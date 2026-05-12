@@ -6,6 +6,7 @@ import { VueDraggable } from 'vue-draggable-plus'
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarHeader,
@@ -28,6 +29,7 @@ import CreateSmartScopeDialog from '@/features/smart-scope/components/CreateSmar
 import CreateCollectionDialog from '@/features/collection/components/CreateCollectionDialog.vue'
 import LibraryCreatorModal from '@/features/library/components/LibraryCreatorModal.vue'
 import { useLibraryCreationRedirect } from '@/features/library/composables/useLibraryCreationRedirect'
+import { useInstallPrompt } from '@/features/pwa/composables/useInstallPrompt'
 import { useThemeStore } from '@/stores/theme'
 
 function resolveIcon(name: string | null | undefined, fallback: Component): Component {
@@ -54,6 +56,7 @@ const { hasPermission } = usePermissions()
 const { subscribeLibrary, getProgress, progressMap } = useScanProgress()
 const { handleLibraryCreated } = useLibraryCreationRedirect()
 const themeStore = useThemeStore()
+const { isInstallable, installApp } = useInstallPrompt()
 
 const iconRadiusClass = computed(() => (themeStore.radius === 'sharp' ? 'rounded-none' : 'rounded-full'))
 
@@ -429,6 +432,12 @@ onUnmounted(() => stopLibraryUploadListener())
         </Transition>
       </SidebarGroup>
     </SidebarContent>
+
+    <SidebarFooter v-if="isInstallable" class="border-t border-sidebar-border/60 pb-2">
+      <SidebarMenu>
+        <SidebarNavItem :is-active="false" tooltip="Install App" :icon="Icons.Download" label="Install App" @click="installApp" />
+      </SidebarMenu>
+    </SidebarFooter>
 
     <SidebarRail />
   </Sidebar>
