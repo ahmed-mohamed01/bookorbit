@@ -15,7 +15,6 @@ import { STATUS_OPTIONS, STATUS_ICONS, STATUS_COLORS, useBookStatus } from '@/fe
 import BookDownloadButton from '@/features/book/components/BookDownloadButton.vue'
 import DiscoverRow from '@/features/book/components/detail/DiscoverRow.vue'
 import BookCoverPlaceholder from '@/features/book/components/BookCoverPlaceholder.vue'
-import KoreaderBookSyncCard from '@/features/koreader/components/KoreaderBookSyncCard.vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -1403,13 +1402,6 @@ watch(
           </div>
         </div>
       </div>
-
-      <KoreaderBookSyncCard
-        v-if="canViewKoreader && koreaderBookProgress"
-        class="mt-6"
-        :book-id="props.book.id"
-        :book-progress="koreaderBookProgress"
-      />
 
       <!-- Synopsis -->
       <div class="mt-6 pt-5 border-t border-border">

@@ -136,6 +136,8 @@ export function useFoliate(
         await view.goTo(cfi).catch(() => {})
       } else if (fallbackFraction !== undefined && fallbackFraction > 0) {
         view.goToFraction?.(fallbackFraction)
+      } else {
+        await view.goTo(0).catch(() => {})
       }
     } catch (e) {
       console.error('[useFoliate]', e)

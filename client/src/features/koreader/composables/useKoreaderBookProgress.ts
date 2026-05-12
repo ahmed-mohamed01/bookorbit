@@ -10,10 +10,6 @@ export function useKoreaderBookProgress() {
     loading.value = true
     try {
       const res = await api(`/api/v1/koreader/books/${bookId}/progress`)
-      if (res.status === 404) {
-        bookProgress.value = null
-        return
-      }
       if (!res.ok) throw new Error('Failed to fetch book progress')
       bookProgress.value = await res.json()
     } catch {

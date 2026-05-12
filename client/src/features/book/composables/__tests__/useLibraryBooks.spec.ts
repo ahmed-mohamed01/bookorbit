@@ -293,10 +293,11 @@ describe('useLibraryBooks', () => {
 
   it('includes filter, collapseSeries, and trimmed q in the request body', async () => {
     const { useLibraryBooks } = await import('../useLibraryBooks')
-    const libraryId = ref<number | null>(7)
+    const libraryId = ref<number | null>(null)
     const collapseEnabled = ref(true)
     const q = ref('  needle  ')
-    const { filter, sort, load } = useLibraryBooks(libraryId, collapseEnabled, q)
+    const { filter, sort } = useLibraryBooks(libraryId, collapseEnabled, q)
+
     filter.value = {
       type: 'group',
       join: 'AND',
@@ -305,7 +306,8 @@ describe('useLibraryBooks', () => {
     sort.value = [{ field: 'author', dir: 'desc' }]
 
     mockOkResponse(makePage([], 0))
-    await load(true)
+    libraryId.value = 7
+    await new Promise((r) => setTimeout(r, 0))
 
     const [url, init] = fetchMock.mock.calls[0]!
     expect(url).toBe('/api/v1/libraries/7/books')

@@ -80,8 +80,20 @@ describe('useKoreaderBookProgress', () => {
     expect(loading.value).toBe(false)
   })
 
-  it('fetchBookProgress sets bookProgress to null on 404', async () => {
-    apiMock.mockResolvedValueOnce(makeResponse({}, { ok: false, status: 404 }))
+  it('fetchBookProgress sets bookProgress to null when server returns null (no koreader data)', async () => {
+    apiMock.mockResolvedValueOnce(makeResponse(null))
+
+    const { useKoreaderBookProgress } = await import('../useKoreaderBookProgress')
+    const { bookProgress, fetchBookProgress } = useKoreaderBookProgress()
+    bookProgress.value = makeBookProgress()
+
+    await fetchBookProgress(42)
+
+    expect(bookProgress.value).toBeNull()
+  })
+
+  it('fetchBookProgress sets bookProgress to null on error response', async () => {
+    apiMock.mockResolvedValueOnce(makeResponse({}, { ok: false, status: 500 }))
 
     const { useKoreaderBookProgress } = await import('../useKoreaderBookProgress')
     const { bookProgress, fetchBookProgress } = useKoreaderBookProgress()

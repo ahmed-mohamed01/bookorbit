@@ -103,6 +103,7 @@ async function bootstrap() {
         styleSrc: ["'self'", "'unsafe-inline'", 'blob:'],
         imgSrc: ["'self'", 'data:', 'blob:'],
         connectSrc: cspConnectSrc,
+        mediaSrc: ["'self'", 'data:', 'blob:'],
         fontSrc: ["'self'", 'data:', 'blob:'],
         objectSrc: ["'none'"],
         frameSrc: ["'self'", 'blob:'],

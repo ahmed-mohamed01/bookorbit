@@ -141,12 +141,8 @@ export function useLibraryBooks(libraryId: Ref<number | null>, collapseEnabled: 
     pagination.page = 0
   }
 
-  watch(libraryId, (newId, oldId) => {
-    if (newId !== oldId) load(true)
-  })
-
   watch(
-    sort,
+    [libraryId, sort] as const,
     () => {
       void load(true)
     },

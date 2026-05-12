@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, provide, ref, shallowRef, watch } from 'vue'
+import { computed, onUnmounted, provide, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowUpDown,
@@ -337,10 +337,6 @@ const { sentinel } = useInfiniteScrollSentinel({
   hasMore,
   loading,
   loadMore: () => load(),
-})
-
-onMounted(() => {
-  load(true)
 })
 
 const stopUploadCompletedListener = onLibraryUploadCompleted((event) => {

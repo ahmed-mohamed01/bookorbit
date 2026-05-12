@@ -1,18 +1,4 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  ForbiddenException,
-  Get,
-  Headers,
-  NotFoundException,
-  Param,
-  ParseIntPipe,
-  Patch,
-  Post,
-  Put,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Headers, Param, ParseIntPipe, Patch, Post, Put, UseGuards } from '@nestjs/common';
 
 import { Permission } from '@bookorbit/types';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -100,10 +86,8 @@ export class KoreaderController {
 
   @RequirePermission(Permission.KoreaderSync)
   @Get('books/:bookId/progress')
-  async getBookProgress(@CurrentUser() user: RequestUser, @Param('bookId', ParseIntPipe) bookId: number) {
-    const progress = await this.koreaderService.getBookProgress(user.id, bookId);
-    if (!progress) throw new NotFoundException('No KOReader sync data found for this book');
-    return progress;
+  getBookProgress(@CurrentUser() user: RequestUser, @Param('bookId', ParseIntPipe) bookId: number) {
+    return this.koreaderService.getBookProgress(user.id, bookId);
   }
 
   @RequirePermission(Permission.KoreaderSync)

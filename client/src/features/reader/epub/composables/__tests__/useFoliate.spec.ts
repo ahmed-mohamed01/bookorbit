@@ -98,21 +98,21 @@ describe('useFoliate.open', () => {
     expect(mockGoToFraction).toHaveBeenCalledWith(0.42)
   })
 
-  it('does not navigate when cfi is null and fraction is 0', async () => {
+  it('navigates to position 0 when cfi is null and fraction is 0', async () => {
     const foliate = useFoliate(() => container)
 
     await foliate.open(1, 1, 'epub', null, 0)
 
-    expect(mockGoTo).not.toHaveBeenCalled()
+    expect(mockGoTo).toHaveBeenCalledWith(0)
     expect(mockGoToFraction).not.toHaveBeenCalled()
   })
 
-  it('does not navigate when cfi is null and fraction is undefined', async () => {
+  it('navigates to position 0 when cfi is null and fraction is undefined', async () => {
     const foliate = useFoliate(() => container)
 
     await foliate.open(1, 1, 'epub', null, undefined)
 
-    expect(mockGoTo).not.toHaveBeenCalled()
+    expect(mockGoTo).toHaveBeenCalledWith(0)
     expect(mockGoToFraction).not.toHaveBeenCalled()
   })
 
