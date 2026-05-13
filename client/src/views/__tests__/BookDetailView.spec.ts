@@ -8,7 +8,8 @@ const mockState = vi.hoisted(() => ({
   route: null as unknown as { params: { bookId: string }; query: Record<string, unknown> },
   detail: null as unknown as { value: BookDetail | null },
   loading: null as unknown as { value: boolean },
-  fetch: vi.fn<() => void>(),
+  notFound: null as unknown as { value: boolean },
+  fetch: vi.fn<(bookId: number) => void>(),
 }))
 
 vi.mock('vue-router', async (importOriginal) => {
@@ -23,6 +24,7 @@ vi.mock('@/features/book/composables/useBookDetail', () => ({
   useBookDetail: () => ({
     detail: mockState.detail,
     loading: mockState.loading,
+    notFound: mockState.notFound,
     fetch: mockState.fetch,
   }),
 }))
@@ -131,6 +133,7 @@ describe('BookDetailView', () => {
     })
     mockState.detail = ref(makeBook())
     mockState.loading = ref(false)
+    mockState.notFound = ref(false)
     mockState.fetch.mockReset()
   })
 
@@ -159,5 +162,45 @@ describe('BookDetailView', () => {
     mockState.route.query = { tab: 'details' }
     await nextTick()
     expect(wrapper.get('[data-test="details-rating"]').text()).toBe('4')
+  })
+
+  it('clears the old detail view while a new route fetch is in flight', async () => {
+    mockState.fetch.mockImplementation((bookId: number) => {
+      if (bookId !== 218) return
+
+      mockState.detail.value = null
+      mockState.loading.value = true
+
+      setTimeout(() => {
+        mockState.detail.value = makeBook({ id: 218, rating: null, readStatus: null, title: 'Next Book' })
+        mockState.loading.value = false
+      }, 0)
+    })
+
+    const wrapper = mount(BookDetailView, {
+      global: {
+        stubs: {
+          BookDetailLayout: { template: '<div><slot /></div>' },
+          DetailsTab: DetailsTabStub,
+          EditMetadataTab: EditMetadataTabStub,
+          FilesTab: { template: '<div />' },
+          EntityNotFound: { template: '<div data-test="not-found" />' },
+        },
+      },
+    })
+
+    expect(wrapper.get('[data-test="details-rating"]').text()).toBe('2')
+
+    mockState.route.params.bookId = '218'
+    await nextTick()
+
+    expect(wrapper.find('[data-test="details-rating"]').exists()).toBe(false)
+    expect(wrapper.find('.animate-shimmer').exists()).toBe(true)
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await nextTick()
+
+    expect(mockState.fetch).toHaveBeenCalledWith(218)
+    expect(wrapper.get('[data-test="details-rating"]').text()).toBe('')
   })
 })

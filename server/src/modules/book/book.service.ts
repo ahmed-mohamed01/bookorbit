@@ -56,6 +56,7 @@ import type { MetadataExportColumnMode } from './dto/metadata-export-options.dto
 import { SaveProgressDto } from './dto/save-progress.dto';
 import { UpsertAudioProgressDto } from './dto/upsert-audio-progress.dto';
 import { UpdateBookMetadataDto } from './dto/update-book-metadata.dto';
+import { buildBookDetailSupplementalFields } from './utils/build-book-detail-supplemental-fields';
 
 const METADATA_UPDATE_FAILPOINTS = [
   'afterScalarUpdate',
@@ -1860,6 +1861,18 @@ export class BookService {
     const meta = book.book_metadata;
     const hasAudioFiles = fileRows.some((f) => f.format && isAudioFormat(f.format));
     const resolvedChapters = this.resolveChapters(meta?.chapters as AudiobookChapter[] | null | undefined, fileRows);
+    const supplementalFields = buildBookDetailSupplementalFields({
+      readStatus,
+      hasAudioFiles,
+      narratorRows,
+      audioMeta: {
+        durationSeconds: meta?.durationSeconds,
+        abridged: meta?.abridged,
+      },
+      chapters: resolvedChapters,
+      comicMeta,
+      collections: collectionRows,
+    });
 
     return {
       id: book.books.id,
@@ -1907,32 +1920,8 @@ export class BookService {
       })),
       lastWrittenAt: meta?.lastWrittenAt ?? null,
       metadataScore: meta?.metadataScore ?? null,
-      readStatus,
-      audioMetadata: hasAudioFiles
-        ? {
-            narrators: narratorRows.map((n, i) => ({ id: n.id, name: n.name, sortName: n.sortName, displayOrder: i })),
-            durationSeconds: meta?.durationSeconds ?? null,
-            abridged: meta?.abridged ?? false,
-            chapters: resolvedChapters,
-          }
-        : null,
       formatPriority: (book.libraries?.formatPriority as string[] | null) ?? [],
-      comicMetadata: comicMeta
-        ? {
-            issueNumber: comicMeta.issueNumber ?? undefined,
-            volumeName: comicMeta.volumeName ?? undefined,
-            pencillers: comicMeta.pencillers ?? undefined,
-            inkers: comicMeta.inkers ?? undefined,
-            colorists: comicMeta.colorists ?? undefined,
-            letterers: comicMeta.letterers ?? undefined,
-            coverArtists: comicMeta.coverArtists ?? undefined,
-            characters: comicMeta.characters ?? undefined,
-            teams: comicMeta.teams ?? undefined,
-            locations: comicMeta.locations ?? undefined,
-            storyArcs: comicMeta.storyArcs ?? undefined,
-          }
-        : null,
-      collections: collectionRows,
+      ...supplementalFields,
     };
   }
 
