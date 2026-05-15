@@ -1,17 +1,5 @@
 import { DashboardRepository } from './dashboard.repository';
 
-function makeBoundsChain<T>(rows: T) {
-  const chain: Record<string, vi.Mock> = {
-    from: vi.fn(),
-    leftJoin: vi.fn(),
-    where: vi.fn(),
-  };
-  chain.from.mockReturnValue(chain);
-  chain.leftJoin.mockReturnValue(chain);
-  chain.where.mockResolvedValue(rows);
-  return chain;
-}
-
 function makeLimitChain<T>(rows: T) {
   const chain: Record<string, vi.Mock> = {
     from: vi.fn(),
@@ -72,49 +60,40 @@ describe('DashboardRepository', () => {
   });
 
   it('returns empty random ids when there are no candidates', async () => {
-    const boundsChain = makeBoundsChain([{ minId: null, maxId: null }]);
-    const db = { select: vi.fn().mockReturnValue(boundsChain) };
+    const listChain = makeLimitChain([]);
+    const db = { select: vi.fn().mockReturnValue(listChain) };
     const repo = new DashboardRepository(db as never);
 
     const result = await repo.findRandomBookIds([5], 7, 20);
 
     expect(result).toEqual([]);
     expect(db.select).toHaveBeenCalledTimes(1);
+    expect(listChain.leftJoin).toHaveBeenCalledTimes(2);
+    expect(listChain.orderBy).toHaveBeenCalledTimes(1);
+    expect(listChain.limit).toHaveBeenCalledWith(20);
   });
 
-  it('uses zero offset for random ids when total candidates are below requested limit', async () => {
-    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
-    const boundsChain = makeBoundsChain([{ minId: 1, maxId: 3 }]);
-    const firstPassChain = makeLimitChain([{ id: 1 }, { id: 2 }, { id: 3 }]);
-    const secondPassChain = makeLimitChain([]);
-    const db = {
-      select: vi.fn().mockReturnValueOnce(boundsChain).mockReturnValueOnce(firstPassChain).mockReturnValueOnce(secondPassChain),
-    };
+  it('maps random rows to id list and respects limit', async () => {
+    const listChain = makeLimitChain([{ id: 21 }, { id: 3 }, { id: 15 }]);
+    const db = { select: vi.fn().mockReturnValue(listChain) };
     const repo = new DashboardRepository(db as never);
 
-    const result = await repo.findRandomBookIds([5], 7, 20);
+    const result = await repo.findRandomBookIds([5], 7, 3);
 
-    expect(result).toEqual([1, 2, 3]);
-    expect(firstPassChain.limit).toHaveBeenCalledWith(20);
-    expect(secondPassChain.limit).toHaveBeenCalledWith(17);
-    randomSpy.mockRestore();
+    expect(result).toEqual([21, 3, 15]);
+    expect(db.select).toHaveBeenCalledTimes(1);
+    expect(listChain.leftJoin).toHaveBeenCalledTimes(2);
+    expect(listChain.orderBy).toHaveBeenCalledTimes(1);
+    expect(listChain.limit).toHaveBeenCalledWith(3);
   });
 
-  it('uses wrap-around sampling when anchored random pass does not fill the limit', async () => {
-    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5);
-    const boundsChain = makeBoundsChain([{ minId: 1, maxId: 12 }]);
-    const firstPassChain = makeLimitChain([{ id: 21 }, { id: 22 }]);
-    const secondPassChain = makeLimitChain([{ id: 1 }, { id: 2 }]);
-    const db = {
-      select: vi.fn().mockReturnValueOnce(boundsChain).mockReturnValueOnce(firstPassChain).mockReturnValueOnce(secondPassChain),
-    };
+  it('returns empty random ids and does not query when limit is zero', async () => {
+    const db = { select: vi.fn() };
     const repo = new DashboardRepository(db as never);
 
-    const result = await repo.findRandomBookIds([3, 4], 99, 5);
+    const result = await repo.findRandomBookIds([3, 4], 99, 0);
 
-    expect(result).toEqual([21, 22, 1, 2]);
-    expect(firstPassChain.limit).toHaveBeenCalledWith(5);
-    expect(secondPassChain.limit).toHaveBeenCalledWith(3);
-    randomSpy.mockRestore();
+    expect(result).toEqual([]);
+    expect(db.select).not.toHaveBeenCalled();
   });
 });

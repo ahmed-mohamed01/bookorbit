@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { DB } from '../../db';
@@ -65,49 +65,21 @@ export class DashboardRepository {
     if (accessibleLibraryIds.length === 0) return [];
     if (limit <= 0) return [];
 
-    const unreadFilter = and(
-      inArray(books.libraryId, accessibleLibraryIds),
-      eq(books.status, 'present'),
-      or(isNull(readingProgress.bookFileId), eq(readingProgress.percentage, 0)),
-    );
-
-    const [bounds] = await this.db
-      .select({
-        minId: sql<number | null>`min(${books.id})`,
-        maxId: sql<number | null>`max(${books.id})`,
-      })
-      .from(books)
-      .leftJoin(bookFiles, eq(bookFiles.id, books.primaryFileId))
-      .leftJoin(readingProgress, and(eq(readingProgress.bookFileId, bookFiles.id), eq(readingProgress.userId, userId)))
-      .where(unreadFilter);
-
-    if (bounds?.minId == null || bounds.maxId == null || bounds.minId > bounds.maxId) return [];
-
-    const range = bounds.maxId - bounds.minId + 1;
-    const anchorId = bounds.minId + Math.floor(Math.random() * range);
-
-    const firstPass = await this.db
+    const rows = await this.db
       .select({ id: books.id })
       .from(books)
       .leftJoin(bookFiles, eq(bookFiles.id, books.primaryFileId))
       .leftJoin(readingProgress, and(eq(readingProgress.bookFileId, bookFiles.id), eq(readingProgress.userId, userId)))
-      .where(and(unreadFilter, gte(books.id, anchorId)))
-      .orderBy(books.id)
+      .where(
+        and(
+          inArray(books.libraryId, accessibleLibraryIds),
+          eq(books.status, 'present'),
+          or(isNull(readingProgress.bookFileId), eq(readingProgress.percentage, 0)),
+        ),
+      )
+      .orderBy(sql`random()`)
       .limit(limit);
 
-    const remaining = limit - firstPass.length;
-    const secondPass =
-      remaining > 0
-        ? await this.db
-            .select({ id: books.id })
-            .from(books)
-            .leftJoin(bookFiles, eq(bookFiles.id, books.primaryFileId))
-            .leftJoin(readingProgress, and(eq(readingProgress.bookFileId, bookFiles.id), eq(readingProgress.userId, userId)))
-            .where(and(unreadFilter, lt(books.id, anchorId)))
-            .orderBy(books.id)
-            .limit(remaining)
-        : [];
-
-    return [...firstPass, ...secondPass].map((row) => row.id);
+    return rows.map((row) => row.id);
   }
 }
