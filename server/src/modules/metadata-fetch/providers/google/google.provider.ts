@@ -26,7 +26,7 @@ export class GoogleProvider implements IdentifiableProvider {
 
   async search(params: MetadataSearchParams): Promise<MetadataCandidate[]> {
     const { enabled, apiKey } = await this.providerConfig.getConfig().then((c) => c.google);
-    if (!enabled) return [];
+    if (!enabled || !apiKey.trim()) return [];
     const query = this.buildQuery(params);
     if (!query) return [];
     return this.fetchVolumes(query, apiKey, params.signal);
@@ -34,7 +34,7 @@ export class GoogleProvider implements IdentifiableProvider {
 
   async lookupById(providerId: string, signal?: AbortSignal): Promise<MetadataCandidate | null> {
     const { enabled, apiKey } = await this.providerConfig.getConfig().then((c) => c.google);
-    if (!enabled) return null;
+    if (!enabled || !apiKey.trim()) return null;
     const url = this.buildUrl(`/volumes/${providerId}`, {}, apiKey);
     const startedAt = Date.now();
     this.logger.log(`[google] [start] op=lookup providerId="${providerId}"`);

@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { Loader2, Save } from 'lucide-vue-next'
 import type { MetadataProviderKey, ProviderConfigurations, ProviderStatus, ProviderThrottleRuntimeState } from '@bookorbit/types'
+import { toast } from 'vue-sonner'
 import { Badge } from '@/components/ui/badge'
 
 const props = defineProps<{
@@ -78,7 +79,7 @@ const rows: { key: keyof ProviderConfigurations; label: string; hint?: string; f
   {
     key: 'google',
     label: 'Google Books',
-    hint: "Broad coverage from Google's book index. Add an API key to avoid rate limits.",
+    hint: "Broad coverage from Google's book index. Google Books now requires an API key before this provider can be enabled.",
     fields: [{ key: 'apiKey', label: 'API Key', type: 'password' }],
   },
   {
@@ -163,6 +164,33 @@ function save() {
   emit('save', draft.value)
 }
 
+function isGoogleApiKeyField(rowKey: keyof ProviderConfigurations, fieldKey: string): boolean {
+  return rowKey === 'google' && fieldKey === 'apiKey'
+}
+
+function hasGoogleApiKey(): boolean {
+  return !!draft.value?.google.apiKey.trim()
+}
+
+function canEnableProvider(key: keyof ProviderConfigurations): boolean {
+  return key !== 'google' || hasGoogleApiKey()
+}
+
+function canEditField(rowKey: keyof ProviderConfigurations, fieldKey: string): boolean {
+  if (!draft.value) return false
+  return draft.value[rowKey].enabled || isGoogleApiKeyField(rowKey, fieldKey)
+}
+
+function toggleProvider(key: keyof ProviderConfigurations) {
+  if (!draft.value) return
+  const provider = draft.value[key]
+  if (!provider.enabled && !canEnableProvider(key)) {
+    toast.error('Google Books requires an API key before it can be enabled')
+    return
+  }
+  provider.enabled = !provider.enabled
+}
+
 function onSecretFieldFocus(event: FocusEvent) {
   const input = event.target as HTMLInputElement | null
   if (input?.readOnly) input.readOnly = false
@@ -229,7 +257,7 @@ function onSecretFieldFocus(event: FocusEvent) {
               <select
                 v-if="field.type === 'select'"
                 v-model="(draft[row.key] as unknown as Record<string, string>)[field.key]"
-                :disabled="!draft[row.key].enabled"
+                :disabled="!canEditField(row.key, field.key)"
                 class="h-9 w-full sm:w-auto rounded-md border border-input bg-background px-3 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-40 transition-all"
               >
                 <option v-for="opt in field.options" :key="opt" :value="opt">{{ opt }}</option>
@@ -240,7 +268,7 @@ function onSecretFieldFocus(event: FocusEvent) {
                 :type="field.type === 'password' ? 'text' : field.type"
                 :name="`metadata-${row.key}-${field.key}`"
                 :placeholder="field.label"
-                :disabled="!draft[row.key].enabled"
+                :disabled="!canEditField(row.key, field.key)"
                 :readonly="field.type === 'password'"
                 :autocomplete="field.type === 'password' ? 'off' : 'off'"
                 autocorrect="off"
@@ -267,7 +295,7 @@ function onSecretFieldFocus(event: FocusEvent) {
               :aria-checked="draft[row.key].enabled"
               class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none"
               :class="draft[row.key].enabled ? 'bg-primary' : 'bg-muted border border-border'"
-              @click="draft[row.key].enabled = !draft[row.key].enabled"
+              @click="toggleProvider(row.key)"
             >
               <span
                 class="inline-block h-3.5 w-3.5 rounded-full bg-white shadow-xs transition-transform"

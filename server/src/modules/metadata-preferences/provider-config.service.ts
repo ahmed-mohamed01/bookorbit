@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger } from '@nestjs/common';
 import { eq, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { MetadataProviderKey, ProviderConfigurations, ProviderStatus } from '@bookorbit/types';
@@ -15,7 +15,7 @@ type ProviderConfigPatch = {
 const PROVIDER_CONFIG_KEY = 'metadata_provider_config';
 
 const DEFAULT_CONFIG: ProviderConfigurations = {
-  google: { enabled: true, apiKey: '' },
+  google: { enabled: false, apiKey: '' },
   amazon: { enabled: true, domain: 'amazon.com', cookie: '' },
   goodreads: { enabled: true },
   hardcover: { enabled: false, apiKey: '' },
@@ -143,6 +143,20 @@ export class ProviderConfigService {
     };
   }
 
+  private validateConfig(config: ProviderConfigurations): void {
+    if (config.google.enabled && !config.google.apiKey.trim()) {
+      throw new BadRequestException('Google Books requires an API key before it can be enabled');
+    }
+  }
+
+  private normalizeConfig(config: ProviderConfigurations): ProviderConfigurations {
+    if (!config.google.enabled || config.google.apiKey.trim()) return config;
+    return {
+      ...config,
+      google: { ...config.google, enabled: false },
+    };
+  }
+
   private parsePersistedConfig(
     rawValue: string,
     fallback: ProviderConfigurations,
@@ -170,7 +184,7 @@ export class ProviderConfigService {
       where: eq(schema.appSettings.key, PROVIDER_CONFIG_KEY),
     });
     if (!row) return defaults;
-    return this.parsePersistedConfig(row.value, defaults, 'get', startedAt);
+    return this.normalizeConfig(this.parsePersistedConfig(row.value, defaults, 'get', startedAt));
   }
 
   async updateConfig(patch: ProviderConfigPatch): Promise<ProviderConfigurations> {
@@ -182,8 +196,9 @@ export class ProviderConfigService {
       const row = await tx.query.appSettings.findFirst({
         where: eq(schema.appSettings.key, PROVIDER_CONFIG_KEY),
       });
-      const current = row ? this.parsePersistedConfig(row.value, defaults, 'update', startedAt) : defaults;
+      const current = row ? this.normalizeConfig(this.parsePersistedConfig(row.value, defaults, 'update', startedAt)) : defaults;
       const next = this.mergeConfig(current, patch);
+      this.validateConfig(next);
       const value = JSON.stringify(next);
       await tx
         .insert(schema.appSettings)
@@ -200,8 +215,8 @@ export class ProviderConfigService {
         key: MetadataProviderKey.GOOGLE,
         label: PROVIDER_LABELS[MetadataProviderKey.GOOGLE],
         enabled: cfg.google.enabled,
-        configured: true,
-        hint: !cfg.google.apiKey ? 'Recommended for higher rate limits' : undefined,
+        configured: !!cfg.google.apiKey.trim(),
+        hint: !cfg.google.apiKey.trim() ? 'API key required' : undefined,
       },
       {
         key: MetadataProviderKey.AMAZON,

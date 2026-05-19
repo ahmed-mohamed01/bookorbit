@@ -59,7 +59,7 @@ describe('ProviderConfigService', () => {
     const config = await service.getConfig();
 
     expect(config).toEqual({
-      google: { enabled: true, apiKey: '' },
+      google: { enabled: false, apiKey: '' },
       amazon: { enabled: true, domain: 'amazon.com', cookie: '' },
       goodreads: { enabled: true },
       hardcover: { enabled: false, apiKey: '' },
@@ -80,7 +80,7 @@ describe('ProviderConfigService', () => {
 
     const second = await service.getConfig();
 
-    expect(second.google.enabled).toBe(true);
+    expect(second.google.enabled).toBe(false);
     expect(second.amazon.domain).toBe('amazon.com');
   });
 
@@ -95,7 +95,7 @@ describe('ProviderConfigService', () => {
 
     const config = await service.getConfig();
 
-    expect(config.google).toEqual({ enabled: true, apiKey: 'key-1' });
+    expect(config.google).toEqual({ enabled: false, apiKey: 'key-1' });
     expect(config.amazon).toEqual({ enabled: true, domain: 'amazon.com', cookie: '' });
     expect(config.hardcover).toEqual({ enabled: true, apiKey: 'hardcover-key' });
     expect(config.itunes).toEqual({ enabled: false, coverResolution: 'high' });
@@ -115,6 +115,18 @@ describe('ProviderConfigService', () => {
     expect(config.google).toEqual({ enabled: false, apiKey: 'g-key' });
     expect(config.amazon).toEqual({ enabled: true, domain: 'amazon.com', cookie: '' });
     expect(config.goodreads).toEqual({ enabled: true });
+  });
+
+  it('normalizes stored Google Books config to disabled when API key is missing', async () => {
+    db.query.appSettings.findFirst.mockResolvedValue({
+      value: JSON.stringify({
+        google: { enabled: true, apiKey: '' },
+      }),
+    });
+
+    const config = await service.getConfig();
+
+    expect(config.google).toEqual({ enabled: false, apiKey: '' });
   });
 
   it('drops unsupported properties from stored provider sections', async () => {
@@ -186,6 +198,30 @@ describe('ProviderConfigService', () => {
     );
   });
 
+  it('rejects enabling Google Books without an API key', async () => {
+    db.__tx.query.appSettings.findFirst.mockResolvedValue({
+      value: JSON.stringify({
+        google: { enabled: false, apiKey: '' },
+      }),
+    });
+
+    await expect(service.updateConfig({ google: { enabled: true } })).rejects.toThrow('Google Books requires an API key');
+    expect(db.__tx.insert).not.toHaveBeenCalled();
+  });
+
+  it('normalizes legacy enabled Google Books config during unrelated updates', async () => {
+    db.__tx.query.appSettings.findFirst.mockResolvedValue({
+      value: JSON.stringify({
+        google: { enabled: true, apiKey: '' },
+      }),
+    });
+
+    const updated = await service.updateConfig({ amazon: { cookie: 'session-cookie' } });
+
+    expect(updated.google).toEqual({ enabled: false, apiKey: '' });
+    expect(updated.amazon.cookie).toBe('session-cookie');
+  });
+
   it('acquires advisory lock before reading config inside update transaction', async () => {
     db.__tx.query.appSettings.findFirst.mockResolvedValue(undefined);
 
@@ -234,7 +270,8 @@ describe('ProviderConfigService', () => {
       MetadataProviderKey.AUDNEXUS,
       MetadataProviderKey.COMICVINE,
     ]);
-    expect(statuses.find((s) => s.key === MetadataProviderKey.GOOGLE)?.hint).toContain('Recommended for higher rate limits');
+    expect(statuses.find((s) => s.key === MetadataProviderKey.GOOGLE)?.configured).toBe(false);
+    expect(statuses.find((s) => s.key === MetadataProviderKey.GOOGLE)?.hint).toContain('API key required');
     expect(statuses.find((s) => s.key === MetadataProviderKey.AMAZON)?.hint).toContain('Cookie recommended');
     expect(statuses.find((s) => s.key === MetadataProviderKey.HARDCOVER)?.configured).toBe(false);
     expect(statuses.find((s) => s.key === MetadataProviderKey.GOODREADS)?.enabled).toBe(false);

@@ -52,6 +52,18 @@ describe('GoogleProvider', () => {
       expect(result).toEqual([]);
     });
 
+    it('should return empty array if API key is missing', async () => {
+      global.fetch = vi.fn();
+      vi.spyOn(providerConfig, 'getConfig').mockResolvedValue({
+        ...mockConfig,
+        google: { enabled: true, apiKey: '' },
+      });
+
+      const result = await provider.search({ title: 'Test' });
+      expect(result).toEqual([]);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
     it('should fetch from Google Books and return mapped volumes', async () => {
       const mockVolume = {
         id: 'vol1',
@@ -102,6 +114,18 @@ describe('GoogleProvider', () => {
   });
 
   describe('lookupById', () => {
+    it('should return null if API key is missing', async () => {
+      global.fetch = vi.fn();
+      vi.spyOn(providerConfig, 'getConfig').mockResolvedValue({
+        ...mockConfig,
+        google: { enabled: true, apiKey: '' },
+      });
+
+      const result = await provider.lookupById('vol1');
+      expect(result).toBeNull();
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
     it('should fetch volume by id and return mapped volume', async () => {
       const mockVolume = {
         id: 'vol1',

@@ -34,7 +34,9 @@ export function useProviderConfig() {
         await fetchConfig()
         toast.success('Provider settings saved')
       } else {
-        toast.error('Failed to save provider settings')
+        const data = await res.json().catch(() => null)
+        const message = typeof data?.message === 'string' ? data.message : 'Failed to save provider settings'
+        toast.error(message)
       }
     } finally {
       saving.value = false
