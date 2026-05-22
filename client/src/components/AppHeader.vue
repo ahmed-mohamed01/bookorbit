@@ -14,6 +14,9 @@ import {
   Trophy,
   User,
   MoreVertical,
+  BadgeQuestionMark,
+  Star,
+  ExternalLink,
 } from 'lucide-vue-next'
 import { useRouter, useRoute } from 'vue-router'
 import { toast } from 'vue-sonner'
@@ -60,6 +63,9 @@ const { onLibraryUploadCompleted } = useLibraryUploadEvents()
 const { summary: bookDockSummary, fetchSummary: fetchBookDockSummary, subscribe: subscribeBookDockSummary } = useBookDockSummary()
 const { subscribe: subscribeNotifications } = useNotifications()
 const themeStore = useThemeStore()
+const documentationUrl = 'https://bookorbit.app/what-is-bookorbit.html'
+const githubRepositoryUrl = 'https://github.com/bookorbit/bookorbit'
+const githubStarPopoverOpen = ref(false)
 
 const isBookDockActive = computed(() => route.name === 'book-dock')
 const isAchievementsActive = computed(() => route.name === 'achievements')
@@ -139,6 +145,14 @@ function clearSearch() {
 function closeMobileSearch() {
   mobileSearchOpen.value = false
   clearSearch()
+}
+
+function handleGithubStarPopoverOpenChange(open: boolean) {
+  githubStarPopoverOpen.value = open
+}
+
+function closeGithubStarPopover() {
+  githubStarPopoverOpen.value = false
 }
 
 function navigateToResult(result: GlobalSearchResult) {
@@ -640,6 +654,71 @@ function formatBadgeClass(fmt: string): string {
         <!-- Group 2: Preferences (Appearance, Settings) -->
         <div class="hidden md:block h-4 w-px bg-foreground/20" />
         <div class="hidden md:flex items-center gap-2.5">
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <Button
+                as-child
+                data-tour="documentation-link"
+                variant="ghost"
+                size="icon"
+                :class="[
+                  'h-8 w-8 border border-primary/35 text-foreground/70 hover:border-primary/70 hover:text-foreground transition-colors',
+                  iconRadiusClass,
+                ]"
+              >
+                <a :href="documentationUrl" target="_blank" rel="noopener noreferrer">
+                  <BadgeQuestionMark :size="15" />
+                </a>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Documentation</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <Popover :open="githubStarPopoverOpen" @update:open="handleGithubStarPopoverOpenChange">
+              <TooltipTrigger as-child>
+                <PopoverTrigger as-child>
+                  <Button
+                    data-tour="github-star-cta"
+                    variant="ghost"
+                    size="icon"
+                    :class="[
+                      'h-8 w-8 border border-primary/35 text-foreground/70 hover:border-primary/70 hover:text-foreground transition-colors',
+                      iconRadiusClass,
+                    ]"
+                  >
+                    <Star :size="15" />
+                  </Button>
+                </PopoverTrigger>
+              </TooltipTrigger>
+              <PopoverContent side="bottom" align="end" class="relative w-80 p-4">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="absolute right-2 top-2 h-6 w-6 text-muted-foreground hover:text-foreground"
+                  aria-label="Close"
+                  @click="closeGithubStarPopover"
+                >
+                  <X :size="13" />
+                </Button>
+                <div class="space-y-3 pr-5">
+                  <p class="text-sm font-medium text-foreground">Enjoying BookOrbit?</p>
+                  <p class="text-xs leading-relaxed text-muted-foreground">
+                    If BookOrbit is helping with your library, please consider starring the project on GitHub. It helps more people discover the app
+                    and supports ongoing development.
+                  </p>
+                  <Button as-child class="w-full">
+                    <a :href="githubRepositoryUrl" target="_blank" rel="noopener noreferrer" class="inline-flex items-center justify-center gap-1.5">
+                      <span>Star BookOrbit on GitHub</span>
+                      <ExternalLink :size="14" />
+                    </a>
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+            <TooltipContent>Star on GitHub</TooltipContent>
+          </Tooltip>
+
           <Tooltip>
             <Popover>
               <TooltipTrigger as-child>
