@@ -157,6 +157,7 @@ function openAuthorBrowse() {
     <BookCoverSurface
       size="mini"
       class="book-cover-surface--spine-fitted w-16 rounded shrink-0 overflow-hidden relative"
+      :disable-spine="isAudiobook"
       :class="isMissing ? 'opacity-50 grayscale' : ''"
       :style="[{ aspectRatio: coverAspectRatio }, !book.hasCover || !coverLoaded || coverFailed ? coverStyle : {}]"
     >
@@ -178,7 +179,11 @@ function openAuthorBrowse() {
         @load="handleCoverLoad"
         @error="coverFailed = true"
       />
-      <div v-if="book.hasCover && coverLoaded && !coverFailed" class="book-cover-spine-layer absolute z-[3]" :style="fittedCoverSpineStyle" />
+      <div
+        v-if="!isAudiobook && book.hasCover && coverLoaded && !coverFailed"
+        class="book-cover-spine-layer absolute z-[3]"
+        :style="fittedCoverSpineStyle"
+      />
       <BookCoverPlaceholder
         v-if="!book.hasCover || coverFailed"
         :title="book.title"

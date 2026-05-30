@@ -7,15 +7,24 @@ const props = withDefaults(
     size?: 'default' | 'mini'
     interactive?: boolean
     tag?: string
+    disableSpine?: boolean
   }>(),
   {
     size: 'default',
     interactive: false,
     tag: 'div',
+    disableSpine: false,
   },
 )
 
 const { bookSpineOverlay, bookShadowStrength } = useDisplaySettings()
+
+const spineOverlayMode = computed(() => {
+  if (props.disableSpine) return 'off'
+  return bookSpineOverlay?.value ?? 'off'
+})
+
+const shadowStrengthMode = computed(() => bookShadowStrength?.value ?? 'default')
 
 const classes = computed(() => [
   'book-cover-surface',
@@ -29,8 +38,8 @@ const classes = computed(() => [
     :is="tag"
     :class="classes"
     :data-cover-size="size"
-    :data-cover-shadow="bookShadowStrength"
-    :data-cover-spine="bookSpineOverlay"
+    :data-cover-shadow="shadowStrengthMode"
+    :data-cover-spine="spineOverlayMode"
     :data-cover-interactive="interactive ? 'true' : 'false'"
   >
     <slot />

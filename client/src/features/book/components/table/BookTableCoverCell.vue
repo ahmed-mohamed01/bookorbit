@@ -10,6 +10,7 @@ const props = defineProps<{
   bookId: number
   title: string | null
   hasCover: boolean
+  isAudio: boolean
 }>()
 
 const emit = defineEmits<{ 'cover-click': [] }>()
@@ -67,6 +68,7 @@ const adjustedTop = computed(() => {
   <div class="relative" @mouseenter="handleMouseEnter" @mouseleave="handleMouseLeave">
     <BookCoverSurface
       size="mini"
+      :disable-spine="isAudio"
       tabindex="0"
       role="button"
       aria-label="View cover"

@@ -247,6 +247,18 @@ describe('BookCoverCard — cover style preferences', () => {
     const coverDiv = wrapper.find('[style*="aspect-ratio"]')
     expect(coverDiv.attributes('data-cover-shadow')).toBe('strong')
   })
+
+  it('forces spine overlay off for audiobooks even when global spine mode is enabled', async () => {
+    const wrapper = mountCard({
+      ...presentBook,
+      files: [{ id: 12, format: 'm4b', role: 'primary', sizeBytes: null }],
+    })
+    bookSpineOverlay.value = 'strong'
+    await nextTick()
+
+    const coverDiv = wrapper.find('[style*="aspect-ratio"]')
+    expect(coverDiv.attributes('data-cover-spine')).toBe('off')
+  })
 })
 
 describe('BookCoverCard — placeholder state', () => {

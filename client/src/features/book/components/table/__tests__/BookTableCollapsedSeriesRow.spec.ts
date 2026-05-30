@@ -1,7 +1,8 @@
 import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BookCard } from '@bookorbit/types'
 import BookTableCollapsedSeriesRow from '../BookTableCollapsedSeriesRow.vue'
+import { useDisplaySettings } from '@/composables/useDisplaySettings'
 
 const mockRouterPush = vi.fn<(...args: unknown[]) => unknown>()
 
@@ -46,9 +47,15 @@ function makeBook(overrides: Partial<BookCard> = {}): BookCard {
   }
 }
 
+const { bookSpineOverlay } = useDisplaySettings()
+
 describe('BookTableCollapsedSeriesRow', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    bookSpineOverlay.value = 'off'
   })
 
   it('renders the series name and book count', () => {
@@ -152,5 +159,20 @@ describe('BookTableCollapsedSeriesRow', () => {
     await wrapper.get('td').trigger('click')
 
     expect(mockRouterPush).not.toHaveBeenCalled()
+  })
+
+  it('forces spine overlay off for audiobook collapsed rows', () => {
+    bookSpineOverlay.value = 'strong'
+    const wrapper = mount(BookTableCollapsedSeriesRow, {
+      props: {
+        book: makeBook({
+          files: [{ id: 9, format: 'm4b', role: 'primary', sizeBytes: null }],
+        }),
+        colspan: 6,
+      },
+    })
+
+    const cover = wrapper.find('.book-cover-surface')
+    expect(cover.attributes('data-cover-spine')).toBe('off')
   })
 })

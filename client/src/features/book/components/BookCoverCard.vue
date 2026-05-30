@@ -282,6 +282,7 @@ async function handleSetStatus(status: ReadStatus) {
       class="book-cover-surface--spine-fitted relative w-full rounded-sm overflow-hidden transition-[box-shadow,transform,ring] duration-150 will-change-transform"
       :class="isMissing || selectionMode ? '' : 'group-hover:scale-[1.02]'"
       :interactive="!isMissing && !selectionMode"
+      :disable-spine="isAudiobook"
       :style="[{ aspectRatio: coverAspectRatio }, !book.hasCover || !coverLoaded || coverFailed ? coverStyle : {}]"
     >
       <!-- Missing border overlay: mirror selected overlay pattern so border is never clipped/hidden -->
@@ -309,7 +310,11 @@ async function handleSetStatus(status: ReadStatus) {
         @error="coverFailed = true"
       />
 
-      <div v-if="book.hasCover && coverLoaded && !coverFailed" class="book-cover-spine-layer absolute z-[3]" :style="fittedCoverSpineStyle" />
+      <div
+        v-if="!isAudiobook && book.hasCover && coverLoaded && !coverFailed"
+        class="book-cover-spine-layer absolute z-[3]"
+        :style="fittedCoverSpineStyle"
+      />
 
       <!-- Skeleton shimmer while a known-cover loads -->
       <div v-if="book.hasCover && !coverLoaded && !coverFailed" class="absolute inset-0 animate-pulse bg-white/10" />

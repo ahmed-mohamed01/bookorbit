@@ -1,7 +1,8 @@
 import { mount } from '@vue/test-utils'
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import BookListRow from '../BookListRow.vue'
 import type { BookCard } from '@bookorbit/types'
+import { useDisplaySettings } from '@/composables/useDisplaySettings'
 
 vi.mock('vue-router', async (importOriginal) => {
   const actual = await importOriginal<typeof import('vue-router')>()
@@ -34,6 +35,12 @@ const globalStubs = {
     TooltipContent: { template: '<div><slot /></div>' },
   },
 }
+
+const { bookSpineOverlay } = useDisplaySettings()
+
+afterEach(() => {
+  bookSpineOverlay.value = 'off'
+})
 
 const missingBook: BookCard = {
   id: 1,
@@ -144,5 +151,21 @@ describe('BookListRow — present state', () => {
     })
 
     expect(wrapper.findAll('.fill-lime-400')).toHaveLength(4)
+  })
+
+  it('forces spine overlay off for audiobook rows even when global spine mode is enabled', () => {
+    bookSpineOverlay.value = 'strong'
+    const wrapper = mount(BookListRow, {
+      props: {
+        book: {
+          ...presentBook,
+          files: [{ id: 22, format: 'm4b', role: 'primary', sizeBytes: null }],
+        },
+      },
+      global: globalStubs,
+    })
+
+    const cover = wrapper.find('.book-cover-surface')
+    expect(cover.attributes('data-cover-spine')).toBe('off')
   })
 })

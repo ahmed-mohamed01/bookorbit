@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Lock, LockOpen } from 'lucide-vue-next'
+import { FORMAT_TO_GROUP, type BookCard } from '@bookorbit/types'
 import BookTableCoverCell from './BookTableCoverCell.vue'
 import BookTableTextCell from './BookTableTextCell.vue'
 import BookTableNumberCell from './BookTableNumberCell.vue'
@@ -14,7 +15,6 @@ import BookTableActionsCell from './BookTableActionsCell.vue'
 import BookTableProgressCell from './BookTableProgressCell.vue'
 import BookTableMetadataScoreCell from './BookTableMetadataScoreCell.vue'
 import BookTableLockableCell from './BookTableLockableCell.vue'
-import type { BookCard } from '@bookorbit/types'
 import type { CellType, ColumnId } from '@/features/book/composables/tableColumnSchema'
 
 type NavigationDirection = 'next' | 'prev' | 'rowUp' | 'rowDown'
@@ -71,6 +71,9 @@ const lockStateClass = computed(() => {
   if (props.lockedFieldCount > 0) return 'text-amber-600/90 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300'
   return 'text-muted-foreground/70 hover:text-foreground'
 })
+
+const primaryFile = computed(() => props.book.files.find((file) => file.role === 'primary') ?? props.book.files[0] ?? null)
+const isAudiobook = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'audio')
 </script>
 
 <template>
@@ -91,6 +94,7 @@ const lockStateClass = computed(() => {
     :book-id="book.id"
     :title="book.title"
     :has-cover="book.hasCover"
+    :is-audio="isAudiobook"
     @cover-click="emit('coverClick')"
   />
 

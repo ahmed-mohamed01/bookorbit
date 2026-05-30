@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import type { BookCard } from '@bookorbit/types'
+import { FORMAT_TO_GROUP, type BookCard } from '@bookorbit/types'
 import BookCoverPlaceholder from './BookCoverPlaceholder.vue'
 import BookCoverSurface from './BookCoverSurface.vue'
 import { COVER_ASPECT_RATIO_KEY, DEFAULT_COVER_ASPECT_RATIO } from '../lib/cover-aspect-ratio'
@@ -25,6 +25,8 @@ const coverIds = computed(() => collapsed.value.coverBookIds.filter((bookId) => 
 const tileCount = computed(() => Math.max(coverIds.value.length, 1))
 
 const failedCovers = ref(new Set<number>())
+const primaryFile = computed(() => props.book.files.find((file) => file.role === 'primary') ?? props.book.files[0] ?? null)
+const isAudiobook = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'audio')
 
 function handleCoverError(bookId: number) {
   failedCovers.value = new Set([...failedCovers.value, bookId])
@@ -48,6 +50,7 @@ function tileClass(index: number): string {
     <BookCoverSurface
       class="relative w-full rounded-sm overflow-hidden transition-[box-shadow,transform] duration-150 will-change-transform group-hover:scale-[1.02]"
       interactive
+      :disable-spine="isAudiobook"
       :style="{ aspectRatio: coverAspectRatio }"
     >
       <!-- Adaptive cover mosaic -->

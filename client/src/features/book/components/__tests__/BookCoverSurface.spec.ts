@@ -44,4 +44,13 @@ describe('BookCoverSurface', () => {
     expect(wrapper.attributes('type')).toBe('button')
     expect(wrapper.attributes('aria-label')).toBe('cover')
   })
+
+  it('forces spine overlay off when disableSpine is true', () => {
+    bookSpineOverlay.value = 'strong'
+    const wrapper = mount(BookCoverSurface, {
+      props: { disableSpine: true },
+    })
+
+    expect(wrapper.attributes('data-cover-spine')).toBe('off')
+  })
 })

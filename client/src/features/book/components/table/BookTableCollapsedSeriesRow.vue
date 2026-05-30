@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ChevronRight } from 'lucide-vue-next'
-import type { BookCard } from '@bookorbit/types'
+import { FORMAT_TO_GROUP, type BookCard } from '@bookorbit/types'
 import BookCoverSurface from '../BookCoverSurface.vue'
 
 const props = defineProps<{
@@ -18,6 +18,8 @@ const seriesName = computed(() => props.book.seriesName ?? '')
 const readCount = computed(() => collapsed.value.readCount)
 const bookCount = computed(() => collapsed.value.bookCount)
 const coverIds = computed(() => collapsed.value.coverBookIds.filter((id) => id > 0).slice(0, 4))
+const primaryFile = computed(() => props.book.files.find((file) => file.role === 'primary') ?? props.book.files[0] ?? null)
+const isAudiobook = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'audio')
 
 function handleClick() {
   if (props.selectionMode) return
@@ -34,10 +36,21 @@ function thumbnailUrl(bookId: number): string {
     <div class="flex items-center gap-3 min-w-0">
       <!-- Cover row: up to 4 thumbnails -->
       <div class="flex shrink-0 gap-0.5">
-        <BookCoverSurface v-for="coverId in coverIds" :key="coverId" size="mini" class="h-8 w-6 rounded-sm overflow-hidden">
+        <BookCoverSurface
+          v-for="coverId in coverIds"
+          :key="coverId"
+          size="mini"
+          :disable-spine="isAudiobook"
+          class="h-8 w-6 rounded-sm overflow-hidden"
+        >
           <img :src="thumbnailUrl(coverId)" class="h-full w-full object-cover" loading="lazy" alt="" />
         </BookCoverSurface>
-        <BookCoverSurface v-if="coverIds.length === 0" size="mini" class="h-8 w-6 rounded-sm bg-muted flex items-center justify-center">
+        <BookCoverSurface
+          v-if="coverIds.length === 0"
+          size="mini"
+          :disable-spine="isAudiobook"
+          class="h-8 w-6 rounded-sm bg-muted flex items-center justify-center"
+        >
           <span class="text-[8px] text-muted-foreground">?</span>
         </BookCoverSurface>
       </div>
