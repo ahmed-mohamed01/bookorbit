@@ -9,6 +9,7 @@ import {
   CARD_OVERLAY_KEYS,
   COVER_SIZE_SCOPES,
   RADIUS_IDS,
+  SERIES_CARD_COVER_MODES,
   TABLE_DENSITIES,
   THEME_IDS,
   type DisplayPreferences,
@@ -48,6 +49,7 @@ const DISPLAY_PREFERENCES_SCHEMA = z
     bookSpineOverlay: z.enum(BOOK_SPINE_OVERLAYS),
     bookShadowStrength: z.enum(BOOK_SHADOW_STRENGTHS),
     bookCoverDisplayMode: z.enum(BOOK_COVER_DISPLAY_MODES),
+    seriesCardCoverMode: z.enum(SERIES_CARD_COVER_MODES).default('mosaic'),
   })
   .strict()
   .superRefine((data, ctx) => {

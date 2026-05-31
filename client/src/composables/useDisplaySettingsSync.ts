@@ -117,6 +117,7 @@ export function initDisplaySettingsSync(): void {
         settings.bookSpineOverlay.value,
         settings.bookShadowStrength.value,
         settings.bookCoverDisplayMode.value,
+        settings.seriesCardCoverMode.value,
       ] as const,
     () => {
       if (isApplyingServerPrefs || !isSyncEnabled()) return

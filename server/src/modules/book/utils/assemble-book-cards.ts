@@ -37,6 +37,9 @@ type CollapsedBookRow = BookRow & {
   readCount: number | null;
   coverBookIds: number[] | null;
   seriesLatestAddedAt: Date | null;
+  firstVolumeBookId: number | null;
+  latestVolumeBookId: number | null;
+  firstUnreadBookId: number | null;
 };
 
 type NameRow = { bookId: number; name: string };
@@ -179,6 +182,9 @@ export function assembleCollapsedBookCards(
         readCount: row.readCount ?? 0,
         coverBookIds: row.coverBookIds ?? [],
         seriesLatestAddedAt: row.seriesLatestAddedAt?.toISOString() ?? null,
+        firstVolumeBookId: row.firstVolumeBookId ?? null,
+        latestVolumeBookId: row.latestVolumeBookId ?? null,
+        firstUnreadBookId: row.firstUnreadBookId ?? null,
       };
       base[i] = { ...base[i]!, collapsedSeries: collapsed };
     }
@@ -230,11 +236,17 @@ export function collapseBookCards(cards: BookCard[]): BookCard[] {
       .map((b) => b.id);
     const fallbackIds = sorted.slice(0, 4).map((b) => b.id);
 
+    const firstUnread = sorted.find((b) => b.readStatus?.status !== 'read');
+    const lastWithIndex = sorted.findLast((b) => b.seriesIndex !== null);
+
     representative.collapsedSeries = {
       bookCount: group.length,
       readCount,
       coverBookIds: coverIds.length > 0 ? coverIds : fallbackIds,
       seriesLatestAddedAt,
+      firstVolumeBookId: sorted[0]!.id,
+      latestVolumeBookId: (lastWithIndex ?? sorted[sorted.length - 1]!).id,
+      firstUnreadBookId: firstUnread?.id ?? null,
     };
     result.push({ index: firstIndex, card: representative });
   }

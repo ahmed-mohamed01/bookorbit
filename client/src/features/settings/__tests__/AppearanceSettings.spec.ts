@@ -191,6 +191,7 @@ describe('AppearanceSettings', () => {
     expect(routerReplaceMock).toHaveBeenLastCalledWith({ name: 'settings-appearance', query: { tab: 'layout' } })
     expect(wrapper.findAll('.settings-group-label').map((label) => label.text())).toEqual([
       'Library Grid Layout',
+      'Series Display',
       'Author Grid',
       'List and Table Views',
     ])

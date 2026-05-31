@@ -7,6 +7,7 @@ import {
   BOOK_VIEW_MODES,
   CARD_OVERLAY_KEYS,
   COVER_SIZE_SCOPES,
+  SERIES_CARD_COVER_MODES,
   TABLE_DENSITIES,
   type AuthorCoverShape,
   type BookCoverDisplayMode,
@@ -16,6 +17,7 @@ import {
   type CardOverlayKey,
   type CoverSizeScope,
   type DisplayPreferences,
+  type SeriesCardCoverMode,
   type TableDensity,
 } from '@bookorbit/types'
 import { storage } from '@/services/storage'
@@ -29,6 +31,7 @@ export type {
   CardOverlayKey,
   CoverSizeScope,
   DisplayPreferences,
+  SeriesCardCoverMode,
   TableDensity,
 } from '@bookorbit/types'
 
@@ -38,6 +41,7 @@ const DEFAULT_GRID_GAP = 28
 const DEFAULT_BOOK_SPINE_OVERLAY: BookSpineOverlay = 'off'
 const DEFAULT_BOOK_SHADOW_STRENGTH: BookShadowStrength = 'default'
 const DEFAULT_BOOK_COVER_DISPLAY_MODE: BookCoverDisplayMode = 'blurred-fit'
+const DEFAULT_SERIES_CARD_COVER_MODE: SeriesCardCoverMode = 'mosaic'
 const DEFAULT_CARD_OVERLAYS: CardOverlayKey[] = ['progress-bar', 'format', 'rating', 'read-status', 'series-position']
 
 function normalizeBookSpineOverlay(value: unknown): BookSpineOverlay {
@@ -56,6 +60,12 @@ function normalizeBookCoverDisplayMode(value: unknown): BookCoverDisplayMode {
   return typeof value === 'string' && BOOK_COVER_DISPLAY_MODES.includes(value as BookCoverDisplayMode)
     ? (value as BookCoverDisplayMode)
     : DEFAULT_BOOK_COVER_DISPLAY_MODE
+}
+
+function normalizeSeriesCardCoverMode(value: unknown): SeriesCardCoverMode {
+  return typeof value === 'string' && SERIES_CARD_COVER_MODES.includes(value as SeriesCardCoverMode)
+    ? (value as SeriesCardCoverMode)
+    : DEFAULT_SERIES_CARD_COVER_MODE
 }
 
 function normalizeCoverSizeScope(value: unknown): CoverSizeScope {
@@ -116,6 +126,7 @@ const bookShadowStrength = ref<BookShadowStrength>(normalizeBookShadowStrength(s
 const bookCoverDisplayMode = ref<BookCoverDisplayMode>(
   normalizeBookCoverDisplayMode(storage.get('bookCoverDisplayMode', DEFAULT_BOOK_COVER_DISPLAY_MODE)),
 )
+const seriesCardCoverMode = ref<SeriesCardCoverMode>(normalizeSeriesCardCoverMode(storage.get('seriesCardCoverMode', DEFAULT_SERIES_CARD_COVER_MODE)))
 
 watch(portraitCoverSize, (v) => storage.set('portraitCoverSize', v))
 watch(squareCoverSize, (v) => storage.set('squareCoverSize', v))
@@ -133,6 +144,7 @@ watch(tableDensity, (v) => storage.set('tableDensity', normalizeTableDensity(v))
 watch(bookSpineOverlay, (value) => storage.set('bookSpineOverlay', normalizeBookSpineOverlay(value)))
 watch(bookShadowStrength, (value) => storage.set('bookShadowStrength', normalizeBookShadowStrength(value)))
 watch(bookCoverDisplayMode, (value) => storage.set('bookCoverDisplayMode', normalizeBookCoverDisplayMode(value)))
+watch(seriesCardCoverMode, (value) => storage.set('seriesCardCoverMode', normalizeSeriesCardCoverMode(value)))
 
 export function getDisplayPreferencesSnapshot(): DisplayPreferences {
   return {
@@ -152,6 +164,7 @@ export function getDisplayPreferencesSnapshot(): DisplayPreferences {
     bookSpineOverlay: normalizeBookSpineOverlay(bookSpineOverlay.value),
     bookShadowStrength: normalizeBookShadowStrength(bookShadowStrength.value),
     bookCoverDisplayMode: normalizeBookCoverDisplayMode(bookCoverDisplayMode.value),
+    seriesCardCoverMode: normalizeSeriesCardCoverMode(seriesCardCoverMode.value),
   }
 }
 
@@ -181,6 +194,9 @@ export function sanitizeDisplayPreferences(raw: unknown): Partial<DisplayPrefere
   if (BOOK_COVER_DISPLAY_MODES.includes(obj.bookCoverDisplayMode as BookCoverDisplayMode)) {
     out.bookCoverDisplayMode = obj.bookCoverDisplayMode as BookCoverDisplayMode
   }
+  if (SERIES_CARD_COVER_MODES.includes(obj.seriesCardCoverMode as SeriesCardCoverMode)) {
+    out.seriesCardCoverMode = obj.seriesCardCoverMode as SeriesCardCoverMode
+  }
 
   return out
 }
@@ -203,6 +219,7 @@ export function applyDisplayPreferences(raw: unknown): void {
   if (prefs.bookSpineOverlay !== undefined) bookSpineOverlay.value = prefs.bookSpineOverlay
   if (prefs.bookShadowStrength !== undefined) bookShadowStrength.value = prefs.bookShadowStrength
   if (prefs.bookCoverDisplayMode !== undefined) bookCoverDisplayMode.value = prefs.bookCoverDisplayMode
+  if (prefs.seriesCardCoverMode !== undefined) seriesCardCoverMode.value = prefs.seriesCardCoverMode
 }
 
 export function useDisplaySettings() {
@@ -223,5 +240,6 @@ export function useDisplaySettings() {
     bookSpineOverlay,
     bookShadowStrength,
     bookCoverDisplayMode,
+    seriesCardCoverMode,
   }
 }

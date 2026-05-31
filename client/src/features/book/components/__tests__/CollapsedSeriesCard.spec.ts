@@ -56,15 +56,17 @@ function makeBook(overrides?: Partial<BookCard>): BookCard {
   }
 }
 
-const { bookSpineOverlay } = useDisplaySettings()
+const { bookSpineOverlay, seriesCardCoverMode } = useDisplaySettings()
 
 describe('CollapsedSeriesCard', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    seriesCardCoverMode.value = 'mosaic'
   })
 
   afterEach(() => {
     bookSpineOverlay.value = 'off'
+    seriesCardCoverMode.value = 'mosaic'
   })
 
   it('renders four cover tiles when all books are represented by covers', () => {
@@ -213,5 +215,224 @@ describe('CollapsedSeriesCard', () => {
 
     const cover = wrapper.find('.book-cover-surface')
     expect(cover.attributes('data-cover-spine')).toBe('off')
+  })
+
+  describe('single cover mode (non-mosaic)', () => {
+    it('renders single cover for first-volume mode', () => {
+      seriesCardCoverMode.value = 'first-volume'
+      const wrapper = mount(CollapsedSeriesCard, {
+        props: {
+          book: makeBook({
+            collapsedSeries: {
+              bookCount: 5,
+              readCount: 0,
+              coverBookIds: [1, 2, 3, 4],
+              seriesLatestAddedAt: null,
+              firstVolumeBookId: 10,
+              latestVolumeBookId: 40,
+              firstUnreadBookId: 20,
+            },
+          }),
+        },
+      })
+
+      expect(wrapper.find('[data-testid="series-single-cover"]').exists()).toBe(true)
+      expect(wrapper.findAll('[data-testid="series-cover-tile"]')).toHaveLength(0)
+      const img = wrapper.find('[data-testid="series-single-cover"] img')
+      expect(img.exists()).toBe(true)
+      expect(img.attributes('src')).toBe('/api/v1/books/10/thumbnail')
+    })
+
+    it('renders single cover for latest-volume mode', () => {
+      seriesCardCoverMode.value = 'latest-volume'
+      const wrapper = mount(CollapsedSeriesCard, {
+        props: {
+          book: makeBook({
+            collapsedSeries: {
+              bookCount: 5,
+              readCount: 0,
+              coverBookIds: [1, 2, 3, 4],
+              seriesLatestAddedAt: null,
+              firstVolumeBookId: 10,
+              latestVolumeBookId: 40,
+              firstUnreadBookId: 20,
+            },
+          }),
+        },
+      })
+
+      const img = wrapper.find('[data-testid="series-single-cover"] img')
+      expect(img.attributes('src')).toBe('/api/v1/books/40/thumbnail')
+    })
+
+    it('renders single cover for first-unread mode', () => {
+      seriesCardCoverMode.value = 'first-unread'
+      const wrapper = mount(CollapsedSeriesCard, {
+        props: {
+          book: makeBook({
+            collapsedSeries: {
+              bookCount: 5,
+              readCount: 2,
+              coverBookIds: [1, 2, 3, 4],
+              seriesLatestAddedAt: null,
+              firstVolumeBookId: 10,
+              latestVolumeBookId: 40,
+              firstUnreadBookId: 20,
+            },
+          }),
+        },
+      })
+
+      const img = wrapper.find('[data-testid="series-single-cover"] img')
+      expect(img.attributes('src')).toBe('/api/v1/books/20/thumbnail')
+    })
+
+    it('falls back to first coverBookId when volume ID is missing', () => {
+      seriesCardCoverMode.value = 'first-volume'
+      const wrapper = mount(CollapsedSeriesCard, {
+        props: {
+          book: makeBook({
+            collapsedSeries: {
+              bookCount: 3,
+              readCount: 0,
+              coverBookIds: [77, 88],
+              seriesLatestAddedAt: null,
+            },
+          }),
+        },
+      })
+
+      const img = wrapper.find('[data-testid="series-single-cover"] img')
+      expect(img.attributes('src')).toBe('/api/v1/books/77/thumbnail')
+    })
+
+    it('first-unread falls back to firstVolumeBookId when firstUnreadBookId is missing', () => {
+      seriesCardCoverMode.value = 'first-unread'
+      const wrapper = mount(CollapsedSeriesCard, {
+        props: {
+          book: makeBook({
+            collapsedSeries: {
+              bookCount: 3,
+              readCount: 3,
+              coverBookIds: [1, 2, 3],
+              seriesLatestAddedAt: null,
+              firstVolumeBookId: 10,
+            },
+          }),
+        },
+      })
+
+      const img = wrapper.find('[data-testid="series-single-cover"] img')
+      expect(img.attributes('src')).toBe('/api/v1/books/10/thumbnail')
+    })
+
+    it('first-unread falls back to first coverBookId when both unread and first volume are missing', () => {
+      seriesCardCoverMode.value = 'first-unread'
+      const wrapper = mount(CollapsedSeriesCard, {
+        props: {
+          book: makeBook({
+            collapsedSeries: {
+              bookCount: 3,
+              readCount: 3,
+              coverBookIds: [77, 88],
+              seriesLatestAddedAt: null,
+            },
+          }),
+        },
+      })
+
+      const img = wrapper.find('[data-testid="series-single-cover"] img')
+      expect(img.attributes('src')).toBe('/api/v1/books/77/thumbnail')
+    })
+
+    it('shows count badge in single cover mode', () => {
+      seriesCardCoverMode.value = 'first-volume'
+      const wrapper = mount(CollapsedSeriesCard, {
+        props: {
+          book: makeBook({
+            collapsedSeries: {
+              bookCount: 7,
+              readCount: 0,
+              coverBookIds: [1, 2],
+              seriesLatestAddedAt: null,
+              firstVolumeBookId: 1,
+            },
+          }),
+        },
+      })
+
+      const badge = wrapper.find('[data-testid="series-count-badge"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toBe('7')
+    })
+
+    it('shows hover overlay with series name and author in single cover mode', () => {
+      seriesCardCoverMode.value = 'latest-volume'
+      const wrapper = mount(CollapsedSeriesCard, {
+        props: {
+          book: makeBook({
+            seriesName: 'Dune Saga',
+            authors: ['Frank Herbert'],
+            collapsedSeries: {
+              bookCount: 3,
+              readCount: 0,
+              coverBookIds: [1, 2, 3],
+              seriesLatestAddedAt: null,
+              latestVolumeBookId: 3,
+            },
+          }),
+        },
+      })
+
+      expect(wrapper.text()).toContain('Dune Saga')
+      expect(wrapper.text()).toContain('Frank Herbert')
+    })
+
+    it('shows placeholder after single cover image error', async () => {
+      seriesCardCoverMode.value = 'first-volume'
+      const wrapper = mount(CollapsedSeriesCard, {
+        props: {
+          book: makeBook({
+            collapsedSeries: {
+              bookCount: 2,
+              readCount: 0,
+              coverBookIds: [10, 20],
+              seriesLatestAddedAt: null,
+              firstVolumeBookId: 10,
+            },
+          }),
+        },
+      })
+
+      const img = wrapper.find('[data-testid="series-single-cover"] img')
+      expect(img.exists()).toBe(true)
+
+      await img.trigger('error')
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.find('[data-testid="series-single-cover"] img').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="series-single-cover"] .book-cover-placeholder').exists()).toBe(true)
+    })
+
+    it('renders mosaic when mode is mosaic (default)', () => {
+      seriesCardCoverMode.value = 'mosaic'
+      const wrapper = mount(CollapsedSeriesCard, {
+        props: {
+          book: makeBook({
+            collapsedSeries: {
+              bookCount: 4,
+              readCount: 0,
+              coverBookIds: [1, 2, 3, 4],
+              seriesLatestAddedAt: null,
+              firstVolumeBookId: 1,
+              latestVolumeBookId: 4,
+            },
+          }),
+        },
+      })
+
+      expect(wrapper.find('[data-testid="series-single-cover"]').exists()).toBe(false)
+      expect(wrapper.findAll('[data-testid="series-cover-tile"]')).toHaveLength(4)
+    })
   })
 })

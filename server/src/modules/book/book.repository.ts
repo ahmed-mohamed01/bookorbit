@@ -63,6 +63,9 @@ type CollapsedRawRow = {
   book_count: string | null;
   read_count: string | null;
   cover_book_ids: number[] | null;
+  first_volume_book_id: number | null;
+  latest_volume_book_id: number | null;
+  first_unread_book_id: number | null;
   total_count: string;
 };
 type PatternMetadataRow = {
@@ -285,6 +288,9 @@ export class BookRepository {
       readCount: number | null;
       coverBookIds: number[] | null;
       seriesLatestAddedAt: Date | null;
+      firstVolumeBookId: number | null;
+      latestVolumeBookId: number | null;
+      firstUnreadBookId: number | null;
     }>;
     authorRows: { bookId: number; name: string }[];
     fileRows: { bookId: number; id: number; format: string | null; role: string; sizeBytes: number | null }[];
@@ -370,6 +376,45 @@ export class BookRepository {
         FROM series_cover_candidates scc
         GROUP BY scc.norm_series, scc.library_id
       ),
+      series_first_volume AS (
+        SELECT scc.norm_series, scc.library_id, scc.id AS first_volume_book_id
+        FROM series_cover_candidates scc
+        WHERE scc.rn = 1
+      ),
+      series_latest_volume AS (
+        SELECT slv.norm_series, slv.library_id, slv.id AS latest_volume_book_id
+        FROM (
+          SELECT
+            base.norm_series,
+            base.library_id,
+            base.id,
+            ROW_NUMBER() OVER (
+              PARTITION BY base.norm_series, base.library_id
+              ORDER BY base.series_index DESC NULLS LAST, base.added_at DESC, base.id DESC
+            ) AS rn
+          FROM base_rows base
+          WHERE base.norm_series IS NOT NULL
+        ) slv
+        WHERE slv.rn = 1
+      ),
+      series_first_unread AS (
+        SELECT sfu.norm_series, sfu.library_id, sfu.id AS first_unread_book_id
+        FROM (
+          SELECT
+            base.norm_series,
+            base.library_id,
+            base.id,
+            ROW_NUMBER() OVER (
+              PARTITION BY base.norm_series, base.library_id
+              ORDER BY base.series_index ASC NULLS LAST, base.added_at ASC, base.id ASC
+            ) AS rn
+          FROM base_rows base
+          LEFT JOIN user_book_status ubs ON ubs.book_id = base.id AND ubs.user_id = ${userId}
+          WHERE base.norm_series IS NOT NULL
+            AND ubs.status IS DISTINCT FROM 'read'
+        ) sfu
+        WHERE sfu.rn = 1
+      ),
       representatives AS (
         SELECT DISTINCT ON (base.library_id, COALESCE(base.norm_series, 'book_' || base.id::text))
           base.id,
@@ -395,7 +440,10 @@ export class BookRepository {
           COALESCE(sa.latest_added_at, base.added_at) AS sort_added_at,
           sa.book_count,
           sa.read_count,
-          sc.cover_book_ids
+          sc.cover_book_ids,
+          sfv.first_volume_book_id,
+          slv2.latest_volume_book_id,
+          sfu2.first_unread_book_id
         FROM base_rows base
         LEFT JOIN user_book_ratings ubr ON ubr.book_id = base.id AND ubr.user_id = ${userId}
         LEFT JOIN series_agg sa
@@ -404,6 +452,15 @@ export class BookRepository {
         LEFT JOIN series_covers sc
           ON sc.norm_series = sa.norm_series
           AND sc.library_id = sa.library_id
+        LEFT JOIN series_first_volume sfv
+          ON sfv.norm_series = base.norm_series
+          AND sfv.library_id = base.library_id
+        LEFT JOIN series_latest_volume slv2
+          ON slv2.norm_series = base.norm_series
+          AND slv2.library_id = base.library_id
+        LEFT JOIN series_first_unread sfu2
+          ON sfu2.norm_series = base.norm_series
+          AND sfu2.library_id = base.library_id
         ORDER BY
           base.library_id,
           COALESCE(base.norm_series, 'book_' || base.id::text),
@@ -445,6 +502,9 @@ export class BookRepository {
       readCount: r.read_count !== null ? Number(r.read_count) : null,
       coverBookIds: r.cover_book_ids,
       seriesLatestAddedAt: r.sort_added_at ? new Date(r.sort_added_at) : null,
+      firstVolumeBookId: r.first_volume_book_id ?? null,
+      latestVolumeBookId: r.latest_volume_book_id ?? null,
+      firstUnreadBookId: r.first_unread_book_id ?? null,
     }));
 
     const bookRefs = mappedRows.map((row) => ({ id: row.id, primaryFileId: row.primaryFileId ?? null }));

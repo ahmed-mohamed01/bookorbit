@@ -20,6 +20,7 @@ function resetDisplaySettings() {
   settings.bookSpineOverlay.value = 'off'
   settings.bookShadowStrength.value = 'default'
   settings.bookCoverDisplayMode.value = 'blurred-fit'
+  settings.seriesCardCoverMode.value = 'mosaic'
 }
 
 afterEach(() => {
@@ -87,5 +88,31 @@ describe('useDisplaySettings preferences helpers', () => {
   it('ignores non-object payloads', () => {
     expect(sanitizeDisplayPreferences(null)).toEqual({})
     expect(sanitizeDisplayPreferences('bad')).toEqual({})
+  })
+
+  it('includes seriesCardCoverMode in snapshot', () => {
+    settings.seriesCardCoverMode.value = 'first-volume'
+    const snap = getDisplayPreferencesSnapshot()
+    expect(snap.seriesCardCoverMode).toBe('first-volume')
+  })
+
+  it('sanitizes valid seriesCardCoverMode values', () => {
+    const sanitized = sanitizeDisplayPreferences({ seriesCardCoverMode: 'latest-volume' })
+    expect(sanitized).toEqual({ seriesCardCoverMode: 'latest-volume' })
+  })
+
+  it('drops invalid seriesCardCoverMode values', () => {
+    const sanitized = sanitizeDisplayPreferences({ seriesCardCoverMode: 'unknown-mode' })
+    expect(sanitized).toEqual({})
+  })
+
+  it('applies seriesCardCoverMode from preferences', () => {
+    applyDisplayPreferences({ seriesCardCoverMode: 'first-unread' })
+    expect(settings.seriesCardCoverMode.value).toBe('first-unread')
+  })
+
+  it('defaults seriesCardCoverMode to mosaic', () => {
+    resetDisplaySettings()
+    expect(settings.seriesCardCoverMode.value).toBe('mosaic')
   })
 })

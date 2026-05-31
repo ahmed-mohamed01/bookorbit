@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, inject, ref } from 'vue'
+import { computed, inject, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { FORMAT_TO_GROUP, type BookCard } from '@bookorbit/types'
 import BookCoverPlaceholder from './BookCoverPlaceholder.vue'
 import BookCoverSurface from './BookCoverSurface.vue'
 import { COVER_ASPECT_RATIO_KEY, DEFAULT_COVER_ASPECT_RATIO } from '../lib/cover-aspect-ratio'
 import { useCoverVersions } from '../composables/useCoverVersions'
+import { useDisplaySettings } from '@/composables/useDisplaySettings'
 
 const props = defineProps<{
   book: BookCard
@@ -15,21 +16,48 @@ const route = useRoute()
 const router = useRouter()
 const coverAspectRatio = inject(COVER_ASPECT_RATIO_KEY, ref(DEFAULT_COVER_ASPECT_RATIO))
 const { coverUrl } = useCoverVersions()
+const { seriesCardCoverMode } = useDisplaySettings()
 
 const collapsed = computed(() => props.book.collapsedSeries!)
 const seriesName = computed(() => props.book.seriesName ?? '')
 const authorLine = computed(() => props.book.authors.join(', ') || null)
 const hoverTitleClampClass = computed(() => (coverAspectRatio.value === '1/1' ? 'line-clamp-1' : 'line-clamp-2'))
 
+const isMosaic = computed(() => seriesCardCoverMode.value === 'mosaic')
+
 const coverIds = computed(() => collapsed.value.coverBookIds.filter((bookId) => bookId > 0).slice(0, 4))
 const tileCount = computed(() => Math.max(coverIds.value.length, 1))
 
+const resolvedCoverId = computed<number | null>(() => {
+  const c = collapsed.value
+  const fallback = coverIds.value[0] ?? null
+  switch (seriesCardCoverMode.value) {
+    case 'first-volume':
+      return c.firstVolumeBookId ?? fallback
+    case 'latest-volume':
+      return c.latestVolumeBookId ?? fallback
+    case 'first-unread':
+      return c.firstUnreadBookId ?? c.firstVolumeBookId ?? fallback
+    default:
+      return null
+  }
+})
+
 const failedCovers = ref(new Set<number>())
+const singleCoverFailed = ref(false)
+
+watch(resolvedCoverId, () => {
+  singleCoverFailed.value = false
+})
 const primaryFile = computed(() => props.book.files.find((file) => file.role === 'primary') ?? props.book.files[0] ?? null)
 const isAudiobook = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'audio')
 
 function handleCoverError(bookId: number) {
   failedCovers.value = new Set([...failedCovers.value, bookId])
+}
+
+function handleSingleCoverError() {
+  singleCoverFailed.value = true
 }
 
 function handleClick() {
@@ -53,8 +81,21 @@ function tileClass(index: number): string {
       :disable-spine="isAudiobook"
       :style="{ aspectRatio: coverAspectRatio }"
     >
-      <!-- Adaptive cover mosaic -->
-      <div class="absolute inset-0 grid grid-cols-2 grid-rows-2">
+      <!-- Single cover mode -->
+      <div v-if="!isMosaic && resolvedCoverId != null" class="absolute inset-0" data-testid="series-single-cover">
+        <img
+          v-if="!singleCoverFailed"
+          :src="coverUrl(resolvedCoverId)"
+          class="absolute inset-0 h-full w-full object-cover"
+          loading="lazy"
+          alt=""
+          @error="handleSingleCoverError"
+        />
+        <BookCoverPlaceholder v-else title="" author-line="" :is-audio="false" :seed="`series-${resolvedCoverId}`" />
+      </div>
+
+      <!-- Adaptive cover mosaic (default mode) -->
+      <div v-else class="absolute inset-0 grid grid-cols-2 grid-rows-2">
         <template v-for="(bookId, i) in coverIds" :key="bookId">
           <div class="relative overflow-hidden" :class="tileClass(i)" data-testid="series-cover-tile">
             <img

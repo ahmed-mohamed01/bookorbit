@@ -30,6 +30,7 @@ const validDisplayPreferences: DisplayPreferences = {
   bookSpineOverlay: 'subtle',
   bookShadowStrength: 'strong',
   bookCoverDisplayMode: 'natural-bottom',
+  seriesCardCoverMode: 'mosaic',
 };
 
 const repo = {

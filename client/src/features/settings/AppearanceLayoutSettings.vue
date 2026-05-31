@@ -2,10 +2,19 @@
 import { computed } from 'vue'
 import { Circle, Square } from 'lucide-vue-next'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
-import { useDisplaySettings, type AuthorCoverShape, type CoverSizeScope } from '@/composables/useDisplaySettings'
+import { useDisplaySettings, type AuthorCoverShape, type CoverSizeScope, type SeriesCardCoverMode } from '@/composables/useDisplaySettings'
 
-const { portraitCoverSize, squareCoverSize, coverSizeScope, portraitGridGap, squareGridGap, authorCoverSize, authorCoverShape, tableZebraStriping } =
-  useDisplaySettings()
+const {
+  portraitCoverSize,
+  squareCoverSize,
+  coverSizeScope,
+  portraitGridGap,
+  squareGridGap,
+  authorCoverSize,
+  authorCoverShape,
+  tableZebraStriping,
+  seriesCardCoverMode,
+} = useDisplaySettings()
 
 const syncModeEnabled = computed(() => coverSizeScope.value === 'synced')
 
@@ -15,6 +24,10 @@ function setCoverSizeScope(mode: CoverSizeScope) {
 
 function setAuthorCoverShape(shape: AuthorCoverShape) {
   authorCoverShape.value = shape
+}
+
+function setSeriesCardCoverMode(mode: SeriesCardCoverMode) {
+  seriesCardCoverMode.value = mode
 }
 
 function handlePortraitCoverSizeInput(event: Event) {
@@ -168,6 +181,54 @@ function handleAuthorCoverSizeInput(event: Event) {
               :disabled="!syncModeEnabled"
               @input="handleSquareGridGapInput"
             />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <p class="settings-group-label">Series Display</p>
+      <div class="border border-border rounded-lg overflow-hidden divide-y divide-border shadow-xs">
+        <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between px-4 py-3.5 md:px-5 md:py-4 bg-card">
+          <div>
+            <p class="settings-label">Collapsed series cover</p>
+            <p class="settings-hint">Choose which cover to show when series are collapsed in the book grid</p>
+          </div>
+          <div class="flex items-center gap-1 p-1 rounded-lg border border-border bg-muted/50 self-start">
+            <button
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+              :class="seriesCardCoverMode === 'mosaic' ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'"
+              @click="setSeriesCardCoverMode('mosaic')"
+            >
+              Mosaic
+            </button>
+            <button
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+              :class="
+                seriesCardCoverMode === 'first-volume' ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'
+              "
+              @click="setSeriesCardCoverMode('first-volume')"
+            >
+              First
+            </button>
+            <button
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+              :class="
+                seriesCardCoverMode === 'latest-volume' ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'
+              "
+              @click="setSeriesCardCoverMode('latest-volume')"
+            >
+              Latest
+            </button>
+            <button
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+              :class="
+                seriesCardCoverMode === 'first-unread' ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'
+              "
+              @click="setSeriesCardCoverMode('first-unread')"
+            >
+              First Unread
+            </button>
           </div>
         </div>
       </div>

@@ -20,6 +20,7 @@ function validDisplayPreferences(overrides: Partial<DisplayPreferences> = {}): D
     bookSpineOverlay: 'subtle',
     bookShadowStrength: 'strong',
     bookCoverDisplayMode: 'blurred-fit',
+    seriesCardCoverMode: 'mosaic',
     ...overrides,
   }
 }
@@ -220,5 +221,35 @@ describe('useDisplaySettingsSync', () => {
     window.dispatchEvent(new Event('pagehide'))
 
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('syncs seriesCardCoverMode changes to the server', async () => {
+    vi.useFakeTimers()
+    const { apiMock, displaySettings, sync } = await loadModules()
+    apiMock.mockResolvedValue({ ok: true })
+
+    sync.initDisplaySettingsSync()
+    displaySettings.useDisplaySettings().seriesCardCoverMode.value = 'first-volume'
+    await vi.advanceTimersByTimeAsync(1500)
+
+    expect(apiMock).toHaveBeenCalledWith(
+      '/api/v1/user-preferences/display',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"seriesCardCoverMode":"first-volume"'),
+      }),
+    )
+  })
+
+  it('loads seriesCardCoverMode from the server', async () => {
+    const { apiMock, displaySettings, sync } = await loadModules()
+    apiMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ settings: validDisplayPreferences({ seriesCardCoverMode: 'latest-volume' }) }),
+    })
+
+    await sync.loadDisplaySettingsFromServer()
+
+    expect(displaySettings.useDisplaySettings().seriesCardCoverMode.value).toBe('latest-volume')
   })
 })
