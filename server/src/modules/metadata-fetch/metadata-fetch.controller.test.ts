@@ -1,4 +1,4 @@
-import { MetadataProviderKey, ProviderThrottleRuntimeSnapshot } from '@bookorbit/types';
+import { MetadataProviderKey, ProviderConfigurations, ProviderThrottleRuntimeSnapshot } from '@bookorbit/types';
 import type { Mocked } from 'vitest';
 import { firstValueFrom, of, toArray } from 'rxjs';
 
@@ -21,6 +21,14 @@ describe('MetadataFetchController', () => {
   let throttleTracker: Mocked<ProviderThrottleTracker>;
   let controller: MetadataFetchController;
   let user: RequestUser;
+  const providerInfos = [
+    { key: MetadataProviderKey.GOOGLE, label: 'Google Books', identifiable: true },
+    { key: MetadataProviderKey.AMAZON, label: 'Amazon', identifiable: true },
+    { key: MetadataProviderKey.OPEN_LIBRARY, label: 'OpenLibrary', identifiable: false },
+    { key: MetadataProviderKey.AUDIBLE, label: 'Audible', identifiable: true },
+    { key: MetadataProviderKey.AUDNEXUS, label: 'AudNexus', identifiable: false },
+    { key: MetadataProviderKey.KOBO, label: 'Kobo', identifiable: true },
+  ];
 
   beforeEach(() => {
     service = {
@@ -34,7 +42,7 @@ describe('MetadataFetchController', () => {
     } as unknown as Mocked<ProviderRegistry>;
 
     providerConfig = {
-      getConfig: vi.fn().mockResolvedValue({}),
+      getConfig: vi.fn().mockResolvedValue(makeProviderConfig()),
       getProviderStatuses: vi.fn(),
     } as unknown as Mocked<ProviderConfigService>;
 
@@ -46,6 +54,7 @@ describe('MetadataFetchController', () => {
     throttleTracker = {
       snapshot: vi.fn(),
     } as unknown as Mocked<ProviderThrottleTracker>;
+    registry.all.mockReturnValue(providerInfos as never);
 
     controller = new MetadataFetchController(service, registry, providerConfig, throttleTracker, metadataPreferences);
     user = {
@@ -144,8 +153,32 @@ describe('MetadataFetchController', () => {
         existingProviderIds: {},
         isAudiobook: false,
       },
-      undefined,
+      [
+        MetadataProviderKey.GOOGLE,
+        MetadataProviderKey.OPEN_LIBRARY,
+        MetadataProviderKey.AUDIBLE,
+        MetadataProviderKey.AUDNEXUS,
+        MetadataProviderKey.KOBO,
+      ],
     );
+  });
+
+  it('uses enabled provider config when stream providers are omitted', async () => {
+    providerConfig.getConfig.mockResolvedValue(
+      makeProviderConfig({
+        google: { enabled: false, apiKey: '' },
+        openLibrary: { enabled: false },
+        audible: { enabled: false, domain: 'com' },
+        audnexus: { enabled: false },
+        kobo: { enabled: true, country: 'us', language: 'en' },
+      }),
+    );
+    service.search.mockReturnValue(of({ provider: MetadataProviderKey.KOBO, providerId: 'dune-1', title: 'Dune' }));
+
+    const stream = await controller.stream({ title: 'Dune' }, user);
+    await firstValueFrom(stream.pipe(toArray()));
+
+    expect(service.search).toHaveBeenCalledWith(expect.objectContaining({ title: 'Dune' }), [MetadataProviderKey.KOBO]);
   });
 
   it('infers audiobook search when audiobook providers are requested', async () => {
@@ -183,11 +216,22 @@ describe('MetadataFetchController', () => {
         existingProviderIds: { [MetadataProviderKey.AUDIBLE]: 'B0ABC12345' },
         isAudiobook: true,
       }),
-      undefined,
+      [
+        MetadataProviderKey.GOOGLE,
+        MetadataProviderKey.OPEN_LIBRARY,
+        MetadataProviderKey.AUDIBLE,
+        MetadataProviderKey.AUDNEXUS,
+        MetadataProviderKey.KOBO,
+      ],
     );
   });
 
   it('delegates lookup requests to the metadata fetch service and filters blocklisted genres', async () => {
+    providerConfig.getConfig.mockResolvedValue(
+      makeProviderConfig({
+        amazon: { enabled: true, domain: 'amazon.com', cookie: '' },
+      }),
+    );
     const resolver = new MetadataPreferenceResolver();
     const preferences = resolver.getDefaultPreferences();
     preferences.options!.genres.blocklist = ['Adult'];
@@ -204,6 +248,19 @@ describe('MetadataFetchController', () => {
 
     expect(service.lookupById).toHaveBeenCalledWith(MetadataProviderKey.AMAZON, 'B123');
     expect(result).toEqual({ provider: MetadataProviderKey.AMAZON, providerId: 'B123', title: 'Amazon Title', genres: ['Mystery'] });
+  });
+
+  it('returns null for lookup requests when the provider is disabled', async () => {
+    providerConfig.getConfig.mockResolvedValue(
+      makeProviderConfig({
+        amazon: { enabled: false, domain: 'amazon.com', cookie: '' },
+      }),
+    );
+
+    const result = await controller.lookup({ provider: MetadataProviderKey.AMAZON, id: 'B123' });
+
+    expect(result).toBeNull();
+    expect(service.lookupById).not.toHaveBeenCalled();
   });
 
   it('returns runtime provider throttle state for admin metadata settings', async () => {
@@ -242,3 +299,19 @@ describe('MetadataFetchController', () => {
     expect(result).toEqual(runtime);
   });
 });
+
+function makeProviderConfig(overrides: Partial<ProviderConfigurations> = {}): ProviderConfigurations {
+  return {
+    google: { enabled: true, apiKey: '', ...overrides.google },
+    amazon: { enabled: false, domain: 'amazon.com', cookie: '', ...overrides.amazon },
+    goodreads: { enabled: false, ...overrides.goodreads },
+    hardcover: { enabled: false, apiKey: '', ...overrides.hardcover },
+    openLibrary: { enabled: true, ...overrides.openLibrary },
+    itunes: { enabled: false, coverResolution: 'high', ...overrides.itunes },
+    audible: { enabled: true, domain: 'com', ...overrides.audible },
+    audnexus: { enabled: true, ...overrides.audnexus },
+    comicvine: { enabled: false, apiKey: '', ...overrides.comicvine },
+    ranobedb: { enabled: false, ...overrides.ranobedb },
+    kobo: { enabled: true, country: 'us', language: 'en', ...overrides.kobo },
+  };
+}

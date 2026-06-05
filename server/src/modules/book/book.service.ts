@@ -263,6 +263,7 @@ export class BookService {
     openLibraryId?: string | null;
     itunesId?: string | null;
     audibleId?: string | null;
+    koboId?: string | null;
     comicvineId?: string | null;
     ranobedbId?: string | null;
   }): Partial<Record<MetadataProviderKey, string>> {
@@ -274,6 +275,7 @@ export class BookService {
     if (meta.openLibraryId) providerIds[MetadataProviderKey.OPEN_LIBRARY] = meta.openLibraryId;
     if (meta.itunesId) providerIds[MetadataProviderKey.ITUNES] = meta.itunesId;
     if (meta.audibleId) providerIds[MetadataProviderKey.AUDIBLE] = meta.audibleId;
+    if (meta.koboId) providerIds[MetadataProviderKey.KOBO] = meta.koboId;
     if (meta.comicvineId) providerIds[MetadataProviderKey.COMICVINE] = meta.comicvineId;
     if (meta.ranobedbId) providerIds[MetadataProviderKey.RANOBEDB] = meta.ranobedbId;
     return providerIds;
@@ -282,7 +284,16 @@ export class BookService {
   private applyResolvedProviderIds(
     dto: Pick<
       UpdateBookMetadataDto,
-      'googleBooksId' | 'goodreadsId' | 'amazonId' | 'hardcoverId' | 'openLibraryId' | 'itunesId' | 'audibleId' | 'comicvineId' | 'ranobedbId'
+      | 'googleBooksId'
+      | 'goodreadsId'
+      | 'amazonId'
+      | 'hardcoverId'
+      | 'openLibraryId'
+      | 'itunesId'
+      | 'audibleId'
+      | 'koboId'
+      | 'comicvineId'
+      | 'ranobedbId'
     >,
     providerIds: Partial<Record<MetadataProviderKey, string>>,
   ): void {
@@ -293,6 +304,7 @@ export class BookService {
     if (providerIds[MetadataProviderKey.OPEN_LIBRARY]) dto.openLibraryId = providerIds[MetadataProviderKey.OPEN_LIBRARY];
     if (providerIds[MetadataProviderKey.ITUNES]) dto.itunesId = providerIds[MetadataProviderKey.ITUNES];
     if (providerIds[MetadataProviderKey.AUDIBLE]) dto.audibleId = providerIds[MetadataProviderKey.AUDIBLE];
+    if (providerIds[MetadataProviderKey.KOBO]) dto.koboId = providerIds[MetadataProviderKey.KOBO];
     if (providerIds[MetadataProviderKey.COMICVINE]) dto.comicvineId = providerIds[MetadataProviderKey.COMICVINE];
     if (providerIds[MetadataProviderKey.RANOBEDB]) dto.ranobedbId = providerIds[MetadataProviderKey.RANOBEDB];
   }
@@ -1225,6 +1237,7 @@ export class BookService {
     if (dto.openLibraryId !== undefined) scalarFields.openLibraryId = dto.openLibraryId ?? null;
     if (dto.itunesId !== undefined) scalarFields.itunesId = dto.itunesId ?? null;
     if (dto.audibleId !== undefined) scalarFields.audibleId = dto.audibleId ?? null;
+    if (dto.koboId !== undefined) scalarFields.koboId = dto.koboId ?? null;
     if (dto.comicvineId !== undefined) scalarFields.comicvineId = dto.comicvineId ?? null;
     if (dto.ranobedbId !== undefined) scalarFields.ranobedbId = dto.ranobedbId ?? null;
     if (dto.rating !== undefined) scalarFields.rating = dto.rating ?? null;
@@ -2087,6 +2100,7 @@ export class BookService {
           openLibraryId?: string;
           itunesId?: string;
           audibleId?: string;
+          koboId?: string;
           comicvineId?: string;
           ranobedbId?: string;
           audioMetadata?: {
@@ -2470,6 +2484,7 @@ export class BookService {
         [MetadataProviderKey.OPEN_LIBRARY]: meta?.openLibraryId ?? null,
         [MetadataProviderKey.ITUNES]: meta?.itunesId ?? null,
         [MetadataProviderKey.AUDIBLE]: meta?.audibleId ?? null,
+        [MetadataProviderKey.KOBO]: meta?.koboId ?? null,
         [MetadataProviderKey.COMICVINE]: meta?.comicvineId ?? null,
         [MetadataProviderKey.RANOBEDB]: meta?.ranobedbId ?? null,
       },
@@ -2577,6 +2592,7 @@ export class BookService {
           hardcoverId: parsed.hardcoverId,
           openLibraryId: parsed.openLibraryId,
           itunesId: parsed.itunesId,
+          koboId: parsed.koboId,
           ranobedbId: parsed.ranobedbId,
           authors: parsed.authors.length > 0 ? parsed.authors.map((a) => a.name) : undefined,
           genres: parsed.genres.length > 0 ? parsed.genres : undefined,
@@ -2606,6 +2622,7 @@ export class BookService {
           hardcoverId: parsed.hardcoverId,
           openLibraryId: parsed.openLibraryId,
           itunesId: parsed.itunesId,
+          koboId: parsed.koboId,
           ranobedbId: parsed.ranobedbId,
           authors: parsed.authors.length > 0 ? parsed.authors.map((a) => a.name) : undefined,
           genres: parsed.genres.length > 0 ? parsed.genres : undefined,
@@ -2653,6 +2670,7 @@ export class BookService {
           hardcoverId: parsed.hardcoverId,
           openLibraryId: parsed.openLibraryId,
           itunesId: parsed.itunesId,
+          koboId: parsed.koboId,
           ranobedbId: parsed.ranobedbId,
           authors: parsed.authors.length > 0 ? parsed.authors.map((a) => a.name) : undefined,
           genres: cbzGenres.length > 0 ? cbzGenres : undefined,

@@ -48,6 +48,7 @@ const BOOK_METADATA_COLUMN_BY_PROPERTY = {
   goodreadsId: 'goodreads_id',
   amazonId: 'amazon_id',
   hardcoverId: 'hardcover_id',
+  koboId: 'kobo_id',
   audibleId: 'audible_id',
   comicvineId: 'comicvine_id',
   openLibraryId: 'open_library_id',

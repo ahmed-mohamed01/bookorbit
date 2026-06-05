@@ -109,6 +109,12 @@ export interface ComicVineProviderConfig {
   apiKey: string;
 }
 
+export interface KoboProviderConfig {
+  enabled: boolean;
+  country: string;
+  language: string;
+}
+
 export interface ProviderConfigurations {
   google: GoogleProviderConfig;
   amazon: AmazonProviderConfig;
@@ -120,6 +126,7 @@ export interface ProviderConfigurations {
   audnexus: AudnexusProviderConfig;
   comicvine: ComicVineProviderConfig;
   ranobedb: SimpleProviderConfig;
+  kobo: KoboProviderConfig;
 }
 
 export interface ProviderStatus {

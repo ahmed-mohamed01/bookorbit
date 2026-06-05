@@ -37,6 +37,7 @@ function makeWeights(): MetadataScoreWeights {
     hardcoverId: 1,
     openLibraryId: 1,
     itunesId: 1,
+    koboId: 1,
   };
 }
 
@@ -102,6 +103,7 @@ describe('MetadataScoreService', () => {
       hardcoverId: null,
       openLibraryId: null,
       itunesId: null,
+      koboId: null,
       authorCount: 1,
       genreCount: 0,
       tagCount: 0,
@@ -157,6 +159,7 @@ describe('MetadataScoreService', () => {
             hardcoverId: null,
             openLibraryId: null,
             itunesId: null,
+            koboId: null,
             authorCount: 1,
             genreCount: 0,
             tagCount: 0,
@@ -184,6 +187,7 @@ describe('MetadataScoreService', () => {
             hardcoverId: null,
             openLibraryId: null,
             itunesId: null,
+            koboId: null,
             authorCount: 1,
             genreCount: 0,
             tagCount: 0,
@@ -216,6 +220,7 @@ describe('MetadataScoreService', () => {
             hardcoverId: null,
             openLibraryId: null,
             itunesId: null,
+            koboId: null,
             authorCount: 1,
             genreCount: 0,
             tagCount: 0,

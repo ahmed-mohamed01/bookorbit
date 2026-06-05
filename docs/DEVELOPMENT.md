@@ -472,10 +472,11 @@ All commands are run from the repository root unless noted otherwise.
 
 ### Setup
 
-| Command        | Description                                          |
-| -------------- | ---------------------------------------------------- |
-| `pnpm setup`   | One-command bootstrap (env, deps, DB, migrate, seed) |
-| `pnpm install` | Install all workspace dependencies                   |
+| Command                                         | Description                                          |
+| ----------------------------------------------- | ---------------------------------------------------- |
+| `pnpm setup`                                    | One-command bootstrap (env, deps, DB, migrate, seed) |
+| `pnpm install`                                  | Install all workspace dependencies                   |
+| `cd server && pnpm run setup:kobo-cloudscraper` | Setup Python venv for Kobo metadata fetcher          |
 
 ### Development
 

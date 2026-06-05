@@ -6,11 +6,13 @@ import {
   MetadataFetchPreferences,
   MetadataField,
   MetadataProviderKey,
+  ProviderConfigurations,
 } from '@bookorbit/types';
 import { of } from 'rxjs';
 
 import { MetadataPreferenceResolver } from '../metadata-preferences/metadata-preference-resolver';
 import { MetadataPreferencesService } from '../metadata-preferences/metadata-preferences.service';
+import { ProviderConfigService } from '../metadata-preferences/provider-config.service';
 import { MetadataFetchPipeline } from './metadata-fetch-pipeline';
 import { MetadataFetchService } from './metadata-fetch.service';
 import { ProviderRegistry } from './provider-registry';
@@ -44,6 +46,7 @@ function candidate(provider: MetadataProviderKey, providerId: string, data: Part
 describe('MetadataFetchPipeline', () => {
   let fetchService: Mocked<MetadataFetchService>;
   let preferencesService: Mocked<MetadataPreferencesService>;
+  let providerConfig: Mocked<ProviderConfigService>;
   let resolver: Mocked<MetadataPreferenceResolver>;
   let registry: Mocked<ProviderRegistry>;
   let pipeline: MetadataFetchPipeline;
@@ -58,6 +61,10 @@ describe('MetadataFetchPipeline', () => {
       getForLibrary: vi.fn(),
     } as unknown as Mocked<MetadataPreferencesService>;
 
+    providerConfig = {
+      getConfig: vi.fn().mockResolvedValue(makeProviderConfig()),
+    } as unknown as Mocked<ProviderConfigService>;
+
     resolver = {
       resolve: vi.fn(),
       withForwardCompatibility: vi.fn(),
@@ -68,7 +75,7 @@ describe('MetadataFetchPipeline', () => {
     } as unknown as Mocked<ProviderRegistry>;
 
     const throttleTracker = { isThrottled: vi.fn().mockReturnValue(false) } as unknown as ProviderThrottleTracker;
-    pipeline = new MetadataFetchPipeline(fetchService, preferencesService, resolver, registry, throttleTracker);
+    pipeline = new MetadataFetchPipeline(fetchService, preferencesService, resolver, registry, throttleTracker, providerConfig);
   });
 
   it('derives enabled provider keys from active fields, filters unknown providers, and de-duplicates keys', async () => {
@@ -99,6 +106,37 @@ describe('MetadataFetchPipeline', () => {
     await pipeline.run({ title: 'Query' }, {});
 
     expect(fetchService.search).toHaveBeenCalledWith({ title: 'Query' }, [MetadataProviderKey.GOOGLE, MetadataProviderKey.OPEN_LIBRARY]);
+  });
+
+  it('filters derived provider keys by enabled provider config', async () => {
+    const global = createPreferences((fields) => {
+      fields.title = {
+        enabled: true,
+        providers: [MetadataProviderKey.GOOGLE, MetadataProviderKey.OPEN_LIBRARY, MetadataProviderKey.KOBO],
+        mergeStrategy: 'overwriteIfProvided',
+      };
+    });
+
+    providerConfig.getConfig.mockResolvedValue(
+      makeProviderConfig({
+        google: { enabled: false, apiKey: '' },
+        openLibrary: { enabled: false },
+        kobo: { enabled: true, country: 'us', language: 'en' },
+      }),
+    );
+    preferencesService.getGlobal.mockResolvedValue(global);
+    resolver.resolve.mockReturnValue(global);
+    resolver.withForwardCompatibility.mockReturnValue(global);
+    registry.all.mockReturnValue([
+      { key: MetadataProviderKey.GOOGLE },
+      { key: MetadataProviderKey.OPEN_LIBRARY },
+      { key: MetadataProviderKey.KOBO },
+    ] as never);
+    fetchService.search.mockReturnValue(of(candidate(MetadataProviderKey.KOBO, 'k1', { title: 'Kobo Title' })));
+
+    await pipeline.run({ title: 'Query' }, {});
+
+    expect(fetchService.search).toHaveBeenCalledWith({ title: 'Query' }, [MetadataProviderKey.KOBO]);
   });
 
   it('applies fillMissing without overwriting existing fields and records sources', async () => {
@@ -413,3 +451,19 @@ describe('MetadataFetchPipeline', () => {
     expect(result.title).toBe('Library Title');
   });
 });
+
+function makeProviderConfig(overrides: Partial<ProviderConfigurations> = {}): ProviderConfigurations {
+  return {
+    google: { enabled: true, apiKey: '', ...overrides.google },
+    amazon: { enabled: true, domain: 'amazon.com', cookie: '', ...overrides.amazon },
+    goodreads: { enabled: true, ...overrides.goodreads },
+    hardcover: { enabled: true, apiKey: 'hardcover-key', ...overrides.hardcover },
+    openLibrary: { enabled: true, ...overrides.openLibrary },
+    itunes: { enabled: true, coverResolution: 'high', ...overrides.itunes },
+    audible: { enabled: true, domain: 'com', ...overrides.audible },
+    audnexus: { enabled: true, ...overrides.audnexus },
+    comicvine: { enabled: true, apiKey: 'comicvine-key', ...overrides.comicvine },
+    ranobedb: { enabled: true, ...overrides.ranobedb },
+    kobo: { enabled: true, country: 'us', language: 'en', ...overrides.kobo },
+  };
+}

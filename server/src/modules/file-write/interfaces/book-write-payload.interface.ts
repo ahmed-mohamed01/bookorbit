@@ -22,6 +22,7 @@ export interface BookWritePayload {
   hardcoverId?: string | null;
   openLibraryId?: string | null;
   ranobedbId?: string | null;
+  koboId?: string | null;
   comicIssueNumber?: string | null;
   comicVolumeName?: string | null;
   comicPencillers?: string[];

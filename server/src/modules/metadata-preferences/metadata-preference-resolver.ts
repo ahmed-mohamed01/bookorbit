@@ -18,6 +18,7 @@ const DEFAULT_PROVIDER_ORDER: MetadataProviderKey[] = [
   MetadataProviderKey.GOODREADS,
   MetadataProviderKey.GOOGLE,
   MetadataProviderKey.AMAZON,
+  MetadataProviderKey.KOBO,
   MetadataProviderKey.OPEN_LIBRARY,
 ];
 
@@ -30,6 +31,7 @@ const PROVIDERS_WITH_ITUNES: MetadataProviderKey[] = [
   MetadataProviderKey.GOOGLE,
   MetadataProviderKey.ITUNES,
   MetadataProviderKey.AMAZON,
+  MetadataProviderKey.KOBO,
   MetadataProviderKey.OPEN_LIBRARY,
 ];
 
@@ -41,13 +43,14 @@ const FIELD_DEFAULTS: Partial<Record<MetadataField, Partial<FieldPreference>>> =
     providers: [
       MetadataProviderKey.AMAZON,
       MetadataProviderKey.ITUNES,
+      MetadataProviderKey.KOBO,
       MetadataProviderKey.GOODREADS,
       MetadataProviderKey.GOOGLE,
       MetadataProviderKey.OPEN_LIBRARY,
     ],
   },
   authors: { providers: PROVIDERS_WITH_ITUNES },
-  genres: { providers: [MetadataProviderKey.GOODREADS, MetadataProviderKey.GOOGLE, MetadataProviderKey.ITUNES] },
+  genres: { providers: [MetadataProviderKey.GOODREADS, MetadataProviderKey.GOOGLE, MetadataProviderKey.ITUNES, MetadataProviderKey.KOBO] },
 };
 
 @Injectable()

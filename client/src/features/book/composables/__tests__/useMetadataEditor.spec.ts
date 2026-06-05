@@ -169,6 +169,23 @@ describe('useMetadataEditor', () => {
     })
   })
 
+  it('loads and saves Kobo provider IDs', async () => {
+    const book = makeBook({ providerIds: { kobo: 'old-kobo-id' } })
+    apiMock.mockResolvedValue({ ok: true, json: async () => ({ ...book, providerIds: { kobo: 'new-kobo-id' } }) })
+
+    const { form, load, save } = useMetadataEditor()
+    load(book)
+    expect(form.koboId).toBe('old-kobo-id')
+
+    form.koboId = 'new-kobo-id'
+    await save(book.id)
+
+    const [, req] = apiMock.mock.calls[0] as [string, RequestInit]
+    expect(JSON.parse(String(req.body))).toEqual({
+      koboId: 'new-kobo-id',
+    })
+  })
+
   it('can save lock-only changes through the atomic endpoint without metadata fields', async () => {
     const book = makeBook()
     apiMock.mockResolvedValue({ ok: true, json: async () => ({ ...book, lockedFields: ['title'] }) })

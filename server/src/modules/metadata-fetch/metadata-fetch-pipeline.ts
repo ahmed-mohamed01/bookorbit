@@ -7,10 +7,12 @@ import {
   MetadataFetchPreferences,
   MetadataField,
   MetadataProviderKey,
+  ProviderConfigurations,
 } from '@bookorbit/types';
 import { firstValueFrom, toArray } from 'rxjs';
 
 import { MetadataPreferenceResolver } from '../metadata-preferences/metadata-preference-resolver';
+import { ProviderConfigService } from '../metadata-preferences/provider-config.service';
 import { MetadataPreferencesService } from '../metadata-preferences/metadata-preferences.service';
 import { createGenreBlocklistTokenSet, filterGenresAgainstBlocklist } from '../../common/utils/genre-blocklist.utils';
 import { MetadataFetchService } from './metadata-fetch.service';
@@ -35,6 +37,7 @@ export class MetadataFetchPipeline {
     private readonly resolver: MetadataPreferenceResolver,
     private readonly registry: ProviderRegistry,
     private readonly throttleTracker: ProviderThrottleTracker,
+    private readonly providerConfig: ProviderConfigService,
   ) {}
 
   async run(
@@ -59,12 +62,12 @@ export class MetadataFetchPipeline {
     existingFields: Partial<Record<MetadataField, unknown>>,
     libraryId?: number,
   ): Promise<{ resolved: ResolvedMetadataFields; sources: Record<string, string>; providerIds: ResolvedProviderIds }> {
-    const global = await this.preferencesService.getGlobal();
+    const [global, providerConfig] = await Promise.all([this.preferencesService.getGlobal(), this.providerConfig.getConfig()]);
     const overrides = libraryId ? (await this.preferencesService.getForLibrary(libraryId, global)).overrides : null;
     const registeredKeys = this.registry.all().map((p) => p.key) as MetadataProviderKey[];
     const preferences: MetadataFetchPreferences = this.resolver.withForwardCompatibility(this.resolver.resolve(global, overrides), registeredKeys);
 
-    const enabledProviders = this.deriveProviderSet(preferences, registeredKeys);
+    const enabledProviders = this.deriveProviderSet(preferences, registeredKeys, providerConfig);
     const candidates = await firstValueFrom(this.fetchService.search(params, enabledProviders).pipe(toArray()), {
       defaultValue: [] as MetadataCandidate[],
     });
@@ -76,13 +79,15 @@ export class MetadataFetchPipeline {
     return this.applyPreferences(preferences, byProvider, existingFields);
   }
 
-  private deriveProviderSet(preferences: MetadataFetchPreferences, registeredKeys: MetadataProviderKey[]) {
+  private deriveProviderSet(preferences: MetadataFetchPreferences, registeredKeys: MetadataProviderKey[], providerConfig: ProviderConfigurations) {
     const registered = new Set(registeredKeys);
     const keys = new Set<MetadataProviderKey>();
 
     for (const [, fieldPreference] of Object.entries(preferences.fields) as [MetadataField, FieldPreference][]) {
       if (!fieldPreference.enabled) continue;
-      fieldPreference.providers.filter((providerKey) => registered.has(providerKey)).forEach((providerKey) => keys.add(providerKey));
+      fieldPreference.providers
+        .filter((providerKey) => registered.has(providerKey) && providerConfig[providerKey]?.enabled !== false)
+        .forEach((providerKey) => keys.add(providerKey));
     }
 
     const active: MetadataProviderKey[] = [];

@@ -4,6 +4,7 @@ dist/
 .env.local
 client/.env
 server/.env
+server/.venv/
 *.local
 data
 

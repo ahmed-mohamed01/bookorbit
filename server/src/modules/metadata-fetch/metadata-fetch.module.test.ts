@@ -17,6 +17,7 @@ import { AudibleProvider } from './providers/audible/audible.provider';
 import { AudnexusProvider } from './providers/audnexus/audnexus.provider';
 import { HardcoverProvider } from './providers/hardcover/hardcover.provider';
 import { ComicVineProvider } from './providers/comicvine/comicvine.provider';
+import { KoboProvider } from './providers/kobo/kobo.provider';
 import { RanobeDbProvider } from './providers/ranobedb/ranobedb.provider';
 
 describe('MetadataFetchModule', () => {
@@ -35,6 +36,7 @@ describe('MetadataFetchModule', () => {
         HardcoverProvider,
         ComicVineProvider,
         RanobeDbProvider,
+        KoboProvider,
         ProviderRegistry,
         MetadataFetchRepository,
         MetadataFetchService,
@@ -59,6 +61,7 @@ describe('MetadataFetchModule', () => {
       HardcoverProvider,
       ComicVineProvider,
       RanobeDbProvider,
+      KoboProvider,
     ]);
 
     const google = { key: 'google' };

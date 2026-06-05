@@ -42,9 +42,15 @@ WORKDIR /app
 
 ARG APP_VERSION=dev
 ENV APP_VERSION=${APP_VERSION}
+ENV KOBO_CLOUDSCRAPER_PYTHON=/opt/bookorbit-python/bin/python
+
+COPY server/requirements/kobo-cloudscraper.txt /tmp/kobo-cloudscraper-requirements.txt
 
 RUN apk upgrade --no-cache && \
-    apk add --no-cache poppler-utils su-exec ffmpeg && \
+    apk add --no-cache poppler-utils su-exec ffmpeg python3 py3-pip && \
+    python3 -m venv /opt/bookorbit-python && \
+    /opt/bookorbit-python/bin/python -m pip install --no-cache-dir -r /tmp/kobo-cloudscraper-requirements.txt && \
+    rm -f /tmp/kobo-cloudscraper-requirements.txt && \
     rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 ENV NODE_ENV=production

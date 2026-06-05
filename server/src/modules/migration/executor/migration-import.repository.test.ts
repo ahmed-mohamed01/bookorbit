@@ -32,6 +32,7 @@ describe('MigrationImportRepository', () => {
         title: 'Dune',
         openLibraryId: 'OL1W',
         itunesId: '123',
+        koboId: 'dune-kobo',
       },
       {
         bookId: 2,
@@ -48,6 +49,7 @@ describe('MigrationImportRepository', () => {
           title: expect.anything(),
           openLibraryId: expect.anything(),
           itunesId: expect.anything(),
+          koboId: expect.anything(),
           updatedAt: expect.anything(),
         }),
       }),

@@ -3025,6 +3025,7 @@ describe('BookService', () => {
             openLibraryId: null,
             itunesId: null,
             audibleId: null,
+            koboId: 'beautiful-ugly-3',
             comicvineId: null,
             ranobedbId: 'ranobe-detail',
             chapters: null,
@@ -3096,6 +3097,7 @@ describe('BookService', () => {
       expect(result.comicMetadata).toEqual(expect.objectContaining({ issueNumber: '1', teams: ['House Atreides'] }));
       expect(result.rating).toBe(5);
       expect(result.providerIds.google).toBe('g1');
+      expect(result.providerIds.kobo).toBe('beautiful-ugly-3');
       expect(result.providerIds.ranobedb).toBe('ranobe-detail');
       expect(result.fileWriteStatus).toEqual({
         enabled: true,
@@ -3147,6 +3149,7 @@ describe('BookService', () => {
             openLibraryId: null,
             itunesId: null,
             audibleId: null,
+            koboId: null,
             comicvineId: null,
             ranobedbId: null,
             chapters: null,

@@ -22,6 +22,7 @@ describe('MetadataPreferenceResolver', () => {
         MetadataProviderKey.GOOGLE,
         MetadataProviderKey.ITUNES,
         MetadataProviderKey.AMAZON,
+        MetadataProviderKey.KOBO,
         MetadataProviderKey.OPEN_LIBRARY,
       ]);
     }
@@ -29,12 +30,18 @@ describe('MetadataPreferenceResolver', () => {
     expect(defaults.fields.cover.providers).toEqual([
       MetadataProviderKey.AMAZON,
       MetadataProviderKey.ITUNES,
+      MetadataProviderKey.KOBO,
       MetadataProviderKey.GOODREADS,
       MetadataProviderKey.GOOGLE,
       MetadataProviderKey.OPEN_LIBRARY,
     ]);
 
-    expect(defaults.fields.genres.providers).toEqual([MetadataProviderKey.GOODREADS, MetadataProviderKey.GOOGLE, MetadataProviderKey.ITUNES]);
+    expect(defaults.fields.genres.providers).toEqual([
+      MetadataProviderKey.GOODREADS,
+      MetadataProviderKey.GOOGLE,
+      MetadataProviderKey.ITUNES,
+      MetadataProviderKey.KOBO,
+    ]);
 
     const fieldsWithoutItunes: (keyof typeof defaults.fields)[] = [
       'publisher',
@@ -50,6 +57,7 @@ describe('MetadataPreferenceResolver', () => {
         MetadataProviderKey.GOODREADS,
         MetadataProviderKey.GOOGLE,
         MetadataProviderKey.AMAZON,
+        MetadataProviderKey.KOBO,
         MetadataProviderKey.OPEN_LIBRARY,
       ]);
     }

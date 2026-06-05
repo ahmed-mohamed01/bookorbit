@@ -67,6 +67,7 @@ const DIRECT_PATCH_FIELDS = [
   'openLibraryId',
   'itunesId',
   'audibleId',
+  'koboId',
   'comicvineId',
   'ranobedbId',
 ] as const
@@ -162,6 +163,7 @@ const providerIdFields = [
   { field: 'openLibraryId' as const, label: 'OpenLibrary' },
   { field: 'itunesId' as const, label: 'iTunes' },
   { field: 'audibleId' as const, label: 'Audible' },
+  { field: 'koboId' as const, label: 'Kobo' },
   { field: 'comicvineId' as const, label: 'ComicVine' },
   { field: 'ranobedbId' as const, label: 'RanobeDB' },
 ]
@@ -413,6 +415,7 @@ function buildPreviewPatch(preview: MetadataRefreshPreview): MetadataPatch {
     openLibraryId: preview.openLibraryId,
     itunesId: preview.itunesId,
     audibleId: preview.audibleId,
+    koboId: preview.koboId,
     comicvineId: preview.comicvineId,
     ranobedbId: preview.ranobedbId,
     comicMetadata: preview.comicMetadata,

@@ -288,6 +288,7 @@ export class BookMetadataFetchOrchestratorService implements OnApplicationBootst
     if (filteredProviderIds[MetadataProviderKey.OPEN_LIBRARY]) scalarFields.openLibraryId = filteredProviderIds[MetadataProviderKey.OPEN_LIBRARY];
     if (filteredProviderIds[MetadataProviderKey.ITUNES]) scalarFields.itunesId = filteredProviderIds[MetadataProviderKey.ITUNES];
     if (filteredProviderIds[MetadataProviderKey.AUDIBLE]) scalarFields.audibleId = filteredProviderIds[MetadataProviderKey.AUDIBLE];
+    if (filteredProviderIds[MetadataProviderKey.KOBO]) scalarFields.koboId = filteredProviderIds[MetadataProviderKey.KOBO];
     if (filteredProviderIds[MetadataProviderKey.COMICVINE]) scalarFields.comicvineId = filteredProviderIds[MetadataProviderKey.COMICVINE];
     if (filteredProviderIds[MetadataProviderKey.RANOBEDB]) scalarFields.ranobedbId = filteredProviderIds[MetadataProviderKey.RANOBEDB];
 
@@ -376,6 +377,7 @@ export class BookMetadataFetchOrchestratorService implements OnApplicationBootst
     openLibraryId?: string | null;
     itunesId?: string | null;
     audibleId?: string | null;
+    koboId?: string | null;
     comicvineId?: string | null;
     ranobedbId?: string | null;
   }): Partial<Record<MetadataProviderKey, string>> {
@@ -387,6 +389,7 @@ export class BookMetadataFetchOrchestratorService implements OnApplicationBootst
     if (meta.openLibraryId) ids[MetadataProviderKey.OPEN_LIBRARY] = meta.openLibraryId;
     if (meta.itunesId) ids[MetadataProviderKey.ITUNES] = meta.itunesId;
     if (meta.audibleId) ids[MetadataProviderKey.AUDIBLE] = meta.audibleId;
+    if (meta.koboId) ids[MetadataProviderKey.KOBO] = meta.koboId;
     if (meta.comicvineId) ids[MetadataProviderKey.COMICVINE] = meta.comicvineId;
     if (meta.ranobedbId) ids[MetadataProviderKey.RANOBEDB] = meta.ranobedbId;
     return ids;

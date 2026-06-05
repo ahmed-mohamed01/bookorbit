@@ -59,6 +59,10 @@ const envSchema = z.object({
       message: 'CSP_ALLOW_CLOUDFLARE_INSIGHTS must be one of true/false/1/0/yes/no/on/off',
     })
     .optional(),
+  KOBO_CLOUDSCRAPER_PYTHON: z
+    .string()
+    .transform((val) => val.trim())
+    .optional(),
 });
 
 export function validateEnv(config: Record<string, unknown>) {

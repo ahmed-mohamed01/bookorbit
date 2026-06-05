@@ -580,6 +580,15 @@ const providerLinks = computed<ProviderLink[]>(() => {
       fallback: 'Au',
     })
   }
+  if (ids.kobo) {
+    out.push({
+      key: 'kobo',
+      label: 'Kobo',
+      url: `https://www.kobo.com/us/en/ebook/${encodeURIComponent(ids.kobo)}`,
+      iconUrl: providerIconPath('kobo'),
+      fallback: 'K',
+    })
+  }
   if (ids.ranobedb) {
     out.push({
       key: 'ranobedb',

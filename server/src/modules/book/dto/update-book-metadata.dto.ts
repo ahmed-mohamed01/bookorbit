@@ -51,6 +51,7 @@ export class UpdateBookMetadataDto {
   @IsOptional() @IsString() @MaxLength(50) openLibraryId?: string | null;
   @IsOptional() @IsString() @MaxLength(50) itunesId?: string | null;
   @IsOptional() @IsString() @MaxLength(20) audibleId?: string | null;
+  @IsOptional() @IsString() @MaxLength(255) koboId?: string | null;
   @IsOptional() @ValidateNested() @Type(() => AudioMetadataDto) audioMetadata?: AudioMetadataDto;
   @IsOptional() @IsString() @MaxLength(50) comicvineId?: string | null;
   @IsOptional() @IsString() @MaxLength(50) ranobedbId?: string | null;

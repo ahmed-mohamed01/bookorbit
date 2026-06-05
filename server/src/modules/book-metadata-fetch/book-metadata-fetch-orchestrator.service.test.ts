@@ -240,6 +240,7 @@ describe('BookMetadataFetchOrchestratorService', () => {
       providerIds: {
         [MetadataProviderKey.GOOGLE]: 'g1',
         [MetadataProviderKey.AUDIBLE]: 'a1',
+        [MetadataProviderKey.KOBO]: 'kobo-1',
       },
       skippedFields: [],
     });
@@ -256,6 +257,7 @@ describe('BookMetadataFetchOrchestratorService', () => {
         abridged: false,
         googleBooksId: 'g1',
         audibleId: 'a1',
+        koboId: 'kobo-1',
       }),
     );
     expect(metadataService.replaceAuthors).toHaveBeenCalledWith(88, [{ name: 'Author A', sortName: null }]);

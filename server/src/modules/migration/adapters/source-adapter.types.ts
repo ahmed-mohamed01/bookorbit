@@ -62,6 +62,7 @@ export interface SourceBook {
   goodreadsId?: string | null;
   amazonId?: string | null;
   hardcoverId?: string | null;
+  koboId?: string | null;
   audibleId?: string | null;
   comicvineId?: string | null;
   durationSeconds?: number | null;

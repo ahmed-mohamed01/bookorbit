@@ -81,6 +81,9 @@ const AUDIBLE_DOMAINS = [
   'audible.in',
 ]
 
+const KOBO_COUNTRIES = ['us', 'ca', 'gb', 'au', 'nz', 'de', 'fr', 'it', 'es', 'nl', 'pt', 'br', 'jp']
+const KOBO_LANGUAGES = ['en', 'fr', 'de', 'it', 'es', 'nl', 'pt', 'ja', 'all']
+
 type FieldDef = {
   key: string
   label: string
@@ -153,6 +156,29 @@ const rows: RowDef[] = [
     label: 'iTunes',
     hint: "Apple's digital book catalog. Choose whether to fetch high or standard resolution covers.",
     fields: [{ key: 'coverResolution', label: 'Cover Resolution', type: 'select', options: ['high', 'standard'] }],
+  },
+  {
+    key: 'kobo',
+    label: 'Kobo',
+    hint: "Scrapes Kobo's public book pages. Country and language must match Kobo URL paths; bot protection can block requests.",
+    fields: [
+      {
+        key: 'country',
+        label: 'Country',
+        type: 'select',
+        options: KOBO_COUNTRIES,
+        alwaysEditable: true,
+        widthClass: 'md:w-[5.25rem] md:min-w-[5.25rem]',
+      },
+      {
+        key: 'language',
+        label: 'Language',
+        type: 'select',
+        options: KOBO_LANGUAGES,
+        alwaysEditable: true,
+        widthClass: 'md:w-[5.25rem] md:min-w-[5.25rem]',
+      },
+    ],
   },
   {
     key: 'audible',

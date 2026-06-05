@@ -6,6 +6,7 @@ export interface MetadataProvider {
   readonly key: MetadataProviderKey;
   readonly label: string;
   readonly identifiable: boolean;
+  readonly timeoutMs?: number;
   search(params: MetadataSearchParams): Promise<MetadataCandidate[]>;
 }
 

@@ -58,6 +58,7 @@ export const bookMetadata = pgTable(
     hardcoverId: varchar('hardcover_id', { length: 255 }),
     openLibraryId: varchar('open_library_id', { length: 50 }),
     itunesId: varchar('itunes_id', { length: 50 }),
+    koboId: varchar('kobo_id', { length: 255 }),
     metadataScore: integer('metadata_score'),
     lastMetadataFetchAt: timestamp('last_metadata_fetch_at', { withTimezone: true }),
     embedding: embedding256('embedding'),

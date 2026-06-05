@@ -310,7 +310,9 @@ describe('MetadataFetchService', () => {
       openLibraryId: 'ol-1',
       itunesId: null,
       audibleId: 'B0ABC12345',
+      koboId: 'beautiful-ugly-3',
       comicvineId: 'cv-1',
+      ranobedbId: null,
     });
     metadataFetchRepository.hasLibraryAccess.mockResolvedValue(true);
 
@@ -324,7 +326,9 @@ describe('MetadataFetchService', () => {
       [MetadataProviderKey.OPEN_LIBRARY]: 'ol-1',
       [MetadataProviderKey.ITUNES]: undefined,
       [MetadataProviderKey.AUDIBLE]: 'B0ABC12345',
+      [MetadataProviderKey.KOBO]: 'beautiful-ugly-3',
       [MetadataProviderKey.COMICVINE]: 'cv-1',
+      [MetadataProviderKey.RANOBEDB]: undefined,
     });
     expect(metadataFetchRepository.hasLibraryAccess).toHaveBeenCalledWith(5, 7);
   });
@@ -339,7 +343,9 @@ describe('MetadataFetchService', () => {
       openLibraryId: null,
       itunesId: null,
       audibleId: null,
+      koboId: null,
       comicvineId: null,
+      ranobedbId: null,
     });
 
     await expect(service.getStoredProviderIds(99, makeUser({ isSuperuser: true }))).resolves.toEqual({
@@ -350,7 +356,9 @@ describe('MetadataFetchService', () => {
       [MetadataProviderKey.OPEN_LIBRARY]: undefined,
       [MetadataProviderKey.ITUNES]: undefined,
       [MetadataProviderKey.AUDIBLE]: undefined,
+      [MetadataProviderKey.KOBO]: undefined,
       [MetadataProviderKey.COMICVINE]: undefined,
+      [MetadataProviderKey.RANOBEDB]: undefined,
     });
     expect(metadataFetchRepository.hasLibraryAccess).not.toHaveBeenCalled();
   });
@@ -371,7 +379,9 @@ describe('MetadataFetchService', () => {
       openLibraryId: null,
       itunesId: null,
       audibleId: null,
+      koboId: null,
       comicvineId: null,
+      ranobedbId: null,
     });
     metadataFetchRepository.hasLibraryAccess.mockResolvedValue(false);
 

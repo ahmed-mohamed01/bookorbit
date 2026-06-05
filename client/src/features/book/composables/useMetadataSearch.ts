@@ -94,6 +94,7 @@ export function useMetadataSearch() {
     'hardcover',
     'google',
     'itunes',
+    'kobo',
     'openLibrary',
   ]
 

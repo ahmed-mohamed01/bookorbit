@@ -11,6 +11,7 @@ export const MetadataProviderKey = {
   AUDNEXUS: "audnexus",
   COMICVINE: "comicvine",
   RANOBEDB: "ranobedb",
+  KOBO: "kobo",
 } as const;
 
 export interface ComicMetadataFields {

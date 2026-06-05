@@ -69,6 +69,7 @@ export class MetadataFetchService {
       [MetadataProviderKey.OPEN_LIBRARY]: row.openLibraryId ?? undefined,
       [MetadataProviderKey.ITUNES]: row.itunesId ?? undefined,
       [MetadataProviderKey.AUDIBLE]: row.audibleId ?? undefined,
+      [MetadataProviderKey.KOBO]: row.koboId ?? undefined,
       [MetadataProviderKey.COMICVINE]: row.comicvineId ?? undefined,
       [MetadataProviderKey.RANOBEDB]: row.ranobedbId ?? undefined,
     };
@@ -79,7 +80,7 @@ export class MetadataFetchService {
     this.logger.log(`[metadata_fetch.provider_search] [start] provider=${provider.key} - provider fetch started`);
 
     try {
-      const { results, timedOut } = await this.withTimeout((signal) => this.fetchFromProvider(provider, { ...params, signal }));
+      const { results, timedOut } = await this.withTimeout((signal) => this.fetchFromProvider(provider, { ...params, signal }), provider.timeoutMs);
 
       if (timedOut) {
         this.logger.warn(
@@ -137,7 +138,10 @@ export class MetadataFetchService {
     return filterAndRank(await provider.search(fallbackParams), fallbackParams);
   }
 
-  private withTimeout(run: (signal: AbortSignal) => Promise<MetadataCandidate[]>): Promise<TimedProviderResult> {
+  private withTimeout(
+    run: (signal: AbortSignal) => Promise<MetadataCandidate[]>,
+    timeoutMs: number = MetadataFetchService.PROVIDER_TIMEOUT_MS,
+  ): Promise<TimedProviderResult> {
     let timer: NodeJS.Timeout | undefined;
     const controller = new AbortController();
 
@@ -145,7 +149,7 @@ export class MetadataFetchService {
       timer = setTimeout(() => {
         controller.abort();
         resolve({ results: [], timedOut: true });
-      }, MetadataFetchService.PROVIDER_TIMEOUT_MS);
+      }, timeoutMs);
     });
 
     const providerPromise = run(controller.signal)

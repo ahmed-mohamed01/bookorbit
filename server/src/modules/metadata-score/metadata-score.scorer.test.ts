@@ -23,6 +23,7 @@ function makeData(overrides: Partial<ScoreData> = {}): ScoreData {
     hardcoverId: null,
     openLibraryId: null,
     itunesId: null,
+    koboId: null,
     authorCount: 0,
     genreCount: 0,
     tagCount: 0,
@@ -79,6 +80,7 @@ describe('MetadataScoreScorer', () => {
       hardcoverId: 0,
       openLibraryId: 0,
       itunesId: 0,
+      koboId: 0,
     };
 
     expect(scorer.compute(data, weights)).toBe(100);
@@ -110,6 +112,7 @@ describe('MetadataScoreScorer', () => {
       hardcoverId: 0,
       openLibraryId: 0,
       itunesId: 0,
+      koboId: 0,
     };
 
     expect(scorer.compute(makeData({ title: 'Dune', coverSource: 'extracted', authorCount: 10 }), weights)).toBe(100);

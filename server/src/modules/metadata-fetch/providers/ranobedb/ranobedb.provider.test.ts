@@ -18,6 +18,7 @@ const enabledConfig: ProviderConfigurations = {
   audnexus: { enabled: false },
   comicvine: { enabled: false, apiKey: '' },
   ranobedb: { enabled: true },
+  kobo: { enabled: false, country: 'us', language: 'en' },
 };
 
 const disabledConfig: ProviderConfigurations = {

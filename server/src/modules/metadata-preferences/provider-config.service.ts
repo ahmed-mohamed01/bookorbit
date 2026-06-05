@@ -43,6 +43,7 @@ const DEFAULT_CONFIG: ProviderConfigurations = {
   audnexus: { enabled: false },
   comicvine: { enabled: false, apiKey: '' },
   ranobedb: { enabled: false },
+  kobo: { enabled: false, country: 'us', language: 'en' },
 };
 
 function asObject(value: unknown): Record<string, unknown> {
@@ -115,6 +116,15 @@ function mergeComicVineConfig(base: ProviderConfigurations['comicvine'], value: 
   };
 }
 
+function mergeKoboConfig(base: ProviderConfigurations['kobo'], value: unknown): ProviderConfigurations['kobo'] {
+  const next = asObject(value);
+  return {
+    enabled: asBoolean(next.enabled, base.enabled),
+    country: asString(next.country, base.country),
+    language: asString(next.language, base.language),
+  };
+}
+
 const PROVIDER_LABELS: Record<MetadataProviderKey, string> = {
   [MetadataProviderKey.GOOGLE]: 'Google Books',
   [MetadataProviderKey.AMAZON]: 'Amazon',
@@ -126,6 +136,7 @@ const PROVIDER_LABELS: Record<MetadataProviderKey, string> = {
   [MetadataProviderKey.AUDNEXUS]: 'AudNexus',
   [MetadataProviderKey.COMICVINE]: 'ComicVine',
   [MetadataProviderKey.RANOBEDB]: 'RanobeDB',
+  [MetadataProviderKey.KOBO]: 'Kobo',
 };
 
 type ProviderEnableRule = {
@@ -170,6 +181,7 @@ export class ProviderConfigService {
       audnexus: { ...DEFAULT_CONFIG.audnexus },
       comicvine: { ...DEFAULT_CONFIG.comicvine },
       ranobedb: { ...DEFAULT_CONFIG.ranobedb },
+      kobo: { ...DEFAULT_CONFIG.kobo },
     };
   }
 
@@ -186,6 +198,7 @@ export class ProviderConfigService {
       audnexus: mergeSimpleConfig(base.audnexus, next.audnexus),
       comicvine: mergeComicVineConfig(base.comicvine, next.comicvine),
       ranobedb: mergeSimpleConfig(base.ranobedb, next.ranobedb),
+      kobo: mergeKoboConfig(base.kobo, next.kobo),
     };
   }
 
@@ -251,6 +264,11 @@ export class ProviderConfigService {
         ...config.comicvine,
         apiKey: config.comicvine.apiKey.trim(),
       },
+      kobo: {
+        ...config.kobo,
+        country: this.normalizeKoboPathSegment(config.kobo.country, DEFAULT_CONFIG.kobo.country),
+        language: this.normalizeKoboPathSegment(config.kobo.language, DEFAULT_CONFIG.kobo.language),
+      },
     };
 
     if (!normalized.google.enabled || normalized.google.apiKey) return normalized;
@@ -272,6 +290,14 @@ export class ProviderConfigService {
       return normalized.slice('cookie:'.length).trim();
     }
     return normalized;
+  }
+
+  private normalizeKoboPathSegment(value: string, fallback: string): string {
+    const normalized = value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '');
+    return normalized || fallback;
   }
 
   private parsePersistedConfig(
@@ -392,6 +418,13 @@ export class ProviderConfigService {
         label: PROVIDER_LABELS[MetadataProviderKey.RANOBEDB],
         enabled: cfg.ranobedb.enabled,
         configured: true,
+      },
+      {
+        key: MetadataProviderKey.KOBO,
+        label: PROVIDER_LABELS[MetadataProviderKey.KOBO],
+        enabled: cfg.kobo.enabled,
+        configured: true,
+        hint: 'Web scraping may be blocked by Kobo bot protection',
       },
     ];
   }

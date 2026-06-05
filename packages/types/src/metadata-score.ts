@@ -20,7 +20,8 @@ export type MetadataScoreField =
   | "amazonId"
   | "hardcoverId"
   | "openLibraryId"
-  | "itunesId";
+  | "itunesId"
+  | "koboId";
 
 export type MetadataScoreGroup = "core" | "publishing" | "classification" | "enrichment" | "providers";
 
@@ -53,6 +54,7 @@ export const METADATA_SCORE_FIELDS: Record<MetadataScoreField, MetadataScoreFiel
   hardcoverId: { group: "providers", label: "Hardcover ID", defaultWeight: 1 },
   openLibraryId: { group: "providers", label: "Open Library ID", defaultWeight: 1 },
   itunesId: { group: "providers", label: "iTunes ID", defaultWeight: 1 },
+  koboId: { group: "providers", label: "Kobo ID", defaultWeight: 1 },
 };
 
 export const METADATA_SCORE_GROUP_LABELS: Record<MetadataScoreGroup, string> = {

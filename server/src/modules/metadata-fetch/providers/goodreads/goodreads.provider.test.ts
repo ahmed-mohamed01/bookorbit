@@ -19,6 +19,7 @@ describe('GoodreadsProvider', () => {
     audnexus: { enabled: false },
     comicvine: { enabled: false, apiKey: '' },
     ranobedb: { enabled: false },
+    kobo: { enabled: false, country: 'us', language: 'en' },
   };
 
   function goodreadsBookHtml(bookId: string, title: string): string {

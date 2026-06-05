@@ -37,6 +37,12 @@ export class ComicVineProviderConfigDto {
   @IsOptional() @IsString() apiKey?: string;
 }
 
+export class KoboProviderConfigDto {
+  @IsOptional() @IsBoolean() enabled?: boolean;
+  @IsOptional() @IsString() country?: string;
+  @IsOptional() @IsString() language?: string;
+}
+
 export class UpdateProviderConfigDto {
   @IsOptional() @ValidateNested() @Type(() => GoogleProviderConfigDto) google?: GoogleProviderConfigDto;
   @IsOptional() @ValidateNested() @Type(() => AmazonProviderConfigDto) amazon?: AmazonProviderConfigDto;
@@ -48,4 +54,5 @@ export class UpdateProviderConfigDto {
   @IsOptional() @ValidateNested() @Type(() => SimpleProviderConfigDto) audnexus?: SimpleProviderConfigDto;
   @IsOptional() @ValidateNested() @Type(() => ComicVineProviderConfigDto) comicvine?: ComicVineProviderConfigDto;
   @IsOptional() @ValidateNested() @Type(() => SimpleProviderConfigDto) ranobedb?: SimpleProviderConfigDto;
+  @IsOptional() @ValidateNested() @Type(() => KoboProviderConfigDto) kobo?: KoboProviderConfigDto;
 }

@@ -20,7 +20,20 @@ describe('getProviderColor', () => {
   })
 
   it('returns a color for all known providers', () => {
-    const providers = ['google', 'amazon', 'goodreads', 'hardcover', 'openLibrary', 'itunes', 'audible', 'audnexus', 'comicvine', 'ranobedb', 'auto']
+    const providers = [
+      'google',
+      'amazon',
+      'goodreads',
+      'hardcover',
+      'openLibrary',
+      'itunes',
+      'audible',
+      'audnexus',
+      'comicvine',
+      'ranobedb',
+      'kobo',
+      'auto',
+    ]
     for (const provider of providers) {
       expect(getProviderColor(provider)).toBeTruthy()
     }
@@ -33,7 +46,7 @@ describe('PROVIDER_SHORT_LABELS', () => {
   })
 
   it('has labels for all providers', () => {
-    const providers = ['google', 'amazon', 'goodreads', 'hardcover', 'openLibrary', 'itunes', 'audible', 'audnexus', 'comicvine', 'ranobedb']
+    const providers = ['google', 'amazon', 'goodreads', 'hardcover', 'openLibrary', 'itunes', 'audible', 'audnexus', 'comicvine', 'ranobedb', 'kobo']
     for (const provider of providers) {
       expect(PROVIDER_SHORT_LABELS[provider]).toBeTruthy()
     }

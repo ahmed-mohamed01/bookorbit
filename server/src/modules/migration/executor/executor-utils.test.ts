@@ -81,6 +81,7 @@ describe('migration executor utils', () => {
       goodreadsId: 'gr',
       amazonId: 'amz',
       hardcoverId: 'hc',
+      koboId: 'kobo',
       audibleId: 'aud',
       comicvineId: 'cv',
       durationSeconds: 3601.7,
@@ -96,6 +97,23 @@ describe('migration executor utils', () => {
       durationSeconds: 3602,
       abridged: false,
     });
+  });
+
+  it('maps Kobo provider IDs when present in source metadata', () => {
+    const patch = buildMetadataPatch({
+      title: null,
+      subtitle: null,
+      isbn10: null,
+      isbn13: null,
+      description: null,
+      publisher: null,
+      publishedYear: null,
+      language: null,
+      koboId: 'kobo-book-slug',
+      presentFields: ['koboId'],
+    });
+
+    expect(patch).toEqual({ koboId: 'kobo-book-slug' });
   });
 
   it('builds contributor values with truncation and defaulted sort name', () => {

@@ -6,6 +6,7 @@ export const appConfig = registerAs('app', () => ({
   appUrl: process.env.APP_URL ?? 'http://localhost:5173',
   version: process.env.APP_VERSION ?? 'Local build',
   oidcAllowLocalIssuers: parseBooleanFlag(process.env.OIDC_ALLOW_LOCAL_ISSUERS, false),
+  koboCloudscraperPython: process.env.KOBO_CLOUDSCRAPER_PYTHON?.trim() || undefined,
 }));
 
 export const dbConfig = registerAs('db', () => ({

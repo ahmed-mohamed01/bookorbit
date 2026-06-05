@@ -25,6 +25,7 @@ export const COMIC_INFO_PROVIDER_ID_KEYS = [
   'hardcoverId',
   'googleBooksId',
   'openLibraryId',
+  'koboId',
 ] as const satisfies readonly BookWritePayloadKey[];
 
 export const COMIC_INFO_MANAGED_NOTES_KEYS = [
@@ -36,6 +37,7 @@ export const COMIC_INFO_MANAGED_NOTES_KEYS = [
   'googleBooksId',
   'openLibraryId',
   'ranobedbId',
+  'koboId',
 ] as const satisfies readonly BookWritePayloadKey[];
 
 type ComicInfoProviderKey = (typeof COMIC_INFO_PROVIDER_ID_KEYS)[number];
@@ -46,6 +48,7 @@ export const COMIC_INFO_PROVIDER_WEB_URL_BUILDERS: Record<ComicInfoProviderKey, 
   hardcoverId: (id: string) => `https://hardcover.app/books/${id}`,
   googleBooksId: (id: string) => `https://books.google.com/books?id=${id}`,
   openLibraryId: (id: string) => `https://openlibrary.org/works/${id}`,
+  koboId: (id: string) => `https://www.kobo.com/us/en/ebook/${id}`,
 };
 
 export const EPUB_PROVIDER_IDENTIFIER_SCHEMES = {
@@ -55,5 +58,6 @@ export const EPUB_PROVIDER_IDENTIFIER_SCHEMES = {
   googleBooksId: 'GOOGLE',
   openLibraryId: 'OPENLIBRARY',
   ranobedbId: 'RANOBEDB',
+  koboId: 'KOBO',
   itunesId: 'ITUNES',
 } as const satisfies Partial<Record<BookWritePayloadKey, string>>;

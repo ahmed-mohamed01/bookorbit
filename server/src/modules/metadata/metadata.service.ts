@@ -571,6 +571,7 @@ export class MetadataService {
       hardcoverId: data.hardcoverId,
       openLibraryId: data.openLibraryId,
       ranobedbId: data.ranobedbId,
+      koboId: data.koboId,
       itunesId: data.itunesId,
       comicMetadata: data.comicMetadata ?? undefined,
     });
@@ -594,6 +595,7 @@ export class MetadataService {
     if (filtered.hardcoverId !== undefined) scalarFields.hardcoverId = filtered.hardcoverId;
     if (filtered.openLibraryId !== undefined) scalarFields.openLibraryId = filtered.openLibraryId;
     if (filtered.ranobedbId !== undefined) scalarFields.ranobedbId = filtered.ranobedbId;
+    if (filtered.koboId !== undefined) scalarFields.koboId = filtered.koboId;
     if (filtered.itunesId !== undefined) scalarFields.itunesId = filtered.itunesId;
     if (Object.keys(scalarFields).length > 0) {
       scalarFields.updatedAt = new Date();

@@ -14,6 +14,7 @@
     "url": "https://github.com/bookorbit/bookorbit/issues"
   },
   "scripts": {
+    "setup:kobo-cloudscraper": "tsx src/scripts/setup-kobo-cloudscraper.ts",
     "prestart": "pnpm --filter @bookorbit/types build",
     "prestart:dev": "pnpm --filter @bookorbit/types build",
     "prestart:debug": "pnpm --filter @bookorbit/types build",

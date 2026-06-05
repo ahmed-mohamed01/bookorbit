@@ -18,6 +18,8 @@ const mockConfig: ProviderConfigurations = {
   audible: { enabled: false, domain: 'com' },
   audnexus: { enabled: false },
   comicvine: { enabled: true, apiKey: 'test-key' },
+  ranobedb: { enabled: false },
+  kobo: { enabled: false, country: 'us', language: 'en' },
 };
 
 const mockVolume = {

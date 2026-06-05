@@ -29,6 +29,7 @@ const METADATA_SCORE_BASE_SELECT = {
   hardcoverId: bookMetadata.hardcoverId,
   openLibraryId: bookMetadata.openLibraryId,
   itunesId: bookMetadata.itunesId,
+  koboId: bookMetadata.koboId,
 } as const;
 
 export type ScorePage = {

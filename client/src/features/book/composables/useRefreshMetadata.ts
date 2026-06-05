@@ -25,6 +25,7 @@ export interface MetadataRefreshPreview {
   openLibraryId?: string | null
   itunesId?: string | null
   audibleId?: string | null
+  koboId?: string | null
   comicvineId?: string | null
   ranobedbId?: string | null
   audioMetadata?: {
