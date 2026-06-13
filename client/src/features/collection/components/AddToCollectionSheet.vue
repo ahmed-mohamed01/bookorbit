@@ -59,6 +59,21 @@ function partialCount(collection: Collection): number {
   return membershipCount(collection)
 }
 
+function justAdded(collection: Collection): boolean {
+  return changedCollectionIds.value.has(collection.id) && isFullyAdded(collection)
+}
+
+function membershipLabel(collection: Collection): string {
+  const total = props.bookIds.length
+  if (isFullyAdded(collection)) {
+    if (justAdded(collection)) return total === 1 ? 'Added' : `All ${total} added`
+    return total === 1 ? 'In this collection' : `All ${total} in this collection`
+  }
+  const partial = partialCount(collection)
+  if (partial > 0) return `${partial} of ${total} in this collection`
+  return `${collection.bookCount} book${collection.bookCount === 1 ? '' : 's'}`
+}
+
 function markCollectionChanged(collectionId: number): void {
   changedCollectionIds.value = new Set([...changedCollectionIds.value, collectionId])
 }
@@ -205,10 +220,8 @@ function handleFocusOut(e: FocusEvent) {
             >
               <div class="flex flex-col min-w-0">
                 <span class="text-sm font-medium text-foreground truncate">{{ collection.name }}</span>
-                <span class="text-xs text-muted-foreground">
-                  <template v-if="isFullyAdded(collection)">All {{ bookIds.length }} already here</template>
-                  <template v-else-if="partialCount(collection) > 0"> {{ partialCount(collection) }} of {{ bookIds.length }} already here </template>
-                  <template v-else>{{ collection.bookCount }} book{{ collection.bookCount === 1 ? '' : 's' }}</template>
+                <span class="text-xs" :class="justAdded(collection) ? 'text-primary font-medium' : 'text-muted-foreground'">
+                  {{ membershipLabel(collection) }}
                 </span>
               </div>
               <Loader2 v-if="mutatingCollectionId === collection.id" :size="18" class="animate-spin text-muted-foreground shrink-0" />
