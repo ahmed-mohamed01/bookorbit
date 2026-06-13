@@ -136,7 +136,7 @@ const {
 })
 const { onLibraryUploadCompleted } = useLibraryUploadEvents()
 const { setBookContext } = useBookNavigation()
-useBookViewContext(books, total, loadMorePrefix)
+useBookViewContext(slots, total, loadMorePrefix)
 
 const FILTER_STORAGE_PREFIX = 'bookorbit:filter:library:'
 function getFilterKey(id: number) {

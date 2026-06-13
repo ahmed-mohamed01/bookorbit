@@ -108,7 +108,7 @@ const {
 const { sortModel: tableSortModel } = useViewSort(tableSort, 'collection', collectionId)
 const collectionLoadError = computed(() => collectionsError.value ?? booksError.value)
 const { setBookContext } = useBookNavigation()
-useBookViewContext(books, total, loadMorePrefix)
+useBookViewContext(slots, total, loadMorePrefix)
 
 function handleSaveCurrentView(name: string) {
   if (!tableRef.value) return

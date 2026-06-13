@@ -96,7 +96,7 @@ const {
   q: debouncedQuery,
 })
 const { setBookContext } = useBookNavigation()
-useBookViewContext(books, total, loadMorePrefix)
+useBookViewContext(slots, total, loadMorePrefix)
 const { smartScopes, loaded: smartScopesLoaded, error: smartScopesError, fetchSmartScopes, deleteSmartScope } = useSmartScopes()
 const smartScopeNotFound = ref(false)
 const smartScopeLoadError = computed(() => smartScopesError.value ?? booksError.value)

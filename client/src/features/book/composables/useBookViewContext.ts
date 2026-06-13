@@ -1,17 +1,14 @@
 import { onMounted, watch, type Ref } from 'vue'
-import type { BookCard } from '@bookorbit/types'
 import { useBookNavigation } from './useBookNavigation'
+import type { BookSlot } from './useBookWindow'
 
-export function useBookViewContext(books: Ref<BookCard[]>, total: Ref<number>, loadMore: () => Promise<unknown> | unknown) {
-  const { setBookContext, registerLoadMore } = useBookNavigation()
+export function useBookViewContext(slots: Ref<BookSlot[]>, total: Ref<number>, loadMore: () => Promise<unknown> | unknown) {
+  const { setBookSlotContext, registerLoadMore } = useBookNavigation()
   const syncBookContext = () => {
-    setBookContext(
-      books.value.map((book) => book.id),
-      total.value,
-    )
+    setBookSlotContext(slots.value, total.value)
   }
 
-  watch([books, total], () => syncBookContext(), { immediate: true })
+  watch([slots, total], () => syncBookContext(), { immediate: true })
 
   onMounted(() => {
     registerLoadMore(async () => {

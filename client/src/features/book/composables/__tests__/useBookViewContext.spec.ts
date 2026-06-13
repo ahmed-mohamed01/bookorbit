@@ -4,6 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { BookCard } from '@bookorbit/types'
 import { useBookNavigation } from '../useBookNavigation'
 import { useBookViewContext } from '../useBookViewContext'
+import type { BookPlaceholder, BookSlot } from '../useBookWindow'
+
+function placeholder(id: number): BookPlaceholder {
+  return { id, placeholder: true }
+}
 
 function makeBook(id: number): BookCard {
   return {
@@ -65,5 +70,37 @@ describe('useBookViewContext', () => {
 
     expect(loadMore).toHaveBeenCalledTimes(1)
     expect(nextId).toBe(3)
+  })
+
+  it('reports the absolute slot index after a jump rail loads a far block', async () => {
+    const nav = useBookNavigation()
+    // First block (rows 0-1) plus a far block (rows 5000-5001) loaded; the
+    // rows in between are still placeholders, as after a jump to "Z".
+    const slots = ref<BookSlot[]>([
+      makeBook(1),
+      makeBook(2),
+      ...Array.from({ length: 4998 }, (_, i) => placeholder(-(i + 1))),
+      makeBook(5001),
+      makeBook(5002),
+    ])
+    const total = ref(5002)
+    const loadMore = vi.fn(async () => {})
+
+    const Harness = defineComponent({
+      setup() {
+        useBookViewContext(slots, total, loadMore)
+        return {}
+      },
+      template: '<div />',
+    })
+
+    const wrapper = mount(Harness)
+
+    expect(nav.currentIndex(5001)).toBe(5000)
+    expect(nav.currentIndex(5002)).toBe(5001)
+    expect(nav.currentIndex(1)).toBe(0)
+    expect(nav.total.value).toBe(5002)
+
+    wrapper.unmount()
   })
 })
