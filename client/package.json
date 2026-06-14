@@ -21,6 +21,7 @@
     "test:unit": "vitest",
     "test:cov": "vitest --coverage",
     "build-only": "vite build",
+    "pretype-check": "pnpm --filter @bookorbit/types build",
     "type-check": "vue-tsc --build",
     "lint": "pnpm run lint:check",
     "lint:check": "run-s lint:oxlint:check lint:eslint:check",

@@ -68,11 +68,11 @@ describe('useMetadataEditor', () => {
 
     const { load, save } = useMetadataEditor()
     load(book)
-    await save(book.id)
+    await save(book.id, [])
 
     const [, req] = apiMock.mock.calls[0] as [string, RequestInit]
-    const payload = JSON.parse(String(req.body)) as Record<string, unknown>
-    expect(payload.audioMetadata).toBeUndefined()
+    const { metadata } = JSON.parse(String(req.body)) as { metadata: Record<string, unknown> }
+    expect(metadata.audioMetadata).toBeUndefined()
   })
 
   it('includes audioMetadata when book has audio files', async () => {
@@ -101,13 +101,13 @@ describe('useMetadataEditor', () => {
     const { form, load, save } = useMetadataEditor()
     load(book)
     form.narrators = ['Narrator Two']
-    await save(book.id)
+    await save(book.id, [])
 
     const [, req] = apiMock.mock.calls[0] as [string, RequestInit]
     const payload = JSON.parse(String(req.body)) as {
-      audioMetadata?: { narrators?: string[]; durationSeconds?: number | null; abridged?: boolean }
+      metadata: { audioMetadata?: { narrators?: string[]; durationSeconds?: number | null; abridged?: boolean } }
     }
-    expect(payload.audioMetadata).toEqual({
+    expect(payload.metadata.audioMetadata).toEqual({
       narrators: ['Narrator Two'],
     })
   })
@@ -119,13 +119,14 @@ describe('useMetadataEditor', () => {
     const { form, load, save } = useMetadataEditor()
     load(book)
     form.publisher = 'Updated Publisher'
-    await save(book.id)
+    await save(book.id, [])
 
     const [url, req] = apiMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('/api/v1/books/1/metadata?syncFileWrite=true')
+    expect(url).toBe('/api/v1/books/1/metadata-and-locks?syncFileWrite=true')
     const payload = JSON.parse(String(req.body)) as Record<string, unknown>
     expect(payload).toEqual({
-      publisher: 'Updated Publisher',
+      metadata: { publisher: 'Updated Publisher' },
+      lockedFields: [],
     })
   })
 
@@ -143,7 +144,7 @@ describe('useMetadataEditor', () => {
     const { form, load, save } = useMetadataEditor()
     load(book)
     form.title = 'Updated Title'
-    const result = await save(book.id)
+    const result = await save(book.id, [])
 
     expect(result).toEqual({
       book: { ...book, title: 'Updated Title' },
@@ -159,7 +160,7 @@ describe('useMetadataEditor', () => {
     const { form, load, save } = useMetadataEditor()
     load(book)
     form.goodreadsId = 'manual-goodreads-id'
-    await save(book.id, { saveLocks: true, lockedFields: ['goodreadsId'] })
+    await save(book.id, ['goodreadsId'])
 
     const [url, req] = apiMock.mock.calls[0] as [string, RequestInit]
     expect(url).toBe('/api/v1/books/1/metadata-and-locks?syncFileWrite=true')
@@ -178,11 +179,12 @@ describe('useMetadataEditor', () => {
     expect(form.koboId).toBe('old-kobo-id')
 
     form.koboId = 'new-kobo-id'
-    await save(book.id)
+    await save(book.id, [])
 
     const [, req] = apiMock.mock.calls[0] as [string, RequestInit]
     expect(JSON.parse(String(req.body))).toEqual({
-      koboId: 'new-kobo-id',
+      metadata: { koboId: 'new-kobo-id' },
+      lockedFields: [],
     })
   })
 
@@ -192,7 +194,7 @@ describe('useMetadataEditor', () => {
 
     const { load, save } = useMetadataEditor()
     load(book)
-    await save(book.id, { saveLocks: true, lockedFields: ['title'] })
+    await save(book.id, ['title'])
 
     const [url, req] = apiMock.mock.calls[0] as [string, RequestInit]
     expect(url).toBe('/api/v1/books/1/metadata-and-locks')

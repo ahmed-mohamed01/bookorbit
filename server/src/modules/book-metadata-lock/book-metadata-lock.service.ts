@@ -116,17 +116,6 @@ export class BookMetadataLockService {
     await this.assertFieldsUnlocked(bookId, this.getFieldsTargetedByBookUpdate(dto));
   }
 
-  async assertManualUpdateAllowedForLockTransition(bookId: number, dto: UpdateBookMetadataDto, nextLockedFields: readonly string[]): Promise<void> {
-    const currentlyLocked = new Set(await this.getLockedFields(bookId));
-    const nextLocked = new Set(this.normalizeLockedFields(nextLockedFields));
-    const lockedBeforeAndAfter = [...currentlyLocked].filter((field) => nextLocked.has(field));
-    const targetedFields = this.getFieldsTargetedByBookUpdate(dto);
-    const blockedFields = targetedFields.filter((field) => lockedBeforeAndAfter.includes(field));
-    if (blockedFields.length === 0) return;
-
-    throw new ConflictException(`Metadata fields are locked: ${blockedFields.join(', ')}`);
-  }
-
   async filterAutomatedBookUpdate(
     bookId: number,
     dto: UpdateBookMetadataDto,

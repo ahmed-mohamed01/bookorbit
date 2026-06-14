@@ -1376,7 +1376,10 @@ export class BookService {
     );
     try {
       await this.verifyBookAccess(id, user);
-      await this.bookMetadataLockService.assertManualUpdateAllowedForLockTransition(id, metadata, dto.lockedFields);
+      // No lock guard here: this endpoint sets metadata and locks together from one explicit manual
+      // request, so a field carried in the payload is always an intentional edit (the editor disables
+      // locked inputs). Guarding on the final lock state would reject the legitimate unlock -> edit ->
+      // re-lock flow (issue #328). Automated writes are filtered separately via filterAutomatedBookUpdate.
       const { detail, scalarFieldCount, normalizedLockedFields, write, libraryAutoWriteEnabled } = await this.persistMetadataUpdate(
         id,
         metadata,

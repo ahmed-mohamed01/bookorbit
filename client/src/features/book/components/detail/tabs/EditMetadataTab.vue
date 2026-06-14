@@ -211,12 +211,12 @@ async function submit() {
     const ok = await coverPanel.value.confirm()
     if (ok) emit('coverChanged', 'custom')
   }
-  const shouldSaveLocks = locksDirty.value
-  const result = await save(props.book.id, { saveLocks: shouldSaveLocks, lockedFields: lockedFields.value })
+  const locksChanged = locksDirty.value
+  const result = await save(props.book.id, lockedFields.value)
   if (result) {
     markLocksPersisted(result.book.lockedFields)
     emit('saved', result.book)
-    if (shouldSaveLocks) emit('locksChanged', result.book.lockedFields)
+    if (locksChanged) emit('locksChanged', result.book.lockedFields)
     showSaveResultToast(result.write, result.libraryAutoWriteEnabled)
   }
 }

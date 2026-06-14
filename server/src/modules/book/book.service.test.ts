@@ -15,6 +15,7 @@ import { UpdateBookMetadataDto } from './dto/update-book-metadata.dto';
 import { BulkEditFieldsDto } from './dto/bulk-edit-metadata.dto';
 import { BookQueryBuilder } from './book-query-builder.service';
 import { BookService } from './book.service';
+import { BookMetadataLockService } from '../book-metadata-lock/book-metadata-lock.service';
 import { EMPTY_CONTENT_FILTER_RULES } from '@bookorbit/types';
 
 vi.mock('fs/promises', async () => {
@@ -103,7 +104,7 @@ function makeMetadataFetchDiagnostics(overrides: Partial<MetadataFetchDiagnostic
   };
 }
 
-function makeService() {
+function makeService(overrides: { bookMetadataLockService?: unknown } = {}) {
   const bookRepo = {
     findCards: vi.fn(),
     countWhere: vi.fn(),
@@ -202,7 +203,6 @@ function makeService() {
     normalizeLockedFields: vi.fn().mockImplementation((fields: string[] | null | undefined) => fields ?? []),
     isFieldLocked: vi.fn().mockResolvedValue(false),
     assertManualUpdateAllowed: vi.fn().mockResolvedValue(undefined),
-    assertManualUpdateAllowedForLockTransition: vi.fn().mockResolvedValue(undefined),
     filterResolvedMetadata: vi.fn().mockImplementation((_bookId: number, resolved: unknown, providerIds: unknown) =>
       Promise.resolve({
         resolved,
@@ -244,7 +244,7 @@ function makeService() {
     userBookStatusService as never,
     narratorService as never,
     comicMetadataService as never,
-    bookMetadataLockService as never,
+    (overrides.bookMetadataLockService ?? bookMetadataLockService) as never,
     embedder as never,
     fileWriteService as never,
     fileRenameService as never,
@@ -1293,9 +1293,6 @@ describe('BookService', () => {
         user,
       );
 
-      expect(bookMetadataLockService.assertManualUpdateAllowedForLockTransition).toHaveBeenCalledWith(5, { goodreadsId: 'manual-goodreads-id' }, [
-        'goodreadsId',
-      ]);
       expect(bookRepo.updateMetadataFields).toHaveBeenCalledWith(
         5,
         expect.objectContaining({
@@ -1308,26 +1305,27 @@ describe('BookService', () => {
       expect(result).toEqual({ book: { id: 5, lockedFields: ['goodreadsId'] }, write: null, libraryAutoWriteEnabled: false });
     });
 
-    it('updateMetadataAndLocks rejects fields locked before and after without opening a transaction', async () => {
-      const { service, bookRepo, bookMetadataLockService } = makeService();
+    // Regression for issue #328: a field that is locked BOTH before and after the request must still be
+    // written (the unlock -> edit -> re-lock flow). Uses the real lock service so a reintroduced guard fails.
+    it('updateMetadataAndLocks writes a field that stays locked across the request', async () => {
+      const lockRepo = {
+        findLockedFields: vi.fn().mockResolvedValue(['title']),
+        findLockedFieldsByBookIds: vi.fn().mockResolvedValue(new Map()),
+        replaceLockedFields: vi.fn().mockResolvedValue(undefined),
+      };
+      const lockService = new BookMetadataLockService(lockRepo as never);
+      const { service, bookRepo } = makeService({ bookMetadataLockService: lockService });
       const user = makeUser();
-      const error = new ConflictException('Metadata fields are locked: title');
+      const tx = { id: 'tx-328' };
       vi.spyOn(service, 'verifyBookAccess').mockResolvedValue(undefined);
-      bookMetadataLockService.assertManualUpdateAllowedForLockTransition.mockRejectedValue(error);
+      vi.spyOn(service, 'getDetail').mockResolvedValue({ id: 5, lockedFields: ['title'] } as never);
+      bookRepo.withTransaction.mockImplementation(async (callback: (value: unknown) => Promise<unknown>) => callback(tx));
 
-      await expect(
-        service.updateMetadataAndLocks(
-          5,
-          {
-            metadata: { title: 'Blocked Title' },
-            lockedFields: ['title'],
-          },
-          user,
-        ),
-      ).rejects.toThrow(error);
+      const result = await service.updateMetadataAndLocks(5, { metadata: { title: 'New Title' }, lockedFields: ['title'] }, user);
 
-      expect(bookRepo.withTransaction).not.toHaveBeenCalled();
-      expect(bookMetadataLockService.replaceLockedFields).not.toHaveBeenCalled();
+      expect(bookRepo.updateMetadataFields).toHaveBeenCalledWith(5, expect.objectContaining({ title: 'New Title', updatedAt: expect.any(Date) }), tx);
+      expect(lockRepo.replaceLockedFields).toHaveBeenCalledWith(5, ['title'], tx);
+      expect(result.book).toEqual({ id: 5, lockedFields: ['title'] });
     });
 
     it('updateMetadataAndLocks can persist locks without scheduling metadata side effects', async () => {
