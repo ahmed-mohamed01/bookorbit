@@ -1,6 +1,6 @@
 import { MetadataProviderKey } from '@bookorbit/types';
 
-import { mapGoodreadsApolloState } from './goodreads.mapper';
+import { mapGoodreadsApolloState, mapGoodreadsAutocompleteItem } from './goodreads.mapper';
 
 describe('GoodreadsMapper', () => {
   it('should map a complete Goodreads apollo state correctly', () => {
@@ -161,6 +161,59 @@ describe('GoodreadsMapper', () => {
       isbn13: '9780060935467',
       genres: ['Classics'],
       coverUrl: 'https://images.gr-assets.com/books/2657.jpg',
+    });
+  });
+
+  describe('mapGoodreadsAutocompleteItem', () => {
+    it('maps a full autocomplete item, splitting subtitle and parsing series from the title', () => {
+      const result = mapGoodreadsAutocompleteItem(
+        {
+          bookId: '68428',
+          title: 'Mistborn: The Final Empire (Mistborn, #1)',
+          bookTitleBare: 'Mistborn: The Final Empire',
+          author: { name: 'Brandon Sanderson' },
+          numPages: 541,
+          imageUrl: 'https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1617768316i/68428._SY75_.jpg',
+          description: { html: 'For a thousand years the ash fell &amp; no flowers bloomed.<br/><br/>Once, a hero rose…', truncated: true },
+        },
+        '68428',
+      );
+
+      expect(result).toEqual({
+        provider: MetadataProviderKey.GOODREADS,
+        providerId: '68428',
+        title: 'Mistborn',
+        subtitle: 'The Final Empire',
+        authors: ['Brandon Sanderson'],
+        description: 'For a thousand years the ash fell & no flowers bloomed.\n\nOnce, a hero rose…',
+        pageCount: 541,
+        coverUrl: 'https://i.gr-assets.com/images/S/compressed.photo.goodreads.com/books/1617768316i/68428.jpg',
+        sourceUrl: 'https://www.goodreads.com/book/show/68428',
+        seriesName: 'Mistborn',
+        seriesIndex: 1,
+      });
+    });
+
+    it('derives the bookId from bookUrl and accepts a string author', () => {
+      const result = mapGoodreadsAutocompleteItem(
+        { bookUrl: '/book/show/54493401-project-hail-mary', title: 'Project Hail Mary', author: 'Andy Weir', numPages: 476 },
+        '54493401',
+      );
+
+      expect(result).toMatchObject({ title: 'Project Hail Mary', authors: ['Andy Weir'], pageCount: 476 });
+      expect(result?.subtitle).toBeUndefined();
+      expect(result?.seriesName).toBeUndefined();
+      expect(result?.seriesIndex).toBeUndefined();
+    });
+
+    it('returns null when the item has no usable title', () => {
+      expect(mapGoodreadsAutocompleteItem({ bookId: '1', numPages: 10 }, '1')).toBeNull();
+    });
+
+    it('ignores a zero page count and a missing cover', () => {
+      const result = mapGoodreadsAutocompleteItem({ bookTitleBare: 'Untitled', numPages: 0 }, '7');
+      expect(result?.pageCount).toBeUndefined();
+      expect(result?.coverUrl).toBeUndefined();
     });
   });
 

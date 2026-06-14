@@ -302,6 +302,58 @@ describe('GoodreadsProvider', () => {
       expect(bookFetchUrls[0]).toBe('https://www.goodreads.com/book/show/44767458');
       expect(result[0].title).toBe('Dune');
     });
+
+    it('keeps fetching detail pages after one loads but fails to parse', async () => {
+      vi.useFakeTimers();
+      const autocomplete = [
+        { bookId: '1', bookUrl: '/book/show/1.B1', title: 'B1', bookTitleBare: 'B1' },
+        { bookId: '2', bookUrl: '/book/show/2.B2', title: 'B2', bookTitleBare: 'B2' },
+      ];
+
+      global.fetch = vi.fn((input: Parameters<typeof fetch>[0]) => {
+        const url = fetchUrl(input);
+        if (url.includes('/auto_complete')) return Promise.resolve({ ok: true, json: () => Promise.resolve(autocomplete) });
+        if (url.includes('/book/show/1')) return Promise.resolve({ ok: true, text: () => Promise.resolve('<html>no data</html>') });
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(goodreadsBookHtml('2', 'B2 From Detail')) });
+      }) as never;
+
+      const searchPromise = provider.search({ title: 'B' });
+      await vi.runAllTimersAsync();
+      const result = await searchPromise;
+
+      const detailUrls = vi
+        .mocked(global.fetch)
+        .mock.calls.map(([url]) => fetchUrl(url))
+        .filter((url) => url.includes('/book/show/'));
+      expect(detailUrls).toContain('https://www.goodreads.com/book/show/2');
+      expect(result.find((c) => c.providerId === '2')?.title).toBe('B2 From Detail');
+      expect(result.find((c) => c.providerId === '1')?.title).toBe('B1');
+    });
+
+    it('stops fetching detail pages once one is WAF-blocked and falls back to autocomplete', async () => {
+      vi.useFakeTimers();
+      const autocomplete = [
+        { bookId: '1', bookUrl: '/book/show/1.B1', title: 'B1', bookTitleBare: 'B1' },
+        { bookId: '2', bookUrl: '/book/show/2.B2', title: 'B2', bookTitleBare: 'B2' },
+      ];
+
+      global.fetch = vi.fn((input: Parameters<typeof fetch>[0]) => {
+        const url = fetchUrl(input);
+        if (url.includes('/auto_complete')) return Promise.resolve({ ok: true, json: () => Promise.resolve(autocomplete) });
+        return Promise.resolve({ ok: true, status: 202, text: () => Promise.resolve('<div id="challenge-container"></div>') });
+      }) as never;
+
+      const searchPromise = provider.search({ title: 'B' });
+      await vi.runAllTimersAsync();
+      const result = await searchPromise;
+
+      const detailUrls = vi
+        .mocked(global.fetch)
+        .mock.calls.map(([url]) => fetchUrl(url))
+        .filter((url) => url.includes('/book/show/'));
+      expect(detailUrls).toEqual(['https://www.goodreads.com/book/show/1']);
+      expect(result.map((c) => c.title)).toEqual(['B1', 'B2']);
+    });
   });
 
   describe('lookupById', () => {
