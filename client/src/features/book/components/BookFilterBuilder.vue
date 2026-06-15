@@ -32,6 +32,7 @@ const NO_VALUE_OPERATORS: RuleOperator[] = [
   'isFinished',
   'isLocked',
   'isUnlocked',
+  'isUpNext',
 ]
 const BETWEEN_OPERATORS: RuleOperator[] = ['between']
 const COLLECTION_OPERATORS: RuleOperator[] = ['includesAny', 'includesAll', 'excludesAll']

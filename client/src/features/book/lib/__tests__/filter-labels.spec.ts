@@ -13,6 +13,16 @@ describe('lock status labels', () => {
   })
 })
 
+describe('series status labels', () => {
+  it('exposes a Series Status field label', () => {
+    expect(FIELD_LABELS.seriesStatus).toBe('Series Status')
+  })
+
+  it('exposes an is up next operator label', () => {
+    expect(OPERATOR_LABELS.isUpNext).toBe('is up next')
+  })
+})
+
 describe('ruleToParts', () => {
   it('renders a locked rule with no value', () => {
     const rule: Rule = { type: 'rule', field: 'lockStatus', operator: 'isLocked' }
@@ -22,6 +32,11 @@ describe('ruleToParts', () => {
   it('renders an unlocked rule with no value', () => {
     const rule: Rule = { type: 'rule', field: 'lockStatus', operator: 'isUnlocked' }
     expect(ruleToParts(rule)).toEqual({ field: 'Lock Status', operator: 'is unlocked', value: null })
+  })
+
+  it('renders an up-next rule with no value', () => {
+    const rule: Rule = { type: 'rule', field: 'seriesStatus', operator: 'isUpNext' }
+    expect(ruleToParts(rule)).toEqual({ field: 'Series Status', operator: 'is up next', value: null })
   })
 
   it('renders withinLast rules with a days suffix', () => {

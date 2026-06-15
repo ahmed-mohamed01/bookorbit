@@ -15,6 +15,7 @@
  * - `format` - resolved via `book_files.format` (primary file)
  * - `isbn` - matches both `isbn10` and `isbn13` in `book_metadata`
  * - `lockStatus` - derived from `book_metadata.locked_fields` (non-empty array = locked)
+ * - `seriesStatus` - computed per-user: "up next in series" (next unstarted book whose earlier series entries are all finished)
  */
 export type RuleField =
   | "title"
@@ -41,7 +42,8 @@ export type RuleField =
   | "isbn"
   | "metadataScore"
   | "cover"
-  | "lockStatus";
+  | "lockStatus"
+  | "seriesStatus";
 
 export type RuleOperator =
   | "contains"
@@ -69,7 +71,8 @@ export type RuleOperator =
   | "isInProgress"
   | "isFinished"
   | "isLocked"
-  | "isUnlocked";
+  | "isUnlocked"
+  | "isUpNext";
 
 export const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
   title: ["contains", "notContains", "startsWith", "endsWith", "eq", "notEq", "isEmpty", "isNotEmpty"],
@@ -97,6 +100,7 @@ export const FIELD_OPERATORS: Record<RuleField, RuleOperator[]> = {
   metadataScore: ["gt", "gte", "lt", "lte", "between", "isEmpty", "isNotEmpty"],
   cover: ["isMissing", "isPresent"],
   lockStatus: ["isLocked", "isUnlocked"],
+  seriesStatus: ["isUpNext"],
 };
 
 export const RULE_FIELDS = Object.keys(FIELD_OPERATORS) as RuleField[];
@@ -128,6 +132,7 @@ export const RULE_OPERATORS: RuleOperator[] = [
   "isFinished",
   "isLocked",
   "isUnlocked",
+  "isUpNext",
 ];
 
 export type Rule = {
