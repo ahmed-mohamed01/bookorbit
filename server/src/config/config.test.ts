@@ -43,6 +43,8 @@ describe('config', () => {
       nodeEnv: 'development',
       appUrl: 'http://localhost:5173',
       version: 'Local build',
+      githubReleasesRepo: 'bookorbit/bookorbit',
+      githubReleasesToken: undefined,
       oidcAllowLocalIssuers: false,
       koboCloudscraperPython: undefined,
     });
@@ -54,11 +56,15 @@ describe('config', () => {
     process.env.APP_VERSION = 'v2.3.4';
     process.env.OIDC_ALLOW_LOCAL_ISSUERS = 'true';
     process.env.KOBO_CLOUDSCRAPER_PYTHON = '/opt/bookorbit-python/bin/python';
+    process.env.GITHUB_RELEASES_REPO = 'acme/app';
+    process.env.GITHUB_RELEASES_TOKEN = 'ghp_example';
 
     expect(appConfig()).toEqual({
       nodeEnv: 'production',
       appUrl: 'https://bookorbit.local',
       version: 'v2.3.4',
+      githubReleasesRepo: 'acme/app',
+      githubReleasesToken: 'ghp_example',
       oidcAllowLocalIssuers: true,
       koboCloudscraperPython: '/opt/bookorbit-python/bin/python',
     });

@@ -33,6 +33,7 @@ export * from "./user-statistics";
 export * from "./migration";
 export * from "./notification";
 export * from "./app-info";
+export * from "./release-notes";
 export * from "./series";
 export * from "./table-layout";
 export * from "./series-collapse";

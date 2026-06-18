@@ -17,6 +17,7 @@ import {
   THEME_IDS,
   type DisplayPreferences,
   type ThemePreferences,
+  type WhatsNewPreferences,
 } from '@bookorbit/types';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
@@ -70,11 +71,59 @@ const DISPLAY_PREFERENCES_SCHEMA = z
     }
   });
 
+const WHATS_NEW_PREFERENCES_SCHEMA = z
+  .object({
+    lastSeenVersion: z.string().min(1).max(50).optional(),
+    popupEnabled: z.boolean().optional(),
+  })
+  .strict();
+
+const WHATS_NEW_DEFAULTS: WhatsNewPreferences = { lastSeenVersion: null, popupEnabled: true };
+
 @Injectable()
 export class UserPreferencesService {
   private readonly logger = new Logger(UserPreferencesService.name);
 
   constructor(private readonly repo: UserPreferencesRepository) {}
+
+  async getWhatsNewPreferences(userId: number): Promise<WhatsNewPreferences> {
+    const row = await this.repo.findByCategory(userId, 'whats-new');
+    if (!row) return { ...WHATS_NEW_DEFAULTS };
+    const stored = row.data as Partial<WhatsNewPreferences>;
+    return {
+      lastSeenVersion: stored.lastSeenVersion ?? null,
+      popupEnabled: stored.popupEnabled ?? true,
+    };
+  }
+
+  async upsertWhatsNewPreferences(userId: number, data: Record<string, unknown>): Promise<void> {
+    const start = Date.now();
+    this.logger.log(`[user_preferences.upsert_whats_new] [start] userId=${userId} - upsert whats-new preferences started`);
+
+    const result = WHATS_NEW_PREFERENCES_SCHEMA.safeParse(data);
+    if (!result.success) {
+      const firstIssue = result.error.issues[0];
+      const issuePath = firstIssue?.path.length ? firstIssue.path.join('.') : 'settings';
+      const issueMessage = firstIssue?.message ?? 'Invalid settings payload';
+      throw new BadRequestException(`Invalid whats-new preferences at "${issuePath}": ${issueMessage}`);
+    }
+
+    try {
+      const existing = await this.getWhatsNewPreferences(userId);
+      const merged: WhatsNewPreferences = { ...existing, ...result.data };
+      await this.repo.upsert(userId, 'whats-new', { ...merged });
+      const durationMs = Date.now() - start;
+      this.logger.log(`[user_preferences.upsert_whats_new] [end] userId=${userId} durationMs=${durationMs} - upsert whats-new preferences completed`);
+    } catch (err) {
+      const durationMs = Date.now() - start;
+      const errorClass = err instanceof Error ? err.constructor.name : 'UnknownError';
+      const error = sanitizeLogValue(err instanceof Error ? err.message : String(err));
+      this.logger.error(
+        `[user_preferences.upsert_whats_new] [fail] userId=${userId} durationMs=${durationMs} errorClass=${errorClass} error="${error}" - upsert whats-new preferences failed`,
+      );
+      throw err;
+    }
+  }
 
   async getThemePreferences(userId: number): Promise<ThemePreferences | null> {
     const row = await this.repo.findByCategory(userId, 'theme');

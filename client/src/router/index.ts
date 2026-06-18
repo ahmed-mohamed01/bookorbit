@@ -233,6 +233,12 @@ export const routes: RouteRecordRaw[] = [
         meta: { title: 'Book Dock' },
       },
       {
+        path: '/whats-new',
+        name: 'whats-new',
+        component: () => import('@/features/whats-new/WhatsNewView.vue'),
+        meta: { title: "What's New" },
+      },
+      {
         path: '/statistics',
         name: 'statistics',
         component: () => import('@/features/statistics/components/StatisticsPage.vue'),

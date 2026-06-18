@@ -114,6 +114,12 @@ The workflow will:
 
 If all commits since the last release are non-releasable types (`chore`, `docs`, `test`, `build`, `ci`, `refactor`), semantic-release will skip the release. The Docker publish job will also be skipped.
 
+### Authoring the "What's New" highlights
+
+semantic-release creates the GitHub release as a **draft** with a `## Highlights` scaffold (added by `release.config.js`) that lists this release's `feat` commits as candidate highlights. Open the draft, curate those candidates into user-facing highlight bullets (with optional icons and dragged-in media), validate with `cd server && pnpm whats-new:check <tag>`, then click **Publish release**. The highlights power the in-app "What's New" popup and the `/whats-new` archive; the draft stays hidden in the app until you publish (even though the `:latest` Docker image is pushed beforehand).
+
+Full step-by-step walkthrough, format reference, and pre-publish checklist: [docs/whats-new-authoring-guide.md](whats-new-authoring-guide.md).
+
 ---
 
 ## Docker Image Publishing

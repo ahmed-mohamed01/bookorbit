@@ -32,4 +32,16 @@ export class UserPreferencesController {
   async upsertDisplayPreferences(@Body() dto: UpsertUserPreferenceDto, @CurrentUser() user: RequestUser) {
     await this.userPreferencesService.upsertDisplayPreferences(user.id, dto.settings);
   }
+
+  @Get('whats-new')
+  async getWhatsNewPreferences(@CurrentUser() user: RequestUser) {
+    const settings = await this.userPreferencesService.getWhatsNewPreferences(user.id);
+    return { settings };
+  }
+
+  @Put('whats-new')
+  @HttpCode(204)
+  async upsertWhatsNewPreferences(@Body() dto: UpsertUserPreferenceDto, @CurrentUser() user: RequestUser) {
+    await this.userPreferencesService.upsertWhatsNewPreferences(user.id, dto.settings);
+  }
 }

@@ -63,6 +63,14 @@ const envSchema = z.object({
     .string()
     .transform((val) => val.trim())
     .optional(),
+  GITHUB_RELEASES_REPO: z
+    .string()
+    .transform((val) => val.trim())
+    .optional(),
+  GITHUB_RELEASES_TOKEN: z
+    .string()
+    .transform((val) => val.trim())
+    .optional(),
 });
 
 export function validateEnv(config: Record<string, unknown>) {

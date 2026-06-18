@@ -17,6 +17,7 @@ import {
   BadgeQuestionMark,
   Star,
   ExternalLink,
+  Sparkles,
 } from 'lucide-vue-next'
 import { useRouter, useRoute } from 'vue-router'
 import { toast } from 'vue-sonner'
@@ -50,6 +51,7 @@ import { useLibraryUploadEvents } from '@/features/library/composables/useLibrar
 import { useBookDockSummary } from '@/features/book-dock/composables/useBookDockSummary'
 import NotificationSheet from '@/features/notifications/components/NotificationSheet.vue'
 import { useNotifications } from '@/features/notifications/composables/useNotifications'
+import { useWhatsNew } from '@/features/whats-new/composables/useWhatsNew'
 import UserAvatar from '@/components/UserAvatar.vue'
 import { DEFAULT_FORMAT_PRIORITY } from '@bookorbit/types'
 import { useThemeStore } from '@/stores/theme'
@@ -63,6 +65,7 @@ const { hasPermission, isDemoRestrictedAccount } = usePermissions()
 const { onLibraryUploadCompleted } = useLibraryUploadEvents()
 const { summary: bookDockSummary, fetchSummary: fetchBookDockSummary, subscribe: subscribeBookDockSummary } = useBookDockSummary()
 const { subscribe: subscribeNotifications } = useNotifications()
+const { hasUnseen: hasUnseenWhatsNew } = useWhatsNew()
 const themeStore = useThemeStore()
 const documentationUrl = 'https://bookorbit.app/what-is-bookorbit.html'
 const githubRepositoryUrl = 'https://github.com/bookorbit/bookorbit'
@@ -96,6 +99,10 @@ function navigateToAccount() {
 
 function navigateToSettings() {
   router.push({ name: 'settings-libraries' })
+}
+
+function navigateToWhatsNew() {
+  router.push({ name: 'whats-new' })
 }
 
 const uploadOpen = ref(false)
@@ -547,6 +554,21 @@ function formatBadgeStyle(fmt: string) {
               <Settings :size="15" class="mr-2 text-muted-foreground" />
               Settings
             </DropdownMenuItem>
+
+            <DropdownMenuSeparator />
+
+            <DropdownMenuItem @click="navigateToWhatsNew">
+              <Sparkles :size="15" class="mr-2 text-muted-foreground" />
+              What's New
+              <span v-if="hasUnseenWhatsNew" class="ml-auto h-1.5 w-1.5 rounded-full bg-primary" aria-label="New" />
+            </DropdownMenuItem>
+            <DropdownMenuItem as-child>
+              <a :href="documentationUrl" target="_blank" rel="noopener noreferrer">
+                <BadgeQuestionMark :size="15" class="mr-2 text-muted-foreground" />
+                Documentation
+                <ExternalLink :size="12" class="ml-auto text-muted-foreground" />
+              </a>
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -650,23 +672,43 @@ function formatBadgeStyle(fmt: string) {
         <div class="hidden md:block h-4 w-px bg-foreground/20" />
         <div class="hidden md:flex items-center gap-2.5">
           <Tooltip>
-            <TooltipTrigger as-child>
-              <Button
-                as-child
-                data-tour="documentation-link"
-                variant="ghost"
-                size="icon"
-                :class="[
-                  'h-8 w-8 border border-primary/35 text-foreground/70 hover:border-primary/70 hover:text-foreground transition-colors',
-                  iconRadiusClass,
-                ]"
-              >
-                <a :href="documentationUrl" target="_blank" rel="noopener noreferrer">
-                  <BadgeQuestionMark :size="15" />
-                </a>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Documentation</TooltipContent>
+            <DropdownMenu>
+              <TooltipTrigger as-child>
+                <DropdownMenuTrigger as-child>
+                  <Button
+                    data-tour="documentation-link"
+                    variant="ghost"
+                    size="icon"
+                    :class="[
+                      'relative h-8 w-8 border border-primary/35 text-foreground/70 hover:border-primary/70 hover:text-foreground transition-colors',
+                      iconRadiusClass,
+                    ]"
+                  >
+                    <BadgeQuestionMark :size="15" />
+                    <span
+                      v-if="hasUnseenWhatsNew"
+                      class="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background"
+                      aria-label="New release notes available"
+                    />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <DropdownMenuContent align="end" class="w-48">
+                <DropdownMenuItem as-child>
+                  <a :href="documentationUrl" target="_blank" rel="noopener noreferrer">
+                    <BadgeQuestionMark :size="14" class="mr-2 text-muted-foreground" />
+                    Documentation
+                    <ExternalLink :size="12" class="ml-auto text-muted-foreground" />
+                  </a>
+                </DropdownMenuItem>
+                <DropdownMenuItem @click="navigateToWhatsNew">
+                  <Sparkles :size="14" class="mr-2 text-muted-foreground" />
+                  What's New
+                  <span v-if="hasUnseenWhatsNew" class="ml-auto h-1.5 w-1.5 rounded-full bg-primary" aria-label="New" />
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <TooltipContent>Help</TooltipContent>
           </Tooltip>
 
           <Tooltip>

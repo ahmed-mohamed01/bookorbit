@@ -32,6 +32,7 @@ import { useLibraryCreationRedirect } from '@/features/library/composables/useLi
 import { useThemeStore } from '@/stores/theme'
 import { useAppInfo } from '@/features/settings/composables/useAppInfo'
 import { buildSidebarVersionUi } from '@/components/sidebar/versionUi'
+import { useWhatsNew } from '@/features/whats-new/composables/useWhatsNew'
 
 function resolveIcon(name: string | null | undefined, fallback: Component): Component {
   if (name && name in Icons) return (Icons as Record<string, unknown>)[name] as Component
@@ -58,6 +59,7 @@ const { subscribeLibrary, getProgress, progressMap } = useScanProgress()
 const { handleLibraryCreated } = useLibraryCreationRedirect()
 const themeStore = useThemeStore()
 const { version, updateAvailable, latestVersion, loadAppInfo } = useAppInfo()
+const { hasUnseen: hasUnseenWhatsNew } = useWhatsNew()
 
 const iconRadiusClass = computed(() => (themeStore.radius === 'sharp' ? 'rounded-none' : 'rounded-full'))
 const versionUi = computed(() => {
@@ -441,16 +443,10 @@ onUnmounted(() => stopLibraryUploadListener())
     <SidebarFooter v-if="versionUi.currentLabel" class="border-t border-sidebar-border/60">
       <div class="px-2 py-2 group-data-[collapsible=icon]:hidden">
         <div class="flex flex-wrap items-center justify-center gap-2 text-center text-[12px] font-medium leading-none text-sidebar-foreground/80">
-          <a
-            v-if="versionUi.currentHref"
-            :href="versionUi.currentHref"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="transition-colors hover:text-sidebar-foreground"
-          >
+          <RouterLink to="/whats-new" class="inline-flex items-center gap-1.5 transition-colors hover:text-sidebar-foreground">
             {{ versionUi.currentLabel }}
-          </a>
-          <span v-else>{{ versionUi.currentLabel }}</span>
+            <span v-if="hasUnseenWhatsNew" class="h-1.5 w-1.5 rounded-full bg-primary" aria-label="New release notes available" />
+          </RouterLink>
 
           <span v-if="versionUi.showLatest" class="text-sidebar-foreground/45">•</span>
 

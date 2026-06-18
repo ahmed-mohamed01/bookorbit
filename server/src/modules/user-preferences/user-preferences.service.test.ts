@@ -336,4 +336,30 @@ describe('UserPreferencesService', () => {
     await expect(service.upsertDisplayPreferences(11, withoutSecondary as unknown as Record<string, unknown>)).resolves.toBeUndefined();
     expect(repo.upsert).toHaveBeenCalledWith(11, 'display', expect.objectContaining({ gridCardSecondaryLabel: 'hidden' }));
   });
+
+  it('getWhatsNewPreferences returns defaults when repository has no row', async () => {
+    await expect(service.getWhatsNewPreferences(7)).resolves.toEqual({ lastSeenVersion: null, popupEnabled: true });
+    expect(repo.findByCategory).toHaveBeenCalledWith(7, 'whats-new');
+  });
+
+  it('getWhatsNewPreferences fills missing fields with defaults', async () => {
+    repo.findByCategory.mockResolvedValueOnce({ data: { lastSeenVersion: 'v1.2.0' } } as never);
+    await expect(service.getWhatsNewPreferences(7)).resolves.toEqual({ lastSeenVersion: 'v1.2.0', popupEnabled: true });
+  });
+
+  it('upsertWhatsNewPreferences merges a partial update onto existing values', async () => {
+    repo.findByCategory.mockResolvedValueOnce({ data: { lastSeenVersion: 'v1.0.0', popupEnabled: true } } as never);
+    await expect(service.upsertWhatsNewPreferences(11, { popupEnabled: false })).resolves.toBeUndefined();
+    expect(repo.upsert).toHaveBeenCalledWith(11, 'whats-new', { lastSeenVersion: 'v1.0.0', popupEnabled: false });
+  });
+
+  it('upsertWhatsNewPreferences rejects unknown fields', async () => {
+    await expect(service.upsertWhatsNewPreferences(11, { lastSeenVersion: 'v1.0.0', nope: true })).rejects.toBeInstanceOf(BadRequestException);
+    expect(repo.upsert).not.toHaveBeenCalled();
+  });
+
+  it('upsertWhatsNewPreferences rejects a non-boolean popupEnabled', async () => {
+    await expect(service.upsertWhatsNewPreferences(11, { popupEnabled: 'yes' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(repo.upsert).not.toHaveBeenCalled();
+  });
 });

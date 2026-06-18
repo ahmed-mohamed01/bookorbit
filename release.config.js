@@ -51,6 +51,19 @@ const commitPartial = `\
 // strips the warning emoji from breaking-changes headings, and appends a
 // Docker pull block after the commit groups.
 const mainTemplate = [
+  "## Highlights",
+  "",
+  "<!-- Author: write 1 line per user-facing highlight ABOVE this comment, then delete this block.",
+  "     Full guide: docs/whats-new-authoring-guide.md",
+  "     Format:  - **Title** - short user benefit  {icon comment}",
+  "       - Optional icon: end the line with an HTML comment GitHub hides, using a PascalCase",
+  "         lucide.dev name, e.g. BookHeart. Omit it for the default icon. Literal syntax in the guide.",
+  "       - Image/video: drag the file in; leave GitHub's inserted <img> tag or bare URL as-is.",
+  "     Example:  - **Kobo highlight sync** - your highlights now sync both ways.  {icon: BookHeart}",
+  "     Validate before publishing: cd server && pnpm whats-new:check <tag>",
+  "     Leaving this comment in place (no bullets) means no What's New popup for this release.",
+  "{{{highlightCandidatesBlock}}}-->",
+  "",
   "{{#if noteGroups}}",
   "{{#each noteGroups}}",
   "",
@@ -142,15 +155,34 @@ function finalizeContext(ctx) {
           const githubUser = shaToGithubUser.get(commit.hash);
           if (githubUser) commit.githubUser = githubUser;
         }
-        // Pre-compute commit URL — {{commitUrlFormat}} does not resolve inside
+        // Pre-compute commit URL: {{commitUrlFormat}} does not resolve inside
         // Handlebars partials because partials don't walk the parent context chain.
         if (commit.hash && ctx.host && ctx.owner && ctx.repository) {
           commit.commitUrl = `${ctx.host}/${ctx.owner}/${ctx.repository}/commit/${commit.hash}`;
         }
       }
     }
+
+    // Collect this release's feat commits as candidate highlights for the author
+    // to curate. Rendered inside the scaffold's HTML comment (never shown publicly)
+    // as a pre-built string, so the comment never gains an inner "-->".
+    const candidates = [];
+    for (const group of ctx.commitGroups ?? []) {
+      if (group.title !== "Features") continue;
+      for (const commit of group.commits ?? []) {
+        const text = (commit.subject || commit.header || "").trim();
+        if (!text || text.includes("-->")) continue;
+        candidates.push(text.charAt(0).toUpperCase() + text.slice(1));
+        if (candidates.length >= 8) break;
+      }
+    }
+    ctx.highlightCandidatesBlock = candidates.length
+      ? "\n     Candidates from this release (curate the good ones into real bullets above, then delete):\n" +
+        candidates.map((c) => `       - **${c}**`).join("\n") +
+        "\n"
+      : "";
   } catch {
-    // non-fatal: commits render without author attribution
+    // non-fatal: commits render without author attribution / candidates
   }
   return ctx;
 }
@@ -188,6 +220,10 @@ module.exports = {
         },
       },
     ],
-    "@semantic-release/github",
+    // Create the GitHub release as a DRAFT so the maintainer can author the
+    // "## Highlights" section (see docs/whats-new-authoring-guide.md) before it
+    // goes public, then click "Publish release". The git tag and Docker images
+    // are still produced; BookOrbit hides draft releases until they are published.
+    ["@semantic-release/github", { draftRelease: true }],
   ],
 };

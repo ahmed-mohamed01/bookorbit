@@ -7,6 +7,7 @@ import { cancelPendingThemeSync, initThemeSync, loadFromServer } from '@/composa
 import { useSetupStatus } from './useSetupStatus'
 import { disconnectAuthorEnrichmentSocket } from '@/features/settings/composables/useAuthorEnrichmentStatus'
 import { disconnectBookMetadataFetchSocket } from '@/features/book-metadata-fetch/composables/useBookMetadataFetchStatus'
+import { resetWhatsNew } from '@/features/whats-new/composables/useWhatsNew'
 
 const SESSION_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
@@ -52,6 +53,7 @@ function clearAuth() {
   setAccessToken(null)
   disconnectAuthorEnrichmentSocket()
   disconnectBookMetadataFetchSocket()
+  resetWhatsNew()
 }
 
 setOnAuthFailure(() => {

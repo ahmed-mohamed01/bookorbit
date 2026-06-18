@@ -60,6 +60,7 @@ import { EntityManagerModule } from './modules/entity-manager/entity-manager.mod
 import { FontModule } from './modules/font/font.module';
 import { KoreaderModule } from './modules/koreader/koreader.module';
 import { AppInfoModule } from './modules/app-info/app-info.module';
+import { ReleaseNotesModule } from './modules/release-notes/release-notes.module';
 import { AchievementModule } from './modules/achievement/achievement.module';
 import { HardcoverModule } from './modules/hardcover/hardcover.module';
 
@@ -130,6 +131,7 @@ import { HardcoverModule } from './modules/hardcover/hardcover.module';
     FontModule,
     KoreaderModule,
     AppInfoModule,
+    ReleaseNotesModule,
     AchievementModule,
     HardcoverModule,
   ],
