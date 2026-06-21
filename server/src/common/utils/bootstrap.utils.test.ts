@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { request } from 'http';
+import type { AddressInfo } from 'net';
 import {
   parseBooleanEnv,
   parseTrustProxy,
@@ -255,6 +257,7 @@ describe('empty request body bootstrap handling', () => {
     const chunks: Buffer[] = [];
 
     for await (const chunk of stream) {
+      expect(Buffer.isBuffer(chunk)).toBe(true);
       chunks.push(Buffer.from(chunk));
     }
 
@@ -343,6 +346,22 @@ describe('empty request body bootstrap handling', () => {
       expect(response.json()).toEqual({ body: { ok: true } });
     });
   });
+
+  it('feeds injected empty JSON bodies as buffers for Nest-style Fastify parsers', async () => {
+    await withNestBufferParserApp(async (app) => {
+      const response = await requestApp(app, {
+        method: 'POST',
+        path: '/body',
+        headers: {
+          'content-type': 'application/json',
+          'content-length': '0',
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(JSON.parse(response.body)).toEqual({ body: {} });
+    });
+  });
 });
 
 async function withParserApp(run: (app: FastifyInstance) => Promise<void>): Promise<void> {
@@ -356,4 +375,57 @@ async function withParserApp(run: (app: FastifyInstance) => Promise<void>): Prom
   } finally {
     await app.close();
   }
+}
+
+async function withNestBufferParserApp(run: (app: FastifyInstance) => Promise<void>): Promise<void> {
+  const app = Fastify({ logger: false });
+  app.addHook('preParsing', (request, _reply, payload, done) => {
+    if (shouldInjectEmptyJsonBody(request.method, request.headers)) {
+      done(null, buildEmptyJsonBodyStream(request.headers));
+      return;
+    }
+    done(null, payload);
+  });
+  app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (_request, body: Buffer, done) => {
+    done(null, JSON.parse(body.toString('utf8')));
+  });
+  app.post('/body', (request) => ({ body: request.body ?? null }));
+
+  try {
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    await run(app);
+  } finally {
+    await app.close();
+  }
+}
+
+async function requestApp(
+  app: FastifyInstance,
+  options: { method: string; path: string; headers: Record<string, string> },
+): Promise<{ statusCode: number; body: string }> {
+  const address = app.server.address() as AddressInfo;
+
+  return new Promise((resolve, reject) => {
+    const req = request(
+      {
+        method: options.method,
+        host: address.address,
+        port: address.port,
+        path: options.path,
+        headers: options.headers,
+      },
+      (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => {
+          body += chunk;
+        });
+        res.on('end', () => {
+          resolve({ statusCode: res.statusCode ?? 0, body });
+        });
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
 }

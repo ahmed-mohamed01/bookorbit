@@ -213,6 +213,27 @@ describe('KoboSyncController', () => {
     expect(reply.send).not.toHaveBeenCalled();
   });
 
+  it('acknowledges add-items requests for synced BookOrbit collection tags', async () => {
+    const req = { method: 'POST', url: '/api/v1/kobo/token/v1/library/tags/col-1/items' };
+    const reply = makeReply();
+
+    await controller.addTagItems('col-1', { deviceToken: 'token-1' } as never, req as never, reply as never);
+
+    expect(reply.status).toHaveBeenCalledWith(HttpStatus.OK);
+    expect(reply.send).toHaveBeenCalledWith({ RequestResult: 'Success' });
+    expect(proxyService.forward).not.toHaveBeenCalled();
+  });
+
+  it('proxies add-items requests for non-BookOrbit Kobo tags', async () => {
+    const req = { method: 'POST', url: '/api/v1/kobo/token/v1/library/tags/kobo-tag/items' };
+    const reply = makeReply();
+
+    await controller.addTagItems('kobo-tag', { deviceToken: 'token-1' } as never, req as never, reply as never);
+
+    expect(proxyService.forward).toHaveBeenCalledWith(req, reply, 'token-1');
+    expect(reply.send).not.toHaveBeenCalled();
+  });
+
   it('proxies metadata/state/delete for non-numeric book ids', async () => {
     const req = { method: 'GET', url: '/api/v1/kobo/token/v1/library/abc/metadata' };
     const reply = makeReply();

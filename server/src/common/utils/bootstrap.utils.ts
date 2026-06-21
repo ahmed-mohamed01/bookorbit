@@ -72,7 +72,7 @@ export function shouldInjectEmptyJsonBody(method: string, headers: IncomingHttpH
 
 export function buildEmptyJsonBodyStream(headers: IncomingHttpHeaders): Readable {
   headers['content-length'] = String(Buffer.byteLength(EMPTY_JSON_BODY));
-  return Readable.from([EMPTY_JSON_BODY]);
+  return Readable.from([Buffer.from(EMPTY_JSON_BODY)]);
 }
 
 export function registerEmptyBodyContentTypeParser(fastify: FastifyInstance): void {

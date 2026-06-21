@@ -114,6 +114,13 @@ export class KoboSyncController {
     reply.status(HttpStatus.OK).send({ RequestResult: 'Success' });
   }
 
+  @Post('v1/library/tags/:tagId/items')
+  @HttpCode(HttpStatus.OK)
+  async addTagItems(@Param('tagId') tagId: string, @KoboDevice() device: KoboDeviceContext, @Req() req: FastifyRequest, @Res() reply: FastifyReply) {
+    if (!tagId.startsWith('col-')) return this.proxyService.forward(req, reply, device.deviceToken);
+    reply.status(HttpStatus.OK).send({ RequestResult: 'Success' });
+  }
+
   @Get('v1/library/:bookId/metadata')
   async getBookMetadata(
     @Param('bookId') bookId: string,
