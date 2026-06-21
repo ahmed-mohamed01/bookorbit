@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { BookOpen, FileText, Wand2, Pencil, X, ArrowRight } from 'lucide-vue-next'
+import { BookOpen, FileText, Wand2, Pencil, X, ArrowRight } from '@lucide/vue'
 import type { BookDockFile, BookDockMetadata } from '@bookorbit/types'
 import {
   DialogClose,

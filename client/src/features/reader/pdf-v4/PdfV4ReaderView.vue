@@ -10,7 +10,7 @@ import { useReaderSettings } from '../shared/composables/useReaderSettings'
 import { useThemeStore, ACCENT_OPTIONS } from '@/stores/theme'
 import type { PdfReaderSettings } from '@bookorbit/types'
 import { getIsDark, lookupAccentHex } from './pdf-viewer-utils'
-import { ArrowLeft } from 'lucide-vue-next'
+import { ArrowLeft } from '@lucide/vue'
 
 const props = defineProps<{ bookId: number; fileId: number; peekMode?: boolean }>()
 const route = useRoute()

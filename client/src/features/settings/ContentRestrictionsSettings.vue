@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { ShieldAlert } from 'lucide-vue-next'
+import { ShieldAlert } from '@lucide/vue'
 import { api } from '@/lib/api'
 import type { ContentFilterRulesWithNames } from '@bookorbit/types'
 

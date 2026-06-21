@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick, onUnmounted } from 'vue'
-import { ArrowDown, ArrowUp, Columns3, EyeOff, Filter, Pin, PinOff, X } from 'lucide-vue-next'
+import { ArrowDown, ArrowUp, Columns3, EyeOff, Filter, Pin, PinOff, X } from '@lucide/vue'
 import type { ColumnDef } from '@/features/book/composables/useTableColumns'
 
 const props = defineProps<{

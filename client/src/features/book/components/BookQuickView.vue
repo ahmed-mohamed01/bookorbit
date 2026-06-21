@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { BookOpen, ExternalLink, Eye, Folder, FolderPlus, Headphones, Pencil, Star, Trash2, X } from 'lucide-vue-next'
+import { BookOpen, ExternalLink, Eye, Folder, FolderPlus, Headphones, Pencil, Star, Trash2, X } from '@lucide/vue'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Ban, Loader2, Plus, Search, Trash2 } from 'lucide-vue-next'
+import { Ban, Loader2, Plus, Search, Trash2 } from '@lucide/vue'
 import type { MetadataFetchPreferences } from '@bookorbit/types'
 import { useMetadataPreferences } from './composables/useMetadataPreferences'
 

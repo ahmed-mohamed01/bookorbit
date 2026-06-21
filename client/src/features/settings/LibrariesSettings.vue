@@ -16,9 +16,9 @@ import {
   FileText,
   Folder,
   CalendarClock,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import SettingsPageHeader from './SettingsPageHeader.vue'
-import * as LucideIcons from 'lucide-vue-next'
+import * as LucideIcons from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { api } from '@/lib/api'
 import type { Library as LibraryType, LibraryStats } from '@bookorbit/types'

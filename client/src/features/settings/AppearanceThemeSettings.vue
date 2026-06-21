@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Moon, Sun } from 'lucide-vue-next'
+import { Moon, Sun } from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ACCENT_PASTEL, ACCENT_VIVID, BACKGROUND_OPTIONS, RADIUS_OPTIONS, useThemeStore } from '@/stores/theme'
 import AppearancePreferenceStorage from './AppearancePreferenceStorage.vue'

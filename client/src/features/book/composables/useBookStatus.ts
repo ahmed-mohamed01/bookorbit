@@ -1,5 +1,5 @@
 import { api } from '@/lib/api'
-import { Book, BookCheck, BookMarked, BookOpen, BookX, Pause, RotateCcw, ScanLine } from 'lucide-vue-next'
+import { Book, BookCheck, BookMarked, BookOpen, BookX, Pause, RotateCcw, ScanLine } from '@lucide/vue'
 import type { ReadStatus, UserBookStatus } from '@bookorbit/types'
 
 export type StatusOption = {

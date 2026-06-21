@@ -12,7 +12,7 @@ import {
   ComboboxTrigger,
   ComboboxViewport,
 } from 'reka-ui'
-import { Check, ChevronsUpDown } from 'lucide-vue-next'
+import { Check, ChevronsUpDown } from '@lucide/vue'
 
 interface User {
   id: number

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Download, FileText, FileJson, FileType } from 'lucide-vue-next'
+import { Download, FileText, FileJson, FileType } from '@lucide/vue'
 import type { AnnotationItem } from '@bookorbit/types'
 
 const props = defineProps<{

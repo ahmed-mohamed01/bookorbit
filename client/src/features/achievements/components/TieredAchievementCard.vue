@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Check, CheckCircle2, Circle } from 'lucide-vue-next'
+import { Check, CheckCircle2, Circle } from '@lucide/vue'
 import type { AchievementRarity } from '@bookorbit/types'
 import type { TieredGroup } from '../types'
 import { resolveLucideIcon } from '../utils/resolveLucideIcon'

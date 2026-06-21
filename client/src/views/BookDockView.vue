@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { PackageOpen, CheckCircle2, AlertCircle } from 'lucide-vue-next'
+import { PackageOpen, CheckCircle2, AlertCircle } from '@lucide/vue'
 import type { BookDockFile } from '@bookorbit/types'
 import { api } from '@/lib/api'
 import { formatBytes } from '@/lib/formatting'

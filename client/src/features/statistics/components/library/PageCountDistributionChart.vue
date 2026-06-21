@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { BookOpen } from 'lucide-vue-next'
+import { BookOpen } from '@lucide/vue'
 
 import { usePageCountDistribution } from '../../composables/usePageCountDistribution'
 import ChartCard from '../ChartCard.vue'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Check, ChevronDown, ChevronUp, ClipboardCopy, FolderOpen, Info, Loader2, RotateCcw, Save } from 'lucide-vue-next'
-import * as LucideIcons from 'lucide-vue-next'
+import { Check, ChevronDown, ChevronUp, ClipboardCopy, FolderOpen, Info, Loader2, RotateCcw, Save } from '@lucide/vue'
+import * as LucideIcons from '@lucide/vue'
 import {
   DEFAULT_DOWNLOAD_PATTERN,
   DEFAULT_UPLOAD_PATTERN_BOOK_PER_FILE,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowDown, ArrowUp, ArrowUpDown, GripVertical, Loader2 } from 'lucide-vue-next'
+import { ArrowDown, ArrowUp, ArrowUpDown, GripVertical, Loader2 } from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ColumnDef, ColumnId } from '@/features/book/composables/tableColumnSchema'
 import type { SortSpec } from '@bookorbit/types'

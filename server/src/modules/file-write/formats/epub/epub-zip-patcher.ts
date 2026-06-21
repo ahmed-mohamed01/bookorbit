@@ -1,7 +1,7 @@
 import { createWriteStream } from 'fs';
 import type { Readable } from 'stream';
 import * as unzipper from 'unzipper';
-import archiver from 'archiver';
+import { ZipArchive, type Archiver } from 'archiver';
 import { replaceFileAtomically } from '../shared/atomic-file-replace';
 
 export async function readEntry(filePath: string, entryPath: string): Promise<string> {
@@ -14,7 +14,7 @@ export async function readEntry(filePath: string, entryPath: string): Promise<st
 export async function patch(filePath: string, patches: Map<string, Buffer>): Promise<void> {
   const tmpPath = filePath + '.tmp';
   const zip = await unzipper.Open.file(filePath);
-  const archive = archiver('zip', { zlib: { level: 6 } });
+  const archive = new ZipArchive({ zlib: { level: 6 } });
   const output = createWriteStream(tmpPath);
 
   await new Promise<void>((resolve, reject) => {
@@ -47,11 +47,7 @@ export async function patch(filePath: string, patches: Map<string, Buffer>): Pro
   await replaceFileAtomically(tmpPath, filePath);
 }
 
-function appendEntryStream(
-  archive: ReturnType<typeof archiver>,
-  entry: { path: string; stream: () => Readable },
-  reject: (error: Error) => void,
-): void {
+function appendEntryStream(archive: Archiver, entry: { path: string; stream: () => Readable }, reject: (error: Error) => void): void {
   const source = entry.stream();
   source.once('error', reject);
   archive.append(source, { name: entry.path });

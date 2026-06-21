@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { CalendarDays } from 'lucide-vue-next'
+import { CalendarDays } from '@lucide/vue'
 
 import { usePublicationDecade } from '../../composables/usePublicationDecade'
 import ChartCard from '../ChartCard.vue'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { Clock3 } from 'lucide-vue-next'
+import { Clock3 } from '@lucide/vue'
 
 import { useUserPeakReadingHours } from '../../composables/useUserPeakReadingHours'
 import ChartCard from '../ChartCard.vue'

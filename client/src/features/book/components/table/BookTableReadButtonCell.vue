@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { BookOpen, ChevronDown, Eye, Play } from 'lucide-vue-next'
+import { BookOpen, ChevronDown, Eye, Play } from '@lucide/vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { FORMAT_TO_GROUP, READER_OPENABLE_FORMATS } from '@bookorbit/types'
 import type { BookCard, BookFileRef } from '@bookorbit/types'

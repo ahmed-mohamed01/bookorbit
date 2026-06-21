@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { House } from 'lucide-vue-next'
+import { House } from '@lucide/vue'
 
 const router = useRouter()
 

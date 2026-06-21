@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Star } from 'lucide-vue-next'
+import { Star } from '@lucide/vue'
 import { RATING_STARS, getRatingStarClass } from '@/features/book/lib/rating-stars'
 
 const props = defineProps<{

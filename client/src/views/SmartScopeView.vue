@@ -13,7 +13,7 @@ import {
   Search,
   SlidersHorizontal,
   X,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import VirtualBookGrid from '@/features/book/components/VirtualBookGrid.vue'
 import BookListRow from '@/features/book/components/BookListRow.vue'
 import VirtualBookTable from '@/features/book/components/VirtualBookTable.vue'

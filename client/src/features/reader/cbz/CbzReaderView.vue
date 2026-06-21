@@ -22,7 +22,7 @@ import {
   ScanLine,
   Settings,
   Sun,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { useVisibility } from '../shared/composables/useVisibility'
 import { useReaderProgress } from '../shared/composables/useReaderProgress'
 import { useReadingSession } from '../shared/composables/useReadingSession'

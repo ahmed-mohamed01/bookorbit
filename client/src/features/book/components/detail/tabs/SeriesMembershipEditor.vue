@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-vue-next'
+import { ArrowDown, ArrowUp, Plus, Trash2 } from '@lucide/vue'
 import InputWithSuggestions from '@/components/ui/InputWithSuggestions.vue'
 import type { EditableSeriesMembership } from '../../../composables/useMetadataEditor'
 

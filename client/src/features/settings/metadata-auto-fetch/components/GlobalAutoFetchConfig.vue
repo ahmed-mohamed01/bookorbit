@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ChevronDown, ChevronUp, Save } from 'lucide-vue-next'
+import { ChevronDown, ChevronUp, Save } from '@lucide/vue'
 import type { BookMetadataFetchConfig } from '@bookorbit/types'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import ConditionConfigurator from './ConditionConfigurator.vue'

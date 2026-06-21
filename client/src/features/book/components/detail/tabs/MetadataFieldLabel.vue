@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Loader2, Lock, LockOpen } from 'lucide-vue-next'
+import { Loader2, Lock, LockOpen } from '@lucide/vue'
 import type { BookMetadataLockField } from '@bookorbit/types'
 
 const props = defineProps<{

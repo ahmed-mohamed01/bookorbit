@@ -17,7 +17,7 @@ import {
   Res,
 } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import { createReadStream } from 'fs';
 import { stat } from 'fs/promises';
 import type { FastifyReply } from 'fastify';
@@ -293,7 +293,7 @@ export class BookController {
     const releaseExportSlot = this.bookService.acquireExportSlot(user.id);
     let plannedFiles = 0;
     let projectedBytes = 0;
-    const archive = archiver('zip', { zlib: { level: 0 } });
+    const archive = new ZipArchive({ zlib: { level: 0 } });
     let clientDisconnected = false;
     const handleDisconnect = () => {
       clientDisconnected = true;

@@ -17,7 +17,7 @@ import {
   Trash2,
   TriangleAlert,
   X,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { DialogClose, DialogContent, DialogOverlay, DialogPortal, DialogRoot } from 'reka-ui'
 import { getFormatColor } from '@/features/book/lib/format-colors'
 import { providerIconPath } from '@/features/book/lib/provider-icons'

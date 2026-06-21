@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, type Component, type ComponentPublicInstance } from 'vue'
-import { ChevronLeft, ChevronRight, GripVertical } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, GripVertical } from '@lucide/vue'
 import { VueDraggable } from 'vue-draggable-plus'
 
 import type { WidgetConfig, WidgetType } from '@bookorbit/types'

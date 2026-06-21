@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, computed, ref, watch } from 'vue'
-import { RefreshCw, Search, X, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-vue-next'
+import { RefreshCw, Search, X, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from '@lucide/vue'
 import { AuditAction } from '@bookorbit/types'
 import SettingsPageHeader from '@/features/settings/SettingsPageHeader.vue'
 import { useAuditLog } from './useAuditLog'

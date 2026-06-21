@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { toast } from 'vue-sonner'
-import { Cloud, Monitor } from 'lucide-vue-next'
+import { Cloud, Monitor } from '@lucide/vue'
 import { getDisplayPreferencesSnapshot } from '@/composables/useDisplaySettings'
 import { loadDisplaySettingsFromServer, seedDisplaySettingsToServer } from '@/composables/useDisplaySettingsSync'
 import { loadFromServer, seedToServer } from '@/composables/useThemeSync'

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Loader2, Search } from 'lucide-vue-next'
+import { Loader2, Search } from '@lucide/vue'
 
 defineProps<{
   minSimilarity: number

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { Upload, RotateCw, Trash2, PenLine, FileText, Search, X, Wand2, RefreshCw, FolderPlus, Loader2 } from 'lucide-vue-next'
+import { Upload, RotateCw, Trash2, PenLine, FileText, Search, X, Wand2, RefreshCw, FolderPlus, Loader2 } from '@lucide/vue'
 import type { BookDockFileStatus } from '@bookorbit/types'
 import { api } from '@/lib/api'
 import { usePermissions } from '@/features/auth/composables/usePermissions'

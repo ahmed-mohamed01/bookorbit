@@ -1,6 +1,6 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import type { MockedFunction } from 'vitest';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import { createReadStream } from 'fs';
 import { stat } from 'fs/promises';
 import { Permission } from '@bookorbit/types';
@@ -12,14 +12,15 @@ import { BookController } from './book.controller';
 import { EMPTY_CONTENT_FILTER_RULES } from '@bookorbit/types';
 
 vi.mock('archiver', () => ({
-  __esModule: true,
-  default: vi.fn(() => ({
-    pipe: vi.fn(),
-    file: vi.fn(),
-    on: vi.fn().mockReturnThis(),
-    abort: vi.fn(),
-    finalize: vi.fn().mockResolvedValue(undefined),
-  })),
+  ZipArchive: vi.fn(function () {
+    return {
+      pipe: vi.fn(),
+      file: vi.fn(),
+      on: vi.fn().mockReturnThis(),
+      abort: vi.fn(),
+      finalize: vi.fn().mockResolvedValue(undefined),
+    };
+  }),
 }));
 
 vi.mock('fs', async () => {
@@ -112,6 +113,16 @@ function makeReply() {
       }
     },
   };
+}
+
+function mockZipArchiveOnce(archive: unknown) {
+  (ZipArchive as unknown as vi.Mock).mockImplementationOnce(
+    class {
+      constructor() {
+        return archive;
+      }
+    } as never,
+  );
 }
 
 function makeController() {
@@ -399,9 +410,9 @@ describe('BookController', () => {
     expect(raw.setHeader).toHaveBeenCalledWith('Content-Type', 'application/zip');
     expect(raw.setHeader).toHaveBeenCalledWith('Content-Disposition', 'attachment; filename="books.zip"');
 
-    const archiverMock = archiver as unknown as vi.Mock;
-    expect(archiverMock).toHaveBeenCalledWith('zip', { zlib: { level: 0 } });
-    const archive = archiverMock.mock.results[0].value;
+    const zipArchiveMock = ZipArchive as unknown as vi.Mock;
+    expect(zipArchiveMock).toHaveBeenCalledWith({ zlib: { level: 0 } });
+    const archive = zipArchiveMock.mock.results[0].value;
 
     expect(archive.pipe).toHaveBeenCalledWith(raw);
     expect(archive.file).toHaveBeenCalledWith('/books/a.epub', { name: 'A.epub' });
@@ -425,7 +436,7 @@ describe('BookController', () => {
       abort: vi.fn(),
       finalize: vi.fn().mockRejectedValue(new Error('zip failure')),
     };
-    (archiver as unknown as vi.Mock).mockReturnValueOnce(archive);
+    mockZipArchiveOnce(archive);
 
     await expect(controller.exportBooks({ bookIds: [1], allFormats: false }, makeUser(), reply)).rejects.toThrow('zip failure');
   });
@@ -561,7 +572,7 @@ describe('BookController', () => {
         return Promise.reject(new Error('stream closed'));
       }),
     };
-    (archiver as unknown as vi.Mock).mockReturnValueOnce(archive);
+    mockZipArchiveOnce(archive);
 
     await expect(controller.exportBooks({ bookIds: [1], allFormats: false }, makeUser(), reply)).resolves.toBeUndefined();
     expect(archive.abort).toHaveBeenCalled();
@@ -586,7 +597,7 @@ describe('BookController', () => {
         return Promise.reject(new Error('stream aborted'));
       }),
     };
-    (archiver as unknown as vi.Mock).mockReturnValueOnce(archive);
+    mockZipArchiveOnce(archive);
 
     await expect(controller.exportBooks({ bookIds: [1], allFormats: false }, makeUser(), reply)).resolves.toBeUndefined();
     expect(archive.abort).toHaveBeenCalled();
@@ -610,7 +621,7 @@ describe('BookController', () => {
       abort: vi.fn(),
       finalize: vi.fn().mockRejectedValue(new Error('zip failure')),
     };
-    (archiver as unknown as vi.Mock).mockReturnValueOnce(archive);
+    mockZipArchiveOnce(archive);
 
     await expect(controller.exportBooks({ bookIds: [1], allFormats: false }, makeUser(), reply)).rejects.toThrow('zip failure');
     expect(release).toHaveBeenCalledTimes(1);
@@ -639,7 +650,7 @@ describe('BookController', () => {
         return new Promise<void>(() => {});
       }),
     };
-    (archiver as unknown as vi.Mock).mockReturnValueOnce(archive);
+    mockZipArchiveOnce(archive);
 
     await expect(controller.exportBooks({ bookIds: [1], allFormats: false }, makeUser(), reply)).rejects.toThrow('archive warning');
   });

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { Bell, BellOff, CheckCheck, Trash2 } from 'lucide-vue-next'
+import { Bell, BellOff, CheckCheck, Trash2 } from '@lucide/vue'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { useNotifications } from '../composables/useNotifications'

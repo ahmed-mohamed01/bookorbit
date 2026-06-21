@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Swords } from 'lucide-vue-next'
+import { Swords } from '@lucide/vue'
 
 import { useMonthlyChallengeWidget } from '../../composables/useMonthlyChallengeWidget'
 

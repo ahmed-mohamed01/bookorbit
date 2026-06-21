@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { X, Loader2 } from 'lucide-vue-next'
+import { X, Loader2 } from '@lucide/vue'
 import type { BookDockBulkEditResult, BookDockMetadata } from '@bookorbit/types'
 import { api } from '@/lib/api'
 

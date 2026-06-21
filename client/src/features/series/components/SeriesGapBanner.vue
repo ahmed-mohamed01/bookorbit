@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { AlertCircle } from 'lucide-vue-next'
+import { AlertCircle } from '@lucide/vue'
 
 const props = defineProps<{
   gaps: number[]

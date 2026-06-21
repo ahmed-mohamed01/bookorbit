@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { ChevronRight, Loader2, Search, X } from 'lucide-vue-next'
+import { ChevronRight, Loader2, Search, X } from '@lucide/vue'
 import type { SearchResult } from '../composables/useSearch'
 import { MIN_SEARCH_QUERY_LENGTH } from '../composables/useSearch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'

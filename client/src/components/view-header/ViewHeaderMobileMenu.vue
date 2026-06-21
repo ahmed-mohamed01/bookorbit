@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, useSlots } from 'vue'
-import { CheckSquare, MoreHorizontal, Search, SlidersHorizontal, Square } from 'lucide-vue-next'
+import { CheckSquare, MoreHorizontal, Search, SlidersHorizontal, Square } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,

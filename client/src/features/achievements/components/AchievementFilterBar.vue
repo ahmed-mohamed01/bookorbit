@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Medal, Trophy } from 'lucide-vue-next'
+import { Medal, Trophy } from '@lucide/vue'
 import type { FilterState } from '../types'
 
 const props = defineProps<{

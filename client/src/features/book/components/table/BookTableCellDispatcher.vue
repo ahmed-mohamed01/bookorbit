@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Lock, LockOpen } from 'lucide-vue-next'
+import { Lock, LockOpen } from '@lucide/vue'
 import { FORMAT_TO_GROUP, type BookCard } from '@bookorbit/types'
 import BookTableCoverCell from './BookTableCoverCell.vue'
 import BookTableTextCell from './BookTableTextCell.vue'

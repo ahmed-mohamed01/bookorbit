@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { AlertTriangle, CheckSquare, FileSpreadsheet, FolderOpen, Layers, Pencil, Search, SlidersHorizontal, Square, X } from 'lucide-vue-next'
+import { AlertTriangle, CheckSquare, FileSpreadsheet, FolderOpen, Layers, Pencil, Search, SlidersHorizontal, Square, X } from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import VirtualBookGrid from '@/features/book/components/VirtualBookGrid.vue'

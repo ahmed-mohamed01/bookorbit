@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ChevronLeft, ChevronRight, GitMerge, MoreHorizontal, Pencil, Search, Scissors, Trash2, X } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, GitMerge, MoreHorizontal, Pencil, Search, Scissors, Trash2, X } from '@lucide/vue'
 import type {
   BrowseEntityBookCountFilter,
   BrowseEntityItem,

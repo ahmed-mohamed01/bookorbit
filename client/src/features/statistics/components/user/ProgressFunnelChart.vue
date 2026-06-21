@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { Waypoints } from 'lucide-vue-next'
+import { Waypoints } from '@lucide/vue'
 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useUserProgressFunnel } from '../../composables/useUserProgressFunnel'

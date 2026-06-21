@@ -1,19 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
-import {
-  X,
-  FolderSync,
-  BookOpen,
-  PackageOpen,
-  UserCheck,
-  Mail,
-  Tablet,
-  ArrowRightLeft,
-  FileDown,
-  TriangleAlert,
-  BookOpenCheck,
-} from 'lucide-vue-next'
+import { X, FolderSync, BookOpen, PackageOpen, UserCheck, Mail, Tablet, ArrowRightLeft, FileDown, TriangleAlert, BookOpenCheck } from '@lucide/vue'
 import type { NotificationItem } from '@bookorbit/types'
 import { useNotifications } from '../composables/useNotifications'
 

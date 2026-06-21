@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Check, RefreshCw, Sparkles, ArrowUpFromLine, CheckCircle2, AlertCircle, Loader2, Bell, Award } from 'lucide-vue-next'
+import { Check, RefreshCw, Sparkles, ArrowUpFromLine, CheckCircle2, AlertCircle, Loader2, Bell, Award } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import SettingsPageHeader from './SettingsPageHeader.vue'

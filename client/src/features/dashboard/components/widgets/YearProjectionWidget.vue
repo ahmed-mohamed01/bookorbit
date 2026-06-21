@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { TrendingUp, TrendingDown, Minus } from 'lucide-vue-next'
+import { TrendingUp, TrendingDown, Minus } from '@lucide/vue'
 
 import { useYearProjectionWidget } from '../../composables/useYearProjectionWidget'
 

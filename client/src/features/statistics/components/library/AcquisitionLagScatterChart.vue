@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { CalendarRange } from 'lucide-vue-next'
+import { CalendarRange } from '@lucide/vue'
 
 import type { AcquisitionLagPoint } from '@bookorbit/types'
 import { useAcquisitionLagScatter } from '../../composables/useAcquisitionLagScatter'

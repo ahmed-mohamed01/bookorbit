@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { Link, Save, CheckCircle2, AlertCircle, Info, Loader2, Unlink } from 'lucide-vue-next'
+import { Link, Save, CheckCircle2, AlertCircle, Info, Loader2, Unlink } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { useHardcoverSettings } from '../composables/useHardcoverSettings'

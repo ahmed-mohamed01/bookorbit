@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Dna } from 'lucide-vue-next'
+import { Dna } from '@lucide/vue'
 
 import { useReadingDnaWidget } from '../../composables/useReadingDnaWidget'
 

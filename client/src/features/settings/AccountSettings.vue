@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import type { OidcProviderPublic, UserSettings } from '@bookorbit/types'
-import { ChevronDown, ChevronUp, Clock, KeyRound, Link, LinkIcon, MapPin, Save, Trash2, Upload } from 'lucide-vue-next'
+import { ChevronDown, ChevronUp, Clock, KeyRound, Link, LinkIcon, MapPin, Save, Trash2, Upload } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import UserAvatar from '@/components/UserAvatar.vue'
 import { api } from '@/lib/api'

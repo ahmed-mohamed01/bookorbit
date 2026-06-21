@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
-import { X } from 'lucide-vue-next'
+import { X } from '@lucide/vue'
 import { api } from '@/lib/api'
 import { Permission, PERMISSION_LABELS } from '@bookorbit/types'
 import type { AuthUser } from '@bookorbit/types'

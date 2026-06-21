@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { CheckCircle2, FileUp, Loader2, Plus, Upload, X, XCircle, RotateCcw } from 'lucide-vue-next'
+import { CheckCircle2, FileUp, Loader2, Plus, Upload, X, XCircle, RotateCcw } from '@lucide/vue'
 import { Permission } from '@bookorbit/types'
 import { SUPPORTED_FORMATS_ACCEPT, useAddBookFile } from '@/features/book/composables/useAddBookFile'
 import { usePermissions } from '@/features/auth/composables/usePermissions'

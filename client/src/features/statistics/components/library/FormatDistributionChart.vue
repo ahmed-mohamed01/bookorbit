@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { PieChart } from 'lucide-vue-next'
+import { PieChart } from '@lucide/vue'
 import { breakpointsTailwind, useBreakpoints } from '@vueuse/core'
 
 import { useFormatDistribution } from '../../composables/useFormatDistribution'

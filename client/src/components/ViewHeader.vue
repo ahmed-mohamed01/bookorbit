@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { CheckSquare, LayoutGrid, List, SlidersHorizontal, Square, Table2 } from 'lucide-vue-next'
-import * as LucideIcons from 'lucide-vue-next'
+import { CheckSquare, LayoutGrid, List, SlidersHorizontal, Square, Table2 } from '@lucide/vue'
+import * as LucideIcons from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'

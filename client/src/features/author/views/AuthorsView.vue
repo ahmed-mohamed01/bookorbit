@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowUpDown, CheckCheck, Filter, RefreshCcw, Search, SlidersHorizontal, Trash2, X } from 'lucide-vue-next'
+import { ArrowUpDown, CheckCheck, Filter, RefreshCcw, Search, SlidersHorizontal, Trash2, X } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 
 import SelectionActionBar from '@/components/SelectionActionBar.vue'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { Calendar } from 'lucide-vue-next'
+import { Calendar } from '@lucide/vue'
 import { useThemeStore } from '@/stores/theme'
 
 import { buildHeatmapPalette } from '../../heatmap-palette'

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { ArrowLeft, CopyCheck, Copy, CheckCheck, Eye, EyeOff, Info } from 'lucide-vue-next'
+import { ArrowLeft, CopyCheck, Copy, CheckCheck, Eye, EyeOff, Info } from '@lucide/vue'
 import type {
   BookMetadataLockField,
   MetadataCandidate,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { GripVertical } from 'lucide-vue-next'
+import { GripVertical } from '@lucide/vue'
 import { METADATA_LABELS, FORMAT_LABELS } from '../composables/useLibraryCreator'
 
 const props = defineProps<{

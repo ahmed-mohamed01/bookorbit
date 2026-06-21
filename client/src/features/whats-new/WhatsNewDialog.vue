@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ArrowRight, ChevronDown, ExternalLink, Sparkles, X } from 'lucide-vue-next'
+import { ArrowRight, ChevronDown, ExternalLink, Sparkles, X } from '@lucide/vue'
 import { useModal } from '@/composables/useModal'
 import { useWhatsNew } from './composables/useWhatsNew'
 import { formatReleaseDate } from './lib/whats-new.logic'

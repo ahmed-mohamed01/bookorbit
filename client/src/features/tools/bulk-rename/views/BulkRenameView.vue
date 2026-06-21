@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useElementSize } from '@vueuse/core'
-import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Play, RefreshCw, SlidersHorizontal, X } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Play, RefreshCw, SlidersHorizontal, X } from '@lucide/vue'
 import type { BulkRenameStatus, Library } from '@bookorbit/types'
 
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'

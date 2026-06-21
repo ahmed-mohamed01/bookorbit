@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Flame, Trophy } from 'lucide-vue-next'
+import { Flame, Trophy } from '@lucide/vue'
 
 import { useReadingStreakWidget } from '../../composables/useReadingStreakWidget'
 

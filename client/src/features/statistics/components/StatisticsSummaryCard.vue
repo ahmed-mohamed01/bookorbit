@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { BarChart3, BookCheck, BookOpen, BookText, Building2, CalendarPlus, CalendarRange, Globe, Layers, Tags, Users } from 'lucide-vue-next'
+import { BarChart3, BookCheck, BookOpen, BookText, Building2, CalendarPlus, CalendarRange, Globe, Layers, Tags, Users } from '@lucide/vue'
 
 import { useStatisticsSummary } from '../composables/useStatisticsSummary'
 import { useUserStatisticsSummary } from '../composables/useUserStatisticsSummary'

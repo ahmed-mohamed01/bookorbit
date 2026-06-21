@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
-import * as Icons from 'lucide-vue-next'
-import { Sparkles } from 'lucide-vue-next'
+import * as Icons from '@lucide/vue'
+import { Sparkles } from '@lucide/vue'
 import { isIconNameShape } from '../lib/whats-new.logic'
 
 const props = withDefaults(defineProps<{ name: string | null; size?: number }>(), { size: 18 })

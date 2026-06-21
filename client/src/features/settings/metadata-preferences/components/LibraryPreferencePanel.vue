@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, type CSSProperties } from 'vue'
-import { ChevronDown, ChevronRight, Loader2, RotateCcw, Library, Trash2, Save } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight, Loader2, RotateCcw, Library, Trash2, Save } from '@lucide/vue'
 import type {
   FieldPreference,
   FieldPreferenceOverrides,

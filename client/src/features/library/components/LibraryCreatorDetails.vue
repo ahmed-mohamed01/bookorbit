@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import * as LucideIcons from 'lucide-vue-next'
-import { Library, Search, X } from 'lucide-vue-next'
+import * as LucideIcons from '@lucide/vue'
+import { Library, Search, X } from '@lucide/vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { CoverAspectRatio } from '@bookorbit/types'

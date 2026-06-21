@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
-import { Settings2, Sparkles } from 'lucide-vue-next'
+import { Settings2, Sparkles } from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 import { useAuth } from '@/features/auth/composables/useAuth'

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Image } from 'lucide-vue-next'
+import { Image } from '@lucide/vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import {
   useDisplaySettings,

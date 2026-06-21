@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
-import { BookOpen, LayoutGrid, Moon, Palette, ScrollText, Sun, Type } from 'lucide-vue-next'
+import { BookOpen, LayoutGrid, Moon, Palette, ScrollText, Sun, Type } from '@lucide/vue'
 import type { ReaderState } from '../composables/useReaderState'
 import type { useCustomFonts } from '../composables/useCustomFonts'
 import { themes } from '../constants/themes'

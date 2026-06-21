@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { TrendingUp } from 'lucide-vue-next'
+import { TrendingUp } from '@lucide/vue'
 
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useBooksAddedOverTime } from '../../composables/useBooksAddedOverTime'

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { X } from 'lucide-vue-next'
+import { X } from '@lucide/vue'
 
 defineProps<{ open: boolean }>()
 const emit = defineEmits<{ 'update:open': [value: boolean] }>()

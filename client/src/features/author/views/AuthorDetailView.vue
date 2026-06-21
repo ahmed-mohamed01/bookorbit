@@ -2,7 +2,7 @@
 import { useWindowSize } from '@vueuse/core'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowUpDown, ChevronDown, ChevronLeft, ImageMinus, LayoutGrid, List, Upload } from 'lucide-vue-next'
+import { ArrowUpDown, ChevronDown, ChevronLeft, ImageMinus, LayoutGrid, List, Upload } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 
 import type { AuthorSummary, BookCard } from '@bookorbit/types'

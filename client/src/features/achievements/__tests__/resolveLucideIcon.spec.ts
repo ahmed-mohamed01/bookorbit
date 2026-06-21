@@ -19,7 +19,7 @@ import {
   StarHalf,
   ThumbsDown,
   Trophy,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 
 describe('resolveLucideIcon', () => {
   it('resolves kebab-case icon name to component', () => {

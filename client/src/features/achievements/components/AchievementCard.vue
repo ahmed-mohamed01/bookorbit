@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Check, Lock } from 'lucide-vue-next'
+import { Check, Lock } from '@lucide/vue'
 import type { AchievementItem, AchievementRarity } from '@bookorbit/types'
 import { resolveLucideIcon } from '../utils/resolveLucideIcon'
 

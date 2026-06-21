@@ -4,7 +4,7 @@ import type { MockedFunction } from 'vitest';
 import { createWriteStream } from 'fs';
 import * as fs from 'fs/promises';
 import * as unzipper from 'unzipper';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 
 import { patch, readEntry } from './epub-zip-patcher';
 
@@ -38,7 +38,7 @@ let lastArchive: EventEmitter & {
 };
 
 vi.mock('archiver', () => ({
-  default: vi.fn(() => {
+  ZipArchive: vi.fn(function () {
     let output: EventEmitter | null = null;
     const emitter = new EventEmitter() as EventEmitter & {
       append: vi.Mock;
@@ -99,7 +99,7 @@ describe('epub-zip-patcher', () => {
 
     await patch('/book.epub', patches);
 
-    expect(archiver).toHaveBeenCalledWith('zip', { zlib: { level: 6 } });
+    expect(ZipArchive).toHaveBeenCalledWith({ zlib: { level: 6 } });
     expect(lastArchive.append).toHaveBeenNthCalledWith(1, Buffer.from('application/epub+zip'), { name: 'mimetype', store: true });
     expect(lastArchive.append).toHaveBeenCalledWith(Buffer.from('new-opf'), { name: 'OPS/content.opf' });
     expect(chapterEntry.stream).toHaveBeenCalledTimes(1);

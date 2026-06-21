@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
-import { CalendarRange } from 'lucide-vue-next'
+import { CalendarRange } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import type { UserReadingSessionTimeline, UserReadingSessionTimelineItem } from '@bookorbit/types'
 

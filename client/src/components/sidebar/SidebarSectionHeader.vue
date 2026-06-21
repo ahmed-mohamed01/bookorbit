@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ChevronDown, Plus, GripVertical, Check, MoreVertical } from 'lucide-vue-next'
+import { ChevronDown, Plus, GripVertical, Check, MoreVertical } from '@lucide/vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useThemeStore } from '@/stores/theme'
 

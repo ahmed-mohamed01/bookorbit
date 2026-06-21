@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import { SearchX } from 'lucide-vue-next'
+import { SearchX } from '@lucide/vue'
 
 defineProps<{ entity: string }>()
 

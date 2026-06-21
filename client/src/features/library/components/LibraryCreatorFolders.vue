@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Plus, Trash2, RefreshCw, FolderOpen, AlertTriangle, CheckCircle2, XCircle, Loader2 } from 'lucide-vue-next'
+import { Plus, Trash2, RefreshCw, FolderOpen, AlertTriangle, CheckCircle2, XCircle, Loader2 } from '@lucide/vue'
 import type { PrescanResult } from '@bookorbit/types'
 import { api } from '@/lib/api'
 import FolderPickerModal from './FolderPickerModal.vue'

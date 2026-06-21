@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { ListChecks } from 'lucide-vue-next'
+import { ListChecks } from '@lucide/vue'
 
 import { useMetadataCompleteness } from '../../composables/useMetadataCompleteness'
 import ChartCard from '../ChartCard.vue'

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
-import { Keyboard, X } from 'lucide-vue-next'
+import { Keyboard, X } from '@lucide/vue'
 
 const emit = defineEmits<{
   close: []

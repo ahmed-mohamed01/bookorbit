@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowUpDown, Filter, Search, SlidersHorizontal, X } from 'lucide-vue-next'
+import { ArrowUpDown, Filter, Search, SlidersHorizontal, X } from '@lucide/vue'
 
 import ViewHeader from '@/components/ViewHeader.vue'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'

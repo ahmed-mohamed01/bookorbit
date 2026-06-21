@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Highlighter, ExternalLink } from 'lucide-vue-next'
+import { Highlighter, ExternalLink } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 
 import { useCoverVersions } from '@/features/book/composables/useCoverVersions'

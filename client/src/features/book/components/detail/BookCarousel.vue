@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronLeft, ChevronRight } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight } from '@lucide/vue'
 
 import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import BookCoverArtwork from '@/features/book/components/BookCoverArtwork.vue'

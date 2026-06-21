@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { RefreshCw, Save } from 'lucide-vue-next'
+import { RefreshCw, Save } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import type { AuthorAutoEnrichmentConfig } from '@bookorbit/types'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChevronLeft, ChevronRight } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight } from '@lucide/vue'
 import BookDetailTabs from './BookDetailTabs.vue'
 import { useBookNavigation } from '../../composables/useBookNavigation'
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
-import { ChevronLeft, ChevronRight, X } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, X } from '@lucide/vue'
 import { useModal } from '@/composables/useModal'
 import { registerLightbox } from '../lib/lightbox-state'
 

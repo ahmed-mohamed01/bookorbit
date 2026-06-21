@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Volume2, RefreshCw } from 'lucide-vue-next'
+import { Volume2, RefreshCw } from '@lucide/vue'
 import type { DictionaryResult } from '@bookorbit/types'
 import { useDictionary } from '../composables/useDictionary'
 

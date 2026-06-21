@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { X, BookOpen, Check, Trash2, Sparkles, ArrowLeft, Wand2, AlertCircle } from 'lucide-vue-next'
+import { X, BookOpen, Check, Trash2, Sparkles, ArrowLeft, Wand2, AlertCircle } from '@lucide/vue'
 import type { BookDockFile, BookDockMetadata, MetadataCandidate, MetadataSource, MetadataProviderKey } from '@bookorbit/types'
 import BookDockStatusBadge from './BookDockStatusBadge.vue'
 import MetadataSearchPanel from '@/features/book/components/detail/tabs/MetadataSearchPanel.vue'

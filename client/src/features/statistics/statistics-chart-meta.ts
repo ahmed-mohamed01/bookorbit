@@ -23,7 +23,7 @@ import {
   Users,
   Waypoints,
   Zap,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 
 import { DEFAULT_LIBRARY_CHART_ORDER, DEFAULT_USER_CHART_ORDER, type StatisticsChartId } from '@bookorbit/types'
 

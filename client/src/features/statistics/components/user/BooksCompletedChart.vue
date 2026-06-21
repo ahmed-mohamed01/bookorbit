@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { BookCheck } from 'lucide-vue-next'
+import { BookCheck } from '@lucide/vue'
 
 import { useUserBooksCompleted } from '../../composables/useUserBooksCompleted'
 import ChartCard from '../ChartCard.vue'

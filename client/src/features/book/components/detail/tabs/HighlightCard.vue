@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Copy, FileEdit, Palette, Trash2, X, Check } from 'lucide-vue-next'
+import { Copy, FileEdit, Palette, Trash2, X, Check } from '@lucide/vue'
 import type { AnnotationItem } from '@bookorbit/types'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import HighlightNoteEditor from './HighlightNoteEditor.vue'

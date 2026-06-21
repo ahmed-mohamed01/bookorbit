@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { toast } from 'vue-sonner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Trash2, RefreshCw } from 'lucide-vue-next'
+import { Trash2, RefreshCw } from '@lucide/vue'
 import { useEmailSendLog, type EmailSendLogEntry } from '../composables/useEmailSendLog'
 
 const { logEntries, fetchLog, deleteEntry, resendEntry } = useEmailSendLog()

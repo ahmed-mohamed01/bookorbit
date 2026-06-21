@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChevronLeft, Pencil } from 'lucide-vue-next'
+import { ChevronLeft, Pencil } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 
 import type { BookCard, BookDetail } from '@bookorbit/types'

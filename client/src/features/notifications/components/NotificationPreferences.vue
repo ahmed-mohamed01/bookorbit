@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { toast } from 'vue-sonner'
-import { Save } from 'lucide-vue-next'
+import { Save } from '@lucide/vue'
 import { NOTIFICATION_CATEGORIES, NOTIFICATION_CATEGORY_LABELS, type NotificationCategory, type NotificationPreferences } from '@bookorbit/types'
 import { useAuth } from '@/features/auth/composables/useAuth'
 import { useWhatsNew } from '@/features/whats-new/composables/useWhatsNew'

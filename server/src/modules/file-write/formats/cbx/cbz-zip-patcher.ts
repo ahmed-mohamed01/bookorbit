@@ -3,7 +3,7 @@ import { dirname, join } from 'path';
 import { randomUUID } from 'crypto';
 import type { Readable } from 'stream';
 import * as unzipper from 'unzipper';
-import archiver from 'archiver';
+import { ZipArchive, type Archiver } from 'archiver';
 import { replaceFileAtomically } from '../shared/atomic-file-replace';
 
 function isComicInfoEntry(entryPath: string): boolean {
@@ -24,7 +24,7 @@ export async function writeComicInfoToZip(filePath: string, xmlContent: string):
   const xmlEntryPath = existing?.path ?? 'ComicInfo.xml';
 
   const tmpPath = join(dirname(filePath), `.cbx-write-${randomUUID()}`);
-  const archive = archiver('zip', { zlib: { level: 6 } });
+  const archive = new ZipArchive({ zlib: { level: 6 } });
   const output = createWriteStream(tmpPath);
 
   await new Promise<void>((resolve, reject) => {
@@ -45,11 +45,7 @@ export async function writeComicInfoToZip(filePath: string, xmlContent: string):
   await replaceFileAtomically(tmpPath, filePath);
 }
 
-function appendEntryStream(
-  archive: ReturnType<typeof archiver>,
-  entry: { path: string; stream: () => Readable },
-  reject: (error: Error) => void,
-): void {
+function appendEntryStream(archive: Archiver, entry: { path: string; stream: () => Readable }, reject: (error: Error) => void): void {
   const source = entry.stream();
   source.once('error', reject);
   archive.append(source, { name: entry.path });

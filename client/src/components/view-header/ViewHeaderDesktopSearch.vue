@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref } from 'vue'
-import { Search, X } from 'lucide-vue-next'
+import { Search, X } from '@lucide/vue'
 
 withDefaults(
   defineProps<{

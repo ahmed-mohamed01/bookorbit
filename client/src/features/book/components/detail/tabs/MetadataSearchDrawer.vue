@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { X, Sparkles } from 'lucide-vue-next'
+import { X, Sparkles } from '@lucide/vue'
 import { isAudioFormat } from '@bookorbit/types'
 import type { BookDetail, BookMetadataLockField, MetadataCandidate, MetadataSource } from '@bookorbit/types'
 import { useMetadataSearch } from '../../../composables/useMetadataSearch'

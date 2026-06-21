@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { HardDrive } from 'lucide-vue-next'
+import { HardDrive } from '@lucide/vue'
 import { breakpointsTailwind, useBreakpoints } from '@vueuse/core'
 
 import { useStorageByFormat } from '../../composables/useStorageByFormat'

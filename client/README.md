@@ -53,5 +53,5 @@ pnpm test:cov           # run unit tests with coverage
 - Feature state lives in composables (`features/<name>/composables/use*.ts`), not global stores.
 - HTTP calls use the native `fetch` API via `src/lib/api.ts`.
 - Styling with Tailwind CSS v4 utility classes. Theme tokens are CSS variables in `src/assets/main.css`.
-- Icons from `lucide-vue-next` only.
+- Icons from `@lucide/vue` only.
 - Shared types imported from `@bookorbit/types`.

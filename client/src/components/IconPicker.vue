@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import * as LucideIcons from 'lucide-vue-next'
-import { ChevronDown, Search, X } from 'lucide-vue-next'
+import * as LucideIcons from '@lucide/vue'
+import { ChevronDown, Search, X } from '@lucide/vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 

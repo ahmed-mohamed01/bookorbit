@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onUnmounted, ref, watch } from 'vue'
-import { X } from 'lucide-vue-next'
+import { X } from '@lucide/vue'
 import { api } from '@/lib/api'
 
 const props = defineProps<{

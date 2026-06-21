@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { Gauge } from 'lucide-vue-next'
+import { Gauge } from '@lucide/vue'
 
 import { readCssColor } from '@/lib/echarts'
 import { useMetadataFreshnessGauge } from '../../composables/useMetadataFreshnessGauge'

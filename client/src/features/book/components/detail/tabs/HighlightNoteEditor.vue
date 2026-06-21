@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Save, X } from 'lucide-vue-next'
+import { Save, X } from '@lucide/vue'
 
 const props = defineProps<{
   initialNote: string | null

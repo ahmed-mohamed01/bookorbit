@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { BarChart3 } from 'lucide-vue-next'
+import { BarChart3 } from '@lucide/vue'
 
 import { useMetadataScoreDistribution } from '../../composables/useMetadataScoreDistribution'
 import ChartCard from '../ChartCard.vue'

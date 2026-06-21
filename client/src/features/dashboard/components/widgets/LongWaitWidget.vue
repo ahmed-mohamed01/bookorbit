@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Clock, Play } from 'lucide-vue-next'
+import { Clock, Play } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import { FORMAT_TO_GROUP } from '@bookorbit/types'
 

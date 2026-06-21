@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { X } from 'lucide-vue-next'
+import { X } from '@lucide/vue'
 import { useSmartScopes } from '@/features/smart-scope/composables/useSmartScopes'
 import IconPicker from '@/components/IconPicker.vue'
 import type { GroupRule, SortSpec } from '@bookorbit/types'

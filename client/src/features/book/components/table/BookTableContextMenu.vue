@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { BookOpen, ExternalLink, FolderPlus, Pencil, RefreshCw, Send, Trash2 } from 'lucide-vue-next'
+import { BookOpen, ExternalLink, FolderPlus, Pencil, RefreshCw, Send, Trash2 } from '@lucide/vue'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useRefreshMetadata } from '@/features/book/composables/useRefreshMetadata'
 import { useBookRefreshFeedback } from '@/features/book/composables/useBookRefreshFeedback'

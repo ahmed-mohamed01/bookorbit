@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { TrendingUp } from 'lucide-vue-next'
+import { TrendingUp } from '@lucide/vue'
 
 import { useFormatShareOverTime } from '../../composables/useFormatShareOverTime'
 import ChartCard from '../ChartCard.vue'

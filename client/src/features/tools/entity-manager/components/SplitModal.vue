@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Plus, Trash2, X } from 'lucide-vue-next'
+import { Plus, Trash2, X } from '@lucide/vue'
 
 defineProps<{
   entityName: string

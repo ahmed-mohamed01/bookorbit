@@ -38,7 +38,7 @@ vi.mock('@/components/ui/sheet', () => ({
   }),
 }))
 
-vi.mock('lucide-vue-next', () => ({
+vi.mock('@lucide/vue', () => ({
   Search: defineComponent({ name: 'MockSearch', setup: () => () => h('span', { 'data-testid': 'icon-search' }) }),
   Loader2: defineComponent({ name: 'MockLoader', setup: () => () => h('span', { 'data-testid': 'icon-loader' }) }),
   Image: defineComponent({ name: 'MockImageIcon', setup: () => () => h('span') }),

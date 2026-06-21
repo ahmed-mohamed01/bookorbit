@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight } from '@lucide/vue'
 import type { AnnotationItem } from '@bookorbit/types'
 import HighlightCard from './HighlightCard.vue'
 

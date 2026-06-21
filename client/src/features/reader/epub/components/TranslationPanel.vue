@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Copy, RefreshCw } from 'lucide-vue-next'
+import { Copy, RefreshCw } from '@lucide/vue'
 import type { SupportedLanguage, TranslationResult } from '../services/translation.types'
 
 const props = defineProps<{

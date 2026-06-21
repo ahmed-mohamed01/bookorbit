@@ -13,7 +13,7 @@ import {
   Minimize,
   Search,
   Settings,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 

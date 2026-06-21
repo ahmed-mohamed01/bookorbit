@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, ref, watch } from 'vue'
-import { ArrowLeft, Loader2, Pencil, X } from 'lucide-vue-next'
+import { ArrowLeft, Loader2, Pencil, X } from '@lucide/vue'
 import { breakpointsTailwind, useBreakpoints } from '@vueuse/core'
 import { DialogClose, DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui'
 import type { BookCard } from '@bookorbit/types'

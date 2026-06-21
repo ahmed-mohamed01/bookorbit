@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-vue-next'
+import { AlertTriangle, CheckCircle2, Info, X, XCircle } from '@lucide/vue'
 import type { BookWriteAndRenameResult } from '@bookorbit/types'
 
 const props = defineProps<{

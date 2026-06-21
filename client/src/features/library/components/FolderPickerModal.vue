@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { Folder, FolderOpen, FolderPlus, ChevronRight, ChevronUp, Search, X, Check, Loader2, HardDrive } from 'lucide-vue-next'
+import { Folder, FolderOpen, FolderPlus, ChevronRight, ChevronUp, Search, X, Check, Loader2, HardDrive } from '@lucide/vue'
 import type { CreateFolderResult } from '@bookorbit/types'
 import { api } from '@/lib/api'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'

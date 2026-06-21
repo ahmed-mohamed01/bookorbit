@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Plus, Trash2, X } from 'lucide-vue-next'
+import { Plus, Trash2, X } from '@lucide/vue'
 import { FIELD_OPERATORS, RULE_FIELDS, type GroupRule, type Rule, type RuleField, type RuleOperator } from '@bookorbit/types'
 import { READ_STATUSES } from '@bookorbit/types'
 import { FIELD_LABELS, OPERATOR_LABELS } from '@/features/book/lib/filter-labels'

@@ -24,7 +24,7 @@ import {
   Star,
   Trash2,
   TriangleAlert,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { useBookStatus, STATUS_OPTIONS, STATUS_ICONS, STATUS_COLORS } from '../composables/useBookStatus'
 import type { ReadStatus } from '@bookorbit/types'
 import {

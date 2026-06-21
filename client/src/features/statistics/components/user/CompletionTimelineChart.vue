@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { CalendarRange } from 'lucide-vue-next'
+import { CalendarRange } from '@lucide/vue'
 
 import { useUserCompletionTimeline } from '../../composables/useUserCompletionTimeline'
 import ChartCard from '../ChartCard.vue'

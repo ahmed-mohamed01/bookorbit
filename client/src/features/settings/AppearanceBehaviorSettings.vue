@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { BookOpen, BookText } from 'lucide-vue-next'
+import { BookOpen, BookText } from '@lucide/vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { useDisplaySettings, type BookThumbnailClickAction } from '@/composables/useDisplaySettings'
 import { useSeriesCollapsePreference } from '@/features/book/composables/useSeriesCollapsePreference'

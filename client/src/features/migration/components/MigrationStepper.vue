@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, AlertCircle, Loader2 } from 'lucide-vue-next'
+import { Check, AlertCircle, Loader2 } from '@lucide/vue'
 
 export interface StepDefinition {
   label: string

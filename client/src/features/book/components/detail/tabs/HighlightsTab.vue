@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowUpDown, Highlighter } from 'lucide-vue-next'
+import { ArrowUpDown, Highlighter } from '@lucide/vue'
 import type { BookDetail } from '@bookorbit/types'
 import { useBookHighlights } from '@/features/book/composables/useBookHighlights'
 import HighlightsFilterBar from './HighlightsFilterBar.vue'

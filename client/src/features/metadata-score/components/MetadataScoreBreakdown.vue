@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Check, Minus } from 'lucide-vue-next'
+import { Check, Minus } from '@lucide/vue'
 import type { BookDetail, MetadataScoreWeights } from '@bookorbit/types'
 import { METADATA_SCORE_FIELDS, METADATA_SCORE_GROUP_LABELS, type MetadataScoreField, type MetadataScoreGroup } from '@bookorbit/types'
 

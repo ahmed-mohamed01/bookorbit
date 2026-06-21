@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Compass } from 'lucide-vue-next'
+import { Compass } from '@lucide/vue'
 
 import { useDiversityScoreWidget } from '../../composables/useDiversityScoreWidget'
 

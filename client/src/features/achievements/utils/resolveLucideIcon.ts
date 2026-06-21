@@ -55,7 +55,7 @@ import {
   Timer,
   Trophy,
   Zap,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import type { Component } from 'vue'
 
 const ICON_MAP: Record<string, Component> = {

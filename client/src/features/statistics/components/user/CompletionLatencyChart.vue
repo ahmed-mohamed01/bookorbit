@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { Rabbit } from 'lucide-vue-next'
+import { Rabbit } from '@lucide/vue'
 
 import { useUserCompletionLatency } from '../../composables/useUserCompletionLatency'
 import ChartCard from '../ChartCard.vue'

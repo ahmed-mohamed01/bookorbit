@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Circle, Square } from 'lucide-vue-next'
+import { Circle, Square } from '@lucide/vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import {
   useDisplaySettings,

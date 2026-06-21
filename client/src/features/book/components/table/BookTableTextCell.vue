@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { RouterLink } from 'vue-router'
-import { ExternalLink } from 'lucide-vue-next'
+import { ExternalLink } from '@lucide/vue'
 
 const props = defineProps<{
   value: string | null

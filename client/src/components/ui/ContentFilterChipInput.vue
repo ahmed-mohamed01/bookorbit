@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onUnmounted, ref } from 'vue'
-import { X } from 'lucide-vue-next'
+import { X } from '@lucide/vue'
 
 interface Item {
   id: number

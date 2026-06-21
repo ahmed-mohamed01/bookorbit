@@ -1,4 +1,4 @@
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import { createWriteStream } from 'fs';
 import { mkdir } from 'fs/promises';
 import { dirname, join } from 'path';
@@ -105,7 +105,7 @@ function assertRelativePath(path: string): void {
 
 async function writeZipArchive(absolutePath: string, entries: ZipEntryInput[]): Promise<void> {
   const output = createWriteStream(absolutePath);
-  const archive = archiver('zip', { zlib: { level: 6 } });
+  const archive = new ZipArchive({ zlib: { level: 6 } });
 
   await new Promise<void>((resolve, reject) => {
     output.on('close', resolve);

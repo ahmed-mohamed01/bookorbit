@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Circle, Square } from 'lucide-vue-next'
+import { Circle, Square } from '@lucide/vue'
 import type { BookViewMode } from '@/composables/useDisplaySettings'
 
 withDefaults(

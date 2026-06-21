@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, onUnmounted } from 'vue'
-import { Loader2 } from 'lucide-vue-next'
+import { Loader2 } from '@lucide/vue'
 import { useCoverVersions } from '../../composables/useCoverVersions'
 import BookCoverArtwork from '../BookCoverArtwork.vue'
 import BookCoverImage from '../BookCoverImage.vue'

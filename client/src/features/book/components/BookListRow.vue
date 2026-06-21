@@ -21,7 +21,7 @@ import {
   Star,
   Trash2,
   TriangleAlert,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCoverVersions } from '../composables/useCoverVersions'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { Target, Pencil } from 'lucide-vue-next'
+import { Target, Pencil } from '@lucide/vue'
 
 import { readCssColor } from '@/lib/echarts'
 import { useReadingGoalWidget } from '../../composables/useReadingGoalWidget'

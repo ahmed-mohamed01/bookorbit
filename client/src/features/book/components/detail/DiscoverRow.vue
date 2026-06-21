@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { BookOpen, User, Sparkles, ChevronLeft, ChevronRight } from 'lucide-vue-next'
+import { BookOpen, User, Sparkles, ChevronLeft, ChevronRight } from '@lucide/vue'
 
 import type { BookRecommendation, SeriesBookRecommendation } from '@bookorbit/types'
 import { api } from '@/lib/api'

@@ -2,7 +2,7 @@
 import { ref, reactive, watch } from 'vue'
 import { toast } from 'vue-sonner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Plus, Pencil, Trash2, Star, ChevronDown, ChevronRight, ChevronUp } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, Star, ChevronDown, ChevronRight, ChevronUp } from '@lucide/vue'
 import { useEmailTemplates, type EmailTemplate, type EmailTemplateForm } from '../composables/useEmailTemplates'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useMediaQuery } from '@vueuse/core'

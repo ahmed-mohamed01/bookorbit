@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Sparkles, Users } from 'lucide-vue-next'
+import { Sparkles, Users } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { useBookMetadataFetchStatus } from '../composables/useBookMetadataFetchStatus'
 import { useAuthorEnrichmentStatus } from '@/features/settings/composables/useAuthorEnrichmentStatus'

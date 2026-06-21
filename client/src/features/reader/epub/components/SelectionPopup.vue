@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { BookA, Copy, FileText, Highlighter, Languages, Search, Trash2 } from 'lucide-vue-next'
+import { BookA, Copy, FileText, Highlighter, Languages, Search, Trash2 } from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 const props = defineProps<{

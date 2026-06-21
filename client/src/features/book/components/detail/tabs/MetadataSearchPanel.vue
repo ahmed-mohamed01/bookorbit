@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, reactive, ref, watch } from 'vue'
-import { Search, BookOpen, Loader2, PencilLine } from 'lucide-vue-next'
+import { Search, BookOpen, Loader2, PencilLine } from '@lucide/vue'
 import type { MetadataCandidate, MetadataProviderInfo, MetadataProviderKey } from '@bookorbit/types'
 import MetadataResultCard from './MetadataResultCard.vue'
 import { providerActivePillStyle } from '../../../lib/metadata-fetch'

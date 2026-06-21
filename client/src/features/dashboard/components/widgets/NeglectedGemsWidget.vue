@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Gem, Star, BookMarked, Check } from 'lucide-vue-next'
+import { Gem, Star, BookMarked, Check } from '@lucide/vue'
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 

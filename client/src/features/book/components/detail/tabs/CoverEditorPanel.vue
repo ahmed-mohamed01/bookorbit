@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, ref, onUnmounted } from 'vue'
-import { Image, ImagePlus, Link, Lock, LockOpen, Loader2, RotateCcw, Search, Upload, X } from 'lucide-vue-next'
+import { Image, ImagePlus, Link, Lock, LockOpen, Loader2, RotateCcw, Search, Upload, X } from '@lucide/vue'
 import type { BookDetail } from '@bookorbit/types'
 import { FORMAT_TO_GROUP } from '@bookorbit/types'
 import { hideOnError } from '../../../lib/metadata-fetch'

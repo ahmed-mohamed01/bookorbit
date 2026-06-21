@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Monitor, Cloud } from 'lucide-vue-next'
+import { Monitor, Cloud } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { api } from '@/lib/api'
 import { useAuth } from '@/features/auth/composables/useAuth'

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, computed } from 'vue'
-import { RefreshCw, Save, RotateCcw } from 'lucide-vue-next'
+import { RefreshCw, Save, RotateCcw } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import type { MetadataScoreWeights, MetadataScoreField } from '@bookorbit/types'
 import { DEFAULT_METADATA_SCORE_WEIGHTS, METADATA_SCORE_FIELDS, METADATA_SCORE_GROUP_LABELS, type MetadataScoreGroup } from '@bookorbit/types'

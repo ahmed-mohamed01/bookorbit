@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Loader2, AlertCircle } from 'lucide-vue-next'
+import { Loader2, AlertCircle } from '@lucide/vue'
 import { useAuth } from '@/features/auth/composables/useAuth'
 
 const route = useRoute()

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { X, RefreshCw } from 'lucide-vue-next'
+import { X, RefreshCw } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import type { AuthorEnrichmentFailedPage } from '@bookorbit/types'
 import { api } from '@/lib/api'

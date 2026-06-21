@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { ChevronDown, ExternalLink, Search, Sparkles } from 'lucide-vue-next'
+import { ChevronDown, ExternalLink, Search, Sparkles } from '@lucide/vue'
 import type { ReleaseNote, ReleaseNotesResponse } from '@bookorbit/types'
 import { api } from '@/lib/api'
 import { useWhatsNew } from './composables/useWhatsNew'

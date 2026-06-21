@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { AuthorDetail } from '@bookorbit/types'
-import { MoreHorizontal, Pencil, RefreshCcw, Trash2, UsersRound, X } from 'lucide-vue-next'
+import { MoreHorizontal, Pencil, RefreshCcw, Trash2, UsersRound, X } from '@lucide/vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { toDisplayCoverUrl } from '@/features/book/lib/metadata-fetch'
 

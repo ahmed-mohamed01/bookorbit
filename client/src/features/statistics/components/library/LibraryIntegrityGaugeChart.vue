@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { ShieldCheck } from 'lucide-vue-next'
+import { ShieldCheck } from '@lucide/vue'
 
 import { readCssColor } from '@/lib/echarts'
 import { useLibraryIntegrityGauge } from '../../composables/useLibraryIntegrityGauge'

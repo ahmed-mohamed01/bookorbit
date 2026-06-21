@@ -4,7 +4,7 @@ import { api } from '@/lib/api'
 import { generatePkce } from '@/features/auth/composables/useOidc'
 import { toast } from 'vue-sonner'
 import { Permission, PERMISSION_LABELS } from '@bookorbit/types'
-import { ArrowLeft, Plus, ShieldCheck, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, Plus, ShieldCheck, Trash2 } from '@lucide/vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import SettingsPageHeader from './SettingsPageHeader.vue'
 

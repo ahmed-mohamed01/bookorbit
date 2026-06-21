@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ChevronLeft, ChevronRight, ChevronsUpDown } from 'lucide-vue-next'
+import { ChevronLeft, ChevronRight, ChevronsUpDown } from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 const props = defineProps<{

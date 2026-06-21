@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
-import { BookCopy, HardDrive, Library, Users } from 'lucide-vue-next'
+import { BookCopy, HardDrive, Library, Users } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import type { RouteLocationRaw } from 'vue-router'
 

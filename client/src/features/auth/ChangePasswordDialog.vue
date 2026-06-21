@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { X } from 'lucide-vue-next'
+import { X } from '@lucide/vue'
 import { api } from '@/lib/api'
 import { useAuth } from './composables/useAuth'
 import { useChangePasswordDialog } from '@/composables/useChangePasswordDialog'

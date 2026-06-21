@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { X } from 'lucide-vue-next'
+import { X } from '@lucide/vue'
 import { useCollections } from '../composables/useCollections'
 import IconPicker from '@/components/IconPicker.vue'
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { UserPlus, Trash2 } from 'lucide-vue-next'
+import { UserPlus, Trash2 } from '@lucide/vue'
 import { api } from '@/lib/api'
 import type { LibraryAccessEntry } from '@bookorbit/types'
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { AlertTriangle, X } from 'lucide-vue-next'
+import { AlertTriangle, X } from '@lucide/vue'
 
 const props = defineProps<{
   count: number

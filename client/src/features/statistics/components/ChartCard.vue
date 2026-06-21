@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
 import { computed } from 'vue'
-import { AlertCircle, GripVertical } from 'lucide-vue-next'
+import { AlertCircle, GripVertical } from '@lucide/vue'
 import { Skeleton } from '@/components/ui/skeleton'
 import ChartEmptyState from './ChartEmptyState.vue'
 

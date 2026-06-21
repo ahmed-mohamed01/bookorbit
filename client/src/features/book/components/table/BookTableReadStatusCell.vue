@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { ChevronDown } from 'lucide-vue-next'
+import { ChevronDown } from '@lucide/vue'
 import { STATUS_OPTIONS, STATUS_ICONS, STATUS_COLORS } from '@/features/book/composables/useBookStatus'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { ReadStatus, UserBookStatus } from '@bookorbit/types'

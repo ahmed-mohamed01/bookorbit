@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { VueDraggable } from 'vue-draggable-plus'
-import { GripVertical, X } from 'lucide-vue-next'
+import { GripVertical, X } from '@lucide/vue'
 import type { MetadataProviderKey, ProviderStatus } from '@bookorbit/types'
 import { providerChipStyle, PROVIDER_SHORT_LABELS } from '@/lib/provider-colors'
 import { PROVIDER_DND_GROUP, toProviderDragItems } from '../lib/provider-drag'

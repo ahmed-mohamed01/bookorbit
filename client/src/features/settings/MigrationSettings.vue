@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { Eye, EyeOff, Loader2 } from 'lucide-vue-next'
+import { Eye, EyeOff, Loader2 } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import SettingsPageHeader from './SettingsPageHeader.vue'
 import MigrationStepper from '@/features/migration/components/MigrationStepper.vue'

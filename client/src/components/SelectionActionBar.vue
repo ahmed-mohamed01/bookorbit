@@ -19,7 +19,7 @@ import {
   Trash2,
   Unlock,
   X,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import InputWithSuggestions from '@/components/ui/InputWithSuggestions.vue'
 import { usePublisherSearch, useSeriesNameSearch, useLanguageSearch } from '@/features/book/composables/useMetadataFieldSearch'
 import {

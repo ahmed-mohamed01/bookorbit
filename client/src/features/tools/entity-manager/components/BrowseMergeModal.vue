@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Check, GitMerge, X } from 'lucide-vue-next'
+import { Check, GitMerge, X } from '@lucide/vue'
 import type { BrowseEntityItem } from '@bookorbit/types'
 
 const props = defineProps<{

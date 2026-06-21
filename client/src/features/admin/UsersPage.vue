@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { UserPlus, Plus, Pencil, KeyRound, Trash2, ShieldCheck, MoreVertical, ShieldAlert } from 'lucide-vue-next'
+import { UserPlus, Plus, Pencil, KeyRound, Trash2, ShieldCheck, MoreVertical, ShieldAlert } from '@lucide/vue'
 import { api } from '@/lib/api'
 import type { AuthUser } from '@bookorbit/types'
 import { usePermissions } from '@/features/auth/composables/usePermissions'

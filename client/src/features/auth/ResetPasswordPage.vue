@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Moon, Sun, Wallpaper } from 'lucide-vue-next'
+import { Moon, Sun, Wallpaper } from '@lucide/vue'
 import { ACCENT_VIVID, ACCENT_PASTEL, ACCENT_OPTIONS, RADIUS_OPTIONS, BACKGROUND_OPTIONS, useThemeStore } from '@/stores/theme'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 

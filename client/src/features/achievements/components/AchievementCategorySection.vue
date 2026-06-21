@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue'
-import { BookOpen, Compass, Flame, Library, TabletSmartphone } from 'lucide-vue-next'
+import { BookOpen, Compass, Flame, Library, TabletSmartphone } from '@lucide/vue'
 import type { AchievementCategory, AchievementCategoryGroup } from '@bookorbit/types'
 import { groupAchievements } from '../composables/useGroupedAchievements'
 import type { DisplayItem, FilterState } from '../types'

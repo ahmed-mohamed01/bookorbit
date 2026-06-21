@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { Bookmark, BookOpen, Highlighter, Trash2 } from 'lucide-vue-next'
+import { Bookmark, BookOpen, Highlighter, Trash2 } from '@lucide/vue'
 import type { TocItem } from '../composables/useToc'
 import type { Bookmark as BookmarkType } from '../composables/useBookmarks'
 import type { Annotation } from '../composables/useAnnotations'
@@ -374,7 +374,7 @@ function deleteAnnotation(id: number) {
 
 <script lang="ts">
 import { defineComponent, h, type VNode, type Component } from 'vue'
-import { ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { ChevronDown, ChevronRight } from '@lucide/vue'
 
 interface LocalTocItem {
   label: string

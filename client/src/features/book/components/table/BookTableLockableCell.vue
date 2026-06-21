@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Lock, LockOpen } from 'lucide-vue-next'
+import { Lock, LockOpen } from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 defineProps<{

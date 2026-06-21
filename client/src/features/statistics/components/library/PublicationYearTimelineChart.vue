@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { TrendingUp } from 'lucide-vue-next'
+import { TrendingUp } from '@lucide/vue'
 
 import { usePublicationYearTimeline } from '../../composables/usePublicationYearTimeline'
 import ChartCard from '../ChartCard.vue'

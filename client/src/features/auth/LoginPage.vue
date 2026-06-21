@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { OidcProviderPublic } from '@bookorbit/types'
-import { Moon, Sun, Wallpaper } from 'lucide-vue-next'
+import { Moon, Sun, Wallpaper } from '@lucide/vue'
 import { ACCENT_VIVID, ACCENT_PASTEL, ACCENT_OPTIONS, RADIUS_OPTIONS, BACKGROUND_OPTIONS, useThemeStore } from '@/stores/theme'
 import { useAuth } from './composables/useAuth'
 import { useOidc } from './composables/useOidc'

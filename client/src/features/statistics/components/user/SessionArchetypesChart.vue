@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { Layers } from 'lucide-vue-next'
+import { Layers } from '@lucide/vue'
 
 import { useUserSessionArchetypes } from '../../composables/useUserSessionArchetypes'
 import ChartCard from '../ChartCard.vue'

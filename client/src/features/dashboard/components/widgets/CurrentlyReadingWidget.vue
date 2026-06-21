@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BookOpen, Play } from 'lucide-vue-next'
+import { BookOpen, Play } from '@lucide/vue'
 import { useRouter } from 'vue-router'
 import { FORMAT_TO_GROUP } from '@bookorbit/types'
 

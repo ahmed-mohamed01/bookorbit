@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { Copy, Download, RotateCcw, Star, Upload, X } from 'lucide-vue-next'
+import { Copy, Download, RotateCcw, Star, Upload, X } from '@lucide/vue'
 import type { TableDensity } from '@/composables/useDisplaySettings'
 import type { SavedView } from '@/features/book/composables/useSavedViews'
 import type { ColumnDef, ColumnId } from '@/features/book/composables/useTableColumns'

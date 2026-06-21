@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import * as Icons from 'lucide-vue-next'
+import * as Icons from '@lucide/vue'
 import { VueDraggable } from 'vue-draggable-plus'
 import {
   Sidebar,

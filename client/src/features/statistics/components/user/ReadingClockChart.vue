@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { Clock } from 'lucide-vue-next'
+import { Clock } from '@lucide/vue'
 
 import { useThemeStore } from '@/stores/theme'
 import { getThemePalette } from '@/lib/echarts'

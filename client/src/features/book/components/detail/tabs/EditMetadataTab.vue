@@ -1,19 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import {
-  Check,
-  ChevronDown,
-  FileCheck,
-  HardDriveDownload,
-  HardDriveUpload,
-  Loader2,
-  Lock,
-  LockOpen,
-  RefreshCw,
-  Sparkles,
-  Star,
-  X,
-} from 'lucide-vue-next'
+import { Check, ChevronDown, FileCheck, HardDriveDownload, HardDriveUpload, Loader2, Lock, LockOpen, RefreshCw, Sparkles, Star, X } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import type { BookDetail, BookMetadataLockField, WriteResult } from '@bookorbit/types'
 import { BOOK_FILE_WRITE_FIELD_LABELS, FORMAT_TO_GROUP } from '@bookorbit/types'

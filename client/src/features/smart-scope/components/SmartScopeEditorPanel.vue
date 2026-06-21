@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { X, Zap } from 'lucide-vue-next'
+import { X, Zap } from '@lucide/vue'
 import { api } from '@/lib/api'
 import type { GroupRule, SmartScope, Rule, SortSpec } from '@bookorbit/types'
 import { useSmartScopes } from '@/features/smart-scope/composables/useSmartScopes'

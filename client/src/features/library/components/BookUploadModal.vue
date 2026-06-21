@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { CheckCircle2, FileUp, Loader2, Plus, RotateCcw, Upload, X, XCircle } from 'lucide-vue-next'
+import { CheckCircle2, FileUp, Loader2, Plus, RotateCcw, Upload, X, XCircle } from '@lucide/vue'
 import { api } from '@/lib/api'
 import type { Library } from '@bookorbit/types'
 import { SUPPORTED_FORMATS, SUPPORTED_FORMATS_ACCEPT, useBookUpload, type FileUploadStatus } from '../composables/useBookUpload'

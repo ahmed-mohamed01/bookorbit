@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch } from 'vue'
 import VChart from 'vue-echarts'
-import { GitMerge } from 'lucide-vue-next'
+import { GitMerge } from '@lucide/vue'
 import type { ChordDiagramData } from '@bookorbit/types'
 
 import { useGenreCooccurrence } from '../../composables/useGenreCooccurrence'

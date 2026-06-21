@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { BookOpen, ExternalLink, FolderPlus, MoreHorizontal, Pencil, RefreshCw, Send, Trash2 } from 'lucide-vue-next'
+import { BookOpen, ExternalLink, FolderPlus, MoreHorizontal, Pencil, RefreshCw, Send, Trash2 } from '@lucide/vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 import { usePermissions } from '@/features/auth/composables/usePermissions'

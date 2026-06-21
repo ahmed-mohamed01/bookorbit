@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { HeartPulse } from 'lucide-vue-next'
+import { HeartPulse } from '@lucide/vue'
 
 import { useReadingRhythmWidget } from '../../composables/useReadingRhythmWidget'
 

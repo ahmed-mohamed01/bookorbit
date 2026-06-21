@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Eye } from 'lucide-vue-next'
+import { Eye } from '@lucide/vue'
 
 const props = defineProps<{
   watch: boolean

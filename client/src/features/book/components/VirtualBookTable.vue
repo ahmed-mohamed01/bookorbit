@@ -2,7 +2,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { breakpointsTailwind, useBreakpoints } from '@vueuse/core'
 import { useVirtualizer } from '@tanstack/vue-virtual'
-import { AlertTriangle, ArrowDown, ArrowUp, BookOpen, CheckCircle2, ChevronUp, Loader2, RotateCcw, X } from 'lucide-vue-next'
+import { AlertTriangle, ArrowDown, ArrowUp, BookOpen, CheckCircle2, ChevronUp, Loader2, RotateCcw, X } from '@lucide/vue'
 import {
   useTableColumns,
   COLUMN_DEFS,

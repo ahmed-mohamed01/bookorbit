@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref, computed, watch } from 'vue'
-import { Plus, Trash2, Copy, Rss, ChevronDown, ChevronUp } from 'lucide-vue-next'
+import { Plus, Trash2, Copy, Rss, ChevronDown, ChevronUp } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import SettingsPageHeader from './SettingsPageHeader.vue'

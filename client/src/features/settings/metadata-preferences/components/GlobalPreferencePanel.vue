@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { Loader2, RotateCcw, Save, Settings, Trash2 } from 'lucide-vue-next'
+import { Loader2, RotateCcw, Save, Settings, Trash2 } from '@lucide/vue'
 import type { FieldPreference, MetadataFetchPreferences, MetadataField, ProviderStatus } from '@bookorbit/types'
 import FieldPreferenceTable from './FieldPreferenceTable.vue'
 

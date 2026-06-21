@@ -1,4 +1,4 @@
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import { randomUUID } from 'crypto';
 import { createWriteStream } from 'fs';
 import { mkdir, writeFile } from 'fs/promises';
@@ -69,7 +69,7 @@ interface ZipEntry {
 
 async function writeZip(outPath: string, entries: ZipEntry[]): Promise<void> {
   const output = createWriteStream(outPath);
-  const archive = archiver('zip', { zlib: { level: 6 } });
+  const archive = new ZipArchive({ zlib: { level: 6 } });
 
   await new Promise<void>((resolve, reject) => {
     output.on('close', resolve);

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, useAttrs } from 'vue'
-import { Aperture, BookMarked, BookmarkPlus, ChevronLeft, ChevronRight, Headphones, ListOrdered, RefreshCw, Shuffle, Sparkles } from 'lucide-vue-next'
+import { Aperture, BookMarked, BookmarkPlus, ChevronLeft, ChevronRight, Headphones, ListOrdered, RefreshCw, Shuffle, Sparkles } from '@lucide/vue'
 
 import { isAudioFormat, type BookCard, type CoverAspectRatio, type ScrollerType } from '@bookorbit/types'
 import BookCoverCard from '@/features/book/components/BookCoverCard.vue'

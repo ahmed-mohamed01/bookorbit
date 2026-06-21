@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { X, Loader2, FolderPlus } from 'lucide-vue-next'
+import { X, Loader2, FolderPlus } from '@lucide/vue'
 import { api } from '@/lib/api'
 import { useLibraries } from '@/features/library/composables/useLibraries'
 

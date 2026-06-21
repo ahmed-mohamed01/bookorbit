@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Search, Loader2, Image as ImageIcon, Check } from 'lucide-vue-next'
+import { Search, Loader2, Image as ImageIcon, Check } from '@lucide/vue'
 import type { CoverSearchResult } from '@bookorbit/types'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 

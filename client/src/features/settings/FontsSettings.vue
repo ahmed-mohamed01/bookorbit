@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { Pencil, Trash2, Upload, X, Check, ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { Pencil, Trash2, Upload, X, Check, ChevronDown, ChevronRight } from '@lucide/vue'
 import { MAX_FONTS_PER_USER } from '@bookorbit/types'
 import type { UserFont } from '@bookorbit/types'
 import { useCustomFonts } from '@/features/reader/epub/composables/useCustomFonts'

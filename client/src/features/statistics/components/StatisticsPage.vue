@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Check, ChevronDown, GripVertical, Settings2 } from 'lucide-vue-next'
+import { Check, ChevronDown, GripVertical, Settings2 } from '@lucide/vue'
 import { VueDraggable } from 'vue-draggable-plus'
 
 import type { ChartConfigEntry, StatisticsChartId } from '@bookorbit/types'

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ChevronRight, LibraryBig } from 'lucide-vue-next'
+import { ChevronRight, LibraryBig } from '@lucide/vue'
 import { FORMAT_TO_GROUP, type BookCard } from '@bookorbit/types'
 import BookCoverSurface from '../BookCoverSurface.vue'
 import type { ColumnId } from '@/features/book/composables/useTableColumns'

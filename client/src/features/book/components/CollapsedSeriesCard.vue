@@ -2,7 +2,7 @@
 import { computed, inject, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { FORMAT_TO_GROUP, type BookCard } from '@bookorbit/types'
-import { Library } from 'lucide-vue-next'
+import { Library } from '@lucide/vue'
 import BookCoverArtwork from './BookCoverArtwork.vue'
 import BookCoverPlaceholder from './BookCoverPlaceholder.vue'
 import BookCoverSurface from './BookCoverSurface.vue'

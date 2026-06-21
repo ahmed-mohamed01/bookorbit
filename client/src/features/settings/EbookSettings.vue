@@ -7,7 +7,7 @@ import { useCustomFonts } from '@/features/reader/epub/composables/useCustomFont
 import { themes } from '@/features/reader/epub/constants/themes'
 import { BUILTIN_READER_FONT_OPTIONS } from '@/features/reader/shared/constants/font-options'
 import { formatFontFamilyLabel } from '@/features/reader/shared/lib/font-display'
-import { Check } from 'lucide-vue-next'
+import { Check } from '@lucide/vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import SettingsPageHeader from './SettingsPageHeader.vue'
 

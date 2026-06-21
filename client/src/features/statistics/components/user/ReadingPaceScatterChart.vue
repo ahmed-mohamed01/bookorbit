@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { Zap } from 'lucide-vue-next'
+import { Zap } from '@lucide/vue'
 
 import { useUserReadingPace } from '../../composables/useUserReadingPace'
 import ChartCard from '../ChartCard.vue'

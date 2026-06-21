@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { Users } from 'lucide-vue-next'
+import { Users } from '@lucide/vue'
 
 import { useThemeStore } from '@/stores/theme'
 import { getThemePalette, readCssColor } from '@/lib/echarts'

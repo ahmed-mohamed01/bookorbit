@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { Eye, EyeOff, Loader2, X, ChevronLeft, ChevronRight, Check, AlertCircle, RotateCcw } from 'lucide-vue-next'
+import { Eye, EyeOff, Loader2, X, ChevronLeft, ChevronRight, Check, AlertCircle, RotateCcw } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import SearchableUserSelect from './SearchableUserSelect.vue'
 import { api } from '@/lib/api'

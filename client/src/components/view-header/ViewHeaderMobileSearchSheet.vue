@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue'
-import { Search, X } from 'lucide-vue-next'
+import { Search, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 

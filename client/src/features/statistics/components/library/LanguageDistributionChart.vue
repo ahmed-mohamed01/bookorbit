@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { Globe } from 'lucide-vue-next'
+import { Globe } from '@lucide/vue'
 import { breakpointsTailwind, useBreakpoints } from '@vueuse/core'
 
 import { useLanguageDistribution } from '../../composables/useLanguageDistribution'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { X, Check, AlertCircle, Copy, Loader2, ExternalLink, ChevronDown, FileText } from 'lucide-vue-next'
+import { X, Check, AlertCircle, Copy, Loader2, ExternalLink, ChevronDown, FileText } from '@lucide/vue'
 
 import { api } from '@/lib/api'
 import { useLibraries } from '@/features/library/composables/useLibraries'

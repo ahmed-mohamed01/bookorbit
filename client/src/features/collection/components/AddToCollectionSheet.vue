@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { FolderMinus, Library, Loader2, Plus } from 'lucide-vue-next'
+import { FolderMinus, Library, Loader2, Plus } from '@lucide/vue'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'

@@ -2,7 +2,7 @@
 import { ref, reactive } from 'vue'
 import { toast } from 'vue-sonner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Plus, Pencil, Trash2, Star } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, Star } from '@lucide/vue'
 import { useEmailRecipients, type EmailRecipient, type EmailRecipientForm } from '../composables/useEmailRecipients'
 import { useEmailTemplates } from '../composables/useEmailTemplates'
 

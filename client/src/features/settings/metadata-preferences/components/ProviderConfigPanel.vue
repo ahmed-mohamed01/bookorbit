@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Loader2, Save } from 'lucide-vue-next'
+import { Loader2, Save } from '@lucide/vue'
 import { MetadataProviderKey } from '@bookorbit/types'
 import type { ProviderConfigurations, ProviderConnectionTestResult, ProviderStatus, ProviderThrottleRuntimeState } from '@bookorbit/types'
 import { toast } from 'vue-sonner'

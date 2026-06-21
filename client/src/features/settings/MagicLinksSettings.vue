@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Plus, Trash2, Copy, Check, Link, Pause, Play } from 'lucide-vue-next'
+import { Plus, Trash2, Copy, Check, Link, Pause, Play } from '@lucide/vue'
 import { api } from '@/lib/api'
 import { useMagicLinks } from '@/features/settings/composables/useMagicLinks'
 import SettingsPageHeader from '@/features/settings/SettingsPageHeader.vue'

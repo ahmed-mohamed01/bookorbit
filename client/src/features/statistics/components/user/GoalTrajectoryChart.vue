@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, shallowRef, watchEffect } from 'vue'
 import VChart from 'vue-echarts'
-import { Goal } from 'lucide-vue-next'
+import { Goal } from '@lucide/vue'
 
 import { useUserGoalTrajectory } from '../../composables/useUserGoalTrajectory'
 import ChartCard from '../ChartCard.vue'

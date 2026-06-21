@@ -22,7 +22,7 @@ import {
   Volume2,
   VolumeX,
   X,
-} from 'lucide-vue-next'
+} from '@lucide/vue'
 import type { AudiobookChapter, BookDetail, BookDetailFile } from '@bookorbit/types'
 import { api } from '@/lib/api'
 import BookCoverPlaceholder from '@/features/book/components/BookCoverPlaceholder.vue'

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { toast } from 'vue-sonner'
-import { X, Send, Loader2 } from 'lucide-vue-next'
+import { X, Send, Loader2 } from '@lucide/vue'
 import { useEmailProviders } from '../composables/useEmailProviders'
 import { useEmailRecipients } from '../composables/useEmailRecipients'
 import { useEmailGroups } from '../composables/useEmailGroups'

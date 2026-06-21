@@ -5,7 +5,7 @@ import { createWriteStream } from 'fs';
 import * as fs from 'fs/promises';
 import { randomUUID } from 'crypto';
 import * as unzipper from 'unzipper';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 
 import { readComicInfoFromZip, writeComicInfoToZip } from './cbz-zip-patcher';
 
@@ -47,7 +47,7 @@ let lastArchive: EventEmitter & {
 };
 
 vi.mock('archiver', () => ({
-  default: vi.fn(() => {
+  ZipArchive: vi.fn(function () {
     let output: EventEmitter | null = null;
     const emitter = new EventEmitter() as EventEmitter & {
       append: vi.Mock;
@@ -110,7 +110,7 @@ describe('cbz-zip-patcher', () => {
 
     await writeComicInfoToZip('/books/a.cbz', '<ComicInfo><Title>New</Title></ComicInfo>');
 
-    expect(archiver).toHaveBeenCalledWith('zip', { zlib: { level: 6 } });
+    expect(ZipArchive).toHaveBeenCalledWith({ zlib: { level: 6 } });
     expect(imageEntry.stream).toHaveBeenCalledTimes(1);
     expect(lastArchive.append).toHaveBeenCalledWith(expect.objectContaining({ pipe: expect.any(Function) }), { name: 'pages/001.jpg' });
     expect(lastArchive.append).toHaveBeenCalledWith(Buffer.from('<ComicInfo><Title>New</Title></ComicInfo>', 'utf-8'), {

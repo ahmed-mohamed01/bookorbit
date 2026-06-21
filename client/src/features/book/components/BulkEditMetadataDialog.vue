@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { X } from 'lucide-vue-next'
+import { X } from '@lucide/vue'
 import ChipInput from '@/components/ui/ChipInput.vue'
 import InputWithSuggestions from '@/components/ui/InputWithSuggestions.vue'
 import SeriesMembershipEditor from '@/features/book/components/detail/tabs/SeriesMembershipEditor.vue'

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { Loader2 } from 'lucide-vue-next'
+import { Loader2 } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import type { BookDockAutoFinalizeMetadataMode } from '@bookorbit/types'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'

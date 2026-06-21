@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { ChevronDown, ChevronUp, GripVertical, Plus, RotateCcw, Trash2 } from 'lucide-vue-next'
+import { ChevronDown, ChevronUp, GripVertical, Plus, RotateCcw, Trash2 } from '@lucide/vue'
 
 import type { ScrollerConfig, ScrollerType, WidgetConfig } from '@bookorbit/types'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'

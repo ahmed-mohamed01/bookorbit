@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { Download, FileJson2, FileSpreadsheet, Loader2, X } from 'lucide-vue-next'
+import { Download, FileJson2, FileSpreadsheet, Loader2, X } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import type { SortSpec } from '@bookorbit/types'
 import {

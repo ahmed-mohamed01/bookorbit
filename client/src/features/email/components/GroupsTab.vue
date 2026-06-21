@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { toast } from 'vue-sonner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { Plus, Trash2, UserMinus, UserPlus, ChevronDown, ChevronRight } from 'lucide-vue-next'
+import { Plus, Trash2, UserMinus, UserPlus, ChevronDown, ChevronRight } from '@lucide/vue'
 import { useEmailGroups, type EmailGroup } from '../composables/useEmailGroups'
 import { useEmailRecipients } from '../composables/useEmailRecipients'
 
