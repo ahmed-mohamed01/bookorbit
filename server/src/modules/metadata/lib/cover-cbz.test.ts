@@ -10,9 +10,10 @@ const mockReadFile = readFile as MockedFunction<typeof readFile>;
 interface ZipEntry {
   name: string;
   data: Buffer;
-  compression?: 0 | 8;
+  compression?: number;
   /** When true, LFH compressedSize is written as 0 (data descriptor mode). CDR always has the real size. */
   dataDescriptor?: boolean;
+  corruptPayload?: boolean;
 }
 
 /**
@@ -27,7 +28,8 @@ function buildZip(entries: ZipEntry[], eocdComment?: Buffer): Buffer {
 
   for (const entry of entries) {
     const nameBuf = Buffer.from(entry.name, 'utf-8');
-    const payload = entry.compression === 8 ? deflateRawSync(entry.data) : entry.data;
+    const payload = Buffer.from(entry.compression === 8 ? deflateRawSync(entry.data) : entry.data);
+    if (entry.corruptPayload && payload.length > 0) payload[0] ^= 0xff;
     const lfhCompressedSize = entry.dataDescriptor ? 0 : payload.length;
 
     const lfh = Buffer.alloc(30 + nameBuf.length);
@@ -75,9 +77,18 @@ function buildZip(entries: ZipEntry[], eocdComment?: Buffer): Buffer {
   return Buffer.concat([...lfhChunks, cdData, eocd]);
 }
 
-function mockZip(entries: ZipEntry[], eocdComment?: Buffer) {
+function mockZip(entries: ZipEntry[], eocdComment?: Buffer): Buffer {
   const buf = buildZip(entries, eocdComment);
   mockReadFile.mockResolvedValue(buf as unknown as Awaited<ReturnType<typeof readFile>>);
+  return buf;
+}
+
+function eocdOffset(buf: Buffer): number {
+  return buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+}
+
+function centralDirectoryOffset(buf: Buffer): number {
+  return buf.readUInt32LE(eocdOffset(buf) + 16);
 }
 
 describe('extractCbzCover', () => {
@@ -86,6 +97,25 @@ describe('extractCbzCover', () => {
   it('returns the first visible image (STORED)', async () => {
     mockZip([{ name: '001.jpg', data: Buffer.from([0xff, 0xd8, 0xff]) }]);
     await expect(extractCbzCover('/book.cbz')).resolves.toEqual(Buffer.from([0xff, 0xd8, 0xff]));
+  });
+
+  it('returns the first visible image by natural filename order instead of ZIP entry order', async () => {
+    mockZip([
+      { name: '010.jpg', data: Buffer.from([0x10]) },
+      { name: '001.jpg', data: Buffer.from([0x01]) },
+      { name: '002.jpg', data: Buffer.from([0x02]) },
+    ]);
+
+    await expect(extractCbzCover('/book.cbz')).resolves.toEqual(Buffer.from([0x01]));
+  });
+
+  it('uses natural numeric sorting when choosing between page names', async () => {
+    mockZip([
+      { name: 'page10.jpg', data: Buffer.from([0x10]) },
+      { name: 'page2.jpg', data: Buffer.from([0x02]) },
+    ]);
+
+    await expect(extractCbzCover('/book.cbz')).resolves.toEqual(Buffer.from([0x02]));
   });
 
   it('skips hidden image files and returns first visible image', async () => {
@@ -101,12 +131,30 @@ describe('extractCbzCover', () => {
     await expect(extractCbzCover('/book.cbz')).resolves.toEqual(Buffer.from([1, 2, 3, 4]));
   });
 
+  it('skips unsupported image compression methods and continues to the next image', async () => {
+    mockZip([
+      { name: '001.jpg', data: Buffer.from([0x01]), compression: 99 },
+      { name: '002.jpg', data: Buffer.from([0x02]) },
+    ]);
+
+    await expect(extractCbzCover('/book.cbz')).resolves.toEqual(Buffer.from([0x02]));
+  });
+
   it('extracts cover when LFH compressedSize is 0 (data descriptor mode)', async () => {
     // Reproduces the real-world bug: CBZ files produced with data descriptors
     // store compressedSize=0 in the local file header. The CDR always has the
     // correct size and is now the authoritative source.
     mockZip([{ name: 'cover.jpg', data: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), compression: 8, dataDescriptor: true }]);
     await expect(extractCbzCover('/book.cbz')).resolves.toEqual(Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+  });
+
+  it('sorts data-descriptor entries before extracting the cover', async () => {
+    mockZip([
+      { name: '010.jpg', data: Buffer.from([0x10]), compression: 8, dataDescriptor: true },
+      { name: '001.jpg', data: Buffer.from([0x01]), compression: 8, dataDescriptor: true },
+    ]);
+
+    await expect(extractCbzCover('/book.cbz')).resolves.toEqual(Buffer.from([0x01]));
   });
 
   it('handles a ZIP with a large EOCD comment (e.g. ComicTagger metadata)', async () => {
@@ -125,6 +173,39 @@ describe('extractCbzCover', () => {
 
   it('returns null when the archive contains no image files', async () => {
     mockZip([{ name: 'notes.txt', data: Buffer.from('hello') }]);
+    await expect(extractCbzCover('/book.cbz')).resolves.toBeNull();
+  });
+
+  it('returns null when sorted image candidates cannot be extracted', async () => {
+    mockZip([{ name: '001.jpg', data: Buffer.from([1, 2, 3, 4]), compression: 8, corruptPayload: true }]);
+    await expect(extractCbzCover('/book.cbz')).resolves.toBeNull();
+  });
+
+  it('returns null when the central directory bounds are invalid', async () => {
+    const buf = mockZip([{ name: '001.jpg', data: Buffer.from([0x01]) }]);
+    buf.writeUInt32LE(buf.length, eocdOffset(buf) + 16);
+
+    await expect(extractCbzCover('/book.cbz')).resolves.toBeNull();
+  });
+
+  it('returns null when a central directory entry is truncated', async () => {
+    const buf = mockZip([{ name: '001.jpg', data: Buffer.from([0x01]) }]);
+    buf.writeUInt16LE(1000, centralDirectoryOffset(buf) + 28);
+
+    await expect(extractCbzCover('/book.cbz')).resolves.toBeNull();
+  });
+
+  it('returns null when a selected image points outside the local file headers', async () => {
+    const buf = mockZip([{ name: '001.jpg', data: Buffer.from([0x01]) }]);
+    buf.writeUInt32LE(buf.length, centralDirectoryOffset(buf) + 42);
+
+    await expect(extractCbzCover('/book.cbz')).resolves.toBeNull();
+  });
+
+  it('returns null when selected image payload bounds are invalid', async () => {
+    const buf = mockZip([{ name: '001.jpg', data: Buffer.from([0x01]) }]);
+    buf.writeUInt32LE(buf.length, centralDirectoryOffset(buf) + 20);
+
     await expect(extractCbzCover('/book.cbz')).resolves.toBeNull();
   });
 

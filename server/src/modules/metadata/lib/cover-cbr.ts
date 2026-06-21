@@ -1,6 +1,6 @@
 import { readFile } from 'fs/promises';
 import { createExtractorFromData, UnrarError } from 'node-unrar-js';
-import { isArchiveImageFile, isHiddenArchivePath } from './archive-image-utils';
+import { compareArchiveEntryNames, isArchiveImageFile, isHiddenArchivePath } from './archive-image-utils';
 
 function toArrayBuffer(buf: Buffer): ArrayBuffer {
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
@@ -26,7 +26,7 @@ export async function extractCbrCover(absolutePath: string): Promise<Buffer | nu
       // instead of ERAR_END_ARCHIVE. Accept partial results if we have images.
       if (!(err instanceof UnrarError) || images.length === 0) throw err;
     }
-    images.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    images.sort((a, b) => compareArchiveEntryNames(a.name, b.name));
 
     if (images.length === 0) return null;
     const firstName = images[0].name;

@@ -1,4 +1,4 @@
-import { isArchiveImageFile, isHiddenArchivePath } from './archive-image-utils';
+import { compareArchiveEntryNames, isArchiveImageFile, isHiddenArchivePath } from './archive-image-utils';
 
 describe('archive-image-utils', () => {
   it('detects supported image file extensions case-insensitively', () => {
@@ -15,5 +15,10 @@ describe('archive-image-utils', () => {
     expect(isHiddenArchivePath('.hidden.jpg')).toBe(true);
     expect(isHiddenArchivePath('folder/.hidden/page.jpg')).toBe(true);
     expect(isHiddenArchivePath('folder/page.jpg')).toBe(false);
+  });
+
+  it('sorts archive entries by natural filename order', () => {
+    const entries = ['page10.jpg', 'Page1.JPG', 'page2.jpg'];
+    expect(entries.toSorted(compareArchiveEntryNames)).toEqual(['Page1.JPG', 'page2.jpg', 'page10.jpg']);
   });
 });

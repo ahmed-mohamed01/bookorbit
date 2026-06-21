@@ -1,6 +1,6 @@
 import { readFile } from 'fs/promises';
 import { getSevenZip } from '../../../common/sevenzip';
-import { isArchiveImageFile } from './archive-image-utils';
+import { compareArchiveEntryNames, isArchiveImageFile } from './archive-image-utils';
 import { cleanupSevenZipArtifacts, createSevenZipTempId, type SevenZipInstance } from './sevenzip-vfs';
 
 export async function extractCb7Cover(absolutePath: string): Promise<Buffer | null> {
@@ -31,7 +31,7 @@ export async function extractCb7Cover(absolutePath: string): Promise<Buffer | nu
 
     const files = sz.FS.readdir(outDir)
       .filter((f) => f !== '.' && f !== '..' && isArchiveImageFile(f))
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+      .sort(compareArchiveEntryNames);
 
     const result = files.length > 0 ? Buffer.from(sz.FS.readFile(`${outDir}/${files[0]}`)) : null;
     return result;
