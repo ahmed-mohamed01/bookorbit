@@ -82,8 +82,6 @@ describe('cfiRangesOverlap', () => {
   })
 
   it('returns false when selection is entirely before annotation', () => {
-    const before = 'epubcfi(/6/4!/4/2,/2/1:0,/2/1:0)'
-    // 0:0 to 0:0 is before 0:0 to 0:20 only if no overlap; here they share start — overlap
     const clearlyBefore = 'epubcfi(/6/2!/4/2,/2/1:0,/2/1:5)'
     expect(cfiRangesOverlap(clearlyBefore, ann)).toBe(false)
   })

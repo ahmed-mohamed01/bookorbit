@@ -37,12 +37,20 @@ export interface CspOptions {
 
 const CLOUDFLARE_INSIGHTS_SCRIPT_SRC = 'https://static.cloudflareinsights.com';
 const CLOUDFLARE_INSIGHTS_CONNECT_SRC = 'https://cloudflareinsights.com';
+const DICTIONARY_CONNECT_SRC = ['https://api.dictionaryapi.dev', 'https://*.wiktionary.org'];
 
 export function buildCspDirectives(options: CspOptions = {}) {
   const { allowCloudflareInsights = false } = options;
 
   const scriptSrc = ["'self'", "'wasm-unsafe-eval'", ...(allowCloudflareInsights ? [CLOUDFLARE_INSIGHTS_SCRIPT_SRC] : [])];
-  const connectSrc = ["'self'", 'ws:', 'wss:', 'https://cdn.jsdelivr.net', ...(allowCloudflareInsights ? [CLOUDFLARE_INSIGHTS_CONNECT_SRC] : [])];
+  const connectSrc = [
+    "'self'",
+    'ws:',
+    'wss:',
+    'https://cdn.jsdelivr.net',
+    ...DICTIONARY_CONNECT_SRC,
+    ...(allowCloudflareInsights ? [CLOUDFLARE_INSIGHTS_CONNECT_SRC] : []),
+  ];
 
   return {
     defaultSrc: ["'self'"],

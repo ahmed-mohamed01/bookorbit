@@ -167,6 +167,13 @@ describe('buildCspDirectives', () => {
 
       expect(connectSrc).not.toContain('https://cloudflareinsights.com');
     });
+
+    it('includes dictionary lookup endpoints used by the epub reader', () => {
+      const { connectSrc } = buildCspDirectives();
+
+      expect(connectSrc).toContain('https://api.dictionaryapi.dev');
+      expect(connectSrc).toContain('https://*.wiktionary.org');
+    });
   });
 
   describe('scriptSrc with Cloudflare Insights', () => {
