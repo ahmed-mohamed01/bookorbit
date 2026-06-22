@@ -70,3 +70,59 @@ export function findNearestCfi<T extends { cfi: string | null | undefined }>(ite
 
   return nearest
 }
+
+interface CfiRange {
+  spineStep: number
+  startKey: bigint
+  endKey: bigint
+}
+
+function pathToSortKey(path: string): bigint {
+  const nums =
+    path
+      .replace(/\[[^\]]*\]/g, '')
+      .match(/\d+/g)
+      ?.map(Number)
+      .filter(Number.isFinite) ?? []
+  if (!nums.length) return 0n
+  return BigInt(
+    nums
+      .slice(0, 8)
+      .map((n) => Math.max(0, Math.floor(n)).toString().padStart(6, '0'))
+      .join(''),
+  )
+}
+
+function parseCfiRange(cfi: string): CfiRange | null {
+  const body = getCfiBody(cfi)
+  if (!body) return null
+
+  const firstComma = body.indexOf(',')
+  if (firstComma === -1) return null
+  const secondComma = body.indexOf(',', firstComma + 1)
+  if (secondComma === -1) return null
+
+  const parentPath = body.slice(0, firstComma)
+  const startRel = body.slice(firstComma + 1, secondComma)
+  const endRel = body.slice(secondComma + 1)
+
+  const spineMatch = parentPath.match(/\/6\/(\d+)/)
+  const spineStep = spineMatch ? Number(spineMatch[1]) : -1
+
+  const bangIdx = parentPath.indexOf('!')
+  const contentBase = bangIdx !== -1 ? parentPath.slice(bangIdx + 1) : ''
+
+  return {
+    spineStep,
+    startKey: pathToSortKey(contentBase + startRel),
+    endKey: pathToSortKey(contentBase + endRel),
+  }
+}
+
+export function cfiRangesOverlap(a: string, b: string): boolean {
+  const ra = parseCfiRange(a)
+  const rb = parseCfiRange(b)
+  if (!ra || !rb) return false
+  if (ra.spineStep !== rb.spineStep) return false
+  return ra.startKey <= rb.endKey && ra.endKey >= rb.startKey
+}

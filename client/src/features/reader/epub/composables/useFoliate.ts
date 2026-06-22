@@ -47,6 +47,12 @@ export function useFoliate(
   const viewRef = ref<unknown>(null)
   const bookLanguage = ref<string>('en')
 
+  let onAnnotationClick: ((cfi: string, popupPosition: { x: number; y: number; showBelow: boolean }) => void) | null = null
+
+  function setAnnotationClickHandler(fn: (cfi: string, popupPosition: { x: number; y: number; showBelow: boolean }) => void) {
+    onAnnotationClick = fn
+  }
+
   const annotations = useFoliateAnnotations()
   const selection = useFoliateSelection(() => viewRef.value)
   const input = useFoliateInput(() => viewRef.value, onMiddleTap, selection.handleSelectionEnd, selection.handleSelectionChange)
@@ -118,6 +124,39 @@ export function useFoliate(
 
       view.addEventListener('draw-annotation', (e: Event) => {
         annotations.handleDrawAnnotationEvent(e as CustomEvent)
+      })
+
+      view.addEventListener('show-annotation', (e: Event) => {
+        const detail = (e as CustomEvent).detail
+        if (!detail?.value || !onAnnotationClick) return
+
+        const range = detail.range as Range | undefined
+        let x = window.innerWidth / 2
+        let selectionTop = 0
+        let selectionBottom = 100
+
+        if (range) {
+          const rangeRect = range.getBoundingClientRect()
+          const doc = range.startContainer.ownerDocument
+          const iframe = doc?.defaultView?.frameElement as HTMLIFrameElement | null
+          if (iframe) {
+            const iframeRect = iframe.getBoundingClientRect()
+            x = iframeRect.left + rangeRect.left + rangeRect.width / 2
+            selectionTop = iframeRect.top + rangeRect.top
+            selectionBottom = iframeRect.top + rangeRect.bottom
+          } else {
+            x = rangeRect.left + rangeRect.width / 2
+            selectionTop = rangeRect.top
+            selectionBottom = rangeRect.bottom
+          }
+        }
+
+        const minSpaceAbove = 120
+        const showBelow = selectionTop < minSpaceAbove
+        const y = showBelow ? selectionBottom + 10 : selectionTop - 50
+        const clampedX = Math.max(100, Math.min(x, window.innerWidth - 150))
+
+        onAnnotationClick(detail.value as string, { x: clampedX, y, showBelow })
       })
 
       view.addEventListener('relocate', (e: Event) => {
@@ -281,5 +320,6 @@ export function useFoliate(
     addAnnotations: (anns: { cfi: string; color: string; style: string }[]) => annotations.addAnnotations(viewRef.value, anns),
     deleteAnnotation: (cfi: string) => annotations.deleteAnnotation(viewRef.value, cfi),
     setTextSelectedHandler: selection.setHandler,
+    setAnnotationClickHandler,
   }
 }

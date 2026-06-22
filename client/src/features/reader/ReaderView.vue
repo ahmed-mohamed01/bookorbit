@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { useFoliate, type RelocateDetail } from './epub/composables/useFoliate'
+import type { SelectionDetail } from './epub/composables/useFoliateSelection'
 import { useReaderProgress } from './shared/composables/useReaderProgress'
 import { useReadingSession } from './shared/composables/useReadingSession'
 import { useReaderState } from './epub/composables/useReaderState'
@@ -33,6 +34,7 @@ import AudiobookReaderView from './audiobook/AudiobookReaderView.vue'
 import type { ReaderState } from './epub/composables/useReaderState'
 import type { FoliateLocationContext, FoliateRenderer } from './epub/composables/useFoliate'
 import type { EpubReaderSettings } from '@bookorbit/types'
+import { cfiRangesOverlap } from './epub/utils'
 import { getFormatGroup } from '@bookorbit/types'
 
 const route = useRoute()
@@ -237,11 +239,25 @@ const {
   addAnnotations,
   deleteAnnotation,
   setTextSelectedHandler,
+  setAnnotationClickHandler,
   view: foliateView,
   bookLanguage,
 } = useFoliate(() => containerRef.value, onRelocateHandler, onApplyStylesHandler, onMiddleTapHandler)
 
-setTextSelectedHandler(selection.show)
+function handleTextSelected(detail: SelectionDetail) {
+  const selCfi = detail.cfi
+  const match = selCfi ? (annotations.annotations.value.find((a) => cfiRangesOverlap(selCfi, a.cfi)) ?? null) : null
+  selection.show(detail, match?.id ?? null)
+}
+
+function handleAnnotationClick(cfi: string, popupPosition: { x: number; y: number; showBelow: boolean }) {
+  const ann = annotations.annotations.value.find((a) => a.cfi === cfi)
+  if (!ann) return
+  selection.show({ text: ann.text, cfi, popupPosition }, ann.id)
+}
+
+setTextSelectedHandler(handleTextSelected)
+setAnnotationClickHandler(handleAnnotationClick)
 
 onMounted(async () => {
   const onFullscreenChange = () => {

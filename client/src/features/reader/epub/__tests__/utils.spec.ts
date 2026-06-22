@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { findNearestCfi, formatCfiLocation, formatDate, getCfiSortKey, stripFragment } from '../utils'
+import { cfiRangesOverlap, findNearestCfi, formatCfiLocation, formatDate, getCfiSortKey, stripFragment } from '../utils'
 
 describe('epub utils', () => {
   it('removes hash fragments from href values', () => {
@@ -56,5 +56,50 @@ describe('epub utils', () => {
   it('returns null when current CFI cannot be parsed', () => {
     const items = [{ id: 1, cfi: 'epubcfi(/6/2)' }]
     expect(findNearestCfi(items, 'bad-cfi')).toBeNull()
+  })
+})
+
+describe('cfiRangesOverlap', () => {
+  const ann = 'epubcfi(/6/4!/4/2,/2/1:0,/2/1:20)'
+
+  it('detects exact CFI match as overlapping', () => {
+    expect(cfiRangesOverlap(ann, ann)).toBe(true)
+  })
+
+  it('detects a subset selection inside an annotation as overlapping', () => {
+    const subset = 'epubcfi(/6/4!/4/2,/2/1:5,/2/1:10)'
+    expect(cfiRangesOverlap(subset, ann)).toBe(true)
+  })
+
+  it('detects a superset selection around an annotation as overlapping', () => {
+    const superset = 'epubcfi(/6/4!/4/2,/2/1:0,/2/1:50)'
+    expect(cfiRangesOverlap(superset, ann)).toBe(true)
+  })
+
+  it('detects a partially overlapping selection as overlapping', () => {
+    const partial = 'epubcfi(/6/4!/4/2,/2/1:10,/2/1:30)'
+    expect(cfiRangesOverlap(partial, ann)).toBe(true)
+  })
+
+  it('returns false when selection is entirely before annotation', () => {
+    const before = 'epubcfi(/6/4!/4/2,/2/1:0,/2/1:0)'
+    // 0:0 to 0:0 is before 0:0 to 0:20 only if no overlap; here they share start — overlap
+    const clearlyBefore = 'epubcfi(/6/2!/4/2,/2/1:0,/2/1:5)'
+    expect(cfiRangesOverlap(clearlyBefore, ann)).toBe(false)
+  })
+
+  it('returns false when selection is in a different spine item', () => {
+    const otherSpine = 'epubcfi(/6/6!/4/2,/2/1:0,/2/1:20)'
+    expect(cfiRangesOverlap(otherSpine, ann)).toBe(false)
+  })
+
+  it('returns false for non-range (point) CFIs', () => {
+    const point = 'epubcfi(/6/4!/4/2/2/1:5)'
+    expect(cfiRangesOverlap(point, ann)).toBe(false)
+  })
+
+  it('returns false for invalid CFI strings', () => {
+    expect(cfiRangesOverlap('not-a-cfi', ann)).toBe(false)
+    expect(cfiRangesOverlap(ann, 'not-a-cfi')).toBe(false)
   })
 })

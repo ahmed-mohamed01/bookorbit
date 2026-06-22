@@ -11,12 +11,12 @@ export function useReaderSelection() {
   const showNoteDialog = ref(false)
   const noteText = ref('')
 
-  function show(detail: SelectionDetail) {
+  function show(detail: SelectionDetail, overlappingId: number | null = null) {
     text.value = detail.text
     cfi.value = detail.cfi ?? null
     position.value = { x: detail.popupPosition.x, y: detail.popupPosition.y }
     showBelow.value = detail.popupPosition.showBelow
-    overlappingAnnotationId.value = null
+    overlappingAnnotationId.value = overlappingId
     visible.value = true
   }
 
