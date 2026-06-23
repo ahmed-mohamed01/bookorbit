@@ -57,7 +57,7 @@ describe('candidate-relevance', () => {
 
     it('normalizes ISBN in candidate before matching', () => {
       const candidates = [candidate('Title', 'Author', '123-456-789-0')]; // hyphens in candidate
-      const params: MetadataSearchParams = { isbn: '1234567890' };
+      const params: MetadataSearchParams = { title: 'Different Title', isbn: '1234567890' };
       const result = filterAndRank(candidates, params);
       expect(result).toHaveLength(1);
     });

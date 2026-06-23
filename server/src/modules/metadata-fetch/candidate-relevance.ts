@@ -1,6 +1,7 @@
 import { MetadataCandidate } from '@bookorbit/types';
 import { distance } from 'fastest-levenshtein';
 
+import { candidateHasNormalizedIsbn, normalizeMetadataIsbn } from './isbn-match';
 import { MetadataSearchParams } from './providers/metadata-search-params';
 
 const DEFAULT_LIMIT = 5;
@@ -34,8 +35,8 @@ export function filterAndRank(candidates: MetadataCandidate[], params: MetadataS
 
 function scoreCandidate(candidate: MetadataCandidate, params: MetadataSearchParams): number {
   if (params.isbn) {
-    const isbn = params.isbn.replace(/[^0-9X]/gi, '');
-    if (candidate.isbn10 === isbn || candidate.isbn13 === isbn) return 100;
+    const isbn = normalizeMetadataIsbn(params.isbn);
+    if (candidateHasNormalizedIsbn(candidate, isbn)) return 100;
   }
 
   let score = 0;

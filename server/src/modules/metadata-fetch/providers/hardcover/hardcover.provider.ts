@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { MetadataCandidate, MetadataProviderKey } from '@bookorbit/types';
 
 import { ProviderConfigService } from '../../../metadata-preferences/provider-config.service';
+import { candidateHasNormalizedIsbn, normalizeMetadataIsbn } from '../../isbn-match';
 import { IdentifiableProvider } from '../metadata-provider';
 import { MetadataSearchParams } from '../metadata-search-params';
 import { HardcoverClient } from './hardcover.client';
@@ -48,13 +49,19 @@ export class HardcoverProvider implements IdentifiableProvider {
     return docs.map(mapSearchDocument);
   }
 
-  async lookupById(providerId: string, signal?: AbortSignal): Promise<MetadataCandidate | null> {
+  async lookupById(providerId: string, signal?: AbortSignal, params?: MetadataSearchParams): Promise<MetadataCandidate | null> {
     const { enabled, apiKey } = await this.providerConfig.getConfig().then((c) => c.hardcover);
     if (!enabled || !apiKey) return null;
 
     const book = signal ? await this.client.lookupBySlug(providerId, apiKey, signal) : await this.client.lookupBySlug(providerId, apiKey);
     if (!book) return null;
 
-    return mapBookWithEditions(book)[0] ?? null;
+    const candidates = mapBookWithEditions(book);
+    const requestedIsbn = normalizeMetadataIsbn(params?.isbn);
+    if (requestedIsbn) {
+      return candidates.find((candidate) => candidateHasNormalizedIsbn(candidate, requestedIsbn)) ?? null;
+    }
+
+    return candidates[0] ?? null;
   }
 }

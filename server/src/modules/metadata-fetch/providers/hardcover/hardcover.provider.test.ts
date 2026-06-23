@@ -228,6 +228,74 @@ describe('HardcoverProvider', () => {
       expect(result?.pageCount).toBe(662);
     });
 
+    it('returns the requested ISBN edition from a stored work slug even when another edition ranks first', async () => {
+      vi.spyOn(client, 'lookupBySlug').mockResolvedValue({
+        ...mockBook,
+        editions: [
+          {
+            id: 1,
+            title: 'Kometen kommer',
+            isbn_13: '9788203250132',
+            release_year: 1946,
+            pages: 154,
+            language: { code2: 'no' },
+            publisher: { name: 'Aschehoug' },
+            reading_format_id: 1,
+          },
+          {
+            id: 2,
+            title: 'Kometen kommer',
+            isbn_13: '9789523331587',
+            release_year: 2019,
+            pages: 150,
+            language: { code2: 'sv' },
+            publisher: { name: 'Forlaget M' },
+            reading_format_id: 1,
+          },
+        ],
+      });
+
+      const result = await provider.lookupById('comet-in-moominland', undefined, {
+        title: 'Kometen kommer',
+        author: 'Tove Jansson',
+        isbn: '978-952-333-158-7',
+      });
+
+      expect(result?.isbn13).toBe('9789523331587');
+      expect(result?.language).toBe('sv');
+      expect(result?.publisher).toBe('Forlaget M');
+      expect(result?.publishedYear).toBe(2019);
+      expect(result?.pageCount).toBe(150);
+    });
+
+    it('returns null for a stored work slug when the requested ISBN is missing so ISBN search can run', async () => {
+      vi.spyOn(client, 'lookupBySlug').mockResolvedValue({
+        ...mockBook,
+        slug: 'comet-in-moominland',
+        title: 'Kometen kommer',
+        editions: [
+          {
+            id: 1,
+            title: 'Kometen kommer',
+            isbn_13: '9788203250132',
+            release_year: 1946,
+            pages: 154,
+            language: { code2: 'no' },
+            publisher: { name: 'Aschehoug' },
+            reading_format_id: 1,
+          },
+        ],
+      });
+
+      const result = await provider.lookupById('comet-in-moominland', undefined, {
+        title: 'Kometen kommer',
+        author: 'Tove Jansson',
+        isbn: '9789523331587',
+      });
+
+      expect(result).toBeNull();
+    });
+
     it('returns null when the slug is not found', async () => {
       vi.spyOn(client, 'lookupBySlug').mockResolvedValue(null);
       expect(await provider.lookupById('nonexistent-book')).toBeNull();

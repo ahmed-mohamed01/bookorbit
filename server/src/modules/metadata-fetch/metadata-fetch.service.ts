@@ -139,7 +139,7 @@ export class MetadataFetchService {
   private async fetchFromProvider(provider: MetadataProvider, params: MetadataSearchParams): Promise<MetadataCandidate[]> {
     const existingProviderId = params.existingProviderIds?.[provider.key];
     if (isIdentifiable(provider) && existingProviderId) {
-      const lookupResult = await provider.lookupById(existingProviderId, params.signal);
+      const lookupResult = await provider.lookupById(existingProviderId, params.signal, params);
       if (lookupResult) {
         const rankedLookup = filterAndRank([lookupResult], params, 1);
         if (rankedLookup.length > 0) return rankedLookup;

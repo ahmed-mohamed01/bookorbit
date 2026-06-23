@@ -234,7 +234,14 @@ describe('MetadataFetchService', () => {
     );
 
     expect(results).toEqual([candidate(MetadataProviderKey.GOOGLE, 'stored-id', 'Dune')]);
-    expect(google.lookupById).toHaveBeenCalledWith('stored-id', expect.anything());
+    expect(google.lookupById).toHaveBeenCalledWith(
+      'stored-id',
+      expect.anything(),
+      expect.objectContaining({
+        title: 'Dune',
+        existingProviderIds: { [MetadataProviderKey.GOOGLE]: 'stored-id' },
+      }),
+    );
     expect(google.search).not.toHaveBeenCalled();
   });
 
@@ -253,9 +260,57 @@ describe('MetadataFetchService', () => {
     );
 
     expect(results).toEqual([candidate(MetadataProviderKey.GOOGLE, 'search-id', 'Dune')]);
-    expect(google.lookupById).toHaveBeenCalledWith('missing', expect.anything());
+    expect(google.lookupById).toHaveBeenCalledWith(
+      'missing',
+      expect.anything(),
+      expect.objectContaining({
+        title: 'Dune',
+        existingProviderIds: { [MetadataProviderKey.GOOGLE]: 'missing' },
+      }),
+    );
     expect(google.search).toHaveBeenCalledTimes(1);
     expect(google.search).toHaveBeenCalledWith(expect.objectContaining({ title: 'Dune' }));
+  });
+
+  it('passes ISBN context into stored provider lookups and falls back when lookup rejects the edition', async () => {
+    const hardcover: IdentifiableProvider = {
+      key: MetadataProviderKey.HARDCOVER,
+      label: 'Hardcover',
+      identifiable: true,
+      search: vi.fn().mockResolvedValue([candidate(MetadataProviderKey.HARDCOVER, 'comet-in-moominland', 'Kometen kommer')]),
+      lookupById: vi.fn().mockResolvedValue(null),
+    };
+    registry.select.mockReturnValue([hardcover]);
+
+    const results = await firstValueFrom(
+      service
+        .search({
+          title: 'Kometen kommer',
+          author: 'Tove Jansson',
+          isbn: '9789523331587',
+          existingProviderIds: { [MetadataProviderKey.HARDCOVER]: 'comet-in-moominland' },
+        })
+        .pipe(toArray()),
+    );
+
+    expect(results).toEqual([candidate(MetadataProviderKey.HARDCOVER, 'comet-in-moominland', 'Kometen kommer')]);
+    expect(hardcover.lookupById).toHaveBeenCalledWith(
+      'comet-in-moominland',
+      expect.anything(),
+      expect.objectContaining({
+        title: 'Kometen kommer',
+        author: 'Tove Jansson',
+        isbn: '9789523331587',
+      }),
+    );
+    expect(hardcover.search).toHaveBeenCalledTimes(1);
+    expect(hardcover.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Kometen kommer',
+        author: 'Tove Jansson',
+        isbn: '9789523331587',
+      }),
+    );
   });
 
   it('falls back to provider search when lookupById returns an irrelevant candidate', async () => {
@@ -279,7 +334,15 @@ describe('MetadataFetchService', () => {
     );
 
     expect(results).toEqual([candidate(MetadataProviderKey.GOOGLE, 'search-id', 'Dune')]);
-    expect(google.lookupById).toHaveBeenCalledWith('stored-id', expect.anything());
+    expect(google.lookupById).toHaveBeenCalledWith(
+      'stored-id',
+      expect.anything(),
+      expect.objectContaining({
+        title: 'Dune',
+        author: 'Frank Herbert',
+        existingProviderIds: { [MetadataProviderKey.GOOGLE]: 'stored-id' },
+      }),
+    );
     expect(google.search).toHaveBeenCalledTimes(1);
     expect(google.search).toHaveBeenCalledWith(expect.objectContaining({ title: 'Dune', author: 'Frank Herbert' }));
   });
