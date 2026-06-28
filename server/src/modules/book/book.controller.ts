@@ -16,7 +16,6 @@ import {
   Query,
   Res,
 } from '@nestjs/common';
-import { SkipThrottle } from '@nestjs/throttler';
 import { ZipArchive } from 'archiver';
 import { createReadStream } from 'fs';
 import { stat } from 'fs/promises';
@@ -314,7 +313,6 @@ export class BookController {
     }
   }
 
-  @SkipThrottle()
   @Get(':id/cover')
   async getCover(
     @Param('id', ParseIntPipe) id: number,
@@ -342,7 +340,6 @@ export class BookController {
     reply.send(createReadStream(coverPath));
   }
 
-  @SkipThrottle()
   @Get(':id/thumbnail')
   async getThumbnail(
     @Param('id', ParseIntPipe) id: number,
