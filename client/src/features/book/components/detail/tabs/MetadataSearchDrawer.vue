@@ -59,7 +59,6 @@ const {
 
 const view = ref<'search' | 'diff'>('search')
 const selectedCandidate = ref<MetadataCandidate | null>(null)
-const lastSearchParams = ref<{ title: string; author: string; isbn: string } | null>(null)
 const drawerTitle = computed(() => (view.value === 'search' ? 'Search Metadata' : 'Compare Metadata'))
 const drawerSubtitle = computed(() =>
   view.value === 'search' ? 'Find the best provider match for this book.' : 'Review differences and apply only what you want.',
@@ -79,26 +78,17 @@ function runMetadataSearch(params: { title: string; author: string; isbn: string
 }
 
 function handleSearch(params: { title: string; author: string; isbn: string }) {
-  lastSearchParams.value = params
   selectedCandidate.value = null
   view.value = 'search'
   runMetadataSearch(params)
 }
 
-function rerunLastSearch() {
-  selectedCandidate.value = null
-  view.value = 'search'
-  if (lastSearchParams.value) runMetadataSearch(lastSearchParams.value)
-}
-
 function handleToggleProvider(provider: MetadataProviderKey) {
   toggleProvider(provider)
-  if (hasSearched.value) rerunLastSearch()
 }
 
 function handleClearProviderFilter() {
   clearProviderFilter()
-  if (hasSearched.value) rerunLastSearch()
 }
 
 function handleSelect(candidate: MetadataCandidate) {
