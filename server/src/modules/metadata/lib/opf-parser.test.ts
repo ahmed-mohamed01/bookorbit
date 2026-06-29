@@ -716,6 +716,44 @@ describe('parseOpf', () => {
       const r = parseOpf(epub3Opf(`<meta property="calibre:user_metadata">{"#pagecount":{"#value#":"lots"}}</meta>`));
       expect(r.pageCount).toBeNull();
     });
+
+    it('parses extra tags from a #extra_tags column with a JSON array value', () => {
+      const xml = epub3Opf(`<meta property="calibre:user_metadata">{"#extra_tags":{"#value#":["Horror","Historical Fiction"]}}</meta>`);
+      expect(parseOpf(xml).tags).toEqual(['Horror', 'Historical Fiction']);
+    });
+
+    it('parses extra tags from a #extra_tags column with a pipe-delimited string value', () => {
+      const xml = epub3Opf(`<meta property="calibre:user_metadata">{"#extra_tags":{"#value#":"Horror|Historical Fiction"}}</meta>`);
+      expect(parseOpf(xml).tags).toEqual(['Horror', 'Historical Fiction']);
+    });
+
+    it('parses extra tags from a #extra_tags column with a comma-delimited string value (Calibre tags column format)', () => {
+      const xml = epub3Opf(`<meta property="calibre:user_metadata">{"#extra_tags":{"#value#":"Horror, Historical Fiction"}}</meta>`);
+      expect(parseOpf(xml).tags).toEqual(['Horror', 'Historical Fiction']);
+    });
+
+    it('prefers pipe over comma when both are present in a #extra_tags string value', () => {
+      const xml = epub3Opf(`<meta property="calibre:user_metadata">{"#extra_tags":{"#value#":"History, Modern|Fantasy"}}</meta>`);
+      expect(parseOpf(xml).tags).toEqual(['History, Modern', 'Fantasy']);
+    });
+
+    it('merges #extra_tags with bookorbit:tags and deduplicates', () => {
+      const xml = epub3Opf(`
+        <meta property="bookorbit:tags">["Horror","Classic"]</meta>
+        <meta property="calibre:user_metadata">{"#extra_tags":{"#value#":["Classic","Historical Fiction"]}}</meta>
+      `);
+      expect(parseOpf(xml).tags).toEqual(['Horror', 'Classic', 'Historical Fiction']);
+    });
+
+    it('contributes nothing when #extra_tags value is an empty array', () => {
+      const xml = epub3Opf(`<meta property="calibre:user_metadata">{"#extra_tags":{"#value#":[]}}</meta>`);
+      expect(parseOpf(xml).tags).toHaveLength(0);
+    });
+
+    it('ignores a non-string, non-array #extra_tags value', () => {
+      const xml = epub3Opf(`<meta property="calibre:user_metadata">{"#extra_tags":{"#value#":42}}</meta>`);
+      expect(parseOpf(xml).tags).toHaveLength(0);
+    });
   });
 
   describe('graceful handling of bad input', () => {

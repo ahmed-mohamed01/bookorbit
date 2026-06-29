@@ -151,9 +151,9 @@ function normalizeProviderId(provider: ProviderKey, raw: string): string | null 
 }
 
 // Calibre stores custom-column values in a `calibre:user_metadata` JSON blob keyed by column name,
-// each value carrying the actual value under `#value#`. Used only to fill page count / subtitle when null.
-function parseCalibreUserMetadata(raw: string | null): { pageCount: number | null; subtitle: string | null } {
-  const empty = { pageCount: null, subtitle: null };
+// each value carrying the actual value under `#value#`. Used only to fill page count / subtitle / extra tags when null/empty.
+function parseCalibreUserMetadata(raw: string | null): { pageCount: number | null; subtitle: string | null; extraTags: string[] } {
+  const empty = { pageCount: null, subtitle: null, extraTags: [] };
   if (!raw) return empty;
 
   let parsed: unknown;
@@ -174,11 +174,22 @@ function parseCalibreUserMetadata(raw: string | null): { pageCount: number | nul
     const n = Number(v);
     return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
   };
+  const coerceExtraTags = (v: unknown): string[] => {
+    if (v === undefined || v === null) return [];
+    if (Array.isArray(v)) return v.map((item) => String(item).trim()).filter(Boolean);
+    if (typeof v === 'string')
+      return v
+        .split(v.includes('|') ? '|' : ',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+    return [];
+  };
 
   const pageCount = coercePageCount(columnValue('#pagecount')) ?? coercePageCount(columnValue('#page_count'));
   const subRaw = columnValue('#subtitle');
   const subtitle = typeof subRaw === 'string' && subRaw.trim() ? subRaw.trim() : null;
-  return { pageCount, subtitle };
+  const extraTags = coerceExtraTags(columnValue('#extra_tags'));
+  return { pageCount, subtitle, extraTags };
 }
 
 function normalizeCreatorRole(role: string | null | undefined): string {
@@ -400,7 +411,8 @@ export function parseOpf(xml: string): ParsedOpf {
 
   // ── Genres and tags ────────────────────────────────────────────────────────
   const genres = toArray(metadata['subject']).map(getText).filter(Boolean);
-  const tags = parseBookOrbitTags(propertyMeta('bookorbit:tags') ?? namedMeta('bookorbit:tags'));
+  const tagsFromMeta = parseBookOrbitTags(propertyMeta('bookorbit:tags') ?? namedMeta('bookorbit:tags'));
+  const tags = [...new Set([...tagsFromMeta, ...calibreUser.extraTags])];
   let pageCount = parseNumber(propertyMeta('bookorbit:page_count') ?? namedMeta('bookorbit:page_count'));
   pageCount ??= calibreUser.pageCount;
   const rating = parseNumber(propertyMeta('bookorbit:rating') ?? namedMeta('bookorbit:rating'));
