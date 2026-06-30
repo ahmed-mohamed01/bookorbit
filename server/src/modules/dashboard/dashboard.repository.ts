@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, inArray, isNull, notInArray, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { BOOK_FORMATS, isAudioFormat, type ContentFilterRules } from '@bookorbit/types';
+import { BOOK_FORMATS, isAudioFormat, type ContentFilterRules, type ReadStatus } from '@bookorbit/types';
 
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
@@ -11,6 +11,7 @@ import { buildContentFilterClauses } from '../../common/utils/content-filter-sql
 type Db = NodePgDatabase<typeof schema>;
 type UpNextInSeriesRow = { id: number };
 const AUDIO_FORMATS = BOOK_FORMATS.filter(isAudioFormat);
+const DISCOVERY_EXCLUDED_READ_STATUSES = ['reading', 'rereading', 'on_hold', 'read', 'skimmed', 'abandoned'] as const satisfies readonly ReadStatus[];
 
 @Injectable()
 export class DashboardRepository {
@@ -231,11 +232,13 @@ export class DashboardRepository {
       .from(books)
       .leftJoin(bookFiles, eq(bookFiles.id, books.primaryFileId))
       .leftJoin(readingProgress, and(eq(readingProgress.bookFileId, bookFiles.id), eq(readingProgress.userId, userId)))
+      .leftJoin(userBookStatus, and(eq(userBookStatus.bookId, books.id), eq(userBookStatus.userId, userId)))
       .where(
         and(
           inArray(books.libraryId, accessibleLibraryIds),
           eq(books.status, 'present'),
           or(isNull(readingProgress.bookFileId), eq(readingProgress.percentage, 0)),
+          or(isNull(userBookStatus.bookId), notInArray(userBookStatus.status, [...DISCOVERY_EXCLUDED_READ_STATUSES])),
           ...cfClauses,
         ),
       )

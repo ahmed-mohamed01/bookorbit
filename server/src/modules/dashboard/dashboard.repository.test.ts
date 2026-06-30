@@ -20,6 +20,19 @@ function makeLimitChain<T>(rows: T) {
   return chain;
 }
 
+function collectValues(value: unknown, seen = new WeakSet<object>()): unknown[] {
+  if (value === null || typeof value !== 'object') return [value];
+  if (seen.has(value)) return [];
+  seen.add(value);
+
+  const values: unknown[] = [];
+  if ('value' in value) values.push((value as { value: unknown }).value);
+  for (const key of Object.getOwnPropertyNames(value)) {
+    values.push(...collectValues((value as Record<string, unknown>)[key], seen));
+  }
+  return values;
+}
+
 describe('DashboardRepository', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -108,21 +121,30 @@ describe('DashboardRepository', () => {
 
     expect(result).toEqual([]);
     expect(db.select).toHaveBeenCalledTimes(1);
-    expect(listChain.leftJoin).toHaveBeenCalledTimes(2);
+    expect(listChain.leftJoin).toHaveBeenCalledTimes(3);
+    expect(listChain.leftJoin.mock.calls[0]?.[0]).toBe(bookFiles);
+    expect(listChain.leftJoin.mock.calls[1]?.[0]).toBe(readingProgress);
+    expect(listChain.leftJoin.mock.calls[2]?.[0]).toBe(userBookStatus);
     expect(listChain.orderBy).toHaveBeenCalledTimes(1);
     expect(listChain.limit).toHaveBeenCalledWith(20);
   });
 
-  it('maps random rows to id list and respects limit', async () => {
+  it('maps random rows to id list and excludes active or finished read statuses', async () => {
     const listChain = makeLimitChain([{ id: 21 }, { id: 3 }, { id: 15 }]);
     const db = { select: vi.fn().mockReturnValue(listChain) };
     const repo = new DashboardRepository(db as never);
 
     const result = await repo.findRandomBookIds([5], 7, 3);
+    const whereArg = listChain.where.mock.calls[0]?.[0];
+    const whereValues = collectValues(whereArg);
 
     expect(result).toEqual([21, 3, 15]);
     expect(db.select).toHaveBeenCalledTimes(1);
-    expect(listChain.leftJoin).toHaveBeenCalledTimes(2);
+    expect(listChain.leftJoin).toHaveBeenCalledTimes(3);
+    expect(listChain.leftJoin.mock.calls[0]?.[0]).toBe(bookFiles);
+    expect(listChain.leftJoin.mock.calls[1]?.[0]).toBe(readingProgress);
+    expect(listChain.leftJoin.mock.calls[2]?.[0]).toBe(userBookStatus);
+    expect(whereValues).toEqual(expect.arrayContaining(['reading', 'rereading', 'on_hold', 'read', 'skimmed', 'abandoned']));
     expect(listChain.orderBy).toHaveBeenCalledTimes(1);
     expect(listChain.limit).toHaveBeenCalledWith(3);
   });
