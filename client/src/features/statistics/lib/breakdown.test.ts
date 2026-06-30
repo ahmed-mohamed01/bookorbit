@@ -5,9 +5,14 @@ vi.mock('@/lib/echarts', () => ({
   oklchToHex: () => '#000000',
 }))
 
-import { getBreakdownColor, getBreakdownSeries } from './breakdown'
+import { BREAKDOWN_OPTIONS, DEFAULT_BREAKDOWN_DIMENSION, getBreakdownColor, getBreakdownSeries } from './breakdown'
 
 describe('breakdown', () => {
+  it('defaults source-or-format charts to format', () => {
+    expect(DEFAULT_BREAKDOWN_DIMENSION).toBe('format')
+    expect(BREAKDOWN_OPTIONS[0]).toEqual({ value: 'format', label: 'Format' })
+  })
+
   it('returns the three source buckets for the source dimension', () => {
     const series = getBreakdownSeries('source', 'theme:violet', [])
     expect(series.map((s) => s.key)).toEqual(['bookorbit', 'koreader', 'kobo'])

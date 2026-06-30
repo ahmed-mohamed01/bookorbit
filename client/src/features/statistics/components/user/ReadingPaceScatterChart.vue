@@ -4,7 +4,7 @@ import VChart from 'vue-echarts'
 import { Zap } from '@lucide/vue'
 
 import { useThemeStore } from '@/stores/theme'
-import { getBreakdownSeries, type BreakdownDimension } from '../../lib/breakdown'
+import { DEFAULT_BREAKDOWN_DIMENSION, getBreakdownSeries, type BreakdownDimension } from '../../lib/breakdown'
 import { useUserReadingPace } from '../../composables/useUserReadingPace'
 import BreakdownSelect from '../BreakdownSelect.vue'
 import ChartCard from '../ChartCard.vue'
@@ -19,7 +19,7 @@ const isEmpty = computed(() => data.value.length === 0)
 const hasEnoughData = computed(() => data.value.length >= MIN_SESSIONS)
 
 const option = shallowRef({})
-const dimension = ref<BreakdownDimension>('source')
+const dimension = ref<BreakdownDimension>(DEFAULT_BREAKDOWN_DIMENSION)
 
 watchEffect(() => {
   option.value = {}

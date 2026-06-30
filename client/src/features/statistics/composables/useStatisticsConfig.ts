@@ -25,6 +25,51 @@ const DEFAULT_FILTERS: StatisticsFilterConfig = {
 const config = ref<ChartConfigEntry[]>([])
 const filters = ref<StatisticsFilterConfig>({ ...DEFAULT_FILTERS })
 
+const libraryChartIdSet = new Set<StatisticsChartId>(LIBRARY_CHART_IDS)
+const userChartIdSet = new Set<StatisticsChartId>(USER_CHART_IDS)
+
+const LEGACY_USER_CHART_ORDER_WITH_SOURCE_SECOND: StatisticsChartId[] = [
+  'reading-heatmap',
+  'reading-source-distribution',
+  'peak-reading-hours',
+  'favorite-reading-days',
+  'completion-timeline',
+  'goal-trajectory',
+  'progress-funnel',
+  'completion-latency',
+  'genre-reading-time',
+  'reading-pace',
+  'books-completed',
+  'reading-clock',
+  'reading-session-timeline',
+  'session-archetypes',
+]
+
+function matchesOrder(actual: StatisticsChartId[], expected: StatisticsChartId[]): boolean {
+  return actual.length === expected.length && actual.every((id, index) => id === expected[index])
+}
+
+function chartIdsByOrder(entries: ChartConfigEntry[], ids: Set<StatisticsChartId>): StatisticsChartId[] {
+  return entries
+    .filter((entry) => ids.has(entry.id))
+    .sort((a, b) => a.order - b.order)
+    .map((entry) => entry.id)
+}
+
+function withUserChartOrder(entries: ChartConfigEntry[], order: StatisticsChartId[]): ChartConfigEntry[] {
+  const orderById = new Map(order.map((id, index) => [id, index]))
+  return entries.map((entry) => {
+    const order = orderById.get(entry.id)
+    return order === undefined ? entry : { ...entry, order }
+  })
+}
+
+function migrateLegacyUserChartOrder(entries: ChartConfigEntry[]): ChartConfigEntry[] {
+  const userOrder = chartIdsByOrder(entries, userChartIdSet)
+  if (!matchesOrder(userOrder, LEGACY_USER_CHART_ORDER_WITH_SOURCE_SECOND)) return entries
+  return withUserChartOrder(entries, USER_CHART_IDS)
+}
+
 function normalizeCharts(saved: ChartConfigEntry[] | undefined): ChartConfigEntry[] {
   const knownSet = new Set<StatisticsChartId>(KNOWN_CHART_IDS)
   const filtered = (saved ?? []).filter((e) => knownSet.has(e.id))
@@ -34,11 +79,8 @@ function normalizeCharts(saved: ChartConfigEntry[] | undefined): ChartConfigEntr
     visible: true,
     order: filtered.length + i,
   }))
-  return [...filtered, ...newEntries]
+  return migrateLegacyUserChartOrder([...filtered, ...newEntries])
 }
-
-const libraryChartIdSet = new Set<StatisticsChartId>(LIBRARY_CHART_IDS)
-const userChartIdSet = new Set<StatisticsChartId>(USER_CHART_IDS)
 
 function normalizeFilters(saved: StatisticsFilterConfig | undefined): StatisticsFilterConfig {
   return {

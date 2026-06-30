@@ -5,7 +5,7 @@ import { Clock } from '@lucide/vue'
 import type { ReadingSessionSourceBucket } from '@bookorbit/types'
 
 import { useThemeStore } from '@/stores/theme'
-import { getBreakdownSeries, type BreakdownDimension } from '../../lib/breakdown'
+import { DEFAULT_BREAKDOWN_DIMENSION, getBreakdownSeries, type BreakdownDimension } from '../../lib/breakdown'
 import { useUserPeakReadingHours } from '../../composables/useUserPeakReadingHours'
 import BreakdownSelect from '../BreakdownSelect.vue'
 import ChartCard from '../ChartCard.vue'
@@ -28,7 +28,7 @@ const option = shallowRef({})
 const totalEvents = computed(() => data.value.reduce((s, d) => s + d.eventsCount, 0))
 const isEmpty = computed(() => totalEvents.value === 0)
 const lowConfidence = computed(() => totalEvents.value > 0 && totalEvents.value < MIN_EVENTS)
-const dimension = ref<BreakdownDimension>('source')
+const dimension = ref<BreakdownDimension>(DEFAULT_BREAKDOWN_DIMENSION)
 
 function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds))

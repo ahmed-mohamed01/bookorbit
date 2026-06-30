@@ -8,7 +8,13 @@ import { READING_SESSION_SOURCE_BUCKET_LABELS } from '@bookorbit/types'
 
 import { useThemeStore } from '@/stores/theme'
 import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
-import { getBreakdownColor, getBreakdownSeries, type BreakdownDimension, type BreakdownSeries } from '../../lib/breakdown'
+import {
+  DEFAULT_BREAKDOWN_DIMENSION,
+  getBreakdownColor,
+  getBreakdownSeries,
+  type BreakdownDimension,
+  type BreakdownSeries,
+} from '../../lib/breakdown'
 import { fetchUserReadingSessionTimeline, updateUserReadingSessionTimelineSession } from '../../api/statistics.api'
 import { useStatisticsConfig } from '../../composables/useStatisticsConfig'
 import BreakdownSelect from '../BreakdownSelect.vue'
@@ -60,7 +66,7 @@ const { filters } = useStatisticsConfig()
 const { coverUrl } = useCoverVersions()
 const themeStore = useThemeStore()
 const themeKey = computed(() => `${themeStore.theme}:${themeStore.accent}`)
-const dimension = ref<BreakdownDimension>('source')
+const dimension = ref<BreakdownDimension>(DEFAULT_BREAKDOWN_DIMENSION)
 
 const now = new Date()
 const selectedYear = ref(getIsoWeekYear(now))

@@ -79,7 +79,6 @@ export const DEFAULT_LIBRARY_CHART_ORDER: StatisticsChartId[] = [
 
 export const DEFAULT_USER_CHART_ORDER: StatisticsChartId[] = [
   "reading-heatmap",
-  "reading-source-distribution",
   "peak-reading-hours",
   "favorite-reading-days",
   "completion-timeline",
@@ -92,6 +91,7 @@ export const DEFAULT_USER_CHART_ORDER: StatisticsChartId[] = [
   "reading-clock",
   "reading-session-timeline",
   "session-archetypes",
+  "reading-source-distribution",
 ];
 
 export const DEFAULT_STATISTICS_CHART_ORDER: StatisticsChartId[] = [...DEFAULT_LIBRARY_CHART_ORDER, ...DEFAULT_USER_CHART_ORDER];

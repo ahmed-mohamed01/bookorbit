@@ -5,7 +5,7 @@ import { CalendarDays } from '@lucide/vue'
 import type { ReadingSessionSourceBucket } from '@bookorbit/types'
 
 import { useThemeStore } from '@/stores/theme'
-import { getBreakdownSeries, type BreakdownDimension } from '../../lib/breakdown'
+import { DEFAULT_BREAKDOWN_DIMENSION, getBreakdownSeries, type BreakdownDimension } from '../../lib/breakdown'
 import { useUserFavoriteReadingDays } from '../../composables/useUserFavoriteReadingDays'
 import BreakdownSelect from '../BreakdownSelect.vue'
 import ChartCard from '../ChartCard.vue'
@@ -22,7 +22,7 @@ const option = shallowRef({})
 const totalEvents = computed(() => data.value.reduce((sum, item) => sum + item.eventsCount, 0))
 const isEmpty = computed(() => totalEvents.value === 0)
 const lowConfidence = computed(() => totalEvents.value > 0 && totalEvents.value < MIN_EVENTS)
-const dimension = ref<BreakdownDimension>('source')
+const dimension = ref<BreakdownDimension>(DEFAULT_BREAKDOWN_DIMENSION)
 
 function weekdayOccurrencesInWindow(days: number): number[] {
   const counts = Array.from({ length: 7 }, () => 0)

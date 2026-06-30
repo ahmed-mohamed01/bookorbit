@@ -5,9 +5,11 @@ import { resolveSourceBucketColors } from './source-bucket-colors'
 
 export type BreakdownDimension = 'source' | 'format'
 
+export const DEFAULT_BREAKDOWN_DIMENSION: BreakdownDimension = 'format'
+
 export const BREAKDOWN_OPTIONS: { value: BreakdownDimension; label: string }[] = [
-  { value: 'source', label: 'Source' },
   { value: 'format', label: 'Format' },
+  { value: 'source', label: 'Source' },
 ]
 
 export interface BreakdownSeries {
