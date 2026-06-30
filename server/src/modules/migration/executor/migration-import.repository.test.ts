@@ -63,11 +63,15 @@ describe('MigrationImportRepository', () => {
     const seriesIdentity = {
       resolveMetadataPatch: vi.fn().mockResolvedValue({ bookId: 1, seriesName: 'Dune', seriesId: 88 }),
     };
+    const seriesMemberships = {
+      syncPrimaryFromMetadata: vi.fn().mockResolvedValue([]),
+    };
 
-    const repo = new MigrationImportRepository(db as never, seriesIdentity as never);
+    const repo = new MigrationImportRepository(db as never, seriesIdentity as never, seriesMemberships as never);
     await repo.batchUpsertBookMetadata([{ bookId: 1, seriesName: '  Dune  ' }]);
 
     expect(seriesIdentity.resolveMetadataPatch).toHaveBeenCalledWith({ bookId: 1, seriesName: '  Dune  ' }, db);
+    expect(seriesMemberships.syncPrimaryFromMetadata).toHaveBeenCalledWith(1, db);
     expect(values).toHaveBeenCalledWith({ bookId: 1, seriesName: 'Dune', seriesId: 88 });
     expect(onConflictDoUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -89,6 +93,20 @@ describe('MigrationImportRepository', () => {
     expect(deleteFn).not.toHaveBeenCalled();
 
     await repo.clearUserBookStatuses([1, 1, 2], [10, 10, 11]);
+    expect(deleteFn).toHaveBeenCalledTimes(1);
+    expect(where).toHaveBeenCalledTimes(1);
+  });
+
+  it('clearUserBookRatings no-ops for empty targets and deduplicates ids otherwise', async () => {
+    const where = vi.fn().mockResolvedValue(undefined);
+    const deleteFn = vi.fn().mockReturnValue({ where });
+    const repo = new MigrationImportRepository({ delete: deleteFn } as never);
+
+    await repo.clearUserBookRatings([], [1, 2]);
+    await repo.clearUserBookRatings([1], []);
+    expect(deleteFn).not.toHaveBeenCalled();
+
+    await repo.clearUserBookRatings([1, 1, 2], [10, 10, 11]);
     expect(deleteFn).toHaveBeenCalledTimes(1);
     expect(where).toHaveBeenCalledTimes(1);
   });

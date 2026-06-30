@@ -89,6 +89,7 @@ function createImportRepoMock() {
     batchUpsertUserBookStatuses: vi.fn(() => Promise.resolve()),
     batchUpsertReadingProgress: vi.fn(() => Promise.resolve()),
     batchUpsertAudiobookProgress: vi.fn(() => Promise.resolve()),
+    syncImportedReadingSessions: vi.fn(() => Promise.resolve()),
     batchInsertBookmarks: vi.fn(() => Promise.resolve()),
     batchInsertAnnotations: vi.fn(() => Promise.resolve()),
     batchInsertCollectionBooks: vi.fn(() => Promise.resolve()),
@@ -477,6 +478,7 @@ describe('UserStateImporter progress and bookmark edge cases', () => {
           availableDomains: {
             userBookStatuses: false,
             readingProgress: false,
+            readingSessions: false,
             bookmarks: false,
             annotations: false,
             shelves: false,
@@ -497,6 +499,7 @@ describe('UserStateImporter progress and bookmark edge cases', () => {
     expect(repo.setRunMetric).toHaveBeenCalledWith(121, 'user_state', 'user_book_status', expect.objectContaining({ processed: 0, skipped: 0 }));
     expect(repo.setRunMetric).toHaveBeenCalledWith(121, 'user_state', 'reading_progress', expect.objectContaining({ processed: 0, skipped: 0 }));
     expect(repo.setRunMetric).toHaveBeenCalledWith(121, 'user_state', 'audiobook_progress', expect.objectContaining({ processed: 0, skipped: 0 }));
+    expect(repo.setRunMetric).toHaveBeenCalledWith(121, 'user_state', 'reading_sessions', expect.objectContaining({ processed: 0, skipped: 0 }));
     expect(repo.setRunMetric).toHaveBeenCalledWith(121, 'user_state', 'bookmarks', expect.objectContaining({ processed: 0, skipped: 0 }));
     expect(repo.setRunMetric).toHaveBeenCalledWith(121, 'user_state', 'annotations', expect.objectContaining({ processed: 0, skipped: 0 }));
     expect(repo.setRunMetric).toHaveBeenCalledWith(121, 'user_state', 'collections', expect.objectContaining({ processed: 0, skipped: 0 }));

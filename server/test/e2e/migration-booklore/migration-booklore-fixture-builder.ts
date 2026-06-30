@@ -548,6 +548,33 @@ export async function seedCanonicalScenario(ctx: MigrationBookloreE2EContext): P
 
     await insertRows(
       conn,
+      'reading_sessions',
+      [
+        'id',
+        'user_id',
+        'book_id',
+        'book_type',
+        'start_time',
+        'end_time',
+        'duration_seconds',
+        'start_progress',
+        'end_progress',
+        'progress_delta',
+        'start_location',
+        'end_location',
+        'duration_formatted',
+        'created_at',
+      ],
+      [
+        [9001, 1, 101, 'EPUB', '2024-01-06 10:00:00', '2024-01-06 10:30:00', 1700, 20, 45, 25, 'start', 'end', '28m', '2024-01-06 10:30:01'],
+        [9002, 1, 102, 'EPUB', '2024-01-07 10:00:00', '2024-01-07 10:20:00', 5000, 22, 25, 3, null, null, '20m', '2024-01-07 10:20:01'],
+        [9003, 2, 103, 'AUDIOBOOK', '2024-02-06 09:00:00', '2024-02-06 09:40:00', 1800, null, null, null, null, null, '30m', '2024-02-06 09:40:01'],
+        [9004, 3, 104, 'EPUB', '2024-03-06 09:00:00', '2024-03-06 09:10:00', 600, 0, 12, 12, null, null, '10m', '2024-03-06 09:10:01'],
+      ],
+    );
+
+    await insertRows(
+      conn,
       'book_marks',
       ['user_id', 'book_id', 'book_file_id', 'title', 'cfi', 'position_seconds', 'track_index', 'created_at'],
       [
@@ -1010,6 +1037,7 @@ async function createCanonicalSchema(conn: mysql.Connection): Promise<void> {
     'CREATE TABLE `book_metadata_author_mapping` (`book_id` INT, `author_id` INT, `sort_order` INT)',
     'CREATE TABLE `user_book_progress` (`user_id` INT, `book_id` INT, `status` VARCHAR(50), `percentage` DECIMAL(8,2), `started_at` DATETIME, `finished_at` DATETIME, `updated_at` DATETIME)',
     'CREATE TABLE `user_book_file_progress` (`user_id` INT, `book_id` INT, `book_file_id` INT, `percentage` DECIMAL(8,2), `cfi` VARCHAR(2000), `position_href` VARCHAR(255), `page_number` INT, `position_seconds` DECIMAL(10,2), `updated_at` DATETIME)',
+    'CREATE TABLE `reading_sessions` (`id` INT PRIMARY KEY, `user_id` INT, `book_id` INT, `book_type` VARCHAR(20), `start_time` DATETIME, `end_time` DATETIME, `duration_seconds` INT, `start_progress` DECIMAL(8,2), `end_progress` DECIMAL(8,2), `progress_delta` DECIMAL(8,2), `start_location` VARCHAR(255), `end_location` VARCHAR(255), `duration_formatted` VARCHAR(50), `created_at` DATETIME)',
     'CREATE TABLE `book_marks` (`user_id` INT, `book_id` INT, `book_file_id` INT, `title` VARCHAR(255), `cfi` VARCHAR(2000), `position_seconds` DECIMAL(10,2), `track_index` INT, `created_at` DATETIME)',
     'CREATE TABLE `annotations` (`user_id` INT, `book_id` INT, `cfi` VARCHAR(2000), `text` TEXT, `color` VARCHAR(20), `style` VARCHAR(20), `note` TEXT, `chapter_title` VARCHAR(255), `created_at` DATETIME, `updated_at` DATETIME)',
     'CREATE TABLE `shelf` (`id` INT PRIMARY KEY, `user_id` INT, `name` VARCHAR(255))',

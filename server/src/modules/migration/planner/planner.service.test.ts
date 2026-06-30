@@ -33,6 +33,20 @@ describe('MigrationPlannerService', () => {
       userFileProgress: [
         { sourceUserId: 'u1', sourceBookId: 's3', percentage: 10, cfi: null, pageNumber: null, positionSeconds: 5, updatedAt: null },
       ],
+      readingSessions: [
+        {
+          sourceSessionId: 'rs-1',
+          sourceUserId: 'u1',
+          sourceBookId: 's3',
+          bookType: 'EPUB',
+          startedAt: '2024-01-01T00:00:00.000Z',
+          endedAt: '2024-01-01T00:10:00.000Z',
+          durationSeconds: 600,
+          progressDelta: 5,
+          endProgress: 15,
+          createdAt: null,
+        },
+      ],
       bookmarks: [{ sourceUserId: 'u1', sourceBookId: 's3', title: null, cfi: null, positionSeconds: null, createdAt: null }],
       annotations: [
         {
@@ -58,6 +72,7 @@ describe('MigrationPlannerService', () => {
         tags: true,
         userBookStatuses: true,
         readingProgress: true,
+        readingSessions: true,
         bookmarks: true,
         annotations: true,
         shelves: true,
@@ -151,6 +166,7 @@ describe('MigrationPlannerService', () => {
         counts: {
           statuses: 1,
           fileProgress: 1,
+          readingSessions: 1,
           bookmarks: 1,
           annotations: 1,
           shelves: 1,
@@ -163,6 +179,7 @@ describe('MigrationPlannerService', () => {
         counts: {
           statuses: 0,
           fileProgress: 0,
+          readingSessions: 0,
           bookmarks: 0,
           annotations: 0,
           shelves: 0,
@@ -181,6 +198,20 @@ describe('MigrationPlannerService', () => {
         ],
         userFileProgress: [
           { sourceUserId: 'u1', sourceBookId: 'b1', percentage: 100, cfi: null, pageNumber: null, positionSeconds: null, updatedAt: null },
+        ],
+        readingSessions: [
+          {
+            sourceSessionId: 'rs-1',
+            sourceUserId: 'u1',
+            sourceBookId: 'b1',
+            bookType: 'EPUB',
+            startedAt: '2024-01-01T00:00:00.000Z',
+            endedAt: '2024-01-01T00:10:00.000Z',
+            durationSeconds: 600,
+            progressDelta: 5,
+            endProgress: 100,
+            createdAt: null,
+          },
         ],
         bookmarks: [{ sourceUserId: 'u1', sourceBookId: 'b1', title: null, cfi: null, positionSeconds: null, createdAt: null }],
         annotations: [
@@ -212,6 +243,7 @@ describe('MigrationPlannerService', () => {
         counts: {
           statuses: 1,
           fileProgress: 1,
+          readingSessions: 1,
           bookmarks: 1,
           annotations: 1,
           shelves: 1,

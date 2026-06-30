@@ -22,6 +22,7 @@ export const BOOKLORE_TABLES = {
   newPdfViewerPreference: 'new_pdf_viewer_preference',
   pdfAnnotations: 'pdf_annotations',
   pdfViewerPreference: 'pdf_viewer_preference',
+  readingSessions: 'reading_sessions',
   shelf: 'shelf',
   tag: 'tag',
   userBookFileProgress: 'user_book_file_progress',

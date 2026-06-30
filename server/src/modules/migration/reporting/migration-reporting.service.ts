@@ -242,7 +242,7 @@ export class MigrationReportingService {
         targetUserId: row.targetUserId,
         username: row.username,
         reason: null,
-        details: `statuses=${row.counts.statuses}; fileProgress=${row.counts.fileProgress}; bookmarks=${row.counts.bookmarks}; annotations=${row.counts.annotations}; shelves=${row.counts.shelves}`,
+        details: `statuses=${row.counts.statuses}; fileProgress=${row.counts.fileProgress}; readingSessions=${row.counts.readingSessions}; bookmarks=${row.counts.bookmarks}; annotations=${row.counts.annotations}; shelves=${row.counts.shelves}`,
         code: null,
         message: null,
         createdAt: report.run.updatedAt?.toISOString() ?? report.run.createdAt.toISOString(),
@@ -374,6 +374,7 @@ function normalizeUserPreview(planValue: unknown, summaryValue: unknown): Planne
         counts: {
           statuses: typeof counts.statuses === 'number' ? counts.statuses : 0,
           fileProgress: typeof counts.fileProgress === 'number' ? counts.fileProgress : 0,
+          readingSessions: typeof counts.readingSessions === 'number' ? counts.readingSessions : 0,
           bookmarks: typeof counts.bookmarks === 'number' ? counts.bookmarks : 0,
           annotations: typeof counts.annotations === 'number' ? counts.annotations : 0,
           shelves: typeof counts.shelves === 'number' ? counts.shelves : 0,

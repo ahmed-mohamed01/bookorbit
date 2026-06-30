@@ -489,6 +489,7 @@ const reportData = computed(() => {
     userBookStatus: m('user_state', 'user_book_status'),
     readingProgress: m('user_state', 'reading_progress'),
     audiobookProgress: m('user_state', 'audiobook_progress'),
+    readingSessions: m('user_state', 'reading_sessions'),
     bookmarks: m('user_state', 'bookmarks'),
     annotations: m('user_state', 'annotations'),
     collections: m('user_state', 'collections'),
@@ -1176,11 +1177,12 @@ function friendlyMatchStrategy(strategy: string | null): string {
 function describeUserPreviewCounts(counts: {
   statuses: number
   fileProgress: number
+  readingSessions: number
   bookmarks: number
   annotations: number
   shelves: number
 }): string {
-  return `${counts.statuses} statuses, ${counts.fileProgress} progress entries, ${counts.bookmarks} bookmarks, ${counts.annotations} annotations, ${counts.shelves} collection entries`
+  return `${counts.statuses} statuses, ${counts.fileProgress} progress entries, ${counts.readingSessions ?? 0} reading sessions, ${counts.bookmarks} bookmarks, ${counts.annotations} annotations, ${counts.shelves} collection entries`
 }
 
 function extractPlanUnresolvedBooks(planPayload: unknown): ReportUnresolvedBook[] {
@@ -1879,6 +1881,10 @@ const sourceTypeCompatibility = computed<SourceTypeCompatibility | null>(() => S
                             <div class="flex justify-between">
                               <span class="text-muted-foreground">Audiobook progress entries</span
                               ><span class="font-medium">{{ reportData.audiobookProgress?.imported ?? 0 }}</span>
+                            </div>
+                            <div class="flex justify-between">
+                              <span class="text-muted-foreground">Reading sessions</span
+                              ><span class="font-medium">{{ reportData.readingSessions?.imported ?? 0 }}</span>
                             </div>
                             <div class="flex justify-between">
                               <span class="text-muted-foreground">Bookmarks</span

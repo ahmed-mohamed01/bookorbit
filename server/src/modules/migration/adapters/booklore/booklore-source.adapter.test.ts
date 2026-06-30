@@ -187,6 +187,7 @@ describe('BookloreSourceAdapter validation and export', () => {
             BOOKLORE_TABLES.bookMetadataAuthorMapping,
             BOOKLORE_TABLES.userBookProgress,
             BOOKLORE_TABLES.userBookFileProgress,
+            BOOKLORE_TABLES.readingSessions,
             BOOKLORE_TABLES.bookMarks,
             BOOKLORE_TABLES.annotations,
             BOOKLORE_TABLES.shelf,
@@ -240,6 +241,18 @@ describe('BookloreSourceAdapter validation and export', () => {
             'page_number',
             'position_seconds',
             'updated_at',
+          ),
+          [BOOKLORE_TABLES.readingSessions]: columns(
+            'id',
+            'user_id',
+            'book_id',
+            'book_type',
+            'start_time',
+            'end_time',
+            'duration_seconds',
+            'progress_delta',
+            'end_progress',
+            'created_at',
           ),
           [BOOKLORE_TABLES.bookMarks]: columns('user_id', 'book_id', 'book_file_id', 'title', 'cfi', 'position_seconds', 'track_index', 'created_at'),
           [BOOKLORE_TABLES.annotations]: columns(
@@ -331,6 +344,22 @@ describe('BookloreSourceAdapter validation and export', () => {
             },
           ]);
         }
+        if (sqlText.includes(`FROM \`${BOOKLORE_TABLES.readingSessions}\` s`)) {
+          return Promise.resolve([
+            {
+              sourceSessionId: 'rs-1',
+              sourceUserId: 'u1',
+              sourceBookId: 'b1',
+              bookType: 'EPUB',
+              startedAt: '2024-01-05T10:00:00.000Z',
+              endedAt: '2024-01-05T10:30:00.000Z',
+              durationSeconds: 1500,
+              progressDelta: 12.5,
+              endProgress: 75,
+              createdAt: '2024-01-05T10:30:01.000Z',
+            },
+          ]);
+        }
         if (sqlText.includes(`FROM \`${BOOKLORE_TABLES.bookMarks}\` b`)) {
           return Promise.resolve([
             {
@@ -397,6 +426,7 @@ describe('BookloreSourceAdapter validation and export', () => {
         tags: true,
         userBookStatuses: true,
         readingProgress: true,
+        readingSessions: true,
         bookmarks: true,
         annotations: true,
         shelves: true,
@@ -415,8 +445,126 @@ describe('BookloreSourceAdapter validation and export', () => {
       }),
     );
     expect(result.books[0]?.authors?.map((author) => author.name)).toEqual(['Frank Herbert', 'Brian Herbert']);
+    expect(result.readingSessions).toEqual([
+      {
+        sourceSessionId: 'rs-1',
+        sourceUserId: 'u1',
+        sourceBookId: 'b1',
+        bookType: 'EPUB',
+        startedAt: '2024-01-05T10:00:00.000Z',
+        endedAt: '2024-01-05T10:30:00.000Z',
+        durationSeconds: 1500,
+        progressDelta: 12.5,
+        endProgress: 75,
+        createdAt: '2024-01-05T10:30:01.000Z',
+      },
+    ]);
     expect(result.shelves).toEqual([{ sourceShelfId: 's1', sourceUserId: 'u1', name: 'Favorites' }]);
     expect(result.shelfBooks).toEqual([{ sourceShelfId: 's1', sourceUserId: 'u1', sourceBookId: 'b1' }]);
+  });
+
+  it('uses book-level progress as a fallback when file-level progress is absent', async () => {
+    const columns = (...names: string[]) => new Set(names.map((name) => name.toLowerCase()));
+    const connector = {
+      withConnection: vi.fn().mockImplementation((_config, fn) => fn({})),
+      listTables: vi
+        .fn()
+        .mockResolvedValue(
+          new Set([BOOKLORE_TABLES.users, BOOKLORE_TABLES.book, BOOKLORE_TABLES.userBookProgress, BOOKLORE_TABLES.userBookFileProgress]),
+        ),
+      listColumns: vi.fn().mockImplementation((_conn, tableName: string) => {
+        const map: Record<string, Set<string>> = {
+          [BOOKLORE_TABLES.users]: columns('id'),
+          [BOOKLORE_TABLES.book]: columns('id'),
+          [BOOKLORE_TABLES.userBookProgress]: columns(
+            'user_id',
+            'book_id',
+            'read_status',
+            'epub_progress_percent',
+            'epub_progress',
+            'epub_progress_href',
+            'last_read_time',
+          ),
+          [BOOKLORE_TABLES.userBookFileProgress]: columns('user_id', 'book_id', 'progress_percent', 'position_data'),
+        };
+        return Promise.resolve(map[tableName] ?? new Set<string>());
+      }),
+      queryRows: vi.fn().mockImplementation((_conn, sqlText: string) => {
+        if (sqlText.includes('FROM `users` u')) return Promise.resolve([]);
+        if (sqlText.includes('FROM `book` b')) {
+          return Promise.resolve([{ sourceBookId: 'b1' }, { sourceBookId: 'b2' }]);
+        }
+        if (sqlText.includes(`FROM \`${BOOKLORE_TABLES.userBookProgress}\` p`)) {
+          return Promise.resolve([
+            {
+              sourceUserId: 'u1',
+              sourceBookId: 'b1',
+              status: 'reading',
+              percentage: 22,
+              cfi: 'epubcfi(/6/2)',
+              href: '/chap1.xhtml',
+              pageNumber: null,
+              positionSeconds: null,
+              updatedAt: '2026-01-11T12:00:00.000Z',
+            },
+            {
+              sourceUserId: 'u1',
+              sourceBookId: 'b2',
+              status: 'reading',
+              percentage: 30,
+              cfi: null,
+              href: null,
+              pageNumber: null,
+              positionSeconds: null,
+              updatedAt: '2026-01-12T12:00:00.000Z',
+            },
+          ]);
+        }
+        if (sqlText.includes(`FROM \`${BOOKLORE_TABLES.userBookFileProgress}\` p`)) {
+          return Promise.resolve([
+            {
+              sourceUserId: 'u1',
+              sourceBookId: 'b2',
+              sourceFileId: null,
+              percentage: 55,
+              cfi: 'epubcfi(/6/4)',
+              href: null,
+              pageNumber: null,
+              positionSeconds: null,
+              updatedAt: '2026-01-12T13:00:00.000Z',
+            },
+          ]);
+        }
+        return Promise.resolve([]);
+      }),
+    };
+
+    const adapter = new BookloreSourceAdapter(connector as never);
+    const result = await adapter.exportData({
+      host: 'localhost',
+      port: 3306,
+      user: 'booklore',
+      password: 'secret',
+      database: 'booklore',
+      mediaRootPath: null,
+      ssl: false,
+    });
+
+    expect(result.availableDomains?.readingProgress).toBe(true);
+    expect(result.userFileProgress).toEqual([
+      expect.objectContaining({
+        sourceBookId: 'b2',
+        percentage: 55,
+        cfi: 'epubcfi(/6/4)',
+      }),
+      expect.objectContaining({
+        sourceBookId: 'b1',
+        sourceFileId: null,
+        percentage: 22,
+        cfi: 'epubcfi(/6/2)',
+        href: '/chap1.xhtml',
+      }),
+    ]);
   });
 });
 
@@ -518,7 +666,8 @@ describe('BookloreSourceAdapter validate - missing tables', () => {
         'book_metadata table not found; metadata overlays will be limited',
         'author mapping tables not found; author migration disabled',
         'user_book_progress table not found; status migration disabled',
-        'user_book_file_progress table not found; file progress migration disabled',
+        'user_book_file_progress and user_book_progress tables not found; reading progress migration disabled',
+        'reading_sessions table not found; reading session migration disabled',
         'book_marks table not found; bookmark migration disabled',
         'annotations table not found; annotation migration disabled',
         'shelf mapping tables not found; shelf-to-collection migration disabled',
@@ -999,16 +1148,17 @@ describe('BookloreSourceAdapter private method branches', () => {
     expect(connector.queryRows).not.toHaveBeenCalled();
   });
 
-  it('fetchUserBookStatuses maps Date and string dates via toIso', async () => {
+  it('fetchUserBookStatuses maps Date, string dates, and personal ratings', async () => {
     const isoDate = '2024-06-01T00:00:00.000Z';
     const connector = {
-      listColumns: vi.fn().mockResolvedValue(new Set(['user_id', 'book_id', 'updated_at', 'started_at', 'finished_at'])),
+      listColumns: vi.fn().mockResolvedValue(new Set(['user_id', 'book_id', 'updated_at', 'started_at', 'finished_at', 'personal_rating'])),
       queryRows: vi.fn().mockResolvedValue([
         {
           sourceUserId: 'u1',
           sourceBookId: 'b1',
           status: null,
           percentage: null,
+          rating: 8,
           startedAt: new Date(isoDate),
           finishedAt: '2024-07-01',
           updatedAt: '2024-06-15T00:00:00.000Z',
@@ -1021,6 +1171,8 @@ describe('BookloreSourceAdapter private method branches', () => {
     expect(result[0].startedAt).toBe(isoDate);
     expect(result[0].finishedAt).toBe('2024-07-01T00:00:00.000Z');
     expect(result[0].updatedAt).toBeTruthy();
+    expect(result[0].rating).toBe(8);
+    expect(connector.queryRows.mock.calls[0][1]).toContain('personal_rating');
   });
 
   it('fetchUserBookStatuses filters out rows with empty sourceUserId or sourceBookId', async () => {

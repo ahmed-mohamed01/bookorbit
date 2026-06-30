@@ -77,6 +77,7 @@ export interface MigrationRunReport {
       counts: {
         statuses: number
         fileProgress: number
+        readingSessions: number
         bookmarks: number
         annotations: number
         shelves: number

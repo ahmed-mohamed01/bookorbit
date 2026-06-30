@@ -1,5 +1,5 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, like, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { DB } from '../../../db';
@@ -7,6 +7,13 @@ import { refreshPrimaryAuthorSortNamesForAuthors, refreshPrimaryAuthorSortNamesF
 import * as schema from '../../../db/schema';
 import { SeriesIdentityService } from '../../../common/services/series-identity.service';
 import { SeriesMembershipService } from '../../../common/services/series-membership.service';
+import {
+  aggregateReadingSessionDailyStats,
+  getDayRangeForDateKeys,
+  getReadingSessionDayKeys,
+  type ReadingDailyStatsSegment,
+} from '../../../common/utils/reading-daily-stats.utils';
+import { resolveTimeZone } from '../../../common/utils/timezone.utils';
 import { uniqueNumbers } from './executor-utils';
 
 type Db = NodePgDatabase<typeof schema>;
@@ -207,6 +214,15 @@ export class MigrationImportRepository {
         target: [schema.userBookStatus.userId, schema.userBookStatus.bookId],
         set: omitKeys(values, 'userId', 'bookId'),
       });
+  }
+
+  async clearUserBookRatings(userIds: number[], bookIds: number[]): Promise<void> {
+    const targetUserIds = uniqueNumbers(userIds);
+    const targetBookIds = uniqueNumbers(bookIds);
+    if (targetUserIds.length === 0 || targetBookIds.length === 0) return;
+    await this.db
+      .delete(schema.userBookRatings)
+      .where(and(inArray(schema.userBookRatings.userId, targetUserIds), inArray(schema.userBookRatings.bookId, targetBookIds)));
   }
 
   // --- Reading progress ---
@@ -481,6 +497,22 @@ export class MigrationImportRepository {
     }
   }
 
+  async batchUpsertUserBookRatings(items: Array<typeof schema.userBookRatings.$inferInsert>): Promise<void> {
+    if (items.length === 0) return;
+    for (const batch of chunk(items, BATCH_CHUNK_SIZE)) {
+      await this.db
+        .insert(schema.userBookRatings)
+        .values(batch)
+        .onConflictDoUpdate({
+          target: [schema.userBookRatings.userId, schema.userBookRatings.bookId],
+          set: {
+            rating: sql`excluded.rating`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        });
+    }
+  }
+
   async batchUpsertReadingProgress(items: Array<typeof schema.readingProgress.$inferInsert>): Promise<void> {
     if (items.length === 0) return;
     for (const batch of chunk(items, BATCH_CHUNK_SIZE)) {
@@ -515,6 +547,115 @@ export class MigrationImportRepository {
             updatedAt: sql`excluded.updated_at`,
           },
         });
+    }
+  }
+
+  async syncImportedReadingSessions(params: {
+    items: Array<typeof schema.readingSessions.$inferInsert>;
+    userIds: number[];
+    bookIds: number[];
+    sessionIdPrefix: string;
+  }): Promise<void> {
+    const targetUserIds = uniqueNumbers(params.userIds);
+    const targetBookIds = uniqueNumbers(params.bookIds);
+    if (targetUserIds.length === 0 || targetBookIds.length === 0) return;
+
+    const existing = await this.db
+      .select({
+        id: schema.readingSessions.id,
+        userId: schema.readingSessions.userId,
+        bookId: schema.readingSessions.bookId,
+        sessionId: schema.readingSessions.sessionId,
+        startedAt: schema.readingSessions.startedAt,
+        endedAt: schema.readingSessions.endedAt,
+        durationSeconds: schema.readingSessions.durationSeconds,
+        progressDelta: schema.readingSessions.progressDelta,
+        libraryId: schema.books.libraryId,
+      })
+      .from(schema.readingSessions)
+      .innerJoin(schema.books, eq(schema.books.id, schema.readingSessions.bookId))
+      .where(and(inArray(schema.readingSessions.userId, targetUserIds), like(schema.readingSessions.sessionId, `${params.sessionIdPrefix}%`)));
+
+    const desiredKeys = new Set(params.items.map((item) => `${item.userId}:${item.sessionId}`));
+    const targetBookIdSet = new Set(targetBookIds);
+    const relevantExisting = existing.filter((row) => targetBookIdSet.has(row.bookId) || desiredKeys.has(`${row.userId}:${row.sessionId}`));
+    const stale = relevantExisting.filter((row) => targetBookIdSet.has(row.bookId) && !desiredKeys.has(`${row.userId}:${row.sessionId}`));
+    const timeZonesByUserId = await this.fetchTimeZonesByUserIds(targetUserIds);
+    const affectedDaysByUserLibrary = new Map<string, { userId: number; libraryId: number; timeZone: string; days: Set<string> }>();
+
+    const addAffectedDays = (entry: {
+      userId: number;
+      libraryId: number;
+      startedAt: Date;
+      endedAt: Date;
+      durationSeconds: number;
+      progressDelta: number | null;
+    }) => {
+      const timeZone = timeZonesByUserId.get(entry.userId) ?? 'UTC';
+      const key = `${entry.userId}:${entry.libraryId}`;
+      const group = affectedDaysByUserLibrary.get(key) ?? { userId: entry.userId, libraryId: entry.libraryId, timeZone, days: new Set<string>() };
+      for (const day of getReadingSessionDayKeys(entry, timeZone)) {
+        group.days.add(day);
+      }
+      affectedDaysByUserLibrary.set(key, group);
+    };
+
+    for (const row of relevantExisting) {
+      addAffectedDays({
+        userId: row.userId,
+        libraryId: row.libraryId,
+        startedAt: row.startedAt,
+        endedAt: row.endedAt,
+        durationSeconds: row.durationSeconds,
+        progressDelta: row.progressDelta ?? null,
+      });
+    }
+
+    if (stale.length > 0) {
+      for (const batch of chunk(
+        stale.map((row) => row.id),
+        BATCH_CHUNK_SIZE,
+      )) {
+        await this.db.delete(schema.readingSessions).where(inArray(schema.readingSessions.id, batch));
+      }
+    }
+
+    const libraryIdsByBookId = await this.fetchLibraryIdsByBookIds(params.items.map((item) => item.bookId));
+
+    for (const item of params.items) {
+      const libraryId = libraryIdsByBookId.get(item.bookId);
+      if (!libraryId) continue;
+      addAffectedDays({
+        userId: item.userId,
+        libraryId,
+        startedAt: item.startedAt,
+        endedAt: item.endedAt,
+        durationSeconds: item.durationSeconds,
+        progressDelta: item.progressDelta ?? null,
+      });
+    }
+
+    for (const batch of chunk(params.items, BATCH_CHUNK_SIZE)) {
+      await this.db
+        .insert(schema.readingSessions)
+        .values(batch)
+        .onConflictDoUpdate({
+          target: [schema.readingSessions.userId, schema.readingSessions.sessionId],
+          set: {
+            bookFileId: sql`excluded.book_file_id`,
+            bookId: sql`excluded.book_id`,
+            source: sql`excluded.source`,
+            startedAt: sql`excluded.started_at`,
+            endedAt: sql`excluded.ended_at`,
+            durationSeconds: sql`excluded.duration_seconds`,
+            progressDelta: sql`excluded.progress_delta`,
+            endProgress: sql`excluded.end_progress`,
+          },
+        });
+    }
+
+    for (const group of affectedDaysByUserLibrary.values()) {
+      await this.recomputeReadingDailyStats(group.userId, group.libraryId, [...group.days], group.timeZone);
     }
   }
 
@@ -591,8 +732,10 @@ export class MigrationImportRepository {
     return { primaryFilesByBookId, audiobookPrimaryFilesByBookId };
   }
 
-  async fetchTargetBookFiles(bookIds: number[]): Promise<Map<number, Array<{ id: number; hash: string | null; absolutePath: string }>>> {
-    const result = new Map<number, Array<{ id: number; hash: string | null; absolutePath: string }>>();
+  async fetchTargetBookFiles(
+    bookIds: number[],
+  ): Promise<Map<number, Array<{ id: number; hash: string | null; absolutePath: string; format: string | null }>>> {
+    const result = new Map<number, Array<{ id: number; hash: string | null; absolutePath: string; format: string | null }>>();
     if (bookIds.length === 0) return result;
 
     const rows = await this.db
@@ -601,13 +744,14 @@ export class MigrationImportRepository {
         bookId: schema.bookFiles.bookId,
         hash: schema.bookFiles.fileHash,
         absolutePath: schema.bookFiles.absolutePath,
+        format: schema.bookFiles.format,
       })
       .from(schema.bookFiles)
       .where(inArray(schema.bookFiles.bookId, bookIds));
 
     for (const row of rows) {
       const files = result.get(row.bookId) ?? [];
-      files.push({ id: row.id, hash: row.hash, absolutePath: row.absolutePath });
+      files.push({ id: row.id, hash: row.hash, absolutePath: row.absolutePath, format: row.format });
       result.set(row.bookId, files);
     }
 
@@ -628,5 +772,103 @@ export class MigrationImportRepository {
     }
 
     return result;
+  }
+
+  private async fetchTimeZonesByUserIds(userIds: number[]): Promise<Map<number, string>> {
+    const result = new Map<number, string>();
+    const targetUserIds = uniqueNumbers(userIds);
+    if (targetUserIds.length === 0) return result;
+
+    const rows = await this.db
+      .select({ id: schema.users.id, settings: schema.users.settings })
+      .from(schema.users)
+      .where(inArray(schema.users.id, targetUserIds));
+
+    for (const row of rows) {
+      result.set(row.id, resolveTimeZone((row.settings as { timezone?: unknown } | undefined)?.timezone, 'UTC'));
+    }
+    return result;
+  }
+
+  private async recomputeReadingDailyStats(userId: number, libraryId: number, days: string[], timeZone: string): Promise<void> {
+    const affectedDays = [...new Set(days)].sort();
+    if (affectedDays.length === 0) return;
+
+    await this.lockReadingDailyStats(userId, libraryId);
+
+    await this.db
+      .delete(schema.userReadingDailyStats)
+      .where(
+        and(
+          eq(schema.userReadingDailyStats.userId, userId),
+          eq(schema.userReadingDailyStats.libraryId, libraryId),
+          inArray(schema.userReadingDailyStats.day, affectedDays),
+        ),
+      );
+
+    const range = getDayRangeForDateKeys(affectedDays, timeZone);
+    if (!range) return;
+
+    const rows = await this.db
+      .select({
+        startedAt: schema.readingSessions.startedAt,
+        endedAt: schema.readingSessions.endedAt,
+        durationSeconds: schema.readingSessions.durationSeconds,
+        progressDelta: schema.readingSessions.progressDelta,
+      })
+      .from(schema.readingSessions)
+      .innerJoin(schema.books, eq(schema.books.id, schema.readingSessions.bookId))
+      .where(
+        and(
+          eq(schema.readingSessions.userId, userId),
+          eq(schema.books.libraryId, libraryId),
+          lt(schema.readingSessions.startedAt, range.end),
+          gt(schema.readingSessions.endedAt, range.start),
+        ),
+      );
+
+    const segments = aggregateReadingSessionDailyStats(
+      rows.map((row) => ({
+        startedAt: row.startedAt,
+        endedAt: row.endedAt,
+        durationSeconds: row.durationSeconds,
+        progressDelta: row.progressDelta ?? null,
+      })),
+      timeZone,
+      new Set(affectedDays),
+    );
+    await this.insertReadingDailyStatsSegments(userId, libraryId, segments);
+  }
+
+  private async lockReadingDailyStats(userId: number, libraryId: number): Promise<void> {
+    await this.db.execute(sql`select pg_advisory_xact_lock(${userId}::int, ${libraryId}::int)`);
+  }
+
+  private async insertReadingDailyStatsSegments(userId: number, libraryId: number, segments: ReadingDailyStatsSegment[]): Promise<void> {
+    if (segments.length === 0) return;
+
+    const now = new Date();
+    await this.db
+      .insert(schema.userReadingDailyStats)
+      .values(
+        segments.map((segment) => ({
+          userId,
+          libraryId,
+          day: segment.day,
+          readingSeconds: segment.readingSeconds,
+          progressDelta: segment.progressDelta,
+          sessionsCount: segment.sessionsCount,
+          updatedAt: now,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [schema.userReadingDailyStats.userId, schema.userReadingDailyStats.libraryId, schema.userReadingDailyStats.day],
+        set: {
+          readingSeconds: sql`excluded.reading_seconds`,
+          progressDelta: sql`excluded.progress_delta`,
+          sessionsCount: sql`excluded.sessions_count`,
+          updatedAt: now,
+        },
+      });
   }
 }

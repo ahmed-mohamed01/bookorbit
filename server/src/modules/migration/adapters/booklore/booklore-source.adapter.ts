@@ -12,6 +12,7 @@ import type {
   SourceContributor,
   SourceExportDomains,
   SourceExportData,
+  SourceReadingSession,
   SourceShelf,
   SourceShelfBook,
   SourceSnapshot,
@@ -34,6 +35,7 @@ const TABLE_CANDIDATES = {
   authorMapping: [BOOKLORE_TABLES.bookMetadataAuthorMapping],
   userBookProgress: [BOOKLORE_TABLES.userBookProgress],
   userBookFileProgress: [BOOKLORE_TABLES.userBookFileProgress],
+  readingSessions: [BOOKLORE_TABLES.readingSessions],
   bookmarks: [BOOKLORE_TABLES.bookMarks],
   annotations: [BOOKLORE_TABLES.annotations],
   pdfAnnotations: [BOOKLORE_TABLES.pdfAnnotations],
@@ -65,6 +67,7 @@ interface TableResolution {
   authorMapping: string | null;
   userBookProgress: string | null;
   userBookFileProgress: string | null;
+  readingSessions: string | null;
   bookmarks: string | null;
   annotations: string | null;
   pdfAnnotations: string | null;
@@ -140,7 +143,10 @@ export class BookloreSourceAdapter implements SourceAdapter<BookloreConnectionCo
       const users = await this.fetchUsers(conn, resolved.users);
       const books = await this.fetchBooks(conn, resolved);
       const userBookStatuses = await this.fetchUserBookStatuses(conn, resolved.userBookProgress);
-      const userFileProgress = await this.fetchUserFileProgress(conn, resolved.userBookFileProgress, resolved.bookFile);
+      const fileProgress = await this.fetchUserFileProgress(conn, resolved.userBookFileProgress, resolved.bookFile);
+      const bookLevelProgress = await this.fetchBookLevelFileProgress(conn, resolved.userBookProgress);
+      const userFileProgress = mergeProgressFallbacks(fileProgress, bookLevelProgress);
+      const readingSessions = await this.fetchReadingSessions(conn, resolved.readingSessions);
       const bookmarks = await this.fetchBookmarks(conn, resolved.bookmarks);
       const annotations = await this.fetchAnnotations(conn, resolved.annotations);
       const { shelves, shelfBooks } = await this.fetchShelves(conn, resolved.shelves, resolved.shelfBooks, resolved.book);
@@ -153,6 +159,7 @@ export class BookloreSourceAdapter implements SourceAdapter<BookloreConnectionCo
         books,
         userBookStatuses,
         userFileProgress,
+        readingSessions,
         bookmarks,
         annotations,
         shelves,
@@ -169,7 +176,8 @@ export class BookloreSourceAdapter implements SourceAdapter<BookloreConnectionCo
       genres: !!resolved.categories && !!resolved.categoryMapping,
       tags: !!resolved.tags && !!resolved.tagMapping,
       userBookStatuses: !!resolved.userBookProgress,
-      readingProgress: !!resolved.userBookFileProgress,
+      readingProgress: !!resolved.userBookFileProgress || !!resolved.userBookProgress,
+      readingSessions: !!resolved.readingSessions,
       bookmarks: !!resolved.bookmarks,
       annotations: !!resolved.annotations,
       shelves: !!resolved.shelves && !!resolved.shelfBooks,
@@ -217,7 +225,12 @@ export class BookloreSourceAdapter implements SourceAdapter<BookloreConnectionCo
     if (!resolved.bookMetadata) warnings.push('book_metadata table not found; metadata overlays will be limited');
     if (!resolved.authors || !resolved.authorMapping) warnings.push('author mapping tables not found; author migration disabled');
     if (!resolved.userBookProgress) warnings.push('user_book_progress table not found; status migration disabled');
-    if (!resolved.userBookFileProgress) warnings.push('user_book_file_progress table not found; file progress migration disabled');
+    if (!resolved.userBookFileProgress && !resolved.userBookProgress) {
+      warnings.push('user_book_file_progress and user_book_progress tables not found; reading progress migration disabled');
+    } else if (!resolved.userBookFileProgress) {
+      warnings.push('user_book_file_progress table not found; falling back to user_book_progress percentages for reading progress');
+    }
+    if (!resolved.readingSessions) warnings.push('reading_sessions table not found; reading session migration disabled');
     if (!resolved.bookmarks) warnings.push('book_marks table not found; bookmark migration disabled');
     if (!resolved.annotations) warnings.push('annotations table not found; annotation migration disabled');
     if (!resolved.shelves || !resolved.shelfBooks) warnings.push('shelf mapping tables not found; shelf-to-collection migration disabled');
@@ -652,6 +665,7 @@ export class BookloreSourceAdapter implements SourceAdapter<BookloreConnectionCo
     const startedAtCol = firstColumn(cols, ['started_at', 'start_date', 'date_started']);
     const finishedAtCol = firstColumn(cols, ['finished_at', 'finish_date', 'completed_at', 'date_finished']);
     const updatedAtCol = firstColumn(cols, ['updated_at', 'modified_at', 'last_read_at', 'last_read_time']);
+    const ratingCol = firstColumn(cols, ['personal_rating', 'personalrating', 'user_rating', 'rating']);
 
     const sqlText = `
       SELECT
@@ -659,6 +673,7 @@ export class BookloreSourceAdapter implements SourceAdapter<BookloreConnectionCo
         CAST(p.\`${bookCol}\` AS CHAR) AS sourceBookId,
         ${sqlString('p', statusCol, 'status')},
         ${sqlCoalesceNumber('p', pctCols, 'percentage')},
+        ${sqlNumber('p', ratingCol, 'rating')},
         ${sqlDate('p', startedAtCol, 'startedAt')},
         ${sqlDate('p', finishedAtCol, 'finishedAt')},
         ${sqlDate('p', updatedAtCol, 'updatedAt')}
@@ -668,15 +683,21 @@ export class BookloreSourceAdapter implements SourceAdapter<BookloreConnectionCo
     const rows = await this.connector.queryRows(conn, sqlText);
 
     return rows
-      .map((row) => ({
-        sourceUserId: asString(row.sourceUserId) ?? '',
-        sourceBookId: asString(row.sourceBookId) ?? '',
-        status: asString(row.status),
-        percentage: asNumber(row.percentage),
-        startedAt: toIso(row.startedAt),
-        finishedAt: toIso(row.finishedAt),
-        updatedAt: toIso(row.updatedAt),
-      }))
+      .map((row) => {
+        const statusRow: SourceUserBookStatus = {
+          sourceUserId: asString(row.sourceUserId) ?? '',
+          sourceBookId: asString(row.sourceBookId) ?? '',
+          status: asString(row.status),
+          percentage: asNumber(row.percentage),
+          startedAt: toIso(row.startedAt),
+          finishedAt: toIso(row.finishedAt),
+          updatedAt: toIso(row.updatedAt),
+        };
+        if (ratingCol) {
+          statusRow.rating = asNumber(row.rating);
+        }
+        return statusRow;
+      })
       .filter((row) => !!row.sourceUserId && !!row.sourceBookId);
   }
 
@@ -745,6 +766,111 @@ export class BookloreSourceAdapter implements SourceAdapter<BookloreConnectionCo
         updatedAt: toIso(row.updatedAt),
       }))
       .filter((row) => !!row.sourceUserId && !!row.sourceBookId);
+  }
+
+  private async fetchBookLevelFileProgress(conn: mysql.Connection, progressTable: string | null): Promise<SourceUserFileProgress[]> {
+    if (!progressTable) return [];
+
+    const cols = await this.connector.listColumns(conn, progressTable);
+    const userCol = firstColumn(cols, ['user_id', 'userid']);
+    const bookCol = firstColumn(cols, ['book_id', 'bookid']);
+    if (!userCol || !bookCol) return [];
+
+    const pctCols = columnsInOrder(cols, [
+      'percentage',
+      'progress_percent',
+      'percent_complete',
+      'epub_progress_percent',
+      'pdf_progress_percent',
+      'cbx_progress_percent',
+      'koreader_progress_percent',
+      'kobo_progress_percent',
+      'progress',
+    ]);
+    const cfiCol = firstColumn(cols, ['epub_progress', 'koreader_progress', 'kobo_location', 'cfi', 'location']);
+    const hrefCol = firstColumn(cols, ['epub_progress_href', 'position_href', 'href']);
+    const pageCol = firstColumn(cols, ['page_number', 'page', 'page_index', 'pdf_progress', 'cbx_progress']);
+    const updatedAtCol = firstColumn(cols, ['updated_at', 'modified_at', 'last_read_at', 'last_read_time']);
+
+    const sqlText = `
+      SELECT
+        CAST(p.\`${userCol}\` AS CHAR) AS sourceUserId,
+        CAST(p.\`${bookCol}\` AS CHAR) AS sourceBookId,
+        NULL AS sourceFileId,
+        ${sqlCoalesceNumber('p', pctCols, 'percentage')},
+        ${sqlString('p', cfiCol, 'cfi')},
+        ${sqlString('p', hrefCol, 'href')},
+        ${sqlNumber('p', pageCol, 'pageNumber')},
+        NULL AS positionSeconds,
+        ${sqlDate('p', updatedAtCol, 'updatedAt')}
+      FROM \`${progressTable}\` p
+    `;
+
+    const rows = await this.connector.queryRows(conn, sqlText);
+
+    return rows
+      .map((row) => ({
+        sourceUserId: asString(row.sourceUserId) ?? '',
+        sourceBookId: asString(row.sourceBookId) ?? '',
+        sourceFileId: null,
+        percentage: asNumber(row.percentage),
+        cfi: asString(row.cfi),
+        href: asString(row.href),
+        pageNumber: asInteger(row.pageNumber),
+        positionSeconds: null,
+        updatedAt: toIso(row.updatedAt),
+      }))
+      .filter((row) => !!row.sourceUserId && !!row.sourceBookId);
+  }
+
+  private async fetchReadingSessions(conn: mysql.Connection, sessionsTable: string | null): Promise<SourceReadingSession[]> {
+    if (!sessionsTable) return [];
+
+    const cols = await this.connector.listColumns(conn, sessionsTable);
+    const idCol = firstColumn(cols, ['id', 'session_id']);
+    const userCol = firstColumn(cols, ['user_id', 'userid']);
+    const bookCol = firstColumn(cols, ['book_id', 'bookid']);
+    const startedAtCol = firstColumn(cols, ['start_time', 'started_at', 'start_at', 'started']);
+    const endedAtCol = firstColumn(cols, ['end_time', 'ended_at', 'end_at', 'ended']);
+    if (!idCol || !userCol || !bookCol || !startedAtCol || !endedAtCol) return [];
+
+    const bookTypeCol = firstColumn(cols, ['book_type', 'booktype', 'file_type', 'format']);
+    const durationCol = firstColumn(cols, ['duration_seconds', 'duration']);
+    const progressDeltaCol = firstColumn(cols, ['progress_delta']);
+    const endProgressCol = firstColumn(cols, ['end_progress']);
+    const createdAtCol = firstColumn(cols, ['created_at', 'createdat']);
+
+    const sqlText = `
+      SELECT
+        CAST(s.\`${idCol}\` AS CHAR) AS sourceSessionId,
+        CAST(s.\`${userCol}\` AS CHAR) AS sourceUserId,
+        CAST(s.\`${bookCol}\` AS CHAR) AS sourceBookId,
+        ${sqlString('s', bookTypeCol, 'bookType')},
+        ${sqlDate('s', startedAtCol, 'startedAt')},
+        ${sqlDate('s', endedAtCol, 'endedAt')},
+        ${sqlNumber('s', durationCol, 'durationSeconds')},
+        ${sqlNumber('s', progressDeltaCol, 'progressDelta')},
+        ${sqlNumber('s', endProgressCol, 'endProgress')},
+        ${sqlDate('s', createdAtCol, 'createdAt')}
+      FROM \`${sessionsTable}\` s
+    `;
+
+    const rows = await this.connector.queryRows(conn, sqlText);
+
+    return rows
+      .map((row) => ({
+        sourceSessionId: asString(row.sourceSessionId) ?? '',
+        sourceUserId: asString(row.sourceUserId) ?? '',
+        sourceBookId: asString(row.sourceBookId) ?? '',
+        bookType: asString(row.bookType),
+        startedAt: toIso(row.startedAt),
+        endedAt: toIso(row.endedAt),
+        durationSeconds: asInteger(row.durationSeconds),
+        progressDelta: asNumber(row.progressDelta),
+        endProgress: asNumber(row.endProgress),
+        createdAt: toIso(row.createdAt),
+      }))
+      .filter((row) => !!row.sourceSessionId && !!row.sourceUserId && !!row.sourceBookId);
   }
 
   private async fetchBookmarks(conn: mysql.Connection, bookmarkTable: string | null): Promise<SourceBookmark[]> {
@@ -1011,6 +1137,7 @@ function resolveTables(tables: Set<string>): TableResolution {
     authorMapping: resolveTable(tables, TABLE_CANDIDATES.authorMapping),
     userBookProgress: resolveTable(tables, TABLE_CANDIDATES.userBookProgress),
     userBookFileProgress: resolveTable(tables, TABLE_CANDIDATES.userBookFileProgress),
+    readingSessions: resolveTable(tables, TABLE_CANDIDATES.readingSessions),
     bookmarks: resolveTable(tables, TABLE_CANDIDATES.bookmarks),
     annotations: resolveTable(tables, TABLE_CANDIDATES.annotations),
     pdfAnnotations: resolveTable(tables, TABLE_CANDIDATES.pdfAnnotations),
@@ -1057,6 +1184,21 @@ function firstColumn(columns: Set<string>, candidates: string[]): string | null 
 
 function columnsInOrder(columns: Set<string>, candidates: string[]): string[] {
   return candidates.filter((candidate) => columns.has(candidate.toLowerCase()));
+}
+
+function mergeProgressFallbacks(fileProgress: SourceUserFileProgress[], bookLevelProgress: SourceUserFileProgress[]): SourceUserFileProgress[] {
+  if (bookLevelProgress.length === 0) return fileProgress;
+
+  const fileProgressKeys = new Set(fileProgress.filter(hasProgressSignal).map((row) => `${row.sourceUserId}:${row.sourceBookId}`));
+  const fallbackRows = bookLevelProgress.filter((row) => hasProgressSignal(row) && !fileProgressKeys.has(`${row.sourceUserId}:${row.sourceBookId}`));
+  return [...fileProgress, ...fallbackRows];
+}
+
+function hasProgressSignal(row: SourceUserFileProgress): boolean {
+  const hasLocator = (row.cfi?.trim().length ?? 0) > 0 || (row.href?.trim().length ?? 0) > 0;
+  const hasPageNumber = typeof row.pageNumber === 'number' && Number.isFinite(row.pageNumber) && row.pageNumber > 0;
+  const hasPosition = typeof row.positionSeconds === 'number' && Number.isFinite(row.positionSeconds) && row.positionSeconds > 0;
+  return (row.percentage ?? 0) > 0 || hasLocator || hasPageNumber || hasPosition;
 }
 
 function sqlString(alias: string, column: string | null, outName: string): string {

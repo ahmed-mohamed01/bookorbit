@@ -223,7 +223,7 @@ describe('Migration Booklore API to DB (e2e)', { timeout: 240_000 }, () => {
         perUserPreview: Array<{
           sourceUserId: string;
           targetUserId: number;
-          counts: { statuses: number; fileProgress: number; bookmarks: number; annotations: number; shelves: number };
+          counts: { statuses: number; fileProgress: number; readingSessions: number; bookmarks: number; annotations: number; shelves: number };
         }>;
       };
     }>(ctx, {
@@ -254,6 +254,7 @@ describe('Migration Booklore API to DB (e2e)', { timeout: 240_000 }, () => {
           counts: expect.objectContaining({
             statuses: 1,
             fileProgress: 2,
+            readingSessions: 2,
             bookmarks: 1,
             annotations: 1,
             shelves: 2,
@@ -265,6 +266,7 @@ describe('Migration Booklore API to DB (e2e)', { timeout: 240_000 }, () => {
           counts: expect.objectContaining({
             statuses: 1,
             fileProgress: 1,
+            readingSessions: 1,
             bookmarks: 1,
             annotations: 1,
             shelves: 1,
@@ -427,11 +429,11 @@ describe('Migration Booklore API to DB (e2e)', { timeout: 240_000 }, () => {
       expect.arrayContaining([
         expect.objectContaining({
           username: 'alice-source',
-          counts: expect.objectContaining({ statuses: 2, fileProgress: 2, bookmarks: 1, annotations: 1, shelves: 2 }),
+          counts: expect.objectContaining({ statuses: 2, fileProgress: 2, readingSessions: 2, bookmarks: 1, annotations: 1, shelves: 2 }),
         }),
         expect.objectContaining({
           username: 'bob-source',
-          counts: expect.objectContaining({ statuses: 1, fileProgress: 1, bookmarks: 1, annotations: 1, shelves: 1 }),
+          counts: expect.objectContaining({ statuses: 1, fileProgress: 1, readingSessions: 1, bookmarks: 1, annotations: 1, shelves: 1 }),
         }),
       ]),
     );
@@ -479,6 +481,13 @@ describe('Migration Booklore API to DB (e2e)', { timeout: 240_000 }, () => {
     expect(metricByKey.get('user_state:audiobook_progress')).toMatchObject({
       processed: 1,
       imported: 1,
+    });
+    expect(metricByKey.get('user_state:reading_sessions')).toMatchObject({
+      processed: 4,
+      imported: 3,
+      unresolved: 1,
+      skipped: 0,
+      failed: 0,
     });
     expect(metricByKey.get('user_state:bookmarks')).toMatchObject({
       processed: 2,
@@ -621,6 +630,74 @@ describe('Migration Booklore API to DB (e2e)', { timeout: 240_000 }, () => {
         positionSeconds: 12.5,
       }),
     ]);
+
+    const readingSessions = await ctx.db
+      .select()
+      .from(schema.readingSessions)
+      .where(inArray(schema.readingSessions.userId, [scenario.targetUsers.alice.id, scenario.targetUsers.bob.id]));
+    expect(readingSessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userId: scenario.targetUsers.alice.id,
+          bookId: scenario.books.isbn.bookId,
+          bookFileId: scenario.books.isbn.primaryFileId,
+          sessionId: 'booklore:rs:9001',
+          source: 'web',
+          durationSeconds: 1700,
+          progressDelta: 25,
+          endProgress: 45,
+        }),
+        expect.objectContaining({
+          userId: scenario.targetUsers.alice.id,
+          bookId: scenario.books.hash.bookId,
+          bookFileId: scenario.books.hash.primaryFileId,
+          sessionId: 'booklore:rs:9002',
+          durationSeconds: 1200,
+          progressDelta: 3,
+          endProgress: 25,
+        }),
+        expect.objectContaining({
+          userId: scenario.targetUsers.bob.id,
+          bookId: scenario.books.audio.bookId,
+          bookFileId: scenario.books.audio.primaryFileId,
+          sessionId: 'booklore:rs:9003',
+          durationSeconds: 1800,
+          progressDelta: null,
+          endProgress: null,
+        }),
+      ]),
+    );
+    expect(readingSessions).toHaveLength(3);
+
+    const dailyStats = await ctx.db
+      .select()
+      .from(schema.userReadingDailyStats)
+      .where(inArray(schema.userReadingDailyStats.userId, [scenario.targetUsers.alice.id, scenario.targetUsers.bob.id]));
+    expect(dailyStats).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          userId: scenario.targetUsers.alice.id,
+          day: '2024-01-06',
+          readingSeconds: 1700,
+          progressDelta: 25,
+          sessionsCount: 1,
+        }),
+        expect.objectContaining({
+          userId: scenario.targetUsers.alice.id,
+          day: '2024-01-07',
+          readingSeconds: 1200,
+          progressDelta: 3,
+          sessionsCount: 1,
+        }),
+        expect.objectContaining({
+          userId: scenario.targetUsers.bob.id,
+          day: '2024-02-06',
+          readingSeconds: 1800,
+          progressDelta: 0,
+          sessionsCount: 1,
+        }),
+      ]),
+    );
 
     const bookmarks = await ctx.db.select().from(schema.bookmarks);
     expect(bookmarks).toEqual(
@@ -998,6 +1075,7 @@ describe('Migration Booklore API to DB (e2e)', { timeout: 240_000 }, () => {
         'book_metadata table not found; metadata overlays will be limited',
         'author mapping tables not found; author migration disabled',
         'user_book_progress table not found; status migration disabled',
+        'reading_sessions table not found; reading session migration disabled',
         'book_marks table not found; bookmark migration disabled',
         'mediaRootPath not configured; book cover/thumbnail import disabled',
       ]),

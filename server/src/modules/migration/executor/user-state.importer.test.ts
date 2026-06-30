@@ -10,13 +10,16 @@ function makeImporter() {
       primaryFilesByBookId: new Map([[200, 500]]),
       audiobookPrimaryFilesByBookId: new Map([[200, 500]]),
     }),
-    fetchTargetBookFiles: vi.fn().mockResolvedValue(new Map()),
+    fetchTargetBookFiles: vi.fn().mockResolvedValue(new Map([[200, [{ id: 500, hash: null, absolutePath: '/target/book.epub', format: 'epub' }]]])),
     clearUserBookStatuses: vi.fn().mockResolvedValue(undefined),
     batchUpsertUserBookStatuses: vi.fn().mockResolvedValue(undefined),
+    clearUserBookRatings: vi.fn().mockResolvedValue(undefined),
+    batchUpsertUserBookRatings: vi.fn().mockResolvedValue(undefined),
     clearReadingProgress: vi.fn().mockResolvedValue(undefined),
     batchUpsertReadingProgress: vi.fn().mockResolvedValue(undefined),
     clearAudiobookProgress: vi.fn().mockResolvedValue(undefined),
     batchUpsertAudiobookProgress: vi.fn().mockResolvedValue(undefined),
+    syncImportedReadingSessions: vi.fn().mockResolvedValue(undefined),
     clearBookmarks: vi.fn().mockResolvedValue(undefined),
     batchInsertBookmarks: vi.fn().mockResolvedValue(undefined),
     clearAnnotations: vi.fn().mockResolvedValue(undefined),
@@ -37,6 +40,7 @@ describe('UserStateImporter', () => {
 
     const planned = {
       plan: {
+        snapshot: { sourceType: 'booklore' },
         userMappings: [{ sourceUserId: 'u1', targetUserId: 10 }],
         pathMappings: [],
       },
@@ -46,6 +50,7 @@ describe('UserStateImporter', () => {
           availableDomains: {
             userBookStatuses: true,
             readingProgress: true,
+            readingSessions: true,
             bookmarks: true,
             annotations: true,
             shelves: true,
@@ -65,6 +70,7 @@ describe('UserStateImporter', () => {
               sourceBookId: 'b-source',
               status: 'completed',
               percentage: 100,
+              rating: 8,
               startedAt: '2026-01-01T00:00:00.000Z',
               finishedAt: null,
               updatedAt: '2026-01-02T00:00:00.000Z',
@@ -80,6 +86,20 @@ describe('UserStateImporter', () => {
               pageNumber: 12,
               positionSeconds: 30,
               updatedAt: '2026-01-03T00:00:00.000Z',
+            },
+          ],
+          readingSessions: [
+            {
+              sourceSessionId: 'session-1',
+              sourceUserId: 'u1',
+              sourceBookId: 'b-source',
+              bookType: 'EPUB',
+              startedAt: '2026-01-04T00:00:00.000Z',
+              endedAt: '2026-01-04T00:30:00.000Z',
+              durationSeconds: 9999,
+              progressDelta: 12.345,
+              endProgress: 120,
+              createdAt: '2026-01-04T00:30:01.000Z',
             },
           ],
           bookmarks: [
@@ -125,6 +145,13 @@ describe('UserStateImporter', () => {
         source: 'manual',
       }),
     ]);
+    expect(importRepo.batchUpsertUserBookRatings).toHaveBeenCalledWith([
+      expect.objectContaining({
+        userId: 10,
+        bookId: 200,
+        rating: 4,
+      }),
+    ]);
     expect(importRepo.batchUpsertReadingProgress).toHaveBeenCalledWith([
       expect.objectContaining({
         bookFileId: 500,
@@ -140,6 +167,23 @@ describe('UserStateImporter', () => {
         positionSeconds: 30,
       }),
     ]);
+    expect(importRepo.syncImportedReadingSessions).toHaveBeenCalledWith({
+      items: [
+        expect.objectContaining({
+          userId: 10,
+          bookId: 200,
+          bookFileId: 500,
+          sessionId: 'booklore:rs:session-1',
+          durationSeconds: 1800,
+          progressDelta: 12.35,
+          endProgress: 100,
+          source: 'web',
+        }),
+      ],
+      userIds: [10],
+      bookIds: [200],
+      sessionIdPrefix: 'booklore:rs:',
+    });
     expect(importRepo.batchInsertBookmarks).toHaveBeenCalledWith([
       expect.objectContaining({
         userId: 10,
@@ -160,6 +204,24 @@ describe('UserStateImporter', () => {
       300,
       'user_state',
       'collections',
+      expect.objectContaining({
+        processed: 1,
+        imported: 1,
+      }),
+    );
+    expect(repo.setRunMetric).toHaveBeenCalledWith(
+      300,
+      'user_state',
+      'user_book_rating',
+      expect.objectContaining({
+        processed: 1,
+        imported: 1,
+      }),
+    );
+    expect(repo.setRunMetric).toHaveBeenCalledWith(
+      300,
+      'user_state',
+      'reading_sessions',
       expect.objectContaining({
         processed: 1,
         imported: 1,
@@ -343,6 +405,7 @@ describe('UserStateImporter', () => {
     await importer.import(302, planned as never, vi.fn().mockResolvedValue(undefined));
 
     expect(importRepo.batchUpsertUserBookStatuses).not.toHaveBeenCalled();
+    expect(importRepo.batchUpsertUserBookRatings).not.toHaveBeenCalled();
     expect(importRepo.batchUpsertReadingProgress).not.toHaveBeenCalled();
     expect(importRepo.batchUpsertAudiobookProgress).not.toHaveBeenCalled();
     expect(importRepo.batchInsertBookmarks).not.toHaveBeenCalled();
@@ -350,6 +413,7 @@ describe('UserStateImporter', () => {
     expect(importRepo.batchInsertCollectionBooks).not.toHaveBeenCalled();
 
     expect(repo.setRunMetric).toHaveBeenCalledWith(302, 'user_state', 'user_book_status', expect.objectContaining({ processed: 0 }));
+    expect(repo.setRunMetric).toHaveBeenCalledWith(302, 'user_state', 'user_book_rating', expect.objectContaining({ processed: 0 }));
     expect(repo.setRunMetric).toHaveBeenCalledWith(302, 'user_state', 'reading_progress', expect.objectContaining({ processed: 0 }));
     expect(repo.setRunMetric).toHaveBeenCalledWith(302, 'user_state', 'audiobook_progress', expect.objectContaining({ processed: 0 }));
     expect(repo.setRunMetric).toHaveBeenCalledWith(302, 'user_state', 'bookmarks', expect.objectContaining({ processed: 0 }));
@@ -543,6 +607,7 @@ describe('UserStateImporter', () => {
               sourceBookId: 'b-source',
               status: 'reading',
               percentage: 20,
+              rating: 2,
               startedAt: null,
               finishedAt: null,
               updatedAt: '2026-01-10T00:00:00.000Z',
@@ -552,6 +617,7 @@ describe('UserStateImporter', () => {
               sourceBookId: 'b-source',
               status: 'completed',
               percentage: 100,
+              rating: 9,
               startedAt: null,
               finishedAt: null,
               updatedAt: newerStatusUpdatedAt,
@@ -602,6 +668,20 @@ describe('UserStateImporter', () => {
       userId: 10,
       bookId: 200,
       status: 'read',
+      updatedAt: new Date(newerStatusUpdatedAt),
+    });
+
+    const ratingBatch = importRepo.batchUpsertUserBookRatings.mock.calls[0]?.[0] as Array<{
+      userId: number;
+      bookId: number;
+      rating: number;
+      updatedAt: Date;
+    }>;
+    expect(ratingBatch).toHaveLength(1);
+    expect(ratingBatch[0]).toMatchObject({
+      userId: 10,
+      bookId: 200,
+      rating: 5,
       updatedAt: new Date(newerStatusUpdatedAt),
     });
 

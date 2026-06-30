@@ -82,6 +82,7 @@ export interface SourceUserBookStatus {
   sourceBookId: string;
   status: string | null;
   percentage: number | null;
+  rating?: number | null;
   startedAt: string | null;
   finishedAt: string | null;
   updatedAt: string | null;
@@ -97,6 +98,19 @@ export interface SourceUserFileProgress {
   pageNumber: number | null;
   positionSeconds: number | null;
   updatedAt: string | null;
+}
+
+export interface SourceReadingSession {
+  sourceSessionId: string;
+  sourceUserId: string;
+  sourceBookId: string;
+  bookType: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationSeconds: number | null;
+  progressDelta: number | null;
+  endProgress: number | null;
+  createdAt: string | null;
 }
 
 export interface SourceBookmark {
@@ -143,6 +157,7 @@ export interface SourceExportDomains {
   tags: boolean;
   userBookStatuses: boolean;
   readingProgress: boolean;
+  readingSessions: boolean;
   bookmarks: boolean;
   annotations: boolean;
   shelves: boolean;
@@ -154,6 +169,7 @@ export interface SourceExportData {
   books: SourceBook[];
   userBookStatuses: SourceUserBookStatus[];
   userFileProgress: SourceUserFileProgress[];
+  readingSessions: SourceReadingSession[];
   bookmarks: SourceBookmark[];
   annotations: SourceAnnotation[];
   shelves: SourceShelf[];

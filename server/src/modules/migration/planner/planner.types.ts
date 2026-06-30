@@ -56,6 +56,7 @@ export interface PlannedUnresolvedBook {
 export interface UserPreviewCounts {
   statuses: number;
   fileProgress: number;
+  readingSessions: number;
   bookmarks: number;
   annotations: number;
   shelves: number;

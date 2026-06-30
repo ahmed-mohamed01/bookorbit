@@ -31,7 +31,7 @@ export function uniqueNumbers(values: number[]): number[] {
 
 export function buildSourceFileTargetMap(
   planned: PlannerResult,
-  targetFilesByBookId: Map<number, Array<{ id: number; hash: string | null; absolutePath: string }>>,
+  targetFilesByBookId: Map<number, Array<{ id: number; hash: string | null; absolutePath: string; format?: string | null }>>,
 ): Map<string, number> {
   const sourceBooksById = new Map(planned.execution.sourceData.books.map((book) => [book.sourceBookId, book]));
   const out = new Map<string, number>();

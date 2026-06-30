@@ -154,10 +154,20 @@ function parsePathMappings(raw: unknown): PathMapping[] {
 
 export function buildUserPreview(sourceData: SourceExportData, mappedUsers: Map<string, number>, matchedBookIds: Set<string>): PlannedUserPreview[] {
   const usersById = new Map(sourceData.users.map((user) => [user.sourceUserId, user]));
-  const countsBySourceUser = new Map<string, { statuses: number; fileProgress: number; bookmarks: number; annotations: number; shelves: number }>();
+  const countsBySourceUser = new Map<
+    string,
+    { statuses: number; fileProgress: number; readingSessions: number; bookmarks: number; annotations: number; shelves: number }
+  >();
 
-  const increment = (sourceUserId: string, key: 'statuses' | 'fileProgress' | 'bookmarks' | 'annotations' | 'shelves') => {
-    const current = countsBySourceUser.get(sourceUserId) ?? { statuses: 0, fileProgress: 0, bookmarks: 0, annotations: 0, shelves: 0 };
+  const increment = (sourceUserId: string, key: 'statuses' | 'fileProgress' | 'readingSessions' | 'bookmarks' | 'annotations' | 'shelves') => {
+    const current = countsBySourceUser.get(sourceUserId) ?? {
+      statuses: 0,
+      fileProgress: 0,
+      readingSessions: 0,
+      bookmarks: 0,
+      annotations: 0,
+      shelves: 0,
+    };
     current[key] += 1;
     countsBySourceUser.set(sourceUserId, current);
   };
@@ -167,6 +177,9 @@ export function buildUserPreview(sourceData: SourceExportData, mappedUsers: Map<
   }
   for (const row of sourceData.userFileProgress) {
     if (mappedUsers.has(row.sourceUserId) && matchedBookIds.has(row.sourceBookId)) increment(row.sourceUserId, 'fileProgress');
+  }
+  for (const row of sourceData.readingSessions ?? []) {
+    if (mappedUsers.has(row.sourceUserId) && matchedBookIds.has(row.sourceBookId)) increment(row.sourceUserId, 'readingSessions');
   }
   for (const row of sourceData.bookmarks) {
     if (mappedUsers.has(row.sourceUserId) && matchedBookIds.has(row.sourceBookId)) increment(row.sourceUserId, 'bookmarks');
@@ -187,7 +200,14 @@ export function buildUserPreview(sourceData: SourceExportData, mappedUsers: Map<
 
   return [...mappedUsers.entries()].map(([sourceUserId, targetUserId]) => {
     const sourceUser = usersById.get(sourceUserId);
-    const counts = countsBySourceUser.get(sourceUserId) ?? { statuses: 0, fileProgress: 0, bookmarks: 0, annotations: 0, shelves: 0 };
+    const counts = countsBySourceUser.get(sourceUserId) ?? {
+      statuses: 0,
+      fileProgress: 0,
+      readingSessions: 0,
+      bookmarks: 0,
+      annotations: 0,
+      shelves: 0,
+    };
     return {
       sourceUserId,
       targetUserId,
