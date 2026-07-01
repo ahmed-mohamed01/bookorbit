@@ -8,11 +8,13 @@ import { toast } from 'vue-sonner'
 import type { AuthorSummary, BookCard } from '@bookorbit/types'
 import VirtualBookGrid from '@/features/book/components/VirtualBookGrid.vue'
 import BookListRow from '@/features/book/components/BookListRow.vue'
+import DeleteBookDialog from '@/features/book/components/DeleteBookDialog.vue'
 import { useScrollRestoreOnActivate } from '@/features/book/composables/useScrollRestoreOnActivate'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import { useLibraries } from '@/features/library/composables/useLibraries'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { usePageTitle } from '@/composables/usePageTitle'
+import { useDeleteBook } from '@/features/book/composables/useDeleteBook'
 import AuthorHeader from '../components/AuthorHeader.vue'
 import AuthorConfirmDialog from '../components/AuthorConfirmDialog.vue'
 import {
@@ -100,6 +102,28 @@ const BOOK_SORT_OPTIONS = [
   { value: 'publishedYear', label: 'Published Year' },
 ] as const
 
+type BookActionType = 'quick-view' | 'edit-metadata' | 'add-to-collection' | 'delete'
+
+const {
+  pendingId: deleteBookId,
+  deleting: deletingBook,
+  promptDelete,
+  cancelDelete,
+  confirmDelete,
+} = useDeleteBook((id) => {
+  const previousLength = books.value.length
+  books.value = books.value.filter((b) => b.id !== id)
+  if (books.value.length === previousLength) return
+
+  total.value = Math.max(0, total.value - 1)
+  if (author.value) {
+    author.value = {
+      ...author.value,
+      bookCount: Math.max(0, author.value.bookCount - 1),
+    }
+  }
+})
+
 function showRefreshResultToast(updated: { imageUrl?: string | null }) {
   if (!updated.imageUrl) {
     toast.warning('Metadata refreshed, but no author image was found.')
@@ -141,9 +165,14 @@ function toggleMerge() {
   if (mergeOpen.value) editOpen.value = false
 }
 
-function handleBookAction(book: BookCard, action: 'quick-view' | 'edit-metadata' | 'add-to-collection' | 'delete') {
+function handleBookAction(book: BookCard, action: BookActionType) {
   if (action === 'quick-view') {
     void router.push({ name: 'book-detail', params: { bookId: book.id } })
+    return
+  }
+
+  if (action === 'delete') {
+    promptDelete(book.id)
   }
 }
 
@@ -710,5 +739,7 @@ defineOptions({ name: 'AuthorDetailView' })
       @confirm="runMerge"
       @cancel="confirmMergeOpen = false"
     />
+
+    <DeleteBookDialog :open="deleteBookId !== null" :deleting="deletingBook" @confirm="confirmDelete" @cancel="cancelDelete" />
   </div>
 </template>
