@@ -573,7 +573,7 @@ export class BookQueryBuilder {
         if (days! < 0) throw new BadRequestException(`Operator '${operator}' requires a non-negative value`);
         const wholeDays = Math.floor(days!);
         const shiftDays = wholeDays > 0 ? wholeDays - 1 : 0;
-        return sql`${dateExpr} >= (timezone(${timeZone}, now())::date - ${shiftDays})`;
+        return sql`${dateExpr} >= (timezone(${timeZone}, now())::date - ${shiftDays}::int)`;
       }
       case 'isEmpty':
         return sql`${dateExpr} is null`;

@@ -81,6 +81,14 @@ function collectSqlText(node: unknown, acc: string[] = []): string[] {
   return acc;
 }
 
+function expectPostgresSafeDateArithmetic(node: unknown): void {
+  const unsafeFragments = collectSqlText(node).filter((text) => {
+    const normalized = text.toLowerCase().replace(/\s+/g, ' ');
+    return /::date - (?!::int\b|\d+\b|\()/.test(normalized);
+  });
+  expect(unsafeFragments).toEqual([]);
+}
+
 const BASE_CTX = { accessibleLibraryIds: [1] as number[] };
 const USER_CTX = { accessibleLibraryIds: [1] as number[], userId: 10 };
 
@@ -584,7 +592,11 @@ describe('field coverage smoke tests', () => {
         if (value !== undefined) rule.value = value;
         if (valueTo !== undefined) rule.valueTo = valueTo;
 
-        expect(() => builder.buildWhere(wrapRule(rule) as never, USER_CTX), `field '${field}' operator '${operator}' should not throw`).not.toThrow();
+        let where: unknown;
+        expect(() => {
+          where = builder.buildWhere(wrapRule(rule) as never, USER_CTX);
+        }, `field '${field}' operator '${operator}' should not throw`).not.toThrow();
+        expectPostgresSafeDateArithmetic(where);
       }
     },
   );
@@ -1123,6 +1135,21 @@ describe('read status date filters (startedAt / finishedAt)', () => {
     expect(betweenRule.values[3]).toBe('2026-01-31');
     expect(withinLastRule).toMatchObject({ type: 'sql' });
     expect(withinLastRule.text.toLowerCase()).toContain('timezone(');
+  });
+
+  it.each(['startedAt', 'finishedAt'] as const)('casts withinLast day offset for %s so PostgreSQL keeps date arithmetic typed', (field) => {
+    const { builder } = makeBuilder();
+    const where = builder.buildWhere(wrapRule({ type: 'rule', field, operator: 'withinLast', value: 30 }) as never, {
+      ...USER_CTX,
+      timeZone: 'America/Chicago',
+    }) as any;
+
+    const rule = getRuleSql(where);
+    expect(rule).toMatchObject({ type: 'sql' });
+    expect(rule.text.toLowerCase()).toContain('::date - ::int');
+    expect(rule.values[1]).toBe('America/Chicago');
+    expect(rule.values[2]).toBe(29);
+    expectPostgresSafeDateArithmetic(rule);
   });
 
   it('supports isEmpty / isNotEmpty operators', () => {
