@@ -16,6 +16,7 @@ import { useAnnotations } from './epub/composables/useAnnotations'
 import { useToc } from './epub/composables/useToc'
 import { useSearch, type FoliateView } from './epub/composables/useSearch'
 import { useReaderSelection } from './epub/composables/useReaderSelection'
+import { useReaderSidebarPin } from './epub/composables/useReaderSidebarPin'
 import { useReaderKeyboardShortcuts } from './epub/composables/useReaderKeyboardShortcuts'
 import ReaderHeader from './epub/components/ReaderHeader.vue'
 import ReaderFooter from './epub/components/ReaderFooter.vue'
@@ -118,6 +119,7 @@ const search = useSearch()
 const { results: searchResults, isSearching, search: doSearch, clear: clearSearch } = search
 
 const selection = useReaderSelection()
+const { isSidebarPinned, toggleSidebarPinned, shouldCloseAfterNavigation } = useReaderSidebarPin(fileId)
 
 function closeAnyPanel() {
   if (showSearch.value) {
@@ -523,6 +525,12 @@ function navigateSearch(cfiTarget: string) {
   goTo(cfiTarget)
 }
 
+function closeSidebarAfterNavigation() {
+  if (shouldCloseAfterNavigation()) {
+    showSidebar.value = false
+  }
+}
+
 async function navigateFromSidebar(cfiTarget: string) {
   const goToPromise = goTo(cfiTarget)
   if (!goToPromise) return
@@ -530,7 +538,7 @@ async function navigateFromSidebar(cfiTarget: string) {
     .then(() => true)
     .catch(() => false)
   if (!navigated) return
-  showSidebar.value = false
+  closeSidebarAfterNavigation()
 }
 
 function navigateAnnotationChapterFromSidebar(chapterIndex: number) {
@@ -538,14 +546,14 @@ function navigateAnnotationChapterFromSidebar(chapterIndex: number) {
   if (!goToPromise) return
   void Promise.resolve(goToPromise)
     .then(() => {
-      showSidebar.value = false
+      closeSidebarAfterNavigation()
     })
     .catch(() => undefined)
 }
 
 function navigateChapterFromSidebar(href: string) {
   goTo(href)
-  showSidebar.value = false
+  closeSidebarAfterNavigation()
 }
 
 function closeSearch() {
@@ -652,7 +660,9 @@ watch(
       :locationMetaByCfi="sidebarLocationMetaByCfi"
       :activeHref="activeHref"
       :expandedHrefs="expandedHrefs"
+      :pinned="isSidebarPinned"
       @close="showSidebar = false"
+      @togglePinned="toggleSidebarPinned"
       @navigateChapter="navigateChapterFromSidebar"
       @navigateBookmark="navigateFromSidebar"
       @navigateAnnotation="navigateFromSidebar"

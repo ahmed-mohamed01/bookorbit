@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { Bookmark, BookOpen, Highlighter, Trash2, TriangleAlert } from '@lucide/vue'
+import { Bookmark, BookOpen, Highlighter, Pin, PinOff, Trash2, TriangleAlert, X } from '@lucide/vue'
 import { ANNOTATION_COLOR_FILTER_OPTIONS } from '@bookorbit/types'
 import type { TocItem } from '../composables/useToc'
 import type { Bookmark as BookmarkType } from '../composables/useBookmarks'
@@ -16,6 +16,7 @@ const props = defineProps<{
   locationMetaByCfi: Record<string, { chapterTitle: string | null; percentage: number | null }>
   activeHref: string
   expandedHrefs: Set<string>
+  pinned: boolean
 }>()
 
 const emit = defineEmits<{
@@ -27,9 +28,15 @@ const emit = defineEmits<{
   deleteBookmark: [id: number]
   deleteAnnotation: [id: number]
   toggleExpand: [href: string]
+  togglePinned: []
 }>()
 
 type Tab = 'chapters' | 'bookmarks' | 'highlights'
+const tabOptions = [
+  { id: 'chapters', icon: BookOpen, label: 'TOC', fullLabel: 'Table of contents' },
+  { id: 'bookmarks', icon: Bookmark, label: 'Marks', fullLabel: 'Bookmarks' },
+  { id: 'highlights', icon: Highlighter, label: 'Notes', fullLabel: 'Highlights and notes' },
+] as const
 const activeTab = ref<Tab>('chapters')
 const scrollContainer = ref<HTMLElement | null>(null)
 type SortMode = 'location' | 'newest' | 'oldest'
@@ -88,6 +95,7 @@ const filteredAndSortedHighlights = computed(() => {
 
 const activeBookmarkId = computed(() => findNearestCfi(filteredAndSortedBookmarks.value, props.currentCfi)?.id ?? null)
 const activeAnnotationId = computed(() => findNearestCfi(filteredAndSortedHighlights.value, props.currentCfi)?.id ?? null)
+const pinLabel = computed(() => (props.pinned ? 'Unpin sidebar' : 'Pin sidebar'))
 const activeRowSelectorByTab: Record<Tab, string> = {
   chapters: '[data-reader-active-row="chapter"]',
   bookmarks: '[data-reader-active-row="bookmark"]',
@@ -171,6 +179,10 @@ function sortByMode<T extends { cfi: string | null | undefined; createdAt: strin
   return sorted
 }
 
+function selectTab(tab: Tab) {
+  activeTab.value = tab
+}
+
 function navigateBookmark(cfi: string | null | undefined) {
   if (!cfi) return
   emit('navigateBookmark', cfi)
@@ -197,30 +209,71 @@ function deleteBookmark(id: number) {
 function deleteAnnotation(id: number) {
   emit('deleteAnnotation', id)
 }
+
+function closeSidebar() {
+  emit('close')
+}
+
+function togglePinned() {
+  emit('togglePinned')
+}
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex">
+  <div class="fixed inset-0 z-50 flex" :class="pinned ? 'pointer-events-none' : ''">
     <div
-      class="sidebar-panel w-[19rem] sm:w-[20rem] md:w-[21.5rem] lg:w-[22.5rem] h-full bg-card text-card-foreground flex flex-col shadow-2xl border-r border-border"
+      class="sidebar-panel pointer-events-auto w-[17.1rem] sm:w-[18rem] md:w-[19.35rem] lg:w-[20.25rem] h-full bg-card text-card-foreground flex flex-col shadow-2xl border-r border-border"
       @click.stop
     >
       <div class="flex items-stretch border-b border-border shrink-0">
-        <button
-          v-for="tab in [
-            { id: 'chapters', icon: BookOpen, label: 'Chapters' },
-            { id: 'bookmarks', icon: Bookmark, label: 'Bookmarks' },
-            { id: 'highlights', icon: Highlighter, label: 'Highlights' },
-          ] as const"
-          :key="tab.id"
-          class="flex-1 flex items-center justify-center gap-1 py-2.5 text-[13px] relative transition-colors"
-          :class="activeTab === tab.id ? 'text-primary' : 'text-muted-foreground hover:text-foreground'"
-          @click="activeTab = tab.id"
-        >
-          <component :is="tab.icon" :size="16" />
-          {{ tab.label }}
-          <span v-if="activeTab === tab.id" class="absolute bottom-0 inset-x-0 h-0.5 bg-primary rounded-t-full" />
-        </button>
+        <div class="grid min-w-0 flex-1 grid-cols-3">
+          <Tooltip v-for="tab in tabOptions" :key="tab.id">
+            <TooltipTrigger as-child>
+              <button
+                type="button"
+                class="relative flex min-w-0 items-center justify-center gap-1 px-1 py-2.5 text-[13px] transition-colors"
+                :class="activeTab === tab.id ? 'text-primary' : 'text-muted-foreground hover:text-foreground'"
+                :aria-label="tab.fullLabel"
+                @click="selectTab(tab.id)"
+              >
+                <component :is="tab.icon" :size="16" class="shrink-0" />
+                <span class="truncate">{{ tab.label }}</span>
+                <span v-if="activeTab === tab.id" class="absolute bottom-0 inset-x-0 h-0.5 bg-primary rounded-t-full" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{{ tab.fullLabel }}</TooltipContent>
+          </Tooltip>
+        </div>
+        <div class="flex items-center gap-1 border-l border-border px-1.5">
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <button
+                type="button"
+                class="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                :class="pinned ? 'bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary' : ''"
+                :aria-label="pinLabel"
+                :aria-pressed="pinned"
+                @click="togglePinned"
+              >
+                <component :is="pinned ? PinOff : Pin" :size="15" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{{ pinLabel }}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <button
+                type="button"
+                class="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label="Close sidebar"
+                @click="closeSidebar"
+              >
+                <X :size="16" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Close sidebar</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
 
       <div ref="scrollContainer" class="flex-1 overflow-y-auto">
@@ -379,7 +432,7 @@ function deleteAnnotation(id: number) {
         </template>
       </div>
     </div>
-    <div class="flex-1" @click="emit('close')" />
+    <div v-if="!pinned" class="flex-1" data-reader-sidebar-backdrop @click="closeSidebar" />
   </div>
 </template>
 
