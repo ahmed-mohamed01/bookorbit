@@ -7,7 +7,7 @@ import { useAppInfo } from '@/features/settings/composables/useAppInfo'
 import { SUPPORTED_FORMATS, SUPPORTED_FORMATS_ACCEPT, useBookUpload, type FileUploadStatus } from '../composables/useBookUpload'
 import { emitLibraryUploadCompleted } from '../composables/useLibraryUploadEvents'
 import { useLibraries } from '../composables/useLibraries'
-
+import { api } from '@/lib/api'
 const props = defineProps<{
   libraryId?: number
 }>()
