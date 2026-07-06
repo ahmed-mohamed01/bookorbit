@@ -106,6 +106,7 @@ function makeService() {
       absolutePath: '/books/dune.epub',
       format: 'epub',
     }),
+    resolveDownloadFilename: vi.fn().mockResolvedValue('Dune - Frank Herbert.epub'),
   };
   const bookReadService = {
     findProgressByBook: vi.fn().mockResolvedValue([
@@ -484,12 +485,7 @@ describe('KoreaderCatalogService', () => {
   it('encodes non-ASCII content file download filenames for Content-Disposition', async () => {
     const { service, bookService } = makeService();
     const reply = makeReply();
-    bookService.getDetail.mockResolvedValueOnce(
-      makeDetail({
-        title: 'Dune’s Café',
-        authors: [{ id: 1, name: 'Frank Herbert', sortName: 'Herbert, Frank' }],
-      }),
-    );
+    bookService.resolveDownloadFilename.mockResolvedValueOnce('Dune’s Café - Frank Herbert.epub');
 
     await service.streamFile(makeUser({ permissions: [] }), 100, reply as never);
 

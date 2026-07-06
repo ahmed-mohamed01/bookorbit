@@ -1,6 +1,6 @@
 import { createReadStream } from 'fs';
 import { stat } from 'fs/promises';
-import { basename, extname } from 'path';
+import { basename } from 'path';
 
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
@@ -249,9 +249,12 @@ export class KoreaderCatalogService {
       throw new NotFoundException('File not found');
     }
 
-    const detail = await this.bookService.getDetail(file.bookId, user);
     const format = this.normalizeFormat(file.format);
-    const filename = this.downloadFilename(detail, fileId, format);
+    const filename = await this.bookService.resolveDownloadFilename({
+      bookId: file.bookId,
+      absolutePath: file.absolutePath,
+      format: file.format,
+    });
 
     try {
       const { size } = await stat(file.absolutePath);
@@ -626,19 +629,5 @@ export class KoreaderCatalogService {
 
   private uniqueFormats(formats: string[]): string[] {
     return [...new Set(formats.map((format) => this.normalizeFormat(format)).filter(Boolean))];
-  }
-
-  private downloadFilename(detail: BookDetailDto, fileId: number, format: string): string {
-    const title = detail.title ?? (basename(detail.folderPath) || `book-${detail.id}`);
-    const author = detail.authors[0]?.name;
-    const base = [title, author].filter(Boolean).join(' - ');
-    const safeBase =
-      base
-        .replace(/["\\/:*?<>|]+/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim() || `book-${detail.id}-file-${fileId}`;
-    const ext = extname(safeBase).replace(/^\./, '').toLowerCase();
-    if (ext === format) return safeBase;
-    return `${safeBase}.${format}`;
   }
 }
