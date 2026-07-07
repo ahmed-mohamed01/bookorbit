@@ -17,7 +17,7 @@ export const userBookStatus = pgTable(
       .references(() => books.id, { onDelete: 'cascade' }),
     // 'unread' | 'want_to_read' | 'reading' | 'on_hold' | 'rereading' | 'read' | 'skimmed' | 'abandoned'
     status: varchar('status', { length: 20 }).$type<ReadStatus>().notNull().default('unread'),
-    // 'auto' (derived from progress) | 'manual' (user-set; never auto-overridden)
+    // 'auto' (derived from progress) | 'manual' (user-set/imported; protected from progress updates except want_to_read)
     source: varchar('source', { length: 10 }).$type<ReadStatusSource>().notNull().default('auto'),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
