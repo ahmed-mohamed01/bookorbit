@@ -80,6 +80,18 @@ export class BookDockController {
     return this.service.getSummary(user.id, user.isSuperuser);
   }
 
+  @Post('pause')
+  @HttpCode(HttpStatus.OK)
+  pause() {
+    return this.service.pauseProcessing();
+  }
+
+  @Post('resume')
+  @HttpCode(HttpStatus.OK)
+  resume() {
+    return this.service.resumeProcessing();
+  }
+
   @Get('statistics')
   getStatistics(@CurrentUser() user: RequestUser) {
     return this.service.getStatistics(user.id, user.isSuperuser);

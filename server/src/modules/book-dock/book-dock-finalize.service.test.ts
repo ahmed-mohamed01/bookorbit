@@ -61,6 +61,10 @@ function makeService() {
   const gateway = {
     emitSummary: vi.fn(),
   };
+  const processingState = {
+    isPaused: vi.fn().mockResolvedValue(false),
+    getCachedPaused: vi.fn().mockReturnValue(false),
+  };
 
   const service = new BookDockFinalizeService(
     db as never,
@@ -74,9 +78,10 @@ function makeService() {
     events as never,
     gateway as never,
     { notify: vi.fn().mockResolvedValue(undefined) } as never,
+    processingState as never,
   );
 
-  return { service, db, repo, libraryService, appSettings, metadataService, validator, storage, processor, events, gateway };
+  return { service, db, repo, libraryService, appSettings, metadataService, validator, storage, processor, events, gateway, processingState };
 }
 
 function makeRow(overrides?: Partial<Record<string, unknown>>) {
@@ -113,6 +118,18 @@ describe('BookDockFinalizeService', () => {
   });
 
   describe('triggerAutoFinalize', () => {
+    it('does not load settings or rows while Book Dock processing is paused', async () => {
+      const { service, repo, appSettings, processingState } = makeService();
+      processingState.isPaused.mockResolvedValue(true);
+      const pauseSpy = vi.spyOn((service as any).autoFinalizeQueue, 'pause');
+
+      await service.triggerAutoFinalize(1);
+
+      expect(pauseSpy).toHaveBeenCalledTimes(1);
+      expect(appSettings.getAutoFinalizeSettings).not.toHaveBeenCalled();
+      expect(repo.findById).not.toHaveBeenCalled();
+    });
+
     it('merges embedded and fetched metadata when auto-finalizing and selected metadata is empty', async () => {
       const { service, repo, appSettings } = makeService();
       const fetched = { title: 'Fetched Title', authors: ['Fetched Author'] } as BookDockMetadata;
@@ -294,6 +311,48 @@ describe('BookDockFinalizeService', () => {
       await service.triggerAutoFinalize(row.id);
 
       expect(finalizeSpy).not.toHaveBeenCalled();
+    });
+
+    it('requeueAutoFinalizeCandidates queues ready rows that match current settings', async () => {
+      const { service, repo, appSettings } = makeService();
+      appSettings.getAutoFinalizeSettings.mockResolvedValue({
+        enabled: true,
+        threshold: 85,
+        libraryId: 5,
+        folderId: 9,
+        metadataMode: 'safe_merge',
+      });
+      repo.findSelectionBatch
+        .mockResolvedValueOnce([
+          makeRow({ id: 1, status: 'ready', confidence: 90, fetchedMetadata: { title: 'One' } as BookDockMetadata }),
+          makeRow({ id: 2, status: 'ready', confidence: 40, fetchedMetadata: { title: 'Two' } as BookDockMetadata }),
+        ])
+        .mockResolvedValueOnce([]);
+      const enqueueSpy = vi.spyOn((service as any).autoFinalizeQueue, 'enqueue').mockReturnValue(true);
+
+      await expect(service.requeueAutoFinalizeCandidates()).resolves.toBe(1);
+
+      expect(repo.findSelectionBatch).toHaveBeenCalledWith({
+        limit: 100,
+        afterId: undefined,
+        status: 'ready',
+        userId: 0,
+        isSuperuser: true,
+      });
+      expect(enqueueSpy).toHaveBeenCalledWith(1);
+      expect(enqueueSpy).not.toHaveBeenCalledWith(2);
+    });
+
+    it('requeueAutoFinalizeCandidates does no work when paused or disabled', async () => {
+      const { service, repo, appSettings, processingState } = makeService();
+      processingState.isPaused.mockResolvedValueOnce(true);
+      await expect(service.requeueAutoFinalizeCandidates()).resolves.toBe(0);
+      expect(repo.findSelectionBatch).not.toHaveBeenCalled();
+
+      processingState.isPaused.mockResolvedValue(false);
+      appSettings.getAutoFinalizeSettings.mockResolvedValue({ enabled: false, threshold: 85, libraryId: 5, folderId: 9, metadataMode: 'safe_merge' });
+      await expect(service.requeueAutoFinalizeCandidates()).resolves.toBe(0);
+      expect(repo.findSelectionBatch).not.toHaveBeenCalled();
     });
   });
 
@@ -821,7 +880,7 @@ describe('BookDockFinalizeService', () => {
       mockStat.mockResolvedValueOnce({ size: 200 } as never);
       processor.createBookRecord.mockResolvedValueOnce({ bookId: 600 });
 
-      // User types "Title (alt).epub" — should NOT produce "Title (alt).epub.epub"
+      // User types "Title (alt).epub" - should NOT produce "Title (alt).epub.epub"
       const overrideMap = new Map([[1, { libraryId: 5, folderId: 9, targetFileName: 'Title (alt).epub' }]]);
       const result = await (service as any).finalizeFile(
         makeRow({ id: 1, fileName: 'Title.epub', format: 'epub', targetLibraryId: 5, targetFolderId: 9 }),

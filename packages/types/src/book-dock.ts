@@ -54,6 +54,7 @@ export interface BookDockSummary {
   ready: number;
   error: number;
   total: number;
+  paused: boolean;
 }
 
 export interface BookDockFinalizeOverride {

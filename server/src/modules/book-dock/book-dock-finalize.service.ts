@@ -1,4 +1,14 @@
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnApplicationBootstrap,
+  OnModuleDestroy,
+  OnModuleInit,
+  Optional,
+} from '@nestjs/common';
 import { basename, dirname, extname, join, resolve } from 'path';
 import { access as fsAccess, readFile, stat, unlink } from 'fs/promises';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
@@ -29,6 +39,7 @@ import { UploadValidatorService } from '../upload/upload-validator.service';
 import { BookDockRepository } from './book-dock.repository';
 import { BookDockEventsService, BOOK_DOCK_FILE_INGESTED } from './book-dock-events.service';
 import { BookDockGateway } from './book-dock.gateway';
+import { BookDockProcessingStateService } from './book-dock-processing-state.service';
 import { BookDockWorkQueue } from './book-dock-work-queue';
 import type { BookDockFileRow } from '../../db/schema';
 
@@ -67,7 +78,7 @@ type NormalizedFinalizeMetadata = {
 };
 
 @Injectable()
-export class BookDockFinalizeService implements OnModuleInit, OnModuleDestroy {
+export class BookDockFinalizeService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(BookDockFinalizeService.name);
   private readonly autoFinalizeQueue: BookDockWorkQueue;
 
@@ -83,6 +94,7 @@ export class BookDockFinalizeService implements OnModuleInit, OnModuleDestroy {
     private readonly events: BookDockEventsService,
     private readonly gateway: BookDockGateway,
     private readonly notificationService: NotificationService,
+    private readonly processingState: BookDockProcessingStateService,
     @Optional() private readonly seriesIdentity?: SeriesIdentityService,
     @Optional() private readonly seriesMemberships?: SeriesMembershipService,
   ) {
@@ -97,6 +109,12 @@ export class BookDockFinalizeService implements OnModuleInit, OnModuleDestroy {
     this.events.on(BOOK_DOCK_FILE_INGESTED, (fileId: number) => {
       this.enqueueAutoFinalize(fileId);
     });
+  }
+
+  async onApplicationBootstrap(): Promise<void> {
+    if (await this.processingState.isPaused()) {
+      this.autoFinalizeQueue.pause();
+    }
   }
 
   onModuleDestroy(): void {
@@ -286,6 +304,11 @@ export class BookDockFinalizeService implements OnModuleInit, OnModuleDestroy {
   }
 
   async triggerAutoFinalize(fileId: number): Promise<void> {
+    if (await this.processingState.isPaused()) {
+      this.autoFinalizeQueue.pause();
+      return;
+    }
+
     const settings = await this.appSettings.getAutoFinalizeSettings();
     if (!settings.enabled || settings.libraryId === null || settings.folderId === null) return;
 
@@ -321,7 +344,46 @@ export class BookDockFinalizeService implements OnModuleInit, OnModuleDestroy {
   }
 
   private enqueueAutoFinalize(fileId: number): void {
+    if (this.processingState.getCachedPaused()) this.autoFinalizeQueue.pause();
     this.autoFinalizeQueue.enqueue(fileId);
+  }
+
+  pauseProcessing(): void {
+    this.autoFinalizeQueue.pause();
+  }
+
+  async resumeProcessing(): Promise<void> {
+    if (await this.processingState.isPaused()) return;
+    this.autoFinalizeQueue.resume();
+  }
+
+  async requeueAutoFinalizeCandidates(): Promise<number> {
+    if (await this.processingState.isPaused()) return 0;
+
+    const settings = await this.appSettings.getAutoFinalizeSettings();
+    if (!settings.enabled || settings.libraryId === null || settings.folderId === null) return 0;
+
+    let queued = 0;
+    let afterId: number | undefined;
+    while (!(await this.processingState.isPaused())) {
+      const rows = await this.repo.findSelectionBatch({
+        limit: BATCH_SIZE,
+        afterId,
+        status: 'ready',
+        userId: 0,
+        isSuperuser: true,
+      });
+      if (rows.length === 0) break;
+
+      for (const row of rows) {
+        if (shouldAutoFinalize(row, settings.metadataMode, settings.threshold) && this.autoFinalizeQueue.enqueue(row.id)) {
+          queued++;
+        }
+      }
+      afterId = rows[rows.length - 1]?.id;
+    }
+
+    return queued;
   }
 
   private logAutoFinalizeQueueFailure(fileId: number, err: unknown): void {
@@ -682,7 +744,8 @@ export class BookDockFinalizeService implements OnModuleInit, OnModuleDestroy {
 
   private async emitSummary(): Promise<void> {
     const summary = await this.repo.countsByStatus();
-    this.gateway.emitSummary(summary);
+    const paused = await this.processingState.isPaused();
+    this.gateway.emitSummary({ ...summary, paused });
   }
 }
 

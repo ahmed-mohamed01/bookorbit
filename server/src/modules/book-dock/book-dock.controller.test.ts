@@ -34,6 +34,8 @@ function makeController() {
     bulkSetTarget: vi.fn(),
     selectionSummary: vi.fn(),
     bulkEdit: vi.fn(),
+    pauseProcessing: vi.fn(),
+    resumeProcessing: vi.fn(),
   };
   const ingestService = { ingestUpload: vi.fn() };
   const finalizeService = { previewNames: vi.fn(), finalize: vi.fn() };
@@ -160,10 +162,14 @@ describe('BookDockController', () => {
       { fileIds: [1], defaultLibraryId: 2, defaultFolderId: 3, selectAll: false, excludedIds: [], overrides: [] } as any,
     );
     await controller.rescan();
+    await controller.pause();
+    await controller.resume();
 
     expect(service.bulkSetTarget).toHaveBeenCalledWith([5], false, [6], null, null, undefined, undefined, MOCK_USER.id, MOCK_USER.isSuperuser);
     expect(finalizeService.finalize).toHaveBeenCalledWith(99, true, [1], false, [], 2, 3, [], undefined, undefined);
     expect(watcherService.rescan).toHaveBeenCalled();
+    expect(service.pauseProcessing).toHaveBeenCalledTimes(1);
+    expect(service.resumeProcessing).toHaveBeenCalledTimes(1);
   });
 
   it('marks bulk edit endpoint as demo-restricted', () => {
