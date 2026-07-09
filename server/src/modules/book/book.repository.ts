@@ -26,6 +26,7 @@ import {
   collectionBooks,
   collections,
   genres,
+  koboDevices,
   koboLibrarySnapshots,
   koboReadingStates,
   koboSnapshotBooks,
@@ -956,9 +957,11 @@ export class BookRepository {
     return row ?? null;
   }
 
-  async findKoboSnapshotState(userId: number, bookId: number) {
-    const [row] = await this.db
+  async findKoboSnapshotStates(userId: number, bookId: number) {
+    return this.db
       .select({
+        deviceId: koboDevices.id,
+        deviceName: koboDevices.name,
         snapshotId: koboLibrarySnapshots.id,
         snapshotUpdatedAt: koboLibrarySnapshots.updatedAt,
         synced: koboSnapshotBooks.synced,
@@ -969,10 +972,10 @@ export class BookRepository {
         metadataHash: koboSnapshotBooks.metadataHash,
       })
       .from(koboLibrarySnapshots)
+      .innerJoin(koboDevices, and(eq(koboDevices.id, koboLibrarySnapshots.deviceId), eq(koboDevices.userId, userId)))
       .leftJoin(koboSnapshotBooks, and(eq(koboSnapshotBooks.snapshotId, koboLibrarySnapshots.id), eq(koboSnapshotBooks.bookId, bookId)))
       .where(eq(koboLibrarySnapshots.userId, userId))
-      .limit(1);
-    return row ?? null;
+      .orderBy(asc(koboDevices.createdAt), asc(koboDevices.id));
   }
 
   async findKoboSyncCollectionNamesForBook(userId: number, bookId: number): Promise<string[]> {

@@ -793,13 +793,28 @@ const leftColumnProgressRows = computed<ProgressRow[]>(() => {
 const leftColumnProgressVisible = computed(() => leftColumnProgressRows.value.slice(0, 3))
 const leftColumnProgressOverflow = computed(() => Math.max(0, leftColumnProgressRows.value.length - 3))
 
+function formatKoboDeviceNames(snapshots: BookKoboState['snapshots']): string {
+  const names = snapshots.map((snapshot) => snapshot.deviceName)
+  if (names.length === 1) return names.join('')
+  if (names.length === 2) return names.join(' and ')
+  return `${snapshots.length} devices`
+}
+
 const koboAnomaly = computed(() => {
   if (!canViewKobo.value) return null
-  const snap = koboState.value?.snapshot
-  if (!snap) return null
-  if (snap.pendingDelete) return { label: 'Pending delete from device', tooltip: 'Kobo will remove it on next sync.' }
-  if (snap.removedByDevice) return { label: 'Removed by device', tooltip: 'Kobo reported this book removed.' }
-  if (snap.synced === false) return { label: 'Not synced', tooltip: 'Queued for next Kobo sync.' }
+  const snapshots = koboState.value?.snapshots ?? []
+  const pendingDelete = snapshots.filter((snapshot) => snapshot.pendingDelete)
+  if (pendingDelete.length > 0) {
+    return { label: `Pending delete on ${formatKoboDeviceNames(pendingDelete)}`, tooltip: 'Kobo will remove it on the next sync.' }
+  }
+  const removedByDevice = snapshots.filter((snapshot) => snapshot.removedByDevice)
+  if (removedByDevice.length > 0) {
+    return { label: `Removed on ${formatKoboDeviceNames(removedByDevice)}`, tooltip: 'Kobo reported this book removed.' }
+  }
+  const unsynced = snapshots.filter((snapshot) => snapshot.synced === false)
+  if (unsynced.length > 0) {
+    return { label: `Not synced on ${formatKoboDeviceNames(unsynced)}`, tooltip: 'Queued for the next Kobo sync.' }
+  }
   return null
 })
 
@@ -1035,7 +1050,7 @@ async function loadSupplemental() {
           eligibleForKoboSync: fallbackSyncCollections.length > 0,
           syncCollections: fallbackSyncCollections,
           readingState: null,
-          snapshot: null,
+          snapshots: [],
         }
       }
     } else {
@@ -1051,7 +1066,7 @@ async function loadSupplemental() {
           eligibleForKoboSync: false,
           syncCollections: [],
           readingState: null,
-          snapshot: null,
+          snapshots: [],
         }
       : null
   } finally {

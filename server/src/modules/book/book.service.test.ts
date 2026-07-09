@@ -121,7 +121,7 @@ function makeService(overrides: { bookMetadataLockService?: unknown } = {}) {
     findRatingByBookAndUser: vi.fn().mockResolvedValue(null),
     findCollectionsByBookId: vi.fn(),
     findKoboReadingState: vi.fn(),
-    findKoboSnapshotState: vi.fn(),
+    findKoboSnapshotStates: vi.fn(),
     findKoboSyncCollectionNamesForBook: vi.fn(),
     findFileById: vi.fn(),
     findLibraryIdByBookId: vi.fn(),
@@ -1922,7 +1922,7 @@ describe('BookService', () => {
         eligibleForKoboSync: false,
         syncCollections: [],
         readingState: null,
-        snapshot: null,
+        snapshots: [],
       });
     });
 
@@ -1938,16 +1938,32 @@ describe('BookService', () => {
         priorityTimestamp: 'priority',
         updatedAt: new Date('2026-01-02T00:00:00.000Z'),
       });
-      bookRepo.findKoboSnapshotState.mockResolvedValue({
-        snapshotId: 99,
-        snapshotUpdatedAt: new Date('2026-01-03T00:00:00.000Z'),
-        synced: true,
-        pendingDelete: false,
-        isNew: false,
-        removedByDevice: false,
-        fileHash: 'fhash',
-        metadataHash: 'mhash',
-      });
+      bookRepo.findKoboSnapshotStates.mockResolvedValue([
+        {
+          deviceId: 99,
+          deviceName: 'Libra',
+          snapshotId: 99,
+          snapshotUpdatedAt: new Date('2026-01-03T00:00:00.000Z'),
+          synced: true,
+          pendingDelete: false,
+          isNew: false,
+          removedByDevice: false,
+          fileHash: 'fhash',
+          metadataHash: 'mhash',
+        },
+        {
+          deviceId: 100,
+          deviceName: 'Elipsa',
+          snapshotId: 100,
+          snapshotUpdatedAt: new Date('2026-01-04T00:00:00.000Z'),
+          synced: false,
+          pendingDelete: true,
+          isNew: false,
+          removedByDevice: false,
+          fileHash: null,
+          metadataHash: null,
+        },
+      ]);
       bookRepo.findKoboSyncCollectionNamesForBook.mockResolvedValue(['Favorites']);
 
       const result = await service.getKoboState(10, user);
@@ -1955,7 +1971,10 @@ describe('BookService', () => {
       expect(result.eligibleForKoboSync).toBe(true);
       expect(result.readingState?.progressPercent).toBe(100);
       expect(result.readingState?.status).toBe('Reading');
-      expect(result.snapshot?.snapshotId).toBe(99);
+      expect(result.snapshots).toEqual([
+        expect.objectContaining({ deviceId: 99, deviceName: 'Libra', snapshotId: 99, synced: true, inSnapshot: true }),
+        expect.objectContaining({ deviceId: 100, deviceName: 'Elipsa', snapshotId: 100, synced: false, pendingDelete: true, fileHash: null }),
+      ]);
     });
 
     it('ignores source-level Kobo progress in book state summaries', async () => {
@@ -1970,7 +1989,7 @@ describe('BookService', () => {
         priorityTimestamp: 'priority',
         updatedAt: new Date('2026-01-02T00:00:00.000Z'),
       });
-      bookRepo.findKoboSnapshotState.mockResolvedValue(null);
+      bookRepo.findKoboSnapshotStates.mockResolvedValue([]);
       bookRepo.findKoboSyncCollectionNamesForBook.mockResolvedValue(['Favorites']);
 
       const result = await service.getKoboState(10, user);

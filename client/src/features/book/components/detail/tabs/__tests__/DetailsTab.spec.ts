@@ -115,6 +115,9 @@ function mountDetails(book: BookDetail) {
         Popover: { template: '<div><slot /><slot name="content" /></div>' },
         PopoverTrigger: { template: '<div><slot /></div>' },
         PopoverContent: { template: '<div><slot /></div>' },
+        Tooltip: { template: '<div><slot /></div>' },
+        TooltipTrigger: { template: '<div><slot /></div>' },
+        TooltipContent: { template: '<div><slot /></div>' },
       },
     },
   })
@@ -146,13 +149,13 @@ describe('DetailsTab cover surface', () => {
       const url = String(input)
       if (url.includes('/metadata-score/weights')) return response({})
       if (url.includes('/audio-progress')) return response(null)
-      if (url.includes('/collections?')) return response([])
+      if (url.includes('/collections/membership')) return response([])
       if (url.includes('/kobo-state')) {
         return response({
           eligibleForKoboSync: false,
           syncCollections: [],
           readingState: null,
-          snapshot: null,
+          snapshots: [],
         })
       }
       if (url.includes('/koreader/books/')) return response(null)
@@ -264,6 +267,59 @@ describe('DetailsTab cover surface', () => {
       { name: 'author-detail', params: { id: 42 } },
     ])
     expect(wrapper.text()).toContain('Author One, Author Two')
+  })
+
+  it('summarizes pending Kobo sync state for each affected device', async () => {
+    mocks.api.mockImplementation(async (input) => {
+      const url = String(input)
+      if (url.includes('/metadata-score/weights')) return response({})
+      if (url.includes('/audio-progress')) return response(null)
+      if (url.includes('/collections/membership')) return response([])
+      if (url.includes('/kobo-state')) {
+        return response({
+          eligibleForKoboSync: true,
+          syncCollections: ['Favorites'],
+          readingState: null,
+          snapshots: [
+            {
+              deviceId: 1,
+              deviceName: 'Libra',
+              snapshotId: 11,
+              snapshotUpdatedAt: '2026-01-01T00:00:00.000Z',
+              inSnapshot: true,
+              synced: false,
+              pendingDelete: true,
+              isNew: false,
+              removedByDevice: false,
+              fileHash: null,
+              metadataHash: null,
+            },
+            {
+              deviceId: 2,
+              deviceName: 'Elipsa',
+              snapshotId: 12,
+              snapshotUpdatedAt: '2026-01-01T00:00:00.000Z',
+              inSnapshot: true,
+              synced: false,
+              pendingDelete: true,
+              isNew: false,
+              removedByDevice: false,
+              fileHash: null,
+              metadataHash: null,
+            },
+          ],
+        })
+      }
+      if (url.includes('/koreader/books/')) return response(null)
+      if (url.includes('/progress')) return response([])
+      return response({})
+    })
+
+    const wrapper = mountDetails(makeBook())
+    await flushPromises()
+
+    expect(mocks.api).toHaveBeenCalledWith('/api/v1/books/12/kobo-state')
+    expect(wrapper.text()).toContain('Pending delete on Libra and Elipsa')
   })
 
   it('links every series membership to its series detail page', async () => {

@@ -217,6 +217,8 @@ export type BookKoboReadingState = {
 };
 
 export type BookKoboSnapshotState = {
+  deviceId: number;
+  deviceName: string;
   snapshotId: number;
   snapshotUpdatedAt: string;
   inSnapshot: boolean;
@@ -232,7 +234,7 @@ export type BookKoboState = {
   eligibleForKoboSync: boolean;
   syncCollections: string[];
   readingState: BookKoboReadingState | null;
-  snapshot: BookKoboSnapshotState | null;
+  snapshots: BookKoboSnapshotState[];
 };
 
 export type BooksPage = {

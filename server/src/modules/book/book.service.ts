@@ -2429,13 +2429,13 @@ export class BookService {
         eligibleForKoboSync: false,
         syncCollections: [],
         readingState: null,
-        snapshot: null,
+        snapshots: [],
       };
     }
 
-    const [readingStateRow, snapshotRow, syncCollections] = await Promise.all([
+    const [readingStateRow, snapshotRows, syncCollections] = await Promise.all([
       this.bookRepo.findKoboReadingState(user.id, id),
-      this.bookRepo.findKoboSnapshotState(user.id, id),
+      this.bookRepo.findKoboSnapshotStates(user.id, id),
       this.bookRepo.findKoboSyncCollectionNamesForBook(user.id, id),
     ]);
 
@@ -2459,19 +2459,19 @@ export class BookService {
             updatedAt: readingStateRow.updatedAt.toISOString(),
           }
         : null,
-      snapshot: snapshotRow
-        ? {
-            snapshotId: snapshotRow.snapshotId,
-            snapshotUpdatedAt: snapshotRow.snapshotUpdatedAt.toISOString(),
-            inSnapshot: snapshotRow.synced !== null,
-            synced: snapshotRow.synced ?? null,
-            pendingDelete: snapshotRow.pendingDelete ?? null,
-            isNew: snapshotRow.isNew ?? null,
-            removedByDevice: snapshotRow.removedByDevice ?? null,
-            fileHash: snapshotRow.fileHash ?? null,
-            metadataHash: snapshotRow.metadataHash ?? null,
-          }
-        : null,
+      snapshots: snapshotRows.map((snapshotRow) => ({
+        deviceId: snapshotRow.deviceId,
+        deviceName: snapshotRow.deviceName,
+        snapshotId: snapshotRow.snapshotId,
+        snapshotUpdatedAt: snapshotRow.snapshotUpdatedAt.toISOString(),
+        inSnapshot: snapshotRow.synced !== null,
+        synced: snapshotRow.synced ?? null,
+        pendingDelete: snapshotRow.pendingDelete ?? null,
+        isNew: snapshotRow.isNew ?? null,
+        removedByDevice: snapshotRow.removedByDevice ?? null,
+        fileHash: snapshotRow.fileHash ?? null,
+        metadataHash: snapshotRow.metadataHash ?? null,
+      })),
     };
   }
 
