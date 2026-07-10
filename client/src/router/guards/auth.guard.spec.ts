@@ -43,7 +43,11 @@ describe('registerAuthGuard', () => {
       provisioningMethod: 'local',
       settings: { achievementPreferences: { enabled: false } },
     })
-    registerAuthGuard({ beforeEach: vi.fn((callback: (to: TestRoute) => Promise<unknown>) => (guard = callback)) } as never)
+    registerAuthGuard({
+      beforeEach: vi.fn<(callback: (to: TestRoute) => Promise<unknown>) => void>((callback) => {
+        guard = callback
+      }),
+    } as never)
   })
 
   it('redirects disabled achievement routes to Account profile settings', async () => {
