@@ -42,6 +42,7 @@ describe('UserService', () => {
     findLibraryIdsByUserId: vi.fn(),
     replaceViewerLibraries: vi.fn(),
     findExistingLibraryIds: vi.fn(),
+    findSettingsById: vi.fn(),
   };
   const contentFilterRepo = {
     findByUserIdWithNames: vi.fn(),
@@ -276,6 +277,24 @@ describe('UserService', () => {
     await service.updateMySettings(5, { settings });
 
     expect(userRepo.update).toHaveBeenCalledWith(5, { settings });
+  });
+
+  it('caches an explicit achievement preference when settings are updated', async () => {
+    userRepo.update.mockResolvedValue({ id: 5, settings: { achievementPreferences: { enabled: false } } });
+
+    await service.updateMySettings(5, { settings: { achievementPreferences: { enabled: false } } });
+
+    await expect(service.isAchievementEnabled(5)).resolves.toBe(false);
+    expect(userRepo.findSettingsById).not.toHaveBeenCalled();
+  });
+
+  it('defaults achievements to enabled and caches the targeted settings lookup', async () => {
+    userRepo.findSettingsById.mockResolvedValue({});
+
+    await expect(service.isAchievementEnabled(5)).resolves.toBe(true);
+    await expect(service.isAchievementEnabled(5)).resolves.toBe(true);
+
+    expect(userRepo.findSettingsById).toHaveBeenCalledTimes(1);
   });
 
   it('updateReaderStorageMode updates syncReaderPreferences setting', async () => {

@@ -20,6 +20,8 @@ import { AppSettingsService } from '../app-settings/app-settings.service';
 
 @Injectable()
 export class UserService {
+  private readonly achievementEnabledCache = new Map<number, { enabled: boolean; expiresAt: number }>();
+
   constructor(
     private readonly userRepo: UserRepository,
     private readonly config: ConfigService,
@@ -193,7 +195,18 @@ export class UserService {
   async updateMySettings(userId: number, dto: UpdateMeSettingsDto) {
     const user = await this.userRepo.update(userId, { settings: dto.settings });
     if (!user) throw new NotFoundException('User not found');
+    this.updateAchievementEnabledCache(userId, dto.settings);
     return user;
+  }
+
+  async isAchievementEnabled(userId: number): Promise<boolean> {
+    const cached = this.achievementEnabledCache.get(userId);
+    if (cached && cached.expiresAt > Date.now()) return cached.enabled;
+
+    const settings = await this.userRepo.findSettingsById(userId);
+    const enabled = settings !== null && this.readAchievementEnabled(settings);
+    this.cacheAchievementEnabled(userId, enabled);
+    return enabled;
   }
 
   async updateReaderStorageMode(userId: number, sync: boolean) {
@@ -206,6 +219,26 @@ export class UserService {
     const user = await this.userRepo.update(userId, { settings: { syncThemePreferences: sync } });
     if (!user) throw new NotFoundException('User not found');
     return user;
+  }
+
+  private updateAchievementEnabledCache(userId: number, settings: Record<string, unknown>): void {
+    const preferences = settings['achievementPreferences'];
+    if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences)) {
+      this.achievementEnabledCache.delete(userId);
+      return;
+    }
+
+    this.cacheAchievementEnabled(userId, this.readAchievementEnabled(settings));
+  }
+
+  private cacheAchievementEnabled(userId: number, enabled: boolean): void {
+    this.achievementEnabledCache.set(userId, { enabled, expiresAt: Date.now() + 60_000 });
+  }
+
+  private readAchievementEnabled(settings: Record<string, unknown>): boolean {
+    const preferences = settings['achievementPreferences'];
+    if (!preferences || typeof preferences !== 'object' || Array.isArray(preferences)) return true;
+    return (preferences as Record<string, unknown>)['enabled'] !== false;
   }
 
   async deleteUser(id: number, requestingUser: RequestUser) {
