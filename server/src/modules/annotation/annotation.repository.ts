@@ -29,6 +29,7 @@ import {
   annotations,
   authors,
   bookAuthors,
+  bookFiles,
   bookMetadata,
   books,
   AnnotationRow,
@@ -44,7 +45,7 @@ export type AnnotationWithCfi = AnnotationRow & {
   jumpFileId: number | null;
   pageno: number | null;
 };
-export type HubAnnotationRow = AnnotationWithCfi & { bookTitle: string | null; author: string | null };
+export type HubAnnotationRow = AnnotationWithCfi & { bookTitle: string | null; author: string | null; jumpFileFormat: string | null };
 
 export interface HubFilters {
   bookId?: number;
@@ -95,6 +96,11 @@ export class AnnotationRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
 
   private hubColumns() {
+    const jumpFileId = sql<number | null>`coalesce(
+      ${annotationPositions.bookFileId},
+      (select ap2.book_file_id from annotation_positions ap2 where ap2.annotation_id = ${annotations.id} and ap2.format in ('xpointer', 'pdf') limit 1),
+      ${books.primaryFileId}
+    )`;
     return {
       ...getTableColumns(annotations),
       cfi: annotationPositions.pos0,
@@ -104,9 +110,8 @@ export class AnnotationRepository {
       author: sql<
         string | null
       >`(select string_agg(${authors.name}, ', ' order by ${bookAuthors.displayOrder}) from ${bookAuthors} inner join ${authors} on ${authors.id} = ${bookAuthors.authorId} where ${bookAuthors.bookId} = ${annotations.bookId})`,
-      jumpFileId: sql<
-        number | null
-      >`coalesce(${annotationPositions.bookFileId}, (select ap2.book_file_id from annotation_positions ap2 where ap2.annotation_id = ${annotations.id} and ap2.format in ('xpointer', 'pdf') limit 1), ${books.primaryFileId})`,
+      jumpFileId,
+      jumpFileFormat: sql<string | null>`(select ${bookFiles.format} from ${bookFiles} where ${bookFiles.id} = ${jumpFileId} limit 1)`,
       pageno: sql<
         number | null
       >`(select (ap3.extras ->> 'pageno')::int from annotation_positions ap3 where ap3.annotation_id = ${annotations.id} and ap3.format in ('xpointer', 'pdf') limit 1)`,
