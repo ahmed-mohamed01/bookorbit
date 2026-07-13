@@ -228,7 +228,7 @@ export class DashboardWidgetRepository {
       .select({ count: sql<number>`count(*)::int` })
       .from(annotations)
       .innerJoin(books, eq(books.id, annotations.bookId))
-      .where(and(eq(annotations.userId, userId), inArray(books.libraryId, accessibleLibraryIds), ...cfClauses));
+      .where(and(eq(annotations.userId, userId), isNull(annotations.deletedAt), inArray(books.libraryId, accessibleLibraryIds), ...cfClauses));
 
     return row?.count ?? 0;
   }
@@ -255,7 +255,7 @@ export class DashboardWidgetRepository {
       .from(annotations)
       .innerJoin(books, eq(books.id, annotations.bookId))
       .innerJoin(bookMetadata, eq(bookMetadata.bookId, books.id))
-      .where(and(eq(annotations.userId, userId), inArray(books.libraryId, accessibleLibraryIds), ...cfClauses))
+      .where(and(eq(annotations.userId, userId), isNull(annotations.deletedAt), inArray(books.libraryId, accessibleLibraryIds), ...cfClauses))
       .orderBy(annotations.id)
       .limit(1)
       .offset(offset);
