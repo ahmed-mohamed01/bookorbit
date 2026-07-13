@@ -57,6 +57,19 @@ describe('classifyFile — metadata files', () => {
   it('classifies .nfo as metadata', () => {
     expect(classifyFile('/books/Book/book.nfo')).toEqual({ format: 'nfo', role: 'metadata' });
   });
+
+  it('classifies metadata.json as metadata with format json', () => {
+    expect(classifyFile('/books/Book/metadata.json')).toEqual({ format: 'json', role: 'metadata' });
+  });
+
+  it('requires the exact lowercase metadata.json basename', () => {
+    expect(classifyFile('/books/Book/Metadata.JSON')).toEqual({ format: 'json', role: 'supplement' });
+  });
+
+  it('classifies other .json files as supplement', () => {
+    expect(classifyFile('/books/Book/reader.json')).toEqual({ format: 'json', role: 'supplement' });
+    expect(classifyFile('/books/Book/data.json')).toEqual({ format: 'json', role: 'supplement' });
+  });
 });
 
 // ── SUPPLEMENTARY ─────────────────────────────────────────────────────────────

@@ -23,11 +23,13 @@ export interface Classification {
 }
 
 export function classifyFile(absolutePath: string): Classification {
-  const ext = extname(absolutePath).toLowerCase().slice(1);
-  const stem = basename(absolutePath, extname(absolutePath)).toLowerCase();
+  const originalExtension = extname(absolutePath);
+  const ext = originalExtension.toLowerCase().slice(1);
+  const stem = basename(absolutePath, originalExtension).toLowerCase();
 
   if (PRIMARY_FORMATS.has(ext)) return { format: ext, role: 'content' };
   if (METADATA_EXTENSIONS.has(ext)) return { format: ext, role: 'metadata' };
+  if (ext === 'json' && basename(absolutePath) === 'metadata.json') return { format: 'json', role: 'metadata' };
   if (COVER_EXTENSIONS.has(ext)) return { format: ext, role: COVER_BASENAMES.has(stem) ? 'cover' : 'supplement' };
 
   return { format: ext || null, role: 'supplement' };

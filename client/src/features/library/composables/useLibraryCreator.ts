@@ -5,9 +5,10 @@ import type { CoverAspectRatio, Library, OrganizationMode, PrescanResult } from 
 
 export { DEFAULT_FORMAT_PRIORITY, FORMAT_LABELS }
 
-export const DEFAULT_METADATA_PRECEDENCE = ['embedded', 'opfFile']
+export const DEFAULT_METADATA_PRECEDENCE = ['sidecar', 'embedded', 'opfFile']
 
 export const METADATA_LABELS: Record<string, string> = {
+  sidecar: 'Audiobookshelf metadata.json',
   embedded: 'Embedded metadata',
   opfFile: 'OPF files',
 }
@@ -102,7 +103,8 @@ export function useLibraryCreator() {
     form.folders = library.folders.map((f) => f.path)
     form.watch = library.watch
     form.autoScanCronExpression = library.autoScanCronExpression ?? null
-    form.metadataPrecedence = [...library.metadataPrecedence]
+    const missingMetadataSources = DEFAULT_METADATA_PRECEDENCE.filter((source) => !library.metadataPrecedence.includes(source))
+    form.metadataPrecedence = [...library.metadataPrecedence, ...missingMetadataSources]
     const missing = DEFAULT_FORMAT_PRIORITY.filter((f) => !library.formatPriority.includes(f))
     form.formatPriority = [...library.formatPriority, ...missing]
     form.allowedFormats = [...library.allowedFormats]

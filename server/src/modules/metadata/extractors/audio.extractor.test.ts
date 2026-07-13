@@ -42,10 +42,12 @@ function makeExecFileSuccess(stdout: string) {
   });
 }
 
-function makeExecFileError(message: string) {
+function makeExecFileError(message: string): Error {
+  const error = new Error(message);
   mockExecFile.mockImplementation((_bin: string, _args: string[], callback: ExecFileCallback) => {
-    callback(new Error(message), '');
+    callback(error, '');
   });
+  return error;
 }
 
 function makeSpawnProcess(coverBytes: Buffer | null): EventEmitter & { stdout: EventEmitter } {
@@ -610,40 +612,27 @@ describe('extractAudioMetadata — misc fields', () => {
   });
 });
 
-// ── FAILURE TOLERANCE ────────────────────────────────────────────────────────
+// ── PROBE FAILURES ──────────────────────────────────────────────────────────
 
-describe('extractAudioMetadata — failure tolerance', () => {
+describe('extractAudioMetadata — probe failures', () => {
   beforeEach(() => resetMocks());
 
-  it('returns all-null safe result when ffprobe exits with an error', async () => {
-    makeExecFileError('ffprobe: command not found');
+  it('preserves the ffprobe process rejection', async () => {
+    const probeError = makeExecFileError('ffprobe: command not found');
 
-    const result = await extractAudioMetadata('/path/corrupted.mp3');
-
-    expect(result.title).toBeNull();
-    expect(result.authors).toEqual([]);
-    expect(result.narrators).toEqual([]);
-    expect(result.durationSeconds).toBeNull();
-    expect(result.chapters).toEqual([]);
-    expect(result.coverBytes).toBeNull();
+    await expect(extractAudioMetadata('/path/corrupted.mp3')).rejects.toBe(probeError);
   });
 
-  it('returns all-null safe result when ffprobe outputs invalid JSON', async () => {
+  it('rejects when ffprobe outputs invalid JSON', async () => {
     makeExecFileSuccess('not valid json at all {{}}');
 
-    const result = await extractAudioMetadata('/path/bad-output.mp3');
-
-    expect(result.title).toBeNull();
-    expect(result.durationSeconds).toBeNull();
+    await expect(extractAudioMetadata('/path/bad-output.mp3')).rejects.toBeInstanceOf(SyntaxError);
   });
 
-  it('returns all-null safe result for a non-audio file', async () => {
-    makeExecFileError('Invalid data found when processing input');
+  it('preserves the ffprobe rejection for invalid non-audio input', async () => {
+    const probeError = makeExecFileError('Invalid data found when processing input');
 
-    const result = await extractAudioMetadata('/path/notaudio.txt');
-
-    expect(result.title).toBeNull();
-    expect(result.durationSeconds).toBeNull();
+    await expect(extractAudioMetadata('/path/notaudio.txt')).rejects.toBe(probeError);
   });
 
   it('invokes ffprobe with correct arguments', async () => {
@@ -830,13 +819,29 @@ describe('extractAudioMetadata — optional ffprobe output fields', () => {
   });
 
   it('handles format object with no tags property at all', async () => {
-    makeExecFileSuccess(JSON.stringify({ format: { duration: '300' }, streams: [], chapters: [] }));
+    makeExecFileSuccess(JSON.stringify({ format: {}, streams: [], chapters: [] }));
 
     const result = await extractAudioMetadata('/path/no-tags.m4b');
 
-    expect(result.title).toBeNull();
-    expect(result.authors).toEqual([]);
-    expect(result.durationSeconds).toBe(300);
+    expect(result).toEqual({
+      title: null,
+      subtitle: null,
+      authors: [],
+      narrators: [],
+      publisher: null,
+      publishedDate: null,
+      publishedYear: null,
+      description: null,
+      language: null,
+      seriesName: null,
+      seriesIndex: null,
+      genres: [],
+      audibleId: null,
+      librofmId: null,
+      durationSeconds: null,
+      chapters: [],
+      coverBytes: null,
+    });
   });
 });
 

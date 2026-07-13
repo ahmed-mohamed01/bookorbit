@@ -587,6 +587,21 @@ describe('BookDockMetadataService', () => {
     expect(Object.values(patch.embeddedMetadata).every((value) => value === undefined)).toBe(true);
   });
 
+  it('extractAndSave(audio) marks probe failures as extraction errors instead of ready', async () => {
+    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    mockExtractAudioMetadata.mockRejectedValue(new Error('probe failed'));
+    const service = new BookDockMetadataService(repo as never);
+
+    await service.extractAndSave(13, '/tmp/corrupt.m4b', 'm4b', '/tmp/covers');
+
+    expect(repo.update).toHaveBeenNthCalledWith(1, 13, { status: 'extracting' });
+    expect(repo.update).toHaveBeenNthCalledWith(2, 13, { status: 'error', errorMessage: 'probe failed' });
+    expect(repo.update).not.toHaveBeenCalledWith(13, expect.objectContaining({ status: 'ready' }));
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[book_dock.extract_metadata] [fail]'));
+  });
+
   it.each(['m4b', 'm4a', 'mp3', 'opus', 'ogg', 'flac'])(
     'routes %s uploads through the audio extractor, not the generic cover path',
     async (format) => {

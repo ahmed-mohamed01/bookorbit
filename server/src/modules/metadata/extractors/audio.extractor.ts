@@ -49,93 +49,89 @@ interface FfprobeOutput {
 }
 
 export async function extractAudioMetadata(absolutePath: string): Promise<AudioExtractResult> {
-  try {
-    const { stdout } = await execFile(FFPROBE_PATH, [
-      '-v',
-      'quiet',
-      '-print_format',
-      'json',
-      '-show_format',
-      '-show_chapters',
-      '-show_streams',
-      absolutePath,
-    ]);
+  const { stdout } = await execFile(FFPROBE_PATH, [
+    '-v',
+    'quiet',
+    '-print_format',
+    'json',
+    '-show_format',
+    '-show_chapters',
+    '-show_streams',
+    absolutePath,
+  ]);
 
-    const data: FfprobeOutput = JSON.parse(stdout);
-    const tags = normalizeTags(data.format?.tags ?? {});
-    const streams = data.streams ?? [];
-    const chapters = data.chapters ?? [];
+  const data: FfprobeOutput = JSON.parse(stdout);
+  const tags = normalizeTags(data.format?.tags ?? {});
+  const streams = data.streams ?? [];
+  const chapters = data.chapters ?? [];
 
-    const rawAlbumArtist = tagValue(tags, 'albumartist') ?? tagValue(tags, 'album_artist');
-    const rawArtist = tagValue(tags, 'artist');
-    const rawComposer = tagValue(tags, 'composer');
+  const rawAlbumArtist = tagValue(tags, 'albumartist') ?? tagValue(tags, 'album_artist');
+  const rawArtist = tagValue(tags, 'artist');
+  const rawComposer = tagValue(tags, 'composer');
 
-    const authorNames = rawAlbumArtist ? splitArtists(rawAlbumArtist) : rawArtist ? splitArtists(rawArtist) : [];
-    const narratorNames = rawComposer
-      ? splitNarrators(rawComposer)
-      : rawAlbumArtist && rawArtist && normalizePersonTag(rawAlbumArtist) !== normalizePersonTag(rawArtist)
-        ? splitNarrators(rawArtist)
-        : [];
+  const authorNames = rawAlbumArtist ? splitArtists(rawAlbumArtist) : rawArtist ? splitArtists(rawArtist) : [];
+  const narratorNames = rawComposer
+    ? splitNarrators(rawComposer)
+    : rawAlbumArtist && rawArtist && normalizePersonTag(rawAlbumArtist) !== normalizePersonTag(rawArtist)
+      ? splitNarrators(rawArtist)
+      : [];
 
-    // Album tag is the audiobook title; fall back to track title.
-    const title = tagValue(tags, 'album') ?? tagValue(tags, 'title');
-    const subtitle = tagValue(tags, 'subtitle');
+  // Album tag is the audiobook title; fall back to track title.
+  const title = tagValue(tags, 'album') ?? tagValue(tags, 'title');
+  const subtitle = tagValue(tags, 'subtitle');
 
-    const publisher = tagValue(tags, 'publisher');
-    const rawPublicationDate = tagValue(tags, 'date') ?? tagValue(tags, 'year');
-    const publishedDate = parsePublishedDateKey(rawPublicationDate) ?? null;
-    const publishedYear = publishedDate ? publishedYearFromDateKey(publishedDate) : (parsePublishedYear(rawPublicationDate) ?? null);
-    const description = resolveDescription(
-      tagValue(tags, 'comment'),
-      tagValue(tags, 'description'),
-      tagValue(tags, 'lyrics'),
-      tagValue(tags, 'synopsis'),
-    );
-    const language = resolveLanguage(tags, streams);
-    const seriesName = tagValue(tags, 'series') ?? tagValue(tags, 'show');
-    const seriesIndex = parseSeriesIndex(
-      tagValue(tags, 'series-part') ??
-        tagValue(tags, 'part') ??
-        tagValue(tags, 'series_part') ??
-        tagValue(tags, 'seriespart') ??
-        tagValue(tags, 'episode_id') ??
-        tagValue(tags, 'episode_sort'),
-    );
-    const genres = splitTagList(tagValue(tags, 'genre'), ';');
-    const audibleId = tagValue(tags, 'asin') ?? tagValue(tags, 'audible_asin');
-    const librofmId = tagValue(tags, 'librofm_isbn');
-    const durationSeconds = parseDurationSeconds(data.format?.duration);
+  const publisher = tagValue(tags, 'publisher');
+  const rawPublicationDate = tagValue(tags, 'date') ?? tagValue(tags, 'year');
+  const publishedDate = parsePublishedDateKey(rawPublicationDate) ?? null;
+  const publishedYear = publishedDate ? publishedYearFromDateKey(publishedDate) : (parsePublishedYear(rawPublicationDate) ?? null);
+  const description = resolveDescription(
+    tagValue(tags, 'comment'),
+    tagValue(tags, 'description'),
+    tagValue(tags, 'lyrics'),
+    tagValue(tags, 'synopsis'),
+  );
+  const language = resolveLanguage(tags, streams);
+  const seriesName = tagValue(tags, 'series') ?? tagValue(tags, 'show');
+  const seriesIndex = parseSeriesIndex(
+    tagValue(tags, 'series-part') ??
+      tagValue(tags, 'part') ??
+      tagValue(tags, 'series_part') ??
+      tagValue(tags, 'seriespart') ??
+      tagValue(tags, 'episode_id') ??
+      tagValue(tags, 'episode_sort'),
+  );
+  const genres = splitTagList(tagValue(tags, 'genre'), ';');
+  const audibleId = tagValue(tags, 'asin') ?? tagValue(tags, 'audible_asin');
+  const librofmId = tagValue(tags, 'librofm_isbn');
+  const durationSeconds = parseDurationSeconds(data.format?.duration);
 
-    const mappedChapters: AudiobookChapter[] = chapters.flatMap((ch) => {
-      const startMs = parseChapterStartMs(ch.start_time);
-      if (startMs === null) return [];
-      return [{ title: ch.tags?.title ?? '', startMs }];
-    });
+  const mappedChapters: AudiobookChapter[] = chapters.flatMap((ch) => {
+    const startMs = parseChapterStartMs(ch.start_time);
+    if (startMs === null) return [];
+    return [{ title: ch.tags?.title ?? '', startMs }];
+  });
 
-    const coverBytes = await extractCoverBytes(absolutePath, streams);
+  const coverBytes = await extractCoverBytes(absolutePath, streams);
 
-    return {
-      title,
-      subtitle,
-      authors: authorNames.map((name) => ({ name, sortName: null })),
-      narrators: narratorNames,
-      publisher,
-      publishedDate,
-      publishedYear,
-      description,
-      language,
-      seriesName,
-      seriesIndex,
-      genres,
-      audibleId,
-      librofmId,
-      durationSeconds,
-      chapters: mappedChapters,
-      coverBytes,
-    };
-  } catch {
-    return emptyResult();
-  }
+  return {
+    title,
+    subtitle,
+    authors: authorNames.map((name) => ({ name, sortName: null })),
+    narrators: narratorNames,
+    publisher,
+    publishedDate,
+    publishedYear,
+    description,
+    language,
+    seriesName,
+    seriesIndex,
+    genres,
+    audibleId,
+    librofmId,
+    durationSeconds,
+    chapters: mappedChapters,
+    coverBytes,
+  };
 }
 
 export async function parseAudioDuration(absolutePath: string): Promise<number | null> {
@@ -253,26 +249,4 @@ function normalizeLanguageValue(value: string | null): string | null {
   if (!normalized) return null;
   const lower = normalized.toLowerCase();
   return lower === 'und' || lower === 'unknown' ? null : normalized;
-}
-
-function emptyResult(): AudioExtractResult {
-  return {
-    title: null,
-    subtitle: null,
-    authors: [],
-    narrators: [],
-    publisher: null,
-    publishedDate: null,
-    publishedYear: null,
-    description: null,
-    language: null,
-    seriesName: null,
-    seriesIndex: null,
-    genres: [],
-    audibleId: null,
-    librofmId: null,
-    durationSeconds: null,
-    chapters: [],
-    coverBytes: null,
-  };
 }

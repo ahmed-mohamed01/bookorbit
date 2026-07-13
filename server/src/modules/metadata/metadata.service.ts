@@ -37,6 +37,7 @@ import { AudioFormatExtractor } from './extractors/audio-format.extractor';
 import { ComicFormatExtractor } from './extractors/comic-format.extractor';
 import { EpubFormatExtractor } from './extractors/epub-format.extractor';
 import { Fb2FormatExtractor } from './extractors/fb2-format.extractor';
+import { JsonSidecarFormatExtractor } from './extractors/json-sidecar-format.extractor';
 import { MobiFormatExtractor } from './extractors/mobi-format.extractor';
 import { OpfFormatExtractor } from './extractors/opf-format.extractor';
 import { PdfFormatExtractor } from './extractors/pdf-format.extractor';
@@ -94,6 +95,7 @@ export class MetadataService {
       ['epub', epub],
       ['kepub', epub],
       ['opf', new OpfFormatExtractor()],
+      ['json', new JsonSidecarFormatExtractor()],
       ['pdf', new PdfFormatExtractor({ extractCover: true, onWarning: (warning) => this.logPdfParseWarning(warning) })],
       ['mobi', mobi],
       ['azw3', mobi],
@@ -112,51 +114,57 @@ export class MetadataService {
   // ── Public API ───────────────────────────────────────────────────────────────
 
   async extractAndSave(bookId: number, absolutePath: string, format: string): Promise<void> {
-    await this.extractAndSaveIfAvailable(bookId, absolutePath, format);
+    await this.runExtractAndSave(bookId, absolutePath, format, false);
   }
 
   async extractAndSaveIfAvailable(bookId: number, absolutePath: string, format: string): Promise<boolean> {
+    return this.runExtractAndSave(bookId, absolutePath, format, true);
+  }
+
+  private async runExtractAndSave(bookId: number, absolutePath: string, format: string, suppressExtractorFailure: boolean): Promise<boolean> {
     const event = 'metadata.extract_and_save';
     const startedAt = Date.now();
     this.logger.debug(`[${event}] [start] bookId=${bookId} format=${format} - metadata extraction started`);
 
-    try {
-      const extractor = this.extractorMap.get(format);
-      if (!extractor) {
-        this.logger.debug(
-          `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} extractorFound=false - metadata extraction skipped`,
-        );
-        return false;
-      }
-
-      const data = await extractor.extract(absolutePath);
-      if (!data) {
-        this.logger.debug(
-          `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} parsed=false - metadata extraction skipped`,
-        );
-        return false;
-      }
-
-      await Promise.all([this.persistMetadata(bookId, data, format), data.cover ? this.persistCover(bookId, data.cover, true) : Promise.resolve()]);
-
-      this.scoreService.calculateAndSave(bookId).catch((error: Error) => {
-        this.logger.warn(
-          `[metadata.score_calculation] [fail] bookId=${bookId} errorClass=${error.name} error="${sanitizeLogValue(error.message)}" - metadata score calculation failed`,
-        );
-      });
-
+    const extractor = this.extractorMap.get(format);
+    if (!extractor) {
       this.logger.debug(
-        `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} coverExtracted=${data.cover != null} - metadata extraction completed`,
+        `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} extractorFound=false - metadata extraction skipped`,
       );
-      return true;
+      return false;
+    }
+
+    let data: ParsedBookData | null;
+    try {
+      data = await extractor.extract(absolutePath);
     } catch (error) {
+      if (!suppressExtractorFailure) throw error;
       const errorClass = error instanceof Error ? error.name : 'Error';
       const errorMessage = sanitizeLogValue(error instanceof Error ? error.message : String(error));
       this.logger.warn(
         `[${event}] [fail] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${errorMessage}" - metadata extraction failed`,
       );
-      throw error;
+      return false;
     }
+    if (!data) {
+      this.logger.debug(
+        `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} parsed=false - metadata extraction skipped`,
+      );
+      return false;
+    }
+
+    await Promise.all([this.persistMetadata(bookId, data, format), data.cover ? this.persistCover(bookId, data.cover, true) : Promise.resolve()]);
+
+    this.scoreService.calculateAndSave(bookId).catch((error: Error) => {
+      this.logger.warn(
+        `[metadata.score_calculation] [fail] bookId=${bookId} errorClass=${error.name} error="${sanitizeLogValue(error.message)}" - metadata score calculation failed`,
+      );
+    });
+
+    this.logger.debug(
+      `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} coverExtracted=${data.cover != null} - metadata extraction completed`,
+    );
+    return true;
   }
 
   // Called when ebook is the winner but audio files are also present.
@@ -573,7 +581,7 @@ export class MetadataService {
   // ── Persistence ──────────────────────────────────────────────────────────────
 
   private async persistMetadata(bookId: number, data: ParsedBookData, format: string): Promise<void> {
-    if (isAudioFormat(format)) {
+    if (isAudioFormat(format) || format === 'json') {
       await this.persistAudioMetadata(bookId, data);
     } else {
       await this.persistBookMetadata(bookId, data, format);
@@ -590,6 +598,8 @@ export class MetadataService {
       title: data.title,
       subtitle: data.subtitle,
       description: data.description,
+      ...(data.isbn10 === undefined ? {} : { isbn10: data.isbn10 ? data.isbn10.replace(/[^0-9Xx]/g, '') : data.isbn10 }),
+      ...(data.isbn13 === undefined ? {} : { isbn13: data.isbn13 ? data.isbn13.replace(/[^0-9]/g, '') : data.isbn13 }),
       publisher: normalizeMetadataText(data.publisher),
       publishedDate: data.publishedDate,
       publishedYear: data.publishedYear,
@@ -598,12 +608,14 @@ export class MetadataService {
       seriesIndex: data.seriesIndex,
       authors: data.authors.map((author) => author.name),
       genres: data.genres,
+      ...(data.tags === undefined ? {} : { tags: data.tags }),
       audibleId: data.audibleId,
       librofmId: data.librofmId,
       audioMetadata: {
         durationSeconds: data.durationSeconds ?? null,
         chapters: data.chapters && data.chapters.length > 0 ? data.chapters : null,
         narrators: data.narrators,
+        ...(data.abridged == null ? {} : { abridged: data.abridged }),
       },
     });
 
@@ -611,6 +623,8 @@ export class MetadataService {
     if (filtered.title !== undefined) scalarFields.title = filtered.title;
     if (filtered.subtitle !== undefined) scalarFields.subtitle = filtered.subtitle;
     if (filtered.description !== undefined) scalarFields.description = filtered.description;
+    if (filtered.isbn10 !== undefined) scalarFields.isbn10 = filtered.isbn10;
+    if (filtered.isbn13 !== undefined) scalarFields.isbn13 = filtered.isbn13;
     if (filtered.publisher !== undefined) scalarFields.publisher = normalizeMetadataText(filtered.publisher);
     const publishedDate = normalizePublishedDate(filtered.publishedDate);
     if (publishedDate !== undefined) {
@@ -629,6 +643,9 @@ export class MetadataService {
     if (filtered.audibleId !== undefined) scalarFields.audibleId = filtered.audibleId;
     if (filtered.librofmId !== undefined) scalarFields.librofmId = filtered.librofmId;
     if (filtered.audioMetadata?.durationSeconds !== undefined) scalarFields.durationSeconds = filtered.audioMetadata.durationSeconds;
+    if (filtered.audioMetadata?.abridged !== undefined && filtered.audioMetadata.abridged !== null) {
+      scalarFields.abridged = filtered.audioMetadata.abridged;
+    }
     if (filtered.audioMetadata?.chapters !== undefined) scalarFields.chapters = filtered.audioMetadata.chapters;
     if (Object.keys(scalarFields).length > 0) {
       const shouldSyncSeries =
@@ -646,6 +663,9 @@ export class MetadataService {
     }
     if (filtered.genres !== undefined) {
       await this.replaceGenres(bookId, filtered.genres);
+    }
+    if (filtered.tags !== undefined) {
+      await this.replaceTags(bookId, filtered.tags);
     }
 
     if (filtered.audioMetadata?.narrators !== undefined) {

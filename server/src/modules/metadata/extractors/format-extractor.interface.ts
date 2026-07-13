@@ -34,6 +34,7 @@ export interface ParsedBookData {
   narrators?: string[];
   durationSeconds?: number | null;
   chapters?: { title: string; startMs: number }[];
+  abridged?: boolean | null;
   // ebook-specific extras
   pageCount?: number | null;
   comicMetadata?: ParsedCbzComicMetadata | null;

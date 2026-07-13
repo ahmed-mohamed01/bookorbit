@@ -42,6 +42,8 @@ interface FileByPathEntry {
   sizeBytes: number | null;
   mtime: Date | null;
   fileHash: string | null;
+  format: string | null;
+  role: string;
   sortOrder: number | null;
 }
 
@@ -90,7 +92,7 @@ const METADATA_FORMATS = new Set([
   'flac',
   'opf',
 ]);
-const SCANNER_METADATA_SOURCES = ['embedded', 'opfFile'] as const;
+const SCANNER_METADATA_SOURCES = ['embedded', 'opfFile', 'sidecar'] as const;
 const COVER_REFRESH_BATCH_SIZE = 5;
 const BOOK_EMIT_BUFFER_SIZE = 20;
 const BOOK_EMIT_FLUSH_INTERVAL_MS = 1000;
@@ -244,6 +246,8 @@ export class ScannerService implements OnApplicationBootstrap {
       sizeBytes: number | null;
       mtime: Date | null;
       fileHash: string | null;
+      format: string | null;
+      role: string;
       sortOrder?: number | null;
     }>,
   ): ScanLookupMaps {
@@ -265,7 +269,17 @@ export class ScannerService implements OnApplicationBootstrap {
     const fileByPath = new Map<string, FileByPathEntry>(
       knownFiles.map((f) => [
         f.absolutePath,
-        { id: f.id, bookId: f.bookId, ino: f.ino, sizeBytes: f.sizeBytes, mtime: f.mtime, fileHash: f.fileHash, sortOrder: f.sortOrder ?? null },
+        {
+          id: f.id,
+          bookId: f.bookId,
+          ino: f.ino,
+          sizeBytes: f.sizeBytes,
+          mtime: f.mtime,
+          fileHash: f.fileHash,
+          format: f.format,
+          role: f.role,
+          sortOrder: f.sortOrder ?? null,
+        },
       ]),
     );
 
@@ -909,6 +923,8 @@ export class ScannerService implements OnApplicationBootstrap {
         sizeBytes: f.sizeBytes,
         mtime: f.mtime,
         fileHash: f.fileHash,
+        format: f.format,
+        role: f.role,
       })),
     );
   }
@@ -1518,7 +1534,8 @@ export class ScannerService implements OnApplicationBootstrap {
     // Phase 3: Metadata extraction, source-precedence driven, triggered by new/reassigned/changed metadata sources.
     //
     // Design rules:
-    //   - Text metadata (title, authors, cover, etc.) comes from the first available configured source.
+    //   - Shared metadata comes from the first available configured source.
+    //   - A successful sidecar owns text metadata; an audio winner may supply only its embedded cover.
     //   - Audio-specific fields (chapters, narrators, duration) always come from audio if present.
     //   - Extraction only fires when at least one configured metadata source is new, reassigned, or changed.
 
@@ -1530,8 +1547,13 @@ export class ScannerService implements OnApplicationBootstrap {
     const winnerIsAudio = winner !== null && winner.format !== null && isAudioFormat(winner.format);
 
     // 3a: Extract shared metadata from the first available configured source.
+    let successfulMetadataSource: MetadataExtractionSource | null = null;
     if (shouldExtractMetadata) {
-      await this.extractFirstAvailableMetadataSource(book.id, metadataSources);
+      successfulMetadataSource = await this.extractFirstAvailableMetadataSource(book.id, metadataSources);
+    }
+
+    if (successfulMetadataSource?.key === 'sidecar' && winnerIsAudio && winner?.format) {
+      await this.metadataService.refreshCoverForBook(book.id, winner.absolutePath, winner.format);
     }
 
     // 3b: When winner is not audio, extract audio-specific fields (chapters, narrators)
@@ -1599,6 +1621,11 @@ export class ScannerService implements OnApplicationBootstrap {
       sourcesByKey.set('opfFile', { key: 'opfFile', file: opfFile, format: 'opf' });
     }
 
+    const jsonSidecarFile = this.selectJsonSidecarMetadataFile(registeredFiles);
+    if (jsonSidecarFile) {
+      sourcesByKey.set('sidecar', { key: 'sidecar', file: jsonSidecarFile, format: 'json' });
+    }
+
     return normalizeMetadataPrecedence(metadataPrecedence).flatMap((sourceKey) => {
       const source = sourcesByKey.get(sourceKey);
       return source ? [source] : [];
@@ -1621,31 +1648,29 @@ export class ScannerService implements OnApplicationBootstrap {
     return [...opfFiles].sort((a, b) => basename(a.absolutePath).localeCompare(basename(b.absolutePath), undefined, { numeric: true }))[0] ?? null;
   }
 
-  private async extractFirstAvailableMetadataSource(bookId: number, sources: MetadataExtractionSource[]): Promise<void> {
+  private selectJsonSidecarMetadataFile(registeredFiles: RegisteredFile[]): RegisteredFile | null {
+    return (
+      registeredFiles.find((file) => file.role === 'metadata' && file.format === 'json' && basename(file.absolutePath) === 'metadata.json') ?? null
+    );
+  }
+
+  private async extractFirstAvailableMetadataSource(bookId: number, sources: MetadataExtractionSource[]): Promise<MetadataExtractionSource | null> {
     for (const source of sources) {
       try {
         const extracted = await this.extractMetadataSource(bookId, source.file.absolutePath, source.format);
-        if (extracted) return;
+        if (extracted) return source;
       } catch (err) {
         this.logger.warn(
           `[scanner.extract_metadata] [fail] bookId=${bookId} source=${source.key} path="${sanitizeLogValue(source.file.absolutePath)}" format=${source.format} errorClass=${err instanceof Error ? err.name : 'Error'} error="${sanitizeLogValue(err instanceof Error ? err.message : String(err))}" - metadata extraction failed`,
         );
-        return;
+        return null;
       }
     }
+    return null;
   }
 
   private async extractMetadataSource(bookId: number, absolutePath: string, format: string): Promise<boolean> {
-    const metadataService = this.metadataService as MetadataService & {
-      extractAndSaveIfAvailable?: (bookId: number, absolutePath: string, format: string) => Promise<boolean>;
-    };
-
-    if (typeof metadataService.extractAndSaveIfAvailable === 'function') {
-      return metadataService.extractAndSaveIfAvailable(bookId, absolutePath, format);
-    }
-
-    await this.metadataService.extractAndSave(bookId, absolutePath, format);
-    return true;
+    return this.metadataService.extractAndSaveIfAvailable(bookId, absolutePath, format);
   }
 
   private async upsertBook(
@@ -2045,14 +2070,15 @@ export class ScannerService implements OnApplicationBootstrap {
     const inoUnchanged = fileStat.ino === byPath.ino;
     const reassigned = byPath.bookId !== bookId;
     const sortOrderUnchanged = sortOrder === byPath.sortOrder;
+    const classificationChanged = format !== byPath.format || role !== byPath.role;
 
-    if (sizeUnchanged && mtimeUnchanged && inoUnchanged && !reassigned && sortOrderUnchanged) {
+    if (sizeUnchanged && mtimeUnchanged && inoUnchanged && !reassigned && sortOrderUnchanged && !classificationChanged) {
       return { isNew: false, reassigned: false, changed: false, fileId: byPath.id };
     }
 
     await waitForStability(fileStat.absolutePath, fileStat.mtime.getTime());
 
-    if (!sizeUnchanged || !mtimeUnchanged || !inoUnchanged || reassigned) {
+    if (!sizeUnchanged || !mtimeUnchanged || !inoUnchanged || reassigned || classificationChanged) {
       await this.scannerRepo.updateBookFile(byPath.id, {
         ...(reassigned && { bookId }),
         libraryFolderId,
@@ -2080,6 +2106,8 @@ export class ScannerService implements OnApplicationBootstrap {
       sizeBytes: fileStat.sizeBytes,
       mtime: fileStat.mtime,
       fileHash: byPath.fileHash,
+      format,
+      role,
       sortOrder,
     });
     if (fileStat.ino !== 0n) {
@@ -2091,7 +2119,7 @@ export class ScannerService implements OnApplicationBootstrap {
         mtime: fileStat.mtime,
       });
     }
-    return { isNew: false, reassigned, changed: !sizeUnchanged || !mtimeUnchanged, fileId: byPath.id };
+    return { isNew: false, reassigned, changed: !sizeUnchanged || !mtimeUnchanged || classificationChanged, fileId: byPath.id };
   }
 
   private async resolveByLocalIno(
@@ -2112,6 +2140,8 @@ export class ScannerService implements OnApplicationBootstrap {
     if (await this.pathExists(oldAbsolutePath)) return null;
     const sizeUnchanged = fileStat.sizeBytes === byIno.sizeBytes;
     const mtimeUnchanged = fileStat.mtime.getTime() === byIno.mtime?.getTime();
+    const oldPathEntry = fileByPath.get(oldAbsolutePath);
+    const classificationChanged = oldPathEntry !== undefined && (format !== oldPathEntry.format || role !== oldPathEntry.role);
     await this.scannerRepo.updateBookFile(byIno.id, {
       bookId,
       libraryFolderId,
@@ -2124,7 +2154,6 @@ export class ScannerService implements OnApplicationBootstrap {
       sortOrder,
     });
     counts.updatedCount++;
-    const oldPathEntry = fileByPath.get(oldAbsolutePath);
     if (oldPathEntry?.id === byIno.id) {
       fileByPath.delete(oldAbsolutePath);
     }
@@ -2135,10 +2164,17 @@ export class ScannerService implements OnApplicationBootstrap {
       sizeBytes: fileStat.sizeBytes,
       mtime: fileStat.mtime,
       fileHash: oldPathEntry?.fileHash ?? null,
+      format,
+      role,
       sortOrder,
     });
     fileByIno.set(fileStat.ino, { id: byIno.id, bookId, absolutePath: fileStat.absolutePath, sizeBytes: fileStat.sizeBytes, mtime: fileStat.mtime });
-    return { isNew: false, reassigned: byIno.bookId !== bookId, changed: !sizeUnchanged || !mtimeUnchanged, fileId: byIno.id };
+    return {
+      isNew: false,
+      reassigned: byIno.bookId !== bookId,
+      changed: !sizeUnchanged || !mtimeUnchanged || classificationChanged,
+      fileId: byIno.id,
+    };
   }
 
   private async resolveByGlobalIno(
@@ -2173,6 +2209,7 @@ export class ScannerService implements OnApplicationBootstrap {
     const oldAbsolutePath = globalByIno.file.absolutePath;
     const sizeUnchanged = fileStat.sizeBytes === globalByIno.file.sizeBytes;
     const mtimeUnchanged = fileStat.mtime.getTime() === globalByIno.file.mtime?.getTime();
+    const classificationChanged = format !== globalByIno.file.format || role !== globalByIno.file.role;
     await this.scannerRepo.updateBookFile(globalByIno.file.id, {
       bookId,
       libraryFolderId,
@@ -2201,6 +2238,8 @@ export class ScannerService implements OnApplicationBootstrap {
       sizeBytes: fileStat.sizeBytes,
       mtime: fileStat.mtime,
       fileHash: globalByIno.file.fileHash,
+      format,
+      role,
       sortOrder,
     });
     fileByIno.set(fileStat.ino, {
@@ -2213,7 +2252,7 @@ export class ScannerService implements OnApplicationBootstrap {
     return {
       isNew: false,
       reassigned: globalByIno.file.bookId !== bookId,
-      changed: !sizeUnchanged || !mtimeUnchanged,
+      changed: !sizeUnchanged || !mtimeUnchanged || classificationChanged,
       fileId: globalByIno.file.id,
     };
   }
@@ -2248,6 +2287,7 @@ export class ScannerService implements OnApplicationBootstrap {
       const byHash = await this.scannerRepo.findBookFileByHash(fileHash, libraryFolderId);
       if (byHash && byHash.sizeBytes === fileStat.sizeBytes && !(await this.pathExists(byHash.absolutePath))) {
         const oldAbsolutePath = byHash.absolutePath;
+        const classificationChanged = format !== byHash.format || role !== byHash.role;
         await this.scannerRepo.updateBookFile(byHash.id, {
           bookId,
           libraryFolderId,
@@ -2276,6 +2316,8 @@ export class ScannerService implements OnApplicationBootstrap {
           sizeBytes: fileStat.sizeBytes,
           mtime: fileStat.mtime,
           fileHash: byHash.fileHash,
+          format,
+          role,
           sortOrder,
         });
         if (fileStat.ino !== 0n) {
@@ -2287,7 +2329,7 @@ export class ScannerService implements OnApplicationBootstrap {
             mtime: fileStat.mtime,
           });
         }
-        return { isNew: false, reassigned: byHash.bookId !== bookId, changed: false, fileId: byHash.id };
+        return { isNew: false, reassigned: byHash.bookId !== bookId, changed: classificationChanged, fileId: byHash.id };
       }
 
       let globalByHash = await this.scannerRepo.findBookFileWithContextByHash(fileHash);
@@ -2307,6 +2349,7 @@ export class ScannerService implements OnApplicationBootstrap {
         !(await this.pathExists(globalByHash.file.absolutePath))
       ) {
         const oldAbsolutePath = globalByHash.file.absolutePath;
+        const classificationChanged = format !== globalByHash.file.format || role !== globalByHash.file.role;
         await this.scannerRepo.updateBookFile(globalByHash.file.id, {
           bookId,
           libraryFolderId,
@@ -2336,6 +2379,8 @@ export class ScannerService implements OnApplicationBootstrap {
           sizeBytes: fileStat.sizeBytes,
           mtime: fileStat.mtime,
           fileHash,
+          format,
+          role,
           sortOrder,
         });
         if (fileStat.ino !== 0n) {
@@ -2347,7 +2392,12 @@ export class ScannerService implements OnApplicationBootstrap {
             mtime: fileStat.mtime,
           });
         }
-        return { isNew: false, reassigned: globalByHash.file.bookId !== bookId, changed: false, fileId: globalByHash.file.id };
+        return {
+          isNew: false,
+          reassigned: globalByHash.file.bookId !== bookId,
+          changed: classificationChanged,
+          fileId: globalByHash.file.id,
+        };
       }
     }
 
@@ -2378,6 +2428,8 @@ export class ScannerService implements OnApplicationBootstrap {
           sizeBytes: concurrent.file.sizeBytes,
           mtime: concurrent.file.mtime,
           fileHash: concurrent.file.fileHash,
+          format: concurrent.file.format,
+          role: concurrent.file.role,
           sortOrder: concurrent.file.sortOrder,
         },
         fileStat,
@@ -2399,6 +2451,8 @@ export class ScannerService implements OnApplicationBootstrap {
       sizeBytes: fileStat.sizeBytes,
       mtime: fileStat.mtime,
       fileHash,
+      format,
+      role,
       sortOrder,
     });
     if (fileStat.ino !== 0n) {

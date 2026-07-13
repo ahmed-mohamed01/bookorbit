@@ -106,9 +106,27 @@ describe('useLibraryCreator', () => {
     expect(creator.form.fileWriteAudioMaxFileSizeMb).toBe(500)
   })
 
-  it('hydrates file rename and audio write settings when editing a library', async () => {
+  it('uses sidecar-first metadata precedence for blank library forms', async () => {
+    const { METADATA_LABELS, useLibraryCreator } = await import('../useLibraryCreator')
+    const creator = useLibraryCreator()
+
+    expect(creator.form.metadataPrecedence).toEqual(['sidecar', 'embedded', 'opfFile'])
+    expect(METADATA_LABELS.sidecar).toBe('Audiobookshelf metadata.json')
+  })
+
+  it('appends missing supported metadata sources when editing an older library', async () => {
     const { useLibraryCreator } = await import('../useLibraryCreator')
     const creator = useLibraryCreator()
+
+    creator.initEdit(makeLibrary({ metadataPrecedence: ['embedded', 'opfFile'] }))
+
+    expect(creator.form.metadataPrecedence).toEqual(['embedded', 'opfFile', 'sidecar'])
+  })
+
+  it('preserves stored metadata precedence and hydrates write settings when editing a library', async () => {
+    const { useLibraryCreator } = await import('../useLibraryCreator')
+    const creator = useLibraryCreator()
+    const metadataPrecedence = ['opfFile', 'embedded', 'sidecar']
 
     creator.initEdit({
       id: 1,
@@ -118,7 +136,7 @@ describe('useLibraryCreator', () => {
       coverAspectRatio: '2/3',
       watch: false,
       autoScanCronExpression: null,
-      metadataPrecedence: ['embedded'],
+      metadataPrecedence,
       formatPriority: ['epub'],
       allowedFormats: ['epub'],
       organizationMode: 'book_per_folder',
@@ -145,6 +163,7 @@ describe('useLibraryCreator', () => {
     expect(creator.form.fileRenameEnabled).toBe(true)
     expect(creator.form.fileWriteAudioEnabled).toBe(false)
     expect(creator.form.fileWriteAudioMaxFileSizeMb).toBe(750)
+    expect(creator.form.metadataPrecedence).toEqual(metadataPrecedence)
   })
 
   it('creates a library with audio write-back settings in the payload', async () => {
@@ -170,6 +189,7 @@ describe('useLibraryCreator', () => {
     )
     expect(JSON.parse(apiMock.mock.calls[0]?.[1]?.body as string)).toMatchObject({
       name: 'Audio',
+      metadataPrecedence: ['sidecar', 'embedded', 'opfFile'],
       fileWriteAudioEnabled: true,
       fileWriteAudioMaxFileSizeMb: 750,
     })

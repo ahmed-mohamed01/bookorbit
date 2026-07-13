@@ -172,7 +172,7 @@ describe('LibraryService', () => {
         icon: 'BookOpen',
         displayOrder: 0,
         watch: false,
-        metadataPrecedence: ['folderStructure', 'embedded', 'nfoFile', 'opfFile', 'sidecar'],
+        metadataPrecedence: ['folderStructure', 'sidecar', 'embedded', 'nfoFile', 'opfFile'],
         formatPriority: ['epub', 'kepub', 'pdf', 'cbz', 'cbr', 'cb7', 'mobi', 'azw3', 'azw', 'fb2', 'm4b', 'mp3', 'm4a', 'opus', 'ogg', 'flac'],
         organizationMode: 'book_per_folder',
         coverAspectRatio: '2/3',

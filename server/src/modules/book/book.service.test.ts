@@ -4022,6 +4022,16 @@ describe('BookService', () => {
       await expect(service.getMetadataFromFile(5, makeUser())).resolves.toEqual({});
     });
 
+    it('propagates audio probe failures from file metadata inspection', async () => {
+      const { service, bookRepo } = makeService();
+      vi.spyOn(service, 'verifyBookAccess').mockResolvedValue(undefined);
+      bookRepo.findPrimaryFile.mockResolvedValue({ absolutePath: '/books/corrupt.m4b', format: 'm4b' });
+      const probeError = new Error('probe failed');
+      mockExtractAudioMetadata.mockRejectedValue(probeError);
+
+      await expect(service.getMetadataFromFile(5, makeUser())).rejects.toBe(probeError);
+    });
+
     it('maps pdf metadata and emits parser warnings', async () => {
       const { service, bookRepo } = makeService();
       const warnSpy = vi.spyOn((service as unknown as { logger: { warn: (message: string) => void } }).logger, 'warn').mockImplementation();

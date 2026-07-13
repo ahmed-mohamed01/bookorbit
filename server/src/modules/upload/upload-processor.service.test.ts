@@ -271,14 +271,17 @@ describe('UploadProcessorService', () => {
     expect(metadataService.extractAndAggregateAudioDuration).not.toHaveBeenCalled();
   });
 
-  it('extractMetadataAsync does not extract duration when metadata save fails for an audio file', async () => {
-    vi.spyOn((service as unknown as { logger: { warn: (m: string) => void } }).logger, 'warn').mockImplementation();
+  it('extractMetadataAsync logs one failure and skips duration when strict audio extraction rejects', async () => {
+    const warn = vi.spyOn((service as unknown as { logger: { warn: (m: string) => void } }).logger, 'warn').mockImplementation();
     metadataService.extractAndSave.mockRejectedValue(new Error('probe failed'));
 
     service.extractMetadataAsync(7, '/tmp/book.m4b', 'm4b');
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(metadataService.extractAndAggregateAudioDuration).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[upload.extract_metadata] [fail]'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('probe failed'));
   });
 
   it('extractAudioDurationAsync ignores non-audio formats', () => {
