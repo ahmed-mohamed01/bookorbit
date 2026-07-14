@@ -140,6 +140,7 @@ function makeRepo(overrides: Record<string, unknown> = {}) {
       }),
     ),
     findPrimaryBookFilesByLibrary: vi.fn().mockResolvedValue([]),
+    findSidecarCoverFilesByLibrary: vi.fn().mockResolvedValue([]),
     findBooksByFolderPath: vi.fn().mockResolvedValue([]),
     findBookFilesByBookId: vi.fn().mockResolvedValue([]),
     findBookFilesByBookIds: vi.fn().mockResolvedValue([]),
@@ -171,6 +172,20 @@ const mockMetadata = {
   extractAndSave: vi.fn().mockResolvedValue(undefined),
   extractAndSaveIfAvailable: vi.fn(),
   refreshCoverForBook: vi.fn().mockResolvedValue(false),
+  saveSidecarCover: vi.fn().mockResolvedValue('saved'),
+  applyCoverFromSources: vi.fn(async (bookId: number, readOrder: Array<{ kind: string; absolutePath: string; format?: string }>) => {
+    for (const source of readOrder) {
+      if (source.kind === 'sidecar') {
+        const outcome = await mockMetadata.saveSidecarCover(bookId, source.absolutePath);
+        if (outcome === 'saved') return true;
+        if (outcome === 'locked') return false;
+      } else if (await mockMetadata.refreshCoverForBook(bookId, source.absolutePath, source.format)) {
+        return true;
+      }
+    }
+    return false;
+  }),
+  getCoverSource: vi.fn().mockResolvedValue('extracted'),
   extractAudioFileDuration: vi.fn().mockResolvedValue(undefined),
   aggregateAudioDuration: vi.fn().mockResolvedValue(undefined),
   extractAudioChaptersAndNarrators: vi.fn().mockResolvedValue(undefined),
@@ -233,6 +248,8 @@ beforeEach(() => {
     await mockMetadata.extractAndSave(bookId, absolutePath, format);
     return true;
   });
+  mockMetadata.saveSidecarCover.mockResolvedValue('saved');
+  mockMetadata.getCoverSource.mockResolvedValue('extracted');
 });
 
 // ── startScan — precondition checks ──────────────────────────────────────────
@@ -1240,6 +1257,478 @@ describe('genuinely new primary file', () => {
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[scanner.extract_metadata] [fail]'));
     expect(repo.completeScanJob).toHaveBeenCalled();
     expect(repo.failScanJob).not.toHaveBeenCalled();
+  });
+
+  it('imports the cover.jpg sidecar over the embedded audio cover when sidecar is ranked first', async () => {
+    installSuccessfulAvailabilityMock();
+    const audio = makeFileStat({ absolutePath: '/library/Book/book.m4b', relPath: 'Book/book.m4b', format: 'm4b', role: 'content' });
+    const sidecar = makeFileStat({
+      absolutePath: '/library/Book/metadata.json',
+      relPath: 'Book/metadata.json',
+      ino: 1002n,
+      format: 'json',
+      role: 'metadata',
+    });
+    const cover = makeFileStat({
+      absolutePath: '/library/Book/cover.jpg',
+      relPath: 'Book/cover.jpg',
+      ino: 1003n,
+      sizeBytes: 512,
+      format: 'jpg',
+      role: 'cover',
+    });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [audio, sidecar, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    const repo = makeRepo({ findLibrarySettings: vi.fn().mockResolvedValue(makeLibrarySettings(LIBRARY_METADATA_PRECEDENCE_DEFAULT)) });
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockMetadata.saveSidecarCover).toHaveBeenCalledWith(1, cover.absolutePath);
+    expect(mockMetadata.refreshCoverForBook).not.toHaveBeenCalled();
+  });
+
+  it('re-applies the cover.jpg sidecar after embedded extraction when metadata.json is absent and sidecar ranks first', async () => {
+    const extractAndSaveIfAvailable = vi.fn().mockImplementation(async (bookId: number, absolutePath: string, format: string) => {
+      await mockMetadata.extractAndSave(bookId, absolutePath, format);
+      return true;
+    });
+    mockMetadata.extractAndSaveIfAvailable.mockImplementation(extractAndSaveIfAvailable);
+    const audio = makeFileStat({ absolutePath: '/library/Book/book.m4b', relPath: 'Book/book.m4b', format: 'm4b', role: 'content' });
+    const cover = makeFileStat({
+      absolutePath: '/library/Book/cover.jpg',
+      relPath: 'Book/cover.jpg',
+      ino: 1003n,
+      sizeBytes: 512,
+      format: 'jpg',
+      role: 'cover',
+    });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [audio, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    const repo = makeRepo({ findLibrarySettings: vi.fn().mockResolvedValue(makeLibrarySettings(['sidecar', 'embedded', 'opfFile'])) });
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockMetadata.extractAndSave).toHaveBeenCalledWith(1, audio.absolutePath, 'm4b');
+    expect(mockMetadata.saveSidecarCover).toHaveBeenCalledWith(1, cover.absolutePath);
+    const embeddedOrder = mockMetadata.extractAndSave.mock.invocationCallOrder[0];
+    const sidecarOrder = mockMetadata.saveSidecarCover.mock.invocationCallOrder[0];
+    expect(sidecarOrder).toBeGreaterThan(embeddedOrder);
+    expect(mockMetadata.refreshCoverForBook).not.toHaveBeenCalled();
+  });
+
+  it('re-applies an unchanged cover.jpg sidecar on rescan when the primary file changes and re-triggers embedded extraction', async () => {
+    installSuccessfulAvailabilityMock();
+    const primary = makeFileStat({
+      absolutePath: '/library/Book/book.epub',
+      relPath: 'Book/book.epub',
+      format: 'epub',
+      role: 'content',
+      sizeBytes: 2048,
+    });
+    const cover = makeFileStat({
+      absolutePath: '/library/Book/cover.jpg',
+      relPath: 'Book/cover.jpg',
+      ino: 1002n,
+      sizeBytes: 512,
+      mtime: new Date('2024-01-01'),
+      format: 'jpg',
+      role: 'cover',
+    });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [primary, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    const repo = makeRepo({
+      findLibrarySettings: vi.fn().mockResolvedValue(makeLibrarySettings(LIBRARY_METADATA_PRECEDENCE_DEFAULT)),
+      findBooksByLibraryFolder: vi.fn().mockResolvedValue([{ id: 1, status: 'present', folderPath: '/library/Book', primaryFileId: 10 }]),
+      findBookFilesByLibraryFolder: vi.fn().mockResolvedValue([
+        makeBookFile({
+          id: 10,
+          bookId: 1,
+          absolutePath: primary.absolutePath,
+          relPath: primary.relPath,
+          ino: primary.ino,
+          sizeBytes: 1024, // differs from the 2048-byte file on disk -> primary is "changed"
+          sortOrder: 0,
+        }),
+        makeBookFile({
+          id: 12,
+          bookId: 1,
+          absolutePath: cover.absolutePath,
+          relPath: cover.relPath,
+          ino: cover.ino,
+          sizeBytes: 512,
+          mtime: new Date('2024-01-01'),
+          fileHash: 'cover-hash-v1',
+          format: 'jpg',
+          role: 'cover',
+          sortOrder: 1,
+        }),
+      ]),
+    });
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+
+    await service.startScan(1, 'manual');
+    await done;
+
+    // Embedded extraction re-fires because the primary file changed, and would otherwise
+    // clobber the previously imported sidecar cover via its own overwrite=true cover write.
+    expect(mockMetadata.extractAndSaveIfAvailable).toHaveBeenCalledWith(1, primary.absolutePath, 'epub');
+    expect(mockMetadata.saveSidecarCover).toHaveBeenCalledWith(1, cover.absolutePath);
+  });
+
+  it('re-applies an unchanged cover.jpg sidecar instead of letting the audio backfill clobber it when only metadata.json changes', async () => {
+    installSuccessfulAvailabilityMock();
+    const audio = makeFileStat({ absolutePath: '/library/Book/book.m4b', relPath: 'Book/book.m4b', format: 'm4b', role: 'content' });
+    const sidecar = makeFileStat({
+      absolutePath: '/library/Book/metadata.json',
+      relPath: 'Book/metadata.json',
+      ino: 1002n,
+      sizeBytes: 256,
+      format: 'json',
+      role: 'metadata',
+    });
+    const cover = makeFileStat({
+      absolutePath: '/library/Book/cover.jpg',
+      relPath: 'Book/cover.jpg',
+      ino: 1003n,
+      sizeBytes: 512,
+      mtime: new Date('2024-01-01'),
+      format: 'jpg',
+      role: 'cover',
+    });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [audio, sidecar, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    const repo = makeRepo({
+      findLibrarySettings: vi.fn().mockResolvedValue(makeLibrarySettings(LIBRARY_METADATA_PRECEDENCE_DEFAULT)),
+      findBooksByLibraryFolder: vi.fn().mockResolvedValue([{ id: 1, status: 'present', folderPath: '/library/Book', primaryFileId: 10 }]),
+      findBookFilesByLibraryFolder: vi.fn().mockResolvedValue([
+        makeBookFile({ id: 10, bookId: 1, absolutePath: audio.absolutePath, relPath: audio.relPath, ino: audio.ino, format: 'm4b', sortOrder: 0 }),
+        makeBookFile({
+          id: 11,
+          bookId: 1,
+          absolutePath: sidecar.absolutePath,
+          relPath: sidecar.relPath,
+          ino: sidecar.ino,
+          sizeBytes: 128, // differs from the 256-byte file on disk -> metadata.json is "changed"
+          format: 'json',
+          role: 'metadata',
+          sortOrder: 1,
+        }),
+        makeBookFile({
+          id: 12,
+          bookId: 1,
+          absolutePath: cover.absolutePath,
+          relPath: cover.relPath,
+          ino: cover.ino,
+          sizeBytes: 512,
+          mtime: new Date('2024-01-01'),
+          fileHash: 'cover-hash-v1',
+          format: 'jpg',
+          role: 'cover',
+          sortOrder: 2,
+        }),
+      ]),
+    });
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockMetadata.extractAndSaveIfAvailable).toHaveBeenCalledWith(1, sidecar.absolutePath, 'json');
+    expect(mockMetadata.saveSidecarCover).toHaveBeenCalledWith(1, cover.absolutePath);
+    expect(mockMetadata.refreshCoverForBook).not.toHaveBeenCalled();
+  });
+
+  it('falls through to the embedded audio backfill when a sidecar-first cover.jpg is corrupt', async () => {
+    installSuccessfulAvailabilityMock();
+    mockMetadata.saveSidecarCover.mockResolvedValue('failed');
+    const audio = makeFileStat({ absolutePath: '/library/Book/book.m4b', relPath: 'Book/book.m4b', format: 'm4b', role: 'content' });
+    const sidecar = makeFileStat({
+      absolutePath: '/library/Book/metadata.json',
+      relPath: 'Book/metadata.json',
+      ino: 1002n,
+      format: 'json',
+      role: 'metadata',
+    });
+    const cover = makeFileStat({
+      absolutePath: '/library/Book/cover.jpg',
+      relPath: 'Book/cover.jpg',
+      ino: 1003n,
+      sizeBytes: 512,
+      format: 'jpg',
+      role: 'cover',
+    });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [audio, sidecar, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    const repo = makeRepo({ findLibrarySettings: vi.fn().mockResolvedValue(makeLibrarySettings(LIBRARY_METADATA_PRECEDENCE_DEFAULT)) });
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockMetadata.saveSidecarCover).toHaveBeenCalledWith(1, cover.absolutePath);
+    expect(mockMetadata.refreshCoverForBook).toHaveBeenCalledWith(1, audio.absolutePath, 'm4b');
+  });
+
+  it('fills in the cover.jpg sidecar under embedded-first precedence only when no cover was extracted', async () => {
+    installSuccessfulAvailabilityMock();
+    mockMetadata.getCoverSource.mockResolvedValue(null);
+    const audio = makeFileStat({ absolutePath: '/library/Book/book.m4b', relPath: 'Book/book.m4b', format: 'm4b', role: 'content' });
+    const cover = makeFileStat({
+      absolutePath: '/library/Book/cover.jpg',
+      relPath: 'Book/cover.jpg',
+      ino: 1003n,
+      sizeBytes: 512,
+      format: 'jpg',
+      role: 'cover',
+    });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [audio, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    const repo = makeRepo({ findLibrarySettings: vi.fn().mockResolvedValue(makeLibrarySettings(['embedded', 'sidecar', 'opfFile'])) });
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockMetadata.saveSidecarCover).toHaveBeenCalledWith(1, cover.absolutePath);
+  });
+
+  it('does not fill in the cover.jpg sidecar under embedded-first precedence when a cover already exists', async () => {
+    installSuccessfulAvailabilityMock();
+    mockMetadata.getCoverSource.mockResolvedValue('extracted');
+    const audio = makeFileStat({ absolutePath: '/library/Book/book.m4b', relPath: 'Book/book.m4b', format: 'm4b', role: 'content' });
+    const cover = makeFileStat({
+      absolutePath: '/library/Book/cover.jpg',
+      relPath: 'Book/cover.jpg',
+      ino: 1003n,
+      sizeBytes: 512,
+      format: 'jpg',
+      role: 'cover',
+    });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [audio, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    const repo = makeRepo({ findLibrarySettings: vi.fn().mockResolvedValue(makeLibrarySettings(['embedded', 'sidecar', 'opfFile'])) });
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockMetadata.saveSidecarCover).not.toHaveBeenCalled();
+  });
+
+  it('does not re-import an unchanged cover.jpg sidecar on rescan', async () => {
+    const primary = makeFileStat({ absolutePath: '/library/Book/book.epub', relPath: 'Book/book.epub', format: 'epub', role: 'content' });
+    const cover = makeFileStat({
+      absolutePath: '/library/Book/cover.jpg',
+      relPath: 'Book/cover.jpg',
+      ino: 1002n,
+      sizeBytes: 512,
+      mtime: new Date('2024-01-01'),
+      format: 'jpg',
+      role: 'cover',
+    });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [primary, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    const repo = makeRepo({
+      findLibrarySettings: vi.fn().mockResolvedValue(makeLibrarySettings(LIBRARY_METADATA_PRECEDENCE_DEFAULT)),
+      findBooksByLibraryFolder: vi.fn().mockResolvedValue([{ id: 1, status: 'present', folderPath: '/library/Book', primaryFileId: 10 }]),
+      findBookFilesByLibraryFolder: vi.fn().mockResolvedValue([
+        makeBookFile({ id: 10, bookId: 1, absolutePath: primary.absolutePath, relPath: primary.relPath, ino: primary.ino, sortOrder: 0 }),
+        makeBookFile({
+          id: 12,
+          bookId: 1,
+          absolutePath: cover.absolutePath,
+          relPath: cover.relPath,
+          ino: cover.ino,
+          sizeBytes: 512,
+          mtime: new Date('2024-01-01'),
+          fileHash: 'cover-hash-v1',
+          format: 'jpg',
+          role: 'cover',
+          sortOrder: 1,
+        }),
+      ]),
+    });
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockMetadata.saveSidecarCover).not.toHaveBeenCalled();
+  });
+
+  it('does not re-import a cover.jpg sidecar touched only by mtime when its content hash is unchanged', async () => {
+    const primary = makeFileStat({ absolutePath: '/library/Book/book.epub', relPath: 'Book/book.epub', format: 'epub', role: 'content' });
+    const cover = makeFileStat({
+      absolutePath: '/library/Book/cover.jpg',
+      relPath: 'Book/cover.jpg',
+      ino: 1002n,
+      sizeBytes: 512,
+      mtime: new Date('2024-06-01'),
+      format: 'jpg',
+      role: 'cover',
+    });
+    mockFingerprint.mockResolvedValue('cover-hash-v1');
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [primary, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    const repo = makeRepo({
+      findLibrarySettings: vi.fn().mockResolvedValue(makeLibrarySettings(LIBRARY_METADATA_PRECEDENCE_DEFAULT)),
+      findBooksByLibraryFolder: vi.fn().mockResolvedValue([{ id: 1, status: 'present', folderPath: '/library/Book', primaryFileId: 10 }]),
+      findBookFilesByLibraryFolder: vi.fn().mockResolvedValue([
+        makeBookFile({ id: 10, bookId: 1, absolutePath: primary.absolutePath, relPath: primary.relPath, ino: primary.ino, sortOrder: 0 }),
+        makeBookFile({
+          id: 12,
+          bookId: 1,
+          absolutePath: cover.absolutePath,
+          relPath: cover.relPath,
+          ino: cover.ino,
+          sizeBytes: 512,
+          mtime: new Date('2024-01-01'),
+          fileHash: 'cover-hash-v1',
+          format: 'jpg',
+          role: 'cover',
+          sortOrder: 1,
+        }),
+      ]),
+    });
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockFingerprint).toHaveBeenCalledWith(cover.absolutePath);
+    expect(mockMetadata.saveSidecarCover).not.toHaveBeenCalled();
+  });
+
+  it('re-imports a cover.jpg sidecar whose content hash changed and updates the stored hash', async () => {
+    const primary = makeFileStat({ absolutePath: '/library/Book/book.epub', relPath: 'Book/book.epub', format: 'epub', role: 'content' });
+    const cover = makeFileStat({
+      absolutePath: '/library/Book/cover.jpg',
+      relPath: 'Book/cover.jpg',
+      ino: 1002n,
+      sizeBytes: 512,
+      mtime: new Date('2024-06-01'),
+      format: 'jpg',
+      role: 'cover',
+    });
+    mockFingerprint.mockResolvedValue('cover-hash-v2');
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [primary, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    const repo = makeRepo({
+      findLibrarySettings: vi.fn().mockResolvedValue(makeLibrarySettings(LIBRARY_METADATA_PRECEDENCE_DEFAULT)),
+      findBooksByLibraryFolder: vi.fn().mockResolvedValue([{ id: 1, status: 'present', folderPath: '/library/Book', primaryFileId: 10 }]),
+      findBookFilesByLibraryFolder: vi.fn().mockResolvedValue([
+        makeBookFile({ id: 10, bookId: 1, absolutePath: primary.absolutePath, relPath: primary.relPath, ino: primary.ino, sortOrder: 0 }),
+        makeBookFile({
+          id: 12,
+          bookId: 1,
+          absolutePath: cover.absolutePath,
+          relPath: cover.relPath,
+          ino: cover.ino,
+          sizeBytes: 512,
+          mtime: new Date('2024-01-01'),
+          fileHash: 'cover-hash-v1',
+          format: 'jpg',
+          role: 'cover',
+          sortOrder: 1,
+        }),
+      ]),
+    });
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockMetadata.saveSidecarCover).toHaveBeenCalledWith(1, cover.absolutePath);
+    expect(repo.updateBookFile).toHaveBeenCalledWith(12, { fileHash: 'cover-hash-v2' });
+  });
+
+  it('excludes cover.jpg sidecar import for book_per_file libraries', async () => {
+    installSuccessfulAvailabilityMock();
+    const audio = makeFileStat({ absolutePath: '/library/book.m4b', relPath: 'book.m4b', format: 'm4b', role: 'content' });
+    const cover = makeFileStat({
+      absolutePath: '/library/cover.jpg',
+      relPath: 'cover.jpg',
+      ino: 1003n,
+      sizeBytes: 512,
+      format: 'jpg',
+      role: 'cover',
+    });
+    mockFindLooseCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/book.m4b', [audio, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+    const repo = makeRepo({
+      findLibrarySettings: vi.fn().mockResolvedValue({
+        allowedFormats: [],
+        formatPriority: DEFAULT_FORMAT_PRIORITY,
+        metadataPrecedence: [...LIBRARY_METADATA_PRECEDENCE_DEFAULT],
+        excludePatterns: [],
+        organizationMode: 'book_per_file',
+      }),
+    });
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockMetadata.saveSidecarCover).not.toHaveBeenCalled();
   });
 
   it('does not fall back to embedded metadata when preferred-source persistence rejects', async () => {
@@ -3355,6 +3844,93 @@ describe('bootstrap, wrappers, and cover refresh', () => {
     expect(mockGateway.emitCoverRefreshed).toHaveBeenCalledWith({ bookId: 1, libraryId: 1 });
     expect(mockGateway.emitCoverRefreshProgress).toHaveBeenNthCalledWith(1, { libraryId: 1, processed: 0, total: 2, status: 'running' });
     expect(mockGateway.emitCoverRefreshProgress).toHaveBeenNthCalledWith(2, { libraryId: 1, processed: 2, total: 2, status: 'completed' });
+  });
+
+  it('resolves the sidecar cover over embedded when sidecar ranks first', async () => {
+    const repo = makeRepo({
+      findLibrarySettings: vi.fn().mockResolvedValue({
+        allowedFormats: [],
+        formatPriority: DEFAULT_FORMAT_PRIORITY,
+        metadataPrecedence: ['sidecar', 'embedded'],
+        excludePatterns: [],
+        organizationMode: 'book_per_folder',
+      }),
+      findPrimaryBookFilesByLibrary: vi.fn().mockResolvedValue([{ bookId: 1, absolutePath: '/library/Book/book.m4b', format: 'm4b' }]),
+      findSidecarCoverFilesByLibrary: vi.fn().mockResolvedValue([{ bookId: 1, absolutePath: '/library/Book/cover.jpg', format: 'jpg' }]),
+    });
+    const { service } = makeService(repo);
+
+    await expect(service.refreshCovers(1)).resolves.toEqual({ queued: 1 });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(repo.findSidecarCoverFilesByLibrary).toHaveBeenCalledTimes(1);
+    expect(repo.findSidecarCoverFilesByLibrary).toHaveBeenCalledWith(1);
+    expect(mockMetadata.saveSidecarCover).toHaveBeenCalledWith(1, '/library/Book/cover.jpg');
+    expect(mockMetadata.refreshCoverForBook).not.toHaveBeenCalled();
+    expect(mockGateway.emitCoverRefreshed).toHaveBeenCalledWith({ bookId: 1, libraryId: 1 });
+  });
+
+  it('falls back to the sidecar cover when embedded ranks first but yields no cover', async () => {
+    const repo = makeRepo({
+      findLibrarySettings: vi.fn().mockResolvedValue({
+        allowedFormats: [],
+        formatPriority: DEFAULT_FORMAT_PRIORITY,
+        metadataPrecedence: ['embedded', 'sidecar'],
+        excludePatterns: [],
+        organizationMode: 'book_per_folder',
+      }),
+      findPrimaryBookFilesByLibrary: vi.fn().mockResolvedValue([{ bookId: 1, absolutePath: '/library/Book/book.m4b', format: 'm4b' }]),
+      findSidecarCoverFilesByLibrary: vi.fn().mockResolvedValue([{ bookId: 1, absolutePath: '/library/Book/cover.jpg', format: 'jpg' }]),
+    });
+    mockMetadata.refreshCoverForBook.mockResolvedValue(false);
+    const { service } = makeService(repo);
+
+    await expect(service.refreshCovers(1)).resolves.toEqual({ queued: 1 });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(mockMetadata.refreshCoverForBook).toHaveBeenCalledWith(1, '/library/Book/book.m4b', 'm4b');
+    expect(mockMetadata.saveSidecarCover).toHaveBeenCalledWith(1, '/library/Book/cover.jpg');
+  });
+
+  it('processes a book that only has a sidecar cover and a non-extractable primary format', async () => {
+    const repo = makeRepo({
+      findLibrarySettings: vi.fn().mockResolvedValue({
+        allowedFormats: [],
+        formatPriority: DEFAULT_FORMAT_PRIORITY,
+        metadataPrecedence: ['sidecar', 'embedded'],
+        excludePatterns: [],
+        organizationMode: 'book_per_folder',
+      }),
+      findPrimaryBookFilesByLibrary: vi.fn().mockResolvedValue([{ bookId: 4, absolutePath: '/library/Book/readme.txt', format: 'txt' }]),
+      findSidecarCoverFilesByLibrary: vi.fn().mockResolvedValue([{ bookId: 4, absolutePath: '/library/Book/cover.png', format: 'png' }]),
+    });
+    const { service } = makeService(repo);
+
+    await expect(service.refreshCovers(1)).resolves.toEqual({ queued: 1 });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(mockMetadata.saveSidecarCover).toHaveBeenCalledWith(4, '/library/Book/cover.png');
+  });
+
+  it('skips the sidecar cover lookup for book_per_file libraries', async () => {
+    const repo = makeRepo({
+      findLibrarySettings: vi.fn().mockResolvedValue({
+        allowedFormats: [],
+        formatPriority: DEFAULT_FORMAT_PRIORITY,
+        metadataPrecedence: ['sidecar', 'embedded'],
+        excludePatterns: [],
+        organizationMode: 'book_per_file',
+      }),
+      findPrimaryBookFilesByLibrary: vi.fn().mockResolvedValue([{ bookId: 1, absolutePath: '/library/book.epub', format: 'epub' }]),
+    });
+    const { service } = makeService(repo);
+
+    await expect(service.refreshCovers(1)).resolves.toEqual({ queued: 1 });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(repo.findSidecarCoverFilesByLibrary).not.toHaveBeenCalled();
+    expect(mockMetadata.saveSidecarCover).not.toHaveBeenCalled();
+    expect(mockMetadata.refreshCoverForBook).toHaveBeenCalledWith(1, '/library/book.epub', 'epub');
   });
 
   it('rethrows refreshCovers query failures', async () => {

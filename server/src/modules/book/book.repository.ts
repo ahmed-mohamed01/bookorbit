@@ -1218,6 +1218,24 @@ export class BookRepository {
       .orderBy(asc(books.id));
   }
 
+  async findSidecarCoverCandidatesByBookIds(
+    bookIds: number[],
+  ): Promise<{ bookId: number; absolutePath: string; format: string | null; metadataPrecedence: string[]; organizationMode: string }[]> {
+    if (bookIds.length === 0) return [];
+    return this.db
+      .select({
+        bookId: bookFiles.bookId,
+        absolutePath: bookFiles.absolutePath,
+        format: bookFiles.format,
+        metadataPrecedence: libraries.metadataPrecedence,
+        organizationMode: libraries.organizationMode,
+      })
+      .from(bookFiles)
+      .innerJoin(books, eq(books.id, bookFiles.bookId))
+      .innerJoin(libraries, eq(libraries.id, books.libraryId))
+      .where(and(inArray(bookFiles.bookId, bookIds), eq(bookFiles.role, 'cover')));
+  }
+
   async findPrimaryReaderFilesByBookIds(
     bookIds: number[],
   ): Promise<{ id: number; bookId: number; absolutePath: string; format: string | null; fileHash: string | null; sizeBytes: number | null }[]> {

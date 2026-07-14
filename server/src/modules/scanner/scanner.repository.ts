@@ -116,6 +116,14 @@ export class ScannerRepository {
       .where(and(eq(books.libraryId, libraryId), ne(books.status, 'missing')));
   }
 
+  async findSidecarCoverFilesByLibrary(libraryId: number): Promise<{ bookId: number; absolutePath: string; format: string | null }[]> {
+    return this.db
+      .select({ bookId: books.id, absolutePath: bookFiles.absolutePath, format: bookFiles.format })
+      .from(books)
+      .innerJoin(bookFiles, eq(bookFiles.bookId, books.id))
+      .where(and(eq(books.libraryId, libraryId), ne(books.status, 'missing'), eq(bookFiles.role, 'cover')));
+  }
+
   async findPrimaryBookFilesByBookId(bookId: number) {
     return this.db
       .select({

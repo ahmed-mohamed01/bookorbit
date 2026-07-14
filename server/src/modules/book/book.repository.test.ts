@@ -294,7 +294,32 @@ describe('BookRepository', () => {
     await expect(repo.findRecommendationTitlesByBookIds([])).resolves.toEqual([]);
     await expect(repo.findPrimaryFilesByBookIds([])).resolves.toEqual([]);
     await expect(repo.findAllFilesByBookIds([])).resolves.toEqual([]);
+    await expect(repo.findSidecarCoverCandidatesByBookIds([])).resolves.toEqual([]);
     expect(db.select).not.toHaveBeenCalled();
+  });
+
+  it('reads sidecar cover candidates joined with library precedence for the given book ids', async () => {
+    const rows = [
+      {
+        bookId: 1,
+        absolutePath: '/books/A/cover.jpg',
+        format: 'jpg',
+        metadataPrecedence: ['sidecar', 'embedded'],
+        organizationMode: 'book_per_folder',
+      },
+      {
+        bookId: 2,
+        absolutePath: '/books/B/cover.png',
+        format: 'png',
+        metadataPrecedence: ['embedded', 'sidecar'],
+        organizationMode: 'book_per_file',
+      },
+    ];
+    const db = { select: vi.fn().mockReturnValueOnce(makeSelectChain('where', rows)) };
+    const repo = new BookRepository(db as never);
+
+    await expect(repo.findSidecarCoverCandidatesByBookIds([1, 2])).resolves.toEqual(rows);
+    expect(db.select).toHaveBeenCalledTimes(1);
   });
 
   it('maps hasCover from coverSource and aggregates authors per book in recommendation rows', async () => {

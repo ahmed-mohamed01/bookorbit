@@ -209,6 +209,20 @@ describe('ScannerRepository', () => {
     await expect(repo.findMissingBooksByFolderPath('/books/B', 5)).resolves.toEqual([{ id: 12, folderPath: '/books/B', status: 'missing' }]);
   });
 
+  it('reads sidecar cover files scoped to a library', async () => {
+    const { repo, queues, db } = makeRepo();
+    queues.select.push([
+      { bookId: 1, absolutePath: '/books/A/cover.jpg', format: 'jpg' },
+      { bookId: 2, absolutePath: '/books/B/cover.png', format: 'png' },
+    ]);
+
+    await expect(repo.findSidecarCoverFilesByLibrary(4)).resolves.toEqual([
+      { bookId: 1, absolutePath: '/books/A/cover.jpg', format: 'jpg' },
+      { bookId: 2, absolutePath: '/books/B/cover.png', format: 'png' },
+    ]);
+    expect(db.select).toHaveBeenCalledTimes(1);
+  });
+
   it('creates and updates book files and supports hash lookup', async () => {
     const { repo, queues, chains, db } = makeRepo();
     queues.select.push([{ id: 50, fileHash: 'abc123' }]);

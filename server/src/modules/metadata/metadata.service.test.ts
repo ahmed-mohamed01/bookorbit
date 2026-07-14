@@ -4,11 +4,13 @@ vi.mock('fs/promises', () => ({
   writeFile: vi.fn(),
   readdir: vi.fn().mockResolvedValue([]),
   rm: vi.fn(),
+  stat: vi.fn(),
 }));
 
 vi.mock('./lib/cover', () => ({
   generateThumbnail: vi.fn(),
   imageExt: vi.fn(),
+  isDecodableImage: vi.fn(),
 }));
 
 vi.mock('./lib/cbz-metadata', () => ({
@@ -82,13 +84,13 @@ vi.mock('./extractors/audio.extractor', () => ({
   parseAudioDuration: vi.fn().mockImplementation(() => Promise.resolve(null)),
 }));
 
-import { mkdir, readFile, readdir, rm, writeFile } from 'fs/promises';
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'fs/promises';
 import { Logger } from '@nestjs/common';
 import type { BookMetadataLockField } from '@bookorbit/types';
 
 import { authors, bookAuthors, bookGenres, bookMetadata, books, bookTags, genres, tags } from '../../db/schema';
 import { BookMetadataLockService } from '../book-metadata-lock/book-metadata-lock.service';
-import { generateThumbnail, imageExt } from './lib/cover';
+import { generateThumbnail, imageExt, isDecodableImage } from './lib/cover';
 import { extractEpubCover } from './lib/cover-epub';
 import { extractEpubMetadata } from './lib/epub';
 import { parseBookFilename } from './lib/filename-parser';
@@ -105,6 +107,8 @@ const mockReaddir = readdir as MockedFunction<typeof readdir>;
 const mockRm = rm as MockedFunction<typeof rm>;
 const mockGenerateThumbnail = generateThumbnail as MockedFunction<typeof generateThumbnail>;
 const mockImageExt = imageExt as MockedFunction<typeof imageExt>;
+const mockStat = stat as MockedFunction<typeof stat>;
+const mockIsDecodableImage = isDecodableImage as MockedFunction<typeof isDecodableImage>;
 const mockParseBookFilename = parseBookFilename as MockedFunction<typeof parseBookFilename>;
 const mockParseMobiFile = parseMobiFile as MockedFunction<typeof parseMobiFile>;
 const mockParsePdfFile = parsePdfFile as MockedFunction<typeof parsePdfFile>;
@@ -177,6 +181,8 @@ describe('MetadataService', () => {
     mockRm.mockResolvedValue(undefined);
     mockGenerateThumbnail.mockResolvedValue(Buffer.from('thumbnail-bytes'));
     mockImageExt.mockReturnValue('png');
+    mockIsDecodableImage.mockResolvedValue(true);
+    mockStat.mockResolvedValue({ isFile: () => true, size: 4096 } as never);
     mockParseBookFilename.mockReturnValue({ title: 'Fallback Title', publishedYear: 2001 });
     mockParseMobiFile.mockResolvedValue(null);
     mockParsePdfFile.mockResolvedValue(null);
@@ -311,6 +317,148 @@ describe('MetadataService', () => {
     expect(mockWriteFile).toHaveBeenCalledWith('/books/covers/13/cover_extracted.png', Buffer.from('image-bytes'));
     expect(mockWriteFile).not.toHaveBeenCalledWith('/books/covers/13/thumbnail.jpg', expect.any(Buffer));
     expect(db.update).not.toHaveBeenCalledWith(books);
+  });
+
+  it('saveSidecarCover writes cover bytes without overwriting an existing coverSource and returns saved', async () => {
+    const { db, updateSet } = makeDb();
+    const service = makeService(db);
+    mockReadFile.mockResolvedValue(Buffer.from('image-bytes'));
+
+    await expect(service.saveSidecarCover(21, '/books/Book/cover.jpg')).resolves.toBe('saved');
+
+    expect(mockReadFile).toHaveBeenCalledWith('/books/Book/cover.jpg');
+    expect(mockWriteFile).toHaveBeenCalledWith('/books/covers/21/cover_extracted.png', Buffer.from('image-bytes'));
+    expect(mockWriteFile).toHaveBeenCalledWith('/books/covers/21/thumbnail.jpg', Buffer.from('thumbnail-bytes'));
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ coverSource: 'extracted' }));
+  });
+
+  it('saveSidecarCover returns locked without touching the cover when the cover field is locked', async () => {
+    const { db } = makeDb();
+    const lockService = {
+      isFieldLocked: vi.fn().mockResolvedValue(true),
+      filterAutomatedBookUpdate: vi.fn(),
+    };
+    const service = makeService(db, undefined, { bookMetadataLockService: lockService });
+
+    await expect(service.saveSidecarCover(22, '/books/Book/cover.jpg')).resolves.toBe('locked');
+
+    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it('saveSidecarCover returns failed for empty or oversized files without reading or writing', async () => {
+    const { db } = makeDb();
+    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const service = makeService(db);
+
+    mockStat.mockResolvedValueOnce({ isFile: () => true, size: 0 } as never);
+    await expect(service.saveSidecarCover(23, '/books/Book/cover.jpg')).resolves.toBe('failed');
+
+    mockStat.mockResolvedValueOnce({ isFile: () => true, size: 21 * 1024 * 1024 } as never);
+    await expect(service.saveSidecarCover(23, '/books/Book/cover.jpg')).resolves.toBe('failed');
+
+    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[scanner.import_sidecar_cover] [fail]'));
+  });
+
+  it('saveSidecarCover returns failed for a corrupt image without overwriting the existing cover', async () => {
+    const { db } = makeDb();
+    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const service = makeService(db);
+    mockReadFile.mockResolvedValue(Buffer.from('not-an-image'));
+    mockIsDecodableImage.mockResolvedValue(false);
+
+    await expect(service.saveSidecarCover(24, '/books/Book/cover.jpg')).resolves.toBe('failed');
+
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('reason=corrupt'));
+  });
+
+  it('saveSidecarCover returns failed and never throws when the file cannot be read', async () => {
+    const { db } = makeDb();
+    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const service = makeService(db);
+    mockReadFile.mockRejectedValue(new Error('unreadable'));
+
+    await expect(service.saveSidecarCover(25, '/books/Book/cover.jpg')).resolves.toBe('failed');
+
+    expect(mockWriteFile).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[scanner.import_sidecar_cover] [fail]'));
+  });
+
+  it('applyCoverFromSources persists the sidecar cover and stops without trying embedded when it succeeds', async () => {
+    const { db } = makeDb();
+    const service = makeService(db);
+    const saveSidecarCoverSpy = vi.spyOn(service, 'saveSidecarCover').mockResolvedValue('saved');
+    const refreshCoverForBookSpy = vi.spyOn(service, 'refreshCoverForBook').mockResolvedValue(true);
+
+    await expect(
+      service.applyCoverFromSources(30, [
+        { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' },
+        { kind: 'embedded', absolutePath: '/books/Book/book.epub', format: 'epub' },
+      ]),
+    ).resolves.toBe(true);
+
+    expect(saveSidecarCoverSpy).toHaveBeenCalledWith(30, '/books/Book/cover.jpg');
+    expect(refreshCoverForBookSpy).not.toHaveBeenCalled();
+  });
+
+  it('applyCoverFromSources falls through to the embedded source when the sidecar cover fails', async () => {
+    const { db } = makeDb();
+    const service = makeService(db);
+    const saveSidecarCoverSpy = vi.spyOn(service, 'saveSidecarCover').mockResolvedValue('failed');
+    const refreshCoverForBookSpy = vi.spyOn(service, 'refreshCoverForBook').mockResolvedValue(true);
+
+    await expect(
+      service.applyCoverFromSources(31, [
+        { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' },
+        { kind: 'embedded', absolutePath: '/books/Book/book.epub', format: 'epub' },
+      ]),
+    ).resolves.toBe(true);
+
+    expect(saveSidecarCoverSpy).toHaveBeenCalledWith(31, '/books/Book/cover.jpg');
+    expect(refreshCoverForBookSpy).toHaveBeenCalledWith(31, '/books/Book/book.epub', 'epub');
+  });
+
+  it('applyCoverFromSources stops the walk without trying embedded when the sidecar cover is locked', async () => {
+    const { db } = makeDb();
+    const service = makeService(db);
+    const saveSidecarCoverSpy = vi.spyOn(service, 'saveSidecarCover').mockResolvedValue('locked');
+    const refreshCoverForBookSpy = vi.spyOn(service, 'refreshCoverForBook').mockResolvedValue(true);
+
+    await expect(
+      service.applyCoverFromSources(32, [
+        { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' },
+        { kind: 'embedded', absolutePath: '/books/Book/book.epub', format: 'epub' },
+      ]),
+    ).resolves.toBe(false);
+
+    expect(saveSidecarCoverSpy).toHaveBeenCalledWith(32, '/books/Book/cover.jpg');
+    expect(refreshCoverForBookSpy).not.toHaveBeenCalled();
+  });
+
+  it('applyCoverFromSources returns false when every source in the read order fails', async () => {
+    const { db } = makeDb();
+    const service = makeService(db);
+    vi.spyOn(service, 'refreshCoverForBook').mockResolvedValue(false);
+
+    await expect(service.applyCoverFromSources(33, [{ kind: 'embedded', absolutePath: '/books/Book/book.epub', format: 'epub' }])).resolves.toBe(
+      false,
+    );
+  });
+
+  it('getCoverSource returns the stored cover source or null', async () => {
+    const { db, selectLimit } = makeDb();
+    const service = makeService(db);
+
+    selectLimit.mockResolvedValueOnce([{ coverSource: 'extracted' }]);
+    await expect(service.getCoverSource(26)).resolves.toBe('extracted');
+
+    selectLimit.mockResolvedValueOnce([]);
+    await expect(service.getCoverSource(26)).resolves.toBeNull();
   });
 
   it('downloadAndSaveCover no-ops on empty payloads and network failures', async () => {

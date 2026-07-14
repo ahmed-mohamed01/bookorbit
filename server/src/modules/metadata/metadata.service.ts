@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { mkdir, readdir, rm, writeFile } from 'fs/promises';
+import { mkdir, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
 import { join } from 'path';
 
 import { DB } from '../../db';
@@ -42,7 +42,8 @@ import { MobiFormatExtractor } from './extractors/mobi-format.extractor';
 import { OpfFormatExtractor } from './extractors/opf-format.extractor';
 import { PdfFormatExtractor } from './extractors/pdf-format.extractor';
 import type { FormatExtractor, ParsedBookData } from './extractors/format-extractor.interface';
-import { generateThumbnail, imageExt } from './lib/cover';
+import { generateThumbnail, imageExt, isDecodableImage } from './lib/cover';
+import type { CoverReadSource } from './lib/cover-source-resolution';
 import type { PdfParseWarning } from './lib/pdf-parser';
 import { MetadataEventsService, METADATA_AUTHORS_REPLACED } from './metadata-events.service';
 
@@ -57,6 +58,7 @@ interface RelationMutationOptions {
 const AUDIO_FORMATS = ['m4b', 'mp3', 'm4a', 'opus', 'ogg', 'flac'] as const;
 const MAX_RELATION_NAME_LENGTH = 200;
 const EXTRACTED_COVER_SOURCE = 'extracted';
+const MAX_SIDECAR_COVER_BYTES = 20 * 1024 * 1024;
 const MIN_PUBLISHED_YEAR = 1000;
 const MAX_PUBLISHED_YEAR = 2200;
 const NORMALIZED_AUTHOR_NAME_SQL = normalizeMetadataTextKeySql(authors.name);
@@ -286,6 +288,79 @@ export class MetadataService {
       );
       return false;
     }
+  }
+
+  /**
+   * Applies the first cover source that yields cover bytes, in the order given
+   * by `resolveCoverReadOrder`. Shared by the library-wide and per-book cover
+   * refresh flows: a sidecar source persists via `saveSidecarCover`, an embedded
+   * source via `refreshCoverForBook`. A locked book stops the walk. Returns
+   * whether a cover was written.
+   */
+  async applyCoverFromSources(bookId: number, readOrder: CoverReadSource[]): Promise<boolean> {
+    for (const source of readOrder) {
+      if (source.kind === 'sidecar') {
+        const outcome = await this.saveSidecarCover(bookId, source.absolutePath);
+        if (outcome === 'saved') return true;
+        if (outcome === 'locked') return false;
+      } else if (await this.refreshCoverForBook(bookId, source.absolutePath, source.format)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Imports a `cover.*` sidecar image next to the media as the book cover.
+   * Corrupt, unreadable, empty, or oversized files never throw and never touch
+   * an existing cover; they return 'failed' so the caller can fall through to
+   * the next cover source. Locked covers return 'locked'.
+   */
+  async saveSidecarCover(bookId: number, absolutePath: string): Promise<'saved' | 'locked' | 'failed'> {
+    const event = 'scanner.import_sidecar_cover';
+    const startedAt = Date.now();
+    try {
+      if (await this.bookMetadataLockService.isFieldLocked(bookId, 'cover')) {
+        this.logger.debug(
+          `[${event}] [end] bookId=${bookId} durationMs=${Date.now() - startedAt} applied=false locked=true - sidecar cover import skipped`,
+        );
+        return 'locked';
+      }
+
+      const fileStat = await stat(absolutePath);
+      if (!fileStat.isFile() || fileStat.size === 0 || fileStat.size > MAX_SIDECAR_COVER_BYTES) {
+        this.logger.warn(
+          `[${event}] [fail] bookId=${bookId} path="${sanitizeLogValue(absolutePath)}" sizeBytes=${fileStat.size} durationMs=${Date.now() - startedAt} reason=invalid_size - sidecar cover import failed`,
+        );
+        return 'failed';
+      }
+
+      const bytes = await readFile(absolutePath);
+      if (!(await isDecodableImage(bytes))) {
+        this.logger.warn(
+          `[${event}] [fail] bookId=${bookId} path="${sanitizeLogValue(absolutePath)}" durationMs=${Date.now() - startedAt} reason=corrupt - sidecar cover import failed`,
+        );
+        return 'failed';
+      }
+
+      await this.persistCover(bookId, bytes, false);
+      this.logger.debug(
+        `[${event}] [end] bookId=${bookId} path="${sanitizeLogValue(absolutePath)}" durationMs=${Date.now() - startedAt} applied=true - sidecar cover import completed`,
+      );
+      return 'saved';
+    } catch (error) {
+      const errorClass = error instanceof Error ? error.name : 'Error';
+      const errorMessage = sanitizeLogValue(error instanceof Error ? error.message : String(error));
+      this.logger.warn(
+        `[${event}] [fail] bookId=${bookId} path="${sanitizeLogValue(absolutePath)}" durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${errorMessage}" - sidecar cover import failed`,
+      );
+      return 'failed';
+    }
+  }
+
+  async getCoverSource(bookId: number): Promise<string | null> {
+    const [row] = await this.db.select({ coverSource: bookMetadata.coverSource }).from(bookMetadata).where(eq(bookMetadata.bookId, bookId)).limit(1);
+    return row?.coverSource ?? null;
   }
 
   // ── Audio helpers ────────────────────────────────────────────────────────────

@@ -111,6 +111,7 @@ function makeService(overrides: { bookMetadataLockService?: unknown } = {}) {
     findPatternMetadataByBookIds: vi.fn(),
     findLibraryIdsByBookIds: vi.fn(),
     findPrimaryFilesByBookIds: vi.fn(),
+    findSidecarCoverCandidatesByBookIds: vi.fn().mockResolvedValue([]),
     findAllFilesByBookIds: vi.fn(),
     findTagsByBookIds: vi.fn(),
     findAuthorsByBookIds: vi.fn(),
@@ -162,6 +163,19 @@ function makeService(overrides: { bookMetadataLockService?: unknown } = {}) {
     emitAuthorsReplaced: vi.fn(),
     downloadAndSaveCover: vi.fn().mockResolvedValue(undefined),
     refreshCoverForBook: vi.fn(),
+    saveSidecarCover: vi.fn().mockResolvedValue('saved'),
+    applyCoverFromSources: vi.fn(async (bookId: number, readOrder: Array<{ kind: string; absolutePath: string; format?: string }>) => {
+      for (const source of readOrder) {
+        if (source.kind === 'sidecar') {
+          const outcome = await metadataService.saveSidecarCover(bookId, source.absolutePath);
+          if (outcome === 'saved') return true;
+          if (outcome === 'locked') return false;
+        } else if (await metadataService.refreshCoverForBook(bookId, source.absolutePath, source.format)) {
+          return true;
+        }
+      }
+      return false;
+    }),
   };
   const pipeline = {
     run: vi.fn(),
@@ -2023,6 +2037,116 @@ describe('BookService', () => {
       expect(onProgress).toHaveBeenCalledTimes(2);
       expect(onProgress).toHaveBeenNthCalledWith(1, 1);
       expect(onProgress).toHaveBeenNthCalledWith(2, 2);
+    });
+
+    it('bulkReExtractCover resolves the sidecar cover over embedded when sidecar ranks first', async () => {
+      const { service, bookRepo, metadataService } = makeService();
+      const user = makeUser();
+
+      bookRepo.findLibraryIdsByBookIds.mockResolvedValue([{ id: 1, libraryId: 7 }]);
+      bookRepo.findPrimaryFilesByBookIds.mockResolvedValue([{ bookId: 1, absolutePath: '/books/Book/book.m4b', format: 'm4b' }]);
+      bookRepo.findSidecarCoverCandidatesByBookIds.mockResolvedValue([
+        {
+          bookId: 1,
+          absolutePath: '/books/Book/cover.jpg',
+          format: 'jpg',
+          metadataPrecedence: ['sidecar', 'embedded'],
+          organizationMode: 'book_per_folder',
+        },
+      ]);
+
+      const result = await service.bulkReExtractCover([1], user);
+
+      expect(result).toEqual({ processed: 1, updated: 1 });
+      expect(bookRepo.findSidecarCoverCandidatesByBookIds).toHaveBeenCalledTimes(1);
+      expect(bookRepo.findSidecarCoverCandidatesByBookIds).toHaveBeenCalledWith([1]);
+      expect(metadataService.saveSidecarCover).toHaveBeenCalledWith(1, '/books/Book/cover.jpg');
+      expect(metadataService.refreshCoverForBook).not.toHaveBeenCalled();
+    });
+
+    it('bulkReExtractCover falls back to embedded extraction when embedded ranks first', async () => {
+      const { service, bookRepo, metadataService } = makeService();
+      const user = makeUser();
+
+      bookRepo.findLibraryIdsByBookIds.mockResolvedValue([{ id: 1, libraryId: 7 }]);
+      bookRepo.findPrimaryFilesByBookIds.mockResolvedValue([{ bookId: 1, absolutePath: '/books/Book/book.m4b', format: 'm4b' }]);
+      bookRepo.findSidecarCoverCandidatesByBookIds.mockResolvedValue([
+        {
+          bookId: 1,
+          absolutePath: '/books/Book/cover.jpg',
+          format: 'jpg',
+          metadataPrecedence: ['embedded', 'sidecar'],
+          organizationMode: 'book_per_folder',
+        },
+      ]);
+      metadataService.refreshCoverForBook.mockResolvedValue(true);
+
+      const result = await service.bulkReExtractCover([1], user);
+
+      expect(result).toEqual({ processed: 1, updated: 1 });
+      expect(metadataService.refreshCoverForBook).toHaveBeenCalledWith(1, '/books/Book/book.m4b', 'm4b');
+      expect(metadataService.saveSidecarCover).not.toHaveBeenCalled();
+    });
+
+    it('bulkReExtractCover ignores sidecar covers for book_per_file libraries', async () => {
+      const { service, bookRepo, metadataService } = makeService();
+      const user = makeUser();
+
+      bookRepo.findLibraryIdsByBookIds.mockResolvedValue([{ id: 1, libraryId: 7 }]);
+      bookRepo.findPrimaryFilesByBookIds.mockResolvedValue([{ bookId: 1, absolutePath: '/books/book.epub', format: 'epub' }]);
+      bookRepo.findSidecarCoverCandidatesByBookIds.mockResolvedValue([
+        {
+          bookId: 1,
+          absolutePath: '/books/cover.jpg',
+          format: 'jpg',
+          metadataPrecedence: ['sidecar', 'embedded'],
+          organizationMode: 'book_per_file',
+        },
+      ]);
+      metadataService.refreshCoverForBook.mockResolvedValue(true);
+
+      const result = await service.bulkReExtractCover([1], user);
+
+      expect(result).toEqual({ processed: 1, updated: 1 });
+      expect(metadataService.saveSidecarCover).not.toHaveBeenCalled();
+      expect(metadataService.refreshCoverForBook).toHaveBeenCalledWith(1, '/books/book.epub', 'epub');
+    });
+
+    it('bulkReExtractCover resolves per-book precedence across libraries', async () => {
+      const { service, bookRepo, metadataService } = makeService();
+      const user = makeUser();
+
+      bookRepo.findLibraryIdsByBookIds.mockResolvedValue([
+        { id: 1, libraryId: 7 },
+        { id: 2, libraryId: 8 },
+      ]);
+      bookRepo.findPrimaryFilesByBookIds.mockResolvedValue([
+        { bookId: 1, absolutePath: '/lib7/Book/book.m4b', format: 'm4b' },
+        { bookId: 2, absolutePath: '/lib8/Book/book.m4b', format: 'm4b' },
+      ]);
+      bookRepo.findSidecarCoverCandidatesByBookIds.mockResolvedValue([
+        {
+          bookId: 1,
+          absolutePath: '/lib7/Book/cover.jpg',
+          format: 'jpg',
+          metadataPrecedence: ['sidecar', 'embedded'],
+          organizationMode: 'book_per_folder',
+        },
+        {
+          bookId: 2,
+          absolutePath: '/lib8/Book/cover.jpg',
+          format: 'jpg',
+          metadataPrecedence: ['embedded', 'sidecar'],
+          organizationMode: 'book_per_folder',
+        },
+      ]);
+      metadataService.refreshCoverForBook.mockResolvedValue(true);
+
+      const result = await service.bulkReExtractCover([1, 2], user);
+
+      expect(result).toEqual({ processed: 2, updated: 2 });
+      expect(metadataService.saveSidecarCover).toHaveBeenCalledWith(1, '/lib7/Book/cover.jpg');
+      expect(metadataService.refreshCoverForBook).toHaveBeenCalledWith(2, '/lib8/Book/book.m4b', 'm4b');
     });
 
     it('stops bulk cover extraction when progress callback throws', async () => {
