@@ -8,7 +8,7 @@ export { DEFAULT_FORMAT_PRIORITY, FORMAT_LABELS }
 export const DEFAULT_METADATA_PRECEDENCE = ['sidecar', 'embedded', 'opfFile']
 
 export const METADATA_LABELS: Record<string, string> = {
-  sidecar: 'Audiobookshelf metadata.json',
+  sidecar: 'Sidecar metadata',
   embedded: 'Embedded metadata',
   opfFile: 'OPF files',
 }

@@ -4737,7 +4737,8 @@
       "metadata": {
         "sourcePrecedence": {
           "title": "Source precedence",
-          "hint": "The highest source in the list is preferred when multiple are available."
+          "hint": "The highest source in the list is preferred when multiple are available.",
+          "sidecarTooltip": "metadata.json and cover.jpg sidecar files, as created by Audiobookshelf."
         },
         "formatPriority": {
           "title": "Format priority",

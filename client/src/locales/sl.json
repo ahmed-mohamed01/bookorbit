@@ -4739,7 +4739,8 @@
       "metadata": {
         "sourcePrecedence": {
           "title": "Prednost virov",
-          "hint": "Kadar je na voljo več virov, ima prednost tisti, ki je najvišje na seznamu."
+          "hint": "Kadar je na voljo več virov, ima prednost tisti, ki je najvišje na seznamu.",
+          "sidecarTooltip": "Spremljajoče datoteke metadata.json in cover.jpg, kot jih ustvari Audiobookshelf."
         },
         "formatPriority": {
           "title": "Prednost oblik",

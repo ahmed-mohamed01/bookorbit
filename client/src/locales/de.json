@@ -4742,7 +4742,8 @@
       "metadata": {
         "sourcePrecedence": {
           "title": "Quellenpriorität",
-          "hint": "Die höchste Quelle in der Liste wird bevorzugt, wenn mehrere verfügbar sind."
+          "hint": "Die höchste Quelle in der Liste wird bevorzugt, wenn mehrere verfügbar sind.",
+          "sidecarTooltip": "metadata.json- und cover.jpg-Begleitdateien, wie sie von Audiobookshelf erstellt werden."
         },
         "formatPriority": {
           "title": "Formatpriorität",

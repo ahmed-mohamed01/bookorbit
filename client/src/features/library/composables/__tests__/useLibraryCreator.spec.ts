@@ -111,7 +111,7 @@ describe('useLibraryCreator', () => {
     const creator = useLibraryCreator()
 
     expect(creator.form.metadataPrecedence).toEqual(['sidecar', 'embedded', 'opfFile'])
-    expect(METADATA_LABELS.sidecar).toBe('Audiobookshelf metadata.json')
+    expect(METADATA_LABELS.sidecar).toBe('Sidecar metadata')
   })
 
   it('appends missing supported metadata sources when editing an older library', async () => {

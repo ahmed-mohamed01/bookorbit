@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, ChevronUp, GripVertical } from '@lucide/vue'
+import { ChevronDown, ChevronUp, GripVertical, Info } from '@lucide/vue'
 import { METADATA_LABELS, FORMAT_LABELS } from '../composables/useLibraryCreator'
 
 const { t } = useI18n()
@@ -99,7 +99,15 @@ function moveFormat(index: number, direction: -1 | 1) {
           <span class="flex items-center justify-center w-4 h-4 rounded-full bg-primary/10 text-primary text-[9px] font-bold shrink-0">
             {{ index + 1 }}
           </span>
-          <span class="flex-1 text-sm text-foreground truncate">{{ METADATA_LABELS[key] ?? key }}</span>
+          <div class="flex-1 flex items-center gap-1.5 min-w-0">
+            <span class="text-sm text-foreground truncate">{{ METADATA_LABELS[key] ?? key }}</span>
+            <Info
+              v-if="key === 'sidecar'"
+              :size="13"
+              class="shrink-0 text-muted-foreground cursor-help"
+              :title="t('library.creator.metadata.sourcePrecedence.sidecarTooltip')"
+            />
+          </div>
           <div class="flex items-center gap-0.5">
             <button
               type="button"
