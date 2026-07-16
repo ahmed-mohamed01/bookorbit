@@ -5,6 +5,7 @@ import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import type {
   ContentFilterRules,
+  JumpBucketKind,
   JumpBucketsResponse,
   SortField,
   SortSpec,
@@ -17,6 +18,7 @@ import { accentInsensitiveIlike } from '../../common/utils/accent-insensitive-se
 import { SeriesIdentityService } from '../../common/services/series-identity.service';
 import { SeriesMembershipService } from '../../common/services/series-membership.service';
 import { BookQueryBuilder } from './book-query-builder.service';
+import { letterJumpBucketExpr } from './jump-bucket-expr';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import {
@@ -146,6 +148,24 @@ type TemporalJumpBucketRawRow = JumpBucketRawRow & {
   step: number | string;
 };
 
+type DiscreteJumpBucketRawRow = JumpBucketRawRow & {
+  is_unknown: boolean;
+};
+
+type FlatDiscreteSourceParts = {
+  prefixCte: SQL;
+  join: SQL;
+  value: SQL;
+};
+
+type CollapsedDiscreteSourceParts = {
+  prefixCte: SQL;
+  baseJoin: SQL;
+  baseExtraSelect: SQL;
+  representativeExtraSelect: SQL;
+  value: SQL;
+};
+
 type TemporalSourceParts = {
   prefixCte: SQL;
   join: SQL;
@@ -153,6 +173,116 @@ type TemporalSourceParts = {
   baseExtraSelect: SQL;
   representativeExtraSelect: SQL;
 };
+
+function flatDiscreteSourceParts(field: SortField, userId: number): FlatDiscreteSourceParts | null {
+  const empty = sql.raw('');
+  const direct = (value: SQL): FlatDiscreteSourceParts => ({ prefixCte: empty, join: empty, value });
+
+  switch (field) {
+    case 'title':
+      return direct(sql`${bookMetadata.title}`);
+    case 'author':
+      return direct(sql`${books.primaryAuthorSortName}`);
+    case 'series':
+      return direct(sql`${bookMetadata.seriesName}`);
+    case 'publisher':
+      return direct(sql`${bookMetadata.publisher}`);
+    case 'language':
+      return direct(sql`${bookMetadata.language}`);
+    case 'format':
+      return {
+        prefixCte: empty,
+        join: sql`LEFT JOIN ${bookFiles} rail_primary_file ON rail_primary_file.id = ${books.primaryFileId}`,
+        value: sql.raw('rail_primary_file.format'),
+      };
+    case 'readStatus':
+      return {
+        prefixCte: empty,
+        join: sql`LEFT JOIN ${userBookStatus} rail_ubs ON rail_ubs.book_id = ${books.id} AND rail_ubs.user_id = ${userId}`,
+        value: sql`coalesce(rail_ubs.status::text, 'unread')`,
+      };
+    default:
+      return null;
+  }
+}
+
+function collapsedDiscreteSourceParts(field: SortField, userId: number): CollapsedDiscreteSourceParts | null {
+  const empty = sql.raw('');
+  const direct = (value: SQL): CollapsedDiscreteSourceParts => ({
+    prefixCte: empty,
+    baseJoin: empty,
+    baseExtraSelect: empty,
+    representativeExtraSelect: empty,
+    value,
+  });
+
+  switch (field) {
+    case 'title':
+    case 'series':
+      return direct(sql.raw('r.sort_title'));
+    case 'author':
+      return direct(sql.raw('r.author_sort_name'));
+    case 'publisher':
+      return direct(sql.raw('r.publisher'));
+    case 'language':
+      return {
+        prefixCte: empty,
+        baseJoin: empty,
+        baseExtraSelect: sql`, ${bookMetadata.language} AS language`,
+        representativeExtraSelect: sql`, base.language`,
+        value: sql.raw('r.language'),
+      };
+    case 'format':
+      return {
+        prefixCte: empty,
+        baseJoin: sql`LEFT JOIN ${bookFiles} rail_primary_file ON rail_primary_file.id = ${books.primaryFileId}`,
+        baseExtraSelect: sql`, rail_primary_file.format AS rail_discrete_value`,
+        representativeExtraSelect: sql`, base.rail_discrete_value`,
+        value: sql.raw('r.rail_discrete_value'),
+      };
+    case 'readStatus':
+      return {
+        prefixCte: empty,
+        baseJoin: sql`LEFT JOIN ${userBookStatus} rail_ubs ON rail_ubs.book_id = ${books.id} AND rail_ubs.user_id = ${userId}`,
+        baseExtraSelect: sql`, coalesce(rail_ubs.status::text, 'unread') AS rail_discrete_value`,
+        representativeExtraSelect: sql`, base.rail_discrete_value`,
+        value: sql.raw('r.rail_discrete_value'),
+      };
+    default:
+      return null;
+  }
+}
+
+function discreteBucketsQuery(opts: { prefixCte: SQL; orderedRows: SQL; maxBuckets: number }): SQL {
+  return sql`
+    WITH ${opts.prefixCte}
+    ordered AS MATERIALIZED (${opts.orderedRows}),
+    grouped AS (
+      SELECT bucket, is_unknown, min(item_index)::int AS item_index, (SELECT count(*) FROM ordered)::int AS total
+      FROM ordered
+      WHERE bucket IS NOT NULL
+      GROUP BY bucket, is_unknown
+    ),
+    ranked AS (
+      SELECT
+        grouped.*,
+        row_number() OVER (ORDER BY item_index)::int AS bucket_ordinal,
+        count(*) OVER ()::int AS bucket_count
+      FROM grouped
+    )
+    SELECT bucket, item_index, total, is_unknown
+    FROM ranked
+    WHERE bucket_count <= ${opts.maxBuckets}
+      OR bucket_ordinal = 1
+      OR bucket_ordinal = bucket_count
+      OR mod(
+        bucket_ordinal - 1,
+        GREATEST(ceil((bucket_count - 1)::numeric / GREATEST(${opts.maxBuckets} - 1, 1))::int, 1)
+      ) = 0
+    ORDER BY item_index
+    LIMIT ${opts.maxBuckets}
+  `;
+}
 
 function temporalSourceParts(field: SortField, userId: number, timeZone: string, collapsed: boolean): TemporalSourceParts | null {
   const empty = sql.raw('');
@@ -888,25 +1018,37 @@ export class BookRepository {
     return { rows: mappedRows, ...enrichment, total };
   }
 
-  async findJumpBuckets(opts: { where: SQL | undefined; bucketExpr: SQL; orderBy: SQL[] }): Promise<JumpBucketsResponse> {
+  async findJumpBuckets(opts: {
+    where: SQL | undefined;
+    field: SortField;
+    kind: Exclude<JumpBucketKind, 'temporal'>;
+    userId: number;
+    maxBuckets: number;
+    orderBy: SQL[];
+  }): Promise<JumpBucketsResponse> {
+    const source = flatDiscreteSourceParts(opts.field, opts.userId);
+    if (!source) return { buckets: [], total: 0, kind: opts.kind, granularity: null };
     const visibleWhere = this.visibleWhere(opts.where);
-    const result = await this.db.execute<JumpBucketRawRow>(sql`
-      WITH ordered AS (
+    const bucketExpr = opts.kind === 'letter' ? letterJumpBucketExpr(source.value) : sql`coalesce((${source.value})::text, '__unknown__')`;
+    const isUnknownExpr = opts.kind === 'category' ? sql`${source.value} IS NULL` : sql`false`;
+    const result = await this.db.execute<DiscreteJumpBucketRawRow>(
+      discreteBucketsQuery({
+        prefixCte: source.prefixCte,
+        orderedRows: sql`
         SELECT
-          ${opts.bucketExpr} AS bucket,
+          ${bucketExpr} AS bucket,
+          ${isUnknownExpr} AS is_unknown,
           (ROW_NUMBER() OVER (ORDER BY ${sql.join(opts.orderBy, sql`, `)}) - 1) AS item_index
         FROM ${books}
         LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = ${books.id}
+        ${source.join}
         WHERE ${visibleWhere}
-      )
-      SELECT bucket, min(item_index)::int AS item_index, (SELECT count(*) FROM ordered)::int AS total
-      FROM ordered
-      WHERE bucket IS NOT NULL
-      GROUP BY bucket
-      ORDER BY min(item_index)
-    `);
+      `,
+        maxBuckets: opts.maxBuckets,
+      }),
+    );
 
-    return this.mapJumpBucketRows(result.rows);
+    return this.mapDiscreteJumpBucketRows(result.rows, opts.kind);
   }
 
   async findTemporalJumpBuckets(opts: {
@@ -946,11 +1088,25 @@ export class BookRepository {
   // selection (same group key, same pick order) but only projects the columns
   // buildCollapseOrderBy can reference as aliases or via r.* correlated
   // subqueries.
-  async findJumpBucketsCollapsed(opts: { where: SQL | undefined; bucketExpr: SQL; sort: SortSpec[]; userId: number }): Promise<JumpBucketsResponse> {
+  async findJumpBucketsCollapsed(opts: {
+    where: SQL | undefined;
+    field: SortField;
+    kind: Exclude<JumpBucketKind, 'temporal'>;
+    sort: SortSpec[];
+    userId: number;
+    maxBuckets: number;
+  }): Promise<JumpBucketsResponse> {
+    const source = collapsedDiscreteSourceParts(opts.field, opts.userId);
+    if (!source) return { buckets: [], total: 0, kind: opts.kind, granularity: null };
     const whereFragment = this.visibleWhere(opts.where);
     const orderBy = BookQueryBuilder.buildCollapseOrderBy(opts.sort, opts.userId);
-    const result = await this.db.execute<JumpBucketRawRow>(sql`
-      WITH base_rows AS (
+    const bucketExpr = opts.kind === 'letter' ? letterJumpBucketExpr(source.value) : sql`coalesce((${source.value})::text, '__unknown__')`;
+    const isUnknownExpr = opts.kind === 'category' ? sql`${source.value} IS NULL` : sql`false`;
+    const result = await this.db.execute<DiscreteJumpBucketRawRow>(
+      discreteBucketsQuery({
+        prefixCte: sql`
+      ${source.prefixCte}
+      base_rows AS MATERIALIZED (
         SELECT
           books.id,
           books.library_id,
@@ -967,8 +1123,10 @@ export class BookRepository {
           book_metadata.publisher,
           book_metadata.page_count,
           NULLIF(lower(btrim(book_metadata.series_name)), '') AS norm_series
+          ${source.baseExtraSelect}
         FROM books
         LEFT JOIN book_metadata ON book_metadata.book_id = books.id
+        ${source.baseJoin}
         WHERE ${whereFragment}
       ),
       series_latest AS (
@@ -994,6 +1152,7 @@ export class BookRepository {
           base.primary_author_sort_name AS author_sort_name,
           COALESCE(base.norm_series, lower(base.title)) AS sort_title,
           COALESCE(sl.latest_added_at, base.added_at) AS sort_added_at
+          ${source.representativeExtraSelect}
         FROM base_rows base
         LEFT JOIN user_book_ratings ubr ON ubr.book_id = base.id AND ubr.user_id = ${opts.userId}
         LEFT JOIN series_latest sl
@@ -1001,20 +1160,19 @@ export class BookRepository {
           AND sl.library_id = base.library_id
         ORDER BY ${sql.raw(COLLAPSE_REPRESENTATIVE_PICK_SQL)}
       ),
-      ordered AS (
+      `,
+        orderedRows: sql`
         SELECT
-          ${opts.bucketExpr} AS bucket,
+          ${bucketExpr} AS bucket,
+          ${isUnknownExpr} AS is_unknown,
           (ROW_NUMBER() OVER (ORDER BY ${sql.raw(orderBy)}) - 1) AS item_index
         FROM representatives r
-      )
-      SELECT bucket, min(item_index)::int AS item_index, (SELECT count(*) FROM ordered)::int AS total
-      FROM ordered
-      WHERE bucket IS NOT NULL
-      GROUP BY bucket
-      ORDER BY min(item_index)
-    `);
+      `,
+        maxBuckets: opts.maxBuckets,
+      }),
+    );
 
-    return this.mapJumpBucketRows(result.rows);
+    return this.mapDiscreteJumpBucketRows(result.rows, opts.kind);
   }
 
   async findTemporalJumpBucketsCollapsed(opts: {
@@ -1089,15 +1247,16 @@ export class BookRepository {
     return this.mapTemporalJumpBucketRows(result.rows);
   }
 
-  private mapJumpBucketRows(rows: JumpBucketRawRow[]): JumpBucketsResponse {
+  private mapDiscreteJumpBucketRows(rows: DiscreteJumpBucketRawRow[], kind: Exclude<JumpBucketKind, 'temporal'>): JumpBucketsResponse {
     return {
       buckets: rows.map((row) => ({
         key: row.bucket,
         label: row.bucket,
         index: Number(row.item_index),
+        ...(row.is_unknown ? { isUnknown: true } : {}),
       })),
       total: rows.length > 0 ? Number(rows[0].total) : 0,
-      kind: 'letter',
+      kind,
       granularity: null,
     };
   }

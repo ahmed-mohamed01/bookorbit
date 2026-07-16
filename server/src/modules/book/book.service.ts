@@ -35,9 +35,8 @@ import {
   MetadataProviderKey,
   Permission,
   isAudioFormat,
-  jumpBucketKindForSort,
+  jumpRailStrategyForSort,
   resolveUploadPath,
-  temporalJumpBucketPrecisionForSort,
 } from '@bookorbit/types';
 import type {
   AudiobookChapter,
@@ -78,7 +77,6 @@ import { UserBookStatusService, type AutoReadingActivity } from '../user-book-st
 import { AchievementEventsService, ACHIEVEMENT_EVENT_BOOK_RATING_CHANGED } from '../achievement/achievement-events.service';
 import { BookMetadataLockService } from '../book-metadata-lock/book-metadata-lock.service';
 import { BookQueryBuilder } from './book-query-builder.service';
-import { collapsedJumpBucketExpr, flatJumpBucketExpr } from './jump-bucket-expr';
 import { BookRepository } from './book.repository';
 import { ComicMetadataRepository } from '../metadata/comic-metadata.repository';
 import { CustomMetadataService } from '../custom-metadata/custom-metadata.service';
@@ -1128,22 +1126,21 @@ export class BookService {
 
   async executeJumpBucketsQuery(userId: number, where: SQL | undefined, query: JumpBucketsQuery, timeZone = 'UTC'): Promise<JumpBucketsResponse> {
     const event = 'book.jump_buckets';
-    const kind = jumpBucketKindForSort(query.sort);
+    const strategy = jumpRailStrategyForSort(query.sort);
+    const kind = strategy?.kind ?? null;
     const primary = query.sort[0] ?? { field: 'title' as const, dir: 'asc' as const };
     const shouldCollapse = query.collapseSeries === true && !BookQueryBuilder.hasSeriesSelectionFilter(query.filter);
-    if (!kind) throw new BadRequestException('jump buckets are not available for this sort');
+    if (!strategy) throw new BadRequestException('jump buckets are not available for this sort');
 
     const start = Date.now();
     try {
       let response: JumpBucketsResponse;
-      if (kind === 'temporal') {
-        const precision = temporalJumpBucketPrecisionForSort(query.sort);
-        if (!precision) throw new BadRequestException('temporal jump buckets are not available for this sort');
+      if (strategy.kind === 'temporal') {
         const temporalOpts = {
           where,
           field: primary.field,
           direction: primary.dir,
-          precision,
+          precision: strategy.precision,
           userId,
           timeZone,
           maxBuckets: query.maxBuckets,
@@ -1152,11 +1149,16 @@ export class BookService {
           ? await this.bookRepo.findTemporalJumpBucketsCollapsed(temporalOpts)
           : await this.bookRepo.findTemporalJumpBuckets(temporalOpts);
       } else {
-        const bucketExpr = shouldCollapse ? collapsedJumpBucketExpr(primary.field) : flatJumpBucketExpr(primary.field);
-        if (!bucketExpr) throw new BadRequestException('jump buckets are not available for this sort');
+        const discreteOpts = {
+          where,
+          field: primary.field,
+          kind: strategy.kind,
+          userId,
+          maxBuckets: query.maxBuckets,
+        };
         response = shouldCollapse
-          ? await this.bookRepo.findJumpBucketsCollapsed({ where, bucketExpr, sort: query.sort, userId })
-          : await this.bookRepo.findJumpBuckets({ where, bucketExpr, orderBy: this.queryBuilder.buildOrderBy(query.sort, userId) });
+          ? await this.bookRepo.findJumpBucketsCollapsed({ ...discreteOpts, sort: query.sort })
+          : await this.bookRepo.findJumpBuckets({ ...discreteOpts, orderBy: this.queryBuilder.buildOrderBy(query.sort, userId) });
       }
       this.logger.log(
         `[${event}] [end] userId=${userId} kind=${kind} collapse=${shouldCollapse} maxBuckets=${query.maxBuckets} durationMs=${Date.now() - start} bucketCount=${response.buckets.length} total=${response.total} - jump buckets computed`,

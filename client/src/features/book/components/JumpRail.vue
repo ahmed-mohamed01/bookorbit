@@ -1,29 +1,21 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { TransitionPresets, useElementBounding, useMediaQuery, useTransition } from '@vueuse/core'
-import type { JumpBucket, JumpBucketKind, TemporalJumpBucketGranularity } from '@bookorbit/types'
+import type { JumpBucket, JumpBucketKind, SortField, TemporalJumpBucketGranularity } from '@bookorbit/types'
 import { useI18n } from 'vue-i18n'
-import { formatDate, formatNumber } from '@/i18n/formatters'
+import { useJumpRailSlots, type JumpRailSlot as RailSlot } from '../composables/useJumpRailSlots'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const SLOT_PX = 20
 const RAIL_PAD_PX = 8
 const SCROLL_PULSE_MS = 900
-const MAX_TEMPORAL_SLOTS = 64
-
-type RailSlot = {
-  key: string
-  label: string
-  displayLabel: string
-  accessibleLabel: string
-  bucket: JumpBucket | null
-}
 
 const props = defineProps<{
   visible: boolean
   buckets: JumpBucket[]
   kind: JumpBucketKind
+  field: SortField
   granularity?: TemporalJumpBucketGranularity | null
   activeKey: string | null
   template?: string[]
@@ -47,153 +39,13 @@ const railPositionStyle = computed(() => {
   }
 })
 
-function temporalLabels(bucket: JumpBucket): Pick<RailSlot, 'label' | 'displayLabel' | 'accessibleLabel'> {
-  if (bucket.isUnknown) {
-    return { label: t('book.jumpRail.unknownDate'), displayLabel: '?', accessibleLabel: t('book.jumpRail.unknownDate') }
-  }
-
-  const granularity = props.granularity
-  if (!granularity) return { label: bucket.label, displayLabel: bucket.label, accessibleLabel: bucket.label }
-  if (granularity.unit === 'year') {
-    const start = Number(bucket.key)
-    if (!Number.isFinite(start)) return { label: bucket.label, displayLabel: bucket.label, accessibleLabel: bucket.label }
-    const startLabel = formatNumber(start, { useGrouping: false })
-    if (granularity.step === 1) return { label: startLabel, displayLabel: startLabel, accessibleLabel: startLabel }
-    const endLabel = formatNumber(start + granularity.step - 1, { useGrouping: false })
-    const range = `${startLabel}-${endLabel}`
-    return { label: range, displayLabel: startLabel, accessibleLabel: range }
-  }
-
-  const dateKey = granularity.unit === 'month' ? `${bucket.key}-01` : bucket.key
-  const date = new Date(`${dateKey}T00:00:00Z`)
-  if (Number.isNaN(date.getTime())) return { label: bucket.label, displayLabel: bucket.label, accessibleLabel: bucket.label }
-  if (granularity.unit === 'month') {
-    const fullLabel = formatDate(date, { month: 'long', year: 'numeric', timeZone: 'UTC' })
-    return {
-      label: fullLabel,
-      displayLabel: bucket.key.endsWith('-01') ? formatDate(date, { year: 'numeric', timeZone: 'UTC' }) : '',
-      accessibleLabel: fullLabel,
-    }
-  }
-  const fullLabel = formatDate(date, { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
-  return {
-    label: fullLabel,
-    displayLabel: bucket.key.endsWith('-01-01')
-      ? formatDate(date, { year: 'numeric', timeZone: 'UTC' })
-      : bucket.key.endsWith('-01')
-        ? formatDate(date, { month: 'short', timeZone: 'UTC' })
-        : '',
-    accessibleLabel: fullLabel,
-  }
-}
-
-function shiftDateKey(key: string, unit: 'day' | 'month', amount: number): string | null {
-  const date = new Date(`${unit === 'month' ? `${key}-01` : key}T00:00:00Z`)
-  if (Number.isNaN(date.getTime())) return null
-  if (unit === 'month') date.setUTCMonth(date.getUTCMonth() + amount)
-  else date.setUTCDate(date.getUTCDate() + amount)
-  const shifted = date.toISOString().slice(0, 10)
-  return unit === 'month' ? shifted.slice(0, 7) : shifted
-}
-
-function temporalDistance(start: string, end: string, granularity: TemporalJumpBucketGranularity): number | null {
-  if (granularity.unit === 'year') {
-    const startYear = Number(start)
-    const endYear = Number(end)
-    if (!Number.isFinite(startYear) || !Number.isFinite(endYear)) return null
-    return Math.abs((endYear - startYear) / granularity.step)
-  }
-
-  const startDate = new Date(`${granularity.unit === 'month' ? `${start}-01` : start}T00:00:00Z`)
-  const endDate = new Date(`${granularity.unit === 'month' ? `${end}-01` : end}T00:00:00Z`)
-  if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) return null
-  if (granularity.unit === 'month') {
-    return Math.abs((endDate.getUTCFullYear() - startDate.getUTCFullYear()) * 12 + endDate.getUTCMonth() - startDate.getUTCMonth())
-  }
-  return Math.abs((endDate.getTime() - startDate.getTime()) / 86_400_000)
-}
-
-function shiftTemporalKey(key: string, granularity: TemporalJumpBucketGranularity, amount: number): string | null {
-  if (granularity.unit === 'year') {
-    const year = Number(key)
-    return Number.isFinite(year) ? String(year + amount * granularity.step) : null
-  }
-  return shiftDateKey(key, granularity.unit, amount)
-}
-
-function temporalTimelineKeys(buckets: JumpBucket[], granularity: TemporalJumpBucketGranularity | null | undefined, maxSlots: number): string[] {
-  const known = buckets.filter((bucket) => !bucket.isUnknown)
-  if (!granularity || known.length < 2) return known.map((bucket) => bucket.key)
-
-  const capacity = Math.max(known.length, Math.min(MAX_TEMPORAL_SLOTS, Math.max(2, maxSlots)))
-  const gaps = known.slice(0, -1).map((bucket, index) => {
-    const next = known[index + 1]!
-    const distance = temporalDistance(bucket.key, next.key, granularity)
-    return { start: bucket.key, end: next.key, distance: distance ?? 1, markers: 0 }
-  })
-  let remaining = capacity - known.length
-  while (remaining > 0) {
-    let selected: (typeof gaps)[number] | null = null
-    let selectedScore = 0
-    for (const gap of gaps) {
-      const missing = Math.max(0, Math.floor(gap.distance) - 1)
-      if (gap.markers >= missing) continue
-      const score = missing / (gap.markers + 1)
-      if (score > selectedScore) {
-        selected = gap
-        selectedScore = score
-      }
-    }
-    if (!selected) break
-    selected.markers += 1
-    remaining -= 1
-  }
-
-  const keys: string[] = []
-  for (let index = 0; index < known.length; index++) {
-    keys.push(known[index]!.key)
-    const gap = gaps[index]
-    if (!gap || gap.markers === 0) continue
-    const startValue = granularity.unit === 'year' ? Number(gap.start) : gap.start
-    const endValue = granularity.unit === 'year' ? Number(gap.end) : gap.end
-    const direction = startValue <= endValue ? 1 : -1
-    for (let marker = 1; marker <= gap.markers; marker++) {
-      const offset = Math.round((gap.distance * marker) / (gap.markers + 1)) * direction
-      const key = shiftTemporalKey(gap.start, granularity, offset)
-      if (key && key !== gap.start && key !== gap.end) keys.push(key)
-    }
-  }
-  return keys
-}
-
-const slots = computed<RailSlot[]>(() => {
-  void locale.value
-  if (props.kind === 'letter' && props.template) {
-    const byKey = new Map(props.buckets.map((bucket) => [bucket.key, bucket]))
-    return props.template.map((key) => ({ key, label: key, displayLabel: key, accessibleLabel: key, bucket: byKey.get(key) ?? null }))
-  }
-
-  const byKey = new Map(props.buckets.map((bucket) => [bucket.key, bucket]))
-  const unknown = props.buckets.find((bucket) => bucket.isUnknown)
-  const maxKnownSlots = Math.max(2, (props.maxSlots ?? MAX_TEMPORAL_SLOTS) - (unknown ? 1 : 0))
-  const timelineKeys = temporalTimelineKeys(props.buckets, props.granularity, maxKnownSlots)
-  if (unknown) timelineKeys.push(unknown.key)
-  const temporalSlots: RailSlot[] = timelineKeys.map((key) => {
-    const bucket = byKey.get(key) ?? null
-    const labels = temporalLabels(bucket ?? { key, label: key, index: -1 })
-    return { key, ...labels, displayLabel: bucket ? labels.displayLabel : '', bucket }
-  })
-  const displayedYears = new Set(temporalSlots.filter((slot) => slot.displayLabel).map((slot) => slot.key.slice(0, 4)))
-  for (const index of [0, temporalSlots.length - 1]) {
-    const slot = temporalSlots[index]
-    if (!slot || slot.displayLabel || slot.bucket?.isUnknown) continue
-    const yearKey = slot.key.slice(0, 4)
-    if (displayedYears.has(yearKey)) continue
-    const year = Number(slot.key.slice(0, 4))
-    slot.displayLabel = Number.isFinite(year) ? formatNumber(year, { useGrouping: false }) : slot.label
-    displayedYears.add(yearKey)
-  }
-  return temporalSlots
+const slots = useJumpRailSlots({
+  buckets: () => props.buckets,
+  kind: () => props.kind,
+  field: () => props.field,
+  granularity: () => props.granularity,
+  template: () => props.template,
+  maxSlots: () => props.maxSlots,
 })
 
 const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
@@ -335,7 +187,7 @@ function handleAfterLeave() {
       ref="railEl"
       class="jump-rail fixed right-1.5 top-1/2 z-30 flex max-h-[85vh] -translate-y-1/2 select-none flex-col items-stretch overflow-visible rounded-2xl border border-primary/20 bg-background/80 py-2 shadow-sm backdrop-blur"
       :class="[
-        kind === 'temporal' ? 'w-14 px-1' : engaged ? 'w-9 px-1.5' : 'w-8 px-1',
+        kind === 'category' ? 'w-20 px-1' : kind === 'temporal' ? 'w-12 px-0.5' : engaged ? 'w-8 px-1' : 'w-7 px-0.5',
         reducedMotion ? '' : 'transition-[width,padding] duration-300 ease-out',
       ]"
       :style="railPositionStyle"
@@ -356,7 +208,7 @@ function handleAfterLeave() {
       />
 
       <div
-        v-if="kind === 'temporal' && previewSlot"
+        v-if="kind !== 'letter' && previewSlot"
         class="pointer-events-none absolute right-full top-0 z-20 mr-2 flex h-7 -translate-y-1 items-center whitespace-nowrap rounded-md border border-border bg-popover px-2.5 text-xs font-medium tabular-nums text-popover-foreground shadow-md"
         :style="{ transform: `translateY(${hoverThumbY - 4}px)` }"
         aria-hidden="true"
@@ -383,8 +235,11 @@ function handleAfterLeave() {
       >
         <span
           v-if="slot.displayLabel"
-          class="rounded-full px-1.5 leading-4"
-          :class="slot.key === activeKey ? 'bg-primary font-semibold text-primary-foreground shadow-sm' : ''"
+          class="rounded-full leading-4"
+          :class="[
+            kind === 'category' ? 'max-w-full truncate px-1.5' : 'px-1',
+            slot.key === activeKey ? 'bg-primary font-semibold text-primary-foreground shadow-sm' : '',
+          ]"
         >
           {{ slot.displayLabel }}
         </span>

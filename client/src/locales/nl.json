@@ -3065,7 +3065,8 @@
     "jumpRail": {
       "jumpToSection": "Naar sectie springen",
       "jumpTo": "Naar {label} springen",
-      "unknownDate": "Unknown date"
+      "unknownDate": "Unknown date",
+      "unknownValue": "Unknown value"
     },
     "quickView": {
       "title": "Snelweergave boek",

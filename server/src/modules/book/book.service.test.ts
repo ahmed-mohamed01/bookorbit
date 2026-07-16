@@ -2620,7 +2620,9 @@ describe('BookService', () => {
 
       expect(libraryService.verifyUserAccess).toHaveBeenCalledWith(42, 7, false);
       expect(queryBuilder.buildOrderBy).toHaveBeenCalledWith([{ field: 'title', dir: 'asc' }], 42);
-      expect(bookRepo.findJumpBuckets).toHaveBeenCalledWith(expect.objectContaining({ where: 'WHERE', orderBy: ['ORDER'] }));
+      expect(bookRepo.findJumpBuckets).toHaveBeenCalledWith(
+        expect.objectContaining({ where: 'WHERE', field: 'title', kind: 'letter', userId: 42, maxBuckets: 24, orderBy: ['ORDER'] }),
+      );
       expect(bookRepo.findJumpBucketsCollapsed).not.toHaveBeenCalled();
       expect(result).toEqual({ buckets: [{ key: 'A', label: 'A', index: 0 }], total: 12, kind: 'letter', granularity: null });
     });
@@ -2639,7 +2641,7 @@ describe('BookService', () => {
       expect(bookRepo.findJumpBucketsCollapsed).not.toHaveBeenCalled();
     });
 
-    it('executeJumpBucketsQuery routes letter and temporal sorts to their bounded query paths', async () => {
+    it('executeJumpBucketsQuery routes letter, category, and temporal sorts to their bounded query paths', async () => {
       const { service, queryBuilder, bookRepo } = makeService();
       queryBuilder.buildOrderBy.mockReturnValue(['ORDER'] as never);
       bookRepo.findJumpBuckets.mockResolvedValue({ buckets: [], total: 0, kind: 'letter', granularity: null });
@@ -2650,10 +2652,25 @@ describe('BookService', () => {
         granularity: null,
       });
 
-      for (const sort of [[{ field: 'author', dir: 'desc' }], [{ field: 'publishedYear', dir: 'asc' }], [{ field: 'title', dir: 'desc' }], []]) {
+      for (const sort of [
+        [{ field: 'author', dir: 'desc' }],
+        [{ field: 'series', dir: 'asc' }],
+        [{ field: 'publisher', dir: 'desc' }],
+        [{ field: 'format', dir: 'asc' }],
+        [{ field: 'language', dir: 'desc' }],
+        [{ field: 'readStatus', dir: 'asc' }],
+        [{ field: 'publishedYear', dir: 'asc' }],
+        [{ field: 'title', dir: 'desc' }],
+        [],
+      ]) {
         await service.executeJumpBucketsQuery(1, undefined, { sort, pagination: { page: 0, size: 50 }, maxBuckets: 24 } as never);
       }
-      expect(bookRepo.findJumpBuckets).toHaveBeenCalledTimes(3);
+      expect(bookRepo.findJumpBuckets).toHaveBeenCalledTimes(8);
+      expect(bookRepo.findJumpBuckets).toHaveBeenCalledWith(expect.objectContaining({ field: 'series', kind: 'letter', maxBuckets: 24 }));
+      expect(bookRepo.findJumpBuckets).toHaveBeenCalledWith(expect.objectContaining({ field: 'publisher', kind: 'letter', maxBuckets: 24 }));
+      expect(bookRepo.findJumpBuckets).toHaveBeenCalledWith(expect.objectContaining({ field: 'format', kind: 'category', maxBuckets: 24 }));
+      expect(bookRepo.findJumpBuckets).toHaveBeenCalledWith(expect.objectContaining({ field: 'language', kind: 'category', maxBuckets: 24 }));
+      expect(bookRepo.findJumpBuckets).toHaveBeenCalledWith(expect.objectContaining({ field: 'readStatus', kind: 'category', userId: 1 }));
       expect(bookRepo.findTemporalJumpBuckets).toHaveBeenCalledWith(
         expect.objectContaining({ field: 'publishedYear', direction: 'asc', precision: 'year', maxBuckets: 24 }),
       );

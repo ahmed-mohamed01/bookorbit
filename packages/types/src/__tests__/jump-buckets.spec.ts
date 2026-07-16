@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { jumpBucketKindForSort, temporalJumpBucketPrecisionForSort } from "../jump-buckets";
+import { jumpBucketKindForSort, jumpRailStrategyForSort, temporalJumpBucketPrecisionForSort } from "../jump-buckets";
 import type { SortSpec } from "../query";
 
 describe("jumpBucketKindForSort", () => {
@@ -12,6 +12,20 @@ describe("jumpBucketKindForSort", () => {
   it("returns letter for author sorts in both directions", () => {
     expect(jumpBucketKindForSort([{ field: "author", dir: "asc" }])).toBe("letter");
     expect(jumpBucketKindForSort([{ field: "author", dir: "desc" }])).toBe("letter");
+  });
+
+  it("returns letter for series and publisher sorts", () => {
+    for (const field of ["series", "publisher"] as const) {
+      expect(jumpBucketKindForSort([{ field, dir: "asc" }])).toBe("letter");
+      expect(jumpBucketKindForSort([{ field, dir: "desc" }])).toBe("letter");
+    }
+  });
+
+  it("returns category for language, format, and read status sorts", () => {
+    for (const field of ["language", "format", "readStatus"] as const) {
+      expect(jumpBucketKindForSort([{ field, dir: "asc" }])).toBe("category");
+      expect(jumpBucketKindForSort([{ field, dir: "desc" }])).toBe("category");
+    }
   });
 
   it("returns temporal for publishedYear sorts", () => {
@@ -50,6 +64,18 @@ describe("jumpBucketKindForSort", () => {
         { field: "addedAt", dir: "desc" },
       ]),
     ).toBe("letter");
+  });
+});
+
+describe("jumpRailStrategyForSort", () => {
+  it("returns the temporal precision as part of the strategy", () => {
+    expect(jumpRailStrategyForSort([{ field: "publishedDate", dir: "asc" }])).toEqual({ kind: "temporal", precision: "year" });
+    expect(jumpRailStrategyForSort([{ field: "addedAt", dir: "asc" }])).toEqual({ kind: "temporal", precision: "date" });
+  });
+
+  it("returns strategy-only descriptors for discrete rails", () => {
+    expect(jumpRailStrategyForSort([{ field: "publisher", dir: "asc" }])).toEqual({ kind: "letter" });
+    expect(jumpRailStrategyForSort([{ field: "format", dir: "asc" }])).toEqual({ kind: "category" });
   });
 });
 

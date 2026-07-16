@@ -91,6 +91,15 @@ describe('useJumpBuckets', () => {
     expect(body.maxBuckets).toBe(24)
   })
 
+  it('fetches categorical buckets for supported discrete sorts', async () => {
+    mockBucketsResponse([{ key: 'epub', label: 'epub', index: 0 }])
+    const { kind, buckets } = makeBuckets({ sort: [{ field: 'format', dir: 'asc' }] })
+    await flush()
+
+    expect(kind.value).toBe('category')
+    expect(buckets.value[0]?.key).toBe('epub')
+  })
+
   it('does not fetch while disabled and fetches once enabled', async () => {
     mockBucketsResponse(LETTER_BUCKETS)
     const { buckets, enabled } = makeBuckets({ enabledValue: false })

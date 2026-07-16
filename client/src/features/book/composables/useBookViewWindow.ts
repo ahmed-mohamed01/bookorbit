@@ -66,6 +66,7 @@ export function useBookViewWindow(options: {
   }
 
   const bucketKind = computed(() => jumpBucketKindForSort(sort.value))
+  const primarySortField = computed(() => sort.value[0]?.field ?? 'title')
   const railModeActive = computed(() => options.viewMode.value === 'grid')
   const railEligible = computed(() => bucketKind.value !== null && railModeActive.value && window.total.value >= MIN_TOTAL_FOR_RAIL)
 
@@ -124,6 +125,7 @@ export function useBookViewWindow(options: {
     hasMorePrefix,
     loadMorePrefix,
     bucketKind,
+    primarySortField,
     buckets: bucketsApi.buckets,
     temporalGranularity: bucketsApi.granularity,
     railCapacity,

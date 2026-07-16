@@ -1,6 +1,6 @@
 import type { BookQuery, SortField, SortSpec } from "./query";
 
-export type JumpBucketKind = "letter" | "temporal";
+export type JumpBucketKind = "letter" | "temporal" | "category";
 
 export type TemporalJumpBucketUnit = "day" | "month" | "year";
 
@@ -33,29 +33,31 @@ export type JumpBucketsQuery = BookQuery & {
   maxBuckets: number;
 };
 
-const KIND_BY_PRIMARY_SORT_FIELD: Partial<Record<SortField, JumpBucketKind>> = {
-  title: "letter",
-  author: "letter",
-  addedAt: "temporal",
-  updatedAt: "temporal",
-  publishedDate: "temporal",
-  publishedYear: "temporal",
-  lastReadAt: "temporal",
-  startedAt: "temporal",
-  finishedAt: "temporal",
-};
-
 export type TemporalJumpBucketPrecision = "date" | "year";
 
-const TEMPORAL_PRECISION_BY_SORT_FIELD: Partial<Record<SortField, TemporalJumpBucketPrecision>> = {
-  addedAt: "date",
-  updatedAt: "date",
-  publishedDate: "year",
-  publishedYear: "year",
-  lastReadAt: "date",
-  startedAt: "date",
-  finishedAt: "date",
+export type JumpRailStrategy = { kind: "letter" } | { kind: "temporal"; precision: TemporalJumpBucketPrecision } | { kind: "category" };
+
+const STRATEGY_BY_PRIMARY_SORT_FIELD: Partial<Record<SortField, JumpRailStrategy>> = {
+  title: { kind: "letter" },
+  author: { kind: "letter" },
+  series: { kind: "letter" },
+  publisher: { kind: "letter" },
+  addedAt: { kind: "temporal", precision: "date" },
+  updatedAt: { kind: "temporal", precision: "date" },
+  publishedDate: { kind: "temporal", precision: "year" },
+  publishedYear: { kind: "temporal", precision: "year" },
+  lastReadAt: { kind: "temporal", precision: "date" },
+  startedAt: { kind: "temporal", precision: "date" },
+  finishedAt: { kind: "temporal", precision: "date" },
+  language: { kind: "category" },
+  format: { kind: "category" },
+  readStatus: { kind: "category" },
 };
+
+export function jumpRailStrategyForSort(sort: SortSpec[]): JumpRailStrategy | null {
+  const primary = sort[0] ?? { field: "title", dir: "asc" };
+  return STRATEGY_BY_PRIMARY_SORT_FIELD[primary.field] ?? null;
+}
 
 /**
  * Single source of truth for rail eligibility, shared by the client (gate the
@@ -65,11 +67,10 @@ const TEMPORAL_PRECISION_BY_SORT_FIELD: Partial<Record<SortField, TemporalJumpBu
  * title ascending, mirroring the server's default.
  */
 export function jumpBucketKindForSort(sort: SortSpec[]): JumpBucketKind | null {
-  const primary = sort[0] ?? { field: "title", dir: "asc" };
-  return KIND_BY_PRIMARY_SORT_FIELD[primary.field] ?? null;
+  return jumpRailStrategyForSort(sort)?.kind ?? null;
 }
 
 export function temporalJumpBucketPrecisionForSort(sort: SortSpec[]): TemporalJumpBucketPrecision | null {
-  const primary = sort[0] ?? { field: "title", dir: "asc" };
-  return TEMPORAL_PRECISION_BY_SORT_FIELD[primary.field] ?? null;
+  const strategy = jumpRailStrategyForSort(sort);
+  return strategy?.kind === "temporal" ? strategy.precision : null;
 }

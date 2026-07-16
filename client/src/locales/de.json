@@ -3065,7 +3065,8 @@
     "jumpRail": {
       "jumpToSection": "Zu Abschnitt springen",
       "jumpTo": "Zu {label} springen",
-      "unknownDate": "Unknown date"
+      "unknownDate": "Unknown date",
+      "unknownValue": "Unknown value"
     },
     "quickView": {
       "title": "Schnellansicht des Buchs",

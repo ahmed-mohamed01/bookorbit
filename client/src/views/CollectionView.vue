@@ -95,6 +95,7 @@ const {
   handleJump,
   buckets,
   bucketKind,
+  primarySortField,
   temporalGranularity,
   railCapacity,
   refreshBuckets,
@@ -614,6 +615,7 @@ defineOptions({ name: 'CollectionView' })
           :selection-mode="selectionMode"
           :is-selected="isSelected"
           :rail-gutter="railGutterReserved"
+          :rail-gutter-kind="bucketKind"
           @range="handleRange"
           @first-visible-index="handleFirstVisibleIndex"
           @action="handleBookAction"
@@ -667,6 +669,7 @@ defineOptions({ name: 'CollectionView' })
           :visible="railVisible"
           :buckets="buckets"
           :kind="bucketKind ?? 'letter'"
+          :field="primarySortField"
           :granularity="temporalGranularity"
           :max-slots="railCapacity"
           :viewport="mainRef"

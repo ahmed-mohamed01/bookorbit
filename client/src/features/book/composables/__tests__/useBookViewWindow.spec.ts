@@ -225,6 +225,20 @@ describe('useBookViewWindow', () => {
     expect(win.bucketKind.value).not.toBeNull()
   })
 
+  it('exposes categorical rail eligibility and the primary sort field', async () => {
+    mockApi(120, [bucket('en', 0), bucket('de', 60)])
+    const { win } = setup({ viewMode: 'grid' })
+    await flush()
+
+    win.sort.value = [{ field: 'language', dir: 'asc' }]
+    await flush()
+    await flush()
+
+    expect(win.bucketKind.value).toBe('category')
+    expect(win.primarySortField.value).toBe('language')
+    expect(win.railVisible.value).toBe(true)
+  })
+
   it('keeps the jump rail hidden in table mode', async () => {
     mockApi(250, [bucket('A', 0), bucket('B', 120)])
     const { win } = setup({ viewMode: 'table' })

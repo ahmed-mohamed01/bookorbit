@@ -290,12 +290,28 @@ describe('VirtualBookGrid', () => {
       requestAnimationFrameSpy.mockRestore()
     })
 
-    it('reserves a right gutter when railGutter is set', () => {
+    it('reserves a compact right gutter for the alphabet rail', () => {
       const wrapper = mount(VirtualBookGrid, {
         props: { books: [makeBook(1)], coverSize: 120, gridGap: 12, railGutter: true },
       })
 
-      expect(wrapper.classes()).toContain('pr-16')
+      expect(wrapper.classes()).toContain('pr-10')
+    })
+
+    it('reserves a wider right gutter for the temporal rail', () => {
+      const wrapper = mount(VirtualBookGrid, {
+        props: { books: [makeBook(1)], coverSize: 120, gridGap: 12, railGutter: true, railGutterKind: 'temporal' },
+      })
+
+      expect(wrapper.classes()).toContain('pr-14')
+    })
+
+    it('reserves the widest right gutter for categorical labels', () => {
+      const wrapper = mount(VirtualBookGrid, {
+        props: { books: [makeBook(1)], coverSize: 120, gridGap: 12, railGutter: true, railGutterKind: 'category' },
+      })
+
+      expect(wrapper.classes()).toContain('pr-22')
     })
   })
 

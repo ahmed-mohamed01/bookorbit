@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { setI18nLocale } from '@/i18n'
 import { formatBytes } from '@/lib/formatting'
-import { formatDate, formatNumber } from './formatters'
+import { formatDate, formatLanguageName, formatNumber } from './formatters'
 
 describe('locale formatters', () => {
   afterEach(async () => {
@@ -24,6 +24,12 @@ describe('locale formatters', () => {
 
     await setI18nLocale('nl')
     expect(formatDate(date, { month: 'long', timeZone: 'UTC' })).toBe('januari')
+  })
+
+  it('formats language codes and safely preserves custom language values', async () => {
+    await setI18nLocale('en')
+    expect(formatLanguageName('de')).toBe('German')
+    expect(formatLanguageName('Custom language')).toBe('Custom language')
   })
 
   it('formats file sizes with localized decimals', async () => {

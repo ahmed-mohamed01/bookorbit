@@ -18,6 +18,10 @@ type SeededBook = {
   id: number;
   title: string | null;
   authorSortName: string | null;
+  publisher: string | null;
+  language: string | null;
+  format: string | null;
+  readStatus: string;
   publishedYear: number | null;
   seriesName: string | null;
   addedAt: string;
@@ -32,12 +36,18 @@ function letterOf(value: string | null): string | null {
   const trimmed = (value ?? '').trim();
   if (trimmed === '') return null;
   const first = trimmed[0]!.toUpperCase();
-  return /^[A-Z]$/.test(first) ? first : '#';
+  const unaccented =
+    first
+      .normalize('NFKD')
+      .replace(/\p{Mark}/gu, '')[0]
+      ?.toUpperCase() ?? first;
+  if (/^[A-Z]$/.test(unaccented)) return unaccented;
+  return /^\p{Letter}$/u.test(first) ? first : '#';
 }
 
 function expectedBucketKey(
   book: SeededBook,
-  field: 'title' | 'author' | 'publishedYear',
+  field: 'title' | 'author' | 'series' | 'publisher' | 'publishedYear',
   collapsed: boolean,
   granularity: TemporalJumpBucketGranularity | null,
 ): string | null {
@@ -47,8 +57,15 @@ function expectedBucketKey(
     return String(Math.floor(book.publishedYear / step) * step);
   }
   if (field === 'author') return letterOf(book.authorSortName);
+  if (field === 'series') return letterOf(collapsed ? (book.seriesName ?? book.title) : book.seriesName);
+  if (field === 'publisher') return letterOf(book.publisher);
   if (collapsed) return letterOf(book.seriesName ?? book.title);
   return letterOf(book.title);
+}
+
+function expectedCategoryBucketKey(book: SeededBook, field: 'language' | 'format' | 'readStatus'): string {
+  if (field === 'readStatus') return book.readStatus;
+  return book[field] ?? '__unknown__';
 }
 
 function expectedTemporalBucketKey(value: string | null, granularity: TemporalJumpBucketGranularity | null): string {
@@ -66,6 +83,8 @@ describe('Jump buckets invariant (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
 
   async function seedBook(input: {
     title: string | null;
+    publisher?: string | null;
+    language?: string | null;
     publishedYear?: number | null;
     seriesId?: number | null;
     seriesName?: string | null;
@@ -89,6 +108,8 @@ describe('Jump buckets invariant (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
     await ctx.db.insert(bookMetadata).values({
       bookId: book!.id,
       title: input.title,
+      publisher: input.publisher ?? null,
+      language: input.language ?? null,
       publishedYear: input.publishedYear ?? null,
       seriesId: input.seriesId ?? null,
       seriesName: input.seriesName ?? null,
@@ -202,13 +223,17 @@ describe('Jump buckets invariant (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
         author: { id: cheap!.id, sortName: '99 Cent Press', name: '99 Cent Press' },
         addedAt: '2024-01-16',
       },
-      { title: 'quail hunting', publishedYear: 1991, addedAt: '2024-01-17' },
+      { title: 'Дальний берег', publishedYear: 1991, addedAt: '2024-01-17' },
     ];
 
     const allIds: number[] = [];
-    for (const spec of seedSpecs) {
+    for (const [index, spec] of seedSpecs.entries()) {
+      const publisher = index % 6 === 0 ? null : ['Orbit', 'Penguin', 'Éditions du Nord'][index % 3]!;
+      const language = index % 7 === 0 ? null : ['en', 'de', 'pt'][index % 3]!;
       const id = await seedBook({
         title: spec.title,
+        publisher,
+        language,
         publishedYear: spec.publishedYear ?? null,
         seriesId: spec.series?.id ?? null,
         seriesName: spec.series?.name ?? null,
@@ -222,6 +247,10 @@ describe('Jump buckets invariant (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
         id,
         title: spec.title,
         authorSortName: spec.author ? (spec.author.sortName ?? spec.author.name) : null,
+        publisher,
+        language,
+        format: null,
+        readStatus: 'unread',
         publishedYear: spec.publishedYear ?? null,
         seriesName: spec.series?.name ?? null,
         addedAt: spec.addedAt,
@@ -237,6 +266,7 @@ describe('Jump buckets invariant (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
     const [admin] = await ctx.db.select({ id: users.id }).from(users).where(eq(users.username, 'metadata-write-e2e-admin')).limit(1);
     if (!admin) throw new Error('e2e admin user not found');
 
+    const seededStatuses = ['reading', 'read', 'want_to_read'] as const;
     const statusRows = allIds.flatMap((bookId, index) => {
       if (index % 5 === 0) return [];
       const day = String(index + 1).padStart(2, '0');
@@ -245,11 +275,12 @@ describe('Jump buckets invariant (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
       const seeded = seededById.get(bookId)!;
       seeded.startedAt = startedAt;
       seeded.finishedAt = finishedAt;
+      seeded.readStatus = seededStatuses[index % seededStatuses.length]!;
       return [
         {
           userId: admin.id,
           bookId,
-          status: 'read' as const,
+          status: seeded.readStatus as (typeof seededStatuses)[number],
           source: 'manual' as const,
           startedAt: new Date(`${startedAt}T12:00:00Z`),
           finishedAt: new Date(`${finishedAt}T12:00:00Z`),
@@ -258,28 +289,38 @@ describe('Jump buckets invariant (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
     });
     await ctx.db.insert(userBookStatus).values(statusRows);
 
-    const progressBookIds = allIds.filter((_, index) => index % 5 !== 0);
+    const seededFormats = ['epub', 'pdf', 'mobi'] as const;
     const insertedFiles = await ctx.db
       .insert(bookFiles)
       .values(
-        progressBookIds.map((bookId, index) => ({
+        allIds.map((bookId, index) => ({
           bookId,
           libraryFolderId: library.libraryFolderId,
           absolutePath: `/seed/progress-${bookId}.epub`,
           relPath: `progress-${bookId}.epub`,
           ino: BigInt(900_000 + index),
-          format: 'epub',
+          format: seededFormats[index % seededFormats.length],
           role: 'content',
         })),
       )
       .returning({ id: bookFiles.id, bookId: bookFiles.bookId });
+    for (const [index, file] of insertedFiles.entries()) {
+      const seeded = seededById.get(file.bookId)!;
+      await ctx.db
+        .update(books)
+        .set({ primaryFileId: file.id, updatedAt: new Date(`${seeded.updatedAt}T00:00:00.000Z`) })
+        .where(eq(books.id, file.bookId));
+      seeded.format = seededFormats[index % seededFormats.length]!;
+    }
     await ctx.db.insert(readingProgress).values(
-      insertedFiles.map((file, index) => {
-        const day = String(index + 1).padStart(2, '0');
-        const lastReadAt = `2025-05-${day}`;
-        seededById.get(file.bookId)!.lastReadAt = lastReadAt;
-        return { bookFileId: file.id, userId: admin.id, percentage: 50, updatedAt: new Date(`${lastReadAt}T12:00:00Z`) };
-      }),
+      insertedFiles
+        .filter((_, index) => index % 5 !== 0)
+        .map((file, index) => {
+          const day = String(index + 1).padStart(2, '0');
+          const lastReadAt = `2025-05-${day}`;
+          seededById.get(file.bookId)!.lastReadAt = lastReadAt;
+          return { bookFileId: file.id, userId: admin.id, percentage: 50, updatedAt: new Date(`${lastReadAt}T12:00:00Z`) };
+        }),
     );
   });
 
@@ -309,7 +350,7 @@ describe('Jump buckets invariant (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
     return response.json() as BooksPage;
   }
 
-  const fields = ['title', 'author', 'publishedYear'] as const;
+  const fields = ['title', 'author', 'series', 'publisher', 'publishedYear'] as const;
   const dirs = ['asc', 'desc'] as const;
   const collapseModes = [false, true] as const;
 
@@ -362,6 +403,37 @@ describe('Jump buckets invariant (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () =>
     expect(response.granularity).toEqual({ unit: 'year', step: 1 });
     for (const year of expectedYears) expect(returnedKeys.has(year)).toBe(true);
   });
+
+  const categoryFields = ['language', 'format', 'readStatus'] as const;
+  for (const field of categoryFields) {
+    for (const dir of dirs) {
+      for (const collapsed of collapseModes) {
+        it(`anchors ${field} ${dir} collapse=${collapsed} category buckets to exact listing offsets`, async () => {
+          const sort: SortSpec[] = [{ field, dir }];
+          const [bucketsResponse, listing] = await Promise.all([fetchBuckets(sort, collapsed), fetchListing(sort, collapsed)]);
+
+          expect(bucketsResponse.kind).toBe('category');
+          expect(bucketsResponse.buckets.length).toBeGreaterThan(1);
+          expect(bucketsResponse.buckets.length).toBeLessThanOrEqual(32);
+          expect(bucketsResponse.total).toBe(listing.total);
+
+          let previousIndex = -1;
+          for (const bucket of bucketsResponse.buckets) {
+            expect(bucket.index).toBeGreaterThan(previousIndex);
+            previousIndex = bucket.index;
+            const itemAtAnchor = listing.items[bucket.index] as BookCard;
+            const seeded = seededById.get(itemAtAnchor.id)!;
+            expect(expectedCategoryBucketKey(seeded, field)).toBe(bucket.key);
+            if (bucket.index > 0) {
+              const itemBefore = listing.items[bucket.index - 1] as BookCard;
+              const seededBefore = seededById.get(itemBefore.id)!;
+              expect(expectedCategoryBucketKey(seededBefore, field)).not.toBe(bucket.key);
+            }
+          }
+        });
+      }
+    }
+  }
 
   const temporalFields = ['addedAt', 'updatedAt', 'lastReadAt', 'startedAt', 'finishedAt'] as const;
   for (const field of temporalFields) {

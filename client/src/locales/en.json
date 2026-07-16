@@ -3023,7 +3023,8 @@
     "jumpRail": {
       "jumpToSection": "Jump to section",
       "jumpTo": "Jump to {label}",
-      "unknownDate": "Unknown date"
+      "unknownDate": "Unknown date",
+      "unknownValue": "Unknown value"
     },
     "quickView": {
       "title": "Book quick view",

@@ -2,7 +2,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useElementSize, useWindowSize, watchDebounced } from '@vueuse/core'
 import { RecycleScroller } from 'vue-virtual-scroller'
-import { isAudioFormat, type BookCard, type CoverAspectRatio } from '@bookorbit/types'
+import { isAudioFormat, type BookCard, type CoverAspectRatio, type JumpBucketKind } from '@bookorbit/types'
 import BookCoverCard from './BookCoverCard.vue'
 import BookCoverSkeleton from './BookCoverSkeleton.vue'
 import CollapsedSeriesCard from './CollapsedSeriesCard.vue'
@@ -23,6 +23,7 @@ const props = withDefaults(
     virtualized?: boolean
     audioCoverScale?: number
     railGutter?: boolean
+    railGutterKind?: JumpBucketKind | null
   }>(),
   {
     selectionMode: false,
@@ -31,6 +32,7 @@ const props = withDefaults(
     virtualized: true,
     audioCoverScale: 1,
     railGutter: false,
+    railGutterKind: null,
   },
 )
 
@@ -261,7 +263,11 @@ defineExpose({ scrollToIndex })
 </script>
 
 <template>
-  <div ref="containerRef" class="w-full" :class="{ 'pr-16': railGutter }">
+  <div
+    ref="containerRef"
+    class="w-full"
+    :class="railGutter ? (railGutterKind === 'category' ? 'pr-22' : railGutterKind === 'temporal' ? 'pr-14' : 'pr-10') : ''"
+  >
     <div
       v-if="!virtualized && useVariableStaticWidths"
       class="flex w-full flex-wrap content-start items-end"

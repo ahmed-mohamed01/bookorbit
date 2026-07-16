@@ -25,6 +25,7 @@ function mountRail(props: Partial<InstanceType<typeof JumpRail>['$props']> = {})
       visible: true,
       buckets: LETTER_BUCKETS,
       kind: 'letter' as const,
+      field: 'title' as const,
       activeKey: null,
       template: LETTER_TEMPLATE,
       ...props,
@@ -80,12 +81,39 @@ describe('JumpRail', () => {
     expect(available.map((slot) => slot.text())).toEqual(['#', 'A', 'M'])
   })
 
+  it('does not truncate single-character letter labels into visible ellipses', () => {
+    const wrapper = mountRail()
+    const label = wrapper.get('button[data-key="A"] span')
+
+    expect(label.classes()).not.toContain('truncate')
+  })
+
+  it('uses compact widths appropriate to each rail kind', () => {
+    const letter = mountRail()
+    const temporal = mountRail({ kind: 'temporal', field: 'publishedYear', buckets: yearBuckets(3), template: undefined })
+    const category = mountRail({ kind: 'category', field: 'format', buckets: [{ key: 'epub', label: 'epub', index: 0 }], template: undefined })
+
+    expect(letter.get('[data-testid="jump-rail"]').classes()).toContain('w-7')
+    expect(temporal.get('[data-testid="jump-rail"]').classes()).toContain('w-12')
+    expect(category.get('[data-testid="jump-rail"]').classes()).toContain('w-20')
+  })
+
   it('renders letters in template order, supporting descending templates', () => {
     const wrapper = mountRail({ template: [...LETTER_TEMPLATE].reverse() })
 
     const labels = wrapper.findAll('button').map((slot) => slot.text())
     expect(labels[0]).toBe('Z')
     expect(labels[26]).toBe('#')
+  })
+
+  it('preserves Unicode initials returned by the server alongside the alphabet template', () => {
+    const wrapper = mountRail({
+      buckets: [...LETTER_BUCKETS, { key: 'Д', label: 'Д', index: 35 }],
+    })
+
+    const keys = wrapper.findAll('button').map((button) => button.attributes('data-key'))
+    expect(keys).toContain('Д')
+    expect(keys.indexOf('Д')).toBeGreaterThan(keys.indexOf('M'))
   })
 
   it('emits jump with the bucket when an available slot is clicked', async () => {
@@ -193,6 +221,53 @@ describe('JumpRail', () => {
 
     await firePointer(wrapper, 'pointermove', { clientY: 30, pointerType: 'mouse' })
     expect(wrapper.get('[data-testid="jump-rail-preview"]').text()).toBe('February 2026')
+  })
+
+  it('renders and localizes categorical format and unknown targets', () => {
+    const wrapper = mountRail({
+      kind: 'category' as const,
+      field: 'format' as const,
+      buckets: [
+        { key: 'epub', label: 'epub', index: 0 },
+        { key: '__unknown__', label: '__unknown__', index: 20, isUnknown: true },
+      ],
+      template: undefined,
+    })
+
+    expect(wrapper.get('button[data-key="epub"]').text()).toBe('EPUB')
+    expect(wrapper.get('button[data-key="epub"] span').classes()).toContain('truncate')
+    expect(wrapper.get('button[data-key="__unknown__"]').text()).toBe('?')
+    expect(wrapper.get('button[data-key="__unknown__"]').attributes('aria-label')).toContain('Unknown value')
+  })
+
+  it('renders localized read-status category labels', () => {
+    const wrapper = mountRail({
+      kind: 'category' as const,
+      field: 'readStatus' as const,
+      buckets: [
+        { key: 'want_to_read', label: 'want_to_read', index: 0 },
+        { key: 'reading', label: 'reading', index: 10 },
+      ],
+      template: undefined,
+    })
+
+    expect(wrapper.get('button[data-key="want_to_read"]').text()).toBe('Want to Read')
+    expect(wrapper.get('button[data-key="reading"]').text()).toBe('Reading')
+  })
+
+  it('shows a hover preview and emits jumps for categorical targets', async () => {
+    const buckets = [
+      { key: 'en', label: 'en', index: 0 },
+      { key: 'de', label: 'de', index: 20 },
+    ]
+    const wrapper = mountRail({ kind: 'category' as const, field: 'language' as const, buckets, template: undefined })
+    preparePointerRail(wrapper, 40)
+
+    await firePointer(wrapper, 'pointermove', { clientY: 30, pointerType: 'mouse' })
+    expect(wrapper.get('[data-testid="jump-rail-preview"]').text()).toBe('German')
+
+    await wrapper.get('button[data-key="de"]').trigger('click')
+    expect(wrapper.emitted('jump')).toEqual([[buckets[1]]])
   })
 
   it('renders nothing when not visible', () => {
@@ -304,12 +379,12 @@ describe('JumpRail', () => {
     const wrapper = mountRail({ activeKey: null })
 
     await wrapper.setProps({ activeKey: 'A' })
-    expect(wrapper.get('[data-testid="jump-rail"]').classes()).toContain('px-1.5')
+    expect(wrapper.get('[data-testid="jump-rail"]').classes()).toContain('px-1')
 
     vi.advanceTimersByTime(900)
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.get('[data-testid="jump-rail"]').classes()).toContain('px-1')
+    expect(wrapper.get('[data-testid="jump-rail"]').classes()).toContain('px-0.5')
   })
 
   it('clears a pending pulse timer on unmount', async () => {

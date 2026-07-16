@@ -3065,7 +3065,8 @@
     "jumpRail": {
       "jumpToSection": "Pular para a seção",
       "jumpTo": "Pular para {label}",
-      "unknownDate": "Unknown date"
+      "unknownDate": "Unknown date",
+      "unknownValue": "Unknown value"
     },
     "quickView": {
       "title": "Visualização rápida do livro",
