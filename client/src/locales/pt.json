@@ -3064,7 +3064,8 @@
     },
     "jumpRail": {
       "jumpToSection": "Pular para a seção",
-      "jumpTo": "Pular para {label}"
+      "jumpTo": "Pular para {label}",
+      "unknownDate": "Unknown date"
     },
     "quickView": {
       "title": "Visualização rápida do livro",

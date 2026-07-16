@@ -3022,7 +3022,8 @@
     },
     "jumpRail": {
       "jumpToSection": "Jump to section",
-      "jumpTo": "Jump to {label}"
+      "jumpTo": "Jump to {label}",
+      "unknownDate": "Unknown date"
     },
     "quickView": {
       "title": "Book quick view",

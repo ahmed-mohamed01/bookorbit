@@ -112,19 +112,87 @@ describe('JumpRail', () => {
   })
 
   it('renders year buckets without a template', () => {
-    const wrapper = mountRail({ kind: 'year' as const, buckets: yearBuckets(5), template: undefined })
+    const wrapper = mountRail({
+      kind: 'temporal' as const,
+      granularity: { unit: 'year', step: 1 },
+      buckets: yearBuckets(5),
+      template: undefined,
+    })
 
     const labels = wrapper.findAll('button').map((slot) => slot.text())
     expect(labels).toEqual(['1950', '1951', '1952', '1953', '1954'])
   })
 
-  it('thins large year sets to fit while keeping first and last', () => {
-    const wrapper = mountRail({ kind: 'year' as const, buckets: yearBuckets(80), template: undefined })
+  it('formats multi-year ranges and unknown dates', () => {
+    const wrapper = mountRail({
+      kind: 'temporal' as const,
+      granularity: { unit: 'year', step: 10 },
+      buckets: [
+        { key: '1900', label: '1900', index: 0 },
+        { key: '__unknown__', label: '__unknown__', index: 40, isUnknown: true },
+      ],
+      template: undefined,
+    })
 
-    const labels = wrapper.findAll('button').map((slot) => slot.text())
-    expect(labels.length).toBeLessThan(80)
-    expect(labels[0]).toBe('1950')
-    expect(labels[labels.length - 1]).toBe('2029')
+    expect(wrapper.get('button[data-key="1900"]').text()).toBe('1900')
+    expect(wrapper.get('button[data-key="1900"]').attributes('aria-label')).toContain('1900-1909')
+    expect(wrapper.get('button[data-key="__unknown__"]').text()).toBe('?')
+    expect(wrapper.get('button[data-key="__unknown__"]').attributes('aria-label')).toContain('Unknown date')
+  })
+
+  it('fills bounded temporal gaps with disabled dot targets', () => {
+    const wrapper = mountRail({
+      kind: 'temporal' as const,
+      granularity: { unit: 'year', step: 5 },
+      buckets: [
+        { key: '1900', label: '1900', index: 0 },
+        { key: '1920', label: '1920', index: 40 },
+      ],
+      template: undefined,
+    })
+
+    expect(wrapper.findAll('button').map((button) => button.attributes('data-key'))).toEqual(['1900', '1905', '1910', '1915', '1920'])
+    expect(wrapper.get('button[data-key="1905"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button[data-key="1905"]').text()).toBe('')
+  })
+
+  it('compresses empty time without dropping populated year targets', () => {
+    const wrapper = mountRail({
+      kind: 'temporal' as const,
+      granularity: { unit: 'year', step: 1 },
+      maxSlots: 5,
+      buckets: [
+        { key: '1974', label: '1974', index: 0 },
+        { key: '1988', label: '1988', index: 4 },
+        { key: '1989', label: '1989', index: 7 },
+      ],
+      template: undefined,
+    })
+
+    expect(wrapper.findAll('button')).toHaveLength(5)
+    expect(wrapper.get('button[data-key="1974"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('button[data-key="1988"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('button[data-key="1989"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('uses year anchors and dot targets for months with a hover preview', async () => {
+    const wrapper = mountRail({
+      kind: 'temporal' as const,
+      granularity: { unit: 'month', step: 1 },
+      buckets: [
+        { key: '2026-01', label: '2026-01', index: 0 },
+        { key: '2026-02', label: '2026-02', index: 10 },
+        { key: '2026-03', label: '2026-03', index: 20 },
+      ],
+      template: undefined,
+    })
+    preparePointerRail(wrapper, 60)
+
+    expect(wrapper.get('button[data-key="2026-01"]').text()).toBe('2026')
+    expect(wrapper.get('button[data-key="2026-02"]').text()).toBe('')
+
+    await firePointer(wrapper, 'pointermove', { clientY: 30, pointerType: 'mouse' })
+    expect(wrapper.get('[data-testid="jump-rail-preview"]').text()).toBe('February 2026')
   })
 
   it('renders nothing when not visible', () => {

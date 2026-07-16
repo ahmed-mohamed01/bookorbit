@@ -102,6 +102,7 @@ watch(prefs, () => {
 })
 
 const { searchQuery, debouncedQuery, clearSearch } = useViewSearch()
+const mainRef = ref<HTMLElement | null>(null)
 
 const {
   booksProxy: books,
@@ -123,6 +124,8 @@ const {
   handleJump,
   buckets,
   bucketKind,
+  temporalGranularity,
+  railCapacity,
   refreshBuckets,
   railVisible,
   activeBucketKey,
@@ -134,11 +137,11 @@ const {
   listEndpoint: (id) => `/api/v1/libraries/${id}/books`,
   bucketsEndpoint: (id) => `/api/v1/libraries/${id}/books/jump-buckets`,
   viewMode: effectiveViewMode,
+  railViewport: mainRef,
   collapseEnabled: collapseEnabledRef,
   q: debouncedQuery,
 })
 const { onLibraryUploadCompleted } = useLibraryUploadEvents()
-const mainRef = ref<HTMLElement | null>(null)
 useScrollRestoreOnActivate(mainRef)
 const { setBookContext } = useBookNavigation()
 useBookViewContext(slots, total, loadMorePrefix)
@@ -966,6 +969,9 @@ defineOptions({ name: 'HomeView' })
             :visible="railVisible"
             :buckets="buckets"
             :kind="bucketKind ?? 'letter'"
+            :granularity="temporalGranularity"
+            :max-slots="railCapacity"
+            :viewport="mainRef"
             :active-key="activeBucketKey"
             :template="bucketKind === 'letter' ? letterTemplate : undefined"
             @jump="handleJump"

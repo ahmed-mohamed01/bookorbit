@@ -3064,7 +3064,8 @@
     },
     "jumpRail": {
       "jumpToSection": "Naar sectie springen",
-      "jumpTo": "Naar {label} springen"
+      "jumpTo": "Naar {label} springen",
+      "unknownDate": "Unknown date"
     },
     "quickView": {
       "title": "Snelweergave boek",

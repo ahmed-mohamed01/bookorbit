@@ -6,7 +6,7 @@ import { bookMetadata, books } from '../../db/schema';
 // Maps a row to its rail bucket: 'A'..'Z', '#' for non-alphabetic first chars,
 // NULL (excluded from buckets) for empty values. Must stay in sync with
 // jumpBucketKindForSort in @bookorbit/types: every field that yields a kind
-// there needs an expression here for both the flat and collapsed shapes.
+// there needs a letter expression here for both the flat and collapsed shapes.
 function letterExpr(column: SQL): SQL {
   return sql`
     CASE
@@ -23,10 +23,6 @@ export function flatJumpBucketExpr(field: SortField): SQL | null {
       return letterExpr(sql`${bookMetadata.title}`);
     case 'author':
       return letterExpr(sql`${books.primaryAuthorSortName}`);
-    case 'publishedDate':
-      return sql`extract(year from coalesce(${bookMetadata.publishedDate}, make_date(${bookMetadata.publishedYear}, 1, 1)))::int::text`;
-    case 'publishedYear':
-      return sql`${bookMetadata.publishedYear}::text`;
     default:
       return null;
   }
@@ -38,10 +34,6 @@ export function collapsedJumpBucketExpr(field: SortField): SQL | null {
       return letterExpr(sql.raw('r.sort_title'));
     case 'author':
       return letterExpr(sql.raw('r.author_sort_name'));
-    case 'publishedDate':
-      return sql.raw('extract(year from coalesce(r.published_date, make_date(r.published_year, 1, 1)))::int::text');
-    case 'publishedYear':
-      return sql.raw('r.published_year::text');
     default:
       return null;
   }

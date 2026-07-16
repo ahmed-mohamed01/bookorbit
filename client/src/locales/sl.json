@@ -3064,7 +3064,8 @@
     },
     "jumpRail": {
       "jumpToSection": "Skoči na razdelek",
-      "jumpTo": "Skoči na {label}"
+      "jumpTo": "Skoči na {label}",
+      "unknownDate": "Unknown date"
     },
     "quickView": {
       "title": "Hitri pregled knjige",

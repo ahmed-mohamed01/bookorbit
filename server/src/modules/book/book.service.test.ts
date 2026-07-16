@@ -144,6 +144,8 @@ function makeService(overrides: { bookMetadataLockService?: unknown } = {}) {
     findCardsCollapsed: vi.fn(),
     findJumpBuckets: vi.fn(),
     findJumpBucketsCollapsed: vi.fn(),
+    findTemporalJumpBuckets: vi.fn(),
+    findTemporalJumpBucketsCollapsed: vi.fn(),
     checkBookPassesContentFilters: vi.fn().mockResolvedValue(true),
   };
   const libraryService = {
@@ -2603,18 +2605,24 @@ describe('BookService', () => {
       const user = makeUser({ id: 42 });
       queryBuilder.buildWhere.mockReturnValue('WHERE' as never);
       queryBuilder.buildOrderBy.mockReturnValue(['ORDER'] as never);
-      bookRepo.findJumpBuckets.mockResolvedValue({ buckets: [{ key: 'A', label: 'A', index: 0 }], total: 12 });
+      bookRepo.findJumpBuckets.mockResolvedValue({
+        buckets: [{ key: 'A', label: 'A', index: 0 }],
+        total: 12,
+        kind: 'letter',
+        granularity: null,
+      });
 
       const result = await service.queryJumpBucketsForLibrary(user, 7, {
         sort: [{ field: 'title', dir: 'asc' }],
         pagination: { page: 0, size: 50 },
+        maxBuckets: 24,
       } as never);
 
       expect(libraryService.verifyUserAccess).toHaveBeenCalledWith(42, 7, false);
       expect(queryBuilder.buildOrderBy).toHaveBeenCalledWith([{ field: 'title', dir: 'asc' }], 42);
       expect(bookRepo.findJumpBuckets).toHaveBeenCalledWith(expect.objectContaining({ where: 'WHERE', orderBy: ['ORDER'] }));
       expect(bookRepo.findJumpBucketsCollapsed).not.toHaveBeenCalled();
-      expect(result).toEqual({ buckets: [{ key: 'A', label: 'A', index: 0 }], total: 12 });
+      expect(result).toEqual({ buckets: [{ key: 'A', label: 'A', index: 0 }], total: 12, kind: 'letter', granularity: null });
     });
 
     it('executeJumpBucketsQuery rejects ineligible sorts with BadRequestException', async () => {
@@ -2622,28 +2630,38 @@ describe('BookService', () => {
 
       await expect(
         service.executeJumpBucketsQuery(1, undefined, {
-          sort: [{ field: 'addedAt', dir: 'desc' }],
+          sort: [{ field: 'rating', dir: 'desc' }],
           pagination: { page: 0, size: 50 },
+          maxBuckets: 24,
         } as never),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(bookRepo.findJumpBuckets).not.toHaveBeenCalled();
       expect(bookRepo.findJumpBucketsCollapsed).not.toHaveBeenCalled();
     });
 
-    it('executeJumpBucketsQuery supports author and publishedYear sorts in both directions', async () => {
+    it('executeJumpBucketsQuery routes letter and temporal sorts to their bounded query paths', async () => {
       const { service, queryBuilder, bookRepo } = makeService();
       queryBuilder.buildOrderBy.mockReturnValue(['ORDER'] as never);
-      bookRepo.findJumpBuckets.mockResolvedValue({ buckets: [], total: 0 });
+      bookRepo.findJumpBuckets.mockResolvedValue({ buckets: [], total: 0, kind: 'letter', granularity: null });
+      bookRepo.findTemporalJumpBuckets.mockResolvedValue({
+        buckets: [],
+        total: 0,
+        kind: 'temporal',
+        granularity: null,
+      });
 
       for (const sort of [[{ field: 'author', dir: 'desc' }], [{ field: 'publishedYear', dir: 'asc' }], [{ field: 'title', dir: 'desc' }], []]) {
-        await service.executeJumpBucketsQuery(1, undefined, { sort, pagination: { page: 0, size: 50 } } as never);
+        await service.executeJumpBucketsQuery(1, undefined, { sort, pagination: { page: 0, size: 50 }, maxBuckets: 24 } as never);
       }
-      expect(bookRepo.findJumpBuckets).toHaveBeenCalledTimes(4);
+      expect(bookRepo.findJumpBuckets).toHaveBeenCalledTimes(3);
+      expect(bookRepo.findTemporalJumpBuckets).toHaveBeenCalledWith(
+        expect.objectContaining({ field: 'publishedYear', direction: 'asc', precision: 'year', maxBuckets: 24 }),
+      );
     });
 
     it('executeJumpBucketsQuery routes to the collapsed variant when collapseSeries is set', async () => {
       const { service, bookRepo } = makeService();
-      bookRepo.findJumpBucketsCollapsed.mockResolvedValue({ buckets: [], total: 0 });
+      bookRepo.findJumpBucketsCollapsed.mockResolvedValue({ buckets: [], total: 0, kind: 'letter', granularity: null });
 
       await service.executeJumpBucketsQuery(
         9,
@@ -2651,6 +2669,7 @@ describe('BookService', () => {
         {
           sort: [{ field: 'title', dir: 'asc' }],
           pagination: { page: 0, size: 50 },
+          maxBuckets: 24,
           collapseSeries: true,
         } as never,
       );
@@ -2664,11 +2683,12 @@ describe('BookService', () => {
     it('executeJumpBucketsQuery ignores collapseSeries when the filter targets a series', async () => {
       const { service, queryBuilder, bookRepo } = makeService();
       queryBuilder.buildOrderBy.mockReturnValue(['ORDER'] as never);
-      bookRepo.findJumpBuckets.mockResolvedValue({ buckets: [], total: 0 });
+      bookRepo.findJumpBuckets.mockResolvedValue({ buckets: [], total: 0, kind: 'letter', granularity: null });
 
       await service.executeJumpBucketsQuery(9, undefined, {
         sort: [{ field: 'title', dir: 'asc' }],
         pagination: { page: 0, size: 50 },
+        maxBuckets: 24,
         collapseSeries: true,
         filter: { type: 'group', join: 'AND', rules: [{ type: 'rule', field: 'series', operator: 'eq', value: 'Dune' }] },
       } as never);
@@ -2679,11 +2699,12 @@ describe('BookService', () => {
 
     it('executeJumpBucketsQuery keeps collapseSeries for a series presence filter', async () => {
       const { service, bookRepo } = makeService();
-      bookRepo.findJumpBucketsCollapsed.mockResolvedValue({ buckets: [], total: 0 });
+      bookRepo.findJumpBucketsCollapsed.mockResolvedValue({ buckets: [], total: 0, kind: 'letter', granularity: null });
 
       await service.executeJumpBucketsQuery(9, undefined, {
         sort: [{ field: 'title', dir: 'asc' }],
         pagination: { page: 0, size: 50 },
+        maxBuckets: 24,
         collapseSeries: true,
         filter: { type: 'group', join: 'AND', rules: [{ type: 'rule', field: 'series', operator: 'isNotEmpty' }] },
       } as never);

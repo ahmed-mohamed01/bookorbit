@@ -3,7 +3,14 @@ import { SQL, and, asc, count, eq, inArray, isNotNull, ne, or, sql } from 'drizz
 import { SUPPORTED_BOOK_FORMATS } from '../upload/upload-validator.service';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import type { ContentFilterRules, JumpBucketsResponse, SortSpec } from '@bookorbit/types';
+import type {
+  ContentFilterRules,
+  JumpBucketsResponse,
+  SortField,
+  SortSpec,
+  TemporalJumpBucketPrecision,
+  TemporalJumpBucketUnit,
+} from '@bookorbit/types';
 import { isAudioFormat, isComicFormat } from '@bookorbit/types';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
 import { accentInsensitiveIlike } from '../../common/utils/accent-insensitive-search.utils';
@@ -132,6 +139,247 @@ type JumpBucketRawRow = {
   item_index: number | string;
   total: number | string;
 };
+
+type TemporalJumpBucketRawRow = JumpBucketRawRow & {
+  is_unknown: boolean;
+  unit: TemporalJumpBucketUnit;
+  step: number | string;
+};
+
+type TemporalSourceParts = {
+  prefixCte: SQL;
+  join: SQL;
+  value: SQL;
+  baseExtraSelect: SQL;
+  representativeExtraSelect: SQL;
+};
+
+function temporalSourceParts(field: SortField, userId: number, timeZone: string, collapsed: boolean): TemporalSourceParts | null {
+  const empty = sql.raw('');
+  const direct = (value: SQL): TemporalSourceParts => ({
+    prefixCte: empty,
+    join: empty,
+    value,
+    baseExtraSelect: empty,
+    representativeExtraSelect: empty,
+  });
+
+  if (collapsed) {
+    switch (field) {
+      case 'addedAt':
+        return direct(sql`timezone(${timeZone}, r.sort_added_at)`);
+      case 'updatedAt':
+        return direct(sql`timezone(${timeZone}, r.updated_at)`);
+      case 'publishedDate':
+        return direct(sql`coalesce(r.published_date, make_date(r.published_year, 1, 1))::timestamp`);
+      case 'publishedYear':
+        return direct(sql`make_date(r.published_year, 1, 1)::timestamp`);
+      case 'startedAt':
+      case 'finishedAt': {
+        const column = field === 'startedAt' ? sql.raw('rail_ubs.started_at') : sql.raw('rail_ubs.finished_at');
+        return {
+          prefixCte: empty,
+          join: sql`LEFT JOIN ${userBookStatus} rail_ubs ON rail_ubs.book_id = books.id AND rail_ubs.user_id = ${userId}`,
+          value: sql`timezone(${timeZone}, r.rail_temporal_value)`,
+          baseExtraSelect: sql`, ${column} AS rail_temporal_value`,
+          representativeExtraSelect: sql`, base.rail_temporal_value`,
+        };
+      }
+      case 'lastReadAt':
+        return {
+          prefixCte: sql`rail_last_read AS MATERIALIZED (
+            SELECT rail_bf.book_id, max(rail_rp.updated_at) AS value
+            FROM ${readingProgress} rail_rp
+            INNER JOIN ${bookFiles} rail_bf ON rail_bf.id = rail_rp.book_file_id
+            WHERE rail_rp.user_id = ${userId}
+            GROUP BY rail_bf.book_id
+          ),`,
+          join: sql`LEFT JOIN rail_last_read ON rail_last_read.book_id = books.id`,
+          value: sql`timezone(${timeZone}, r.rail_temporal_value)`,
+          baseExtraSelect: sql`, rail_last_read.value AS rail_temporal_value`,
+          representativeExtraSelect: sql`, base.rail_temporal_value`,
+        };
+      default:
+        return null;
+    }
+  }
+
+  switch (field) {
+    case 'addedAt':
+      return direct(sql`timezone(${timeZone}, ${books.addedAt})`);
+    case 'updatedAt':
+      return direct(sql`timezone(${timeZone}, ${books.updatedAt})`);
+    case 'publishedDate':
+      return direct(sql`coalesce(${bookMetadata.publishedDate}, make_date(${bookMetadata.publishedYear}, 1, 1))::timestamp`);
+    case 'publishedYear':
+      return direct(sql`make_date(${bookMetadata.publishedYear}, 1, 1)::timestamp`);
+    case 'startedAt':
+    case 'finishedAt': {
+      const column = field === 'startedAt' ? sql.raw('rail_ubs.started_at') : sql.raw('rail_ubs.finished_at');
+      return {
+        prefixCte: empty,
+        join: sql`LEFT JOIN ${userBookStatus} rail_ubs ON rail_ubs.book_id = ${books.id} AND rail_ubs.user_id = ${userId}`,
+        value: sql`timezone(${timeZone}, ${column})`,
+        baseExtraSelect: empty,
+        representativeExtraSelect: empty,
+      };
+    }
+    case 'lastReadAt':
+      return {
+        prefixCte: sql`rail_last_read AS MATERIALIZED (
+          SELECT rail_bf.book_id, max(rail_rp.updated_at) AS value
+          FROM ${readingProgress} rail_rp
+          INNER JOIN ${bookFiles} rail_bf ON rail_bf.id = rail_rp.book_file_id
+          WHERE rail_rp.user_id = ${userId}
+          GROUP BY rail_bf.book_id
+        ),`,
+        join: sql`LEFT JOIN rail_last_read ON rail_last_read.book_id = ${books.id}`,
+        value: sql`timezone(${timeZone}, rail_last_read.value)`,
+        baseExtraSelect: empty,
+        representativeExtraSelect: empty,
+      };
+    default:
+      return null;
+  }
+}
+
+function temporalBucketsQuery(opts: {
+  prefixCte: SQL;
+  temporalRows: SQL;
+  precision: TemporalJumpBucketPrecision;
+  direction: 'asc' | 'desc';
+  maxBuckets: number;
+}): SQL {
+  const direction = sql.raw(opts.direction === 'desc' ? 'DESC' : 'ASC');
+  const unit =
+    opts.precision === 'year'
+      ? sql`'year'::text`
+      : sql`CASE
+          WHEN day_span <= known_capacity THEN 'day'
+          WHEN month_span <= known_capacity THEN 'month'
+          ELSE 'year'
+        END`;
+
+  return sql`
+    WITH ${opts.prefixCte}
+    temporal_rows AS MATERIALIZED (${opts.temporalRows}),
+    bounds AS (
+      SELECT
+        min(value::date) AS min_date,
+        max(value::date) AS max_date,
+        count(*)::int AS total,
+        count(value)::int AS known_total,
+        (count(DISTINCT extract(year FROM value)) FILTER (WHERE value IS NOT NULL))::int AS known_year_count
+      FROM temporal_rows
+    ),
+    spans AS (
+      SELECT
+        bounds.*,
+        GREATEST(${opts.maxBuckets} - CASE WHEN total > known_total THEN 1 ELSE 0 END, 2)::int AS known_capacity,
+        COALESCE((max_date - min_date) + 1, 1)::int AS day_span,
+        COALESCE(
+          ((extract(year FROM max_date)::int - extract(year FROM min_date)::int) * 12)
+          + extract(month FROM max_date)::int - extract(month FROM min_date)::int + 1,
+          1
+        )::int AS month_span,
+        COALESCE(extract(year FROM max_date)::int - extract(year FROM min_date)::int + 1, 1)::int AS year_span
+      FROM bounds
+    ),
+    resolution_seed AS (
+      SELECT spans.*, ${unit} AS unit
+      FROM spans
+    ),
+    resolution_raw AS (
+      SELECT
+        resolution_seed.*,
+        CASE
+          WHEN unit <> 'year' OR year_span <= known_capacity OR known_year_count <= known_capacity THEN 1
+          ELSE GREATEST(1, ceil(year_span::numeric / GREATEST(known_capacity - 1, 1))::int)
+        END AS raw_year_step
+      FROM resolution_seed
+    ),
+    resolution_scale AS (
+      SELECT
+        resolution_raw.*,
+        power(10::numeric, floor(log(GREATEST(raw_year_step, 1)::numeric)))::int AS step_scale
+      FROM resolution_raw
+    ),
+    resolution AS (
+      SELECT
+        min_date,
+        max_date,
+        total,
+        known_total,
+        known_capacity,
+        unit,
+        CASE
+          WHEN raw_year_step <= step_scale THEN step_scale
+          WHEN raw_year_step <= step_scale * 2 THEN step_scale * 2
+          WHEN raw_year_step <= step_scale * 5 THEN step_scale * 5
+          ELSE step_scale * 10
+        END::int AS step
+      FROM resolution_scale
+    ),
+    bucketed AS (
+      SELECT
+        temporal_rows.value,
+        resolution.unit,
+        resolution.step,
+        CASE resolution.unit
+          WHEN 'day' THEN to_char(temporal_rows.value::date, 'YYYY-MM-DD')
+          WHEN 'month' THEN to_char(date_trunc('month', temporal_rows.value)::date, 'YYYY-MM')
+          ELSE (floor(extract(year FROM temporal_rows.value)::numeric / resolution.step) * resolution.step)::int::text
+        END AS bucket
+      FROM temporal_rows
+      CROSS JOIN resolution
+      WHERE temporal_rows.value IS NOT NULL
+    ),
+    known_groups AS (
+      SELECT bucket, min(value) AS bucket_sort, count(*)::int AS item_count, min(unit) AS unit, min(step)::int AS step
+      FROM bucketed
+      GROUP BY bucket
+    ),
+    known_ranked AS (
+      SELECT
+        bucket,
+        COALESCE(
+          sum(item_count) OVER (
+            ORDER BY bucket_sort ${direction}
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+          ),
+          0
+        )::int AS item_index,
+        unit,
+        step
+      FROM known_groups
+    ),
+    result_rows AS (
+      SELECT
+        known_ranked.bucket,
+        known_ranked.item_index,
+        bounds.total,
+        false AS is_unknown,
+        known_ranked.unit,
+        known_ranked.step
+      FROM known_ranked
+      CROSS JOIN bounds
+      UNION ALL
+      SELECT
+        '__unknown__' AS bucket,
+        bounds.known_total AS item_index,
+        bounds.total,
+        true AS is_unknown,
+        resolution.unit,
+        resolution.step
+      FROM bounds
+      CROSS JOIN resolution
+      WHERE bounds.total > bounds.known_total
+    )
+    SELECT bucket, item_index, total, is_unknown, unit, step
+    FROM result_rows
+    ORDER BY item_index
+  `;
+}
 
 @Injectable()
 export class BookRepository {
@@ -661,6 +909,39 @@ export class BookRepository {
     return this.mapJumpBucketRows(result.rows);
   }
 
+  async findTemporalJumpBuckets(opts: {
+    where: SQL | undefined;
+    field: SortField;
+    direction: 'asc' | 'desc';
+    precision: TemporalJumpBucketPrecision;
+    userId: number;
+    timeZone: string;
+    maxBuckets: number;
+  }): Promise<JumpBucketsResponse> {
+    const source = temporalSourceParts(opts.field, opts.userId, opts.timeZone, false);
+    if (!source) return { buckets: [], total: 0, kind: 'temporal', granularity: null };
+
+    const visibleWhere = this.visibleWhere(opts.where);
+    const temporalRows = sql`
+      SELECT ${source.value} AS value
+      FROM ${books}
+      LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = ${books.id}
+      ${source.join}
+      WHERE ${visibleWhere}
+    `;
+    const result = await this.db.execute<TemporalJumpBucketRawRow>(
+      temporalBucketsQuery({
+        prefixCte: source.prefixCte,
+        temporalRows,
+        precision: opts.precision,
+        direction: opts.direction,
+        maxBuckets: opts.maxBuckets,
+      }),
+    );
+
+    return this.mapTemporalJumpBucketRows(result.rows);
+  }
+
   // The representatives CTE mirrors findCardsCollapsed's representative
   // selection (same group key, same pick order) but only projects the columns
   // buildCollapseOrderBy can reference as aliases or via r.* correlated
@@ -736,6 +1017,78 @@ export class BookRepository {
     return this.mapJumpBucketRows(result.rows);
   }
 
+  async findTemporalJumpBucketsCollapsed(opts: {
+    where: SQL | undefined;
+    field: SortField;
+    direction: 'asc' | 'desc';
+    precision: TemporalJumpBucketPrecision;
+    userId: number;
+    timeZone: string;
+    maxBuckets: number;
+  }): Promise<JumpBucketsResponse> {
+    const source = temporalSourceParts(opts.field, opts.userId, opts.timeZone, true);
+    if (!source) return { buckets: [], total: 0, kind: 'temporal', granularity: null };
+
+    const whereFragment = this.visibleWhere(opts.where);
+    const empty = sql.raw('');
+    const usesSeriesLatest = opts.field === 'addedAt';
+    const seriesLatestCte = usesSeriesLatest
+      ? sql`series_latest AS (
+          SELECT base.series_id, base.library_id, max(base.added_at) AS latest_added_at
+          FROM base_rows base
+          WHERE base.series_id IS NOT NULL
+          GROUP BY base.series_id, base.library_id
+        ),`
+      : empty;
+    const seriesLatestJoin = usesSeriesLatest
+      ? sql`LEFT JOIN series_latest sl ON sl.series_id = base.series_id AND sl.library_id = base.library_id`
+      : empty;
+    const sortAddedAt = usesSeriesLatest ? sql`coalesce(sl.latest_added_at, base.added_at)` : sql`base.added_at`;
+    const prefixCte = sql`
+      ${source.prefixCte}
+      base_rows AS MATERIALIZED (
+        SELECT
+          ${books.id} AS id,
+          ${books.libraryId} AS library_id,
+          ${books.addedAt} AS added_at,
+          ${books.updatedAt} AS updated_at,
+          ${bookMetadata.seriesId} AS series_id,
+          ${bookMetadata.seriesIndex} AS series_index,
+          ${bookMetadata.publishedDate} AS published_date,
+          ${bookMetadata.publishedYear} AS published_year
+          ${source.baseExtraSelect}
+        FROM ${books}
+        LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = ${books.id}
+        ${source.join}
+        WHERE ${whereFragment}
+      ),
+      ${seriesLatestCte}
+      representatives AS (
+        SELECT DISTINCT ON (${sql.raw(COLLAPSE_GROUP_KEY_SQL)})
+          base.id,
+          base.updated_at,
+          base.published_date,
+          base.published_year,
+          ${sortAddedAt} AS sort_added_at
+          ${source.representativeExtraSelect}
+        FROM base_rows base
+        ${seriesLatestJoin}
+        ORDER BY ${sql.raw(COLLAPSE_REPRESENTATIVE_PICK_SQL)}
+      ),
+    `;
+    const result = await this.db.execute<TemporalJumpBucketRawRow>(
+      temporalBucketsQuery({
+        prefixCte,
+        temporalRows: sql`SELECT ${source.value} AS value FROM representatives r`,
+        precision: opts.precision,
+        direction: opts.direction,
+        maxBuckets: opts.maxBuckets,
+      }),
+    );
+
+    return this.mapTemporalJumpBucketRows(result.rows);
+  }
+
   private mapJumpBucketRows(rows: JumpBucketRawRow[]): JumpBucketsResponse {
     return {
       buckets: rows.map((row) => ({
@@ -744,6 +1097,23 @@ export class BookRepository {
         index: Number(row.item_index),
       })),
       total: rows.length > 0 ? Number(rows[0].total) : 0,
+      kind: 'letter',
+      granularity: null,
+    };
+  }
+
+  private mapTemporalJumpBucketRows(rows: TemporalJumpBucketRawRow[]): JumpBucketsResponse {
+    const first = rows[0];
+    return {
+      buckets: rows.map((row) => ({
+        key: row.bucket,
+        label: row.bucket,
+        index: Number(row.item_index),
+        ...(row.is_unknown ? { isUnknown: true } : {}),
+      })),
+      total: first ? Number(first.total) : 0,
+      kind: 'temporal',
+      granularity: first ? { unit: first.unit, step: Number(first.step) } : null,
     };
   }
 

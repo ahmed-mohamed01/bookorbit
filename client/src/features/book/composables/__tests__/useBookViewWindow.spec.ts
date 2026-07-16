@@ -73,7 +73,7 @@ function bucket(key: string, index: number): JumpBucket {
 function mockApi(total: number, buckets: JumpBucket[] = []) {
   fetchMock.mockImplementation((url, init) => {
     if (url.includes('jump-buckets')) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ buckets }) })
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ buckets, total, kind: 'letter', granularity: null }) })
     }
     const body = JSON.parse(String(init?.body)) as { pagination: { page: number } }
     return Promise.resolve({ ok: true, json: () => Promise.resolve(pageFor(body.pagination.page, total)) })

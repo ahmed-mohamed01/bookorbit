@@ -85,6 +85,7 @@ watch(prefs, () => {
 })
 
 const { searchQuery, debouncedQuery, clearSearch } = useViewSearch()
+const mainRef = ref<HTMLElement | null>(null)
 const {
   booksProxy: books,
   slots,
@@ -103,6 +104,8 @@ const {
   handleJump,
   buckets,
   bucketKind,
+  temporalGranularity,
+  railCapacity,
   refreshBuckets,
   railVisible,
   activeBucketKey,
@@ -114,11 +117,11 @@ const {
   listEndpoint: (id) => `/api/v1/smart-scopes/${id}/books/query`,
   bucketsEndpoint: (id) => `/api/v1/smart-scopes/${id}/books/jump-buckets`,
   viewMode: effectiveViewMode,
+  railViewport: mainRef,
   collapseEnabled: collapseEnabledRef,
   q: debouncedQuery,
 })
 const { setBookContext } = useBookNavigation()
-const mainRef = ref<HTMLElement | null>(null)
 useScrollRestoreOnActivate(mainRef)
 useBookViewContext(slots, total, loadMorePrefix)
 const { smartScopes, loaded: smartScopesLoaded, error: smartScopesError, fetchSmartScopes, deleteSmartScope } = useSmartScopes()
@@ -799,6 +802,9 @@ defineOptions({ name: 'SmartScopeView' })
             :visible="railVisible"
             :buckets="buckets"
             :kind="bucketKind ?? 'letter'"
+            :granularity="temporalGranularity"
+            :max-slots="railCapacity"
+            :viewport="mainRef"
             :active-key="activeBucketKey"
             :template="bucketKind === 'letter' ? letterTemplate : undefined"
             @jump="handleJump"

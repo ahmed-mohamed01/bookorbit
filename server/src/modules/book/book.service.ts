@@ -37,6 +37,7 @@ import {
   isAudioFormat,
   jumpBucketKindForSort,
   resolveUploadPath,
+  temporalJumpBucketPrecisionForSort,
 } from '@bookorbit/types';
 import type {
   AudiobookChapter,
@@ -50,6 +51,7 @@ import type {
   BooksPage,
   FileRenameResult,
   JumpBucketsResponse,
+  JumpBucketsQuery,
   MetadataFetchDiagnostics,
   MetadataField,
   ReadStatus,
@@ -1110,7 +1112,7 @@ export class BookService {
     return result;
   }
 
-  async queryJumpBucketsForLibrary(user: RequestUser, libraryId: number, query: BookQuery): Promise<JumpBucketsResponse> {
+  async queryJumpBucketsForLibrary(user: RequestUser, libraryId: number, query: JumpBucketsQuery): Promise<JumpBucketsResponse> {
     await this.libraryService.verifyUserAccess(user.id, libraryId, this.isSuperuser(user));
     const timeZone = this.resolveUserTimeZone(user);
     const where = this.queryBuilder.buildWhere(query.filter, {
@@ -1121,24 +1123,43 @@ export class BookService {
       timeZone,
       contentFilters: this.isSuperuser(user) ? undefined : user.contentFilters,
     });
-    return this.executeJumpBucketsQuery(user.id, where, query);
+    return this.executeJumpBucketsQuery(user.id, where, query, timeZone);
   }
 
-  async executeJumpBucketsQuery(userId: number, where: SQL | undefined, query: BookQuery): Promise<JumpBucketsResponse> {
+  async executeJumpBucketsQuery(userId: number, where: SQL | undefined, query: JumpBucketsQuery, timeZone = 'UTC'): Promise<JumpBucketsResponse> {
     const event = 'book.jump_buckets';
     const kind = jumpBucketKindForSort(query.sort);
-    const primaryField = (query.sort[0] ?? { field: 'title', dir: 'asc' }).field;
+    const primary = query.sort[0] ?? { field: 'title' as const, dir: 'asc' as const };
     const shouldCollapse = query.collapseSeries === true && !BookQueryBuilder.hasSeriesSelectionFilter(query.filter);
-    const bucketExpr = shouldCollapse ? collapsedJumpBucketExpr(primaryField) : flatJumpBucketExpr(primaryField);
-    if (!kind || !bucketExpr) throw new BadRequestException('jump buckets are not available for this sort');
+    if (!kind) throw new BadRequestException('jump buckets are not available for this sort');
 
     const start = Date.now();
     try {
-      const response = shouldCollapse
-        ? await this.bookRepo.findJumpBucketsCollapsed({ where, bucketExpr, sort: query.sort, userId })
-        : await this.bookRepo.findJumpBuckets({ where, bucketExpr, orderBy: this.queryBuilder.buildOrderBy(query.sort, userId) });
+      let response: JumpBucketsResponse;
+      if (kind === 'temporal') {
+        const precision = temporalJumpBucketPrecisionForSort(query.sort);
+        if (!precision) throw new BadRequestException('temporal jump buckets are not available for this sort');
+        const temporalOpts = {
+          where,
+          field: primary.field,
+          direction: primary.dir,
+          precision,
+          userId,
+          timeZone,
+          maxBuckets: query.maxBuckets,
+        };
+        response = shouldCollapse
+          ? await this.bookRepo.findTemporalJumpBucketsCollapsed(temporalOpts)
+          : await this.bookRepo.findTemporalJumpBuckets(temporalOpts);
+      } else {
+        const bucketExpr = shouldCollapse ? collapsedJumpBucketExpr(primary.field) : flatJumpBucketExpr(primary.field);
+        if (!bucketExpr) throw new BadRequestException('jump buckets are not available for this sort');
+        response = shouldCollapse
+          ? await this.bookRepo.findJumpBucketsCollapsed({ where, bucketExpr, sort: query.sort, userId })
+          : await this.bookRepo.findJumpBuckets({ where, bucketExpr, orderBy: this.queryBuilder.buildOrderBy(query.sort, userId) });
+      }
       this.logger.log(
-        `[${event}] [end] userId=${userId} kind=${kind} collapse=${shouldCollapse} durationMs=${Date.now() - start} bucketCount=${response.buckets.length} total=${response.total} - jump buckets computed`,
+        `[${event}] [end] userId=${userId} kind=${kind} collapse=${shouldCollapse} maxBuckets=${query.maxBuckets} durationMs=${Date.now() - start} bucketCount=${response.buckets.length} total=${response.total} - jump buckets computed`,
       );
       return response;
     } catch (err) {

@@ -3064,7 +3064,8 @@
     },
     "jumpRail": {
       "jumpToSection": "Zu Abschnitt springen",
-      "jumpTo": "Zu {label} springen"
+      "jumpTo": "Zu {label} springen",
+      "unknownDate": "Unknown date"
     },
     "quickView": {
       "title": "Schnellansicht des Buchs",
