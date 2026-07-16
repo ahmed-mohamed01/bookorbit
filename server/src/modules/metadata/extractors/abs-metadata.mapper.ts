@@ -72,16 +72,26 @@ function mapIsbn(value: unknown): { isbn10: string | null; isbn13: string | null
 
 const NUMERIC_SEQUENCE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
 
-function mapSeries(value: unknown): { seriesName: string | null; seriesIndex: number | null } {
-  const [first] = coerceStringArray(value);
-  if (first === undefined) return { seriesName: null, seriesIndex: null };
-
-  const match = first.match(/ #([^#\s]+)$/);
+function parseSeriesEntry(entry: string): { seriesName: string; seriesIndex: number | null } {
+  const match = entry.match(/ #([^#\s]+)$/);
   if (match && NUMERIC_SEQUENCE.test(match[1])) {
-    const name = first.slice(0, match.index).trim();
-    return { seriesName: name.length > 0 ? name : first, seriesIndex: parseFloat(match[1]) };
+    const name = entry.slice(0, match.index).trim();
+    return { seriesName: name.length > 0 ? name : entry, seriesIndex: parseFloat(match[1]) };
   }
-  return { seriesName: first, seriesIndex: null };
+  return { seriesName: entry, seriesIndex: null };
+}
+
+function mapSeriesMemberships(value: unknown): { seriesName: string; seriesIndex: number | null }[] {
+  const memberships: { seriesName: string; seriesIndex: number | null }[] = [];
+  const seen = new Set<string>();
+  for (const entry of coerceStringArray(value)) {
+    const parsed = parseSeriesEntry(entry);
+    const key = parsed.seriesName.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    memberships.push(parsed);
+  }
+  return memberships;
 }
 
 function mapChapters(value: unknown): { title: string; startMs: number }[] {
@@ -101,7 +111,8 @@ function mapChapters(value: unknown): { title: string; startMs: number }[] {
 export function mapAbsMetadata(raw: AbsBookMetadata): ParsedBookData {
   const source = hoistLegacyWrapper(raw as Record<string, unknown>);
   const { isbn10, isbn13 } = mapIsbn(source.isbn);
-  const { seriesName, seriesIndex } = mapSeries(source.series);
+  const seriesMemberships = mapSeriesMemberships(source.series);
+  const [primarySeries] = seriesMemberships;
 
   return {
     title: coerceString(source.title),
@@ -113,8 +124,9 @@ export function mapAbsMetadata(raw: AbsBookMetadata): ParsedBookData {
     publishedDate: coerceString(source.publishedDate),
     publishedYear: coerceYear(source.publishedYear),
     language: coerceString(source.language),
-    seriesName,
-    seriesIndex,
+    seriesName: primarySeries?.seriesName ?? null,
+    seriesIndex: primarySeries?.seriesIndex ?? null,
+    seriesMemberships,
     authors: coerceStringArray(source.authors).map((name) => ({ name, sortName: null })),
     genres: coerceStringArray(source.genres),
     tags: coerceStringArray(source.tags),
@@ -139,6 +151,7 @@ export function hasAbsMetadata(data: ParsedBookData): boolean {
     data.language !== null ||
     data.seriesName !== null ||
     data.seriesIndex !== null ||
+    (data.seriesMemberships?.length ?? 0) > 0 ||
     data.audibleId !== null ||
     data.abridged !== null ||
     data.authors.length > 0 ||

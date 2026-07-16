@@ -217,6 +217,12 @@ describe('MetadataService', () => {
       comicMetadataRepository?: { upsert: ReturnType<typeof vi.fn> };
       bookMetadataLockService?: Pick<BookMetadataLockService, 'isFieldLocked' | 'filterAutomatedBookUpdate'>;
       embedder?: { embedBook: ReturnType<typeof vi.fn> } | null;
+      seriesIdentity?: { normalizeName: ReturnType<typeof vi.fn>; resolveMetadataPatch: ReturnType<typeof vi.fn> };
+      seriesMemberships?: {
+        replaceForBook: ReturnType<typeof vi.fn>;
+        findByBookId: ReturnType<typeof vi.fn>;
+        syncPrimaryFromMetadata: ReturnType<typeof vi.fn>;
+      };
     },
   ) {
     return new MetadataService(
@@ -231,6 +237,8 @@ describe('MetadataService', () => {
       }) as never,
       (overrides?.embedder ?? embedder) as never,
       metadataEvents as never,
+      overrides?.seriesIdentity as never,
+      overrides?.seriesMemberships as never,
     );
   }
 
@@ -758,6 +766,153 @@ describe('MetadataService', () => {
 
     const scalarPatch = updateSet.mock.calls[0][0] as Record<string, unknown>;
     expect(scalarPatch).not.toHaveProperty('abridged');
+  });
+
+  const makeSeriesMembershipsMock = (existing: unknown[] = []) => ({
+    replaceForBook: vi.fn().mockResolvedValue([]),
+    findByBookId: vi.fn().mockResolvedValue(existing),
+    syncPrimaryFromMetadata: vi.fn().mockResolvedValue([]),
+  });
+
+  const makeSeriesIdentityMock = () => ({
+    normalizeName: vi.fn((name: string) => name.trim().toLowerCase() || null),
+    resolveMetadataPatch: vi.fn(<T>(fields: T) => Promise.resolve(fields)),
+  });
+
+  it('extractAndSaveIfAvailable(json) replaces memberships from a multi-series sidecar when unlocked', async () => {
+    const { db } = makeDb();
+    const seriesMemberships = makeSeriesMembershipsMock();
+    const service = makeService(db, undefined, {
+      bookMetadataLockService: makeRealBookMetadataLockService(),
+      seriesIdentity: makeSeriesIdentityMock(),
+      seriesMemberships,
+    });
+    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
+    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
+    vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
+
+    mockReadFile.mockResolvedValue(
+      JSON.stringify({
+        title: 'Mistborn',
+        series: ['The Mistborn Saga #2', 'Mistborn Era 1 #2', 'Cosmere #2'],
+      }),
+    );
+
+    await expect(service.extractAndSaveIfAvailable(50, '/books/metadata.json', 'json')).resolves.toBe(true);
+
+    expect(seriesMemberships.replaceForBook).toHaveBeenCalledWith(50, [
+      { seriesName: 'The Mistborn Saga', seriesIndex: 2 },
+      { seriesName: 'Mistborn Era 1', seriesIndex: 2 },
+      { seriesName: 'Cosmere', seriesIndex: 2 },
+    ]);
+    expect(seriesMemberships.findByBookId).not.toHaveBeenCalled();
+    expect(seriesMemberships.syncPrimaryFromMetadata).not.toHaveBeenCalled();
+  });
+
+  it('extractAndSaveIfAvailable(json) keeps existing memberships and appends new series when series is locked', async () => {
+    const { db } = makeDb();
+    const seriesMemberships = makeSeriesMembershipsMock([
+      { seriesId: 1, seriesName: 'The Mistborn Saga', seriesIndex: 2, displayOrder: 0 },
+      { seriesId: 2, seriesName: 'User Added', seriesIndex: 5, displayOrder: 1 },
+    ]);
+    const service = makeService(db, undefined, {
+      bookMetadataLockService: makeRealBookMetadataLockService(['seriesName', 'seriesIndex']),
+      seriesIdentity: makeSeriesIdentityMock(),
+      seriesMemberships,
+    });
+    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
+    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
+    vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
+
+    mockReadFile.mockResolvedValue(
+      JSON.stringify({
+        title: 'Mistborn',
+        series: ['The Mistborn Saga #2', 'Cosmere #2'],
+      }),
+    );
+
+    await expect(service.extractAndSaveIfAvailable(51, '/books/metadata.json', 'json')).resolves.toBe(true);
+
+    expect(seriesMemberships.findByBookId).toHaveBeenCalledWith(51);
+    expect(seriesMemberships.replaceForBook).toHaveBeenCalledWith(51, [
+      { seriesName: 'The Mistborn Saga', seriesIndex: 2 },
+      { seriesName: 'User Added', seriesIndex: 5 },
+      { seriesName: 'Cosmere', seriesIndex: 2 },
+    ]);
+  });
+
+  it('extractAndSaveIfAvailable(json) does not re-add a locked series that already exists by normalized name', async () => {
+    const { db } = makeDb();
+    const seriesMemberships = makeSeriesMembershipsMock([{ seriesId: 1, seriesName: 'Cosmere', seriesIndex: 1, displayOrder: 0 }]);
+    const service = makeService(db, undefined, {
+      bookMetadataLockService: makeRealBookMetadataLockService(['seriesName']),
+      seriesIdentity: makeSeriesIdentityMock(),
+      seriesMemberships,
+    });
+    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
+    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
+    vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
+
+    mockReadFile.mockResolvedValue(JSON.stringify({ title: 'Mistborn', series: ['  cosmere  #3'] }));
+
+    await expect(service.extractAndSaveIfAvailable(52, '/books/metadata.json', 'json')).resolves.toBe(true);
+
+    expect(seriesMemberships.findByBookId).toHaveBeenCalledWith(52);
+    expect(seriesMemberships.replaceForBook).not.toHaveBeenCalled();
+  });
+
+  it('extractAndSaveIfAvailable(json) clears memberships when an unlocked sidecar has an empty series array', async () => {
+    const { db } = makeDb();
+    const seriesMemberships = makeSeriesMembershipsMock();
+    const service = makeService(db, undefined, {
+      bookMetadataLockService: makeRealBookMetadataLockService(),
+      seriesIdentity: makeSeriesIdentityMock(),
+      seriesMemberships,
+    });
+    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
+    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
+    vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
+
+    mockReadFile.mockResolvedValue(JSON.stringify({ title: 'No Series', series: [] }));
+
+    await expect(service.extractAndSaveIfAvailable(53, '/books/metadata.json', 'json')).resolves.toBe(true);
+
+    expect(seriesMemberships.replaceForBook).toHaveBeenCalledWith(53, []);
+  });
+
+  it('extractAndSave(audio) uses the scalar series path and never touches memberships directly', async () => {
+    const { db } = makeDb();
+    const seriesMemberships = makeSeriesMembershipsMock();
+    const service = makeService(db, undefined, {
+      bookMetadataLockService: makeRealBookMetadataLockService(),
+      seriesMemberships,
+    });
+    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
+    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
+
+    mockExtractAudioMetadata.mockResolvedValueOnce({
+      title: 'Audio Title',
+      subtitle: null,
+      authors: [],
+      narrators: [],
+      publisher: null,
+      publishedYear: null,
+      description: null,
+      language: null,
+      seriesName: 'Audio Series',
+      seriesIndex: 1,
+      genres: [],
+      audibleId: null,
+      durationSeconds: null,
+      chapters: [],
+      coverBytes: null,
+    });
+
+    await service.extractAndSave(54, '/books/audio.m4b', 'm4b');
+
+    expect(seriesMemberships.replaceForBook).not.toHaveBeenCalled();
+    expect(seriesMemberships.findByBookId).not.toHaveBeenCalled();
+    expect(seriesMemberships.syncPrimaryFromMetadata).toHaveBeenCalledWith(54);
   });
 
   it('refreshCoverForBook returns false and avoids db writes when extractor reports no cover', async () => {

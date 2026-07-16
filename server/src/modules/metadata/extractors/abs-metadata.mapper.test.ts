@@ -135,10 +135,45 @@ describe('mapAbsMetadata - series parsing', () => {
     expect(result.seriesIndex).toBeNull();
   });
 
-  it('imports only the first series entry', () => {
+  it('keeps the first series entry as the scalar primary', () => {
     const result = mapAbsMetadata({ series: ['First #1', 'Second #2'] });
     expect(result.seriesName).toBe('First');
     expect(result.seriesIndex).toBe(1);
+  });
+
+  it('parses every series entry into memberships in file order', () => {
+    const result = mapAbsMetadata({ series: ['The Mistborn Saga #2', 'Mistborn Era 1 #2', 'Cosmere #2'] });
+    expect(result.seriesMemberships).toEqual([
+      { seriesName: 'The Mistborn Saga', seriesIndex: 2 },
+      { seriesName: 'Mistborn Era 1', seriesIndex: 2 },
+      { seriesName: 'Cosmere', seriesIndex: 2 },
+    ]);
+    expect(result.seriesName).toBe('The Mistborn Saga');
+    expect(result.seriesIndex).toBe(2);
+  });
+
+  it('keeps entries without a sequence and mixes valid and invalid sequences', () => {
+    const result = mapAbsMetadata({ series: ['Standalone', 'Saga #1a', 'Cosmere #7'] });
+    expect(result.seriesMemberships).toEqual([
+      { seriesName: 'Standalone', seriesIndex: null },
+      { seriesName: 'Saga #1a', seriesIndex: null },
+      { seriesName: 'Cosmere', seriesIndex: 7 },
+    ]);
+  });
+
+  it('deduplicates memberships by series name, first occurrence wins', () => {
+    const result = mapAbsMetadata({ series: ['Saga #1', 'saga #3', 'Other #2'] });
+    expect(result.seriesMemberships).toEqual([
+      { seriesName: 'Saga', seriesIndex: 1 },
+      { seriesName: 'Other', seriesIndex: 2 },
+    ]);
+  });
+
+  it('leaves memberships empty when no series entries are present', () => {
+    const result = mapAbsMetadata({});
+    expect(result.seriesMemberships).toEqual([]);
+    expect(result.seriesName).toBeNull();
+    expect(result.seriesIndex).toBeNull();
   });
 
   it('parses a leading-dot fractional sequence', () => {

@@ -12,6 +12,7 @@ export interface ParsedBookData {
   language?: string | null;
   seriesName?: string | null;
   seriesIndex?: number | null;
+  seriesMemberships?: { seriesName: string; seriesIndex: number | null }[];
   authors: { name: string; sortName: string | null }[];
   genres: string[];
   tags?: string[];

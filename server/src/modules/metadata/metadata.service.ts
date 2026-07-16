@@ -669,7 +669,9 @@ export class MetadataService {
   }
 
   private async persistAudioMetadata(bookId: number, data: ParsedBookData): Promise<void> {
-    const { dto: filtered } = await this.bookMetadataLockService.filterAutomatedBookUpdate(bookId, {
+    const useMemberships = data.seriesMemberships !== undefined && this.seriesMemberships != null;
+
+    const { dto: filtered, skippedFields } = await this.bookMetadataLockService.filterAutomatedBookUpdate(bookId, {
       title: data.title,
       subtitle: data.subtitle,
       description: data.description,
@@ -679,8 +681,9 @@ export class MetadataService {
       publishedDate: data.publishedDate,
       publishedYear: data.publishedYear,
       language: data.language,
-      seriesName: normalizeMetadataText(data.seriesName),
-      seriesIndex: data.seriesIndex,
+      ...(useMemberships
+        ? { seriesMemberships: data.seriesMemberships }
+        : { seriesName: normalizeMetadataText(data.seriesName), seriesIndex: data.seriesIndex }),
       authors: data.authors.map((author) => author.name),
       genres: data.genres,
       ...(data.tags === undefined ? {} : { tags: data.tags }),
@@ -733,6 +736,11 @@ export class MetadataService {
       }
     }
 
+    if (useMemberships) {
+      const seriesLocked = skippedFields.includes('seriesName') || skippedFields.includes('seriesIndex');
+      await this.persistSidecarSeriesMemberships(bookId, data.seriesMemberships!, seriesLocked);
+    }
+
     if (filtered.authors !== undefined) {
       await this.replaceAuthors(bookId, data.authors);
     }
@@ -748,6 +756,46 @@ export class MetadataService {
     }
 
     this.logger.debug(`[metadata.persist_audio] [end] bookId=${bookId} title="${sanitizeLogValue(data.title ?? '')}" - audio metadata persisted`);
+  }
+
+  private async persistSidecarSeriesMemberships(
+    bookId: number,
+    sidecarMemberships: { seriesName: string; seriesIndex: number | null }[],
+    seriesLocked: boolean,
+  ): Promise<void> {
+    if (!this.seriesMemberships) return;
+
+    if (!seriesLocked) {
+      await this.seriesMemberships.replaceForBook(bookId, sidecarMemberships);
+      return;
+    }
+
+    const current = await this.seriesMemberships.findByBookId(bookId);
+    const seen = new Set<string>();
+    for (const membership of current) {
+      const key = this.normalizeSeriesKey(membership.seriesName);
+      if (key) seen.add(key);
+    }
+
+    const additions = sidecarMemberships.filter((membership) => {
+      const key = this.normalizeSeriesKey(membership.seriesName);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    if (additions.length === 0) return;
+
+    await this.seriesMemberships.replaceForBook(bookId, [
+      ...current.map((membership) => ({ seriesName: membership.seriesName, seriesIndex: membership.seriesIndex })),
+      ...additions,
+    ]);
+  }
+
+  private normalizeSeriesKey(name: string): string | null {
+    if (this.seriesIdentity) return this.seriesIdentity.normalizeName(name);
+    const trimmed = name.trim().toLowerCase();
+    return trimmed.length > 0 ? trimmed : null;
   }
 
   private async persistBookMetadata(bookId: number, data: ParsedBookData, format: string): Promise<void> {
