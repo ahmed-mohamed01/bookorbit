@@ -291,4 +291,55 @@ describe('ReadingAttemptService', () => {
 
     expect(row.endedOn).toBe('2025-01-10');
   });
+
+  it('stamps origin and provider from a completed hardcover import', async () => {
+    await service.importExternalRead(1, 10, {
+      provider: 'hardcover',
+      externalId: '88',
+      startedOn: '2025-02-01',
+      endedOn: '2025-02-10',
+    });
+
+    expect(fake.rows).toHaveLength(1);
+    expect(fake.rows[0]).toMatchObject({
+      outcome: 'completed',
+      origin: 'hardcover',
+      externalProvider: 'hardcover',
+      externalId: '88',
+    });
+  });
+
+  it('stamps origin and provider from a completed audiobookshelf import', async () => {
+    await service.importExternalRead(1, 10, {
+      provider: 'audiobookshelf',
+      externalId: 'abs-item-1',
+      startedOn: '2025-03-01',
+      endedOn: '2025-03-05',
+    });
+
+    expect(fake.rows).toHaveLength(1);
+    expect(fake.rows[0]).toMatchObject({
+      outcome: 'completed',
+      origin: 'audiobookshelf',
+      externalProvider: 'audiobookshelf',
+      externalId: 'abs-item-1',
+    });
+  });
+
+  it('opens an active audiobookshelf attempt with audiobookshelf origin when unfinished', async () => {
+    await service.importExternalRead(1, 10, {
+      provider: 'audiobookshelf',
+      externalId: 'abs-item-2',
+      startedOn: '2025-04-01',
+      endedOn: null,
+    });
+
+    expect(fake.rows).toHaveLength(1);
+    expect(fake.rows[0]).toMatchObject({
+      outcome: null,
+      origin: 'audiobookshelf',
+      externalProvider: 'audiobookshelf',
+      externalId: 'abs-item-2',
+    });
+  });
 });

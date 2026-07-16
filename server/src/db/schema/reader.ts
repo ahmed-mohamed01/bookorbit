@@ -77,7 +77,7 @@ export const readingAttempts = pgTable(
       .on(t.userId, t.externalProvider, t.externalId)
       .where(sql`${t.externalProvider} is not null and ${t.externalId} is not null`),
     check('reading_attempts_outcome_chk', sql`${t.outcome} is null or ${t.outcome} in ('completed', 'skimmed', 'abandoned')`),
-    check('reading_attempts_origin_chk', sql`${t.origin} in ('manual', 'bookorbit', 'kobo', 'koreader', 'hardcover', 'migration')`),
+    check('reading_attempts_origin_chk', sql`${t.origin} in ('manual', 'bookorbit', 'kobo', 'koreader', 'hardcover', 'audiobookshelf', 'migration')`),
     check('reading_attempts_end_after_start_chk', sql`${t.endedOn} is null or ${t.startedOn} is null or ${t.endedOn} >= ${t.startedOn}`),
     check('reading_attempts_closed_has_outcome_chk', sql`${t.endedOn} is null or ${t.outcome} is not null`),
   ],
@@ -202,8 +202,8 @@ export const readingSessions = pgTable(
     attemptId: integer('attempt_id').references(() => readingAttempts.id, { onDelete: 'set null' }),
     // Client-generated UUID; used for idempotent retries.
     sessionId: varchar('session_id', { length: 64 }).notNull(),
-    // 'web' (browser reader) | 'koreader' (page-stats derivation) | 'manual' (user-entered) | 'kobo' (future)
-    source: varchar('source', { length: 10 }).$type<ReadingSessionSource>(),
+    // 'web' (browser reader) | 'koreader' (page-stats derivation) | 'manual' (user-entered) | 'kobo' (future) | 'audiobookshelf'
+    source: varchar('source', { length: 20 }).$type<ReadingSessionSource>(),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
     endedAt: timestamp('ended_at', { withTimezone: true }).notNull(),
     // Server-computed from endedAt - startedAt; client-provided timestamps are untrusted for duration.
@@ -220,7 +220,7 @@ export const readingSessions = pgTable(
     index('rs_user_book_started_at_idx').on(t.userId, t.bookId, t.startedAt),
     index('reading_sessions_book_id_idx').on(t.bookId),
     index('rs_attempt_started_at_idx').on(t.attemptId, t.startedAt),
-    check('reading_sessions_source_chk', sql`${t.source} in ('web', 'koreader', 'manual', 'kobo')`),
+    check('reading_sessions_source_chk', sql`${t.source} in ('web', 'koreader', 'manual', 'kobo', 'audiobookshelf')`),
     check('reading_sessions_duration_seconds_nonnegative_chk', sql`${t.durationSeconds} >= 0`),
     check('reading_sessions_end_progress_range_chk', sql`${t.endProgress} is null or (${t.endProgress} >= 0 and ${t.endProgress} <= 100)`),
     check('reading_sessions_ended_after_started_chk', sql`${t.endedAt} >= ${t.startedAt}`),
