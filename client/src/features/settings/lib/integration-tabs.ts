@@ -1,6 +1,6 @@
 import { Permission } from '@bookorbit/types'
 
-export const INTEGRATION_TABS = ['hardcover', 'readwise', 'storygraph'] as const
+export const INTEGRATION_TABS = ['hardcover', 'readwise', 'storygraph', 'audiobookshelf'] as const
 
 export type IntegrationTab = (typeof INTEGRATION_TABS)[number]
 
@@ -9,6 +9,9 @@ type IntegrationTabInfo = {
   titleLabel: string
   permission: Permission
 }
+
+// Resolves to Permission.AudiobookshelfSync when the parallel shared-types change lands.
+const AUDIOBOOKSHELF_PERMISSION = 'audiobookshelf_sync' as Permission
 
 export const INTEGRATION_TAB_INFO: Record<IntegrationTab, IntegrationTabInfo> = {
   hardcover: {
@@ -25,6 +28,11 @@ export const INTEGRATION_TAB_INFO: Record<IntegrationTab, IntegrationTabInfo> = 
     navLabel: 'StoryGraph',
     titleLabel: 'StoryGraph',
     permission: Permission.StorygraphSync,
+  },
+  audiobookshelf: {
+    navLabel: 'Audiobookshelf',
+    titleLabel: 'Audiobookshelf',
+    permission: AUDIOBOOKSHELF_PERMISSION,
   },
 }
 

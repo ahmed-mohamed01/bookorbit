@@ -5,6 +5,7 @@ import SettingsPageHeader from './SettingsPageHeader.vue'
 import HardcoverSettings from '@/features/hardcover/components/HardcoverSettings.vue'
 import ReadwiseSettings from '@/features/readwise/components/ReadwiseSettings.vue'
 import StorygraphSettings from '@/features/storygraph/components/StorygraphSettings.vue'
+import AudiobookshelfSettings from '@/features/audiobookshelf/components/AudiobookshelfSettings.vue'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { INTEGRATION_TAB_INFO, INTEGRATION_TABS, normalizeIntegrationTab, type IntegrationTab as Tab } from './lib/integration-tabs'
 
@@ -77,6 +78,7 @@ function selectTab(tab: Tab) {
   <HardcoverSettings v-if="activeTab === 'hardcover' && availableTabs.length > 0" embedded />
   <ReadwiseSettings v-else-if="activeTab === 'readwise' && availableTabs.length > 0" embedded />
   <StorygraphSettings v-else-if="activeTab === 'storygraph' && availableTabs.length > 0" embedded />
+  <AudiobookshelfSettings v-else-if="activeTab === 'audiobookshelf' && availableTabs.length > 0" embedded />
   <div v-else class="rounded-lg border border-border bg-card px-4 py-5 text-sm text-muted-foreground">
     You do not have permission to use any integrations.
   </div>
