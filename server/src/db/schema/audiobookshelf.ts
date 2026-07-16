@@ -33,6 +33,8 @@ export const audiobookshelfBookState = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     absLibraryItemId: varchar('abs_library_item_id', { length: 255 }).notNull(),
+    absTitle: varchar('abs_title', { length: 1000 }),
+    absAuthorName: varchar('abs_author_name', { length: 1000 }),
     bookId: integer('book_id').references(() => books.id, { onDelete: 'cascade' }),
     matchMethod: varchar('match_method', { length: 20 }),
     matchConfidence: real('match_confidence'),

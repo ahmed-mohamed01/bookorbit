@@ -379,6 +379,13 @@
       "when": 1784221311618,
       "tag": "0053_add-audiobookshelf-foundations",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1784241077310,
+      "tag": "0054_abs_book_state_display_fields",
+      "breakpoints": true
     }
   ]
 }
