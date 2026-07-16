@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { AlertCircle, CheckCircle2, Eye, EyeOff, Link, Loader2, RefreshCw, Save, Unlink } from '@lucide/vue'
 import { toast } from 'vue-sonner'
+import type { UpsertAudiobookshelfSettingsPayload } from '@bookorbit/types'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { useAudiobookshelfSettings } from '../composables/useAudiobookshelfSettings'
 import { useAudiobookshelfSync } from '../composables/useAudiobookshelfSync'
@@ -12,7 +13,7 @@ const { syncing, isFullResync, syncNow, fullResync } = useAudiobookshelfSync()
 const form = reactive({ serverUrl: '', enabled: true })
 const tokenInput = ref('')
 const tokenVisible = ref(false)
-const testResult = ref<{ valid: boolean; serverName?: string; username?: string } | null>(null)
+const testResult = ref<{ success: boolean; username?: string; error?: string } | null>(null)
 
 const isConfigured = computed(() => settings.value?.tokenConfigured === true && Boolean(settings.value.serverUrl))
 const lastSyncedLabel = computed(() => {
@@ -59,8 +60,8 @@ async function handleTestConnection(): Promise<void> {
     return
   }
   testResult.value = await testConnection(connectionPayload())
-  if (testResult.value.valid) toast.success('Audiobookshelf connection successful')
-  else toast.error(error.value ?? 'Audiobookshelf connection failed')
+  if (testResult.value.success) toast.success('Audiobookshelf connection successful')
+  else toast.error(testResult.value.error ?? error.value ?? 'Audiobookshelf connection failed')
 }
 
 async function handleSave(): Promise<void> {
@@ -72,7 +73,12 @@ async function handleSave(): Promise<void> {
     toast.error('Enter your Audiobookshelf API token')
     return
   }
-  const saved = await saveSettings({ ...connectionPayload(), enabled: form.enabled })
+  const payload: UpsertAudiobookshelfSettingsPayload = {
+    ...(form.serverUrl.trim() !== settings.value?.serverUrl ? { serverUrl: form.serverUrl.trim() } : {}),
+    ...(tokenInput.value.trim() ? { apiToken: tokenInput.value.trim() } : {}),
+    ...(form.enabled !== settings.value?.enabled ? { enabled: form.enabled } : {}),
+  }
+  const saved = await saveSettings(payload)
   if (saved) {
     tokenInput.value = ''
     testResult.value = null
@@ -174,10 +180,10 @@ async function handleFullResync(): Promise<void> {
           <CheckCircle2 v-else class="size-3" />
           Test connection
         </button>
-        <span v-if="testResult" class="flex items-center gap-1 text-xs" :class="testResult.valid ? 'text-primary' : 'text-destructive'">
-          <CheckCircle2 v-if="testResult.valid" class="size-3.5" />
+        <span v-if="testResult" class="flex items-center gap-1 text-xs" :class="testResult.success ? 'text-primary' : 'text-destructive'">
+          <CheckCircle2 v-if="testResult.success" class="size-3.5" />
           <AlertCircle v-else class="size-3.5" />
-          {{ testResult.valid ? `Connected${testResult.serverName ? ` to ${testResult.serverName}` : ''}` : 'Connection failed' }}
+          {{ testResult.success ? `Connected${testResult.username ? ` as ${testResult.username}` : ''}` : (testResult.error ?? 'Connection failed') }}
         </span>
       </div>
 
@@ -205,7 +211,7 @@ async function handleFullResync(): Promise<void> {
       <div v-if="isConfigured" class="flex flex-col gap-2 sm:flex-row">
         <button
           type="button"
-          :disabled="syncing || !settings?.enabled"
+          :disabled="syncing || !settings?.effectiveEnabled"
           class="flex items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
           @click="handleSyncNow"
         >
@@ -215,7 +221,7 @@ async function handleFullResync(): Promise<void> {
         </button>
         <button
           type="button"
-          :disabled="syncing || !settings?.enabled"
+          :disabled="syncing || !settings?.effectiveEnabled"
           class="flex items-center justify-center gap-1.5 rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-40"
           @click="handleFullResync"
         >

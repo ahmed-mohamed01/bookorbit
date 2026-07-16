@@ -2,6 +2,7 @@
 import { onMounted, reactive, watch } from 'vue'
 import { Loader2, Save } from '@lucide/vue'
 import { toast } from 'vue-sonner'
+import type { UpsertAudiobookshelfSettingsPayload } from '@bookorbit/types'
 import SettingsPageHeader from '@/features/settings/SettingsPageHeader.vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import AudiobookshelfConnectionCard from './AudiobookshelfConnectionCard.vue'
@@ -30,7 +31,12 @@ onMounted(async () => {
 })
 
 async function handleSaveSyncOptions(): Promise<void> {
-  const saved = await saveSettings({ ...syncOptions })
+  const payload: UpsertAudiobookshelfSettingsPayload = {
+    ...(syncOptions.syncStatus !== settings.value?.syncStatus ? { syncStatus: syncOptions.syncStatus } : {}),
+    ...(syncOptions.syncPosition !== settings.value?.syncPosition ? { syncPosition: syncOptions.syncPosition } : {}),
+    ...(syncOptions.syncSessions !== settings.value?.syncSessions ? { syncSessions: syncOptions.syncSessions } : {}),
+  }
+  const saved = await saveSettings(payload)
   if (saved) toast.success('Audiobookshelf sync options saved')
   else toast.error(error.value ?? 'Failed to save Audiobookshelf sync options')
 }

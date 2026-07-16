@@ -4,20 +4,24 @@ The client keeps all route paths and request and response types in `api/audioboo
 
 ## Settings and connection
 
-| Method   | Path                                              | Request body                                                                             | Expected response                   |
-| -------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------- |
-| `GET`    | `/api/v1/audiobookshelf/settings`                 | None                                                                                     | `AudiobookshelfSettingsResponse`    |
-| `PATCH`  | `/api/v1/audiobookshelf/settings`                 | Any subset of `{ serverUrl, apiToken, enabled, syncStatus, syncPosition, syncSessions }` | `AudiobookshelfSettingsResponse`    |
-| `DELETE` | `/api/v1/audiobookshelf/settings`                 | None                                                                                     | Empty success response              |
-| `POST`   | `/api/v1/audiobookshelf/settings/test-connection` | Any subset of `{ serverUrl, apiToken }`. Omitted values use saved settings.              | `{ valid, serverName?, username? }` |
+These routes are user-scoped and guarded at the controller by `Permission.AudiobookshelfSync`.
 
-`AudiobookshelfSettingsResponse`:
+| Method   | Path                                     | Request body                                                                                   | Expected response                |
+| -------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------- |
+| `GET`    | `/api/v1/audiobookshelf/settings`        | None                                                                                           | `AudiobookshelfSettings`         |
+| `PATCH`  | `/api/v1/audiobookshelf/settings`        | Changed fields from `{ serverUrl, apiToken, enabled, syncStatus, syncPosition, syncSessions }` | `AudiobookshelfSettings`         |
+| `DELETE` | `/api/v1/audiobookshelf/settings`        | None                                                                                           | `200` with an empty body         |
+| `POST`   | `/api/v1/audiobookshelf/test-connection` | Any subset of `{ serverUrl, apiToken }`. Omitted values use saved settings.                    | `{ success, username?, error? }` |
+
+`AudiobookshelfSettings`, imported from `@bookorbit/types`:
 
 ```ts
 {
   serverUrl: string | null
   tokenConfigured: boolean
   enabled: boolean
+  effectiveEnabled: boolean
+  disabledReason: 'permission_denied' | 'missing_config' | 'user_disabled' | null
   syncStatus: boolean
   syncPosition: boolean
   syncSessions: boolean
@@ -26,7 +30,7 @@ The client keeps all route paths and request and response types in `api/audioboo
 }
 ```
 
-The token is never returned to the browser.
+The token is never returned to the browser. These four routes and shapes are verified against server commit `985ae45d`.
 
 ## Linked books
 
@@ -103,11 +107,8 @@ Both requests remain open until the run completes. The client provides indetermi
 }
 ```
 
-## Assumptions
+## Assumptions for unbuilt routes
 
-- Server ticket 02 will add `Permission.AudiobookshelfSync` with the confirmed literal value `audiobookshelf_sync`. Until that shared-types change is merged, the settings tab uses the literal cast to `Permission` and does not modify `packages/types`.
-- Settings updates use `PATCH`, matching the Hardcover and StoryGraph integrations and allowing connection fields and sync toggles to be saved independently.
-- Connection tests accept omitted URL or token fields and use the stored value for anything omitted. This lets a configured user test without exposing or re-entering the saved token.
 - Manual sync and full resync are synchronous HTTP operations that return the summary above. No status or stream endpoints were specified by tickets 04 or 06.
 - Linked-book actions identify rows by the URL-encoded ABS library item id because it is stable and unique per user.
 - Rescan completes the matching pass before returning. The client reloads all three bounded first pages after it succeeds.

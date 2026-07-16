@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
+import type { AudiobookshelfSettings } from '@bookorbit/types'
 import AudiobookshelfConnectionCard from '../AudiobookshelfConnectionCard.vue'
-import type { AudiobookshelfSettingsResponse } from '../../api/audiobookshelf.api'
 
-const settings = ref<AudiobookshelfSettingsResponse | null>(null)
+const settings = ref<AudiobookshelfSettings | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   fetchSettings: vi.fn<() => Promise<void>>(),
   saveSettings: vi.fn<() => Promise<boolean>>(),
   disconnect: vi.fn<() => Promise<boolean>>(),
-  testConnection: vi.fn<() => Promise<{ valid: boolean }>>(),
+  testConnection: vi.fn<() => Promise<{ success: boolean }>>(),
   syncNow: vi.fn<() => Promise<boolean>>(),
   fullResync: vi.fn<() => Promise<boolean>>(),
 }))
@@ -38,11 +38,13 @@ vi.mock('../../composables/useAudiobookshelfSync', () => ({
 
 vi.mock('vue-sonner', () => ({ toast: { success: vi.fn<() => void>(), error: vi.fn<() => void>() } }))
 
-function configuredSettings(overrides: Partial<AudiobookshelfSettingsResponse> = {}): AudiobookshelfSettingsResponse {
+function configuredSettings(overrides: Partial<AudiobookshelfSettings> = {}): AudiobookshelfSettings {
   return {
     serverUrl: 'https://abs.example.com',
     tokenConfigured: true,
     enabled: true,
+    effectiveEnabled: true,
+    disabledReason: null,
     syncStatus: true,
     syncPosition: true,
     syncSessions: true,
@@ -77,7 +79,7 @@ describe('AudiobookshelfConnectionCard', () => {
     mocks.fetchSettings.mockResolvedValue()
     mocks.saveSettings.mockResolvedValue(true)
     mocks.disconnect.mockResolvedValue(true)
-    mocks.testConnection.mockResolvedValue({ valid: true })
+    mocks.testConnection.mockResolvedValue({ success: true })
     mocks.syncNow.mockResolvedValue(true)
     mocks.fullResync.mockResolvedValue(true)
   })

@@ -1,40 +1,15 @@
 import { api } from '@/lib/api'
+import type {
+  AudiobookshelfConnectionTestPayload,
+  AudiobookshelfConnectionTestResult,
+  AudiobookshelfSettings,
+  UpsertAudiobookshelfSettingsPayload,
+} from '@bookorbit/types'
 
 const BASE = '/api/v1/audiobookshelf'
 const BOOK_SEARCH_PATH = '/api/v1/books/search'
 
 export type AudiobookshelfMatchBucket = 'linked' | 'needs-review' | 'unmatched'
-
-export interface AudiobookshelfSettingsResponse {
-  serverUrl: string | null
-  tokenConfigured: boolean
-  enabled: boolean
-  syncStatus: boolean
-  syncPosition: boolean
-  syncSessions: boolean
-  lastSyncedAt: string | null
-  lastSyncError: string | null
-}
-
-export interface UpdateAudiobookshelfSettingsRequest {
-  serverUrl?: string
-  apiToken?: string
-  enabled?: boolean
-  syncStatus?: boolean
-  syncPosition?: boolean
-  syncSessions?: boolean
-}
-
-export interface TestAudiobookshelfConnectionRequest {
-  serverUrl?: string
-  apiToken?: string
-}
-
-export interface AudiobookshelfConnectionTestResult {
-  valid: boolean
-  serverName?: string
-  username?: string
-}
 
 export interface AudiobookshelfBookState {
   absLibraryItemId: string
@@ -83,13 +58,13 @@ async function responseError(response: Response, fallback: string): Promise<Erro
   return new Error((body as { message?: string }).message ?? fallback)
 }
 
-export async function fetchAudiobookshelfSettings(): Promise<AudiobookshelfSettingsResponse> {
+export async function fetchAudiobookshelfSettings(): Promise<AudiobookshelfSettings> {
   const response = await api(`${BASE}/settings`)
   if (!response.ok) throw await responseError(response, 'Failed to load Audiobookshelf settings')
   return response.json()
 }
 
-export async function updateAudiobookshelfSettings(payload: UpdateAudiobookshelfSettingsRequest): Promise<AudiobookshelfSettingsResponse> {
+export async function updateAudiobookshelfSettings(payload: UpsertAudiobookshelfSettingsPayload): Promise<AudiobookshelfSettings> {
   const response = await api(`${BASE}/settings`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -104,8 +79,8 @@ export async function disconnectAudiobookshelf(): Promise<void> {
   if (!response.ok) throw await responseError(response, 'Failed to disconnect Audiobookshelf')
 }
 
-export async function testAudiobookshelfConnection(payload: TestAudiobookshelfConnectionRequest): Promise<AudiobookshelfConnectionTestResult> {
-  const response = await api(`${BASE}/settings/test-connection`, {
+export async function testAudiobookshelfConnection(payload: AudiobookshelfConnectionTestPayload): Promise<AudiobookshelfConnectionTestResult> {
+  const response = await api(`${BASE}/test-connection`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

@@ -10,9 +10,6 @@ type IntegrationTabInfo = {
   permission: Permission
 }
 
-// Resolves to Permission.AudiobookshelfSync when the parallel shared-types change lands.
-const AUDIOBOOKSHELF_PERMISSION = 'audiobookshelf_sync' as Permission
-
 export const INTEGRATION_TAB_INFO: Record<IntegrationTab, IntegrationTabInfo> = {
   hardcover: {
     navLabel: 'Hardcover',
@@ -32,7 +29,7 @@ export const INTEGRATION_TAB_INFO: Record<IntegrationTab, IntegrationTabInfo> = 
   audiobookshelf: {
     navLabel: 'Audiobookshelf',
     titleLabel: 'Audiobookshelf',
-    permission: AUDIOBOOKSHELF_PERMISSION,
+    permission: Permission.AudiobookshelfSync,
   },
 }
 

@@ -90,6 +90,7 @@ const SESSION_SOURCE_PILLS = computed<Record<ReadingSessionSource, { label: stri
   web: { label: t('book.detail.readingLog.table.sourceWeb'), class: 'border-[var(--pill-web)]/40 bg-[var(--pill-web)]/10 text-[var(--pill-web)]' },
   koreader: { label: 'KOReader', class: 'border-[var(--pill-koreader)]/40 bg-[var(--pill-koreader)]/10 text-[var(--pill-koreader)]' },
   kobo: { label: 'Kobo', class: 'border-[var(--pill-kobo)]/40 bg-[var(--pill-kobo)]/10 text-[var(--pill-kobo)]' },
+  audiobookshelf: { label: 'Audiobookshelf', class: 'border-border bg-muted text-muted-foreground' },
   manual: { label: t('book.detail.readingLog.table.sourceManual'), class: 'border-border bg-muted text-muted-foreground' },
 }))
 

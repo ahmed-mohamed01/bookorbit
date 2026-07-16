@@ -1,16 +1,18 @@
 import { ref } from 'vue'
+import type {
+  AudiobookshelfConnectionTestPayload,
+  AudiobookshelfConnectionTestResult,
+  AudiobookshelfSettings,
+  UpsertAudiobookshelfSettingsPayload,
+} from '@bookorbit/types'
 import {
   disconnectAudiobookshelf,
   fetchAudiobookshelfSettings,
   testAudiobookshelfConnection,
   updateAudiobookshelfSettings,
-  type AudiobookshelfConnectionTestResult,
-  type AudiobookshelfSettingsResponse,
-  type TestAudiobookshelfConnectionRequest,
-  type UpdateAudiobookshelfSettingsRequest,
 } from '../api/audiobookshelf.api'
 
-const settings = ref<AudiobookshelfSettingsResponse | null>(null)
+const settings = ref<AudiobookshelfSettings | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
@@ -29,7 +31,7 @@ export function useAudiobookshelfSettings() {
     }
   }
 
-  async function saveSettings(payload: UpdateAudiobookshelfSettingsRequest): Promise<boolean> {
+  async function saveSettings(payload: UpsertAudiobookshelfSettingsPayload): Promise<boolean> {
     saving.value = true
     error.value = null
     try {
@@ -58,14 +60,14 @@ export function useAudiobookshelfSettings() {
     }
   }
 
-  async function testConnection(payload: TestAudiobookshelfConnectionRequest): Promise<AudiobookshelfConnectionTestResult> {
+  async function testConnection(payload: AudiobookshelfConnectionTestPayload): Promise<AudiobookshelfConnectionTestResult> {
     testing.value = true
     error.value = null
     try {
       return await testAudiobookshelfConnection(payload)
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to test Audiobookshelf connection'
-      return { valid: false }
+      return { success: false, error: error.value ?? undefined }
     } finally {
       testing.value = false
     }

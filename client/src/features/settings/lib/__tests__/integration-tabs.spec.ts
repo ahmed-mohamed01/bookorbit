@@ -11,7 +11,7 @@ describe('integration-tabs', () => {
     expect(INTEGRATION_TAB_INFO.hardcover.permission).toBe(Permission.HardcoverSync)
     expect(INTEGRATION_TAB_INFO.readwise.permission).toBe(Permission.ReadwiseSync)
     expect(INTEGRATION_TAB_INFO.storygraph.permission).toBe(Permission.StorygraphSync)
-    expect(INTEGRATION_TAB_INFO.audiobookshelf.permission).toBe('audiobookshelf_sync')
+    expect(INTEGRATION_TAB_INFO.audiobookshelf.permission).toBe(Permission.AudiobookshelfSync)
   })
 
   it('defaults to Hardcover for an invalid tab', () => {
