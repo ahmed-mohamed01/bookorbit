@@ -227,7 +227,7 @@ export class ReadingAttemptService {
   async importExternalRead(
     userId: number,
     bookId: number,
-    input: { provider: 'hardcover'; externalId: string; startedOn: string | null; endedOn: string | null },
+    input: { provider: 'hardcover' | 'audiobookshelf'; externalId: string; startedOn: string | null; endedOn: string | null },
   ): Promise<void> {
     this.validateDates(input.startedOn, input.endedOn);
     await this.repo.transaction(async (tx) => {
@@ -246,7 +246,7 @@ export class ReadingAttemptService {
           userId,
           bookId,
           startedOn: input.startedOn,
-          origin: 'hardcover',
+          origin: input.provider,
           externalProvider: input.provider,
           externalId: input.externalId,
         });
@@ -257,7 +257,7 @@ export class ReadingAttemptService {
           startedOn: input.startedOn,
           endedOn: input.endedOn,
           outcome: input.endedOn ? 'completed' : 'abandoned',
-          origin: 'hardcover',
+          origin: input.provider,
           externalProvider: input.provider,
           externalId: input.externalId,
         });

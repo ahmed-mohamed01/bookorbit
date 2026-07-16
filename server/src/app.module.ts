@@ -67,6 +67,7 @@ import { AchievementModule } from './modules/achievement/achievement.module';
 import { HardcoverModule } from './modules/hardcover/hardcover.module';
 import { ReadwiseModule } from './modules/readwise/readwise.module';
 import { StorygraphModule } from './modules/storygraph/storygraph.module';
+import { AudiobookshelfModule } from './modules/audiobookshelf/audiobookshelf.module';
 import { CustomMetadataModule } from './modules/custom-metadata/custom-metadata.module';
 import { CustomIconModule } from './modules/custom-icon/custom-icon.module';
 import { AccountActivityModule } from './modules/account-activity/account-activity.module';
@@ -147,6 +148,7 @@ import { SharedReadingInsightsModule } from './modules/shared-reading-insights/s
     HardcoverModule,
     ReadwiseModule,
     StorygraphModule,
+    AudiobookshelfModule,
     AccountActivityModule,
     SharedReadingInsightsModule,
   ],

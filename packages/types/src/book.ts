@@ -33,7 +33,7 @@ export type UserBookStatus = {
 export const READING_ATTEMPT_OUTCOMES = ["completed", "skimmed", "abandoned"] as const;
 export type ReadingAttemptOutcome = (typeof READING_ATTEMPT_OUTCOMES)[number];
 
-export const READING_ATTEMPT_ORIGINS = ["manual", "bookorbit", "kobo", "koreader", "hardcover", "migration"] as const;
+export const READING_ATTEMPT_ORIGINS = ["manual", "bookorbit", "kobo", "koreader", "hardcover", "audiobookshelf", "migration"] as const;
 export type ReadingAttemptOrigin = (typeof READING_ATTEMPT_ORIGINS)[number];
 
 export type ReadingAttempt = {
