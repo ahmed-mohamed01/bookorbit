@@ -72,3 +72,12 @@ export interface AudiobookshelfExclusionPayload {
 export interface AudiobookshelfRescanResult {
   queued: number;
 }
+
+export interface AudiobookshelfSyncResult {
+  matched: number;
+  statusApplied: number;
+  positionApplied: number;
+  sessionsApplied: number;
+  skipped: number;
+  failed: number;
+}

@@ -86,8 +86,7 @@ export class AudiobookshelfMatchService {
     const startedAt = Date.now();
     this.logger.log(`[abs.match] [start] userId=${user.id} trigger=rescan - library rescan started`);
     try {
-      const items = await this.fetchMatchInputs(user.id, settings.serverUrl, settings.apiToken);
-      const summary = await this.matchItems(user, items, { force: true });
+      const summary = await this.matchLibrary(user, settings.serverUrl, settings.apiToken, { force: true });
       this.logger.log(
         `[abs.match] [end] userId=${user.id} trigger=rescan durationMs=${Date.now() - startedAt} totalItems=${summary.totalItems} autoLinked=${summary.autoLinked} needsReview=${summary.needsReview} unmatched=${summary.unmatched} errors=${summary.errors} skipped=${summary.skipped} - library rescan completed`,
       );
@@ -100,6 +99,11 @@ export class AudiobookshelfMatchService {
       );
       throw err;
     }
+  }
+
+  async matchLibrary(user: RequestUser, serverUrl: string, token: string, options: { force: boolean }): Promise<AudiobookshelfMatchSummary> {
+    const items = await this.fetchMatchInputs(user.id, serverUrl, token);
+    return this.matchItems(user, items, options);
   }
 
   async matchItems(user: RequestUser, items: AbsMatchInput[], options: { force: boolean }): Promise<AudiobookshelfMatchSummary> {
