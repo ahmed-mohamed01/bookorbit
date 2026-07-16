@@ -53,4 +53,5 @@ export * from "./annotation";
 export * from "./hardcover";
 export * from "./readwise";
 export * from "./storygraph";
+export * from "./audiobookshelf";
 export * from "./path";

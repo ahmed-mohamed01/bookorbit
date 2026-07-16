@@ -611,6 +611,11 @@ describe('Authorization matrix (e2e)', () => {
           path: '/storygraph/settings',
           token: 'allPerms',
         },
+        [Permission.AudiobookshelfSync]: {
+          method: 'GET',
+          path: '/audiobookshelf/settings',
+          token: 'allPerms',
+        },
         [Permission.DemoRestricted]: {
           method: 'GET',
           path: '/notifications',
