@@ -7,7 +7,12 @@ import type {
   AudiobookshelfSettings,
   UpsertAudiobookshelfSettingsPayload,
 } from '@bookorbit/types'
-import { fetchAudiobookshelfLibraries, updateAudiobookshelfSettings } from '../../api/audiobookshelf.api'
+import {
+  disconnectAudiobookshelf,
+  fetchAudiobookshelfLibraries,
+  fetchAudiobookshelfSettings,
+  updateAudiobookshelfSettings,
+} from '../../api/audiobookshelf.api'
 
 vi.mock('../../api/audiobookshelf.api', () => ({
   disconnectAudiobookshelf: vi.fn<() => Promise<void>>(),
@@ -18,7 +23,25 @@ vi.mock('../../api/audiobookshelf.api', () => ({
 }))
 
 const mockFetchLibraries = vi.mocked(fetchAudiobookshelfLibraries)
+const mockFetchSettings = vi.mocked(fetchAudiobookshelfSettings)
 const mockUpdateSettings = vi.mocked(updateAudiobookshelfSettings)
+const mockDisconnect = vi.mocked(disconnectAudiobookshelf)
+
+interface Deferred<T> {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason?: unknown) => void
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve
+    reject = innerReject
+  })
+  return { promise, resolve, reject }
+}
 
 function configuredSettings(overrides: Partial<AudiobookshelfSettings> = {}): AudiobookshelfSettings {
   return {
@@ -50,8 +73,10 @@ async function loadComposable() {
 describe('useAudiobookshelfSettings credential discovery', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockFetchSettings.mockResolvedValue(configuredSettings())
     mockUpdateSettings.mockResolvedValue(configuredSettings())
     mockFetchLibraries.mockResolvedValue({ libraries: [library('fiction')] })
+    mockDisconnect.mockResolvedValue()
   })
 
   it('discovers once for token replacement followed by a server URL change', async () => {
@@ -117,5 +142,137 @@ describe('useAudiobookshelfSettings credential discovery', () => {
     await expect(settings.saveSettings({ syncStatus: false })).resolves.toBe(true)
 
     expect(mockFetchLibraries).not.toHaveBeenCalled()
+  })
+
+  it('coalesces duplicate concurrent settings fetches', async () => {
+    const settingsResult = deferred<AudiobookshelfSettings>()
+    mockFetchSettings.mockReturnValueOnce(settingsResult.promise)
+    const settings = await loadComposable()
+
+    const firstFetch = settings.fetchSettings()
+    const secondFetch = settings.fetchSettings()
+
+    expect(mockFetchSettings).toHaveBeenCalledTimes(1)
+    expect(settings.loading.value).toBe(true)
+
+    settingsResult.resolve(configuredSettings({ serverUrl: 'https://coalesced.example.com' }))
+    await Promise.all([firstFetch, secondFetch])
+
+    expect(settings.loading.value).toBe(false)
+    expect(settings.settings.value?.serverUrl).toBe('https://coalesced.example.com')
+  })
+
+  it('does not let a settings fetch started before a save overwrite the completed save', async () => {
+    const staleFetch = deferred<AudiobookshelfSettings>()
+    mockFetchSettings.mockReturnValueOnce(staleFetch.promise)
+    mockUpdateSettings.mockResolvedValueOnce(configuredSettings({ serverUrl: 'https://saved.example.com' }))
+    const settings = await loadComposable()
+
+    const fetch = settings.fetchSettings()
+    await expect(settings.saveSettings({ serverUrl: 'https://saved.example.com' })).resolves.toBe(true)
+    staleFetch.resolve(configuredSettings({ serverUrl: 'https://stale.example.com' }))
+    await fetch
+
+    expect(settings.settings.value?.serverUrl).toBe('https://saved.example.com')
+  })
+
+  it('does not let a sync settings refresh started during a save overwrite the save result', async () => {
+    const save = deferred<AudiobookshelfSettings>()
+    const syncRefresh = deferred<AudiobookshelfSettings>()
+    mockUpdateSettings.mockReturnValueOnce(save.promise)
+    mockFetchSettings.mockReturnValueOnce(syncRefresh.promise)
+    const settings = await loadComposable()
+
+    const saveResult = settings.saveSettings({ serverUrl: 'https://saved.example.com' })
+    const refresh = settings.fetchSettings()
+    save.resolve(configuredSettings({ serverUrl: 'https://saved.example.com' }))
+    await saveResult
+    syncRefresh.resolve(configuredSettings({ serverUrl: 'https://sync-stale.example.com' }))
+    await refresh
+
+    expect(settings.settings.value?.serverUrl).toBe('https://saved.example.com')
+  })
+
+  it('starts a fresh save-triggered discovery while initial discovery is pending', async () => {
+    const initialDiscovery = deferred<AudiobookshelfLibrariesResponse>()
+    const saveDiscovery = deferred<AudiobookshelfLibrariesResponse>()
+    mockFetchLibraries.mockReturnValueOnce(initialDiscovery.promise).mockReturnValueOnce(saveDiscovery.promise)
+    mockUpdateSettings.mockResolvedValueOnce(configuredSettings({ serverUrl: 'https://saved.example.com' }))
+    const settings = await loadComposable()
+
+    const initial = settings.fetchLibraries()
+    const save = settings.saveSettings({ serverUrl: 'https://saved.example.com' })
+    await Promise.resolve()
+
+    expect(mockFetchLibraries).toHaveBeenCalledTimes(2)
+    saveDiscovery.resolve({ libraries: [library('saved')] })
+    await save
+    expect(settings.libraries.value).toEqual([library('saved')])
+    expect(settings.librariesLoading.value).toBe(false)
+
+    initialDiscovery.resolve({ libraries: [library('initial')] })
+    await initial
+
+    expect(settings.libraries.value).toEqual([library('saved')])
+    expect(settings.librariesError.value).toBeNull()
+    expect(settings.librariesLoading.value).toBe(false)
+  })
+
+  it('ignores stale library success, error, and finally paths after a newer discovery starts', async () => {
+    const initialDiscovery = deferred<AudiobookshelfLibrariesResponse>()
+    const saveDiscovery = deferred<AudiobookshelfLibrariesResponse>()
+    mockFetchLibraries.mockReturnValueOnce(initialDiscovery.promise).mockReturnValueOnce(saveDiscovery.promise)
+    const settings = await loadComposable()
+
+    const initial = settings.fetchLibraries()
+    const save = settings.saveSettings({ apiToken: 'replacement-token' })
+    await Promise.resolve()
+    initialDiscovery.reject(new Error('stale discovery failed'))
+    await initial
+
+    expect(settings.librariesError.value).toBeNull()
+    expect(settings.librariesLoading.value).toBe(true)
+
+    saveDiscovery.resolve({ libraries: [library('fresh')] })
+    await save
+
+    expect(settings.libraries.value).toEqual([library('fresh')])
+    expect(settings.librariesError.value).toBeNull()
+    expect(settings.librariesLoading.value).toBe(false)
+  })
+
+  it('coalesces equivalent concurrent library discovery across composable instances', async () => {
+    const discovery = deferred<AudiobookshelfLibrariesResponse>()
+    mockFetchLibraries.mockReturnValueOnce(discovery.promise)
+    const first = await loadComposable()
+    const { useAudiobookshelfSettings } = await import('../useAudiobookshelfSettings')
+    const second = useAudiobookshelfSettings()
+
+    const firstLoad = first.fetchLibraries()
+    const secondLoad = second.fetchLibraries()
+
+    expect(mockFetchLibraries).toHaveBeenCalledTimes(1)
+    discovery.resolve({ libraries: [library('shared')] })
+    await Promise.all([firstLoad, secondLoad])
+
+    expect(first.libraries.value).toEqual([library('shared')])
+    expect(second.libraries.value).toEqual([library('shared')])
+  })
+
+  it('disconnect clears libraries and prevents a pending discovery from restoring them', async () => {
+    const discovery = deferred<AudiobookshelfLibrariesResponse>()
+    mockFetchLibraries.mockReturnValueOnce(discovery.promise)
+    const settings = await loadComposable()
+    settings.libraries.value = [library('current')]
+
+    const load = settings.fetchLibraries()
+    await expect(settings.disconnect()).resolves.toBe(true)
+    discovery.resolve({ libraries: [library('stale')] })
+    await load
+
+    expect(settings.settings.value).toBeNull()
+    expect(settings.libraries.value).toEqual([])
+    expect(settings.librariesError.value).toBeNull()
+    expect(settings.librariesLoading.value).toBe(false)
   })
 })
