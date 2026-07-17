@@ -57,6 +57,7 @@ function makeDeps() {
     getAudioFilesInPlayOrder: vi.fn().mockResolvedValue([{ id: 1, format: 'mp3', durationSeconds: 300 }]),
     upsertAudioProgressFromSync: vi.fn().mockResolvedValue(undefined),
   };
+  const sessionsService = { syncSessions: vi.fn().mockResolvedValue({ inserted: 0, updated: 0, skipped: 0, watermark: null }) };
   const settings = {
     userId: 7,
     serverUrl: 'http://abs.local',
@@ -74,8 +75,9 @@ function makeDeps() {
     attempts as never,
     statusService as never,
     bookService as never,
+    sessionsService as never,
   );
-  return { service, repo, client, matchService, attempts, statusService, bookService, settings };
+  return { service, repo, client, matchService, attempts, statusService, bookService, sessionsService, settings };
 }
 
 describe('resolveAbsTargetStatus', () => {
@@ -270,7 +272,7 @@ describe('AudiobookshelfSyncService.sync', () => {
     expect(repo.updateBookState).toHaveBeenCalledWith(7, 'abs-b', expect.objectContaining({ lastSyncedAbsUpdate: 2000, syncError: null }));
   });
 
-  it('reports matched from the match step and never applies sessions', async () => {
+  it('reports matched from the match step', async () => {
     const { service, matchService } = makeDeps();
     matchService.matchLibrary.mockResolvedValue({ autoLinked: 4 });
 
@@ -278,7 +280,45 @@ describe('AudiobookshelfSyncService.sync', () => {
 
     expect(matchService.matchLibrary).toHaveBeenCalledWith(makeUser(), 'http://abs.local', 'token', { force: false });
     expect(result.matched).toBe(4);
+  });
+
+  it('reports sessionsApplied as inserted + updated from the session ingest', async () => {
+    const { service, sessionsService, repo } = makeDeps();
+    sessionsService.syncSessions.mockResolvedValue({ inserted: 5, updated: 3, skipped: 1, watermark: 123 });
+
+    const result = await service.sync(makeUser());
+
+    expect(sessionsService.syncSessions).toHaveBeenCalledWith(makeUser(), expect.objectContaining({ syncSessions: true }));
+    expect(result.sessionsApplied).toBe(8);
+    expect(repo.upsertSettings).toHaveBeenCalledWith(7, expect.objectContaining({ lastSyncError: null }));
+  });
+
+  it('does not ingest sessions when the syncSessions toggle is off', async () => {
+    const { service, sessionsService, repo } = makeDeps();
+    repo.findSettings.mockResolvedValue({
+      userId: 7,
+      serverUrl: 'http://abs.local',
+      apiToken: 'token',
+      enabled: true,
+      syncStatus: true,
+      syncPosition: true,
+      syncSessions: false,
+    });
+
+    const result = await service.sync(makeUser());
+
+    expect(sessionsService.syncSessions).not.toHaveBeenCalled();
     expect(result.sessionsApplied).toBe(0);
+  });
+
+  it('isolates a session-ingest failure: still completes and records the error on settings', async () => {
+    const { service, sessionsService, repo } = makeDeps();
+    sessionsService.syncSessions.mockRejectedValue(new Error('sessions "boom"'));
+
+    const result = await service.sync(makeUser());
+
+    expect(result.sessionsApplied).toBe(0);
+    expect(repo.upsertSettings).toHaveBeenCalledWith(7, expect.objectContaining({ lastSyncError: expect.stringContaining('sessions') }));
   });
 
   it('skips items entirely when both status and position sync are disabled', async () => {
@@ -416,6 +456,7 @@ describe('AudiobookshelfSyncService ordering against real reading-attempt/status
     };
     const matchService = { matchLibrary: vi.fn().mockResolvedValue({ autoLinked: 0 }) };
     const bookService = { getAudioFilesInPlayOrder: vi.fn(), upsertAudioProgressFromSync: vi.fn() };
+    const sessionsService = { syncSessions: vi.fn().mockResolvedValue({ inserted: 0, updated: 0, skipped: 0, watermark: null }) };
 
     const service = new AudiobookshelfSyncService(
       repo as never,
@@ -424,6 +465,7 @@ describe('AudiobookshelfSyncService ordering against real reading-attempt/status
       attemptService as never,
       statusService as never,
       bookService as never,
+      sessionsService as never,
     );
 
     const result = await service.sync(makeUser());

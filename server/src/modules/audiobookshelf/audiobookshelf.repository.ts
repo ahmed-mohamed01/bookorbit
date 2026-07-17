@@ -1,15 +1,28 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { AudiobookshelfBookStateBucket, ContentFilterRules } from '@bookorbit/types';
 import { Permission } from '@bookorbit/types';
-import { and, asc, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, ilike, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import type { AudiobookshelfBookState, AudiobookshelfUserSetting, NewAudiobookshelfBookState, NewAudiobookshelfUserSetting } from '../../db/schema';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
+import {
+  aggregateReadingSessionDailyStats,
+  getDayRangeForDateKeys,
+  getReadingSessionDayKeys,
+  type ReadingDailyStatsSegment,
+} from '../../common/utils/reading-daily-stats.utils';
+import type { AbsMappedSession } from './audiobookshelf-sessions.util';
 
 type Db = NodePgDatabase<typeof schema>;
+type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+
+export interface AbsIngestSessionsResult {
+  insertedSessionIds: string[];
+  updated: number;
+}
 
 const ISBN_ASIN_LOOKUP_CHUNK = 1000;
 const BOOK_STATE_UPSERT_CHUNK = 500;
@@ -417,5 +430,165 @@ export class AudiobookshelfRepository {
       .update(schema.audiobookshelfBookState)
       .set({ ...patch, updatedAt: new Date() })
       .where(and(eq(schema.audiobookshelfBookState.userId, userId), eq(schema.audiobookshelfBookState.absLibraryItemId, absLibraryItemId)));
+  }
+
+  async findLibraryIdsByBookIds(bookIds: number[]): Promise<Map<number, number>> {
+    const map = new Map<number, number>();
+    if (bookIds.length === 0) return map;
+    for (const group of chunk([...new Set(bookIds)], ISBN_ASIN_LOOKUP_CHUNK)) {
+      const rows = await this.db
+        .select({ id: schema.books.id, libraryId: schema.books.libraryId })
+        .from(schema.books)
+        .where(inArray(schema.books.id, group));
+      for (const row of rows) map.set(row.id, row.libraryId);
+    }
+    return map;
+  }
+
+  /**
+   * Upserts a bounded batch of listening sessions and recomputes affected daily stats in one
+   * transaction. Upsert is keyed on `(userId, sessionId)`: ABS mutates open sessions in place, so a
+   * re-fetched session with grown `timeListening` updates the existing row (and its stats) rather
+   * than duplicating. Daily stats are recomputed per affected `libraryId` (the recompute + advisory
+   * lock are `(userId, libraryId)`-scoped), mirroring the KOReader ingest path.
+   */
+  async ingestSessions(userId: number, timeZone: string, sessions: AbsMappedSession[]): Promise<AbsIngestSessionsResult> {
+    if (sessions.length === 0) return { insertedSessionIds: [], updated: 0 };
+
+    return this.db.transaction(async (tx) => {
+      const sessionIds = sessions.map((session) => session.sessionId);
+      const existing = await tx
+        .select({ sessionId: schema.readingSessions.sessionId })
+        .from(schema.readingSessions)
+        .where(and(eq(schema.readingSessions.userId, userId), inArray(schema.readingSessions.sessionId, sessionIds)));
+      const existingIds = new Set(existing.map((row) => row.sessionId));
+
+      await tx
+        .insert(schema.readingSessions)
+        .values(
+          sessions.map((session) => ({
+            userId,
+            bookFileId: session.bookFileId,
+            bookId: session.bookId,
+            // Latest non-deleted attempt for the book. The pipeline imports the ABS attempt before
+            // sessions, so a finished book links to its completed attempt and an in-progress book to
+            // its active one.
+            attemptId: sql<number | null>`(
+              select id from reading_attempts
+              where user_id = ${userId} and book_id = ${session.bookId} and deleted_at is null
+              order by id desc limit 1
+            )`,
+            sessionId: session.sessionId,
+            source: 'audiobookshelf' as const,
+            startedAt: session.startedAt,
+            endedAt: session.endedAt,
+            durationSeconds: session.durationSeconds,
+            progressDelta: session.progressDelta,
+            endProgress: session.endProgress,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [schema.readingSessions.userId, schema.readingSessions.sessionId],
+          set: {
+            bookFileId: sql`excluded.book_file_id`,
+            endedAt: sql`excluded.ended_at`,
+            durationSeconds: sql`excluded.duration_seconds`,
+            progressDelta: sql`excluded.progress_delta`,
+            endProgress: sql`excluded.end_progress`,
+            attemptId: sql`coalesce(excluded.attempt_id, ${schema.readingSessions.attemptId})`,
+          },
+        });
+
+      const daysByLibrary = new Map<number, Set<string>>();
+      for (const session of sessions) {
+        const days = daysByLibrary.get(session.libraryId) ?? new Set<string>();
+        for (const day of getReadingSessionDayKeys(session, timeZone)) days.add(day);
+        daysByLibrary.set(session.libraryId, days);
+      }
+      for (const [libraryId, days] of daysByLibrary) {
+        await this.recomputeDailyStats(tx, userId, libraryId, [...days], timeZone);
+      }
+
+      const insertedSessionIds = sessions.map((session) => session.sessionId).filter((id) => !existingIds.has(id));
+      return { insertedSessionIds, updated: sessions.length - insertedSessionIds.length };
+    });
+  }
+
+  private async recomputeDailyStats(tx: Tx, userId: number, libraryId: number, days: string[], timeZone: string): Promise<void> {
+    const affectedDays = [...new Set(days)].sort();
+    if (affectedDays.length === 0) return;
+
+    await tx.execute(sql`select pg_advisory_xact_lock(${userId}::int, ${libraryId}::int)`);
+
+    await tx
+      .delete(schema.userReadingDailyStats)
+      .where(
+        and(
+          eq(schema.userReadingDailyStats.userId, userId),
+          eq(schema.userReadingDailyStats.libraryId, libraryId),
+          inArray(schema.userReadingDailyStats.day, affectedDays),
+        ),
+      );
+
+    const range = getDayRangeForDateKeys(affectedDays, timeZone);
+    if (!range) return;
+
+    const rows = await tx
+      .select({
+        startedAt: schema.readingSessions.startedAt,
+        endedAt: schema.readingSessions.endedAt,
+        durationSeconds: schema.readingSessions.durationSeconds,
+        progressDelta: schema.readingSessions.progressDelta,
+      })
+      .from(schema.readingSessions)
+      .innerJoin(schema.books, eq(schema.books.id, schema.readingSessions.bookId))
+      .where(
+        and(
+          eq(schema.readingSessions.userId, userId),
+          eq(schema.books.libraryId, libraryId),
+          lt(schema.readingSessions.startedAt, range.end),
+          gt(schema.readingSessions.endedAt, range.start),
+        ),
+      );
+
+    const segments = aggregateReadingSessionDailyStats(
+      rows.map((row) => ({
+        startedAt: row.startedAt,
+        endedAt: row.endedAt,
+        durationSeconds: row.durationSeconds,
+        progressDelta: row.progressDelta ?? null,
+      })),
+      timeZone,
+      new Set(affectedDays),
+    );
+    await this.insertDailyStatsSegments(tx, userId, libraryId, segments);
+  }
+
+  private async insertDailyStatsSegments(tx: Tx, userId: number, libraryId: number, segments: ReadingDailyStatsSegment[]): Promise<void> {
+    if (segments.length === 0) return;
+
+    const now = new Date();
+    await tx
+      .insert(schema.userReadingDailyStats)
+      .values(
+        segments.map((segment) => ({
+          userId,
+          libraryId,
+          day: segment.day,
+          readingSeconds: segment.readingSeconds,
+          progressDelta: segment.progressDelta,
+          sessionsCount: segment.sessionsCount,
+          updatedAt: now,
+        })),
+      )
+      .onConflictDoUpdate({
+        target: [schema.userReadingDailyStats.userId, schema.userReadingDailyStats.libraryId, schema.userReadingDailyStats.day],
+        set: {
+          readingSeconds: sql`excluded.reading_seconds`,
+          progressDelta: sql`excluded.progress_delta`,
+          sessionsCount: sql`excluded.sessions_count`,
+          updatedAt: now,
+        },
+      });
   }
 }

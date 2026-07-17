@@ -9,6 +9,7 @@ import { UserBookStatusService } from '../user-book-status/user-book-status.serv
 import { AudiobookshelfClientService, type AbsMediaProgress } from './audiobookshelf-client.service';
 import { AudiobookshelfMatchService } from './audiobookshelf-match.service';
 import { AudiobookshelfRepository } from './audiobookshelf.repository';
+import { AudiobookshelfSessionsService } from './audiobookshelf-sessions.service';
 import { AUDIOBOOKSHELF_DURATION_TOLERANCE_SECONDS } from './audiobookshelf.constants';
 
 // Upgrade-only ranking. A sync may promote a book toward completion but never move it backward.
@@ -68,6 +69,7 @@ export class AudiobookshelfSyncService {
     private readonly attempts: ReadingAttemptService,
     private readonly statusService: UserBookStatusService,
     private readonly bookService: BookService,
+    private readonly sessionsService: AudiobookshelfSessionsService,
   ) {}
 
   async sync(user: RequestUser): Promise<AudiobookshelfSyncResult> {
@@ -138,9 +140,25 @@ export class AudiobookshelfSyncService {
         }
       }
 
-      await this.repo.upsertSettings(user.id, { lastSyncedAt: new Date(), lastSyncError: null });
+      let sessionsError: string | null = null;
+      if (settings.syncSessions) {
+        try {
+          const sessions = await this.sessionsService.syncSessions(user, settings);
+          result.sessionsApplied = sessions.inserted + sessions.updated;
+        } catch (err) {
+          // Isolate session-ingest failures: status/position work is already committed, so record the
+          // error and still report those counts rather than failing the whole run.
+          sessionsError = sanitizeLogValue(err instanceof Error ? err.message : String(err));
+          const errorClass = err instanceof Error ? err.constructor.name : 'Error';
+          this.logger.error(
+            `[abs.sync] [fail] userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sessionsError}" - session ingest failed`,
+          );
+        }
+      }
+
+      await this.repo.upsertSettings(user.id, { lastSyncedAt: new Date(), lastSyncError: sessionsError });
       this.logger.log(
-        `[abs.sync] [end] userId=${user.id} durationMs=${Date.now() - startedAt} matched=${result.matched} statusApplied=${result.statusApplied} positionApplied=${result.positionApplied} skipped=${result.skipped} failed=${result.failed} - sync completed`,
+        `[abs.sync] [end] userId=${user.id} durationMs=${Date.now() - startedAt} matched=${result.matched} statusApplied=${result.statusApplied} positionApplied=${result.positionApplied} sessionsApplied=${result.sessionsApplied} skipped=${result.skipped} failed=${result.failed} - sync completed`,
       );
       return result;
     } catch (err) {
