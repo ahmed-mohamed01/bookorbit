@@ -19,6 +19,7 @@ export interface AbsMatchInput {
 
 export interface AudiobookshelfMatchSummary {
   totalItems: number;
+  selectedAbsItemIds: string[];
   processed: number;
   autoLinked: number;
   needsReview: number;
@@ -129,6 +130,7 @@ export class AudiobookshelfMatchService {
   async matchItems(user: RequestUser, items: AbsMatchInput[], options: { force: boolean }): Promise<AudiobookshelfMatchSummary> {
     const summary: AudiobookshelfMatchSummary = {
       totalItems: items.length,
+      selectedAbsItemIds: items.map((item) => item.absLibraryItemId),
       processed: 0,
       autoLinked: 0,
       needsReview: 0,

@@ -14,6 +14,7 @@ const isFullResync = ref(false)
 
 const mocks = vi.hoisted(() => ({
   fetchSettings: vi.fn<() => Promise<void>>(),
+  fetchLibraries: vi.fn<() => Promise<void>>(),
   saveSettings: vi.fn<() => Promise<boolean>>(),
   disconnect: vi.fn<() => Promise<boolean>>(),
   testConnection: vi.fn<() => Promise<{ success: boolean }>>(),
@@ -78,6 +79,7 @@ describe('AudiobookshelfConnectionCard', () => {
     syncing.value = false
     isFullResync.value = false
     mocks.fetchSettings.mockResolvedValue()
+    mocks.fetchLibraries.mockResolvedValue()
     mocks.saveSettings.mockResolvedValue(true)
     mocks.disconnect.mockResolvedValue(true)
     mocks.testConnection.mockResolvedValue({ success: true })
@@ -111,5 +113,20 @@ describe('AudiobookshelfConnectionCard', () => {
     const lastError = wrapper.get('[data-testid="last-sync-error"]')
     expect(lastError.text()).toBe('Audiobookshelf request timed out')
     expect(lastError.classes()).toContain('text-destructive')
+  })
+
+  it('refreshes libraries after replacing the token for the same server URL', async () => {
+    settings.value = configuredSettings()
+    const wrapper = await mountCard()
+
+    await wrapper.get('#audiobookshelf-token').setValue('replacement-token')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text().includes('Save connection'))!
+      .trigger('click')
+    await flushPromises()
+
+    expect(mocks.saveSettings).toHaveBeenCalledWith({ apiToken: 'replacement-token' })
+    expect(mocks.fetchLibraries).toHaveBeenCalledTimes(1)
   })
 })

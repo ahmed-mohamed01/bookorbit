@@ -114,14 +114,15 @@ export class AudiobookshelfSyncService {
         excludedLibraryIds: settings.excludedLibraryIds ?? [],
       });
       result.matched = matchSummary.autoLinked;
+      const selectedAbsItemIds = new Set(matchSummary.selectedAbsItemIds);
 
       const me = await this.client.getMe(user.id, settings.serverUrl, settings.apiToken);
-      const progresses = me.mediaProgress.filter((mp) => mp.libraryItemId && !mp.episodeId);
+      const candidateProgresses = me.mediaProgress.filter((mp) => mp.libraryItemId && !mp.episodeId);
+      const progresses = candidateProgresses.filter((mp) => selectedAbsItemIds.has(mp.libraryItemId!));
+      result.skipped += candidateProgresses.length - progresses.length;
 
-      const states = await this.repo.findBookStatesByAbsItemIds(
-        user.id,
-        progresses.map((mp) => mp.libraryItemId!),
-      );
+      const progressItemIds = progresses.map((mp) => mp.libraryItemId!);
+      const states = progressItemIds.length ? await this.repo.findBookStatesByAbsItemIds(user.id, progressItemIds) : [];
       const stateByItemId = new Map(states.map((state) => [state.absLibraryItemId, state]));
 
       for (const mp of progresses) {
