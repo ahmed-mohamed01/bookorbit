@@ -1,39 +1,22 @@
 import { api } from '@/lib/api'
 import type {
+  AudiobookshelfBookState,
+  AudiobookshelfBookStateBucket,
+  AudiobookshelfBookStatePage,
   AudiobookshelfConnectionTestPayload,
   AudiobookshelfConnectionTestResult,
+  AudiobookshelfExclusionPayload,
+  AudiobookshelfLinkBookPayload,
+  AudiobookshelfRescanResult,
   AudiobookshelfSettings,
+  AudiobookshelfSyncResult,
   UpsertAudiobookshelfSettingsPayload,
 } from '@bookorbit/types'
 
+export type { AudiobookshelfBookState, AudiobookshelfBookStateBucket, AudiobookshelfBookStatePage, AudiobookshelfSyncResult } from '@bookorbit/types'
+
 const BASE = '/api/v1/audiobookshelf'
 const BOOK_SEARCH_PATH = '/api/v1/books/search'
-
-export type AudiobookshelfMatchBucket = 'linked' | 'needs-review' | 'unmatched'
-
-export interface AudiobookshelfBookState {
-  absLibraryItemId: string
-  absTitle: string
-  absAuthorName: string | null
-  absCoverUrl: string | null
-  bookId: number | null
-  bookTitle: string | null
-  bookAuthorName: string | null
-  matchMethod: 'asin' | 'isbn' | 'title_author_series' | 'manual' | null
-  matchConfidence: number | null
-  needsReview: boolean
-  matchError: string | null
-  syncExcluded: boolean
-  syncError: string | null
-  lastSyncedAt: string | null
-}
-
-export interface AudiobookshelfBookStatePage {
-  items: AudiobookshelfBookState[]
-  total: number
-  page: number
-  pageSize: number
-}
 
 export interface BookSearchOption {
   id: number
@@ -44,16 +27,8 @@ export interface BookSearchOption {
   formats: string[]
 }
 
-export interface AudiobookshelfSyncResult {
-  matched: number
-  statusApplied: number
-  positionApplied: number
-  sessionsApplied: number
-  skipped: number
-  failed: number
-}
-
-async function responseError(response: Response, fallback: string): Promise<Error> {
+async function responseError(response: Response, fallback: string, conflictMessage?: string): Promise<Error> {
+  if (response.status === 409 && conflictMessage) return new Error(conflictMessage)
   const body = await response.json().catch(() => ({}))
   return new Error((body as { message?: string }).message ?? fallback)
 }
@@ -90,7 +65,7 @@ export async function testAudiobookshelfConnection(payload: AudiobookshelfConnec
 }
 
 export async function fetchAudiobookshelfBookStates(
-  bucket: AudiobookshelfMatchBucket,
+  bucket: AudiobookshelfBookStateBucket,
   page: number,
   pageSize: number,
 ): Promise<AudiobookshelfBookStatePage> {
@@ -106,7 +81,10 @@ export async function confirmAudiobookshelfMatch(absLibraryItemId: string): Prom
   return response.json()
 }
 
-export async function linkAudiobookshelfBook(absLibraryItemId: string, bookId: number): Promise<AudiobookshelfBookState> {
+export async function linkAudiobookshelfBook(
+  absLibraryItemId: string,
+  bookId: AudiobookshelfLinkBookPayload['bookId'],
+): Promise<AudiobookshelfBookState> {
   const response = await api(`${BASE}/books/${encodeURIComponent(absLibraryItemId)}/link`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -122,7 +100,10 @@ export async function unlinkAudiobookshelfBook(absLibraryItemId: string): Promis
   return response.json()
 }
 
-export async function updateAudiobookshelfBookExclusion(absLibraryItemId: string, syncExcluded: boolean): Promise<AudiobookshelfBookState> {
+export async function updateAudiobookshelfBookExclusion(
+  absLibraryItemId: string,
+  syncExcluded: AudiobookshelfExclusionPayload['syncExcluded'],
+): Promise<AudiobookshelfBookState> {
   const response = await api(`${BASE}/books/${encodeURIComponent(absLibraryItemId)}/exclusion`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -132,7 +113,7 @@ export async function updateAudiobookshelfBookExclusion(absLibraryItemId: string
   return response.json()
 }
 
-export async function rescanAudiobookshelfMatches(): Promise<{ queued: number }> {
+export async function rescanAudiobookshelfMatches(): Promise<AudiobookshelfRescanResult> {
   const response = await api(`${BASE}/books/rescan`, { method: 'POST' })
   if (!response.ok) throw await responseError(response, 'Failed to rescan Audiobookshelf matches')
   return response.json()
@@ -147,12 +128,16 @@ export async function searchAudiobookshelfLinkCandidates(query: string, limit = 
 
 export async function startAudiobookshelfSync(): Promise<AudiobookshelfSyncResult> {
   const response = await api(`${BASE}/sync`, { method: 'POST' })
-  if (!response.ok) throw await responseError(response, 'Failed to sync Audiobookshelf')
+  if (!response.ok) {
+    throw await responseError(response, 'Failed to sync Audiobookshelf', 'An Audiobookshelf sync is already running')
+  }
   return response.json()
 }
 
 export async function startAudiobookshelfFullResync(): Promise<AudiobookshelfSyncResult> {
   const response = await api(`${BASE}/full-resync`, { method: 'POST' })
-  if (!response.ok) throw await responseError(response, 'Failed to fully resync Audiobookshelf')
+  if (!response.ok) {
+    throw await responseError(response, 'Failed to fully resync Audiobookshelf', 'An Audiobookshelf sync is already running')
+  }
   return response.json()
 }

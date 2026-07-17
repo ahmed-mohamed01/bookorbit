@@ -2,12 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { reactive, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import AudiobookshelfLinkedBooks from '../AudiobookshelfLinkedBooks.vue'
-import type { AudiobookshelfBookState, AudiobookshelfBookStatePage, AudiobookshelfMatchBucket, BookSearchOption } from '../../api/audiobookshelf.api'
+import type {
+  AudiobookshelfBookState,
+  AudiobookshelfBookStateBucket,
+  AudiobookshelfBookStatePage,
+  BookSearchOption,
+} from '../../api/audiobookshelf.api'
 
-const pages = reactive<Record<AudiobookshelfMatchBucket, AudiobookshelfBookStatePage>>({
-  linked: { items: [], total: 0, page: 1, pageSize: 20 },
-  'needs-review': { items: [], total: 0, page: 1, pageSize: 20 },
-  unmatched: { items: [], total: 0, page: 1, pageSize: 20 },
+const pages = reactive<Record<AudiobookshelfBookStateBucket, AudiobookshelfBookStatePage>>({
+  linked: { items: [], total: 0, page: 0, pageSize: 20 },
+  'needs-review': { items: [], total: 0, page: 0, pageSize: 20 },
+  unmatched: { items: [], total: 0, page: 0, pageSize: 20 },
 })
 const loading = ref(false)
 const rescanning = ref(false)
@@ -56,8 +61,8 @@ function state(overrides: Partial<AudiobookshelfBookState>): AudiobookshelfBookS
   }
 }
 
-function setPage(bucket: AudiobookshelfMatchBucket, items: AudiobookshelfBookState[]): void {
-  pages[bucket] = { items, total: items.length, page: 1, pageSize: 20 }
+function setPage(bucket: AudiobookshelfBookStateBucket, items: AudiobookshelfBookState[]): void {
+  pages[bucket] = { items, total: items.length, page: 0, pageSize: 20 }
 }
 
 async function clickButton(wrapper: ReturnType<typeof mount>, label: string): Promise<void> {
@@ -99,6 +104,8 @@ describe('AudiobookshelfLinkedBooks', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('The Hobbit')
+    expect(wrapper.find('img').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="abs-cover-placeholder"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('Linked 1')
     expect(wrapper.text()).toContain('Needs review 1')
     expect(wrapper.text()).toContain('Unmatched 1')
@@ -143,5 +150,17 @@ describe('AudiobookshelfLinkedBooks', () => {
     await clickButton(wrapper, 'Unlink')
 
     expect(mocks.unlinkBook).toHaveBeenCalledWith('abs-1')
+  })
+
+  it('loads the next zero-based page', async () => {
+    pages.linked = { items: [state({})], total: 41, page: 0, pageSize: 20 }
+    const wrapper = mount(AudiobookshelfLinkedBooks)
+    await flushPromises()
+
+    await wrapper.get('button[aria-label="Next page"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.loadBucket).toHaveBeenCalledWith('linked', 1)
+    expect(wrapper.text()).toContain('Page 1 of 3')
   })
 })

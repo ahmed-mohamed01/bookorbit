@@ -7,16 +7,16 @@ import {
   unlinkAudiobookshelfBook,
   updateAudiobookshelfBookExclusion,
   type AudiobookshelfBookStatePage,
-  type AudiobookshelfMatchBucket,
+  type AudiobookshelfBookStateBucket,
 } from '../api/audiobookshelf.api'
 
 const PAGE_SIZE = 20
 
 function emptyPage(): AudiobookshelfBookStatePage {
-  return { items: [], total: 0, page: 1, pageSize: PAGE_SIZE }
+  return { items: [], total: 0, page: 0, pageSize: PAGE_SIZE }
 }
 
-const pages = reactive<Record<AudiobookshelfMatchBucket, AudiobookshelfBookStatePage>>({
+const pages = reactive<Record<AudiobookshelfBookStateBucket, AudiobookshelfBookStatePage>>({
   linked: emptyPage(),
   'needs-review': emptyPage(),
   unmatched: emptyPage(),
@@ -27,7 +27,7 @@ const error = ref<string | null>(null)
 const actionId = ref<string | null>(null)
 
 export function useAudiobookshelfLinkedBooks() {
-  async function loadBucket(bucket: AudiobookshelfMatchBucket, page = pages[bucket].page): Promise<void> {
+  async function loadBucket(bucket: AudiobookshelfBookStateBucket, page = pages[bucket].page): Promise<void> {
     loading.value = true
     error.value = null
     try {
@@ -44,9 +44,9 @@ export function useAudiobookshelfLinkedBooks() {
     error.value = null
     try {
       const [linked, needsReview, unmatched] = await Promise.all([
-        fetchAudiobookshelfBookStates('linked', 1, PAGE_SIZE),
-        fetchAudiobookshelfBookStates('needs-review', 1, PAGE_SIZE),
-        fetchAudiobookshelfBookStates('unmatched', 1, PAGE_SIZE),
+        fetchAudiobookshelfBookStates('linked', 0, PAGE_SIZE),
+        fetchAudiobookshelfBookStates('needs-review', 0, PAGE_SIZE),
+        fetchAudiobookshelfBookStates('unmatched', 0, PAGE_SIZE),
       ])
       pages.linked = linked
       pages['needs-review'] = needsReview

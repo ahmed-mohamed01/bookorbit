@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { AlertCircle, Ban, Check, ChevronLeft, ChevronRight, Link2, Loader2, RefreshCw, Search, Unlink } from '@lucide/vue'
+import { AlertCircle, Ban, BookOpen, Check, ChevronLeft, ChevronRight, Link2, Loader2, RefreshCw, Search, Unlink } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import {
   searchAudiobookshelfLinkCandidates,
   type AudiobookshelfBookState,
-  type AudiobookshelfMatchBucket,
+  type AudiobookshelfBookStateBucket,
   type BookSearchOption,
 } from '../api/audiobookshelf.api'
 import { useAudiobookshelfLinkedBooks } from '../composables/useAudiobookshelfLinkedBooks'
@@ -13,7 +13,7 @@ import { useAudiobookshelfLinkedBooks } from '../composables/useAudiobookshelfLi
 const { pages, loading, rescanning, error, actionId, loadBucket, loadAllBuckets, confirmMatch, linkBook, unlinkBook, setExcluded, rescan } =
   useAudiobookshelfLinkedBooks()
 
-const activeBucket = ref<AudiobookshelfMatchBucket>('linked')
+const activeBucket = ref<AudiobookshelfBookStateBucket>('linked')
 const pickerItemId = ref<string | null>(null)
 const searchQuery = ref('')
 const searchResults = ref<BookSearchOption[]>([])
@@ -23,7 +23,7 @@ const searchError = ref<string | null>(null)
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 let searchRequestId = 0
 
-const buckets: Array<{ id: AudiobookshelfMatchBucket; label: string }> = [
+const buckets: Array<{ id: AudiobookshelfBookStateBucket; label: string }> = [
   { id: 'linked', label: 'Linked' },
   { id: 'needs-review', label: 'Needs review' },
   { id: 'unmatched', label: 'Unmatched' },
@@ -31,8 +31,8 @@ const buckets: Array<{ id: AudiobookshelfMatchBucket; label: string }> = [
 
 const activePage = computed(() => pages[activeBucket.value])
 const totalPages = computed(() => Math.max(1, Math.ceil(activePage.value.total / activePage.value.pageSize)))
-const rangeStart = computed(() => (activePage.value.total === 0 ? 0 : (activePage.value.page - 1) * activePage.value.pageSize + 1))
-const rangeEnd = computed(() => Math.min(activePage.value.page * activePage.value.pageSize, activePage.value.total))
+const rangeStart = computed(() => (activePage.value.total === 0 ? 0 : activePage.value.page * activePage.value.pageSize + 1))
+const rangeEnd = computed(() => Math.min((activePage.value.page + 1) * activePage.value.pageSize, activePage.value.total))
 
 onMounted(async () => {
   await loadAllBuckets()
@@ -43,7 +43,7 @@ onUnmounted(() => {
   searchRequestId++
 })
 
-function selectBucket(bucket: AudiobookshelfMatchBucket): void {
+function selectBucket(bucket: AudiobookshelfBookStateBucket): void {
   activeBucket.value = bucket
   closePicker()
 }
@@ -157,11 +157,11 @@ async function handleRetry(): Promise<void> {
 }
 
 async function handlePreviousPage(): Promise<void> {
-  if (activePage.value.page > 1) await loadBucket(activeBucket.value, activePage.value.page - 1)
+  if (activePage.value.page > 0) await loadBucket(activeBucket.value, activePage.value.page - 1)
 }
 
 async function handleNextPage(): Promise<void> {
-  if (activePage.value.page < totalPages.value) await loadBucket(activeBucket.value, activePage.value.page + 1)
+  if (activePage.value.page + 1 < totalPages.value) await loadBucket(activeBucket.value, activePage.value.page + 1)
 }
 </script>
 
@@ -219,6 +219,20 @@ async function handleNextPage(): Promise<void> {
     <div v-else class="divide-y divide-border">
       <article v-for="item in activePage.items" :key="item.absLibraryItemId" class="space-y-3 py-4 first:pt-0 last:pb-0">
         <div class="flex gap-3">
+          <img
+            v-if="item.absCoverUrl"
+            :src="item.absCoverUrl"
+            alt=""
+            class="h-14 w-10 shrink-0 rounded-sm border border-border object-cover"
+            loading="lazy"
+          />
+          <div
+            v-else
+            data-testid="abs-cover-placeholder"
+            class="flex h-14 w-10 shrink-0 items-center justify-center rounded-sm border border-border bg-muted text-muted-foreground"
+          >
+            <BookOpen class="size-4" />
+          </div>
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">
               <p class="truncate text-sm font-medium">{{ item.absTitle }}</p>
@@ -351,17 +365,17 @@ async function handleNextPage(): Promise<void> {
       <div class="flex items-center gap-2">
         <button
           type="button"
-          :disabled="activePage.page <= 1 || loading"
+          :disabled="activePage.page <= 0 || loading"
           aria-label="Previous page"
           class="rounded-md border border-border bg-muted p-1.5 transition-colors hover:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-40"
           @click="handlePreviousPage"
         >
           <ChevronLeft class="size-3.5" />
         </button>
-        <span>Page {{ activePage.page }} of {{ totalPages }}</span>
+        <span>Page {{ activePage.page + 1 }} of {{ totalPages }}</span>
         <button
           type="button"
-          :disabled="activePage.page >= totalPages || loading"
+          :disabled="activePage.page + 1 >= totalPages || loading"
           aria-label="Next page"
           class="rounded-md border border-border bg-muted p-1.5 transition-colors hover:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-40"
           @click="handleNextPage"
