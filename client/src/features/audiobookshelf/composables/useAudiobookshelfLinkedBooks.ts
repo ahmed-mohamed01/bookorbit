@@ -25,36 +25,59 @@ const loading = ref(false)
 const rescanning = ref(false)
 const error = ref<string | null>(null)
 const actionId = ref<string | null>(null)
+let loadRequestId = 0
+
+function beginLoad(): number {
+  const requestId = ++loadRequestId
+  loading.value = true
+  error.value = null
+  return requestId
+}
+
+function isCurrentLoad(requestId: number): boolean {
+  return requestId === loadRequestId
+}
 
 export function useAudiobookshelfLinkedBooks() {
   async function loadBucket(bucket: AudiobookshelfBookStateBucket, page = pages[bucket].page): Promise<void> {
-    loading.value = true
-    error.value = null
+    const requestId = beginLoad()
     try {
-      pages[bucket] = await fetchAudiobookshelfBookStates(bucket, page, PAGE_SIZE)
+      const nextPage = await fetchAudiobookshelfBookStates(bucket, page, PAGE_SIZE)
+      if (isCurrentLoad(requestId)) {
+        pages[bucket] = nextPage
+      }
     } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to load Audiobookshelf books'
+      if (isCurrentLoad(requestId)) {
+        error.value = err instanceof Error ? err.message : 'Failed to load Audiobookshelf books'
+      }
     } finally {
-      loading.value = false
+      if (isCurrentLoad(requestId)) {
+        loading.value = false
+      }
     }
   }
 
   async function loadAllBuckets(): Promise<void> {
-    loading.value = true
-    error.value = null
+    const requestId = beginLoad()
     try {
       const [linked, needsReview, unmatched] = await Promise.all([
         fetchAudiobookshelfBookStates('linked', 0, PAGE_SIZE),
         fetchAudiobookshelfBookStates('needs-review', 0, PAGE_SIZE),
         fetchAudiobookshelfBookStates('unmatched', 0, PAGE_SIZE),
       ])
-      pages.linked = linked
-      pages['needs-review'] = needsReview
-      pages.unmatched = unmatched
+      if (isCurrentLoad(requestId)) {
+        pages.linked = linked
+        pages['needs-review'] = needsReview
+        pages.unmatched = unmatched
+      }
     } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to load Audiobookshelf books'
+      if (isCurrentLoad(requestId)) {
+        error.value = err instanceof Error ? err.message : 'Failed to load Audiobookshelf books'
+      }
     } finally {
-      loading.value = false
+      if (isCurrentLoad(requestId)) {
+        loading.value = false
+      }
     }
   }
 
