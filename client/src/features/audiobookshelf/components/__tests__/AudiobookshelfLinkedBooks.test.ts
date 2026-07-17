@@ -17,6 +17,11 @@ const pages = reactive<Record<AudiobookshelfBookStateBucket, AudiobookshelfBookS
 const loading = ref(false)
 const rescanning = ref(false)
 const error = ref<string | null>(null)
+const bucketLoading = reactive<Record<AudiobookshelfBookStateBucket, boolean>>({
+  linked: false,
+  'needs-review': false,
+  unmatched: false,
+})
 const bucketErrors = reactive<Record<AudiobookshelfBookStateBucket, string | null>>({
   linked: null,
   'needs-review': null,
@@ -25,7 +30,7 @@ const bucketErrors = reactive<Record<AudiobookshelfBookStateBucket, string | nul
 const actionId = ref<string | null>(null)
 
 const mocks = vi.hoisted(() => ({
-  loadBucket: vi.fn<() => Promise<void>>(),
+  loadBucket: vi.fn<(bucket: AudiobookshelfBookStateBucket, page?: number) => Promise<void>>(),
   loadAllBuckets: vi.fn<() => Promise<void>>(),
   confirmMatch: vi.fn<() => Promise<boolean>>(),
   linkBook: vi.fn<() => Promise<boolean>>(),
@@ -36,7 +41,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../../composables/useAudiobookshelfLinkedBooks', () => ({
-  useAudiobookshelfLinkedBooks: () => ({ pages, loading, rescanning, error, bucketErrors, actionId, ...mocks }),
+  useAudiobookshelfLinkedBooks: () => ({ pages, loading, bucketLoading, rescanning, error, bucketErrors, actionId, ...mocks }),
 }))
 
 vi.mock('../../api/audiobookshelf.api', async (importOriginal) => {
@@ -70,6 +75,22 @@ function setPage(bucket: AudiobookshelfBookStateBucket, items: AudiobookshelfBoo
   pages[bucket] = { items, total: items.length, page: 0, pageSize: 20 }
 }
 
+interface Deferred<T> {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason?: unknown) => void
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve
+    reject = innerReject
+  })
+  return { promise, resolve, reject }
+}
+
 async function clickButton(wrapper: ReturnType<typeof mount>, label: string): Promise<void> {
   const button = wrapper.findAll('button').find((candidate) => candidate.text().includes(label))
   expect(button, `button containing ${label}`).toBeDefined()
@@ -85,6 +106,9 @@ describe('AudiobookshelfLinkedBooks', () => {
     setPage('needs-review', [state({ absLibraryItemId: 'abs-review', absTitle: 'Dune', bookId: 7, bookTitle: 'Dune', needsReview: true })])
     setPage('unmatched', [state({ absLibraryItemId: 'abs-unmatched', absTitle: 'Hyperion', bookId: null, bookTitle: null, matchMethod: null })])
     loading.value = false
+    bucketLoading.linked = false
+    bucketLoading['needs-review'] = false
+    bucketLoading.unmatched = false
     rescanning.value = false
     error.value = null
     bucketErrors.linked = null
@@ -182,5 +206,76 @@ describe('AudiobookshelfLinkedBooks', () => {
     await clickButton(wrapper, 'Retry')
 
     expect(mocks.loadBucket).toHaveBeenCalledWith('unmatched')
+  })
+
+  it('shows a switched failed bucket error while an unrelated bucket remains pending', async () => {
+    loading.value = true
+    bucketLoading.unmatched = true
+    bucketErrors['needs-review'] = 'Needs review bucket failed'
+    const wrapper = mount(AudiobookshelfLinkedBooks)
+    await flushPromises()
+
+    await clickButton(wrapper, 'Needs review')
+
+    expect(wrapper.text()).toContain('Needs review bucket failed')
+    expect(wrapper.text()).toContain('Retry')
+    expect(wrapper.text()).not.toContain('Loading needs-review books')
+
+    await clickButton(wrapper, 'Retry')
+
+    expect(mocks.loadBucket).toHaveBeenCalledWith('needs-review')
+  })
+
+  it('shows switched loaded bucket rows while an unrelated bucket remains pending', async () => {
+    loading.value = true
+    bucketLoading.unmatched = true
+    const wrapper = mount(AudiobookshelfLinkedBooks)
+    await flushPromises()
+
+    await clickButton(wrapper, 'Needs review')
+
+    expect(wrapper.text()).toContain('Dune')
+    expect(wrapper.text()).not.toContain('Loading needs-review books')
+    expect(wrapper.text()).not.toContain('No books in this bucket.')
+  })
+
+  it('shows same-bucket retry loading and then success', async () => {
+    const retry = deferred<void>()
+    bucketErrors.unmatched = 'Unmatched bucket failed'
+    setPage('unmatched', [])
+    mocks.loadBucket.mockImplementationOnce(async (bucket: AudiobookshelfBookStateBucket) => {
+      bucketErrors[bucket] = null
+      bucketLoading[bucket] = true
+      loading.value = true
+      await retry.promise
+      setPage(bucket, [
+        state({
+          absLibraryItemId: 'abs-unmatched-retry',
+          absTitle: 'Retry success',
+          bookId: null,
+          bookTitle: null,
+          matchMethod: null,
+        }),
+      ])
+      bucketLoading[bucket] = false
+      loading.value = false
+    })
+    const wrapper = mount(AudiobookshelfLinkedBooks)
+    await flushPromises()
+
+    await clickButton(wrapper, 'Unmatched')
+    const retryButton = wrapper.findAll('button').find((candidate) => candidate.text().includes('Retry'))
+    expect(retryButton, 'Retry button').toBeDefined()
+    void retryButton!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Loading unmatched books')
+    expect(wrapper.text()).not.toContain('Unmatched bucket failed')
+
+    retry.resolve()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Retry success')
+    expect(wrapper.text()).not.toContain('Loading unmatched books')
   })
 })

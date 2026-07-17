@@ -13,6 +13,7 @@ import { useAudiobookshelfLinkedBooks } from '../composables/useAudiobookshelfLi
 const {
   pages,
   loading,
+  bucketLoading,
   rescanning,
   error,
   bucketErrors,
@@ -43,6 +44,7 @@ const buckets: Array<{ id: AudiobookshelfBookStateBucket; label: string }> = [
 ]
 
 const activePage = computed(() => pages[activeBucket.value])
+const activeBucketLoading = computed(() => bucketLoading[activeBucket.value])
 const activeBucketError = computed(() => bucketErrors[activeBucket.value])
 const totalPages = computed(() => Math.max(1, Math.ceil(activePage.value.total / activePage.value.pageSize)))
 const rangeStart = computed(() => (activePage.value.total === 0 ? 0 : activePage.value.page * activePage.value.pageSize + 1))
@@ -212,7 +214,7 @@ async function handleNextPage(): Promise<void> {
       </button>
     </div>
 
-    <div v-if="loading" class="flex items-center gap-2 py-6 text-xs text-muted-foreground">
+    <div v-if="activeBucketLoading" class="flex items-center gap-2 py-6 text-xs text-muted-foreground">
       <Loader2 class="size-3.5 animate-spin" />
       Loading {{ activeBucket }} books...
     </div>
@@ -379,7 +381,7 @@ async function handleNextPage(): Promise<void> {
       <div class="flex items-center gap-2">
         <button
           type="button"
-          :disabled="activePage.page <= 0 || loading"
+          :disabled="activePage.page <= 0 || activeBucketLoading"
           aria-label="Previous page"
           class="rounded-md border border-border bg-muted p-1.5 transition-colors hover:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-40"
           @click="handlePreviousPage"
@@ -389,7 +391,7 @@ async function handleNextPage(): Promise<void> {
         <span>Page {{ activePage.page + 1 }} of {{ totalPages }}</span>
         <button
           type="button"
-          :disabled="activePage.page + 1 >= totalPages || loading"
+          :disabled="activePage.page + 1 >= totalPages || activeBucketLoading"
           aria-label="Next page"
           class="rounded-md border border-border bg-muted p-1.5 transition-colors hover:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-40"
           @click="handleNextPage"

@@ -26,6 +26,11 @@ const loading = ref(false)
 const rescanning = ref(false)
 const error = ref<string | null>(null)
 const actionId = ref<string | null>(null)
+const bucketLoading = reactive<Record<AudiobookshelfBookStateBucket, boolean>>({
+  linked: false,
+  'needs-review': false,
+  unmatched: false,
+})
 const bucketErrors = reactive<Record<AudiobookshelfBookStateBucket, string | null>>({
   linked: null,
   'needs-review': null,
@@ -69,6 +74,9 @@ function finishBucketLoad(requestId: number): void {
 }
 
 function updateLoading(): void {
+  for (const bucket of BUCKETS) {
+    bucketLoading[bucket] = activeLoadRequestIds.has(bucketRequestIds[bucket])
+  }
   loading.value = BUCKETS.some((bucket) => activeLoadRequestIds.has(bucketRequestIds[bucket]))
 }
 
@@ -176,6 +184,7 @@ export function useAudiobookshelfLinkedBooks() {
   return {
     pages,
     loading,
+    bucketLoading,
     rescanning,
     error,
     bucketErrors,

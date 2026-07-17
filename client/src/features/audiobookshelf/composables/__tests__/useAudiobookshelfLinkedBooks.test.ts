@@ -191,6 +191,34 @@ describe('useAudiobookshelfLinkedBooks', () => {
     expect(linkedBooks.pages.linked.page).toBe(1)
   })
 
+  it('tracks bucket loading independently while different buckets overlap', async () => {
+    const linkedPage = deferred<AudiobookshelfBookStatePage>()
+    const unmatchedPage = deferred<AudiobookshelfBookStatePage>()
+    mockFetchBookStates.mockReturnValueOnce(linkedPage.promise).mockReturnValueOnce(unmatchedPage.promise)
+    const linkedBooks = await loadComposable()
+
+    const linkedLoad = linkedBooks.loadBucket('linked', 1)
+    const unmatchedLoad = linkedBooks.loadBucket('unmatched', 2)
+
+    expect(linkedBooks.loading.value).toBe(true)
+    expect(linkedBooks.bucketLoading.linked).toBe(true)
+    expect(linkedBooks.bucketLoading['needs-review']).toBe(false)
+    expect(linkedBooks.bucketLoading.unmatched).toBe(true)
+
+    unmatchedPage.resolve(page('unmatched', 'page-two', 2))
+    await unmatchedLoad
+
+    expect(linkedBooks.loading.value).toBe(true)
+    expect(linkedBooks.bucketLoading.linked).toBe(true)
+    expect(linkedBooks.bucketLoading.unmatched).toBe(false)
+
+    linkedPage.resolve(page('linked', 'page-one', 1))
+    await linkedLoad
+
+    expect(linkedBooks.loading.value).toBe(false)
+    expect(linkedBooks.bucketLoading.linked).toBe(false)
+  })
+
   it('commits trailing full-refresh bucket results after one bucket fails', async () => {
     const linkedPage = deferred<AudiobookshelfBookStatePage>()
     const needsReviewPage = deferred<AudiobookshelfBookStatePage>()
@@ -252,6 +280,31 @@ describe('useAudiobookshelfLinkedBooks', () => {
     expect(linkedBooks.bucketErrors.linked).toBe('linked failed')
     expect(linkedBooks.bucketErrors.unmatched).toBeNull()
     expect(linkedBooks.error.value).toBeNull()
+  })
+
+  it('clears same-bucket loading and error after retry success', async () => {
+    const failedLinkedPage = deferred<AudiobookshelfBookStatePage>()
+    const retryLinkedPage = deferred<AudiobookshelfBookStatePage>()
+    mockFetchBookStates.mockReturnValueOnce(failedLinkedPage.promise).mockReturnValueOnce(retryLinkedPage.promise)
+    const linkedBooks = await loadComposable()
+
+    const failedLoad = linkedBooks.loadBucket('linked', 1)
+    failedLinkedPage.reject(new Error('linked failed'))
+    await failedLoad
+
+    expect(linkedBooks.bucketErrors.linked).toBe('linked failed')
+    expect(linkedBooks.bucketLoading.linked).toBe(false)
+
+    const retryLoad = linkedBooks.loadBucket('linked', 1)
+    expect(linkedBooks.bucketErrors.linked).toBeNull()
+    expect(linkedBooks.bucketLoading.linked).toBe(true)
+
+    retryLinkedPage.resolve(page('linked', 'retry', 1))
+    await retryLoad
+
+    expect(linkedBooks.bucketLoading.linked).toBe(false)
+    expect(linkedBooks.bucketErrors.linked).toBeNull()
+    expect(linkedBooks.pages.linked.items[0]?.absLibraryItemId).toBe('linked-retry')
   })
 
   it('keeps a full-refresh bucket failure after unrelated pagination succeeds', async () => {
