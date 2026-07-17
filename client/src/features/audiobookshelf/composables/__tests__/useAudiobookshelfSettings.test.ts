@@ -176,6 +176,43 @@ describe('useAudiobookshelfSettings credential discovery', () => {
     expect(settings.settings.value?.serverUrl).toBe('https://saved.example.com')
   })
 
+  it('clears stale settings loading when an authoritative save completes before an older GET resolves', async () => {
+    const staleFetch = deferred<AudiobookshelfSettings>()
+    mockFetchSettings.mockReturnValueOnce(staleFetch.promise)
+    mockUpdateSettings.mockResolvedValueOnce(configuredSettings({ serverUrl: 'https://saved.example.com' }))
+    const settings = await loadComposable()
+
+    const fetch = settings.fetchSettings()
+    await expect(settings.saveSettings({ serverUrl: 'https://saved.example.com' })).resolves.toBe(true)
+
+    expect(settings.loading.value).toBe(false)
+    expect(settings.settings.value?.serverUrl).toBe('https://saved.example.com')
+
+    staleFetch.resolve(configuredSettings({ serverUrl: 'https://stale.example.com' }))
+    await fetch
+
+    expect(settings.loading.value).toBe(false)
+    expect(settings.settings.value?.serverUrl).toBe('https://saved.example.com')
+  })
+
+  it('keeps stale GET rejection from restoring loading or error after an authoritative save', async () => {
+    const staleFetch = deferred<AudiobookshelfSettings>()
+    mockFetchSettings.mockReturnValueOnce(staleFetch.promise)
+    mockUpdateSettings.mockResolvedValueOnce(configuredSettings({ serverUrl: 'https://saved.example.com' }))
+    const settings = await loadComposable()
+
+    const fetch = settings.fetchSettings()
+    await expect(settings.saveSettings({ serverUrl: 'https://saved.example.com' })).resolves.toBe(true)
+
+    expect(settings.loading.value).toBe(false)
+    staleFetch.reject(new Error('stale fetch failed'))
+    await fetch
+
+    expect(settings.loading.value).toBe(false)
+    expect(settings.error.value).toBeNull()
+    expect(settings.settings.value?.serverUrl).toBe('https://saved.example.com')
+  })
+
   it('does not let a sync settings refresh started during a save overwrite the save result', async () => {
     const save = deferred<AudiobookshelfSettings>()
     const syncRefresh = deferred<AudiobookshelfSettings>()
@@ -191,6 +228,97 @@ describe('useAudiobookshelfSettings credential discovery', () => {
     await refresh
 
     expect(settings.settings.value?.serverUrl).toBe('https://saved.example.com')
+  })
+
+  it('lets only the newer overlapping save start discovery when the newer save resolves first', async () => {
+    const olderSave = deferred<AudiobookshelfSettings>()
+    const newerSave = deferred<AudiobookshelfSettings>()
+    const newerDiscovery = deferred<AudiobookshelfLibrariesResponse>()
+    mockUpdateSettings.mockReturnValueOnce(olderSave.promise).mockReturnValueOnce(newerSave.promise)
+    mockFetchLibraries.mockReturnValueOnce(newerDiscovery.promise)
+    const settings = await loadComposable()
+
+    const olderResult = settings.saveSettings({ serverUrl: 'https://older.example.com' })
+    const newerResult = settings.saveSettings({ serverUrl: 'https://newer.example.com' })
+    newerSave.resolve(configuredSettings({ serverUrl: 'https://newer.example.com' }))
+    await Promise.resolve()
+
+    expect(mockFetchLibraries).toHaveBeenCalledTimes(1)
+    newerDiscovery.resolve({ libraries: [library('newer')] })
+    await expect(newerResult).resolves.toBe(true)
+    olderSave.resolve(configuredSettings({ serverUrl: 'https://older.example.com' }))
+    await expect(olderResult).resolves.toBe(true)
+
+    expect(mockFetchLibraries).toHaveBeenCalledTimes(1)
+    expect(settings.settings.value?.serverUrl).toBe('https://newer.example.com')
+    expect(settings.libraries.value).toEqual([library('newer')])
+  })
+
+  it('lets only the newer overlapping save start discovery when the older save resolves first', async () => {
+    const olderSave = deferred<AudiobookshelfSettings>()
+    const newerSave = deferred<AudiobookshelfSettings>()
+    const newerDiscovery = deferred<AudiobookshelfLibrariesResponse>()
+    mockUpdateSettings.mockReturnValueOnce(olderSave.promise).mockReturnValueOnce(newerSave.promise)
+    mockFetchLibraries.mockReturnValueOnce(newerDiscovery.promise)
+    const settings = await loadComposable()
+
+    const olderResult = settings.saveSettings({ serverUrl: 'https://older.example.com' })
+    const newerResult = settings.saveSettings({ serverUrl: 'https://newer.example.com' })
+    olderSave.resolve(configuredSettings({ serverUrl: 'https://older.example.com' }))
+    await expect(olderResult).resolves.toBe(true)
+
+    expect(mockFetchLibraries).not.toHaveBeenCalled()
+    expect(settings.settings.value).toBeNull()
+
+    newerSave.resolve(configuredSettings({ serverUrl: 'https://newer.example.com' }))
+    await Promise.resolve()
+    expect(mockFetchLibraries).toHaveBeenCalledTimes(1)
+    newerDiscovery.resolve({ libraries: [library('newer')] })
+    await expect(newerResult).resolves.toBe(true)
+
+    expect(settings.settings.value?.serverUrl).toBe('https://newer.example.com')
+    expect(settings.libraries.value).toEqual([library('newer')])
+  })
+
+  it('does not let an older save commit or discover after a newer save fails', async () => {
+    const olderSave = deferred<AudiobookshelfSettings>()
+    const newerSave = deferred<AudiobookshelfSettings>()
+    mockUpdateSettings.mockReturnValueOnce(olderSave.promise).mockReturnValueOnce(newerSave.promise)
+    const settings = await loadComposable()
+
+    const olderResult = settings.saveSettings({ serverUrl: 'https://older.example.com' })
+    const newerResult = settings.saveSettings({ serverUrl: 'https://newer.example.com' })
+    newerSave.reject(new Error('newer save failed'))
+    await expect(newerResult).resolves.toBe(false)
+    olderSave.resolve(configuredSettings({ serverUrl: 'https://older.example.com' }))
+    await expect(olderResult).resolves.toBe(true)
+
+    expect(settings.settings.value).toBeNull()
+    expect(settings.error.value).toBe('newer save failed')
+    expect(mockFetchLibraries).not.toHaveBeenCalled()
+  })
+
+  it('does not let an older save restore settings or libraries after disconnect', async () => {
+    const save = deferred<AudiobookshelfSettings>()
+    const disconnect = deferred<void>()
+    mockUpdateSettings.mockReturnValueOnce(save.promise)
+    mockDisconnect.mockReturnValueOnce(disconnect.promise)
+    const settings = await loadComposable()
+    settings.settings.value = configuredSettings()
+    settings.libraries.value = [library('current')]
+
+    const saveResult = settings.saveSettings({ serverUrl: 'https://saved.example.com' })
+    const disconnectResult = settings.disconnect()
+    disconnect.resolve()
+    await expect(disconnectResult).resolves.toBe(true)
+    save.resolve(configuredSettings({ serverUrl: 'https://saved.example.com' }))
+    await expect(saveResult).resolves.toBe(true)
+
+    expect(settings.settings.value).toBeNull()
+    expect(settings.libraries.value).toEqual([])
+    expect(settings.librariesError.value).toBeNull()
+    expect(settings.librariesLoading.value).toBe(false)
+    expect(mockFetchLibraries).not.toHaveBeenCalled()
   })
 
   it('starts a fresh save-triggered discovery while initial discovery is pending', async () => {

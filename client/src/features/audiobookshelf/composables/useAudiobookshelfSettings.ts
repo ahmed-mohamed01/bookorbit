@@ -42,6 +42,13 @@ interface FetchLibrariesOptions {
   forceFresh?: boolean
 }
 
+function clearStaleSettingsFetch(): void {
+  if (activeSettingsFetch && (!activeSettingsFetch.canCommit || activeSettingsFetch.mutationGeneration !== settingsMutationGeneration)) {
+    activeSettingsFetch = null
+    loading.value = false
+  }
+}
+
 export function useAudiobookshelfSettings() {
   async function fetchSettings(): Promise<void> {
     if (
@@ -93,8 +100,9 @@ export function useAudiobookshelfSettings() {
       const nextSettings = await updateAudiobookshelfSettings(payload)
       if (activeSettingsSaveId === saveId) {
         settings.value = nextSettings
+        clearStaleSettingsFetch()
       }
-      if ((payload.serverUrl || payload.apiToken) && nextSettings.serverUrl && nextSettings.tokenConfigured) {
+      if (activeSettingsSaveId === saveId && (payload.serverUrl || payload.apiToken) && nextSettings.serverUrl && nextSettings.tokenConfigured) {
         await fetchLibraries({ forceFresh: true }).catch(() => undefined)
       }
       return true
@@ -154,6 +162,7 @@ export function useAudiobookshelfSettings() {
         settings.value = null
         currentLibraryRequestId = ++nextLibraryRequestId
         activeLibraryFetch = null
+        clearStaleSettingsFetch()
         libraries.value = []
         librariesLoading.value = false
         librariesError.value = null
