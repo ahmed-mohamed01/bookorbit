@@ -32,3 +32,52 @@ export interface AudiobookshelfConnectionTestResult {
   username?: string;
   error?: string;
 }
+
+export type AudiobookshelfMatchMethod = "asin" | "isbn" | "title_author_series" | "manual";
+
+export type AudiobookshelfBookStateBucket = "linked" | "needs-review" | "unmatched";
+
+export interface AudiobookshelfBookState {
+  absLibraryItemId: string;
+  absTitle: string;
+  absAuthorName: string | null;
+  absCoverUrl: string | null;
+  bookId: number | null;
+  bookTitle: string | null;
+  bookAuthorName: string | null;
+  matchMethod: AudiobookshelfMatchMethod | null;
+  matchConfidence: number | null;
+  needsReview: boolean;
+  matchError: string | null;
+  syncExcluded: boolean;
+  syncError: string | null;
+  lastSyncedAt: string | null;
+}
+
+export interface AudiobookshelfBookStatePage {
+  items: AudiobookshelfBookState[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface AudiobookshelfLinkBookPayload {
+  bookId: number;
+}
+
+export interface AudiobookshelfExclusionPayload {
+  syncExcluded: boolean;
+}
+
+export interface AudiobookshelfRescanResult {
+  queued: number;
+}
+
+export interface AudiobookshelfSyncResult {
+  matched: number;
+  statusApplied: number;
+  positionApplied: number;
+  sessionsApplied: number;
+  skipped: number;
+  failed: number;
+}

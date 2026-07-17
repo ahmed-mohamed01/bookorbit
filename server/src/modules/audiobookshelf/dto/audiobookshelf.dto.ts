@@ -1,6 +1,15 @@
-import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
-import type { AudiobookshelfConnectionTestPayload, UpsertAudiobookshelfSettingsPayload } from '@bookorbit/types';
+import type {
+  AudiobookshelfBookStateBucket,
+  AudiobookshelfConnectionTestPayload,
+  AudiobookshelfExclusionPayload,
+  AudiobookshelfLinkBookPayload,
+  UpsertAudiobookshelfSettingsPayload,
+} from '@bookorbit/types';
+
+const AUDIOBOOKSHELF_BOOK_STATE_BUCKETS: AudiobookshelfBookStateBucket[] = ['linked', 'needs-review', 'unmatched'];
 
 export class UpsertAudiobookshelfSettingsDto implements UpsertAudiobookshelfSettingsPayload {
   @IsOptional()
@@ -40,4 +49,40 @@ export class TestAudiobookshelfConnectionDto implements AudiobookshelfConnection
   @IsString()
   @MaxLength(2048)
   apiToken?: string;
+}
+
+export class ListAudiobookshelfBookStatesDto {
+  @IsIn(AUDIOBOOKSHELF_BOOK_STATE_BUCKETS)
+  bucket!: AudiobookshelfBookStateBucket;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  page?: number = 0;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize?: number = 20;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  q?: string;
+}
+
+export class LinkAudiobookshelfBookDto implements AudiobookshelfLinkBookPayload {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  bookId!: number;
+}
+
+export class UpdateAudiobookshelfExclusionDto implements AudiobookshelfExclusionPayload {
+  @IsBoolean()
+  syncExcluded!: boolean;
 }

@@ -892,6 +892,14 @@ export class BookRepository {
       .where(eq(bookFiles.bookId, bookId));
   }
 
+  async findAudioFilesInPlayOrder(bookId: number): Promise<{ id: number; format: string | null; durationSeconds: number | null }[]> {
+    return this.db
+      .select({ id: bookFiles.id, format: bookFiles.format, durationSeconds: bookFiles.durationSeconds })
+      .from(bookFiles)
+      .where(and(eq(bookFiles.bookId, bookId), eq(bookFiles.role, 'content')))
+      .orderBy(asc(bookFiles.sortOrder), asc(bookFiles.id));
+  }
+
   async findBookBase(bookId: number) {
     const [row] = await this.db.select().from(books).where(eq(books.id, bookId)).limit(1);
     return row ?? null;

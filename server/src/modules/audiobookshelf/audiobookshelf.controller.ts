@@ -6,11 +6,15 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import type { RequestUser } from '../../common/types/request-user';
 import { TestAudiobookshelfConnectionDto, UpsertAudiobookshelfSettingsDto } from './dto';
 import { AudiobookshelfSettingsService } from './audiobookshelf-settings.service';
+import { AudiobookshelfSyncService } from './audiobookshelf-sync.service';
 
 @Controller('audiobookshelf')
 @RequirePermission(Permission.AudiobookshelfSync)
 export class AudiobookshelfController {
-  constructor(private readonly settingsService: AudiobookshelfSettingsService) {}
+  constructor(
+    private readonly settingsService: AudiobookshelfSettingsService,
+    private readonly syncService: AudiobookshelfSyncService,
+  ) {}
 
   @Get('settings')
   getSettings(@CurrentUser() user: RequestUser) {
@@ -30,5 +34,15 @@ export class AudiobookshelfController {
   @Post('test-connection')
   testConnection(@CurrentUser() user: RequestUser, @Body() dto: TestAudiobookshelfConnectionDto) {
     return this.settingsService.testConnection(user.id, dto);
+  }
+
+  @Post('sync')
+  sync(@CurrentUser() user: RequestUser) {
+    return this.syncService.sync(user);
+  }
+
+  @Post('full-resync')
+  fullResync(@CurrentUser() user: RequestUser) {
+    return this.syncService.fullResync(user);
   }
 }
