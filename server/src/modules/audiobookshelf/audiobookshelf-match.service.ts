@@ -105,6 +105,12 @@ export class AudiobookshelfMatchService {
   async matchLibrary(user: RequestUser, serverUrl: string, token: string, options: { force: boolean }): Promise<AudiobookshelfMatchSummary> {
     const items = await this.fetchMatchInputs(user.id, serverUrl, token);
     const summary = await this.matchItems(user, items, options);
+    if (items.length === 0) {
+      this.logger.warn(
+        `[abs.match] [end] userId=${user.id} trigger=${options.force ? 'rescan' : 'incremental'} inventoryEmpty=true pruned=0 - prune skipped`,
+      );
+      return summary;
+    }
     summary.pruned = await this.repo.deleteBookStatesNotIn(
       user.id,
       items.map((item) => item.absLibraryItemId),

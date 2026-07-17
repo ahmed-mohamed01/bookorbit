@@ -313,7 +313,9 @@ export class AudiobookshelfRepository {
 
   async deleteBookStatesNotIn(userId: number, absLibraryItemIds: string[]): Promise<number> {
     const currentItemsClause =
-      absLibraryItemIds.length > 0 ? sql`not (${schema.audiobookshelfBookState.absLibraryItemId} = any(${absLibraryItemIds}::varchar[]))` : undefined;
+      absLibraryItemIds.length > 0
+        ? sql`not (${schema.audiobookshelfBookState.absLibraryItemId} = any(${sql.param(absLibraryItemIds)}::varchar[]))`
+        : undefined;
     const result = await this.db
       .delete(schema.audiobookshelfBookState)
       .where(and(eq(schema.audiobookshelfBookState.userId, userId), currentItemsClause));
