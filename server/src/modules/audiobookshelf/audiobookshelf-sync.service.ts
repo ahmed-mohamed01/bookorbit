@@ -109,7 +109,7 @@ export class AudiobookshelfSyncService {
 
     const result: AudiobookshelfSyncResult = { matched: 0, statusApplied: 0, positionApplied: 0, sessionsApplied: 0, skipped: 0, failed: 0 };
     try {
-      const matchSummary = await this.matchService.matchLibrary(user, settings.serverUrl, settings.apiToken, { force: false });
+      const matchSummary = await this.matchService.matchLibrary(user, settings.serverUrl, settings.apiToken, { force: options.force === true });
       result.matched = matchSummary.autoLinked;
 
       const me = await this.client.getMe(user.id, settings.serverUrl, settings.apiToken);
