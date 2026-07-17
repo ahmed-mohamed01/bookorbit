@@ -1,5 +1,6 @@
 import { computed, ref } from 'vue'
 import { startAudiobookshelfFullResync, startAudiobookshelfSync, type AudiobookshelfSyncResult } from '../api/audiobookshelf.api'
+import { useAudiobookshelfLinkedBooks } from './useAudiobookshelfLinkedBooks'
 import { useAudiobookshelfSettings } from './useAudiobookshelfSettings'
 
 const syncing = ref(false)
@@ -19,6 +20,9 @@ export function useAudiobookshelfSync() {
     try {
       lastResult.value = mode === 'full' ? await startAudiobookshelfFullResync() : await startAudiobookshelfSync()
       await useAudiobookshelfSettings().fetchSettings()
+      await useAudiobookshelfLinkedBooks()
+        .loadAllBuckets()
+        .catch(() => undefined)
       return true
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to sync Audiobookshelf'
