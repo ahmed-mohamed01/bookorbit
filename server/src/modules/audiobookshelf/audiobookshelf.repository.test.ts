@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PgDialect } from 'drizzle-orm/pg-core';
 
 import { AudiobookshelfRepository } from './audiobookshelf.repository';
 
@@ -44,5 +45,8 @@ describe('AudiobookshelfRepository', () => {
 
     expect(db.delete).toHaveBeenCalledTimes(1);
     expect(where).toHaveBeenCalledTimes(1);
+    const query = new PgDialect().sqlToQuery(where.mock.calls[0]![0] as never);
+    expect(query.sql).toContain('any($2::varchar[])');
+    expect(query.params).toEqual([7, ['current-1', 'current-2']]);
   });
 });

@@ -107,7 +107,7 @@ export class AudiobookshelfMatchService {
     const summary = await this.matchItems(user, items, options);
     if (items.length === 0) {
       this.logger.warn(
-        `[abs.match] [end] userId=${user.id} inventoryEmpty=true pruned=0 - empty ABS inventory, prune skipped to protect existing links`,
+        `[abs.match] [end] userId=${user.id} trigger=${options.force ? 'rescan' : 'incremental'} inventoryEmpty=true pruned=0 - empty ABS inventory, prune skipped to protect existing links`,
       );
       return summary;
     }
