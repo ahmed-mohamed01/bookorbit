@@ -33,6 +33,7 @@ let activeSettingsFetch: {
   canCommit: boolean
 } | null = null
 let settingsMutationQueue: Promise<unknown> | null = null
+let pendingCredentialDiscovery = false
 let nextLibraryRequestId = 0
 let currentLibraryRequestId = 0
 let activeLibraryFetch: {
@@ -108,6 +109,9 @@ export function useAudiobookshelfSettings() {
     const saveId = ++nextSettingsRequestId
     activeSettingsSaveId = saveId
     settingsMutationGeneration += 1
+    if (payload.serverUrl || payload.apiToken) {
+      pendingCredentialDiscovery = true
+    }
     saving.value = true
     error.value = null
     return queueSettingsMutation(async () => {
@@ -117,8 +121,11 @@ export function useAudiobookshelfSettings() {
           settings.value = nextSettings
           clearStaleSettingsFetch()
         }
-        if (activeSettingsSaveId === saveId && (payload.serverUrl || payload.apiToken) && nextSettings.serverUrl && nextSettings.tokenConfigured) {
+        if (activeSettingsSaveId === saveId && pendingCredentialDiscovery && nextSettings.serverUrl && nextSettings.tokenConfigured) {
           await fetchLibraries({ forceFresh: true }).catch(() => undefined)
+          if (activeSettingsSaveId === saveId && librariesError.value === null) {
+            pendingCredentialDiscovery = false
+          }
         }
         return true
       } catch (err) {
@@ -180,6 +187,7 @@ export function useAudiobookshelfSettings() {
       try {
         await disconnectAudiobookshelf()
         if (activeSettingsSaveId === saveId) {
+          pendingCredentialDiscovery = false
           settings.value = null
           clearStaleSettingsFetch()
           libraries.value = []

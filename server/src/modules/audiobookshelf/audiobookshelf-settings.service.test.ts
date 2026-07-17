@@ -1,4 +1,4 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AudiobookshelfClientService } from './audiobookshelf-client.service';
@@ -23,6 +23,22 @@ function makeRow(overrides: Partial<Record<string, unknown>> = {}) {
     updatedAt: new Date(),
     ...overrides,
   };
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve;
+    reject = innerReject;
+  });
+  return { promise, resolve, reject };
 }
 
 describe('AudiobookshelfSettingsService', () => {
@@ -132,16 +148,88 @@ describe('AudiobookshelfSettingsService', () => {
       expect(repo.updateSettings).toHaveBeenCalledWith(42, { excludedLibraryIds: ['blinkist', 'fiction'] });
     });
 
-    it('does not recreate settings when a stale PATCH loses a race to DELETE', async () => {
-      repo.findSettings.mockResolvedValueOnce(makeRow()).mockResolvedValueOnce(undefined);
+    it('rejects without logging success when a stale PATCH loses a race to DELETE', async () => {
+      const logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      repo.findSettings.mockResolvedValueOnce(makeRow());
       repo.updateSettings.mockResolvedValueOnce(undefined);
 
-      const result = await service.upsertSettings(42, { syncSessions: false });
+      await expect(service.upsertSettings(42, { syncSessions: false })).rejects.toBeInstanceOf(NotFoundException);
 
       expect(repo.updateSettings).toHaveBeenCalledWith(42, { syncSessions: false });
       expect(repo.upsertSettings).not.toHaveBeenCalled();
-      expect(result.serverUrl).toBeNull();
-      expect(result.tokenConfigured).toBe(false);
+      expect(repo.userHasAudiobookshelfSyncPermission).not.toHaveBeenCalled();
+      expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('settings saved'));
+      logSpy.mockRestore();
+    });
+
+    it('preserves final stored state for controlled concurrent partial PATCH updates', async () => {
+      let stored = makeRow({ serverUrl: 'https://old.example.com', apiToken: 'old-token', syncStatus: true });
+      const firstUpdate = deferred<void>();
+      const secondUpdate = deferred<void>();
+      let updateCount = 0;
+      const statefulRepo = {
+        findSettings: vi.fn(() => Promise.resolve({ ...stored })),
+        upsertSettings: vi.fn(),
+        updateSettings: vi.fn(async (_userId: number, data: Record<string, unknown>) => {
+          updateCount += 1;
+          await (updateCount === 1 ? firstUpdate.promise : secondUpdate.promise);
+          stored = { ...stored, ...data, updatedAt: new Date() };
+          return { ...stored };
+        }),
+        deleteSettings: vi.fn(),
+        userHasAudiobookshelfSyncPermission: vi.fn().mockResolvedValue(true),
+      };
+      const statefulService = new AudiobookshelfSettingsService(
+        statefulRepo as unknown as AudiobookshelfRepository,
+        client as unknown as AudiobookshelfClientService,
+      );
+
+      const urlPatch = statefulService.upsertSettings(42, { serverUrl: 'https://next.example.com/' });
+      const tokenPatch = statefulService.upsertSettings(42, { apiToken: 'fresh-token' });
+      await Promise.resolve();
+      secondUpdate.resolve();
+      await expect(tokenPatch).resolves.toMatchObject({ serverUrl: 'https://old.example.com', tokenConfigured: true });
+      firstUpdate.resolve();
+      await expect(urlPatch).resolves.toMatchObject({ serverUrl: 'https://next.example.com', tokenConfigured: true });
+
+      expect(stored).toMatchObject({
+        serverUrl: 'https://next.example.com',
+        apiToken: 'fresh-token',
+        syncStatus: true,
+      });
+      expect(statefulRepo.upsertSettings).not.toHaveBeenCalled();
+    });
+
+    it('preserves deletion when a controlled PATCH loses to DELETE', async () => {
+      let stored: ReturnType<typeof makeRow> | undefined = makeRow();
+      const updateGate = deferred<void>();
+      const statefulRepo = {
+        findSettings: vi.fn(() => Promise.resolve(stored ? { ...stored } : undefined)),
+        upsertSettings: vi.fn(),
+        updateSettings: vi.fn(async (_userId: number, data: Record<string, unknown>) => {
+          await updateGate.promise;
+          if (!stored) return undefined;
+          stored = { ...stored, ...data, updatedAt: new Date() };
+          return { ...stored };
+        }),
+        deleteSettings: vi.fn(() => {
+          stored = undefined;
+        }),
+        userHasAudiobookshelfSyncPermission: vi.fn().mockResolvedValue(true),
+      };
+      const statefulService = new AudiobookshelfSettingsService(
+        statefulRepo as unknown as AudiobookshelfRepository,
+        client as unknown as AudiobookshelfClientService,
+      );
+
+      const patch = statefulService.upsertSettings(42, { syncSessions: false });
+      await Promise.resolve();
+      await statefulService.disconnectUser(42);
+      updateGate.resolve();
+
+      await expect(patch).rejects.toBeInstanceOf(NotFoundException);
+      expect(stored).toBeUndefined();
+      expect(statefulRepo.upsertSettings).not.toHaveBeenCalled();
     });
   });
 

@@ -73,7 +73,8 @@ export class AudiobookshelfSettingsService {
     }
 
     if (existing) {
-      await this.repo.updateSettings(userId, data);
+      const updated = await this.repo.updateSettings(userId, data);
+      if (!updated) throw new NotFoundException('Audiobookshelf integration no longer configured');
     } else {
       await this.repo.upsertSettings(userId, data);
     }

@@ -263,6 +263,33 @@ describe('useAudiobookshelfSettings credential discovery', () => {
     expect(settings.libraries.value).toEqual([library('newer')])
   })
 
+  it('carries credential discovery to a queued non-credential save that owns the final state', async () => {
+    const credentialSave = deferred<AudiobookshelfSettings>()
+    const toggleSave = deferred<AudiobookshelfSettings>()
+    const finalDiscovery = deferred<AudiobookshelfLibrariesResponse>()
+    mockUpdateSettings.mockReturnValueOnce(credentialSave.promise).mockReturnValueOnce(toggleSave.promise)
+    mockFetchLibraries.mockReturnValueOnce(finalDiscovery.promise)
+    const settings = await loadComposable()
+
+    const credentialResult = settings.saveSettings({ apiToken: 'replacement-token' })
+    const toggleResult = settings.saveSettings({ syncStatus: false })
+
+    credentialSave.resolve(configuredSettings({ serverUrl: 'https://new-abs.example.com' }))
+    await expect(credentialResult).resolves.toBe(true)
+
+    expect(mockFetchLibraries).not.toHaveBeenCalled()
+
+    toggleSave.resolve(configuredSettings({ serverUrl: 'https://new-abs.example.com', syncStatus: false }))
+    await Promise.resolve()
+
+    expect(mockFetchLibraries).toHaveBeenCalledTimes(1)
+    finalDiscovery.resolve({ libraries: [library('final')] })
+    await expect(toggleResult).resolves.toBe(true)
+
+    expect(settings.settings.value?.syncStatus).toBe(false)
+    expect(settings.libraries.value).toEqual([library('final')])
+  })
+
   it('does not let an older save commit or discover after a newer save fails', async () => {
     const olderSave = deferred<AudiobookshelfSettings>()
     const newerSave = deferred<AudiobookshelfSettings>()
