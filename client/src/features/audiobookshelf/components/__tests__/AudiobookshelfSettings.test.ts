@@ -123,6 +123,9 @@ describe('AudiobookshelfSettings library selection', () => {
         ...(payload.excludedLibraryIds ? { excludedLibraryIds: payload.excludedLibraryIds } : {}),
         tokenConfigured: payload.apiToken ? true : settings.value.tokenConfigured,
       }
+      if ((payload.serverUrl || payload.apiToken) && settings.value.serverUrl && settings.value.tokenConfigured) {
+        await mocks.fetchLibraries()
+      }
       return true
     })
     mocks.disconnect.mockResolvedValue(true)
@@ -195,6 +198,35 @@ describe('AudiobookshelfSettings library selection', () => {
     await clickSaveConnection(wrapper)
 
     expect(mocks.saveSettings).toHaveBeenCalledWith({ serverUrl: 'https://new-abs.example.com' })
+    expect(mocks.fetchLibraries).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes once for token replacement followed by a configured server URL change', async () => {
+    const wrapper = await mountSettingsWithConnection()
+    mocks.fetchLibraries.mockClear()
+
+    await wrapper.get('#audiobookshelf-token').setValue('replacement-token')
+    await clickSaveConnection(wrapper)
+    await wrapper.get('#audiobookshelf-server-url').setValue('https://next-abs.example.com')
+    await clickSaveConnection(wrapper)
+
+    expect(mocks.saveSettings).toHaveBeenNthCalledWith(1, { apiToken: 'replacement-token' })
+    expect(mocks.saveSettings).toHaveBeenNthCalledWith(2, { serverUrl: 'https://next-abs.example.com' })
+    expect(mocks.fetchLibraries).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes once after saving a configured server URL and replacement token together', async () => {
+    const wrapper = await mountSettingsWithConnection()
+    mocks.fetchLibraries.mockClear()
+
+    await wrapper.get('#audiobookshelf-server-url').setValue('https://combined-abs.example.com')
+    await wrapper.get('#audiobookshelf-token').setValue('replacement-token')
+    await clickSaveConnection(wrapper)
+
+    expect(mocks.saveSettings).toHaveBeenCalledWith({
+      serverUrl: 'https://combined-abs.example.com',
+      apiToken: 'replacement-token',
+    })
     expect(mocks.fetchLibraries).toHaveBeenCalledTimes(1)
   })
 })

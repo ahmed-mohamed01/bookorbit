@@ -41,6 +41,9 @@ export function useAudiobookshelfSettings() {
     error.value = null
     try {
       settings.value = await updateAudiobookshelfSettings(payload)
+      if ((payload.serverUrl || payload.apiToken) && settings.value.serverUrl && settings.value.tokenConfigured) {
+        await fetchLibraries().catch(() => undefined)
+      }
       return true
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to save Audiobookshelf settings'

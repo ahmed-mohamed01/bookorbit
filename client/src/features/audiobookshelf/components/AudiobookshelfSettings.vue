@@ -16,7 +16,6 @@ const { settings, saving, error, libraries, librariesLoading, librariesError, fe
 
 const syncOptions = reactive({ syncStatus: true, syncPosition: true, syncSessions: true })
 const excludedLibraryIds = ref<string[]>([])
-const skipNextLibraryDiscovery = ref(false)
 const includedLibraryCount = computed(() => libraries.value.filter((library) => !excludedLibraryIds.value.includes(library.id)).length)
 
 watch(
@@ -33,26 +32,8 @@ watch(
 
 onMounted(async () => {
   if (!settings.value) await fetchSettings()
+  if (settings.value?.serverUrl && settings.value.tokenConfigured) await fetchLibraries()
 })
-
-watch(
-  () => [settings.value?.serverUrl, settings.value?.tokenConfigured] as const,
-  async ([serverUrl, configured], previous) => {
-    if (!configured || !serverUrl) return
-    if (skipNextLibraryDiscovery.value) {
-      skipNextLibraryDiscovery.value = false
-      return
-    }
-    if (!librariesLoading.value && (!previous || previous[0] !== serverUrl)) {
-      await fetchLibraries()
-    }
-  },
-  { immediate: true },
-)
-
-function handleConnectionCredentialsSaved(): void {
-  skipNextLibraryDiscovery.value = true
-}
 
 function handleLibraryToggle(library: { id: string }): void {
   if (excludedLibraryIds.value.includes(library.id)) {
@@ -88,7 +69,7 @@ async function handleSaveSyncOptions(): Promise<void> {
       subtitle="Pull listening status, playback position, and sessions from Audiobookshelf."
     />
 
-    <AudiobookshelfConnectionCard @credentials-saved="handleConnectionCredentialsSaved" />
+    <AudiobookshelfConnectionCard />
     <AudiobookshelfSyncProgress v-if="settings?.tokenConfigured" />
 
     <section v-if="settings?.tokenConfigured" class="space-y-4 rounded-lg border border-border bg-card px-4 py-4 shadow-xs md:px-5 md:py-5">

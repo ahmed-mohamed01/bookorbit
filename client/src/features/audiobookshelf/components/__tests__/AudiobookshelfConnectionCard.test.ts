@@ -115,7 +115,7 @@ describe('AudiobookshelfConnectionCard', () => {
     expect(lastError.classes()).toContain('text-destructive')
   })
 
-  it('refreshes libraries after replacing the token for the same server URL', async () => {
+  it('saves a replacement token without owning library discovery', async () => {
     settings.value = configuredSettings()
     const wrapper = await mountCard()
 
@@ -127,6 +127,6 @@ describe('AudiobookshelfConnectionCard', () => {
     await flushPromises()
 
     expect(mocks.saveSettings).toHaveBeenCalledWith({ apiToken: 'replacement-token' })
-    expect(mocks.fetchLibraries).toHaveBeenCalledTimes(1)
+    expect(mocks.fetchLibraries).not.toHaveBeenCalled()
   })
 })
