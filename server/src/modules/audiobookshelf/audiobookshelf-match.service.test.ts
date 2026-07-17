@@ -169,6 +169,31 @@ describe('AudiobookshelfMatchService', () => {
     expect(repo.bulkUpsertBookStates).not.toHaveBeenCalled();
   });
 
+  it('preserves a manual unlink during incremental matching', async () => {
+    repo.findBookStatesByAbsItemIds.mockResolvedValue([
+      { absLibraryItemId: 'abs-1', bookId: null, matchMethod: null, manualUnlinked: true, needsReview: false, lastMatchAttemptAt: new Date() },
+    ]);
+
+    const summary = await service.matchItems(makeUser(), [makeInput({ asin: 'B00ASIN' })], { force: false });
+
+    expect(summary.skipped).toBe(1);
+    expect(summary.processed).toBe(0);
+    expect(repo.findBookIdsByAudibleIds).not.toHaveBeenCalled();
+    expect(repo.bulkUpsertBookStates).not.toHaveBeenCalled();
+  });
+
+  it('lets an explicit rescan clear a manual unlink by reprocessing the item', async () => {
+    repo.findBookStatesByAbsItemIds.mockResolvedValue([
+      { absLibraryItemId: 'abs-1', bookId: null, matchMethod: null, manualUnlinked: true, needsReview: false, lastMatchAttemptAt: new Date() },
+    ]);
+    repo.findBookIdsByAudibleIds.mockResolvedValue([{ key: 'B00ASIN', bookId: 101 }]);
+
+    const summary = await service.matchItems(makeUser(), [makeInput({ asin: 'B00ASIN' })], { force: true });
+
+    expect(summary.autoLinked).toBe(1);
+    expect(upsertsFrom(repo.bulkUpsertBookStates)[0]).toMatchObject({ absLibraryItemId: 'abs-1', bookId: 101, matchMethod: 'asin' });
+  });
+
   it('rescan fetches only book libraries and forces matching', async () => {
     repo.findSettings.mockResolvedValue({ enabled: true, serverUrl: 'https://abs.example', apiToken: 'token', excludedLibraryIds: ['L3'] });
     client.getLibraries.mockResolvedValue({

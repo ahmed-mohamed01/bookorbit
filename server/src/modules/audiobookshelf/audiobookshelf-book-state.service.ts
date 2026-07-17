@@ -3,7 +3,8 @@ import type { AudiobookshelfBookState, AudiobookshelfBookStatePage, Audiobookshe
 
 import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
-import { AudiobookshelfRepository, type AbsBookStateView } from './audiobookshelf.repository';
+import { LibraryService } from '../library/library.service';
+import { AudiobookshelfRepository, type AbsBookAccessScope, type AbsBookStateView } from './audiobookshelf.repository';
 import type { ListAudiobookshelfBookStatesDto } from './dto';
 
 @Injectable()
@@ -13,31 +14,38 @@ export class AudiobookshelfBookStateService {
   constructor(
     private readonly repo: AudiobookshelfRepository,
     private readonly bookService: BookService,
+    private readonly libraryService: LibraryService,
   ) {}
 
   async list(user: RequestUser, dto: ListAudiobookshelfBookStatesDto): Promise<AudiobookshelfBookStatePage> {
     const page = dto.page ?? 0;
     const pageSize = dto.pageSize ?? 20;
-    const { items, total } = await this.repo.listBookStates(user.id, dto.bucket, page, pageSize, dto.q);
+    const scope = await this.resolveScope(user);
+    const { items, total } = await this.repo.listBookStates(user.id, scope, dto.bucket, page, pageSize, dto.q);
     return { items: items.map((item) => this.toApi(item)), total, page, pageSize };
   }
 
   async confirm(user: RequestUser, absLibraryItemId: string): Promise<AudiobookshelfBookState> {
+    const scope = await this.resolveScope(user);
     const row = await this.repo.findBookStateRow(user.id, absLibraryItemId);
     if (!row) throw new NotFoundException('Audiobookshelf item not found');
     if (row.bookId == null || !row.needsReview) {
       throw new BadRequestException('This Audiobookshelf item is not awaiting review');
     }
+    const scoped = await this.repo.findBookStateView(user.id, absLibraryItemId, scope);
+    if (!scoped) throw new NotFoundException('Audiobookshelf item not found');
 
-    await this.repo.updateBookState(user.id, absLibraryItemId, { needsReview: false, matchError: null });
+    await this.repo.updateBookState(user.id, absLibraryItemId, { needsReview: false, matchError: null, manualUnlinked: false });
     this.logger.log(`[abs.confirm_match] [end] userId=${user.id} bookId=${row.bookId} - review match confirmed`);
-    return this.viewOrThrow(user.id, absLibraryItemId);
+    return this.viewOrThrow(user.id, absLibraryItemId, scope);
   }
 
   async link(user: RequestUser, absLibraryItemId: string, bookId: number): Promise<AudiobookshelfBookState> {
     await this.bookService.verifyBookAccess(bookId, user);
     const row = await this.repo.findBookStateRow(user.id, absLibraryItemId);
     if (!row) throw new NotFoundException('Audiobookshelf item not found');
+    const scope = await this.resolveScope(user);
+    await this.assertCurrentStateInScope(user.id, absLibraryItemId, row.bookId, scope);
 
     await this.repo.updateBookState(user.id, absLibraryItemId, {
       bookId,
@@ -45,15 +53,18 @@ export class AudiobookshelfBookStateService {
       matchConfidence: null,
       needsReview: false,
       matchError: null,
+      manualUnlinked: false,
       lastMatchAttemptAt: new Date(),
     });
     this.logger.log(`[abs.manual_link] [end] userId=${user.id} bookId=${bookId} - manual link set`);
-    return this.viewOrThrow(user.id, absLibraryItemId);
+    return this.viewOrThrow(user.id, absLibraryItemId, scope);
   }
 
   async unlink(user: RequestUser, absLibraryItemId: string): Promise<AudiobookshelfBookState> {
     const row = await this.repo.findBookStateRow(user.id, absLibraryItemId);
     if (!row) throw new NotFoundException('Audiobookshelf item not found');
+    const scope = await this.resolveScope(user);
+    await this.assertCurrentStateInScope(user.id, absLibraryItemId, row.bookId, scope);
 
     await this.repo.updateBookState(user.id, absLibraryItemId, {
       bookId: null,
@@ -61,22 +72,43 @@ export class AudiobookshelfBookStateService {
       matchConfidence: null,
       needsReview: false,
       matchError: null,
+      manualUnlinked: true,
       lastMatchAttemptAt: new Date(),
     });
     this.logger.log(`[abs.unlink] [end] userId=${user.id} previousBookId=${row.bookId ?? 'null'} - link cleared`);
-    return this.viewOrThrow(user.id, absLibraryItemId);
+    return this.viewOrThrow(user.id, absLibraryItemId, scope);
   }
 
   async setExclusion(user: RequestUser, absLibraryItemId: string, syncExcluded: boolean): Promise<AudiobookshelfBookState> {
     const row = await this.repo.findBookStateRow(user.id, absLibraryItemId);
     if (!row) throw new NotFoundException('Audiobookshelf item not found');
+    const scope = await this.resolveScope(user);
+    await this.assertCurrentStateInScope(user.id, absLibraryItemId, row.bookId, scope);
 
     await this.repo.updateBookState(user.id, absLibraryItemId, { syncExcluded });
-    return this.viewOrThrow(user.id, absLibraryItemId);
+    return this.viewOrThrow(user.id, absLibraryItemId, scope);
   }
 
-  private async viewOrThrow(userId: number, absLibraryItemId: string): Promise<AudiobookshelfBookState> {
-    const view = await this.repo.findBookStateView(userId, absLibraryItemId);
+  private async resolveScope(user: RequestUser): Promise<AbsBookAccessScope> {
+    return {
+      libraryIds: await this.libraryService.findAccessibleLibraryIds(user),
+      contentFilters: user.isSuperuser ? undefined : user.contentFilters,
+    };
+  }
+
+  private async assertCurrentStateInScope(
+    userId: number,
+    absLibraryItemId: string,
+    bookId: number | null | undefined,
+    scope: AbsBookAccessScope,
+  ): Promise<void> {
+    if (bookId == null) return;
+    const view = await this.repo.findBookStateView(userId, absLibraryItemId, scope);
+    if (!view) throw new NotFoundException('Audiobookshelf item not found');
+  }
+
+  private async viewOrThrow(userId: number, absLibraryItemId: string, scope: AbsBookAccessScope): Promise<AudiobookshelfBookState> {
+    const view = await this.repo.findBookStateView(userId, absLibraryItemId, scope);
     if (!view) throw new NotFoundException('Audiobookshelf item not found');
     return this.toApi(view);
   }

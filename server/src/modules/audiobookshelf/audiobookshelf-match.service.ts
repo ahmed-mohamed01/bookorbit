@@ -161,6 +161,10 @@ export class AudiobookshelfMatchService {
           summary.skipped++;
           continue;
         }
+        if (!options.force && state.manualUnlinked) {
+          summary.skipped++;
+          continue;
+        }
         if (!options.force && state.lastMatchAttemptAt) {
           if (libraryChangedAt === undefined) libraryChangedAt = await this.repo.findLibraryChangedAt(accessibleLibraryIds);
           const unchanged = !libraryChangedAt || state.lastMatchAttemptAt.getTime() >= libraryChangedAt.getTime();

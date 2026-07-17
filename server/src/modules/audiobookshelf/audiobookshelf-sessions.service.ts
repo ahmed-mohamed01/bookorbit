@@ -5,6 +5,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { resolveTimeZone } from '../../common/utils/timezone.utils';
 import { BookService } from '../book/book.service';
+import { LibraryService } from '../library/library.service';
 import {
   ACHIEVEMENT_EVENT_BACKFILL,
   ACHIEVEMENT_EVENT_READING_SESSION_SAVED,
@@ -12,7 +13,7 @@ import {
 } from '../achievement/achievement-events.service';
 import type { AudiobookshelfUserSetting } from '../../db/schema';
 import { AudiobookshelfClientService, type AbsListeningSession } from './audiobookshelf-client.service';
-import { AudiobookshelfRepository } from './audiobookshelf.repository';
+import { AudiobookshelfRepository, type AbsBookAccessScope } from './audiobookshelf.repository';
 import {
   AUDIOBOOKSHELF_BACKFILL_EVENT_THRESHOLD,
   AUDIOBOOKSHELF_SESSION_OVERLAP_MS,
@@ -53,6 +54,7 @@ export class AudiobookshelfSessionsService {
     private readonly client: AudiobookshelfClientService,
     private readonly bookService: BookService,
     private readonly achievementEvents: AchievementEventsService,
+    private readonly libraryService: LibraryService,
   ) {}
 
   /**
@@ -84,6 +86,10 @@ export class AudiobookshelfSessionsService {
     const acc: IngestAccumulator = { inserted: 0, updated: 0, skipped: 0, sampleInserted: [] };
     const caches: ResolveCaches = { libraryIdByBook: new Map(), audioFilesByBook: new Map() };
     const excludedLibraryIds = new Set(settings.excludedLibraryIds ?? []);
+    const scope = {
+      libraryIds: await this.libraryService.findAccessibleLibraryIds(user),
+      contentFilters: user.isSuperuser ? undefined : user.contentFilters,
+    };
     let maxUpdated = existingWatermark;
 
     try {
@@ -107,7 +113,7 @@ export class AudiobookshelfSessionsService {
 
         const includedSessions = sessions.filter((session) => !session.libraryId || !excludedLibraryIds.has(session.libraryId));
         acc.skipped += sessions.length - includedSessions.length;
-        await this.processPage(user.id, timeZone, includedSessions, caches, acc);
+        await this.processPage(user.id, scope, timeZone, includedSessions, caches, acc);
 
         const fetched = (page + 1) * AUDIOBOOKSHELF_SESSIONS_PAGE_SIZE;
         if (sessions.length < AUDIOBOOKSHELF_SESSIONS_PAGE_SIZE || fetched >= response.total) break;
@@ -138,18 +144,17 @@ export class AudiobookshelfSessionsService {
 
   private async processPage(
     userId: number,
+    scope: AbsBookAccessScope,
     timeZone: string,
     sessions: AbsListeningSession[],
     caches: ResolveCaches,
     acc: IngestAccumulator,
   ): Promise<void> {
     const itemIds = [...new Set(sessions.filter((session) => session.libraryItemId && !session.episodeId).map((session) => session.libraryItemId!))];
-    const states = await this.repo.findBookStatesByAbsItemIds(userId, itemIds);
+    const states = await this.repo.findSyncableBookStatesByAbsItemIds(userId, scope, itemIds);
     const stateByItem = new Map(states.map((state) => [state.absLibraryItemId, state]));
 
-    const linkedBookIds = states
-      .filter((state) => state.bookId != null && !state.needsReview && !state.syncExcluded && !state.matchError)
-      .map((state) => state.bookId!);
+    const linkedBookIds = states.filter((state) => state.bookId != null).map((state) => state.bookId!);
     const missingLibraryBookIds = linkedBookIds.filter((bookId) => !caches.libraryIdByBook.has(bookId));
     if (missingLibraryBookIds.length > 0) {
       const resolved = await this.repo.findLibraryIdsByBookIds(missingLibraryBookIds);
@@ -163,7 +168,7 @@ export class AudiobookshelfSessionsService {
         continue;
       }
       const state = stateByItem.get(session.libraryItemId);
-      if (!state || state.bookId == null || state.needsReview || state.syncExcluded || state.matchError) {
+      if (!state || state.bookId == null) {
         acc.skipped++;
         continue;
       }

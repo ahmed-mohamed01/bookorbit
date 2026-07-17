@@ -49,7 +49,7 @@ function makeMatchSummary(selectedAbsItemIds: string[] = ['abs-1', 'abs-a', 'abs
 function makeDeps() {
   const repo = {
     findSettings: vi.fn(),
-    findBookStatesByAbsItemIds: vi.fn().mockResolvedValue([]),
+    findSyncableBookStatesByAbsItemIds: vi.fn().mockResolvedValue([]),
     updateBookState: vi.fn().mockResolvedValue(undefined),
     updateSettings: vi.fn().mockResolvedValue(undefined),
   };
@@ -65,6 +65,7 @@ function makeDeps() {
     syncSessions: vi.fn().mockResolvedValue({ inserted: 0, updated: 0, skipped: 0, watermark: null }),
     deepReconciliationScan: vi.fn().mockResolvedValue({ inserted: 0, updated: 0, skipped: 0, watermark: null }),
   };
+  const libraryService = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([1, 2]) };
   const settings = {
     userId: 7,
     serverUrl: 'http://abs.local',
@@ -83,8 +84,9 @@ function makeDeps() {
     statusService as never,
     bookService as never,
     sessionsService as never,
+    libraryService as never,
   );
-  return { service, repo, client, matchService, attempts, statusService, bookService, sessionsService, settings };
+  return { service, repo, client, matchService, attempts, statusService, bookService, sessionsService, settings, libraryService };
 }
 
 describe('resolveAbsTargetStatus', () => {
@@ -161,7 +163,7 @@ describe('AudiobookshelfSyncService.sync', () => {
     });
     const mp = makeMp({ isFinished: true, progress: 1, currentTime: 300, finishedAt: 1_700_000_000_000, lastUpdate: 1_700_000_000_000 });
     client.getMe.mockResolvedValue({ mediaProgress: [mp] });
-    repo.findBookStatesByAbsItemIds.mockResolvedValue([makeState()]);
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState()]);
 
     const result = await service.sync(makeUser());
 
@@ -186,7 +188,7 @@ describe('AudiobookshelfSyncService.sync', () => {
   it('short-circuits unchanged items without any writes', async () => {
     const { service, client, attempts, statusService, bookService, repo } = makeDeps();
     client.getMe.mockResolvedValue({ mediaProgress: [makeMp({ lastUpdate: 2000 })] });
-    repo.findBookStatesByAbsItemIds.mockResolvedValue([makeState({ lastSyncedAbsUpdate: 2000 })]);
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ lastSyncedAbsUpdate: 2000 })]);
 
     const result = await service.sync(makeUser());
 
@@ -207,12 +209,7 @@ describe('AudiobookshelfSyncService.sync', () => {
         makeMp({ id: 'mp-d', libraryItemId: 'abs-d' }),
       ],
     });
-    repo.findBookStatesByAbsItemIds.mockResolvedValue([
-      makeState({ absLibraryItemId: 'abs-a', bookId: null }),
-      makeState({ absLibraryItemId: 'abs-b', needsReview: true }),
-      makeState({ absLibraryItemId: 'abs-c', syncExcluded: true }),
-      makeState({ absLibraryItemId: 'abs-d', matchError: 'ambiguous_asin' }),
-    ]);
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([]);
 
     const result = await service.sync(makeUser());
 
@@ -220,16 +217,33 @@ describe('AudiobookshelfSyncService.sync', () => {
     expect(attempts.importExternalRead).not.toHaveBeenCalled();
   });
 
+  it('scopes progress sync through current library access and content filters', async () => {
+    const { service, client, repo, attempts, statusService, bookService, libraryService } = makeDeps();
+    const contentFilters = { includeTagIds: [5], excludeTagIds: [9], includeGenreIds: [], excludeGenreIds: [] };
+    libraryService.findAccessibleLibraryIds.mockResolvedValue([77]);
+    client.getMe.mockResolvedValue({ mediaProgress: [makeMp({ libraryItemId: 'abs-1' })] });
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([]);
+
+    const result = await service.sync(makeUser({ contentFilters }));
+
+    expect(repo.findSyncableBookStatesByAbsItemIds).toHaveBeenCalledWith(7, { libraryIds: [77], contentFilters }, ['abs-1']);
+    expect(result.skipped).toBe(1);
+    expect(attempts.importExternalRead).not.toHaveBeenCalled();
+    expect(statusService.updateManual).not.toHaveBeenCalled();
+    expect(bookService.upsertAudioProgressFromSync).not.toHaveBeenCalled();
+    expect(repo.updateBookState).not.toHaveBeenCalled();
+  });
+
   it('does not sync preserved excluded-library progress when the selected inventory is empty', async () => {
     const { service, client, repo, matchService, attempts, statusService, bookService } = makeDeps();
     matchService.matchLibrary.mockResolvedValue(makeMatchSummary([]));
     client.getMe.mockResolvedValue({ mediaProgress: [makeMp({ libraryItemId: 'abs-1' })] });
-    repo.findBookStatesByAbsItemIds.mockResolvedValue([makeState()]);
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState()]);
 
     const result = await service.sync(makeUser());
 
     expect(result.skipped).toBe(1);
-    expect(repo.findBookStatesByAbsItemIds).not.toHaveBeenCalled();
+    expect(repo.findSyncableBookStatesByAbsItemIds).not.toHaveBeenCalled();
     expect(attempts.importExternalRead).not.toHaveBeenCalled();
     expect(statusService.updateManual).not.toHaveBeenCalled();
     expect(bookService.upsertAudioProgressFromSync).not.toHaveBeenCalled();
@@ -240,7 +254,7 @@ describe('AudiobookshelfSyncService.sync', () => {
     const { service, client, bookService, repo, statusService } = makeDeps();
     statusService.findOne.mockResolvedValue({ status: 'unread' });
     client.getMe.mockResolvedValue({ mediaProgress: [makeMp({ duration: 1000, currentTime: 100 })] });
-    repo.findBookStatesByAbsItemIds.mockResolvedValue([makeState()]);
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState()]);
     bookService.getAudioFilesInPlayOrder.mockResolvedValue([{ id: 1, format: 'mp3', durationSeconds: 300 }]);
 
     const result = await service.sync(makeUser());
@@ -254,7 +268,7 @@ describe('AudiobookshelfSyncService.sync', () => {
     const { service, client, bookService, repo, statusService } = makeDeps();
     statusService.findOne.mockResolvedValue({ status: 'unread' });
     client.getMe.mockResolvedValue({ mediaProgress: [makeMp()] });
-    repo.findBookStatesByAbsItemIds.mockResolvedValue([makeState()]);
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState()]);
     bookService.getAudioFilesInPlayOrder.mockResolvedValue([]);
 
     const result = await service.sync(makeUser());
@@ -268,7 +282,7 @@ describe('AudiobookshelfSyncService.sync', () => {
     const { service, client, bookService, repo, statusService } = makeDeps();
     statusService.findOne.mockResolvedValue({ status: 'read' });
     client.getMe.mockResolvedValue({ mediaProgress: [makeMp({ progress: 0.03, currentTime: 9, duration: 300, lastUpdate: 5000 })] });
-    repo.findBookStatesByAbsItemIds.mockResolvedValue([makeState({ lastSyncedAbsUpdate: 4000 })]);
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ lastSyncedAbsUpdate: 4000 })]);
 
     const result = await service.sync(makeUser());
 
@@ -282,7 +296,7 @@ describe('AudiobookshelfSyncService.sync', () => {
     client.getMe.mockResolvedValue({
       mediaProgress: [makeMp({ id: 'mp-a', libraryItemId: 'abs-a' }), makeMp({ id: 'mp-b', libraryItemId: 'abs-b' })],
     });
-    repo.findBookStatesByAbsItemIds.mockResolvedValue([
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([
       makeState({ absLibraryItemId: 'abs-a', bookId: 100 }),
       makeState({ absLibraryItemId: 'abs-b', bookId: 200 }),
     ]);
@@ -358,7 +372,7 @@ describe('AudiobookshelfSyncService.sync', () => {
       syncPosition: false,
     });
     client.getMe.mockResolvedValue({ mediaProgress: [makeMp()] });
-    repo.findBookStatesByAbsItemIds.mockResolvedValue([makeState()]);
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState()]);
 
     const result = await service.sync(makeUser());
 
@@ -380,7 +394,7 @@ describe('AudiobookshelfSyncService.sync', () => {
     const { service, client, attempts, statusService, repo, sessionsService, matchService } = makeDeps();
     statusService.findOne.mockResolvedValue({ status: 'unread' });
     client.getMe.mockResolvedValue({ mediaProgress: [makeMp({ lastUpdate: 2000 })] });
-    repo.findBookStatesByAbsItemIds.mockResolvedValue([makeState({ lastSyncedAbsUpdate: 2000 })]);
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ lastSyncedAbsUpdate: 2000 })]);
 
     const result = await service.fullResync(makeUser());
 
@@ -489,7 +503,7 @@ describe('AudiobookshelfSyncService ordering against real reading-attempt/status
         syncStatus: true,
         syncPosition: false,
       }),
-      findBookStatesByAbsItemIds: vi.fn().mockResolvedValue([makeState()]),
+      findSyncableBookStatesByAbsItemIds: vi.fn().mockResolvedValue([makeState()]),
       updateBookState: vi.fn().mockResolvedValue(undefined),
       updateSettings: vi.fn().mockResolvedValue(undefined),
     };
@@ -501,6 +515,7 @@ describe('AudiobookshelfSyncService ordering against real reading-attempt/status
     const matchService = { matchLibrary: vi.fn().mockResolvedValue(makeMatchSummary()) };
     const bookService = { getAudioFilesInPlayOrder: vi.fn(), upsertAudioProgressFromSync: vi.fn() };
     const sessionsService = { syncSessions: vi.fn().mockResolvedValue({ inserted: 0, updated: 0, skipped: 0, watermark: null }) };
+    const libraryService = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([1, 2]) };
 
     const service = new AudiobookshelfSyncService(
       repo as never,
@@ -510,6 +525,7 @@ describe('AudiobookshelfSyncService ordering against real reading-attempt/status
       statusService as never,
       bookService as never,
       sessionsService as never,
+      libraryService as never,
     );
 
     const result = await service.sync(makeUser());

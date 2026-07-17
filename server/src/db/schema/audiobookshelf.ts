@@ -52,6 +52,7 @@ export const audiobookshelfBookState = pgTable(
     lastSyncedAbsUpdate: bigint('last_synced_abs_update', { mode: 'number' }),
     syncError: text('sync_error'),
     syncExcluded: boolean('sync_excluded').notNull().default(false),
+    manualUnlinked: boolean('manual_unlinked').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .defaultNow()

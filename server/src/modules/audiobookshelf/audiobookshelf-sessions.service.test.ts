@@ -36,7 +36,7 @@ function makeSession(overrides: Partial<AbsListeningSession> = {}): AbsListening
 
 function makeDeps() {
   const repo = {
-    findBookStatesByAbsItemIds: vi.fn((_userId: number, ids: string[]) =>
+    findSyncableBookStatesByAbsItemIds: vi.fn((_userId: number, _scope: unknown, ids: string[]) =>
       Promise.resolve(ids.map((id) => ({ absLibraryItemId: id, bookId: 100, needsReview: false, syncExcluded: false, matchError: null }))),
     ),
     findLibraryIdsByBookIds: vi.fn((ids: number[]) => Promise.resolve(new Map(ids.map((id) => [id, 1])))),
@@ -48,8 +48,15 @@ function makeDeps() {
   const client = { getListeningSessions: vi.fn() };
   const bookService = { getAudioFilesInPlayOrder: vi.fn().mockResolvedValue([{ id: 10, format: 'mp3', durationSeconds: 100_000 }]) };
   const achievementEvents = { emit: vi.fn() };
-  const service = new AudiobookshelfSessionsService(repo as never, client as never, bookService as never, achievementEvents as never);
-  return { service, repo, client, bookService, achievementEvents };
+  const libraryService = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([1, 2]) };
+  const service = new AudiobookshelfSessionsService(
+    repo as never,
+    client as never,
+    bookService as never,
+    achievementEvents as never,
+    libraryService as never,
+  );
+  return { service, repo, client, bookService, achievementEvents, libraryService };
 }
 
 function settings(overrides: Record<string, unknown> = {}) {
@@ -180,7 +187,7 @@ describe('AudiobookshelfSessionsService', () => {
 
   it('skips sessions for unlinked, needs-review, excluded, or errored items', async () => {
     const { service, repo, client } = makeDeps();
-    repo.findBookStatesByAbsItemIds.mockResolvedValue([
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([
       { absLibraryItemId: 'abs-item-1', bookId: null, needsReview: false, syncExcluded: false, matchError: null },
     ]);
     client.getListeningSessions.mockResolvedValue({ total: 1, sessions: [makeSession({ libraryItemId: 'abs-item-1' })] });
@@ -188,6 +195,21 @@ describe('AudiobookshelfSessionsService', () => {
     const result = await service.syncSessions(makeUser(), settings());
 
     expect(result).toMatchObject({ inserted: 0, updated: 0, skipped: 1 });
+    expect(repo.ingestSessions).not.toHaveBeenCalled();
+  });
+
+  it('scopes session sync through current library access and content filters', async () => {
+    const { service, repo, client, bookService, libraryService } = makeDeps();
+    const contentFilters = { includeTagIds: [], excludeTagIds: [3], includeGenreIds: [8], excludeGenreIds: [] };
+    libraryService.findAccessibleLibraryIds.mockResolvedValue([88]);
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([]);
+    client.getListeningSessions.mockResolvedValue({ total: 1, sessions: [makeSession({ libraryItemId: 'abs-item-1' })] });
+
+    const result = await service.syncSessions(makeUser({ contentFilters }), settings());
+
+    expect(repo.findSyncableBookStatesByAbsItemIds).toHaveBeenCalledWith(7, { libraryIds: [88], contentFilters }, ['abs-item-1']);
+    expect(result.skipped).toBe(1);
+    expect(bookService.getAudioFilesInPlayOrder).not.toHaveBeenCalled();
     expect(repo.ingestSessions).not.toHaveBeenCalled();
   });
 });

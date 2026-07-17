@@ -40,6 +40,7 @@ describe('AudiobookshelfBookStateService', () => {
     updateBookState: ReturnType<typeof vi.fn>;
   };
   let bookService: { verifyBookAccess: ReturnType<typeof vi.fn> };
+  let libraryService: { findAccessibleLibraryIds: ReturnType<typeof vi.fn> };
   let service: AudiobookshelfBookStateService;
 
   beforeEach(() => {
@@ -50,7 +51,8 @@ describe('AudiobookshelfBookStateService', () => {
       updateBookState: vi.fn().mockResolvedValue(undefined),
     };
     bookService = { verifyBookAccess: vi.fn().mockResolvedValue(undefined) };
-    service = new AudiobookshelfBookStateService(repo as never, bookService as never);
+    libraryService = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([1, 2]) };
+    service = new AudiobookshelfBookStateService(repo as never, bookService as never, libraryService as never);
   });
 
   it('maps a paginated bucket list to the API shape', async () => {
@@ -63,7 +65,14 @@ describe('AudiobookshelfBookStateService', () => {
 
     const page = await service.list(makeUser(), { bucket: 'linked', page: 0, pageSize: 20 });
 
-    expect(repo.listBookStates).toHaveBeenCalledWith(7, 'linked', 0, 20, undefined);
+    expect(repo.listBookStates).toHaveBeenCalledWith(
+      7,
+      { libraryIds: [1, 2], contentFilters: { includeTagIds: [], excludeTagIds: [], includeGenreIds: [], excludeGenreIds: [] } },
+      'linked',
+      0,
+      20,
+      undefined,
+    );
     expect(page).toMatchObject({ total: 1, page: 0, pageSize: 20 });
     expect(page.items[0]).toMatchObject({
       absLibraryItemId: 'abs-1',
@@ -80,8 +89,16 @@ describe('AudiobookshelfBookStateService', () => {
 
     const result = await service.confirm(makeUser(), 'abs-1');
 
-    expect(repo.updateBookState).toHaveBeenCalledWith(7, 'abs-1', { needsReview: false, matchError: null });
+    expect(repo.updateBookState).toHaveBeenCalledWith(7, 'abs-1', { needsReview: false, matchError: null, manualUnlinked: false });
     expect(result.needsReview).toBe(false);
+  });
+
+  it('confirm rejects when a pending match no longer passes the current access scope', async () => {
+    repo.findBookStateRow.mockResolvedValue({ absLibraryItemId: 'abs-1', bookId: 10, needsReview: true });
+    repo.findBookStateView.mockResolvedValue(null);
+
+    await expect(service.confirm(makeUser(), 'abs-1')).rejects.toBeInstanceOf(NotFoundException);
+    expect(repo.updateBookState).not.toHaveBeenCalled();
   });
 
   it('confirm rejects an item that is not awaiting review', async () => {
@@ -127,7 +144,7 @@ describe('AudiobookshelfBookStateService', () => {
     expect(repo.updateBookState).toHaveBeenCalledWith(
       7,
       'abs-1',
-      expect.objectContaining({ bookId: null, matchMethod: null, needsReview: false, matchError: null }),
+      expect.objectContaining({ bookId: null, matchMethod: null, needsReview: false, matchError: null, manualUnlinked: true }),
     );
     expect(result.bookId).toBeNull();
     expect(result.matchMethod).toBeNull();
@@ -141,5 +158,13 @@ describe('AudiobookshelfBookStateService', () => {
 
     expect(repo.updateBookState).toHaveBeenCalledWith(7, 'abs-1', { syncExcluded: true });
     expect(result.syncExcluded).toBe(true);
+  });
+
+  it('rejects mutation of an existing link after access is lost', async () => {
+    repo.findBookStateRow.mockResolvedValue({ absLibraryItemId: 'abs-1', bookId: 42 });
+    repo.findBookStateView.mockResolvedValue(null);
+
+    await expect(service.setExclusion(makeUser(), 'abs-1', true)).rejects.toBeInstanceOf(NotFoundException);
+    expect(repo.updateBookState).not.toHaveBeenCalled();
   });
 });

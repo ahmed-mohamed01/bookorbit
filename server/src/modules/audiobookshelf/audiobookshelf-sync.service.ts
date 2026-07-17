@@ -4,6 +4,7 @@ import { isAudioFormat, type AudiobookshelfSyncResult, type ReadStatus } from '@
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { BookService } from '../book/book.service';
+import { LibraryService } from '../library/library.service';
 import { ReadingAttemptService } from '../user-book-status/reading-attempt.service';
 import { UserBookStatusService } from '../user-book-status/user-book-status.service';
 import { AudiobookshelfClientService, type AbsMediaProgress } from './audiobookshelf-client.service';
@@ -79,6 +80,7 @@ export class AudiobookshelfSyncService {
     private readonly statusService: UserBookStatusService,
     private readonly bookService: BookService,
     private readonly sessionsService: AudiobookshelfSessionsService,
+    private readonly libraryService: LibraryService,
   ) {}
 
   /**
@@ -122,12 +124,16 @@ export class AudiobookshelfSyncService {
       result.skipped += candidateProgresses.length - progresses.length;
 
       const progressItemIds = progresses.map((mp) => mp.libraryItemId!);
-      const states = progressItemIds.length ? await this.repo.findBookStatesByAbsItemIds(user.id, progressItemIds) : [];
+      const scope = {
+        libraryIds: await this.libraryService.findAccessibleLibraryIds(user),
+        contentFilters: user.isSuperuser ? undefined : user.contentFilters,
+      };
+      const states = progressItemIds.length ? await this.repo.findSyncableBookStatesByAbsItemIds(user.id, scope, progressItemIds) : [];
       const stateByItemId = new Map(states.map((state) => [state.absLibraryItemId, state]));
 
       for (const mp of progresses) {
         const state = stateByItemId.get(mp.libraryItemId!);
-        if (!state || state.bookId == null || state.needsReview || state.syncExcluded || state.matchError) {
+        if (!state || state.bookId == null) {
           result.skipped++;
           continue;
         }
