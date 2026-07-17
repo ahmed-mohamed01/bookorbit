@@ -200,14 +200,13 @@ describe('AudiobookshelfMatchService', () => {
     expect(repo.deleteBookStatesNotIn).toHaveBeenCalledWith(7, ['item-1']);
   });
 
-  it('prunes states missing from a completed provider inventory', async () => {
+  it('skips the prune when the provider inventory is empty', async () => {
     client.getLibraries.mockResolvedValue({ libraries: [] });
-    repo.deleteBookStatesNotIn.mockResolvedValue(497);
 
     const summary = await service.matchLibrary(makeUser(), 'https://abs.example', 'token', { force: false });
 
-    expect(repo.deleteBookStatesNotIn).toHaveBeenCalledWith(7, []);
-    expect(summary.pruned).toBe(497);
+    expect(repo.deleteBookStatesNotIn).not.toHaveBeenCalled();
+    expect(summary.pruned).toBe(0);
   });
 
   it('rescan rejects when the integration is not configured', async () => {
