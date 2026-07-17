@@ -354,13 +354,14 @@ describe('AudiobookshelfSyncService.sync', () => {
   });
 
   it('fullResync re-applies an unchanged item (force bypasses the watermark short-circuit) and runs the deep scan', async () => {
-    const { service, client, attempts, statusService, repo, sessionsService } = makeDeps();
+    const { service, client, attempts, statusService, repo, sessionsService, matchService } = makeDeps();
     statusService.findOne.mockResolvedValue({ status: 'unread' });
     client.getMe.mockResolvedValue({ mediaProgress: [makeMp({ lastUpdate: 2000 })] });
     repo.findBookStatesByAbsItemIds.mockResolvedValue([makeState({ lastSyncedAbsUpdate: 2000 })]);
 
     const result = await service.fullResync(makeUser());
 
+    expect(matchService.matchLibrary).toHaveBeenCalledWith(makeUser(), 'http://abs.local', 'token', { force: true });
     expect(attempts.importExternalRead).toHaveBeenCalledTimes(1);
     expect(result.skipped).toBe(0);
     expect(sessionsService.deepReconciliationScan).toHaveBeenCalledWith(makeUser(), expect.objectContaining({ syncSessions: true }));
