@@ -19,6 +19,7 @@ const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
 const error = ref<string | null>(null)
+const testError = ref<string | null>(null)
 const libraries = ref<AudiobookshelfLibrary[]>([])
 const librariesLoading = ref(false)
 const librariesError = ref<string | null>(null)
@@ -31,6 +32,7 @@ let activeSettingsFetch: {
   mutationGeneration: number
   canCommit: boolean
 } | null = null
+let settingsMutationQueue: Promise<unknown> | null = null
 let nextLibraryRequestId = 0
 let currentLibraryRequestId = 0
 let activeLibraryFetch: {
@@ -47,6 +49,18 @@ function clearStaleSettingsFetch(): void {
     activeSettingsFetch = null
     loading.value = false
   }
+}
+
+function queueSettingsMutation<T>(operation: () => Promise<T>): Promise<T> {
+  const queued = settingsMutationQueue ? settingsMutationQueue.catch(() => undefined).then(operation) : operation()
+  const tracked = queued.catch(() => undefined)
+  settingsMutationQueue = tracked
+  void tracked.finally(() => {
+    if (settingsMutationQueue === tracked) {
+      settingsMutationQueue = null
+    }
+  })
+  return queued
 }
 
 export function useAudiobookshelfSettings() {
@@ -96,27 +110,29 @@ export function useAudiobookshelfSettings() {
     settingsMutationGeneration += 1
     saving.value = true
     error.value = null
-    try {
-      const nextSettings = await updateAudiobookshelfSettings(payload)
-      if (activeSettingsSaveId === saveId) {
-        settings.value = nextSettings
-        clearStaleSettingsFetch()
+    return queueSettingsMutation(async () => {
+      try {
+        const nextSettings = await updateAudiobookshelfSettings(payload)
+        if (activeSettingsSaveId === saveId) {
+          settings.value = nextSettings
+          clearStaleSettingsFetch()
+        }
+        if (activeSettingsSaveId === saveId && (payload.serverUrl || payload.apiToken) && nextSettings.serverUrl && nextSettings.tokenConfigured) {
+          await fetchLibraries({ forceFresh: true }).catch(() => undefined)
+        }
+        return true
+      } catch (err) {
+        if (activeSettingsSaveId === saveId) {
+          error.value = err instanceof Error ? err.message : 'Failed to save Audiobookshelf settings'
+        }
+        return false
+      } finally {
+        if (activeSettingsSaveId === saveId) {
+          activeSettingsSaveId = 0
+          saving.value = false
+        }
       }
-      if (activeSettingsSaveId === saveId && (payload.serverUrl || payload.apiToken) && nextSettings.serverUrl && nextSettings.tokenConfigured) {
-        await fetchLibraries({ forceFresh: true }).catch(() => undefined)
-      }
-      return true
-    } catch (err) {
-      if (activeSettingsSaveId === saveId) {
-        error.value = err instanceof Error ? err.message : 'Failed to save Audiobookshelf settings'
-      }
-      return false
-    } finally {
-      if (activeSettingsSaveId === saveId) {
-        activeSettingsSaveId = 0
-        saving.value = false
-      }
-    }
+    })
   }
 
   async function fetchLibraries(options: FetchLibrariesOptions = {}): Promise<void> {
@@ -156,39 +172,48 @@ export function useAudiobookshelfSettings() {
     settingsMutationGeneration += 1
     saving.value = true
     error.value = null
-    try {
-      await disconnectAudiobookshelf()
-      if (activeSettingsSaveId === saveId) {
-        settings.value = null
-        currentLibraryRequestId = ++nextLibraryRequestId
-        activeLibraryFetch = null
-        clearStaleSettingsFetch()
-        libraries.value = []
-        librariesLoading.value = false
-        librariesError.value = null
+    currentLibraryRequestId = ++nextLibraryRequestId
+    activeLibraryFetch = null
+    librariesLoading.value = false
+    librariesError.value = null
+    return queueSettingsMutation(async () => {
+      try {
+        await disconnectAudiobookshelf()
+        if (activeSettingsSaveId === saveId) {
+          settings.value = null
+          clearStaleSettingsFetch()
+          libraries.value = []
+          librariesLoading.value = false
+          librariesError.value = null
+        }
+        return true
+      } catch (err) {
+        if (activeSettingsSaveId === saveId) {
+          error.value = err instanceof Error ? err.message : 'Failed to disconnect Audiobookshelf'
+        }
+        return false
+      } finally {
+        if (activeSettingsSaveId === saveId) {
+          activeSettingsSaveId = 0
+          saving.value = false
+          activeLibraryFetch = null
+        }
       }
-      return true
-    } catch (err) {
-      if (activeSettingsSaveId === saveId) {
-        error.value = err instanceof Error ? err.message : 'Failed to disconnect Audiobookshelf'
-      }
-      return false
-    } finally {
-      if (activeSettingsSaveId === saveId) {
-        activeSettingsSaveId = 0
-        saving.value = false
-      }
-    }
+    })
   }
 
   async function testConnection(payload: AudiobookshelfConnectionTestPayload): Promise<AudiobookshelfConnectionTestResult> {
+    if (saving.value) {
+      testError.value = 'Wait for the current Audiobookshelf settings change to finish'
+      return { success: false, error: testError.value }
+    }
     testing.value = true
-    error.value = null
+    testError.value = null
     try {
       return await testAudiobookshelfConnection(payload)
     } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to test Audiobookshelf connection'
-      return { success: false, error: error.value ?? undefined }
+      testError.value = err instanceof Error ? err.message : 'Failed to test Audiobookshelf connection'
+      return { success: false, error: testError.value ?? undefined }
     } finally {
       testing.value = false
     }
@@ -200,6 +225,7 @@ export function useAudiobookshelfSettings() {
     saving,
     testing,
     error,
+    testError,
     libraries,
     librariesLoading,
     librariesError,

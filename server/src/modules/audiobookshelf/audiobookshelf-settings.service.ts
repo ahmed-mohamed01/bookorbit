@@ -61,11 +61,9 @@ export class AudiobookshelfSettingsService {
       if (!rawToken) throw new BadRequestException('API token is required to connect Audiobookshelf');
     }
 
-    const data: Parameters<typeof this.repo.upsertSettings>[1] = {};
-    // Both server_url and api_token are NOT NULL. PostgreSQL validates the INSERT values before
-    // ON CONFLICT, so carry existing values into the insert side even on the update path.
-    data.serverUrl = normalizedUrl ?? existing!.serverUrl;
-    data.apiToken = rawToken ?? existing!.apiToken;
+    const data: Parameters<typeof this.repo.updateSettings>[1] = {};
+    if (normalizedUrl !== undefined) data.serverUrl = normalizedUrl;
+    if (rawToken !== undefined) data.apiToken = rawToken;
     if (payload.enabled !== undefined) data.enabled = payload.enabled;
     if (payload.syncStatus !== undefined) data.syncStatus = payload.syncStatus;
     if (payload.syncPosition !== undefined) data.syncPosition = payload.syncPosition;
@@ -74,7 +72,11 @@ export class AudiobookshelfSettingsService {
       data.excludedLibraryIds = [...new Set(payload.excludedLibraryIds.map((id) => id.trim()))];
     }
 
-    await this.repo.upsertSettings(userId, data);
+    if (existing) {
+      await this.repo.updateSettings(userId, data);
+    } else {
+      await this.repo.upsertSettings(userId, data);
+    }
     this.logger.log(`[abs.settings] [end] userId=${userId} enabled=${data.enabled ?? existing?.enabled ?? true} - settings saved`);
     return this.getSettings(userId);
   }

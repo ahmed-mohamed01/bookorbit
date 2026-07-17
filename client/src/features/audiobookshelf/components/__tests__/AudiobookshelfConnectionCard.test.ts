@@ -9,6 +9,7 @@ const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
 const settingsError = ref<string | null>(null)
+const testError = ref<string | null>(null)
 const syncing = ref(false)
 const isFullResync = ref(false)
 
@@ -29,6 +30,7 @@ vi.mock('../../composables/useAudiobookshelfSettings', () => ({
     saving,
     testing,
     error: settingsError,
+    testError,
     ...mocks,
   }),
 }))
@@ -76,6 +78,7 @@ describe('AudiobookshelfConnectionCard', () => {
     saving.value = false
     testing.value = false
     settingsError.value = null
+    testError.value = null
     syncing.value = false
     isFullResync.value = false
     mocks.fetchSettings.mockResolvedValue()
@@ -128,5 +131,19 @@ describe('AudiobookshelfConnectionCard', () => {
 
     expect(mocks.saveSettings).toHaveBeenCalledWith({ apiToken: 'replacement-token' })
     expect(mocks.fetchLibraries).not.toHaveBeenCalled()
+  })
+
+  it('disables connection testing during save or disconnect mutations', async () => {
+    saving.value = true
+    settings.value = configuredSettings()
+    const wrapper = await mountCard()
+
+    const testButton = wrapper.findAll('button').find((button) => button.text().includes('Test connection'))
+    expect(testButton?.attributes('disabled')).toBeDefined()
+
+    await testButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.testConnection).not.toHaveBeenCalled()
   })
 })

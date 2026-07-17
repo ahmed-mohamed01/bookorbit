@@ -29,6 +29,7 @@ describe('AudiobookshelfSettingsService', () => {
   let repo: {
     findSettings: ReturnType<typeof vi.fn>;
     upsertSettings: ReturnType<typeof vi.fn>;
+    updateSettings: ReturnType<typeof vi.fn>;
     deleteSettings: ReturnType<typeof vi.fn>;
     userHasAudiobookshelfSyncPermission: ReturnType<typeof vi.fn>;
   };
@@ -39,6 +40,7 @@ describe('AudiobookshelfSettingsService', () => {
     repo = {
       findSettings: vi.fn(),
       upsertSettings: vi.fn().mockResolvedValue(makeRow()),
+      updateSettings: vi.fn().mockResolvedValue(makeRow()),
       deleteSettings: vi.fn().mockResolvedValue(undefined),
       userHasAudiobookshelfSyncPermission: vi.fn().mockResolvedValue(true),
     };
@@ -94,27 +96,52 @@ describe('AudiobookshelfSettingsService', () => {
       repo.findSettings.mockResolvedValue(undefined);
       await expect(service.upsertSettings(42, { serverUrl: 'ftp://abs.example.com', apiToken: 'abc' })).rejects.toBeInstanceOf(BadRequestException);
       expect(repo.upsertSettings).not.toHaveBeenCalled();
+      expect(repo.updateSettings).not.toHaveBeenCalled();
     });
 
     it('normalizes the server URL (strips trailing slash) on save', async () => {
       repo.findSettings.mockResolvedValue(undefined);
       await service.upsertSettings(42, { serverUrl: 'https://abs.example.com/', apiToken: 'abc' });
       expect(repo.upsertSettings).toHaveBeenCalledWith(42, expect.objectContaining({ serverUrl: 'https://abs.example.com' }));
+      expect(repo.updateSettings).not.toHaveBeenCalled();
     });
 
-    it('carries existing url and token into the insert values when only a toggle changes', async () => {
+    it('updates only supplied fields when existing settings change', async () => {
       repo.findSettings.mockResolvedValue(makeRow());
       await service.upsertSettings(42, { syncSessions: false });
-      expect(repo.upsertSettings).toHaveBeenCalledWith(
-        42,
-        expect.objectContaining({ serverUrl: 'https://abs.example.com', apiToken: 'stored-token', syncSessions: false }),
-      );
+      expect(repo.updateSettings).toHaveBeenCalledWith(42, { syncSessions: false });
+      expect(repo.upsertSettings).not.toHaveBeenCalled();
+    });
+
+    it('does not carry stale token values into concurrent partial PATCH updates', async () => {
+      repo.findSettings.mockResolvedValue(makeRow({ apiToken: 'old-token' }));
+
+      await Promise.all([
+        service.upsertSettings(42, { serverUrl: 'https://next.example.com/' }),
+        service.upsertSettings(42, { apiToken: 'fresh-token' }),
+      ]);
+
+      expect(repo.updateSettings).toHaveBeenNthCalledWith(1, 42, { serverUrl: 'https://next.example.com' });
+      expect(repo.updateSettings).toHaveBeenNthCalledWith(2, 42, { apiToken: 'fresh-token' });
+      expect(repo.upsertSettings).not.toHaveBeenCalled();
     });
 
     it('normalizes and deduplicates excluded library ids', async () => {
       repo.findSettings.mockResolvedValue(makeRow());
       await service.upsertSettings(42, { excludedLibraryIds: [' blinkist ', 'fiction', 'blinkist'] });
-      expect(repo.upsertSettings).toHaveBeenCalledWith(42, expect.objectContaining({ excludedLibraryIds: ['blinkist', 'fiction'] }));
+      expect(repo.updateSettings).toHaveBeenCalledWith(42, { excludedLibraryIds: ['blinkist', 'fiction'] });
+    });
+
+    it('does not recreate settings when a stale PATCH loses a race to DELETE', async () => {
+      repo.findSettings.mockResolvedValueOnce(makeRow()).mockResolvedValueOnce(undefined);
+      repo.updateSettings.mockResolvedValueOnce(undefined);
+
+      const result = await service.upsertSettings(42, { syncSessions: false });
+
+      expect(repo.updateSettings).toHaveBeenCalledWith(42, { syncSessions: false });
+      expect(repo.upsertSettings).not.toHaveBeenCalled();
+      expect(result.serverUrl).toBeNull();
+      expect(result.tokenConfigured).toBe(false);
     });
   });
 

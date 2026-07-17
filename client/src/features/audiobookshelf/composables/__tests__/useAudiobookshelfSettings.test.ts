@@ -11,6 +11,7 @@ import {
   disconnectAudiobookshelf,
   fetchAudiobookshelfLibraries,
   fetchAudiobookshelfSettings,
+  testAudiobookshelfConnection,
   updateAudiobookshelfSettings,
 } from '../../api/audiobookshelf.api'
 
@@ -24,6 +25,7 @@ vi.mock('../../api/audiobookshelf.api', () => ({
 
 const mockFetchLibraries = vi.mocked(fetchAudiobookshelfLibraries)
 const mockFetchSettings = vi.mocked(fetchAudiobookshelfSettings)
+const mockTestConnection = vi.mocked(testAudiobookshelfConnection)
 const mockUpdateSettings = vi.mocked(updateAudiobookshelfSettings)
 const mockDisconnect = vi.mocked(disconnectAudiobookshelf)
 
@@ -75,6 +77,7 @@ describe('useAudiobookshelfSettings credential discovery', () => {
     vi.clearAllMocks()
     mockFetchSettings.mockResolvedValue(configuredSettings())
     mockUpdateSettings.mockResolvedValue(configuredSettings())
+    mockTestConnection.mockResolvedValue({ success: true, username: 'ada' })
     mockFetchLibraries.mockResolvedValue({ libraries: [library('fiction')] })
     mockDisconnect.mockResolvedValue()
   })
@@ -230,7 +233,7 @@ describe('useAudiobookshelfSettings credential discovery', () => {
     expect(settings.settings.value?.serverUrl).toBe('https://saved.example.com')
   })
 
-  it('lets only the newer overlapping save start discovery when the newer save resolves first', async () => {
+  it('serializes overlapping saves in invocation order and commits only the newer save', async () => {
     const olderSave = deferred<AudiobookshelfSettings>()
     const newerSave = deferred<AudiobookshelfSettings>()
     const newerDiscovery = deferred<AudiobookshelfLibrariesResponse>()
@@ -240,33 +243,13 @@ describe('useAudiobookshelfSettings credential discovery', () => {
 
     const olderResult = settings.saveSettings({ serverUrl: 'https://older.example.com' })
     const newerResult = settings.saveSettings({ serverUrl: 'https://newer.example.com' })
-    newerSave.resolve(configuredSettings({ serverUrl: 'https://newer.example.com' }))
-    await Promise.resolve()
 
-    expect(mockFetchLibraries).toHaveBeenCalledTimes(1)
-    newerDiscovery.resolve({ libraries: [library('newer')] })
-    await expect(newerResult).resolves.toBe(true)
+    expect(mockUpdateSettings).toHaveBeenCalledTimes(1)
     olderSave.resolve(configuredSettings({ serverUrl: 'https://older.example.com' }))
     await expect(olderResult).resolves.toBe(true)
 
-    expect(mockFetchLibraries).toHaveBeenCalledTimes(1)
-    expect(settings.settings.value?.serverUrl).toBe('https://newer.example.com')
-    expect(settings.libraries.value).toEqual([library('newer')])
-  })
-
-  it('lets only the newer overlapping save start discovery when the older save resolves first', async () => {
-    const olderSave = deferred<AudiobookshelfSettings>()
-    const newerSave = deferred<AudiobookshelfSettings>()
-    const newerDiscovery = deferred<AudiobookshelfLibrariesResponse>()
-    mockUpdateSettings.mockReturnValueOnce(olderSave.promise).mockReturnValueOnce(newerSave.promise)
-    mockFetchLibraries.mockReturnValueOnce(newerDiscovery.promise)
-    const settings = await loadComposable()
-
-    const olderResult = settings.saveSettings({ serverUrl: 'https://older.example.com' })
-    const newerResult = settings.saveSettings({ serverUrl: 'https://newer.example.com' })
-    olderSave.resolve(configuredSettings({ serverUrl: 'https://older.example.com' }))
-    await expect(olderResult).resolves.toBe(true)
-
+    expect(mockUpdateSettings).toHaveBeenNthCalledWith(1, { serverUrl: 'https://older.example.com' })
+    expect(mockUpdateSettings).toHaveBeenNthCalledWith(2, { serverUrl: 'https://newer.example.com' })
     expect(mockFetchLibraries).not.toHaveBeenCalled()
     expect(settings.settings.value).toBeNull()
 
@@ -288,10 +271,10 @@ describe('useAudiobookshelfSettings credential discovery', () => {
 
     const olderResult = settings.saveSettings({ serverUrl: 'https://older.example.com' })
     const newerResult = settings.saveSettings({ serverUrl: 'https://newer.example.com' })
-    newerSave.reject(new Error('newer save failed'))
-    await expect(newerResult).resolves.toBe(false)
     olderSave.resolve(configuredSettings({ serverUrl: 'https://older.example.com' }))
     await expect(olderResult).resolves.toBe(true)
+    newerSave.reject(new Error('newer save failed'))
+    await expect(newerResult).resolves.toBe(false)
 
     expect(settings.settings.value).toBeNull()
     expect(settings.error.value).toBe('newer save failed')
@@ -309,10 +292,10 @@ describe('useAudiobookshelfSettings credential discovery', () => {
 
     const saveResult = settings.saveSettings({ serverUrl: 'https://saved.example.com' })
     const disconnectResult = settings.disconnect()
-    disconnect.resolve()
-    await expect(disconnectResult).resolves.toBe(true)
     save.resolve(configuredSettings({ serverUrl: 'https://saved.example.com' }))
     await expect(saveResult).resolves.toBe(true)
+    disconnect.resolve()
+    await expect(disconnectResult).resolves.toBe(true)
 
     expect(settings.settings.value).toBeNull()
     expect(settings.libraries.value).toEqual([])
@@ -402,5 +385,74 @@ describe('useAudiobookshelfSettings credential discovery', () => {
     expect(settings.libraries.value).toEqual([])
     expect(settings.librariesError.value).toBeNull()
     expect(settings.librariesLoading.value).toBe(false)
+  })
+
+  it('invalidates pending discovery as soon as disconnect starts and preserves display if delete fails', async () => {
+    const discovery = deferred<AudiobookshelfLibrariesResponse>()
+    const disconnect = deferred<void>()
+    mockFetchLibraries.mockReturnValueOnce(discovery.promise)
+    mockDisconnect.mockReturnValueOnce(disconnect.promise)
+    const settings = await loadComposable()
+    settings.settings.value = configuredSettings()
+    settings.libraries.value = [library('current')]
+
+    const load = settings.fetchLibraries()
+    const disconnectResult = settings.disconnect()
+
+    expect(settings.librariesLoading.value).toBe(false)
+    discovery.resolve({ libraries: [library('stale')] })
+    await load
+
+    expect(settings.libraries.value).toEqual([library('current')])
+
+    disconnect.reject(new Error('delete failed'))
+    await expect(disconnectResult).resolves.toBe(false)
+
+    expect(settings.settings.value).toEqual(configuredSettings())
+    expect(settings.libraries.value).toEqual([library('current')])
+    expect(settings.error.value).toBe('delete failed')
+  })
+
+  it('does not let a test-connection failure overwrite a save error', async () => {
+    const save = deferred<AudiobookshelfSettings>()
+    mockUpdateSettings.mockReturnValueOnce(save.promise)
+    const settings = await loadComposable()
+
+    const saveResult = settings.saveSettings({ serverUrl: 'https://saved.example.com' })
+    const testResult = await settings.testConnection({ serverUrl: 'https://abs.example.com' })
+
+    expect(testResult).toEqual({
+      success: false,
+      error: 'Wait for the current Audiobookshelf settings change to finish',
+    })
+    expect(mockTestConnection).not.toHaveBeenCalled()
+    expect(settings.error.value).toBeNull()
+    expect(settings.testError.value).toBe('Wait for the current Audiobookshelf settings change to finish')
+
+    save.reject(new Error('save failed'))
+    await expect(saveResult).resolves.toBe(false)
+
+    expect(settings.error.value).toBe('save failed')
+    expect(settings.testError.value).toBe('Wait for the current Audiobookshelf settings change to finish')
+  })
+
+  it('isolates late test-connection rejection from disconnect errors', async () => {
+    const test = deferred<AudiobookshelfConnectionTestResult>()
+    const disconnect = deferred<void>()
+    mockTestConnection.mockReturnValueOnce(test.promise)
+    mockDisconnect.mockReturnValueOnce(disconnect.promise)
+    const settings = await loadComposable()
+
+    const testResult = settings.testConnection({ serverUrl: 'https://abs.example.com' })
+    const disconnectResult = settings.disconnect()
+    disconnect.reject(new Error('disconnect failed'))
+    await expect(disconnectResult).resolves.toBe(false)
+
+    test.reject(new Error('test failed'))
+    await expect(testResult).resolves.toEqual({ success: false, error: 'test failed' })
+
+    expect(settings.error.value).toBe('disconnect failed')
+    expect(settings.testError.value).toBe('test failed')
+    expect(settings.testing.value).toBe(false)
   })
 })

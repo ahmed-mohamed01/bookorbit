@@ -7,7 +7,7 @@ import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { useAudiobookshelfSettings } from '../composables/useAudiobookshelfSettings'
 import { useAudiobookshelfSync } from '../composables/useAudiobookshelfSync'
 
-const { settings, loading, saving, testing, error, fetchSettings, saveSettings, disconnect, testConnection } = useAudiobookshelfSettings()
+const { settings, loading, saving, testing, error, testError, fetchSettings, saveSettings, disconnect, testConnection } = useAudiobookshelfSettings()
 const { syncing, isFullResync, syncNow, fullResync } = useAudiobookshelfSync()
 
 const form = reactive({ serverUrl: '', enabled: true })
@@ -61,7 +61,7 @@ async function handleTestConnection(): Promise<void> {
   }
   testResult.value = await testConnection(connectionPayload())
   if (testResult.value.success) toast.success('Audiobookshelf connection successful')
-  else toast.error(testResult.value.error ?? error.value ?? 'Audiobookshelf connection failed')
+  else toast.error(testResult.value.error ?? testError.value ?? 'Audiobookshelf connection failed')
 }
 
 async function handleSave(): Promise<void> {
@@ -172,7 +172,7 @@ async function handleFullResync(): Promise<void> {
       <div class="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          :disabled="testing"
+          :disabled="testing || saving"
           class="flex items-center gap-1.5 rounded-md border border-border bg-muted px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-40"
           @click="handleTestConnection"
         >

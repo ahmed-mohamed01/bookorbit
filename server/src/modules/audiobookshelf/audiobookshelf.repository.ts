@@ -18,6 +18,7 @@ import type { AbsMappedSession } from './audiobookshelf-sessions.util';
 
 type Db = NodePgDatabase<typeof schema>;
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+type AudiobookshelfSettingsMutation = Partial<Omit<AudiobookshelfUserSetting, 'id' | 'userId' | 'createdAt' | 'updatedAt'>>;
 
 export interface AbsIngestSessionsResult {
   insertedSessionIds: string[];
@@ -110,10 +111,7 @@ export class AudiobookshelfRepository {
     return rows.map((row) => row.userId);
   }
 
-  async upsertSettings(
-    userId: number,
-    data: Partial<Omit<AudiobookshelfUserSetting, 'id' | 'userId' | 'createdAt' | 'updatedAt'>>,
-  ): Promise<AudiobookshelfUserSetting> {
+  async upsertSettings(userId: number, data: AudiobookshelfSettingsMutation): Promise<AudiobookshelfUserSetting> {
     const [row] = await this.db
       .insert(schema.audiobookshelfUserSettings)
       .values({ userId, ...data } as NewAudiobookshelfUserSetting)
@@ -125,11 +123,13 @@ export class AudiobookshelfRepository {
     return row!;
   }
 
-  async updateSettings(userId: number, data: Partial<Omit<AudiobookshelfUserSetting, 'id' | 'userId' | 'createdAt' | 'updatedAt'>>): Promise<void> {
-    await this.db
+  async updateSettings(userId: number, data: AudiobookshelfSettingsMutation): Promise<AudiobookshelfUserSetting | undefined> {
+    const [row] = await this.db
       .update(schema.audiobookshelfUserSettings)
       .set({ ...data, updatedAt: new Date() })
-      .where(eq(schema.audiobookshelfUserSettings.userId, userId));
+      .where(eq(schema.audiobookshelfUserSettings.userId, userId))
+      .returning();
+    return row;
   }
 
   async deleteSettings(userId: number): Promise<void> {
