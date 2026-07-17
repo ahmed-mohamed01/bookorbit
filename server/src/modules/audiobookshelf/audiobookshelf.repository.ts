@@ -311,6 +311,15 @@ export class AudiobookshelfRepository {
     return results;
   }
 
+  async deleteBookStatesNotIn(userId: number, absLibraryItemIds: string[]): Promise<number> {
+    const currentItemsClause =
+      absLibraryItemIds.length > 0 ? sql`not (${schema.audiobookshelfBookState.absLibraryItemId} = any(${absLibraryItemIds}::varchar[]))` : undefined;
+    const result = await this.db
+      .delete(schema.audiobookshelfBookState)
+      .where(and(eq(schema.audiobookshelfBookState.userId, userId), currentItemsClause));
+    return result.rowCount ?? 0;
+  }
+
   async bulkUpsertBookStates(userId: number, rows: AbsBookStateUpsert[]): Promise<void> {
     if (rows.length === 0) return;
     for (const group of chunk(rows, BOOK_STATE_UPSERT_CHUNK)) {

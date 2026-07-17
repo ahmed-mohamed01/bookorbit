@@ -35,6 +35,7 @@ describe('AudiobookshelfMatchService', () => {
     findBookIdsByIsbns: ReturnType<typeof vi.fn>;
     findFuzzyCandidates: ReturnType<typeof vi.fn>;
     bulkUpsertBookStates: ReturnType<typeof vi.fn>;
+    deleteBookStatesNotIn: ReturnType<typeof vi.fn>;
   };
   let client: { getLibraries: ReturnType<typeof vi.fn>; getLibraryItems: ReturnType<typeof vi.fn> };
   let library: { findAccessibleLibraryIds: ReturnType<typeof vi.fn> };
@@ -49,6 +50,7 @@ describe('AudiobookshelfMatchService', () => {
       findBookIdsByIsbns: vi.fn().mockResolvedValue([]),
       findFuzzyCandidates: vi.fn().mockResolvedValue([]),
       bulkUpsertBookStates: vi.fn().mockResolvedValue(undefined),
+      deleteBookStatesNotIn: vi.fn().mockResolvedValue(0),
     };
     client = { getLibraries: vi.fn(), getLibraryItems: vi.fn() };
     library = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([1, 2]) };
@@ -195,6 +197,17 @@ describe('AudiobookshelfMatchService', () => {
     expect(result).toEqual({ queued: 1 });
     expect(client.getLibraryItems).toHaveBeenCalledTimes(1);
     expect(client.getLibraryItems).toHaveBeenCalledWith(7, 'https://abs.example', 'token', 'L1', { limit: 500, page: 0 });
+    expect(repo.deleteBookStatesNotIn).toHaveBeenCalledWith(7, ['item-1']);
+  });
+
+  it('prunes states missing from a completed provider inventory', async () => {
+    client.getLibraries.mockResolvedValue({ libraries: [] });
+    repo.deleteBookStatesNotIn.mockResolvedValue(497);
+
+    const summary = await service.matchLibrary(makeUser(), 'https://abs.example', 'token', { force: false });
+
+    expect(repo.deleteBookStatesNotIn).toHaveBeenCalledWith(7, []);
+    expect(summary.pruned).toBe(497);
   });
 
   it('rescan rejects when the integration is not configured', async () => {

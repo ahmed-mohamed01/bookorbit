@@ -33,4 +33,16 @@ describe('AudiobookshelfRepository', () => {
     expect(updateChain.set).toHaveBeenCalledWith(expect.objectContaining({ lastSyncError: 'provider timeout', updatedAt: expect.any(Date) }));
     expect(where).toHaveBeenCalledTimes(1);
   });
+
+  it('deletes only the user book states absent from the current provider inventory', async () => {
+    const where = vi.fn<(...args: unknown[]) => Promise<{ rowCount: number }>>().mockResolvedValue({ rowCount: 2 });
+    const deleteChain = { where };
+    const db = { delete: vi.fn<(...args: unknown[]) => typeof deleteChain>().mockReturnValue(deleteChain) };
+    const repository = new AudiobookshelfRepository(db as never);
+
+    await expect(repository.deleteBookStatesNotIn(7, ['current-1', 'current-2'])).resolves.toBe(2);
+
+    expect(db.delete).toHaveBeenCalledTimes(1);
+    expect(where).toHaveBeenCalledTimes(1);
+  });
 });

@@ -25,6 +25,7 @@ export interface AudiobookshelfMatchSummary {
   unmatched: number;
   errors: number;
   skipped: number;
+  pruned: number;
 }
 
 const FUZZY_CANDIDATE_LIMIT = 20;
@@ -88,7 +89,7 @@ export class AudiobookshelfMatchService {
     try {
       const summary = await this.matchLibrary(user, settings.serverUrl, settings.apiToken, { force: true });
       this.logger.log(
-        `[abs.match] [end] userId=${user.id} trigger=rescan durationMs=${Date.now() - startedAt} totalItems=${summary.totalItems} autoLinked=${summary.autoLinked} needsReview=${summary.needsReview} unmatched=${summary.unmatched} errors=${summary.errors} skipped=${summary.skipped} - library rescan completed`,
+        `[abs.match] [end] userId=${user.id} trigger=rescan durationMs=${Date.now() - startedAt} totalItems=${summary.totalItems} autoLinked=${summary.autoLinked} needsReview=${summary.needsReview} unmatched=${summary.unmatched} errors=${summary.errors} skipped=${summary.skipped} pruned=${summary.pruned} - library rescan completed`,
       );
       return { queued: summary.processed };
     } catch (err) {
@@ -103,7 +104,12 @@ export class AudiobookshelfMatchService {
 
   async matchLibrary(user: RequestUser, serverUrl: string, token: string, options: { force: boolean }): Promise<AudiobookshelfMatchSummary> {
     const items = await this.fetchMatchInputs(user.id, serverUrl, token);
-    return this.matchItems(user, items, options);
+    const summary = await this.matchItems(user, items, options);
+    summary.pruned = await this.repo.deleteBookStatesNotIn(
+      user.id,
+      items.map((item) => item.absLibraryItemId),
+    );
+    return summary;
   }
 
   async matchItems(user: RequestUser, items: AbsMatchInput[], options: { force: boolean }): Promise<AudiobookshelfMatchSummary> {
@@ -115,6 +121,7 @@ export class AudiobookshelfMatchService {
       unmatched: 0,
       errors: 0,
       skipped: 0,
+      pruned: 0,
     };
     if (items.length === 0) return summary;
 
