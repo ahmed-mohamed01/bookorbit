@@ -17,6 +17,11 @@ const pages = reactive<Record<AudiobookshelfBookStateBucket, AudiobookshelfBookS
 const loading = ref(false)
 const rescanning = ref(false)
 const error = ref<string | null>(null)
+const bucketErrors = reactive<Record<AudiobookshelfBookStateBucket, string | null>>({
+  linked: null,
+  'needs-review': null,
+  unmatched: null,
+})
 const actionId = ref<string | null>(null)
 
 const mocks = vi.hoisted(() => ({
@@ -31,7 +36,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../../composables/useAudiobookshelfLinkedBooks', () => ({
-  useAudiobookshelfLinkedBooks: () => ({ pages, loading, rescanning, error, actionId, ...mocks }),
+  useAudiobookshelfLinkedBooks: () => ({ pages, loading, rescanning, error, bucketErrors, actionId, ...mocks }),
 }))
 
 vi.mock('../../api/audiobookshelf.api', async (importOriginal) => {
@@ -82,6 +87,9 @@ describe('AudiobookshelfLinkedBooks', () => {
     loading.value = false
     rescanning.value = false
     error.value = null
+    bucketErrors.linked = null
+    bucketErrors['needs-review'] = null
+    bucketErrors.unmatched = null
     actionId.value = null
     mocks.loadAllBuckets.mockResolvedValue()
     mocks.loadBucket.mockResolvedValue()
@@ -162,5 +170,17 @@ describe('AudiobookshelfLinkedBooks', () => {
 
     expect(mocks.loadBucket).toHaveBeenCalledWith('linked', 1)
     expect(wrapper.text()).toContain('Page 1 of 3')
+  })
+
+  it('retries the active bucket when that bucket has a load error', async () => {
+    bucketErrors.unmatched = 'Unmatched bucket failed'
+    const wrapper = mount(AudiobookshelfLinkedBooks)
+    await flushPromises()
+
+    await clickButton(wrapper, 'Unmatched')
+    expect(wrapper.text()).toContain('Unmatched bucket failed')
+    await clickButton(wrapper, 'Retry')
+
+    expect(mocks.loadBucket).toHaveBeenCalledWith('unmatched')
   })
 })

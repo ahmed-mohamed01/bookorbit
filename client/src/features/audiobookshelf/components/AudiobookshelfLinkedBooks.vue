@@ -10,8 +10,21 @@ import {
 } from '../api/audiobookshelf.api'
 import { useAudiobookshelfLinkedBooks } from '../composables/useAudiobookshelfLinkedBooks'
 
-const { pages, loading, rescanning, error, actionId, loadBucket, loadAllBuckets, confirmMatch, linkBook, unlinkBook, setExcluded, rescan } =
-  useAudiobookshelfLinkedBooks()
+const {
+  pages,
+  loading,
+  rescanning,
+  error,
+  bucketErrors,
+  actionId,
+  loadBucket,
+  loadAllBuckets,
+  confirmMatch,
+  linkBook,
+  unlinkBook,
+  setExcluded,
+  rescan,
+} = useAudiobookshelfLinkedBooks()
 
 const activeBucket = ref<AudiobookshelfBookStateBucket>('linked')
 const pickerItemId = ref<string | null>(null)
@@ -30,6 +43,7 @@ const buckets: Array<{ id: AudiobookshelfBookStateBucket; label: string }> = [
 ]
 
 const activePage = computed(() => pages[activeBucket.value])
+const activeBucketError = computed(() => bucketErrors[activeBucket.value])
 const totalPages = computed(() => Math.max(1, Math.ceil(activePage.value.total / activePage.value.pageSize)))
 const rangeStart = computed(() => (activePage.value.total === 0 ? 0 : activePage.value.page * activePage.value.pageSize + 1))
 const rangeEnd = computed(() => Math.min((activePage.value.page + 1) * activePage.value.pageSize, activePage.value.total))
@@ -203,9 +217,9 @@ async function handleNextPage(): Promise<void> {
       Loading {{ activeBucket }} books...
     </div>
 
-    <div v-else-if="error" class="flex flex-wrap items-center gap-2 py-3 text-xs text-destructive">
+    <div v-else-if="activeBucketError" class="flex flex-wrap items-center gap-2 py-3 text-xs text-destructive">
       <AlertCircle class="size-3.5" />
-      {{ error }}
+      {{ activeBucketError }}
       <button type="button" class="underline underline-offset-2" @click="handleRetry">Retry</button>
     </div>
 

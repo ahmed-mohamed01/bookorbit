@@ -207,10 +207,78 @@ describe('useAudiobookshelfLinkedBooks', () => {
     unmatchedPage.resolve(page('unmatched', 'refresh'))
     await refresh
 
-    expect(linkedBooks.error.value).toBe('linked failed')
+    expect(linkedBooks.error.value).toBeNull()
+    expect(linkedBooks.bucketErrors.linked).toBe('linked failed')
+    expect(linkedBooks.bucketErrors['needs-review']).toBeNull()
+    expect(linkedBooks.bucketErrors.unmatched).toBeNull()
     expect(linkedBooks.loading.value).toBe(false)
     expect(linkedBooks.pages['needs-review'].items[0]?.absLibraryItemId).toBe('needs-review-refresh')
     expect(linkedBooks.pages.unmatched.items[0]?.absLibraryItemId).toBe('unmatched-refresh')
+  })
+
+  it('keeps a bucket failure when a newer unrelated bucket succeeds first', async () => {
+    const linkedPage = deferred<AudiobookshelfBookStatePage>()
+    const unmatchedPage = deferred<AudiobookshelfBookStatePage>()
+    mockFetchBookStates.mockReturnValueOnce(linkedPage.promise).mockReturnValueOnce(unmatchedPage.promise)
+    const linkedBooks = await loadComposable()
+
+    const linkedLoad = linkedBooks.loadBucket('linked', 1)
+    const unmatchedLoad = linkedBooks.loadBucket('unmatched', 2)
+    unmatchedPage.resolve(page('unmatched', 'page-two', 2))
+    await unmatchedLoad
+    linkedPage.reject(new Error('linked failed'))
+    await linkedLoad
+
+    expect(linkedBooks.pages.unmatched.items[0]?.absLibraryItemId).toBe('unmatched-page-two')
+    expect(linkedBooks.bucketErrors.linked).toBe('linked failed')
+    expect(linkedBooks.bucketErrors.unmatched).toBeNull()
+    expect(linkedBooks.error.value).toBeNull()
+  })
+
+  it('keeps a bucket failure when an unrelated bucket succeeds later', async () => {
+    const linkedPage = deferred<AudiobookshelfBookStatePage>()
+    const unmatchedPage = deferred<AudiobookshelfBookStatePage>()
+    mockFetchBookStates.mockReturnValueOnce(linkedPage.promise).mockReturnValueOnce(unmatchedPage.promise)
+    const linkedBooks = await loadComposable()
+
+    const linkedLoad = linkedBooks.loadBucket('linked', 1)
+    linkedPage.reject(new Error('linked failed'))
+    await linkedLoad
+    const unmatchedLoad = linkedBooks.loadBucket('unmatched', 2)
+    unmatchedPage.resolve(page('unmatched', 'page-two', 2))
+    await unmatchedLoad
+
+    expect(linkedBooks.pages.unmatched.items[0]?.absLibraryItemId).toBe('unmatched-page-two')
+    expect(linkedBooks.bucketErrors.linked).toBe('linked failed')
+    expect(linkedBooks.bucketErrors.unmatched).toBeNull()
+    expect(linkedBooks.error.value).toBeNull()
+  })
+
+  it('keeps a full-refresh bucket failure after unrelated pagination succeeds', async () => {
+    const refreshLinked = deferred<AudiobookshelfBookStatePage>()
+    const refreshNeedsReview = deferred<AudiobookshelfBookStatePage>()
+    const refreshUnmatched = deferred<AudiobookshelfBookStatePage>()
+    const unmatchedPage = deferred<AudiobookshelfBookStatePage>()
+    mockFetchBookStates
+      .mockReturnValueOnce(refreshLinked.promise)
+      .mockReturnValueOnce(refreshNeedsReview.promise)
+      .mockReturnValueOnce(refreshUnmatched.promise)
+      .mockReturnValueOnce(unmatchedPage.promise)
+    const linkedBooks = await loadComposable()
+
+    const refresh = linkedBooks.loadAllBuckets()
+    refreshLinked.reject(new Error('linked refresh failed'))
+    refreshNeedsReview.resolve(page('needs-review', 'refresh'))
+    refreshUnmatched.resolve(page('unmatched', 'refresh'))
+    await refresh
+    const pagination = linkedBooks.loadBucket('unmatched', 4)
+    unmatchedPage.resolve(page('unmatched', 'page-four', 4))
+    await pagination
+
+    expect(linkedBooks.bucketErrors.linked).toBe('linked refresh failed')
+    expect(linkedBooks.bucketErrors.unmatched).toBeNull()
+    expect(linkedBooks.pages.unmatched.items[0]?.absLibraryItemId).toBe('unmatched-page-four')
+    expect(linkedBooks.pages.unmatched.page).toBe(4)
   })
 
   it('does not let a superseded request clear loading while the current request is pending', async () => {
@@ -265,6 +333,7 @@ describe('useAudiobookshelfLinkedBooks', () => {
 
     expect(linkedBooks.loading.value).toBe(true)
     expect(linkedBooks.error.value).toBeNull()
+    expect(linkedBooks.bucketErrors.linked).toBeNull()
 
     newerLinked.resolve(page('linked', 'new'))
     newerNeedsReview.resolve(page('needs-review', 'new'))
@@ -272,6 +341,7 @@ describe('useAudiobookshelfLinkedBooks', () => {
     await newerLoad
 
     expect(linkedBooks.error.value).toBeNull()
+    expect(linkedBooks.bucketErrors.linked).toBeNull()
     expect(linkedBooks.pages.linked.items[0]?.absLibraryItemId).toBe('linked-new')
   })
 

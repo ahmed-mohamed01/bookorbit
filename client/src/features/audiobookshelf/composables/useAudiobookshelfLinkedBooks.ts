@@ -26,6 +26,11 @@ const loading = ref(false)
 const rescanning = ref(false)
 const error = ref<string | null>(null)
 const actionId = ref<string | null>(null)
+const bucketErrors = reactive<Record<AudiobookshelfBookStateBucket, string | null>>({
+  linked: null,
+  'needs-review': null,
+  unmatched: null,
+})
 const bucketRequestIds: Record<AudiobookshelfBookStateBucket, number> = {
   linked: 0,
   'needs-review': 0,
@@ -52,6 +57,7 @@ function ownsError(operationId: number): boolean {
 function beginBucketLoad(bucket: AudiobookshelfBookStateBucket): number {
   const requestId = ++nextBucketRequestId
   bucketRequestIds[bucket] = requestId
+  bucketErrors[bucket] = null
   activeLoadRequestIds.add(requestId)
   updateLoading()
   return requestId
@@ -70,15 +76,15 @@ function ownsBucket(bucket: AudiobookshelfBookStateBucket, requestId: number): b
   return bucketRequestIds[bucket] === requestId
 }
 
-function setLoadError(operationId: number, bucket: AudiobookshelfBookStateBucket, requestId: number, err: unknown): void {
-  if (ownsError(operationId) && ownsBucket(bucket, requestId)) {
-    error.value = err instanceof Error ? err.message : 'Failed to load Audiobookshelf books'
+function setLoadError(bucket: AudiobookshelfBookStateBucket, requestId: number, err: unknown): void {
+  if (ownsBucket(bucket, requestId)) {
+    bucketErrors[bucket] = err instanceof Error ? err.message : 'Failed to load Audiobookshelf books'
   }
 }
 
 export function useAudiobookshelfLinkedBooks() {
   async function loadBucket(bucket: AudiobookshelfBookStateBucket, page = pages[bucket].page): Promise<void> {
-    const operationId = beginOperation()
+    beginOperation()
     const requestId = beginBucketLoad(bucket)
     try {
       const nextPage = await fetchAudiobookshelfBookStates(bucket, page, PAGE_SIZE)
@@ -86,14 +92,14 @@ export function useAudiobookshelfLinkedBooks() {
         pages[bucket] = nextPage
       }
     } catch (err) {
-      setLoadError(operationId, bucket, requestId, err)
+      setLoadError(bucket, requestId, err)
     } finally {
       finishBucketLoad(requestId)
     }
   }
 
   async function loadAllBuckets(): Promise<void> {
-    const operationId = beginOperation()
+    beginOperation()
     await Promise.all(
       BUCKETS.map(async (bucket) => {
         const requestId = beginBucketLoad(bucket)
@@ -103,7 +109,7 @@ export function useAudiobookshelfLinkedBooks() {
             pages[bucket] = nextPage
           }
         } catch (err) {
-          setLoadError(operationId, bucket, requestId, err)
+          setLoadError(bucket, requestId, err)
         } finally {
           finishBucketLoad(requestId)
         }
@@ -172,6 +178,7 @@ export function useAudiobookshelfLinkedBooks() {
     loading,
     rescanning,
     error,
+    bucketErrors,
     actionId,
     loadBucket,
     loadAllBuckets,
