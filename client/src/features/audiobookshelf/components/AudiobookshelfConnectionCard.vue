@@ -7,6 +7,7 @@ import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { useAudiobookshelfSettings } from '../composables/useAudiobookshelfSettings'
 import { useAudiobookshelfSync } from '../composables/useAudiobookshelfSync'
 
+const emit = defineEmits<{ credentialsSaved: [] }>()
 const { settings, loading, saving, testing, error, fetchSettings, fetchLibraries, saveSettings, disconnect, testConnection } =
   useAudiobookshelfSettings()
 const { syncing, isFullResync, syncNow, fullResync } = useAudiobookshelfSync()
@@ -84,7 +85,10 @@ async function handleSave(): Promise<void> {
     const tokenReplaced = Boolean(payload.apiToken)
     tokenInput.value = ''
     testResult.value = null
-    if (tokenReplaced) await fetchLibraries()
+    if (tokenReplaced) {
+      emit('credentialsSaved')
+      await fetchLibraries()
+    }
     toast.success('Audiobookshelf connection saved')
   } else {
     toast.error(error.value ?? 'Failed to save Audiobookshelf connection')
