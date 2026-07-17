@@ -27,17 +27,15 @@ export class AudiobookshelfBookStateService {
 
   async confirm(user: RequestUser, absLibraryItemId: string): Promise<AudiobookshelfBookState> {
     const scope = await this.resolveScope(user);
-    const row = await this.repo.findBookStateRow(user.id, absLibraryItemId);
-    if (!row) throw new NotFoundException('Audiobookshelf item not found');
-    if (row.bookId == null || !row.needsReview) {
-      throw new BadRequestException('This Audiobookshelf item is not awaiting review');
-    }
     const scoped = await this.repo.findBookStateView(user.id, absLibraryItemId, scope);
     if (!scoped) throw new NotFoundException('Audiobookshelf item not found');
+    if (scoped.bookId == null || !scoped.needsReview) {
+      throw new BadRequestException('This Audiobookshelf item is not awaiting review');
+    }
 
-    await this.repo.updateBookState(user.id, absLibraryItemId, { needsReview: false, matchError: null, manualUnlinked: false });
-    this.logger.log(`[abs.confirm_match] [end] userId=${user.id} bookId=${row.bookId} - review match confirmed`);
-    return this.viewOrThrow(user.id, absLibraryItemId, scope);
+    await this.repo.updateBookState(user.id, scoped.absLibraryItemId, { needsReview: false, matchError: null, manualUnlinked: false });
+    this.logger.log(`[abs.confirm_match] [end] userId=${user.id} bookId=${scoped.bookId} - review match confirmed`);
+    return this.viewOrThrow(user.id, scoped.absLibraryItemId, scope);
   }
 
   async link(user: RequestUser, absLibraryItemId: string, bookId: number): Promise<AudiobookshelfBookState> {

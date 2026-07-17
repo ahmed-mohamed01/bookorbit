@@ -84,26 +84,45 @@ describe('AudiobookshelfBookStateService', () => {
   });
 
   it('confirm clears review state for a pending review match', async () => {
-    repo.findBookStateRow.mockResolvedValue({ absLibraryItemId: 'abs-1', bookId: 10, needsReview: true });
-    repo.findBookStateView.mockResolvedValue(makeView({ bookId: 10, needsReview: false, matchMethod: 'title_author_series' }));
+    repo.findBookStateView
+      .mockResolvedValueOnce(makeView({ absLibraryItemId: 'scoped-abs-1', bookId: 10, needsReview: true, matchMethod: 'title_author_series' }))
+      .mockResolvedValueOnce(makeView({ absLibraryItemId: 'scoped-abs-1', bookId: 10, needsReview: false, matchMethod: 'title_author_series' }));
 
-    const result = await service.confirm(makeUser(), 'abs-1');
+    const result = await service.confirm(makeUser(), 'request-abs-1');
 
-    expect(repo.updateBookState).toHaveBeenCalledWith(7, 'abs-1', { needsReview: false, matchError: null, manualUnlinked: false });
+    expect(repo.findBookStateRow).not.toHaveBeenCalled();
+    expect(repo.updateBookState).toHaveBeenCalledWith(7, 'scoped-abs-1', { needsReview: false, matchError: null, manualUnlinked: false });
+    expect(repo.findBookStateView).toHaveBeenNthCalledWith(1, 7, 'request-abs-1', {
+      libraryIds: [1, 2],
+      contentFilters: { includeTagIds: [], excludeTagIds: [], includeGenreIds: [], excludeGenreIds: [] },
+    });
+    expect(repo.findBookStateView).toHaveBeenNthCalledWith(2, 7, 'scoped-abs-1', {
+      libraryIds: [1, 2],
+      contentFilters: { includeTagIds: [], excludeTagIds: [], includeGenreIds: [], excludeGenreIds: [] },
+    });
     expect(result.needsReview).toBe(false);
   });
 
-  it('confirm rejects when a pending match no longer passes the current access scope', async () => {
-    repo.findBookStateRow.mockResolvedValue({ absLibraryItemId: 'abs-1', bookId: 10, needsReview: true });
+  it.each([
+    'absent item',
+    'inaccessible library',
+    'content-filtered book',
+    'missing local book',
+    'non-present local book',
+    'otherwise out-of-scope row',
+  ])('confirm returns not found for %s', async () => {
     repo.findBookStateView.mockResolvedValue(null);
 
     await expect(service.confirm(makeUser(), 'abs-1')).rejects.toBeInstanceOf(NotFoundException);
+    expect(repo.findBookStateRow).not.toHaveBeenCalled();
     expect(repo.updateBookState).not.toHaveBeenCalled();
   });
 
   it('confirm rejects an item that is not awaiting review', async () => {
-    repo.findBookStateRow.mockResolvedValue({ absLibraryItemId: 'abs-1', bookId: 10, needsReview: false });
+    repo.findBookStateView.mockResolvedValue(makeView({ bookId: 10, needsReview: false, matchMethod: 'asin' }));
+
     await expect(service.confirm(makeUser(), 'abs-1')).rejects.toBeInstanceOf(BadRequestException);
+    expect(repo.findBookStateRow).not.toHaveBeenCalled();
     expect(repo.updateBookState).not.toHaveBeenCalled();
   });
 
