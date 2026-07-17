@@ -57,7 +57,10 @@ function makeDeps() {
     getAudioFilesInPlayOrder: vi.fn().mockResolvedValue([{ id: 1, format: 'mp3', durationSeconds: 300 }]),
     upsertAudioProgressFromSync: vi.fn().mockResolvedValue(undefined),
   };
-  const sessionsService = { syncSessions: vi.fn().mockResolvedValue({ inserted: 0, updated: 0, skipped: 0, watermark: null }) };
+  const sessionsService = {
+    syncSessions: vi.fn().mockResolvedValue({ inserted: 0, updated: 0, skipped: 0, watermark: null }),
+    deepReconciliationScan: vi.fn().mockResolvedValue({ inserted: 0, updated: 0, skipped: 0, watermark: null }),
+  };
   const settings = {
     userId: 7,
     serverUrl: 'http://abs.local',
@@ -348,6 +351,20 @@ describe('AudiobookshelfSyncService.sync', () => {
 
     await expect(service.sync(makeUser())).rejects.toThrow('abs unreachable');
     expect(repo.upsertSettings).toHaveBeenCalledWith(7, expect.objectContaining({ lastSyncError: expect.stringContaining('abs unreachable') }));
+  });
+
+  it('fullResync re-applies an unchanged item (force bypasses the watermark short-circuit) and runs the deep scan', async () => {
+    const { service, client, attempts, statusService, repo, sessionsService } = makeDeps();
+    statusService.findOne.mockResolvedValue({ status: 'unread' });
+    client.getMe.mockResolvedValue({ mediaProgress: [makeMp({ lastUpdate: 2000 })] });
+    repo.findBookStatesByAbsItemIds.mockResolvedValue([makeState({ lastSyncedAbsUpdate: 2000 })]);
+
+    const result = await service.fullResync(makeUser());
+
+    expect(attempts.importExternalRead).toHaveBeenCalledTimes(1);
+    expect(result.skipped).toBe(0);
+    expect(sessionsService.deepReconciliationScan).toHaveBeenCalledWith(makeUser(), expect.objectContaining({ syncSessions: true }));
+    expect(sessionsService.syncSessions).not.toHaveBeenCalled();
   });
 
   it('rejects a second concurrent run for the same user', async () => {

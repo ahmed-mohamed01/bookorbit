@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { AchievementModule } from '../achievement/achievement.module';
 import { BookModule } from '../book/book.module';
 import { LibraryModule } from '../library/library.module';
+import { UserModule } from '../user/user.module';
 import { UserBookStatusModule } from '../user-book-status/user-book-status.module';
 import { AudiobookshelfBookStateService } from './audiobookshelf-book-state.service';
 import { AudiobookshelfBooksController } from './audiobookshelf-books.controller';
@@ -12,10 +13,11 @@ import { AudiobookshelfMatchService } from './audiobookshelf-match.service';
 import { AudiobookshelfRepository } from './audiobookshelf.repository';
 import { AudiobookshelfSessionsService } from './audiobookshelf-sessions.service';
 import { AudiobookshelfSettingsService } from './audiobookshelf-settings.service';
+import { AudiobookshelfSyncSchedulerService } from './audiobookshelf-sync-scheduler.service';
 import { AudiobookshelfSyncService } from './audiobookshelf-sync.service';
 
 @Module({
-  imports: [AchievementModule, BookModule, LibraryModule, UserBookStatusModule],
+  imports: [AchievementModule, BookModule, LibraryModule, UserModule, UserBookStatusModule],
   controllers: [AudiobookshelfController, AudiobookshelfBooksController],
   providers: [
     AudiobookshelfClientService,
@@ -25,6 +27,7 @@ import { AudiobookshelfSyncService } from './audiobookshelf-sync.service';
     AudiobookshelfBookStateService,
     AudiobookshelfSessionsService,
     AudiobookshelfSyncService,
+    AudiobookshelfSyncSchedulerService,
   ],
   exports: [
     AudiobookshelfClientService,

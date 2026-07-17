@@ -40,4 +40,9 @@ export class AudiobookshelfController {
   sync(@CurrentUser() user: RequestUser) {
     return this.syncService.sync(user);
   }
+
+  @Post('full-resync')
+  fullResync(@CurrentUser() user: RequestUser) {
+    return this.syncService.fullResync(user);
+  }
 }

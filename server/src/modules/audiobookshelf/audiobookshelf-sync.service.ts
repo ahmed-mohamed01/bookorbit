@@ -12,6 +12,15 @@ import { AudiobookshelfRepository } from './audiobookshelf.repository';
 import { AudiobookshelfSessionsService } from './audiobookshelf-sessions.service';
 import { AUDIOBOOKSHELF_DURATION_TOLERANCE_SECONDS } from './audiobookshelf.constants';
 
+export interface AudiobookshelfSyncOptions {
+  // Re-apply every linked book even when ABS has not advanced past the last-synced watermark. Used
+  // by full resync to re-baseline state after a toggle change.
+  force?: boolean;
+  // Run the deep reconciliation scan (full re-pagination) as the sessions phase instead of the
+  // incremental watermark path.
+  deepSessions?: boolean;
+}
+
 // Upgrade-only ranking. A sync may promote a book toward completion but never move it backward.
 // `abandoned` is terminal: in-progress ABS state never resurrects it, but `isFinished` still promotes to `read`.
 const COMPLETION_RANK: Record<ReadStatus, number> = {
@@ -72,7 +81,17 @@ export class AudiobookshelfSyncService {
     private readonly sessionsService: AudiobookshelfSessionsService,
   ) {}
 
-  async sync(user: RequestUser): Promise<AudiobookshelfSyncResult> {
+  /**
+   * Full resync: re-baseline the user's read state from scratch. Bypasses the per-book
+   * `lastSyncedAbsUpdate` short-circuit (so single-toggle watermark advances re-apply) and runs the
+   * deep reconciliation scan as the sessions phase (full re-pagination, not the incremental
+   * watermark path). Same in-flight guard and disabled/unconfigured rejection as `sync`.
+   */
+  async fullResync(user: RequestUser): Promise<AudiobookshelfSyncResult> {
+    return this.sync(user, { force: true, deepSessions: true });
+  }
+
+  async sync(user: RequestUser, options: AudiobookshelfSyncOptions = {}): Promise<AudiobookshelfSyncResult> {
     const settings = await this.repo.findSettings(user.id);
     if (!settings || !settings.enabled || !settings.serverUrl || !settings.apiToken) {
       throw new BadRequestException('Audiobookshelf sync is not configured');
@@ -84,7 +103,9 @@ export class AudiobookshelfSyncService {
     this.runningUsers.add(user.id);
 
     const startedAt = Date.now();
-    this.logger.log(`[abs.sync] [start] userId=${user.id} syncStatus=${settings.syncStatus} syncPosition=${settings.syncPosition} - sync started`);
+    this.logger.log(
+      `[abs.sync] [start] userId=${user.id} syncStatus=${settings.syncStatus} syncPosition=${settings.syncPosition} force=${options.force === true} deepSessions=${options.deepSessions === true} - sync started`,
+    );
 
     const result: AudiobookshelfSyncResult = { matched: 0, statusApplied: 0, positionApplied: 0, sessionsApplied: 0, skipped: 0, failed: 0 };
     try {
@@ -106,7 +127,7 @@ export class AudiobookshelfSyncService {
           result.skipped++;
           continue;
         }
-        if (state.lastSyncedAbsUpdate != null && mp.lastUpdate <= state.lastSyncedAbsUpdate) {
+        if (!options.force && state.lastSyncedAbsUpdate != null && mp.lastUpdate <= state.lastSyncedAbsUpdate) {
           result.skipped++;
           continue;
         }
@@ -143,7 +164,9 @@ export class AudiobookshelfSyncService {
       let sessionsError: string | null = null;
       if (settings.syncSessions) {
         try {
-          const sessions = await this.sessionsService.syncSessions(user, settings);
+          const sessions = options.deepSessions
+            ? await this.sessionsService.deepReconciliationScan(user, settings)
+            : await this.sessionsService.syncSessions(user, settings);
           result.sessionsApplied = sessions.inserted + sessions.updated;
         } catch (err) {
           // Isolate session-ingest failures: status/position work is already committed, so record the

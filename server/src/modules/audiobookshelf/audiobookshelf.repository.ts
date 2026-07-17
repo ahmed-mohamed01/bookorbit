@@ -88,6 +88,28 @@ export class AudiobookshelfRepository {
     });
   }
 
+  /**
+   * Keyset page of user ids that have Audiobookshelf sync enabled and a non-empty server URL + token.
+   * Ordered by userId ascending; callers advance `afterUserId` to the last id of the prior page. Used
+   * by the scheduler so it never loads all users unbounded.
+   */
+  async findEnabledConfiguredUserIds(afterUserId: number, limit: number): Promise<number[]> {
+    const rows = await this.db
+      .select({ userId: schema.audiobookshelfUserSettings.userId })
+      .from(schema.audiobookshelfUserSettings)
+      .where(
+        and(
+          eq(schema.audiobookshelfUserSettings.enabled, true),
+          gt(schema.audiobookshelfUserSettings.userId, afterUserId),
+          sql`length(trim(${schema.audiobookshelfUserSettings.serverUrl})) > 0`,
+          sql`length(trim(${schema.audiobookshelfUserSettings.apiToken})) > 0`,
+        ),
+      )
+      .orderBy(asc(schema.audiobookshelfUserSettings.userId))
+      .limit(limit);
+    return rows.map((row) => row.userId);
+  }
+
   async upsertSettings(
     userId: number,
     data: Partial<Omit<AudiobookshelfUserSetting, 'id' | 'userId' | 'createdAt' | 'updatedAt'>>,

@@ -15,3 +15,16 @@ export const AUDIOBOOKSHELF_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 // Max allowed drift between BookOrbit's summed audio-file duration and ABS's item duration
 // before a position write is skipped. Guards against file-ordering/track-count mismatches.
 export const AUDIOBOOKSHELF_DURATION_TOLERANCE_SECONDS = 5;
+// Cron cadence for the scheduled sync (every 15 minutes).
+export const AUDIOBOOKSHELF_SCHEDULER_CRON = '*/15 * * * *';
+// Users synced concurrently per scheduler tick. Small, bounded global parallelism: each user's
+// pipeline runs sequentially, and only this many users run at once so a slow ABS server cannot fan
+// out into unbounded outbound load.
+export const AUDIOBOOKSHELF_SCHEDULER_CONCURRENCY = 3;
+// Keyset page size for iterating enabled+configured users. Never load all users unbounded.
+export const AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE = 100;
+// Every Nth executed scheduler run performs a deep reconciliation scan (full session re-pagination)
+// instead of an incremental one, closing the offline-session watermark hole unattended. Counting
+// executed runs (not scheduled ticks) keeps the cadence stable across overlap-skipped ticks. At the
+// 15-minute cadence, 96 runs is roughly once per day.
+export const AUDIOBOOKSHELF_DEEP_SCAN_EVERY_N_RUNS = 96;
