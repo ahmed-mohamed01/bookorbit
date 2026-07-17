@@ -155,12 +155,13 @@ export class AudiobookshelfRepository {
     if (libraryIds.length === 0) return null;
     const [row] = await this.db
       .select({
-        changedAt: sql<Date | null>`greatest(max(${schema.books.updatedAt}), max(${schema.bookMetadata.updatedAt}))`,
+        changedAt: sql<Date | string | null>`greatest(max(${schema.books.updatedAt}), max(${schema.bookMetadata.updatedAt}))`,
       })
       .from(schema.books)
       .leftJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.books.id))
       .where(inArray(schema.books.libraryId, libraryIds));
-    return row?.changedAt ?? null;
+    if (!row?.changedAt) return null;
+    return row.changedAt instanceof Date ? row.changedAt : new Date(row.changedAt);
   }
 
   async findBookIdsByAudibleIds(libraryIds: number[], contentFilters: ContentFilterRules | undefined, asins: string[]): Promise<AbsExactMatchRow[]> {
