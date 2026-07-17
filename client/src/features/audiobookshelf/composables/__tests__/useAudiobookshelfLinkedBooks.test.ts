@@ -1,18 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AudiobookshelfRescanResult } from '@bookorbit/types'
 import type { AudiobookshelfBookState, AudiobookshelfBookStateBucket, AudiobookshelfBookStatePage } from '../../api/audiobookshelf.api'
-import { fetchAudiobookshelfBookStates } from '../../api/audiobookshelf.api'
+import { confirmAudiobookshelfMatch, fetchAudiobookshelfBookStates, rescanAudiobookshelfMatches } from '../../api/audiobookshelf.api'
 
 vi.mock('../../api/audiobookshelf.api', () => ({
   fetchAudiobookshelfBookStates:
     vi.fn<(bucket: AudiobookshelfBookStateBucket, page: number, pageSize: number) => Promise<AudiobookshelfBookStatePage>>(),
   confirmAudiobookshelfMatch: vi.fn<() => Promise<AudiobookshelfBookState>>(),
   linkAudiobookshelfBook: vi.fn<() => Promise<AudiobookshelfBookState>>(),
-  rescanAudiobookshelfMatches: vi.fn<() => Promise<unknown>>(),
+  rescanAudiobookshelfMatches: vi.fn<() => Promise<AudiobookshelfRescanResult>>(),
   unlinkAudiobookshelfBook: vi.fn<() => Promise<AudiobookshelfBookState>>(),
   updateAudiobookshelfBookExclusion: vi.fn<() => Promise<AudiobookshelfBookState>>(),
 }))
 
 const mockFetchBookStates = vi.mocked(fetchAudiobookshelfBookStates)
+const mockConfirmMatch = vi.mocked(confirmAudiobookshelfMatch)
+const mockRescanMatches = vi.mocked(rescanAudiobookshelfMatches)
 
 interface Deferred<T> {
   promise: Promise<T>
@@ -67,6 +70,8 @@ async function loadComposable() {
 describe('useAudiobookshelfLinkedBooks', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockConfirmMatch.mockResolvedValue(state('linked', 'confirmed'))
+    mockRescanMatches.mockResolvedValue({ queued: 0 })
   })
 
   it('keeps newer all-bucket results when an older all-bucket load resolves later', async () => {
@@ -137,6 +142,77 @@ describe('useAudiobookshelfLinkedBooks', () => {
     expect(mockFetchBookStates).toHaveBeenNthCalledWith(1, 'linked', 2, 20)
   })
 
+  it('keeps unrelated full-refresh results when a newer paginated bucket load resolves first', async () => {
+    const refreshLinked = deferred<AudiobookshelfBookStatePage>()
+    const refreshNeedsReview = deferred<AudiobookshelfBookStatePage>()
+    const refreshUnmatched = deferred<AudiobookshelfBookStatePage>()
+    const linkedPage = deferred<AudiobookshelfBookStatePage>()
+    mockFetchBookStates
+      .mockReturnValueOnce(refreshLinked.promise)
+      .mockReturnValueOnce(refreshNeedsReview.promise)
+      .mockReturnValueOnce(refreshUnmatched.promise)
+      .mockReturnValueOnce(linkedPage.promise)
+    const linkedBooks = await loadComposable()
+
+    const refresh = linkedBooks.loadAllBuckets()
+    const pagination = linkedBooks.loadBucket('linked', 2)
+    linkedPage.resolve(page('linked', 'page-two', 2))
+    await pagination
+    refreshLinked.resolve(page('linked', 'refresh'))
+    refreshNeedsReview.resolve(page('needs-review', 'refresh'))
+    refreshUnmatched.resolve(page('unmatched', 'refresh'))
+    await refresh
+
+    expect(linkedBooks.pages.linked.items[0]?.absLibraryItemId).toBe('linked-page-two')
+    expect(linkedBooks.pages.linked.page).toBe(2)
+    expect(linkedBooks.pages['needs-review'].items[0]?.absLibraryItemId).toBe('needs-review-refresh')
+    expect(linkedBooks.pages.unmatched.items[0]?.absLibraryItemId).toBe('unmatched-refresh')
+  })
+
+  it('allows concurrent different-bucket loads to commit independently', async () => {
+    const linkedPage = deferred<AudiobookshelfBookStatePage>()
+    const unmatchedPage = deferred<AudiobookshelfBookStatePage>()
+    mockFetchBookStates.mockReturnValueOnce(linkedPage.promise).mockReturnValueOnce(unmatchedPage.promise)
+    const linkedBooks = await loadComposable()
+
+    const linkedLoad = linkedBooks.loadBucket('linked', 1)
+    const unmatchedLoad = linkedBooks.loadBucket('unmatched', 3)
+    unmatchedPage.resolve(page('unmatched', 'page-three', 3))
+    await unmatchedLoad
+
+    expect(linkedBooks.loading.value).toBe(true)
+    expect(linkedBooks.pages.unmatched.items[0]?.absLibraryItemId).toBe('unmatched-page-three')
+
+    linkedPage.resolve(page('linked', 'page-one', 1))
+    await linkedLoad
+
+    expect(linkedBooks.loading.value).toBe(false)
+    expect(linkedBooks.pages.linked.items[0]?.absLibraryItemId).toBe('linked-page-one')
+    expect(linkedBooks.pages.linked.page).toBe(1)
+  })
+
+  it('commits trailing full-refresh bucket results after one bucket fails', async () => {
+    const linkedPage = deferred<AudiobookshelfBookStatePage>()
+    const needsReviewPage = deferred<AudiobookshelfBookStatePage>()
+    const unmatchedPage = deferred<AudiobookshelfBookStatePage>()
+    mockFetchBookStates
+      .mockReturnValueOnce(linkedPage.promise)
+      .mockReturnValueOnce(needsReviewPage.promise)
+      .mockReturnValueOnce(unmatchedPage.promise)
+    const linkedBooks = await loadComposable()
+
+    const refresh = linkedBooks.loadAllBuckets()
+    linkedPage.reject(new Error('linked failed'))
+    needsReviewPage.resolve(page('needs-review', 'refresh'))
+    unmatchedPage.resolve(page('unmatched', 'refresh'))
+    await refresh
+
+    expect(linkedBooks.error.value).toBe('linked failed')
+    expect(linkedBooks.loading.value).toBe(false)
+    expect(linkedBooks.pages['needs-review'].items[0]?.absLibraryItemId).toBe('needs-review-refresh')
+    expect(linkedBooks.pages.unmatched.items[0]?.absLibraryItemId).toBe('unmatched-refresh')
+  })
+
   it('does not let a superseded request clear loading while the current request is pending', async () => {
     const olderLinked = deferred<AudiobookshelfBookStatePage>()
     const olderNeedsReview = deferred<AudiobookshelfBookStatePage>()
@@ -196,6 +272,58 @@ describe('useAudiobookshelfLinkedBooks', () => {
     await newerLoad
 
     expect(linkedBooks.error.value).toBeNull()
+    expect(linkedBooks.pages.linked.items[0]?.absLibraryItemId).toBe('linked-new')
+  })
+
+  it('does not surface a stale rescan rejection after a newer refresh succeeds', async () => {
+    const rescan = deferred<AudiobookshelfRescanResult>()
+    const newerLinked = deferred<AudiobookshelfBookStatePage>()
+    const newerNeedsReview = deferred<AudiobookshelfBookStatePage>()
+    const newerUnmatched = deferred<AudiobookshelfBookStatePage>()
+    mockRescanMatches.mockReturnValueOnce(rescan.promise)
+    mockFetchBookStates
+      .mockReturnValueOnce(newerLinked.promise)
+      .mockReturnValueOnce(newerNeedsReview.promise)
+      .mockReturnValueOnce(newerUnmatched.promise)
+    const linkedBooks = await loadComposable()
+
+    const rescanResult = linkedBooks.rescan()
+    const newerLoad = linkedBooks.loadAllBuckets()
+    newerLinked.resolve(page('linked', 'new'))
+    newerNeedsReview.resolve(page('needs-review', 'new'))
+    newerUnmatched.resolve(page('unmatched', 'new'))
+    await newerLoad
+    rescan.reject(new Error('rescan failed'))
+
+    await expect(rescanResult).resolves.toBe(false)
+    expect(linkedBooks.error.value).toBeNull()
+    expect(linkedBooks.rescanning.value).toBe(false)
+    expect(linkedBooks.pages.linked.items[0]?.absLibraryItemId).toBe('linked-new')
+  })
+
+  it('does not surface a stale action rejection after a newer refresh succeeds', async () => {
+    const action = deferred<AudiobookshelfBookState>()
+    const newerLinked = deferred<AudiobookshelfBookStatePage>()
+    const newerNeedsReview = deferred<AudiobookshelfBookStatePage>()
+    const newerUnmatched = deferred<AudiobookshelfBookStatePage>()
+    mockConfirmMatch.mockReturnValueOnce(action.promise)
+    mockFetchBookStates
+      .mockReturnValueOnce(newerLinked.promise)
+      .mockReturnValueOnce(newerNeedsReview.promise)
+      .mockReturnValueOnce(newerUnmatched.promise)
+    const linkedBooks = await loadComposable()
+
+    const actionResult = linkedBooks.confirmMatch('abs-1')
+    const newerLoad = linkedBooks.loadAllBuckets()
+    newerLinked.resolve(page('linked', 'new'))
+    newerNeedsReview.resolve(page('needs-review', 'new'))
+    newerUnmatched.resolve(page('unmatched', 'new'))
+    await newerLoad
+    action.reject(new Error('action failed'))
+
+    await expect(actionResult).resolves.toBe(false)
+    expect(linkedBooks.error.value).toBeNull()
+    expect(linkedBooks.actionId.value).toBeNull()
     expect(linkedBooks.pages.linked.items[0]?.absLibraryItemId).toBe('linked-new')
   })
 })

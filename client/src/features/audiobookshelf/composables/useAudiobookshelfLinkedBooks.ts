@@ -11,6 +11,7 @@ import {
 } from '../api/audiobookshelf.api'
 
 const PAGE_SIZE = 20
+const BUCKETS = ['linked', 'needs-review', 'unmatched'] as const
 
 function emptyPage(): AudiobookshelfBookStatePage {
   return { items: [], total: 0, page: 0, pageSize: PAGE_SIZE }
@@ -25,74 +26,128 @@ const loading = ref(false)
 const rescanning = ref(false)
 const error = ref<string | null>(null)
 const actionId = ref<string | null>(null)
-let loadRequestId = 0
+const bucketRequestIds: Record<AudiobookshelfBookStateBucket, number> = {
+  linked: 0,
+  'needs-review': 0,
+  unmatched: 0,
+}
+const activeLoadRequestIds = new Set<number>()
+let nextBucketRequestId = 0
+let nextOperationId = 0
+let errorOwnerId = 0
+let actionOwnerId = 0
+let rescanOwnerId = 0
 
-function beginLoad(): number {
-  const requestId = ++loadRequestId
-  loading.value = true
+function beginOperation(): number {
+  const operationId = ++nextOperationId
+  errorOwnerId = operationId
   error.value = null
+  return operationId
+}
+
+function ownsError(operationId: number): boolean {
+  return operationId === errorOwnerId
+}
+
+function beginBucketLoad(bucket: AudiobookshelfBookStateBucket): number {
+  const requestId = ++nextBucketRequestId
+  bucketRequestIds[bucket] = requestId
+  activeLoadRequestIds.add(requestId)
+  updateLoading()
   return requestId
 }
 
-function isCurrentLoad(requestId: number): boolean {
-  return requestId === loadRequestId
+function finishBucketLoad(requestId: number): void {
+  activeLoadRequestIds.delete(requestId)
+  updateLoading()
+}
+
+function updateLoading(): void {
+  loading.value = BUCKETS.some((bucket) => activeLoadRequestIds.has(bucketRequestIds[bucket]))
+}
+
+function ownsBucket(bucket: AudiobookshelfBookStateBucket, requestId: number): boolean {
+  return bucketRequestIds[bucket] === requestId
+}
+
+function setLoadError(operationId: number, bucket: AudiobookshelfBookStateBucket, requestId: number, err: unknown): void {
+  if (ownsError(operationId) && ownsBucket(bucket, requestId)) {
+    error.value = err instanceof Error ? err.message : 'Failed to load Audiobookshelf books'
+  }
 }
 
 export function useAudiobookshelfLinkedBooks() {
   async function loadBucket(bucket: AudiobookshelfBookStateBucket, page = pages[bucket].page): Promise<void> {
-    const requestId = beginLoad()
+    const operationId = beginOperation()
+    const requestId = beginBucketLoad(bucket)
     try {
       const nextPage = await fetchAudiobookshelfBookStates(bucket, page, PAGE_SIZE)
-      if (isCurrentLoad(requestId)) {
+      if (ownsBucket(bucket, requestId)) {
         pages[bucket] = nextPage
       }
     } catch (err) {
-      if (isCurrentLoad(requestId)) {
-        error.value = err instanceof Error ? err.message : 'Failed to load Audiobookshelf books'
-      }
+      setLoadError(operationId, bucket, requestId, err)
     } finally {
-      if (isCurrentLoad(requestId)) {
-        loading.value = false
-      }
+      finishBucketLoad(requestId)
     }
   }
 
   async function loadAllBuckets(): Promise<void> {
-    const requestId = beginLoad()
-    try {
-      const [linked, needsReview, unmatched] = await Promise.all([
-        fetchAudiobookshelfBookStates('linked', 0, PAGE_SIZE),
-        fetchAudiobookshelfBookStates('needs-review', 0, PAGE_SIZE),
-        fetchAudiobookshelfBookStates('unmatched', 0, PAGE_SIZE),
-      ])
-      if (isCurrentLoad(requestId)) {
-        pages.linked = linked
-        pages['needs-review'] = needsReview
-        pages.unmatched = unmatched
-      }
-    } catch (err) {
-      if (isCurrentLoad(requestId)) {
-        error.value = err instanceof Error ? err.message : 'Failed to load Audiobookshelf books'
-      }
-    } finally {
-      if (isCurrentLoad(requestId)) {
-        loading.value = false
-      }
-    }
+    const operationId = beginOperation()
+    await Promise.all(
+      BUCKETS.map(async (bucket) => {
+        const requestId = beginBucketLoad(bucket)
+        try {
+          const nextPage = await fetchAudiobookshelfBookStates(bucket, 0, PAGE_SIZE)
+          if (ownsBucket(bucket, requestId)) {
+            pages[bucket] = nextPage
+          }
+        } catch (err) {
+          setLoadError(operationId, bucket, requestId, err)
+        } finally {
+          finishBucketLoad(requestId)
+        }
+      }),
+    )
   }
 
   async function runAction(absLibraryItemId: string, action: () => Promise<unknown>): Promise<boolean> {
+    const operationId = beginOperation()
+    actionOwnerId = operationId
     actionId.value = absLibraryItemId
-    error.value = null
     try {
       await action()
       await loadAllBuckets()
       return true
     } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to update Audiobookshelf book'
+      if (ownsError(operationId)) {
+        error.value = err instanceof Error ? err.message : 'Failed to update Audiobookshelf book'
+      }
       return false
     } finally {
-      actionId.value = null
+      if (actionOwnerId === operationId) {
+        actionId.value = null
+      }
+    }
+  }
+
+  async function rescan(): Promise<boolean> {
+    const operationId = beginOperation()
+    rescanOwnerId = operationId
+    rescanning.value = true
+    try {
+      await rescanAudiobookshelfMatches()
+      await loadAllBuckets()
+      return true
+    } catch (err) {
+      if (ownsError(operationId)) {
+        error.value = err instanceof Error ? err.message : 'Failed to rescan Audiobookshelf matches'
+      }
+      return false
+    } finally {
+      if (rescanOwnerId === operationId) {
+        rescanning.value = false
+      }
     }
   }
 
@@ -110,21 +165,6 @@ export function useAudiobookshelfLinkedBooks() {
 
   async function setExcluded(absLibraryItemId: string, syncExcluded: boolean): Promise<boolean> {
     return runAction(absLibraryItemId, () => updateAudiobookshelfBookExclusion(absLibraryItemId, syncExcluded))
-  }
-
-  async function rescan(): Promise<boolean> {
-    rescanning.value = true
-    error.value = null
-    try {
-      await rescanAudiobookshelfMatches()
-      await loadAllBuckets()
-      return true
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Failed to rescan Audiobookshelf matches'
-      return false
-    } finally {
-      rescanning.value = false
-    }
   }
 
   return {
