@@ -113,7 +113,7 @@ export class AudiobookshelfSessionsService {
 
       let watermark: number | null = settings.lastSessionWatermark ?? null;
       if (maxUpdated > existingWatermark) {
-        await this.repo.upsertSettings(user.id, { lastSessionWatermark: maxUpdated });
+        await this.repo.updateSettings(user.id, { lastSessionWatermark: maxUpdated });
         watermark = maxUpdated;
       }
 

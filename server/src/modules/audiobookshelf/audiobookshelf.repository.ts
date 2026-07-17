@@ -125,6 +125,13 @@ export class AudiobookshelfRepository {
     return row!;
   }
 
+  async updateSettings(userId: number, data: Partial<Omit<AudiobookshelfUserSetting, 'id' | 'userId' | 'createdAt' | 'updatedAt'>>): Promise<void> {
+    await this.db
+      .update(schema.audiobookshelfUserSettings)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(schema.audiobookshelfUserSettings.userId, userId));
+  }
+
   async deleteSettings(userId: number): Promise<void> {
     await this.db.delete(schema.audiobookshelfUserSettings).where(eq(schema.audiobookshelfUserSettings.userId, userId));
   }

@@ -43,7 +43,7 @@ function makeDeps() {
     ingestSessions: vi.fn((_userId: number, _tz: string, sessions: AbsMappedSession[]) =>
       Promise.resolve({ insertedSessionIds: sessions.map((s) => s.sessionId), updated: 0 }),
     ),
-    upsertSettings: vi.fn().mockResolvedValue(undefined),
+    updateSettings: vi.fn().mockResolvedValue(undefined),
   };
   const client = { getListeningSessions: vi.fn() };
   const bookService = { getAudioFilesInPlayOrder: vi.fn().mockResolvedValue([{ id: 10, format: 'mp3', durationSeconds: 100_000 }]) };
@@ -72,7 +72,7 @@ describe('AudiobookshelfSessionsService', () => {
 
     expect(result).toMatchObject({ inserted: 2, updated: 0, watermark: WATERMARK + 5000 });
     expect(repo.ingestSessions).toHaveBeenCalledTimes(1);
-    expect(repo.upsertSettings).toHaveBeenCalledWith(7, { lastSessionWatermark: WATERMARK + 5000 });
+    expect(repo.updateSettings).toHaveBeenCalledWith(7, { lastSessionWatermark: WATERMARK + 5000 });
   });
 
   it('stops incrementally when a whole page predates the watermark minus overlap, without ingesting', async () => {
@@ -86,7 +86,7 @@ describe('AudiobookshelfSessionsService', () => {
 
     expect(result.inserted).toBe(0);
     expect(repo.ingestSessions).not.toHaveBeenCalled();
-    expect(repo.upsertSettings).not.toHaveBeenCalled();
+    expect(repo.updateSettings).not.toHaveBeenCalled();
   });
 
   it('re-captures a mutated session that sits behind the watermark but inside the overlap window', async () => {

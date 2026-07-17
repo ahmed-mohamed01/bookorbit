@@ -47,7 +47,7 @@ function makeDeps() {
     findSettings: vi.fn(),
     findBookStatesByAbsItemIds: vi.fn().mockResolvedValue([]),
     updateBookState: vi.fn().mockResolvedValue(undefined),
-    upsertSettings: vi.fn().mockResolvedValue(undefined),
+    updateSettings: vi.fn().mockResolvedValue(undefined),
   };
   const client = { getMe: vi.fn().mockResolvedValue({ mediaProgress: [] }) };
   const matchService = { matchLibrary: vi.fn().mockResolvedValue({ autoLinked: 0 }) };
@@ -176,7 +176,7 @@ describe('AudiobookshelfSyncService.sync', () => {
       'abs-1',
       expect.objectContaining({ lastSyncedAbsUpdate: 1_700_000_000_000, syncError: null, lastSyncedStatus: 'read' }),
     );
-    expect(repo.upsertSettings).toHaveBeenCalledWith(7, expect.objectContaining({ lastSyncError: null }));
+    expect(repo.updateSettings).toHaveBeenCalledWith(7, expect.objectContaining({ lastSyncError: null }));
   });
 
   it('short-circuits unchanged items without any writes', async () => {
@@ -293,7 +293,7 @@ describe('AudiobookshelfSyncService.sync', () => {
 
     expect(sessionsService.syncSessions).toHaveBeenCalledWith(makeUser(), expect.objectContaining({ syncSessions: true }));
     expect(result.sessionsApplied).toBe(8);
-    expect(repo.upsertSettings).toHaveBeenCalledWith(7, expect.objectContaining({ lastSyncError: null }));
+    expect(repo.updateSettings).toHaveBeenCalledWith(7, expect.objectContaining({ lastSyncError: null }));
   });
 
   it('does not ingest sessions when the syncSessions toggle is off', async () => {
@@ -321,7 +321,7 @@ describe('AudiobookshelfSyncService.sync', () => {
     const result = await service.sync(makeUser());
 
     expect(result.sessionsApplied).toBe(0);
-    expect(repo.upsertSettings).toHaveBeenCalledWith(7, expect.objectContaining({ lastSyncError: expect.stringContaining('sessions') }));
+    expect(repo.updateSettings).toHaveBeenCalledWith(7, expect.objectContaining({ lastSyncError: expect.stringContaining('sessions') }));
   });
 
   it('skips items entirely when both status and position sync are disabled', async () => {
@@ -350,7 +350,7 @@ describe('AudiobookshelfSyncService.sync', () => {
     client.getMe.mockRejectedValue(new Error('abs unreachable'));
 
     await expect(service.sync(makeUser())).rejects.toThrow('abs unreachable');
-    expect(repo.upsertSettings).toHaveBeenCalledWith(7, expect.objectContaining({ lastSyncError: expect.stringContaining('abs unreachable') }));
+    expect(repo.updateSettings).toHaveBeenCalledWith(7, expect.objectContaining({ lastSyncError: expect.stringContaining('abs unreachable') }));
   });
 
   it('fullResync re-applies an unchanged item (force bypasses the watermark short-circuit) and runs the deep scan', async () => {
@@ -464,7 +464,7 @@ describe('AudiobookshelfSyncService ordering against real reading-attempt/status
       }),
       findBookStatesByAbsItemIds: vi.fn().mockResolvedValue([makeState()]),
       updateBookState: vi.fn().mockResolvedValue(undefined),
-      upsertSettings: vi.fn().mockResolvedValue(undefined),
+      updateSettings: vi.fn().mockResolvedValue(undefined),
     };
     const client = {
       getMe: vi.fn().mockResolvedValue({

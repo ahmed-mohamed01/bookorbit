@@ -179,7 +179,7 @@ export class AudiobookshelfSyncService {
         }
       }
 
-      await this.repo.upsertSettings(user.id, { lastSyncedAt: new Date(), lastSyncError: sessionsError });
+      await this.repo.updateSettings(user.id, { lastSyncedAt: new Date(), lastSyncError: sessionsError });
       this.logger.log(
         `[abs.sync] [end] userId=${user.id} durationMs=${Date.now() - startedAt} matched=${result.matched} statusApplied=${result.statusApplied} positionApplied=${result.positionApplied} sessionsApplied=${result.sessionsApplied} skipped=${result.skipped} failed=${result.failed} - sync completed`,
       );
@@ -190,7 +190,7 @@ export class AudiobookshelfSyncService {
       this.logger.error(
         `[abs.sync] [fail] userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${error}" - sync failed`,
       );
-      await this.repo.upsertSettings(user.id, { lastSyncError: error }).catch(() => undefined);
+      await this.repo.updateSettings(user.id, { lastSyncError: error }).catch(() => undefined);
       throw err;
     } finally {
       this.runningUsers.delete(user.id);
