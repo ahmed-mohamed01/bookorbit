@@ -6,12 +6,13 @@ The client keeps all route paths in `api/audiobookshelf.api.ts` and imports Audi
 
 These routes are user-scoped and guarded at the controller by `Permission.AudiobookshelfSync`.
 
-| Method   | Path                                     | Request body                                                                                   | Expected response                |
-| -------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------- |
-| `GET`    | `/api/v1/audiobookshelf/settings`        | None                                                                                           | `AudiobookshelfSettings`         |
-| `PATCH`  | `/api/v1/audiobookshelf/settings`        | Changed fields from `{ serverUrl, apiToken, enabled, syncStatus, syncPosition, syncSessions }` | `AudiobookshelfSettings`         |
-| `DELETE` | `/api/v1/audiobookshelf/settings`        | None                                                                                           | `200` with an empty body         |
-| `POST`   | `/api/v1/audiobookshelf/test-connection` | Any subset of `{ serverUrl, apiToken }`. Omitted values use saved settings.                    | `{ success, username?, error? }` |
+| Method   | Path                                     | Request body                                                                                                       | Expected response                 |
+| -------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------- |
+| `GET`    | `/api/v1/audiobookshelf/settings`        | None                                                                                                               | `AudiobookshelfSettings`          |
+| `PATCH`  | `/api/v1/audiobookshelf/settings`        | Changed fields from `{ serverUrl, apiToken, enabled, syncStatus, syncPosition, syncSessions, excludedLibraryIds }` | `AudiobookshelfSettings`          |
+| `GET`    | `/api/v1/audiobookshelf/libraries`       | None                                                                                                               | `AudiobookshelfLibrariesResponse` |
+| `DELETE` | `/api/v1/audiobookshelf/settings`        | None                                                                                                               | `200` with an empty body          |
+| `POST`   | `/api/v1/audiobookshelf/test-connection` | Any subset of `{ serverUrl, apiToken }`. Omitted values use saved settings.                                        | `{ success, username?, error? }`  |
 
 `AudiobookshelfSettings`, imported from `@bookorbit/types`:
 
@@ -25,10 +26,13 @@ These routes are user-scoped and guarded at the controller by `Permission.Audiob
   syncStatus: boolean
   syncPosition: boolean
   syncSessions: boolean
+  excludedLibraryIds: string[]
   lastSyncedAt: string | null
   lastSyncError: string | null
 }
 ```
+
+`AudiobookshelfLibrariesResponse` contains only ABS book libraries. Each entry has `{ id, name, mediaType, provider, excluded }`. All libraries are included when `excludedLibraryIds` is empty. Excluded libraries are omitted from matching and subsequent sync work.
 
 The token is never returned to the browser. These routes and shapes are verified against server commit `985ae45d`.
 

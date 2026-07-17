@@ -48,6 +48,7 @@ function configuredSettings(overrides: Partial<AudiobookshelfSettings> = {}): Au
     syncStatus: true,
     syncPosition: true,
     syncSessions: true,
+    excludedLibraryIds: [],
     lastSyncedAt: '2026-07-15T10:30:00.000Z',
     lastSyncError: null,
     ...overrides,

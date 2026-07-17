@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 
 import type {
   AudiobookshelfConnectionTestResult,
+  AudiobookshelfLibrariesResponse,
   AudiobookshelfSettings,
   AudiobookshelfSyncDisabledReason,
   UpsertAudiobookshelfSettingsPayload,
@@ -36,6 +37,7 @@ export class AudiobookshelfSettingsService {
       syncStatus: row?.syncStatus ?? true,
       syncPosition: row?.syncPosition ?? true,
       syncSessions: row?.syncSessions ?? true,
+      excludedLibraryIds: row?.excludedLibraryIds ?? [],
       lastSyncedAt: row?.lastSyncedAt?.toISOString() ?? null,
       lastSyncError: row?.lastSyncError ?? null,
     };
@@ -68,6 +70,9 @@ export class AudiobookshelfSettingsService {
     if (payload.syncStatus !== undefined) data.syncStatus = payload.syncStatus;
     if (payload.syncPosition !== undefined) data.syncPosition = payload.syncPosition;
     if (payload.syncSessions !== undefined) data.syncSessions = payload.syncSessions;
+    if (payload.excludedLibraryIds !== undefined) {
+      data.excludedLibraryIds = [...new Set(payload.excludedLibraryIds.map((id) => id.trim()))];
+    }
 
     await this.repo.upsertSettings(userId, data);
     this.logger.log(`[abs.settings] [end] userId=${userId} enabled=${data.enabled ?? existing?.enabled ?? true} - settings saved`);
@@ -101,6 +106,20 @@ export class AudiobookshelfSettingsService {
     }
 
     return this.client.testConnection(userId, serverUrl, token);
+  }
+
+  async getLibraries(userId: number): Promise<AudiobookshelfLibrariesResponse> {
+    const settings = await this.repo.findSettings(userId);
+    if (!settings?.serverUrl || !settings.apiToken) {
+      throw new BadRequestException('Audiobookshelf sync is not configured');
+    }
+    const response = await this.client.getLibraries(userId, settings.serverUrl, settings.apiToken);
+    const excluded = new Set(settings.excludedLibraryIds);
+    return {
+      libraries: response.libraries
+        .filter((library) => library.mediaType === 'book')
+        .map((library) => ({ ...library, excluded: excluded.has(library.id) })),
+    };
   }
 
   private resolveDisabledReason(input: {

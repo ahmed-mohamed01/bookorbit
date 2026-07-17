@@ -87,7 +87,10 @@ export class AudiobookshelfMatchService {
     const startedAt = Date.now();
     this.logger.log(`[abs.match] [start] userId=${user.id} trigger=rescan - library rescan started`);
     try {
-      const summary = await this.matchLibrary(user, settings.serverUrl, settings.apiToken, { force: true });
+      const summary = await this.matchLibrary(user, settings.serverUrl, settings.apiToken, {
+        force: true,
+        excludedLibraryIds: settings.excludedLibraryIds ?? [],
+      });
       this.logger.log(
         `[abs.match] [end] userId=${user.id} trigger=rescan durationMs=${Date.now() - startedAt} totalItems=${summary.totalItems} autoLinked=${summary.autoLinked} needsReview=${summary.needsReview} unmatched=${summary.unmatched} errors=${summary.errors} skipped=${summary.skipped} pruned=${summary.pruned} - library rescan completed`,
       );
@@ -102,8 +105,13 @@ export class AudiobookshelfMatchService {
     }
   }
 
-  async matchLibrary(user: RequestUser, serverUrl: string, token: string, options: { force: boolean }): Promise<AudiobookshelfMatchSummary> {
-    const items = await this.fetchMatchInputs(user.id, serverUrl, token);
+  async matchLibrary(
+    user: RequestUser,
+    serverUrl: string,
+    token: string,
+    options: { force: boolean; excludedLibraryIds?: string[] },
+  ): Promise<AudiobookshelfMatchSummary> {
+    const items = await this.fetchMatchInputs(user.id, serverUrl, token, options.excludedLibraryIds ?? []);
     const summary = await this.matchItems(user, items, options);
     if (items.length === 0) {
       this.logger.warn(
@@ -291,9 +299,10 @@ export class AudiobookshelfMatchService {
     return best;
   }
 
-  private async fetchMatchInputs(userId: number, serverUrl: string, token: string): Promise<AbsMatchInput[]> {
+  private async fetchMatchInputs(userId: number, serverUrl: string, token: string, excludedLibraryIds: string[]): Promise<AbsMatchInput[]> {
     const { libraries } = await this.client.getLibraries(userId, serverUrl, token);
-    const bookLibraries = libraries.filter((library) => library.mediaType === 'book');
+    const excluded = new Set(excludedLibraryIds);
+    const bookLibraries = libraries.filter((library) => library.mediaType === 'book' && !excluded.has(library.id));
     const inputs: AbsMatchInput[] = [];
 
     for (const library of bookLibraries) {

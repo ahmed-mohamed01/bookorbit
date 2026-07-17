@@ -386,6 +386,13 @@
       "when": 1784241077310,
       "tag": "0054_abs_book_state_display_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1784291257414,
+      "tag": "0055_audiobookshelf-library-selection",
+      "breakpoints": true
     }
   ]
 }

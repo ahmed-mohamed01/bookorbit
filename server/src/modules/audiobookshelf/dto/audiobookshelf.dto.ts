@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 import type {
   AudiobookshelfBookStateBucket,
@@ -37,6 +37,14 @@ export class UpsertAudiobookshelfSettingsDto implements UpsertAudiobookshelfSett
   @IsOptional()
   @IsBoolean()
   syncSessions?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(1000)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  @MaxLength(255, { each: true })
+  excludedLibraryIds?: string[];
 }
 
 export class TestAudiobookshelfConnectionDto implements AudiobookshelfConnectionTestPayload {

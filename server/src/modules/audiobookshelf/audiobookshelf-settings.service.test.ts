@@ -15,6 +15,7 @@ function makeRow(overrides: Partial<Record<string, unknown>> = {}) {
     syncStatus: true,
     syncPosition: true,
     syncSessions: true,
+    excludedLibraryIds: [],
     lastSyncedAt: null,
     lastSyncError: null,
     lastSessionWatermark: null,
@@ -31,7 +32,7 @@ describe('AudiobookshelfSettingsService', () => {
     deleteSettings: ReturnType<typeof vi.fn>;
     userHasAudiobookshelfSyncPermission: ReturnType<typeof vi.fn>;
   };
-  let client: { testConnection: ReturnType<typeof vi.fn> };
+  let client: { testConnection: ReturnType<typeof vi.fn>; getLibraries: ReturnType<typeof vi.fn> };
   let service: AudiobookshelfSettingsService;
 
   beforeEach(() => {
@@ -41,7 +42,7 @@ describe('AudiobookshelfSettingsService', () => {
       deleteSettings: vi.fn().mockResolvedValue(undefined),
       userHasAudiobookshelfSyncPermission: vi.fn().mockResolvedValue(true),
     };
-    client = { testConnection: vi.fn() };
+    client = { testConnection: vi.fn(), getLibraries: vi.fn() };
     service = new AudiobookshelfSettingsService(repo as unknown as AudiobookshelfRepository, client as unknown as AudiobookshelfClientService);
   });
 
@@ -54,6 +55,7 @@ describe('AudiobookshelfSettingsService', () => {
       expect(settings.tokenConfigured).toBe(true);
       expect(settings.serverUrl).toBe('https://abs.example.com');
       expect(settings.effectiveEnabled).toBe(true);
+      expect(settings.excludedLibraryIds).toEqual([]);
       expect(settings.disabledReason).toBeNull();
     });
 
@@ -107,6 +109,32 @@ describe('AudiobookshelfSettingsService', () => {
         42,
         expect.objectContaining({ serverUrl: 'https://abs.example.com', apiToken: 'stored-token', syncSessions: false }),
       );
+    });
+
+    it('normalizes and deduplicates excluded library ids', async () => {
+      repo.findSettings.mockResolvedValue(makeRow());
+      await service.upsertSettings(42, { excludedLibraryIds: [' blinkist ', 'fiction', 'blinkist'] });
+      expect(repo.upsertSettings).toHaveBeenCalledWith(42, expect.objectContaining({ excludedLibraryIds: ['blinkist', 'fiction'] }));
+    });
+  });
+
+  describe('getLibraries', () => {
+    it('returns book libraries with their exclusion state', async () => {
+      repo.findSettings.mockResolvedValue(makeRow({ excludedLibraryIds: ['blinkist'] }));
+      client.getLibraries.mockResolvedValue({
+        libraries: [
+          { id: 'fiction', name: 'Fiction', mediaType: 'book', provider: 'audible' },
+          { id: 'blinkist', name: 'Blinkist', mediaType: 'book', provider: 'audible' },
+          { id: 'podcasts', name: 'Podcasts', mediaType: 'podcast', provider: 'rss' },
+        ],
+      });
+
+      await expect(service.getLibraries(42)).resolves.toEqual({
+        libraries: [
+          { id: 'fiction', name: 'Fiction', mediaType: 'book', provider: 'audible', excluded: false },
+          { id: 'blinkist', name: 'Blinkist', mediaType: 'book', provider: 'audible', excluded: true },
+        ],
+      });
     });
   });
 

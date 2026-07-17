@@ -9,6 +9,7 @@ import {
   confirmAudiobookshelfMatch,
   disconnectAudiobookshelf,
   fetchAudiobookshelfBookStates,
+  fetchAudiobookshelfLibraries,
   fetchAudiobookshelfSettings,
   linkAudiobookshelfBook,
   rescanAudiobookshelfMatches,
@@ -48,6 +49,14 @@ describe('audiobookshelf.api settings contract', () => {
       '/api/v1/audiobookshelf/settings',
       expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ enabled: false }) }),
     )
+  })
+
+  it('fetches the current book-library selection options', async () => {
+    const response = { libraries: [{ id: 'fiction', name: 'Fiction', mediaType: 'book', provider: 'audible', excluded: false }] }
+    mockApi.mockResolvedValue(jsonResponse(response))
+
+    await expect(fetchAudiobookshelfLibraries()).resolves.toEqual(response)
+    expect(mockApi).toHaveBeenCalledWith('/api/v1/audiobookshelf/libraries')
   })
 
   it('uses the verified disconnect and connection-test routes', async () => {

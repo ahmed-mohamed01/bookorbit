@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { bigint, boolean, index, integer, pgTable, real, serial, text, timestamp, unique, varchar } from 'drizzle-orm/pg-core';
 
 import { books } from './books';
@@ -15,6 +16,10 @@ export const audiobookshelfUserSettings = pgTable('audiobookshelf_user_settings'
   syncStatus: boolean('sync_status').notNull().default(true),
   syncPosition: boolean('sync_position').notNull().default(true),
   syncSessions: boolean('sync_sessions').notNull().default(true),
+  excludedLibraryIds: text('excluded_library_ids')
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
   lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
   lastSyncError: text('last_sync_error'),
   lastSessionWatermark: bigint('last_session_watermark', { mode: 'number' }),

@@ -7,6 +7,7 @@ import type {
   AudiobookshelfConnectionTestResult,
   AudiobookshelfExclusionPayload,
   AudiobookshelfLinkBookPayload,
+  AudiobookshelfLibrariesResponse,
   AudiobookshelfRescanResult,
   AudiobookshelfSettings,
   AudiobookshelfSyncResult,
@@ -36,6 +37,12 @@ async function responseError(response: Response, fallback: string, conflictMessa
 export async function fetchAudiobookshelfSettings(): Promise<AudiobookshelfSettings> {
   const response = await api(`${BASE}/settings`)
   if (!response.ok) throw await responseError(response, 'Failed to load Audiobookshelf settings')
+  return response.json()
+}
+
+export async function fetchAudiobookshelfLibraries(): Promise<AudiobookshelfLibrariesResponse> {
+  const response = await api(`${BASE}/libraries`)
+  if (!response.ok) throw await responseError(response, 'Failed to load Audiobookshelf libraries')
   return response.json()
 }
 

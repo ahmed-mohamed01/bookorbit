@@ -61,6 +61,19 @@ function ingestedSessionIds(repo: ReturnType<typeof makeDeps>['repo']): string[]
 }
 
 describe('AudiobookshelfSessionsService', () => {
+  it('skips sessions from excluded libraries', async () => {
+    const { service, repo, client } = makeDeps();
+    client.getListeningSessions.mockResolvedValue({
+      total: 2,
+      sessions: [makeSession({ id: 'included', libraryId: 'fiction' }), makeSession({ id: 'excluded', libraryId: 'blinkist' })],
+    });
+
+    const result = await service.syncSessions(makeUser(), settings({ excludedLibraryIds: ['blinkist'] }));
+
+    expect(ingestedSessionIds(repo)).toEqual(['included']);
+    expect(result.skipped).toBe(1);
+  });
+
   it('ingests a page and advances the watermark to the max updatedAt seen', async () => {
     const { service, repo, client } = makeDeps();
     client.getListeningSessions.mockResolvedValue({

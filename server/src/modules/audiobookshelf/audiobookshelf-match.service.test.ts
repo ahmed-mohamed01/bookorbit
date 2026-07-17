@@ -170,11 +170,12 @@ describe('AudiobookshelfMatchService', () => {
   });
 
   it('rescan fetches only book libraries and forces matching', async () => {
-    repo.findSettings.mockResolvedValue({ enabled: true, serverUrl: 'https://abs.example', apiToken: 'token' });
+    repo.findSettings.mockResolvedValue({ enabled: true, serverUrl: 'https://abs.example', apiToken: 'token', excludedLibraryIds: ['L3'] });
     client.getLibraries.mockResolvedValue({
       libraries: [
         { id: 'L1', name: 'Audiobooks', mediaType: 'book', provider: 'audible' },
         { id: 'L2', name: 'Shows', mediaType: 'podcast', provider: 'itunes' },
+        { id: 'L3', name: 'Blinkist', mediaType: 'book', provider: 'audible' },
       ],
     });
     client.getLibraryItems.mockResolvedValue({

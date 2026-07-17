@@ -83,6 +83,7 @@ export class AudiobookshelfSessionsService {
 
     const acc: IngestAccumulator = { inserted: 0, updated: 0, skipped: 0, sampleInserted: [] };
     const caches: ResolveCaches = { libraryIdByBook: new Map(), audioFilesByBook: new Map() };
+    const excludedLibraryIds = new Set(settings.excludedLibraryIds ?? []);
     let maxUpdated = existingWatermark;
 
     try {
@@ -104,7 +105,9 @@ export class AudiobookshelfSessionsService {
         // sessions are already ingested. A deep scan uses -Infinity as the floor and never stops here.
         if (mode === 'incremental' && pageEntirelyOlderThan(sessions, floor)) break;
 
-        await this.processPage(user.id, timeZone, sessions, caches, acc);
+        const includedSessions = sessions.filter((session) => !session.libraryId || !excludedLibraryIds.has(session.libraryId));
+        acc.skipped += sessions.length - includedSessions.length;
+        await this.processPage(user.id, timeZone, includedSessions, caches, acc);
 
         const fetched = (page + 1) * AUDIOBOOKSHELF_SESSIONS_PAGE_SIZE;
         if (sessions.length < AUDIOBOOKSHELF_SESSIONS_PAGE_SIZE || fetched >= response.total) break;

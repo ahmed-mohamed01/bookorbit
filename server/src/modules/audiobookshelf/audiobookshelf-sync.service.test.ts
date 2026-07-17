@@ -281,7 +281,10 @@ describe('AudiobookshelfSyncService.sync', () => {
 
     const result = await service.sync(makeUser());
 
-    expect(matchService.matchLibrary).toHaveBeenCalledWith(makeUser(), 'http://abs.local', 'token', { force: false });
+    expect(matchService.matchLibrary).toHaveBeenCalledWith(makeUser(), 'http://abs.local', 'token', {
+      force: false,
+      excludedLibraryIds: [],
+    });
     expect(result.matched).toBe(4);
   });
 
@@ -361,7 +364,10 @@ describe('AudiobookshelfSyncService.sync', () => {
 
     const result = await service.fullResync(makeUser());
 
-    expect(matchService.matchLibrary).toHaveBeenCalledWith(makeUser(), 'http://abs.local', 'token', { force: true });
+    expect(matchService.matchLibrary).toHaveBeenCalledWith(makeUser(), 'http://abs.local', 'token', {
+      force: true,
+      excludedLibraryIds: [],
+    });
     expect(attempts.importExternalRead).toHaveBeenCalledTimes(1);
     expect(result.skipped).toBe(0);
     expect(sessionsService.deepReconciliationScan).toHaveBeenCalledWith(makeUser(), expect.objectContaining({ syncSessions: true }));

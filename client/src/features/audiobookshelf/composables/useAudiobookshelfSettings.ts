@@ -2,11 +2,13 @@ import { ref } from 'vue'
 import type {
   AudiobookshelfConnectionTestPayload,
   AudiobookshelfConnectionTestResult,
+  AudiobookshelfLibrary,
   AudiobookshelfSettings,
   UpsertAudiobookshelfSettingsPayload,
 } from '@bookorbit/types'
 import {
   disconnectAudiobookshelf,
+  fetchAudiobookshelfLibraries,
   fetchAudiobookshelfSettings,
   testAudiobookshelfConnection,
   updateAudiobookshelfSettings,
@@ -17,6 +19,9 @@ const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
 const error = ref<string | null>(null)
+const libraries = ref<AudiobookshelfLibrary[]>([])
+const librariesLoading = ref(false)
+const librariesError = ref<string | null>(null)
 
 export function useAudiobookshelfSettings() {
   async function fetchSettings(): Promise<void> {
@@ -45,12 +50,25 @@ export function useAudiobookshelfSettings() {
     }
   }
 
+  async function fetchLibraries(): Promise<void> {
+    librariesLoading.value = true
+    librariesError.value = null
+    try {
+      libraries.value = (await fetchAudiobookshelfLibraries()).libraries
+    } catch (err) {
+      librariesError.value = err instanceof Error ? err.message : 'Failed to load Audiobookshelf libraries'
+    } finally {
+      librariesLoading.value = false
+    }
+  }
+
   async function disconnect(): Promise<boolean> {
     saving.value = true
     error.value = null
     try {
       await disconnectAudiobookshelf()
       settings.value = null
+      libraries.value = []
       return true
     } catch (err) {
       error.value = err instanceof Error ? err.message : 'Failed to disconnect Audiobookshelf'
@@ -73,5 +91,19 @@ export function useAudiobookshelfSettings() {
     }
   }
 
-  return { settings, loading, saving, testing, error, fetchSettings, saveSettings, disconnect, testConnection }
+  return {
+    settings,
+    loading,
+    saving,
+    testing,
+    error,
+    libraries,
+    librariesLoading,
+    librariesError,
+    fetchSettings,
+    fetchLibraries,
+    saveSettings,
+    disconnect,
+    testConnection,
+  }
 }

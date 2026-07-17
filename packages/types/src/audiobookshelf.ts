@@ -9,6 +9,7 @@ export interface AudiobookshelfSettings {
   syncStatus: boolean;
   syncPosition: boolean;
   syncSessions: boolean;
+  excludedLibraryIds: string[];
   lastSyncedAt: string | null;
   lastSyncError: string | null;
 }
@@ -20,6 +21,19 @@ export interface UpsertAudiobookshelfSettingsPayload {
   syncStatus?: boolean;
   syncPosition?: boolean;
   syncSessions?: boolean;
+  excludedLibraryIds?: string[];
+}
+
+export interface AudiobookshelfLibrary {
+  id: string;
+  name: string;
+  mediaType: string;
+  provider: string;
+  excluded: boolean;
+}
+
+export interface AudiobookshelfLibrariesResponse {
+  libraries: AudiobookshelfLibrary[];
 }
 
 export interface AudiobookshelfConnectionTestPayload {

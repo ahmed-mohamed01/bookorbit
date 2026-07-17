@@ -21,6 +21,11 @@ export class AudiobookshelfController {
     return this.settingsService.getSettings(user.id);
   }
 
+  @Get('libraries')
+  getLibraries(@CurrentUser() user: RequestUser) {
+    return this.settingsService.getLibraries(user.id);
+  }
+
   @Patch('settings')
   upsertSettings(@CurrentUser() user: RequestUser, @Body() dto: UpsertAudiobookshelfSettingsDto) {
     return this.settingsService.upsertSettings(user.id, dto);
