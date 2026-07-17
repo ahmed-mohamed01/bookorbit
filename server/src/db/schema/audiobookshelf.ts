@@ -23,6 +23,9 @@ export const audiobookshelfUserSettings = pgTable('audiobookshelf_user_settings'
   lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
   lastSyncError: text('last_sync_error'),
   lastSessionWatermark: bigint('last_session_watermark', { mode: 'number' }),
+  lastDeepSessionScanAt: timestamp('last_deep_session_scan_at', { withTimezone: true }),
+  sessionBackfillCursorPage: integer('session_backfill_cursor_page'),
+  sessionBackfillMaxUpdated: bigint('session_backfill_max_updated', { mode: 'number' }),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true })
     .defaultNow()
@@ -50,6 +53,9 @@ export const audiobookshelfBookState = pgTable(
     lastSyncedStatus: varchar('last_synced_status', { length: 20 }),
     lastSyncedProgress: real('last_synced_progress'),
     lastSyncedAbsUpdate: bigint('last_synced_abs_update', { mode: 'number' }),
+    lastSyncedPositionAbsUpdate: bigint('last_synced_position_abs_update', { mode: 'number' }),
+    lastSyncedProgressAt: timestamp('last_synced_progress_at', { withTimezone: true }),
+    lastSeenInInventoryAt: timestamp('last_seen_in_inventory_at', { withTimezone: true }),
     syncError: text('sync_error'),
     syncExcluded: boolean('sync_excluded').notNull().default(false),
     manualUnlinked: boolean('manual_unlinked').notNull().default(false),
