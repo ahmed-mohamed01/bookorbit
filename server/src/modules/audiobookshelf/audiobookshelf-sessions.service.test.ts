@@ -46,7 +46,11 @@ function makeDeps() {
     updateSettings: vi.fn().mockResolvedValue(undefined),
   };
   const client = { getListeningSessions: vi.fn() };
-  const bookService = { getAudioFilesInPlayOrder: vi.fn().mockResolvedValue([{ id: 10, format: 'mp3', durationSeconds: 100_000 }]) };
+  const bookService = {
+    getAudioFilesInPlayOrderForBooks: vi.fn((bookIds: number[]) =>
+      Promise.resolve(new Map(bookIds.map((id) => [id, [{ id: 10, format: 'mp3', durationSeconds: 100_000 }]]))),
+    ),
+  };
   const achievementEvents = { emit: vi.fn() };
   const libraryService = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([1, 2]) };
   const service = new AudiobookshelfSessionsService(
@@ -88,7 +92,9 @@ describe('AudiobookshelfSessionsService', () => {
       sessions: [makeSession({ id: 's1', updatedAt: WATERMARK + 5000 }), makeSession({ id: 's2', updatedAt: WATERMARK + 4000 })],
     });
 
-    const result = await service.syncSessions(makeUser(), settings());
+    // A non-zero prior watermark keeps this a routine incremental sync (not a first-ever backfill), so
+    // the completion patch is watermark-only with no resume-cursor bookkeeping.
+    const result = await service.syncSessions(makeUser(), settings({ lastSessionWatermark: 1 }));
 
     expect(result).toMatchObject({ inserted: 2, updated: 0, watermark: WATERMARK + 5000 });
     expect(repo.ingestSessions).toHaveBeenCalledTimes(1);
@@ -199,7 +205,7 @@ describe('AudiobookshelfSessionsService', () => {
   });
 
   it('scopes session sync through current library access and content filters', async () => {
-    const { service, repo, client, bookService, libraryService } = makeDeps();
+    const { service, repo, client, libraryService } = makeDeps();
     const contentFilters = { includeTagIds: [], excludeTagIds: [3], includeGenreIds: [8], excludeGenreIds: [] };
     libraryService.findAccessibleLibraryIds.mockResolvedValue([88]);
     repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([]);
@@ -209,7 +215,105 @@ describe('AudiobookshelfSessionsService', () => {
 
     expect(repo.findSyncableBookStatesByAbsItemIds).toHaveBeenCalledWith(7, { libraryIds: [88], contentFilters }, ['abs-item-1']);
     expect(result.skipped).toBe(1);
-    expect(bookService.getAudioFilesInPlayOrder).not.toHaveBeenCalled();
     expect(repo.ingestSessions).not.toHaveBeenCalled();
+  });
+
+  it('batch-loads audio files once per page instead of once per book', async () => {
+    const { service, client, bookService, repo } = makeDeps();
+    repo.findSyncableBookStatesByAbsItemIds.mockImplementation((_userId: number, _scope: unknown, ids: string[]) =>
+      Promise.resolve(ids.map((id, i) => ({ absLibraryItemId: id, bookId: 100 + i, needsReview: false, syncExcluded: false, matchError: null }))),
+    );
+    client.getListeningSessions.mockResolvedValue({
+      total: 3,
+      sessions: [
+        makeSession({ id: 's1', libraryItemId: 'item-1', updatedAt: WATERMARK + 1 }),
+        makeSession({ id: 's2', libraryItemId: 'item-2', updatedAt: WATERMARK + 2 }),
+        makeSession({ id: 's3', libraryItemId: 'item-3', updatedAt: WATERMARK + 3 }),
+      ],
+    });
+
+    await service.syncSessions(makeUser(), settings());
+
+    // One batched load for the whole page, not one query per distinct book.
+    expect(bookService.getAudioFilesInPlayOrderForBooks).toHaveBeenCalledTimes(1);
+    expect(bookService.getAudioFilesInPlayOrderForBooks).toHaveBeenCalledWith([100, 101, 102]);
+  });
+
+  it('resumes a deep backfill from the persisted cursor page and pre-seeded max updatedAt', async () => {
+    const { service, client, repo } = makeDeps();
+    const seenPages: number[] = [];
+    client.getListeningSessions.mockImplementation((_u, _s, _t, page: number) => {
+      seenPages.push(page);
+      // Page 5 (the resume point) has one session, page 6 is empty to end pagination.
+      if (page === 5) return Promise.resolve({ total: 3000, sessions: [makeSession({ id: 'resumed', updatedAt: WATERMARK + 10 })] });
+      return Promise.resolve({ total: 3000, sessions: [] });
+    });
+
+    await service.deepReconciliationScan(
+      makeUser(),
+      settings({ lastSessionWatermark: WATERMARK, sessionBackfillCursorPage: 5, sessionBackfillMaxUpdated: WATERMARK + 999 }),
+    );
+
+    // Never re-fetched pages 0..4.
+    expect(seenPages[0]).toBe(5);
+    expect(seenPages).not.toContain(0);
+    // Per-page checkpoint persisted the next page + accumulated max updatedAt during the run.
+    expect(repo.updateSettings).toHaveBeenCalledWith(7, { sessionBackfillCursorPage: 6, sessionBackfillMaxUpdated: WATERMARK + 999 });
+    // Completion cleared the cursor and promoted the accumulated max as the watermark.
+    expect(repo.updateSettings).toHaveBeenLastCalledWith(7, {
+      lastSessionWatermark: WATERMARK + 999,
+      sessionBackfillCursorPage: null,
+      sessionBackfillMaxUpdated: null,
+    });
+  });
+
+  it('restarts a deep backfill at page 0 when no cursor is persisted', async () => {
+    const { service, client } = makeDeps();
+    const seenPages: number[] = [];
+    client.getListeningSessions.mockImplementation((_u, _s, _t, page: number) => {
+      seenPages.push(page);
+      return Promise.resolve({ total: 0, sessions: [] });
+    });
+
+    await service.deepReconciliationScan(makeUser(), settings({ lastSessionWatermark: WATERMARK }));
+
+    expect(seenPages[0]).toBe(0);
+  });
+
+  it('checkpoints the cursor after each committed page so a late-page failure resumes mid-run', async () => {
+    const { service, client, repo } = makeDeps();
+    client.getListeningSessions.mockImplementation((_u, _s, _t, page: number) => {
+      if (page === 0) {
+        return Promise.resolve({
+          total: 1500,
+          sessions: Array.from({ length: 500 }, (_, i) => makeSession({ id: `p0-${i}`, updatedAt: WATERMARK + 100 + i })),
+        });
+      }
+      // Page 1 fails after page 0's transaction (and checkpoint) already committed.
+      return Promise.reject(new Error('network blip on page 1'));
+    });
+
+    await expect(service.deepReconciliationScan(makeUser(), settings({ lastSessionWatermark: WATERMARK }))).rejects.toThrow('network blip');
+
+    // The checkpoint for page 0 persisted cursor=1 before the failure; watermark was not promoted.
+    expect(repo.updateSettings).toHaveBeenCalledWith(7, expect.objectContaining({ sessionBackfillCursorPage: 1 }));
+    expect(repo.updateSettings).not.toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ lastSessionWatermark: expect.anything(), sessionBackfillCursorPage: null }),
+    );
+  });
+
+  it('does not checkpoint a cursor for a routine incremental sync with an existing watermark', async () => {
+    const { service, client, repo } = makeDeps();
+    client.getListeningSessions.mockResolvedValue({
+      total: 1,
+      sessions: [makeSession({ id: 's1', updatedAt: WATERMARK + 5000 })],
+    });
+
+    await service.syncSessions(makeUser(), settings({ lastSessionWatermark: WATERMARK }));
+
+    for (const call of repo.updateSettings.mock.calls) {
+      expect(call[1]).not.toHaveProperty('sessionBackfillCursorPage');
+    }
   });
 });

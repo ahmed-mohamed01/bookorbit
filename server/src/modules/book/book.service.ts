@@ -1905,6 +1905,12 @@ export class BookService {
     return this.bookRepo.findAudioFilesInPlayOrder(bookId);
   }
 
+  async getAudioFilesInPlayOrderForBooks(
+    bookIds: number[],
+  ): Promise<Map<number, { id: number; format: string | null; durationSeconds: number | null }[]>> {
+    return this.bookRepo.findAudioFilesInPlayOrderForBooks(bookIds);
+  }
+
   async getAudioProgressForSync(userId: number, bookId: number) {
     return this.bookRepo.findAudioProgress(userId, bookId);
   }

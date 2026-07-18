@@ -5,14 +5,30 @@ import { Permission } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { UserService } from '../user/user.service';
-import { AudiobookshelfRepository } from './audiobookshelf.repository';
+import { AudiobookshelfRepository, type AbsEnabledUser } from './audiobookshelf.repository';
 import { AudiobookshelfSyncService } from './audiobookshelf-sync.service';
 import {
   AUDIOBOOKSHELF_DEEP_SCAN_EVERY_N_RUNS,
+  AUDIOBOOKSHELF_DEEP_SCAN_INTERVAL_MS,
   AUDIOBOOKSHELF_SCHEDULER_CONCURRENCY,
   AUDIOBOOKSHELF_SCHEDULER_CRON,
+  AUDIOBOOKSHELF_SCHEDULER_INTERVAL_MS,
   AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE,
 } from './audiobookshelf.constants';
+
+/**
+ * Per-user deep-scan decision. A user is deep-due when it has never been deep-scanned or its last scan
+ * predates the deep interval, AND the current tick is this user's stagger slice. The slice
+ * (`userId mod slices == tick mod slices`) spreads users across the interval's ticks so a never-scanned
+ * cohort does not all deep-scan at once. The interval check tolerates one tick of clock jitter so the
+ * user reliably becomes due when its slice next comes around.
+ */
+export function isDeepSessionScanDue(lastScanAt: Date | null, userId: number, now: number): boolean {
+  const currentSlice = Math.floor(now / AUDIOBOOKSHELF_SCHEDULER_INTERVAL_MS) % AUDIOBOOKSHELF_DEEP_SCAN_EVERY_N_RUNS;
+  if (userId % AUDIOBOOKSHELF_DEEP_SCAN_EVERY_N_RUNS !== currentSlice) return false;
+  if (lastScanAt == null) return true;
+  return now - lastScanAt.getTime() >= AUDIOBOOKSHELF_DEEP_SCAN_INTERVAL_MS - AUDIOBOOKSHELF_SCHEDULER_INTERVAL_MS;
+}
 
 @Injectable()
 export class AudiobookshelfSyncSchedulerService {
@@ -20,9 +36,6 @@ export class AudiobookshelfSyncSchedulerService {
   // Overlap guard: a single tick runs at a time. If the previous run is still in flight we skip the
   // tick rather than stacking runs (per-request timeouts in the client keep a slow ABS from wedging).
   private running = false;
-  // Executed-run counter driving the deep-scan cadence. Incremented only when a tick actually runs,
-  // so overlap-skipped ticks do not drift the cadence.
-  private runCount = 0;
 
   constructor(
     private readonly repo: AudiobookshelfRepository,
@@ -37,68 +50,75 @@ export class AudiobookshelfSyncSchedulerService {
       return;
     }
     this.running = true;
-    this.runCount++;
-    const deepScan = this.runCount % AUDIOBOOKSHELF_DEEP_SCAN_EVERY_N_RUNS === 0;
-    const startedAt = Date.now();
-    this.logger.log(`[abs.scheduler] [start] runCount=${this.runCount} deepScan=${deepScan} - scheduled sync started`);
+    const now = Date.now();
+    const startedAt = now;
+    this.logger.log('[abs.scheduler] [start] - scheduled sync started');
 
     let usersProcessed = 0;
     let usersFailed = 0;
+    let usersDeepScanned = 0;
     try {
       let afterUserId = 0;
       while (true) {
-        const userIds = await this.repo.findEnabledConfiguredUserIds(afterUserId, AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE);
-        if (userIds.length === 0) break;
-        afterUserId = userIds[userIds.length - 1]!;
+        const users = await this.repo.findEnabledConfiguredUsers(afterUserId, AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE);
+        if (users.length === 0) break;
+        afterUserId = users[users.length - 1]!.userId;
 
-        for (const group of chunk(userIds, AUDIOBOOKSHELF_SCHEDULER_CONCURRENCY)) {
-          const outcomes = await Promise.all(group.map((userId) => this.syncUser(userId, deepScan)));
+        for (const group of chunk(users, AUDIOBOOKSHELF_SCHEDULER_CONCURRENCY)) {
+          const outcomes = await Promise.all(group.map((user) => this.syncUser(user, now)));
           for (const outcome of outcomes) {
-            if (outcome === 'processed') usersProcessed++;
-            else if (outcome === 'failed') usersFailed++;
+            if (outcome.result === 'processed') usersProcessed++;
+            else if (outcome.result === 'failed') usersFailed++;
+            if (outcome.deepScan) usersDeepScanned++;
           }
         }
 
-        if (userIds.length < AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE) break;
+        if (users.length < AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE) break;
       }
 
       this.logger.log(
-        `[abs.scheduler] [end] runCount=${this.runCount} deepScan=${deepScan} durationMs=${Date.now() - startedAt} usersProcessed=${usersProcessed} usersFailed=${usersFailed} - scheduled sync completed`,
+        `[abs.scheduler] [end] durationMs=${Date.now() - startedAt} usersProcessed=${usersProcessed} usersFailed=${usersFailed} usersDeepScanned=${usersDeepScanned} - scheduled sync completed`,
       );
     } catch (err) {
       const errorClass = err instanceof Error ? err.constructor.name : 'Error';
       const error = sanitizeLogValue(err instanceof Error ? err.message : String(err));
       this.logger.error(
-        `[abs.scheduler] [fail] runCount=${this.runCount} durationMs=${Date.now() - startedAt} usersProcessed=${usersProcessed} usersFailed=${usersFailed} errorClass=${errorClass} error="${error}" - scheduled sync failed`,
+        `[abs.scheduler] [fail] durationMs=${Date.now() - startedAt} usersProcessed=${usersProcessed} usersFailed=${usersFailed} errorClass=${errorClass} error="${error}" - scheduled sync failed`,
       );
     } finally {
       this.running = false;
     }
   }
 
-  private async syncUser(userId: number, deepScan: boolean): Promise<'processed' | 'failed' | 'skipped'> {
+  private async syncUser(enabledUser: AbsEnabledUser, now: number): Promise<{ result: 'processed' | 'failed' | 'skipped'; deepScan: boolean }> {
+    const deepScan = isDeepSessionScanDue(enabledUser.lastDeepSessionScanAt, enabledUser.userId, now);
+
     let user: RequestUser | null;
     try {
-      user = await this.userService.findByIdWithPermissions(userId);
+      user = await this.userService.findByIdWithPermissions(enabledUser.userId);
     } catch {
       user = null;
     }
-    if (!user || !user.active) return 'skipped';
-    if (!user.isSuperuser && !user.permissions.includes(Permission.AudiobookshelfSync)) return 'skipped';
+    if (!user || !user.active) return { result: 'skipped', deepScan: false };
+    if (!user.isSuperuser && !user.permissions.includes(Permission.AudiobookshelfSync)) return { result: 'skipped', deepScan: false };
 
     try {
-      // Reconcile the full inventory only on the slow deep cadence; frequent ticks just poll progress.
+      // Reconcile the full inventory only on the per-user deep cadence; frequent ticks just poll progress.
       await this.syncService.sync(user, { deepSessions: deepScan, reconcile: deepScan });
-      return 'processed';
+      // Stamp the deep watermark only after a successful deep run so the next deep is one interval out.
+      if (deepScan) {
+        await this.repo.updateSettings(enabledUser.userId, { lastDeepSessionScanAt: new Date() });
+      }
+      return { result: 'processed', deepScan };
     } catch (err) {
       // Skip-and-continue on the per-user in-flight guard (a manual sync is already running) - not a
       // failure. Everything else is isolated per user (sync already records settings.lastSyncError)
       // so one user's failure never halts the loop.
-      if (err instanceof ConflictException) return 'skipped';
+      if (err instanceof ConflictException) return { result: 'skipped', deepScan: false };
       const errorClass = err instanceof Error ? err.constructor.name : 'Error';
       const error = sanitizeLogValue(err instanceof Error ? err.message : String(err));
-      this.logger.warn(`[abs.scheduler] [fail] userId=${userId} errorClass=${errorClass} error="${error}" - user sync failed`);
-      return 'failed';
+      this.logger.warn(`[abs.scheduler] [fail] userId=${enabledUser.userId} errorClass=${errorClass} error="${error}" - user sync failed`);
+      return { result: 'failed', deepScan: false };
     }
   }
 }

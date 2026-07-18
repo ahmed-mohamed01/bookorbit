@@ -15,6 +15,7 @@ import {
   type ReadingDailyStatsSegment,
 } from '../../common/utils/reading-daily-stats.utils';
 import type { AbsMappedSession } from './audiobookshelf-sessions.util';
+import { AUDIOBOOKSHELF_DAILY_STATS_RECOMPUTE_SPAN_DAYS } from './audiobookshelf.constants';
 
 type Db = NodePgDatabase<typeof schema>;
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -79,10 +80,43 @@ export interface AbsBookAccessScope {
   contentFilters?: ContentFilterRules;
 }
 
+export interface AbsEnabledUser {
+  userId: number;
+  lastDeepSessionScanAt: Date | null;
+}
+
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
+}
+
+function daySpanDays(from: string, to: string): number {
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  return Math.round((Date.UTC(ty!, tm! - 1, td!) - Date.UTC(fy!, fm! - 1, fd!)) / 86_400_000);
+}
+
+/**
+ * Groups YYYY-MM-DD keys into windows no wider than `maxSpanDays`. Nearby days share one bounded
+ * window (one recompute query), while far-apart days split into separate windows, so a recompute
+ * never spans a multi-year range even when a single batch touches distant days. Input is sorted here
+ * (callers pass Set-derived, unordered day keys), which the zero-padded keys make chronological.
+ */
+function groupDaysByBoundedSpan(days: string[], maxSpanDays: number): string[][] {
+  const sortedDays = [...days].sort();
+  const groups: string[][] = [];
+  let current: string[] = [];
+  for (const day of sortedDays) {
+    if (current.length === 0 || daySpanDays(current[0]!, day) < maxSpanDays) {
+      current.push(day);
+    } else {
+      groups.push(current);
+      current = [day];
+    }
+  }
+  if (current.length > 0) groups.push(current);
+  return groups;
 }
 
 @Injectable()
@@ -96,13 +130,17 @@ export class AudiobookshelfRepository {
   }
 
   /**
-   * Keyset page of user ids that have Audiobookshelf sync enabled and a non-empty server URL + token.
-   * Ordered by userId ascending; callers advance `afterUserId` to the last id of the prior page. Used
-   * by the scheduler so it never loads all users unbounded.
+   * Keyset page of users that have Audiobookshelf sync enabled and a non-empty server URL + token,
+   * with each user's persisted deep-scan watermark. Ordered by userId ascending; callers advance
+   * `afterUserId` to the last id of the prior page. Used by the scheduler so it never loads all users
+   * unbounded and can decide deep-vs-incremental per user.
    */
-  async findEnabledConfiguredUserIds(afterUserId: number, limit: number): Promise<number[]> {
-    const rows = await this.db
-      .select({ userId: schema.audiobookshelfUserSettings.userId })
+  async findEnabledConfiguredUsers(afterUserId: number, limit: number): Promise<AbsEnabledUser[]> {
+    return this.db
+      .select({
+        userId: schema.audiobookshelfUserSettings.userId,
+        lastDeepSessionScanAt: schema.audiobookshelfUserSettings.lastDeepSessionScanAt,
+      })
       .from(schema.audiobookshelfUserSettings)
       .where(
         and(
@@ -114,7 +152,6 @@ export class AudiobookshelfRepository {
       )
       .orderBy(asc(schema.audiobookshelfUserSettings.userId))
       .limit(limit);
-    return rows.map((row) => row.userId);
   }
 
   async upsertSettings(userId: number, data: AudiobookshelfSettingsMutation): Promise<AudiobookshelfUserSetting> {
@@ -613,7 +650,7 @@ export class AudiobookshelfRepository {
         .where(and(eq(schema.readingSessions.userId, userId), inArray(schema.readingSessions.sessionId, sessionIds)));
       const existingIds = new Set(existing.map((row) => row.sessionId));
 
-      await tx
+      const affected = await tx
         .insert(schema.readingSessions)
         .values(
           sessions.map((session) => ({
@@ -647,10 +684,26 @@ export class AudiobookshelfRepository {
             endProgress: sql`excluded.end_progress`,
             attemptId: sql`coalesce(excluded.attempt_id, ${schema.readingSessions.attemptId})`,
           },
-        });
+          // Change guard: a re-fetched overlap row that is byte-for-byte identical is left untouched, so
+          // unchanged history is never rewritten and its days are not recomputed. `is distinct from`
+          // treats nulls correctly. A grown open session (extended endedAt/duration) still updates.
+          setWhere: sql`
+            ${schema.readingSessions.bookFileId} is distinct from excluded.book_file_id
+            or ${schema.readingSessions.endedAt} is distinct from excluded.ended_at
+            or ${schema.readingSessions.durationSeconds} is distinct from excluded.duration_seconds
+            or ${schema.readingSessions.progressDelta} is distinct from excluded.progress_delta
+            or ${schema.readingSessions.endProgress} is distinct from excluded.end_progress
+          `,
+        })
+        .returning({ sessionId: schema.readingSessions.sessionId });
+
+      // RETURNING yields only rows that were inserted or actually updated; rows skipped by the change
+      // guard are absent. Recompute daily stats for just those days, not every submitted overlap day.
+      const affectedIds = new Set(affected.map((row) => row.sessionId));
 
       const daysByLibrary = new Map<number, Set<string>>();
       for (const session of sessions) {
+        if (!affectedIds.has(session.sessionId)) continue;
         const days = daysByLibrary.get(session.libraryId) ?? new Set<string>();
         for (const day of getReadingSessionDayKeys(session, timeZone)) days.add(day);
         daysByLibrary.set(session.libraryId, days);
@@ -659,8 +712,9 @@ export class AudiobookshelfRepository {
         await this.recomputeDailyStats(tx, userId, libraryId, [...days], timeZone);
       }
 
-      const insertedSessionIds = sessions.map((session) => session.sessionId).filter((id) => !existingIds.has(id));
-      return { insertedSessionIds, updated: sessions.length - insertedSessionIds.length };
+      const insertedSessionIds = sessionIds.filter((id) => !existingIds.has(id));
+      const updated = [...affectedIds].filter((id) => existingIds.has(id)).length;
+      return { insertedSessionIds, updated };
     });
   }
 
@@ -670,17 +724,27 @@ export class AudiobookshelfRepository {
 
     await tx.execute(sql`select pg_advisory_xact_lock(${userId}::int, ${libraryId}::int)`);
 
+    // Far-apart affected days (common during a multi-year backfill) are split into bounded windows so
+    // each recompute query loads at most a month of session history into memory, never the full range.
+    for (const group of groupDaysByBoundedSpan(affectedDays, AUDIOBOOKSHELF_DAILY_STATS_RECOMPUTE_SPAN_DAYS)) {
+      await this.recomputeDailyStatsForDays(tx, userId, libraryId, group, timeZone);
+    }
+  }
+
+  private async recomputeDailyStatsForDays(tx: Tx, userId: number, libraryId: number, days: string[], timeZone: string): Promise<void> {
+    if (days.length === 0) return;
+
     await tx
       .delete(schema.userReadingDailyStats)
       .where(
         and(
           eq(schema.userReadingDailyStats.userId, userId),
           eq(schema.userReadingDailyStats.libraryId, libraryId),
-          inArray(schema.userReadingDailyStats.day, affectedDays),
+          inArray(schema.userReadingDailyStats.day, days),
         ),
       );
 
-    const range = getDayRangeForDateKeys(affectedDays, timeZone);
+    const range = getDayRangeForDateKeys(days, timeZone);
     if (!range) return;
 
     const rows = await tx
@@ -709,7 +773,7 @@ export class AudiobookshelfRepository {
         progressDelta: row.progressDelta ?? null,
       })),
       timeZone,
-      new Set(affectedDays),
+      new Set(days),
     );
     await this.insertDailyStatsSegments(tx, userId, libraryId, segments);
   }

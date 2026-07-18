@@ -15,7 +15,7 @@ function thenable(result: unknown) {
   return chain;
 }
 
-function insertChain(captured: { values: unknown[] }) {
+function insertChain(captured: { values: unknown[]; conflict: unknown[] }, getReturning: () => { sessionId: string }[]) {
   const chain: Record<string, unknown> = {
     then: (resolve: (v: unknown) => unknown) => Promise.resolve(undefined).then(resolve),
   };
@@ -23,7 +23,11 @@ function insertChain(captured: { values: unknown[] }) {
     captured.values.push(rows);
     return chain;
   });
-  chain.onConflictDoUpdate = vi.fn().mockReturnValue(chain);
+  chain.onConflictDoUpdate = vi.fn((cfg: unknown) => {
+    captured.conflict.push(cfg);
+    return chain;
+  });
+  chain.returning = vi.fn(() => Promise.resolve(getReturning()));
   return chain;
 }
 
@@ -53,7 +57,8 @@ function makeSession(overrides: Partial<AbsMappedSession> = {}): AbsMappedSessio
 describe('AudiobookshelfRepository.ingestSessions', () => {
   let selectResults: unknown[][];
   let selectCall: number;
-  let captured: { values: unknown[] };
+  let captured: { values: unknown[]; conflict: unknown[] };
+  let returningOverride: { sessionId: string }[] | null;
   let execute: ReturnType<typeof vi.fn>;
   let del: ReturnType<typeof vi.fn>;
   let tx: Record<string, unknown>;
@@ -63,12 +68,17 @@ describe('AudiobookshelfRepository.ingestSessions', () => {
   beforeEach(() => {
     selectResults = [];
     selectCall = 0;
-    captured = { values: [] };
+    captured = { values: [], conflict: [] };
+    returningOverride = null;
     execute = vi.fn().mockResolvedValue(undefined);
     del = vi.fn(() => deleteChain());
+    // By default the upsert returns every submitted session (all inserted or changed). Tests set
+    // returningOverride to model the change guard skipping unchanged rows.
+    const getReturning = () =>
+      returningOverride ?? ((captured.values[0] as { sessionId: string }[] | undefined) ?? []).map((r) => ({ sessionId: r.sessionId }));
     tx = {
       select: vi.fn(() => thenable(selectResults[selectCall++] ?? [])),
-      insert: vi.fn(() => insertChain(captured)),
+      insert: vi.fn(() => insertChain(captured, getReturning)),
       delete: del,
       execute,
     };
@@ -115,6 +125,53 @@ describe('AudiobookshelfRepository.ingestSessions', () => {
     const result = await repo.ingestSessions(7, 'UTC', []);
     expect(result).toEqual({ insertedSessionIds: [], updated: 0 });
     expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('guards the upsert with an is-distinct-from clause so unchanged rows are not rewritten', async () => {
+    selectResults = [[], []];
+    await repo.ingestSessions(7, 'UTC', [makeSession()]);
+
+    const conflict = captured.conflict[0] as { setWhere: unknown };
+    expect(conflict.setWhere).toBeDefined();
+    expect(sqlChunkText(conflict.setWhere).replace(/\s+/g, ' ')).toContain('is distinct from');
+  });
+
+  it('skips the recompute entirely when an overlap row is unchanged (no lock, no delete)', async () => {
+    // The session already exists and the change guard returns it in neither insert nor update.
+    selectResults = [[{ sessionId: 'sess-1' }]];
+    returningOverride = [];
+
+    const result = await repo.ingestSessions(7, 'UTC', [makeSession({ sessionId: 'sess-1' })]);
+
+    expect(result).toEqual({ insertedSessionIds: [], updated: 0 });
+    expect(execute).not.toHaveBeenCalled();
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it('recomputes stats for a grown open session that actually changed', async () => {
+    // Existing row, and the change guard reports it as updated.
+    selectResults = [[{ sessionId: 'sess-1' }], []];
+    returningOverride = [{ sessionId: 'sess-1' }];
+
+    const result = await repo.ingestSessions(7, 'UTC', [makeSession({ sessionId: 'sess-1' })]);
+
+    expect(result).toEqual({ insertedSessionIds: [], updated: 1 });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(del).toHaveBeenCalledTimes(1);
+  });
+
+  it('recomputes far-apart affected days in separate bounded windows under one advisory lock', async () => {
+    // existing lookup, then one recompute range select per bounded day window.
+    selectResults = [[], [], []];
+    await repo.ingestSessions(7, 'UTC', [
+      makeSession({ sessionId: 'jan', libraryId: 1, startedAt: new Date('2026-01-01T10:00:00.000Z'), endedAt: new Date('2026-01-01T10:10:00.000Z') }),
+      makeSession({ sessionId: 'apr', libraryId: 1, startedAt: new Date('2026-04-01T10:00:00.000Z'), endedAt: new Date('2026-04-01T10:10:00.000Z') }),
+    ]);
+
+    // One library -> a single advisory lock; two windows >31 days apart -> two deletes + two range loads,
+    // so a batch touching distant days never loads the whole span into memory at once.
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(del).toHaveBeenCalledTimes(2);
   });
 });
 
