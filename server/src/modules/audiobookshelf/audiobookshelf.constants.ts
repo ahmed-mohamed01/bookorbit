@@ -12,9 +12,13 @@ export const AUDIOBOOKSHELF_SESSIONS_INGEST_CHUNK = 200;
 export const AUDIOBOOKSHELF_BACKFILL_EVENT_THRESHOLD = 20;
 export const AUDIOBOOKSHELF_USER_AGENT = 'BookOrbit Audiobookshelf Sync (https://bookorbit.app)';
 export const AUDIOBOOKSHELF_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
-// Max allowed drift between BookOrbit's summed audio-file duration and ABS's item duration
-// before a position write is skipped. Guards against file-ordering/track-count mismatches.
-export const AUDIOBOOKSHELF_DURATION_TOLERANCE_SECONDS = 5;
+// Tolerance for the summed-duration guard before writing an audio position. Per-file durations are
+// stored as integer seconds, so rounding drift accumulates with track count and a fixed allowance
+// wrongly rejects valid many-file audiobooks. Effective tolerance =
+//   max(base, perFile * fileCount) + relative * totalDuration.
+export const AUDIOBOOKSHELF_DURATION_TOLERANCE_BASE_SECONDS = 5;
+export const AUDIOBOOKSHELF_DURATION_TOLERANCE_PER_FILE_SECONDS = 1;
+export const AUDIOBOOKSHELF_DURATION_TOLERANCE_RELATIVE = 0.01;
 // Cron cadence for the scheduled sync (every 15 minutes).
 export const AUDIOBOOKSHELF_SCHEDULER_CRON = '*/15 * * * *';
 // Users synced concurrently per scheduler tick. Small, bounded global parallelism: each user's

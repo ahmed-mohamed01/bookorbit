@@ -1,8 +1,9 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
-import { isAudioFormat, type AudiobookshelfSyncResult, type ReadStatus } from '@bookorbit/types';
+import { isAudioFormat, type AudiobookshelfSyncResult, type ReadStatus, type UserSettings } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { resolveTimeZone, toDateKeyInTimeZone } from '../../common/utils/timezone.utils';
 import { BookService } from '../book/book.service';
 import { LibraryService } from '../library/library.service';
 import { ReadingAttemptService } from '../user-book-status/reading-attempt.service';
@@ -11,7 +12,11 @@ import { AudiobookshelfClientService, type AbsMediaProgress } from './audiobooks
 import { AudiobookshelfMatchService } from './audiobookshelf-match.service';
 import { AudiobookshelfRepository } from './audiobookshelf.repository';
 import { AudiobookshelfSessionsService } from './audiobookshelf-sessions.service';
-import { AUDIOBOOKSHELF_DURATION_TOLERANCE_SECONDS } from './audiobookshelf.constants';
+import {
+  AUDIOBOOKSHELF_DURATION_TOLERANCE_BASE_SECONDS,
+  AUDIOBOOKSHELF_DURATION_TOLERANCE_PER_FILE_SECONDS,
+  AUDIOBOOKSHELF_DURATION_TOLERANCE_RELATIVE,
+} from './audiobookshelf.constants';
 
 export interface AudiobookshelfSyncOptions {
   // Re-apply every linked book even when ABS has not advanced past the last-synced watermark. Used
@@ -62,9 +67,9 @@ export function resolveAbsPosition(
   return { currentFileId: last.id, positionSeconds: last.durationSeconds ?? 0 };
 }
 
-function msToDateString(ms: number | null | undefined): string | null {
+function msToDateKey(ms: number | null | undefined, timeZone: string): string | null {
   if (ms == null || !Number.isFinite(ms) || ms <= 0) return null;
-  return new Date(ms).toISOString().slice(0, 10);
+  return toDateKeyInTimeZone(new Date(ms), timeZone);
 }
 
 @Injectable()
@@ -128,6 +133,7 @@ export class AudiobookshelfSyncService {
         libraryIds: await this.libraryService.findAccessibleLibraryIds(user),
         contentFilters: user.isSuperuser ? undefined : user.contentFilters,
       };
+      const timeZone = resolveTimeZone((user.settings as unknown as UserSettings | undefined)?.timezone, 'UTC');
       const states = progressItemIds.length ? await this.repo.findSyncableBookStatesByAbsItemIds(user.id, scope, progressItemIds) : [];
       const stateByItemId = new Map(states.map((state) => [state.absLibraryItemId, state]));
 
@@ -147,7 +153,7 @@ export class AudiobookshelfSyncService {
         }
 
         try {
-          const outcome = await this.applyProgressToBook(user.id, state.bookId, mp, {
+          const outcome = await this.applyProgressToBook(user.id, state.bookId, mp, timeZone, {
             syncStatus: settings.syncStatus,
             syncPosition: settings.syncPosition,
           });
@@ -211,6 +217,7 @@ export class AudiobookshelfSyncService {
     userId: number,
     bookId: number,
     mp: AbsMediaProgress,
+    timeZone: string,
     toggles: { syncStatus: boolean; syncPosition: boolean },
   ): Promise<{ statusApplied: boolean; positionApplied: boolean; appliedStatus: ReadStatus | null }> {
     let statusApplied = false;
@@ -219,8 +226,8 @@ export class AudiobookshelfSyncService {
 
     if (toggles.syncStatus) {
       const current = (await this.statusService.findOne(userId, bookId))?.status ?? 'unread';
-      const startedOn = msToDateString(mp.startedAt);
-      const endedOn = mp.isFinished ? (msToDateString(mp.finishedAt) ?? msToDateString(mp.lastUpdate)) : null;
+      const startedOn = msToDateKey(mp.startedAt, timeZone);
+      const endedOn = mp.isFinished ? (msToDateKey(mp.finishedAt, timeZone) ?? msToDateKey(mp.lastUpdate, timeZone)) : null;
 
       // Attempts FIRST, then status. Reversing this creates a duplicate manual attempt dated today
       // and loses the ABS finish date.
@@ -258,7 +265,10 @@ export class AudiobookshelfSyncService {
     }
 
     const totalDuration = files.reduce((sum, file) => sum + (file.durationSeconds ?? 0), 0);
-    if (Math.abs(totalDuration - mp.duration) > AUDIOBOOKSHELF_DURATION_TOLERANCE_SECONDS) {
+    const durationTolerance =
+      Math.max(AUDIOBOOKSHELF_DURATION_TOLERANCE_BASE_SECONDS, files.length * AUDIOBOOKSHELF_DURATION_TOLERANCE_PER_FILE_SECONDS) +
+      totalDuration * AUDIOBOOKSHELF_DURATION_TOLERANCE_RELATIVE;
+    if (Math.abs(totalDuration - mp.duration) > durationTolerance) {
       this.logger.warn(
         `[abs.sync] [fail] userId=${userId} bookId=${bookId} localDuration=${totalDuration} absDuration=${mp.duration} - position skipped: duration mismatch`,
       );
