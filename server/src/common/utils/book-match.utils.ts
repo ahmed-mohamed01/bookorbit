@@ -6,6 +6,14 @@ export function normalizeIsbn(value: string | null | undefined): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+// Canonical ASIN form for both write and query boundaries. ASINs are uppercase alphanumeric, so
+// trimming and upper-casing makes stored and queried values comparable under case-sensitive `inArray`.
+export function normalizeAsin(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const normalized = value.trim().toUpperCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
 export function normalizeName(value: string): string {
   return value
     .normalize('NFKD')

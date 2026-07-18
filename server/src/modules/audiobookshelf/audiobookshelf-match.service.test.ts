@@ -33,9 +33,10 @@ describe('AudiobookshelfMatchService', () => {
     findLibraryChangedAt: ReturnType<typeof vi.fn>;
     findBookIdsByAudibleIds: ReturnType<typeof vi.fn>;
     findBookIdsByIsbns: ReturnType<typeof vi.fn>;
-    findFuzzyCandidates: ReturnType<typeof vi.fn>;
+    findFuzzyCandidatesForTitles: ReturnType<typeof vi.fn>;
     bulkUpsertBookStates: ReturnType<typeof vi.fn>;
-    deleteBookStatesNotIn: ReturnType<typeof vi.fn>;
+    markBookStatesSeenInInventory: ReturnType<typeof vi.fn>;
+    pruneBookStatesNotSeenSince: ReturnType<typeof vi.fn>;
   };
   let client: { getLibraries: ReturnType<typeof vi.fn>; getLibraryItems: ReturnType<typeof vi.fn> };
   let library: { findAccessibleLibraryIds: ReturnType<typeof vi.fn> };
@@ -48,9 +49,10 @@ describe('AudiobookshelfMatchService', () => {
       findLibraryChangedAt: vi.fn().mockResolvedValue(new Date('2026-01-01T00:00:00Z')),
       findBookIdsByAudibleIds: vi.fn().mockResolvedValue([]),
       findBookIdsByIsbns: vi.fn().mockResolvedValue([]),
-      findFuzzyCandidates: vi.fn().mockResolvedValue([]),
+      findFuzzyCandidatesForTitles: vi.fn().mockResolvedValue(new Map()),
       bulkUpsertBookStates: vi.fn().mockResolvedValue(undefined),
-      deleteBookStatesNotIn: vi.fn().mockResolvedValue(0),
+      markBookStatesSeenInInventory: vi.fn().mockResolvedValue(undefined),
+      pruneBookStatesNotSeenSince: vi.fn().mockResolvedValue(0),
     };
     client = { getLibraries: vi.fn(), getLibraryItems: vi.fn() };
     library = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([1, 2]) };
@@ -64,7 +66,7 @@ describe('AudiobookshelfMatchService', () => {
     expect(summary.autoLinked).toBe(1);
     const [row] = upsertsFrom(repo.bulkUpsertBookStates);
     expect(row).toMatchObject({ bookId: 100, matchMethod: 'asin', needsReview: false, matchConfidence: 100, matchError: null });
-    expect(repo.findFuzzyCandidates).not.toHaveBeenCalled();
+    expect(repo.findFuzzyCandidatesForTitles).not.toHaveBeenCalled();
   });
 
   it('auto-links on exact ISBN match when ASIN is absent', async () => {
@@ -88,18 +90,58 @@ describe('AudiobookshelfMatchService', () => {
     expect(row).toMatchObject({ bookId: null, matchError: 'ambiguous_asin', needsReview: false });
   });
 
-  it('routes a fuzzy near-tie to review with a deterministic best pick, never auto-linking', async () => {
-    repo.findFuzzyCandidates.mockResolvedValue([
-      { bookId: 55, title: 'The Way of Kings', authors: ['Brandon Sanderson'], series: [] },
-      { bookId: 33, title: 'The Way of Kings', authors: ['Brandon Sanderson'], series: [] },
-    ]);
+  it('treats a fuzzy near-tie as ambiguous and never auto-suggests a single pick', async () => {
+    repo.findFuzzyCandidatesForTitles.mockResolvedValue(
+      new Map([
+        [
+          'The Way of Kings',
+          [
+            { bookId: 55, title: 'The Way of Kings', authors: ['Brandon Sanderson'], series: [] },
+            { bookId: 33, title: 'The Way of Kings', authors: ['Brandon Sanderson'], series: [] },
+          ],
+        ],
+      ]),
+    );
+    const summary = await service.matchItems(makeUser(), [makeInput()], { force: true });
+
+    expect(summary.autoLinked).toBe(0);
+    expect(summary.needsReview).toBe(0);
+    expect(summary.errors).toBe(1);
+    const [row] = upsertsFrom(repo.bulkUpsertBookStates);
+    expect(row).toMatchObject({ bookId: null, matchMethod: null, matchConfidence: null, needsReview: false, matchError: 'ambiguous_fuzzy' });
+  });
+
+  it('suggests a single fuzzy match for review when there is one clear candidate', async () => {
+    repo.findFuzzyCandidatesForTitles.mockResolvedValue(
+      new Map([['The Way of Kings', [{ bookId: 70, title: 'The Way of Kings', authors: ['Brandon Sanderson'], series: [] }]]]),
+    );
     const summary = await service.matchItems(makeUser(), [makeInput()], { force: true });
 
     expect(summary.needsReview).toBe(1);
-    expect(summary.autoLinked).toBe(0);
+    expect(summary.errors).toBe(0);
     const [row] = upsertsFrom(repo.bulkUpsertBookStates);
-    expect(row).toMatchObject({ bookId: 33, matchMethod: 'title_author_series', needsReview: true });
-    expect(row.matchConfidence).toBeGreaterThan(0);
+    expect(row).toMatchObject({ bookId: 70, matchMethod: 'title_author_series', needsReview: true });
+    expect(row.matchConfidence).toBe(100);
+  });
+
+  it('suggests the clear winner for review when the runner-up trails by more than the margin', async () => {
+    repo.findFuzzyCandidatesForTitles.mockResolvedValue(
+      new Map([
+        [
+          'The Way of Kings',
+          [
+            { bookId: 70, title: 'The Way of Kings', authors: ['Brandon Sanderson'], series: [] },
+            { bookId: 71, title: 'Way of Kings', authors: ['Brandon Sanderson'], series: [] },
+          ],
+        ],
+      ]),
+    );
+    const summary = await service.matchItems(makeUser(), [makeInput()], { force: true });
+
+    expect(summary.needsReview).toBe(1);
+    expect(summary.errors).toBe(0);
+    const [row] = upsertsFrom(repo.bulkUpsertBookStates);
+    expect(row).toMatchObject({ bookId: 70, matchMethod: 'title_author_series', needsReview: true, matchConfidence: 100 });
   });
 
   it('scores against the best matching series membership regardless of membership order', async () => {
@@ -109,14 +151,16 @@ describe('AudiobookshelfMatchService', () => {
       { name: 'The Stormlight Archive', seriesIndex: 1 },
     ];
 
-    repo.findFuzzyCandidates.mockResolvedValueOnce([{ bookId: 70, title: 'The Way of Kings', authors: ['Brandon Sanderson'], series: forward }]);
+    repo.findFuzzyCandidatesForTitles.mockResolvedValueOnce(
+      new Map([['The Way of Kings', [{ bookId: 70, title: 'The Way of Kings', authors: ['Brandon Sanderson'], series: forward }]]]),
+    );
     const first = await service.matchItems(makeUser(), [input], { force: true });
     const firstRow = upsertsFrom(repo.bulkUpsertBookStates)[0]!;
 
     repo.bulkUpsertBookStates.mockClear();
-    repo.findFuzzyCandidates.mockResolvedValueOnce([
-      { bookId: 70, title: 'The Way of Kings', authors: ['Brandon Sanderson'], series: [...forward].reverse() },
-    ]);
+    repo.findFuzzyCandidatesForTitles.mockResolvedValueOnce(
+      new Map([['The Way of Kings', [{ bookId: 70, title: 'The Way of Kings', authors: ['Brandon Sanderson'], series: [...forward].reverse() }]]]),
+    );
     const second = await service.matchItems(makeUser(), [input], { force: true });
     const secondRow = upsertsFrom(repo.bulkUpsertBookStates)[0]!;
 
@@ -139,7 +183,7 @@ describe('AudiobookshelfMatchService', () => {
     expect(summary.processed).toBe(0);
     expect(repo.findBookIdsByAudibleIds).not.toHaveBeenCalled();
     expect(repo.findBookIdsByIsbns).not.toHaveBeenCalled();
-    expect(repo.findFuzzyCandidates).not.toHaveBeenCalled();
+    expect(repo.findFuzzyCandidatesForTitles).not.toHaveBeenCalled();
     expect(repo.bulkUpsertBookStates).not.toHaveBeenCalled();
   });
 
@@ -223,7 +267,8 @@ describe('AudiobookshelfMatchService', () => {
     expect(result).toEqual({ queued: 1 });
     expect(client.getLibraryItems).toHaveBeenCalledTimes(1);
     expect(client.getLibraryItems).toHaveBeenCalledWith(7, 'https://abs.example', 'token', 'L1', { limit: 500, page: 0 });
-    expect(repo.deleteBookStatesNotIn).toHaveBeenCalledWith(7, ['item-1']);
+    expect(repo.markBookStatesSeenInInventory).toHaveBeenCalledWith(7, ['item-1'], expect.any(Date));
+    expect(repo.pruneBookStatesNotSeenSince).toHaveBeenCalledWith(7, expect.any(Date));
   });
 
   it('skips the prune when the provider inventory is empty', async () => {
@@ -231,8 +276,66 @@ describe('AudiobookshelfMatchService', () => {
 
     const summary = await service.matchLibrary(makeUser(), 'https://abs.example', 'token', { force: false });
 
-    expect(repo.deleteBookStatesNotIn).not.toHaveBeenCalled();
+    expect(repo.pruneBookStatesNotSeenSince).not.toHaveBeenCalled();
     expect(summary.pruned).toBe(0);
+  });
+
+  it('loads fuzzy candidates once per page for all residual titles rather than per item', async () => {
+    await service.matchItems(
+      makeUser(),
+      [
+        makeInput({ absLibraryItemId: 'a', title: 'Title One', author: 'Author One' }),
+        makeInput({ absLibraryItemId: 'b', title: 'Title Two', author: 'Author Two' }),
+      ],
+      { force: true },
+    );
+
+    expect(repo.findFuzzyCandidatesForTitles).toHaveBeenCalledTimes(1);
+    expect(repo.findFuzzyCandidatesForTitles).toHaveBeenCalledWith([1, 2], emptyFilters, ['Title One', 'Title Two'], expect.any(Number));
+  });
+
+  it('canonicalizes ASIN and lowercase-x ISBN10 to uppercase before the exact lookups', async () => {
+    repo.findBookIdsByIsbns.mockResolvedValue([{ key: '080442957X', bookId: 300 }]);
+
+    const summary = await service.matchItems(makeUser(), [makeInput({ asin: 'b00asin', isbn: '0-8044-2957-x' })], { force: true });
+
+    expect(repo.findBookIdsByAudibleIds).toHaveBeenCalledWith([1, 2], emptyFilters, ['B00ASIN']);
+    expect(repo.findBookIdsByIsbns).toHaveBeenCalledWith([1, 2], emptyFilters, ['080442957X']);
+    expect(summary.autoLinked).toBe(1);
+    expect(upsertsFrom(repo.bulkUpsertBookStates)[0]).toMatchObject({ bookId: 300, matchMethod: 'isbn' });
+  });
+
+  it('stamps every observed item as seen and prunes rows not seen this run', async () => {
+    repo.findSettings.mockResolvedValue({ enabled: true, serverUrl: 'https://abs.example', apiToken: 'token', excludedLibraryIds: [] });
+    client.getLibraries.mockResolvedValue({ libraries: [{ id: 'L1', name: 'Audiobooks', mediaType: 'book', provider: 'audible' }] });
+    client.getLibraryItems.mockResolvedValue({
+      results: [
+        {
+          id: 'item-1',
+          libraryId: 'L1',
+          mediaType: 'book',
+          media: { metadata: { title: 'T1', authorName: 'A', isbn: null, asin: null, seriesName: null } },
+        },
+        {
+          id: 'item-2',
+          libraryId: 'L1',
+          mediaType: 'book',
+          media: { metadata: { title: 'T2', authorName: 'A', isbn: null, asin: null, seriesName: null } },
+        },
+      ],
+      total: 2,
+      limit: 500,
+      page: 0,
+    });
+    repo.pruneBookStatesNotSeenSince.mockResolvedValue(3);
+
+    const summary = await service.matchLibrary(makeUser(), 'https://abs.example', 'token', { force: true });
+
+    expect(repo.markBookStatesSeenInInventory).toHaveBeenCalledWith(7, ['item-1', 'item-2'], expect.any(Date));
+    const upserts = upsertsFrom(repo.bulkUpsertBookStates);
+    expect(upserts.every((row) => row.lastSeenInInventoryAt instanceof Date)).toBe(true);
+    expect(repo.pruneBookStatesNotSeenSince).toHaveBeenCalledWith(7, expect.any(Date));
+    expect(summary.pruned).toBe(3);
   });
 
   it('rescan rejects when the integration is not configured', async () => {

@@ -1,3 +1,4 @@
+import { normalizeAsin } from '../../../common/utils/book-match.utils';
 import type { AbsBookMetadata } from './abs-metadata.types';
 import type { ParsedBookData } from './format-extractor.interface';
 
@@ -66,7 +67,9 @@ function mapIsbn(value: unknown): { isbn10: string | null; isbn13: string | null
   if (str === null) return { isbn10: null, isbn13: null };
   const cleaned = str.replace(/[\s-]/g, '');
   if (/^\d{13}$/.test(cleaned)) return { isbn10: null, isbn13: cleaned };
-  if (/^\d{9}[\dXx]$/.test(cleaned)) return { isbn10: cleaned, isbn13: null };
+  // Canonicalize the ISBN-10 check character to uppercase so a lowercase trailing `x` matches the
+  // query-side normalization (which upper-cases). Case-sensitive lookups otherwise miss.
+  if (/^\d{9}[\dXx]$/.test(cleaned)) return { isbn10: cleaned.toUpperCase(), isbn13: null };
   return { isbn10: null, isbn13: null };
 }
 
@@ -130,7 +133,7 @@ export function mapAbsMetadata(raw: AbsBookMetadata): ParsedBookData {
     authors: coerceStringArray(source.authors).map((name) => ({ name, sortName: null })),
     genres: coerceStringArray(source.genres),
     tags: coerceStringArray(source.tags),
-    audibleId: coerceString(source.asin),
+    audibleId: normalizeAsin(coerceString(source.asin)),
     narrators: coerceStringArray(source.narrators),
     chapters: mapChapters(source.chapters),
     abridged: coerceBoolean(source.abridged),

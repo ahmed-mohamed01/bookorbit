@@ -43,8 +43,8 @@ describe('AudiobookshelfSyncSchedulerService', () => {
     await service.runScheduledSync();
 
     expect(syncService.sync).toHaveBeenCalledTimes(2);
-    expect(syncService.sync).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), { deepSessions: false });
-    expect(syncService.sync).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }), { deepSessions: false });
+    expect(syncService.sync).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), { deepSessions: false, reconcile: false });
+    expect(syncService.sync).toHaveBeenCalledWith(expect.objectContaining({ id: 2 }), { deepSessions: false, reconcile: false });
   });
 
   it('skips users who were deleted, deactivated, or lost the sync permission', async () => {
@@ -114,9 +114,9 @@ describe('AudiobookshelfSyncSchedulerService', () => {
     for (let run = 1; run < AUDIOBOOKSHELF_DEEP_SCAN_EVERY_N_RUNS; run++) {
       await service.runScheduledSync();
     }
-    expect(syncService.sync).toHaveBeenLastCalledWith(expect.anything(), { deepSessions: false });
+    expect(syncService.sync).toHaveBeenLastCalledWith(expect.anything(), { deepSessions: false, reconcile: false });
 
     await service.runScheduledSync();
-    expect(syncService.sync).toHaveBeenLastCalledWith(expect.anything(), { deepSessions: true });
+    expect(syncService.sync).toHaveBeenLastCalledWith(expect.anything(), { deepSessions: true, reconcile: true });
   });
 });

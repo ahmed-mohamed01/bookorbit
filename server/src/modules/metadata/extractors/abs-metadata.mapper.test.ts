@@ -229,9 +229,13 @@ describe('mapAbsMetadata - lenient coercion', () => {
     expect(mapAbsMetadata({ isbn: '0-385-74358-1' }).isbn10).toBe('0385743581');
   });
 
-  it('routes an ISBN-10 with a final X or x check character', () => {
+  it('canonicalizes an ISBN-10 final X check character to uppercase (including lowercase input)', () => {
     expect(mapAbsMetadata({ isbn: '0-8044-2957-X' }).isbn10).toBe('080442957X');
-    expect(mapAbsMetadata({ isbn: '0-8044-2957-x' }).isbn10).toBe('080442957x');
+    expect(mapAbsMetadata({ isbn: '0-8044-2957-x' }).isbn10).toBe('080442957X');
+  });
+
+  it('canonicalizes a lowercase ASIN to uppercase', () => {
+    expect(mapAbsMetadata({ asin: '  b00oyx5g5w  ' }).audibleId).toBe('B00OYX5G5W');
   });
 
   it('ignores an isbn with an unexpected digit length', () => {

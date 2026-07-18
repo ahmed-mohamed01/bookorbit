@@ -1,12 +1,26 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import type { AudiobookshelfRescanResult, ContentFilterRules } from '@bookorbit/types';
+import type { AudiobookshelfRescanResult } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
-import { normalizeIsbn, normalizeName, normalizedLevenshtein, scoreAuthors, scoreTitle, tokenOverlap } from '../../common/utils/book-match.utils';
+import {
+  normalizeAsin,
+  normalizeIsbn,
+  normalizeName,
+  normalizedLevenshtein,
+  scoreAuthors,
+  scoreTitle,
+  tokenOverlap,
+} from '../../common/utils/book-match.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { LibraryService } from '../library/library.service';
 import { AudiobookshelfClientService, type AbsLibraryItem } from './audiobookshelf-client.service';
-import { AudiobookshelfRepository, type AbsBookStateUpsert, type AbsExactMatchRow, type AbsFuzzyCandidateSeries } from './audiobookshelf.repository';
+import {
+  AudiobookshelfRepository,
+  type AbsBookStateUpsert,
+  type AbsExactMatchRow,
+  type AbsFuzzyCandidate,
+  type AbsFuzzyCandidateSeries,
+} from './audiobookshelf.repository';
 
 export interface AbsMatchInput {
   absLibraryItemId: string;
@@ -33,6 +47,10 @@ const FUZZY_CANDIDATE_LIMIT = 20;
 const FUZZY_TITLE_MIN = 0.8;
 const FUZZY_AUTHOR_MIN = 0.7;
 const FUZZY_ACCEPT_CONFIDENCE = 84;
+// Minimum confidence gap (in 0-100 points) the top fuzzy candidate must clear over the runner-up.
+// Within this margin the two are treated as ambiguous and left for human review rather than
+// auto-suggesting a single pick.
+const FUZZY_AMBIGUITY_MARGIN = 4;
 const SERIES_NAME_MIN = 0.6;
 const SERIES_BONUS_WEIGHT = 0.1;
 const ABS_LIBRARY_ITEMS_PAGE_SIZE = 500;
@@ -52,11 +70,6 @@ function parseAbsSeries(seriesName: string | null): ParsedSeries {
     return { name: match[1]!.trim() || null, sequence: Number.isFinite(sequence) ? sequence : null };
   }
   return { name: first, sequence: null };
-}
-
-function normalizeAsin(value: string | null): string | null {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
 }
 
 function groupByKey(rows: AbsExactMatchRow[]): Map<string, Set<number>> {
@@ -106,28 +119,63 @@ export class AudiobookshelfMatchService {
     }
   }
 
+  /**
+   * Full inventory reconcile: paginate the selected ABS inventory and match each bounded page, never
+   * materializing the whole remote library. Uses staged pruning - stamp every observed row with the
+   * run start, then delete rows whose marker predates it. This is the slow-cadence path (rescan /
+   * scheduled deep run), not the frequent progress poll.
+   */
   async matchLibrary(
     user: RequestUser,
     serverUrl: string,
     token: string,
     options: { force: boolean; excludedLibraryIds?: string[] },
   ): Promise<AudiobookshelfMatchSummary> {
-    const items = await this.fetchMatchInputs(user.id, serverUrl, token, options.excludedLibraryIds ?? []);
-    const summary = await this.matchItems(user, items, options);
-    if (items.length === 0) {
+    const runStartedAt = new Date();
+    const summary: AudiobookshelfMatchSummary = {
+      totalItems: 0,
+      selectedAbsItemIds: [],
+      processed: 0,
+      autoLinked: 0,
+      needsReview: 0,
+      unmatched: 0,
+      errors: 0,
+      skipped: 0,
+      pruned: 0,
+    };
+
+    await this.forEachInventoryPage(user.id, serverUrl, token, options.excludedLibraryIds ?? [], async (pageItems) => {
+      summary.totalItems += pageItems.length;
+      for (const item of pageItems) summary.selectedAbsItemIds.push(item.absLibraryItemId);
+      await this.repo.markBookStatesSeenInInventory(
+        user.id,
+        pageItems.map((item) => item.absLibraryItemId),
+        runStartedAt,
+      );
+      const pageSummary = await this.matchItems(user, pageItems, { force: options.force, seenAt: runStartedAt });
+      summary.processed += pageSummary.processed;
+      summary.autoLinked += pageSummary.autoLinked;
+      summary.needsReview += pageSummary.needsReview;
+      summary.unmatched += pageSummary.unmatched;
+      summary.errors += pageSummary.errors;
+      summary.skipped += pageSummary.skipped;
+    });
+
+    if (summary.totalItems === 0) {
       this.logger.warn(
         `[abs.match] [end] userId=${user.id} trigger=${options.force ? 'rescan' : 'incremental'} inventoryEmpty=true pruned=0 - empty ABS inventory, prune skipped to protect existing links`,
       );
       return summary;
     }
-    summary.pruned = await this.repo.deleteBookStatesNotIn(
-      user.id,
-      items.map((item) => item.absLibraryItemId),
+
+    summary.pruned = await this.repo.pruneBookStatesNotSeenSince(user.id, runStartedAt);
+    this.logger.log(
+      `[abs.match] [end] userId=${user.id} trigger=${options.force ? 'rescan' : 'incremental'} totalItems=${summary.totalItems} autoLinked=${summary.autoLinked} needsReview=${summary.needsReview} unmatched=${summary.unmatched} errors=${summary.errors} skipped=${summary.skipped} pruned=${summary.pruned} - reconcile completed`,
     );
     return summary;
   }
 
-  async matchItems(user: RequestUser, items: AbsMatchInput[], options: { force: boolean }): Promise<AudiobookshelfMatchSummary> {
+  async matchItems(user: RequestUser, items: AbsMatchInput[], options: { force: boolean; seenAt?: Date }): Promise<AudiobookshelfMatchSummary> {
     const summary: AudiobookshelfMatchSummary = {
       totalItems: items.length,
       selectedAbsItemIds: items.map((item) => item.absLibraryItemId),
@@ -191,9 +239,19 @@ export class AudiobookshelfMatchService {
     const isbnMap = groupByKey(isbns.length ? await this.repo.findBookIdsByIsbns(accessibleLibraryIds, contentFilters, isbns) : []);
 
     const now = new Date();
+    const seenAt = options.seenAt ?? now;
     const upserts: AbsBookStateUpsert[] = [];
+    const residuals: AbsMatchInput[] = [];
+    const baseFor = (item: AbsMatchInput) => ({
+      absLibraryItemId: item.absLibraryItemId,
+      absTitle: item.title,
+      absAuthorName: item.author,
+      lastMatchAttemptAt: now,
+      lastSeenInInventoryAt: seenAt,
+    });
+
     for (const item of toMatch) {
-      const base = { absLibraryItemId: item.absLibraryItemId, absTitle: item.title, absAuthorName: item.author, lastMatchAttemptAt: now };
+      const base = baseFor(item);
 
       const asin = normalizeAsin(item.asin);
       if (asin && asinMap.has(asin)) {
@@ -235,22 +293,37 @@ export class AudiobookshelfMatchService {
         continue;
       }
 
-      const fuzzy = await this.matchFuzzy(item, accessibleLibraryIds, contentFilters);
-      if (fuzzy) {
-        upserts.push({
-          ...base,
-          bookId: fuzzy.bookId,
-          matchMethod: 'title_author_series',
-          matchConfidence: fuzzy.confidence,
-          needsReview: true,
-          matchError: null,
-        });
-        summary.needsReview++;
-        continue;
-      }
+      residuals.push(item);
+    }
 
-      upserts.push({ ...base, bookId: null, matchMethod: null, matchConfidence: null, needsReview: false, matchError: null });
-      summary.unmatched++;
+    if (residuals.length > 0) {
+      const fuzzyTitles = residuals.filter((item) => item.title?.trim() && item.author?.trim()).map((item) => item.title!.trim());
+      const candidatesByTitle = fuzzyTitles.length
+        ? await this.repo.findFuzzyCandidatesForTitles(accessibleLibraryIds, contentFilters, fuzzyTitles, FUZZY_CANDIDATE_LIMIT)
+        : new Map<string, AbsFuzzyCandidate[]>();
+
+      for (const item of residuals) {
+        const base = baseFor(item);
+        const candidates = item.title?.trim() ? (candidatesByTitle.get(item.title.trim()) ?? []) : [];
+        const fuzzy = this.scoreFuzzy(item, candidates);
+        if (fuzzy === 'ambiguous') {
+          upserts.push({ ...base, bookId: null, matchMethod: null, matchConfidence: null, needsReview: false, matchError: 'ambiguous_fuzzy' });
+          summary.errors++;
+        } else if (fuzzy) {
+          upserts.push({
+            ...base,
+            bookId: fuzzy.bookId,
+            matchMethod: 'title_author_series',
+            matchConfidence: fuzzy.confidence,
+            needsReview: true,
+            matchError: null,
+          });
+          summary.needsReview++;
+        } else {
+          upserts.push({ ...base, bookId: null, matchMethod: null, matchConfidence: null, needsReview: false, matchError: null });
+          summary.unmatched++;
+        }
+      }
     }
 
     await this.repo.bulkUpsertBookStates(user.id, upserts);
@@ -260,14 +333,13 @@ export class AudiobookshelfMatchService {
     return summary;
   }
 
-  private async matchFuzzy(
-    item: AbsMatchInput,
-    libraryIds: number[],
-    contentFilters: ContentFilterRules | undefined,
-  ): Promise<{ bookId: number; confidence: number } | null> {
-    if (!item.title?.trim() || !item.author?.trim()) return null;
-    const candidates = await this.repo.findFuzzyCandidates(libraryIds, contentFilters, item.title, FUZZY_CANDIDATE_LIMIT);
-    if (candidates.length === 0) return null;
+  /**
+   * Pure scoring over already-loaded candidates. Returns the single best pick, `'ambiguous'` when the
+   * top two are within `FUZZY_AMBIGUITY_MARGIN` (leave for human review, never auto-suggest), or null
+   * when nothing clears the thresholds.
+   */
+  private scoreFuzzy(item: AbsMatchInput, candidates: AbsFuzzyCandidate[]): { bookId: number; confidence: number } | 'ambiguous' | null {
+    if (!item.title?.trim() || !item.author?.trim() || candidates.length === 0) return null;
 
     const scored = candidates
       .map((candidate) => {
@@ -282,7 +354,10 @@ export class AudiobookshelfMatchService {
       .sort((a, b) => b.confidence - a.confidence || a.bookId - b.bookId);
 
     const best = scored[0];
-    return best ? { bookId: best.bookId, confidence: best.confidence } : null;
+    if (!best) return null;
+    const runnerUp = scored[1];
+    if (runnerUp && best.confidence - runnerUp.confidence < FUZZY_AMBIGUITY_MARGIN) return 'ambiguous';
+    return { bookId: best.bookId, confidence: best.confidence };
   }
 
   private scoreSeries(absSeriesName: string, memberships: AbsFuzzyCandidateSeries[]): number {
@@ -305,24 +380,32 @@ export class AudiobookshelfMatchService {
     return best;
   }
 
-  private async fetchMatchInputs(userId: number, serverUrl: string, token: string, excludedLibraryIds: string[]): Promise<AbsMatchInput[]> {
+  /**
+   * Stream the selected ABS inventory one bounded page at a time, invoking `onPage` per page so the
+   * whole remote library is never held in memory at once.
+   */
+  private async forEachInventoryPage(
+    userId: number,
+    serverUrl: string,
+    token: string,
+    excludedLibraryIds: string[],
+    onPage: (items: AbsMatchInput[]) => Promise<void>,
+  ): Promise<void> {
     const { libraries } = await this.client.getLibraries(userId, serverUrl, token);
     const excluded = new Set(excludedLibraryIds);
     const bookLibraries = libraries.filter((library) => library.mediaType === 'book' && !excluded.has(library.id));
-    const inputs: AbsMatchInput[] = [];
 
     for (const library of bookLibraries) {
       let page = 0;
       while (true) {
         const response = await this.client.getLibraryItems(userId, serverUrl, token, library.id, { limit: ABS_LIBRARY_ITEMS_PAGE_SIZE, page });
-        for (const item of response.results) inputs.push(this.toMatchInput(item));
+        const items = response.results.map((item) => this.toMatchInput(item));
+        if (items.length > 0) await onPage(items);
         const fetched = (page + 1) * ABS_LIBRARY_ITEMS_PAGE_SIZE;
         if (response.results.length < ABS_LIBRARY_ITEMS_PAGE_SIZE || fetched >= response.total) break;
         page++;
       }
     }
-
-    return inputs;
   }
 
   private toMatchInput(item: AbsLibraryItem): AbsMatchInput {

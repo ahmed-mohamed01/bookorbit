@@ -87,7 +87,8 @@ export class AudiobookshelfSyncSchedulerService {
     if (!user.isSuperuser && !user.permissions.includes(Permission.AudiobookshelfSync)) return 'skipped';
 
     try {
-      await this.syncService.sync(user, { deepSessions: deepScan });
+      // Reconcile the full inventory only on the slow deep cadence; frequent ticks just poll progress.
+      await this.syncService.sync(user, { deepSessions: deepScan, reconcile: deepScan });
       return 'processed';
     } catch (err) {
       // Skip-and-continue on the per-user in-flight guard (a manual sync is already running) - not a

@@ -25,6 +25,10 @@ export interface AudiobookshelfSyncOptions {
   // Run the deep reconciliation scan (full re-pagination) as the sessions phase instead of the
   // incremental watermark path.
   deepSessions?: boolean;
+  // Reconcile the full ABS inventory (match new items + staged prune) this run. Decoupled from the
+  // frequent progress poll: the scheduler only sets it on the slow deep cadence, while manual sync
+  // and full resync default it on. Defaults to true when unset.
+  reconcile?: boolean;
 }
 
 // Upgrade-only ranking. A sync may promote a book toward completion but never move it backward.
@@ -95,7 +99,7 @@ export class AudiobookshelfSyncService {
    * watermark path). Same in-flight guard and disabled/unconfigured rejection as `sync`.
    */
   async fullResync(user: RequestUser): Promise<AudiobookshelfSyncResult> {
-    return this.sync(user, { force: true, deepSessions: true });
+    return this.sync(user, { force: true, deepSessions: true, reconcile: true });
   }
 
   async sync(user: RequestUser, options: AudiobookshelfSyncOptions = {}): Promise<AudiobookshelfSyncResult> {
@@ -109,24 +113,31 @@ export class AudiobookshelfSyncService {
     }
     this.runningUsers.add(user.id);
 
+    const reconcile = options.reconcile ?? true;
     const startedAt = Date.now();
     this.logger.log(
-      `[abs.sync] [start] userId=${user.id} syncStatus=${settings.syncStatus} syncPosition=${settings.syncPosition} force=${options.force === true} deepSessions=${options.deepSessions === true} - sync started`,
+      `[abs.sync] [start] userId=${user.id} syncStatus=${settings.syncStatus} syncPosition=${settings.syncPosition} force=${options.force === true} deepSessions=${options.deepSessions === true} reconcile=${reconcile} - sync started`,
     );
 
     const result: AudiobookshelfSyncResult = { matched: 0, statusApplied: 0, positionApplied: 0, sessionsApplied: 0, skipped: 0, failed: 0 };
     try {
-      const matchSummary = await this.matchService.matchLibrary(user, settings.serverUrl, settings.apiToken, {
-        force: options.force === true,
-        excludedLibraryIds: settings.excludedLibraryIds ?? [],
-      });
-      result.matched = matchSummary.autoLinked;
-      const selectedAbsItemIds = new Set(matchSummary.selectedAbsItemIds);
+      // Full inventory reconciliation (match + staged prune) is the slow-cadence path. When skipped,
+      // the frequent poll applies progress against already-persisted book state instead of
+      // re-materializing and re-matching the entire remote library.
+      let selectedAbsItemIds: Set<string> | null = null;
+      if (reconcile) {
+        const matchSummary = await this.matchService.matchLibrary(user, settings.serverUrl, settings.apiToken, {
+          force: options.force === true,
+          excludedLibraryIds: settings.excludedLibraryIds ?? [],
+        });
+        result.matched = matchSummary.autoLinked;
+        selectedAbsItemIds = new Set(matchSummary.selectedAbsItemIds);
+      }
 
       const me = await this.client.getMe(user.id, settings.serverUrl, settings.apiToken);
       const candidateProgresses = me.mediaProgress.filter((mp) => mp.libraryItemId && !mp.episodeId);
-      const progresses = candidateProgresses.filter((mp) => selectedAbsItemIds.has(mp.libraryItemId!));
-      result.skipped += candidateProgresses.length - progresses.length;
+      const progresses = selectedAbsItemIds ? candidateProgresses.filter((mp) => selectedAbsItemIds!.has(mp.libraryItemId!)) : candidateProgresses;
+      if (selectedAbsItemIds) result.skipped += candidateProgresses.length - progresses.length;
 
       const progressItemIds = progresses.map((mp) => mp.libraryItemId!);
       const scope = {

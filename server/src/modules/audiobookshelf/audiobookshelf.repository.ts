@@ -71,6 +71,7 @@ export interface AbsBookStateUpsert {
   needsReview: boolean;
   matchError: string | null;
   lastMatchAttemptAt: Date;
+  lastSeenInInventoryAt: Date;
 }
 
 export interface AbsBookAccessScope {
@@ -239,68 +240,98 @@ export class AudiobookshelfRepository {
   }
 
   /**
-   * Bounded fuzzy candidate load: trigram-ranked local books for a single ABS title, capped at `limit`.
-   * Never a full-library scan - only residual items that failed the exact tiers reach here.
+   * Bounded, batched fuzzy candidate load for a whole reconcile page. The trigram ranking is
+   * per-title (the `%` / `similarity` operators rank against one query string), but author and
+   * series enrichment is loaded once across the union of candidate books - not 3 queries per residual
+   * item. Titles are deduplicated so repeated ABS titles query only once. Never a full-library scan:
+   * only residual items that failed the exact tiers reach here, and each title is capped at `limitPerTitle`.
    */
-  async findFuzzyCandidates(
+  async findFuzzyCandidatesForTitles(
     libraryIds: number[],
     contentFilters: ContentFilterRules | undefined,
-    title: string,
-    limit: number,
-  ): Promise<AbsFuzzyCandidate[]> {
-    if (libraryIds.length === 0 || !title.trim()) return [];
+    titles: string[],
+    limitPerTitle: number,
+  ): Promise<Map<string, AbsFuzzyCandidate[]>> {
+    const byTitle = new Map<string, AbsFuzzyCandidate[]>();
+    if (libraryIds.length === 0) return byTitle;
+    const uniqueTitles = [...new Set(titles.map((title) => title.trim()).filter((title) => title.length > 0))];
+    if (uniqueTitles.length === 0) return byTitle;
+
     const filters = contentFilters ? buildContentFilterClauses(contentFilters, this.db) : [];
-    const rows = await this.db
-      .select({ bookId: schema.books.id, title: schema.bookMetadata.title })
-      .from(schema.books)
-      .innerJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.books.id))
-      .where(
-        and(
-          inArray(schema.books.libraryId, libraryIds),
-          eq(schema.books.status, 'present'),
-          sql`${schema.bookMetadata.title} % ${title}`,
-          ...filters,
-        ),
-      )
-      .orderBy(sql`similarity(${schema.bookMetadata.title}, ${title}) desc`, asc(schema.books.id))
-      .limit(limit);
+    const candidateRowsByTitle = new Map<string, { bookId: number; title: string | null }[]>();
+    const bookIds = new Set<number>();
 
-    if (rows.length === 0) return [];
-    const bookIds = rows.map((row) => row.bookId);
+    for (const title of uniqueTitles) {
+      const rows = await this.db
+        .select({ bookId: schema.books.id, title: schema.bookMetadata.title })
+        .from(schema.books)
+        .innerJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.books.id))
+        .where(
+          and(
+            inArray(schema.books.libraryId, libraryIds),
+            eq(schema.books.status, 'present'),
+            sql`${schema.bookMetadata.title} % ${title}`,
+            ...filters,
+          ),
+        )
+        .orderBy(sql`similarity(${schema.bookMetadata.title}, ${title}) desc`, asc(schema.books.id))
+        .limit(limitPerTitle);
+      candidateRowsByTitle.set(title, rows);
+      for (const row of rows) bookIds.add(row.bookId);
+    }
 
-    const authorRows = await this.db
-      .select({ bookId: schema.bookAuthors.bookId, name: schema.authors.name })
-      .from(schema.bookAuthors)
-      .innerJoin(schema.authors, eq(schema.authors.id, schema.bookAuthors.authorId))
-      .where(inArray(schema.bookAuthors.bookId, bookIds))
-      .orderBy(asc(schema.bookAuthors.bookId), asc(schema.bookAuthors.displayOrder), asc(schema.bookAuthors.authorId));
+    if (bookIds.size === 0) return byTitle;
+    const authorsByBook = await this.loadAuthorsByBook([...bookIds]);
+    const seriesByBook = await this.loadSeriesByBook([...bookIds]);
 
-    const seriesRows = await this.db
-      .select({ bookId: schema.bookSeriesMemberships.bookId, name: schema.bookSeries.name, seriesIndex: schema.bookSeriesMemberships.seriesIndex })
-      .from(schema.bookSeriesMemberships)
-      .innerJoin(schema.bookSeries, eq(schema.bookSeries.id, schema.bookSeriesMemberships.seriesId))
-      .where(inArray(schema.bookSeriesMemberships.bookId, bookIds))
-      .orderBy(asc(schema.bookSeriesMemberships.bookId), asc(schema.bookSeriesMemberships.displayOrder));
+    for (const [title, rows] of candidateRowsByTitle) {
+      byTitle.set(
+        title,
+        rows.map((row) => ({
+          bookId: row.bookId,
+          title: row.title,
+          authors: authorsByBook.get(row.bookId) ?? [],
+          series: seriesByBook.get(row.bookId) ?? [],
+        })),
+      );
+    }
+    return byTitle;
+  }
 
+  private async loadAuthorsByBook(bookIds: number[]): Promise<Map<number, string[]>> {
     const authorsByBook = new Map<number, string[]>();
-    for (const row of authorRows) {
-      const list = authorsByBook.get(row.bookId) ?? [];
-      list.push(row.name);
-      authorsByBook.set(row.bookId, list);
+    for (const group of chunk(bookIds, ISBN_ASIN_LOOKUP_CHUNK)) {
+      const rows = await this.db
+        .select({ bookId: schema.bookAuthors.bookId, name: schema.authors.name })
+        .from(schema.bookAuthors)
+        .innerJoin(schema.authors, eq(schema.authors.id, schema.bookAuthors.authorId))
+        .where(inArray(schema.bookAuthors.bookId, group))
+        .orderBy(asc(schema.bookAuthors.bookId), asc(schema.bookAuthors.displayOrder), asc(schema.bookAuthors.authorId));
+      for (const row of rows) {
+        const list = authorsByBook.get(row.bookId) ?? [];
+        list.push(row.name);
+        authorsByBook.set(row.bookId, list);
+      }
     }
-    const seriesByBook = new Map<number, AbsFuzzyCandidateSeries[]>();
-    for (const row of seriesRows) {
-      const list = seriesByBook.get(row.bookId) ?? [];
-      list.push({ name: row.name, seriesIndex: row.seriesIndex });
-      seriesByBook.set(row.bookId, list);
-    }
+    return authorsByBook;
+  }
 
-    return rows.map((row) => ({
-      bookId: row.bookId,
-      title: row.title,
-      authors: authorsByBook.get(row.bookId) ?? [],
-      series: seriesByBook.get(row.bookId) ?? [],
-    }));
+  private async loadSeriesByBook(bookIds: number[]): Promise<Map<number, AbsFuzzyCandidateSeries[]>> {
+    const seriesByBook = new Map<number, AbsFuzzyCandidateSeries[]>();
+    for (const group of chunk(bookIds, ISBN_ASIN_LOOKUP_CHUNK)) {
+      const rows = await this.db
+        .select({ bookId: schema.bookSeriesMemberships.bookId, name: schema.bookSeries.name, seriesIndex: schema.bookSeriesMemberships.seriesIndex })
+        .from(schema.bookSeriesMemberships)
+        .innerJoin(schema.bookSeries, eq(schema.bookSeries.id, schema.bookSeriesMemberships.seriesId))
+        .where(inArray(schema.bookSeriesMemberships.bookId, group))
+        .orderBy(asc(schema.bookSeriesMemberships.bookId), asc(schema.bookSeriesMemberships.displayOrder));
+      for (const row of rows) {
+        const list = seriesByBook.get(row.bookId) ?? [];
+        list.push({ name: row.name, seriesIndex: row.seriesIndex });
+        seriesByBook.set(row.bookId, list);
+      }
+    }
+    return seriesByBook;
   }
 
   async findBookStatesByAbsItemIds(userId: number, absLibraryItemIds: string[]): Promise<AudiobookshelfBookState[]> {
@@ -316,14 +347,34 @@ export class AudiobookshelfRepository {
     return results;
   }
 
-  async deleteBookStatesNotIn(userId: number, absLibraryItemIds: string[]): Promise<number> {
-    const currentItemsClause =
-      absLibraryItemIds.length > 0
-        ? sql`not (${schema.audiobookshelfBookState.absLibraryItemId} = any(${sql.param(absLibraryItemIds)}::varchar[]))`
-        : undefined;
+  /**
+   * Staged-prune step 1: stamp `lastSeenInInventoryAt` on every row whose item was observed in the
+   * current reconcile pass. Bounded by chunking so a huge page never builds one oversized statement.
+   */
+  async markBookStatesSeenInInventory(userId: number, absLibraryItemIds: string[], seenAt: Date): Promise<void> {
+    if (absLibraryItemIds.length === 0) return;
+    for (const group of chunk(absLibraryItemIds, ISBN_ASIN_LOOKUP_CHUNK)) {
+      await this.db
+        .update(schema.audiobookshelfBookState)
+        .set({ lastSeenInInventoryAt: seenAt })
+        .where(and(eq(schema.audiobookshelfBookState.userId, userId), inArray(schema.audiobookshelfBookState.absLibraryItemId, group)));
+    }
+  }
+
+  /**
+   * Staged-prune step 2: delete rows not stamped during the current reconcile pass (marker predates
+   * the run start or is null). Replaces passing the full inventory id array into the delete. Callers
+   * must skip this when the inventory was empty, to avoid wiping links on a transient empty response.
+   */
+  async pruneBookStatesNotSeenSince(userId: number, runStartedAt: Date): Promise<number> {
     const result = await this.db
       .delete(schema.audiobookshelfBookState)
-      .where(and(eq(schema.audiobookshelfBookState.userId, userId), currentItemsClause));
+      .where(
+        and(
+          eq(schema.audiobookshelfBookState.userId, userId),
+          or(isNull(schema.audiobookshelfBookState.lastSeenInInventoryAt), lt(schema.audiobookshelfBookState.lastSeenInInventoryAt, runStartedAt)),
+        ),
+      );
     return result.rowCount ?? 0;
   }
 
@@ -344,6 +395,7 @@ export class AudiobookshelfRepository {
             needsReview: row.needsReview,
             matchError: row.matchError,
             lastMatchAttemptAt: row.lastMatchAttemptAt,
+            lastSeenInInventoryAt: row.lastSeenInInventoryAt,
             manualUnlinked: false,
           })),
         )
@@ -358,6 +410,7 @@ export class AudiobookshelfRepository {
             needsReview: sql`excluded.needs_review`,
             matchError: sql`excluded.match_error`,
             lastMatchAttemptAt: sql`excluded.last_match_attempt_at`,
+            lastSeenInInventoryAt: sql`excluded.last_seen_in_inventory_at`,
             manualUnlinked: false,
             updatedAt: new Date(),
           },

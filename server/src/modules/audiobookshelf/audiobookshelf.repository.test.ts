@@ -38,18 +38,44 @@ describe('AudiobookshelfRepository', () => {
     expect(returning).toHaveBeenCalledTimes(1);
   });
 
-  it('deletes only the user book states absent from the current provider inventory', async () => {
+  it('prunes only the user book states not seen since the reconcile run start', async () => {
     const where = vi.fn<(...args: unknown[]) => Promise<{ rowCount: number }>>().mockResolvedValue({ rowCount: 2 });
     const deleteChain = { where };
     const db = { delete: vi.fn<(...args: unknown[]) => typeof deleteChain>().mockReturnValue(deleteChain) };
     const repository = new AudiobookshelfRepository(db as never);
+    const runStartedAt = new Date('2026-07-17T00:00:00.000Z');
 
-    await expect(repository.deleteBookStatesNotIn(7, ['current-1', 'current-2'])).resolves.toBe(2);
+    await expect(repository.pruneBookStatesNotSeenSince(7, runStartedAt)).resolves.toBe(2);
 
     expect(db.delete).toHaveBeenCalledTimes(1);
     expect(where).toHaveBeenCalledTimes(1);
     const query = new PgDialect().sqlToQuery(where.mock.calls[0]![0] as never);
-    expect(query.sql).toContain('any($2::varchar[])');
-    expect(query.params).toEqual([7, ['current-1', 'current-2']]);
+    expect(query.sql).toContain('last_seen_in_inventory_at');
+    expect(query.sql).toContain('is null');
+    expect(query.params).toEqual([7, runStartedAt.toISOString()]);
+  });
+
+  it('stamps the seen marker on every observed item, chunked', async () => {
+    const where = vi.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(undefined);
+    const set = vi.fn<(...args: unknown[]) => { where: typeof where }>().mockReturnValue({ where });
+    const updateChain = { set };
+    const db = { update: vi.fn<(...args: unknown[]) => typeof updateChain>().mockReturnValue(updateChain) };
+    const repository = new AudiobookshelfRepository(db as never);
+    const seenAt = new Date('2026-07-17T00:00:00.000Z');
+
+    await repository.markBookStatesSeenInInventory(7, ['item-1', 'item-2'], seenAt);
+
+    expect(db.update).toHaveBeenCalledTimes(1);
+    expect(set).toHaveBeenCalledWith({ lastSeenInInventoryAt: seenAt });
+    expect(where).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks nothing when the observed item list is empty', async () => {
+    const db = { update: vi.fn() };
+    const repository = new AudiobookshelfRepository(db as never);
+
+    await repository.markBookStatesSeenInInventory(7, [], new Date());
+
+    expect(db.update).not.toHaveBeenCalled();
   });
 });

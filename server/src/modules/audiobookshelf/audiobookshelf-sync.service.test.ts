@@ -368,6 +368,21 @@ describe('AudiobookshelfSyncService.sync', () => {
     expect(result.matched).toBe(4);
   });
 
+  it('skips full inventory reconciliation on a frequent poll (reconcile false) but still applies progress', async () => {
+    const { service, client, matchService, repo, bookService, statusService } = makeDeps();
+    statusService.findOne.mockResolvedValue({ status: 'unread' });
+    client.getMe.mockResolvedValue({ mediaProgress: [makeMp({ lastUpdate: 5000 })] });
+    repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ lastSyncedAbsUpdate: 2000 })]);
+
+    const result = await service.sync(makeUser(), { reconcile: false });
+
+    expect(matchService.matchLibrary).not.toHaveBeenCalled();
+    expect(result.matched).toBe(0);
+    expect(repo.findSyncableBookStatesByAbsItemIds).toHaveBeenCalledWith(7, expect.anything(), ['abs-1']);
+    expect(bookService.upsertAudioProgressFromSync).toHaveBeenCalled();
+    expect(result.positionApplied).toBe(1);
+  });
+
   it('reports sessionsApplied as inserted + updated from the session ingest', async () => {
     const { service, sessionsService, repo } = makeDeps();
     sessionsService.syncSessions.mockResolvedValue({ inserted: 5, updated: 3, skipped: 1, watermark: 123 });
