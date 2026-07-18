@@ -143,28 +143,35 @@ export class AudiobookshelfSyncService {
           result.skipped++;
           continue;
         }
-        if (!options.force && state.lastSyncedAbsUpdate != null && mp.lastUpdate <= state.lastSyncedAbsUpdate) {
-          result.skipped++;
-          continue;
-        }
-        if (!settings.syncStatus && !settings.syncPosition) {
+        // Split per-phase watermarks: a skipped or disabled position phase must not consume the ABS
+        // update a later position retry needs, and a status-only advance must not skip position.
+        const statusDue = settings.syncStatus && (options.force || state.lastSyncedAbsUpdate == null || mp.lastUpdate > state.lastSyncedAbsUpdate);
+        // A row synced under the previous single-watermark scheme has no position watermark yet; fall
+        // back to the status watermark so it is not needlessly re-synced after the split.
+        const positionWatermark = state.lastSyncedPositionAbsUpdate ?? state.lastSyncedAbsUpdate;
+        const positionDue = settings.syncPosition && (options.force || positionWatermark == null || mp.lastUpdate > positionWatermark);
+        if (!statusDue && !positionDue) {
           result.skipped++;
           continue;
         }
 
         try {
-          const outcome = await this.applyProgressToBook(user.id, state.bookId, mp, timeZone, {
-            syncStatus: settings.syncStatus,
-            syncPosition: settings.syncPosition,
-          });
+          const outcome = await this.applyProgressToBook(
+            user.id,
+            state.bookId,
+            mp,
+            timeZone,
+            { status: statusDue, position: positionDue },
+            state.lastSyncedProgressAt,
+          );
           if (outcome.statusApplied) result.statusApplied++;
           if (outcome.positionApplied) result.positionApplied++;
           await this.repo.updateBookState(user.id, state.absLibraryItemId, {
             lastSyncedAt: new Date(),
-            lastSyncedStatus: outcome.appliedStatus,
             lastSyncedProgress: mp.progress,
-            lastSyncedAbsUpdate: mp.lastUpdate,
             syncError: null,
+            ...(statusDue ? { lastSyncedStatus: outcome.appliedStatus, lastSyncedAbsUpdate: mp.lastUpdate } : {}),
+            ...(outcome.positionApplied ? { lastSyncedPositionAbsUpdate: mp.lastUpdate, lastSyncedProgressAt: outcome.positionProgressAt } : {}),
           });
         } catch (err) {
           result.failed++;
@@ -218,13 +225,15 @@ export class AudiobookshelfSyncService {
     bookId: number,
     mp: AbsMediaProgress,
     timeZone: string,
-    toggles: { syncStatus: boolean; syncPosition: boolean },
-  ): Promise<{ statusApplied: boolean; positionApplied: boolean; appliedStatus: ReadStatus | null }> {
+    due: { status: boolean; position: boolean },
+    positionSyncedProgressAt: Date | null,
+  ): Promise<{ statusApplied: boolean; positionApplied: boolean; appliedStatus: ReadStatus | null; positionProgressAt: Date | null }> {
     let statusApplied = false;
     let positionApplied = false;
     let appliedStatus: ReadStatus | null = null;
+    let positionProgressAt: Date | null = null;
 
-    if (toggles.syncStatus) {
+    if (due.status) {
       const current = (await this.statusService.findOne(userId, bookId))?.status ?? 'unread';
       const startedOn = msToDateKey(mp.startedAt, timeZone);
       const endedOn = mp.isFinished ? (msToDateKey(mp.finishedAt, timeZone) ?? msToDateKey(mp.lastUpdate, timeZone)) : null;
@@ -248,20 +257,28 @@ export class AudiobookshelfSyncService {
       }
     }
 
-    if (toggles.syncPosition) {
-      positionApplied = await this.applyPosition(userId, bookId, mp);
+    if (due.position) {
+      const position = await this.applyPosition(userId, bookId, mp, positionSyncedProgressAt);
+      positionApplied = position.applied;
+      positionProgressAt = position.progressAt;
     }
 
-    return { statusApplied, positionApplied, appliedStatus };
+    return { statusApplied, positionApplied, appliedStatus, positionProgressAt };
   }
 
-  private async applyPosition(userId: number, bookId: number, mp: AbsMediaProgress): Promise<boolean> {
+  private async applyPosition(
+    userId: number,
+    bookId: number,
+    mp: AbsMediaProgress,
+    syncedProgressAt: Date | null,
+  ): Promise<{ applied: boolean; progressAt: Date | null }> {
+    const skipped = { applied: false, progressAt: null };
     const files = (await this.bookService.getAudioFilesInPlayOrder(bookId)).filter((file) => file.format && isAudioFormat(file.format));
-    if (files.length === 0) return false;
+    if (files.length === 0) return skipped;
 
     if (!Number.isFinite(mp.duration) || mp.duration <= 0) {
       this.logger.warn(`[abs.sync] [fail] userId=${userId} bookId=${bookId} absDuration=${mp.duration} - position skipped: invalid ABS duration`);
-      return false;
+      return skipped;
     }
 
     const totalDuration = files.reduce((sum, file) => sum + (file.durationSeconds ?? 0), 0);
@@ -272,14 +289,27 @@ export class AudiobookshelfSyncService {
       this.logger.warn(
         `[abs.sync] [fail] userId=${userId} bookId=${bookId} localDuration=${totalDuration} absDuration=${mp.duration} - position skipped: duration mismatch`,
       );
-      return false;
+      return skipped;
+    }
+
+    // Newest-wins guard: never move a locally advanced position backward. A snapshot of the progress
+    // row's updatedAt from our last ABS write that no longer matches means local playback changed it
+    // since; with no snapshot (first sync) compare positions rather than the two systems' clocks.
+    const local = await this.bookService.getAudioProgressForSync(userId, bookId);
+    if (local) {
+      const localAdvanced =
+        syncedProgressAt != null ? local.updatedAt.getTime() !== syncedProgressAt.getTime() : (local.percentage ?? 0) > mp.progress * 100;
+      if (localAdvanced) {
+        this.logger.warn(`[abs.sync] [fail] userId=${userId} bookId=${bookId} - position skipped: local progress is newer`);
+        return skipped;
+      }
     }
 
     const resolved = resolveAbsPosition(files, mp.currentTime);
-    if (!resolved) return false;
+    if (!resolved) return skipped;
 
     const percentage = Math.max(0, Math.min(100, (mp.currentTime / mp.duration) * 100));
-    await this.bookService.upsertAudioProgressFromSync(userId, bookId, resolved.currentFileId, resolved.positionSeconds, percentage);
-    return true;
+    const written = await this.bookService.upsertAudioProgressFromSync(userId, bookId, resolved.currentFileId, resolved.positionSeconds, percentage);
+    return { applied: true, progressAt: written?.updatedAt ?? null };
   }
 }

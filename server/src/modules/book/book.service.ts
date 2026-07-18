@@ -1905,14 +1905,12 @@ export class BookService {
     return this.bookRepo.findAudioFilesInPlayOrder(bookId);
   }
 
-  async upsertAudioProgressFromSync(
-    userId: number,
-    bookId: number,
-    currentFileId: number,
-    positionSeconds: number,
-    percentage: number,
-  ): Promise<void> {
-    await this.bookRepo.upsertAudioProgress(userId, bookId, currentFileId, positionSeconds, percentage);
+  async getAudioProgressForSync(userId: number, bookId: number) {
+    return this.bookRepo.findAudioProgress(userId, bookId);
+  }
+
+  async upsertAudioProgressFromSync(userId: number, bookId: number, currentFileId: number, positionSeconds: number, percentage: number) {
+    return this.bookRepo.upsertAudioProgress(userId, bookId, currentFileId, positionSeconds, percentage);
   }
 
   async saveAudioProgress(userId: number, bookId: number, dto: UpsertAudioProgressDto, user: RequestUser) {

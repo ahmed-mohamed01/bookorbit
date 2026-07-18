@@ -14,6 +14,8 @@ export type AttemptMutation = {
   startedOn?: string | null;
   endedOn?: string | null;
   outcome?: ReadingAttemptOutcome | null;
+  externalProvider?: string | null;
+  externalId?: string | null;
 };
 
 export type AttemptProjection = {
