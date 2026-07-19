@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { AudioFormatExtractor } from './extractors/audio-format.extractor';
@@ -6,7 +6,6 @@ import { ComicFormatExtractor } from './extractors/comic-format.extractor';
 import { EpubFormatExtractor } from './extractors/epub-format.extractor';
 import { Fb2FormatExtractor } from './extractors/fb2-format.extractor';
 import type { FormatExtractor, ParsedBookData } from './extractors/format-extractor.interface';
-import { JsonSidecarFormatExtractor } from './extractors/json-sidecar-format.extractor';
 import { MobiFormatExtractor } from './extractors/mobi-format.extractor';
 import { OpfFormatExtractor } from './extractors/opf-format.extractor';
 import { PdfFormatExtractor } from './extractors/pdf-format.extractor';
@@ -14,6 +13,11 @@ import { extractCover } from './lib/cover';
 import type { PdfParseWarning } from './lib/pdf-parser';
 
 export const METADATA_AUDIO_FORMATS = ['m4b', 'mp3', 'm4a', 'opus', 'ogg', 'flac'] as const;
+
+// Extension seam: downstream modules can register additional format extractors
+// (keyed by format) via this DI token without editing the built-in extractor map.
+export const EXTRA_METADATA_EXTRACTORS = Symbol('EXTRA_METADATA_EXTRACTORS');
+export type MetadataExtractorEntry = readonly [format: string, extractor: FormatExtractor];
 
 export interface MetadataExtractionResult {
   metadata: ParsedBookData | null;
@@ -25,7 +29,7 @@ export class MetadataExtractionService {
   private readonly logger = new Logger(MetadataExtractionService.name);
   private readonly extractors: ReadonlyMap<string, FormatExtractor>;
 
-  constructor() {
+  constructor(@Optional() @Inject(EXTRA_METADATA_EXTRACTORS) extra: readonly MetadataExtractorEntry[] = []) {
     const audio = new AudioFormatExtractor();
     const mobi = new MobiFormatExtractor();
     const epub = new EpubFormatExtractor();
@@ -33,7 +37,6 @@ export class MetadataExtractionService {
       ['epub', epub],
       ['kepub', epub],
       ['opf', new OpfFormatExtractor()],
-      ['json', new JsonSidecarFormatExtractor()],
       ['pdf', new PdfFormatExtractor({ extractCover: true, onWarning: (warning) => this.logPdfParseWarning(warning) })],
       ['mobi', mobi],
       ['azw3', mobi],
@@ -46,6 +49,9 @@ export class MetadataExtractionService {
 
     for (const format of METADATA_AUDIO_FORMATS) {
       extractors.set(format, audio);
+    }
+    for (const [format, extractor] of extra) {
+      extractors.set(format, extractor);
     }
     this.extractors = extractors;
   }

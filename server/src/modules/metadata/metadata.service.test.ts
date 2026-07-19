@@ -100,6 +100,7 @@ import { extractAudioMetadata, parseAudioDuration } from './extractors/audio.ext
 import { METADATA_AUTHORS_REPLACED } from './metadata-events.service';
 import { MetadataService } from './metadata.service';
 import { MetadataExtractionService } from './metadata-extraction.service';
+import { JsonSidecarFormatExtractor } from './extractors/json-sidecar-format.extractor';
 
 const mockMkdir = mkdir as MockedFunction<typeof mkdir>;
 const mockReadFile = readFile as MockedFunction<typeof readFile>;
@@ -229,7 +230,7 @@ describe('MetadataService', () => {
     return new MetadataService(
       db as never,
       config as never,
-      new MetadataExtractionService(),
+      new MetadataExtractionService([['json', new JsonSidecarFormatExtractor()]]),
       (overrides?.scoreService ?? { calculateAndSave: vi.fn().mockResolvedValue(undefined) }) as never,
       (overrides?.narratorService ?? { replaceForBook: vi.fn().mockResolvedValue(undefined) }) as never,
       (overrides?.comicMetadataRepository ?? { upsert: vi.fn().mockResolvedValue(undefined) }) as never,

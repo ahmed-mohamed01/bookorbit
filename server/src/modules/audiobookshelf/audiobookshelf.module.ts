@@ -5,6 +5,7 @@ import { BookModule } from '../book/book.module';
 import { LibraryModule } from '../library/library.module';
 import { UserModule } from '../user/user.module';
 import { UserBookStatusModule } from '../user-book-status/user-book-status.module';
+import { AudiobookshelfMetadataModule } from './audiobookshelf-metadata.module';
 import { AudiobookshelfBookStateService } from './audiobookshelf-book-state.service';
 import { AudiobookshelfBooksController } from './audiobookshelf-books.controller';
 import { AudiobookshelfClientService } from './audiobookshelf-client.service';
@@ -17,7 +18,7 @@ import { AudiobookshelfSyncSchedulerService } from './audiobookshelf-sync-schedu
 import { AudiobookshelfSyncService } from './audiobookshelf-sync.service';
 
 @Module({
-  imports: [AchievementModule, BookModule, LibraryModule, UserModule, UserBookStatusModule],
+  imports: [AchievementModule, BookModule, LibraryModule, UserModule, UserBookStatusModule, AudiobookshelfMetadataModule],
   controllers: [AudiobookshelfController, AudiobookshelfBooksController],
   providers: [
     AudiobookshelfClientService,
