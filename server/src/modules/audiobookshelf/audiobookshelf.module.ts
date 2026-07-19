@@ -12,6 +12,7 @@ import { AudiobookshelfClientService } from './audiobookshelf-client.service';
 import { AudiobookshelfController } from './audiobookshelf.controller';
 import { AudiobookshelfMatchService } from './audiobookshelf-match.service';
 import { AudiobookshelfRepository } from './audiobookshelf.repository';
+import { AudiobookshelfSchemaBootstrapService } from './audiobookshelf-schema-bootstrap.service';
 import { AudiobookshelfSessionsService } from './audiobookshelf-sessions.service';
 import { AudiobookshelfSettingsService } from './audiobookshelf-settings.service';
 import { AudiobookshelfSyncSchedulerService } from './audiobookshelf-sync-scheduler.service';
@@ -23,6 +24,7 @@ import { AudiobookshelfSyncService } from './audiobookshelf-sync.service';
   providers: [
     AudiobookshelfClientService,
     AudiobookshelfRepository,
+    AudiobookshelfSchemaBootstrapService,
     AudiobookshelfSettingsService,
     AudiobookshelfMatchService,
     AudiobookshelfBookStateService,
