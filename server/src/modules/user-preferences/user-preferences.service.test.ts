@@ -22,6 +22,7 @@ const validDisplayPreferences: DisplayPreferences = {
   squareGridGap: 20,
   viewMode: 'grid',
   cardOverlays: ['progress-bar', 'format', 'rating'],
+  showJumpRails: true,
   smartScopeFilterExpanded: true,
   authorCoverSize: 140,
   authorCoverShape: 'circle',
@@ -111,6 +112,13 @@ describe('UserPreferencesService', () => {
   it('upsertThemePreferences persists validated settings', async () => {
     await expect(service.upsertThemePreferences(11, validThemePreferences)).resolves.toBeUndefined();
     expect(repo.upsert).toHaveBeenCalledWith(11, 'theme', validThemePreferences);
+  });
+
+  it('upsertThemePreferences accepts the system theme', async () => {
+    const systemThemePreferences = { ...validThemePreferences, theme: 'system' } as const;
+
+    await expect(service.upsertThemePreferences(11, systemThemePreferences)).resolves.toBeUndefined();
+    expect(repo.upsert).toHaveBeenCalledWith(11, 'theme', systemThemePreferences);
   });
 
   it('upsertThemePreferences rejects invalid theme ids', async () => {
@@ -249,6 +257,31 @@ describe('UserPreferencesService', () => {
   it('upsertDisplayPreferences rejects non-boolean showSpineOnComics', async () => {
     await expect(
       service.upsertDisplayPreferences(11, { ...validDisplayPreferences, showSpineOnComics: 'yes' } as unknown as Record<string, unknown>),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(repo.upsert).not.toHaveBeenCalled();
+  });
+
+  it('upsertDisplayPreferences accepts both showJumpRails values', async () => {
+    for (const value of [true, false]) {
+      await expect(
+        service.upsertDisplayPreferences(11, { ...validDisplayPreferences, showJumpRails: value } as unknown as Record<string, unknown>),
+      ).resolves.toBeUndefined();
+      expect(repo.upsert).toHaveBeenCalledWith(11, 'display', expect.objectContaining({ showJumpRails: value }));
+    }
+  });
+
+  it('upsertDisplayPreferences defaults showJumpRails to true when omitted', async () => {
+    const { showJumpRails, ...withoutFlag } = validDisplayPreferences;
+    void showJumpRails;
+
+    await expect(service.upsertDisplayPreferences(11, withoutFlag as unknown as Record<string, unknown>)).resolves.toBeUndefined();
+
+    expect(repo.upsert).toHaveBeenCalledWith(11, 'display', expect.objectContaining({ showJumpRails: true }));
+  });
+
+  it('upsertDisplayPreferences rejects non-boolean showJumpRails', async () => {
+    await expect(
+      service.upsertDisplayPreferences(11, { ...validDisplayPreferences, showJumpRails: 'yes' } as unknown as Record<string, unknown>),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(repo.upsert).not.toHaveBeenCalled();
   });

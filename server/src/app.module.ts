@@ -72,6 +72,7 @@ import { CustomMetadataModule } from './modules/custom-metadata/custom-metadata.
 import { CustomIconModule } from './modules/custom-icon/custom-icon.module';
 import { AccountActivityModule } from './modules/account-activity/account-activity.module';
 import { SharedReadingInsightsModule } from './modules/shared-reading-insights/shared-reading-insights.module';
+import { BookDuplicatesModule } from './modules/book-duplicates/book-duplicates.module';
 
 @Module({
   imports: [
@@ -151,6 +152,7 @@ import { SharedReadingInsightsModule } from './modules/shared-reading-insights/s
     AudiobookshelfModule,
     AccountActivityModule,
     SharedReadingInsightsModule,
+    BookDuplicatesModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },

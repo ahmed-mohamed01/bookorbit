@@ -118,7 +118,7 @@ watchEffect(() => {
   option.value = {}
   if (!hasData.value) return
 
-  const palette = buildHeatmapPalette({ theme: themeStore.theme, profile: 'github' })
+  const palette = buildHeatmapPalette({ theme: themeStore.resolvedTheme, profile: 'github' })
   // Touching accent makes this effect re-run when the palette source changes.
   void themeStore.accent
 

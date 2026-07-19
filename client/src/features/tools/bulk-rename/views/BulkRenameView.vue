@@ -18,8 +18,8 @@ const bulk = useBulkRename()
 
 const showConfirmDialog = ref(false)
 const librarySelectRef = ref<HTMLSelectElement | null>(null)
-const tableViewportRef = ref<HTMLElement | null>(null)
-const { width: tableViewportWidth } = useElementSize(tableViewportRef)
+const viewViewportRef = ref<HTMLElement | null>(null)
+const { width: tableViewportWidth } = useElementSize(viewViewportRef)
 const showFullPaths = ref<boolean>(storage.get<boolean>('tools.bulkRename.showFullPaths', false))
 type BulkRenameColumnVisibility = {
   title: boolean
@@ -89,6 +89,11 @@ function handleLibraryChange(event: Event): void {
     bulk.selectLibrary(id)
     bulk.loadPreview()
   }
+}
+
+function handleShowRenameSettings(): void {
+  viewViewportRef.value?.scrollTo({ top: 0 })
+  librarySelectRef.value?.focus({ preventScroll: true })
 }
 
 function handleSetStatusFilter(value: BulkRenameStatus | undefined): void {
@@ -239,8 +244,8 @@ watch(
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 w-full flex-col gap-4">
-    <section class="rounded-lg border border-border/70 bg-card/50 p-4">
+  <div ref="viewViewportRef" class="flex h-full min-h-0 w-full flex-col gap-4 overflow-y-auto pr-1">
+    <section class="shrink-0 rounded-lg border border-border/70 bg-card/50 p-4">
       <div class="flex flex-col gap-4">
         <div class="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end lg:gap-3">
           <div class="min-w-0 flex flex-col gap-2">
@@ -427,8 +432,18 @@ watch(
         <Loader2 class="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
 
-      <div v-else-if="hasPreview" class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/70 bg-card/40">
-        <div ref="tableViewportRef" class="min-h-0 flex-1 overflow-auto">
+      <div v-else-if="hasPreview" class="shrink-0 rounded-lg border border-border/70 bg-card/40">
+        <div class="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-border/60 bg-background/95 px-3 py-2 backdrop-blur-sm">
+          <p class="text-sm font-medium text-foreground">{{ t('tools.bulkRename.previewToolbar') }}</p>
+          <button
+            class="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            @click="handleShowRenameSettings"
+          >
+            <SlidersHorizontal class="size-4" aria-hidden="true" />
+            {{ t('tools.bulkRename.renameSettings') }}
+          </button>
+        </div>
+        <div class="min-h-0">
           <div class="divide-y divide-border/60 md:hidden">
             <article v-for="(item, idx) in bulk.previewItems.value" :key="item.bookId" class="space-y-2 px-3 py-3">
               <div class="flex items-center justify-between gap-2">
@@ -466,7 +481,7 @@ watch(
               <col v-if="showNewPathColumn" />
               <col class="w-30" />
             </colgroup>
-            <thead class="sticky top-0 z-10 bg-muted/70 backdrop-blur-sm">
+            <thead class="sticky top-12 z-10 bg-muted/70 backdrop-blur-sm">
               <tr>
                 <th class="px-4 py-2.5 text-left font-medium text-muted-foreground">#</th>
                 <th v-if="showTitleColumn" class="w-56 px-4 py-2.5 text-left font-medium text-muted-foreground">

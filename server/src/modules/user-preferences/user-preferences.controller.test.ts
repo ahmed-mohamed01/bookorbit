@@ -41,6 +41,7 @@ const validDisplayPreferences: DisplayPreferences = {
   squareGridGap: 20,
   viewMode: 'grid',
   cardOverlays: ['progress-bar', 'format', 'rating'],
+  showJumpRails: true,
   smartScopeFilterExpanded: true,
   authorCoverSize: 140,
   authorCoverShape: 'circle',

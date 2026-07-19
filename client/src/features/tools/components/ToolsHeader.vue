@@ -22,6 +22,10 @@ const sections = computed<ToolSection[]>(() => {
     result.push({ label: t('tools.header.bulkRename'), routeName: 'tools-bulk-rename' })
   }
 
+  if (hasPermission('library_delete_books')) {
+    result.push({ label: t('tools.header.duplicateBooks'), routeName: 'tools-duplicate-books' })
+  }
+
   return result
 })
 

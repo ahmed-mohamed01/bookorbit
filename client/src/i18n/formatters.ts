@@ -5,6 +5,7 @@ import { i18n } from '@/i18n'
 const numberFormatters = new Map<string, Intl.NumberFormat>()
 const dateTimeFormatters = new Map<string, Intl.DateTimeFormat>()
 const relativeTimeFormatters = new Map<string, Intl.RelativeTimeFormat>()
+const languageNameFormatters = new Map<Locale, Intl.DisplayNames>()
 
 function activeLocale(): Locale {
   return (i18n.global.locale as Ref<Locale>).value
@@ -60,4 +61,18 @@ export function formatRelativeTime(
     relativeTimeFormatters.set(key, formatter)
   }
   return formatter.format(value, unit)
+}
+
+export function formatLanguageName(value: string): string {
+  const locale = activeLocale()
+  let formatter = languageNameFormatters.get(locale)
+  if (!formatter) {
+    formatter = new Intl.DisplayNames([locale], { type: 'language', fallback: 'none' })
+    languageNameFormatters.set(locale, formatter)
+  }
+  try {
+    return formatter.of(value) ?? value
+  } catch {
+    return value
+  }
 }

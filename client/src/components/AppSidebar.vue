@@ -139,6 +139,11 @@ function navigateFromSidebar(to: { name: string; params?: Record<string, string 
   if (isMobile.value) setOpenMobile(false)
 }
 
+function navigateToTools(): void {
+  const name = hasPermission('manage_libraries') ? 'tools-entity-manager' : 'tools-duplicate-books'
+  navigateFromSidebar({ name })
+}
+
 async function onLibrarySaved(library: Library) {
   createLibraryOpen.value = false
   subscribeLibrary(library.id)
@@ -220,12 +225,12 @@ onUnmounted(() => stopLibraryUploadListener())
               @click="navigateFromSidebar({ name: 'series' })"
             />
             <SidebarNavItem
-              v-if="hasPermission('manage_libraries')"
+              v-if="hasPermission('manage_libraries') || hasPermission('library_delete_books')"
               :is-active="isToolsActive"
               :tooltip="t('components.sidebar.tools')"
               :icon="Icons.Wrench"
               :label="t('components.sidebar.tools')"
-              @click="navigateFromSidebar({ name: 'tools-entity-manager' })"
+              @click="navigateToTools"
             />
           </SidebarMenu>
         </SidebarGroupContent>

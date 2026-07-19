@@ -32,7 +32,7 @@ describe('locale store', () => {
     expect(matchSupportedLocale(['nl-NL', 'en-US'])).toBe('nl')
     expect(matchSupportedLocale(['de-DE', 'en-GB'])).toBe('de')
     expect(matchSupportedLocale(['nl-BE', 'en'])).toBe('nl')
-    expect(matchSupportedLocale(['pt-BR'])).toBeNull()
+    expect(matchSupportedLocale(['pt-BR'])).toBe('pt')
   })
 
   it('prefers the stored locale over browser detection', async () => {

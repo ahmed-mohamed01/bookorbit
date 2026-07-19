@@ -46,7 +46,7 @@ watchEffect(() => {
   const weekdayCounts = weekdayOccurrencesInWindow(DAYS_WINDOW)
   const denominatorFor = (dayOfWeek: number) => Math.max(1, weekdayCounts[dayOfWeek] ?? 1)
   const formatKeys = [...new Set(data.value.flatMap((item) => Object.keys(item.byFormat)))].sort()
-  const seriesMeta = getBreakdownSeries(dimension.value, `${themeStore.theme}:${themeStore.accent}`, formatKeys)
+  const seriesMeta = getBreakdownSeries(dimension.value, `${themeStore.resolvedTheme}:${themeStore.accent}`, formatKeys)
 
   const series = seriesMeta.map((meta) => ({
     type: 'bar',

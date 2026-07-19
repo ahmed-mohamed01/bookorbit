@@ -20,7 +20,7 @@ const option = shallowRef({})
 watchEffect(() => {
   if (!data.value.items.length) return
 
-  const palette = getThemePalette(themeStore.theme, themeStore.accent, 0.85, 0.85)
+  const palette = getThemePalette(themeStore.resolvedTheme, themeStore.accent, 0.85, 0.85)
   const background = readCssColor('--background')
 
   option.value = {

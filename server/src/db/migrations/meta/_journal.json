@@ -376,36 +376,22 @@
     {
       "idx": 53,
       "version": "7",
-      "when": 1784221311618,
-      "tag": "0053_add-audiobookshelf-foundations",
+      "when": 1783973564941,
+      "tag": "0053_koreader_device_file_naming",
       "breakpoints": true
     },
     {
       "idx": 54,
       "version": "7",
-      "when": 1784241077310,
-      "tag": "0054_abs_book_state_display_fields",
+      "when": 1784079674841,
+      "tag": "0054_add_book_duplicate_scans",
       "breakpoints": true
     },
     {
       "idx": 55,
       "version": "7",
-      "when": 1784291257414,
-      "tag": "0055_audiobookshelf-library-selection",
-      "breakpoints": true
-    },
-    {
-      "idx": 56,
-      "version": "7",
-      "when": 1784313799973,
-      "tag": "0056_manual-unlinked-abs-state",
-      "breakpoints": true
-    },
-    {
-      "idx": 57,
-      "version": "7",
-      "when": 1784319481615,
-      "tag": "0057_abs_correctness_scale_columns",
+      "when": 1784463918214,
+      "tag": "0055_audiobookshelf_integration",
       "breakpoints": true
     }
   ]

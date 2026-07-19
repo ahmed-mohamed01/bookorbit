@@ -86,10 +86,15 @@ for (const [locale, catalog] of catalogs) {
       continue
     }
     if (message.length === 0) errors.push(`${locale}: empty message ${key}`)
+    if (message.includes('\u2014')) errors.push(`${locale}: Unicode em dash is not allowed in ${key}`)
     if (/<[^>]+>/.test(message)) errors.push(`${locale}: HTML is not allowed in ${key}`)
     if (placeholders(message).join(',') !== placeholders(referenceMessage).join(',')) {
       errors.push(`${locale}: placeholders differ for ${key}`)
     }
+    const referenceIsPlural = referenceMessage.includes(' | ')
+    const messageIsPlural = message.includes(' | ')
+    if (referenceIsPlural && !messageIsPlural) errors.push(`${locale}: plural branches missing for ${key}`)
+    if (!referenceIsPlural && messageIsPlural) errors.push(`${locale}: unexpected plural branches in ${key}`)
     if (message.includes(' | ') && message.split(' | ').some((branch) => branch.trim().length === 0)) {
       errors.push(`${locale}: empty plural branch in ${key}`)
     }

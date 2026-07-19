@@ -6,6 +6,7 @@ export * from './custom-icons';
 export * from './migration';
 export * from './libraries';
 export * from './books';
+export * from './book-duplicates';
 export * from './collections';
 export * from './smart-scopes';
 export * from './series';

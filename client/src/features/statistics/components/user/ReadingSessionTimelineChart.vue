@@ -68,7 +68,7 @@ const { t } = useI18n()
 const { filters } = useStatisticsConfig()
 const { coverUrl } = useCoverVersions()
 const themeStore = useThemeStore()
-const themeKey = computed(() => `${themeStore.theme}:${themeStore.accent}`)
+const themeKey = computed(() => `${themeStore.resolvedTheme}:${themeStore.accent}`)
 const dimension = ref<BreakdownDimension>(DEFAULT_BREAKDOWN_DIMENSION)
 
 const now = new Date()

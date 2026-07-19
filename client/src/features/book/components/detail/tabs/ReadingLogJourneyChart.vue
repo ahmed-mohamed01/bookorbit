@@ -15,7 +15,7 @@ const props = defineProps<{
 
 const { t } = useI18n()
 const themeStore = useThemeStore()
-const chartTheme = computed(() => getBookorbitThemeName(themeStore.theme, themeStore.accent))
+const chartTheme = computed(() => getBookorbitThemeName(themeStore.resolvedTheme, themeStore.accent))
 const option = shallowRef({})
 
 onMounted(() => initChartThemes())

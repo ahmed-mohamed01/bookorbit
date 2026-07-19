@@ -25,7 +25,7 @@ const isEmpty = computed(() => totalEvents.value === 0)
 const lowConfidence = computed(() => totalEvents.value > 0 && activeDays.value < MIN_ACTIVE_DAYS)
 const heatmapPaletteState = computed(() => ({
   accent: themeStore.accent,
-  palette: buildHeatmapPalette({ theme: themeStore.theme, profile: 'github' }),
+  palette: buildHeatmapPalette({ theme: themeStore.resolvedTheme, profile: 'github' }),
 }))
 
 function buildContributionPieces(scale: string[]) {

@@ -20,7 +20,7 @@ const themeRefs = activePinia ? storeToRefs(useThemeStore(activePinia)) : null
 const p = computed(() =>
   bookCoverPalette(props.seed, {
     accent: themeRefs?.accent.value,
-    isDark: themeRefs?.theme.value === 'dark',
+    isDark: themeRefs?.resolvedTheme.value === 'dark',
   }),
 )
 

@@ -83,7 +83,8 @@
       "mobileSummary": "Theme: {theme} • Accent: {accent} • Background: {background}",
       "themeMode": {
         "light": "Light",
-        "dark": "Dark"
+        "dark": "Dark",
+        "system": "System"
       },
       "theme": {
         "title": "Theme",
@@ -1645,6 +1646,7 @@
         "modFirst": "First value only",
         "modSort": "Last, First format",
         "modInitial": "First letter only",
+        "modFixed2": "Two decimal places",
         "folderOnlyPrefix": "End a pattern with",
         "folderOnlySuffix": "to specify a folder only. The original filename will be preserved inside it.",
         "conditionalLogic": "Conditional Logic",
@@ -1853,6 +1855,40 @@
       "koreader": {
         "title": "KOReader Sync",
         "subtitle": "Browse your BookOrbit catalog in KOReader and sync progress, reading activity, highlights, and annotation changes.",
+        "tabs": {
+          "sync": "Sync Settings",
+          "fileNaming": "File Naming"
+        },
+        "fileNaming": {
+          "accountTitle": "Account default KOReader pattern",
+          "accountDescription": "Sets the default relative folder and filename used by BookOrbit plugin downloads for your KOReader account. Device-specific rules can override it below.",
+          "defaultPattern": "Default book path pattern",
+          "accountHelp": "Your account default for KOReader plugin downloads unless a device has a custom rule.",
+          "accountHint": "Used by your KOReader devices that do not have a custom override.",
+          "preview": "Preview",
+          "saveAccount": "Save account default",
+          "deviceTitle": "KOReader device overrides",
+          "deviceDescription": "Customize any combination of default, series, and standalone paths. Empty device-specific rows inherit the device default, which itself can inherit the account default KOReader pattern.",
+          "noDevices": "Devices appear here after they sync with BookOrbit.",
+          "customOrganization": "Custom organization",
+          "usingAccountDefault": "Using account default",
+          "deviceDefaultHelp": "Fallback for this device. Leave it equal to the account default to inherit future changes automatically.",
+          "seriesBooks": "Books in a series",
+          "seriesHelp": "Optional path used only for books with series metadata. Leave empty to use this device's default path pattern.",
+          "standaloneBooks": "Books without a series",
+          "standaloneHelp": "Optional path used only for books without series metadata. Leave empty to use this device's default path pattern.",
+          "inheritPlaceholder": "Leave empty to use this device's default pattern",
+          "useAccount": "Use account default",
+          "saveOverride": "Save override",
+          "loadFailed": "Failed to load file organization settings",
+          "accountRequired": "Enter a default book path pattern before saving.",
+          "accountSaved": "Account default KOReader pattern saved",
+          "accountSaveFailed": "Failed to save file organization settings",
+          "deviceUsesAccount": "Device now uses the account default KOReader pattern",
+          "deviceSaved": "Device organization override saved",
+          "deviceSaveFailed": "Failed to save device override",
+          "deviceResetFailed": "Failed to reset device override"
+        },
         "loadingSettings": "Loading KOReader settings...",
         "loadFailed": "Failed to load KOReader settings",
         "never": "Never",
@@ -2986,7 +3022,9 @@
     },
     "jumpRail": {
       "jumpToSection": "Jump to section",
-      "jumpTo": "Jump to {label}"
+      "jumpTo": "Jump to {label}",
+      "unknownDate": "Unknown date",
+      "unknownValue": "Unknown value"
     },
     "quickView": {
       "title": "Book quick view",
@@ -3054,8 +3092,7 @@
         "moreLikeThis": "More Like This"
       },
       "series": {
-        "moreInSeriesPrefix": "More in the",
-        "moreInSeriesSuffix": "series"
+        "moreInSeries": "More in the {series} series"
       },
       "writeRename": {
         "written": "no fields written | Written (one field) | Written ({count} fields)",
@@ -4050,6 +4087,7 @@
         "display": "Display",
         "coverSize": "Cover size",
         "gridGap": "Grid gap",
+        "showJumpRails": "Show jump rails",
         "columnsHint": "Use the column visibility panel in the table header to show or hide columns.",
         "coverShape": "Cover shape",
         "circle": "Circle",
@@ -4076,7 +4114,8 @@
     },
     "themePicker": {
       "light": "Light",
-      "dark": "Dark"
+      "dark": "Dark",
+      "system": "System"
     },
     "userAvatar": {
       "profilePicture": "Profile picture",
@@ -5782,7 +5821,8 @@
   "tools": {
     "header": {
       "entityManager": "Entity Manager",
-      "bulkRename": "Bulk Rename"
+      "bulkRename": "Bulk Rename",
+      "duplicateBooks": "Duplicate Books"
     },
     "entityTypes": {
       "authors": "Authors",
@@ -5794,6 +5834,8 @@
       "series": "Series"
     },
     "bulkRename": {
+      "previewToolbar": "Rename preview",
+      "renameSettings": "Rename settings",
       "library": "Library",
       "selectLibraryPlaceholder": "Select a library...",
       "noEligibleLibraries": "No libraries have file rename enabled. Enable it in Library Settings.",
@@ -5846,6 +5888,78 @@
         "body": "This will rename {count} book on disk. Files with collisions or errors will be skipped. This action cannot be undone. | This will rename {count} book on disk. Files with collisions or errors will be skipped. This action cannot be undone. | This will rename {count} books on disk. Files with collisions or errors will be skipped. This action cannot be undone.",
         "renameButton": "Rename {count} book | Rename {count} book | Rename {count} books"
       }
+    },
+    "bookDuplicates": {
+      "scanSettings": "Scan settings",
+      "title": "Duplicate Books",
+      "description": "Scan files and metadata for potential duplicate records. Nothing is deleted during a scan.",
+      "scope": "Library scope",
+      "allLibraries": "All accessible libraries",
+      "similarity": "Similar-title threshold",
+      "explainSimilarity": "Explain the similar-title threshold",
+      "similarityHelp": "Only for Similar title and author matches. At least one author and the book type must also match. Lower finds more possible duplicates; higher requires closer titles. Identical files, ISBN, and exact metadata are checked separately.",
+      "runScan": "Run scan",
+      "rescan": "Rescan",
+      "status": { "queued": "Scan queued", "running": "Scanning books" },
+      "groupsFound": "No duplicate groups | One duplicate group | {count} duplicate groups",
+      "filter": "Match type",
+      "allReasons": "All match types",
+      "reasons": {
+        "file_hash": "Identical file set",
+        "isbn": "Same ISBN",
+        "exact_metadata": "Exact title and authors",
+        "fuzzy_metadata": "Similar title and author"
+      },
+      "similarityValue": "{percent}% title similarity",
+      "notDuplicates": "Not duplicates",
+      "keepThis": "Keep this book",
+      "discardThis": "Discard this book",
+      "selectKeeperFirst": "Select a keeper first",
+      "noDirectMatch": "No direct match with keeper",
+      "moreFiles": "+{count} more",
+      "showDetails": "Show details",
+      "hideDetails": "Hide details",
+      "deleteSelected": "Delete {count} selected",
+      "openBook": "Open details for {title}",
+      "unknownAuthor": "Unknown author",
+      "unknown": "Unknown",
+      "none": "None",
+      "accessDenied": "You do not have permission to use the duplicate book tool.",
+      "pairDetails": "Match details",
+      "pairLabel": "{first} and {second}",
+      "fields": {
+        "library": "Library",
+        "isbn": "ISBN",
+        "formats": "Formats",
+        "fileLocation": "File",
+        "files": "Files",
+        "readingStatus": "Reading status",
+        "progress": "Progress",
+        "path": "Library path",
+        "collections": "Collections",
+        "added": "Added",
+        "updated": "Updated"
+      },
+      "initial": {
+        "title": "Find duplicate books",
+        "description": "Choose a library scope and similarity level, then run a scan. No books are changed until you explicitly confirm a deletion."
+      },
+      "empty": { "title": "No duplicate groups found", "description": "No books matched the current scope, similarity level, and match filter." },
+      "deleteDialog": {
+        "title": "Permanently delete duplicate books?",
+        "description": "This will permanently delete {count} selected book and its files. | This will permanently delete {count} selected book and its files. | This will permanently delete {count} selected books and their files.",
+        "warning": "Metadata, collections, reading data, and device state are not transferred to the kept book. Associated data for other users is also removed.",
+        "confirm": "Delete {count} book | Delete {count} book | Delete {count} books",
+        "success": "No books deleted | One duplicate book deleted | {count} duplicate books deleted"
+      },
+      "errors": {
+        "start": "Could not start the duplicate scan.",
+        "status": "Could not load scan progress.",
+        "scan": "The duplicate scan failed. Try running it again.",
+        "results": "Could not load duplicate groups.",
+        "delete": "Could not delete the selected duplicate books."
+      },
+      "pagination": { "label": "Duplicate groups pages", "page": "Page {page} of {total}" }
     },
     "entityManager": {
       "unknown": "Unknown",
@@ -6138,6 +6252,7 @@
     "series": "Series",
     "entityManager": "Entity Manager",
     "bulkRename": "Bulk Rename",
+    "duplicateBooks": "Duplicate Books",
     "notFound": "Not Found",
     "signIn": "Sign In",
     "initialSetup": "Initial Setup",

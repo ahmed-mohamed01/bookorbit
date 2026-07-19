@@ -47,6 +47,7 @@ const DISPLAY_PREFERENCES_SCHEMA = z
     squareGridGap: z.number().int().min(1).max(80),
     viewMode: z.enum(BOOK_VIEW_MODES),
     cardOverlays: z.array(z.enum(CARD_OVERLAY_KEYS)),
+    showJumpRails: z.boolean().default(true),
     smartScopeFilterExpanded: z.boolean(),
     authorCoverSize: z.number().int().min(100).max(400),
     authorCoverShape: z.enum(AUTHOR_COVER_SHAPES),

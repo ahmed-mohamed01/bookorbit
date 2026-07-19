@@ -34,7 +34,7 @@ watchEffect(() => {
   option.value = {}
   if (isEmpty.value) return
 
-  const colors = resolveSourceBucketColors(`${themeStore.theme}:${themeStore.accent}`)
+  const colors = resolveSourceBucketColors(`${themeStore.resolvedTheme}:${themeStore.accent}`)
 
   option.value = {
     tooltip: {

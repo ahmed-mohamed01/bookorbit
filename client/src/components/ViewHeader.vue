@@ -21,6 +21,8 @@ withDefaults(
     total: number
     coverSize: number
     gridGap: number
+    showJumpRailToggle?: boolean
+    showJumpRails?: boolean
     viewMode: BookViewMode
     selectionMode?: boolean
     showSelection?: boolean
@@ -56,6 +58,7 @@ withDefaults(
 const emit = defineEmits<{
   'update:coverSize': [value: number]
   'update:gridGap': [value: number]
+  'update:showJumpRails': [value: boolean]
   'update:viewMode': [value: BookViewMode]
   'toggle-selection': []
   'update:coverShape': [value: 'square' | 'circle']
@@ -66,6 +69,10 @@ const { t } = useI18n()
 
 const mobileDisplayOpen = ref(false)
 const mobileSearchOpen = ref(false)
+
+function handleShowJumpRailsUpdate(value: boolean) {
+  emit('update:showJumpRails', value)
+}
 </script>
 
 <template>
@@ -149,6 +156,8 @@ const mobileSearchOpen = ref(false)
             :view-mode="viewMode"
             :cover-size="coverSize"
             :grid-gap="gridGap"
+            :show-jump-rail-toggle="showJumpRailToggle"
+            :show-jump-rails="showJumpRails"
             :cover-shape="coverShape"
             :cover-size-min="coverSizeMin"
             :cover-size-max="coverSizeMax"
@@ -158,6 +167,7 @@ const mobileSearchOpen = ref(false)
             :grid-gap-step="gridGapStep"
             @update:cover-size="emit('update:coverSize', $event)"
             @update:grid-gap="emit('update:gridGap', $event)"
+            @update:show-jump-rails="handleShowJumpRailsUpdate"
             @update:cover-shape="emit('update:coverShape', $event)"
           >
             <template #columns>
@@ -201,6 +211,8 @@ const mobileSearchOpen = ref(false)
           :view-mode="viewMode"
           :cover-size="coverSize"
           :grid-gap="gridGap"
+          :show-jump-rail-toggle="showJumpRailToggle"
+          :show-jump-rails="showJumpRails"
           :cover-shape="coverShape"
           :cover-size-min="coverSizeMin"
           :cover-size-max="coverSizeMax"
@@ -210,6 +222,7 @@ const mobileSearchOpen = ref(false)
           :grid-gap-step="gridGapStep"
           @update:cover-size="emit('update:coverSize', $event)"
           @update:grid-gap="emit('update:gridGap', $event)"
+          @update:show-jump-rails="handleShowJumpRailsUpdate"
           @update:cover-shape="emit('update:coverShape', $event)"
         >
           <template #columns>

@@ -40,7 +40,7 @@ watchEffect(() => {
   if (isEmpty.value || lowConfidence.value || !data.value.length) return
 
   const formatKeys = [...new Set(data.value.flatMap((item) => Object.keys(item.byFormat)))].sort()
-  const seriesMeta = getBreakdownSeries(dimension.value, `${themeStore.theme}:${themeStore.accent}`, formatKeys)
+  const seriesMeta = getBreakdownSeries(dimension.value, `${themeStore.resolvedTheme}:${themeStore.accent}`, formatKeys)
   const series = seriesMeta.map((meta) => ({
     type: 'bar',
     name: meta.label,

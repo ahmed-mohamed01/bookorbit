@@ -35,7 +35,7 @@ import {
   MetadataProviderKey,
   Permission,
   isAudioFormat,
-  jumpBucketKindForSort,
+  jumpRailStrategyForSort,
   resolveUploadPath,
 } from '@bookorbit/types';
 import type {
@@ -50,6 +50,7 @@ import type {
   BooksPage,
   FileRenameResult,
   JumpBucketsResponse,
+  JumpBucketsQuery,
   MetadataFetchDiagnostics,
   MetadataField,
   ReadStatus,
@@ -77,7 +78,6 @@ import { UserBookStatusService, type AutoReadingActivity } from '../user-book-st
 import { AchievementEventsService, ACHIEVEMENT_EVENT_BOOK_RATING_CHANGED } from '../achievement/achievement-events.service';
 import { BookMetadataLockService } from '../book-metadata-lock/book-metadata-lock.service';
 import { BookQueryBuilder } from './book-query-builder.service';
-import { collapsedJumpBucketExpr, flatJumpBucketExpr } from './jump-bucket-expr';
 import { BookRepository } from './book.repository';
 import { ComicMetadataRepository } from '../metadata/comic-metadata.repository';
 import { CustomMetadataService } from '../custom-metadata/custom-metadata.service';
@@ -1111,7 +1111,7 @@ export class BookService {
     return result;
   }
 
-  async queryJumpBucketsForLibrary(user: RequestUser, libraryId: number, query: BookQuery): Promise<JumpBucketsResponse> {
+  async queryJumpBucketsForLibrary(user: RequestUser, libraryId: number, query: JumpBucketsQuery): Promise<JumpBucketsResponse> {
     await this.libraryService.verifyUserAccess(user.id, libraryId, this.isSuperuser(user));
     const timeZone = this.resolveUserTimeZone(user);
     const where = this.queryBuilder.buildWhere(query.filter, {
@@ -1122,24 +1122,47 @@ export class BookService {
       timeZone,
       contentFilters: this.isSuperuser(user) ? undefined : user.contentFilters,
     });
-    return this.executeJumpBucketsQuery(user.id, where, query);
+    return this.executeJumpBucketsQuery(user.id, where, query, timeZone);
   }
 
-  async executeJumpBucketsQuery(userId: number, where: SQL | undefined, query: BookQuery): Promise<JumpBucketsResponse> {
+  async executeJumpBucketsQuery(userId: number, where: SQL | undefined, query: JumpBucketsQuery, timeZone = 'UTC'): Promise<JumpBucketsResponse> {
     const event = 'book.jump_buckets';
-    const kind = jumpBucketKindForSort(query.sort);
-    const primaryField = (query.sort[0] ?? { field: 'title', dir: 'asc' }).field;
+    const strategy = jumpRailStrategyForSort(query.sort);
+    const kind = strategy?.kind ?? null;
+    const primary = query.sort[0] ?? { field: 'title' as const, dir: 'asc' as const };
     const shouldCollapse = query.collapseSeries === true && !BookQueryBuilder.hasSeriesSelectionFilter(query.filter);
-    const bucketExpr = shouldCollapse ? collapsedJumpBucketExpr(primaryField) : flatJumpBucketExpr(primaryField);
-    if (!kind || !bucketExpr) throw new BadRequestException('jump buckets are not available for this sort');
+    if (!strategy) throw new BadRequestException('jump buckets are not available for this sort');
 
     const start = Date.now();
     try {
-      const response = shouldCollapse
-        ? await this.bookRepo.findJumpBucketsCollapsed({ where, bucketExpr, sort: query.sort, userId })
-        : await this.bookRepo.findJumpBuckets({ where, bucketExpr, orderBy: this.queryBuilder.buildOrderBy(query.sort, userId) });
+      let response: JumpBucketsResponse;
+      if (strategy.kind === 'temporal') {
+        const temporalOpts = {
+          where,
+          field: primary.field,
+          direction: primary.dir,
+          precision: strategy.precision,
+          userId,
+          timeZone,
+          maxBuckets: query.maxBuckets,
+        };
+        response = shouldCollapse
+          ? await this.bookRepo.findTemporalJumpBucketsCollapsed(temporalOpts)
+          : await this.bookRepo.findTemporalJumpBuckets(temporalOpts);
+      } else {
+        const discreteOpts = {
+          where,
+          field: primary.field,
+          kind: strategy.kind,
+          userId,
+          maxBuckets: query.maxBuckets,
+        };
+        response = shouldCollapse
+          ? await this.bookRepo.findJumpBucketsCollapsed({ ...discreteOpts, sort: query.sort })
+          : await this.bookRepo.findJumpBuckets({ ...discreteOpts, orderBy: this.queryBuilder.buildOrderBy(query.sort, userId) });
+      }
       this.logger.log(
-        `[${event}] [end] userId=${userId} kind=${kind} collapse=${shouldCollapse} durationMs=${Date.now() - start} bucketCount=${response.buckets.length} total=${response.total} - jump buckets computed`,
+        `[${event}] [end] userId=${userId} kind=${kind} collapse=${shouldCollapse} maxBuckets=${query.maxBuckets} durationMs=${Date.now() - start} bucketCount=${response.buckets.length} total=${response.total} - jump buckets computed`,
       );
       return response;
     } catch (err) {
@@ -1342,12 +1365,21 @@ export class BookService {
 
       let newAbsolutePath = file.absolutePath;
       if (dto.filename && dto.filename !== basename(file.absolutePath)) {
-        if (dto.filename.includes('/') || dto.filename.includes('\\')) {
-          throw new BadRequestException('Filename cannot contain path separators');
+        const safeFilename = basename(dto.filename);
+        if (
+          safeFilename !== dto.filename ||
+          safeFilename === '.' ||
+          safeFilename === '..' ||
+          safeFilename.includes('\\') ||
+          safeFilename.includes('\0') ||
+          Buffer.byteLength(safeFilename, 'utf8') > 255
+        ) {
+          throw new BadRequestException('Filename is invalid');
         }
-        newAbsolutePath = join(dirname(file.absolutePath), dto.filename);
+        newAbsolutePath = join(dirname(file.absolutePath), safeFilename);
         if (newAbsolutePath !== file.absolutePath) {
           try {
+            // codeql[js/path-injection] basename constrains the user-provided value to one validated filename segment.
             await rename(file.absolutePath, newAbsolutePath);
           } catch (err) {
             throw new BadRequestException(`Failed to rename file on disk: ${err instanceof Error ? err.message : String(err)}`);

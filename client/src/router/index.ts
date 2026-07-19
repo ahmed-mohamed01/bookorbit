@@ -358,6 +358,12 @@ export const routes: RouteRecordRaw[] = [
             component: () => import('@/features/tools/bulk-rename/views/BulkRenameView.vue'),
             meta: { title: () => t('titles.bulkRename') },
           },
+          {
+            path: 'duplicate-books',
+            name: 'tools-duplicate-books',
+            component: () => import('@/features/tools/book-duplicates/views/BookDuplicatesView.vue'),
+            meta: { title: () => t('titles.duplicateBooks') },
+          },
           { path: ':pathMatch(.*)*', redirect: { name: 'tools-entity-manager' } },
         ],
       },

@@ -111,11 +111,13 @@ async function handleOidcLogin(provider: OidcProviderPublic) {
       <Tooltip>
         <TooltipTrigger as-child>
           <button class="theme-btn" @click="themeStore.toggleTheme()">
-            <Sun v-if="themeStore.theme === 'dark'" :size="14" />
+            <Sun v-if="themeStore.resolvedTheme === 'dark'" :size="14" />
             <Moon v-else :size="14" />
           </button>
         </TooltipTrigger>
-        <TooltipContent>{{ themeStore.theme === 'dark' ? t('auth.themePicker.switchToLight') : t('auth.themePicker.switchToDark') }}</TooltipContent>
+        <TooltipContent>{{
+          themeStore.resolvedTheme === 'dark' ? t('auth.themePicker.switchToLight') : t('auth.themePicker.switchToDark')
+        }}</TooltipContent>
       </Tooltip>
 
       <!-- Radius picker -->

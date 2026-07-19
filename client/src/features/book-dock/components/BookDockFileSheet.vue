@@ -10,6 +10,7 @@ import {
   type MetadataCandidate,
   type MetadataSource,
   type MetadataProviderKey,
+  type ProviderIds,
 } from '@bookorbit/types'
 import BookDockStatusBadge from './BookDockStatusBadge.vue'
 import MetadataSearchPanel from '@/features/book/components/detail/tabs/MetadataSearchPanel.vue'
@@ -64,11 +65,13 @@ const form = reactive({
   genres: '',
 })
 const selectedCoverUrl = ref('')
+const passthroughMetadata = ref<BookDockMetadata>({})
 
 watch(
   () => props.file.id,
   () => {
     const m = meta.value
+    passthroughMetadata.value = { ...m }
     form.title = m.title ?? ''
     form.subtitle = m.subtitle ?? ''
     form.authors = m.authors?.join(', ') ?? ''
@@ -114,6 +117,7 @@ onUnmounted(() => {
 
 function buildMetadataPatchFromForm(): Partial<BookDockMetadata> {
   return {
+    ...passthroughMetadata.value,
     title: form.title || undefined,
     subtitle: form.subtitle || undefined,
     authors: form.authors
@@ -215,7 +219,7 @@ const currentSource = computed<MetadataSource>(() => ({
   publishedDate: form.publishedDate || null,
   publishedYear: form.publishedYear ? ((n) => (isNaN(n) ? null : n))(parseInt(form.publishedYear, 10)) : null,
   language: form.language || null,
-  pageCount: null,
+  pageCount: passthroughMetadata.value.pageCount ?? null,
   seriesName: form.seriesName || null,
   seriesIndex: form.seriesIndex ? ((n) => (isNaN(n) ? null : n))(parseFloat(form.seriesIndex)) : null,
   isbn10: form.isbn10 || null,
@@ -232,11 +236,31 @@ const currentSource = computed<MetadataSource>(() => ({
         .map((g) => g.trim())
         .filter(Boolean)
     : [],
-  narrators: [],
-  durationSeconds: null,
-  abridged: null,
-  hardcoverEditionId: null,
-  communityRatings: [],
+  narrators: passthroughMetadata.value.narrators ?? [],
+  durationSeconds: passthroughMetadata.value.durationSeconds ?? null,
+  abridged: passthroughMetadata.value.abridged ?? null,
+  hardcoverEditionId: passthroughMetadata.value.hardcoverEditionId ?? null,
+  communityRatings: (passthroughMetadata.value.communityRatings ?? []).map((rating) => ({
+    ...rating,
+    ratingCount: rating.ratingCount ?? null,
+    updatedAt: null,
+  })),
+}))
+
+const providerIds = computed<ProviderIds>(() => ({
+  google: passthroughMetadata.value.googleBooksId ?? null,
+  goodreads: passthroughMetadata.value.goodreadsId ?? null,
+  amazon: passthroughMetadata.value.amazonId ?? null,
+  hardcover: passthroughMetadata.value.hardcoverId ?? null,
+  openLibrary: passthroughMetadata.value.openLibraryId ?? null,
+  itunes: passthroughMetadata.value.itunesId ?? null,
+  audible: passthroughMetadata.value.audibleId ?? null,
+  librofm: passthroughMetadata.value.librofmId ?? null,
+  kobo: passthroughMetadata.value.koboId ?? null,
+  comicvine: passthroughMetadata.value.comicvineId ?? null,
+  ranobedb: passthroughMetadata.value.ranobedbId ?? null,
+  lubimyczytac: passthroughMetadata.value.lubimyczytacId ?? null,
+  aladin: passthroughMetadata.value.aladinId ?? null,
 }))
 
 function openSearch() {
@@ -265,6 +289,9 @@ function backFromDiff() {
 
 async function handleApply(patch: { formPatch: MetadataPatch; coverUrl?: string }) {
   const p = patch.formPatch
+  const bookDockPatch = { ...p }
+  delete bookDockPatch.customMetadata
+  passthroughMetadata.value = { ...passthroughMetadata.value, ...bookDockPatch }
   if ('title' in p) form.title = p.title ?? ''
   if ('subtitle' in p) form.subtitle = p.subtitle ?? ''
   if ('description' in p) form.description = p.description ?? ''
@@ -281,6 +308,7 @@ async function handleApply(patch: { formPatch: MetadataPatch; coverUrl?: string 
 
   if (patch.coverUrl !== undefined) {
     selectedCoverUrl.value = patch.coverUrl
+    passthroughMetadata.value.coverUrl = patch.coverUrl
   }
 
   if (debounceTimer) {
@@ -330,19 +358,27 @@ function openFetchedDiff() {
     provider: 'auto' as MetadataProviderKey,
     providerId: '',
     title: f.title ?? '',
-    subtitle: f.subtitle,
+    subtitle: f.subtitle ?? undefined,
     authors: f.authors,
-    description: f.description,
-    publisher: f.publisher,
-    publishedYear: f.publishedYear,
-    language: f.language,
-    pageCount: f.pageCount,
-    isbn10: f.isbn10,
-    isbn13: f.isbn13,
-    seriesName: f.seriesName,
-    seriesIndex: f.seriesIndex,
+    description: f.description ?? undefined,
+    publisher: f.publisher ?? undefined,
+    publishedDate: f.publishedDate ?? undefined,
+    publishedYear: f.publishedYear ?? undefined,
+    language: f.language ?? undefined,
+    pageCount: f.pageCount ?? undefined,
+    isbn10: f.isbn10 ?? undefined,
+    isbn13: f.isbn13 ?? undefined,
+    seriesName: f.seriesName ?? undefined,
+    seriesIndex: f.seriesIndex ?? undefined,
     genres: f.genres,
-    coverUrl: f.coverUrl,
+    coverUrl: f.coverUrl ?? undefined,
+    narrators: f.narrators,
+    durationSeconds: f.durationSeconds ?? undefined,
+    abridged: f.abridged ?? undefined,
+    hardcoverEditionId: f.hardcoverEditionId ?? undefined,
+    seriesMemberships: f.seriesMemberships ?? undefined,
+    chapters: f.chapters ?? undefined,
+    comicMetadata: f.comicMetadata ?? undefined,
   }
   diffSource.value = 'fetched'
   metaView.value = 'diff'
@@ -628,7 +664,7 @@ onMounted(() => {
             :providers="providers"
             :back-label="diffSource === 'fetched' ? t('common.back') : t('bookDock.sheet.results')"
             :current-cover-url="currentBookDockCoverUrl"
-            :provider-ids="(file.fetchedMetadataSources as any) ?? undefined"
+            :provider-ids="providerIds"
             @back="backFromDiff"
             @apply="handleApply"
           />

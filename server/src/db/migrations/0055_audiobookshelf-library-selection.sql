@@ -1,1 +1,0 @@
-ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN "excluded_library_ids" text[] DEFAULT '{}'::text[] NOT NULL;

@@ -34,7 +34,7 @@ watchEffect(() => {
     return parseFloat(((running / total) * 100).toFixed(1))
   })
 
-  const palette = getThemePalette(themeStore.theme, themeStore.accent)
+  const palette = getThemePalette(themeStore.resolvedTheme, themeStore.accent)
   const primary = palette[0] ?? '#6b7280'
   const mutedColor = readCssColor('--muted-foreground')
 

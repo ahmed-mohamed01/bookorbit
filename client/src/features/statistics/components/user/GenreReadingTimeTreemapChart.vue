@@ -28,7 +28,7 @@ watchEffect(() => {
   option.value = {}
   if (isEmpty.value || !hasEnoughData.value || !data.value.length) return
 
-  const palette = getThemePalette(themeStore.theme, themeStore.accent, 0.8, 0.8)
+  const palette = getThemePalette(themeStore.resolvedTheme, themeStore.accent, 0.8, 0.8)
   const background = readCssColor('--background')
   const bySourceByGenre = new Map(data.value.map((item) => [item.genre, item.bySource]))
 

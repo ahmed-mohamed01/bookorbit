@@ -65,12 +65,11 @@ const route = useRoute()
 const router = useRouter()
 const { viewMode, effectiveViewMode } = useEffectiveViewMode()
 const { hasPermission, isDemoRestrictedAccount } = usePermissions()
-const { smartScopeFilterExpanded } = useDisplaySettings()
+const { smartScopeFilterExpanded, tableDensity, showJumpRails } = useDisplaySettings()
 
 const smartScopeId = shallowRef(Number(route.params.id))
 const coverAspectRatio = computed(() => DEFAULT_COVER_ASPECT_RATIO)
 const { coverSize, gridGap } = useViewDisplaySettings('smartScope', smartScopeId, coverAspectRatio)
-const { tableDensity } = useDisplaySettings()
 const { allSavedViews, saveView, renameView, deleteView, duplicateView, toggleFavorite, importViews } = useSavedViews('smartScope', smartScopeId)
 
 const { getEffectivePreference, setPreference, prefs } = useSeriesCollapsePreference()
@@ -85,6 +84,7 @@ watch(prefs, () => {
 })
 
 const { searchQuery, debouncedQuery, clearSearch } = useViewSearch()
+const mainRef = ref<HTMLElement | null>(null)
 const {
   booksProxy: books,
   slots,
@@ -103,6 +103,9 @@ const {
   handleJump,
   buckets,
   bucketKind,
+  primarySortField,
+  temporalGranularity,
+  railCapacity,
   refreshBuckets,
   railVisible,
   activeBucketKey,
@@ -114,11 +117,12 @@ const {
   listEndpoint: (id) => `/api/v1/smart-scopes/${id}/books/query`,
   bucketsEndpoint: (id) => `/api/v1/smart-scopes/${id}/books/jump-buckets`,
   viewMode: effectiveViewMode,
+  railEnabled: showJumpRails,
+  railViewport: mainRef,
   collapseEnabled: collapseEnabledRef,
   q: debouncedQuery,
 })
 const { setBookContext } = useBookNavigation()
-const mainRef = ref<HTMLElement | null>(null)
 useScrollRestoreOnActivate(mainRef)
 useBookViewContext(slots, total, loadMorePrefix)
 const { smartScopes, loaded: smartScopesLoaded, error: smartScopesError, fetchSmartScopes, deleteSmartScope } = useSmartScopes()
@@ -471,6 +475,8 @@ defineOptions({ name: 'SmartScopeView' })
         :total="total"
         v-model:coverSize="coverSize"
         v-model:gridGap="gridGap"
+        :show-jump-rail-toggle="true"
+        v-model:showJumpRails="showJumpRails"
         v-model:viewMode="viewMode"
         :selection-mode="selectionMode"
         :searchable="true"
@@ -745,6 +751,7 @@ defineOptions({ name: 'SmartScopeView' })
             :selection-mode="selectionMode"
             :is-selected="isSelected"
             :rail-gutter="railGutterReserved"
+            :rail-gutter-kind="bucketKind"
             @range="handleRange"
             @first-visible-index="handleFirstVisibleIndex"
             @action="handleBookAction"
@@ -799,6 +806,10 @@ defineOptions({ name: 'SmartScopeView' })
             :visible="railVisible"
             :buckets="buckets"
             :kind="bucketKind ?? 'letter'"
+            :field="primarySortField"
+            :granularity="temporalGranularity"
+            :max-slots="railCapacity"
+            :viewport="mainRef"
             :active-key="activeBucketKey"
             :template="bucketKind === 'letter' ? letterTemplate : undefined"
             @jump="handleJump"

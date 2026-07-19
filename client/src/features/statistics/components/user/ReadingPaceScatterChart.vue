@@ -30,7 +30,7 @@ watchEffect(() => {
 
   const visible = data.value.filter((p) => p.durationSeconds > 0 && p.durationSeconds <= 14400 && p.progressDelta > 0 && p.progressDelta <= 100)
   const formatKeys = [...new Set(visible.map((p) => p.format))].sort()
-  const seriesMeta = getBreakdownSeries(dimension.value, `${themeStore.theme}:${themeStore.accent}`, formatKeys)
+  const seriesMeta = getBreakdownSeries(dimension.value, `${themeStore.resolvedTheme}:${themeStore.accent}`, formatKeys)
   const series = seriesMeta.map((meta) => ({
     type: 'scatter',
     name: meta.label,

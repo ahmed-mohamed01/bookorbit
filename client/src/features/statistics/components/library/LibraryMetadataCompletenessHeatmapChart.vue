@@ -32,7 +32,7 @@ const { data, loading, error } = useLibraryMetadataCompleteness()
 const option = shallowRef({})
 const heatmapPaletteState = computed(() => ({
   accent: themeStore.accent,
-  palette: buildHeatmapPalette({ theme: themeStore.theme }),
+  palette: buildHeatmapPalette({ theme: themeStore.resolvedTheme }),
 }))
 
 watchEffect(() => {
@@ -47,7 +47,7 @@ watchEffect(() => {
     return [x, y, item.percent, item.presentCount, item.totalCount]
   })
   const palette = heatmapPaletteState.value.palette
-  const labelColor = themeStore.theme === 'dark' ? '#f8fafc' : '#0f172a'
+  const labelColor = themeStore.resolvedTheme === 'dark' ? '#f8fafc' : '#0f172a'
   const pieces = [
     { value: 0, color: palette.scale[0] },
     { gt: 0, lte: 25, color: palette.scale[1] },

@@ -10,6 +10,8 @@ withDefaults(
     viewMode: BookViewMode
     coverSize: number
     gridGap: number
+    showJumpRailToggle?: boolean
+    showJumpRails?: boolean
     coverShape?: 'square' | 'circle'
     coverSizeMin?: number
     coverSizeMax?: number
@@ -31,8 +33,13 @@ withDefaults(
 const emit = defineEmits<{
   'update:coverSize': [value: number]
   'update:gridGap': [value: number]
+  'update:showJumpRails': [value: boolean]
   'update:coverShape': [value: 'square' | 'circle']
 }>()
+
+function handleShowJumpRailsChange(event: Event) {
+  emit('update:showJumpRails', (event.target as HTMLInputElement).checked)
+}
 </script>
 
 <template>
@@ -71,6 +78,16 @@ const emit = defineEmits<{
           class="w-full accent-primary cursor-pointer"
         />
       </div>
+
+      <label v-if="showJumpRailToggle && viewMode === 'grid'" class="flex cursor-pointer items-center justify-between gap-3 pt-1">
+        <span class="text-xs text-muted-foreground">{{ t('components.viewHeader.displayControls.showJumpRails') }}</span>
+        <input
+          type="checkbox"
+          :checked="showJumpRails"
+          class="size-4 shrink-0 cursor-pointer rounded border-input accent-primary"
+          @change="handleShowJumpRailsChange"
+        />
+      </label>
     </template>
 
     <template v-else>

@@ -50,7 +50,7 @@ const { viewMode, effectiveViewMode } = useEffectiveViewMode()
 const { hasPermission, isDemoRestrictedAccount } = usePermissions()
 
 const collectionId = shallowRef(Number(route.params.id))
-const { tableDensity } = useDisplaySettings()
+const { tableDensity, showJumpRails } = useDisplaySettings()
 const { allSavedViews, saveView, renameView, deleteView, duplicateView, toggleFavorite, importViews } = useSavedViews('collection', collectionId)
 const coverAspectRatio = computed(() => DEFAULT_COVER_ASPECT_RATIO)
 const { coverSize, gridGap } = useViewDisplaySettings('collection', collectionId, coverAspectRatio)
@@ -75,6 +75,7 @@ watch(prefs, () => {
 })
 
 const { searchQuery, debouncedQuery, clearSearch } = useViewSearch()
+const mainRef = ref<HTMLElement | null>(null)
 
 const {
   booksProxy: books,
@@ -94,6 +95,9 @@ const {
   handleJump,
   buckets,
   bucketKind,
+  primarySortField,
+  temporalGranularity,
+  railCapacity,
   refreshBuckets,
   railVisible,
   activeBucketKey,
@@ -105,11 +109,12 @@ const {
   listEndpoint: (id) => `/api/v1/collections/${id}/books/query`,
   bucketsEndpoint: (id) => `/api/v1/collections/${id}/books/jump-buckets`,
   viewMode: effectiveViewMode,
+  railEnabled: showJumpRails,
+  railViewport: mainRef,
   collapseEnabled: collapseEnabledRef,
   q: debouncedQuery,
 })
 const { sortModel: tableSortModel } = useViewSort(tableSort, 'collection', collectionId)
-const mainRef = ref<HTMLElement | null>(null)
 useScrollRestoreOnActivate(mainRef)
 const collectionLoadError = computed(() => collectionsError.value ?? booksError.value)
 const { setBookContext } = useBookNavigation()
@@ -434,6 +439,8 @@ defineOptions({ name: 'CollectionView' })
         :total="total"
         v-model:coverSize="coverSize"
         v-model:gridGap="gridGap"
+        :show-jump-rail-toggle="true"
+        v-model:showJumpRails="showJumpRails"
         v-model:viewMode="viewMode"
         :selection-mode="selectionMode"
         :searchable="true"
@@ -611,6 +618,7 @@ defineOptions({ name: 'CollectionView' })
           :selection-mode="selectionMode"
           :is-selected="isSelected"
           :rail-gutter="railGutterReserved"
+          :rail-gutter-kind="bucketKind"
           @range="handleRange"
           @first-visible-index="handleFirstVisibleIndex"
           @action="handleBookAction"
@@ -664,6 +672,10 @@ defineOptions({ name: 'CollectionView' })
           :visible="railVisible"
           :buckets="buckets"
           :kind="bucketKind ?? 'letter'"
+          :field="primarySortField"
+          :granularity="temporalGranularity"
+          :max-slots="railCapacity"
+          :viewport="mainRef"
           :active-key="activeBucketKey"
           :template="bucketKind === 'letter' ? letterTemplate : undefined"
           @jump="handleJump"

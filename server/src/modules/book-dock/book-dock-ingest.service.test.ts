@@ -403,8 +403,13 @@ describe('BookDockIngestService', () => {
           title: 'Dune',
           isbn13: '9780441172719',
           authors: ['Frank Herbert'],
+          hardcoverEditionId: 'hardcover-edition',
         },
         sources: { title: { provider: 'google' } },
+        providerIds: {
+          hardcover: 'hardcover-book',
+          openLibrary: 'OL1W',
+        },
       });
 
       await (service as any).autoFetchMetadataAsync(9);
@@ -416,7 +421,17 @@ describe('BookDockIngestService', () => {
         expect.objectContaining({
           status: 'ready',
           confidence: 95,
-          fetchedMetadata: expect.objectContaining({ title: 'Dune', isbn13: '9780441172719' }),
+          fetchedMetadata: expect.objectContaining({
+            title: 'Dune',
+            isbn13: '9780441172719',
+            hardcoverId: 'hardcover-book',
+            hardcoverEditionId: 'hardcover-edition',
+            openLibraryId: 'OL1W',
+          }),
+          fetchedMetadataSources: expect.objectContaining({
+            hardcoverId: 'hardcover',
+            openLibraryId: 'openLibrary',
+          }),
         }),
       );
     });

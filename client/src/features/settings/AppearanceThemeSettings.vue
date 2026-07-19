@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Moon, Sun } from '@lucide/vue'
+import { Monitor, Moon, Sun } from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { ACCENT_PASTEL, ACCENT_VIVID, BACKGROUND_OPTIONS, RADIUS_OPTIONS, useThemeStore } from '@/stores/theme'
 import AppearancePreferenceStorage from './AppearancePreferenceStorage.vue'
@@ -17,11 +17,15 @@ const backgroundGroups = computed<{ label: string; ids: string[] }[]>(() => [
 ])
 
 function handleLightTheme() {
-  if (themeStore.theme === 'dark') themeStore.toggleTheme()
+  themeStore.setTheme('light')
 }
 
 function handleDarkTheme() {
-  if (themeStore.theme === 'light') themeStore.toggleTheme()
+  themeStore.setTheme('dark')
+}
+
+function handleSystemTheme() {
+  themeStore.setTheme('system')
 }
 
 function resetBrightness() {
@@ -47,18 +51,25 @@ function handleBrightnessInput(event: Event) {
           </div>
           <div class="flex items-center gap-1 p-1 rounded-lg border border-border bg-muted/50 self-start">
             <button
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               :class="themeStore.theme === 'light' ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'"
               @click="handleLightTheme"
             >
               <Sun :size="12" /> {{ t('settings.appearance.themeMode.light') }}
             </button>
             <button
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               :class="themeStore.theme === 'dark' ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'"
               @click="handleDarkTheme"
             >
               <Moon :size="12" /> {{ t('settings.appearance.themeMode.dark') }}
+            </button>
+            <button
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              :class="themeStore.theme === 'system' ? 'bg-background shadow-xs text-foreground' : 'text-muted-foreground hover:text-foreground'"
+              @click="handleSystemTheme"
+            >
+              <Monitor :size="12" /> {{ t('settings.appearance.themeMode.system') }}
             </button>
           </div>
         </div>
@@ -127,7 +138,7 @@ function handleBrightnessInput(event: Event) {
           </div>
         </div>
 
-        <div v-if="themeStore.theme === 'dark'" class="px-4 py-3.5 md:px-5 md:py-4 bg-card">
+        <div v-if="themeStore.resolvedTheme === 'dark'" class="px-4 py-3.5 md:px-5 md:py-4 bg-card">
           <div class="mb-3">
             <div class="flex items-center justify-between gap-3 mb-0.5">
               <p class="settings-label">{{ t('settings.appearance.theme.surfaceBrightness.label') }}</p>

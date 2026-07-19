@@ -1,1 +1,0 @@
-ALTER TABLE "audiobookshelf_book_state" ADD COLUMN "manual_unlinked" boolean DEFAULT false NOT NULL;
