@@ -393,6 +393,13 @@
       "when": 1784463918214,
       "tag": "0055_audiobookshelf_integration",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1784484677071,
+      "tag": "0056_backfill_abs_asin_isbn_normalization",
+      "breakpoints": true
     }
   ]
 }
