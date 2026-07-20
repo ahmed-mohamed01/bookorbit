@@ -13,18 +13,39 @@ each upstream merge is a short chore, not a project.**
 
 ## Guiding principle
 
-Every line the fork changes in an **upstream-owned file** is permanent recurring
-tax - it can conflict on any future upstream merge. ABS-only new files cost
-nothing. So the strategy is:
+1. **Keep feature code in feature files.** ABS logic belongs in the `audiobookshelf`
+   module, the ABS client feature dir, and ABS-owned schema. New fork-only files cost
+   nothing at merge time - they can never conflict.
+2. **Hooks into upstream files are allowed.** A small, generic extension point (a DI
+   token, a registry, a spread) in an upstream file is an acceptable and expected cost.
+   The aim is a *minimal* footprint, not a zero footprint.
+3. **A hook must shrink the footprint, not grow it.** This is the rule that decides
+   whether a seam is worth building. Measure before and after: if the seam machinery
+   adds more lines to the upstream file than the ABS code it removes, it is a net loss -
+   reject it, even if it is well written and the tests pass. (See "Investigated and
+   rejected" below; this exact trap was hit once and reverted.)
+4. **Prefer generic over ABS-specific.** When a hook does stay in an upstream file,
+   it should contain **no ABS identifiers** - upstream could plausibly have written it.
+   Generic code survives upstream refactors far better than `sidecar`-flavoured code.
+5. **Accept the irreducible.** Progress sync *is* an edit to reading-state code. Some
+   coupling cannot be designed away; keep it surgical and commented.
 
-1. Keep ABS logic in **ABS-owned files** (the `audiobookshelf` module, ABS schema,
-   ABS extractors, ABS client feature dir). These already exist and are conflict-free.
-2. Where ABS must reach into an upstream file, prefer a **one-time extension seam**
-   (a registry, a DI token, a spread) over inline edits, so future ABS changes touch
-   only ABS files.
-3. Accept a small, **surgical, well-commented** footprint in the few upstream files
-   that are genuinely core-coupled (reading state). Full isolation is impossible -
-   progress sync *is* an edit to reading-state code.
+## Measuring the surface: use `-w`, always
+
+Raw diff line counts are **misleading** and will send you chasing phantom work. A fork
+change that unwraps a `try/catch` reindents the whole block, so the raw diff explodes
+while the semantic change is tiny.
+
+```
+# raw (misleading)
+git diff      --numstat upstream/main -- <file>
+# semantic (what actually conflicts)
+git diff -w   --numstat upstream/main -- <file>
+```
+
+Real example: `audio.extractor.ts` shows **188 raw** lines but **26 semantic** - ~99%
+was reindentation. It was ranked a top-3 seam target on the raw number and turned out
+to need no work at all.
 
 ## Branch model
 
@@ -32,141 +53,116 @@ nothing. So the strategy is:
   your origin fork. (Consolidate `abs-metadata-json-sidecar` into it - one fork branch.)
 - **Merge upstream, never rebase.** Merging preserves fork history and keeps conflict
   resolution incremental.
-- **Merge frequently and small.** A 15-commit gap is what made the last merge painful.
+- **Merge frequently and small.** A 15-commit gap is what made one merge painful.
   Merge per upstream release (or weekly); small merges = trivial conflicts.
 
 ## The merge ritual
 
-Run this every time you pull upstream. Keep it boring.
-
 ```
-# 1. Fetch and merge
 git fetch upstream
-git merge upstream/main          # resolve conflicts per the audit below
+git merge upstream/main       # resolve per the audit below
 
-# 2. Migrations (until Phase 2 lands): take upstream's, regenerate ABS on top
-#    (see "Migration strategy" - this step disappears after Phase 2)
-git checkout --theirs server/src/db/migrations/meta/_journal.json <colliding snapshots>
-git rm <superseded ABS migrations>
-cd server && pnpm db:generate abs_integration     # one consolidated ABS migration
+cd server
+pnpm build                                  # source typecheck, expect 0 issues
+npx vitest run src/modules/audiobookshelf   # ABS suite must stay green
+pnpm test                                   # full suite
 
-# 3. Re-apply seams if an upstream refactor moved them (see audit)
-
-# 4. Verify
-cd server && pnpm build                            # source typecheck, expect 0 issues
-npx vitest run src/modules/audiobookshelf          # ABS suite must stay green
-pnpm test                                          # full suite (note pre-existing fails)
-
-# 5. Commit the merge
 git commit
 ```
 
-Known pre-existing upstream test failures (NOT caused by the fork): the
-`published-date.utils` timezone bug (fails at UTC+ offsets), which also fails
-`kobo.scraper.test.ts`. Don't chase these during a merge.
+**Migrations no longer need any merge step.** `server/src/db/migrations/` is
+byte-identical to upstream (see "Schema decoupling"), so upstream migrations flow in
+untouched and `_journal.json` can no longer collide.
 
-## Conflict-surface audit
+Known pre-existing upstream failures (**not** caused by the fork): the
+`published-date.utils` timezone bug, which also fails `kobo.scraper.test.ts`. Don't
+chase these during a merge.
 
-Snapshot at the time of writing: the fork touches **~45 upstream-owned files**.
-Categorized by treatment:
+## Schema decoupling (done)
 
-### A. Seam-able - convert to one-time extension points (highest payoff)
+ABS schema is **not** a Drizzle migration. It is applied at runtime by
+`AudiobookshelfSchemaBootstrapService` (`OnApplicationBootstrap`) from SQL embedded in
+`modules/audiobookshelf/schema/audiobookshelf-schema.ts`.
 
-These are registration-style edits where ABS adds itself to an upstream list/map.
-Add a seam once; then ABS code lives in ABS files.
+- Idempotent: `CREATE TABLE IF NOT EXISTS`, plus `pg_constraint` / `information_schema`
+  guards so a large `reading_sessions` is **never** revalidated on reboot (verified: a
+  second boot is a ~6ms no-op with the constraint OID unchanged).
+- ABS tables are invisible to drizzle-kit (not reachable from `db/schema/index.ts`), so
+  `db:generate` reports "No schema changes".
+- The SQL is embedded in TypeScript, not shipped as a `.sql` asset - the SWC watch
+  builder does not reliably copy assets, and a missing file made the whole app fail to
+  boot. Embedding also let `nest-cli.json` revert to upstream.
+- Consequence: ABS tables use `db.select()`, **not** Drizzle's `db.query.<table>`
+  relational API (which only knows tables in the schema barrel).
 
-| Upstream file | +lines | What ABS added | Seam |
-|---|---|---|---|
-| `metadata/metadata.service.ts` | +176 | sidecar cover logic, extractor wiring | inject extra extractors + move sidecar-cover to ABS |
-| `scanner/scanner.service.ts` | +184 | sidecar metadata-source detection/precedence | register "sidecar" as a metadata-source provider |
-| `metadata/extractors/audio.extractor.ts` | +82 | ASIN/audible-id extraction from audio | post-extract provider-id hook, or ABS-owned extractor |
-| `metadata/metadata-extraction.service.ts` | +3 | JSON sidecar extractor registration | DI token for injected `FormatExtractor`s |
-| `metadata/extractors/format-extractor.interface.ts` | +3 | interface shape | the seam interface |
-| `metadata/lib/cover.ts` | +12 | `isDecodableImage` helper | keep as shared util (low churn) or move to ABS |
-| `scanner/lib/classify.ts` | +5 | recognize `metadata.json` sidecar | source-type registry entry |
-| `scanner/scanner.repository.ts` | +11 | sidecar query support | follows the source seam |
-| `library/library.constants.ts` | +2 | add `sidecar` to precedence default | precedence extension point |
-| `client .../integration-tabs.ts` | +7 | ABS settings tab | tab-registration array spread |
-| `client .../IntegrationAllSettings.vue` | +3 | ABS tab render | component registry |
-| `client .../LibraryCreatorMetadata.vue` | +11 | sidecar metadata option | options-list spread |
-| `client .../useLibraryCreator.ts` | +5 | sidecar option state | follows the above |
-| `client .../ReadingLogTable.vue` | +2 | ABS source label | label map entry |
+## Landed seams - the pattern to copy
 
-### B. Irreducible - core-coupled, keep surgical
+Both live in upstream files, contain **zero ABS identifiers**, and are supplied from
+`modules/audiobookshelf/` through the `@Global` `AudiobookshelfMetadataModule`:
 
-Progress sync and provider IDs genuinely modify shared reading-state/domain code.
-Keep these edits small, clustered, and commented so a conflict is a 3-line reconcile.
-
-| Upstream file | +lines | What ABS added |
+| Seam | Upstream file | Token |
 |---|---|---|
-| `user-book-status/reading-attempt.service.ts` | +39 | ABS-origin attempt import/adoption |
-| `book/book.service.ts` | +33 | sidecar cover + audio progress reads/writes |
-| `book/book.repository.ts` | +45 | sidecar/audible query support |
-| `db/schema/reader.ts` | +5 | `audiobookshelf` in source/origin CHECK constraints |
-| `db/schema/metadata.ts` | +2 | `audible_id` column on shared `book_metadata` |
-| `packages/types/{book,reading-session,permissions,index}.ts` | +2..3 each | union + permission extensions |
-| `hardcover/hardcover-import.service.ts`, `reading-attempt.repository.ts`, `db/schema/index.ts` | +2..3 | trivial shared touches |
+| Format extractors | `metadata/metadata-extraction.service.ts` | `EXTRA_METADATA_EXTRACTORS` |
+| Cover sources | `metadata/cover-source-handler.ts` | `EXTRA_COVER_SOURCE_HANDLERS` |
 
-### C. Cheap / mechanical
+The cover seam removed every ABS identifier from `metadata.service.ts` and changed
+`scanner.service.ts` by exactly one line (`applyCoverSource({ kind: 'sidecar', ... })`).
 
-| File(s) | Treatment |
-|---|---|
-| `client/src/locales/{en,de,nl,sl}.json` | i18n keys; conflicts are trivial line adds |
-| `db/migrations/meta/_journal.json` | migration journal; **removed from surface by Phase 2** |
+## Current conflict surface (semantic, `-w`)
 
-### D. Test files (14) - two kinds
+| File | Semantic | Status |
+|---|---|---|
+| `scanner/scanner.service.ts` | 211 | irreducible - see rejected |
+| `metadata/metadata.service.ts` | 153 | generic (post-seam), no ABS identifiers |
+| `hardcover/hardcover-import.service.ts` | 86 | pure code-move - see rejected |
+| `book/book.repository.ts` | 44 | irreducible core |
+| `user-book-status/reading-attempt.service.ts` | 36 | irreducible core |
+| `book/book.service.ts` | 35 | irreducible core |
+| `metadata/extractors/audio.extractor.ts` | 26 | see rejected |
+| `metadata/metadata-extraction.service.ts` | 12 | the extractor seam itself |
+| `metadata/lib/cover.ts` | 11 | shared helper |
+| `scanner/scanner.repository.ts` | 10 | sidecar query support |
+| `scanner/lib/classify.ts` | 6 | sidecar format recognition |
+| client: `LibraryCreatorMetadata.vue` / `integration-tabs.ts` / `useLibraryCreator.ts` | 12 / 7 / 6 | UI registration |
+| `app.module.ts`, `packages/types/*`, `reading-attempt.repository.ts` | 2 each | trivial |
+| `client/src/locales/*.json` | small | i18n keys, trivial conflicts |
 
-- **Coupled to source** (`scanner.service.test.ts` +1215, `metadata.service.test.ts`
-  +587, `book.service.test.ts` +135): the ABS assertions are woven into shared tests
-  because the *source* behavior changed. These do **not** extract cleanly on their
-  own - they relocate as a consequence of the Phase 1 seams.
-- **Cleanly separable** (`audio.extractor.test`, `classify.test`,
-  `format-extractors.test`, `book.repository.test`, `reading-attempt.service.test`,
-  `scanner.repository.test`, and the client specs, ~175 lines total): standalone ABS
-  scenarios that can move to ABS-owned test files anytime. Low payoff, do opportunistically.
+## Investigated and rejected - do not re-chase
 
-## Hardening plan (sequenced)
+Each of these was analysed and deliberately left alone. Re-attempting them wastes time.
 
-Ordering matters: seams first, because the big test surface only separates once the
-source is decoupled.
+- **`audio.extractor.ts`** - 188 raw but only **26 semantic**. Upstream already owns the
+  ASIN / `audible_asin` / `librofm_isbn` extraction and all audiobook parsing. The sole
+  fork change is removing upstream's `try/catch` so ffprobe failures propagate instead of
+  being swallowed (deliberate: "propagate audio probe failures"). **Nothing ABS-specific
+  to extract**; a seam would add surface.
+- **`scanner/scanner.service.ts`** - a metadata-source-provider seam was built and
+  measured: surface went **211 → 251** and 20+ sidecar identifiers still remained. The
+  extractable part (`selectJsonSidecarMetadataFile`, ~5 lines) is dwarfed by the seam
+  machinery (~45). The bulk (`importSidecarCover`, cover/metadata precedence interplay)
+  is scan-flow orchestration, not a bolt-on. **Reverted.** Build was clean and 1910 tests
+  passed - it failed on footprint, not correctness.
+- **`hardcover/hardcover-import.service.ts`** - not ABS logic at all. It is a pure
+  code-move: 85 lines of private scoring helpers (`normalizeIsbn`, `scoreTitle`,
+  `scoreAuthors`, ...) were extracted verbatim to the fork-only
+  `common/utils/book-match.utils.ts` so ABS matching could reuse them (commit
+  `197df6c0`). Bodies are byte-identical to upstream. Reverting would duplicate 85 lines
+  in two places; relocating into the ABS module would invert layering, since
+  `metadata/extractors/abs-metadata.mapper.ts` also imports it. **Leave as-is.**
 
-**Phase 1 - Extension seams** (highest recurring payoff)
-- Metadata extractor registration: DI token so ABS registers its JSON-sidecar
-  extractor from `audiobookshelf.module`, not inline in the upstream map.
-- Sidecar as a metadata-source provider: register `sidecar` via a source registry
-  instead of editing scanner detection/precedence inline.
-- Client UI registration seams: settings tabs, library metadata options, source labels.
-- Consequence: `metadata.service.ts`, `scanner.service.ts`, and their big test files
-  drop most of their ABS footprint; ABS tests move to the ABS module.
+  ⚠️ **Merge hazard:** if upstream ever edits a scoring threshold or regex inside that
+  moved block (upstream lines ~637-740), git reports a delete/modify conflict and the
+  lazy resolution (accept the deletion) **silently drops the upstream fix**. On merges
+  that touch this file, port the change into `book-match.utils.ts` rather than
+  discarding it.
 
-**Phase 2 - Schema / migration decoupling** (removes the worst recurring conflict)
-- Move ABS schema (tables + the shared CHECK-constraint additions) into an
-  **idempotent boot-time bootstrap** run after `drizzle migrate`
-  (`CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`, re-assert constraints).
-- Removes `_journal.json` and the migrations folder from the conflict surface
-  entirely, and is **safe against a live DB** (idempotent, no migration-hash churn).
-- Needs a careful one-time transition since ABS tables currently exist via migrations
-  on your real DB - plan it separately.
+## Where the remaining work is
 
-**Phase 3 - Test relocation**
-- Move the now-decoupled ABS tests into ABS-owned test files (falls out of Phase 1).
-- Extract the cleanly-separable small test files.
+The seam programme is complete: two seams landed, three targets investigated and
+rejected. What is left (~500 semantic lines) is genuine core coupling - progress sync
+into reading state, book read/write paths, provider-ID type unions, and the one-line
+module registration. That is the floor, not a backlog.
 
-**Phase 4 - Ongoing discipline**
-- Keep the irreducible edits (bucket B) surgical and clustered.
-- Follow the merge ritual; merge upstream small and often.
-
-## Migration strategy (the real-data constraint)
-
-This fork runs a **self-hosted instance with real library data**, so migrations
-cannot be freely regenerated (that rewrites applied history). Two viable models:
-
-1. **Interim (current):** on each merge, take upstream's migration state and
-   regenerate a single consolidated ABS migration on top (the ritual step 2). Works,
-   but every merge changes the ABS migration hash - fine while the DB is disposable,
-   risky once data matters.
-2. **Target (Phase 2):** ABS schema lives in an idempotent boot bootstrap, fully
-   outside Drizzle's journal. Zero migration conflicts, safe for a live DB. This is
-   the reason Phase 2 exists.
-
-Until Phase 2, treat the dev DB as disposable when merging (reset + re-migrate).
+If a future ABS feature needs to reach into an upstream file, apply the principle above:
+prefer a generic hook, and **measure `-w` before and after** to confirm it actually
+shrinks the footprint.

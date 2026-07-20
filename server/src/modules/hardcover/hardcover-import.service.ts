@@ -655,6 +655,12 @@ function extractHardcoverAuthors(value: unknown): string[] {
   return authors.filter((author) => author.length > 0);
 }
 
+// FORK NOTE: upstream defines its title/author matching helpers here (normalizeIsbn,
+// normalizeTitle, tokenize, normalizedLevenshtein, scoreTitle, scoreAuthors, ...). This
+// fork moved them verbatim to common/utils/book-match.utils.ts so the Audiobookshelf
+// matcher can reuse them. If an upstream merge conflicts in this region, port the change
+// into book-match.utils.ts - do not just accept the deletion, or the upstream fix is lost.
+
 function roundProgressPercent(value: number | null | undefined): number | null {
   const finite = toFiniteNumber(value);
   if (finite == null) return null;
