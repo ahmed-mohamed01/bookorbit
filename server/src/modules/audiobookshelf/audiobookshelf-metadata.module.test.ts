@@ -1,31 +1,41 @@
-import { Test } from '@nestjs/testing';
+import { MODULE_METADATA } from '@nestjs/common/constants';
 
+import { BULK_COVER_REFRESHER } from '../book/bulk-cover-refresher';
 import { EXTRA_COVER_SOURCE_HANDLERS, type CoverSourceHandler } from '../metadata/cover-source-handler';
-import { MetadataExtractionService } from '../metadata/metadata-extraction.service';
+import { EXTRA_METADATA_EXTRACTORS, MetadataExtractionService, type MetadataExtractorEntry } from '../metadata/metadata-extraction.service';
+import { AudiobookshelfCoverRefreshService } from './audiobookshelf-cover-refresh.service';
 import { AudiobookshelfMetadataModule } from './audiobookshelf-metadata.module';
 
 describe('AudiobookshelfMetadataModule seam', () => {
-  it('registers the JSON sidecar extractor into MetadataExtractionService via DI', async () => {
-    const moduleRef = await Test.createTestingModule({
-      imports: [AudiobookshelfMetadataModule],
-      providers: [MetadataExtractionService],
-    }).compile();
+  const providers = Reflect.getMetadata(MODULE_METADATA.PROVIDERS, AudiobookshelfMetadataModule) as Array<{
+    provide?: unknown;
+    useExisting?: unknown;
+    useValue?: unknown;
+  }>;
 
-    const service = moduleRef.get(MetadataExtractionService);
+  function registrationFor(token: unknown) {
+    return providers.find((provider) => provider.provide === token);
+  }
+
+  it('registers the JSON sidecar extractor and cover source handler', () => {
+    const extractors = registrationFor(EXTRA_METADATA_EXTRACTORS)?.useValue as MetadataExtractorEntry[];
+    const service = new MetadataExtractionService(extractors);
+
     expect(service.supports('json')).toBe(true);
-    // built-in extractors remain intact alongside the injected one
     expect(service.supports('epub')).toBe(true);
     expect(service.supports('m4b')).toBe(true);
 
-    const coverSourceHandlers = moduleRef.get<CoverSourceHandler[]>(EXTRA_COVER_SOURCE_HANDLERS);
+    const coverSourceHandlers = registrationFor(EXTRA_COVER_SOURCE_HANDLERS)?.useValue as CoverSourceHandler[];
     expect(coverSourceHandlers.map((handler) => handler.kind)).toEqual(['sidecar']);
   });
 
-  it('does not support json without the seam (proves the module supplies it)', async () => {
-    const moduleRef = await Test.createTestingModule({
-      providers: [MetadataExtractionService],
-    }).compile();
+  it('registers the ABS bulk cover refresher behind the generic token', () => {
+    expect(registrationFor(BULK_COVER_REFRESHER)?.useExisting).toBe(AudiobookshelfCoverRefreshService);
+  });
 
-    expect(moduleRef.get(MetadataExtractionService).supports('json')).toBe(false);
+  it('does not support json without the seam', () => {
+    const service = new MetadataExtractionService();
+
+    expect(service.supports('json')).toBe(false);
   });
 });

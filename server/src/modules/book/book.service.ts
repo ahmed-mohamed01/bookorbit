@@ -64,7 +64,6 @@ import { UpdateBookFileDto } from './dto/update-book-file.dto';
 import { AppSettingsService } from '../app-settings/app-settings.service';
 import { BookEmbedderService } from '../embedding/book-embedder.service';
 import { MetadataService } from '../metadata/metadata.service';
-import { buildSidecarCoverPathByBookId, resolveCoverReadOrder } from '../metadata/lib/cover-source-resolution';
 import { MetadataScoreService } from '../metadata-score/metadata-score.service';
 import { LibraryService } from '../library/library.service';
 import { books } from '../../db/schema';
@@ -2756,15 +2755,11 @@ export class BookService {
       }
       await this.verifyLibraryAccessForBookIds(bookIds, user);
 
-      const [files, sidecarCoverRows, coverLockedBookIds] = await Promise.all([
+      const [files, coverLockedBookIds] = await Promise.all([
         this.bookRepo.findPrimaryFilesByBookIds(bookIds),
-        this.bookRepo.findSidecarCoverCandidatesByBookIds(bookIds),
         this.bookMetadataLockService.getCoverLockedBookIds(bookIds),
       ]);
       const filesByBookId = new Map(files.map((f) => [f.bookId, f]));
-      const applicableSidecarRows = sidecarCoverRows.filter((r) => r.organizationMode !== 'book_per_file');
-      const sidecarCoverByBookId = buildSidecarCoverPathByBookId(applicableSidecarRows);
-      const precedenceByBookId = new Map(applicableSidecarRows.map((r) => [r.bookId, r.metadataPrecedence]));
 
       let processed = 0;
       let updated = 0;
@@ -2777,19 +2772,13 @@ export class BookService {
           break;
         }
         const file = filesByBookId.get(id);
-        const sidecarCoverPath = sidecarCoverByBookId.get(id) ?? null;
-        if (!file && !sidecarCoverPath) continue;
+        if (!file) continue;
         if (coverLockedBookIds.has(id)) {
           skipped++;
           continue;
         }
         processed++;
-        const readOrder = resolveCoverReadOrder({
-          precedence: precedenceByBookId.get(id) ?? null,
-          primaryFile: file ? { absolutePath: file.absolutePath, format: file.format } : null,
-          sidecarCoverPath,
-        });
-        const saved = await this.metadataService.applyCoverFromSources(id, readOrder);
+        const saved = await this.metadataService.refreshCoverForBook(id, file.absolutePath, file.format ?? '');
         if (saved) {
           updated++;
         }

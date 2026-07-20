@@ -649,6 +649,24 @@ export class AudiobookshelfRepository {
     return map;
   }
 
+  async findSidecarCoverCandidatesByBookIds(
+    bookIds: number[],
+  ): Promise<{ bookId: number; absolutePath: string; format: string | null; metadataPrecedence: string[]; organizationMode: string }[]> {
+    if (bookIds.length === 0) return [];
+    return this.db
+      .select({
+        bookId: schema.bookFiles.bookId,
+        absolutePath: schema.bookFiles.absolutePath,
+        format: schema.bookFiles.format,
+        metadataPrecedence: schema.libraries.metadataPrecedence,
+        organizationMode: schema.libraries.organizationMode,
+      })
+      .from(schema.bookFiles)
+      .innerJoin(schema.books, eq(schema.books.id, schema.bookFiles.bookId))
+      .innerJoin(schema.libraries, eq(schema.libraries.id, schema.books.libraryId))
+      .where(and(inArray(schema.bookFiles.bookId, bookIds), eq(schema.bookFiles.role, 'cover')));
+  }
+
   async findAudioFilesInPlayOrder(bookId: number): Promise<{ id: number; format: string | null; durationSeconds: number | null }[]> {
     return this.db
       .select({ id: schema.bookFiles.id, format: schema.bookFiles.format, durationSeconds: schema.bookFiles.durationSeconds })
