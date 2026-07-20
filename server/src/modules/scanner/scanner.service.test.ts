@@ -173,6 +173,7 @@ const mockMetadata = {
   extractAndSaveIfAvailable: vi.fn(),
   refreshCoverForBook: vi.fn().mockResolvedValue(false),
   saveSidecarCover: vi.fn().mockResolvedValue('saved'),
+  applyCoverSource: vi.fn((bookId: number, source: { absolutePath: string }) => mockMetadata.saveSidecarCover(bookId, source.absolutePath)),
   applyCoverFromSources: vi.fn(async (bookId: number, readOrder: Array<{ kind: string; absolutePath: string; format?: string }>) => {
     for (const source of readOrder) {
       if (source.kind === 'sidecar') {

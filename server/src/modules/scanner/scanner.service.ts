@@ -1696,7 +1696,7 @@ export class ScannerService implements OnApplicationBootstrap {
     // Embedded ranked first: only fill in when the book has no cover after extraction.
     if (!sidecarFirst && (await this.metadataService.getCoverSource(book.id)) !== null) return false;
 
-    const outcome = await this.metadataService.saveSidecarCover(book.id, coverFile.absolutePath);
+    const outcome = await this.metadataService.applyCoverSource(book.id, { kind: 'sidecar', absolutePath: coverFile.absolutePath });
     if (outcome === 'failed') return false;
 
     // Persist the new content hash so later mtime-only touches compare equal and never re-import.

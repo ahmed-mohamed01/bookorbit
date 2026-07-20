@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 
+import { EXTRA_COVER_SOURCE_HANDLERS, type CoverSourceHandler } from '../metadata/cover-source-handler';
 import { MetadataExtractionService } from '../metadata/metadata-extraction.service';
 import { AudiobookshelfMetadataModule } from './audiobookshelf-metadata.module';
 
@@ -15,6 +16,9 @@ describe('AudiobookshelfMetadataModule seam', () => {
     // built-in extractors remain intact alongside the injected one
     expect(service.supports('epub')).toBe(true);
     expect(service.supports('m4b')).toBe(true);
+
+    const coverSourceHandlers = moduleRef.get<CoverSourceHandler[]>(EXTRA_COVER_SOURCE_HANDLERS);
+    expect(coverSourceHandlers.map((handler) => handler.kind)).toEqual(['sidecar']);
   });
 
   it('does not support json without the seam (proves the module supplies it)', async () => {

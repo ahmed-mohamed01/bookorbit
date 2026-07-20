@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'fs/promises';
+import { mkdir, readdir, rm, writeFile } from 'fs/promises';
 import { join } from 'path';
 
 import { DB } from '../../db';
@@ -32,9 +32,10 @@ import { MetadataScoreService } from '../metadata-score/metadata-score.service';
 import { NarratorService } from '../narrator/narrator.service';
 import { authors, bookAuthors, bookGenres, bookMetadata, books, bookTags, genres, tags } from '../../db/schema';
 import { type ComicMetadataFields, isAudioFormat } from '@bookorbit/types';
+import { type CoverSource, type CoverSourceApplyOutcome, type CoverSourceHandler, EXTRA_COVER_SOURCE_HANDLERS } from './cover-source-handler';
 import { parseAudioDuration } from './extractors/audio.extractor';
 import type { ParsedBookData } from './extractors/format-extractor.interface';
-import { generateThumbnail, imageExt, isDecodableImage } from './lib/cover';
+import { generateThumbnail, imageExt } from './lib/cover';
 import type { CoverReadSource } from './lib/cover-source-resolution';
 import { METADATA_AUDIO_FORMATS, MetadataExtractionService } from './metadata-extraction.service';
 import { MetadataEventsService, METADATA_AUTHORS_REPLACED } from './metadata-events.service';
@@ -49,7 +50,6 @@ interface RelationMutationOptions {
 
 const MAX_RELATION_NAME_LENGTH = 200;
 const EXTRACTED_COVER_SOURCE = 'extracted';
-const MAX_SIDECAR_COVER_BYTES = 20 * 1024 * 1024;
 const MIN_PUBLISHED_YEAR = 1000;
 const MAX_PUBLISHED_YEAR = 2200;
 const NORMALIZED_AUTHOR_NAME_SQL = normalizeMetadataTextKeySql(authors.name);
@@ -66,6 +66,7 @@ function normalizePublishedYear(year: number | null | undefined): number | null 
 export class MetadataService {
   private readonly logger = new Logger(MetadataService.name);
   private readonly appDataPath: string;
+  private readonly coverSourceHandlers: ReadonlyMap<string, CoverSourceHandler>;
 
   constructor(
     @Inject(DB) private readonly db: Db,
@@ -79,8 +80,10 @@ export class MetadataService {
     @Optional() private readonly metadataEvents?: MetadataEventsService,
     @Optional() private readonly seriesIdentity?: SeriesIdentityService,
     @Optional() private readonly seriesMemberships?: SeriesMembershipService,
+    @Optional() @Inject(EXTRA_COVER_SOURCE_HANDLERS) extraCoverSourceHandlers: readonly CoverSourceHandler[] = [],
   ) {
     this.appDataPath = this.config.get<string>('storage.appDataPath')!;
+    this.coverSourceHandlers = new Map(extraCoverSourceHandlers.map((handler) => [handler.kind, handler]));
   }
 
   // ── Public API ───────────────────────────────────────────────────────────────
@@ -257,69 +260,48 @@ export class MetadataService {
     }
   }
 
-  /**
-   * Applies the first cover source that yields cover bytes, in the order given
-   * by `resolveCoverReadOrder`. Shared by the library-wide and per-book cover
-   * refresh flows: a sidecar source persists via `saveSidecarCover`, an embedded
-   * source via `refreshCoverForBook`. A locked book stops the walk. Returns
-   * whether a cover was written.
-   */
   async applyCoverFromSources(bookId: number, readOrder: CoverReadSource[]): Promise<boolean> {
     for (const source of readOrder) {
-      if (source.kind === 'sidecar') {
-        const outcome = await this.saveSidecarCover(bookId, source.absolutePath);
-        if (outcome === 'saved') return true;
-        if (outcome === 'locked') return false;
-      } else if (await this.refreshCoverForBook(bookId, source.absolutePath, source.format)) {
-        return true;
+      if (source.kind === 'embedded') {
+        if (await this.refreshCoverForBook(bookId, source.absolutePath, source.format)) return true;
+        continue;
       }
+
+      const outcome = await this.applyCoverSource(bookId, source);
+      if (outcome === 'saved') return true;
+      if (outcome === 'locked') return false;
     }
     return false;
   }
 
-  /**
-   * Imports a `cover.*` sidecar image next to the media as the book cover.
-   * Corrupt, unreadable, empty, or oversized files never throw and never touch
-   * an existing cover; they return 'failed' so the caller can fall through to
-   * the next cover source. Locked covers return 'locked'.
-   */
-  async saveSidecarCover(bookId: number, absolutePath: string): Promise<'saved' | 'locked' | 'failed'> {
-    const event = 'scanner.import_sidecar_cover';
+  async applyCoverSource(bookId: number, source: CoverSource): Promise<CoverSourceApplyOutcome> {
+    const event = 'metadata.apply_cover_source';
     const startedAt = Date.now();
+    const kind = sanitizeLogValue(source.kind);
+    const handler = this.coverSourceHandlers.get(source.kind);
+    if (!handler) return 'failed';
+
     try {
       if (await this.bookMetadataLockService.isFieldLocked(bookId, 'cover')) {
         this.logger.debug(
-          `[${event}] [end] bookId=${bookId} durationMs=${Date.now() - startedAt} applied=false locked=true - sidecar cover import skipped`,
+          `[${event}] [end] bookId=${bookId} kind="${kind}" durationMs=${Date.now() - startedAt} applied=false locked=true - cover source application skipped`,
         );
         return 'locked';
       }
 
-      const fileStat = await stat(absolutePath);
-      if (!fileStat.isFile() || fileStat.size === 0 || fileStat.size > MAX_SIDECAR_COVER_BYTES) {
-        this.logger.warn(
-          `[${event}] [fail] bookId=${bookId} path="${sanitizeLogValue(absolutePath)}" sizeBytes=${fileStat.size} durationMs=${Date.now() - startedAt} reason=invalid_size - sidecar cover import failed`,
-        );
-        return 'failed';
-      }
-
-      const bytes = await readFile(absolutePath);
-      if (!(await isDecodableImage(bytes))) {
-        this.logger.warn(
-          `[${event}] [fail] bookId=${bookId} path="${sanitizeLogValue(absolutePath)}" durationMs=${Date.now() - startedAt} reason=corrupt - sidecar cover import failed`,
-        );
-        return 'failed';
-      }
+      const bytes = await handler.resolve(bookId, source);
+      if (!bytes) return 'failed';
 
       await this.persistCover(bookId, bytes, false);
       this.logger.debug(
-        `[${event}] [end] bookId=${bookId} path="${sanitizeLogValue(absolutePath)}" durationMs=${Date.now() - startedAt} applied=true - sidecar cover import completed`,
+        `[${event}] [end] bookId=${bookId} kind="${kind}" durationMs=${Date.now() - startedAt} applied=true - cover source application completed`,
       );
       return 'saved';
     } catch (error) {
       const errorClass = error instanceof Error ? error.name : 'Error';
       const errorMessage = sanitizeLogValue(error instanceof Error ? error.message : String(error));
       this.logger.warn(
-        `[${event}] [fail] bookId=${bookId} path="${sanitizeLogValue(absolutePath)}" durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${errorMessage}" - sidecar cover import failed`,
+        `[${event}] [fail] bookId=${bookId} kind="${kind}" durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${errorMessage}" - cover source application failed`,
       );
       return 'failed';
     }
@@ -705,7 +687,7 @@ export class MetadataService {
 
     if (useMemberships) {
       const seriesLocked = skippedFields.includes('seriesName') || skippedFields.includes('seriesIndex');
-      await this.persistSidecarSeriesMemberships(bookId, data.seriesMemberships!, seriesLocked);
+      await this.persistSeriesMemberships(bookId, data.seriesMemberships!, seriesLocked);
     }
 
     if (filtered.authors !== undefined) {
@@ -725,15 +707,15 @@ export class MetadataService {
     this.logger.debug(`[metadata.persist_audio] [end] bookId=${bookId} title="${sanitizeLogValue(data.title ?? '')}" - audio metadata persisted`);
   }
 
-  private async persistSidecarSeriesMemberships(
+  private async persistSeriesMemberships(
     bookId: number,
-    sidecarMemberships: { seriesName: string; seriesIndex: number | null }[],
+    memberships: { seriesName: string; seriesIndex: number | null }[],
     seriesLocked: boolean,
   ): Promise<void> {
     if (!this.seriesMemberships) return;
 
     if (!seriesLocked) {
-      await this.seriesMemberships.replaceForBook(bookId, sidecarMemberships);
+      await this.seriesMemberships.replaceForBook(bookId, memberships);
       return;
     }
 
@@ -744,7 +726,7 @@ export class MetadataService {
       if (key) seen.add(key);
     }
 
-    const additions = sidecarMemberships.filter((membership) => {
+    const additions = memberships.filter((membership) => {
       const key = this.normalizeSeriesKey(membership.seriesName);
       if (!key || seen.has(key)) return false;
       seen.add(key);
