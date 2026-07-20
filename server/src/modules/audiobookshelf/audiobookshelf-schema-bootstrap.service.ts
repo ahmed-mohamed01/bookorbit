@@ -1,13 +1,8 @@
-import { Inject, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
-import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
-import { DB } from '../../db';
-import * as schema from '../../db/schema';
+import { AudiobookshelfRepository } from './audiobookshelf.repository';
 import { AUDIOBOOKSHELF_SCHEMA_SQL } from './schema/audiobookshelf-schema';
-
-type Db = NodePgDatabase<typeof schema>;
 
 const STATEMENT_BREAKPOINT = '--> statement-breakpoint';
 
@@ -15,7 +10,7 @@ const STATEMENT_BREAKPOINT = '--> statement-breakpoint';
 export class AudiobookshelfSchemaBootstrapService implements OnApplicationBootstrap {
   private readonly logger = new Logger(AudiobookshelfSchemaBootstrapService.name);
 
-  constructor(@Inject(DB) private readonly db: Db) {}
+  constructor(private readonly repo: AudiobookshelfRepository) {}
 
   async onApplicationBootstrap(): Promise<void> {
     const startedAt = Date.now();
@@ -26,9 +21,7 @@ export class AudiobookshelfSchemaBootstrapService implements OnApplicationBootst
         .map((statement) => statement.trim())
         .filter(Boolean);
 
-      for (const statement of statements) {
-        await this.db.execute(sql.raw(statement));
-      }
+      await this.repo.applySchemaStatements(statements);
 
       this.logger.log(`[abs.schema_bootstrap] [end] durationMs=${Date.now() - startedAt} - schema bootstrap completed`);
     } catch (err) {

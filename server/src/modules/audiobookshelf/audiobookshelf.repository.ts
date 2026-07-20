@@ -130,6 +130,14 @@ function groupDaysByBoundedSpan(days: string[], maxSpanDays: number): string[][]
 export class AudiobookshelfRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
 
+  // Applies the Audiobookshelf schema bootstrap statements. DB access lives here rather than in the
+  // bootstrap service so services never inject the Drizzle instance directly.
+  async applySchemaStatements(statements: readonly string[]): Promise<void> {
+    for (const statement of statements) {
+      await this.db.execute(sql.raw(statement));
+    }
+  }
+
   async findSettings(userId: number): Promise<AudiobookshelfUserSetting | undefined> {
     const [row] = await this.db.select().from(audiobookshelfUserSettings).where(eq(audiobookshelfUserSettings.userId, userId)).limit(1);
     return row;

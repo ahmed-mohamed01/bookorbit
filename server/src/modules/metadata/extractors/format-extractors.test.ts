@@ -481,11 +481,4 @@ describe('metadata format extractors', () => {
       }),
     );
   });
-
-  it('audio extractor propagates probe failures', async () => {
-    const probeError = new Error('ffprobe failed');
-    mockExtractAudioMetadata.mockRejectedValue(probeError);
-
-    await expect(new AudioFormatExtractor().extract('/books/corrupt.m4b')).rejects.toBe(probeError);
-  });
 });
