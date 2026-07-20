@@ -35,6 +35,8 @@ export interface AbsIngestSessionsResult {
 
 const ISBN_ASIN_LOOKUP_CHUNK = 1000;
 const BOOK_STATE_UPSERT_CHUNK = 500;
+const normalizedAudibleId = sql<string>`upper(trim(${schema.bookMetadata.audibleId}))`;
+const normalizedIsbn10 = sql<string>`upper(trim(${schema.bookMetadata.isbn10}))`;
 
 export interface AbsExactMatchRow {
   key: string;
@@ -234,17 +236,10 @@ export class AudiobookshelfRepository {
     const results: AbsExactMatchRow[] = [];
     for (const group of chunk(asins, ISBN_ASIN_LOOKUP_CHUNK)) {
       const rows = await this.db
-        .select({ key: schema.bookMetadata.audibleId, bookId: schema.books.id })
+        .select({ key: normalizedAudibleId, bookId: schema.books.id })
         .from(schema.books)
         .innerJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.books.id))
-        .where(
-          and(
-            inArray(schema.books.libraryId, libraryIds),
-            eq(schema.books.status, 'present'),
-            inArray(schema.bookMetadata.audibleId, group),
-            ...filters,
-          ),
-        );
+        .where(and(inArray(schema.books.libraryId, libraryIds), eq(schema.books.status, 'present'), inArray(normalizedAudibleId, group), ...filters));
       for (const row of rows) if (row.key) results.push({ key: row.key, bookId: row.bookId });
     }
     return results;
@@ -274,17 +269,10 @@ export class AudiobookshelfRepository {
     }
     for (const group of chunk(isbn10s, ISBN_ASIN_LOOKUP_CHUNK)) {
       const rows = await this.db
-        .select({ key: schema.bookMetadata.isbn10, bookId: schema.books.id })
+        .select({ key: normalizedIsbn10, bookId: schema.books.id })
         .from(schema.books)
         .innerJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.books.id))
-        .where(
-          and(
-            inArray(schema.books.libraryId, libraryIds),
-            eq(schema.books.status, 'present'),
-            inArray(schema.bookMetadata.isbn10, group),
-            ...filters,
-          ),
-        );
+        .where(and(inArray(schema.books.libraryId, libraryIds), eq(schema.books.status, 'present'), inArray(normalizedIsbn10, group), ...filters));
       for (const row of rows) if (row.key) results.push({ key: row.key, bookId: row.bookId });
     }
     return results;
@@ -653,18 +641,23 @@ export class AudiobookshelfRepository {
     bookIds: number[],
   ): Promise<{ bookId: number; absolutePath: string; format: string | null; metadataPrecedence: string[]; organizationMode: string }[]> {
     if (bookIds.length === 0) return [];
-    return this.db
-      .select({
-        bookId: schema.bookFiles.bookId,
-        absolutePath: schema.bookFiles.absolutePath,
-        format: schema.bookFiles.format,
-        metadataPrecedence: schema.libraries.metadataPrecedence,
-        organizationMode: schema.libraries.organizationMode,
-      })
-      .from(schema.bookFiles)
-      .innerJoin(schema.books, eq(schema.books.id, schema.bookFiles.bookId))
-      .innerJoin(schema.libraries, eq(schema.libraries.id, schema.books.libraryId))
-      .where(and(inArray(schema.bookFiles.bookId, bookIds), eq(schema.bookFiles.role, 'cover')));
+    const results: { bookId: number; absolutePath: string; format: string | null; metadataPrecedence: string[]; organizationMode: string }[] = [];
+    for (const group of chunk(bookIds, ISBN_ASIN_LOOKUP_CHUNK)) {
+      const rows = await this.db
+        .select({
+          bookId: schema.bookFiles.bookId,
+          absolutePath: schema.bookFiles.absolutePath,
+          format: schema.bookFiles.format,
+          metadataPrecedence: schema.libraries.metadataPrecedence,
+          organizationMode: schema.libraries.organizationMode,
+        })
+        .from(schema.bookFiles)
+        .innerJoin(schema.books, eq(schema.books.id, schema.bookFiles.bookId))
+        .innerJoin(schema.libraries, eq(schema.libraries.id, schema.books.libraryId))
+        .where(and(inArray(schema.bookFiles.bookId, group), eq(schema.bookFiles.role, 'cover')));
+      results.push(...rows);
+    }
+    return results;
   }
 
   async findAudioFilesInPlayOrder(bookId: number): Promise<{ id: number; format: string | null; durationSeconds: number | null }[]> {

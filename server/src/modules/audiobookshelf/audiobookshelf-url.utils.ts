@@ -1,3 +1,6 @@
+import type { ConfigService } from '@nestjs/config';
+
+import type { SafeRemoteHostOptions } from '../../common/utils/ssrf.utils';
 import { AUDIOBOOKSHELF_ALLOWED_PROTOCOLS } from './audiobookshelf.constants';
 
 /**
@@ -18,4 +21,10 @@ export function parseAndNormalizeServerUrl(raw: string): string | null {
   }
   const path = parsed.pathname.replace(/\/+$/, '');
   return `${parsed.origin}${path}`;
+}
+
+export function audiobookshelfSafeRemoteHostOptions(config: ConfigService): SafeRemoteHostOptions {
+  const isProduction = config.get<string>('app.nodeEnv') === 'production';
+  const allowPrivate = !isProduction || config.get<boolean>('app.audiobookshelfAllowLocalServers') === true;
+  return { allowLocal: allowPrivate, allowPrivate, blockLinkLocal: true };
 }

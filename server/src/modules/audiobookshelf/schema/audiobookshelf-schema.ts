@@ -79,7 +79,11 @@ END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "audiobookshelf_book_state_user_book_idx" ON "audiobookshelf_book_state" USING btree ("user_id","book_id");
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS "bm_audible_id_idx" ON "book_metadata" USING btree ("audible_id");
+CREATE INDEX IF NOT EXISTS "bm_audible_id_norm_idx" ON "book_metadata" USING btree (upper(trim("audible_id")));
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "bm_isbn10_norm_idx" ON "book_metadata" USING btree (upper(trim("isbn10")));
+--> statement-breakpoint
+DROP INDEX IF EXISTS "bm_audible_id_idx";
 --> statement-breakpoint
 DO $$ BEGIN
 	IF NOT EXISTS (
@@ -115,18 +119,4 @@ DO $$ BEGIN
 		ALTER TABLE "reading_sessions" ADD CONSTRAINT "reading_sessions_source_chk" CHECK ("reading_sessions"."source" in ('web', 'koreader', 'manual', 'kobo', 'audiobookshelf'));
 	END IF;
 END $$;
---> statement-breakpoint
--- Normalize existing ASIN/ISBN-10 values to the canonical form the ABS matcher expects
--- (normalizeAsin: trim + uppercase, empty -> null). Rows written before that fix would
--- otherwise silently miss exact matches. Both statements are no-ops once normalized, so
--- re-running each boot costs a single scan and changes nothing.
-UPDATE "book_metadata"
-SET "audible_id" = NULLIF(upper(trim("audible_id")), '')
-WHERE "audible_id" IS NOT NULL
-	AND "audible_id" IS DISTINCT FROM NULLIF(upper(trim("audible_id")), '');
---> statement-breakpoint
-UPDATE "book_metadata"
-SET "isbn10" = upper("isbn10")
-WHERE "isbn10" IS NOT NULL
-	AND "isbn10" IS DISTINCT FROM upper("isbn10");
 `;

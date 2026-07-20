@@ -10,6 +10,7 @@ function resetEnv(): void {
   delete process.env.APP_URL;
   delete process.env.APP_VERSION;
   delete process.env.OIDC_ALLOW_LOCAL_ISSUERS;
+  delete process.env.AUDIOBOOKSHELF_ALLOW_LOCAL_SERVERS;
   delete process.env.SWAGGER_ENABLED;
   delete process.env.KOBO_CLOUDSCRAPER_PYTHON;
   delete process.env.KOREADER_PLUGIN_PATH;
@@ -49,6 +50,7 @@ describe('config', () => {
       githubReleasesRepo: 'bookorbit/bookorbit',
       githubReleasesToken: undefined,
       oidcAllowLocalIssuers: false,
+      audiobookshelfAllowLocalServers: false,
       swaggerEnabled: false,
       koboCloudscraperPython: undefined,
       koreaderPluginSourcePath: undefined,
@@ -60,6 +62,7 @@ describe('config', () => {
     process.env.APP_URL = 'https://bookorbit.local';
     process.env.APP_VERSION = 'v2.3.4';
     process.env.OIDC_ALLOW_LOCAL_ISSUERS = 'true';
+    process.env.AUDIOBOOKSHELF_ALLOW_LOCAL_SERVERS = 'true';
     process.env.SWAGGER_ENABLED = 'true';
     process.env.KOBO_CLOUDSCRAPER_PYTHON = '/opt/bookorbit-python/bin/python';
     process.env.KOREADER_PLUGIN_PATH = '/opt/koreader/bookorbit.koplugin';
@@ -73,6 +76,7 @@ describe('config', () => {
       githubReleasesRepo: 'acme/app',
       githubReleasesToken: 'ghp_example',
       oidcAllowLocalIssuers: true,
+      audiobookshelfAllowLocalServers: true,
       swaggerEnabled: true,
       koboCloudscraperPython: '/opt/bookorbit-python/bin/python',
       koreaderPluginSourcePath: '/opt/koreader/bookorbit.koplugin',

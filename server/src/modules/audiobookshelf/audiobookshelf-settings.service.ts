@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import type {
   AudiobookshelfConnectionTestResult,
@@ -8,18 +9,23 @@ import type {
   UpsertAudiobookshelfSettingsPayload,
 } from '@bookorbit/types';
 
+import { ensureSafeUrl, type SafeRemoteHostOptions } from '../../common/utils/ssrf.utils';
 import { AudiobookshelfClientService } from './audiobookshelf-client.service';
 import { AudiobookshelfRepository } from './audiobookshelf.repository';
-import { parseAndNormalizeServerUrl } from './audiobookshelf-url.utils';
+import { audiobookshelfSafeRemoteHostOptions, parseAndNormalizeServerUrl } from './audiobookshelf-url.utils';
 
 @Injectable()
 export class AudiobookshelfSettingsService {
   private readonly logger = new Logger(AudiobookshelfSettingsService.name);
+  private readonly safeRemoteHostOptions: SafeRemoteHostOptions;
 
   constructor(
     private readonly repo: AudiobookshelfRepository,
     private readonly client: AudiobookshelfClientService,
-  ) {}
+    config: ConfigService,
+  ) {
+    this.safeRemoteHostOptions = audiobookshelfSafeRemoteHostOptions(config);
+  }
 
   async getSettings(userId: number): Promise<AudiobookshelfSettings> {
     const [row, hasSyncPermission] = await Promise.all([this.repo.findSettings(userId), this.repo.userHasAudiobookshelfSyncPermission(userId)]);
@@ -52,6 +58,7 @@ export class AudiobookshelfSettingsService {
       if (!normalizedUrl) {
         throw new BadRequestException('Audiobookshelf server URL must be a valid http or https URL');
       }
+      await this.assertSafeServerUrl(normalizedUrl);
     }
 
     const rawToken = payload.apiToken !== undefined ? payload.apiToken.trim() : undefined;
@@ -108,6 +115,12 @@ export class AudiobookshelfSettingsService {
       return { success: false, error: 'Server URL and API token are required to test the connection' };
     }
 
+    try {
+      await this.assertSafeServerUrl(serverUrl);
+    } catch {
+      return { success: false, error: 'The Audiobookshelf server URL is invalid' };
+    }
+
     return this.client.testConnection(userId, serverUrl, token);
   }
 
@@ -134,5 +147,9 @@ export class AudiobookshelfSettingsService {
     if (!input.configComplete) return 'missing_config';
     if (!input.enabled) return 'user_disabled';
     return null;
+  }
+
+  private async assertSafeServerUrl(serverUrl: string): Promise<void> {
+    await ensureSafeUrl(serverUrl, this.safeRemoteHostOptions);
   }
 }

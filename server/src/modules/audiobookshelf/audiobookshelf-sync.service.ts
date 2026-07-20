@@ -180,7 +180,9 @@ export class AudiobookshelfSyncService {
             lastSyncedProgress: mp.progress,
             syncError: null,
             ...(statusDue ? { lastSyncedStatus: outcome.appliedStatus, lastSyncedAbsUpdate: mp.lastUpdate } : {}),
-            ...(outcome.positionApplied ? { lastSyncedPositionAbsUpdate: mp.lastUpdate, lastSyncedProgressAt: outcome.positionProgressAt } : {}),
+            ...(outcome.positionWatermarkAdvanced
+              ? { lastSyncedPositionAbsUpdate: mp.lastUpdate, lastSyncedProgressAt: outcome.positionProgressAt }
+              : {}),
           });
         } catch (err) {
           result.failed++;
@@ -236,9 +238,16 @@ export class AudiobookshelfSyncService {
     timeZone: string,
     due: { status: boolean; position: boolean },
     positionSyncedProgressAt: Date | null,
-  ): Promise<{ statusApplied: boolean; positionApplied: boolean; appliedStatus: ReadStatus | null; positionProgressAt: Date | null }> {
+  ): Promise<{
+    statusApplied: boolean;
+    positionApplied: boolean;
+    positionWatermarkAdvanced: boolean;
+    appliedStatus: ReadStatus | null;
+    positionProgressAt: Date | null;
+  }> {
     let statusApplied = false;
     let positionApplied = false;
+    let positionWatermarkAdvanced = false;
     let appliedStatus: ReadStatus | null = null;
     let positionProgressAt: Date | null = null;
 
@@ -269,10 +278,11 @@ export class AudiobookshelfSyncService {
     if (due.position) {
       const position = await this.applyPosition(userId, bookId, mp, positionSyncedProgressAt);
       positionApplied = position.applied;
+      positionWatermarkAdvanced = position.watermarkAdvanced;
       positionProgressAt = position.progressAt;
     }
 
-    return { statusApplied, positionApplied, appliedStatus, positionProgressAt };
+    return { statusApplied, positionApplied, positionWatermarkAdvanced, appliedStatus, positionProgressAt };
   }
 
   private async applyPosition(
@@ -280,8 +290,8 @@ export class AudiobookshelfSyncService {
     bookId: number,
     mp: AbsMediaProgress,
     syncedProgressAt: Date | null,
-  ): Promise<{ applied: boolean; progressAt: Date | null }> {
-    const skipped = { applied: false, progressAt: null };
+  ): Promise<{ applied: boolean; watermarkAdvanced: boolean; progressAt: Date | null }> {
+    const skipped = { applied: false, watermarkAdvanced: false, progressAt: null };
     const files = (await this.repo.findAudioFilesInPlayOrder(bookId)).filter((file) => file.format && isAudioFormat(file.format));
     if (files.length === 0) return skipped;
 
@@ -310,7 +320,7 @@ export class AudiobookshelfSyncService {
         syncedProgressAt != null ? local.updatedAt.getTime() !== syncedProgressAt.getTime() : (local.percentage ?? 0) > mp.progress * 100;
       if (localAdvanced) {
         this.logger.warn(`[abs.sync] [fail] userId=${userId} bookId=${bookId} - position skipped: local progress is newer`);
-        return skipped;
+        return { applied: false, watermarkAdvanced: true, progressAt: local.updatedAt };
       }
     }
 
@@ -319,6 +329,6 @@ export class AudiobookshelfSyncService {
 
     const percentage = Math.max(0, Math.min(100, (mp.currentTime / mp.duration) * 100));
     const written = await this.repo.upsertAudioProgress(userId, bookId, resolved.currentFileId, resolved.positionSeconds, percentage);
-    return { applied: true, progressAt: written?.updatedAt ?? null };
+    return { applied: true, watermarkAdvanced: true, progressAt: written?.updatedAt ?? null };
   }
 }

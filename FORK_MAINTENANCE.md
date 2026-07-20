@@ -29,6 +29,33 @@ each upstream merge is a short chore, not a project.**
    Generic code survives upstream refactors far better than `sidecar`-flavoured code.
 5. **Accept the irreducible.** Progress sync *is* an edit to reading-state code. Some
    coupling cannot be designed away; keep it surgical and commented.
+6. **Never depend on a data invariant upstream does not maintain.** If a fork feature needs
+   data in a particular shape, enforce it at **read time** - never by repairing rows that
+   upstream code keeps writing in the other shape. A repair pass over a column you do not
+   own is a loop you can never win: you control neither the writers nor when they run.
+
+## Enforce fork invariants at read time (worked example)
+
+ABS matching needs a canonical ASIN to look books up by. `book_metadata.audible_id` is an
+**upstream-owned** column: upstream's audio extractor stores the raw `asin` tag verbatim, about
+eight upstream write paths populate it, and none normalize. That is not an upstream bug - upstream
+never queries or indexes the column, so it never needed a canonical form. The fork introduced that
+requirement.
+
+The first attempt normalized at the fork's own two boundaries and then ran a boot-time
+`UPDATE book_metadata SET audible_id = upper(trim(audible_id))` repair pass. That was wrong twice
+over: it re-scanned the table on every application start forever (the predicate is non-sargable, so
+no index helps and the "already clean" case is the expensive one), and it could never actually hold
+the invariant, because every new scan of an audiobook with a lowercase ASIN tag re-introduced
+unnormalized rows.
+
+The fix was to stop repairing data and make the **comparison** normalization-insensitive -
+`upper(trim(audible_id))` matched against already-normalized inputs, backed by a functional index on
+the same expression. That needs no cooperation from any other write path, is correct regardless of
+who wrote the row or when, and deleted the boot-time scan entirely.
+
+Generalise it: when a fork feature wants to match on an upstream column, normalize in the query and
+index the expression. Do not try to impose an invariant on data you do not own.
 
 ## Measuring the surface: use `-w`, always
 

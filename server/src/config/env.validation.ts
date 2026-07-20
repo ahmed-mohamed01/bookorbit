@@ -61,6 +61,7 @@ const envSchema = z.object({
   EMAIL_ENCRYPTION_KEY: z.string().optional(),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).optional(),
   OIDC_ALLOW_LOCAL_ISSUERS: booleanEnvFlag('OIDC_ALLOW_LOCAL_ISSUERS'),
+  AUDIOBOOKSHELF_ALLOW_LOCAL_SERVERS: booleanEnvFlag('AUDIOBOOKSHELF_ALLOW_LOCAL_SERVERS'),
   CSP_ALLOW_CLOUDFLARE_INSIGHTS: booleanEnvFlag('CSP_ALLOW_CLOUDFLARE_INSIGHTS'),
   SWAGGER_ENABLED: booleanEnvFlag('SWAGGER_ENABLED'),
   KOBO_CLOUDSCRAPER_PYTHON: z

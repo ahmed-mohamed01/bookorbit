@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ConfigService } from '@nestjs/config';
 
 import { AudiobookshelfApiError, AudiobookshelfClientService } from './audiobookshelf-client.service';
 
-const SERVER_URL = 'https://abs.example.com';
+const SERVER_URL = 'https://198.51.100.10';
 const TOKEN = 'secret-token';
 
 function makeFetchResponse(status: number, body: unknown, type: ResponseType = 'basic'): Response {
@@ -14,12 +15,22 @@ function makeFetchResponse(status: number, body: unknown, type: ResponseType = '
   } as unknown as Response;
 }
 
+function makeConfig(nodeEnv = 'production', audiobookshelfAllowLocalServers = false): ConfigService {
+  return {
+    get: vi.fn((key: string) => {
+      if (key === 'app.nodeEnv') return nodeEnv;
+      if (key === 'app.audiobookshelfAllowLocalServers') return audiobookshelfAllowLocalServers;
+      return undefined;
+    }),
+  } as unknown as ConfigService;
+}
+
 describe('AudiobookshelfClientService', () => {
   let service: AudiobookshelfClientService;
   let fetchSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    service = new AudiobookshelfClientService();
+    service = new AudiobookshelfClientService(makeConfig());
     fetchSpy = vi.spyOn(global, 'fetch');
   });
 
@@ -34,7 +45,7 @@ describe('AudiobookshelfClientService', () => {
 
     expect(result.username).toBe('ada');
     const [calledUrl, init] = fetchSpy.mock.calls[0];
-    expect((calledUrl as URL).toString()).toBe('https://abs.example.com/api/me');
+    expect((calledUrl as URL).toString()).toBe('https://198.51.100.10/api/me');
     expect(init).toMatchObject({
       method: 'GET',
       redirect: 'manual',
@@ -70,10 +81,10 @@ describe('AudiobookshelfClientService', () => {
   it('preserves a subpath-mounted base URL', async () => {
     fetchSpy.mockResolvedValueOnce(makeFetchResponse(200, { libraries: [] }));
 
-    await service.getLibraries(1, 'https://host.example.com/audiobookshelf/', TOKEN);
+    await service.getLibraries(1, 'https://198.51.100.11/audiobookshelf/', TOKEN);
 
     const calledUrl = fetchSpy.mock.calls[0][0] as URL;
-    expect(calledUrl.toString()).toBe('https://host.example.com/audiobookshelf/api/libraries');
+    expect(calledUrl.toString()).toBe('https://198.51.100.11/audiobookshelf/api/libraries');
   });
 
   it('rejects a non-http(s) server URL without fetching', async () => {
@@ -86,6 +97,22 @@ describe('AudiobookshelfClientService', () => {
   it('rejects an unparseable server URL without fetching', async () => {
     await expect(service.getMe(1, 'not a url', TOKEN)).rejects.toBeInstanceOf(AudiobookshelfApiError);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('blocks link-local metadata hosts even when private ABS servers are enabled', async () => {
+    service = new AudiobookshelfClientService(makeConfig('production', true));
+    fetchSpy.mockResolvedValueOnce(makeFetchResponse(200, { id: 'u1', username: 'ada', mediaProgress: [] }));
+
+    await expect(service.getMe(1, 'http://169.254.169.254', TOKEN)).rejects.toMatchObject({ code: 'invalid_url' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('allows a private LAN ABS host under the production toggle', async () => {
+    service = new AudiobookshelfClientService(makeConfig('production', true));
+    fetchSpy.mockResolvedValueOnce(makeFetchResponse(200, { id: 'u1', username: 'ada', mediaProgress: [] }));
+
+    await expect(service.getMe(1, 'http://192.168.1.20:13378', TOKEN)).resolves.toMatchObject({ username: 'ada' });
+    expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
   it('rejects a redirect response (opaqueredirect)', async () => {

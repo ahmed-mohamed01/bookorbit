@@ -1,4 +1,5 @@
 import { BadRequestException, Logger, NotFoundException } from '@nestjs/common';
+import type { ConfigService } from '@nestjs/config';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AudiobookshelfClientService } from './audiobookshelf-client.service';
@@ -9,7 +10,7 @@ function makeRow(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: 1,
     userId: 42,
-    serverUrl: 'https://abs.example.com',
+    serverUrl: 'https://198.51.100.10',
     apiToken: 'stored-token',
     enabled: true,
     syncStatus: true,
@@ -41,6 +42,16 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve, reject };
 }
 
+function makeConfig(nodeEnv = 'production', audiobookshelfAllowLocalServers = false): ConfigService {
+  return {
+    get: vi.fn((key: string) => {
+      if (key === 'app.nodeEnv') return nodeEnv;
+      if (key === 'app.audiobookshelfAllowLocalServers') return audiobookshelfAllowLocalServers;
+      return undefined;
+    }),
+  } as unknown as ConfigService;
+}
+
 describe('AudiobookshelfSettingsService', () => {
   let repo: {
     findSettings: ReturnType<typeof vi.fn>;
@@ -61,7 +72,11 @@ describe('AudiobookshelfSettingsService', () => {
       userHasAudiobookshelfSyncPermission: vi.fn().mockResolvedValue(true),
     };
     client = { testConnection: vi.fn(), getLibraries: vi.fn() };
-    service = new AudiobookshelfSettingsService(repo as unknown as AudiobookshelfRepository, client as unknown as AudiobookshelfClientService);
+    service = new AudiobookshelfSettingsService(
+      repo as unknown as AudiobookshelfRepository,
+      client as unknown as AudiobookshelfClientService,
+      makeConfig(),
+    );
   });
 
   describe('getSettings', () => {
@@ -71,7 +86,7 @@ describe('AudiobookshelfSettingsService', () => {
       expect(settings).not.toHaveProperty('apiToken');
       expect(JSON.stringify(settings)).not.toContain('stored-token');
       expect(settings.tokenConfigured).toBe(true);
-      expect(settings.serverUrl).toBe('https://abs.example.com');
+      expect(settings.serverUrl).toBe('https://198.51.100.10');
       expect(settings.effectiveEnabled).toBe(true);
       expect(settings.excludedLibraryIds).toEqual([]);
       expect(settings.disabledReason).toBeNull();
@@ -105,7 +120,7 @@ describe('AudiobookshelfSettingsService', () => {
     it('requires url and token on first save', async () => {
       repo.findSettings.mockResolvedValue(undefined);
       await expect(service.upsertSettings(42, { apiToken: 'abc' })).rejects.toBeInstanceOf(BadRequestException);
-      await expect(service.upsertSettings(42, { serverUrl: 'https://abs.example.com' })).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.upsertSettings(42, { serverUrl: 'https://198.51.100.10' })).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('rejects a non-http(s) server URL', async () => {
@@ -115,10 +130,35 @@ describe('AudiobookshelfSettingsService', () => {
       expect(repo.updateSettings).not.toHaveBeenCalled();
     });
 
+    it('rejects a link-local metadata URL even when private ABS servers are enabled', async () => {
+      service = new AudiobookshelfSettingsService(
+        repo as unknown as AudiobookshelfRepository,
+        client as unknown as AudiobookshelfClientService,
+        makeConfig('production', true),
+      );
+      repo.findSettings.mockResolvedValue(undefined);
+
+      await expect(service.upsertSettings(42, { serverUrl: 'http://169.254.169.254', apiToken: 'abc' })).rejects.toBeInstanceOf(BadRequestException);
+      expect(repo.upsertSettings).not.toHaveBeenCalled();
+    });
+
+    it('allows a private LAN ABS URL under the production toggle', async () => {
+      service = new AudiobookshelfSettingsService(
+        repo as unknown as AudiobookshelfRepository,
+        client as unknown as AudiobookshelfClientService,
+        makeConfig('production', true),
+      );
+      repo.findSettings.mockResolvedValue(undefined);
+
+      await service.upsertSettings(42, { serverUrl: 'http://192.168.1.20:13378/', apiToken: 'abc' });
+
+      expect(repo.upsertSettings).toHaveBeenCalledWith(42, expect.objectContaining({ serverUrl: 'http://192.168.1.20:13378' }));
+    });
+
     it('normalizes the server URL (strips trailing slash) on save', async () => {
       repo.findSettings.mockResolvedValue(undefined);
-      await service.upsertSettings(42, { serverUrl: 'https://abs.example.com/', apiToken: 'abc' });
-      expect(repo.upsertSettings).toHaveBeenCalledWith(42, expect.objectContaining({ serverUrl: 'https://abs.example.com' }));
+      await service.upsertSettings(42, { serverUrl: 'https://198.51.100.10/', apiToken: 'abc' });
+      expect(repo.upsertSettings).toHaveBeenCalledWith(42, expect.objectContaining({ serverUrl: 'https://198.51.100.10' }));
       expect(repo.updateSettings).not.toHaveBeenCalled();
     });
 
@@ -133,12 +173,12 @@ describe('AudiobookshelfSettingsService', () => {
       repo.findSettings.mockResolvedValue(makeRow({ apiToken: 'old-token' }));
 
       await Promise.all([
-        service.upsertSettings(42, { serverUrl: 'https://next.example.com/' }),
+        service.upsertSettings(42, { serverUrl: 'https://198.51.100.11/' }),
         service.upsertSettings(42, { apiToken: 'fresh-token' }),
       ]);
 
-      expect(repo.updateSettings).toHaveBeenNthCalledWith(1, 42, { serverUrl: 'https://next.example.com' });
-      expect(repo.updateSettings).toHaveBeenNthCalledWith(2, 42, { apiToken: 'fresh-token' });
+      expect(repo.updateSettings).toHaveBeenCalledWith(42, { serverUrl: 'https://198.51.100.11' });
+      expect(repo.updateSettings).toHaveBeenCalledWith(42, { apiToken: 'fresh-token' });
       expect(repo.upsertSettings).not.toHaveBeenCalled();
     });
 
@@ -163,16 +203,14 @@ describe('AudiobookshelfSettingsService', () => {
     });
 
     it('preserves final stored state for controlled concurrent partial PATCH updates', async () => {
-      let stored = makeRow({ serverUrl: 'https://old.example.com', apiToken: 'old-token', syncStatus: true });
+      let stored = makeRow({ serverUrl: 'https://198.51.100.12', apiToken: 'old-token', syncStatus: true });
       const firstUpdate = deferred<void>();
       const secondUpdate = deferred<void>();
-      let updateCount = 0;
       const statefulRepo = {
         findSettings: vi.fn(() => Promise.resolve({ ...stored })),
         upsertSettings: vi.fn(),
         updateSettings: vi.fn(async (_userId: number, data: Record<string, unknown>) => {
-          updateCount += 1;
-          await (updateCount === 1 ? firstUpdate.promise : secondUpdate.promise);
+          await ('serverUrl' in data ? firstUpdate.promise : secondUpdate.promise);
           stored = { ...stored, ...data, updatedAt: new Date() };
           return { ...stored };
         }),
@@ -182,18 +220,19 @@ describe('AudiobookshelfSettingsService', () => {
       const statefulService = new AudiobookshelfSettingsService(
         statefulRepo as unknown as AudiobookshelfRepository,
         client as unknown as AudiobookshelfClientService,
+        makeConfig(),
       );
 
-      const urlPatch = statefulService.upsertSettings(42, { serverUrl: 'https://next.example.com/' });
+      const urlPatch = statefulService.upsertSettings(42, { serverUrl: 'https://198.51.100.11/' });
       const tokenPatch = statefulService.upsertSettings(42, { apiToken: 'fresh-token' });
       await Promise.resolve();
       secondUpdate.resolve();
-      await expect(tokenPatch).resolves.toMatchObject({ serverUrl: 'https://old.example.com', tokenConfigured: true });
+      await expect(tokenPatch).resolves.toMatchObject({ serverUrl: 'https://198.51.100.12', tokenConfigured: true });
       firstUpdate.resolve();
-      await expect(urlPatch).resolves.toMatchObject({ serverUrl: 'https://next.example.com', tokenConfigured: true });
+      await expect(urlPatch).resolves.toMatchObject({ serverUrl: 'https://198.51.100.11', tokenConfigured: true });
 
       expect(stored).toMatchObject({
-        serverUrl: 'https://next.example.com',
+        serverUrl: 'https://198.51.100.11',
         apiToken: 'fresh-token',
         syncStatus: true,
       });
@@ -220,6 +259,7 @@ describe('AudiobookshelfSettingsService', () => {
       const statefulService = new AudiobookshelfSettingsService(
         statefulRepo as unknown as AudiobookshelfRepository,
         client as unknown as AudiobookshelfClientService,
+        makeConfig(),
       );
 
       const patch = statefulService.upsertSettings(42, { syncSessions: false });
@@ -271,15 +311,15 @@ describe('AudiobookshelfSettingsService', () => {
       repo.findSettings.mockResolvedValue(makeRow());
       client.testConnection.mockResolvedValue({ success: true, username: 'ada' });
       const result = await service.testConnection(42, {});
-      expect(client.testConnection).toHaveBeenCalledWith(42, 'https://abs.example.com', 'stored-token');
+      expect(client.testConnection).toHaveBeenCalledWith(42, 'https://198.51.100.10', 'stored-token');
       expect(result).toEqual({ success: true, username: 'ada' });
     });
 
     it('uses the payload url and token when provided', async () => {
       repo.findSettings.mockResolvedValue(undefined);
       client.testConnection.mockResolvedValue({ success: true, username: 'ada' });
-      await service.testConnection(42, { serverUrl: 'https://other.example.com/', apiToken: 'live-token' });
-      expect(client.testConnection).toHaveBeenCalledWith(42, 'https://other.example.com', 'live-token');
+      await service.testConnection(42, { serverUrl: 'https://198.51.100.13/', apiToken: 'live-token' });
+      expect(client.testConnection).toHaveBeenCalledWith(42, 'https://198.51.100.13', 'live-token');
     });
 
     it('returns a clean error when config is incomplete', async () => {
@@ -293,6 +333,21 @@ describe('AudiobookshelfSettingsService', () => {
       repo.findSettings.mockResolvedValue(undefined);
       const result = await service.testConnection(42, { serverUrl: 'ftp://x', apiToken: 'abc' });
       expect(result.success).toBe(false);
+      expect(client.testConnection).not.toHaveBeenCalled();
+    });
+
+    it('rejects a stored link-local metadata URL without calling the client', async () => {
+      service = new AudiobookshelfSettingsService(
+        repo as unknown as AudiobookshelfRepository,
+        client as unknown as AudiobookshelfClientService,
+        makeConfig('production', true),
+      );
+      repo.findSettings.mockResolvedValue(makeRow({ serverUrl: 'http://169.254.169.254' }));
+
+      await expect(service.testConnection(42, {})).resolves.toEqual({
+        success: false,
+        error: 'The Audiobookshelf server URL is invalid',
+      });
       expect(client.testConnection).not.toHaveBeenCalled();
     });
   });

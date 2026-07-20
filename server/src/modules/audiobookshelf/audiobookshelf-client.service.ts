@@ -1,10 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
 import type { AudiobookshelfConnectionTestResult } from '@bookorbit/types';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { ensureSafeUrl, type SafeRemoteHostOptions } from '../../common/utils/ssrf.utils';
 import { AUDIOBOOKSHELF_REQUEST_TIMEOUT_MS, AUDIOBOOKSHELF_USER_AGENT } from './audiobookshelf.constants';
-import { parseAndNormalizeServerUrl } from './audiobookshelf-url.utils';
+import { audiobookshelfSafeRemoteHostOptions, parseAndNormalizeServerUrl } from './audiobookshelf-url.utils';
 
 export type AudiobookshelfErrorCode = 'invalid_url' | 'timeout' | 'network' | 'redirect' | 'http' | 'invalid_response';
 
@@ -106,6 +108,11 @@ type QueryParams = Record<string, string | number | undefined>;
 @Injectable()
 export class AudiobookshelfClientService {
   private readonly logger = new Logger(AudiobookshelfClientService.name);
+  private readonly safeRemoteHostOptions: SafeRemoteHostOptions;
+
+  constructor(config: ConfigService) {
+    this.safeRemoteHostOptions = audiobookshelfSafeRemoteHostOptions(config);
+  }
 
   async getMe(userId: number, serverUrl: string, token: string): Promise<AbsMeResponse> {
     return this.request<AbsMeResponse>(userId, serverUrl, token, '/api/me');
@@ -189,6 +196,11 @@ export class AudiobookshelfClientService {
       for (const [key, value] of Object.entries(query)) {
         if (value !== undefined) url.searchParams.set(key, String(value));
       }
+    }
+    try {
+      await ensureSafeUrl(url.toString(), this.safeRemoteHostOptions);
+    } catch {
+      throw new AudiobookshelfApiError('Invalid Audiobookshelf server URL', 'invalid_url');
     }
 
     const started = Date.now();

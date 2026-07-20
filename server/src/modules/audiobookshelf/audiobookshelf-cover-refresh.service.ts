@@ -10,6 +10,9 @@ import { MetadataService } from '../metadata/metadata.service';
 import { buildSidecarCoverPathByBookId, resolveCoverReadOrder } from '../metadata/lib/cover-source-resolution';
 import { AudiobookshelfRepository } from './audiobookshelf.repository';
 
+const COVER_LOOKUP_BATCH_SIZE = 500;
+const COVER_APPLY_CONCURRENCY = 5;
+
 @Injectable()
 export class AudiobookshelfCoverRefreshService implements BulkCoverRefresher {
   private readonly logger = new Logger(AudiobookshelfCoverRefreshService.name);
@@ -38,45 +41,80 @@ export class AudiobookshelfCoverRefreshService implements BulkCoverRefresher {
       }
       await this.bookService.resolveSelectionToIds({ bookIds }, user);
 
-      const [files, sidecarCoverRows, coverLockedBookIds] = await Promise.all([
-        this.bookReadService.findPrimaryFilesByBookIds(bookIds),
-        this.repository.findSidecarCoverCandidatesByBookIds(bookIds),
-        this.bookMetadataLockService.getCoverLockedBookIds(bookIds),
-      ]);
-      const filesByBookId = new Map(files.map((file) => [file.bookId, file]));
-      const applicableSidecarRows = sidecarCoverRows.filter((row) => row.organizationMode !== 'book_per_file');
-      const sidecarCoverByBookId = buildSidecarCoverPathByBookId(applicableSidecarRows);
-      const precedenceByBookId = new Map(applicableSidecarRows.map((row) => [row.bookId, row.metadataPrecedence]));
-
       let processed = 0;
       let updated = 0;
       let skipped = 0;
       let callbackInterrupted = false;
       let cancelled = false;
-      for (const id of bookIds) {
-        if (options?.isCancelled?.()) {
-          cancelled = true;
-          break;
-        }
-        const file = filesByBookId.get(id);
-        const sidecarCoverPath = sidecarCoverByBookId.get(id) ?? null;
-        if (!file && !sidecarCoverPath) continue;
-        if (coverLockedBookIds.has(id)) {
-          skipped++;
-          continue;
-        }
-        processed++;
-        const readOrder = resolveCoverReadOrder({
-          precedence: precedenceByBookId.get(id) ?? null,
-          primaryFile: file ? { absolutePath: file.absolutePath, format: file.format } : null,
-          sidecarCoverPath,
-        });
-        if (await this.metadataService.applyCoverFromSources(id, readOrder)) updated++;
-        try {
-          onProgress?.(id);
-        } catch {
-          callbackInterrupted = true;
-          break;
+      let firstCandidateApplied = false;
+
+      for (let outerIndex = 0; outerIndex < bookIds.length && !cancelled && !callbackInterrupted; outerIndex += COVER_LOOKUP_BATCH_SIZE) {
+        const bookBatch = bookIds.slice(outerIndex, outerIndex + COVER_LOOKUP_BATCH_SIZE);
+        const [files, sidecarCoverRows, coverLockedBookIds] = await Promise.all([
+          this.bookReadService.findPrimaryFilesByBookIds(bookBatch),
+          this.repository.findSidecarCoverCandidatesByBookIds(bookBatch),
+          this.bookMetadataLockService.getCoverLockedBookIds(bookBatch),
+        ]);
+        const filesByBookId = new Map(files.map((file) => [file.bookId, file]));
+        const applicableSidecarRows = sidecarCoverRows.filter((row) => row.organizationMode !== 'book_per_file');
+        const sidecarCoverByBookId = buildSidecarCoverPathByBookId(applicableSidecarRows);
+        const precedenceByBookId = new Map(applicableSidecarRows.map((row) => [row.bookId, row.metadataPrecedence]));
+
+        for (let batchIndex = 0; batchIndex < bookBatch.length && !cancelled && !callbackInterrupted;) {
+          const candidates: { bookId: number; readOrder: ReturnType<typeof resolveCoverReadOrder> }[] = [];
+          while (batchIndex < bookBatch.length && candidates.length < COVER_APPLY_CONCURRENCY) {
+            const id = bookBatch[batchIndex++]!;
+            if (options?.isCancelled?.()) {
+              cancelled = true;
+              break;
+            }
+            const file = filesByBookId.get(id);
+            const sidecarCoverPath = sidecarCoverByBookId.get(id) ?? null;
+            if (!file && !sidecarCoverPath) continue;
+            if (coverLockedBookIds.has(id)) {
+              skipped++;
+              continue;
+            }
+            candidates.push({
+              bookId: id,
+              readOrder: resolveCoverReadOrder({
+                precedence: precedenceByBookId.get(id) ?? null,
+                primaryFile: file ? { absolutePath: file.absolutePath, format: file.format } : null,
+                sidecarCoverPath,
+              }),
+            });
+          }
+
+          if (!firstCandidateApplied && candidates.length > 0) {
+            const first = candidates.shift()!;
+            processed++;
+            if (await this.metadataService.applyCoverFromSources(first.bookId, first.readOrder)) updated++;
+            firstCandidateApplied = true;
+            try {
+              onProgress?.(first.bookId);
+            } catch {
+              callbackInterrupted = true;
+            }
+          }
+          if (cancelled || callbackInterrupted || candidates.length === 0) continue;
+
+          processed += candidates.length;
+          const results = await Promise.allSettled(
+            candidates.map(async (candidate) => ({
+              bookId: candidate.bookId,
+              refreshed: await this.metadataService.applyCoverFromSources(candidate.bookId, candidate.readOrder),
+            })),
+          );
+          for (const result of results) {
+            if (result.status === 'rejected') throw result.reason;
+            if (result.value.refreshed) updated++;
+            try {
+              onProgress?.(result.value.bookId);
+            } catch {
+              callbackInterrupted = true;
+              break;
+            }
+          }
         }
       }
       this.logger.log(

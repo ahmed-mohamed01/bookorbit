@@ -152,6 +152,40 @@ describe('AudiobookshelfCoverRefreshService', () => {
     expect(bookMetadataLockService.getCoverLockedBookIds).not.toHaveBeenCalled();
   });
 
+  it('bounds lookup maps by processing large selections in outer batches', async () => {
+    const { service, bookReadService, repository, bookMetadataLockService } = makeService();
+    const bookIds = Array.from({ length: 501 }, (_, index) => index + 1);
+
+    await service.bulkReExtractCover(bookIds, user);
+
+    expect(bookReadService.findPrimaryFilesByBookIds).toHaveBeenNthCalledWith(1, bookIds.slice(0, 500));
+    expect(bookReadService.findPrimaryFilesByBookIds).toHaveBeenNthCalledWith(2, bookIds.slice(500));
+    expect(repository.findSidecarCoverCandidatesByBookIds).toHaveBeenCalledTimes(2);
+    expect(bookMetadataLockService.getCoverLockedBookIds).toHaveBeenCalledTimes(2);
+  });
+
+  it('applies covers with small bounded concurrency', async () => {
+    const { service, bookReadService, metadataService } = makeService();
+    const bookIds = Array.from({ length: 12 }, (_, index) => index + 1);
+    bookReadService.findPrimaryFilesByBookIds.mockResolvedValue(
+      bookIds.map((bookId) => ({ bookId, absolutePath: `/library/${bookId}.epub`, format: 'epub' })),
+    );
+    let active = 0;
+    let maxActive = 0;
+    metadataService.applyCoverFromSources.mockImplementation(async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await Promise.resolve();
+      active--;
+      return true;
+    });
+
+    await expect(service.bulkReExtractCover(bookIds, user)).resolves.toEqual({ processed: 12, updated: 12 });
+
+    expect(maxActive).toBeGreaterThan(1);
+    expect(maxActive).toBeLessThanOrEqual(5);
+  });
+
   it('propagates access failures before loading cover candidates', async () => {
     const { service, bookService, bookReadService, repository, bookMetadataLockService } = makeService();
     const error = new Error('not accessible');

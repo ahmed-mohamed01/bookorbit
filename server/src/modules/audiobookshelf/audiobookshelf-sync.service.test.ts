@@ -291,18 +291,56 @@ describe('AudiobookshelfSyncService.sync', () => {
 
   it('does not overwrite local playback that advanced since our last ABS write', async () => {
     const { service, client, repo, statusService } = makeDeps();
+    const localUpdatedAt = new Date('2026-07-11T00:00:00.000Z');
     statusService.findOne.mockResolvedValue({ status: 'reading' });
     client.getMe.mockResolvedValue({ mediaProgress: [makeMp({ progress: 0.5, currentTime: 150, lastUpdate: 5000 })] });
     repo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([
       makeState({ lastSyncedAbsUpdate: 4000, lastSyncedPositionAbsUpdate: 4000, lastSyncedProgressAt: new Date('2026-07-10T00:00:00.000Z') }),
     ]);
     // The progress row's updatedAt no longer matches our snapshot -> local playback moved it.
-    repo.findAudioProgress.mockResolvedValue({ percentage: 80, updatedAt: new Date('2026-07-11T00:00:00.000Z') });
+    repo.findAudioProgress.mockResolvedValue({ percentage: 80, updatedAt: localUpdatedAt });
 
     const result = await service.sync(makeUser());
 
     expect(repo.upsertAudioProgress).not.toHaveBeenCalled();
     expect(result.positionApplied).toBe(0);
+    expect(repo.updateBookState).toHaveBeenCalledWith(
+      7,
+      'abs-1',
+      expect.objectContaining({ lastSyncedPositionAbsUpdate: 5000, lastSyncedProgressAt: localUpdatedAt }),
+    );
+  });
+
+  it('applies the next newer ABS position after re-baselining a locally advanced position', async () => {
+    const { service, client, repo, statusService } = makeDeps();
+    const previousSnapshot = new Date('2026-07-10T00:00:00.000Z');
+    const localUpdatedAt = new Date('2026-07-11T00:00:00.000Z');
+    let state = makeState({
+      lastSyncedAbsUpdate: 4000,
+      lastSyncedPositionAbsUpdate: 4000,
+      lastSyncedProgressAt: previousSnapshot,
+    });
+    statusService.findOne.mockResolvedValue({ status: 'reading' });
+    client.getMe
+      .mockResolvedValueOnce({ mediaProgress: [makeMp({ progress: 0.5, currentTime: 150, lastUpdate: 5000 })] })
+      .mockResolvedValueOnce({ mediaProgress: [makeMp({ progress: 0.9, currentTime: 270, lastUpdate: 6000 })] });
+    repo.findSyncableBookStatesByAbsItemIds.mockImplementation(() => Promise.resolve([state]));
+    repo.findAudioProgress.mockResolvedValue({ percentage: 80, updatedAt: localUpdatedAt });
+    repo.updateBookState.mockImplementation((_userId: number, _absItemId: string, patch: Record<string, unknown>) => {
+      state = { ...state, ...patch };
+      return Promise.resolve();
+    });
+
+    const first = await service.sync(makeUser());
+
+    expect(first.positionApplied).toBe(0);
+    expect(repo.upsertAudioProgress).not.toHaveBeenCalled();
+    expect(state).toMatchObject({ lastSyncedPositionAbsUpdate: 5000, lastSyncedProgressAt: localUpdatedAt });
+
+    const second = await service.sync(makeUser());
+
+    expect(second.positionApplied).toBe(1);
+    expect(repo.upsertAudioProgress).toHaveBeenCalledWith(7, 100, 1, 270, 90);
   });
 
   it('applies an ABS re-listen backward when the local row is unchanged since our write', async () => {

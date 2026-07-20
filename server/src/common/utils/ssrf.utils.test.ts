@@ -111,6 +111,19 @@ describe('ensureSafeRemoteHost', () => {
     await expect(ensureSafeRemoteHost('mixed', { allowPrivate: true })).resolves.toBeUndefined();
   });
 
+  it('still blocks link-local literals when private hosts are allowed selectively', async () => {
+    await expect(ensureSafeRemoteHost('169.254.169.254', { allowPrivate: true, blockLinkLocal: true })).rejects.toBeInstanceOf(
+      PrivateAddressException,
+    );
+  });
+
+  it('still blocks link-local DNS results when private hosts are allowed selectively', async () => {
+    lookupMock.mockResolvedValue([{ address: '169.254.169.254', family: 4 }] as never);
+    await expect(ensureSafeRemoteHost('metadata.internal', { allowPrivate: true, blockLinkLocal: true })).rejects.toBeInstanceOf(
+      PrivateAddressException,
+    );
+  });
+
   it('PrivateAddressException message describes the private-address case', async () => {
     const err = await ensureSafeRemoteHost('192.168.1.1').catch((e) => e);
     expect(err).toBeInstanceOf(PrivateAddressException);
