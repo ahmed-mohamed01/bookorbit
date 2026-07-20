@@ -1,4 +1,8 @@
-CREATE TABLE IF NOT EXISTS "audiobookshelf_book_state" (
+// Audiobookshelf schema bootstrap SQL, embedded as a string rather than shipped as a .sql
+// asset. The SWC watch builder does not reliably copy assets into dist, and a missing file
+// makes the entire app fail to boot. Embedding removes that build-config coupling so this
+// works identically in dev watch, nest build, tests and Docker.
+export const AUDIOBOOKSHELF_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS "audiobookshelf_book_state" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"user_id" integer NOT NULL,
 	"abs_library_item_id" varchar(255) NOT NULL,
@@ -111,3 +115,18 @@ DO $$ BEGIN
 		ALTER TABLE "reading_sessions" ADD CONSTRAINT "reading_sessions_source_chk" CHECK ("reading_sessions"."source" in ('web', 'koreader', 'manual', 'kobo', 'audiobookshelf'));
 	END IF;
 END $$;
+--> statement-breakpoint
+-- Normalize existing ASIN/ISBN-10 values to the canonical form the ABS matcher expects
+-- (normalizeAsin: trim + uppercase, empty -> null). Rows written before that fix would
+-- otherwise silently miss exact matches. Both statements are no-ops once normalized, so
+-- re-running each boot costs a single scan and changes nothing.
+UPDATE "book_metadata"
+SET "audible_id" = NULLIF(upper(trim("audible_id")), '')
+WHERE "audible_id" IS NOT NULL
+	AND "audible_id" IS DISTINCT FROM NULLIF(upper(trim("audible_id")), '');
+--> statement-breakpoint
+UPDATE "book_metadata"
+SET "isbn10" = upper("isbn10")
+WHERE "isbn10" IS NOT NULL
+	AND "isbn10" IS DISTINCT FROM upper("isbn10");
+`;

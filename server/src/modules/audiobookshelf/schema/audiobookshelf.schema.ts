@@ -1,8 +1,8 @@
 import { sql } from 'drizzle-orm';
 import { bigint, boolean, index, integer, pgTable, real, serial, text, timestamp, unique, varchar } from 'drizzle-orm/pg-core';
 
-import { books } from './books';
-import { users } from './auth';
+import { books } from '../../../db/schema/books';
+import { users } from '../../../db/schema/auth';
 
 export const audiobookshelfUserSettings = pgTable('audiobookshelf_user_settings', {
   id: serial('id').primaryKey(),

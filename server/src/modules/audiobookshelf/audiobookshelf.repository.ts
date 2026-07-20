@@ -6,7 +6,6 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
-import type { AudiobookshelfBookState, AudiobookshelfUserSetting, NewAudiobookshelfBookState, NewAudiobookshelfUserSetting } from '../../db/schema';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
 import {
   aggregateReadingSessionDailyStats,
@@ -16,6 +15,14 @@ import {
 } from '../../common/utils/reading-daily-stats.utils';
 import type { AbsMappedSession } from './audiobookshelf-sessions.util';
 import { AUDIOBOOKSHELF_DAILY_STATS_RECOMPUTE_SPAN_DAYS } from './audiobookshelf.constants';
+import {
+  audiobookshelfBookState,
+  audiobookshelfUserSettings,
+  type AudiobookshelfBookState,
+  type AudiobookshelfUserSetting,
+  type NewAudiobookshelfBookState,
+  type NewAudiobookshelfUserSetting,
+} from './schema/audiobookshelf.schema';
 
 type Db = NodePgDatabase<typeof schema>;
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -124,9 +131,8 @@ export class AudiobookshelfRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
 
   async findSettings(userId: number): Promise<AudiobookshelfUserSetting | undefined> {
-    return this.db.query.audiobookshelfUserSettings.findFirst({
-      where: eq(schema.audiobookshelfUserSettings.userId, userId),
-    });
+    const [row] = await this.db.select().from(audiobookshelfUserSettings).where(eq(audiobookshelfUserSettings.userId, userId)).limit(1);
+    return row;
   }
 
   /**
@@ -138,28 +144,28 @@ export class AudiobookshelfRepository {
   async findEnabledConfiguredUsers(afterUserId: number, limit: number): Promise<AbsEnabledUser[]> {
     return this.db
       .select({
-        userId: schema.audiobookshelfUserSettings.userId,
-        lastDeepSessionScanAt: schema.audiobookshelfUserSettings.lastDeepSessionScanAt,
+        userId: audiobookshelfUserSettings.userId,
+        lastDeepSessionScanAt: audiobookshelfUserSettings.lastDeepSessionScanAt,
       })
-      .from(schema.audiobookshelfUserSettings)
+      .from(audiobookshelfUserSettings)
       .where(
         and(
-          eq(schema.audiobookshelfUserSettings.enabled, true),
-          gt(schema.audiobookshelfUserSettings.userId, afterUserId),
-          sql`length(trim(${schema.audiobookshelfUserSettings.serverUrl})) > 0`,
-          sql`length(trim(${schema.audiobookshelfUserSettings.apiToken})) > 0`,
+          eq(audiobookshelfUserSettings.enabled, true),
+          gt(audiobookshelfUserSettings.userId, afterUserId),
+          sql`length(trim(${audiobookshelfUserSettings.serverUrl})) > 0`,
+          sql`length(trim(${audiobookshelfUserSettings.apiToken})) > 0`,
         ),
       )
-      .orderBy(asc(schema.audiobookshelfUserSettings.userId))
+      .orderBy(asc(audiobookshelfUserSettings.userId))
       .limit(limit);
   }
 
   async upsertSettings(userId: number, data: AudiobookshelfSettingsMutation): Promise<AudiobookshelfUserSetting> {
     const [row] = await this.db
-      .insert(schema.audiobookshelfUserSettings)
+      .insert(audiobookshelfUserSettings)
       .values({ userId, ...data } as NewAudiobookshelfUserSetting)
       .onConflictDoUpdate({
-        target: schema.audiobookshelfUserSettings.userId,
+        target: audiobookshelfUserSettings.userId,
         set: { ...data, updatedAt: new Date() },
       })
       .returning();
@@ -168,15 +174,15 @@ export class AudiobookshelfRepository {
 
   async updateSettings(userId: number, data: AudiobookshelfSettingsMutation): Promise<AudiobookshelfUserSetting | undefined> {
     const [row] = await this.db
-      .update(schema.audiobookshelfUserSettings)
+      .update(audiobookshelfUserSettings)
       .set({ ...data, updatedAt: new Date() })
-      .where(eq(schema.audiobookshelfUserSettings.userId, userId))
+      .where(eq(audiobookshelfUserSettings.userId, userId))
       .returning();
     return row;
   }
 
   async deleteSettings(userId: number): Promise<void> {
-    await this.db.delete(schema.audiobookshelfUserSettings).where(eq(schema.audiobookshelfUserSettings.userId, userId));
+    await this.db.delete(audiobookshelfUserSettings).where(eq(audiobookshelfUserSettings.userId, userId));
   }
 
   async userHasAudiobookshelfSyncPermission(userId: number): Promise<boolean> {
@@ -377,8 +383,8 @@ export class AudiobookshelfRepository {
     for (const group of chunk(absLibraryItemIds, ISBN_ASIN_LOOKUP_CHUNK)) {
       const rows = await this.db
         .select()
-        .from(schema.audiobookshelfBookState)
-        .where(and(eq(schema.audiobookshelfBookState.userId, userId), inArray(schema.audiobookshelfBookState.absLibraryItemId, group)));
+        .from(audiobookshelfBookState)
+        .where(and(eq(audiobookshelfBookState.userId, userId), inArray(audiobookshelfBookState.absLibraryItemId, group)));
       results.push(...rows);
     }
     return results;
@@ -392,9 +398,9 @@ export class AudiobookshelfRepository {
     if (absLibraryItemIds.length === 0) return;
     for (const group of chunk(absLibraryItemIds, ISBN_ASIN_LOOKUP_CHUNK)) {
       await this.db
-        .update(schema.audiobookshelfBookState)
+        .update(audiobookshelfBookState)
         .set({ lastSeenInInventoryAt: seenAt })
-        .where(and(eq(schema.audiobookshelfBookState.userId, userId), inArray(schema.audiobookshelfBookState.absLibraryItemId, group)));
+        .where(and(eq(audiobookshelfBookState.userId, userId), inArray(audiobookshelfBookState.absLibraryItemId, group)));
     }
   }
 
@@ -405,11 +411,11 @@ export class AudiobookshelfRepository {
    */
   async pruneBookStatesNotSeenSince(userId: number, runStartedAt: Date): Promise<number> {
     const result = await this.db
-      .delete(schema.audiobookshelfBookState)
+      .delete(audiobookshelfBookState)
       .where(
         and(
-          eq(schema.audiobookshelfBookState.userId, userId),
-          or(isNull(schema.audiobookshelfBookState.lastSeenInInventoryAt), lt(schema.audiobookshelfBookState.lastSeenInInventoryAt, runStartedAt)),
+          eq(audiobookshelfBookState.userId, userId),
+          or(isNull(audiobookshelfBookState.lastSeenInInventoryAt), lt(audiobookshelfBookState.lastSeenInInventoryAt, runStartedAt)),
         ),
       );
     return result.rowCount ?? 0;
@@ -419,7 +425,7 @@ export class AudiobookshelfRepository {
     if (rows.length === 0) return;
     for (const group of chunk(rows, BOOK_STATE_UPSERT_CHUNK)) {
       await this.db
-        .insert(schema.audiobookshelfBookState)
+        .insert(audiobookshelfBookState)
         .values(
           group.map((row): NewAudiobookshelfBookState => ({
             userId,
@@ -437,7 +443,7 @@ export class AudiobookshelfRepository {
           })),
         )
         .onConflictDoUpdate({
-          target: [schema.audiobookshelfBookState.userId, schema.audiobookshelfBookState.absLibraryItemId],
+          target: [audiobookshelfBookState.userId, audiobookshelfBookState.absLibraryItemId],
           set: {
             absTitle: sql`excluded.abs_title`,
             absAuthorName: sql`excluded.abs_author_name`,
@@ -460,7 +466,7 @@ export class AudiobookshelfRepository {
       select ${schema.authors.name}
       from ${schema.bookAuthors}
       inner join ${schema.authors} on ${schema.authors.id} = ${schema.bookAuthors.authorId}
-      where ${schema.bookAuthors.bookId} = ${schema.audiobookshelfBookState.bookId}
+      where ${schema.bookAuthors.bookId} = ${audiobookshelfBookState.bookId}
       order by ${schema.bookAuthors.displayOrder} asc, ${schema.bookAuthors.authorId} asc
       limit 1
     )`;
@@ -470,14 +476,14 @@ export class AudiobookshelfRepository {
     switch (bucket) {
       case 'linked':
         return and(
-          sql`${schema.audiobookshelfBookState.bookId} is not null`,
-          eq(schema.audiobookshelfBookState.needsReview, false),
-          isNull(schema.audiobookshelfBookState.matchError),
+          sql`${audiobookshelfBookState.bookId} is not null`,
+          eq(audiobookshelfBookState.needsReview, false),
+          isNull(audiobookshelfBookState.matchError),
         );
       case 'needs-review':
-        return eq(schema.audiobookshelfBookState.needsReview, true);
+        return eq(audiobookshelfBookState.needsReview, true);
       case 'unmatched':
-        return isNull(schema.audiobookshelfBookState.bookId);
+        return isNull(audiobookshelfBookState.bookId);
     }
   }
 
@@ -488,7 +494,7 @@ export class AudiobookshelfRepository {
   }
 
   private linkedStateScopeClause(scope: AbsBookAccessScope): SQL {
-    return and(isNotNull(schema.audiobookshelfBookState.bookId), ...this.scopedBookClauses(scope))!;
+    return and(isNotNull(audiobookshelfBookState.bookId), ...this.scopedBookClauses(scope))!;
   }
 
   async listBookStates(
@@ -499,7 +505,7 @@ export class AudiobookshelfRepository {
     pageSize: number,
     q: string | undefined,
   ): Promise<{ items: AbsBookStateView[]; total: number }> {
-    const clauses: SQL[] = [eq(schema.audiobookshelfBookState.userId, userId)];
+    const clauses: SQL[] = [eq(audiobookshelfBookState.userId, userId)];
     const bucketClause = this.bucketClause(bucket);
     if (bucketClause) clauses.push(bucketClause);
     if (bucket === 'linked' || bucket === 'needs-review') {
@@ -507,38 +513,38 @@ export class AudiobookshelfRepository {
     }
     if (q && q.trim()) {
       const pattern = `%${q.trim()}%`;
-      clauses.push(or(ilike(schema.audiobookshelfBookState.absTitle, pattern), ilike(schema.bookMetadata.title, pattern))!);
+      clauses.push(or(ilike(audiobookshelfBookState.absTitle, pattern), ilike(schema.bookMetadata.title, pattern))!);
     }
     const where = and(...clauses);
 
     const [{ total }] = await this.db
       .select({ total: sql<number>`count(*)::int` })
-      .from(schema.audiobookshelfBookState)
-      .leftJoin(schema.books, eq(schema.books.id, schema.audiobookshelfBookState.bookId))
-      .leftJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.audiobookshelfBookState.bookId))
+      .from(audiobookshelfBookState)
+      .leftJoin(schema.books, eq(schema.books.id, audiobookshelfBookState.bookId))
+      .leftJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, audiobookshelfBookState.bookId))
       .where(where);
 
     const items = await this.db
       .select({
-        absLibraryItemId: schema.audiobookshelfBookState.absLibraryItemId,
-        absTitle: schema.audiobookshelfBookState.absTitle,
-        absAuthorName: schema.audiobookshelfBookState.absAuthorName,
-        bookId: schema.audiobookshelfBookState.bookId,
+        absLibraryItemId: audiobookshelfBookState.absLibraryItemId,
+        absTitle: audiobookshelfBookState.absTitle,
+        absAuthorName: audiobookshelfBookState.absAuthorName,
+        bookId: audiobookshelfBookState.bookId,
         bookTitle: schema.bookMetadata.title,
         bookAuthorName: this.bookAuthorNameSql(),
-        matchMethod: schema.audiobookshelfBookState.matchMethod,
-        matchConfidence: schema.audiobookshelfBookState.matchConfidence,
-        needsReview: schema.audiobookshelfBookState.needsReview,
-        matchError: schema.audiobookshelfBookState.matchError,
-        syncExcluded: schema.audiobookshelfBookState.syncExcluded,
-        syncError: schema.audiobookshelfBookState.syncError,
-        lastSyncedAt: schema.audiobookshelfBookState.lastSyncedAt,
+        matchMethod: audiobookshelfBookState.matchMethod,
+        matchConfidence: audiobookshelfBookState.matchConfidence,
+        needsReview: audiobookshelfBookState.needsReview,
+        matchError: audiobookshelfBookState.matchError,
+        syncExcluded: audiobookshelfBookState.syncExcluded,
+        syncError: audiobookshelfBookState.syncError,
+        lastSyncedAt: audiobookshelfBookState.lastSyncedAt,
       })
-      .from(schema.audiobookshelfBookState)
-      .leftJoin(schema.books, eq(schema.books.id, schema.audiobookshelfBookState.bookId))
-      .leftJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.audiobookshelfBookState.bookId))
+      .from(audiobookshelfBookState)
+      .leftJoin(schema.books, eq(schema.books.id, audiobookshelfBookState.bookId))
+      .leftJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, audiobookshelfBookState.bookId))
       .where(where)
-      .orderBy(desc(schema.audiobookshelfBookState.updatedAt), asc(schema.audiobookshelfBookState.absLibraryItemId))
+      .orderBy(desc(audiobookshelfBookState.updatedAt), asc(audiobookshelfBookState.absLibraryItemId))
       .limit(pageSize)
       .offset(page * pageSize);
 
@@ -546,39 +552,42 @@ export class AudiobookshelfRepository {
   }
 
   async findBookStateView(userId: number, absLibraryItemId: string, scope?: AbsBookAccessScope): Promise<AbsBookStateView | null> {
-    const clauses: SQL[] = [eq(schema.audiobookshelfBookState.userId, userId), eq(schema.audiobookshelfBookState.absLibraryItemId, absLibraryItemId)];
+    const clauses: SQL[] = [eq(audiobookshelfBookState.userId, userId), eq(audiobookshelfBookState.absLibraryItemId, absLibraryItemId)];
     if (scope) {
-      clauses.push(or(isNull(schema.audiobookshelfBookState.bookId), this.linkedStateScopeClause(scope))!);
+      clauses.push(or(isNull(audiobookshelfBookState.bookId), this.linkedStateScopeClause(scope))!);
     }
 
     const [row] = await this.db
       .select({
-        absLibraryItemId: schema.audiobookshelfBookState.absLibraryItemId,
-        absTitle: schema.audiobookshelfBookState.absTitle,
-        absAuthorName: schema.audiobookshelfBookState.absAuthorName,
-        bookId: schema.audiobookshelfBookState.bookId,
+        absLibraryItemId: audiobookshelfBookState.absLibraryItemId,
+        absTitle: audiobookshelfBookState.absTitle,
+        absAuthorName: audiobookshelfBookState.absAuthorName,
+        bookId: audiobookshelfBookState.bookId,
         bookTitle: schema.bookMetadata.title,
         bookAuthorName: this.bookAuthorNameSql(),
-        matchMethod: schema.audiobookshelfBookState.matchMethod,
-        matchConfidence: schema.audiobookshelfBookState.matchConfidence,
-        needsReview: schema.audiobookshelfBookState.needsReview,
-        matchError: schema.audiobookshelfBookState.matchError,
-        syncExcluded: schema.audiobookshelfBookState.syncExcluded,
-        syncError: schema.audiobookshelfBookState.syncError,
-        lastSyncedAt: schema.audiobookshelfBookState.lastSyncedAt,
+        matchMethod: audiobookshelfBookState.matchMethod,
+        matchConfidence: audiobookshelfBookState.matchConfidence,
+        needsReview: audiobookshelfBookState.needsReview,
+        matchError: audiobookshelfBookState.matchError,
+        syncExcluded: audiobookshelfBookState.syncExcluded,
+        syncError: audiobookshelfBookState.syncError,
+        lastSyncedAt: audiobookshelfBookState.lastSyncedAt,
       })
-      .from(schema.audiobookshelfBookState)
-      .leftJoin(schema.books, eq(schema.books.id, schema.audiobookshelfBookState.bookId))
-      .leftJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.audiobookshelfBookState.bookId))
+      .from(audiobookshelfBookState)
+      .leftJoin(schema.books, eq(schema.books.id, audiobookshelfBookState.bookId))
+      .leftJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, audiobookshelfBookState.bookId))
       .where(and(...clauses))
       .limit(1);
     return row ?? null;
   }
 
   async findBookStateRow(userId: number, absLibraryItemId: string): Promise<AudiobookshelfBookState | undefined> {
-    return this.db.query.audiobookshelfBookState.findFirst({
-      where: and(eq(schema.audiobookshelfBookState.userId, userId), eq(schema.audiobookshelfBookState.absLibraryItemId, absLibraryItemId)),
-    });
+    const [row] = await this.db
+      .select()
+      .from(audiobookshelfBookState)
+      .where(and(eq(audiobookshelfBookState.userId, userId), eq(audiobookshelfBookState.absLibraryItemId, absLibraryItemId)))
+      .limit(1);
+    return row;
   }
 
   async updateBookState(
@@ -587,9 +596,9 @@ export class AudiobookshelfRepository {
     patch: Partial<Omit<AudiobookshelfBookState, 'id' | 'userId' | 'absLibraryItemId' | 'createdAt' | 'updatedAt'>>,
   ): Promise<void> {
     await this.db
-      .update(schema.audiobookshelfBookState)
+      .update(audiobookshelfBookState)
       .set({ ...patch, updatedAt: new Date() })
-      .where(and(eq(schema.audiobookshelfBookState.userId, userId), eq(schema.audiobookshelfBookState.absLibraryItemId, absLibraryItemId)));
+      .where(and(eq(audiobookshelfBookState.userId, userId), eq(audiobookshelfBookState.absLibraryItemId, absLibraryItemId)));
   }
 
   async findSyncableBookStatesByAbsItemIds(
@@ -602,15 +611,15 @@ export class AudiobookshelfRepository {
     for (const group of chunk(absLibraryItemIds, ISBN_ASIN_LOOKUP_CHUNK)) {
       const rows = await this.db
         .select()
-        .from(schema.audiobookshelfBookState)
-        .innerJoin(schema.books, eq(schema.books.id, schema.audiobookshelfBookState.bookId))
+        .from(audiobookshelfBookState)
+        .innerJoin(schema.books, eq(schema.books.id, audiobookshelfBookState.bookId))
         .where(
           and(
-            eq(schema.audiobookshelfBookState.userId, userId),
-            inArray(schema.audiobookshelfBookState.absLibraryItemId, group),
-            eq(schema.audiobookshelfBookState.needsReview, false),
-            eq(schema.audiobookshelfBookState.syncExcluded, false),
-            isNull(schema.audiobookshelfBookState.matchError),
+            eq(audiobookshelfBookState.userId, userId),
+            inArray(audiobookshelfBookState.absLibraryItemId, group),
+            eq(audiobookshelfBookState.needsReview, false),
+            eq(audiobookshelfBookState.syncExcluded, false),
+            isNull(audiobookshelfBookState.matchError),
             this.linkedStateScopeClause(scope),
           ),
         );

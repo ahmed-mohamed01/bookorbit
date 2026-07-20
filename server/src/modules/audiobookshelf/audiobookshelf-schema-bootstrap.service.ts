@@ -1,12 +1,11 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
+import { AUDIOBOOKSHELF_SCHEMA_SQL } from './schema/audiobookshelf-schema';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -23,9 +22,7 @@ export class AudiobookshelfSchemaBootstrapService implements OnApplicationBootst
     this.logger.log('[abs.schema_bootstrap] [start] - schema bootstrap started');
 
     try {
-      const schemaSql = await readFile(join(__dirname, 'schema', 'audiobookshelf-schema.sql'), 'utf8');
-      const statements = schemaSql
-        .split(STATEMENT_BREAKPOINT)
+      const statements = AUDIOBOOKSHELF_SCHEMA_SQL.split(STATEMENT_BREAKPOINT)
         .map((statement) => statement.trim())
         .filter(Boolean);
 

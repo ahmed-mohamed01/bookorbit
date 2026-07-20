@@ -6,7 +6,6 @@
     "deleteOutDir": true,
     "builder": "swc",
     "typeCheck": true,
-    "assets": ["modules/audiobookshelf/schema/*.sql"],
     "plugins": [
       {
         "name": "@nestjs/swagger",

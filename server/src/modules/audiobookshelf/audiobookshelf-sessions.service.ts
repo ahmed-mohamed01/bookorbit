@@ -11,9 +11,9 @@ import {
   ACHIEVEMENT_EVENT_READING_SESSION_SAVED,
   AchievementEventsService,
 } from '../achievement/achievement-events.service';
-import type { AudiobookshelfUserSetting } from '../../db/schema';
 import { AudiobookshelfClientService, type AbsListeningSession } from './audiobookshelf-client.service';
 import { AudiobookshelfRepository, type AbsBookAccessScope } from './audiobookshelf.repository';
+import type { AudiobookshelfUserSetting } from './schema/audiobookshelf.schema';
 import {
   AUDIOBOOKSHELF_BACKFILL_EVENT_THRESHOLD,
   AUDIOBOOKSHELF_SESSION_OVERLAP_MS,
