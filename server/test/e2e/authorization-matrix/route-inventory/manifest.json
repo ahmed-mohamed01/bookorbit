@@ -1,5 +1,5 @@
 {
-  "totalRoutes": 368,
+  "totalRoutes": 367,
   "byPermission": {
     "(none)": 164,
     "Permission.ManageMetadataConfig": 32,
@@ -23,8 +23,7 @@
     "Permission.ManageIcons": 1,
     "Permission.HardcoverSync": 1,
     "Permission.ReadwiseSync": 1,
-    "Permission.StorygraphSync": 1,
-    "Permission.AudiobookshelfSync": 1
+    "Permission.StorygraphSync": 1
   },
   "byLibraryAccess": {
     "'viewer'": 3,

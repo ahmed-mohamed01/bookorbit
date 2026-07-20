@@ -79,26 +79,6 @@ describe('validateEnv', () => {
     ).toThrow('OIDC_ALLOW_LOCAL_ISSUERS must be one of true/false/1/0/yes/no/on/off');
   });
 
-  it('accepts boolean-like values for AUDIOBOOKSHELF_ALLOW_LOCAL_SERVERS', () => {
-    for (const AUDIOBOOKSHELF_ALLOW_LOCAL_SERVERS of ['true', 'false', '1', '0', 'yes', 'no', 'on', 'off']) {
-      expect(() =>
-        validateEnv({
-          ...BASE_ENV,
-          AUDIOBOOKSHELF_ALLOW_LOCAL_SERVERS,
-        }),
-      ).not.toThrow();
-    }
-  });
-
-  it('rejects invalid AUDIOBOOKSHELF_ALLOW_LOCAL_SERVERS values', () => {
-    expect(() =>
-      validateEnv({
-        ...BASE_ENV,
-        AUDIOBOOKSHELF_ALLOW_LOCAL_SERVERS: 'maybe',
-      }),
-    ).toThrow('AUDIOBOOKSHELF_ALLOW_LOCAL_SERVERS must be one of true/false/1/0/yes/no/on/off');
-  });
-
   it('accepts boolean-like values for SWAGGER_ENABLED', () => {
     for (const SWAGGER_ENABLED of ['true', 'false', '1', '0', 'yes', 'no', 'on', 'off']) {
       expect(() =>

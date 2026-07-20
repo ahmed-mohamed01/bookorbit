@@ -166,17 +166,5 @@
     "isPublic": false,
     "allowDefault": false,
     "useGuards": []
-  },
-  {
-    "file": "server/src/modules/audiobookshelf/audiobookshelf.controller.ts",
-    "className": "AudiobookshelfController",
-    "methodName": "getSettings",
-    "httpMethod": "GET",
-    "path": "/audiobookshelf/settings",
-    "permissions": ["Permission.AudiobookshelfSync"],
-    "libraryAccess": [],
-    "isPublic": false,
-    "allowDefault": false,
-    "useGuards": []
   }
 ]

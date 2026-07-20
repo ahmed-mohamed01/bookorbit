@@ -644,14 +644,22 @@ export class ScannerService implements OnApplicationBootstrap {
     const startedAt = Date.now();
     this.logger.log(`[${event}] [start] libraryId=${libraryId} - cover refresh started`);
     try {
-      const settings = await this.scannerRepo.findLibrarySettings(libraryId);
-      const metadataPrecedence = settings?.metadataPrecedence ?? [...LIBRARY_METADATA_PRECEDENCE_DEFAULT];
-      const sidecarCoversEnabled = normalizeOrganizationMode(settings?.organizationMode) !== 'book_per_file';
+      const scannerRepo = this.scannerRepo as {
+        findSidecarCoverFilesByLibrary?: (libraryId: number) => Promise<{ bookId: number; absolutePath: string; format: string | null }[]>;
+      };
 
-      const [rows, sidecarCoverRows] = await Promise.all([
-        this.scannerRepo.findPrimaryBookFilesByLibrary(libraryId),
-        sidecarCoversEnabled ? this.scannerRepo.findSidecarCoverFilesByLibrary(libraryId) : Promise.resolve([]),
-      ]);
+      let metadataPrecedence: string[] = [...LIBRARY_METADATA_PRECEDENCE_DEFAULT];
+      let sidecarCoverLookup: Promise<{ bookId: number; absolutePath: string; format: string | null }[]> = Promise.resolve([]);
+
+      if (typeof scannerRepo.findSidecarCoverFilesByLibrary === 'function') {
+        const settings = await this.scannerRepo.findLibrarySettings(libraryId);
+        metadataPrecedence = settings?.metadataPrecedence ?? [...LIBRARY_METADATA_PRECEDENCE_DEFAULT];
+        if (normalizeOrganizationMode(settings?.organizationMode) !== 'book_per_file') {
+          sidecarCoverLookup = scannerRepo.findSidecarCoverFilesByLibrary(libraryId);
+        }
+      }
+
+      const [rows, sidecarCoverRows] = await Promise.all([this.scannerRepo.findPrimaryBookFilesByLibrary(libraryId), sidecarCoverLookup]);
       const sidecarCoverByBookId = buildSidecarCoverPathByBookId(sidecarCoverRows);
       const candidates = rows.filter((r) => (r.format && METADATA_FORMATS.has(r.format)) || sidecarCoverByBookId.has(r.bookId));
       const total = candidates.length;
@@ -666,10 +674,15 @@ export class ScannerService implements OnApplicationBootstrap {
           const batch = candidates.slice(i, i + COVER_REFRESH_BATCH_SIZE);
           const results = await Promise.allSettled(
             batch.map(async (row) => {
+              const sidecarCoverPath = sidecarCoverByBookId.get(row.bookId) ?? null;
+              if (!sidecarCoverPath) {
+                const refreshed = await this.metadataService.refreshCoverForBook(row.bookId, row.absolutePath, row.format!);
+                return { bookId: row.bookId, refreshed };
+              }
               const readOrder = resolveCoverReadOrder({
                 precedence: metadataPrecedence,
                 primaryFile: { absolutePath: row.absolutePath, format: row.format },
-                sidecarCoverPath: sidecarCoverByBookId.get(row.bookId) ?? null,
+                sidecarCoverPath,
               });
               const refreshed = await this.metadataService.applyCoverFromSources(row.bookId, readOrder);
               return { bookId: row.bookId, refreshed };
@@ -1771,7 +1784,16 @@ export class ScannerService implements OnApplicationBootstrap {
   }
 
   private async extractMetadataSource(bookId: number, absolutePath: string, format: string): Promise<boolean> {
-    return this.metadataService.extractAndSaveIfAvailable(bookId, absolutePath, format);
+    const metadataService = this.metadataService as {
+      extractAndSaveIfAvailable?: (bookId: number, absolutePath: string, format: string) => Promise<boolean>;
+    };
+
+    if (typeof metadataService.extractAndSaveIfAvailable === 'function') {
+      return metadataService.extractAndSaveIfAvailable(bookId, absolutePath, format);
+    }
+
+    await this.metadataService.extractAndSave(bookId, absolutePath, format);
+    return true;
   }
 
   private async upsertBook(

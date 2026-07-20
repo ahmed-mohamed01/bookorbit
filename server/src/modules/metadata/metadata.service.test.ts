@@ -4,13 +4,11 @@ vi.mock('fs/promises', () => ({
   writeFile: vi.fn(),
   readdir: vi.fn().mockResolvedValue([]),
   rm: vi.fn(),
-  stat: vi.fn(),
 }));
 
 vi.mock('./lib/cover', () => ({
   generateThumbnail: vi.fn(),
   imageExt: vi.fn(),
-  isDecodableImage: vi.fn(),
 }));
 
 vi.mock('./lib/cbz-metadata', () => ({
@@ -84,14 +82,11 @@ vi.mock('./extractors/audio.extractor', () => ({
   parseAudioDuration: vi.fn().mockImplementation(() => Promise.resolve(null)),
 }));
 
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'fs/promises';
+import { mkdir, readFile, readdir, rm, writeFile } from 'fs/promises';
 import { Logger } from '@nestjs/common';
-import type { BookMetadataLockField } from '@bookorbit/types';
 
 import { authors, bookAuthors, bookGenres, bookMetadata, books, bookTags, genres, tags } from '../../db/schema';
-import { BookMetadataLockService } from '../book-metadata-lock/book-metadata-lock.service';
-import { AudiobookshelfSidecarCoverSourceHandler } from '../audiobookshelf/audiobookshelf-sidecar-cover-source.handler';
-import { generateThumbnail, imageExt, isDecodableImage } from './lib/cover';
+import { generateThumbnail, imageExt } from './lib/cover';
 import { extractEpubCover } from './lib/cover-epub';
 import { extractEpubMetadata } from './lib/epub';
 import { parseBookFilename } from './lib/filename-parser';
@@ -101,7 +96,6 @@ import { extractAudioMetadata, parseAudioDuration } from './extractors/audio.ext
 import { METADATA_AUTHORS_REPLACED } from './metadata-events.service';
 import { MetadataService } from './metadata.service';
 import { MetadataExtractionService } from './metadata-extraction.service';
-import { JsonSidecarFormatExtractor } from './extractors/json-sidecar-format.extractor';
 
 const mockMkdir = mkdir as MockedFunction<typeof mkdir>;
 const mockReadFile = readFile as MockedFunction<typeof readFile>;
@@ -110,8 +104,6 @@ const mockReaddir = readdir as MockedFunction<typeof readdir>;
 const mockRm = rm as MockedFunction<typeof rm>;
 const mockGenerateThumbnail = generateThumbnail as MockedFunction<typeof generateThumbnail>;
 const mockImageExt = imageExt as MockedFunction<typeof imageExt>;
-const mockStat = stat as MockedFunction<typeof stat>;
-const mockIsDecodableImage = isDecodableImage as MockedFunction<typeof isDecodableImage>;
 const mockParseBookFilename = parseBookFilename as MockedFunction<typeof parseBookFilename>;
 const mockParseMobiFile = parseMobiFile as MockedFunction<typeof parseMobiFile>;
 const mockParsePdfFile = parsePdfFile as MockedFunction<typeof parsePdfFile>;
@@ -119,9 +111,6 @@ const mockExtractEpubCover = extractEpubCover as MockedFunction<typeof extractEp
 const mockExtractEpubMetadata = extractEpubMetadata as MockedFunction<typeof extractEpubMetadata>;
 const mockExtractAudioMetadata = extractAudioMetadata as MockedFunction<typeof extractAudioMetadata>;
 const mockParseAudioDuration = parseAudioDuration as MockedFunction<typeof parseAudioDuration>;
-
-const makeRealBookMetadataLockService = (lockedFields: BookMetadataLockField[] = []) =>
-  new BookMetadataLockService({ findLockedFields: vi.fn().mockResolvedValue(lockedFields) } as never);
 
 const makeDb = () => {
   const updateWhere = vi.fn().mockResolvedValue(undefined);
@@ -184,8 +173,6 @@ describe('MetadataService', () => {
     mockRm.mockResolvedValue(undefined);
     mockGenerateThumbnail.mockResolvedValue(Buffer.from('thumbnail-bytes'));
     mockImageExt.mockReturnValue('png');
-    mockIsDecodableImage.mockResolvedValue(true);
-    mockStat.mockResolvedValue({ isFile: () => true, size: 4096 } as never);
     mockParseBookFilename.mockReturnValue({ title: 'Fallback Title', publishedYear: 2001 });
     mockParseMobiFile.mockResolvedValue(null);
     mockParsePdfFile.mockResolvedValue(null);
@@ -218,20 +205,17 @@ describe('MetadataService', () => {
       scoreService?: { calculateAndSave: ReturnType<typeof vi.fn> };
       narratorService?: { replaceForBook: ReturnType<typeof vi.fn> };
       comicMetadataRepository?: { upsert: ReturnType<typeof vi.fn> };
-      bookMetadataLockService?: Pick<BookMetadataLockService, 'isFieldLocked' | 'filterAutomatedBookUpdate'>;
-      embedder?: { embedBook: ReturnType<typeof vi.fn> } | null;
-      seriesIdentity?: { normalizeName: ReturnType<typeof vi.fn>; resolveMetadataPatch: ReturnType<typeof vi.fn> };
-      seriesMemberships?: {
-        replaceForBook: ReturnType<typeof vi.fn>;
-        findByBookId: ReturnType<typeof vi.fn>;
-        syncPrimaryFromMetadata: ReturnType<typeof vi.fn>;
+      bookMetadataLockService?: {
+        isFieldLocked: ReturnType<typeof vi.fn>;
+        filterAutomatedBookUpdate: ReturnType<typeof vi.fn>;
       };
+      embedder?: { embedBook: ReturnType<typeof vi.fn> } | null;
     },
   ) {
     return new MetadataService(
       db as never,
       config as never,
-      new MetadataExtractionService([['json', new JsonSidecarFormatExtractor()]]),
+      new MetadataExtractionService(),
       (overrides?.scoreService ?? { calculateAndSave: vi.fn().mockResolvedValue(undefined) }) as never,
       (overrides?.narratorService ?? { replaceForBook: vi.fn().mockResolvedValue(undefined) }) as never,
       (overrides?.comicMetadataRepository ?? { upsert: vi.fn().mockResolvedValue(undefined) }) as never,
@@ -241,9 +225,6 @@ describe('MetadataService', () => {
       }) as never,
       (overrides?.embedder ?? embedder) as never,
       metadataEvents as never,
-      overrides?.seriesIdentity as never,
-      overrides?.seriesMemberships as never,
-      [new AudiobookshelfSidecarCoverSourceHandler()],
     );
   }
 
@@ -332,148 +313,6 @@ describe('MetadataService', () => {
     expect(db.update).not.toHaveBeenCalledWith(books);
   });
 
-  it('applyCoverSource writes cover bytes without overwriting an existing coverSource and returns saved', async () => {
-    const { db, updateSet } = makeDb();
-    const service = makeService(db);
-    mockReadFile.mockResolvedValue(Buffer.from('image-bytes'));
-
-    await expect(service.applyCoverSource(21, { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' })).resolves.toBe('saved');
-
-    expect(mockReadFile).toHaveBeenCalledWith('/books/Book/cover.jpg');
-    expect(mockWriteFile).toHaveBeenCalledWith('/books/covers/21/cover_extracted.png', Buffer.from('image-bytes'));
-    expect(mockWriteFile).toHaveBeenCalledWith('/books/covers/21/thumbnail.jpg', Buffer.from('thumbnail-bytes'));
-    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ coverSource: 'extracted' }));
-  });
-
-  it('applyCoverSource returns locked without touching the cover when the cover field is locked', async () => {
-    const { db } = makeDb();
-    const lockService = {
-      isFieldLocked: vi.fn().mockResolvedValue(true),
-      filterAutomatedBookUpdate: vi.fn(),
-    };
-    const service = makeService(db, undefined, { bookMetadataLockService: lockService });
-
-    await expect(service.applyCoverSource(22, { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' })).resolves.toBe('locked');
-
-    expect(mockReadFile).not.toHaveBeenCalled();
-    expect(mockWriteFile).not.toHaveBeenCalled();
-    expect(db.update).not.toHaveBeenCalled();
-  });
-
-  it('applyCoverSource returns failed for empty or oversized files without reading or writing', async () => {
-    const { db } = makeDb();
-    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const service = makeService(db);
-
-    mockStat.mockResolvedValueOnce({ isFile: () => true, size: 0 } as never);
-    await expect(service.applyCoverSource(23, { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' })).resolves.toBe('failed');
-
-    mockStat.mockResolvedValueOnce({ isFile: () => true, size: 21 * 1024 * 1024 } as never);
-    await expect(service.applyCoverSource(23, { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' })).resolves.toBe('failed');
-
-    expect(mockReadFile).not.toHaveBeenCalled();
-    expect(mockWriteFile).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[scanner.import_sidecar_cover] [fail]'));
-  });
-
-  it('applyCoverSource returns failed for a corrupt image without overwriting the existing cover', async () => {
-    const { db } = makeDb();
-    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const service = makeService(db);
-    mockReadFile.mockResolvedValue(Buffer.from('not-an-image'));
-    mockIsDecodableImage.mockResolvedValue(false);
-
-    await expect(service.applyCoverSource(24, { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' })).resolves.toBe('failed');
-
-    expect(mockWriteFile).not.toHaveBeenCalled();
-    expect(db.update).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('reason=corrupt'));
-  });
-
-  it('applyCoverSource returns failed and never throws when the file cannot be read', async () => {
-    const { db } = makeDb();
-    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const service = makeService(db);
-    mockReadFile.mockRejectedValue(new Error('unreadable'));
-
-    await expect(service.applyCoverSource(25, { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' })).resolves.toBe('failed');
-
-    expect(mockWriteFile).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[scanner.import_sidecar_cover] [fail]'));
-  });
-
-  it('applyCoverFromSources persists the sidecar cover and stops without trying embedded when it succeeds', async () => {
-    const { db } = makeDb();
-    const service = makeService(db);
-    const applyCoverSourceSpy = vi.spyOn(service, 'applyCoverSource').mockResolvedValue('saved');
-    const refreshCoverForBookSpy = vi.spyOn(service, 'refreshCoverForBook').mockResolvedValue(true);
-
-    await expect(
-      service.applyCoverFromSources(30, [
-        { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' },
-        { kind: 'embedded', absolutePath: '/books/Book/book.epub', format: 'epub' },
-      ]),
-    ).resolves.toBe(true);
-
-    expect(applyCoverSourceSpy).toHaveBeenCalledWith(30, { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' });
-    expect(refreshCoverForBookSpy).not.toHaveBeenCalled();
-  });
-
-  it('applyCoverFromSources falls through to the embedded source when the sidecar cover fails', async () => {
-    const { db } = makeDb();
-    const service = makeService(db);
-    const applyCoverSourceSpy = vi.spyOn(service, 'applyCoverSource').mockResolvedValue('failed');
-    const refreshCoverForBookSpy = vi.spyOn(service, 'refreshCoverForBook').mockResolvedValue(true);
-
-    await expect(
-      service.applyCoverFromSources(31, [
-        { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' },
-        { kind: 'embedded', absolutePath: '/books/Book/book.epub', format: 'epub' },
-      ]),
-    ).resolves.toBe(true);
-
-    expect(applyCoverSourceSpy).toHaveBeenCalledWith(31, { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' });
-    expect(refreshCoverForBookSpy).toHaveBeenCalledWith(31, '/books/Book/book.epub', 'epub');
-  });
-
-  it('applyCoverFromSources stops the walk without trying embedded when the sidecar cover is locked', async () => {
-    const { db } = makeDb();
-    const service = makeService(db);
-    const applyCoverSourceSpy = vi.spyOn(service, 'applyCoverSource').mockResolvedValue('locked');
-    const refreshCoverForBookSpy = vi.spyOn(service, 'refreshCoverForBook').mockResolvedValue(true);
-
-    await expect(
-      service.applyCoverFromSources(32, [
-        { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' },
-        { kind: 'embedded', absolutePath: '/books/Book/book.epub', format: 'epub' },
-      ]),
-    ).resolves.toBe(false);
-
-    expect(applyCoverSourceSpy).toHaveBeenCalledWith(32, { kind: 'sidecar', absolutePath: '/books/Book/cover.jpg' });
-    expect(refreshCoverForBookSpy).not.toHaveBeenCalled();
-  });
-
-  it('applyCoverFromSources returns false when every source in the read order fails', async () => {
-    const { db } = makeDb();
-    const service = makeService(db);
-    vi.spyOn(service, 'refreshCoverForBook').mockResolvedValue(false);
-
-    await expect(service.applyCoverFromSources(33, [{ kind: 'embedded', absolutePath: '/books/Book/book.epub', format: 'epub' }])).resolves.toBe(
-      false,
-    );
-  });
-
-  it('getCoverSource returns the stored cover source or null', async () => {
-    const { db, selectLimit } = makeDb();
-    const service = makeService(db);
-
-    selectLimit.mockResolvedValueOnce([{ coverSource: 'extracted' }]);
-    await expect(service.getCoverSource(26)).resolves.toBe('extracted');
-
-    selectLimit.mockResolvedValueOnce([]);
-    await expect(service.getCoverSource(26)).resolves.toBeNull();
-  });
-
   it('downloadAndSaveCover no-ops on empty payloads and network failures', async () => {
     const { db } = makeDb();
     const service = makeService(db);
@@ -551,420 +390,12 @@ describe('MetadataService', () => {
     expect(replaceAuthorsSpy).toHaveBeenCalledWith(55, [{ name: 'Sidecar Author', sortName: null }]);
   });
 
-  it('extractAndSaveIfAvailable(json) routes ABS sidecars through audio persistence', async () => {
-    const { db, updateSet } = makeDb();
-    const narratorService = {
-      replaceForBook: vi.fn().mockResolvedValue(undefined),
-    };
-    const service = makeService(db, undefined, {
-      narratorService,
-      bookMetadataLockService: makeRealBookMetadataLockService(),
-    });
-    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    const replaceTagsSpy = vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
-
-    mockReadFile.mockResolvedValue(
-      JSON.stringify({
-        title: 'ABS Sidecar Title',
-        authors: ['ABS Author'],
-        narrators: ['ABS Narrator'],
-        genres: ['Fantasy'],
-        tags: ['Owned', 'Audiobook'],
-        isbn: '978-1-23456-789-7',
-        abridged: false,
-      }),
-    );
-
-    await expect(service.extractAndSaveIfAvailable(42, '/books/metadata.json', 'json')).resolves.toBe(true);
-
-    expect(mockReadFile).toHaveBeenCalledWith('/books/metadata.json', 'utf8');
-    expect(updateSet).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: 'ABS Sidecar Title',
-        isbn10: null,
-        isbn13: '9781234567897',
-        abridged: false,
-        updatedAt: expect.any(Date),
-      }),
-    );
-    expect(replaceTagsSpy).toHaveBeenCalledWith(42, ['Owned', 'Audiobook']);
-    expect(narratorService.replaceForBook).toHaveBeenCalledWith(42, ['ABS Narrator']);
-  });
-
-  it('extractAndSaveIfAvailable(json) returns false when the sidecar cannot be read', async () => {
-    const { db } = makeDb();
-    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const service = makeService(db);
-    mockReadFile.mockRejectedValueOnce(new Error('sidecar unreadable'));
-
-    await expect(service.extractAndSaveIfAvailable(42, '/books/metadata.json', 'json')).resolves.toBe(false);
-
-    expect(db.update).not.toHaveBeenCalled();
-    expect(db.insert).not.toHaveBeenCalled();
-    expect(db.delete).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[metadata.extract_and_save] [fail] bookId=42 format=json'));
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('metadata extraction failed'));
-  });
-
-  it('extractAndSaveIfAvailable(audio) returns false without writes when probing fails', async () => {
-    const { db } = makeDb();
-    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const narratorService = { replaceForBook: vi.fn().mockResolvedValue(undefined) };
-    const service = makeService(db, undefined, { narratorService });
-    const replaceAuthorsSpy = vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    const replaceGenresSpy = vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    const replaceTagsSpy = vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
-    mockExtractAudioMetadata.mockRejectedValueOnce(new Error('probe unavailable'));
-
-    await expect(service.extractAndSaveIfAvailable(42, '/books/corrupt.m4b', 'm4b')).resolves.toBe(false);
-
-    expect(db.update).not.toHaveBeenCalled();
-    expect(db.insert).not.toHaveBeenCalled();
-    expect(db.delete).not.toHaveBeenCalled();
-    expect(replaceAuthorsSpy).not.toHaveBeenCalled();
-    expect(replaceGenresSpy).not.toHaveBeenCalled();
-    expect(replaceTagsSpy).not.toHaveBeenCalled();
-    expect(narratorService.replaceForBook).not.toHaveBeenCalled();
-    expect(mockMkdir).not.toHaveBeenCalled();
-    expect(mockWriteFile).not.toHaveBeenCalled();
-    expect(mockGenerateThumbnail).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[metadata.extract_and_save] [fail] bookId=42 format=m4b'));
-  });
-
-  it('extractAndSaveIfAvailable(audio) accepts valid tagless probe output', async () => {
-    const { db } = makeDb();
-    const narratorService = { replaceForBook: vi.fn().mockResolvedValue(undefined) };
-    const service = makeService(db, undefined, {
-      narratorService,
-      bookMetadataLockService: makeRealBookMetadataLockService(),
-    });
-    const replaceAuthorsSpy = vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    const replaceGenresSpy = vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-
-    await expect(service.extractAndSaveIfAvailable(43, '/books/tagless.m4b', 'm4b')).resolves.toBe(true);
-
-    expect(db.update).toHaveBeenCalled();
-    expect(replaceAuthorsSpy).toHaveBeenCalledWith(43, []);
-    expect(replaceGenresSpy).toHaveBeenCalledWith(43, []);
-    expect(narratorService.replaceForBook).toHaveBeenCalledWith(43, []);
-  });
-
-  it('extractAndSave propagates extractor failures without a MetadataService fail log', async () => {
-    const { db } = makeDb();
-    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const service = makeService(db);
-    mockParsePdfFile.mockRejectedValueOnce(new Error('bad metadata'));
-
-    await expect(service.extractAndSave(15, '/books/a.pdf', 'pdf')).rejects.toThrow('bad metadata');
-
-    expect(warnSpy).not.toHaveBeenCalled();
-  });
-
-  it('extractAndSave(audio) propagates probe failures without writes or a MetadataService fail log', async () => {
-    const { db } = makeDb();
-    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const narratorService = { replaceForBook: vi.fn().mockResolvedValue(undefined) };
-    const service = makeService(db, undefined, { narratorService });
-    const replaceAuthorsSpy = vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    const replaceGenresSpy = vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    const replaceTagsSpy = vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
-    mockExtractAudioMetadata.mockRejectedValueOnce(new Error('strict probe failure'));
-
-    await expect(service.extractAndSave(15, '/books/corrupt.m4b', 'm4b')).rejects.toThrow('strict probe failure');
-
-    expect(db.update).not.toHaveBeenCalled();
-    expect(db.insert).not.toHaveBeenCalled();
-    expect(db.delete).not.toHaveBeenCalled();
-    expect(replaceAuthorsSpy).not.toHaveBeenCalled();
-    expect(replaceGenresSpy).not.toHaveBeenCalled();
-    expect(replaceTagsSpy).not.toHaveBeenCalled();
-    expect(narratorService.replaceForBook).not.toHaveBeenCalled();
-    expect(mockMkdir).not.toHaveBeenCalled();
-    expect(mockWriteFile).not.toHaveBeenCalled();
-    expect(mockGenerateThumbnail).not.toHaveBeenCalled();
-    expect(warnSpy).not.toHaveBeenCalled();
-  });
-
-  it('extractAndSaveIfAvailable(json) rethrows persistence failures without a MetadataService fail log', async () => {
-    const { db, updateWhere } = makeDb();
-    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-    const service = makeService(db);
-    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
-    mockReadFile.mockResolvedValueOnce(JSON.stringify({ title: 'Persistence boundary' }));
-    updateWhere.mockRejectedValueOnce(new Error('database unavailable'));
-
-    await expect(service.extractAndSaveIfAvailable(42, '/books/metadata.json', 'json')).rejects.toThrow('database unavailable');
-
-    expect(warnSpy).not.toHaveBeenCalled();
-  });
-
-  it('extractAndSaveIfAvailable(json) suppresses locked ISBN, tags, and abridged fields', async () => {
-    const { db, updateSet } = makeDb();
-    const service = makeService(db, undefined, {
-      bookMetadataLockService: makeRealBookMetadataLockService(['isbn10', 'isbn13', 'tags', 'abridged']),
-    });
-    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    const replaceTagsSpy = vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
-
-    mockReadFile.mockResolvedValue(
-      JSON.stringify({
-        title: 'Locked ABS Fields',
-        isbn: '978-1-23456-789-7',
-        tags: ['Locked Tag'],
-        abridged: false,
-      }),
-    );
-
-    await expect(service.extractAndSaveIfAvailable(45, '/books/metadata.json', 'json')).resolves.toBe(true);
-
-    const scalarPatch = updateSet.mock.calls[0][0] as Record<string, unknown>;
-    expect(scalarPatch).not.toHaveProperty('isbn10');
-    expect(scalarPatch).not.toHaveProperty('isbn13');
-    expect(scalarPatch).not.toHaveProperty('abridged');
-    expect(replaceTagsSpy).not.toHaveBeenCalled();
-  });
-
-  it('extractAndSaveIfAvailable(json) writes ISBN-10 and authoritatively clears tags', async () => {
-    const { db, updateSet } = makeDb();
-    const service = makeService(db, undefined, {
-      bookMetadataLockService: makeRealBookMetadataLockService(),
-    });
-    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    const replaceTagsSpy = vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
-
-    mockReadFile.mockResolvedValue(
-      JSON.stringify({
-        title: 'ISBN-10 ABS Sidecar',
-        isbn: '0-8044-2957-X',
-        tags: [],
-      }),
-    );
-
-    await expect(service.extractAndSaveIfAvailable(44, '/books/metadata.json', 'json')).resolves.toBe(true);
-
-    expect(updateSet).toHaveBeenCalledWith(
-      expect.objectContaining({
-        isbn10: '080442957X',
-        isbn13: null,
-      }),
-    );
-    expect(replaceTagsSpy).toHaveBeenCalledWith(44, []);
-  });
-
-  it('extractAndSaveIfAvailable(json) does not write an invalid abridged value', async () => {
-    const { db, updateSet } = makeDb();
-    const service = makeService(db);
-    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
-
-    mockReadFile.mockResolvedValue(JSON.stringify({ title: 'Unabridged State Preserved', abridged: 'unknown' }));
-
-    await expect(service.extractAndSaveIfAvailable(43, '/books/metadata.json', 'json')).resolves.toBe(true);
-
-    const scalarPatch = updateSet.mock.calls[0][0] as Record<string, unknown>;
-    expect(scalarPatch).not.toHaveProperty('abridged');
-  });
-
-  const makeSeriesMembershipsMock = (existing: unknown[] = []) => ({
-    replaceForBook: vi.fn().mockResolvedValue([]),
-    findByBookId: vi.fn().mockResolvedValue(existing),
-    syncPrimaryFromMetadata: vi.fn().mockResolvedValue([]),
-  });
-
-  const makeSeriesIdentityMock = () => ({
-    normalizeName: vi.fn((name: string) => name.trim().toLowerCase() || null),
-    resolveMetadataPatch: vi.fn(<T>(fields: T) => Promise.resolve(fields)),
-  });
-
-  it('extractAndSaveIfAvailable(json) replaces memberships from a multi-series sidecar when unlocked', async () => {
-    const { db } = makeDb();
-    const seriesMemberships = makeSeriesMembershipsMock();
-    const service = makeService(db, undefined, {
-      bookMetadataLockService: makeRealBookMetadataLockService(),
-      seriesIdentity: makeSeriesIdentityMock(),
-      seriesMemberships,
-    });
-    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
-
-    mockReadFile.mockResolvedValue(
-      JSON.stringify({
-        title: 'Mistborn',
-        series: ['The Mistborn Saga #2', 'Mistborn Era 1 #2', 'Cosmere #2'],
-      }),
-    );
-
-    await expect(service.extractAndSaveIfAvailable(50, '/books/metadata.json', 'json')).resolves.toBe(true);
-
-    expect(seriesMemberships.replaceForBook).toHaveBeenCalledWith(50, [
-      { seriesName: 'The Mistborn Saga', seriesIndex: 2 },
-      { seriesName: 'Mistborn Era 1', seriesIndex: 2 },
-      { seriesName: 'Cosmere', seriesIndex: 2 },
-    ]);
-    expect(seriesMemberships.findByBookId).not.toHaveBeenCalled();
-    expect(seriesMemberships.syncPrimaryFromMetadata).not.toHaveBeenCalled();
-  });
-
-  it('extractAndSaveIfAvailable(json) keeps existing memberships and appends new series when series is locked', async () => {
-    const { db } = makeDb();
-    const seriesMemberships = makeSeriesMembershipsMock([
-      { seriesId: 1, seriesName: 'The Mistborn Saga', seriesIndex: 2, displayOrder: 0 },
-      { seriesId: 2, seriesName: 'User Added', seriesIndex: 5, displayOrder: 1 },
-    ]);
-    const service = makeService(db, undefined, {
-      bookMetadataLockService: makeRealBookMetadataLockService(['seriesName', 'seriesIndex']),
-      seriesIdentity: makeSeriesIdentityMock(),
-      seriesMemberships,
-    });
-    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
-
-    mockReadFile.mockResolvedValue(
-      JSON.stringify({
-        title: 'Mistborn',
-        series: ['The Mistborn Saga #2', 'Cosmere #2'],
-      }),
-    );
-
-    await expect(service.extractAndSaveIfAvailable(51, '/books/metadata.json', 'json')).resolves.toBe(true);
-
-    expect(seriesMemberships.findByBookId).toHaveBeenCalledWith(51);
-    expect(seriesMemberships.replaceForBook).toHaveBeenCalledWith(51, [
-      { seriesName: 'The Mistborn Saga', seriesIndex: 2 },
-      { seriesName: 'User Added', seriesIndex: 5 },
-      { seriesName: 'Cosmere', seriesIndex: 2 },
-    ]);
-  });
-
-  it('extractAndSaveIfAvailable(json) does not re-add a locked series that already exists by normalized name', async () => {
-    const { db } = makeDb();
-    const seriesMemberships = makeSeriesMembershipsMock([{ seriesId: 1, seriesName: 'Cosmere', seriesIndex: 1, displayOrder: 0 }]);
-    const service = makeService(db, undefined, {
-      bookMetadataLockService: makeRealBookMetadataLockService(['seriesName']),
-      seriesIdentity: makeSeriesIdentityMock(),
-      seriesMemberships,
-    });
-    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
-
-    mockReadFile.mockResolvedValue(JSON.stringify({ title: 'Mistborn', series: ['  cosmere  #3'] }));
-
-    await expect(service.extractAndSaveIfAvailable(52, '/books/metadata.json', 'json')).resolves.toBe(true);
-
-    expect(seriesMemberships.findByBookId).toHaveBeenCalledWith(52);
-    expect(seriesMemberships.replaceForBook).not.toHaveBeenCalled();
-  });
-
-  it('extractAndSaveIfAvailable(json) clears memberships when an unlocked sidecar has an empty series array', async () => {
-    const { db } = makeDb();
-    const seriesMemberships = makeSeriesMembershipsMock();
-    const service = makeService(db, undefined, {
-      bookMetadataLockService: makeRealBookMetadataLockService(),
-      seriesIdentity: makeSeriesIdentityMock(),
-      seriesMemberships,
-    });
-    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
-
-    mockReadFile.mockResolvedValue(JSON.stringify({ title: 'No Series', series: [] }));
-
-    await expect(service.extractAndSaveIfAvailable(53, '/books/metadata.json', 'json')).resolves.toBe(true);
-
-    expect(seriesMemberships.replaceForBook).toHaveBeenCalledWith(53, []);
-  });
-
-  it('extractAndSave(audio) uses the scalar series path and never touches memberships directly', async () => {
-    const { db } = makeDb();
-    const seriesMemberships = makeSeriesMembershipsMock();
-    const service = makeService(db, undefined, {
-      bookMetadataLockService: makeRealBookMetadataLockService(),
-      seriesMemberships,
-    });
-    vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-
-    mockExtractAudioMetadata.mockResolvedValueOnce({
-      title: 'Audio Title',
-      subtitle: null,
-      authors: [],
-      narrators: [],
-      publisher: null,
-      publishedYear: null,
-      description: null,
-      language: null,
-      seriesName: 'Audio Series',
-      seriesIndex: 1,
-      genres: [],
-      audibleId: null,
-      durationSeconds: null,
-      chapters: [],
-      coverBytes: null,
-    });
-
-    await service.extractAndSave(54, '/books/audio.m4b', 'm4b');
-
-    expect(seriesMemberships.replaceForBook).not.toHaveBeenCalled();
-    expect(seriesMemberships.findByBookId).not.toHaveBeenCalled();
-    expect(seriesMemberships.syncPrimaryFromMetadata).toHaveBeenCalledWith(54);
-  });
-
   it('refreshCoverForBook returns false and avoids db writes when extractor reports no cover', async () => {
     const { db } = makeDb();
     const service = makeService(db);
     // extractEpubCover is mocked to return null by default; parsePdfFile returns null → no cover
     await expect(service.refreshCoverForBook(7, '/book.epub', 'epub')).resolves.toBe(false);
     expect(db.update).not.toHaveBeenCalled();
-  });
-
-  it('refreshCoverForBook persists only embedded audio cover data', async () => {
-    const { db, updateSet } = makeDb();
-    const service = makeService(db);
-    const replaceAuthorsSpy = vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
-    const replaceGenresSpy = vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    const replaceTagsSpy = vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
-    mockExtractAudioMetadata.mockResolvedValueOnce({
-      title: 'Conflicting embedded title',
-      subtitle: null,
-      authors: [{ name: 'Conflicting Author', sortName: null }],
-      narrators: ['Conflicting Narrator'],
-      publisher: null,
-      publishedYear: null,
-      description: null,
-      language: null,
-      seriesName: null,
-      seriesIndex: null,
-      genres: ['Conflicting Genre'],
-      audibleId: 'conflicting-id',
-      durationSeconds: 123,
-      chapters: [{ title: 'Conflict', startMs: 0 }],
-      coverBytes: Buffer.from('audio-cover'),
-    });
-
-    await expect(service.refreshCoverForBook(19, '/books/book.m4b', 'm4b')).resolves.toBe(true);
-
-    expect(mockWriteFile).toHaveBeenCalledWith('/books/covers/19/cover_extracted.png', Buffer.from('audio-cover'));
-    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ coverSource: 'extracted' }));
-    for (const [patch] of updateSet.mock.calls) {
-      expect(patch).not.toEqual(expect.objectContaining({ title: expect.anything() }));
-      expect(patch).not.toEqual(expect.objectContaining({ audibleId: expect.anything() }));
-      expect(patch).not.toEqual(expect.objectContaining({ chapters: expect.anything() }));
-      expect(patch).not.toEqual(expect.objectContaining({ durationSeconds: expect.anything() }));
-    }
-    expect(replaceAuthorsSpy).not.toHaveBeenCalled();
-    expect(replaceGenresSpy).not.toHaveBeenCalled();
-    expect(replaceTagsSpy).not.toHaveBeenCalled();
   });
 
   it('refreshCoverForBook handles missing extractors, locked cover field, and successful refresh', async () => {
@@ -1011,6 +442,14 @@ describe('MetadataService', () => {
 
     expect(mockWriteFile).toHaveBeenCalledWith('/books/covers/8/cover_extracted.png', expect.any(Buffer));
     expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ coverSource: 'extracted' }));
+  });
+
+  it('extractAndSave propagates extractor errors', async () => {
+    const { db } = makeDb();
+    mockParsePdfFile.mockRejectedValue(new Error('bad metadata'));
+    const service = makeService(db);
+
+    await expect(service.extractAndSave(15, '/books/a.pdf', 'pdf')).rejects.toThrow('bad metadata');
   });
 
   it('extractAndSave logs warning when score calculation or embedding fails', async () => {
@@ -1240,7 +679,6 @@ describe('MetadataService', () => {
     });
     const replaceAuthorsSpy = vi.spyOn(service, 'replaceAuthors').mockResolvedValue(undefined);
     const replaceGenresSpy = vi.spyOn(service, 'replaceGenres').mockResolvedValue(undefined);
-    const replaceTagsSpy = vi.spyOn(service, 'replaceTags').mockResolvedValue(undefined);
 
     mockExtractAudioMetadata.mockResolvedValueOnce({
       title: 'Audio Title',
@@ -1298,20 +736,7 @@ describe('MetadataService', () => {
     );
     expect(replaceAuthorsSpy).toHaveBeenCalledWith(41, [{ name: 'Audio Author', sortName: null }]);
     expect(replaceGenresSpy).toHaveBeenCalledWith(41, ['Fantasy', 'Adventure']);
-    expect(replaceTagsSpy).not.toHaveBeenCalled();
     expect(narratorService.replaceForBook).toHaveBeenCalledWith(41, ['Audio Narrator']);
-
-    const filteredDto = lockService.filterAutomatedBookUpdate.mock.calls[0][1] as Record<string, unknown>;
-    const audioMetadata = filteredDto.audioMetadata as Record<string, unknown>;
-    expect(filteredDto).not.toHaveProperty('isbn10');
-    expect(filteredDto).not.toHaveProperty('isbn13');
-    expect(filteredDto).not.toHaveProperty('tags');
-    expect(audioMetadata).not.toHaveProperty('abridged');
-
-    const scalarPatch = updateSet.mock.calls[0][0] as Record<string, unknown>;
-    expect(scalarPatch).not.toHaveProperty('isbn10');
-    expect(scalarPatch).not.toHaveProperty('isbn13');
-    expect(scalarPatch).not.toHaveProperty('abridged');
   });
 
   it('replaceAuthors normalizes names and deduplicates case-insensitively before db writes', async () => {

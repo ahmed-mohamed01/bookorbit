@@ -33,9 +33,6 @@ vi.mock('../SettingsPageHeader.vue', () => ({ default: { template: '<div data-te
 vi.mock('@/features/hardcover/components/HardcoverSettings.vue', () => ({ default: { template: '<div data-testid="hardcover-settings" />' } }))
 vi.mock('@/features/readwise/components/ReadwiseSettings.vue', () => ({ default: { template: '<div data-testid="readwise-settings" />' } }))
 vi.mock('@/features/storygraph/components/StorygraphSettings.vue', () => ({ default: { template: '<div data-testid="storygraph-settings" />' } }))
-vi.mock('@/features/audiobookshelf/components/AudiobookshelfSettings.vue', () => ({
-  default: { template: '<div data-testid="audiobookshelf-settings" />' },
-}))
 
 function mountComponent(tab?: string, permissions: string[] = [], isSuperuser = false) {
   permissionState.permissions = permissions
@@ -61,7 +58,7 @@ describe('IntegrationAllSettings', () => {
   it('shows every integration to a superuser', () => {
     const wrapper = mountComponent(undefined, [], true)
 
-    expect(wrapper.findAll('button').map((button) => button.text())).toEqual(['Hardcover', 'Readwise', 'StoryGraph', 'Audiobookshelf'])
+    expect(wrapper.findAll('button').map((button) => button.text())).toEqual(['Hardcover', 'Readwise', 'StoryGraph'])
     expect(wrapper.find('[data-testid="hardcover-settings"]').exists()).toBe(true)
   })
 
@@ -69,13 +66,6 @@ describe('IntegrationAllSettings', () => {
     const wrapper = mountComponent('storygraph', ['storygraph_sync'])
 
     expect(wrapper.find('[data-testid="storygraph-settings"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="hardcover-settings"]').exists()).toBe(false)
-  })
-
-  it('shows Audiobookshelf to users with its sync permission', () => {
-    const wrapper = mountComponent('audiobookshelf', ['audiobookshelf_sync'])
-
-    expect(wrapper.find('[data-testid="audiobookshelf-settings"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="hardcover-settings"]').exists()).toBe(false)
   })
 
