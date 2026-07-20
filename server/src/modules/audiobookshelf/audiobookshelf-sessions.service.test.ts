@@ -40,27 +40,19 @@ function makeDeps() {
       Promise.resolve(ids.map((id) => ({ absLibraryItemId: id, bookId: 100, needsReview: false, syncExcluded: false, matchError: null }))),
     ),
     findLibraryIdsByBookIds: vi.fn((ids: number[]) => Promise.resolve(new Map(ids.map((id) => [id, 1])))),
+    findAudioFilesInPlayOrderForBooks: vi.fn((bookIds: number[]) =>
+      Promise.resolve(new Map(bookIds.map((id) => [id, [{ id: 10, format: 'mp3', durationSeconds: 100_000 }]]))),
+    ),
     ingestSessions: vi.fn((_userId: number, _tz: string, sessions: AbsMappedSession[]) =>
       Promise.resolve({ insertedSessionIds: sessions.map((s) => s.sessionId), updated: 0 }),
     ),
     updateSettings: vi.fn().mockResolvedValue(undefined),
   };
   const client = { getListeningSessions: vi.fn() };
-  const bookService = {
-    getAudioFilesInPlayOrderForBooks: vi.fn((bookIds: number[]) =>
-      Promise.resolve(new Map(bookIds.map((id) => [id, [{ id: 10, format: 'mp3', durationSeconds: 100_000 }]]))),
-    ),
-  };
   const achievementEvents = { emit: vi.fn() };
   const libraryService = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([1, 2]) };
-  const service = new AudiobookshelfSessionsService(
-    repo as never,
-    client as never,
-    bookService as never,
-    achievementEvents as never,
-    libraryService as never,
-  );
-  return { service, repo, client, bookService, achievementEvents, libraryService };
+  const service = new AudiobookshelfSessionsService(repo as never, client as never, achievementEvents as never, libraryService as never);
+  return { service, repo, client, achievementEvents, libraryService };
 }
 
 function settings(overrides: Record<string, unknown> = {}) {
@@ -219,7 +211,7 @@ describe('AudiobookshelfSessionsService', () => {
   });
 
   it('batch-loads audio files once per page instead of once per book', async () => {
-    const { service, client, bookService, repo } = makeDeps();
+    const { service, client, repo } = makeDeps();
     repo.findSyncableBookStatesByAbsItemIds.mockImplementation((_userId: number, _scope: unknown, ids: string[]) =>
       Promise.resolve(ids.map((id, i) => ({ absLibraryItemId: id, bookId: 100 + i, needsReview: false, syncExcluded: false, matchError: null }))),
     );
@@ -235,8 +227,8 @@ describe('AudiobookshelfSessionsService', () => {
     await service.syncSessions(makeUser(), settings());
 
     // One batched load for the whole page, not one query per distinct book.
-    expect(bookService.getAudioFilesInPlayOrderForBooks).toHaveBeenCalledTimes(1);
-    expect(bookService.getAudioFilesInPlayOrderForBooks).toHaveBeenCalledWith([100, 101, 102]);
+    expect(repo.findAudioFilesInPlayOrderForBooks).toHaveBeenCalledTimes(1);
+    expect(repo.findAudioFilesInPlayOrderForBooks).toHaveBeenCalledWith([100, 101, 102]);
   });
 
   it('resumes a deep backfill from the persisted cursor page and pre-seeded max updatedAt', async () => {

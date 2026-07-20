@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { BookRepository } from '../book/book.repository';
+import { AudiobookshelfRepository } from './audiobookshelf.repository';
 
 function makeSelectChain<T>(terminalMethod: 'limit' | 'orderBy', terminalResult: T) {
   const chain = {
@@ -27,7 +27,7 @@ describe('Audiobookshelf book queries', () => {
       { id: 12, format: 'm4b', durationSeconds: 3600 },
     ];
     const db = { select: vi.fn().mockReturnValue(makeSelectChain('orderBy', rows)) };
-    const repo = new BookRepository(db as never);
+    const repo = new AudiobookshelfRepository(db as never);
 
     await expect(repo.findAudioFilesInPlayOrder(10)).resolves.toEqual(rows);
     expect(db.select).toHaveBeenCalledTimes(1);
@@ -40,7 +40,7 @@ describe('Audiobookshelf book queries', () => {
       { bookId: 20, id: 21, format: 'm4b', durationSeconds: 3600 },
     ];
     const db = { select: vi.fn().mockReturnValue(makeSelectChain('orderBy', rows)) };
-    const repo = new BookRepository(db as never);
+    const repo = new AudiobookshelfRepository(db as never);
 
     const result = await repo.findAudioFilesInPlayOrderForBooks([20, 10, 20]);
 
@@ -61,7 +61,7 @@ describe('Audiobookshelf book queries', () => {
 
   it('returns an empty audio-file map without querying when no books are requested', async () => {
     const db = { select: vi.fn() };
-    const repo = new BookRepository(db as never);
+    const repo = new AudiobookshelfRepository(db as never);
 
     await expect(repo.findAudioFilesInPlayOrderForBooks([])).resolves.toEqual(new Map());
     expect(db.select).not.toHaveBeenCalled();
@@ -75,7 +75,7 @@ describe('Audiobookshelf book queries', () => {
       select: vi.fn().mockReturnValue(makeSelectChain('limit', [progress])),
       insert: vi.fn().mockReturnValue({ values }),
     };
-    const repo = new BookRepository(db as never);
+    const repo = new AudiobookshelfRepository(db as never);
 
     await expect(repo.findAudioProgress(1, 10)).resolves.toEqual(progress);
     await expect(repo.upsertAudioProgress(1, 10, 12, 90, 25)).resolves.toEqual(progress);

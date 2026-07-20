@@ -4,7 +4,6 @@ import { isAudioFormat, type AudiobookshelfSyncResult, type ReadStatus, type Use
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { resolveTimeZone, toDateKeyInTimeZone } from '../../common/utils/timezone.utils';
-import { BookService } from '../book/book.service';
 import { LibraryService } from '../library/library.service';
 import { ReadingAttemptService } from '../user-book-status/reading-attempt.service';
 import { UserBookStatusService } from '../user-book-status/user-book-status.service';
@@ -87,7 +86,6 @@ export class AudiobookshelfSyncService {
     private readonly matchService: AudiobookshelfMatchService,
     private readonly attempts: ReadingAttemptService,
     private readonly statusService: UserBookStatusService,
-    private readonly bookService: BookService,
     private readonly sessionsService: AudiobookshelfSessionsService,
     private readonly libraryService: LibraryService,
   ) {}
@@ -284,7 +282,7 @@ export class AudiobookshelfSyncService {
     syncedProgressAt: Date | null,
   ): Promise<{ applied: boolean; progressAt: Date | null }> {
     const skipped = { applied: false, progressAt: null };
-    const files = (await this.bookService.getAudioFilesInPlayOrder(bookId)).filter((file) => file.format && isAudioFormat(file.format));
+    const files = (await this.repo.findAudioFilesInPlayOrder(bookId)).filter((file) => file.format && isAudioFormat(file.format));
     if (files.length === 0) return skipped;
 
     if (!Number.isFinite(mp.duration) || mp.duration <= 0) {
@@ -306,7 +304,7 @@ export class AudiobookshelfSyncService {
     // Newest-wins guard: never move a locally advanced position backward. A snapshot of the progress
     // row's updatedAt from our last ABS write that no longer matches means local playback changed it
     // since; with no snapshot (first sync) compare positions rather than the two systems' clocks.
-    const local = await this.bookService.getAudioProgressForSync(userId, bookId);
+    const local = await this.repo.findAudioProgress(userId, bookId);
     if (local) {
       const localAdvanced =
         syncedProgressAt != null ? local.updatedAt.getTime() !== syncedProgressAt.getTime() : (local.percentage ?? 0) > mp.progress * 100;
@@ -320,7 +318,7 @@ export class AudiobookshelfSyncService {
     if (!resolved) return skipped;
 
     const percentage = Math.max(0, Math.min(100, (mp.currentTime / mp.duration) * 100));
-    const written = await this.bookService.upsertAudioProgressFromSync(userId, bookId, resolved.currentFileId, resolved.positionSeconds, percentage);
+    const written = await this.repo.upsertAudioProgress(userId, bookId, resolved.currentFileId, resolved.positionSeconds, percentage);
     return { applied: true, progressAt: written?.updatedAt ?? null };
   }
 }

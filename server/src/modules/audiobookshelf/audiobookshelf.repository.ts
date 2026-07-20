@@ -649,6 +649,59 @@ export class AudiobookshelfRepository {
     return map;
   }
 
+  async findAudioFilesInPlayOrder(bookId: number): Promise<{ id: number; format: string | null; durationSeconds: number | null }[]> {
+    return this.db
+      .select({ id: schema.bookFiles.id, format: schema.bookFiles.format, durationSeconds: schema.bookFiles.durationSeconds })
+      .from(schema.bookFiles)
+      .where(and(eq(schema.bookFiles.bookId, bookId), eq(schema.bookFiles.role, 'content')))
+      .orderBy(asc(schema.bookFiles.sortOrder), asc(schema.bookFiles.id));
+  }
+
+  async findAudioFilesInPlayOrderForBooks(
+    bookIds: number[],
+  ): Promise<Map<number, { id: number; format: string | null; durationSeconds: number | null }[]>> {
+    const byBook = new Map<number, { id: number; format: string | null; durationSeconds: number | null }[]>();
+    if (bookIds.length === 0) return byBook;
+    const rows = await this.db
+      .select({
+        bookId: schema.bookFiles.bookId,
+        id: schema.bookFiles.id,
+        format: schema.bookFiles.format,
+        durationSeconds: schema.bookFiles.durationSeconds,
+      })
+      .from(schema.bookFiles)
+      .where(and(inArray(schema.bookFiles.bookId, [...new Set(bookIds)]), eq(schema.bookFiles.role, 'content')))
+      .orderBy(asc(schema.bookFiles.bookId), asc(schema.bookFiles.sortOrder), asc(schema.bookFiles.id));
+    for (const row of rows) {
+      const list = byBook.get(row.bookId) ?? [];
+      list.push({ id: row.id, format: row.format, durationSeconds: row.durationSeconds });
+      byBook.set(row.bookId, list);
+    }
+    return byBook;
+  }
+
+  async findAudioProgress(userId: number, bookId: number) {
+    const [row] = await this.db
+      .select()
+      .from(schema.audiobookProgress)
+      .where(and(eq(schema.audiobookProgress.userId, userId), eq(schema.audiobookProgress.bookId, bookId)))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async upsertAudioProgress(userId: number, bookId: number, currentFileId: number, positionSeconds: number, percentage: number) {
+    const now = new Date();
+    const [row] = await this.db
+      .insert(schema.audiobookProgress)
+      .values({ userId, bookId, currentFileId, positionSeconds, percentage, updatedAt: now })
+      .onConflictDoUpdate({
+        target: [schema.audiobookProgress.userId, schema.audiobookProgress.bookId],
+        set: { currentFileId, positionSeconds, percentage, updatedAt: now },
+      })
+      .returning();
+    return row;
+  }
+
   /**
    * Upserts a bounded batch of listening sessions and recomputes affected daily stats in one
    * transaction. Upsert is keyed on `(userId, sessionId)`: ABS mutates open sessions in place, so a

@@ -1933,24 +1933,6 @@ export class BookService {
     return this.bookRepo.findAudioProgress(userId, bookId);
   }
 
-  async getAudioFilesInPlayOrder(bookId: number): Promise<{ id: number; format: string | null; durationSeconds: number | null }[]> {
-    return this.bookRepo.findAudioFilesInPlayOrder(bookId);
-  }
-
-  async getAudioFilesInPlayOrderForBooks(
-    bookIds: number[],
-  ): Promise<Map<number, { id: number; format: string | null; durationSeconds: number | null }[]>> {
-    return this.bookRepo.findAudioFilesInPlayOrderForBooks(bookIds);
-  }
-
-  async getAudioProgressForSync(userId: number, bookId: number) {
-    return this.bookRepo.findAudioProgress(userId, bookId);
-  }
-
-  async upsertAudioProgressFromSync(userId: number, bookId: number, currentFileId: number, positionSeconds: number, percentage: number) {
-    return this.bookRepo.upsertAudioProgress(userId, bookId, currentFileId, positionSeconds, percentage);
-  }
-
   async saveAudioProgress(userId: number, bookId: number, dto: UpsertAudioProgressDto, user: RequestUser) {
     const libraryId = await this.bookRepo.findLibraryIdByBookId(bookId);
     if (libraryId === null) throw new NotFoundException(`Book ${bookId} not found`);

@@ -1421,32 +1421,6 @@ export class BookRepository {
       .where(eq(bookFiles.bookId, bookId));
   }
 
-  async findAudioFilesInPlayOrder(bookId: number): Promise<{ id: number; format: string | null; durationSeconds: number | null }[]> {
-    return this.db
-      .select({ id: bookFiles.id, format: bookFiles.format, durationSeconds: bookFiles.durationSeconds })
-      .from(bookFiles)
-      .where(and(eq(bookFiles.bookId, bookId), eq(bookFiles.role, 'content')))
-      .orderBy(asc(bookFiles.sortOrder), asc(bookFiles.id));
-  }
-
-  async findAudioFilesInPlayOrderForBooks(
-    bookIds: number[],
-  ): Promise<Map<number, { id: number; format: string | null; durationSeconds: number | null }[]>> {
-    const byBook = new Map<number, { id: number; format: string | null; durationSeconds: number | null }[]>();
-    if (bookIds.length === 0) return byBook;
-    const rows = await this.db
-      .select({ bookId: bookFiles.bookId, id: bookFiles.id, format: bookFiles.format, durationSeconds: bookFiles.durationSeconds })
-      .from(bookFiles)
-      .where(and(inArray(bookFiles.bookId, [...new Set(bookIds)]), eq(bookFiles.role, 'content')))
-      .orderBy(asc(bookFiles.bookId), asc(bookFiles.sortOrder), asc(bookFiles.id));
-    for (const row of rows) {
-      const list = byBook.get(row.bookId) ?? [];
-      list.push({ id: row.id, format: row.format, durationSeconds: row.durationSeconds });
-      byBook.set(row.bookId, list);
-    }
-    return byBook;
-  }
-
   async findBookBase(bookId: number) {
     const [row] = await this.db.select().from(books).where(eq(books.id, bookId)).limit(1);
     return row ?? null;

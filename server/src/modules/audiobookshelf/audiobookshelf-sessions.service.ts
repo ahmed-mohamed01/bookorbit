@@ -4,7 +4,6 @@ import { isAudioFormat, type UserSettings } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { resolveTimeZone } from '../../common/utils/timezone.utils';
-import { BookService } from '../book/book.service';
 import { LibraryService } from '../library/library.service';
 import {
   ACHIEVEMENT_EVENT_BACKFILL,
@@ -51,7 +50,6 @@ export class AudiobookshelfSessionsService {
   constructor(
     private readonly repo: AudiobookshelfRepository,
     private readonly client: AudiobookshelfClientService,
-    private readonly bookService: BookService,
     private readonly achievementEvents: AchievementEventsService,
     private readonly libraryService: LibraryService,
   ) {}
@@ -220,7 +218,7 @@ export class AudiobookshelfSessionsService {
   }
 
   private async resolveAudioFiles(bookIds: number[]): Promise<Map<number, { id: number; durationSeconds: number | null }[]>> {
-    const byBook = await this.bookService.getAudioFilesInPlayOrderForBooks(bookIds);
+    const byBook = await this.repo.findAudioFilesInPlayOrderForBooks(bookIds);
     const filtered = new Map<number, { id: number; durationSeconds: number | null }[]>();
     for (const [bookId, files] of byBook) {
       filtered.set(
