@@ -58,7 +58,7 @@ describe('IntegrationAllSettings', () => {
   it('shows every integration to a superuser', () => {
     const wrapper = mountComponent(undefined, [], true)
 
-    expect(wrapper.findAll('button').map((button) => button.text())).toEqual(['Hardcover', 'Readwise', 'StoryGraph'])
+    expect(wrapper.findAll('button').map((button) => button.text())).toEqual(['Hardcover', 'Readwise', 'StoryGraph', 'Audiobookshelf'])
     expect(wrapper.find('[data-testid="hardcover-settings"]').exists()).toBe(true)
   })
 

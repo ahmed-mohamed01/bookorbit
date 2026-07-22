@@ -1,4 +1,5 @@
-import { normalizeAsin } from '../../../common/utils/book-match.utils';
+import { normalizeAsin } from '../../audiobookshelf/audiobookshelf-match.utils';
+import { isValidIsbn10, isValidIsbn13, normalizeIsbn } from '../lib/isbn-detect';
 import type { AbsBookMetadata } from './abs-metadata.types';
 import type { ParsedBookData } from './format-extractor.interface';
 
@@ -65,11 +66,11 @@ function hoistLegacyWrapper(raw: Record<string, unknown>): Record<string, unknow
 function mapIsbn(value: unknown): { isbn10: string | null; isbn13: string | null } {
   const str = coerceString(value);
   if (str === null) return { isbn10: null, isbn13: null };
-  const cleaned = str.replace(/[\s-]/g, '');
-  if (/^\d{13}$/.test(cleaned)) return { isbn10: null, isbn13: cleaned };
-  // Canonicalize the ISBN-10 check character to uppercase so a lowercase trailing `x` matches the
-  // query-side normalization (which upper-cases). Case-sensitive lookups otherwise miss.
-  if (/^\d{9}[\dXx]$/.test(cleaned)) return { isbn10: cleaned.toUpperCase(), isbn13: null };
+  // normalizeIsbn strips non-ISBN chars and upper-cases (so a trailing `x` matches the query-side
+  // normalization); the checksum validators reject malformed values rather than persisting them.
+  const normalized = normalizeIsbn(str);
+  if (normalized.length === 13 && isValidIsbn13(normalized)) return { isbn10: null, isbn13: normalized };
+  if (normalized.length === 10 && isValidIsbn10(normalized)) return { isbn10: normalized, isbn13: null };
   return { isbn10: null, isbn13: null };
 }
 

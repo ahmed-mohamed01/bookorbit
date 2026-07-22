@@ -8,9 +8,14 @@ import {
 } from './cover-source-resolution';
 
 describe('sidecarCoverRanksAboveEmbedded', () => {
-  it('ranks sidecar above embedded under the default precedence', () => {
-    expect(sidecarCoverRanksAboveEmbedded(undefined)).toBe(true);
-    expect(sidecarCoverRanksAboveEmbedded([])).toBe(true);
+  it('ranks sidecar below embedded under the default precedence', () => {
+    // Upstream's default is ['folderStructure', 'embedded', 'nfoFile', 'opfFile', 'sidecar'].
+    // Sidecar-first is opt-in per library, never the default.
+    expect(sidecarCoverRanksAboveEmbedded(undefined)).toBe(false);
+    expect(sidecarCoverRanksAboveEmbedded([])).toBe(false);
+  });
+
+  it('ranks sidecar above embedded when a library opts into sidecar-first', () => {
     expect(sidecarCoverRanksAboveEmbedded(['folderStructure', 'sidecar', 'embedded', 'opfFile'])).toBe(true);
   });
 

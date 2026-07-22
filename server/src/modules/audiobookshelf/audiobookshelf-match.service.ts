@@ -2,16 +2,8 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import type { AudiobookshelfRescanResult } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
-import {
-  normalizeAsin,
-  normalizeIsbn,
-  normalizeName,
-  normalizedLevenshtein,
-  scoreAuthors,
-  scoreTitle,
-  tokenOverlap,
-} from '../../common/utils/book-match.utils';
-import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { normalizeIsbn, normalizeName, normalizedLevenshtein, scoreAuthors, scoreTitle, tokenOverlap } from '../hardcover/hardcover-import.service';
+import { normalizeAsin } from './audiobookshelf-match.utils';
 import { LibraryService } from '../library/library.service';
 import { AudiobookshelfClientService, type AbsLibraryItem } from './audiobookshelf-client.service';
 import {
@@ -21,6 +13,7 @@ import {
   type AbsFuzzyCandidate,
   type AbsFuzzyCandidateSeries,
 } from './audiobookshelf.repository';
+import { buildBookAccessScope, describeError, isAbsSyncConfigured } from './audiobookshelf-user.utils';
 
 export interface AbsMatchInput {
   absLibraryItemId: string;
@@ -33,14 +26,12 @@ export interface AbsMatchInput {
 
 export interface AudiobookshelfMatchSummary {
   totalItems: number;
-  selectedAbsItemIds: string[];
   processed: number;
   autoLinked: number;
   needsReview: number;
   unmatched: number;
   errors: number;
   skipped: number;
-  pruned: number;
 }
 
 const FUZZY_CANDIDATE_LIMIT = 20;
@@ -94,7 +85,7 @@ export class AudiobookshelfMatchService {
 
   async rescan(user: RequestUser): Promise<AudiobookshelfRescanResult> {
     const settings = await this.repo.findSettings(user.id);
-    if (!settings || !settings.enabled || !settings.serverUrl || !settings.apiToken) {
+    if (!settings || !isAbsSyncConfigured(settings)) {
       throw new BadRequestException('Audiobookshelf sync is not configured');
     }
 
@@ -106,12 +97,11 @@ export class AudiobookshelfMatchService {
         excludedLibraryIds: settings.excludedLibraryIds ?? [],
       });
       this.logger.log(
-        `[abs.match] [end] userId=${user.id} trigger=rescan durationMs=${Date.now() - startedAt} totalItems=${summary.totalItems} autoLinked=${summary.autoLinked} needsReview=${summary.needsReview} unmatched=${summary.unmatched} errors=${summary.errors} skipped=${summary.skipped} pruned=${summary.pruned} - library rescan completed`,
+        `[abs.match] [end] userId=${user.id} trigger=rescan durationMs=${Date.now() - startedAt} totalItems=${summary.totalItems} autoLinked=${summary.autoLinked} needsReview=${summary.needsReview} unmatched=${summary.unmatched} errors=${summary.errors} skipped=${summary.skipped} - library rescan completed`,
       );
       return { queued: summary.processed };
     } catch (err) {
-      const errorClass = err instanceof Error ? err.constructor.name : 'Error';
-      const error = sanitizeLogValue(err instanceof Error ? err.message : String(err));
+      const { errorClass, error } = describeError(err);
       this.logger.error(
         `[abs.match] [fail] userId=${user.id} trigger=rescan durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${error}" - library rescan failed`,
       );
@@ -121,8 +111,7 @@ export class AudiobookshelfMatchService {
 
   /**
    * Full inventory reconcile: paginate the selected ABS inventory and match each bounded page, never
-   * materializing the whole remote library. Uses staged pruning - stamp every observed row with the
-   * run start, then delete rows whose marker predates it. This is the slow-cadence path (rescan /
+   * materializing the whole remote library. No pruning. This is the slow-cadence path (rescan /
    * scheduled deep run), not the frequent progress poll.
    */
   async matchLibrary(
@@ -131,28 +120,19 @@ export class AudiobookshelfMatchService {
     token: string,
     options: { force: boolean; excludedLibraryIds?: string[] },
   ): Promise<AudiobookshelfMatchSummary> {
-    const runStartedAt = new Date();
     const summary: AudiobookshelfMatchSummary = {
       totalItems: 0,
-      selectedAbsItemIds: [],
       processed: 0,
       autoLinked: 0,
       needsReview: 0,
       unmatched: 0,
       errors: 0,
       skipped: 0,
-      pruned: 0,
     };
 
     await this.forEachInventoryPage(user.id, serverUrl, token, options.excludedLibraryIds ?? [], async (pageItems) => {
       summary.totalItems += pageItems.length;
-      for (const item of pageItems) summary.selectedAbsItemIds.push(item.absLibraryItemId);
-      await this.repo.markBookStatesSeenInInventory(
-        user.id,
-        pageItems.map((item) => item.absLibraryItemId),
-        runStartedAt,
-      );
-      const pageSummary = await this.matchItems(user, pageItems, { force: options.force, seenAt: runStartedAt });
+      const pageSummary = await this.matchItems(user, pageItems, { force: options.force });
       summary.processed += pageSummary.processed;
       summary.autoLinked += pageSummary.autoLinked;
       summary.needsReview += pageSummary.needsReview;
@@ -161,37 +141,26 @@ export class AudiobookshelfMatchService {
       summary.skipped += pageSummary.skipped;
     });
 
-    if (summary.totalItems === 0) {
-      this.logger.warn(
-        `[abs.match] [end] userId=${user.id} trigger=${options.force ? 'rescan' : 'incremental'} inventoryEmpty=true pruned=0 - empty ABS inventory, prune skipped to protect existing links`,
-      );
-      return summary;
-    }
-
-    summary.pruned = await this.repo.pruneBookStatesNotSeenSince(user.id, runStartedAt);
     this.logger.log(
-      `[abs.match] [end] userId=${user.id} trigger=${options.force ? 'rescan' : 'incremental'} totalItems=${summary.totalItems} autoLinked=${summary.autoLinked} needsReview=${summary.needsReview} unmatched=${summary.unmatched} errors=${summary.errors} skipped=${summary.skipped} pruned=${summary.pruned} - reconcile completed`,
+      `[abs.match] [end] userId=${user.id} trigger=${options.force ? 'rescan' : 'incremental'} totalItems=${summary.totalItems} autoLinked=${summary.autoLinked} needsReview=${summary.needsReview} unmatched=${summary.unmatched} errors=${summary.errors} skipped=${summary.skipped} - reconcile completed`,
     );
     return summary;
   }
 
-  async matchItems(user: RequestUser, items: AbsMatchInput[], options: { force: boolean; seenAt?: Date }): Promise<AudiobookshelfMatchSummary> {
+  async matchItems(user: RequestUser, items: AbsMatchInput[], options: { force: boolean }): Promise<AudiobookshelfMatchSummary> {
     const summary: AudiobookshelfMatchSummary = {
       totalItems: items.length,
-      selectedAbsItemIds: items.map((item) => item.absLibraryItemId),
       processed: 0,
       autoLinked: 0,
       needsReview: 0,
       unmatched: 0,
       errors: 0,
       skipped: 0,
-      pruned: 0,
     };
     if (items.length === 0) return summary;
 
     const startedAt = Date.now();
-    const accessibleLibraryIds = await this.libraryService.findAccessibleLibraryIds(user);
-    const contentFilters = user.isSuperuser ? undefined : user.contentFilters;
+    const { libraryIds: accessibleLibraryIds, contentFilters } = await buildBookAccessScope(user, this.libraryService);
 
     const existing = await this.repo.findBookStatesByAbsItemIds(
       user.id,
@@ -239,7 +208,6 @@ export class AudiobookshelfMatchService {
     const isbnMap = groupByKey(isbns.length ? await this.repo.findBookIdsByIsbns(accessibleLibraryIds, contentFilters, isbns) : []);
 
     const now = new Date();
-    const seenAt = options.seenAt ?? now;
     const upserts: AbsBookStateUpsert[] = [];
     const residuals: AbsMatchInput[] = [];
     const baseFor = (item: AbsMatchInput) => ({
@@ -247,51 +215,40 @@ export class AudiobookshelfMatchService {
       absTitle: item.title,
       absAuthorName: item.author,
       lastMatchAttemptAt: now,
-      lastSeenInInventoryAt: seenAt,
     });
 
     for (const item of toMatch) {
       const base = baseFor(item);
 
-      const asin = normalizeAsin(item.asin);
-      if (asin && asinMap.has(asin)) {
-        const bookIds = asinMap.get(asin)!;
-        if (bookIds.size === 1) {
-          upserts.push({
-            ...base,
-            bookId: bookIds.values().next().value!,
-            matchMethod: 'asin',
-            matchConfidence: 100,
-            needsReview: false,
-            matchError: null,
-          });
-          summary.autoLinked++;
-        } else {
-          upserts.push({ ...base, bookId: null, matchMethod: null, matchConfidence: null, needsReview: false, matchError: 'ambiguous_asin' });
-          summary.errors++;
-        }
-        continue;
-      }
+      // ASIN before ISBN: the cascade order is load-bearing, ASIN is the higher-precedence exact tier.
+      const exactTiers: Array<[key: string | null, map: Map<string, Set<number>>, method: string, ambiguousError: string]> = [
+        [normalizeAsin(item.asin), asinMap, 'asin', 'ambiguous_asin'],
+        [normalizeIsbn(item.isbn), isbnMap, 'isbn', 'ambiguous_isbn'],
+      ];
 
-      const isbn = normalizeIsbn(item.isbn);
-      if (isbn && isbnMap.has(isbn)) {
-        const bookIds = isbnMap.get(isbn)!;
-        if (bookIds.size === 1) {
-          upserts.push({
-            ...base,
-            bookId: bookIds.values().next().value!,
-            matchMethod: 'isbn',
-            matchConfidence: 100,
-            needsReview: false,
-            matchError: null,
-          });
-          summary.autoLinked++;
-        } else {
-          upserts.push({ ...base, bookId: null, matchMethod: null, matchConfidence: null, needsReview: false, matchError: 'ambiguous_isbn' });
-          summary.errors++;
+      let matched = false;
+      for (const [key, map, method, ambiguousError] of exactTiers) {
+        if (key && map.has(key)) {
+          const bookIds = map.get(key)!;
+          if (bookIds.size === 1) {
+            upserts.push({
+              ...base,
+              bookId: bookIds.values().next().value!,
+              matchMethod: method,
+              matchConfidence: 100,
+              needsReview: false,
+              matchError: null,
+            });
+            summary.autoLinked++;
+          } else {
+            upserts.push({ ...base, bookId: null, matchMethod: null, matchConfidence: null, needsReview: false, matchError: ambiguousError });
+            summary.errors++;
+          }
+          matched = true;
+          break;
         }
-        continue;
       }
+      if (matched) continue;
 
       residuals.push(item);
     }

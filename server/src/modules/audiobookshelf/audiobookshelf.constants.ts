@@ -19,24 +19,19 @@ export const AUDIOBOOKSHELF_ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 export const AUDIOBOOKSHELF_DURATION_TOLERANCE_BASE_SECONDS = 5;
 export const AUDIOBOOKSHELF_DURATION_TOLERANCE_PER_FILE_SECONDS = 1;
 export const AUDIOBOOKSHELF_DURATION_TOLERANCE_RELATIVE = 0.01;
-// Cron cadence for the scheduled sync (every 15 minutes).
+// Cron cadence for the full scheduled sync (every 15 minutes): matching-if-fresh, all progress, sessions.
 export const AUDIOBOOKSHELF_SCHEDULER_CRON = '*/15 * * * *';
-// Wall-clock spacing of scheduler ticks, matching AUDIOBOOKSHELF_SCHEDULER_CRON. Used to derive the
-// deep-scan interval and to slice users into per-tick stagger buckets.
-export const AUDIOBOOKSHELF_SCHEDULER_INTERVAL_MS = 15 * 60 * 1000;
+// Cron cadence for the hot tier (every 30 seconds): near-live position for in-progress books only.
+export const AUDIOBOOKSHELF_HOT_SCHEDULER_CRON = '*/30 * * * * *';
+// Debounce for the catalog-changed auto-match: a full scan emits many events, so wait for the burst
+// to settle before running one reconcile.
+export const AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS = 30 * 1000;
 // Users synced concurrently per scheduler tick. Small, bounded global parallelism: each user's
 // pipeline runs sequentially, and only this many users run at once so a slow ABS server cannot fan
 // out into unbounded outbound load.
 export const AUDIOBOOKSHELF_SCHEDULER_CONCURRENCY = 3;
 // Keyset page size for iterating enabled+configured users. Never load all users unbounded.
 export const AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE = 100;
-// Number of scheduler ticks in one deep-scan interval. Doubles as the number of stagger buckets: each
-// user maps to one tick per interval by `userId % this`, so enabled users do not all become deep-due
-// at once. At the 15-minute cadence, 96 ticks is roughly one day.
-export const AUDIOBOOKSHELF_DEEP_SCAN_EVERY_N_RUNS = 96;
-// A user is deep-due when its persisted lastDeepSessionScanAt is null or older than this. Derived from
-// the tick cadence so the deep scan runs about once per day per user.
-export const AUDIOBOOKSHELF_DEEP_SCAN_INTERVAL_MS = AUDIOBOOKSHELF_DEEP_SCAN_EVERY_N_RUNS * AUDIOBOOKSHELF_SCHEDULER_INTERVAL_MS;
 // Max span (in days) of session history loaded into memory per daily-stats recompute query. Affected
 // days are grouped into windows no wider than this, so recomputing far-apart days never loads a
 // multi-year range at once during a backfill.

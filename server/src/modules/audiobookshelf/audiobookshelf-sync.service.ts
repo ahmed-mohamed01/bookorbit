@@ -1,16 +1,17 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
-import { isAudioFormat, type AudiobookshelfSyncResult, type ReadStatus, type UserSettings } from '@bookorbit/types';
+import { isAudioFormat, type AudiobookshelfSyncResult, type ReadStatus } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
-import { resolveTimeZone, toDateKeyInTimeZone } from '../../common/utils/timezone.utils';
+import { toDateKeyInTimeZone } from '../../common/utils/timezone.utils';
 import { LibraryService } from '../library/library.service';
 import { ReadingAttemptService } from '../user-book-status/reading-attempt.service';
 import { UserBookStatusService } from '../user-book-status/user-book-status.service';
-import { AudiobookshelfClientService, type AbsMediaProgress } from './audiobookshelf-client.service';
+import { AudiobookshelfApiError, AudiobookshelfClientService, type AbsMediaProgress } from './audiobookshelf-client.service';
 import { AudiobookshelfMatchService } from './audiobookshelf-match.service';
 import { AudiobookshelfRepository } from './audiobookshelf.repository';
 import { AudiobookshelfSessionsService } from './audiobookshelf-sessions.service';
+import { buildBookAccessScope, describeError, isAbsSyncConfigured, resolveUserTimeZone } from './audiobookshelf-user.utils';
 import {
   AUDIOBOOKSHELF_DURATION_TOLERANCE_BASE_SECONDS,
   AUDIOBOOKSHELF_DURATION_TOLERANCE_PER_FILE_SECONDS,
@@ -24,10 +25,13 @@ export interface AudiobookshelfSyncOptions {
   // Run the deep reconciliation scan (full re-pagination) as the sessions phase instead of the
   // incremental watermark path.
   deepSessions?: boolean;
-  // Reconcile the full ABS inventory (match new items + staged prune) this run. Decoupled from the
-  // frequent progress poll: the scheduler only sets it on the slow deep cadence, while manual sync
-  // and full resync default it on. Defaults to true when unset.
+  // Reconcile the full ABS inventory (match new items) this run. Decoupled from the frequent progress
+  // poll: only a fresh connection or an explicit rescan reconciles. Defaults to fresh-detection.
   reconcile?: boolean;
+  // Hot tier: apply position/status for only the books currently in progress in ABS ("Continue
+  // Listening"), skipping reconcile and the session ingest. Runs on a fast cadence for near-live
+  // position; the full poll still handles finished books, sessions, and matching.
+  hotInProgressOnly?: boolean;
 }
 
 // Upgrade-only ranking. A sync may promote a book toward completion but never move it backward.
@@ -102,7 +106,7 @@ export class AudiobookshelfSyncService {
 
   async sync(user: RequestUser, options: AudiobookshelfSyncOptions = {}): Promise<AudiobookshelfSyncResult> {
     const settings = await this.repo.findSettings(user.id);
-    if (!settings || !settings.enabled || !settings.serverUrl || !settings.apiToken) {
+    if (!settings || !isAbsSyncConfigured(settings)) {
       throw new BadRequestException('Audiobookshelf sync is not configured');
     }
 
@@ -111,7 +115,10 @@ export class AudiobookshelfSyncService {
     }
     this.runningUsers.add(user.id);
 
-    const reconcile = options.reconcile ?? true;
+    // Fresh connection reconciles the whole inventory; subsequent syncs only poll progress against the
+    // already-matched state. Forced paths (full resync, explicit rescan) always reconcile. The hot
+    // tier never reconciles - it only refreshes position for already-matched in-progress books.
+    const reconcile = options.hotInProgressOnly ? false : (options.reconcile ?? settings.initialReconcileCompletedAt == null);
     const startedAt = Date.now();
     this.logger.log(
       `[abs.sync] [start] userId=${user.id} syncStatus=${settings.syncStatus} syncPosition=${settings.syncPosition} force=${options.force === true} deepSessions=${options.deepSessions === true} reconcile=${reconcile} - sync started`,
@@ -119,30 +126,32 @@ export class AudiobookshelfSyncService {
 
     const result: AudiobookshelfSyncResult = { matched: 0, statusApplied: 0, positionApplied: 0, sessionsApplied: 0, skipped: 0, failed: 0 };
     try {
-      // Full inventory reconciliation (match + staged prune) is the slow-cadence path. When skipped,
-      // the frequent poll applies progress against already-persisted book state instead of
+      // Full inventory MATCH (no prune), run only on a fresh connection or an explicit rescan. When
+      // skipped, the frequent poll applies progress against already-persisted book state instead of
       // re-materializing and re-matching the entire remote library.
-      let selectedAbsItemIds: Set<string> | null = null;
       if (reconcile) {
         const matchSummary = await this.matchService.matchLibrary(user, settings.serverUrl, settings.apiToken, {
           force: options.force === true,
           excludedLibraryIds: settings.excludedLibraryIds ?? [],
         });
         result.matched = matchSummary.autoLinked;
-        selectedAbsItemIds = new Set(matchSummary.selectedAbsItemIds);
+        // Stamp completion only after matchLibrary returns: a partial (page-by-page) reconcile that
+        // throws leaves this null so the next sync retries the full reconcile instead of skipping it.
+        await this.repo.updateSettings(user.id, { initialReconcileCompletedAt: new Date() });
       }
 
       const me = await this.client.getMe(user.id, settings.serverUrl, settings.apiToken);
-      const candidateProgresses = me.mediaProgress.filter((mp) => mp.libraryItemId && !mp.episodeId);
-      const progresses = selectedAbsItemIds ? candidateProgresses.filter((mp) => selectedAbsItemIds!.has(mp.libraryItemId!)) : candidateProgresses;
-      if (selectedAbsItemIds) result.skipped += candidateProgresses.length - progresses.length;
+      // Unlinked items need no pre-filter: findSyncableBookStatesByAbsItemIds already scopes to
+      // linked, non-excluded, in-scope rows, so anything it omits is skipped in the loop below.
+      // The hot tier narrows to books currently in progress ("Continue Listening") - not finished and
+      // partway through - so a fast cadence stays cheap and never re-touches settled books.
+      const progresses = me.mediaProgress.filter(
+        (mp) => mp.libraryItemId && !mp.episodeId && (!options.hotInProgressOnly || (!mp.isFinished && mp.progress > 0 && mp.progress < 1)),
+      );
 
       const progressItemIds = progresses.map((mp) => mp.libraryItemId!);
-      const scope = {
-        libraryIds: await this.libraryService.findAccessibleLibraryIds(user),
-        contentFilters: user.isSuperuser ? undefined : user.contentFilters,
-      };
-      const timeZone = resolveTimeZone((user.settings as unknown as UserSettings | undefined)?.timezone, 'UTC');
+      const scope = await buildBookAccessScope(user, this.libraryService);
+      const timeZone = resolveUserTimeZone(user);
       const states = progressItemIds.length ? await this.repo.findSyncableBookStatesByAbsItemIds(user.id, scope, progressItemIds) : [];
       const stateByItemId = new Map(states.map((state) => [state.absLibraryItemId, state]));
 
@@ -155,9 +164,11 @@ export class AudiobookshelfSyncService {
         // Split per-phase watermarks: a skipped or disabled position phase must not consume the ABS
         // update a later position retry needs, and a status-only advance must not skip position.
         const statusDue = settings.syncStatus && (options.force || state.lastSyncedAbsUpdate == null || mp.lastUpdate > state.lastSyncedAbsUpdate);
-        // A row synced under the previous single-watermark scheme has no position watermark yet; fall
-        // back to the status watermark so it is not needlessly re-synced after the split.
-        const positionWatermark = state.lastSyncedPositionAbsUpdate ?? state.lastSyncedAbsUpdate;
+        // Use only the position watermark: a null means position was never synced (e.g. matched before
+        // its audio files were scanned, so the position phase skipped), and it must keep retrying until
+        // it lands. Accepted cost: a legacy row that synced position under the pre-split single-watermark
+        // scheme re-syncs position once (idempotent, harmless).
+        const positionWatermark = state.lastSyncedPositionAbsUpdate;
         const positionDue = settings.syncPosition && (options.force || positionWatermark == null || mp.lastUpdate > positionWatermark);
         if (!statusDue && !positionDue) {
           result.skipped++;
@@ -186,8 +197,7 @@ export class AudiobookshelfSyncService {
           });
         } catch (err) {
           result.failed++;
-          const errorClass = err instanceof Error ? err.constructor.name : 'Error';
-          const error = sanitizeLogValue(err instanceof Error ? err.message : String(err));
+          const { errorClass, error } = describeError(err);
           this.logger.warn(
             `[abs.sync] [fail] userId=${user.id} bookId=${state.bookId} absItemId="${sanitizeLogValue(state.absLibraryItemId)}" errorClass=${errorClass} error="${error}" - book sync failed`,
           );
@@ -196,7 +206,7 @@ export class AudiobookshelfSyncService {
       }
 
       let sessionsError: string | null = null;
-      if (settings.syncSessions) {
+      if (settings.syncSessions && !options.hotInProgressOnly) {
         try {
           const sessions = options.deepSessions
             ? await this.sessionsService.deepReconciliationScan(user, settings)
@@ -205,8 +215,8 @@ export class AudiobookshelfSyncService {
         } catch (err) {
           // Isolate session-ingest failures: status/position work is already committed, so record the
           // error and still report those counts rather than failing the whole run.
-          sessionsError = sanitizeLogValue(err instanceof Error ? err.message : String(err));
-          const errorClass = err instanceof Error ? err.constructor.name : 'Error';
+          const { errorClass, error } = describeError(err);
+          sessionsError = error;
           this.logger.error(
             `[abs.sync] [fail] userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sessionsError}" - session ingest failed`,
           );
@@ -219,12 +229,15 @@ export class AudiobookshelfSyncService {
       );
       return result;
     } catch (err) {
-      const errorClass = err instanceof Error ? err.constructor.name : 'Error';
-      const error = sanitizeLogValue(err instanceof Error ? err.message : String(err));
+      const { errorClass, error } = describeError(err);
+      // A rejected token never recovers on its own; without this the scheduler retries it forever.
+      const tokenRejected = err instanceof AudiobookshelfApiError && (err.status === 401 || err.status === 403);
       this.logger.error(
-        `[abs.sync] [fail] userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${error}" - sync failed`,
+        `[abs.sync] [fail] userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${error}" tokenRejected=${tokenRejected} - sync failed${tokenRejected ? ', sync disabled' : ''}`,
       );
-      await this.repo.updateSettings(user.id, { lastSyncError: error }).catch(() => undefined);
+      await this.repo
+        .updateSettings(user.id, tokenRejected ? { enabled: false, lastSyncError: error } : { lastSyncError: error })
+        .catch(() => undefined);
       throw err;
     } finally {
       this.runningUsers.delete(user.id);
@@ -296,7 +309,7 @@ export class AudiobookshelfSyncService {
     if (files.length === 0) return skipped;
 
     if (!Number.isFinite(mp.duration) || mp.duration <= 0) {
-      this.logger.warn(`[abs.sync] [fail] userId=${userId} bookId=${bookId} absDuration=${mp.duration} - position skipped: invalid ABS duration`);
+      this.logger.warn(`[abs.sync] userId=${userId} bookId=${bookId} absDuration=${mp.duration} - position skipped: invalid ABS duration`);
       return skipped;
     }
 
@@ -306,7 +319,7 @@ export class AudiobookshelfSyncService {
       totalDuration * AUDIOBOOKSHELF_DURATION_TOLERANCE_RELATIVE;
     if (Math.abs(totalDuration - mp.duration) > durationTolerance) {
       this.logger.warn(
-        `[abs.sync] [fail] userId=${userId} bookId=${bookId} localDuration=${totalDuration} absDuration=${mp.duration} - position skipped: duration mismatch`,
+        `[abs.sync] userId=${userId} bookId=${bookId} localDuration=${totalDuration} absDuration=${mp.duration} - position skipped: duration mismatch`,
       );
       return skipped;
     }
@@ -319,7 +332,7 @@ export class AudiobookshelfSyncService {
       const localAdvanced =
         syncedProgressAt != null ? local.updatedAt.getTime() !== syncedProgressAt.getTime() : (local.percentage ?? 0) > mp.progress * 100;
       if (localAdvanced) {
-        this.logger.warn(`[abs.sync] [fail] userId=${userId} bookId=${bookId} - position skipped: local progress is newer`);
+        this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress is newer`);
         return { applied: false, watermarkAdvanced: true, progressAt: local.updatedAt };
       }
     }

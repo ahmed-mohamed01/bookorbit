@@ -20,7 +20,6 @@ export const AUDIOBOOKSHELF_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS "audiobooks
 	"last_synced_abs_update" bigint,
 	"last_synced_position_abs_update" bigint,
 	"last_synced_progress_at" timestamp with time zone,
-	"last_seen_in_inventory_at" timestamp with time zone,
 	"sync_error" text,
 	"sync_excluded" boolean DEFAULT false NOT NULL,
 	"manual_unlinked" boolean DEFAULT false NOT NULL,
@@ -42,13 +41,15 @@ CREATE TABLE IF NOT EXISTS "audiobookshelf_user_settings" (
 	"last_synced_at" timestamp with time zone,
 	"last_sync_error" text,
 	"last_session_watermark" bigint,
-	"last_deep_session_scan_at" timestamp with time zone,
 	"session_backfill_cursor_page" integer,
 	"session_backfill_max_updated" bigint,
+	"initial_reconcile_completed_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "audiobookshelf_user_settings_user_id_unique" UNIQUE("user_id")
 );
+--> statement-breakpoint
+ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "initial_reconcile_completed_at" timestamp with time zone;
 --> statement-breakpoint
 DO $$ BEGIN
 	IF NOT EXISTS (

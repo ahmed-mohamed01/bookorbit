@@ -105,11 +105,18 @@ export class AudiobookshelfCoverRefreshService implements BulkCoverRefresher {
               refreshed: await this.metadataService.applyCoverFromSources(candidate.bookId, candidate.readOrder),
             })),
           );
-          for (const result of results) {
-            if (result.status === 'rejected') throw result.reason;
-            if (result.value.refreshed) updated++;
+          for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
+            const result = results[resultIndex]!;
+            const bookId = candidates[resultIndex]!.bookId;
+            if (result.status === 'rejected') {
+              const errorClass = result.reason instanceof Error ? result.reason.name : 'Error';
+              const errorMessage = sanitizeLogValue(result.reason instanceof Error ? result.reason.message : String(result.reason));
+              this.logger.warn(`[${event}] [fail] bookId=${bookId} errorClass=${errorClass} error="${errorMessage}" - cover apply failed`);
+            } else if (result.value.refreshed) {
+              updated++;
+            }
             try {
-              onProgress?.(result.value.bookId);
+              onProgress?.(bookId);
             } catch {
               callbackInterrupted = true;
               break;

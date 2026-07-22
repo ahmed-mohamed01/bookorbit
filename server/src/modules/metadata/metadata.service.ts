@@ -89,56 +89,50 @@ export class MetadataService {
   // ── Public API ───────────────────────────────────────────────────────────────
 
   async extractAndSave(bookId: number, absolutePath: string, format: string): Promise<void> {
-    await this.runExtractAndSave(bookId, absolutePath, format, false);
+    await this.extractAndSaveIfAvailable(bookId, absolutePath, format);
   }
 
   async extractAndSaveIfAvailable(bookId: number, absolutePath: string, format: string): Promise<boolean> {
-    return this.runExtractAndSave(bookId, absolutePath, format, true);
-  }
-
-  private async runExtractAndSave(bookId: number, absolutePath: string, format: string, suppressExtractorFailure: boolean): Promise<boolean> {
     const event = 'metadata.extract_and_save';
     const startedAt = Date.now();
     this.logger.debug(`[${event}] [start] bookId=${bookId} format=${format} - metadata extraction started`);
 
-    if (!this.extractionService.supports(format)) {
-      this.logger.debug(
-        `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} extractorFound=false - metadata extraction skipped`,
-      );
-      return false;
-    }
-
-    let data: ParsedBookData | null;
     try {
-      data = await this.extractionService.extract(absolutePath, format);
+      if (!this.extractionService.supports(format)) {
+        this.logger.debug(
+          `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} extractorFound=false - metadata extraction skipped`,
+        );
+        return false;
+      }
+
+      const data = await this.extractionService.extract(absolutePath, format);
+      if (!data) {
+        this.logger.debug(
+          `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} parsed=false - metadata extraction skipped`,
+        );
+        return false;
+      }
+
+      await Promise.all([this.persistMetadata(bookId, data, format), data.cover ? this.persistCover(bookId, data.cover, true) : Promise.resolve()]);
+
+      this.scoreService.calculateAndSave(bookId).catch((error: Error) => {
+        this.logger.warn(
+          `[metadata.score_calculation] [fail] bookId=${bookId} errorClass=${error.name} error="${sanitizeLogValue(error.message)}" - metadata score calculation failed`,
+        );
+      });
+
+      this.logger.debug(
+        `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} coverExtracted=${data.cover != null} - metadata extraction completed`,
+      );
+      return true;
     } catch (error) {
-      if (!suppressExtractorFailure) throw error;
       const errorClass = error instanceof Error ? error.name : 'Error';
       const errorMessage = sanitizeLogValue(error instanceof Error ? error.message : String(error));
       this.logger.warn(
         `[${event}] [fail] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${errorMessage}" - metadata extraction failed`,
       );
-      return false;
+      throw error;
     }
-    if (!data) {
-      this.logger.debug(
-        `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} parsed=false - metadata extraction skipped`,
-      );
-      return false;
-    }
-
-    await Promise.all([this.persistMetadata(bookId, data, format), data.cover ? this.persistCover(bookId, data.cover, true) : Promise.resolve()]);
-
-    this.scoreService.calculateAndSave(bookId).catch((error: Error) => {
-      this.logger.warn(
-        `[metadata.score_calculation] [fail] bookId=${bookId} errorClass=${error.name} error="${sanitizeLogValue(error.message)}" - metadata score calculation failed`,
-      );
-    });
-
-    this.logger.debug(
-      `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} coverExtracted=${data.cover != null} - metadata extraction completed`,
-    );
-    return true;
   }
 
   // Called when ebook is the winner but audio files are also present.

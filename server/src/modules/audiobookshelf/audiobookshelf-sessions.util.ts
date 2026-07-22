@@ -3,6 +3,8 @@ import type { AbsListeningSession } from './audiobookshelf-client.service';
 
 // One listening session mapped to the shape a `reading_sessions` row needs. `libraryId` is the
 // BookOrbit library of the linked book (NOT the ABS `libraryId`), used to group daily-stats recompute.
+// `progressDelta` is absent by design: ABS reports absolute position only, so the delta is derived
+// from the stored per-book session history after the upsert (see `AudiobookshelfRepository`).
 export interface AbsMappedSession {
   sessionId: string;
   bookId: number;
@@ -12,7 +14,6 @@ export interface AbsMappedSession {
   endedAt: Date;
   durationSeconds: number;
   endProgress: number | null;
-  progressDelta: number | null;
 }
 
 export interface AbsSessionMapContext {
@@ -49,7 +50,6 @@ export function mapAbsSession(session: AbsListeningSession, ctx: AbsSessionMapCo
     endedAt,
     durationSeconds: timeListening,
     endProgress,
-    progressDelta: null,
   };
 }
 
@@ -67,10 +67,4 @@ export function maxSessionUpdatedAt(sessions: AbsListeningSession[], current: nu
     if (Number.isFinite(session.updatedAt) && session.updatedAt > max) max = session.updatedAt;
   }
   return max;
-}
-
-export function chunkSessions<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
 }

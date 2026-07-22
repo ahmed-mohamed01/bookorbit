@@ -1,15 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { isAudioFormat, type UserSettings } from '@bookorbit/types';
+import { isAudioFormat } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
-import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
-import { resolveTimeZone } from '../../common/utils/timezone.utils';
 import { LibraryService } from '../library/library.service';
 import {
   ACHIEVEMENT_EVENT_BACKFILL,
   ACHIEVEMENT_EVENT_READING_SESSION_SAVED,
   AchievementEventsService,
 } from '../achievement/achievement-events.service';
+import { chunk } from './audiobookshelf-array.utils';
 import { AudiobookshelfClientService, type AbsListeningSession } from './audiobookshelf-client.service';
 import { AudiobookshelfRepository, type AbsBookAccessScope } from './audiobookshelf.repository';
 import type { AudiobookshelfUserSetting } from './schema/audiobookshelf.schema';
@@ -19,16 +18,19 @@ import {
   AUDIOBOOKSHELF_SESSIONS_INGEST_CHUNK,
   AUDIOBOOKSHELF_SESSIONS_PAGE_SIZE,
 } from './audiobookshelf.constants';
-import { chunkSessions, mapAbsSession, maxSessionUpdatedAt, pageEntirelyOlderThan, type AbsMappedSession } from './audiobookshelf-sessions.util';
+import { mapAbsSession, maxSessionUpdatedAt, pageEntirelyOlderThan, type AbsMappedSession } from './audiobookshelf-sessions.util';
+import { buildBookAccessScope, describeError, resolveUserTimeZone } from './audiobookshelf-user.utils';
 
 export interface AudiobookshelfSessionsResult {
   inserted: number;
   updated: number;
-  skipped: number;
-  watermark: number | null;
 }
 
 type SyncMode = 'incremental' | 'deep';
+
+// An inserted row carrying the `progress_delta` the repository derived for it, which the mapper
+// cannot know (it depends on the preceding session for the same book).
+type IngestedSession = AbsMappedSession & { progressDelta: number | null };
 
 interface IngestAccumulator {
   inserted: number;
@@ -36,7 +38,7 @@ interface IngestAccumulator {
   skipped: number;
   // Capped sample of inserted rows, used to emit per-session achievement events below the backfill
   // threshold. Never grows past the threshold, so a years-long backfill stays memory-bounded.
-  sampleInserted: AbsMappedSession[];
+  sampleInserted: IngestedSession[];
 }
 
 type SessionsSettingsPatch = Partial<
@@ -76,7 +78,7 @@ export class AudiobookshelfSessionsService {
     const startedAt = Date.now();
     this.logger.log(`[abs.sessions] [start] userId=${user.id} mode=${mode} - session ingest started`);
 
-    const timeZone = resolveTimeZone((user.settings as unknown as UserSettings | undefined)?.timezone, 'UTC');
+    const timeZone = resolveUserTimeZone(user);
     const existingWatermark = settings.lastSessionWatermark ?? 0;
     const floor = mode === 'incremental' ? existingWatermark - AUDIOBOOKSHELF_SESSION_OVERLAP_MS : Number.NEGATIVE_INFINITY;
     // A deep scan and a first-ever sync both fully re-paginate years of history, so they checkpoint
@@ -86,10 +88,7 @@ export class AudiobookshelfSessionsService {
 
     const acc: IngestAccumulator = { inserted: 0, updated: 0, skipped: 0, sampleInserted: [] };
     const excludedLibraryIds = new Set(settings.excludedLibraryIds ?? []);
-    const scope = {
-      libraryIds: await this.libraryService.findAccessibleLibraryIds(user),
-      contentFilters: user.isSuperuser ? undefined : user.contentFilters,
-    };
+    const scope = await buildBookAccessScope(user, this.libraryService);
     let maxUpdated = existingWatermark;
     if (isBackfill && settings.sessionBackfillMaxUpdated != null && settings.sessionBackfillMaxUpdated > maxUpdated) {
       maxUpdated = settings.sessionBackfillMaxUpdated;
@@ -129,11 +128,9 @@ export class AudiobookshelfSessionsService {
         page++;
       }
 
-      let watermark: number | null = settings.lastSessionWatermark ?? null;
       const patch: SessionsSettingsPatch = {};
       if (maxUpdated > existingWatermark) {
         patch.lastSessionWatermark = maxUpdated;
-        watermark = maxUpdated;
       }
       // Backfill completed: promote the accumulated watermark and clear the resume cursor so the next
       // run starts fresh from page 0.
@@ -150,10 +147,9 @@ export class AudiobookshelfSessionsService {
       this.logger.log(
         `[abs.sessions] [end] userId=${user.id} mode=${mode} durationMs=${Date.now() - startedAt} inserted=${acc.inserted} updated=${acc.updated} skipped=${acc.skipped} - session ingest completed`,
       );
-      return { inserted: acc.inserted, updated: acc.updated, skipped: acc.skipped, watermark };
+      return { inserted: acc.inserted, updated: acc.updated };
     } catch (err) {
-      const errorClass = err instanceof Error ? err.constructor.name : 'Error';
-      const error = sanitizeLogValue(err instanceof Error ? err.message : String(err));
+      const { errorClass, error } = describeError(err);
       this.logger.error(
         `[abs.sessions] [fail] userId=${user.id} mode=${mode} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${error}" - session ingest failed`,
       );
@@ -204,14 +200,14 @@ export class AudiobookshelfSessionsService {
       mapped.push(row);
     }
 
-    for (const group of chunkSessions(mapped, AUDIOBOOKSHELF_SESSIONS_INGEST_CHUNK)) {
-      const { insertedSessionIds, updated } = await this.repo.ingestSessions(userId, timeZone, group);
+    for (const group of chunk(mapped, AUDIOBOOKSHELF_SESSIONS_INGEST_CHUNK)) {
+      const { insertedSessionIds, updated, progressDeltaBySessionId } = await this.repo.ingestSessions(userId, timeZone, group);
       const insertedSet = new Set(insertedSessionIds);
       acc.inserted += insertedSessionIds.length;
       acc.updated += updated;
       for (const row of group) {
         if (insertedSet.has(row.sessionId) && acc.sampleInserted.length <= AUDIOBOOKSHELF_BACKFILL_EVENT_THRESHOLD) {
-          acc.sampleInserted.push(row);
+          acc.sampleInserted.push({ ...row, progressDelta: progressDeltaBySessionId.get(row.sessionId) ?? null });
         }
       }
     }
@@ -237,7 +233,7 @@ export class AudiobookshelfSessionsService {
       return;
     }
 
-    const timezone = resolveTimeZone((user.settings as unknown as UserSettings | undefined)?.timezone, 'UTC');
+    const timezone = resolveUserTimeZone(user);
     for (const session of acc.sampleInserted) {
       if (session.bookFileId == null) continue;
       this.achievementEvents.emit(ACHIEVEMENT_EVENT_READING_SESSION_SAVED, {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { AlertCircle, CheckCircle2, Eye, EyeOff, Link, Loader2, RefreshCw, Save, Unlink } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import type { UpsertAudiobookshelfSettingsPayload } from '@bookorbit/types'
@@ -7,7 +7,10 @@ import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { useAudiobookshelfSettings } from '../composables/useAudiobookshelfSettings'
 import { useAudiobookshelfSync } from '../composables/useAudiobookshelfSync'
 
-const { settings, loading, saving, testing, error, testError, fetchSettings, saveSettings, disconnect, testConnection } = useAudiobookshelfSettings()
+// Settings are fetched by the parent (AudiobookshelfSettings), which owns the lifecycle; this card
+// renders from the shared ref. Fetching here too raced the parent's `if (!settings.value)` guard,
+// since children mount first, and fired two identical GETs on every mount.
+const { settings, loading, saving, testing, error, testError, saveSettings, disconnect, testConnection } = useAudiobookshelfSettings()
 const { syncing, isFullResync, syncNow, fullResync } = useAudiobookshelfSync()
 
 const form = reactive({ serverUrl: '', enabled: true })
@@ -35,10 +38,6 @@ watch([() => form.serverUrl, tokenInput], () => {
   testResult.value = null
 })
 
-onMounted(async () => {
-  await fetchSettings()
-})
-
 function toggleTokenVisibility(): void {
   tokenVisible.value = !tokenVisible.value
 }
@@ -50,29 +49,27 @@ function connectionPayload(): { serverUrl?: string; apiToken?: string } {
   }
 }
 
-async function handleTestConnection(): Promise<void> {
+function ensureConnectionInput(): boolean {
   if (!form.serverUrl.trim()) {
     toast.error('Enter your Audiobookshelf server URL')
-    return
+    return false
   }
   if (!tokenInput.value.trim() && !settings.value?.tokenConfigured) {
     toast.error('Enter your Audiobookshelf API token')
-    return
+    return false
   }
+  return true
+}
+
+async function handleTestConnection(): Promise<void> {
+  if (!ensureConnectionInput()) return
   testResult.value = await testConnection(connectionPayload())
   if (testResult.value.success) toast.success('Audiobookshelf connection successful')
   else toast.error(testResult.value.error ?? testError.value ?? 'Audiobookshelf connection failed')
 }
 
 async function handleSave(): Promise<void> {
-  if (!form.serverUrl.trim()) {
-    toast.error('Enter your Audiobookshelf server URL')
-    return
-  }
-  if (!tokenInput.value.trim() && !settings.value?.tokenConfigured) {
-    toast.error('Enter your Audiobookshelf API token')
-    return
-  }
+  if (!ensureConnectionInput()) return
   const payload: UpsertAudiobookshelfSettingsPayload = {
     ...(form.serverUrl.trim() !== settings.value?.serverUrl ? { serverUrl: form.serverUrl.trim() } : {}),
     ...(tokenInput.value.trim() ? { apiToken: tokenInput.value.trim() } : {}),

@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { AudiobookshelfBookStateBucket, ContentFilterRules } from '@bookorbit/types';
 import { Permission } from '@bookorbit/types';
-import { and, asc, desc, eq, gt, ilike, inArray, isNotNull, isNull, lt, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, ilike, inArray, isNotNull, isNull, lt, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { DB } from '../../db';
@@ -13,6 +13,7 @@ import {
   getReadingSessionDayKeys,
   type ReadingDailyStatsSegment,
 } from '../../common/utils/reading-daily-stats.utils';
+import { chunk } from './audiobookshelf-array.utils';
 import type { AbsMappedSession } from './audiobookshelf-sessions.util';
 import { AUDIOBOOKSHELF_DAILY_STATS_RECOMPUTE_SPAN_DAYS } from './audiobookshelf.constants';
 import {
@@ -31,10 +32,34 @@ type AudiobookshelfSettingsMutation = Partial<Omit<AudiobookshelfUserSetting, 'i
 export interface AbsIngestSessionsResult {
   insertedSessionIds: string[];
   updated: number;
+  // Deltas for the rows whose `progress_delta` this batch actually changed, keyed by `sessionId`.
+  // Only covers changed rows, so a no-op re-ingest returns an empty map.
+  progressDeltaBySessionId: Map<string, number | null>;
 }
+
+type AbsProgressDeltaRow = {
+  sessionId: string;
+  libraryId: number;
+  startedAt: Date;
+  endedAt: Date;
+  durationSeconds: number;
+  progressDelta: number | null;
+};
+
+// Raw shape of the same row: drizzle installs identity type parsers for timestamps, so a raw
+// `execute` hands back strings where a query-builder select would hand back `Date`.
+type AbsProgressDeltaSqlRow = {
+  sessionId: string;
+  libraryId: number;
+  startedAt: string;
+  endedAt: string;
+  durationSeconds: number;
+  progressDelta: number | null;
+};
 
 const ISBN_ASIN_LOOKUP_CHUNK = 1000;
 const BOOK_STATE_UPSERT_CHUNK = 500;
+const FUZZY_TITLE_LOOKUP_CHUNK = 100;
 const normalizedAudibleId = sql<string>`upper(trim(${schema.bookMetadata.audibleId}))`;
 const normalizedIsbn10 = sql<string>`upper(trim(${schema.bookMetadata.isbn10}))`;
 
@@ -81,7 +106,6 @@ export interface AbsBookStateUpsert {
   needsReview: boolean;
   matchError: string | null;
   lastMatchAttemptAt: Date;
-  lastSeenInInventoryAt: Date;
 }
 
 export interface AbsBookAccessScope {
@@ -91,13 +115,6 @@ export interface AbsBookAccessScope {
 
 export interface AbsEnabledUser {
   userId: number;
-  lastDeepSessionScanAt: Date | null;
-}
-
-function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
 }
 
 function daySpanDays(from: string, to: string): number {
@@ -146,16 +163,14 @@ export class AudiobookshelfRepository {
   }
 
   /**
-   * Keyset page of users that have Audiobookshelf sync enabled and a non-empty server URL + token,
-   * with each user's persisted deep-scan watermark. Ordered by userId ascending; callers advance
-   * `afterUserId` to the last id of the prior page. Used by the scheduler so it never loads all users
-   * unbounded and can decide deep-vs-incremental per user.
+   * Keyset page of users that have Audiobookshelf sync enabled and a non-empty server URL + token.
+   * Ordered by userId ascending; callers advance `afterUserId` to the last id of the prior page. Used
+   * by the scheduler so it never loads all users unbounded.
    */
   async findEnabledConfiguredUsers(afterUserId: number, limit: number): Promise<AbsEnabledUser[]> {
     return this.db
       .select({
         userId: audiobookshelfUserSettings.userId,
-        lastDeepSessionScanAt: audiobookshelfUserSettings.lastDeepSessionScanAt,
       })
       .from(audiobookshelfUserSettings)
       .where(
@@ -230,19 +245,28 @@ export class AudiobookshelfRepository {
     return row.changedAt instanceof Date ? row.changedAt : new Date(row.changedAt);
   }
 
-  async findBookIdsByAudibleIds(libraryIds: number[], contentFilters: ContentFilterRules | undefined, asins: string[]): Promise<AbsExactMatchRow[]> {
-    if (libraryIds.length === 0 || asins.length === 0) return [];
-    const filters = contentFilters ? buildContentFilterClauses(contentFilters, this.db) : [];
+  private async matchByKey(
+    libraryIds: number[],
+    filters: SQL[],
+    keyExpr: SQL<string> | typeof schema.bookMetadata.isbn13,
+    values: string[],
+  ): Promise<AbsExactMatchRow[]> {
     const results: AbsExactMatchRow[] = [];
-    for (const group of chunk(asins, ISBN_ASIN_LOOKUP_CHUNK)) {
+    for (const group of chunk(values, ISBN_ASIN_LOOKUP_CHUNK)) {
       const rows = await this.db
-        .select({ key: normalizedAudibleId, bookId: schema.books.id })
+        .select({ key: keyExpr, bookId: schema.books.id })
         .from(schema.books)
         .innerJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.books.id))
-        .where(and(inArray(schema.books.libraryId, libraryIds), eq(schema.books.status, 'present'), inArray(normalizedAudibleId, group), ...filters));
+        .where(and(inArray(schema.books.libraryId, libraryIds), eq(schema.books.status, 'present'), inArray(keyExpr, group), ...filters));
       for (const row of rows) if (row.key) results.push({ key: row.key, bookId: row.bookId });
     }
     return results;
+  }
+
+  async findBookIdsByAudibleIds(libraryIds: number[], contentFilters: ContentFilterRules | undefined, asins: string[]): Promise<AbsExactMatchRow[]> {
+    if (libraryIds.length === 0 || asins.length === 0) return [];
+    const filters = contentFilters ? buildContentFilterClauses(contentFilters, this.db) : [];
+    return this.matchByKey(libraryIds, filters, normalizedAudibleId, asins);
   }
 
   async findBookIdsByIsbns(libraryIds: number[], contentFilters: ContentFilterRules | undefined, isbns: string[]): Promise<AbsExactMatchRow[]> {
@@ -250,32 +274,10 @@ export class AudiobookshelfRepository {
     const filters = contentFilters ? buildContentFilterClauses(contentFilters, this.db) : [];
     const isbn13s = isbns.filter((isbn) => isbn.length === 13);
     const isbn10s = isbns.filter((isbn) => isbn.length === 10);
-    const results: AbsExactMatchRow[] = [];
-
-    for (const group of chunk(isbn13s, ISBN_ASIN_LOOKUP_CHUNK)) {
-      const rows = await this.db
-        .select({ key: schema.bookMetadata.isbn13, bookId: schema.books.id })
-        .from(schema.books)
-        .innerJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.books.id))
-        .where(
-          and(
-            inArray(schema.books.libraryId, libraryIds),
-            eq(schema.books.status, 'present'),
-            inArray(schema.bookMetadata.isbn13, group),
-            ...filters,
-          ),
-        );
-      for (const row of rows) if (row.key) results.push({ key: row.key, bookId: row.bookId });
-    }
-    for (const group of chunk(isbn10s, ISBN_ASIN_LOOKUP_CHUNK)) {
-      const rows = await this.db
-        .select({ key: normalizedIsbn10, bookId: schema.books.id })
-        .from(schema.books)
-        .innerJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.books.id))
-        .where(and(inArray(schema.books.libraryId, libraryIds), eq(schema.books.status, 'present'), inArray(normalizedIsbn10, group), ...filters));
-      for (const row of rows) if (row.key) results.push({ key: row.key, bookId: row.bookId });
-    }
-    return results;
+    return [
+      ...(await this.matchByKey(libraryIds, filters, schema.bookMetadata.isbn13, isbn13s)),
+      ...(await this.matchByKey(libraryIds, filters, normalizedIsbn10, isbn10s)),
+    ];
   }
 
   /**
@@ -284,6 +286,10 @@ export class AudiobookshelfRepository {
    * series enrichment is loaded once across the union of candidate books - not 3 queries per residual
    * item. Titles are deduplicated so repeated ABS titles query only once. Never a full-library scan:
    * only residual items that failed the exact tiers reach here, and each title is capped at `limitPerTitle`.
+   *
+   * Titles are looked up a batch at a time via a VALUES list joined with CROSS JOIN LATERAL, so a
+   * 500-item reconcile page costs ceil(n/100) round trips rather than one per title. The lateral keeps
+   * the ranking and `limitPerTitle` per-title, which a flat `IN (...)` query could not express.
    */
   async findFuzzyCandidatesForTitles(
     libraryIds: number[],
@@ -297,26 +303,49 @@ export class AudiobookshelfRepository {
     if (uniqueTitles.length === 0) return byTitle;
 
     const filters = contentFilters ? buildContentFilterClauses(contentFilters, this.db) : [];
+    // `buildContentFilterClauses` emits EXISTS subqueries correlated on `"books"."id"`, so `books`
+    // must stay unaliased and in scope where these are spliced or the correlation silently breaks.
+    const filterSql = filters.length > 0 ? sql` and ${sql.join(filters, sql` and `)}` : sql``;
     const candidateRowsByTitle = new Map<string, { bookId: number; title: string | null }[]>();
+    for (const title of uniqueTitles) candidateRowsByTitle.set(title, []);
     const bookIds = new Set<number>();
 
-    for (const title of uniqueTitles) {
-      const rows = await this.db
-        .select({ bookId: schema.books.id, title: schema.bookMetadata.title })
-        .from(schema.books)
-        .innerJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.books.id))
-        .where(
-          and(
-            inArray(schema.books.libraryId, libraryIds),
-            eq(schema.books.status, 'present'),
-            sql`${schema.bookMetadata.title} % ${title}`,
-            ...filters,
-          ),
-        )
-        .orderBy(sql`similarity(${schema.bookMetadata.title}, ${title}) desc`, asc(schema.books.id))
-        .limit(limitPerTitle);
-      candidateRowsByTitle.set(title, rows);
-      for (const row of rows) bookIds.add(row.bookId);
+    for (const group of chunk(uniqueTitles, FUZZY_TITLE_LOOKUP_CHUNK)) {
+      const titleValues = sql.join(
+        group.map((title) => sql`(${title}::text)`),
+        sql`, `,
+      );
+      // The trailing `offset 0` in the EXISTS is a planner fence, not a real offset. Postgres cannot
+      // estimate the selectivity of `title % v.q` against a correlated VALUES column, so it assumes a
+      // default 600 rows; without the fence it flattens the EXISTS into a semi-join and hash-joins a
+      // full sequential scan of `books` once per title. The fence keeps it a correlated subplan, so
+      // the trigram index drives the lateral and `books` is probed by primary key.
+      const result = await this.db.execute<{ queryTitle: string; bookId: number; title: string | null }>(sql`
+        select v.q as "queryTitle", c.book_id as "bookId", c.title as "title"
+        from (values ${titleValues}) as v(q)
+        cross join lateral (
+          select ${schema.bookMetadata.bookId} as book_id, ${schema.bookMetadata.title} as title,
+                 similarity(${schema.bookMetadata.title}, v.q) as sim
+          from ${schema.bookMetadata}
+          where ${schema.bookMetadata.title} % v.q
+            and exists (
+              select 1
+              from ${schema.books}
+              where ${schema.books.id} = ${schema.bookMetadata.bookId}
+                and ${inArray(schema.books.libraryId, libraryIds)}
+                and ${eq(schema.books.status, 'present')}
+                ${filterSql}
+              offset 0
+            )
+          order by similarity(${schema.bookMetadata.title}, v.q) desc, ${schema.bookMetadata.bookId} asc
+          limit ${limitPerTitle}
+        ) c
+        order by v.q, c.sim desc, c.book_id asc
+      `);
+      for (const row of result.rows) {
+        candidateRowsByTitle.get(row.queryTitle)?.push({ bookId: row.bookId, title: row.title });
+        bookIds.add(row.bookId);
+      }
     }
 
     if (bookIds.size === 0) return byTitle;
@@ -386,37 +415,6 @@ export class AudiobookshelfRepository {
     return results;
   }
 
-  /**
-   * Staged-prune step 1: stamp `lastSeenInInventoryAt` on every row whose item was observed in the
-   * current reconcile pass. Bounded by chunking so a huge page never builds one oversized statement.
-   */
-  async markBookStatesSeenInInventory(userId: number, absLibraryItemIds: string[], seenAt: Date): Promise<void> {
-    if (absLibraryItemIds.length === 0) return;
-    for (const group of chunk(absLibraryItemIds, ISBN_ASIN_LOOKUP_CHUNK)) {
-      await this.db
-        .update(audiobookshelfBookState)
-        .set({ lastSeenInInventoryAt: seenAt })
-        .where(and(eq(audiobookshelfBookState.userId, userId), inArray(audiobookshelfBookState.absLibraryItemId, group)));
-    }
-  }
-
-  /**
-   * Staged-prune step 2: delete rows not stamped during the current reconcile pass (marker predates
-   * the run start or is null). Replaces passing the full inventory id array into the delete. Callers
-   * must skip this when the inventory was empty, to avoid wiping links on a transient empty response.
-   */
-  async pruneBookStatesNotSeenSince(userId: number, runStartedAt: Date): Promise<number> {
-    const result = await this.db
-      .delete(audiobookshelfBookState)
-      .where(
-        and(
-          eq(audiobookshelfBookState.userId, userId),
-          or(isNull(audiobookshelfBookState.lastSeenInInventoryAt), lt(audiobookshelfBookState.lastSeenInInventoryAt, runStartedAt)),
-        ),
-      );
-    return result.rowCount ?? 0;
-  }
-
   async bulkUpsertBookStates(userId: number, rows: AbsBookStateUpsert[]): Promise<void> {
     if (rows.length === 0) return;
     for (const group of chunk(rows, BOOK_STATE_UPSERT_CHUNK)) {
@@ -434,7 +432,6 @@ export class AudiobookshelfRepository {
             needsReview: row.needsReview,
             matchError: row.matchError,
             lastMatchAttemptAt: row.lastMatchAttemptAt,
-            lastSeenInInventoryAt: row.lastSeenInInventoryAt,
             manualUnlinked: false,
           })),
         )
@@ -449,7 +446,6 @@ export class AudiobookshelfRepository {
             needsReview: sql`excluded.needs_review`,
             matchError: sql`excluded.match_error`,
             lastMatchAttemptAt: sql`excluded.last_match_attempt_at`,
-            lastSeenInInventoryAt: sql`excluded.last_seen_in_inventory_at`,
             manualUnlinked: false,
             updatedAt: new Date(),
           },
@@ -466,6 +462,24 @@ export class AudiobookshelfRepository {
       order by ${schema.bookAuthors.displayOrder} asc, ${schema.bookAuthors.authorId} asc
       limit 1
     )`;
+  }
+
+  private bookStateViewColumns() {
+    return {
+      absLibraryItemId: audiobookshelfBookState.absLibraryItemId,
+      absTitle: audiobookshelfBookState.absTitle,
+      absAuthorName: audiobookshelfBookState.absAuthorName,
+      bookId: audiobookshelfBookState.bookId,
+      bookTitle: schema.bookMetadata.title,
+      bookAuthorName: this.bookAuthorNameSql(),
+      matchMethod: audiobookshelfBookState.matchMethod,
+      matchConfidence: audiobookshelfBookState.matchConfidence,
+      needsReview: audiobookshelfBookState.needsReview,
+      matchError: audiobookshelfBookState.matchError,
+      syncExcluded: audiobookshelfBookState.syncExcluded,
+      syncError: audiobookshelfBookState.syncError,
+      lastSyncedAt: audiobookshelfBookState.lastSyncedAt,
+    };
   }
 
   private bucketClause(bucket: AudiobookshelfBookStateBucket): SQL | undefined {
@@ -521,21 +535,7 @@ export class AudiobookshelfRepository {
       .where(where);
 
     const items = await this.db
-      .select({
-        absLibraryItemId: audiobookshelfBookState.absLibraryItemId,
-        absTitle: audiobookshelfBookState.absTitle,
-        absAuthorName: audiobookshelfBookState.absAuthorName,
-        bookId: audiobookshelfBookState.bookId,
-        bookTitle: schema.bookMetadata.title,
-        bookAuthorName: this.bookAuthorNameSql(),
-        matchMethod: audiobookshelfBookState.matchMethod,
-        matchConfidence: audiobookshelfBookState.matchConfidence,
-        needsReview: audiobookshelfBookState.needsReview,
-        matchError: audiobookshelfBookState.matchError,
-        syncExcluded: audiobookshelfBookState.syncExcluded,
-        syncError: audiobookshelfBookState.syncError,
-        lastSyncedAt: audiobookshelfBookState.lastSyncedAt,
-      })
+      .select(this.bookStateViewColumns())
       .from(audiobookshelfBookState)
       .leftJoin(schema.books, eq(schema.books.id, audiobookshelfBookState.bookId))
       .leftJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, audiobookshelfBookState.bookId))
@@ -554,21 +554,7 @@ export class AudiobookshelfRepository {
     }
 
     const [row] = await this.db
-      .select({
-        absLibraryItemId: audiobookshelfBookState.absLibraryItemId,
-        absTitle: audiobookshelfBookState.absTitle,
-        absAuthorName: audiobookshelfBookState.absAuthorName,
-        bookId: audiobookshelfBookState.bookId,
-        bookTitle: schema.bookMetadata.title,
-        bookAuthorName: this.bookAuthorNameSql(),
-        matchMethod: audiobookshelfBookState.matchMethod,
-        matchConfidence: audiobookshelfBookState.matchConfidence,
-        needsReview: audiobookshelfBookState.needsReview,
-        matchError: audiobookshelfBookState.matchError,
-        syncExcluded: audiobookshelfBookState.syncExcluded,
-        syncError: audiobookshelfBookState.syncError,
-        lastSyncedAt: audiobookshelfBookState.lastSyncedAt,
-      })
+      .select(this.bookStateViewColumns())
       .from(audiobookshelfBookState)
       .leftJoin(schema.books, eq(schema.books.id, audiobookshelfBookState.bookId))
       .leftJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, audiobookshelfBookState.bookId))
@@ -660,6 +646,15 @@ export class AudiobookshelfRepository {
     return results;
   }
 
+  // Cover-role files across a library, for the scanner's bulk cover-refresh seam.
+  async findCoverFilesByLibrary(libraryId: number): Promise<{ bookId: number; absolutePath: string; format: string | null }[]> {
+    return this.db
+      .select({ bookId: schema.books.id, absolutePath: schema.bookFiles.absolutePath, format: schema.bookFiles.format })
+      .from(schema.books)
+      .innerJoin(schema.bookFiles, eq(schema.bookFiles.bookId, schema.books.id))
+      .where(and(eq(schema.books.libraryId, libraryId), ne(schema.books.status, 'missing'), eq(schema.bookFiles.role, 'cover')));
+  }
+
   async findAudioFilesInPlayOrder(bookId: number): Promise<{ id: number; format: string | null; durationSeconds: number | null }[]> {
     return this.db
       .select({ id: schema.bookFiles.id, format: schema.bookFiles.format, durationSeconds: schema.bookFiles.durationSeconds })
@@ -721,7 +716,7 @@ export class AudiobookshelfRepository {
    * lock are `(userId, libraryId)`-scoped), mirroring the KOReader ingest path.
    */
   async ingestSessions(userId: number, timeZone: string, sessions: AbsMappedSession[]): Promise<AbsIngestSessionsResult> {
-    if (sessions.length === 0) return { insertedSessionIds: [], updated: 0 };
+    if (sessions.length === 0) return { insertedSessionIds: [], updated: 0, progressDeltaBySessionId: new Map() };
 
     return this.db.transaction(async (tx) => {
       const sessionIds = sessions.map((session) => session.sessionId);
@@ -738,20 +733,30 @@ export class AudiobookshelfRepository {
             userId,
             bookFileId: session.bookFileId,
             bookId: session.bookId,
-            // Latest non-deleted attempt for the book. The pipeline imports the ABS attempt before
-            // sessions, so a finished book links to its completed attempt and an in-progress book to
-            // its active one.
+            // The attempt whose date range CONTAINS this session. Historical backfill spans re-reads,
+            // so neither "latest attempt" nor KOReader's "active attempt" is correct here - both file
+            // a session from a first read onto the second attempt. Undated attempts (origin
+            // 'migration') sort last so they only catch sessions no dated attempt brackets; a session
+            // falling in a gap between attempts resolves to null rather than being misattributed.
+            // Compared in the user's timezone to match how started_on/ended_on were derived.
             attemptId: sql<number | null>`(
               select id from reading_attempts
               where user_id = ${userId} and book_id = ${session.bookId} and deleted_at is null
-              order by id desc limit 1
+                and (started_on is null or started_on <= (${session.startedAt} at time zone ${timeZone})::date)
+                and (ended_on   is null or ended_on   >= (${session.startedAt} at time zone ${timeZone})::date)
+              order by started_on desc nulls last
+              limit 1
             )`,
             sessionId: session.sessionId,
             source: 'audiobookshelf' as const,
             startedAt: session.startedAt,
             endedAt: session.endedAt,
             durationSeconds: session.durationSeconds,
-            progressDelta: session.progressDelta,
+            // Owned by `recomputeProgressDeltas` below, never by the ABS payload: it is derived from
+            // the stored per-book history, so it is deliberately absent from the on-conflict set and
+            // from the change guard. Writing it here would clobber a computed value with null on every
+            // re-fetch and make the guard fire forever.
+            progressDelta: null,
             endProgress: session.endProgress,
           })),
         )
@@ -761,7 +766,6 @@ export class AudiobookshelfRepository {
             bookFileId: sql`excluded.book_file_id`,
             endedAt: sql`excluded.ended_at`,
             durationSeconds: sql`excluded.duration_seconds`,
-            progressDelta: sql`excluded.progress_delta`,
             endProgress: sql`excluded.end_progress`,
             attemptId: sql`coalesce(excluded.attempt_id, ${schema.readingSessions.attemptId})`,
           },
@@ -772,7 +776,6 @@ export class AudiobookshelfRepository {
             ${schema.readingSessions.bookFileId} is distinct from excluded.book_file_id
             or ${schema.readingSessions.endedAt} is distinct from excluded.ended_at
             or ${schema.readingSessions.durationSeconds} is distinct from excluded.duration_seconds
-            or ${schema.readingSessions.progressDelta} is distinct from excluded.progress_delta
             or ${schema.readingSessions.endProgress} is distinct from excluded.end_progress
           `,
         })
@@ -782,12 +785,22 @@ export class AudiobookshelfRepository {
       // guard are absent. Recompute daily stats for just those days, not every submitted overlap day.
       const affectedIds = new Set(affected.map((row) => row.sessionId));
 
+      const deltaRows = await this.recomputeProgressDeltas(tx, userId, sessionIds);
+
       const daysByLibrary = new Map<number, Set<string>>();
+      const addDays = (libraryId: number, keys: string[]) => {
+        const days = daysByLibrary.get(libraryId) ?? new Set<string>();
+        for (const day of keys) days.add(day);
+        daysByLibrary.set(libraryId, days);
+      };
       for (const session of sessions) {
         if (!affectedIds.has(session.sessionId)) continue;
-        const days = daysByLibrary.get(session.libraryId) ?? new Set<string>();
-        for (const day of getReadingSessionDayKeys(session, timeZone)) days.add(day);
-        daysByLibrary.set(session.libraryId, days);
+        addDays(session.libraryId, getReadingSessionDayKeys({ ...session, progressDelta: null }, timeZone));
+      }
+      // A delta change also invalidates a day, and it can land on a row outside this batch (the
+      // corrected successor of a late-arriving session), so those days are folded in here.
+      for (const row of deltaRows) {
+        addDays(row.libraryId, getReadingSessionDayKeys(row, timeZone));
       }
       for (const [libraryId, days] of daysByLibrary) {
         await this.recomputeDailyStats(tx, userId, libraryId, [...days], timeZone);
@@ -795,8 +808,108 @@ export class AudiobookshelfRepository {
 
       const insertedSessionIds = sessionIds.filter((id) => !existingIds.has(id));
       const updated = [...affectedIds].filter((id) => existingIds.has(id)).length;
-      return { insertedSessionIds, updated };
+      return {
+        insertedSessionIds,
+        updated,
+        progressDeltaBySessionId: new Map(deltaRows.map((row) => [row.sessionId, row.progressDelta])),
+      };
     });
+  }
+
+  /**
+   * Derives `progress_delta` for the rows this batch just upserted, in ONE statement.
+   *
+   * ABS reports absolute position only, so the delta is `end_progress` minus the `end_progress` of
+   * the immediately preceding session for the same `(user, book)` - the same definition the manual
+   * session path uses (`ReadingSessionRepository.findLatestEndProgressBefore`): scoped per book (not
+   * per attempt), source-agnostic, units 0-100 percent, clamped to [-100, 100] so a re-read or a
+   * rewind keeps its negative sign, rounded to 2dp. A session with no predecessor gets its full
+   * `end_progress` (mirroring the manual path's `previous ?? 0`); a null `end_progress` on either
+   * side yields null rather than a bogus number - a null predecessor is skipped over, and a null
+   * current row stays null.
+   *
+   * Out-of-order arrival is CORRECTED, not tolerated: backfill pages arrive newest-first and offline
+   * sessions can land behind the watermark, so an inserted row often becomes the predecessor of a row
+   * already stored. Each batch row's earliest following session with a non-null `end_progress` is
+   * therefore recomputed alongside it. That successor is the only row whose predecessor can have
+   * changed, so there is no cascade beyond it.
+   *
+   * Idempotent: the result is a pure function of stored state, and the `is distinct from` guard means
+   * a re-ingest of unchanged history updates nothing and returns nothing, so no day is recomputed.
+   */
+  private async recomputeProgressDeltas(tx: Tx, userId: number, sessionIds: string[]): Promise<AbsProgressDeltaRow[]> {
+    if (sessionIds.length === 0) return [];
+
+    const idList = sql.join(
+      sessionIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
+
+    // Both lateral lookups are single-row index seeks on `rs_user_book_started_at_idx`, so the whole
+    // statement is bounded at ~3x the batch size regardless of how long each book's history is.
+    const result = await tx.execute<AbsProgressDeltaSqlRow>(sql`
+      with batch as (
+        select id, book_id, started_at, session_id
+        from reading_sessions
+        where user_id = ${userId} and session_id in (${idList})
+      ),
+      targets as (
+        select id from batch
+        union
+        select succ.id
+        from batch b
+        cross join lateral (
+          select rs.id
+          from reading_sessions rs
+          where rs.user_id = ${userId}
+            and rs.book_id = b.book_id
+            and rs.end_progress is not null
+            and (rs.started_at, rs.session_id) > (b.started_at, b.session_id)
+          order by rs.started_at asc, rs.session_id asc
+          limit 1
+        ) succ
+      ),
+      computed as (
+        select
+          cur.id,
+          case
+            when cur.end_progress is null then null
+            else round(greatest(-100, least(100, cur.end_progress - coalesce(prev.end_progress, 0)))::numeric, 2)::real
+          end as delta
+        from targets t
+        join reading_sessions cur on cur.id = t.id
+        left join lateral (
+          select rs.end_progress
+          from reading_sessions rs
+          where rs.user_id = ${userId}
+            and rs.book_id = cur.book_id
+            and rs.end_progress is not null
+            and (rs.started_at, rs.session_id) < (cur.started_at, cur.session_id)
+          order by rs.started_at desc, rs.session_id desc
+          limit 1
+        ) prev on true
+      )
+      update reading_sessions rs
+      set progress_delta = c.delta
+      from computed c, books bk
+      where rs.id = c.id and bk.id = rs.book_id and rs.progress_delta is distinct from c.delta
+      returning
+        rs.session_id as "sessionId",
+        bk.library_id as "libraryId",
+        rs.started_at as "startedAt",
+        rs.ended_at as "endedAt",
+        rs.duration_seconds as "durationSeconds",
+        rs.progress_delta as "progressDelta"
+    `);
+
+    return result.rows.map((row) => ({
+      sessionId: row.sessionId,
+      libraryId: Number(row.libraryId),
+      startedAt: new Date(row.startedAt),
+      endedAt: new Date(row.endedAt),
+      durationSeconds: Number(row.durationSeconds),
+      progressDelta: row.progressDelta == null ? null : Number(row.progressDelta),
+    }));
   }
 
   private async recomputeDailyStats(tx: Tx, userId: number, libraryId: number, days: string[], timeZone: string): Promise<void> {

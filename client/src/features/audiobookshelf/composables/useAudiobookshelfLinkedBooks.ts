@@ -36,132 +36,71 @@ const bucketErrors = reactive<Record<AudiobookshelfBookStateBucket, string | nul
   'needs-review': null,
   unmatched: null,
 })
+
 const bucketRequestIds: Record<AudiobookshelfBookStateBucket, number> = {
   linked: 0,
   'needs-review': 0,
   unmatched: 0,
 }
-const activeLoadRequestIds = new Set<number>()
 let nextBucketRequestId = 0
-let nextOperationId = 0
-let errorOwnerId = 0
-let actionOwnerId = 0
-let rescanOwnerId = 0
 
-function beginOperation(): number {
-  const operationId = ++nextOperationId
-  errorOwnerId = operationId
-  error.value = null
-  return operationId
-}
-
-function ownsError(operationId: number): boolean {
-  return operationId === errorOwnerId
-}
-
-function beginBucketLoad(bucket: AudiobookshelfBookStateBucket): number {
+async function loadBucketPage(bucket: AudiobookshelfBookStateBucket, page: number): Promise<void> {
   const requestId = ++nextBucketRequestId
   bucketRequestIds[bucket] = requestId
   bucketErrors[bucket] = null
-  activeLoadRequestIds.add(requestId)
-  updateLoading()
-  return requestId
-}
-
-function finishBucketLoad(requestId: number): void {
-  activeLoadRequestIds.delete(requestId)
-  updateLoading()
-}
-
-function updateLoading(): void {
-  for (const bucket of BUCKETS) {
-    bucketLoading[bucket] = activeLoadRequestIds.has(bucketRequestIds[bucket])
-  }
-  loading.value = BUCKETS.some((bucket) => activeLoadRequestIds.has(bucketRequestIds[bucket]))
-}
-
-function ownsBucket(bucket: AudiobookshelfBookStateBucket, requestId: number): boolean {
-  return bucketRequestIds[bucket] === requestId
-}
-
-function setLoadError(bucket: AudiobookshelfBookStateBucket, requestId: number, err: unknown): void {
-  if (ownsBucket(bucket, requestId)) {
-    bucketErrors[bucket] = err instanceof Error ? err.message : 'Failed to load Audiobookshelf books'
+  bucketLoading[bucket] = true
+  loading.value = true
+  try {
+    const nextPage = await fetchAudiobookshelfBookStates(bucket, page, PAGE_SIZE)
+    if (bucketRequestIds[bucket] === requestId) pages[bucket] = nextPage
+  } catch (err) {
+    if (bucketRequestIds[bucket] === requestId) {
+      bucketErrors[bucket] = err instanceof Error ? err.message : 'Failed to load Audiobookshelf books'
+    }
+  } finally {
+    if (bucketRequestIds[bucket] === requestId) bucketLoading[bucket] = false
+    loading.value = BUCKETS.some((candidate) => bucketLoading[candidate])
   }
 }
 
 export function useAudiobookshelfLinkedBooks() {
   async function loadBucket(bucket: AudiobookshelfBookStateBucket, page = pages[bucket].page): Promise<void> {
-    beginOperation()
-    const requestId = beginBucketLoad(bucket)
-    try {
-      const nextPage = await fetchAudiobookshelfBookStates(bucket, page, PAGE_SIZE)
-      if (ownsBucket(bucket, requestId)) {
-        pages[bucket] = nextPage
-      }
-    } catch (err) {
-      setLoadError(bucket, requestId, err)
-    } finally {
-      finishBucketLoad(requestId)
-    }
+    error.value = null
+    await loadBucketPage(bucket, page)
   }
 
   async function loadAllBuckets(): Promise<void> {
-    beginOperation()
-    await Promise.all(
-      BUCKETS.map(async (bucket) => {
-        const requestId = beginBucketLoad(bucket)
-        try {
-          const nextPage = await fetchAudiobookshelfBookStates(bucket, 0, PAGE_SIZE)
-          if (ownsBucket(bucket, requestId)) {
-            pages[bucket] = nextPage
-          }
-        } catch (err) {
-          setLoadError(bucket, requestId, err)
-        } finally {
-          finishBucketLoad(requestId)
-        }
-      }),
-    )
+    error.value = null
+    await Promise.all(BUCKETS.map((bucket) => loadBucketPage(bucket, 0)))
   }
 
   async function runAction(absLibraryItemId: string, action: () => Promise<unknown>): Promise<boolean> {
-    const operationId = beginOperation()
-    actionOwnerId = operationId
+    error.value = null
     actionId.value = absLibraryItemId
     try {
       await action()
       await loadAllBuckets()
       return true
     } catch (err) {
-      if (ownsError(operationId)) {
-        error.value = err instanceof Error ? err.message : 'Failed to update Audiobookshelf book'
-      }
+      error.value = err instanceof Error ? err.message : 'Failed to update Audiobookshelf book'
       return false
     } finally {
-      if (actionOwnerId === operationId) {
-        actionId.value = null
-      }
+      actionId.value = null
     }
   }
 
   async function rescan(): Promise<boolean> {
-    const operationId = beginOperation()
-    rescanOwnerId = operationId
+    error.value = null
     rescanning.value = true
     try {
       await rescanAudiobookshelfMatches()
       await loadAllBuckets()
       return true
     } catch (err) {
-      if (ownsError(operationId)) {
-        error.value = err instanceof Error ? err.message : 'Failed to rescan Audiobookshelf matches'
-      }
+      error.value = err instanceof Error ? err.message : 'Failed to rescan Audiobookshelf matches'
       return false
     } finally {
-      if (rescanOwnerId === operationId) {
-        rescanning.value = false
-      }
+      rescanning.value = false
     }
   }
 
