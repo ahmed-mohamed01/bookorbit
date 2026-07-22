@@ -1,0 +1,175 @@
+import { ConflictException, Logger } from '@nestjs/common';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { AudiobookshelfSyncSchedulerService } from './audiobookshelf-sync-scheduler.service';
+
+const mockRepo = {
+  findEnabledConfiguredUsers: vi.fn(),
+};
+
+const mockSyncService = {
+  sync: vi.fn(),
+};
+
+const mockUserService = {
+  findByIdWithPermissions: vi.fn(),
+};
+
+function eligibleUser(userId: number) {
+  return { id: userId, active: true, isSuperuser: true, permissions: [] };
+}
+
+function makeDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+function makeService() {
+  return new AudiobookshelfSyncSchedulerService(mockRepo as any, mockSyncService as any, mockUserService as any);
+}
+
+describe('AudiobookshelfSyncSchedulerService', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+
+    mockSyncService.sync.mockResolvedValue(undefined);
+    mockUserService.findByIdWithPermissions.mockImplementation((id: number) => Promise.resolve(eligibleUser(id)));
+    // Single short page by default: one user, fewer than the page size, so the loop stops after one page.
+    mockRepo.findEnabledConfiguredUsers.mockResolvedValue([{ userId: 1 }]);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe('runScheduledSync', () => {
+    it('syncs each eligible user with full options', async () => {
+      await makeService().runScheduledSync();
+
+      expect(mockSyncService.sync).toHaveBeenCalledTimes(1);
+      expect(mockSyncService.sync).toHaveBeenCalledWith(eligibleUser(1), {});
+    });
+
+    it('walks keyset pages, advancing afterUserId to the last user of the page', async () => {
+      const firstPage = Array.from({ length: 100 }, (_, i) => ({ userId: i + 1 }));
+      mockRepo.findEnabledConfiguredUsers.mockResolvedValueOnce(firstPage).mockResolvedValueOnce([]);
+
+      await makeService().runScheduledSync();
+
+      expect(mockRepo.findEnabledConfiguredUsers).toHaveBeenNthCalledWith(1, 0, 100);
+      expect(mockRepo.findEnabledConfiguredUsers).toHaveBeenNthCalledWith(2, 100, 100);
+      expect(mockSyncService.sync).toHaveBeenCalledTimes(100);
+    });
+
+    it('skips the tick when a previous full run is still in flight', async () => {
+      const pending = makeDeferred<void>();
+      mockSyncService.sync.mockReturnValueOnce(pending.promise);
+
+      const service = makeService();
+      const first = service.runScheduledSync();
+      const second = service.runScheduledSync();
+
+      // Only the first run entered the loop; the overlap guard short-circuited the second.
+      expect(mockRepo.findEnabledConfiguredUsers).toHaveBeenCalledTimes(1);
+
+      pending.resolve();
+      await Promise.all([first, second]);
+    });
+
+    it('releases the overlap guard so a later run proceeds', async () => {
+      const service = makeService();
+      await service.runScheduledSync();
+      await service.runScheduledSync();
+
+      expect(mockRepo.findEnabledConfiguredUsers).toHaveBeenCalledTimes(2);
+    });
+
+    it('skips an ineligible (inactive) user without calling sync', async () => {
+      mockUserService.findByIdWithPermissions.mockResolvedValue({ ...eligibleUser(1), active: false });
+
+      await makeService().runScheduledSync();
+
+      expect(mockSyncService.sync).not.toHaveBeenCalled();
+    });
+
+    it('skips a user that fails to resolve', async () => {
+      mockUserService.findByIdWithPermissions.mockRejectedValue(new Error('lookup failed'));
+
+      await makeService().runScheduledSync();
+
+      expect(mockSyncService.sync).not.toHaveBeenCalled();
+    });
+
+    it('isolates a ConflictException so the rest of the batch still syncs', async () => {
+      mockRepo.findEnabledConfiguredUsers.mockResolvedValue([{ userId: 1 }, { userId: 2 }, { userId: 3 }]);
+      mockSyncService.sync.mockImplementation((user: { id: number }) =>
+        user.id === 2 ? Promise.reject(new ConflictException('in flight')) : Promise.resolve(undefined),
+      );
+
+      await makeService().runScheduledSync();
+
+      expect(mockSyncService.sync).toHaveBeenCalledTimes(3);
+    });
+
+    it('isolates a generic sync error so the rest of the batch still syncs', async () => {
+      mockRepo.findEnabledConfiguredUsers.mockResolvedValue([{ userId: 1 }, { userId: 2 }, { userId: 3 }]);
+      mockSyncService.sync.mockImplementation((user: { id: number }) =>
+        user.id === 2 ? Promise.reject(new Error('boom')) : Promise.resolve(undefined),
+      );
+
+      await makeService().runScheduledSync();
+
+      expect(mockSyncService.sync).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not abort the run when a page fetch throws', async () => {
+      mockRepo.findEnabledConfiguredUsers.mockRejectedValue(new Error('db down'));
+
+      await expect(makeService().runScheduledSync()).resolves.toBeUndefined();
+      expect(mockSyncService.sync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('runHotSync', () => {
+    it('syncs each eligible user with hotInProgressOnly', async () => {
+      await makeService().runHotSync();
+
+      expect(mockSyncService.sync).toHaveBeenCalledWith(eligibleUser(1), { hotInProgressOnly: true });
+    });
+
+    it('skips the tick when a previous hot run is still in flight', async () => {
+      const pending = makeDeferred<void>();
+      mockSyncService.sync.mockReturnValueOnce(pending.promise);
+
+      const service = makeService();
+      const first = service.runHotSync();
+      const second = service.runHotSync();
+
+      expect(mockRepo.findEnabledConfiguredUsers).toHaveBeenCalledTimes(1);
+
+      pending.resolve();
+      await Promise.all([first, second]);
+    });
+
+    it('uses a separate guard from the full run so a full run does not block a hot run', async () => {
+      const pending = makeDeferred<void>();
+      mockSyncService.sync.mockReturnValueOnce(pending.promise);
+
+      const service = makeService();
+      const full = service.runScheduledSync();
+      const hot = service.runHotSync();
+
+      // Full run holds its own guard; the hot run runs concurrently and still enters the loop.
+      expect(mockRepo.findEnabledConfiguredUsers).toHaveBeenCalledTimes(2);
+
+      pending.resolve();
+      await Promise.all([full, hot]);
+    });
+  });
+});

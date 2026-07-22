@@ -153,21 +153,59 @@ to second position. That changes behaviour for users without ABS and survives re
 being reverted. If sidecar-first is wanted it belongs in per-library settings the user opts into.
 **Status: reverting to upstream order.**
 
-## Test debt
+## Test debt (rewrite in progress)
 
-All 18 fork-owned ABS test files were removed during the correctness/removability refactor,
-because they were written against the architecture being replaced. Upstream test files were kept
-deliberately - they are the regression net proving BookOrbit still works.
+The fork-owned ABS tests were removed during the correctness/removability refactor - they were
+written against the architecture being replaced. Upstream test files were kept as the regression
+net. The architecture has now settled (two-tier sync, hot tier, catalog listener, fresh-detection
+reconcile, the correctness fixes), so the rewrite targets what actually exists. Match the house
+pattern: Vitest, `.test.ts` beside source, mock the Drizzle `db` and inject mocked deps (see the
+sibling integrations - storygraph/hardcover/koreader each have ~8-10 test files).
 
-To rewrite once the architecture settles, in priority order:
+**Note on the repository's SQL-heavy methods** (`ingestSessions`, `recomputeProgressDeltas`, the
+LATERAL fuzzy query, `matchByKey`): mocking Drizzle for these tests the mock, not the SQL. They were
+verified LIVE against a real Audiobookshelf server this session (7/7 ASIN matches, out-of-order
+`progress_delta`, idempotent re-ingest, byte-identical sidecar covers). Prefer covering the logic
+that surrounds them over re-mocking raw SQL.
 
-1. Reading-attempt integration, including the adopt-active-attempt case (H5) and session-to-attempt
-   resolution across a re-read.
-2. Position sync: the newest-wins guard must both block a locally-advanced write **and** recover on
-   the next genuinely newer ABS update.
-3. Matching: ASIN/ISBN normalization-insensitivity, ambiguity handling returning `null` rather than
-   guessing.
-4. Sessions ingest: pagination, resumable backfill checkpointing, idempotent re-ingest.
-5. Schema bootstrap: idempotency and the constraint guards.
-6. Cover refresh: precedence, fallback, `book_per_file` exclusion, locks, cancellation.
-7. Client: settings tab, connection card token handling (never echoed back).
+Waves, correctness-first:
+
+1. **Pure functions** (no mocking): `abs-metadata.mapper` (coercion/legacy-wrapper/series/ISBN),
+   `mapAbsSession` + pagination stop signals, `resolveAbsPosition`, `resolveAbsTargetStatus`
+   (upgrade-only ranking), the `*.utils` helpers.
+2. **Service orchestration** (mocked repo/client/attempts/status): sync - the fresh-vs-subsequent
+   reconcile gate (`initialReconcileCompletedAt`, and a partial-reconcile leaving it null so the
+   next sync retries), the hot-tier in-progress filter, status derived from `isFinished` (never
+   double-written via percentage), the newest-wins position guard, the split status/position
+   watermarks; match - ASIN-before-ISBN cascade, ambiguity -> `null`/`matchError` not a guess,
+   normalization-insensitive keys; sessions - incremental stop vs backfill checkpoint, idempotent
+   re-ingest; settings - token never echoed back; catalog-listener - debounce collapses a burst,
+   eligibility/config gates; scheduler - the two crons, per-user in-flight skip; client - SSRF
+   guard, timeout, error mapping.
+3. **Repository** (house mock-db) for the tractable CRUD/lookup methods; the SQL-heavy ones are
+   live-verified (above).
+4. **Client** (@vue/test-utils): connection card (token never echoed, guard), settings tab wiring,
+   linked-books buckets.
+5. **Schema bootstrap** idempotency + constraint guards; **controllers** routing + `@RequirePermission`.
+
+## Upstream-drift protection (contract layer)
+
+The ABS tests mock their upstream deps, so an upstream BEHAVIOURAL change (same signature, new
+behaviour) would pass every ABS test while silently breaking the integration. Two nets guard against
+that on a merge:
+
+- **CI typecheck** (`tsc`/`vue-tsc`) catches all STRUCTURAL drift: a renamed/removed/re-signatured
+  upstream method, util, seam token, event constant, or shared-table column ABS references stops
+  compiling.
+- **`audiobookshelf-upstream-contract.test.ts`** imports the REAL upstream functions ABS leans on
+  (no mocks) and asserts the behaviour ABS assumes, so BEHAVIOURAL drift fails a test: hardcover's
+  fuzzy-match helpers (range/thresholds ABS gates on), `isbn-detect` validators, the **isbn-detect
+  vs hardcover `normalizeIsbn` equivalence** the two-path ISBN design relies on, `ensureSafeUrl`
+  (private-IP/scheme rejection - the SSRF guard), the timezone date-key behaviour (near-midnight
+  bucketing), the daily-stats aggregation output shape, and `isDecodableImage`.
+
+**Still uncovered - needs a DB/integration harness (the house has none, hence the mocks):** the
+DB-bound seams `ReadingAttemptService.importExternalRead` (adopt-active-attempt), `MetadataService`
+cover application, the shared-table writes, and the real scanner->`MetadataSourceProvider` wiring. A
+behavioural change in one of those, with an unchanged signature, would still pass all current tests.
+Closing it means introducing a real (or in-memory) test DB and booting the module-graph slice.
