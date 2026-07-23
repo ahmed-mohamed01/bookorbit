@@ -5,11 +5,28 @@ import { createPinia } from 'pinia'
 const mocks = vi.hoisted(() => ({
   api: vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(),
   hasPermission: vi.fn<(...args: unknown[]) => boolean>(),
+  progressChangedCallbacks: [] as Array<(event: { bookId: number; progress: number; source: string }) => void>,
 }))
 
 vi.mock('@/lib/api', () => ({
   api: mocks.api,
 }))
+
+vi.mock('@/features/book/composables/useBookEvents', () => ({
+  useBookEvents: () => ({
+    onBookProgressChanged: (cb: (event: { bookId: number; progress: number; source: string }) => void) => {
+      mocks.progressChangedCallbacks.push(cb)
+      return () => {
+        const index = mocks.progressChangedCallbacks.indexOf(cb)
+        if (index !== -1) mocks.progressChangedCallbacks.splice(index, 1)
+      }
+    },
+  }),
+}))
+
+function emitProgressChanged(bookId: number) {
+  for (const cb of mocks.progressChangedCallbacks) cb({ bookId, progress: 50, source: 'web_reader' })
+}
 
 vi.mock('@/features/auth/composables/usePermissions', () => ({
   usePermissions: () => ({ hasPermission: mocks.hasPermission }),
@@ -104,6 +121,7 @@ describe('ReadingLogTab', () => {
     mocks.api.mockResolvedValue(makeListResponse())
     mocks.hasPermission.mockReset()
     mocks.hasPermission.mockReturnValue(true)
+    mocks.progressChangedCallbacks.length = 0
   })
 
   it('renders quick filter buttons', async () => {
@@ -279,6 +297,38 @@ describe('ReadingLogTab', () => {
         }),
       ],
     ])
+  })
+
+  it('reloads the reading log when a progress-changed event arrives for the current book', async () => {
+    const wrapper = mount(ReadingLogTab, { props: { book: makeBook({ id: 10 }) }, global: { plugins: [createPinia()] } })
+    await flushPromises()
+
+    mocks.api.mockClear()
+    mocks.api.mockResolvedValue(makeListResponse())
+
+    emitProgressChanged(10)
+    await flushPromises()
+
+    const sessionsCall = mocks.api.mock.calls.find(
+      (call) => typeof call[0] === 'string' && (call[0] as string).includes('/api/v1/books/10/sessions?'),
+    )
+    expect(sessionsCall).toBeDefined()
+    void wrapper
+  })
+
+  it('does not reload the reading log when a progress-changed event arrives for a different book', async () => {
+    const wrapper = mount(ReadingLogTab, { props: { book: makeBook({ id: 10 }) }, global: { plugins: [createPinia()] } })
+    await flushPromises()
+
+    mocks.api.mockClear()
+    mocks.api.mockResolvedValue(makeListResponse())
+
+    emitProgressChanged(999)
+    await flushPromises()
+
+    const sessionsCall = mocks.api.mock.calls.find((call) => typeof call[0] === 'string' && (call[0] as string).includes('/sessions?'))
+    expect(sessionsCall).toBeUndefined()
+    void wrapper
   })
 
   it('hides the reset action without metadata-edit permission', async () => {

@@ -57,7 +57,7 @@ export interface BookProgressChangedPayload {
   // Optional: Kobo syncs progress at the book level and has no single relevant file id.
   bookFileId?: number;
   progress: number;
-  source: 'koreader' | 'kobo' | 'web_reader';
+  source: 'koreader' | 'kobo' | 'web_reader' | 'audiobookshelf';
 }
 
 export type AchievementEventPayload =

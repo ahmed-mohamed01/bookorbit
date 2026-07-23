@@ -7,6 +7,7 @@ vi.mock('./audiobookshelf.constants', async (importOriginal) => {
   return { ...actual, AUDIOBOOKSHELF_SESSIONS_PAGE_SIZE: 2 };
 });
 
+import { ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED } from '../achievement/achievement-events.service';
 import { AudiobookshelfSessionsService } from './audiobookshelf-sessions.service';
 import { AUDIOBOOKSHELF_SESSION_OVERLAP_MS } from './audiobookshelf.constants';
 import type { AbsListeningSession } from './audiobookshelf-client.service';
@@ -107,7 +108,7 @@ describe('AudiobookshelfSessionsService', () => {
     mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([]);
     mockRepo.findLibraryIdsByBookIds.mockResolvedValue(new Map());
     mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map());
-    mockRepo.ingestSessions.mockResolvedValue({ insertedSessionIds: [], updated: 0, progressDeltaBySessionId: new Map() });
+    mockRepo.ingestSessions.mockResolvedValue({ insertedSessionIds: [], updated: 0, affectedSessionIds: [], progressDeltaBySessionId: new Map() });
   });
 
   describe('syncSessions - fresh (watermark 0) treated as backfill', () => {
@@ -268,6 +269,70 @@ describe('AudiobookshelfSessionsService', () => {
 
       expect(result.inserted).toBe(1);
       expect(mockAchievements.emit).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('live-refresh progress event', () => {
+    it('emits BOOK_PROGRESS_CHANGED for a book whose session changed this run', async () => {
+      const settings = makeSettings({ lastSessionWatermark: null });
+      wireLinked();
+      // Resolvable audio file so the mapped session carries a bookFileId; currentTime/duration -> 50%.
+      mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map([[100, [{ id: 9, format: 'm4b', durationSeconds: 3600 }]]]));
+      mockClient.getListeningSessions.mockResolvedValueOnce(page([makeSession({ id: 's1', updatedAt: 1000, currentTime: 1800, duration: 3600 })], 1));
+      mockRepo.ingestSessions.mockResolvedValueOnce({
+        insertedSessionIds: ['s1'],
+        updated: 0,
+        affectedSessionIds: ['s1'],
+        progressDeltaBySessionId: new Map(),
+      });
+
+      await makeService().syncSessions(user, settings);
+
+      expect(mockAchievements.emit).toHaveBeenCalledWith(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
+        userId: 1,
+        bookId: 100,
+        bookFileId: 9,
+        progress: 50,
+        source: 'audiobookshelf',
+      });
+    });
+
+    it('emits BOOK_PROGRESS_CHANGED when a session was only updated (grown open session)', async () => {
+      const settings = makeSettings({ lastSessionWatermark: 500_000_000 });
+      wireLinked();
+      mockClient.getListeningSessions.mockResolvedValueOnce(
+        page([makeSession({ id: 's1', updatedAt: 500_000_000, currentTime: 1800, duration: 3600 })], 1),
+      );
+      // Nothing inserted, but the existing row was updated - the warm-tier case for an active listen.
+      mockRepo.ingestSessions.mockResolvedValueOnce({
+        insertedSessionIds: [],
+        updated: 1,
+        affectedSessionIds: ['s1'],
+        progressDeltaBySessionId: new Map(),
+      });
+
+      await makeService().syncSessions(user, settings);
+
+      expect(mockAchievements.emit).toHaveBeenCalledWith(
+        ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED,
+        expect.objectContaining({ userId: 1, bookId: 100, progress: 50, source: 'audiobookshelf' }),
+      );
+    });
+
+    it('does not emit BOOK_PROGRESS_CHANGED on a no-op re-ingest (inserted:0/updated:0)', async () => {
+      const settings = makeSettings({ lastSessionWatermark: 500_000_000 });
+      wireLinked();
+      mockClient.getListeningSessions.mockResolvedValueOnce(page([makeSession({ id: 's1', updatedAt: 500_000_000 })], 1));
+      mockRepo.ingestSessions.mockResolvedValueOnce({
+        insertedSessionIds: [],
+        updated: 0,
+        affectedSessionIds: [],
+        progressDeltaBySessionId: new Map(),
+      });
+
+      await makeService().syncSessions(user, settings);
+
+      expect(mockAchievements.emit).not.toHaveBeenCalledWith(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, expect.anything());
     });
   });
 });

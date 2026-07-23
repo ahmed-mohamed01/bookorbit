@@ -5,6 +5,7 @@ import { Ellipsis, RotateCcw } from '@lucide/vue'
 import { Permission, type BookDetail, type UserBookStatus } from '@bookorbit/types'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useBookReadingLog, type AddReadingSessionPayload } from '@/features/book/composables/useBookReadingLog'
+import { useBookEvents } from '@/features/book/composables/useBookEvents'
 import { useResetReadingState } from '@/features/book/composables/useResetReadingState'
 import ResetReadingStateDialog from '@/features/book/components/ResetReadingStateDialog.vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -43,6 +44,11 @@ const {
   setSort,
   setFilters,
 } = useBookReadingLog(bookIdRef)
+
+const { onBookProgressChanged } = useBookEvents()
+onBookProgressChanged((event) => {
+  if (event.bookId === props.book.id) void reload()
+})
 
 const { hasPermission } = usePermissions()
 const canResetReadingState = computed(() => hasPermission(Permission.LibraryEditMetadata))

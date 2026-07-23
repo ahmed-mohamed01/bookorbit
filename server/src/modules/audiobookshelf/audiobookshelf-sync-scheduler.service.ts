@@ -12,6 +12,7 @@ import {
   AUDIOBOOKSHELF_SCHEDULER_CONCURRENCY,
   AUDIOBOOKSHELF_SCHEDULER_CRON,
   AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE,
+  AUDIOBOOKSHELF_WARM_SESSION_INTERVAL_MS,
 } from './audiobookshelf.constants';
 
 @Injectable()
@@ -21,6 +22,9 @@ export class AudiobookshelfSyncSchedulerService {
   // blocks the 30s hot tier (per-request client timeouts keep a slow ABS from wedging either).
   private running = false;
   private hotRunning = false;
+  // Per-user timestamp of the last hot tick that carried warmSessions. Throttles session ingest on the
+  // 30s hot tier to at most once per 90s per user (position still applies every hot tick).
+  private readonly lastWarmSessionAt = new Map<number, number>();
 
   constructor(
     private readonly repo: AudiobookshelfRepository,
@@ -100,8 +104,18 @@ export class AudiobookshelfSyncSchedulerService {
     }
     if (!user || !isEligibleSyncUser(user)) return { result: 'skipped' };
 
+    // On the hot tier, allow session ingest at most once per 90s per user. The full poll (non-hot)
+    // already ingests sessions every 15 min, so it is left untouched.
+    let effectiveOptions = options;
+    if (options.hotInProgressOnly === true) {
+      const now = Date.now();
+      const warm = now - (this.lastWarmSessionAt.get(enabledUser.userId) ?? 0) >= AUDIOBOOKSHELF_WARM_SESSION_INTERVAL_MS;
+      if (warm) this.lastWarmSessionAt.set(enabledUser.userId, now);
+      effectiveOptions = { ...options, warmSessions: warm };
+    }
+
     try {
-      await this.syncService.sync(user, options);
+      await this.syncService.sync(user, effectiveOptions);
       return { result: 'processed' };
     } catch (err) {
       // Skip-and-continue on the per-user in-flight guard (a manual/full sync is already running) - not

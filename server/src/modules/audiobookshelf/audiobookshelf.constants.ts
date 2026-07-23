@@ -23,6 +23,10 @@ export const AUDIOBOOKSHELF_DURATION_TOLERANCE_RELATIVE = 0.01;
 export const AUDIOBOOKSHELF_SCHEDULER_CRON = '*/15 * * * *';
 // Cron cadence for the hot tier (every 30 seconds): near-live position for in-progress books only.
 export const AUDIOBOOKSHELF_HOT_SCHEDULER_CRON = '*/30 * * * * *';
+// Warm cadence: at most this often per user the hot tier ALSO ingests incremental sessions for
+// in-progress books (position stays on the 30s hot tier). Deliberately >= 90s so actively-listened
+// books get fresh reading-log sessions without paying the session-ingest cost on every 30s tick.
+export const AUDIOBOOKSHELF_WARM_SESSION_INTERVAL_MS = 90_000;
 // Debounce for the catalog-changed auto-match: a full scan emits many events, so wait for the burst
 // to settle before running one reconcile.
 export const AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS = 30 * 1000;

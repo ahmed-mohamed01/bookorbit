@@ -32,6 +32,9 @@ type AudiobookshelfSettingsMutation = Partial<Omit<AudiobookshelfUserSetting, 'i
 export interface AbsIngestSessionsResult {
   insertedSessionIds: string[];
   updated: number;
+  // Session ids inserted OR actually updated this batch (the RETURNING rows). A no-op re-ingest that
+  // touches nothing returns an empty array. Callers map these back to books to emit change events.
+  affectedSessionIds: string[];
   // Deltas for the rows whose `progress_delta` this batch actually changed, keyed by `sessionId`.
   // Only covers changed rows, so a no-op re-ingest returns an empty map.
   progressDeltaBySessionId: Map<string, number | null>;
@@ -716,7 +719,7 @@ export class AudiobookshelfRepository {
    * lock are `(userId, libraryId)`-scoped), mirroring the KOReader ingest path.
    */
   async ingestSessions(userId: number, timeZone: string, sessions: AbsMappedSession[]): Promise<AbsIngestSessionsResult> {
-    if (sessions.length === 0) return { insertedSessionIds: [], updated: 0, progressDeltaBySessionId: new Map() };
+    if (sessions.length === 0) return { insertedSessionIds: [], updated: 0, affectedSessionIds: [], progressDeltaBySessionId: new Map() };
 
     return this.db.transaction(async (tx) => {
       const sessionIds = sessions.map((session) => session.sessionId);
@@ -811,6 +814,7 @@ export class AudiobookshelfRepository {
       return {
         insertedSessionIds,
         updated,
+        affectedSessionIds: [...affectedIds],
         progressDeltaBySessionId: new Map(deltaRows.map((row) => [row.sessionId, row.progressDelta])),
       };
     });

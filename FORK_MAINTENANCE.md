@@ -18,7 +18,7 @@ each upstream merge is a short chore, not a project.**
    nothing at merge time - they can never conflict.
 2. **Hooks into upstream files are allowed.** A small, generic extension point (a DI
    token, a registry, a spread) in an upstream file is an acceptable and expected cost.
-   The aim is a *minimal* footprint, not a zero footprint.
+   The aim is a _minimal_ footprint, not a zero footprint.
 3. **A hook must shrink the footprint, not grow it.** This is the rule that decides
    whether a seam is worth building. Measure before and after: if the seam machinery
    adds more lines to the upstream file than the ABS code it removes, it is a net loss -
@@ -27,7 +27,7 @@ each upstream merge is a short chore, not a project.**
 4. **Prefer generic over ABS-specific.** When a hook does stay in an upstream file,
    it should contain **no ABS identifiers** - upstream could plausibly have written it.
    Generic code survives upstream refactors far better than `sidecar`-flavoured code.
-5. **Accept the irreducible.** Progress sync *is* an edit to reading-state code. Some
+5. **Accept the irreducible.** Progress sync _is_ an edit to reading-state code. Some
    coupling cannot be designed away; keep it surgical and commented.
 6. **Never depend on a data invariant upstream does not maintain.** If a fork feature needs
    data in a particular shape, enforce it at **read time** - never by repairing rows that
@@ -127,32 +127,52 @@ ABS schema is **not** a Drizzle migration. It is applied at runtime by
 Both live in upstream files, contain **zero ABS identifiers**, and are supplied from
 `modules/audiobookshelf/` through the `@Global` `AudiobookshelfMetadataModule`:
 
-| Seam | Upstream file | Token |
-|---|---|---|
-| Format extractors | `metadata/metadata-extraction.service.ts` | `EXTRA_METADATA_EXTRACTORS` |
-| Cover sources | `metadata/cover-source-handler.ts` | `EXTRA_COVER_SOURCE_HANDLERS` |
+| Seam              | Upstream file                             | Token                         |
+| ----------------- | ----------------------------------------- | ----------------------------- |
+| Format extractors | `metadata/metadata-extraction.service.ts` | `EXTRA_METADATA_EXTRACTORS`   |
+| Cover sources     | `metadata/cover-source-handler.ts`        | `EXTRA_COVER_SOURCE_HANDLERS` |
 
 The cover seam removed every ABS identifier from `metadata.service.ts` and changed
 `scanner.service.ts` by exactly one line (`applyCoverSource({ kind: 'sidecar', ... })`).
 
 ## Current conflict surface (semantic, `-w`)
 
-| File | Semantic | Status |
-|---|---|---|
-| `scanner/scanner.service.ts` | 211 | irreducible - see rejected |
-| `metadata/metadata.service.ts` | 153 | generic (post-seam), no ABS identifiers |
-| `hardcover/hardcover-import.service.ts` | 86 | pure code-move - see rejected |
-| `book/book.repository.ts` | 44 | irreducible core |
-| `user-book-status/reading-attempt.service.ts` | 36 | irreducible core |
-| `book/book.service.ts` | 35 | irreducible core |
-| `metadata/extractors/audio.extractor.ts` | 26 | see rejected |
-| `metadata/metadata-extraction.service.ts` | 12 | the extractor seam itself |
-| `metadata/lib/cover.ts` | 11 | shared helper |
-| `scanner/scanner.repository.ts` | 10 | sidecar query support |
-| `scanner/lib/classify.ts` | 6 | sidecar format recognition |
-| client: `LibraryCreatorMetadata.vue` / `integration-tabs.ts` / `useLibraryCreator.ts` | 12 / 7 / 6 | UI registration |
-| `app.module.ts`, `packages/types/*`, `reading-attempt.repository.ts` | 2 each | trivial |
-| `client/src/locales/*.json` | small | i18n keys, trivial conflicts |
+| File                                                                                  | Semantic   | Status                                    |
+| ------------------------------------------------------------------------------------- | ---------- | ----------------------------------------- |
+| `scanner/scanner.service.ts`                                                          | 211        | irreducible - see rejected                |
+| `metadata/metadata.service.ts`                                                        | 153        | generic (post-seam), no ABS identifiers   |
+| `hardcover/hardcover-import.service.ts`                                               | 86         | pure code-move - see rejected             |
+| `book/book.repository.ts`                                                             | 44         | irreducible core                          |
+| `user-book-status/reading-attempt.service.ts`                                         | 36         | irreducible core                          |
+| `book/book.service.ts`                                                                | 35         | irreducible core                          |
+| `metadata/extractors/audio.extractor.ts`                                              | 26         | see rejected                              |
+| `metadata/metadata-extraction.service.ts`                                             | 12         | the extractor seam itself                 |
+| `metadata/lib/cover.ts`                                                               | 11         | shared helper                             |
+| `scanner/scanner.repository.ts`                                                       | 10         | sidecar query support                     |
+| `scanner/lib/classify.ts`                                                             | 6          | sidecar format recognition                |
+| client: `LibraryCreatorMetadata.vue` / `integration-tabs.ts` / `useLibraryCreator.ts` | 12 / 7 / 6 | UI registration                           |
+| client: `book/.../tabs/ReadingLogTab.vue` / `DetailsTab.vue`                          | 3 / 3      | **generic, propose upstream** - see below |
+| `app.module.ts`, `packages/types/*`, `reading-attempt.repository.ts`                  | 2 each     | trivial                                   |
+| `client/src/locales/*.json`                                                           | small      | i18n keys, trivial conflicts              |
+
+**`ReadingLogTab.vue` / `DetailsTab.vue` live-refresh (generic, not ABS-coupled).** Each subscribes
+the book-detail tab to the _existing_ `book:progress-changed` socket event via the _existing_
+`useBookEvents().onBookProgressChanged` hook, and calls its _existing_ `reload()` / `loadSupplemental()`
+when the event's `bookId` matches the open book. Nothing here is Audiobookshelf-specific: upstream's
+own local web reader (and Kobo/KOReader) already emit `book:progress-changed`, so this makes the
+reading-log and details tabs live-update for **every** progress source - they don't today. It survives
+plugin removal (the ABS emit just stops being one of the emitters). Carried in the fork because the
+ABS warm-session tier needs something listening, but it is a **generic upstream improvement and should
+be proposed upstream** rather than maintained here long-term. ~3 lines each, wiring existing primitives.
+
+One backend line travels with it: the ABS sync emits `book:progress-changed` with `source:
+'audiobookshelf'`, which required adding `'audiobookshelf'` to the `BookProgressChangedEvent.source`
+union (`packages/types/src/scanner.ts`) and its server twin (`achievement-events.service.ts`). This is
+the **same enum-widening pattern** already carried for `reading_sessions.source` /
+`reading_attempts.origin` (commit `be8bd0e0`): a provider naming itself in a shared enum, additive and
+removable (drop the plugin and the member is simply unused). It belongs on the same **propose-upstream**
+list as those enum members - the alternative, reusing a false `web_reader`/`koreader` literal, would
+write dishonest source data.
 
 ## Investigated and rejected - do not re-chase
 

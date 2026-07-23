@@ -46,6 +46,7 @@ describe('AudiobookshelfSyncSchedulerService', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   describe('runScheduledSync', () => {
@@ -137,10 +138,59 @@ describe('AudiobookshelfSyncSchedulerService', () => {
   });
 
   describe('runHotSync', () => {
-    it('syncs each eligible user with hotInProgressOnly', async () => {
+    it('syncs each eligible user with hotInProgressOnly (and warmSessions on the first tick)', async () => {
       await makeService().runHotSync();
 
-      expect(mockSyncService.sync).toHaveBeenCalledWith(eligibleUser(1), { hotInProgressOnly: true });
+      // First hot tick for a user always warms (no prior warm timestamp).
+      expect(mockSyncService.sync).toHaveBeenCalledWith(eligibleUser(1), { hotInProgressOnly: true, warmSessions: true });
+    });
+
+    it('sets warmSessions at most once per 90s per user across successive hot ticks', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-07-20T00:00:00Z'));
+      const service = makeService();
+
+      // Tick 1 (T+0): first ever tick warms.
+      await service.runHotSync();
+      expect(mockSyncService.sync).toHaveBeenNthCalledWith(1, eligibleUser(1), { hotInProgressOnly: true, warmSessions: true });
+
+      // Tick 2 (T+30s): inside the 90s window, so no warm - position only.
+      vi.setSystemTime(new Date('2026-07-20T00:00:30Z'));
+      await service.runHotSync();
+      expect(mockSyncService.sync).toHaveBeenNthCalledWith(2, eligibleUser(1), { hotInProgressOnly: true, warmSessions: false });
+
+      // Tick 3 (T+90s): 90s elapsed since the last warm, so warm again.
+      vi.setSystemTime(new Date('2026-07-20T00:01:30Z'));
+      await service.runHotSync();
+      expect(mockSyncService.sync).toHaveBeenNthCalledWith(3, eligibleUser(1), { hotInProgressOnly: true, warmSessions: true });
+    });
+
+    it('throttles warmSessions independently per user', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-07-20T00:00:00Z'));
+      mockRepo.findEnabledConfiguredUsers.mockResolvedValue([{ userId: 1 }, { userId: 2 }]);
+      const service = makeService();
+
+      // Both users warm on their first tick.
+      await service.runHotSync();
+      expect(mockSyncService.sync).toHaveBeenCalledWith(eligibleUser(1), { hotInProgressOnly: true, warmSessions: true });
+      expect(mockSyncService.sync).toHaveBeenCalledWith(eligibleUser(2), { hotInProgressOnly: true, warmSessions: true });
+
+      // 30s later both are throttled.
+      vi.clearAllMocks();
+      mockUserService.findByIdWithPermissions.mockImplementation((id: number) => Promise.resolve(eligibleUser(id)));
+      mockRepo.findEnabledConfiguredUsers.mockResolvedValue([{ userId: 1 }, { userId: 2 }]);
+      mockSyncService.sync.mockResolvedValue(undefined);
+      vi.setSystemTime(new Date('2026-07-20T00:00:30Z'));
+      await service.runHotSync();
+      expect(mockSyncService.sync).toHaveBeenCalledWith(eligibleUser(1), { hotInProgressOnly: true, warmSessions: false });
+      expect(mockSyncService.sync).toHaveBeenCalledWith(eligibleUser(2), { hotInProgressOnly: true, warmSessions: false });
+    });
+
+    it('does not add warmSessions to the full (non-hot) run options', async () => {
+      await makeService().runScheduledSync();
+
+      expect(mockSyncService.sync).toHaveBeenCalledWith(eligibleUser(1), {});
     });
 
     it('skips the tick when a previous hot run is still in flight', async () => {

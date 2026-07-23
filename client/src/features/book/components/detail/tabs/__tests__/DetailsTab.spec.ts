@@ -27,6 +27,10 @@ vi.mock('@/features/auth/composables/usePermissions', () => ({
   usePermissions: () => ({ hasPermission: mocks.hasPermission }),
 }))
 
+vi.mock('@/features/book/composables/useBookEvents', () => ({
+  useBookEvents: () => ({ onBookProgressChanged: () => () => {} }),
+}))
+
 function makeBook(overrides: Partial<BookDetail> = {}): BookDetail {
   return {
     id: 12,

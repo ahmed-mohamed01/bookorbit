@@ -254,6 +254,47 @@ describe('AudiobookshelfSyncService.sync', () => {
     });
   });
 
+  describe('warm session tier (hot tick, incremental sessions for in-progress books)', () => {
+    function wireInProgress() {
+      const inProgress = makeMp({ id: 'mp-hot', libraryItemId: 'item-hot', isFinished: false, progress: 0.4, currentTime: 400 });
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [inProgress] });
+      mockRepo.findSettings.mockResolvedValue(makeSettings({ syncSessions: true }));
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ absLibraryItemId: 'item-hot', bookId: 77 })]);
+    }
+
+    it('does NOT ingest sessions on a hot tick with warmSessions:false', async () => {
+      wireInProgress();
+
+      await makeService().sync(user, { hotInProgressOnly: true, warmSessions: false });
+
+      expect(mockSessionsService.syncSessions).not.toHaveBeenCalled();
+      expect(mockSessionsService.deepReconciliationScan).not.toHaveBeenCalled();
+    });
+
+    it('ingests INCREMENTAL sessions on a warm hot tick when a book is in progress', async () => {
+      wireInProgress();
+
+      await makeService().sync(user, { hotInProgressOnly: true, warmSessions: true });
+
+      expect(mockSessionsService.syncSessions).toHaveBeenCalledTimes(1);
+      // Warm path never runs the deep scan - that stays tied to the full/full-resync path.
+      expect(mockSessionsService.deepReconciliationScan).not.toHaveBeenCalled();
+    });
+
+    it('does NOT ingest sessions on a warm hot tick when no book is in progress', async () => {
+      // Only finished/unstarted books, so the hot filter narrows `progresses` to empty - no warm work.
+      const finished = makeMp({ id: 'mp-done', libraryItemId: 'item-done', isFinished: true, progress: 1, currentTime: 1000 });
+      const unstarted = makeMp({ id: 'mp-new', libraryItemId: 'item-new', isFinished: false, progress: 0, currentTime: 0 });
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [finished, unstarted] });
+      mockRepo.findSettings.mockResolvedValue(makeSettings({ syncSessions: true }));
+
+      await makeService().sync(user, { hotInProgressOnly: true, warmSessions: true });
+
+      expect(mockSessionsService.syncSessions).not.toHaveBeenCalled();
+      expect(mockSessionsService.deepReconciliationScan).not.toHaveBeenCalled();
+    });
+  });
+
   describe('guards', () => {
     it('throws BadRequestException when settings are missing', async () => {
       mockRepo.findSettings.mockResolvedValue(null);

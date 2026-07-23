@@ -32,6 +32,10 @@ export interface AudiobookshelfSyncOptions {
   // Listening"), skipping reconcile and the session ingest. Runs on a fast cadence for near-live
   // position; the full poll still handles finished books, sessions, and matching.
   hotInProgressOnly?: boolean;
+  // Warm tier: hot-tier ticks set this at most every 90s to also ingest incremental sessions for
+  // in-progress books (position still runs every 30s hot tick). Only ingests when a book is actually
+  // in progress this run; never runs the deep scan.
+  warmSessions?: boolean;
 }
 
 // Upgrade-only ranking. A sync may promote a book toward completion but never move it backward.
@@ -205,12 +209,18 @@ export class AudiobookshelfSyncService {
         }
       }
 
+      // Sessions ingest on the full/full-resync path (deep or incremental), and on the warm hot-tier
+      // path but only when a book is actually in progress this run (the hot filter above already
+      // narrowed `progresses` to in-progress books, so a non-empty array means there is warm work).
+      // The warm path never runs the deep scan - deep stays tied to the full path's `deepSessions`.
+      const warmSessionsDue = options.warmSessions === true && progresses.length > 0;
       let sessionsError: string | null = null;
-      if (settings.syncSessions && !options.hotInProgressOnly) {
+      if (settings.syncSessions && (!options.hotInProgressOnly || warmSessionsDue)) {
         try {
-          const sessions = options.deepSessions
-            ? await this.sessionsService.deepReconciliationScan(user, settings)
-            : await this.sessionsService.syncSessions(user, settings);
+          const sessions =
+            options.deepSessions && !options.hotInProgressOnly
+              ? await this.sessionsService.deepReconciliationScan(user, settings)
+              : await this.sessionsService.syncSessions(user, settings);
           result.sessionsApplied = sessions.inserted + sessions.updated;
         } catch (err) {
           // Isolate session-ingest failures: status/position work is already committed, so record the

@@ -5,6 +5,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { LibraryService } from '../library/library.service';
 import {
   ACHIEVEMENT_EVENT_BACKFILL,
+  ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED,
   ACHIEVEMENT_EVENT_READING_SESSION_SAVED,
   AchievementEventsService,
 } from '../achievement/achievement-events.service';
@@ -39,6 +40,10 @@ interface IngestAccumulator {
   // Capped sample of inserted rows, used to emit per-session achievement events below the backfill
   // threshold. Never grows past the threshold, so a years-long backfill stays memory-bounded.
   sampleInserted: IngestedSession[];
+  // Books whose sessions were inserted or updated this run, to the latest such session's progress and
+  // file. Drives one live-refresh event per changed book; empty on a pure no-op re-ingest. Bounded by
+  // the number of distinct in-progress books in the run (tiny on the warm path).
+  changedBooks: Map<number, { progress: number; bookFileId: number | null }>;
 }
 
 type SessionsSettingsPatch = Partial<
@@ -86,7 +91,7 @@ export class AudiobookshelfSessionsService {
     // overlap floor and needs no checkpoint.
     const isBackfill = mode === 'deep' || existingWatermark === 0;
 
-    const acc: IngestAccumulator = { inserted: 0, updated: 0, skipped: 0, sampleInserted: [] };
+    const acc: IngestAccumulator = { inserted: 0, updated: 0, skipped: 0, sampleInserted: [], changedBooks: new Map() };
     const excludedLibraryIds = new Set(settings.excludedLibraryIds ?? []);
     const scope = await buildBookAccessScope(user, this.libraryService);
     let maxUpdated = existingWatermark;
@@ -143,6 +148,7 @@ export class AudiobookshelfSessionsService {
       }
 
       this.emitAchievements(user, acc);
+      this.emitProgressChanged(user, acc);
 
       this.logger.log(
         `[abs.sessions] [end] userId=${user.id} mode=${mode} durationMs=${Date.now() - startedAt} inserted=${acc.inserted} updated=${acc.updated} skipped=${acc.skipped} - session ingest completed`,
@@ -201,13 +207,19 @@ export class AudiobookshelfSessionsService {
     }
 
     for (const group of chunk(mapped, AUDIOBOOKSHELF_SESSIONS_INGEST_CHUNK)) {
-      const { insertedSessionIds, updated, progressDeltaBySessionId } = await this.repo.ingestSessions(userId, timeZone, group);
+      const { insertedSessionIds, updated, affectedSessionIds, progressDeltaBySessionId } = await this.repo.ingestSessions(userId, timeZone, group);
       const insertedSet = new Set(insertedSessionIds);
+      const affectedSet = new Set(affectedSessionIds);
       acc.inserted += insertedSessionIds.length;
       acc.updated += updated;
       for (const row of group) {
         if (insertedSet.has(row.sessionId) && acc.sampleInserted.length <= AUDIOBOOKSHELF_BACKFILL_EVENT_THRESHOLD) {
           acc.sampleInserted.push({ ...row, progressDelta: progressDeltaBySessionId.get(row.sessionId) ?? null });
+        }
+        // Pages arrive newest-first, so the first affected session seen for a book carries its latest
+        // progress; keep that one for the live-refresh event.
+        if (affectedSet.has(row.sessionId) && !acc.changedBooks.has(row.bookId)) {
+          acc.changedBooks.set(row.bookId, { progress: row.endProgress ?? 0, bookFileId: row.bookFileId });
         }
       }
     }
@@ -245,6 +257,20 @@ export class AudiobookshelfSessionsService {
         progressDelta: session.progressDelta,
         endProgress: session.endProgress,
         timezone,
+      });
+    }
+  }
+
+  // One live-refresh event per book whose sessions actually changed this run, so a client viewing that
+  // book reloads its reading log. Never fires on a no-op re-ingest (changedBooks stays empty).
+  private emitProgressChanged(user: RequestUser, acc: IngestAccumulator): void {
+    for (const [bookId, changed] of acc.changedBooks) {
+      this.achievementEvents.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
+        userId: user.id,
+        bookId,
+        ...(changed.bookFileId != null ? { bookFileId: changed.bookFileId } : {}),
+        progress: changed.progress,
+        source: 'audiobookshelf',
       });
     }
   }
