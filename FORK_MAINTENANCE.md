@@ -152,6 +152,7 @@ The cover seam removed every ABS identifier from `metadata.service.ts` and chang
 | `scanner/lib/classify.ts`                                                             | 6          | sidecar format recognition                |
 | client: `LibraryCreatorMetadata.vue` / `integration-tabs.ts` / `useLibraryCreator.ts` | 12 / 7 / 6 | UI registration                           |
 | client: `book/.../tabs/ReadingLogTab.vue` / `DetailsTab.vue`                          | 3 / 3      | **generic, propose upstream** - see below |
+| `dashboard/dashboard-widget.service.ts` / `dashboard.module.ts`                       | ~10 / 2    | **generic, propose upstream** - see below |
 | `app.module.ts`, `packages/types/*`, `reading-attempt.repository.ts`                  | 2 each     | trivial                                   |
 | `client/src/locales/*.json`                                                           | small      | i18n keys, trivial conflicts              |
 
@@ -173,6 +174,18 @@ the **same enum-widening pattern** already carried for `reading_sessions.source`
 removable (drop the plugin and the member is simply unused). It belongs on the same **propose-upstream**
 list as those enum members - the alternative, reusing a false `web_reader`/`koreader` literal, would
 write dishonest source data.
+
+**`dashboard-widget.service.ts` live-cache invalidation (generic, not ABS-coupled).** The
+"Currently Reading" header is served from a 120s `liveCache`, while the scrollers
+(`dashboard.service.ts`, e.g. Continue Listening) are uncached. So a status change - from **any**
+source - surfaced on the scrollers up to two minutes before the header. The fix subscribes
+`DashboardWidgetService` to the _existing_ `book.status-changed` event (Node `EventEmitter`, same
+`.on()` pattern as `StorygraphEventListener`) and calls `liveCache.clearForScope(userId)`, so the
+header refetches the moment status flips. `dashboard.module.ts` imports `AchievementModule` (already
+exported) to inject the emitter. Nothing here is Audiobookshelf-specific - it fixes the lag for Kobo,
+KOReader and manual edits too - so it is a **generic upstream improvement and should be proposed
+upstream**. It survives plugin removal untouched. Carried because the ABS reread flip is what made the
+lag visible.
 
 ## Investigated and rejected - do not re-chase
 

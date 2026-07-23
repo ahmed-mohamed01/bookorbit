@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 
 import type {
   CurrentlyReadingWidgetData,
@@ -18,6 +18,11 @@ import type {
 
 import type { RequestUser } from '../../common/types/request-user';
 import { StatsCache } from '../../common/cache/stats-cache';
+import {
+  ACHIEVEMENT_EVENT_BOOK_STATUS_CHANGED,
+  AchievementEventsService,
+  type BookStatusChangedPayload,
+} from '../achievement/achievement-events.service';
 import { LibraryService } from '../library/library.service';
 import {
   buildDaysSeries,
@@ -38,14 +43,24 @@ const DASHBOARD_STALE_TTL_MS = 300_000;
 const DASHBOARD_CACHE_MAX_ENTRIES = 200;
 
 @Injectable()
-export class DashboardWidgetService {
+export class DashboardWidgetService implements OnModuleInit {
   private readonly liveCache = new StatsCache({ ttlMs: DASHBOARD_LIVE_TTL_MS, maxEntries: DASHBOARD_CACHE_MAX_ENTRIES });
   private readonly staleCache = new StatsCache({ ttlMs: DASHBOARD_STALE_TTL_MS, maxEntries: DASHBOARD_CACHE_MAX_ENTRIES });
 
   constructor(
     private readonly widgetRepo: DashboardWidgetRepository,
     private readonly libraryService: LibraryService,
+    private readonly achievementEvents: AchievementEventsService,
   ) {}
+
+  onModuleInit() {
+    // The live widgets (currently-reading in particular) are status-derived. Without this, a status
+    // change leaves the header serving a cached copy for up to the live TTL while the uncached
+    // scrollers already reflect it. Busting the user's live scope on the change keeps them in step.
+    this.achievementEvents.on(ACHIEVEMENT_EVENT_BOOK_STATUS_CHANGED, (payload: BookStatusChangedPayload) => {
+      this.liveCache.clearForScope(String(payload.userId));
+    });
+  }
 
   private getContentFilters(user: RequestUser) {
     return user.isSuperuser ? undefined : user.contentFilters;

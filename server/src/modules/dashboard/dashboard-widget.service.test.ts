@@ -1,6 +1,9 @@
 import type { CurrentlyReadingWidgetData, LibraryOverviewWidgetData, NeglectedGemsWidgetData, ReadingStreakWidgetData } from '@bookorbit/types';
 
+import { EventEmitter } from 'events';
+
 import type { RequestUser } from '../../common/types/request-user';
+import { ACHIEVEMENT_EVENT_BOOK_STATUS_CHANGED } from '../achievement/achievement-events.service';
 import { DashboardWidgetService } from './dashboard-widget.service';
 import { EMPTY_CONTENT_FILTER_RULES } from '@bookorbit/types';
 
@@ -44,8 +47,10 @@ function makeService() {
     findAccessibleLibraryIds: vi.fn(),
   };
 
-  const service = new DashboardWidgetService(widgetRepo as never, libraryService as never);
-  return { service, widgetRepo, libraryService };
+  const achievementEvents = new EventEmitter();
+  const service = new DashboardWidgetService(widgetRepo as never, libraryService as never, achievementEvents as never);
+  service.onModuleInit();
+  return { service, widgetRepo, libraryService, achievementEvents };
 }
 
 describe('DashboardWidgetService', () => {
@@ -442,6 +447,46 @@ describe('DashboardWidgetService', () => {
       await service.getLibraryOverview(userA);
       await service.getLibraryOverview(userB);
       expect(widgetRepo.getLibraryOverview).toHaveBeenCalledTimes(2);
+    });
+
+    it('a book.status-changed event busts that user live cache so the header refetches', async () => {
+      const { service, widgetRepo, libraryService, achievementEvents } = makeService();
+      libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
+      widgetRepo.getCurrentlyReadingBooks.mockResolvedValue({ books: [] } as never);
+
+      const user = makeUser();
+      await service.getCurrentlyReading(user);
+      await service.getCurrentlyReading(user);
+      expect(widgetRepo.getCurrentlyReadingBooks).toHaveBeenCalledTimes(1);
+
+      achievementEvents.emit(ACHIEVEMENT_EVENT_BOOK_STATUS_CHANGED, {
+        userId: user.id,
+        bookId: 1,
+        newStatus: 'rereading',
+        previousStatus: 'read',
+      });
+
+      await service.getCurrentlyReading(user);
+      expect(widgetRepo.getCurrentlyReadingBooks).toHaveBeenCalledTimes(2);
+    });
+
+    it('a status change for another user does not bust this user live cache', async () => {
+      const { service, widgetRepo, libraryService, achievementEvents } = makeService();
+      libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
+      widgetRepo.getCurrentlyReadingBooks.mockResolvedValue({ books: [] } as never);
+
+      const user = makeUser();
+      await service.getCurrentlyReading(user);
+
+      achievementEvents.emit(ACHIEVEMENT_EVENT_BOOK_STATUS_CHANGED, {
+        userId: 99,
+        bookId: 1,
+        newStatus: 'reading',
+        previousStatus: 'unread',
+      });
+
+      await service.getCurrentlyReading(user);
+      expect(widgetRepo.getCurrentlyReadingBooks).toHaveBeenCalledTimes(1);
     });
   });
 });
