@@ -53,9 +53,12 @@ const COMPLETION_RANK: Record<ReadStatus, number> = {
 
 export function resolveAbsTargetStatus(current: ReadStatus, isFinished: boolean): ReadStatus | null {
   if (current === 'abandoned') return isFinished ? 'read' : null;
-  const targetRank = isFinished ? 3 : 1;
-  if (COMPLETION_RANK[current] >= targetRank) return null;
-  return isFinished ? 'read' : 'reading';
+  if (isFinished) return COMPLETION_RANK[current] >= 3 ? null : 'read';
+  // ABS reports active playback. A finished book being listened to again is a reread: surface it as
+  // active rather than leaving the status contradicting the in-progress attempt ABS already opened.
+  // updateManual -> applyManualStatus adopts that attempt and projects reading vs rereading itself.
+  if (current === 'read') return 'rereading';
+  return COMPLETION_RANK[current] >= 1 ? null : 'reading';
 }
 
 export function resolveAbsPosition(

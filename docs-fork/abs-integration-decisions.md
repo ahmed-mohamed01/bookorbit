@@ -93,6 +93,17 @@ reinvention to eliminate. The read side (`findAudioProgress`) stays in the ABS r
 no benefit. The access/file-ownership checks `saveAudioProgress` performs are instead the sync
 scheduler's responsibility (it resolves a scoped `RequestUser` per user before the loop).
 
+**Re-listens surface as `rereading`.** `importExternalRead` opens an in-progress attempt for an
+unfinished ABS book but does not project `user_book_status` (deliberate: it must not clobber status
+on every sync). `resolveAbsTargetStatus` is the status brancher, and it now maps a finished book
+(`read`) with active ABS playback (`isFinished=false`) to `rereading` rather than leaving the status
+contradicting the attempt ABS just opened. `updateManual` -> `applyManualStatus` adopts that same
+attempt (no duplicate) and its projection resolves `reading` vs `rereading`. On delta syncs this only
+fires when ABS `lastUpdate` advances (genuine playback); the only edge is a first-time reconcile
+flipping a `read` book that still carries stale unfinished ABS progress, which is defensible since ABS
+does hold an open listen for it. This keeps the "status from `isFinished`, never from percentage"
+invariant above intact.
+
 **Accepted deviation:** ABS inserts `reading_sessions` from its own repository. There is no
 session-ingest service, and `koreader-plugin.repository.ts` sets the precedent. Acceptable - but
 the attempt-resolution rule inside that insert must match KOReader's.
@@ -172,7 +183,8 @@ Waves, correctness-first:
 
 1. **Pure functions** (no mocking): `abs-metadata.mapper` (coercion/legacy-wrapper/series/ISBN),
    `mapAbsSession` + pagination stop signals, `resolveAbsPosition`, `resolveAbsTargetStatus`
-   (upgrade-only ranking), the `*.utils` helpers.
+   (status from `isFinished`; a finished book with active ABS playback surfaces as `rereading`),
+   the `*.utils` helpers.
 2. **Service orchestration** (mocked repo/client/attempts/status): sync - the fresh-vs-subsequent
    reconcile gate (`initialReconcileCompletedAt`, and a partial-reconcile leaving it null so the
    next sync retries), the hot-tier in-progress filter, status derived from `isFinished` (never

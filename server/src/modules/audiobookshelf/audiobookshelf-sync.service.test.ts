@@ -114,8 +114,8 @@ function updateSettingsPatchedKey(key: string): boolean {
 
 describe('AudiobookshelfSyncService pure exports', () => {
   describe('resolveAbsTargetStatus', () => {
-    it('does not downgrade a read when ABS is only in progress', () => {
-      expect(resolveAbsTargetStatus('read', false)).toBeNull();
+    it('surfaces a re-listen of a finished book as rereading', () => {
+      expect(resolveAbsTargetStatus('read', false)).toBe('rereading');
     });
 
     it('promotes an in-progress book to reading', () => {
@@ -353,6 +353,18 @@ describe('AudiobookshelfSyncService.sync', () => {
       expect(mockStatusService.updateManual).toHaveBeenCalledWith(user.id, 10, { status: 'read' });
       // Position write goes through the bare ABS upsert (no status side-effect), never a second status derivation.
       expect(mockRepo.upsertAudioProgress).toHaveBeenCalledWith(user.id, 10, 501, 1000, 100);
+    });
+
+    it('surfaces an in-progress re-listen of a finished book as rereading', async () => {
+      const relisten = makeMp({ isFinished: false, progress: 0.4, currentTime: 400, duration: 1000 });
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [relisten] });
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10 })]);
+      mockStatusService.findOne.mockResolvedValue({ status: 'read' });
+      mockRepo.findAudioFilesInPlayOrder.mockResolvedValue([{ id: 501, format: 'm4b', durationSeconds: 1000 }]);
+
+      await makeService().sync(user);
+
+      expect(mockStatusService.updateManual).toHaveBeenCalledWith(user.id, 10, { status: 'rereading' });
     });
   });
 
