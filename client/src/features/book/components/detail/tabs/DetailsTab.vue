@@ -33,6 +33,7 @@ import { FORMAT_TO_GROUP, READER_OPENABLE_FORMATS } from '@bookorbit/types'
 import type { BookDetail, BookKoboState, CustomMetadataBookValue, ReadStatus, UserBookStatus } from '@bookorbit/types'
 import { STATUS_OPTIONS, STATUS_ICONS, STATUS_COLORS, useBookStatus } from '@/features/book/composables/useBookStatus'
 import BookDownloadButton from '@/features/book/components/BookDownloadButton.vue'
+import LinkBookControl from '@/features/book/components/detail/tabs/LinkBookControl.vue'
 import DiscoverRow from '@/features/book/components/detail/DiscoverRow.vue'
 import BookCoverArtwork from '@/features/book/components/BookCoverArtwork.vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -1395,6 +1396,10 @@ onBookProgressChanged((event) => {
       >
         <Send class="size-3.5" />
       </button>
+      <LinkBookControl
+        :book="book"
+        trigger-class="flex items-center justify-center h-9 w-9 rounded-md border border-input bg-background hover:bg-muted transition-colors"
+      />
       <Popover
         v-if="canEditMetadata || hasPermission('library_delete_books')"
         :open="mobileMoreMenuOpen"
@@ -1562,6 +1567,7 @@ onBookProgressChanged((event) => {
             >
               <Send class="size-3.5" />
             </button>
+            <LinkBookControl :book="book" />
             <Popover v-if="canEditMetadata || hasPermission('library_delete_books')" :open="moreMenuOpen" @update:open="(v) => (moreMenuOpen = v)">
               <PopoverTrigger as-child>
                 <button

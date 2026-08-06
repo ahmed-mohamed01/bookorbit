@@ -6,6 +6,7 @@ import { toast } from 'vue-sonner'
 import { useFoliate, type RelocateDetail } from './epub/composables/useFoliate'
 import type { SelectionDetail } from './epub/composables/useFoliateSelection'
 import { useReaderProgress } from './shared/composables/useReaderProgress'
+import { fetchEbookCrossFormatResume } from './shared/composables/useCrossFormatResume'
 import { useReadingSession } from './shared/composables/useReadingSession'
 import { useReaderState } from './epub/composables/useReaderState'
 import { useReaderSettings } from './shared/composables/useReaderSettings'
@@ -302,10 +303,23 @@ onMounted(async () => {
     shouldApplyStyles.value = false
   }
 
+  const deepLinkCfi = typeof route.query.cfi === 'string' ? route.query.cfi : null
+  // When the audiobook is ahead of the ebook, resume at the exact narration passage. Skipped when a
+  // deep link targets a specific location (that wins) or when tracking is off (peek mode).
+  const resume = trackingEnabled.value && !deepLinkCfi ? await fetchEbookCrossFormatResume(bookId) : null
+  const priorCfi = progress.cfi.value
+  const priorFraction = progress.percentage.value > 0 ? progress.percentage.value / 100 : null
+
   const hadProgress = progress.percentage.value > 0
-  await open(bookId, fileId, fileFormat, progress.cfi.value, hadProgress ? progress.percentage.value / 100 : undefined, {
-    fixedLayoutSpread: state.value.fixedLayoutSpread,
-  })
+  const { crossFormatResumed } = await open(
+    bookId,
+    fileId,
+    fileFormat,
+    progress.cfi.value,
+    hadProgress ? progress.percentage.value / 100 : undefined,
+    { fixedLayoutSpread: state.value.fixedLayoutSpread },
+    resume,
+  )
   setChapters(getChapters())
   sectionFractions.value = getSectionFractions()
   await bookmarks.load(bookId)
@@ -316,7 +330,6 @@ onMounted(async () => {
   }
   void hydrateSidebarLocationMeta()
 
-  const deepLinkCfi = typeof route.query.cfi === 'string' ? route.query.cfi : null
   if (deepLinkCfi) {
     try {
       await goTo(deepLinkCfi)
@@ -325,12 +338,28 @@ onMounted(async () => {
     }
   }
 
-  if (hadProgress) {
+  if (crossFormatResumed) {
+    toast.info(t('reader.toast.crossFormatResumed'), {
+      duration: 6000,
+      action: { label: t('reader.toast.crossFormatUndo'), onClick: () => undoCrossFormatResume(priorCfi, priorFraction) },
+    })
+  } else if (hadProgress) {
     const pct = Math.round(progress.percentage.value)
     const label = chapterTitle.value || t('reader.chapterNumber', { number: sectionIndex.value + 1 })
     toast.info(t('reader.toast.resumed', { pct, label }), { duration: 2500 })
   }
 })
+
+// Restores the reader to where it was before a cross-format resume jumped it to the audiobook position.
+function undoCrossFormatResume(priorCfi: string | null, priorFraction: number | null) {
+  if (priorCfi) {
+    void goTo(priorCfi)
+  } else if (priorFraction != null) {
+    void goToFraction(priorFraction)
+  } else {
+    void goToFraction(0)
+  }
+}
 
 const epubSetters: Record<string, (v: unknown) => void> = {
   fontSize: (v) => setFontSize(v as number),

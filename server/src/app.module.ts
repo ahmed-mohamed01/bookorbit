@@ -73,6 +73,8 @@ import { CustomIconModule } from './modules/custom-icon/custom-icon.module';
 import { AccountActivityModule } from './modules/account-activity/account-activity.module';
 import { SharedReadingInsightsModule } from './modules/shared-reading-insights/shared-reading-insights.module';
 import { BookDuplicatesModule } from './modules/book-duplicates/book-duplicates.module';
+import { EditionLinkModule } from './modules/edition-link/edition-link.module';
+import { ReadingAlignmentModule } from './modules/reading-alignment/reading-alignment.module';
 
 @Module({
   imports: [
@@ -153,6 +155,8 @@ import { BookDuplicatesModule } from './modules/book-duplicates/book-duplicates.
     AccountActivityModule,
     SharedReadingInsightsModule,
     BookDuplicatesModule,
+    EditionLinkModule,
+    ReadingAlignmentModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },

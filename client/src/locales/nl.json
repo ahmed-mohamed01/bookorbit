@@ -3679,6 +3679,59 @@
         "moveUp": "Omhoog",
         "moveDown": "Omlaag",
         "removeSeries": "Reeks verwijderen"
+      },
+      "editionLink": {
+        "trigger": "Link book",
+        "tooltipNeedsAudio": "Link an audiobook to enable position alignment.",
+        "tooltipNeedsText": "Link an ebook to enable position alignment.",
+        "tooltipLinked": "Manage the linked edition.",
+        "counterpartAudiobook": "Audiobook",
+        "counterpartEbook": "Ebook",
+        "title": "Link edition",
+        "linkedTo": "Linked to",
+        "unknownTitle": "Untitled",
+        "unlink": "Unlink",
+        "suggestedMatch": "Suggested match",
+        "confidence": "{score}% confidence",
+        "confirmLink": "Link",
+        "noMatch": "No automatic match found.",
+        "searchToggle": "Search for a match",
+        "searchPlaceholder": "Search by title or author",
+        "searching": "Searching...",
+        "noResults": "No matches found.",
+        "linkedSuccess": "Books linked.",
+        "linkFailed": "Failed to link book.",
+        "unlinkedSuccess": "Books unlinked.",
+        "unlinkFailed": "Failed to unlink book.",
+        "searchFailed": "Couldn't search for a match. Try again."
+      },
+      "readingAlignment": {
+        "trigger": "Alignment",
+        "title": "Position alignment",
+        "status": {
+          "none": "Not built",
+          "pending": "Not built",
+          "building": "Aligning...",
+          "ready": "Aligned",
+          "failed": "Alignment failed",
+          "unalignable": "Can't align"
+        },
+        "progress": "{done} / {total} samples",
+        "anchorFound": "{count} anchor found",
+        "anchorsFound": "{count} anchors found",
+        "builtAt": "Built {date}",
+        "buildButton": "Build alignment",
+        "rebuildButton": "Rebuild alignment",
+        "hintNeedsAudio": "Link an audiobook to enable position alignment.",
+        "hintNeedsText": "Link an ebook to enable position alignment.",
+        "unalignableHint": "Position alignment isn't available for this book pair.",
+        "inSyncWith": "In sync with {title}",
+        "buildFailed": "Failed to start alignment build.",
+        "buildBlocked": {
+          "disabled": "Reading alignment is turned off for this server.",
+          "unavailable": "Reading alignment isn't configured on this server yet.",
+          "busy": "The server is busy aligning other books. Try again shortly."
+        }
       }
     },
     "table": {
@@ -5313,7 +5366,9 @@
     },
     "toast": {
       "linkedHighlightError": "De gekoppelde markeringspositie kon niet worden geopend",
-      "resumed": "Hervat op {pct}% - {label}"
+      "resumed": "Hervat op {pct}% - {label}",
+      "crossFormatResumed": "Resumed from your audiobook position",
+      "crossFormatUndo": "Undo"
     },
     "header": {
       "goBack": "Terug",

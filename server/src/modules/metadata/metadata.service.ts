@@ -154,11 +154,15 @@ export class MetadataService {
 
     const updates: Promise<unknown>[] = [];
 
-    if (filtered.audibleId !== undefined) {
+    // Only write a provider id the audio file actually carries. This method supplements a non-audio
+    // winner's metadata with audio-specific fields; writing null here would clobber an audibleId/
+    // librofmId the winning source already set (e.g. the ASIN from the Audiobookshelf metadata.json
+    // sidecar), which in turn breaks exact-match ABS linking.
+    if (filtered.audibleId != null) {
       updates.push(this.db.update(bookMetadata).set({ audibleId: filtered.audibleId, updatedAt: new Date() }).where(eq(bookMetadata.bookId, bookId)));
     }
 
-    if (filtered.librofmId !== undefined) {
+    if (filtered.librofmId != null) {
       updates.push(this.db.update(bookMetadata).set({ librofmId: filtered.librofmId, updatedAt: new Date() }).where(eq(bookMetadata.bookId, bookId)));
     }
 

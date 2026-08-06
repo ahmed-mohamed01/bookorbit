@@ -4,6 +4,7 @@ import { isAudioFormat, type AudiobookshelfSyncResult, type ReadStatus } from '@
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { toDateKeyInTimeZone } from '../../common/utils/timezone.utils';
+import { ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, AchievementEventsService } from '../achievement/achievement-events.service';
 import { LibraryService } from '../library/library.service';
 import { ReadingAttemptService } from '../user-book-status/reading-attempt.service';
 import { UserBookStatusService } from '../user-book-status/user-book-status.service';
@@ -99,6 +100,7 @@ export class AudiobookshelfSyncService {
     private readonly statusService: UserBookStatusService,
     private readonly sessionsService: AudiobookshelfSessionsService,
     private readonly libraryService: LibraryService,
+    private readonly achievementEvents: AchievementEventsService,
   ) {}
 
   /**
@@ -355,6 +357,18 @@ export class AudiobookshelfSyncService {
 
     const percentage = Math.max(0, Math.min(100, (mp.currentTime / mp.duration) * 100));
     const written = await this.repo.upsertAudioProgress(userId, bookId, resolved.currentFileId, resolved.positionSeconds, percentage);
+    // Announce the position write on the shared bus like every other progress writer (web reader, Kobo,
+    // KOReader), so source-agnostic listeners such as the reading-alignment sync observe ABS advances.
+    this.achievementEvents.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
+      userId,
+      bookId,
+      bookFileId: resolved.currentFileId,
+      progress: percentage,
+      source: 'audiobookshelf',
+      // ABS reports the real client playback time; carry it so a delayed poll of older progress cannot
+      // look newer than a more recent local update and drag the linked ebook backward.
+      ...(mp.lastUpdate ? { occurredAt: new Date(mp.lastUpdate) } : {}),
+    });
     return { applied: true, watermarkAdvanced: true, progressAt: written?.updatedAt ?? null };
   }
 }

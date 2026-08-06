@@ -147,6 +147,17 @@ describe('useLibraryCreator', () => {
     expect(creator.form.fileWriteAudioMaxFileSizeMb).toBe(750)
   })
 
+  it('backfills the sidecar metadata source when editing a library that predates it', async () => {
+    const { useLibraryCreator } = await import('../useLibraryCreator')
+    const creator = useLibraryCreator()
+
+    creator.initEdit(makeLibrary({ id: 1, metadataPrecedence: ['embedded', 'opfFile'] }))
+
+    // `sidecar` (the Audiobookshelf metadata.json source) is a default source; a library saved before it
+    // existed must have it restored on edit so the metadata.json import re-enables once saved.
+    expect(creator.form.metadataPrecedence).toContain('sidecar')
+  })
+
   it('creates a library with audio write-back settings in the payload', async () => {
     const { useLibraryCreator } = await import('../useLibraryCreator')
     const creator = useLibraryCreator()

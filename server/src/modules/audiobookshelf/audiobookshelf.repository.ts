@@ -248,12 +248,7 @@ export class AudiobookshelfRepository {
     return row.changedAt instanceof Date ? row.changedAt : new Date(row.changedAt);
   }
 
-  private async matchByKey(
-    libraryIds: number[],
-    filters: SQL[],
-    keyExpr: SQL<string> | typeof schema.bookMetadata.isbn13,
-    values: string[],
-  ): Promise<AbsExactMatchRow[]> {
+  private async matchByKey(libraryIds: number[], filters: SQL[], keyExpr: SQL<string>, values: string[]): Promise<AbsExactMatchRow[]> {
     const results: AbsExactMatchRow[] = [];
     for (const group of chunk(values, ISBN_ASIN_LOOKUP_CHUNK)) {
       const rows = await this.db
@@ -278,7 +273,7 @@ export class AudiobookshelfRepository {
     const isbn13s = isbns.filter((isbn) => isbn.length === 13);
     const isbn10s = isbns.filter((isbn) => isbn.length === 10);
     return [
-      ...(await this.matchByKey(libraryIds, filters, schema.bookMetadata.isbn13, isbn13s)),
+      ...(await this.matchByKey(libraryIds, filters, sql<string>`${schema.bookMetadata.isbn13}`, isbn13s)),
       ...(await this.matchByKey(libraryIds, filters, normalizedIsbn10, isbn10s)),
     ];
   }

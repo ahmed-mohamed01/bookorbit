@@ -406,7 +406,7 @@ describe('DetailsTab cover surface', () => {
     expect(storygraphItem.props('bookId')).toBe(12)
   })
 
-  it('renders a Send via Email action button and opens dialog when user has email_send permission', async () => {
+  it('renders a Send via Email action button and opens the dialog when user has email_send permission', async () => {
     mocks.hasPermission.mockImplementation((perm) => perm === 'email_send')
     const wrapper = mountDetails(makeBook())
     await flushPromises()
@@ -423,7 +423,7 @@ describe('DetailsTab cover surface', () => {
     expect(sendDialog.props('open')).toBe(true)
   })
 
-  it('does not render Send via Email button when user lacks email_send permission', async () => {
+  it('does not render the Send via Email button when user lacks email_send permission', async () => {
     mocks.hasPermission.mockImplementation((perm) => perm !== 'email_send')
     const wrapper = mountDetails(makeBook())
     await flushPromises()

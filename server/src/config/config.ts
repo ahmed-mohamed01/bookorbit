@@ -12,6 +12,12 @@ export const appConfig = registerAs('app', () => ({
   swaggerEnabled: parseBooleanFlag(process.env.SWAGGER_ENABLED, false),
   koboCloudscraperPython: process.env.KOBO_CLOUDSCRAPER_PYTHON?.trim() || undefined,
   koreaderPluginSourcePath: process.env.KOREADER_PLUGIN_PATH?.trim() || undefined,
+  whisperPath: process.env.WHISPER_PATH?.trim() || undefined,
+  whisperModel: process.env.WHISPER_MODEL?.trim() || undefined,
+  ffmpegPath: process.env.FFMPEG_PATH?.trim() || 'ffmpeg',
+  readingAlignmentEnabled: parseBooleanFlag(process.env.READING_ALIGNMENT_ENABLED, false),
+  readingAlignmentSampleIntervalSec: parsePositiveInteger(process.env.READING_ALIGNMENT_SAMPLE_INTERVAL_SEC, 1200),
+  readingAlignmentClipSeconds: parsePositiveInteger(process.env.READING_ALIGNMENT_CLIP_SECONDS, 15),
 }));
 
 export const dbConfig = registerAs('db', () => ({

@@ -34,6 +34,56 @@ each upstream merge is a short chore, not a project.**
    upstream code keeps writing in the other shape. A repair pass over a column you do not
    own is a loop you can never win: you control neither the writers nor when they run.
 
+## Reviewing changes: scope, dead code, and upstream reuse
+
+These rules apply to every review - pre-commit on a fork feature, and again during each upstream
+merge. Start by fixing the baseline: `git diff -w upstream/main`. Every finding is scoped to that
+diff - the code this fork adds or changes.
+
+1. **Dead / redundant / non-functional code is a finding only when it is *ours*.** Upstream's own
+   dead code, awkward code, or latent bugs are **out of scope**: do not flag them and never "fix"
+   them. We do not maintain upstream's internals, and touching an upstream file to tidy it only grows
+   the conflict surface - the opposite of the goal. Leave upstream files byte-identical to upstream
+   unless a hook genuinely earns its place (see "Guiding principle").
+
+2. **Fork code that duplicates upstream behaviour is redundant - delete it and call upstream.** If a
+   helper, method, or branch we added reproduces something upstream already does, and the behaviour is
+   **identical**, remove ours and route callers to the upstream function. Reinventing read-status
+   updates, progress/percent-read writes, percentage math, library-access checks, or book lookups that
+   upstream already exports is the canonical form of this finding.
+
+3. **This rule is strongest at merge time.** A merge is where the fork should get *smaller*, not
+   merely survive. When an upstream merge introduces - or newly exposes - a function that does what a
+   fork-added helper does, delete the fork helper and point its callers at upstream, provided the
+   behaviour is identical. Over successive merges this is how the fork surface shrinks instead of
+   drifting.
+
+4. **"Identical" is a high bar - judge behaviour, not signature.** Same inputs -> same outputs, same
+   side effects, same error and edge-case handling. If upstream's version differs subtly (different
+   rounding, different newest-wins / precedence semantics, or it swallows an error we deliberately
+   propagate - cf. the `audio.extractor.ts` try/catch removal under "Investigated and rejected") a raw
+   call is wrong.
+   But "not identical" does **not** mean "reinvent." First ask whether a **thin wrapper** - the
+   upstream call plus a small adapter for the difference - is *more maintainable than a standalone fork
+   implementation*. If it is, wrap upstream: the bulk of the logic stays on upstream's side and the
+   fork surface shrinks (this is the same footprint test as a seam - the wrapper must be smaller than
+   what it replaces). Only when even a wrapper is more code, or more fragile, than owning it outright
+   do you keep a fully separate fork implementation - and then comment *why* it diverges, so the next
+   reviewer does not "deduplicate" it back into a regression.
+
+5. **Deliberate code-moves are not duplication.** Extracting upstream code verbatim into a fork-only
+   file for reuse (e.g. `book-match.utils.ts`) is the sanctioned way to share upstream logic without
+   inverting layering - do not flag it as duplication, but honour its merge hazard note.
+
+6. **Plugin isolation is a review gate, not a nicety.** A fork feature must be removable: with its
+   module unregistered the full upstream app still builds and runs, and every upstream hook degrades
+   to a no-op. A change that makes upstream depend on fork code fails review regardless of correctness.
+
+**Stance.** Reviewers assume nothing is correct because tests pass or because it already merged. The
+bar is: robust, performant, and compliant with both the **feature objective** and these
+**fork-maintenance objectives**. Prefer several independent, adversarial reviews over one - they
+disagree in the useful places - then synthesise into a single ranked verdict.
+
 ## Enforce fork invariants at read time (worked example)
 
 ABS matching needs a canonical ASIN to look books up by. `book_metadata.audible_id` is an
@@ -96,6 +146,10 @@ pnpm test                                   # full suite
 
 git commit
 ```
+
+While resolving conflicts, apply **"Reviewing changes"** above: if the incoming upstream code now does,
+identically, what a fork-added helper does, replace the fork helper with a call to upstream rather than
+re-resolving around it. The merge is the moment to shrink the fork, not just re-carry it.
 
 **Migrations no longer need any merge step.** `server/src/db/migrations/` is
 byte-identical to upstream (see "Schema decoupling"), so upstream migrations flow in
@@ -186,6 +240,55 @@ exported) to inject the emitter. Nothing here is Audiobookshelf-specific - it fi
 KOReader and manual edits too - so it is a **generic upstream improvement and should be proposed
 upstream**. It survives plugin removal untouched. Carried because the ABS reread flip is what made the
 lag visible.
+
+## Reading-alignment overlay (second permanent feature)
+
+The fork carries a **second** overlay beside Audiobookshelf: **ebook <-> audiobook cross-format
+alignment**. A Whisper build samples the audiobook, matches transcripts to EPUB spine text, and stores
+anchors; a progress-sync listener projects progress across a linked pair, and an open-time resolver
+returns a precise ebook resume point. Upstream has no analogue, so this is maintained here indefinitely
+under the same rules as ABS.
+
+**Owned (fork-only) modules - never conflict:** `server/src/modules/reading-alignment/`,
+`server/src/modules/edition-link/`, and the client feature files (`features/reader/shared/composables/
+useCrossFormatResume.ts`, `features/reader/epub/composables/crossFormatResumeNav.ts`,
+`features/book/composables/useReadingAlignment.ts` / `useEditionLink.ts`, and the `*Control.vue`
+components).
+
+**Schema decoupling (same pattern as ABS):** three tables - `audiobook_alignment`,
+`audiobook_alignment_anchor`, `book_edition_links` - are applied at runtime by
+`ReadingAlignmentSchemaBootstrapService` and `EditionLinkSchemaBootstrapService` (`OnApplicationBootstrap`)
+from SQL embedded in each module's `schema/*-schema.ts`. They are **not** reachable from
+`db/schema/index.ts` (drizzle-kit ignores them; `db:generate` reports no changes), use `db.select()`,
+and add no migration to `server/src/db/migrations/`. `ReadingAlignmentSchemaBootstrapService` also resets
+interrupted `building` rows on boot.
+
+**Seams / hooks in shared files (keep minimal + generic):**
+
+| Shared file | Hook | Conflict cost |
+| --- | --- | --- |
+| `app.module.ts` | register `ReadingAlignmentModule` + `EditionLinkModule` | 2 lines, trivial |
+| `reader/epub/epub.service.ts` | `extractSpineText()` added + exported (spine text for matching/backfill) | real; a generic method, reused by the module - keep it generic |
+| `config/config.ts` | `whisperPath`/`whisperModel`/`ffmpegPath`/`readingAlignment*` on `appConfig` | additive |
+| `achievement-events.service.ts` + `koreader.service.ts` | `occurredAt` (effective activity time) on the progress event | **generic, shared with ABS**, additive/removable - propose upstream |
+| client `DetailsTab.vue` | `<LinkBookControl>` in the action bar | keep additive (do not relocate upstream buttons) |
+| client `ReadingLogTab.vue` / `ReadingAttemptHistory` | `<ReadingAlignmentControl>` via the generic `#actions` slot | clean slot pattern |
+| client `ReaderView.vue` | open-time `fetchEbookCrossFormatResume` + resume ladder | fork-owned logic invoked from the reader open path |
+| `Dockerfile` | `whisper-builder` stage compiles whisper.cpp `v1.9.1` (CPU-only, static) -> `whisper-cli`; runtime adds `libstdc++`/`libgomp` | isolated stage + one COPY |
+
+**Runtime deps (feature is OFF by default):** `whisper-cli` (bundled) + `ffmpeg` (already present) +
+a GGML model (NOT bundled - mount and set `WHISPER_MODEL`). Enable with `READING_ALIGNMENT_ENABLED=true`;
+`WHISPER_PATH` defaults to the bundled binary; `FFMPEG_PATH` defaults to `ffmpeg`. See `.env.example`.
+
+**Plugin removal:** unregister both modules in `app.module.ts`. The app still builds and runs: the
+resolver route 404s and the client falls back to its normal saved-position restore; the progress-sync
+listener simply isn't registered; the link/alignment controls hide when no pair exists. The fork Vue
+component files must remain for the client to compile (expected UI-registration coupling). The three
+tables are left in place, unused.
+
+**Merge notes:** the progress-sync projection into reading-state is the irreducible core coupling (like
+ABS). `extractSpineText` on `epub.service.ts` is the one seam worth watching on an upstream EPUB
+refactor. The `occurredAt` widening is shared with ABS - resolve it once.
 
 ## Investigated and rejected - do not re-chase
 

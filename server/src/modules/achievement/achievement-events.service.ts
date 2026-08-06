@@ -57,6 +57,10 @@ export interface BookProgressChangedPayload {
   // Optional: Kobo syncs progress at the book level and has no single relevant file id.
   bookFileId?: number;
   progress: number;
+  // Optional: the real activity time of this change. Emitters set it when a source reports progress
+  // that occurred earlier than delivery (e.g. KOReader's device timestamp) or intentionally freezes the
+  // progress row's updatedAt. Consumers that reason about recency should prefer it over the row time.
+  occurredAt?: Date;
   source: 'koreader' | 'kobo' | 'web_reader' | 'audiobookshelf';
 }
 

@@ -185,6 +185,7 @@ watch(
         >
           <RotateCcw class="size-3.5" /> Start reread
         </button>
+        <slot name="actions" />
       </div>
     </div>
 

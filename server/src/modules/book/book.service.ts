@@ -74,7 +74,11 @@ import { FileWriteService } from '../file-write/file-write.service';
 import { NarratorService } from '../narrator/narrator.service';
 import { UserBookNoteService } from '../user-book-note/user-book-note.service';
 import { UserBookStatusService, type AutoReadingActivity } from '../user-book-status/user-book-status.service';
-import { AchievementEventsService, ACHIEVEMENT_EVENT_BOOK_RATING_CHANGED } from '../achievement/achievement-events.service';
+import {
+  AchievementEventsService,
+  ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED,
+  ACHIEVEMENT_EVENT_BOOK_RATING_CHANGED,
+} from '../achievement/achievement-events.service';
 import { BookMetadataLockService } from '../book-metadata-lock/book-metadata-lock.service';
 import { BookQueryBuilder } from './book-query-builder.service';
 import { BookRepository } from './book.repository';
@@ -1949,6 +1953,15 @@ export class BookService {
       dto.percentage,
       strongRereadEvidence ? { origin: 'bookorbit', strongRereadEvidence: true } : {},
     );
+    if (previous == null || previous.percentage !== dto.percentage) {
+      this.achievementEvents?.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
+        userId,
+        bookId,
+        bookFileId: dto.currentFileId,
+        progress: dto.percentage,
+        source: 'web_reader',
+      });
+    }
   }
 
   async autoUpdateReadStatusForProgress(
@@ -2024,6 +2037,15 @@ export class BookService {
       dto.percentage,
       strongRereadEvidence ? { origin: 'bookorbit', strongRereadEvidence: true } : {},
     );
+    if (previous == null || previous.percentage !== dto.percentage) {
+      this.achievementEvents?.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
+        userId,
+        bookId: file.bookId,
+        bookFileId: fileId,
+        progress: dto.percentage,
+        source: 'web_reader',
+      });
+    }
   }
 
   async clearFileProgress(userId: number, fileId: number, user: RequestUser): Promise<void> {

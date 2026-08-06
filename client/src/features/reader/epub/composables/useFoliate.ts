@@ -4,6 +4,8 @@ import { useFoliateAnnotations } from './useFoliateAnnotations'
 import { useFoliateSelection } from './useFoliateSelection'
 import { useFoliateInput } from './useFoliateInput'
 import type { EpubBookInfo, EpubReaderSettings } from '@bookorbit/types'
+import type { CrossFormatEbookResume } from '../../shared/composables/useCrossFormatResume'
+import { resumeCrossFormat } from './crossFormatResumeNav'
 
 export interface RelocateDetail {
   cfi?: string | null
@@ -109,9 +111,17 @@ export function useFoliate(
     await customElements.whenDefined('foliate-view')
   }
 
-  async function open(bookId: number, fileId: number, format: string, cfi?: string | null, fallbackFraction?: number, options?: EpubOpenOptions) {
+  async function open(
+    bookId: number,
+    fileId: number,
+    format: string,
+    cfi?: string | null,
+    fallbackFraction?: number,
+    options?: EpubOpenOptions,
+    resume?: CrossFormatEbookResume | null,
+  ): Promise<{ crossFormatResumed: boolean }> {
     const el = container()
-    if (!el) return
+    if (!el) return { crossFormatResumed: false }
 
     loading.value = true
     error.value = null
@@ -136,7 +146,7 @@ export function useFoliate(
         getCFI?: (index: number, range: Range) => string | null
         addAnnotation?: (ann: { value: string }) => void
         deleteAnnotation?: (ann: { value: string }) => void
-        search?: (opts: { query: string }) => AsyncIterable<unknown>
+        search?: (opts: { query: string; index?: number }) => AsyncIterable<unknown>
         clearSearch?: () => void
       }
       view.style.cssText = 'width:100%;height:100%;display:block;'
@@ -272,7 +282,15 @@ export function useFoliate(
       }
       if (onApplyStyles) onApplyStyles(view.renderer)
       let didNavigate = false
-      if (cfi && !shouldRestoreByFraction) {
+      let crossFormatResumed = false
+
+      // Cross-format resume wins over the saved position: when the audiobook is ahead, jump to the exact
+      // passage the narration reached (a precise text search), not the reader's own last spot.
+      if (resume && !shouldRestoreByFraction) {
+        crossFormatResumed = await resumeCrossFormat(view, resume)
+        didNavigate = crossFormatResumed
+      }
+      if (!didNavigate && cfi && !shouldRestoreByFraction) {
         await view
           .goTo(cfi)
           .then((result) => {
@@ -295,12 +313,14 @@ export function useFoliate(
       }
       initialNavigationPending = false
       loading.value = false
+      return { crossFormatResumed }
     } catch (e) {
       console.error('[useFoliate]', e)
       clearTimeout(loadTimeoutId)
       error.value = e instanceof Error ? e.message : 'Failed to open book'
       loading.value = false
     }
+    return { crossFormatResumed: false }
   }
 
   function getViewEl() {
@@ -365,8 +385,15 @@ export function useFoliate(
     bookLanguage,
     isFixedLayout,
     view: viewRef,
-    open: (bookId: number, fileId: number, format: string, cfi?: string | null, fallbackFraction?: number, options?: EpubOpenOptions) =>
-      open(bookId, fileId, format, cfi, fallbackFraction, options),
+    open: (
+      bookId: number,
+      fileId: number,
+      format: string,
+      cfi?: string | null,
+      fallbackFraction?: number,
+      options?: EpubOpenOptions,
+      resume?: CrossFormatEbookResume | null,
+    ) => open(bookId, fileId, format, cfi, fallbackFraction, options, resume),
     prev: () => getViewEl()?.prev?.(),
     next: () => getViewEl()?.next?.(),
     goTo: (t: string | number) => getViewEl()?.goTo?.(t),

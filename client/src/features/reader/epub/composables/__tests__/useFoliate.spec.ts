@@ -227,7 +227,7 @@ describe('useFoliate.open', () => {
     mockGoTo.mockRejectedValue(new Error('invalid CFI'))
     const foliate = useFoliate(() => container)
 
-    await expect(foliate.open(1, 1, 'epub', 'epubcfi(/bad)', undefined)).resolves.toBeUndefined()
+    await expect(foliate.open(1, 1, 'epub', 'epubcfi(/bad)', undefined)).resolves.toEqual({ crossFormatResumed: false })
   })
 
   it('falls back to fraction when CFI navigation rejects', async () => {
