@@ -1,0 +1,10 @@
+# Vulnerabilities suppressed for the container image scan (auto-loaded by aquasecurity/trivy-action).
+# Keep each entry justified and dated; revisit periodically.
+#
+# CVE-2026-56852 - golang.org/x/text: DoS via invalid UTF-8 input (fixed in x/text 0.39.0).
+# Statically baked into the pre-built kepubify Go binaries under server/bin/kepubify/. No kepubify
+# release ships x/text >= 0.39.0 (latest v4.0.4 pins v0.3.6), so it cannot be cleared by updating the
+# binary; the only real fix is rebuilding kepubify from source. kepubify is a local, trusted-input
+# EPUB->KEPUB CLI (not network-facing), so the DoS risk is negligible. Added 2026-08-08 - revisit when
+# kepubify bumps x/text or we rebuild it from source.
+CVE-2026-56852
