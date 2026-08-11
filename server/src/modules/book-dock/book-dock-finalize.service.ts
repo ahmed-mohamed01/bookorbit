@@ -714,7 +714,7 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
       const pattern = libraryPattern ?? appPattern;
 
       if (pattern) {
-        const tokens = this.buildPatternTokens(meta, row.fileName, format);
+        const tokens = this.buildPatternTokens(meta, row.fileName, format, lib?.name);
         const resolved =
           lib?.organizationMode === 'book_per_file'
             ? resolveDownloadFilename(pattern, tokens, format, { sanitizeForCrossPlatform })
@@ -727,7 +727,7 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
   }
 
   private async resolveDestination(
-    library: { fileNamingPattern?: string | null; organizationMode?: string | null },
+    library: { name?: string | null; fileNamingPattern?: string | null; organizationMode?: string | null },
     folderPath: string,
     row: BookDockFileRow,
     format: string,
@@ -741,7 +741,7 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
     const meta = row.selectedMetadata ?? row.embeddedMetadata ?? {};
 
     if (pattern) {
-      const tokens = this.buildPatternTokens(meta, row.fileName, format);
+      const tokens = this.buildPatternTokens(meta, row.fileName, format, library.name);
       const resolved =
         library.organizationMode === 'book_per_file'
           ? resolveDownloadFilename(pattern, tokens, format, { sanitizeForCrossPlatform })
@@ -755,10 +755,11 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
     return join(folderPath, stem, row.fileName);
   }
 
-  private buildPatternTokens(meta: BookDockMetadata, fileName: string, format: string): Record<string, string> {
+  private buildPatternTokens(meta: BookDockMetadata, fileName: string, format: string, libraryName?: string | null): Record<string, string> {
     const stem = basename(fileName, extname(fileName));
     const tokens: Record<string, string> = { originalFilename: stem, extension: format };
 
+    if (libraryName) tokens['library'] = libraryName;
     if (meta.title) tokens['title'] = meta.title;
     if (meta.subtitle) tokens['subtitle'] = meta.subtitle;
     if (meta.publisher) tokens['publisher'] = meta.publisher;
