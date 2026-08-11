@@ -1,5 +1,21 @@
 import { mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const coverSearchPreferenceMock = await vi.hoisted(async () => {
+  const { ref } = await import('vue')
+  return {
+    defaultProvider: ref<'duckduckgo' | 'itunes' | 'all'>('duckduckgo'),
+    isLoading: ref(false),
+    isSaving: ref(false),
+    load: vi.fn<() => Promise<boolean>>(),
+    update: vi.fn<(provider: string) => Promise<boolean>>(),
+  }
+})
+
+vi.mock('@/features/book/composables/useCoverSearchPreferences', () => ({
+  useCoverSearchPreferences: () => coverSearchPreferenceMock,
+}))
+
 import AppearanceBookCoverSettings from '../AppearanceBookCoverSettings.vue'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 
@@ -20,12 +36,31 @@ function mountSettings() {
   })
 }
 
+beforeEach(() => {
+  vi.clearAllMocks()
+  coverSearchPreferenceMock.defaultProvider.value = 'duckduckgo'
+  coverSearchPreferenceMock.isLoading.value = false
+  coverSearchPreferenceMock.isSaving.value = false
+  coverSearchPreferenceMock.load.mockResolvedValue(true)
+  coverSearchPreferenceMock.update.mockResolvedValue(true)
+})
+
 afterEach(() => {
   showSpineOnComics.value = false
   bookDetailCoverTint.value = 'single'
 })
 
 describe('AppearanceBookCoverSettings', () => {
+  it('loads and saves the default cover search provider', async () => {
+    const wrapper = mountSettings()
+
+    expect(coverSearchPreferenceMock.load).toHaveBeenCalledOnce()
+
+    await wrapper.find('#default-cover-search-provider').setValue('itunes')
+
+    expect(coverSearchPreferenceMock.update).toHaveBeenCalledWith('itunes')
+  })
+
   it('reflects and toggles showSpineOnComics from the dedicated switch', async () => {
     const wrapper = mountSettings()
 

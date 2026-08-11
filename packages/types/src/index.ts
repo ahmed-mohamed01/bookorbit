@@ -58,3 +58,4 @@ export * from "./readwise";
 export * from "./storygraph";
 export * from "./path";
 export * from "./sidebar";
+export * from "./cover-search-preferences";

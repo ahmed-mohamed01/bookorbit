@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Search, Loader2, Image as ImageIcon, Check } from '@lucide/vue'
-import type { CoverSearchResult } from '@bookorbit/types'
+import type { CoverSearchDefaultProvider, CoverSearchResult } from '@bookorbit/types'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { useCoverSearchPreferences } from '@/features/book/composables/useCoverSearchPreferences'
 
 const props = defineProps<{
   open: boolean
@@ -13,6 +14,7 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const { defaultProvider, load: loadCoverSearchPreferences } = useCoverSearchPreferences()
 
 const emit = defineEmits<{
   'update:open': [boolean]
@@ -21,31 +23,45 @@ const emit = defineEmits<{
 
 const searchTitle = ref(props.initialTitle)
 const searchAuthor = ref(props.initialAuthor)
-const searchProvider = ref<'duckduckgo' | 'itunes' | 'audiobookcovers' | 'all'>('duckduckgo')
+type SearchProvider = CoverSearchDefaultProvider | 'audiobookcovers'
+
+const searchProvider = ref<SearchProvider>(defaultProvider.value)
 const isAudiobookSearch = ref(props.isAudiobook)
 const isSearching = ref(false)
 const searchResults = ref<CoverSearchResult[]>([])
 const hasSearched = ref(false)
+let openSequence = 0
 
 const resultAspectClass = computed(() => (isAudiobookSearch.value ? 'aspect-square' : 'aspect-[2/3]'))
 
+onMounted(() => {
+  void loadCoverSearchPreferences()
+})
+
 watch(
   () => props.open,
-  (val) => {
-    if (val) {
-      searchTitle.value = props.initialTitle
-      searchAuthor.value = props.initialAuthor
-      isAudiobookSearch.value = props.isAudiobook
-      searchResults.value = []
-      hasSearched.value = false
-    }
+  async (val) => {
+    const sequence = ++openSequence
+    if (!val) return
+
+    searchTitle.value = props.initialTitle
+    searchAuthor.value = props.initialAuthor
+    isAudiobookSearch.value = props.isAudiobook
+    searchResults.value = []
+    hasSearched.value = false
+
+    const openedWith = defaultProvider.value
+    searchProvider.value = openedWith
+
+    await loadCoverSearchPreferences()
+    if (sequence === openSequence && searchProvider.value === openedWith) searchProvider.value = defaultProvider.value
   },
 )
 
 function toggleAudiobookSearch() {
   isAudiobookSearch.value = !isAudiobookSearch.value
   if (!isAudiobookSearch.value && searchProvider.value === 'audiobookcovers') {
-    searchProvider.value = 'duckduckgo'
+    searchProvider.value = defaultProvider.value
   }
 }
 
@@ -140,6 +156,7 @@ function handleOpenChange(val: boolean) {
             </div>
             <button
               class="md:hidden flex items-center justify-center h-9 aspect-square rounded-lg bg-primary text-primary-foreground transition-all shadow-sm active:scale-[0.98] disabled:opacity-50 shrink-0"
+              :aria-label="t('book.detail.coverSearch.findCovers')"
               :disabled="isSearching"
               @click="performSearch"
             >

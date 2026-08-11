@@ -2,6 +2,19 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
 
+const coverSearchPreferenceMock = await vi.hoisted(async () => {
+  const { ref } = await import('vue')
+  return {
+    defaultProvider: ref<'duckduckgo' | 'itunes' | 'all'>('duckduckgo'),
+    isLoading: ref(false),
+    load: vi.fn<() => Promise<boolean>>(),
+  }
+})
+
+vi.mock('@/features/book/composables/useCoverSearchPreferences', () => ({
+  useCoverSearchPreferences: () => coverSearchPreferenceMock,
+}))
+
 import CoverSearchDrawer from './CoverSearchDrawer.vue'
 
 vi.mock('@/components/ui/sheet', () => ({
@@ -77,10 +90,74 @@ type DrawerVm = {
 describe('CoverSearchDrawer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    coverSearchPreferenceMock.defaultProvider.value = 'duckduckgo'
+    coverSearchPreferenceMock.isLoading.value = false
+    coverSearchPreferenceMock.load.mockResolvedValue(true)
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
+  })
+
+  describe('default provider preference', () => {
+    it('preloads the preference on mount so the provider is ready before the drawer opens', async () => {
+      coverSearchPreferenceMock.defaultProvider.value = 'itunes'
+
+      const wrapper = mountDrawer({ open: false })
+      await flushPromises()
+
+      expect(coverSearchPreferenceMock.load).toHaveBeenCalledOnce()
+
+      await wrapper.setProps({ open: true })
+      await flushPromises()
+
+      expect((wrapper.find('select').element as HTMLSelectElement).value).toBe('itunes')
+    })
+
+    it('leaves the search controls enabled while the preference loads', async () => {
+      const wrapper = mountDrawer({ open: false })
+      coverSearchPreferenceMock.load.mockReturnValueOnce(new Promise<boolean>(() => {}))
+
+      await wrapper.setProps({ open: true })
+
+      expect((wrapper.find('select').element as HTMLSelectElement).disabled).toBe(false)
+      expect(wrapper.findAll('button').every((button) => !(button.element as HTMLButtonElement).disabled)).toBe(true)
+    })
+
+    it('restores the saved provider instead of the previous manual choice when reopened', async () => {
+      coverSearchPreferenceMock.defaultProvider.value = 'itunes'
+      const wrapper = mountDrawer({ open: false })
+      await wrapper.setProps({ open: true })
+      await flushPromises()
+      await wrapper.find('select').setValue('all')
+
+      await wrapper.setProps({ open: false })
+      await wrapper.setProps({ open: true })
+      await flushPromises()
+
+      expect((wrapper.find('select').element as HTMLSelectElement).value).toBe('itunes')
+    })
+
+    it('keeps a manual provider choice made before a slow preference load resolves', async () => {
+      const wrapper = mountDrawer({ open: false })
+      await flushPromises()
+
+      let resolveLoad: (value: boolean) => void = () => {}
+      coverSearchPreferenceMock.load.mockReturnValueOnce(
+        new Promise<boolean>((resolve) => {
+          resolveLoad = resolve
+        }),
+      )
+
+      await wrapper.setProps({ open: true })
+      await wrapper.find('select').setValue('all')
+
+      coverSearchPreferenceMock.defaultProvider.value = 'itunes'
+      resolveLoad(true)
+      await flushPromises()
+
+      expect((wrapper.find('select').element as HTMLSelectElement).value).toBe('all')
+    })
   })
 
   describe('audiobook checkbox', () => {
@@ -281,6 +358,7 @@ describe('CoverSearchDrawer', () => {
       })
 
       const wrapper = mountDrawer()
+      await flushPromises()
       await wrapper.find('select').setValue('itunes')
       await (wrapper.vm as unknown as DrawerVm).performSearch()
       await flushPromises()

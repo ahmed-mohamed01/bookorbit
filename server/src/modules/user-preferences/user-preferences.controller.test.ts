@@ -1,5 +1,11 @@
 import type { Mocked } from 'vitest';
-import { EMPTY_CONTENT_FILTER_RULES, type DisplayPreferences, type LocalePreferences, type ThemePreferences } from '@bookorbit/types';
+import {
+  EMPTY_CONTENT_FILTER_RULES,
+  type CoverSearchPreferences,
+  type DisplayPreferences,
+  type LocalePreferences,
+  type ThemePreferences,
+} from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { UserPreferencesController } from './user-preferences.controller';
@@ -61,6 +67,10 @@ const validLocalePreferences: LocalePreferences = {
   locale: 'nl',
 };
 
+const validCoverSearchPreferences: CoverSearchPreferences = {
+  defaultProvider: 'itunes',
+};
+
 describe('UserPreferencesController', () => {
   let service: Mocked<UserPreferencesService>;
   let controller: UserPreferencesController;
@@ -70,9 +80,11 @@ describe('UserPreferencesController', () => {
       getThemePreferences: vi.fn(),
       getDisplayPreferences: vi.fn(),
       getLocalePreferences: vi.fn(),
+      getCoverSearchPreferences: vi.fn(),
       upsertThemePreferences: vi.fn(),
       upsertDisplayPreferences: vi.fn(),
       upsertLocalePreferences: vi.fn(),
+      upsertCoverSearchPreferences: vi.fn(),
     } as unknown as Mocked<UserPreferencesService>;
 
     controller = new UserPreferencesController(service);
@@ -134,6 +146,20 @@ describe('UserPreferencesController', () => {
     await controller.upsertDisplayPreferences({ settings: validDisplayPreferences as unknown as Record<string, unknown> }, user);
 
     expect(service.upsertDisplayPreferences).toHaveBeenCalledWith(99, validDisplayPreferences);
+  });
+
+  it('GET /cover-search returns the current user preference', async () => {
+    service.getCoverSearchPreferences.mockResolvedValueOnce(validCoverSearchPreferences);
+
+    await expect(controller.getCoverSearchPreferences(makeUser({ id: 11 }))).resolves.toEqual({ settings: validCoverSearchPreferences });
+    expect(service.getCoverSearchPreferences).toHaveBeenCalledWith(11);
+  });
+
+  it('PUT /cover-search forwards the current user id and settings', async () => {
+    const dto = { settings: validCoverSearchPreferences as unknown as Record<string, unknown> };
+
+    await expect(controller.upsertCoverSearchPreferences(dto, makeUser({ id: 42 }))).resolves.toBeUndefined();
+    expect(service.upsertCoverSearchPreferences).toHaveBeenCalledWith(42, validCoverSearchPreferences);
   });
 
   it('GET /locale returns null settings when no saved preferences exist', async () => {

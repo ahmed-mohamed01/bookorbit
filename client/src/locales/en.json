@@ -218,6 +218,12 @@
       },
       "bookCovers": {
         "title": "Book Covers",
+        "coverSearch": {
+          "label": "Default cover search provider",
+          "hint": "Choose the source selected when Find cover online opens. Saved to your account, so it applies on every device.",
+          "loadError": "Failed to load the default cover search provider",
+          "saveError": "Failed to save the default cover search provider"
+        },
         "displayMode": {
           "title": "Cover display mode",
           "hint": "Controls how real covers fit inside book slots when aspect ratios differ",

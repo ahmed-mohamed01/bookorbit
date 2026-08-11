@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { toast } from 'vue-sonner'
 import { Image } from '@lucide/vue'
+import { COVER_SEARCH_DEFAULT_PROVIDERS, type CoverSearchDefaultProvider } from '@bookorbit/types'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import {
   useDisplaySettings,
@@ -11,10 +13,24 @@ import {
   type BookSpineOverlay,
   type CardOverlayKey,
 } from '@/composables/useDisplaySettings'
+import { useCoverSearchPreferences } from '@/features/book/composables/useCoverSearchPreferences'
 
 const { t } = useI18n()
 
 const { cardOverlays, bookSpineOverlay, showSpineOnComics, bookShadowStrength, bookCoverDisplayMode, bookDetailCoverTint } = useDisplaySettings()
+const {
+  defaultProvider: defaultCoverSearchProvider,
+  isLoading: isCoverSearchPreferenceLoading,
+  isSaving: isCoverSearchPreferenceSaving,
+  load: loadCoverSearchPreferences,
+  update: updateCoverSearchPreferences,
+} = useCoverSearchPreferences()
+
+const coverSearchProviderOptions = computed<{ id: CoverSearchDefaultProvider; label: string }[]>(() => [
+  { id: 'duckduckgo', label: 'DuckDuckGo' },
+  { id: 'itunes', label: 'iTunes' },
+  { id: 'all', label: t('book.detail.coverSearch.allSources') },
+])
 
 const overlayOptions = computed<{ key: CardOverlayKey; label: string; hint: string }[]>(() => [
   {
@@ -137,6 +153,19 @@ function setBookCoverDisplayMode(mode: BookCoverDisplayMode) {
 function setBookDetailCoverTint(mode: BookDetailCoverTint) {
   bookDetailCoverTint.value = mode
 }
+
+async function handleDefaultCoverSearchProviderChange(event: Event) {
+  const value = (event.currentTarget as HTMLSelectElement).value
+  if (!COVER_SEARCH_DEFAULT_PROVIDERS.includes(value as CoverSearchDefaultProvider)) return
+
+  const saved = await updateCoverSearchPreferences(value as CoverSearchDefaultProvider)
+  if (!saved) toast.error(t('settings.appearance.bookCovers.coverSearch.saveError'))
+}
+
+onMounted(async () => {
+  const loaded = await loadCoverSearchPreferences()
+  if (!loaded) toast.error(t('settings.appearance.bookCovers.coverSearch.loadError'))
+})
 </script>
 
 <template>
@@ -145,6 +174,27 @@ function setBookDetailCoverTint(mode: BookDetailCoverTint) {
       {{ t('settings.appearance.bookCovers.title') }}
     </p>
     <div class="border border-border rounded-lg overflow-hidden divide-y divide-border mb-4 shadow-xs">
+      <div class="settings-row">
+        <div>
+          <label for="default-cover-search-provider" class="settings-label">
+            {{ t('settings.appearance.bookCovers.coverSearch.label') }}
+          </label>
+          <p class="settings-hint">
+            {{ t('settings.appearance.bookCovers.coverSearch.hint') }}
+          </p>
+        </div>
+        <select
+          id="default-cover-search-provider"
+          :value="defaultCoverSearchProvider"
+          class="h-9 min-w-40 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          :disabled="isCoverSearchPreferenceLoading || isCoverSearchPreferenceSaving"
+          @change="handleDefaultCoverSearchProviderChange"
+        >
+          <option v-for="provider in coverSearchProviderOptions" :key="provider.id" :value="provider.id">
+            {{ provider.label }}
+          </option>
+        </select>
+      </div>
       <div class="px-4 py-3.5 md:px-5 md:py-4 bg-card">
         <div>
           <p class="settings-label">

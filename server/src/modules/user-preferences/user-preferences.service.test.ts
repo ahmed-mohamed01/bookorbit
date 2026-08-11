@@ -1,6 +1,13 @@
 import { BadRequestException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Accent, DisplayPreferences, LocalePreferences, ServerFontPreferences, ThemePreferences } from '@bookorbit/types';
+import type {
+  Accent,
+  CoverSearchPreferences,
+  DisplayPreferences,
+  LocalePreferences,
+  ServerFontPreferences,
+  ThemePreferences,
+} from '@bookorbit/types';
 import { MAX_SERVER_FONTS, SUPPORTED_LOCALES } from '@bookorbit/types';
 
 import { UserPreferencesRepository } from './user-preferences.repository';
@@ -82,10 +89,16 @@ const validLocalePreferences: LocalePreferences = {
   locale: 'it',
 };
 
+const validCoverSearchPreferences: CoverSearchPreferences = {
+  defaultProvider: 'itunes',
+};
+
 const repo = {
   findByCategory:
     vi.fn<
-      (...args: [number, string]) => Promise<{ data: ThemePreferences | DisplayPreferences | LocalePreferences | ServerFontPreferences } | undefined>
+      (
+        ...args: [number, string]
+      ) => Promise<{ data: ThemePreferences | DisplayPreferences | LocalePreferences | ServerFontPreferences | CoverSearchPreferences } | undefined>
     >(),
   upsert: vi.fn<(...args: [number, string, Record<string, unknown>]) => Promise<void>>(),
   delete: vi.fn<(...args: [number, string]) => Promise<void>>(),
@@ -121,6 +134,40 @@ describe('UserPreferencesService', () => {
     repo.findByCategory.mockResolvedValueOnce({ data: validDisplayPreferences });
 
     await expect(service.getDisplayPreferences(7)).resolves.toEqual(validDisplayPreferences);
+  });
+
+  it('getCoverSearchPreferences returns the DuckDuckGo default when no preference exists', async () => {
+    await expect(service.getCoverSearchPreferences(7)).resolves.toEqual({ defaultProvider: 'duckduckgo' });
+    expect(repo.findByCategory).toHaveBeenCalledWith(7, 'cover-search');
+  });
+
+  it('getCoverSearchPreferences returns a saved provider', async () => {
+    repo.findByCategory.mockResolvedValueOnce({ data: validCoverSearchPreferences });
+
+    await expect(service.getCoverSearchPreferences(7)).resolves.toEqual(validCoverSearchPreferences);
+  });
+
+  it('getCoverSearchPreferences falls back safely when stored data is malformed', async () => {
+    repo.findByCategory.mockResolvedValueOnce({ data: { defaultProvider: 'unknown' } } as never);
+
+    await expect(service.getCoverSearchPreferences(7)).resolves.toEqual({ defaultProvider: 'duckduckgo' });
+  });
+
+  it.each(['duckduckgo', 'itunes', 'all'] as const)('upsertCoverSearchPreferences accepts %s', async (defaultProvider) => {
+    await expect(service.upsertCoverSearchPreferences(11, { defaultProvider })).resolves.toBeUndefined();
+    expect(repo.upsert).toHaveBeenCalledWith(11, 'cover-search', { defaultProvider });
+  });
+
+  it('upsertCoverSearchPreferences rejects a provider that is not valid for every book', async () => {
+    await expect(service.upsertCoverSearchPreferences(11, { defaultProvider: 'audiobookcovers' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(repo.upsert).not.toHaveBeenCalled();
+  });
+
+  it('upsertCoverSearchPreferences rejects unknown fields', async () => {
+    await expect(service.upsertCoverSearchPreferences(11, { ...validCoverSearchPreferences, unexpected: true })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(repo.upsert).not.toHaveBeenCalled();
   });
 
   it('getLocalePreferences returns null when repository has no row', async () => {

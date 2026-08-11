@@ -33,6 +33,18 @@ export class UserPreferencesController {
     await this.userPreferencesService.upsertDisplayPreferences(user.id, dto.settings);
   }
 
+  @Get('cover-search')
+  async getCoverSearchPreferences(@CurrentUser() user: RequestUser) {
+    const settings = await this.userPreferencesService.getCoverSearchPreferences(user.id);
+    return { settings };
+  }
+
+  @Put('cover-search')
+  @HttpCode(204)
+  async upsertCoverSearchPreferences(@Body() dto: UpsertUserPreferenceDto, @CurrentUser() user: RequestUser) {
+    await this.userPreferencesService.upsertCoverSearchPreferences(user.id, dto.settings);
+  }
+
   @Get('locale')
   async getLocalePreferences(@CurrentUser() user: RequestUser) {
     const settings = await this.userPreferencesService.getLocalePreferences(user.id);

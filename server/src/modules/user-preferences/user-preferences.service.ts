@@ -10,7 +10,9 @@ import {
   BOOK_VIEW_MODES,
   CARD_INFO_MODES,
   CARD_OVERLAY_KEYS,
+  COVER_SEARCH_DEFAULT_PROVIDERS,
   COVER_SIZE_SCOPES,
+  DEFAULT_COVER_SEARCH_PROVIDER,
   FONT_FAMILY_NAME_MAX_LENGTH,
   GRID_CARD_LABEL_FIELDS,
   MAX_SERVER_FONTS,
@@ -22,6 +24,7 @@ import {
   TABLE_DENSITIES,
   THEME_IDS,
   type DisplayPreferences,
+  type CoverSearchPreferences,
   type LocalePreferences,
   type ServerFontPreferences,
   type ThemePreferences,
@@ -81,6 +84,16 @@ const DISPLAY_PREFERENCES_SCHEMA = z
       });
     }
   });
+
+const COVER_SEARCH_PREFERENCES_SCHEMA = z
+  .object({
+    defaultProvider: z.enum(COVER_SEARCH_DEFAULT_PROVIDERS),
+  })
+  .strict();
+
+const COVER_SEARCH_DEFAULTS: CoverSearchPreferences = {
+  defaultProvider: DEFAULT_COVER_SEARCH_PROVIDER,
+};
 
 const LOCALE_PREFERENCES_SCHEMA = z
   .object({
@@ -225,6 +238,24 @@ export class UserPreferencesService {
   async getDisplayPreferences(userId: number): Promise<DisplayPreferences | null> {
     const row = await this.repo.findByCategory(userId, 'display');
     return row ? (row.data as DisplayPreferences) : null;
+  }
+
+  async getCoverSearchPreferences(userId: number): Promise<CoverSearchPreferences> {
+    const row = await this.repo.findByCategory(userId, 'cover-search');
+    const result = COVER_SEARCH_PREFERENCES_SCHEMA.safeParse(row?.data);
+    return result.success ? result.data : { ...COVER_SEARCH_DEFAULTS };
+  }
+
+  async upsertCoverSearchPreferences(userId: number, data: Record<string, unknown>): Promise<void> {
+    const result = COVER_SEARCH_PREFERENCES_SCHEMA.safeParse(data);
+    if (!result.success) {
+      const firstIssue = result.error.issues[0];
+      const issuePath = firstIssue?.path.length ? firstIssue.path.join('.') : 'settings';
+      const issueMessage = firstIssue?.message ?? 'Invalid settings payload';
+      throw new BadRequestException(`Invalid cover search preferences at "${issuePath}": ${issueMessage}`);
+    }
+
+    await this.repo.upsert(userId, 'cover-search', result.data);
   }
 
   async upsertThemePreferences(userId: number, data: Record<string, unknown>): Promise<void> {
