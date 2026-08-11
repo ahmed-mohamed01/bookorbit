@@ -127,7 +127,7 @@ export class MetadataFetchPipeline {
     const { preferences, registeredKeys, providerConfig } = await this.resolveProviderPreferenceContext(libraryId);
     const providerSelection = this.deriveProviderSet(preferences, registeredKeys, providerConfig);
     const searchParams = providerSelection.activeProviders.some((provider) => AUDIOBOOK_PROVIDER_KEYS.has(provider))
-      ? { ...params, isAudiobook: true }
+      ? { ...params, includeAudiobookProviders: true }
       : params;
     const candidates = providerSelection.activeProviders.length
       ? await firstValueFrom(this.fetchService.search(searchParams, providerSelection.activeProviders).pipe(toArray()), {

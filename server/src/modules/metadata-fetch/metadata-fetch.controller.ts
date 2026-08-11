@@ -73,10 +73,11 @@ export class MetadataFetchController {
     ]);
     const requestedAudiobookProvider = (dto.providers ?? []).some(isAudiobookProvider);
     const onlyAudiobookProviders = providerKeys.length > 0 && providerKeys.every(isAudiobookProvider);
-    const isAudiobook =
-      requestedAudiobookProvider || onlyAudiobookProviders
-        ? true
-        : (dto.isAudiobook ?? Boolean(existingProviderIds[MetadataProviderKey.AUDIBLE] || existingProviderIds[MetadataProviderKey.LIBROFM]));
+    const inferredIsAudiobook =
+      requestedAudiobookProvider ||
+      onlyAudiobookProviders ||
+      Boolean(existingProviderIds[MetadataProviderKey.AUDIBLE] || existingProviderIds[MetadataProviderKey.LIBROFM]);
+    const isAudiobook = dto.isAudiobook ?? inferredIsAudiobook;
 
     const params: MetadataSearchParams = {
       title: normalizeSearchTitle(dto.title),
@@ -86,6 +87,7 @@ export class MetadataFetchController {
       seriesIndex: storedContext?.seriesIndex ?? undefined,
       existingProviderIds,
       isAudiobook,
+      includeAudiobookProviders: isAudiobook || providerKeys.some(isAudiobookProvider),
     };
 
     const genreOptions = preferences.options?.genres;

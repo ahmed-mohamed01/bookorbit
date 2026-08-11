@@ -356,6 +356,7 @@ describe('BookDockIngestService', () => {
           title: expectedTitle,
           author: undefined,
           isbn: undefined,
+          isAudiobook: false,
         },
         {},
       );
@@ -384,9 +385,21 @@ describe('BookDockIngestService', () => {
           title: 'The Sandman #001',
           author: 'Neil Gaiman',
           isbn: '9781401284770',
+          isAudiobook: false,
         },
         {},
       );
+    });
+
+    it('searches audiobook editions for a docked audio file', async () => {
+      const { service, appSettings, repo, metadataFetchPipeline } = makeService();
+      appSettings.isBookDockAutoFetchEnabled.mockResolvedValue(true);
+      repo.findById.mockResolvedValue({ id: 8, fileName: 'dune.m4b', format: 'm4b', status: 'ready', embeddedMetadata: { title: 'Dune' } });
+      (metadataFetchPipeline as any).runWithSources = vi.fn().mockResolvedValue({ resolved: {}, sources: {} });
+
+      await (service as any).autoFetchMetadataAsync(8);
+
+      expect(metadataFetchPipeline.runWithSources).toHaveBeenCalledWith(expect.objectContaining({ isAudiobook: true }), {});
     });
 
     it('updates fetched metadata and confidence after pipeline resolution', async () => {

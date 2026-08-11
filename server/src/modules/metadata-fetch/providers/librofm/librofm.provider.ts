@@ -8,7 +8,7 @@ import { ProviderThrottleError } from '../../provider-throttle.error';
 import type { IdentifiableProvider } from '../metadata-provider';
 import type { MetadataSearchParams } from '../metadata-search-params';
 import { PROVIDER_DELAYS_MS, PROVIDER_LIMITS, PROVIDER_TIMEOUT_MS } from '../provider-constants';
-import { buildRequestSignal, normalizeMaxCandidates, sleep } from '../provider-utils';
+import { allowsAudiobookProviders, buildRequestSignal, normalizeMaxCandidates, sleep } from '../provider-utils';
 import { mapLibroFmAudiobook } from './librofm.mapper';
 import type { LibroFmDetailsResponse, LibroFmSearchResponse } from './librofm.types';
 
@@ -31,7 +31,7 @@ export class LibroFmProvider implements IdentifiableProvider {
 
   async search(params: MetadataSearchParams): Promise<MetadataCandidate[]> {
     const { enabled } = await this.providerConfig.getConfig().then((config) => config.librofm);
-    if (!enabled || !params.isAudiobook) return [];
+    if (!enabled || !allowsAudiobookProviders(params)) return [];
 
     const directId = params.existingProviderIds?.[MetadataProviderKey.LIBROFM] ?? params.isbn?.trim();
     if (directId) {

@@ -55,7 +55,7 @@ describe('ITunesProvider', () => {
       expect(result).toEqual([]);
     });
 
-    it('should fetch from iTunes and return mapped results', async () => {
+    it('should use the ebook entity when media type is omitted', async () => {
       const mockResult = {
         trackId: 123,
         trackName: 'Test Book',
@@ -77,6 +77,18 @@ describe('ITunesProvider', () => {
       expect(result[0].title).toBe('Test Book');
       expect(result[0].providerId).toBe('123');
       expect(result[0].coverUrl).toBe('https://example.com/10000x10000bb.jpg');
+    });
+
+    it('should use the ebook entity when media type is explicitly ebook', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ results: [] }),
+      });
+
+      await provider.search({ title: 'A Game of Thrones', isAudiobook: false });
+
+      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('entity=ebook'), expect.any(Object));
+      expect(global.fetch).not.toHaveBeenCalledWith(expect.stringContaining('entity=audiobook'), expect.any(Object));
     });
 
     it('should map cover to standard resolution when configured', async () => {
@@ -114,6 +126,7 @@ describe('ITunesProvider', () => {
 
       const result = await provider.search({ title: 'Audiobook', isAudiobook: true });
 
+      expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('entity=audiobook'), expect.any(Object));
       expect(result).toHaveLength(1);
       expect(result[0].providerId).toBe('456');
       expect(result[0].title).toBe('Audiobook Title');

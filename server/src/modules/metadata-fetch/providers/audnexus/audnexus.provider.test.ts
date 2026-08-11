@@ -69,6 +69,29 @@ describe('AudnexusProvider', () => {
     expect(result).toEqual([]);
   });
 
+  it('searches for an ebook when audiobook providers were explicitly requested', async () => {
+    global.fetch = vi.fn().mockImplementation((input: string | URL) => {
+      const url = String(input);
+      if (url === 'https://api.audnex.us/books/B0TEST12345') {
+        return Promise.resolve(jsonResponse({ asin: 'B0TEST12345', name: 'Artificial Condition' }));
+      }
+      if (url === 'https://api.audnex.us/books/B0TEST12345/chapters') {
+        return Promise.resolve(jsonResponse({ asin: 'B0TEST12345', chapters: [] }));
+      }
+      return Promise.reject(new Error(`Unexpected URL: ${url}`));
+    });
+
+    const result = await provider.search({
+      title: 'Artificial Condition',
+      isAudiobook: false,
+      includeAudiobookProviders: true,
+      existingProviderIds: { [MetadataProviderKey.AUDIBLE]: 'B0TEST12345' },
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].providerId).toBe('B0TEST12345');
+  });
+
   it('uses stored audible ids directly without hitting Audible search', async () => {
     global.fetch = vi.fn().mockImplementation((input: string | URL) => {
       const url = String(input);

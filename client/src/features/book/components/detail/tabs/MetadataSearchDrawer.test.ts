@@ -72,12 +72,12 @@ const MetadataSearchPanelStub = defineComponent({
   },
 })
 
-function makeBook(): BookDetail {
+function makeBook(files: BookDetail['files'] = []): BookDetail {
   return {
     id: 42,
     title: 'Dune',
     authors: [{ id: 1, name: 'Frank Herbert' }],
-    files: [],
+    files,
     genres: [],
     communityRatings: [],
     providerIds: {},
@@ -86,10 +86,14 @@ function makeBook(): BookDetail {
   } as unknown as BookDetail
 }
 
-function mountDrawer() {
+function makeFile(format: string, role: string): BookDetail['files'][number] {
+  return { id: 1, format, role } as unknown as BookDetail['files'][number]
+}
+
+function mountDrawer(files: BookDetail['files'] = []) {
   return mount(MetadataSearchDrawer, {
     props: {
-      book: makeBook(),
+      book: makeBook(files),
       lockedFields: [],
     },
     global: {
@@ -126,5 +130,21 @@ describe('MetadataSearchDrawer', () => {
     expect(metadataSearchMocks.toggleProvider).toHaveBeenCalledWith(MetadataProviderKey.GOOGLE)
     expect(metadataSearchMocks.clearProviderFilter).toHaveBeenCalledTimes(1)
     expect(metadataSearchMocks.search).toHaveBeenCalledTimes(1)
+  })
+
+  it('searches ebook metadata for a book whose primary file is an ebook', async () => {
+    const wrapper = mountDrawer([makeFile('epub', 'primary'), makeFile('m4b', 'content')])
+
+    await wrapper.find('[data-testid="search"]').trigger('click')
+
+    expect(metadataSearchMocks.search).toHaveBeenLastCalledWith(expect.objectContaining({ isAudiobook: false }))
+  })
+
+  it('searches audiobook metadata for a book whose primary file is audio', async () => {
+    const wrapper = mountDrawer([makeFile('m4b', 'primary'), makeFile('epub', 'content')])
+
+    await wrapper.find('[data-testid="search"]').trigger('click')
+
+    expect(metadataSearchMocks.search).toHaveBeenLastCalledWith(expect.objectContaining({ isAudiobook: true }))
   })
 })

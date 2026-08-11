@@ -9,7 +9,7 @@ import { ProviderThrottleError } from '../../provider-throttle.error';
 import { IdentifiableProvider } from '../metadata-provider';
 import { MetadataSearchParams } from '../metadata-search-params';
 import { PROVIDER_TIMEOUT_MS } from '../provider-constants';
-import { buildRequestSignal } from '../provider-utils';
+import { allowsAudiobookProviders, buildRequestSignal } from '../provider-utils';
 import { mapAudibleProduct } from './audible.mapper';
 import { AudibleSearchResponse } from './audible.types';
 import { normalizeAudibleDomain } from './normalize-audible-domain';
@@ -26,7 +26,7 @@ export class AudibleProvider implements IdentifiableProvider {
 
   async search(params: MetadataSearchParams): Promise<MetadataCandidate[]> {
     const { enabled, domain } = await this.providerConfig.getConfig().then((c) => c.audible);
-    if (!enabled || !params.isAudiobook) return [];
+    if (!enabled || !allowsAudiobookProviders(params)) return [];
     const normalizedDomain = normalizeAudibleDomain(domain);
 
     const query = this.buildQuery(params);

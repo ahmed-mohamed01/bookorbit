@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { X, Sparkles } from '@lucide/vue'
-import { isAudioFormat } from '@bookorbit/types'
+import { getBookMediaProfile } from '@bookorbit/types'
 import type { BookDetail, BookMetadataLockField, MetadataCandidate, MetadataProviderKey, MetadataSource } from '@bookorbit/types'
 import { useMetadataSearch } from '../../../composables/useMetadataSearch'
 import { useCoverVersions } from '../../../composables/useCoverVersions'
@@ -19,6 +19,7 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const { coverUrl } = useCoverVersions()
 const bookCoverUrl = computed(() => coverUrl(props.book.id, 'cover', props.book.updatedAt ?? props.book.addedAt))
+const isAudiobookSearch = computed(() => getBookMediaProfile(props.book.files).primaryMediaKind === 'audiobook')
 const searchDefaults = computed(() => ({
   title: props.book.title ?? undefined,
   author: props.book.authors[0]?.name ?? undefined,
@@ -79,8 +80,7 @@ function handleClose() {
 }
 
 function runMetadataSearch(params: { title: string; author: string; isbn: string }) {
-  const isAudiobook = props.book.files.some((f) => f.format != null && isAudioFormat(f.format))
-  search({ ...params, bookId: props.book.id, isAudiobook })
+  search({ ...params, bookId: props.book.id, isAudiobook: isAudiobookSearch.value })
 }
 
 function handleSearch(params: { title: string; author: string; isbn: string }) {

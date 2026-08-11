@@ -53,6 +53,25 @@ describe('LibroFmProvider', () => {
     expect(mockFetchWithThrottle).not.toHaveBeenCalled();
   });
 
+  it('searches for an ebook when audiobook providers were explicitly requested', async () => {
+    mockFetchWithThrottle.mockResolvedValue(
+      response({
+        data: {
+          audiobook: {
+            title: 'Dune',
+            isbn: 9781427201438,
+            audiobook_info: { narrators: ['Simon Vance'], duration: 75840 },
+          },
+        },
+      }),
+    );
+
+    const result = await makeProvider().search({ isbn: '9781427201438', isAudiobook: false, includeAudiobookProviders: true });
+
+    expect(result).toHaveLength(1);
+    expect(mockFetchWithThrottle).toHaveBeenCalled();
+  });
+
   it('uses an ISBN for a direct details lookup', async () => {
     mockFetchWithThrottle.mockResolvedValue(
       response({

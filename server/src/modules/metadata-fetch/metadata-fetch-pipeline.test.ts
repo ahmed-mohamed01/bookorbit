@@ -190,7 +190,7 @@ describe('MetadataFetchPipeline', () => {
     expect(fetchService.search).toHaveBeenCalledWith({ title: 'Query' }, [MetadataProviderKey.KOBO]);
   });
 
-  it('enables audiobook search when Field Rules select an audiobook provider', async () => {
+  it('lets Field Rules run an audiobook provider without switching the search to audiobook editions', async () => {
     const global = createPreferences((fields) => {
       fields.title = {
         enabled: true,
@@ -232,7 +232,8 @@ describe('MetadataFetchPipeline', () => {
         title: 'Yesteryear',
         author: 'Caro Claire Burke',
         isbn: '9780593804223',
-        isAudiobook: true,
+        isAudiobook: false,
+        includeAudiobookProviders: true,
       },
       [MetadataProviderKey.LIBROFM],
     );

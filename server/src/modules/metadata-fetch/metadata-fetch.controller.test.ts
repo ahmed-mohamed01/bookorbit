@@ -144,6 +144,7 @@ describe('MetadataFetchController', () => {
         isbn: '9780441172719',
         existingProviderIds: { [MetadataProviderKey.GOOGLE]: 'vol-1' },
         isAudiobook: false,
+        includeAudiobookProviders: false,
       },
       [MetadataProviderKey.GOOGLE, MetadataProviderKey.OPEN_LIBRARY],
     );
@@ -203,6 +204,7 @@ describe('MetadataFetchController', () => {
         isbn: undefined,
         existingProviderIds: {},
         isAudiobook: false,
+        includeAudiobookProviders: true,
       },
       [
         MetadataProviderKey.GOOGLE,
@@ -231,6 +233,127 @@ describe('MetadataFetchController', () => {
     await firstValueFrom(stream.pipe(toArray()));
 
     expect(service.search).toHaveBeenCalledWith(expect.objectContaining({ title: 'Dune' }), [MetadataProviderKey.KOBO]);
+  });
+
+  it.each([MetadataProviderKey.AUDIBLE, MetadataProviderKey.AUDNEXUS, MetadataProviderKey.LIBROFM])(
+    'preserves an explicit ebook media type when %s is requested alongside iTunes',
+    async (audiobookProvider) => {
+      registry.all.mockReturnValue([
+        { key: MetadataProviderKey.ITUNES, label: 'iTunes', identifiable: true },
+        { key: audiobookProvider, label: audiobookProvider, identifiable: true },
+      ] as never);
+      providerConfig.getConfig.mockResolvedValue(
+        makeProviderConfig({
+          itunes: { enabled: true, coverResolution: 'high' },
+          librofm: { enabled: true },
+        }),
+      );
+      service.getStoredProviderContext.mockResolvedValue({ libraryId: 5, providerIds: {} });
+      service.search.mockReturnValue(of());
+      const providers = [MetadataProviderKey.ITUNES, audiobookProvider];
+
+      const stream = await controller.stream(
+        {
+          bookId: 12,
+          title: 'A Game of Thrones',
+          author: 'George R.R. Martin',
+          isAudiobook: false,
+          providers,
+        },
+        user,
+      );
+      await firstValueFrom(stream.pipe(toArray()));
+
+      expect(service.search).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'A Game of Thrones',
+          author: 'George R.R. Martin',
+          isAudiobook: false,
+          includeAudiobookProviders: true,
+        }),
+        providers,
+      );
+    },
+  );
+
+  it('preserves an explicit ebook media type when field rules resolve to only audiobook providers', async () => {
+    service.getStoredProviderContext.mockResolvedValue({ libraryId: 5, providerIds: {} });
+    pipeline.getEffectiveProviderKeys.mockResolvedValue([MetadataProviderKey.AUDIBLE]);
+    service.search.mockReturnValue(of());
+
+    const stream = await controller.stream({ bookId: 44, title: 'Dune', isAudiobook: false }, user);
+    await firstValueFrom(stream.pipe(toArray()));
+
+    expect(service.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Dune',
+        isAudiobook: false,
+        includeAudiobookProviders: true,
+      }),
+      [MetadataProviderKey.AUDIBLE],
+    );
+  });
+
+  it.each([
+    [MetadataProviderKey.AUDIBLE, 'B0ABC12345'],
+    [MetadataProviderKey.LIBROFM, '9781234567890'],
+  ] as const)('preserves an explicit ebook media type when a stored %s id exists', async (provider, providerId) => {
+    service.getStoredProviderContext.mockResolvedValue({ libraryId: 8, providerIds: { [provider]: providerId } });
+    pipeline.getEffectiveProviderKeys.mockResolvedValue([MetadataProviderKey.ITUNES, provider]);
+    service.search.mockReturnValue(of());
+
+    const stream = await controller.stream({ bookId: 44, title: 'Dune', isAudiobook: false }, user);
+    await firstValueFrom(stream.pipe(toArray()));
+
+    expect(service.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        existingProviderIds: { [provider]: providerId },
+        isAudiobook: false,
+        includeAudiobookProviders: true,
+      }),
+      [MetadataProviderKey.ITUNES, provider],
+    );
+  });
+
+  it('preserves an explicit audiobook media type when only iTunes is requested', async () => {
+    registry.all.mockReturnValue([{ key: MetadataProviderKey.ITUNES, label: 'iTunes', identifiable: true }] as never);
+    providerConfig.getConfig.mockResolvedValue(makeProviderConfig({ itunes: { enabled: true, coverResolution: 'high' } }));
+    service.search.mockReturnValue(of());
+
+    const stream = await controller.stream(
+      {
+        title: 'A Game of Thrones',
+        isAudiobook: true,
+        providers: [MetadataProviderKey.ITUNES],
+      },
+      user,
+    );
+    await firstValueFrom(stream.pipe(toArray()));
+
+    expect(service.search).toHaveBeenCalledWith(expect.objectContaining({ isAudiobook: true }), [MetadataProviderKey.ITUNES]);
+  });
+
+  it('retains audiobook inference for mixed provider searches when the media type is omitted', async () => {
+    registry.all.mockReturnValue([
+      { key: MetadataProviderKey.ITUNES, label: 'iTunes', identifiable: true },
+      { key: MetadataProviderKey.AUDIBLE, label: 'Audible', identifiable: true },
+    ] as never);
+    providerConfig.getConfig.mockResolvedValue(makeProviderConfig({ itunes: { enabled: true, coverResolution: 'high' } }));
+    service.search.mockReturnValue(of());
+
+    const stream = await controller.stream(
+      {
+        title: 'A Game of Thrones',
+        providers: [MetadataProviderKey.ITUNES, MetadataProviderKey.AUDIBLE],
+      },
+      user,
+    );
+    await firstValueFrom(stream.pipe(toArray()));
+
+    expect(service.search).toHaveBeenCalledWith(expect.objectContaining({ isAudiobook: true }), [
+      MetadataProviderKey.ITUNES,
+      MetadataProviderKey.AUDIBLE,
+    ]);
   });
 
   it('infers audiobook search when audiobook providers are requested', async () => {

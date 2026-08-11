@@ -1,6 +1,19 @@
-import { buildRequestSignal, normalizeMaxCandidates, sleep, stripHtml } from './provider-utils';
+import { allowsAudiobookProviders, buildRequestSignal, normalizeMaxCandidates, sleep, stripHtml } from './provider-utils';
 
 describe('provider-utils', () => {
+  describe('allowsAudiobookProviders', () => {
+    it('follows the media type when the caller states no preference', () => {
+      expect(allowsAudiobookProviders({ isAudiobook: true })).toBe(true);
+      expect(allowsAudiobookProviders({ isAudiobook: false })).toBe(false);
+      expect(allowsAudiobookProviders({})).toBe(false);
+    });
+
+    it('runs audiobook providers for an ebook when they were asked for explicitly', () => {
+      expect(allowsAudiobookProviders({ isAudiobook: false, includeAudiobookProviders: true })).toBe(true);
+      expect(allowsAudiobookProviders({ isAudiobook: true, includeAudiobookProviders: false })).toBe(false);
+    });
+  });
+
   describe('normalizeMaxCandidates', () => {
     it('returns max when value is missing or invalid', () => {
       expect(normalizeMaxCandidates(undefined, 10)).toBe(10);

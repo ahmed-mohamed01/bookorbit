@@ -2,6 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy, Optional }
 import type { BookMetadataFetchReason } from '@bookorbit/types';
 import { MetadataProviderKey, NotificationType } from '@bookorbit/types';
 import { NotificationService } from '../notification/notification.service';
+import { resolveIsAudiobook } from '../../common/utils/book-media.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { normalizePublishedDate, publishedYearFromDateKey } from '../../common/utils/published-date.utils';
 import { BookReadService } from '../book/book-read.service';
@@ -177,7 +178,7 @@ export class BookMetadataFetchOrchestratorService implements OnApplicationBootst
         return;
       }
 
-      const { book, authorRows, genreRows, narratorRows, communityRatingRows } = found;
+      const { book, authorRows, genreRows, narratorRows, communityRatingRows, fileRows } = found;
       const meta = book.book_metadata;
       const libraryId = book.books.libraryId;
 
@@ -225,7 +226,7 @@ export class BookMetadataFetchOrchestratorService implements OnApplicationBootst
         seriesIndex: meta?.seriesIndex ?? undefined,
         existingProviderIds: this.collectProviderIds(meta ?? {}),
         hardcoverEditionId: meta?.hardcoverEditionId ?? undefined,
-        isAudiobook: (meta?.durationSeconds !== null && meta?.durationSeconds !== undefined) || !!meta?.audibleId || !!meta?.librofmId,
+        isAudiobook: resolveIsAudiobook(fileRows, meta),
         maxCandidatesPerProvider: 1,
       };
 

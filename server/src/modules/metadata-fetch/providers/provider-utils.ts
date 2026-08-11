@@ -1,4 +1,9 @@
 import { htmlToPlainText } from '../../../common/utils/html-to-text.utils';
+import { MetadataSearchParams } from './metadata-search-params';
+
+export function allowsAudiobookProviders(params: MetadataSearchParams): boolean {
+  return params.includeAudiobookProviders ?? params.isAudiobook ?? false;
+}
 
 export function normalizeMaxCandidates(value: number | undefined, maxResults: number): number {
   if (!Number.isFinite(value) || value == null) return maxResults;

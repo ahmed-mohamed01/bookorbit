@@ -12,7 +12,12 @@ export interface MetadataSearchParams {
   existingProviderIds?: Partial<Record<MetadataProviderKey, string>>;
   // Pins a Hardcover refresh to a previously chosen edition instead of re-deriving one by ISBN.
   hardcoverEditionId?: string;
+  // Media type of the edition being searched. Providers that carry both editions of a title use it to
+  // pick one (e.g. the iTunes ebook vs audiobook entity), so it must describe the book, not the provider set.
   isAudiobook?: boolean;
+  // Lets audiobook-only providers run for a book that is not an audiobook, for the flows where they were
+  // explicitly asked for. Defaults to isAudiobook.
+  includeAudiobookProviders?: boolean;
   // Hint for providers to cap deep candidate exploration in non-interactive flows
   // (e.g. auto-fill/background refresh where there is no manual candidate picking).
   maxCandidatesPerProvider?: number;

@@ -9,7 +9,7 @@ import { normalizeAudibleDomain } from '../audible/normalize-audible-domain';
 import { MetadataProvider } from '../metadata-provider';
 import { MetadataSearchParams } from '../metadata-search-params';
 import { PROVIDER_TIMEOUT_MS } from '../provider-constants';
-import { buildRequestSignal } from '../provider-utils';
+import { allowsAudiobookProviders, buildRequestSignal } from '../provider-utils';
 import { mapAudNexusBook } from './audnexus.mapper';
 import { AudNexusBook, AudNexusChaptersResponse } from './audnexus.types';
 
@@ -34,7 +34,7 @@ export class AudnexusProvider implements MetadataProvider {
 
   async search(params: MetadataSearchParams): Promise<MetadataCandidate[]> {
     const config = await this.providerConfig.getConfig();
-    if (!config.audnexus.enabled || !params.isAudiobook) return [];
+    if (!config.audnexus.enabled || !allowsAudiobookProviders(params)) return [];
     const audibleDomain = normalizeAudibleDomain(config.audible.domain);
 
     const audibleAsin =

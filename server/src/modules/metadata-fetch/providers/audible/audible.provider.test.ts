@@ -11,7 +11,8 @@ vi.mock('../../fetch-with-throttle', () => ({
   fetchWithThrottle: vi.fn(),
 }));
 
-vi.mock('../provider-utils', () => ({
+vi.mock('../provider-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../provider-utils')>()),
   buildRequestSignal: vi.fn(() => new AbortController().signal),
 }));
 
@@ -77,6 +78,20 @@ describe('AudibleProvider', () => {
 
     await expect(provider.search({ title: 'Dune', isAudiobook: false })).resolves.toEqual([]);
     expect(mockFetchWithThrottle).not.toHaveBeenCalled();
+  });
+
+  it('searches for an ebook when audiobook providers were explicitly requested', async () => {
+    const { provider } = makeProvider();
+    mockFetchWithThrottle.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ products: [{ asin: 'A1', title: 'Dune' }] }),
+    } as unknown as Response);
+
+    const result = await provider.search({ title: 'Dune', isAudiobook: false, includeAudiobookProviders: true });
+
+    expect(mockFetchWithThrottle).toHaveBeenCalled();
+    expect(result).toEqual([{ provider: 'audible', providerId: 'A1', title: 'Dune' }]);
   });
 
   it('returns empty results when there is no title/author query', async () => {
