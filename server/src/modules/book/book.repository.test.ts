@@ -218,6 +218,62 @@ describe('BookRepository', () => {
     });
   });
 
+  it('orders collapsed collection groups by their earliest membership position', async () => {
+    const execute = vi.fn().mockResolvedValue({ rows: [] });
+    const repo = new BookRepository({ execute } as never);
+
+    await repo.findCardsCollapsed({
+      where: undefined,
+      sort: [{ field: 'collectionOrder', dir: 'asc' }],
+      limit: 50,
+      offset: 0,
+      userId: 7,
+      defaultCollectionId: 42,
+    });
+
+    const query = new PgDialect().sqlToQuery(execute.mock.calls[0]![0]);
+    expect(query.sql).toContain('MIN(base.collection_position) AS first_collection_position');
+    expect(query.sql).toContain('COALESCE(sa.first_collection_position, base.collection_position) AS sort_collection_position');
+    expect(query.sql).toContain('ORDER BY sort_collection_position ASC NULLS LAST, r.id ASC');
+    expect(query.params).toContain(42);
+  });
+
+  // The order by names sort_collection_position unconditionally, so the column has to be selected
+  // even when no collection is in scope or the query fails to parse.
+  it('selects a null membership position when no collection is in scope', async () => {
+    const execute = vi.fn().mockResolvedValue({ rows: [] });
+    const repo = new BookRepository({ execute } as never);
+
+    await repo.findCardsCollapsed({
+      where: undefined,
+      sort: [{ field: 'title', dir: 'asc' }],
+      limit: 50,
+      offset: 0,
+      userId: 7,
+    });
+
+    const query = new PgDialect().sqlToQuery(execute.mock.calls[0]![0]);
+    expect(query.sql).toContain('NULL::bigint AS collection_position');
+    expect(query.sql).not.toContain('FROM "collection_books"');
+  });
+
+  it('rejects an unusable collection id on the collapsed path', async () => {
+    const execute = vi.fn().mockResolvedValue({ rows: [] });
+    const repo = new BookRepository({ execute } as never);
+
+    await expect(
+      repo.findCardsCollapsed({
+        where: undefined,
+        sort: [{ field: 'collectionOrder', dir: 'asc' }],
+        limit: 50,
+        offset: 0,
+        userId: 7,
+        defaultCollectionId: 0,
+      }),
+    ).rejects.toThrow('Invalid default collection id');
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('findCardIds applies card query pagination without running enrichment queries', async () => {
     const chain = makeSelectChain('offset', [{ id: 9 }, { id: 3 }]);
     const db = { select: vi.fn().mockReturnValue(chain) };

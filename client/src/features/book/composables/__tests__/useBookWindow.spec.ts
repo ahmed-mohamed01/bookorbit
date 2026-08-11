@@ -436,6 +436,98 @@ describe('useBookWindow', () => {
     expect(window.loadedCards.value).toHaveLength(20)
   })
 
+  // Blanking the slots and the total collapses the virtual list to zero height and back, which the
+  // user sees as a flash. It fires on every query change, including ones they did not ask for.
+  describe('query changes while rows are on screen', () => {
+    it('keeps the current rows and total until the new first block lands', async () => {
+      mockBlocks(250)
+      const { window, query } = makeWindow()
+      await flush()
+
+      let resolvePage: ((value: unknown) => void) | null = null
+      fetchMock.mockImplementationOnce(() => new Promise((resolve) => (resolvePage = resolve)))
+      query.value = { sort: [{ field: 'author', dir: 'desc' }] }
+      await nextTick()
+
+      expect(window.total.value).toBe(250)
+      expect(window.slots.value).toHaveLength(250)
+      expect(window.initialized.value).toBe(true)
+      expect(isBookPlaceholder(window.slots.value[0]!)).toBe(false)
+
+      resolvePage!({ ok: true, json: () => Promise.resolve(pageFor(0, 30)) })
+      await flush()
+
+      expect(window.total.value).toBe(30)
+      expect(window.slots.value).toHaveLength(30)
+    })
+
+    it('refetches the first block rather than treating the stale one as loaded', async () => {
+      mockBlocks(250)
+      const { window, query } = makeWindow()
+      await flush()
+      expect(requestedBlocks()).toEqual([0])
+
+      query.value = { sort: [{ field: 'author', dir: 'desc' }] }
+      await flush()
+
+      expect(requestedBlocks()).toEqual([0, 0])
+      expect(window.total.value).toBe(250)
+    })
+
+    it('drops rows past the new total instead of leaving stale ones behind', async () => {
+      mockBlocks(250)
+      const { window, query } = makeWindow()
+      await flush()
+      await window.ensureRange(100, 199)
+      await flush()
+      expect(isBookPlaceholder(window.slots.value[150]!)).toBe(false)
+
+      mockBlocks(120)
+      query.value = { sort: [{ field: 'author', dir: 'desc' }] }
+      await flush()
+
+      expect(window.slots.value).toHaveLength(120)
+      expect(window.slots.value.slice(100).every((slot) => isBookPlaceholder(slot))).toBe(true)
+    })
+
+    it('clears the stale rows when the replacement query fails', async () => {
+      mockBlocks(250)
+      const { window, query } = makeWindow()
+      await flush()
+
+      fetchMock.mockImplementationOnce(() => Promise.resolve({ ok: false, status: 500 }))
+      query.value = { sort: [{ field: 'author', dir: 'desc' }] }
+      await flush()
+
+      expect(window.slots.value).toEqual([])
+      expect(window.total.value).toBe(0)
+      expect(window.error.value).toBe('HTTP 500')
+    })
+
+    it('blanks when the endpoint changes, since another scope is not a stand-in', async () => {
+      mockBlocks(250)
+      const { window, endpoint } = makeWindow()
+      await flush()
+
+      fetchMock.mockImplementationOnce(() => new Promise(() => {}))
+      endpoint.value = '/api/v1/libraries/2/books'
+      await nextTick()
+
+      expect(window.slots.value).toEqual([])
+      expect(window.total.value).toBe(0)
+      expect(window.initialized.value).toBe(false)
+    })
+
+    it('blanks on the very first load so the skeletons show', async () => {
+      fetchMock.mockImplementationOnce(() => new Promise(() => {}))
+      const { window } = makeWindow()
+      await nextTick()
+
+      expect(window.initialized.value).toBe(false)
+      expect(window.slots.value).toEqual([])
+    })
+  })
+
   it('updateBook is a no-op when the id is not loaded', async () => {
     mockBlocks(20)
     const { window } = makeWindow()

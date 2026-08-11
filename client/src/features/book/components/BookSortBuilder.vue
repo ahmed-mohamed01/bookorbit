@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { ArrowDownAZ, ArrowUpAZ, ChevronDown, ChevronUp, Plus, Trash2 } from '@lucide/vue'
 import type { SortField, SortSpec } from '@bookorbit/types'
-import { SORT_FIELDS, customSortField } from '@bookorbit/types'
+import { SORT_FIELDS, customSortField, isCollectionScopedSortField } from '@bookorbit/types'
 import { sortFieldLabel } from '@/features/book/lib/filter-labels'
 import { useActiveCustomFields } from '@/features/book/composables/useActiveCustomFields'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -12,6 +12,8 @@ const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: SortSpec[]
+  /** Set when the builder sits inside a collection view, which is the only place a sort may order by collection membership. */
+  collectionScoped?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -27,12 +29,18 @@ const customSortFields = computed<SortField[]>(() =>
     .map((f) => customSortField(f.id)),
 )
 
-const allFields = computed<SortField[]>(() => [...SORT_FIELDS, ...customSortFields.value])
+// Smart scopes and home shelves are not scoped to one collection, so the server rejects a
+// membership sort from them and offering it would hand the user a sort that fails.
+const offerableFields = computed<SortField[]>(() =>
+  props.collectionScoped ? SORT_FIELDS : SORT_FIELDS.filter((f) => !isCollectionScopedSortField(f)),
+)
+
+const allFields = computed<SortField[]>(() => [...offerableFields.value, ...customSortFields.value])
 
 const usedFields = computed(() => new Set(props.modelValue.map((s) => s.field)))
 
 function availableFields(currentField: SortField): SortField[] {
-  return SORT_FIELDS.filter((f) => f === currentField || !usedFields.value.has(f))
+  return offerableFields.value.filter((f) => f === currentField || !usedFields.value.has(f))
 }
 
 function availableCustomFields(currentField: SortField): SortField[] {

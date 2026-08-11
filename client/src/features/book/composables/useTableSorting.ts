@@ -1,7 +1,22 @@
 import type { SortSpec } from '@bookorbit/types'
 import type { ColumnDef } from './tableColumnSchema'
+import { DEFAULT_SORT, copySort } from '../lib/sort-defaults'
 
-export function useTableSorting(getSort: () => SortSpec[], isSortEnabled: () => boolean, emitSort: (sort: SortSpec[]) => void) {
+/**
+ * `getDefaultSort` is where clearing a column sort lands. It has to follow the view rather than be
+ * hardcoded: a collection clears back to its membership order, and without that the third click on
+ * any header would strand the view on title with no way back.
+ */
+export function useTableSorting(
+  getSort: () => SortSpec[],
+  isSortEnabled: () => boolean,
+  emitSort: (sort: SortSpec[]) => void,
+  getDefaultSort: () => SortSpec[] = () => DEFAULT_SORT,
+) {
+  function clearedSort(): SortSpec[] {
+    return copySort(getDefaultSort())
+  }
+
   function isSortableColumn(col: ColumnDef): boolean {
     return !!col.sortField && isSortEnabled()
   }
@@ -27,7 +42,7 @@ export function useTableSorting(getSort: () => SortSpec[], isSortEnabled: () => 
         next = getSort().map((s) => (s.field === sortField ? { ...s, dir: 'desc' as const } : s))
       } else {
         next = getSort().filter((s) => s.field !== sortField)
-        if (next.length === 0) next = [{ field: 'title' as SortSpec['field'], dir: 'asc' }]
+        if (next.length === 0) next = clearedSort()
       }
       emitSort(next)
       return
@@ -40,14 +55,14 @@ export function useTableSorting(getSort: () => SortSpec[], isSortEnabled: () => 
     } else if (current.dir === 'asc') {
       next = [{ field: sortField as SortSpec['field'], dir: 'desc' }]
     } else {
-      next = [{ field: 'title' as SortSpec['field'], dir: 'asc' }]
+      next = clearedSort()
     }
     emitSort(next)
   }
 
   function removeSortField(field: string): void {
     const next = getSort().filter((s) => s.field !== field)
-    emitSort(next.length > 0 ? next : [{ field: 'title' as SortSpec['field'], dir: 'asc' }])
+    emitSort(next.length > 0 ? next : clearedSort())
   }
 
   return { isSortableColumn, getSortDir, getSortPriority, handleColumnSort, removeSortField }

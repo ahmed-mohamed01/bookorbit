@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref, nextTick } from 'vue'
+import type { SortSpec } from '@bookorbit/types'
 import { useViewSort } from '../useViewSort'
+import { COLLECTION_DEFAULT_SORT } from '../../lib/sort-defaults'
 
 const mockStorage = new Map<string, string>()
 
@@ -24,6 +26,33 @@ describe('useViewSort', () => {
 
     expect(sortModel.value).toEqual([{ field: 'title', dir: 'asc' }])
     expect(isDefaultSort.value).toBe(true)
+  })
+
+  it('takes a per-view default so collections open in membership order', () => {
+    const sort = ref([{ field: 'title' as const, dir: 'asc' as const }])
+    const entityId = ref<number | null>(8)
+
+    const { sortModel, isDefaultSort, resetSort } = useViewSort(sort, 'collection', entityId, COLLECTION_DEFAULT_SORT)
+
+    expect(sortModel.value).toEqual([{ field: 'collectionOrder', dir: 'asc' }])
+    expect(isDefaultSort.value).toBe(true)
+
+    sortModel.value = [{ field: 'author', dir: 'desc' }]
+    expect(isDefaultSort.value).toBe(false)
+
+    resetSort()
+    expect(sortModel.value).toEqual([{ field: 'collectionOrder', dir: 'asc' }])
+    expect(isDefaultSort.value).toBe(true)
+  })
+
+  it('hands out a copy of the default so one view cannot mutate another', () => {
+    const sort = ref<SortSpec[]>([])
+    const entityId = ref<number | null>(9)
+
+    const { sortModel } = useViewSort(sort, 'collection', entityId, COLLECTION_DEFAULT_SORT)
+    sortModel.value[0]!.dir = 'desc'
+
+    expect(COLLECTION_DEFAULT_SORT).toEqual([{ field: 'collectionOrder', dir: 'asc' }])
   })
 
   it('loads stored sort from localStorage on init', () => {

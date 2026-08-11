@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
 import { SQL, and, asc, count, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
 import { SUPPORTED_BOOK_FORMATS } from '../upload/upload-validator.service';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -752,6 +752,7 @@ export class BookRepository {
     offset: number;
     userId: number;
     customFieldTypes?: CustomMetadataFieldTypeMap;
+    defaultCollectionId?: number;
   }): Promise<{
     rows: Array<{
       id: number;
@@ -811,9 +812,23 @@ export class BookRepository {
     }[];
     total: number;
   }> {
-    const { where, sort, limit, offset, userId } = opts;
+    const { where, sort, limit, offset, userId, defaultCollectionId } = opts;
+    if (defaultCollectionId !== undefined && (!Number.isSafeInteger(defaultCollectionId) || defaultCollectionId <= 0)) {
+      throw new BadRequestException('Invalid default collection id');
+    }
     const whereFragment = this.visibleWhere(where);
     const orderBy = BookQueryBuilder.buildCollapseOrderBy(sort, userId, opts.customFieldTypes);
+    // The collectionOrder branch of the order by names sort_collection_position, so the column has
+    // to exist even for the library and smart scope queries that can never sort on it.
+    const collectionPosition =
+      defaultCollectionId === undefined
+        ? sql`NULL::bigint`
+        : sql`(
+            SELECT ${collectionBooks.position}
+            FROM ${collectionBooks}
+            WHERE ${collectionBooks.collectionId} = ${defaultCollectionId}
+              AND ${collectionBooks.bookId} = ${books.id}
+          )`;
 
     const result = await this.db.execute<CollapsedRawRow>(sql`
       WITH base_rows AS (
@@ -843,6 +858,7 @@ export class BookRepository {
           book_metadata.hardcover_id,
           book_metadata.hardcover_edition_id,
           book_metadata.metadata_score,
+          ${collectionPosition} AS collection_position,
           NULLIF(lower(btrim(book_metadata.series_name)), '') AS norm_series
         FROM books
         INNER JOIN libraries ON libraries.id = books.library_id
@@ -855,7 +871,8 @@ export class BookRepository {
           base.library_id,
           COUNT(*) AS book_count,
           SUM(CASE WHEN user_book_status.status = 'read' THEN 1 ELSE 0 END) AS read_count,
-          MAX(base.added_at) AS latest_added_at
+          MAX(base.added_at) AS latest_added_at,
+          MIN(base.collection_position) AS first_collection_position
         FROM base_rows base
         LEFT JOIN user_book_status ON user_book_status.book_id = base.id AND user_book_status.user_id = ${userId}
         WHERE base.series_id IS NOT NULL
@@ -980,6 +997,7 @@ export class BookRepository {
           base.primary_author_sort_name AS author_sort_name,
           COALESCE(base.norm_series, lower(base.title)) AS sort_title,
           COALESCE(sa.latest_added_at, base.added_at) AS sort_added_at,
+          COALESCE(sa.first_collection_position, base.collection_position) AS sort_collection_position,
           sa.book_count,
           sa.read_count,
           sc.cover_book_ids,

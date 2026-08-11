@@ -120,7 +120,7 @@ export class CollectionRepository {
         .innerJoin(books, eq(books.id, collectionBooks.bookId))
         .innerJoin(bookMetadata, eq(bookMetadata.bookId, books.id))
         .where(where)
-        .orderBy(collectionBooks.addedAt, collectionBooks.bookId)
+        .orderBy(collectionBooks.position)
         .limit(size)
         .offset(page * size),
       this.db
@@ -147,7 +147,7 @@ export class CollectionRepository {
       .innerJoin(books, eq(books.id, collectionBooks.bookId))
       .innerJoin(bookMetadata, eq(bookMetadata.bookId, books.id))
       .where(and(eq(collectionBooks.collectionId, collectionId), inArray(books.libraryId, libraryIds), ...(extraWhere ? [extraWhere] : [])))
-      .orderBy(collectionBooks.addedAt, collectionBooks.bookId);
+      .orderBy(collectionBooks.position);
     return rows.map((row) => row.bookId);
   }
 

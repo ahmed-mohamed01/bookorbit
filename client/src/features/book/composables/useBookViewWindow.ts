@@ -5,6 +5,7 @@ import { useBookProgressRefresh } from './useBookProgressRefresh'
 import { BOOK_WINDOW_BLOCK_SIZE, useBookWindow, type BookWindowQuery } from './useBookWindow'
 import { useJumpBuckets } from './useJumpBuckets'
 import { useJumpRailGutter } from './useJumpRailGutter'
+import { DEFAULT_SORT, copySort } from '../lib/sort-defaults'
 
 const LETTER_TEMPLATE = ['#', ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i))]
 const MIN_TOTAL_FOR_RAIL = 50
@@ -33,9 +34,10 @@ export function useBookViewWindow(options: {
   collapseEnabled?: Ref<boolean>
   q?: Ref<string>
   enabled?: Ref<boolean>
+  defaultSort?: SortSpec[]
 }) {
   const filter = ref<GroupRule | undefined>(undefined)
-  const sort = ref<SortSpec[]>([{ field: 'title', dir: 'asc' }])
+  const sort = ref<SortSpec[]>(copySort(options.defaultSort ?? DEFAULT_SORT))
 
   const query = computed<BookWindowQuery>(() => ({
     sort: sort.value,

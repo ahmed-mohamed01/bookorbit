@@ -46,6 +46,11 @@ export function useBookWindow(options: { endpoint: Ref<string | null>; query: Re
   let generation = 0
   let controller: AbortController | null = null
   let placeholderSeq = 0
+  let loadedEndpoint: string | null = null
+  // Set while the next query's first block is in flight and the previous query's rows are still on
+  // screen. Whichever block lands first rebuilds the slot array instead of writing into it, so the
+  // stale rows are replaced in one go rather than overwritten a block at a time.
+  let swapPending = false
 
   function makePlaceholder(): BookPlaceholder {
     placeholderSeq += 1
@@ -106,7 +111,8 @@ export function useBookWindow(options: { endpoint: Ref<string | null>; query: Re
       const data: BooksPage = await res.json()
       if (gen !== generation) return
 
-      const next = resizeSlots(slots.value, data.total)
+      const next = resizeSlots(swapPending ? [] : slots.value, data.total)
+      swapPending = false
       const start = block * BOOK_WINDOW_BLOCK_SIZE
       for (let i = 0; i < data.items.length && start + i < next.length; i++) {
         next[start + i] = data.items[i]!
@@ -117,6 +123,13 @@ export function useBookWindow(options: { endpoint: Ref<string | null>; query: Re
       failedAt.delete(block)
     } catch (e) {
       if (gen !== generation || signal?.aborted) return
+      // The rows still on screen belong to the query this request was replacing, so they cannot
+      // stand in for one that failed.
+      if (swapPending) {
+        swapPending = false
+        slots.value = []
+        total.value = 0
+      }
       failedAt.set(block, Date.now())
       error.value = e instanceof Error ? e.message : 'Failed to load books'
     } finally {
@@ -147,7 +160,9 @@ export function useBookWindow(options: { endpoint: Ref<string | null>; query: Re
       }
       const failed = failedAt.get(block)
       if (failed !== undefined && Date.now() - failed < FAILED_BLOCK_RETRY_MS) continue
-      if (initialized.value && blockFullyLoaded(block)) continue
+      // A pending swap means every loaded block belongs to the previous query, so "already loaded"
+      // is not a reason to skip it.
+      if (!swapPending && initialized.value && blockFullyLoaded(block)) continue
       pending.push(fetchBlock(block))
     }
     return pending.length > 0 ? Promise.all(pending).then(() => undefined) : Promise.resolve()
@@ -161,18 +176,44 @@ export function useBookWindow(options: { endpoint: Ref<string | null>; query: Re
     loading.value = false
   }
 
-  function reset() {
-    invalidateInFlight()
-    failedAt.clear()
+  function clearContent() {
+    swapPending = false
     slots.value = []
     total.value = 0
+  }
+
+  /**
+   * Starts the current query. When rows are already on screen they stay there until the first block
+   * of the new query lands: clearing the slots and the total collapses the virtual list to zero
+   * height and back, which reads as a flash and drops the scroll position. Every query change pays
+   * that cost today, including ones the user did not ask for, such as select mode suppressing
+   * series collapse.
+   */
+  function startQuery(preserveContent: boolean) {
+    invalidateInFlight()
+    failedAt.clear()
     error.value = null
+    loadedEndpoint = options.endpoint.value
     if (!options.endpoint.value) {
+      clearContent()
       initialized.value = true
       return
     }
-    initialized.value = false
+    if (preserveContent) {
+      swapPending = true
+    } else {
+      clearContent()
+      initialized.value = false
+    }
     ensureRange(0, BOOK_WINDOW_BLOCK_SIZE - 1)
+  }
+
+  function hasContentToPreserve(): boolean {
+    return initialized.value && slots.value.length > 0
+  }
+
+  function reset() {
+    startQuery(hasContentToPreserve())
   }
 
   function retry() {
@@ -266,7 +307,16 @@ export function useBookWindow(options: { endpoint: Ref<string | null>; query: Re
 
   const queryKey = computed(() => `${options.endpoint.value ?? ''}|${JSON.stringify(canonicalizeQueryValue(options.query.value))}`)
 
-  watch(queryKey, reset, { immediate: true })
+  watch(
+    queryKey,
+    () => {
+      // Rows from another library or collection are not a useful stand-in for this one, so only a
+      // query change within the same scope keeps them.
+      const sameScope = options.endpoint.value !== null && options.endpoint.value === loadedEndpoint
+      startQuery(sameScope && hasContentToPreserve())
+    },
+    { immediate: true },
+  )
 
   return {
     slots,

@@ -151,9 +151,7 @@ export const CUSTOM_FIELD_TYPE_OPERATORS: Record<CustomMetadataFieldType, RuleOp
  * union because narrowing to the field's own type would need a database lookup; a rule whose
  * operator does not suit its field matches nothing instead of being rejected.
  */
-export const CUSTOM_FIELD_OPERATORS: RuleOperator[] = [
-  ...new Set(Object.values(CUSTOM_FIELD_TYPE_OPERATORS).flat()),
-];
+export const CUSTOM_FIELD_OPERATORS: RuleOperator[] = [...new Set(Object.values(CUSTOM_FIELD_TYPE_OPERATORS).flat())];
 
 export const RULE_OPERATORS: RuleOperator[] = [
   "contains",
@@ -265,7 +263,8 @@ export type StaticSortField =
   | "finishedAt"
   | "random"
   | "language"
-  | "metadataScore";
+  | "metadataScore"
+  | "collectionOrder";
 
 /**
  * A user-defined custom metadata field, referenced by its numeric id.
@@ -303,7 +302,15 @@ export const SORT_FIELDS: StaticSortField[] = [
   "random",
   "language",
   "metadataScore",
+  "collectionOrder",
 ];
+
+/**
+ * Sort fields that only resolve inside a collection query, where the server knows
+ * whose membership order to read. Pickers offered outside a collection must exclude
+ * them, and the server rejects them when no collection scope is supplied.
+ */
+export const COLLECTION_SCOPED_SORT_FIELDS: StaticSortField[] = ["collectionOrder"];
 
 export type SortSpec = {
   field: SortField;
@@ -333,6 +340,15 @@ export function parseCustomSortFieldId(field: string): number | null {
 
 export function isSortField(field: string): field is SortField {
   return (SORT_FIELDS as string[]).includes(field) || isCustomSortField(field);
+}
+
+export function isCollectionScopedSortField(field: string): boolean {
+  return (COLLECTION_SCOPED_SORT_FIELDS as string[]).includes(field);
+}
+
+/** True when any tier of the sort can only be resolved inside a collection query. */
+export function hasCollectionScopedSort(sort: SortSpec[]): boolean {
+  return sort.some((spec) => isCollectionScopedSortField(spec.field));
 }
 
 export function customRuleField(fieldId: number): CustomRuleField {

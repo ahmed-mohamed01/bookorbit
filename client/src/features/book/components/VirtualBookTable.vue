@@ -39,6 +39,7 @@ import { BOOK_METADATA_LOCK_FIELDS } from '@bookorbit/types'
 import { isBookPlaceholder, type BookSlot } from '@/features/book/composables/useBookWindow'
 import { useNarratorSearch } from '@/features/book/composables/useNarratorSearch'
 import { sortFieldLabel } from '@/features/book/lib/filter-labels'
+import { DEFAULT_SORT } from '@/features/book/lib/sort-defaults'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import { useActiveCustomFields } from '@/features/book/composables/useActiveCustomFields'
 import { useI18n } from 'vue-i18n'
@@ -49,6 +50,7 @@ const props = withDefaults(
   defineProps<{
     books: BookSlot[]
     sort: SortSpec[]
+    defaultSort?: SortSpec[]
     viewType: TableViewType
     libraryId?: number
     selectionMode?: boolean
@@ -139,6 +141,7 @@ const { getSortDir, handleColumnSort, removeSortField } = useTableSorting(
   () => props.sort,
   () => props.sortable ?? true,
   (sort) => emit('update:sort', sort),
+  () => props.defaultSort ?? DEFAULT_SORT,
 )
 const { getQuickFilterOptions, buildQuickFilterRule } = useTableQuickFilters(props.viewType)
 const { getCellValue, isCellLocked, isCellReadOnly, isMandatoryFieldEmpty, isBookFileMissing, getPinnedCellBackground } = useTableCellHelpers(

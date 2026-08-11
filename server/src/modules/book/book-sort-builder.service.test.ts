@@ -32,6 +32,46 @@ describe('BookSortBuilder', () => {
     expect(result[0]).toMatchObject({ type: 'sql', text: ' ASC NULLS LAST' });
   });
 
+  it('still falls back to title for an empty sort inside a collection query', () => {
+    const result = service.build([], 7, undefined, { defaultCollectionId: 42 });
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ type: 'sql', text: ' ASC NULLS LAST' });
+    expect(result[0]?.values).not.toContain(42);
+  });
+
+  it('builds collectionOrder as a correlated lookup of the membership position', () => {
+    const raw = (sql as unknown as { raw: vi.Mock }).raw;
+
+    const result = service.build([{ field: 'collectionOrder', dir: 'asc' }], 7, undefined, { defaultCollectionId: 42 });
+
+    expect(result).toHaveLength(2);
+    expect(result[0]?.text).toContain('SELECT');
+    expect(result[0]?.text).toContain('NULLS LAST');
+    expect(result[0]?.values).toContain(42);
+    expect(raw).toHaveBeenCalledWith('ASC');
+  });
+
+  it('honours a descending collectionOrder', () => {
+    const raw = (sql as unknown as { raw: vi.Mock }).raw;
+
+    service.build([{ field: 'collectionOrder', dir: 'desc' }], 7, undefined, { defaultCollectionId: 42 });
+
+    expect(raw).toHaveBeenCalledWith('DESC');
+  });
+
+  it('rejects collectionOrder outside a collection scope', () => {
+    expect(() => service.build([{ field: 'collectionOrder', dir: 'asc' }], 7)).toThrow(
+      new BadRequestException('collectionOrder sort requires a collection scope'),
+    );
+  });
+
+  it('rejects collectionOrder with an unusable collection id', () => {
+    expect(() => service.build([{ field: 'collectionOrder', dir: 'asc' }], 7, undefined, { defaultCollectionId: 0 })).toThrow(
+      new BadRequestException('Invalid collection id for collectionOrder sort'),
+    );
+  });
+
   it('builds simple field sorts for title asc and desc', () => {
     const raw = (sql as unknown as { raw: vi.Mock }).raw;
 

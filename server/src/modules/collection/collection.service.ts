@@ -217,7 +217,7 @@ export class CollectionService {
 
   async getBooks(id: number, user: RequestUser, page: number, size: number, collapseSeries?: boolean, q?: string): Promise<BooksPage> {
     return this.queryBooks(id, user, {
-      sort: [],
+      sort: [{ field: 'collectionOrder', dir: 'asc' }],
       pagination: { page, size },
       ...(collapseSeries ? { collapseSeries: true } : {}),
       ...(q?.trim() ? { q: q.trim() } : {}),
@@ -232,7 +232,7 @@ export class CollectionService {
     );
     try {
       const where = await this.buildBooksWhere(id, user, query);
-      const page = await this.bookService.executeBooksQuery(user.id, where, query);
+      const page = await this.bookService.executeBooksQuery(user.id, where, query, { defaultCollectionId: id });
 
       this.logger.log(
         `[${event}] [end] collectionId=${id} durationMs=${Date.now() - startedAt} total=${page.total} itemCount=${page.items.length} - query collection books completed`,

@@ -1,4 +1,4 @@
-import { index, boolean, integer, pgTable, primaryKey, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { bigserial, index, boolean, integer, pgTable, primaryKey, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
 
 import { books } from './books';
 import { users } from './auth';
@@ -37,6 +37,13 @@ export const collectionBooks = pgTable(
       .notNull()
       .references(() => books.id, { onDelete: 'cascade' }),
     addedAt: timestamp('added_at', { withTimezone: true }).defaultNow().notNull(),
+    // `added_at` defaults to now(), which is the transaction timestamp, so every book added in
+    // one request shares it. This sequence is what actually keeps membership in insertion order.
+    position: bigserial('position', { mode: 'number' }),
   },
-  (table) => [primaryKey({ columns: [table.collectionId, table.bookId] }), index('collection_books_book_id_idx').on(table.bookId)],
+  (table) => [
+    primaryKey({ columns: [table.collectionId, table.bookId] }),
+    index('collection_books_book_id_idx').on(table.bookId),
+    index('collection_books_collection_position_idx').on(table.collectionId, table.position),
+  ],
 );

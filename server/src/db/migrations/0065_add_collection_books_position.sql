@@ -1,0 +1,2 @@
+ALTER TABLE "collection_books" ADD COLUMN "position" bigserial NOT NULL;--> statement-breakpoint
+CREATE INDEX "collection_books_collection_position_idx" ON "collection_books" USING btree ("collection_id","position");

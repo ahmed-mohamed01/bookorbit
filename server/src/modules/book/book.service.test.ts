@@ -4472,6 +4472,50 @@ describe('BookService', () => {
       expect(result).toEqual({ items: [], total: 0, page: 0, size: 50 });
     });
 
+    it('passes collection ordering context to an uncollapsed collectionOrder query', async () => {
+      const { service, bookRepo, queryBuilder } = makeService();
+      const query: BookQuery = {
+        pagination: { page: 0, size: 50 },
+        sort: [{ field: 'collectionOrder', dir: 'asc' }],
+        filter: undefined,
+        collapseSeries: false,
+      };
+      queryBuilder.buildOrderBy.mockReturnValue('collection-order');
+      bookRepo.findCards.mockResolvedValue(emptyCardQueryResult);
+
+      await service.executeBooksQuery(12, undefined, query, { defaultCollectionId: 42 });
+
+      expect(queryBuilder.buildOrderBy).toHaveBeenCalledWith(query.sort, 12, undefined, { defaultCollectionId: 42 });
+      expect(bookRepo.findCards).toHaveBeenCalledWith(expect.objectContaining({ orderBy: 'collection-order' }));
+    });
+
+    it('rejects collectionOrder when the query is not scoped to a collection', async () => {
+      const { service, bookRepo } = makeService();
+      const query: BookQuery = {
+        pagination: { page: 0, size: 50 },
+        sort: [{ field: 'collectionOrder', dir: 'asc' }],
+        filter: undefined,
+        collapseSeries: false,
+      };
+
+      await expect(service.executeBooksQuery(12, undefined, query)).rejects.toThrow('This sort is only available inside a collection');
+      expect(bookRepo.findCards).not.toHaveBeenCalled();
+    });
+
+    it('rejects collectionOrder on the collapsed path too', async () => {
+      const { service, bookRepo } = makeService();
+      vi.spyOn(BookQueryBuilder, 'hasSeriesSelectionFilter').mockReturnValue(false);
+      const query: BookQuery = {
+        pagination: { page: 0, size: 50 },
+        sort: [{ field: 'collectionOrder', dir: 'asc' }],
+        filter: undefined,
+        collapseSeries: true,
+      };
+
+      await expect(service.executeBooksQuery(12, undefined, query)).rejects.toThrow('This sort is only available inside a collection');
+      expect(bookRepo.findCardsCollapsed).not.toHaveBeenCalled();
+    });
+
     it('returns results from findCardsCollapsed when collapseSeries is true', async () => {
       const { service, bookRepo, queryBuilder } = makeService();
       const hasSeriesSelectionFilterSpy = vi.spyOn(BookQueryBuilder, 'hasSeriesSelectionFilter').mockReturnValue(false);
@@ -4497,6 +4541,30 @@ describe('BookService', () => {
       expect(bookRepo.findCards).not.toHaveBeenCalled();
       expect(queryBuilder.buildOrderBy).not.toHaveBeenCalled();
       expect(result).toEqual({ items: [], total: 0, page: 1, size: 25 });
+    });
+
+    it('passes collection ordering context to a collapsed collectionOrder query', async () => {
+      const { service, bookRepo } = makeService();
+      vi.spyOn(BookQueryBuilder, 'hasSeriesSelectionFilter').mockReturnValue(false);
+      const query: BookQuery = {
+        pagination: { page: 0, size: 50 },
+        sort: [{ field: 'collectionOrder', dir: 'asc' }],
+        filter: undefined,
+        collapseSeries: true,
+      };
+      bookRepo.findCardsCollapsed.mockResolvedValue(emptyCardQueryResult);
+
+      await service.executeBooksQuery(12, undefined, query, { defaultCollectionId: 42 });
+
+      expect(bookRepo.findCardsCollapsed).toHaveBeenCalledWith({
+        where: undefined,
+        sort: query.sort,
+        limit: 50,
+        offset: 0,
+        userId: 12,
+        customFieldTypes: undefined,
+        defaultCollectionId: 42,
+      });
     });
 
     it('resolves custom metadata field types for custom sort fields', async () => {

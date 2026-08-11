@@ -36,6 +36,7 @@ import {
   MetadataProviderKey,
   Permission,
   customSortFieldIds,
+  hasCollectionScopedSort,
   isAudioFormat,
   isSortField,
   jumpRailStrategyForSort,
@@ -108,6 +109,10 @@ import type { SetStatusDto } from '../user-book-status/dto/set-status.dto';
 
 type SeriesCollapseQueryOptions = {
   seriesSelectionFilter: GroupRule | undefined;
+};
+
+type BookQueryExecutionOptions = Partial<SeriesCollapseQueryOptions> & {
+  defaultCollectionId?: number;
 };
 
 const METADATA_UPDATE_FAILPOINTS = [
@@ -1064,15 +1069,15 @@ export class BookService {
     return this.customMetadataService.getActiveFieldTypes(fieldIds);
   }
 
-  async executeBooksQuery(
-    userId: number,
-    where: SQL | undefined,
-    query: BookQuery,
-    collapseOptions?: SeriesCollapseQueryOptions,
-  ): Promise<BooksPage> {
+  async executeBooksQuery(userId: number, where: SQL | undefined, query: BookQuery, options?: BookQueryExecutionOptions): Promise<BooksPage> {
     const start = Date.now();
     const { page, size } = query.pagination;
-    const seriesSelectionFilter = collapseOptions ? collapseOptions.seriesSelectionFilter : query.filter;
+    if (hasCollectionScopedSort(query.sort) && options?.defaultCollectionId === undefined) {
+      throw new BadRequestException('This sort is only available inside a collection');
+    }
+    // An absent key means "fall back to the query filter"; a present key set to undefined means the
+    // caller resolved the selection filter to nothing, which is not the same thing.
+    const seriesSelectionFilter = options && 'seriesSelectionFilter' in options ? options.seriesSelectionFilter : query.filter;
     const shouldCollapse = query.collapseSeries === true && !BookQueryBuilder.hasSeriesSelectionFilter(seriesSelectionFilter);
 
     const customFieldTypes = await this.resolveCustomSortFieldTypes(query.sort);
@@ -1086,6 +1091,7 @@ export class BookService {
           offset: page * size,
           userId,
           customFieldTypes,
+          ...(options?.defaultCollectionId !== undefined ? { defaultCollectionId: options.defaultCollectionId } : {}),
         });
       // Collapsed rows render BookTableCollapsedSeriesCell which does not display custom metadata.
       const result = {
@@ -1113,7 +1119,10 @@ export class BookService {
       return result;
     }
 
-    const orderBy = this.queryBuilder.buildOrderBy(query.sort, userId, customFieldTypes);
+    const orderBy =
+      options?.defaultCollectionId !== undefined
+        ? this.queryBuilder.buildOrderBy(query.sort, userId, customFieldTypes, { defaultCollectionId: options.defaultCollectionId })
+        : this.queryBuilder.buildOrderBy(query.sort, userId, customFieldTypes);
     const { rows, authorRows, fileRows, genreRows, tagRows, progressRows, statusRows, narratorRows, seriesMembershipRows, total } =
       await this.bookRepo.findCards({
         where,

@@ -3,8 +3,22 @@ import { computed, onMounted, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { formatNumber } from '@/i18n/formatters'
-import { AlertTriangle, CheckSquare, FileSpreadsheet, FolderOpen, Layers, Pencil, Search, SlidersHorizontal, Square, X } from '@lucide/vue'
+import {
+  AlertTriangle,
+  ArrowUpDown,
+  CheckSquare,
+  FileSpreadsheet,
+  FolderOpen,
+  Layers,
+  Pencil,
+  Search,
+  SlidersHorizontal,
+  Square,
+  X,
+} from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import BookSortBuilder from '@/features/book/components/BookSortBuilder.vue'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import VirtualBookGrid from '@/features/book/components/VirtualBookGrid.vue'
 import BookListRow from '@/features/book/components/BookListRow.vue'
@@ -33,6 +47,7 @@ import { useViewDisplaySettings } from '@/composables/useViewDisplaySettings'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { DEFAULT_COVER_ASPECT_RATIO } from '@/features/book/lib/cover-aspect-ratio'
 import { useViewSort } from '@/features/book/composables/useViewSort'
+import { COLLECTION_DEFAULT_SORT } from '@/features/book/lib/sort-defaults'
 import { useScrollRestoreOnActivate } from '@/features/book/composables/useScrollRestoreOnActivate'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
@@ -118,8 +133,14 @@ const {
   railViewport: mainRef,
   collapseEnabled: effectiveCollapseEnabled,
   q: debouncedQuery,
+  defaultSort: COLLECTION_DEFAULT_SORT,
 })
-const { sortModel: tableSortModel } = useViewSort(tableSort, 'collection', collectionId)
+const {
+  sortModel: tableSortModel,
+  isDefaultSort,
+  sortSummary,
+  resetSort,
+} = useViewSort(tableSort, 'collection', collectionId, COLLECTION_DEFAULT_SORT)
 useScrollRestoreOnActivate(mainRef)
 const collectionLoadError = computed(() => collectionsError.value ?? booksError.value)
 const { setBookContext } = useBookNavigation()
@@ -489,6 +510,41 @@ defineOptions({ name: 'CollectionView' })
         @toggle-selection="toggleSelectionMode"
       >
         <template #toolbar>
+          <div v-if="effectiveViewMode !== 'table'" class="hidden sm:flex items-center gap-1">
+            <Popover>
+              <PopoverTrigger as-child>
+                <button
+                  class="flex items-center gap-1.5 h-8 px-3 rounded-md border text-sm transition-colors"
+                  :class="
+                    !isDefaultSort
+                      ? 'border-primary text-primary bg-primary/10'
+                      : 'border-input text-muted-foreground bg-background hover:text-foreground hover:bg-muted'
+                  "
+                >
+                  <ArrowUpDown :size="13" />
+                  <span class="hidden lg:inline">{{ sortSummary }}</span>
+                  <span class="lg:hidden">{{ t('views.bookView.sort') }}</span>
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" class="w-80 p-3">
+                <BookSortBuilder v-model="tableSortModel" collection-scoped />
+              </PopoverContent>
+            </Popover>
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <button
+                  v-if="!isDefaultSort"
+                  :aria-label="t('common.resetSortAria')"
+                  class="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                  @click="resetSort"
+                >
+                  <X :size="13" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{{ t('views.bookView.resetSort') }}</TooltipContent>
+            </Tooltip>
+          </div>
+
           <Tooltip>
             <TooltipTrigger as-child>
               <button
@@ -595,6 +651,35 @@ defineOptions({ name: 'CollectionView' })
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
+          <Popover>
+            <PopoverTrigger as-child>
+              <button
+                class="flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-sm transition-colors"
+                :class="
+                  !isDefaultSort
+                    ? 'border-primary text-primary bg-primary/10'
+                    : 'border-input text-muted-foreground bg-background hover:text-foreground hover:bg-muted'
+                "
+              >
+                <ArrowUpDown :size="13" />
+                <span>{{ t('views.bookView.sort') }}</span>
+                <span v-if="!isDefaultSort" class="rounded-full border border-primary/40 px-1 py-0.5 text-[10px] font-semibold leading-none">{{
+                  t('views.bookView.sortOn')
+                }}</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" class="w-80 p-3">
+              <BookSortBuilder v-model="tableSortModel" collection-scoped />
+            </PopoverContent>
+          </Popover>
+          <button
+            v-if="!isDefaultSort"
+            :aria-label="t('common.resetSortAria')"
+            class="h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-destructive hover:bg-destructive/10"
+            @click="resetSort"
+          >
+            <X :size="13" />
+          </button>
           <button
             v-if="hasPermission('library_download') && !isDemoRestrictedAccount"
             class="flex h-8 items-center gap-1.5 rounded-md border border-input px-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -687,6 +772,7 @@ defineOptions({ name: 'CollectionView' })
           :books="slots"
           :in-flight="inFlight"
           :sort="tableSort"
+          :default-sort="COLLECTION_DEFAULT_SORT"
           :loading="loading"
           :total="total"
           view-type="collection"

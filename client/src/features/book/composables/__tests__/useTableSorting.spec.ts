@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { useTableSorting } from '../useTableSorting'
 import type { SortSpec } from '@bookorbit/types'
 import type { ColumnDef } from '../tableColumnSchema'
+import { COLLECTION_DEFAULT_SORT } from '../../lib/sort-defaults'
 
 function makeSortable(field: string): ColumnDef {
   return {
@@ -183,6 +184,56 @@ describe('useTableSorting', () => {
       currentSort = [{ field: 'author', dir: 'desc' }]
       sorting.removeSortField('author')
       expect(emitted[0]).toEqual([{ field: 'title', dir: 'asc' }])
+    })
+  })
+
+  // Without a per-view default, clearing a column sort strands a collection on title with no way
+  // back to the order its books were added in.
+  describe('with a view-supplied default sort', () => {
+    let collectionSorting: ReturnType<typeof useTableSorting>
+
+    beforeEach(() => {
+      currentSort = [{ field: 'collectionOrder', dir: 'asc' }]
+      emitted = []
+      collectionSorting = useTableSorting(
+        () => currentSort,
+        () => sortEnabled,
+        (sort) => {
+          emitted.push(sort)
+          currentSort = sort
+        },
+        () => COLLECTION_DEFAULT_SORT,
+      )
+    })
+
+    it('returns to the view default on the third click of a column', () => {
+      collectionSorting.handleColumnSort('author', new MouseEvent('click'))
+      expect(emitted[0]).toEqual([{ field: 'author', dir: 'asc' }])
+
+      collectionSorting.handleColumnSort('author', new MouseEvent('click'))
+      expect(emitted[1]).toEqual([{ field: 'author', dir: 'desc' }])
+
+      collectionSorting.handleColumnSort('author', new MouseEvent('click'))
+      expect(emitted[2]).toEqual([{ field: 'collectionOrder', dir: 'asc' }])
+    })
+
+    it('returns to the view default when shift-clicking away the last tier', () => {
+      currentSort = [{ field: 'author', dir: 'desc' }]
+      collectionSorting.handleColumnSort('author', new MouseEvent('click', { shiftKey: true }))
+      expect(emitted[0]).toEqual([{ field: 'collectionOrder', dir: 'asc' }])
+    })
+
+    it('returns to the view default when removing the last sort field', () => {
+      currentSort = [{ field: 'author', dir: 'desc' }]
+      collectionSorting.removeSortField('author')
+      expect(emitted[0]).toEqual([{ field: 'collectionOrder', dir: 'asc' }])
+    })
+
+    it('emits a copy rather than the shared default constant', () => {
+      collectionSorting.removeSortField('collectionOrder')
+      emitted[0]![0]!.dir = 'desc'
+
+      expect(COLLECTION_DEFAULT_SORT).toEqual([{ field: 'collectionOrder', dir: 'asc' }])
     })
   })
 })

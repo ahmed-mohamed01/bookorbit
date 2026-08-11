@@ -1732,6 +1732,15 @@ describe('BookQueryBuilder.buildCollapseOrderBy', () => {
     expect(BookQueryBuilder.buildCollapseOrderBy([{ field: 'addedAt', dir: 'desc' }], 1)).toBe('sort_added_at DESC NULLS LAST, r.id ASC');
   });
 
+  it('generates sort_collection_position for collectionOrder field', () => {
+    expect(BookQueryBuilder.buildCollapseOrderBy([{ field: 'collectionOrder', dir: 'asc' }], 1)).toBe(
+      'sort_collection_position ASC NULLS LAST, r.id ASC',
+    );
+    expect(BookQueryBuilder.buildCollapseOrderBy([{ field: 'collectionOrder', dir: 'desc' }], 1)).toBe(
+      'sort_collection_position DESC NULLS LAST, r.id ASC',
+    );
+  });
+
   it('generates seriesIndex with sort_title fallback when series is not in sort', () => {
     const result = BookQueryBuilder.buildCollapseOrderBy([{ field: 'seriesIndex', dir: 'asc' }], 1);
     expect(result).toBe('series_index ASC NULLS LAST, sort_title ASC NULLS LAST, r.id ASC');

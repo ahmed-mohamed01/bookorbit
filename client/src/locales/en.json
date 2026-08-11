@@ -3362,7 +3362,8 @@
         "finishedAt": "Date Finished",
         "random": "Random",
         "language": "Language",
-        "metadataScore": "Metadata Score"
+        "metadataScore": "Metadata Score",
+        "collectionOrder": "Order Added"
       },
       "customFieldsGroup": "Custom fields",
       "customFieldFallback": "Custom field",

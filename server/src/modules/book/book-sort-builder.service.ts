@@ -3,7 +3,11 @@ import { AnyColumn, SQL, sql } from 'drizzle-orm';
 
 import { parseCustomSortFieldId } from '@bookorbit/types';
 import type { CustomMetadataFieldType, CustomMetadataFieldTypeMap, SortField, SortSpec } from '@bookorbit/types';
-import { bookMetadata, books } from '../../db/schema';
+import { bookMetadata, books, collectionBooks } from '../../db/schema';
+
+export type BookSortContext = {
+  defaultCollectionId?: number;
+};
 
 const CUSTOM_VALUE_COLUMNS: Record<CustomMetadataFieldType, string> = {
   text: 'value_text',
@@ -37,12 +41,12 @@ const SORT_FIELD_MAP: Partial<Record<SortField, AnyColumn>> = {
 
 @Injectable()
 export class BookSortBuilder {
-  build(sort: SortSpec[], userId?: number, customFieldTypes?: CustomMetadataFieldTypeMap): SQL[] {
+  build(sort: SortSpec[], userId?: number, customFieldTypes?: CustomMetadataFieldTypeMap, context?: BookSortContext): SQL[] {
     const result: SQL[] = [];
     for (const { field, dir } of sort) {
       const D = this.normalizeDir(dir);
       if (!D) continue;
-      this.appendField(result, field, D, sort, userId, customFieldTypes);
+      this.appendField(result, field, D, sort, userId, customFieldTypes, context);
     }
     if (result.length === 0) result.push(sql`${bookMetadata.title} ASC NULLS LAST`);
     result.push(sql`${books.id} ASC`);
@@ -61,6 +65,7 @@ export class BookSortBuilder {
     allSorts: SortSpec[],
     userId?: number,
     customFieldTypes?: CustomMetadataFieldTypeMap,
+    context?: BookSortContext,
   ): void {
     const customFieldId = parseCustomSortFieldId(field);
     if (customFieldId !== null) {
@@ -109,6 +114,15 @@ export class BookSortBuilder {
           sql`(SELECT ubr.rating FROM user_book_ratings ubr WHERE ubr.book_id = books.id AND ubr.user_id = ${userId}) ${sql.raw(D)} NULLS LAST`,
         );
         break;
+      case 'collectionOrder': {
+        const collectionId = context?.defaultCollectionId;
+        if (collectionId === undefined) throw new BadRequestException('collectionOrder sort requires a collection scope');
+        if (!Number.isSafeInteger(collectionId) || collectionId <= 0) throw new BadRequestException('Invalid collection id for collectionOrder sort');
+        result.push(
+          sql`(SELECT ${collectionBooks.position} FROM ${collectionBooks} WHERE ${collectionBooks.collectionId} = ${collectionId} AND ${collectionBooks.bookId} = ${books.id}) ${sql.raw(D)} NULLS LAST`,
+        );
+        break;
+      }
       case 'random': {
         const daySeed = Math.floor(Date.now() / 86_400_000);
         const scopedSeed = daySeed + (userId ?? 0);

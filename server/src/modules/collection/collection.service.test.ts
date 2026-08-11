@@ -398,10 +398,15 @@ describe('CollectionService', () => {
         contentFilters: EMPTY_CONTENT_FILTER_RULES,
       });
       expect(collectionRepo.buildMembershipWhere).toHaveBeenCalledWith(10);
-      expect(bookService.executeBooksQuery).toHaveBeenCalledWith(1, expect.anything(), {
-        sort: [],
-        pagination: { page: 0, size: 50 },
-      });
+      expect(bookService.executeBooksQuery).toHaveBeenCalledWith(
+        1,
+        expect.anything(),
+        {
+          sort: [{ field: 'collectionOrder', dir: 'asc' }],
+          pagination: { page: 0, size: 50 },
+        },
+        { defaultCollectionId: 10 },
+      );
     });
 
     it('passes collapse, search, and query filters into the shared book query pipeline', async () => {
@@ -439,6 +444,7 @@ describe('CollectionService', () => {
           collapseSeries: true,
           q: 'science',
         }),
+        { defaultCollectionId: 10 },
       );
       expect(result).toEqual({ items: [{ id: 2 }, { id: 1 }], total: 2, page: 0, size: 50 });
     });

@@ -18,7 +18,7 @@ import { isDateKey, resolveTimeZone, toDateKeyInTimeZone } from '../../common/ut
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
 import { accentInsensitiveIlike } from '../../common/utils/accent-insensitive-search.utils';
 import * as schema from '../../db/schema';
-import { BookSortBuilder, customMetadataValueColumn } from './book-sort-builder.service';
+import { BookSortBuilder, customMetadataValueColumn, type BookSortContext } from './book-sort-builder.service';
 import {
   audiobookProgress,
   authors,
@@ -129,8 +129,8 @@ export class BookQueryBuilder {
     )!;
   }
 
-  buildOrderBy(sort: SortSpec[], userId?: number, customFieldTypes?: CustomMetadataFieldTypeMap): SQL[] {
-    return this.sortBuilder.build(sort, userId, customFieldTypes);
+  buildOrderBy(sort: SortSpec[], userId?: number, customFieldTypes?: CustomMetadataFieldTypeMap, context?: BookSortContext): SQL[] {
+    return this.sortBuilder.build(sort, userId, customFieldTypes, context);
   }
 
   private groupToSql(node: GroupRule, depth: number, userId?: number, timeZone = 'UTC'): SQL {
@@ -1080,6 +1080,11 @@ export class BookQueryBuilder {
           break;
         case 'addedAt':
           parts.push(`sort_added_at ${D} NULLS LAST`);
+          break;
+        // Precomputed by the collapsed query as the earliest membership position in the group,
+        // so a collapsed series sits where its first-added volume was added.
+        case 'collectionOrder':
+          parts.push(`sort_collection_position ${D} NULLS LAST`);
           break;
         case 'seriesIndex':
           parts.push(`series_index ${D} NULLS LAST`);

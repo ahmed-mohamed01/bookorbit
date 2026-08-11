@@ -15,9 +15,9 @@ function makeField(overrides: Partial<CustomMetadataFieldSummary> = {}): CustomM
   return { id: 7, label: 'Shelf Location', type: 'text', displayOrder: 0, archivedAt: null, enabledLibraryIds: [], ...overrides }
 }
 
-function mountBuilder(modelValue: SortSpec[]) {
+function mountBuilder(modelValue: SortSpec[], collectionScoped = false) {
   return mount(BookSortBuilder, {
-    props: { modelValue },
+    props: { modelValue, collectionScoped },
     global: {
       stubs: {
         Tooltip: { template: '<div><slot /></div>' },
@@ -35,6 +35,33 @@ describe('BookSortBuilder', () => {
     const wrapper = mountBuilder([{ field: 'title', dir: 'asc' }])
 
     expect(wrapper.find('optgroup').exists()).toBe(false)
+  })
+
+  // The server rejects collectionOrder outside a collection, so offering it in a smart scope or a
+  // home shelf would hand the user a sort that 400s.
+  it('does not offer sort fields that need a collection scope', () => {
+    customFields.value = []
+
+    const wrapper = mountBuilder([{ field: 'title', dir: 'asc' }])
+    const values = wrapper
+      .get('select')
+      .findAll('option')
+      .map((o) => o.attributes('value'))
+
+    expect(values).toContain('title')
+    expect(values).not.toContain('collectionOrder')
+  })
+
+  it('offers collection-scoped sort fields when mounted inside a collection', () => {
+    customFields.value = []
+
+    const wrapper = mountBuilder([{ field: 'title', dir: 'asc' }], true)
+    const options = wrapper
+      .get('select')
+      .findAll('option')
+      .map((o) => [o.attributes('value'), o.text()])
+
+    expect(options).toContainEqual(['collectionOrder', 'Order Added'])
   })
 
   it('lists active custom fields in their own group, labelled verbatim', () => {
