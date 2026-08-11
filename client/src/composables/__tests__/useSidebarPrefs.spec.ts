@@ -33,6 +33,7 @@ describe('useSidebarPrefs', () => {
       const { parseSidebarConfig } = await loadModule()
 
       expect(parseSidebarConfig(undefined)).toEqual({
+        browse: { open: true },
         libraries: { open: true, cap: 8 },
         smartScopes: { open: true, cap: 8 },
         collections: { open: true, cap: 8 },
@@ -59,6 +60,12 @@ describe('useSidebarPrefs', () => {
       expect(parsed.libraries).toEqual({ open: false, cap: 8 })
       expect(parsed.smartScopes).toEqual({ open: true, cap: 'all' })
       expect(parsed.collections).toEqual({ open: false, cap: 20 })
+    })
+
+    it('keeps no cap on a section that has no entity list to bound', async () => {
+      const { parseSidebarConfig } = await loadModule()
+
+      expect(parseSidebarConfig({ sections: { browse: { open: false, cap: 20 } } }).browse).toEqual({ open: false })
     })
   })
 
@@ -131,6 +138,7 @@ describe('useSidebarPrefs', () => {
             settings: {
               sidebarConfig: {
                 sections: {
+                  browse: { open: true },
                   libraries: { open: true, cap: 8 },
                   smartScopes: { open: true, cap: 8 },
                   collections: { open: false, cap: 20 },
@@ -165,6 +173,7 @@ describe('useSidebarPrefs', () => {
       const { sections } = useSidebarPrefs()
       await nextTick()
 
+      expect(sections.browse.open).toBe(true)
       expect(sections.libraries.open).toBe(false)
       expect(sections.smartScopes.open).toBe(true)
       expect(sections.collections.open).toBe(false)

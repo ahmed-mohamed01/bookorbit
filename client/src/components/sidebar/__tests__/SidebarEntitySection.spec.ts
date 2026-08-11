@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { reactive, nextTick } from 'vue'
-import type { SidebarCap, SidebarSectionId } from '@bookorbit/types'
+import type { SidebarCap, SidebarCappedSectionId, SidebarSectionId } from '@bookorbit/types'
 import SidebarEntitySection from '../SidebarEntitySection.vue'
 
-const sections = reactive<Record<SidebarSectionId, { open: boolean; cap: SidebarCap }>>({
+const sections = reactive<Record<SidebarSectionId, { open: boolean; cap?: SidebarCap }>>({
+  browse: { open: true },
   libraries: { open: true, cap: 8 },
   smartScopes: { open: true, cap: 8 },
   collections: { open: true, cap: 8 },
@@ -64,7 +65,7 @@ function makeItems(count: number) {
 function mountSection(itemCount: number, overrides: Record<string, unknown> = {}) {
   return mount(SidebarEntitySection, {
     props: {
-      sectionId: 'collections' as SidebarSectionId,
+      sectionId: 'collections' as SidebarCappedSectionId,
       label: 'Collections',
       items: makeItems(itemCount),
       routeName: 'collection',

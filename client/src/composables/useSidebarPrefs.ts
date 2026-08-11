@@ -1,9 +1,11 @@
 import { reactive, watch } from 'vue'
 import {
+  SIDEBAR_CAPPED_SECTION_IDS,
   SIDEBAR_CAP_OPTIONS,
   SIDEBAR_DEFAULT_CAP,
   SIDEBAR_SECTION_IDS,
   type SidebarCap,
+  type SidebarCappedSectionId,
   type SidebarConfig,
   type SidebarSectionId,
   type SidebarSectionState,
@@ -15,7 +17,7 @@ import { useAuth } from '@/features/auth/composables/useAuth'
 const PERSIST_DEBOUNCE_MS = 600
 
 /** Section open/closed state predating the account-scoped sidebarConfig blob. */
-const LEGACY_SECTION_KEYS: Record<SidebarSectionId, string> = {
+const LEGACY_SECTION_KEYS: Partial<Record<SidebarSectionId, string>> = {
   libraries: 'bookorbit:sidebar:libraries',
   smartScopes: 'bookorbit:sidebar:smart-scopes',
   collections: 'bookorbit:sidebar:collections',
@@ -23,8 +25,13 @@ const LEGACY_SECTION_KEYS: Record<SidebarSectionId, string> = {
 
 export const LEGACY_SIDEBAR_WIDTH_KEY = 'bookorbit:sidebar:width'
 
+function isCappedSection(id: SidebarSectionId): id is SidebarCappedSectionId {
+  return (SIDEBAR_CAPPED_SECTION_IDS as readonly SidebarSectionId[]).includes(id)
+}
+
 function defaultSections(): Record<SidebarSectionId, SidebarSectionState> {
   return {
+    browse: { open: true },
     libraries: { open: true, cap: SIDEBAR_DEFAULT_CAP },
     smartScopes: { open: true, cap: SIDEBAR_DEFAULT_CAP },
     collections: { open: true, cap: SIDEBAR_DEFAULT_CAP },
@@ -47,10 +54,7 @@ export function parseSidebarConfig(raw: unknown): Record<SidebarSectionId, Sideb
     const stored = (storedSections as Record<string, unknown>)[id]
     if (typeof stored !== 'object' || stored === null) continue
     const entry = stored as { open?: unknown; cap?: unknown }
-    sections[id] = {
-      open: entry.open !== false,
-      cap: clampCap(entry.cap),
-    }
+    sections[id] = isCappedSection(id) ? { open: entry.open !== false, cap: clampCap(entry.cap) } : { open: entry.open !== false }
   }
   return sections
 }
@@ -101,6 +105,7 @@ function migrateLegacySectionKeys(userId: number): boolean {
   let migrated = false
   for (const id of SIDEBAR_SECTION_IDS) {
     const legacyKey = LEGACY_SECTION_KEYS[id]
+    if (!legacyKey) continue
     const stored = storage.get<unknown>(legacyKey, undefined)
     if (stored === undefined) continue
     sections[id].open = stored !== false
@@ -160,7 +165,7 @@ export function useSidebarPrefs() {
     sections[id].open = !sections[id].open
   }
 
-  function setSectionCap(id: SidebarSectionId, cap: SidebarCap): void {
+  function setSectionCap(id: SidebarCappedSectionId, cap: SidebarCap): void {
     sections[id].cap = clampCap(cap)
   }
 

@@ -2,7 +2,7 @@ import { computed, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, type RouteLocationNormalizedLoaded, type RouteLocationRaw } from 'vue-router'
 import { Highlighter, LayoutDashboard, Library, PackageOpen, Users, Wrench } from '@lucide/vue'
-import type { BrowseCounts } from '@bookorbit/types'
+import type { BrowseCounts, SidebarSectionId } from '@bookorbit/types'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useBookDockSummary } from '@/features/book-dock/composables/useBookDockSummary'
 import { useBrowseCounts } from '@/composables/useBrowseCounts'
@@ -43,12 +43,19 @@ export interface ResolvedSidebarNavEntry {
 export interface SidebarNavZone {
   id: SidebarZoneId
   labelKey: string | null
+  sectionId: SidebarSectionId | null
   entries: ResolvedSidebarNavEntry[]
 }
 
 const ZONE_LABEL_KEYS: Record<SidebarZoneId, string | null> = {
   primary: null,
   browse: 'components.sidebar.zones.browse',
+}
+
+/** Zones with a section id remember whether the user collapsed them; the rest always render. */
+const ZONE_SECTION_IDS: Record<SidebarZoneId, SidebarSectionId | null> = {
+  primary: null,
+  browse: 'browse',
 }
 
 function routeNameStartsWith(route: RouteLocationNormalizedLoaded, prefix: string): boolean {
@@ -158,6 +165,7 @@ export function useSidebarNav() {
     SIDEBAR_ZONE_IDS.map((zoneId) => ({
       id: zoneId,
       labelKey: ZONE_LABEL_KEYS[zoneId],
+      sectionId: ZONE_SECTION_IDS[zoneId],
       entries: SIDEBAR_NAV_REGISTRY.filter((entry) => entry.zone === zoneId && isNavEntryAllowed(entry, context.value)).map((entry) =>
         resolveNavEntry(entry, context.value, route, t(entry.labelKey)),
       ),

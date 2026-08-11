@@ -183,7 +183,13 @@ onUnmounted(() => stopLibraryUploadListener())
     <SidebarContent>
       <!-- Fixed destinations come first: they are a known height, so the variable-length
            entity sections below can never push them out of the first screenful. -->
-      <SidebarZone v-for="zone in zones" :key="zone.id" :label="zone.labelKey ? t(zone.labelKey) : null">
+      <SidebarZone
+        v-for="zone in zones"
+        :key="zone.id"
+        :label="zone.labelKey ? t(zone.labelKey) : null"
+        :section-id="zone.sectionId ?? undefined"
+        :always-open="isRail"
+      >
         <SidebarNavItem
           v-for="entry in zone.entries"
           :key="entry.id"
