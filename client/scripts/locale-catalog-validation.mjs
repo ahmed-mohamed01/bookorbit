@@ -15,6 +15,18 @@ export function flattenCatalog(value, prefix = '', output = new Map()) {
   return output
 }
 
+function messageErrors({ key, locale, message, referenceMessage, slotCountKeys }) {
+  if (referenceMessage === undefined) return [`${locale}: unexpected key ${key}`]
+
+  const errors = []
+  if (message.length === 0) errors.push(`${locale}: empty message ${key}`)
+  if (message.includes('\u2014')) errors.push(`${locale}: Unicode em dash is not allowed in ${key}`)
+  if (/<[^>]+>/.test(message)) errors.push(`${locale}: HTML is not allowed in ${key}`)
+  errors.push(...validateLocaleMessage({ key, locale, message, referenceMessage }))
+  if (slotCountKeys.has(key)) errors.push(...validateSlotCountMessage({ key, locale, message }))
+  return errors
+}
+
 export function validateCatalogs({ catalogs, referencedKeys = new Set(), slotCountKeys = new Set() }) {
   const reference = catalogs.get('en')
   if (!reference) throw new Error('English reference catalog is required')
@@ -26,18 +38,25 @@ export function validateCatalogs({ catalogs, referencedKeys = new Set(), slotCou
 
   for (const [locale, catalog] of catalogs) {
     for (const [key, message] of catalog) {
-      const referenceMessage = reference.get(key)
-      if (referenceMessage === undefined) {
-        errors.push(`${locale}: unexpected key ${key}`)
-        continue
-      }
-      if (message.length === 0) errors.push(`${locale}: empty message ${key}`)
-      if (message.includes('\u2014')) errors.push(`${locale}: Unicode em dash is not allowed in ${key}`)
-      if (/<[^>]+>/.test(message)) errors.push(`${locale}: HTML is not allowed in ${key}`)
-      errors.push(...validateLocaleMessage({ key, locale, message, referenceMessage }))
-      if (slotCountKeys.has(key)) errors.push(...validateSlotCountMessage({ key, locale, message }))
+      errors.push(...messageErrors({ key, locale, message, referenceMessage: reference.get(key), slotCountKeys }))
     }
   }
 
   return errors
+}
+
+export function findInvalidTargetMessages({ catalogs, slotCountKeys = new Set() }) {
+  const reference = catalogs.get('en')
+  if (!reference) throw new Error('English reference catalog is required')
+
+  const invalid = []
+  for (const [locale, catalog] of catalogs) {
+    if (locale === 'en') continue
+    for (const [key, message] of catalog) {
+      const errors = messageErrors({ key, locale, message, referenceMessage: reference.get(key), slotCountKeys })
+      if (errors.length > 0) invalid.push({ locale, key, errors })
+    }
+  }
+
+  return invalid
 }

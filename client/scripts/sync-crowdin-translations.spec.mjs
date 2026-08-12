@@ -284,9 +284,41 @@ describe('Crowdin translation synchronization', () => {
     await expect(access(outputDirectory)).rejects.toThrow()
   })
 
-  it('validates every downloaded catalog before writing any files', async () => {
+  it('omits an invalid downloaded message instead of failing the whole export', async () => {
     const targetCatalogs = TARGET_CATALOGS.slice(0, 2)
     const catalogDirectory = await createCatalogFixture(targetCatalogs)
+    const outputDirectory = path.join(catalogDirectory, 'output')
+    const reportPath = path.join(catalogDirectory, 'rejections.md')
+    const catalogs = new Map([[targetCatalogs[0].languageId, { common: { save: 'Bad \u2014 value' } }]])
+
+    const { rejections } = await syncCrowdinTranslations({
+      token: 'secret',
+      fetchImpl: createSynchronizationFetch({ catalogs }),
+      catalogDirectory,
+      outputDirectory,
+      targetCatalogs,
+      reportPath,
+      assertTargetConfiguration: async () => {},
+    })
+
+    expect(rejections).toEqual([
+      {
+        locale: targetCatalogs[0].locale,
+        key: 'common.save',
+        errors: [`${targetCatalogs[0].locale}: Unicode em dash is not allowed in common.save`],
+      },
+    ])
+    expect(JSON.parse(await readFile(path.join(outputDirectory, `${targetCatalogs[0].locale}.json`), 'utf8'))).toEqual({})
+    expect(JSON.parse(await readFile(path.join(outputDirectory, `${targetCatalogs[1].locale}.json`), 'utf8'))).toEqual({
+      common: { save: `Translated ${targetCatalogs[1].languageId}` },
+    })
+    expect(await readFile(reportPath, 'utf8')).toContain('Unicode em dash is not allowed in common.save')
+  })
+
+  it('fails when a rejected message would drop an existing translation', async () => {
+    const targetCatalogs = TARGET_CATALOGS.slice(0, 2)
+    const currentCatalogs = new Map([[targetCatalogs[0].locale, { common: { save: 'Ulozit' } }]])
+    const catalogDirectory = await createCatalogFixture(targetCatalogs, currentCatalogs)
     const outputDirectory = path.join(catalogDirectory, 'output')
     const catalogs = new Map([[targetCatalogs[0].languageId, { common: { save: 'Bad \u2014 value' } }]])
 
@@ -299,7 +331,7 @@ describe('Crowdin translation synchronization', () => {
         targetCatalogs,
         assertTargetConfiguration: async () => {},
       }),
-    ).rejects.toThrow('Unicode em dash is not allowed')
+    ).rejects.toThrow('rejected by catalog validation')
     await expect(access(outputDirectory)).rejects.toThrow()
   })
 

@@ -4,7 +4,7 @@ import { isIP } from 'node:net'
 import { pathToFileURL } from 'node:url'
 import path from 'node:path'
 import { TARGET_CATALOGS, assertCrowdinTargetConfiguration } from './locale-configuration.mjs'
-import { flattenCatalog, validateCatalogs } from './locale-catalog-validation.mjs'
+import { findInvalidTargetMessages, flattenCatalog, validateCatalogs } from './locale-catalog-validation.mjs'
 
 const API = 'https://api.crowdin.com/api/v2'
 const SOURCE_PATH_SUFFIX = '/client/src/locales/en.json'
@@ -260,7 +260,7 @@ export function parseAllowedTranslationLosses(value = '') {
   return allowed
 }
 
-export function findTranslationLosses({ locale, reference, current, exported }) {
+export function findTranslationLosses({ locale, reference, current, exported, rejected = new Map() }) {
   const legacyComplete = current.size === reference.size && [...reference.keys()].every((key) => current.has(key))
   const losses = []
 
@@ -270,7 +270,8 @@ export function findTranslationLosses({ locale, reference, current, exported }) 
 
     const exportedMessage = exported.get(key)
     if (exportedMessage === undefined) {
-      losses.push({ locale, key, reason: 'missing from Crowdin export' })
+      const rejection = rejected.get(key)
+      losses.push({ locale, key, reason: rejection ? `rejected by catalog validation - ${rejection[0]}` : 'missing from Crowdin export' })
     } else if (currentMessage !== referenceMessage && exportedMessage === referenceMessage) {
       losses.push({ locale, key, reason: 'replaced by English source text' })
     }
@@ -285,13 +286,20 @@ export function assertTranslationRetention({
   exportedCatalogs,
   allowedLosses = new Set(),
   targetCatalogs = TARGET_CATALOGS,
+  rejections = [],
 }) {
+  const rejectedByLocale = new Map()
+  for (const { locale, key, errors } of rejections) {
+    if (!rejectedByLocale.has(locale)) rejectedByLocale.set(locale, new Map())
+    rejectedByLocale.get(locale).set(key, errors)
+  }
+
   const losses = []
   for (const { locale } of targetCatalogs) {
     const current = currentCatalogs.get(locale)
     const exported = exportedCatalogs.get(locale)
     if (!current || !exported) throw new Error(`Translation retention comparison is missing the ${locale} catalog`)
-    losses.push(...findTranslationLosses({ locale, reference, current, exported }))
+    losses.push(...findTranslationLosses({ locale, reference, current, exported, rejected: rejectedByLocale.get(locale) }))
   }
 
   const detected = new Set(losses.map(({ locale, key }) => `${locale}:${key}`))
@@ -308,6 +316,35 @@ export function assertTranslationRetention({
   throw new Error(`Crowdin export would lose existing translations:\n${details.join('\n')}`)
 }
 
+const MAX_REPORTED_REJECTIONS = 50
+
+export function formatRejectionReport(rejections) {
+  if (rejections.length === 0) return ''
+
+  const listed = rejections.slice(0, MAX_REPORTED_REJECTIONS)
+  const lines = [
+    `### Rejected Crowdin messages (${rejections.length})`,
+    '',
+    'These translations did not pass catalog validation and were omitted, so the English source renders instead. Fix them in Crowdin.',
+    '',
+    ...listed.map(({ errors }) => `- ${errors[0]}`),
+  ]
+  if (rejections.length > listed.length) lines.push(`- ...and ${rejections.length - listed.length} more`)
+  return `${lines.join('\n')}\n`
+}
+
+async function reportRejections(rejections, reportPath) {
+  if (rejections.length === 0) {
+    if (reportPath) await writeFile(reportPath, '')
+    return
+  }
+
+  console.log(`Rejected ${rejections.length} invalid Crowdin messages; the English source renders instead:`)
+  for (const { errors } of rejections.slice(0, MAX_REPORTED_REJECTIONS)) console.log(`  ${errors[0]}`)
+  if (rejections.length > MAX_REPORTED_REJECTIONS) console.log(`  ...and ${rejections.length - MAX_REPORTED_REJECTIONS} more`)
+  if (reportPath) await writeFile(reportPath, formatRejectionReport(rejections))
+}
+
 export async function syncCrowdinTranslations({
   token,
   projectId = '912891',
@@ -317,6 +354,7 @@ export async function syncCrowdinTranslations({
   allowedLosses = new Set(),
   targetCatalogs = TARGET_CATALOGS,
   assertTargetConfiguration = assertCrowdinTargetConfiguration,
+  reportPath = process.env.CROWDIN_REJECTION_REPORT || '',
 }) {
   if (!token) throw new Error('CROWDIN_TOKEN is required')
   await assertTargetConfiguration()
@@ -350,6 +388,13 @@ export async function syncCrowdinTranslations({
   const catalogs = new Map([['en', referenceMessages]])
   for (const { locale, catalog } of downloaded) catalogs.set(locale, flattenCatalog(catalog))
 
+  const rejections = findInvalidTargetMessages({ catalogs })
+  const rejectedLocales = new Set(rejections.map(({ locale }) => locale))
+  for (const { locale, key } of rejections) catalogs.get(locale).delete(key)
+  for (const entry of downloaded) {
+    if (rejectedLocales.has(entry.locale)) entry.catalog = orderedSparseCatalog(reference, catalogs.get(entry.locale))
+  }
+
   const errors = validateCatalogs({ catalogs })
   if (errors.length > 0) throw new Error(`Crowdin export validation failed:\n${errors.join('\n')}`)
   assertTranslationRetention({
@@ -358,13 +403,16 @@ export async function syncCrowdinTranslations({
     exportedCatalogs: catalogs,
     allowedLosses,
     targetCatalogs,
+    rejections,
   })
 
   await mkdir(outputDirectory, { recursive: true })
   await Promise.all(
     downloaded.map(({ locale, catalog }) => writeFile(path.join(outputDirectory, `${locale}.json`), `${JSON.stringify(catalog, null, 2)}\n`)),
   )
+  await reportRejections(rejections, reportPath)
   console.log(`Synchronized ${downloaded.length} sparse translation catalogs from Crowdin`)
+  return { rejections }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

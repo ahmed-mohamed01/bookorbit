@@ -59,6 +59,7 @@ jobs:
         env:
           CROWDIN_ALLOWED_TRANSLATION_LOSSES: ${{ inputs.allowed_translation_losses }}
           CROWDIN_PROJECT_ID: ${{ vars.CROWDIN_PROJECT_ID }}
+          CROWDIN_REJECTION_REPORT: ${{ runner.temp }}/crowdin-rejections.md
           CROWDIN_TOKEN: ${{ secrets.CROWDIN_TOKEN }}
         run: pnpm --filter client sync:crowdin
 
@@ -71,6 +72,23 @@ jobs:
           scripts/locale-catalog-validation.spec.mjs
           scripts/sync-crowdin-translations.spec.mjs
           src/i18n/icu.spec.ts
+
+      - name: Compose pull request body
+        env:
+          PR_BODY: ${{ runner.temp }}/crowdin-pr-body.md
+          REJECTION_REPORT: ${{ runner.temp }}/crowdin-rejections.md
+        run: |
+          {
+            echo "Automated sparse translation export from Crowdin."
+            echo
+            echo "Untranslated entries are omitted so Vue I18n falls back to the English catalog."
+          } > "$PR_BODY"
+          if [ -s "$REJECTION_REPORT" ]; then
+            echo >> "$PR_BODY"
+            cat "$REJECTION_REPORT" >> "$PR_BODY"
+            cat "$REJECTION_REPORT" >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Crowdin returned translations that failed catalog validation; they were omitted and are listed in the pull request body."
+          fi
 
       - name: Create translation pull request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
@@ -111,7 +129,4 @@ jobs:
           delete-branch: true
           base: main
           title: "i18n(client): sync translations from Crowdin"
-          body: |-
-            Automated sparse translation export from Crowdin.
-
-            Untranslated entries are omitted so Vue I18n falls back to the English catalog.
+          body-path: ${{ runner.temp }}/crowdin-pr-body.md

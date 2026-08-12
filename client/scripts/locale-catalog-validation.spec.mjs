@@ -36,9 +36,6 @@ describe('locale catalog validation', () => {
       books: { count: '{count, plural, one {# kniha} other {# knih}}' },
     }
 
-    expect(validateCatalogs({ catalogs: catalogs(target) })).toEqual([
-      'cs: ICU plural category few missing for books.count',
-      'cs: ICU plural category many missing for books.count',
-    ])
+    expect(validateCatalogs({ catalogs: catalogs(target) })).toEqual(['cs: ICU plural category few missing for books.count'])
   })
 })

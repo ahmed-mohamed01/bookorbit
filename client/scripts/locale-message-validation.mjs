@@ -101,8 +101,17 @@ export function analyzeIcuMessage(message) {
   }
 }
 
+// Every plural in the catalogs counts whole items, and a library tops out well below a million.
+// CLDR still lists categories that only fractional counts (Czech and Slovak `many`) or counts of a
+// million and over (Spanish, French, Italian and Portuguese `many`) can ever select, so demanding a
+// translation for them rejects otherwise correct Crowdin exports for a branch that cannot render.
+// Sampling 0..1000 selects exactly the categories every integer below a million selects.
+const REACHABLE_COUNT_SAMPLE = Array.from({ length: 1001 }, (_, index) => index)
+
 function pluralCategories(locale, type) {
-  return new Intl.PluralRules(locale, { type }).resolvedOptions().pluralCategories
+  const rules = new Intl.PluralRules(locale, { type })
+  const reachable = new Set(REACHABLE_COUNT_SAMPLE.map((count) => rules.select(count)))
+  return rules.resolvedOptions().pluralCategories.filter((category) => reachable.has(category))
 }
 
 function exactSelectors(selectors) {

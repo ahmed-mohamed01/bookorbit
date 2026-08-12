@@ -86,6 +86,27 @@ describe('locale message validation', () => {
     ])
   })
 
+  it('accepts cardinal categories that only fractional or million-scale counts select', () => {
+    const reference = '{count, plural, one {# book} other {# books}}'
+
+    expect(validate('es', reference, '{count, plural, one {# libro} other {# libros}}')).toEqual([])
+    expect(validate('fr', reference, '{count, plural, one {# livre} other {# livres}}')).toEqual([])
+    expect(validate('cs', reference, '{count, plural, one {# kniha} few {# knihy} other {# knih}}')).toEqual([])
+    expect(validate('es', reference, '{count, plural, one {# libro} many {# de libros} other {# libros}}')).toEqual([])
+  })
+
+  it('still requires categories that everyday counts select', () => {
+    const reference = '{count, plural, one {# book} other {# books}}'
+
+    expect(validate('ru', reference, '{count, plural, one {# книга} other {# книги}}')).toEqual([
+      'ru: ICU plural category few missing for books.count',
+      'ru: ICU plural category many missing for books.count',
+    ])
+    expect(validate('cs', reference, '{count, plural, one {# kniha} other {# knih}}')).toEqual([
+      'cs: ICU plural category few missing for books.count',
+    ])
+  })
+
   it('reports invalid ICU and rejects legacy branches for migrated keys', () => {
     const reference = '{count, plural, one {One book} other {# books}}'
 
