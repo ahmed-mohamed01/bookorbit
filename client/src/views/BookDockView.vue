@@ -6,12 +6,16 @@ import type { BookDockFile } from '@bookorbit/types'
 import { api } from '@/lib/api'
 import { formatBytes } from '@/lib/formatting'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
-import { useBookDockFiles } from '@/features/book-dock/composables/useBookDockFiles'
+import { Permission } from '@bookorbit/types'
+import { useBookDockFiles, type SortField } from '@/features/book-dock/composables/useBookDockFiles'
 import { useBookDockSummary } from '@/features/book-dock/composables/useBookDockSummary'
 import { useBookDockStatistics } from '@/features/book-dock/composables/useBookDockStatistics'
-import { useBookDockUpload, SUPPORTED_FORMATS } from '@/features/book-dock/composables/useBookDockUpload'
-import BookDockToolbar from '@/features/book-dock/components/BookDockToolbar.vue'
-import BookDockFileList from '@/features/book-dock/components/BookDockFileList.vue'
+import { useBookDockUpload, SUPPORTED_FORMATS, SUPPORTED_FORMATS_ACCEPT } from '@/features/book-dock/composables/useBookDockUpload'
+import { useBookDockConflicts } from '@/features/book-dock/composables/useBookDockConflicts'
+import BookDockActionCluster from '@/features/book-dock/components/BookDockActionCluster.vue'
+import BookDockFilterBar from '@/features/book-dock/components/BookDockFilterBar.vue'
+import BookDockFileListView from '@/features/book-dock/components/BookDockFileListView.vue'
+import BookDockListBar from '@/features/book-dock/components/BookDockListBar.vue'
 import BookDockFileSheet from '@/features/book-dock/components/BookDockFileSheet.vue'
 import BookDockFinalizeDialog from '@/features/book-dock/components/BookDockFinalizeDialog.vue'
 import BookDockBulkEditDialog from '@/features/book-dock/components/BookDockBulkEditDialog.vue'
@@ -33,8 +37,10 @@ const {
   filters,
   pageCount,
   fetchFiles,
-  setStatus,
+  activeView,
+  setView,
   setSearch,
+  setSort,
   setPage,
   toggleSelect,
   toggleSelectAll,
@@ -44,12 +50,14 @@ const {
   selectionCount,
   hasSelection,
   getSelectionPayload,
+  total,
 } = useBookDockFiles()
 
 const { summary, fetchSummary, subscribe, onBookDockChange, socketConnected } = useBookDockSummary()
 const { statistics, fetchStatistics } = useBookDockStatistics()
 const { addFiles, isUploading } = useBookDockUpload()
-const { isDemoRestrictedAccount } = usePermissions()
+const { isDemoRestrictedAccount, hasPermission } = usePermissions()
+const { conflicts, scheduleConflicts, cancelConflicts } = useBookDockConflicts()
 
 const selectedFile = ref<BookDockFile | null>(null)
 const showFinalizeDialog = ref(false)
@@ -132,9 +140,73 @@ const errorCount = computed(() => {
 
 const emptyMessage = computed(() => {
   if (filters.search) return t('views.bookDock.empty.noSearchMatch', { query: filters.search })
+  if (filters.needsReview) return t('bookDock.layout.empty.nothingToReview')
   if (filters.status) return t('views.bookDock.empty.noStatusFiles', { status: filters.status })
   return t('views.bookDock.empty.uploadPrompt')
 })
+
+const canPreviewConflicts = computed(() => hasPermission(Permission.LibraryUpload))
+
+const keyboardActive = ref(false)
+
+function onKeyboardActive(active: boolean) {
+  keyboardActive.value = active
+}
+
+const emptyUploadInput = ref<HTMLInputElement | null>(null)
+
+function triggerUpload() {
+  emptyUploadInput.value?.click()
+}
+
+function onEmptyUploadSelected(event: Event) {
+  const input = event.target as HTMLInputElement
+  if (input.files?.length) {
+    addFiles(input.files)
+    input.value = ''
+  }
+}
+
+const allOnPageSelected = computed(() => items.value.length > 0 && items.value.every((file) => isSelected(file.id)))
+
+function handleToggleSelectAll() {
+  if (allOnPageSelected.value) clearSelection()
+  else for (const file of items.value) if (!isSelected(file.id)) toggleSelect(file.id)
+}
+
+function handleSelectAllMatching() {
+  if (!selectAll.value) toggleSelectAll()
+}
+
+function handleSort(field: SortField) {
+  setSort(field)
+}
+
+async function handleRowDiscard(file: BookDockFile) {
+  await api(`/api/v1/book-dock/files/${file.id}`, { method: 'DELETE' })
+  refresh()
+}
+
+async function handleRowRetry(file: BookDockFile) {
+  await api('/api/v1/book-dock/files/retry-fetch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileIds: [file.id] }),
+  })
+  refresh()
+}
+
+function openDestinationForFile(file: BookDockFile) {
+  clearSelection()
+  toggleSelect(file.id)
+  showSetDestinationDialog.value = true
+}
+
+function openFinalizeForFile(file: BookDockFile) {
+  clearSelection()
+  toggleSelect(file.id)
+  showFinalizeDialog.value = true
+}
 
 async function handleBulkDiscard() {
   const payload = getSelectionPayload()
@@ -344,6 +416,9 @@ watch(
   () => items.value.map((f) => `${f.id}:${f.updatedAt}:${f.targetLibraryId ?? ''}:${f.targetFolderId ?? ''}`).join('|'),
   () => {
     scheduleVisibleNamePreview()
+    // finalize/preview is gated on LibraryUpload, so probing it without that
+    // permission would 403 on every page render for an otherwise valid role.
+    if (canPreviewConflicts.value) scheduleConflicts(items.value.map((file) => file.id))
   },
 )
 
@@ -356,6 +431,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   unsubscribeChange()
+  cancelConflicts()
   if (newFilesTimer) clearTimeout(newFilesTimer)
   if (applyFetchedTimer) clearTimeout(applyFetchedTimer)
   if (rescanFailedTimer) clearTimeout(rescanFailedTimer)
@@ -368,7 +444,8 @@ onUnmounted(() => {
 <template>
   <div>
     <main class="flex-1" @dragover="onDragOver" @dragenter="onDragEnter" @dragleave="onDragLeave" @drop="onDrop">
-      <div class="flex flex-col gap-4 py-4 max-w-8xl w-full">
+      <input ref="emptyUploadInput" type="file" :accept="SUPPORTED_FORMATS_ACCEPT" multiple class="hidden" @change="onEmptyUploadSelected" />
+      <div class="flex w-full max-w-420 flex-col gap-4 py-4">
         <div class="flex items-center gap-2.5">
           <div class="flex items-center justify-center size-9 rounded-lg bg-primary/10">
             <PackageOpen class="size-4.5 text-primary" />
@@ -438,38 +515,27 @@ onUnmounted(() => {
               class="ml-2 inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full bg-red-500/15 text-red-600 dark:text-red-400 text-xs font-medium"
             >
               <AlertCircle class="size-3.5" />
-              Pause update failed
+              {{ t('bookDock.layout.pauseUpdateFailed') }}
             </span>
           </Transition>
+
+          <div class="ml-auto">
+            <BookDockActionCluster
+              :paused="summary.paused"
+              @pause="handleProcessingStateChanged"
+              @resume="handleProcessingStateChanged"
+              @pause-error="handleProcessingStateError"
+              @resume-error="handleProcessingStateError"
+              @rescan="refresh"
+              @rescan-error="handleRescanError"
+            />
+          </div>
         </div>
 
-        <BookDockToolbar
-          :active-status="filters.status"
-          :selection-count="selectionCount"
-          :has-selection="hasSelection"
-          :fetched-count="fetchedCount"
-          :error-count="errorCount"
-          :paused="summary.paused"
-          @status-filter="setStatus"
-          @search="setSearch"
-          @pause="handleProcessingStateChanged"
-          @resume="handleProcessingStateChanged"
-          @pause-error="handleProcessingStateError"
-          @resume-error="handleProcessingStateError"
-          @rescan="refresh"
-          @rescan-error="handleRescanError"
-          @retry-fetch="handleRetryFetch"
-          @bulk-discard="handleBulkDiscard"
-          @finalize="openFinalize"
-          @bulk-edit="openBulkEdit"
-          @set-destination="openSetDestination"
-          @refresh="refresh"
-          @apply-fetched="handleApplyFetched"
-        />
+        <BookDockFilterBar :active-view="activeView" :summary="summary" @view="setView" @search="setSearch" />
 
         <!-- Statistics bar -->
-        <div v-if="statistics && statistics.byFormat.length > 0" class="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
-          <span class="font-medium text-foreground">{{ t('views.bookDock.totalInDock', { size: formatBytes(statistics.totalSizeBytes) }) }}</span>
+        <div v-if="statistics && statistics.byFormat.length > 1" class="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
           <span
             v-for="f in statistics.byFormat"
             :key="f.format"
@@ -499,19 +565,50 @@ onUnmounted(() => {
           </div>
         </Transition>
 
-        <BookDockFileList
-          :items="items"
-          :loading="loading"
-          :initialized="initialized"
-          :is-selected="isSelected"
-          :select-all="selectAll"
-          :name-preview-by-file-id="namePreviewByFileId"
-          :empty-message="emptyMessage"
-          @select="handleSelect"
-          @select-all="toggleSelectAll"
-          @open="openSheet"
-          @apply-fetched="handleInlineApplyFetched"
-        />
+        <!-- One clipped container so the list and its action bar share an edge. -->
+        <div class="overflow-hidden rounded-xl border border-border bg-card">
+          <BookDockListBar
+            v-if="items.length > 0"
+            :page-count="items.length"
+            :total="total"
+            :total-size-bytes="statistics?.totalSizeBytes ?? null"
+            :all-on-page-selected="allOnPageSelected"
+            :select-all-matching="selectAll"
+            :selection-count="selectionCount"
+            :fetched-count="fetchedCount"
+            :error-count="errorCount"
+            :summary="summary"
+            :sort="filters.sort"
+            :keyboard-active="keyboardActive"
+            @toggle-select-all="handleToggleSelectAll"
+            @select-all-matching="handleSelectAllMatching"
+            @sort="handleSort"
+            @finalize="openFinalize"
+            @set-destination="openSetDestination"
+            @bulk-edit="openBulkEdit"
+            @bulk-discard="handleBulkDiscard"
+            @apply-fetched="handleApplyFetched"
+            @retry-fetch="handleRetryFetch"
+          />
+          <BookDockFileListView
+            :items="items"
+            :loading="loading"
+            :initialized="initialized"
+            :is-selected="isSelected"
+            :conflicts="conflicts"
+            :name-preview-by-file-id="namePreviewByFileId"
+            :empty-message="emptyMessage"
+            @select="handleSelect"
+            @set-destination="openDestinationForFile"
+            @file="openFinalizeForFile"
+            @apply-fetched="handleInlineApplyFetched"
+            @open="openSheet"
+            @discard="handleRowDiscard"
+            @retry="handleRowRetry"
+            @upload="triggerUpload"
+            @keyboard-active="onKeyboardActive"
+          />
+        </div>
 
         <div v-if="pageCount > 1" class="flex items-center justify-center gap-1">
           <button

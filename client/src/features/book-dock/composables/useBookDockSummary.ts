@@ -4,7 +4,7 @@ import { api } from '@/lib/api'
 import { createAuthenticatedSocket } from '@/lib/socket'
 import type { BookDockSummary } from '@bookorbit/types'
 
-const summary = ref<BookDockSummary>({ pending: 0, ready: 0, error: 0, total: 0, paused: false })
+const summary = ref<BookDockSummary>({ pending: 0, working: 0, ready: 0, error: 0, needsReview: 0, readyToFile: 0, total: 0, paused: false })
 const loading = ref(false)
 const socketConnected = ref(true)
 let socket: Socket | null = null

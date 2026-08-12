@@ -92,6 +92,7 @@ export class BookDockService {
     search?: string,
     userId?: number,
     canManageAll?: boolean,
+    needsReview?: boolean,
   ): Promise<void> {
     await this.processSelectionRows(
       {
@@ -100,6 +101,7 @@ export class BookDockService {
         excludedIds,
         status,
         search,
+        needsReview,
         userId,
         canManageAll,
       },
@@ -123,6 +125,7 @@ export class BookDockService {
     search?: string,
     userId?: number,
     canManageAll?: boolean,
+    needsReview?: boolean,
   ): Promise<{ total: number; updated: number; failed: number }> {
     let updated = 0;
     let failed = 0;
@@ -133,6 +136,7 @@ export class BookDockService {
         excludedIds,
         status,
         search,
+        needsReview,
         userId,
         canManageAll,
       },
@@ -173,6 +177,7 @@ export class BookDockService {
     search?: string,
     userId?: number,
     canManageAll?: boolean,
+    needsReview?: boolean,
   ): Promise<{ total: number; applied: number; skipped: number; skippedEdited: number }> {
     let applied = 0;
     let skipped = 0;
@@ -184,6 +189,7 @@ export class BookDockService {
         excludedIds,
         status,
         search,
+        needsReview,
         userId,
         canManageAll,
       },
@@ -217,6 +223,7 @@ export class BookDockService {
     search?: string,
     userId?: number,
     canManageAll?: boolean,
+    needsReview?: boolean,
   ): Promise<{ total: number; queued: number }> {
     let queued = 0;
     const total = await this.processSelectionRows(
@@ -226,6 +233,7 @@ export class BookDockService {
         excludedIds,
         status,
         search,
+        needsReview,
         userId,
         canManageAll,
       },
@@ -251,6 +259,7 @@ export class BookDockService {
     search?: string,
     userId?: number,
     canManageAll?: boolean,
+    needsReview?: boolean,
   ): Promise<{ total: number; updated: number; failed: number }> {
     await this.assertValidTarget(targetLibraryId, targetFolderId);
     let updated = 0;
@@ -261,6 +270,7 @@ export class BookDockService {
         excludedIds,
         status,
         search,
+        needsReview,
         userId,
         canManageAll,
       },
@@ -284,6 +294,7 @@ export class BookDockService {
     search?: string,
     userId?: number,
     canManageAll?: boolean,
+    needsReview?: boolean,
   ): Promise<{ total: number; withDestination: number; withoutDestination: number }> {
     const destinationPairCounts = new Map<string, number>();
     const folderIdSet = new Set<number>();
@@ -294,6 +305,7 @@ export class BookDockService {
         excludedIds,
         status,
         search,
+        needsReview,
         userId,
         canManageAll,
       },
@@ -460,6 +472,7 @@ export class BookDockService {
       excludedIds?: number[];
       status?: string;
       search?: string;
+      needsReview?: boolean;
       userId?: number;
       canManageAll?: boolean;
     },
@@ -478,6 +491,7 @@ export class BookDockService {
           excludedIds: options.excludedIds,
           status: options.status,
           search: options.search,
+          needsReview: options.needsReview,
           userId,
           canManageAll,
         });

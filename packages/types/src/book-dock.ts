@@ -82,9 +82,16 @@ export interface BookDockFilesPage {
 }
 
 export interface BookDockSummary {
+  /** Everything not yet settled, including files still extracting or fetching. */
   pending: number;
+  /** The in-flight subset of `pending`: extracting plus fetching. */
+  working: number;
   ready: number;
   error: number;
+  /** Ready files with no destination or a match too weak to trust. */
+  needsReview: number;
+  /** Ready files finalize would accept right now: destination resolved. */
+  readyToFile: number;
   total: number;
   paused: boolean;
 }

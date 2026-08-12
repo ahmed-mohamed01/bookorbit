@@ -181,6 +181,7 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
     overrides?: Array<{ fileId: number } & FinalizeOverrideEntry>,
     status?: string,
     search?: string,
+    needsReview?: boolean,
   ): Promise<BookDockFinalizeResult> {
     const ids = selectAll ? [] : dedupeIds(fileIds ?? []);
     const overrideMap = new Map((overrides ?? []).map((o) => [o.fileId, o]));
@@ -198,6 +199,7 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
           excludedIds,
           status,
           search,
+          needsReview,
           userId,
           canManageAll,
         });
@@ -331,25 +333,36 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
     overrides?: Array<{ fileId: number } & FinalizeOverrideEntry>,
     status?: string,
     search?: string,
+    needsReview?: boolean,
   ): Promise<BookDockFinalizePreviewResult> {
     const summary = createFinalizePreviewSummary();
     const overrideMap = new Map((overrides ?? []).map((o) => [o.fileId, o]));
 
-    await this.processFinalizeSelection(userId, canManageAll, fileIds, selectAll, excludedIds, status, search, async (rows, missingIds) => {
-      const prepared = await this.prepareFinalizeBatch(rows, defaultLibraryId, defaultFolderId, overrideMap, userId, isSuperuser);
-      for (const candidate of prepared.analyses) {
-        const analysis = await this.classifyDestination(candidate, prepared.existingDestinations);
-        addFinalizePreviewAnalysis(summary, analysis);
-      }
-      for (const fileId of missingIds) {
-        addFinalizePreviewItem(summary, {
-          fileId,
-          fileName: `book-dock-file-${fileId}`,
-          status: 'error',
-          message: 'Book Dock file not found',
-        });
-      }
-    });
+    await this.processFinalizeSelection(
+      userId,
+      canManageAll,
+      fileIds,
+      selectAll,
+      excludedIds,
+      status,
+      search,
+      needsReview,
+      async (rows, missingIds) => {
+        const prepared = await this.prepareFinalizeBatch(rows, defaultLibraryId, defaultFolderId, overrideMap, userId, isSuperuser);
+        for (const candidate of prepared.analyses) {
+          const analysis = await this.classifyDestination(candidate, prepared.existingDestinations);
+          addFinalizePreviewAnalysis(summary, analysis);
+        }
+        for (const fileId of missingIds) {
+          addFinalizePreviewItem(summary, {
+            fileId,
+            fileName: `book-dock-file-${fileId}`,
+            status: 'error',
+            message: 'Book Dock file not found',
+          });
+        }
+      },
+    );
 
     return summary;
   }
@@ -366,6 +379,7 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
     overrides?: Array<{ fileId: number } & FinalizeOverrideEntry>,
     status?: string,
     search?: string,
+    needsReview?: boolean,
   ): Promise<BookDockDiscardDuplicatesResult> {
     const startedAt = Date.now();
     this.logger.log(`[book_dock.discard_duplicates] [start] userId=${userId} selectAll=${selectAll === true} - duplicate discard started`);
@@ -376,25 +390,35 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
     const discardedFileIds: number[] = [];
 
     try {
-      await this.processFinalizeSelection(userId, canManageAll, fileIds, selectAll, excludedIds, status, search, async (rows, missingIds) => {
-        total += rows.length + missingIds.length;
-        const prepared = await this.prepareFinalizeBatch(rows, defaultLibraryId, defaultFolderId, overrideMap, userId, isSuperuser);
-        const duplicateRows: BookDockFileRow[] = [];
+      await this.processFinalizeSelection(
+        userId,
+        canManageAll,
+        fileIds,
+        selectAll,
+        excludedIds,
+        status,
+        search,
+        needsReview,
+        async (rows, missingIds) => {
+          total += rows.length + missingIds.length;
+          const prepared = await this.prepareFinalizeBatch(rows, defaultLibraryId, defaultFolderId, overrideMap, userId, isSuperuser);
+          const duplicateRows: BookDockFileRow[] = [];
 
-        for (const candidate of prepared.analyses) {
-          const analysis = await this.classifyDestination(candidate, prepared.existingDestinations);
-          if (analysis.status === 'duplicate') duplicateRows.push(candidate.row);
-        }
+          for (const candidate of prepared.analyses) {
+            const analysis = await this.classifyDestination(candidate, prepared.existingDestinations);
+            if (analysis.status === 'duplicate') duplicateRows.push(candidate.row);
+          }
 
-        if (duplicateRows.length === 0) return;
+          if (duplicateRows.length === 0) return;
 
-        for (const row of duplicateRows) {
-          await this.cleanupDiscardedBookDockFile(row);
-          discardedFileIds.push(row.id);
-        }
-        await this.repo.deleteByIds(duplicateRows.map((row) => row.id));
-        discarded += duplicateRows.length;
-      });
+          for (const row of duplicateRows) {
+            await this.cleanupDiscardedBookDockFile(row);
+            discardedFileIds.push(row.id);
+          }
+          await this.repo.deleteByIds(duplicateRows.map((row) => row.id));
+          discarded += duplicateRows.length;
+        },
+      );
 
       this.emitChange();
       const result = { total, discarded, skipped: total - discarded, discardedFileIds: selectAll ? [] : discardedFileIds };
@@ -558,6 +582,7 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
     excludedIds: number[] | undefined,
     status: string | undefined,
     search: string | undefined,
+    needsReview: boolean | undefined,
     processBatch: (rows: BookDockFileRow[], missingIds: number[]) => Promise<void>,
   ): Promise<void> {
     if (selectAll) {
@@ -569,6 +594,7 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
           excludedIds,
           status,
           search,
+          needsReview,
           userId,
           canManageAll,
         });
@@ -690,8 +716,9 @@ export class BookDockFinalizeService implements OnModuleInit, OnApplicationBoots
     canManageAll: boolean | undefined,
     status?: string,
     search?: string,
+    needsReview?: boolean,
   ): Promise<{ fileId: number; fileName: string; newName: string }[]> {
-    const ids = selectAll ? await this.repo.findAllIds(excludedIds, status, search, userId, canManageAll) : (fileIds ?? []);
+    const ids = selectAll ? await this.repo.findAllIds(excludedIds, status, search, userId, canManageAll, needsReview) : (fileIds ?? []);
     if (!ids.length) return [];
 
     const rows = await this.repo.findByIds(ids, userId, canManageAll);

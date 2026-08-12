@@ -4535,6 +4535,70 @@
       "alreadyExistsSaveAs": "Already exists - save as:",
       "renamePlaceholder": "e.g. {name} (2)",
       "import": "Import"
+    },
+    "layout": {
+      "pause": "Pause",
+      "resume": "Resume",
+      "pauseUpdateFailed": "Pause update failed",
+      "clearSearch": "Clear search",
+      "filter": {
+        "all": "All",
+        "needsReview": "Needs review",
+        "pending": "Pending",
+        "ready": "Ready",
+        "error": "Error"
+      },
+      "working": {
+        "label": "{count} working"
+      },
+      "row": {
+        "select": "Select {title}",
+        "setDestination": "Set destination",
+        "file": "File",
+        "match": "{percent}% match",
+        "noAuthor": "No author yet",
+        "proposedChanges": "Proposed changes",
+        "noChanges": "No metadata fetched yet",
+        "editDetails": "Edit details",
+        "noMatch": "No match",
+        "applied": "Applied",
+        "refetch": "Re-fetch metadata",
+        "clickToZoom": "Click a cover to enlarge",
+        "changedFields": "{count, plural, one {# field} other {# fields}}",
+        "needMore": "Need to search providers or edit other fields?"
+      },
+      "selection": {
+        "fileToLibrary": "{count, plural, =0 {File to library} one {File # to library} other {File # to library}}",
+        "nSelected": "{count} selected",
+        "nReadyToFile": "{count} ready to file"
+      },
+      "empty": {
+        "nothingToReview": "Nothing needs review. Every ready file has a destination and a confident match.",
+        "dropHint": "Or drop files anywhere on this page."
+      },
+      "selectAllOnPage": "Select all files on this page",
+      "showingOf": "{shown} of {total}",
+      "keyboardHint": "J / K to move · space to select · enter to expand",
+      "allOnPageSelected": "All {count} on this page are selected.",
+      "selectAllMatching": "Select all {count} matching",
+      "allMatchingSelected": "All {count} matching files are selected",
+      "sort": {
+        "label": "Sort by",
+        "attention": "Needs attention",
+        "createdAt": "Recently added",
+        "fileName": "File name",
+        "fileSize": "Size",
+        "format": "Format",
+        "status": "Status"
+      },
+      "conflict": {
+        "duplicate": "Duplicate",
+        "destination_conflict": "Path taken",
+        "invalid_target": "Bad target",
+        "access_denied": "No access",
+        "invalid_format": "Bad format",
+        "error": "Would fail"
+      }
     }
   },
   "collection": {

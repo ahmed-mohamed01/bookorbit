@@ -63,6 +63,7 @@ export class BookDockController {
   listFiles(@CurrentUser() user: RequestUser, @Query() query: ListBookDockFilesDto) {
     return this.service.listFiles({
       status: query.status,
+      needsReview: query.needsReview,
       page: query.page ?? 1,
       limit: query.limit ?? 20,
       sort: query.sort ?? 'createdAt',
@@ -143,17 +144,44 @@ export class BookDockController {
   @Post('files/discard')
   @HttpCode(HttpStatus.NO_CONTENT)
   bulkDiscard(@CurrentUser() user: RequestUser, @Body() dto: BulkDiscardDto) {
-    return this.service.bulkDiscard(dto.fileIds ?? [], dto.selectAll, dto.excludedIds, dto.status, dto.search, user.id, this.canManageAll(user));
+    return this.service.bulkDiscard(
+      dto.fileIds ?? [],
+      dto.selectAll,
+      dto.excludedIds,
+      dto.status,
+      dto.search,
+      user.id,
+      this.canManageAll(user),
+      dto.needsReview,
+    );
   }
 
   @Post('files/apply-fetched')
   applyFetched(@CurrentUser() user: RequestUser, @Body() dto: BulkApplyFetchedDto) {
-    return this.service.bulkApplyFetched(dto.fileIds ?? [], dto.selectAll, dto.excludedIds, dto.status, dto.search, user.id, this.canManageAll(user));
+    return this.service.bulkApplyFetched(
+      dto.fileIds ?? [],
+      dto.selectAll,
+      dto.excludedIds,
+      dto.status,
+      dto.search,
+      user.id,
+      this.canManageAll(user),
+      dto.needsReview,
+    );
   }
 
   @Post('files/retry-fetch')
   retryFetch(@CurrentUser() user: RequestUser, @Body() dto: BulkRetryFetchDto) {
-    return this.service.bulkRetryFetch(dto.fileIds, dto.selectAll, dto.excludedIds, dto.status, dto.search, user.id, this.canManageAll(user));
+    return this.service.bulkRetryFetch(
+      dto.fileIds,
+      dto.selectAll,
+      dto.excludedIds,
+      dto.status,
+      dto.search,
+      user.id,
+      this.canManageAll(user),
+      dto.needsReview,
+    );
   }
 
   @Post('files/set-target')
@@ -168,12 +196,22 @@ export class BookDockController {
       dto.search,
       user.id,
       this.canManageAll(user),
+      dto.needsReview,
     );
   }
 
   @Post('files/selection-summary')
   selectionSummary(@CurrentUser() user: RequestUser, @Body() dto: SelectionSummaryDto) {
-    return this.service.selectionSummary(dto.fileIds ?? [], dto.selectAll, dto.excludedIds, dto.status, dto.search, user.id, this.canManageAll(user));
+    return this.service.selectionSummary(
+      dto.fileIds ?? [],
+      dto.selectAll,
+      dto.excludedIds,
+      dto.status,
+      dto.search,
+      user.id,
+      this.canManageAll(user),
+      dto.needsReview,
+    );
   }
 
   @Post('files/bulk-edit')
@@ -190,6 +228,7 @@ export class BookDockController {
       dto.search,
       user.id,
       this.canManageAll(user),
+      dto.needsReview,
     );
   }
 
@@ -204,6 +243,7 @@ export class BookDockController {
       this.canManageAll(user),
       dto.status,
       dto.search,
+      dto.needsReview,
     );
   }
 
@@ -223,6 +263,7 @@ export class BookDockController {
       dto.overrides,
       dto.status,
       dto.search,
+      dto.needsReview,
     );
   }
 
@@ -242,6 +283,7 @@ export class BookDockController {
       dto.overrides,
       dto.status,
       dto.search,
+      dto.needsReview,
     );
   }
 
@@ -271,6 +313,7 @@ export class BookDockController {
       dto.overrides,
       dto.status,
       dto.search,
+      dto.needsReview,
     );
   }
 

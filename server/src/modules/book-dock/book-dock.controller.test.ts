@@ -182,11 +182,24 @@ describe('BookDockController', () => {
     await controller.pause();
     await controller.resume();
 
-    expect(service.bulkSetTarget).toHaveBeenCalledWith([5], false, [6], null, null, undefined, undefined, MOCK_USER.id, false);
-    expect(finalizeService.previewNames).toHaveBeenCalledWith([10], false, [], 2, MOCK_USER.id, false, undefined, undefined);
-    expect(finalizeService.previewFinalize).toHaveBeenCalledWith(1, false, false, [10], false, [], 2, 3, [], undefined, undefined);
-    expect(finalizeService.discardDuplicateCandidates).toHaveBeenCalledWith(1, false, false, [10], false, [], 2, 3, [], undefined, undefined);
-    expect(finalizeService.finalize).toHaveBeenCalledWith(99, true, true, [1], false, [], 2, 3, [], undefined, undefined);
+    expect(service.bulkSetTarget).toHaveBeenCalledWith([5], false, [6], null, null, undefined, undefined, MOCK_USER.id, false, undefined);
+    expect(finalizeService.previewNames).toHaveBeenCalledWith([10], false, [], 2, MOCK_USER.id, false, undefined, undefined, undefined);
+    expect(finalizeService.previewFinalize).toHaveBeenCalledWith(1, false, false, [10], false, [], 2, 3, [], undefined, undefined, undefined);
+    expect(finalizeService.discardDuplicateCandidates).toHaveBeenCalledWith(
+      1,
+      false,
+      false,
+      [10],
+      false,
+      [],
+      2,
+      3,
+      [],
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(finalizeService.finalize).toHaveBeenCalledWith(99, true, true, [1], false, [], 2, 3, [], undefined, undefined, undefined);
     expect(watcherService.rescan).toHaveBeenCalled();
     expect(service.pauseProcessing).toHaveBeenCalledTimes(1);
     expect(service.resumeProcessing).toHaveBeenCalledTimes(1);

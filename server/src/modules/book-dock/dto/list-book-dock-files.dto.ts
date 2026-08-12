@@ -1,14 +1,19 @@
-import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
 
 const VALID_STATUSES = ['pending', 'ready', 'error'] as const;
-const VALID_SORT_FIELDS = ['createdAt', 'fileName', 'format', 'status', 'fileSize'] as const;
+const VALID_SORT_FIELDS = ['createdAt', 'fileName', 'format', 'status', 'fileSize', 'attention'] as const;
 const VALID_ORDERS = ['asc', 'desc'] as const;
 
 export class ListBookDockFilesDto {
   @IsOptional()
   @IsIn(VALID_STATUSES)
   status?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
+  @IsBoolean()
+  needsReview?: boolean;
 
   @IsOptional()
   @Transform(({ value }) => parseInt(value as string, 10))

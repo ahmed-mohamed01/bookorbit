@@ -188,6 +188,10 @@ export class FinalizeBookDockDto {
   search?: string;
 
   @IsOptional()
+  @IsBoolean()
+  needsReview?: boolean;
+
+  @IsOptional()
   @ValidateIf((_, value) => value !== undefined)
   @IsInt()
   defaultLibraryId?: number;
@@ -226,6 +230,10 @@ export class BulkDiscardDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  needsReview?: boolean;
 }
 
 export class PreviewNamesDto {
@@ -250,6 +258,10 @@ export class PreviewNamesDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  needsReview?: boolean;
 
   @IsOptional()
   @ValidateIf((_, value) => value !== undefined)
@@ -279,6 +291,10 @@ export class BulkRetryFetchDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  needsReview?: boolean;
 }
 
 export class BulkApplyFetchedDto {
@@ -303,6 +319,10 @@ export class BulkApplyFetchedDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  needsReview?: boolean;
 }
 
 export class BulkSetTargetDto {
@@ -327,6 +347,10 @@ export class BulkSetTargetDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  needsReview?: boolean;
 
   @IsOptional()
   @ValidateIf((_, value) => value !== null)
@@ -361,6 +385,10 @@ export class SelectionSummaryDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  needsReview?: boolean;
 }
 
 export class BulkEditBookDockDto {
@@ -385,6 +413,10 @@ export class BulkEditBookDockDto {
   @IsOptional()
   @IsString()
   search?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  needsReview?: boolean;
 
   @ValidateNested()
   @IsObject()

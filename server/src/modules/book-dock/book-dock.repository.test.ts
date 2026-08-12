@@ -7,7 +7,9 @@ vi.mock('drizzle-orm', () => ({
   gt: vi.fn((left: unknown, right: unknown) => ({ op: 'gt', left, right })),
   ilike: vi.fn((left: unknown, right: unknown) => ({ op: 'ilike', left, right })),
   inArray: vi.fn((left: unknown, right: unknown[]) => ({ op: 'inArray', left, right })),
+  isNotNull: vi.fn((value: unknown) => ({ op: 'isNotNull', value })),
   isNull: vi.fn((value: unknown) => ({ op: 'isNull', value })),
+  lt: vi.fn((left: unknown, right: unknown) => ({ op: 'lt', left, right })),
   notInArray: vi.fn((left: unknown, right: unknown[]) => ({ op: 'notInArray', left, right })),
   or: vi.fn((...clauses: unknown[]) => ({ op: 'or', clauses })),
   sql: Object.assign(
@@ -115,18 +117,21 @@ describe('BookDockRepository', () => {
   it('countsByStatus maps queue statuses and computes total', async () => {
     const { db, selectBuilder } = makeDb();
     selectBuilder.groupBy.mockResolvedValue([
-      { status: 'pending', cnt: '3' },
-      { status: 'ready', cnt: '5' },
-      { status: 'error', cnt: '2' },
-      { status: 'extracting', cnt: '1' },
-      { status: 'fetching', cnt: '4' },
+      { status: 'pending', cnt: '3', needsReview: '0', readyToFile: '0' },
+      { status: 'ready', cnt: '5', needsReview: '2', readyToFile: '3' },
+      { status: 'error', cnt: '2', needsReview: '0', readyToFile: '0' },
+      { status: 'extracting', cnt: '1', needsReview: '0', readyToFile: '0' },
+      { status: 'fetching', cnt: '4', needsReview: '0', readyToFile: '0' },
     ]);
     const repo = new BookDockRepository(db as never);
 
     await expect(repo.countsByStatus()).resolves.toEqual({
       pending: 8,
+      working: 5,
       ready: 5,
       error: 2,
+      needsReview: 2,
+      readyToFile: 3,
       total: 15,
     });
   });
