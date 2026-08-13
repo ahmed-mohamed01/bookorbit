@@ -16,6 +16,7 @@ import {
   Download,
   Eye,
   EyeOff,
+  KeyRound,
   Library,
   Link2,
   RefreshCw,
@@ -26,9 +27,17 @@ import {
   X,
 } from '@lucide/vue'
 import { toast } from 'vue-sonner'
-import type { BookCard, KoreaderDeviceInfo, KoreaderDeviceSweepInfo, KoreaderManualHashLink, KoreaderUnmatchedBook } from '@bookorbit/types'
+import type {
+  BookCard,
+  KoreaderDeviceInfo,
+  KoreaderDeviceSweepInfo,
+  KoreaderManualHashLink,
+  KoreaderUnmatchedBook,
+  UpdateKoreaderCredentialsPayload,
+} from '@bookorbit/types'
 import SettingsPageHeader from './SettingsPageHeader.vue'
 import SettingsTabs from './components/SettingsTabs.vue'
+import KoreaderCredentialsDialog from './KoreaderCredentialsDialog.vue'
 import KoreaderFileNamingSettings from './KoreaderFileNamingSettings.vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { copyToClipboard } from '@/lib/clipboard'
@@ -118,6 +127,9 @@ const newUsername = ref('')
 const newPassword = ref('')
 const creating = ref(false)
 const showPassword = ref(false)
+const changeCredentialsOpen = ref(false)
+const changingCredentials = ref(false)
+const changeCredentialsError = ref<string | null>(null)
 const deleteConfirmOpen = ref(false)
 const helpOpen = ref(false)
 const urlCopied = ref(false)
@@ -347,6 +359,31 @@ function handleCancelSetup() {
 
 function handleTogglePassword() {
   showPassword.value = !showPassword.value
+}
+
+function handleOpenChangeCredentials() {
+  changeCredentialsError.value = null
+  changeCredentialsOpen.value = true
+}
+
+function handleChangeCredentialsOpenChange(open: boolean) {
+  if (changingCredentials.value) return
+  changeCredentialsOpen.value = open
+  if (!open) changeCredentialsError.value = null
+}
+
+async function handleChangeCredentials(payload: UpdateKoreaderCredentialsPayload) {
+  changingCredentials.value = true
+  changeCredentialsError.value = null
+  try {
+    await updateCredentials(payload)
+    changeCredentialsOpen.value = false
+    toast.success(t('settings.reader.koreader.changeCredentials.updated'))
+  } catch (e) {
+    changeCredentialsError.value = e instanceof Error ? e.message : t('settings.reader.koreader.changeCredentials.updateFailed')
+  } finally {
+    changingCredentials.value = false
+  }
 }
 
 function handleOpenDeleteConfirm() {
@@ -670,9 +707,18 @@ async function handleDownloadPlugin() {
                 class="input-field w-full pr-10"
                 :class="{ 'input-secret': !showPassword }"
               />
-              <button class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" @click="handleTogglePassword">
-                <EyeOff v-if="showPassword" :size="14" />
-                <Eye v-else :size="14" />
+              <button
+                type="button"
+                class="absolute right-2 top-1/2 -translate-y-1/2 rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                :aria-label="
+                  showPassword
+                    ? t('settings.reader.koreader.changeCredentials.hidePassword')
+                    : t('settings.reader.koreader.changeCredentials.showPassword')
+                "
+                @click="handleTogglePassword"
+              >
+                <EyeOff v-if="showPassword" :size="14" aria-hidden="true" />
+                <Eye v-else :size="14" aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -731,6 +777,14 @@ async function handleDownloadPlugin() {
                 <p class="settings-hint font-mono truncate">
                   {{ credentials?.username }}
                 </p>
+                <button
+                  type="button"
+                  class="mt-2 inline-flex items-center gap-1.5 rounded-md text-xs font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  @click="handleOpenChangeCredentials"
+                >
+                  <KeyRound :size="12" aria-hidden="true" />
+                  {{ t('settings.reader.koreader.changeCredentials.action') }}
+                </button>
               </div>
               <div>
                 <p class="settings-label">
@@ -1288,6 +1342,15 @@ async function handleDownloadPlugin() {
           </div>
         </div>
       </template>
+
+      <KoreaderCredentialsDialog
+        :open="changeCredentialsOpen"
+        :current-username="credentials?.username ?? ''"
+        :saving="changingCredentials"
+        :error="changeCredentialsError"
+        @update:open="handleChangeCredentialsOpenChange"
+        @submit="handleChangeCredentials"
+      />
 
       <div
         v-if="deleteConfirmOpen"

@@ -200,6 +200,11 @@ function buttonByText(wrapper: ReturnType<typeof mount>, text: string) {
   return wrapper.findAll('button').find((button) => button.text().includes(text))
 }
 
+function setInputValue(input: HTMLInputElement, value: string): void {
+  input.value = value
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
 describe('KoreaderSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -337,6 +342,71 @@ describe('KoreaderSettings', () => {
     expect(wrapper.text()).toContain('2 deleted highlights awaiting KOReader plugin acknowledgement.')
     expect(wrapper.text()).toContain('3 highlight positions need attention.')
     expect(wrapper.text()).not.toContain('Download the preconfigured plugin above.')
+  })
+
+  it('updates an existing KOReader username and password without deleting credentials', async () => {
+    const status = makeSyncStatus()
+    koreaderMock.credentials.value = status.credentials
+    koreaderMock.syncStatus.value = status
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    await buttonByText(wrapper, 'Change credentials')!.trigger('click')
+    await flushPromises()
+
+    const usernameInput = document.body.querySelector<HTMLInputElement>('#koreader-credentials-username')!
+    const passwordInput = document.body.querySelector<HTMLInputElement>('#koreader-credentials-password')!
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('Save credentials'))!
+    expect(usernameInput.value).toBe('reader-user')
+    expect(passwordInput.classList.contains('input-secret')).toBe(true)
+    expect(saveButton.disabled).toBe(true)
+
+    setInputValue(passwordInput, 'short')
+    await flushPromises()
+    expect(saveButton.disabled).toBe(true)
+    expect(document.body.textContent).toContain('The password must be between 6 and 128 characters.')
+
+    setInputValue(usernameInput, 'replacement-reader')
+    setInputValue(passwordInput, 'new-secret')
+    await flushPromises()
+    expect(saveButton.disabled).toBe(false)
+    saveButton.click()
+    await flushPromises()
+
+    expect(koreaderMock.updateCredentials).toHaveBeenCalledWith({
+      username: 'replacement-reader',
+      password: 'new-secret',
+    })
+    expect(document.body.textContent).not.toContain('Change KOReader credentials')
+    wrapper.unmount()
+  })
+
+  it('keeps the credential dialog open when updating credentials fails', async () => {
+    const status = makeSyncStatus()
+    koreaderMock.credentials.value = status.credentials
+    koreaderMock.syncStatus.value = status
+    koreaderMock.updateCredentials.mockRejectedValueOnce(new Error('Username already taken'))
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    await buttonByText(wrapper, 'Change credentials')!.trigger('click')
+    await flushPromises()
+
+    const usernameInput = document.body.querySelector<HTMLInputElement>('#koreader-credentials-username')!
+    setInputValue(usernameInput, 'taken-reader')
+    await flushPromises()
+    const saveButton = Array.from(document.body.querySelectorAll('button')).find((button) => button.textContent?.includes('Save credentials'))!
+    saveButton.click()
+    await flushPromises()
+
+    expect(koreaderMock.updateCredentials).toHaveBeenCalledWith({
+      username: 'taken-reader',
+    })
+    expect(document.body.textContent).toContain('Username already taken')
+    expect(document.body.textContent).toContain('Change KOReader credentials')
+    wrapper.unmount()
   })
 
   it('expands the setup guide only when requested', async () => {
@@ -670,7 +740,10 @@ describe('KoreaderSettings', () => {
     expect(wrapper.text()).toContain('Linked KOReader Title')
     expect(wrapper.text()).toContain('Linked to Linked BookOrbit Title')
 
-    await buttonByText(wrapper, 'Change')!.trigger('click')
+    await wrapper
+      .findAll('button')
+      .find((button) => button.text() === 'Change')!
+      .trigger('click')
     await wrapper
       .findAll('button')
       .find((button) => button.text().includes('Replacement Book'))!
