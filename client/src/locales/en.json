@@ -2105,6 +2105,8 @@
         "credentialsCreatedLabel": "Credentials created",
         "setup": "Setup",
         "pluginServerUrl": "Plugin server URL",
+        "syncUrl": "KOReader sync URL",
+        "syncUrlHint": "Works with the BookOrbit plugin and KOReader's built-in progress sync.",
         "copied": "Copied",
         "copyUrl": "Copy URL",
         "preconfiguredPlugin": "Preconfigured BookOrbit plugin",

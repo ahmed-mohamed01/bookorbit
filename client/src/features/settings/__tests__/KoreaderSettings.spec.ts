@@ -323,8 +323,9 @@ describe('KoreaderSettings', () => {
     expect(wrapper.text()).toContain('reader-user')
     expect(wrapper.text()).toContain('14 books')
     expect(wrapper.text()).toContain('1 device')
-    const syncUrlInput = wrapper.find('input[readonly]').element as HTMLInputElement
-    expect(syncUrlInput.value).toBe('https://bookorbit.example')
+    expect(wrapper.text()).toContain('KOReader sync URL')
+    expect(wrapper.text()).toContain("Works with the BookOrbit plugin and KOReader's built-in progress sync.")
+    expect((wrapper.find('#koreader-sync-url').element as HTMLInputElement).value).toBe('https://bookorbit.example/api/v1/koreader')
     expect(wrapper.text()).toContain('Kobo Libra 2')
     expect(wrapper.text()).toContain('Project Hail Mary')
     expect(wrapper.text()).toContain('Latest plugin: v1.6.0')
@@ -351,11 +352,10 @@ describe('KoreaderSettings', () => {
     await buttonByText(wrapper, 'KOReader setup steps')!.trigger('click')
 
     expect(wrapper.text()).toContain('Download the preconfigured plugin above.')
-    const stockUrlInput = wrapper.find('#koreader-stock-server-url')
-    expect(wrapper.find('label[for="koreader-stock-server-url"]').text()).toBe('Set the custom sync server to the following URL:')
-    expect((stockUrlInput.element as HTMLInputElement).value).toBe('https://bookorbit.example/api/v1/koreader')
+    expect(wrapper.text()).toContain('Set the custom sync server to the URL shown above.')
+    expect(wrapper.findAll('#koreader-sync-url')).toHaveLength(1)
 
-    const copyButton = wrapper.find('#koreader-stock-server-url-copy')
+    const copyButton = wrapper.find('#koreader-sync-url-copy')
     await copyButton.trigger('click')
 
     expect(vi.mocked(copyToClipboard)).toHaveBeenLastCalledWith('https://bookorbit.example/api/v1/koreader')
@@ -469,7 +469,7 @@ describe('KoreaderSettings', () => {
     expect(koreaderMock.fetchUnmatchedBooks).toHaveBeenCalledTimes(2)
     expect(koreaderMock.fetchManualHashLinks).toHaveBeenCalledTimes(2)
     expect(koreaderMock.updateCredentials).toHaveBeenCalledWith({ syncEnabled: false })
-    expect(vi.mocked(copyToClipboard)).toHaveBeenCalledWith('https://bookorbit.example')
+    expect(vi.mocked(copyToClipboard)).toHaveBeenCalledWith('https://bookorbit.example/api/v1/koreader')
     expect(koreaderMock.downloadPluginPackage).toHaveBeenCalledTimes(1)
     expect(wrapper.text()).toContain('Delete KOReader credentials?')
 
