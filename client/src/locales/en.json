@@ -5672,6 +5672,7 @@
       "schedule": {
         "fileWatching": "File watching",
         "autoScanSchedule": "Auto-scan schedule",
+        "timezoneHint": "Schedules run in the server's timezone.",
         "cronExpression": "Cron expression",
         "cronInvalid": "Invalid cron expression.",
         "cronFormat": "Format: minute hour day month weekday",
@@ -5690,6 +5691,7 @@
         },
         "human": {
           "disabled": "Auto-scan disabled",
+          "invalid": "Enter a valid schedule to see a preview",
           "hourly": "Every hour",
           "every6Hours": "Every 6 hours",
           "every12Hours": "Every 12 hours",
