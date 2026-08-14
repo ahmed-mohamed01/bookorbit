@@ -37,7 +37,11 @@ function makeSession(startEpoch: number): DerivedKoreaderSession {
 }
 
 describe('KoreaderStatsService', () => {
-  let koreaderRepo: { getAccessibleLibraryIds: ReturnType<typeof vi.fn>; resolveBookFilesByHashes: ReturnType<typeof vi.fn> };
+  let koreaderRepo: {
+    getAccessibleLibraryIds: ReturnType<typeof vi.fn>;
+    resolveBookFilesByHashes: ReturnType<typeof vi.fn>;
+    restoreDevice: ReturnType<typeof vi.fn>;
+  };
   let pluginRepo: { ingestAndDeriveForBook: ReturnType<typeof vi.fn> };
   let achievementEvents: { emit: ReturnType<typeof vi.fn> };
   let service: KoreaderStatsService;
@@ -50,6 +54,7 @@ describe('KoreaderStatsService', () => {
     koreaderRepo = {
       getAccessibleLibraryIds: vi.fn().mockResolvedValue([1]),
       resolveBookFilesByHashes: vi.fn().mockResolvedValue(new Map([[HASH_A, { bookFileId: 10, bookId: 20, libraryId: 1 }]])),
+      restoreDevice: vi.fn().mockResolvedValue(undefined),
     };
     pluginRepo = {
       ingestAndDeriveForBook: vi.fn().mockResolvedValue({ accepted: 2, duplicates: 0, insertedSessions: [], updatedSessions: 0, deletedSessions: 0 }),

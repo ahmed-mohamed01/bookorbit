@@ -2281,7 +2281,22 @@
         "deviceRemoved": "Device removed",
         "removeDeviceFailed": "Failed to remove device",
         "removeDeviceConfirmTitle": "Remove {device}?",
-        "removeDeviceConfirmBody": "This permanently deletes this device's synced progress, reading activity, and any unmatched-book entries no longer reported by another device. If the device syncs again later, it will reappear as a new entry."
+        "removeDeviceConfirmBody": "This permanently deletes this device's synced progress, reading activity, and any unmatched-book entries no longer reported by another device. If the device syncs again later, it will reappear as a new entry.",
+        "deleteDeviceDataConfirmTitle": "Delete synced data from {device}?",
+        "deleteDeviceDataConfirmBody": "This permanently deletes this device's synced progress, page-by-page reading activity, and any unmatched-book entries no longer reported by another device. Reading sessions already recorded in your stats are kept. If the device syncs again later, it will reappear as a new entry.",
+        "devicesHint": "Retiring a device hides it and keeps everything it has synced. Deleting its synced data cannot be undone.",
+        "retire": "Retire",
+        "retiring": "Retiring...",
+        "restore": "Restore",
+        "restoring": "Restoring...",
+        "deleteSyncedData": "Delete data",
+        "deletingSyncedData": "Deleting...",
+        "deviceRetired": "Device retired",
+        "deviceRestored": "Device restored",
+        "retireDeviceFailed": "Failed to retire device",
+        "restoreDeviceFailed": "Failed to restore device",
+        "retiredDevices": "{count, plural, one {# retired device} other {# retired devices}}",
+        "retiredOnLabel": "Retired"
       },
       "opds": {
         "title": "OPDS",

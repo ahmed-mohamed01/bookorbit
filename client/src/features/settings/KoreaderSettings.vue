@@ -5,6 +5,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { formatDate as formatLocaleDate } from '@/i18n/formatters'
 import {
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   BookOpen,
   Calendar,
   Check,
@@ -118,6 +120,7 @@ const {
   dismissAllUnmatchedBooks,
   relinkManualHashLink,
   unlinkManualHashLink,
+  setDeviceRetired,
   removeDevice,
 } = useKoreaderSync()
 
@@ -142,6 +145,8 @@ const unlinkConfirmLink = ref<KoreaderManualHashLink | null>(null)
 const unlinkingHash = ref<string | null>(null)
 const removeDeviceConfirmTarget = ref<KoreaderDeviceInfo | null>(null)
 const removingDeviceId = ref<string | null>(null)
+const retiringDeviceId = ref<string | null>(null)
+const retiredDevicesOpen = ref(false)
 const dismissConfirmBook = ref<KoreaderUnmatchedBook | null>(null)
 const dismissingHash = ref<string | null>(null)
 const dismissAllConfirmOpen = ref(false)
@@ -166,9 +171,11 @@ onUnmounted(() => {
 
 const syncUrl = computed(() => new URL('/api/v1/koreader', getSyncUrl()).toString())
 const hasCredentials = computed(() => !!credentials.value)
-const deviceCount = computed(() => syncStatus.value?.devices.length ?? 0)
+const activeDevices = computed(() => (syncStatus.value?.devices ?? []).filter((device) => device.retiredAt === null))
+const retiredDevices = computed(() => (syncStatus.value?.devices ?? []).filter((device) => device.retiredAt !== null))
+const deviceCount = computed(() => activeDevices.value.length)
 const totalSyncedBooks = computed(() => syncStatus.value?.totalSyncedBooks ?? 0)
-const sweeps = computed(() => syncStatus.value?.sweeps ?? [])
+const sweeps = computed(() => (syncStatus.value?.sweeps ?? []).filter((sweep) => sweep.retiredAt === null))
 const pluginTotals = computed(
   () =>
     syncStatus.value?.pluginTotals ?? {
@@ -599,6 +606,36 @@ async function handleUnlinkManualLink() {
   }
 }
 
+function formatRetiredAt(value: string | null): string {
+  if (!value) return t('settings.reader.koreader.never')
+  return formatLocaleDate(new Date(value), { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+function handleToggleRetiredDevices() {
+  retiredDevicesOpen.value = !retiredDevicesOpen.value
+}
+
+async function applyDeviceRetired(device: KoreaderDeviceInfo, retired: boolean) {
+  retiringDeviceId.value = device.deviceId
+  try {
+    await setDeviceRetired(device.deviceId, retired)
+    toast.success(retired ? t('settings.reader.koreader.deviceRetired') : t('settings.reader.koreader.deviceRestored'))
+  } catch (e) {
+    const fallback = retired ? t('settings.reader.koreader.retireDeviceFailed') : t('settings.reader.koreader.restoreDeviceFailed')
+    toast.error(e instanceof Error ? e.message : fallback)
+  } finally {
+    retiringDeviceId.value = null
+  }
+}
+
+function handleRetireDevice(device: KoreaderDeviceInfo) {
+  return applyDeviceRetired(device, true)
+}
+
+function handleRestoreDevice(device: KoreaderDeviceInfo) {
+  return applyDeviceRetired(device, false)
+}
+
 function handleOpenRemoveDevice(device: KoreaderDeviceInfo) {
   removeDeviceConfirmTarget.value = device
 }
@@ -898,6 +935,9 @@ async function handleDownloadPlugin() {
           <p class="settings-group-label">
             {{ t('settings.reader.koreader.devices') }}
           </p>
+          <p class="settings-hint mb-3">
+            {{ t('settings.reader.koreader.devicesHint') }}
+          </p>
           <div v-if="deviceCount === 0" class="border border-border rounded-lg px-5 py-8 bg-card text-center shadow-xs">
             <div class="w-10 h-10 rounded-lg bg-muted flex items-center justify-center mx-auto mb-3">
               <Smartphone :size="18" class="text-muted-foreground" />
@@ -910,7 +950,7 @@ async function handleDownloadPlugin() {
             </p>
           </div>
           <div v-else class="border border-border rounded-lg overflow-hidden shadow-xs divide-y divide-border">
-            <div v-for="device in syncStatus?.devices ?? []" :key="device.deviceId" class="px-4 py-4 bg-card md:px-5">
+            <div v-for="device in activeDevices" :key="device.deviceId" class="px-4 py-4 bg-card md:px-5">
               <div class="flex items-start gap-3">
                 <div class="w-9 h-9 rounded-lg bg-muted flex items-center justify-center text-muted-foreground shrink-0 border border-border">
                   <Smartphone :size="16" />
@@ -929,12 +969,63 @@ async function handleDownloadPlugin() {
                   </div>
                 </div>
                 <button
-                  class="flex items-center gap-1.5 rounded-md border border-destructive/30 px-3 py-2 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors shrink-0"
-                  @click="handleOpenRemoveDevice(device)"
+                  class="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors shrink-0 disabled:opacity-60"
+                  :disabled="retiringDeviceId === device.deviceId"
+                  @click="handleRetireDevice(device)"
                 >
-                  <Trash2 :size="12" />
-                  {{ t('settings.reader.koreader.remove') }}
+                  <Archive :size="12" />
+                  {{ retiringDeviceId === device.deviceId ? t('settings.reader.koreader.retiring') : t('settings.reader.koreader.retire') }}
                 </button>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="retiredDevices.length > 0" class="mt-3 border border-border rounded-lg overflow-hidden shadow-xs">
+            <button
+              class="flex w-full items-center justify-between gap-3 px-4 py-3 bg-card text-left text-foreground hover:bg-muted transition-colors md:px-5"
+              :aria-expanded="retiredDevicesOpen"
+              aria-controls="koreader-retired-devices"
+              @click="handleToggleRetiredDevices"
+            >
+              <span class="text-sm font-medium">
+                {{ t('settings.reader.koreader.retiredDevices', { count: retiredDevices.length }) }}
+              </span>
+              <ChevronDown v-if="!retiredDevicesOpen" :size="16" class="text-muted-foreground shrink-0" />
+              <ChevronUp v-else :size="16" class="text-muted-foreground shrink-0" />
+            </button>
+            <div v-if="retiredDevicesOpen" id="koreader-retired-devices" class="divide-y divide-border border-t border-border">
+              <div v-for="device in retiredDevices" :key="device.deviceId" class="px-4 py-4 bg-card md:px-5">
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-start">
+                  <div class="flex flex-1 min-w-0 items-start gap-3">
+                    <div class="w-9 h-9 rounded-lg bg-muted flex items-center justify-center text-muted-foreground shrink-0 border border-border">
+                      <Archive :size="16" />
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <p class="settings-label truncate">{{ device.device }}</p>
+                      <p class="mt-1 text-xs text-muted-foreground">
+                        {{ t('settings.reader.koreader.retiredOnLabel') }}
+                        <span class="text-foreground">{{ formatRetiredAt(device.retiredAt) }}</span>
+                      </p>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button
+                      class="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition-colors disabled:opacity-60"
+                      :disabled="retiringDeviceId === device.deviceId"
+                      @click="handleRestoreDevice(device)"
+                    >
+                      <ArchiveRestore :size="12" />
+                      {{ retiringDeviceId === device.deviceId ? t('settings.reader.koreader.restoring') : t('settings.reader.koreader.restore') }}
+                    </button>
+                    <button
+                      class="flex items-center gap-1.5 rounded-md border border-destructive/30 px-3 py-2 text-xs font-medium text-destructive hover:bg-destructive/10 transition-colors"
+                      @click="handleOpenRemoveDevice(device)"
+                    >
+                      <Trash2 :size="12" />
+                      {{ t('settings.reader.koreader.deleteSyncedData') }}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1438,13 +1529,13 @@ async function handleDownloadPlugin() {
         <div class="relative w-full rounded-t-lg border border-border bg-card p-4 shadow-xl md:max-w-md md:rounded-lg md:p-5">
           <p class="text-base font-semibold text-foreground">
             {{
-              t('settings.reader.koreader.removeDeviceConfirmTitle', {
+              t('settings.reader.koreader.deleteDeviceDataConfirmTitle', {
                 device: removeDeviceConfirmTarget.device,
               })
             }}
           </p>
           <p class="mt-1 text-sm text-muted-foreground">
-            {{ t('settings.reader.koreader.removeDeviceConfirmBody') }}
+            {{ t('settings.reader.koreader.deleteDeviceDataConfirmBody') }}
           </p>
           <div class="mt-4 flex items-center justify-end gap-2">
             <button
@@ -1460,8 +1551,8 @@ async function handleDownloadPlugin() {
             >
               {{
                 removingDeviceId === removeDeviceConfirmTarget.deviceId
-                  ? t('settings.reader.koreader.removing')
-                  : t('settings.reader.koreader.remove')
+                  ? t('settings.reader.koreader.deletingSyncedData')
+                  : t('settings.reader.koreader.deleteSyncedData')
               }}
             </button>
           </div>

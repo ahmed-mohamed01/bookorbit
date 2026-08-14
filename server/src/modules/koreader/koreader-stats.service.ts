@@ -90,6 +90,8 @@ export class KoreaderStatsService {
         results.push({ hash, accepted: result.accepted, duplicates: result.duplicates, watermark });
       }
 
+      if (acceptedTotal > 0) await this.koreaderRepo.restoreDevice(user.id, dto.deviceId);
+
       this.emitSessionAchievements(user, insertedSessions);
 
       this.logger.log(

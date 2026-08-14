@@ -40,6 +40,7 @@ const koreaderMock = vi.hoisted(() => ({
   relinkManualHashLink: vi.fn<() => Promise<void>>(),
   unlinkManualHashLink: vi.fn<() => Promise<void>>(),
   removeDevice: vi.fn<() => Promise<void>>(),
+  setDeviceRetired: vi.fn<() => Promise<void>>(),
 }))
 
 const searchMock = vi.hoisted(() => ({
@@ -86,6 +87,15 @@ function makeCredentials(overrides: Partial<KoreaderCredentials> = {}): Koreader
   }
 }
 
+function makeRetiredDeviceStatus(): KoreaderSyncStatus {
+  const base = makeSyncStatus()
+  return {
+    ...base,
+    devices: base.devices.map((device) => ({ ...device, retiredAt: '2026-01-05T00:00:00.000Z' })),
+    sweeps: base.sweeps.map((sweep) => ({ ...sweep, retiredAt: '2026-01-05T00:00:00.000Z' })),
+  }
+}
+
 function makeSyncStatus(overrides: Partial<KoreaderSyncStatus> = {}): KoreaderSyncStatus {
   return {
     credentials: makeCredentials(),
@@ -95,6 +105,7 @@ function makeSyncStatus(overrides: Partial<KoreaderSyncStatus> = {}): KoreaderSy
         deviceId: 'device-1',
         lastSyncAt: '2026-01-02T00:00:00.000Z',
         lastBookTitle: 'Project Hail Mary',
+        retiredAt: null,
       },
     ],
     totalSyncedBooks: 14,
@@ -113,6 +124,7 @@ function makeSyncStatus(overrides: Partial<KoreaderSyncStatus> = {}): KoreaderSy
         lastSweepBooksMatched: 12,
         lastSweepPageStats: 30,
         lastSweepAnnotations: 8,
+        retiredAt: null,
       },
     ],
     pluginTotals: {
@@ -231,6 +243,7 @@ describe('KoreaderSettings', () => {
     koreaderMock.relinkManualHashLink.mockResolvedValue(undefined)
     koreaderMock.unlinkManualHashLink.mockResolvedValue(undefined)
     koreaderMock.removeDevice.mockResolvedValue(undefined)
+    koreaderMock.setDeviceRetired.mockResolvedValue(undefined)
     searchMock.results.value = []
     searchMock.loading.value = false
     searchMock.loadingMore.value = false
@@ -447,6 +460,7 @@ describe('KoreaderSettings', () => {
           lastSweepBooksMatched: 12,
           lastSweepPageStats: 30,
           lastSweepAnnotations: 8,
+          retiredAt: null,
         },
       ],
     })
@@ -475,6 +489,7 @@ describe('KoreaderSettings', () => {
           lastSweepBooksMatched: 12,
           lastSweepPageStats: 30,
           lastSweepAnnotations: 8,
+          retiredAt: null,
         },
       ],
     })
@@ -506,6 +521,7 @@ describe('KoreaderSettings', () => {
           lastSweepBooksMatched: 12,
           lastSweepPageStats: 30,
           lastSweepAnnotations: 8,
+          retiredAt: null,
         },
       ],
     })
@@ -775,7 +791,7 @@ describe('KoreaderSettings', () => {
     expect(koreaderMock.unlinkManualHashLink).toHaveBeenCalledWith('b'.repeat(32))
   })
 
-  it('confirms before removing a device', async () => {
+  it('retires a device from the active list without deleting anything', async () => {
     const status = makeSyncStatus()
     koreaderMock.credentials.value = status.credentials
     koreaderMock.syncStatus.value = status
@@ -783,38 +799,73 @@ describe('KoreaderSettings', () => {
     const wrapper = mountComponent()
     await flushPromises()
 
-    await buttonByText(wrapper, 'Remove')!.trigger('click')
+    await buttonByText(wrapper, 'Retire')!.trigger('click')
+    await flushPromises()
 
-    expect(wrapper.text()).toContain('Remove Kobo Libra 2?')
-    expect(wrapper.text()).toContain("permanently deletes this device's synced progress, reading activity, and any unmatched-book entries")
+    expect(koreaderMock.setDeviceRetired).toHaveBeenCalledWith('device-1', true)
+    expect(koreaderMock.removeDevice).not.toHaveBeenCalled()
+  })
 
-    const removeButtons = wrapper.findAll('button').filter((button) => button.text() === 'Remove')
-    await removeButtons[removeButtons.length - 1]!.trigger('click')
+  it('lists retired devices in a collapsed group and restores them on request', async () => {
+    const status = makeRetiredDeviceStatus()
+    koreaderMock.credentials.value = status.credentials
+    koreaderMock.syncStatus.value = status
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('1 retired device')
+    expect(buttonByText(wrapper, 'Restore')).toBeUndefined()
+
+    await buttonByText(wrapper, '1 retired device')!.trigger('click')
+    await buttonByText(wrapper, 'Restore')!.trigger('click')
+    await flushPromises()
+
+    expect(koreaderMock.setDeviceRetired).toHaveBeenCalledWith('device-1', false)
+  })
+
+  it("confirms before deleting a retired device's synced data", async () => {
+    const status = makeRetiredDeviceStatus()
+    koreaderMock.credentials.value = status.credentials
+    koreaderMock.syncStatus.value = status
+
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    await buttonByText(wrapper, '1 retired device')!.trigger('click')
+    await buttonByText(wrapper, 'Delete data')!.trigger('click')
+
+    expect(wrapper.text()).toContain('Delete synced data from Kobo Libra 2?')
+    expect(wrapper.text()).toContain('Reading sessions already recorded in your stats are kept')
+
+    const deleteButtons = wrapper.findAll('button').filter((button) => button.text() === 'Delete data')
+    await deleteButtons[deleteButtons.length - 1]!.trigger('click')
     await flushPromises()
 
     expect(koreaderMock.removeDevice).toHaveBeenCalledWith('device-1')
-    expect(wrapper.text()).not.toContain('Remove Kobo Libra 2?')
+    expect(wrapper.text()).not.toContain('Delete synced data from Kobo Libra 2?')
   })
 
-  it('cancels removing a device without calling removeDevice', async () => {
-    const status = makeSyncStatus()
+  it('cancels deleting a device without calling removeDevice', async () => {
+    const status = makeRetiredDeviceStatus()
     koreaderMock.credentials.value = status.credentials
     koreaderMock.syncStatus.value = status
 
     const wrapper = mountComponent()
     await flushPromises()
 
-    await buttonByText(wrapper, 'Remove')!.trigger('click')
-    expect(wrapper.text()).toContain('Remove Kobo Libra 2?')
+    await buttonByText(wrapper, '1 retired device')!.trigger('click')
+    await buttonByText(wrapper, 'Delete data')!.trigger('click')
+    expect(wrapper.text()).toContain('Delete synced data from Kobo Libra 2?')
 
     await buttonByText(wrapper, 'Cancel')!.trigger('click')
 
     expect(koreaderMock.removeDevice).not.toHaveBeenCalled()
-    expect(wrapper.text()).not.toContain('Remove Kobo Libra 2?')
+    expect(wrapper.text()).not.toContain('Delete synced data from Kobo Libra 2?')
   })
 
-  it('keeps the confirm dialog open and reports an error when removing a device fails', async () => {
-    const status = makeSyncStatus()
+  it('keeps the confirm dialog open and reports an error when deleting a device fails', async () => {
+    const status = makeRetiredDeviceStatus()
     koreaderMock.credentials.value = status.credentials
     koreaderMock.syncStatus.value = status
     koreaderMock.removeDevice.mockRejectedValueOnce(new Error('Failed to remove KOReader device'))
@@ -822,13 +873,14 @@ describe('KoreaderSettings', () => {
     const wrapper = mountComponent()
     await flushPromises()
 
-    await buttonByText(wrapper, 'Remove')!.trigger('click')
-    const removeButtons = wrapper.findAll('button').filter((button) => button.text() === 'Remove')
-    await removeButtons[removeButtons.length - 1]!.trigger('click')
+    await buttonByText(wrapper, '1 retired device')!.trigger('click')
+    await buttonByText(wrapper, 'Delete data')!.trigger('click')
+    const deleteButtons = wrapper.findAll('button').filter((button) => button.text() === 'Delete data')
+    await deleteButtons[deleteButtons.length - 1]!.trigger('click')
     await flushPromises()
 
     expect(koreaderMock.removeDevice).toHaveBeenCalledWith('device-1')
-    expect(wrapper.text()).toContain('Remove Kobo Libra 2?')
+    expect(wrapper.text()).toContain('Delete synced data from Kobo Libra 2?')
   })
 
   it('renders hash-only unmatched rows with a distinguishable fallback label', async () => {

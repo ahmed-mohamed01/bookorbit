@@ -463,6 +463,13 @@
       "when": 1786466476402,
       "tag": "0065_add_collection_books_position",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1786683893541,
+      "tag": "0066_add_koreader_device_retirements",
+      "breakpoints": true
     }
   ]
 }
