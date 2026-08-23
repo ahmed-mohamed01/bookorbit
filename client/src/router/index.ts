@@ -103,6 +103,7 @@ const INTEGRATION_ROUTES: Record<IntegrationTab, string> = {
   hardcover: 'settings-hardcover',
   readwise: 'settings-readwise',
   storygraph: 'settings-storygraph',
+  audiobookshelf: 'settings-audiobookshelf',
 }
 
 /** Settings pages are their own routes now, so the legacy `?tab=` value is consumed by the redirect. */
@@ -393,6 +394,13 @@ export const routes: RouteRecordRaw[] = [
             component: () => import('@/features/storygraph/components/StorygraphSettings.vue'),
             props: { embedded: true },
             meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.storygraph') },
+          },
+          {
+            path: 'audiobookshelf',
+            name: 'settings-audiobookshelf',
+            component: () => import('@/features/audiobookshelf/components/AudiobookshelfSettings.vue'),
+            props: { embedded: true },
+            meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.audiobookshelf') },
           },
 
           // ── Server ─────────────────────────────────────────────────────────

@@ -13,6 +13,11 @@ function resetEnv(): void {
   delete process.env.SWAGGER_ENABLED;
   delete process.env.KOBO_CLOUDSCRAPER_PYTHON;
   delete process.env.KOREADER_PLUGIN_PATH;
+  delete process.env.WHISPER_PATH;
+  delete process.env.WHISPER_MODEL;
+  delete process.env.READING_ALIGNMENT_ENABLED;
+  delete process.env.READING_ALIGNMENT_SAMPLE_INTERVAL_SEC;
+  delete process.env.READING_ALIGNMENT_CLIP_SECONDS;
   delete process.env.DATABASE_URL;
   delete process.env.JWT_SECRET;
   delete process.env.JWT_EXPIRES_IN;
@@ -53,6 +58,12 @@ describe('config', () => {
       swaggerEnabled: false,
       koboCloudscraperPython: undefined,
       koreaderPluginSourcePath: undefined,
+      whisperPath: undefined,
+      whisperModel: undefined,
+      ffmpegPath: 'ffmpeg',
+      readingAlignmentEnabled: false,
+      readingAlignmentSampleIntervalSec: 1200,
+      readingAlignmentClipSeconds: 15,
     });
   });
 
@@ -66,6 +77,11 @@ describe('config', () => {
     process.env.KOREADER_PLUGIN_PATH = '/opt/koreader/bookorbit.koplugin';
     process.env.GITHUB_RELEASES_REPO = 'acme/app';
     process.env.GITHUB_RELEASES_TOKEN = 'ghp_example';
+    process.env.WHISPER_PATH = ' /usr/local/bin/whisper-cli ';
+    process.env.WHISPER_MODEL = ' /models/ggml-base.en.bin ';
+    process.env.READING_ALIGNMENT_ENABLED = 'true';
+    process.env.READING_ALIGNMENT_SAMPLE_INTERVAL_SEC = '600';
+    process.env.READING_ALIGNMENT_CLIP_SECONDS = '20';
 
     expect(appConfig()).toEqual({
       nodeEnv: 'production',
@@ -77,6 +93,12 @@ describe('config', () => {
       swaggerEnabled: true,
       koboCloudscraperPython: '/opt/bookorbit-python/bin/python',
       koreaderPluginSourcePath: '/opt/koreader/bookorbit.koplugin',
+      whisperPath: '/usr/local/bin/whisper-cli',
+      whisperModel: '/models/ggml-base.en.bin',
+      ffmpegPath: 'ffmpeg',
+      readingAlignmentEnabled: true,
+      readingAlignmentSampleIntervalSec: 600,
+      readingAlignmentClipSeconds: 20,
     });
   });
 

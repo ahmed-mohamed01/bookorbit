@@ -66,7 +66,7 @@ export interface BookTransferredEvent {
 export interface BookProgressChangedEvent {
   bookId: number;
   progress: number;
-  source: "koreader" | "kobo" | "web_reader";
+  source: "koreader" | "kobo" | "web_reader" | "audiobookshelf";
 }
 
 export interface ScanBooksAddedEvent {

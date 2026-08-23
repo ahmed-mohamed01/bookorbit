@@ -7,7 +7,24 @@ import type { BookReadingSession, BookReadingSessionStats, ReadingAttempt } from
 const mocks = vi.hoisted(() => ({
   api: vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(),
   hasPermission: vi.fn<(...args: unknown[]) => boolean>(),
+  progressChangedCallbacks: [] as Array<(event: { bookId: number; progress: number; source: string }) => void>,
 }))
+
+vi.mock('@/features/book/composables/useBookEvents', () => ({
+  useBookEvents: () => ({
+    onBookProgressChanged: (cb: (event: { bookId: number; progress: number; source: string }) => void) => {
+      mocks.progressChangedCallbacks.push(cb)
+      return () => {
+        const index = mocks.progressChangedCallbacks.indexOf(cb)
+        if (index !== -1) mocks.progressChangedCallbacks.splice(index, 1)
+      }
+    },
+  }),
+}))
+
+function emitProgressChanged(bookId: number) {
+  for (const cb of mocks.progressChangedCallbacks) cb({ bookId, progress: 50, source: 'web_reader' })
+}
 
 vi.mock('@/lib/api', () => ({
   api: mocks.api,
@@ -139,6 +156,7 @@ function mountTab(book = makeBook()) {
 
 describe('ReadingLogTab', () => {
   beforeEach(() => {
+    mocks.progressChangedCallbacks.length = 0
     mocks.api.mockReset()
     mocks.api.mockImplementation(routeApi())
     mocks.hasPermission.mockReset()
@@ -278,5 +296,37 @@ describe('ReadingLogTab', () => {
     await flushPromises()
 
     expect(wrapper.findAll('button').some((button) => button.text() === 'Reset reading state')).toBe(false)
+  })
+
+  it('reloads the reading log when a progress-changed event arrives for the current book', async () => {
+    const wrapper = mountTab(makeBook({ id: 10 }))
+    await flushPromises()
+
+    mocks.api.mockClear()
+    mocks.api.mockImplementation(routeApi())
+
+    emitProgressChanged(10)
+    await flushPromises()
+
+    const sessionsCall = mocks.api.mock.calls.find(
+      (call) => typeof call[0] === 'string' && (call[0] as string).includes('/api/v1/books/10/sessions?'),
+    )
+    expect(sessionsCall).toBeDefined()
+    void wrapper
+  })
+
+  it('does not reload the reading log when a progress-changed event arrives for a different book', async () => {
+    const wrapper = mountTab(makeBook({ id: 10 }))
+    await flushPromises()
+
+    mocks.api.mockClear()
+    mocks.api.mockImplementation(routeApi())
+
+    emitProgressChanged(999)
+    await flushPromises()
+
+    const sessionsCall = mocks.api.mock.calls.find((call) => typeof call[0] === 'string' && (call[0] as string).includes('/sessions?'))
+    expect(sessionsCall).toBeUndefined()
+    void wrapper
   })
 })

@@ -6,6 +6,7 @@ import { toast } from 'vue-sonner'
 import { useFoliate, type RelocateDetail } from './epub/composables/useFoliate'
 import type { SelectionDetail } from './epub/composables/useFoliateSelection'
 import { useReaderProgress } from './shared/composables/useReaderProgress'
+import { fetchEbookCrossFormatResume } from './shared/composables/useCrossFormatResume'
 import { useReadingSession } from './shared/composables/useReadingSession'
 import { useReaderState } from './epub/composables/useReaderState'
 import { useReaderSettings } from './shared/composables/useReaderSettings'
@@ -308,9 +309,21 @@ onMounted(async () => {
   const deepLinkCfi = typeof route.query.cfi === 'string' ? route.query.cfi : null
   const hadProgress = progress.percentage.value > 0
   const resumeTarget = resolveReaderResumeTarget(deepLinkCfi ? undefined : route.query.checkpoint, progress.cfi.value, progress.percentage.value)
-  await open(bookId, fileId, fileFormat, resumeTarget.cfi, resumeTarget.fraction, {
-    fixedLayoutSpread: state.value.fixedLayoutSpread,
-  })
+  // When the audiobook is ahead of the ebook, resume at the exact narration passage. Skipped when a
+  // deep link or checkpoint targets a specific location (those win) or when tracking is off (peek mode).
+  const hasExplicitTarget = Boolean(deepLinkCfi) || resumeTarget.checkpointPercentage != null
+  const resume = trackingEnabled.value && !hasExplicitTarget ? await fetchEbookCrossFormatResume(bookId) : null
+  const priorCfi = progress.cfi.value
+  const priorFraction = progress.percentage.value > 0 ? progress.percentage.value / 100 : null
+  const { crossFormatResumed } = await open(
+    bookId,
+    fileId,
+    fileFormat,
+    resumeTarget.cfi,
+    resumeTarget.fraction,
+    { fixedLayoutSpread: state.value.fixedLayoutSpread },
+    resume,
+  )
   setChapters(getChapters())
   sectionFractions.value = getSectionFractions()
   await bookmarks.load(bookId)
@@ -329,13 +342,30 @@ onMounted(async () => {
     }
   }
 
-  const resumedPercentage = resumeTarget.checkpointPercentage ?? (hadProgress ? progress.percentage.value : null)
+  if (crossFormatResumed) {
+    toast.info(t('reader.toast.crossFormatResumed'), {
+      duration: 6000,
+      action: { label: t('reader.toast.crossFormatUndo'), onClick: () => undoCrossFormatResume(priorCfi, priorFraction) },
+    })
+  }
+  const resumedPercentage = crossFormatResumed ? null : (resumeTarget.checkpointPercentage ?? (hadProgress ? progress.percentage.value : null))
   if (resumedPercentage !== null) {
     const pct = Math.round(resumedPercentage)
     const label = chapterTitle.value || t('reader.chapterNumber', { number: sectionIndex.value + 1 })
     toast.info(t('reader.toast.resumed', { pct, label }), { duration: 2500 })
   }
 })
+
+// Restores the reader to where it was before a cross-format resume jumped it to the audiobook position.
+function undoCrossFormatResume(priorCfi: string | null, priorFraction: number | null) {
+  if (priorCfi) {
+    void goTo(priorCfi)
+  } else if (priorFraction != null) {
+    void goToFraction(priorFraction)
+  } else {
+    void goToFraction(0)
+  }
+}
 
 const epubSetters: Record<string, (v: unknown) => void> = {
   fontSize: (v) => setFontSize(v as number),

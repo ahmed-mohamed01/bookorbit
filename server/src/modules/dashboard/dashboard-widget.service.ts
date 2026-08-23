@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 
 import type {
   CurrentlyReadingWidgetData,
@@ -23,6 +23,11 @@ import type { RequestUser } from '../../common/types/request-user';
 import { StatsCache } from '../../common/cache/stats-cache';
 import { mapWithConcurrency } from '../../common/utils/batch.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import {
+  ACHIEVEMENT_EVENT_BOOK_STATUS_CHANGED,
+  AchievementEventsService,
+  type BookStatusChangedPayload,
+} from '../achievement/achievement-events.service';
 import { LibraryService } from '../library/library.service';
 import {
   buildDaysSeries,
@@ -46,22 +51,47 @@ const DASHBOARD_CACHE_MAX_ENTRIES = 200;
 const WIDGET_QUERY_CONCURRENCY = 3;
 
 @Injectable()
-export class DashboardWidgetService {
+export class DashboardWidgetService implements OnModuleInit {
   private readonly logger = new Logger(DashboardWidgetService.name);
+  // Bounded far above any realistic concurrent-user count; on overflow the tracking resets and
+  // rebuilds lazily, at worst leaving a cached live widget unbusted for one TTL window.
+  private static readonly MAX_TRACKED_USERS = 10_000;
+  private readonly scopesByUser = new Map<number, Set<string>>();
   private readonly liveCache = new StatsCache({ ttlMs: DASHBOARD_LIVE_TTL_MS, maxEntries: DASHBOARD_CACHE_MAX_ENTRIES });
   private readonly staleCache = new StatsCache({ ttlMs: DASHBOARD_STALE_TTL_MS, maxEntries: DASHBOARD_CACHE_MAX_ENTRIES });
 
   constructor(
     private readonly widgetRepo: DashboardWidgetRepository,
     private readonly libraryService: LibraryService,
+    @Optional() private readonly achievementEvents?: AchievementEventsService,
   ) {}
+
+  onModuleInit() {
+    // The live widgets (currently-reading in particular) are status-derived. Without this, a status
+    // change leaves the header serving a cached copy for up to the live TTL while the uncached
+    // scrollers already reflect it. Busting the user's live scopes on the change keeps them in step.
+    // Scope keys embed the library-scope hash, so the ones seen per user are tracked to clear them all.
+    this.achievementEvents?.on(ACHIEVEMENT_EVENT_BOOK_STATUS_CHANGED, (payload: BookStatusChangedPayload) => {
+      const scopes = this.scopesByUser.get(payload.userId);
+      if (!scopes) return;
+      for (const scope of scopes) this.liveCache.clearForScope(scope);
+    });
+  }
 
   private getContentFilters(user: RequestUser) {
     return user.isSuperuser ? undefined : user.contentFilters;
   }
 
   private cacheOwnerKey(user: RequestUser, libraryIds: readonly number[]): string {
-    return `${user.id}:${dashboardLibraryScopeCacheKey(libraryIds)}`;
+    const scope = `${user.id}:${dashboardLibraryScopeCacheKey(libraryIds)}`;
+    let scopes = this.scopesByUser.get(user.id);
+    if (!scopes) {
+      if (this.scopesByUser.size >= DashboardWidgetService.MAX_TRACKED_USERS) this.scopesByUser.clear();
+      scopes = new Set();
+      this.scopesByUser.set(user.id, scopes);
+    }
+    scopes.add(scope);
+    return scope;
   }
 
   private async getLibraryIds(user: RequestUser): Promise<number[]> {

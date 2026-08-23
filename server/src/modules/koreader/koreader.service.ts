@@ -550,6 +550,9 @@ export class KoreaderService {
       bookFileId: bookFile.id,
       progress: bookorbitPercentage,
       source: 'koreader',
+      // KOReader deliberately does not bump reading_progress.updatedAt, so carry the device's real read
+      // time for any consumer (e.g. reading-alignment sync) that compares recency across formats.
+      ...(data.timestamp ? { occurredAt: new Date(data.timestamp * 1000) } : {}),
     });
   }
 

@@ -10,7 +10,11 @@ import { extractCbzMetadata, extractCbrMetadata, extractCb7Metadata } from '../m
 import { parseFb2File } from '../metadata/lib/fb2-parser';
 import { parseMobiFile } from '../metadata/lib/mobi-parser';
 import { parsePdfFile } from '../metadata/lib/pdf-parser';
-import { ACHIEVEMENT_EVENT_BOOK_HARDCOVER_EDITION_CHANGED, ACHIEVEMENT_EVENT_BOOK_RATING_CHANGED } from '../achievement/achievement-events.service';
+import {
+  ACHIEVEMENT_EVENT_BOOK_HARDCOVER_EDITION_CHANGED,
+  ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED,
+  ACHIEVEMENT_EVENT_BOOK_RATING_CHANGED,
+} from '../achievement/achievement-events.service';
 import { UpdateBookMetadataDto } from './dto/update-book-metadata.dto';
 import { BulkEditFieldsDto } from './dto/bulk-edit-metadata.dto';
 import { BookQueryBuilder } from './book-query-builder.service';
@@ -2502,6 +2506,42 @@ describe('BookService', () => {
       expect(bookRepo.isKoboTwoWayProgressSyncEnabled).not.toHaveBeenCalled();
       expect(bookRepo.syncKoboReadingStateFromProgress).not.toHaveBeenCalled();
     });
+
+    it('emits book.progress-changed (web_reader) when the persisted percentage changed', async () => {
+      const { service, bookRepo, libraryService, achievementEvents } = makeService();
+      const user = makeUser();
+
+      bookRepo.findFileById.mockResolvedValue({ id: 8, bookId: 11, libraryId: 2, absolutePath: '/books/b.epub', format: 'epub' });
+      bookRepo.findProgress.mockResolvedValue({ percentage: 40 });
+      bookRepo.upsertProgress.mockResolvedValue(undefined);
+      libraryService.verifyUserAccess.mockResolvedValue(undefined);
+      libraryService.findOne = vi.fn().mockResolvedValue({ readingThreshold: 1, markAsFinishedPercentComplete: 99 });
+
+      await service.saveProgress(user.id, 8, { percentage: 50 } as never, user);
+
+      expect(achievementEvents.emit).toHaveBeenCalledWith(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
+        userId: user.id,
+        bookId: 11,
+        bookFileId: 8,
+        progress: 50,
+        source: 'web_reader',
+      });
+    });
+
+    it('does not emit book.progress-changed when the percentage is unchanged', async () => {
+      const { service, bookRepo, libraryService, achievementEvents } = makeService();
+      const user = makeUser();
+
+      bookRepo.findFileById.mockResolvedValue({ id: 8, bookId: 11, libraryId: 2, absolutePath: '/books/b.epub', format: 'epub' });
+      bookRepo.findProgress.mockResolvedValue({ percentage: 50 });
+      bookRepo.upsertProgress.mockResolvedValue(undefined);
+      libraryService.verifyUserAccess.mockResolvedValue(undefined);
+      libraryService.findOne = vi.fn().mockResolvedValue({ readingThreshold: 1, markAsFinishedPercentComplete: 99 });
+
+      await service.saveProgress(user.id, 8, { percentage: 50 } as never, user);
+
+      expect(achievementEvents.emit).not.toHaveBeenCalledWith(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, expect.anything());
+    });
   });
 
   describe('clearFileProgress', () => {
@@ -2616,6 +2656,42 @@ describe('BookService', () => {
         ),
       ).rejects.toThrow(ForbiddenException);
       expect(bookRepo.upsertAudioProgress).not.toHaveBeenCalled();
+    });
+
+    it('emits book.progress-changed (web_reader) when the persisted percentage changed', async () => {
+      const { service, bookRepo, libraryService, achievementEvents } = makeService();
+      const user = makeUser({ id: 21 });
+
+      bookRepo.findLibraryIdByBookId.mockResolvedValue(1);
+      bookRepo.findFileById.mockResolvedValue({ id: 7, absolutePath: '/books/a.mp3', format: 'mp3', bookId: 10, libraryId: 1 });
+      bookRepo.findAudioProgress.mockResolvedValue({ percentage: 20 });
+      libraryService.verifyUserAccess.mockResolvedValue(undefined);
+      libraryService.findOne = vi.fn().mockResolvedValue({ readingThreshold: 4, markAsFinishedPercentComplete: 90 });
+
+      await service.saveAudioProgress(user.id, 10, { percentage: 33, currentFileId: 7, positionSeconds: 120 }, user);
+
+      expect(achievementEvents.emit).toHaveBeenCalledWith(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
+        userId: user.id,
+        bookId: 10,
+        bookFileId: 7,
+        progress: 33,
+        source: 'web_reader',
+      });
+    });
+
+    it('does not emit book.progress-changed when the audio percentage is unchanged', async () => {
+      const { service, bookRepo, libraryService, achievementEvents } = makeService();
+      const user = makeUser({ id: 21 });
+
+      bookRepo.findLibraryIdByBookId.mockResolvedValue(1);
+      bookRepo.findFileById.mockResolvedValue({ id: 7, absolutePath: '/books/a.mp3', format: 'mp3', bookId: 10, libraryId: 1 });
+      bookRepo.findAudioProgress.mockResolvedValue({ percentage: 33 });
+      libraryService.verifyUserAccess.mockResolvedValue(undefined);
+      libraryService.findOne = vi.fn().mockResolvedValue({ readingThreshold: 4, markAsFinishedPercentComplete: 90 });
+
+      await service.saveAudioProgress(user.id, 10, { percentage: 33, currentFileId: 7, positionSeconds: 120 }, user);
+
+      expect(achievementEvents.emit).not.toHaveBeenCalledWith(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, expect.anything());
     });
   });
 

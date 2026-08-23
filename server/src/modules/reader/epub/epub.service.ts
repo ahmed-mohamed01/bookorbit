@@ -121,6 +121,26 @@ function guessContentType(path: string): string {
   return CONTENT_TYPES[path.slice(dot).toLowerCase()] ?? 'application/octet-stream';
 }
 
+function extractVisibleText(value: unknown, parentKey?: string): string[] {
+  if (parentKey === 'script' || parentKey === 'style' || parentKey === 'noscript') return [];
+  if (typeof value === 'string') {
+    return [
+      value.replace(/&#(x[\da-f]+|\d+);/gi, (_match, entity: string) => {
+        const codePoint = entity[0]?.toLowerCase() === 'x' ? Number.parseInt(entity.slice(1), 16) : Number.parseInt(entity, 10);
+        return Number.isFinite(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : '';
+      }),
+    ];
+  }
+  if (typeof value === 'number') return [String(value)];
+  if (Array.isArray(value)) return value.flatMap((item) => extractVisibleText(item, parentKey));
+  if (value == null || typeof value !== 'object') return [];
+
+  return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => {
+    if (key.startsWith('@_')) return [];
+    return extractVisibleText(child, key);
+  });
+}
+
 function parseNavOl(ol: Record<string, unknown>, basePath: string): EpubTocItem[] {
   return toArray(ol?.li as any)
     .map((li: any) => {
@@ -289,6 +309,29 @@ export class EpubService {
   async getBookInfo(bookId: number, fileId: number | undefined, user: RequestUser): Promise<EpubBookInfo> {
     const epubPath = await this.resolveEpubPath(bookId, fileId, user);
     return (await this.getCachedEntry(epubPath)).info;
+  }
+
+  async extractSpineText(bookId: number, fileId: number | undefined, user: RequestUser): Promise<Array<{ spineIndex: number; text: string }>> {
+    const epubPath = await this.resolveEpubPath(bookId, fileId, user);
+    const cached = await this.getCachedEntry(epubPath);
+    const zip = await unzipper.Open.file(epubPath);
+    const result: Array<{ spineIndex: number; text: string }> = [];
+
+    for (const [spineIndex, item] of cached.info.spine.entries()) {
+      const entry = findInZip(zip.files, item.href);
+      if (!entry) {
+        result.push({ spineIndex, text: '' });
+        continue;
+      }
+
+      const document = xmlParser.parse(await entry.buffer()) as Record<string, unknown>;
+      const html = (document['html'] ?? document) as Record<string, unknown>;
+      const body = html['body'] ?? html;
+      const text = extractVisibleText(body).join(' ').replace(/\s+/g, ' ').trim();
+      result.push({ spineIndex, text });
+    }
+
+    return result;
   }
 
   async streamFile(

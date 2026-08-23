@@ -356,7 +356,7 @@ export class ReadingAttemptService {
   async importExternalRead(
     userId: number,
     bookId: number,
-    input: { provider: 'hardcover'; externalId: string; startedOn: string | null; endedOn: string | null },
+    input: { provider: 'hardcover' | 'audiobookshelf'; externalId: string; startedOn: string | null; endedOn: string | null },
   ): Promise<void> {
     this.validateDates(input.startedOn, input.endedOn);
     await this.repo.transaction(async (tx) => {
@@ -369,28 +369,48 @@ export class ReadingAttemptService {
         });
         return;
       }
-      const active = input.endedOn === null ? await this.repo.findActive(tx, userId, bookId) : null;
-      if (input.endedOn === null && !active) {
-        await this.repo.createActive(tx, {
-          userId,
-          bookId,
-          startedOn: input.startedOn,
-          origin: 'hardcover',
-          externalProvider: input.provider,
-          externalId: input.externalId,
-        });
-      } else {
-        await this.repo.create(tx, {
-          userId,
-          bookId,
-          startedOn: input.startedOn,
-          endedOn: input.endedOn,
-          outcome: input.endedOn ? 'completed' : 'abandoned',
-          origin: 'hardcover',
-          externalProvider: input.provider,
-          externalId: input.externalId,
-        });
+      const active = await this.repo.findActive(tx, userId, bookId);
+
+      if (input.endedOn === null) {
+        // In-progress import: adopt an existing active attempt, or open a new external one. Do not
+        // create a parallel attempt when one is already active.
+        if (!active) {
+          await this.repo.createActive(tx, {
+            userId,
+            bookId,
+            startedOn: input.startedOn,
+            origin: input.provider,
+            externalProvider: input.provider,
+            externalId: input.externalId,
+          });
+        }
+        return;
       }
+
+      if (active && active.externalProvider === null) {
+        // Finished import with a pre-existing local active attempt: close THAT attempt as this
+        // completion (carrying the external finish date and identity) instead of creating a second
+        // completed attempt, which the follow-up status->read transition would otherwise duplicate.
+        await this.repo.update(tx, userId, bookId, active.id, {
+          ...(active.startedOn === null && input.startedOn !== null ? { startedOn: input.startedOn } : {}),
+          endedOn: input.endedOn,
+          outcome: 'completed',
+          externalProvider: input.provider,
+          externalId: input.externalId,
+        });
+        return;
+      }
+
+      await this.repo.create(tx, {
+        userId,
+        bookId,
+        startedOn: input.startedOn,
+        endedOn: input.endedOn,
+        outcome: 'completed',
+        origin: input.provider,
+        externalProvider: input.provider,
+        externalId: input.externalId,
+      });
     });
   }
 

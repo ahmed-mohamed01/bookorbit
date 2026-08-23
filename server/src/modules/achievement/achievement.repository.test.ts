@@ -2078,24 +2078,13 @@ describe('AchievementRepository', () => {
   });
 
   describe('countDistinctSources', () => {
-    it('returns 3 when all sources are active', async () => {
-      const webChain = makeSelectChain([{ id: 1 }]);
-      const koreaderChain = makeSelectChain([{ id: 1 }]);
-      const koboChain = makeSelectChain([{ id: 1 }]);
-      let callCount = 0;
-      const db = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          if (callCount === 1) return webChain;
-          if (callCount === 2) return koreaderChain;
-          return koboChain;
-        }),
-      };
+    it('returns 4 when all sources are active', async () => {
+      const db = { select: vi.fn().mockImplementation(() => makeSelectChain([{ id: 1 }])) };
       const repo = makeRepo(db);
 
       const result = await repo.countDistinctSources(1);
 
-      expect(result).toBe(3);
+      expect(result).toBe(4);
     });
 
     it('returns 0 when no sources active', async () => {

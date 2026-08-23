@@ -5,9 +5,13 @@ import type { CoverAspectRatio, Library, OrganizationMode, PrescanResult } from 
 
 export { DEFAULT_FORMAT_PRIORITY, FORMAT_LABELS }
 
-export const DEFAULT_METADATA_PRECEDENCE = ['embedded', 'opfFile']
+// Mirrors the server's precedence order (embedded < opfFile < sidecar). `sidecar` is the Audiobookshelf
+// metadata.json source; it is included so the option and its import stay available, at lowest precedence
+// by default. Users can drag it higher (e.g. for audiobooks, to make metadata.json authoritative).
+export const DEFAULT_METADATA_PRECEDENCE = ['embedded', 'opfFile', 'sidecar']
 
 export const METADATA_LABELS: Record<string, string> = {
+  sidecar: 'Sidecar metadata (metadata.json)',
   embedded: 'Embedded metadata',
   opfFile: 'OPF files',
 }
@@ -106,7 +110,11 @@ export function useLibraryCreator() {
     form.folders = library.folders.map((f) => f.path)
     form.watch = library.watch
     form.autoScanCronExpression = library.autoScanCronExpression ?? null
-    form.metadataPrecedence = [...library.metadataPrecedence]
+    // Backfill any default sources an older/existing library is missing (e.g. `sidecar`, the
+    // Audiobookshelf metadata.json source), so editing a library restores the option and re-enables the
+    // import when saved, instead of silently keeping a precedence that predates the source.
+    const missingMetadataSources = DEFAULT_METADATA_PRECEDENCE.filter((source) => !library.metadataPrecedence.includes(source))
+    form.metadataPrecedence = [...library.metadataPrecedence, ...missingMetadataSources]
     const missing = DEFAULT_FORMAT_PRIORITY.filter((f) => !library.formatPriority.includes(f))
     form.formatPriority = [...library.formatPriority, ...missing]
     form.allowedFormats = [...library.allowedFormats]

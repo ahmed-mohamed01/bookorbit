@@ -59,10 +59,6 @@ jobs:
           IMAGE_NAME: ${{ github.repository }}
           FORCE_REBUILD: ${{ inputs.force_rebuild }}
         run: |
-          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$GH_REF" != "refs/heads/main" ]]; then
-            echo "::error::workflow_dispatch is only supported from main."
-            exit 1
-          fi
           if [[ "$EVENT_NAME" == "workflow_run" ]]; then
             SOURCE_SHA="$WORKFLOW_RUN_HEAD_SHA"
             echo "update_main=true" >> "$GITHUB_OUTPUT"
@@ -247,6 +243,26 @@ jobs:
           FULL_IMAGE="${REGISTRY}/${IMAGE}"
           docker buildx imagetools create \
             --tag "${FULL_IMAGE}:main" \
+            "${FULL_IMAGE}@${AMD64_DIGEST}" \
+            "${FULL_IMAGE}@${ARM64_DIGEST}"
+
+      # A manual branch build also gets a stable branch-name tag, so a long-lived feature branch is
+      # deployable without chasing sha tags. Excludes main: the break-glass dispatch deliberately
+      # never moves the :main tag past the CI gate above.
+      - name: Update branch tag
+        if: github.event_name == 'workflow_dispatch' && github.ref_name != 'main'
+        shell: bash
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE_NAME }}
+          BRANCH: ${{ github.ref_name }}
+          AMD64_DIGEST: ${{ needs.build-amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ needs.build-arm64.outputs.digest }}
+        run: |
+          FULL_IMAGE="${REGISTRY}/${IMAGE}"
+          BRANCH_TAG=$(echo "$BRANCH" | tr '/' '-')
+          docker buildx imagetools create \
+            --tag "${FULL_IMAGE}:${BRANCH_TAG}" \
             "${FULL_IMAGE}@${AMD64_DIGEST}" \
             "${FULL_IMAGE}@${ARM64_DIGEST}"
 

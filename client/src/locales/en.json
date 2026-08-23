@@ -1387,11 +1387,13 @@
       "tabs": {
         "hardcover": "Hardcover",
         "readwise": "Readwise",
-        "storygraph": "StoryGraph"
+        "storygraph": "StoryGraph",
+        "audiobookshelf": "Audiobookshelf"
       },
       "providerSubtitles": {
         "readwise": "Send your highlights to Readwise automatically.",
-        "storygraph": "Sync your reading progress and status to The StoryGraph."
+        "storygraph": "Sync your reading progress and status to The StoryGraph.",
+        "audiobookshelf": "Sync listening progress and sessions from Audiobookshelf."
       }
     },
     "metadata": {
@@ -2955,7 +2957,8 @@
         "koreader": "KOReader",
         "manual": "Manual",
         "kobo": "Kobo",
-        "unknown": "Unknown"
+        "unknown": "Unknown",
+        "audiobookshelf": "Audiobookshelf"
       },
       "formats": "Formats",
       "genres": "Genres",
@@ -5273,6 +5276,56 @@
         "totalLabel": "Books in series",
         "totalPlaceholder": "of",
         "totalHint": "Total books in this series. Shared with everyone who has this series."
+      },
+      "editionLink": {
+        "trigger": "Link book",
+        "tooltipNeedsAudio": "Link an audiobook to enable position alignment.",
+        "tooltipNeedsText": "Link an ebook to enable position alignment.",
+        "tooltipLinked": "Manage the linked edition.",
+        "counterpartAudiobook": "Audiobook",
+        "counterpartEbook": "Ebook",
+        "title": "Link edition",
+        "linkedTo": "Linked to",
+        "unknownTitle": "Untitled",
+        "unlink": "Unlink",
+        "suggestedMatch": "Suggested match",
+        "confidence": "{score}% confidence",
+        "confirmLink": "Link",
+        "noMatch": "No automatic match found.",
+        "searchToggle": "Search for a match",
+        "searchPlaceholder": "Search by title or author",
+        "searching": "Searching...",
+        "noResults": "No matches found.",
+        "linkedSuccess": "Books linked.",
+        "linkFailed": "Failed to link book.",
+        "unlinkedSuccess": "Books unlinked.",
+        "unlinkFailed": "Failed to unlink book.",
+        "searchFailed": "Couldn't search for a match. Try again."
+      },
+      "readingAlignment": {
+        "title": "Position alignment",
+        "status": {
+          "none": "Not built",
+          "pending": "Not built",
+          "building": "Aligning...",
+          "ready": "Aligned",
+          "failed": "Alignment failed",
+          "unalignable": "Can't align"
+        },
+        "progress": "{done} / {total} samples",
+        "anchorFound": "{count} anchor found",
+        "anchorsFound": "{count} anchors found",
+        "builtAt": "Built {date}",
+        "buildButton": "Build alignment",
+        "rebuildButton": "Rebuild alignment",
+        "unalignableHint": "Position alignment isn't available for this book pair.",
+        "inSyncWith": "In sync with {title}",
+        "buildFailed": "Failed to start alignment build.",
+        "buildBlocked": {
+          "disabled": "Reading alignment is turned off for this server.",
+          "unavailable": "Reading alignment isn't configured on this server yet.",
+          "busy": "The server is busy aligning other books. Try again shortly."
+        }
       }
     },
     "table": {
@@ -7326,7 +7379,9 @@
     },
     "toast": {
       "linkedHighlightError": "Could not open the linked highlight position",
-      "resumed": "Resumed at {pct}% - {label}"
+      "resumed": "Resumed at {pct}% - {label}",
+      "crossFormatResumed": "Resumed from your audiobook position",
+      "crossFormatUndo": "Undo"
     },
     "header": {
       "goBack": "Go back",
@@ -7970,7 +8025,7 @@
       "sourceDistribution": {
         "title": "Where You Read",
         "emptyTitle": "No reading activity yet",
-        "emptyDescription": "Read on the web, KOReader, or Kobo to see your source split."
+        "emptyDescription": "Read on the web, KOReader, Kobo, or Audiobookshelf to see your source split."
       }
     }
   },
