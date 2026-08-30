@@ -23,6 +23,7 @@ defineEmits<{
   scan: [library: Library]
   edit: [library: Library]
   refreshCovers: [library: Library]
+  reextractMetadata: [library: Library]
   syncFiles: [library: Library]
   remove: [library: Library]
 }>()
@@ -63,6 +64,7 @@ const { t } = useI18n()
           @scan="$emit('scan', $event)"
           @edit="$emit('edit', $event)"
           @refresh-covers="$emit('refreshCovers', $event)"
+          @reextract-metadata="$emit('reextractMetadata', $event)"
           @sync-files="$emit('syncFiles', $event)"
           @remove="$emit('remove', $event)"
         />

@@ -596,4 +596,47 @@ describe('LibrariesSettings ledger', () => {
       headerTarget.remove()
     })
   })
+
+  describe('re-extract metadata confirmation', () => {
+    it('confirms before posting to the re-extract-metadata endpoint', async () => {
+      librariesRef.value = [makeLibrary({ id: 7, name: 'Sci-Fi' })]
+      const wrapper = await mountLoaded({ realTeleport: true })
+
+      wrapper.findComponent(LibraryRowActions).vm.$emit('reextractMetadata', librariesRef.value[0]!)
+      await flushPromises()
+
+      const dialog = document.querySelector('[role="dialog"]')
+      expect(dialog).not.toBeNull()
+      expect(dialog!.textContent).toContain('Re-extract metadata?')
+      expect(dialog!.textContent).toContain('Sci-Fi')
+      expect(dialog!.textContent).toContain('Refresh covers')
+
+      const confirmButton = [...dialog!.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Re-extract metadata')
+      confirmButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushPromises()
+
+      expect(apiMock).toHaveBeenCalledWith('/api/v1/scanner/libraries/7/re-extract-metadata', { method: 'POST' })
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+
+      wrapper.unmount()
+    })
+
+    it('does not call the API when the confirmation is cancelled', async () => {
+      librariesRef.value = [makeLibrary({ id: 7, name: 'Sci-Fi' })]
+      const wrapper = await mountLoaded({ realTeleport: true })
+
+      wrapper.findComponent(LibraryRowActions).vm.$emit('reextractMetadata', librariesRef.value[0]!)
+      await flushPromises()
+
+      const dialog = document.querySelector('[role="dialog"]')
+      const cancelButton = [...dialog!.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Cancel')
+      cancelButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await flushPromises()
+
+      expect(apiMock.mock.calls.some((call) => String(call[0]).includes('re-extract-metadata'))).toBe(false)
+      expect(document.querySelector('[role="dialog"]')).toBeNull()
+
+      wrapper.unmount()
+    })
+  })
 })

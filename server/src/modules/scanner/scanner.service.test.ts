@@ -149,6 +149,8 @@ const mockMetadata = {
   aggregateAudioDuration: vi.fn().mockResolvedValue(undefined),
   extractAudioChaptersAndNarrators: vi.fn().mockResolvedValue(undefined),
   extractMergedAudioChapters: vi.fn().mockResolvedValue(undefined),
+  getCoverSource: vi.fn().mockResolvedValue(null),
+  applyCoverSource: vi.fn().mockResolvedValue('saved'),
 };
 
 function makeService(
@@ -2096,6 +2098,186 @@ describe('incremental scan — no re-extraction on unchanged winner', () => {
   });
 });
 
+describe('reextractMetadata option', () => {
+  it('logs reextractMetadata=true on both the scan start and scan job start lines', async () => {
+    const repo = makeRepo();
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+    await service.startScan(1, 'manual', { reextractMetadata: true });
+    await done;
+
+    expect(Logger.prototype.log).toHaveBeenCalledWith(
+      expect.stringContaining('[scanner.start_scan] [start] libraryId=1 triggeredBy=manual forceFullScan=true reextractMetadata=true'),
+    );
+    expect(Logger.prototype.log).toHaveBeenCalledWith(expect.stringContaining('forceFullScan=true reextractMetadata=true - scan job started'));
+  });
+
+  it('implies forceFullScan, clearing incremental dir scan state', async () => {
+    const repo = makeRepo();
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+    await service.startScan(1, 'manual', { reextractMetadata: true });
+    await done;
+
+    expect(repo.clearDirScanState).toHaveBeenCalledWith(1);
+    expect(repo.findDirScanState).not.toHaveBeenCalled();
+  });
+
+  it('forces metadata and audio extraction for an unchanged content file', async () => {
+    const m4b = makeFileStat({ absolutePath: '/library/Book/book.m4b', relPath: 'Book/book.m4b', ino: 10001n });
+
+    const repo = makeRepo({
+      findBooksByLibraryFolder: vi
+        .fn()
+        .mockResolvedValue([{ id: 1, libraryId: 1, libraryFolderId: 1, folderPath: '/library/Book', status: 'present' }]),
+      findBookFilesByLibraryFolder: vi.fn().mockResolvedValue([makeBookFile({ id: 10, bookId: 1, absolutePath: m4b.absolutePath, ino: m4b.ino })]),
+    });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [m4b])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+    await service.startScan(1, 'manual', { reextractMetadata: true });
+    await done;
+
+    // Without reextractMetadata this file is byte-for-byte unchanged and hits the early-return
+    // "changed: false" branch in resolveExistingFilePath - reextractMetadata must override that.
+    expect(mockMetadata.extractAndSave).toHaveBeenCalledWith(expect.any(Number), m4b.absolutePath, 'm4b');
+    expect(mockMetadata.extractAudioFileDuration).toHaveBeenCalledWith(expect.any(Number), m4b.absolutePath);
+    expect(mockMetadata.aggregateAudioDuration).toHaveBeenCalledWith(expect.any(Number));
+  });
+
+  it('forces re-extraction of an unchanged metadata-role file (opf)', async () => {
+    const primary = makeFileStat({ absolutePath: '/library/Book/book.epub', relPath: 'Book/book.epub', format: 'epub', role: 'content' });
+    const opf = makeFileStat({
+      absolutePath: '/library/Book/metadata.opf',
+      relPath: 'Book/metadata.opf',
+      ino: 1002n,
+      sizeBytes: 128,
+      mtime: new Date('2024-01-02'),
+      format: 'opf',
+      role: 'metadata',
+    });
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [primary, opf])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+
+    const repo = makeRepo({
+      findLibrarySettings: vi.fn().mockResolvedValue({
+        allowedFormats: [],
+        formatPriority: DEFAULT_FORMAT_PRIORITY,
+        metadataPrecedence: ['opfFile', 'embedded'],
+        excludePatterns: [],
+        organizationMode: 'book_per_folder',
+      }),
+      findBooksByLibraryFolder: vi
+        .fn()
+        .mockResolvedValue([{ id: 1, libraryId: 1, libraryFolderId: 1, folderPath: '/library/Book', status: 'present' }]),
+      findBookFilesByLibraryFolder: vi.fn().mockResolvedValue([
+        makeBookFile({ id: 10, bookId: 1, absolutePath: primary.absolutePath, relPath: primary.relPath, ino: primary.ino, sortOrder: 0 }),
+        makeBookFile({
+          id: 11,
+          bookId: 1,
+          absolutePath: opf.absolutePath,
+          relPath: opf.relPath,
+          ino: opf.ino,
+          sizeBytes: 128,
+          mtime: new Date('2024-01-02'),
+          format: 'opf',
+          role: 'metadata',
+          sortOrder: 1,
+        }),
+      ]),
+    });
+
+    const done = awaitScan(repo);
+    const { service } = makeService(repo);
+    await service.startScan(1, 'manual', { reextractMetadata: true });
+    await done;
+
+    expect(mockMetadata.extractAndSave).toHaveBeenCalledTimes(1);
+    expect(mockMetadata.extractAndSave).toHaveBeenCalledWith(expect.any(Number), '/library/Book/metadata.opf', 'opf');
+  });
+
+  it('does not force an unchanged provider cover file to reload', async () => {
+    const epub = makeFileStat({ absolutePath: '/library/Book/book.epub', relPath: 'Book/book.epub', format: 'epub', role: 'content' });
+    const cover = makeFileStat({
+      absolutePath: '/library/Book/cover.jpg',
+      relPath: 'Book/cover.jpg',
+      ino: 5002n,
+      sizeBytes: 512,
+      format: 'jpg',
+      role: 'cover',
+    });
+
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [epub, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+
+    const repo = makeRepo({
+      findBooksByLibraryFolder: vi
+        .fn()
+        .mockResolvedValue([{ id: 1, libraryId: 1, libraryFolderId: 1, folderPath: '/library/Book', primaryFileId: 10, status: 'present' }]),
+      findBookFilesByLibraryFolder: vi.fn().mockResolvedValue([
+        makeBookFile({ id: 10, bookId: 1, absolutePath: epub.absolutePath, ino: epub.ino, sortOrder: 0 }),
+        makeBookFile({
+          id: 11,
+          bookId: 1,
+          absolutePath: cover.absolutePath,
+          ino: cover.ino,
+          sizeBytes: 512,
+          format: 'jpg',
+          role: 'cover',
+          sortOrder: 1,
+          fileHash: 'stored-cover-hash',
+        }),
+      ]),
+    });
+
+    const fakeCoverProvider = {
+      key: 'sidecar',
+      select: () => null,
+      selectCover: (files: { role: string }[]) => files.find((f) => f.role === 'cover') ?? null,
+    };
+
+    const jobStore = new ScanJobStore();
+    const notificationService = { notify: vi.fn().mockResolvedValue(undefined) };
+    const achievementEvents = { emit: vi.fn() };
+    const selfWriteRegistry = new SelfWriteRegistry();
+    const service = new ScannerService(
+      repo as any,
+      mockMetadata as any,
+      jobStore,
+      mockGateway as any,
+      notificationService as any,
+      selfWriteRegistry,
+      undefined,
+      achievementEvents as any,
+      [fakeCoverProvider as any],
+    );
+
+    const done = awaitScan(repo);
+    await service.startScan(1, 'manual', { reextractMetadata: true });
+    await done;
+
+    // The content file is forced to changed=true, so shared metadata still re-extracts.
+    expect(mockMetadata.extractAndSave).toHaveBeenCalledWith(expect.any(Number), epub.absolutePath, 'epub');
+    // The unchanged cover file must not be treated as changed by reextractMetadata - it is
+    // byte-identical to what's stored, so the provider cover must not be re-applied.
+    expect(mockMetadata.applyCoverSource).not.toHaveBeenCalled();
+  });
+});
+
 describe('missing book restoration', () => {
   it('restores a missing book to present when its folder is found again', async () => {
     const repo = makeRepo({
@@ -3552,7 +3734,7 @@ describe('incremental scan — dir state', () => {
     const repo = makeRepo();
     const done = awaitScan(repo);
     const { service } = makeService(repo);
-    await service.startScan(1, 'manual', true);
+    await service.startScan(1, 'manual', { forceFullScan: true });
     await done;
 
     expect(repo.clearDirScanState).toHaveBeenCalledWith(1);

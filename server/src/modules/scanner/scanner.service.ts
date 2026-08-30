@@ -157,6 +157,14 @@ interface ProcessCandidateResult {
   created: boolean;
 }
 
+interface ScanOptions {
+  forceFullScan?: boolean;
+  // Forces content/metadata files to be treated as changed so extraction re-runs even when
+  // size/mtime/ino are unchanged (e.g. after the library's metadata precedence changes).
+  // Cover/supplement files are unaffected; re-importing covers stays the job of Refresh covers.
+  reextractMetadata?: boolean;
+}
+
 function normalizeOrganizationMode(mode: string | null | undefined): OrganizationMode {
   return mode === 'book_per_file' ? 'book_per_file' : 'book_per_folder';
 }
@@ -618,10 +626,14 @@ export class ScannerService implements OnApplicationBootstrap {
     await this.scannerRepo.failAllRunningJobs('Server restarted during scan');
   }
 
-  async startScan(libraryId: number, triggeredBy: ScanTriggeredBy, forceFullScan = false): Promise<{ jobId: number }> {
+  async startScan(libraryId: number, triggeredBy: ScanTriggeredBy, options: ScanOptions = {}): Promise<{ jobId: number }> {
     const event = 'scanner.start_scan';
     const startedAt = Date.now();
-    this.logger.log(`[${event}] [start] libraryId=${libraryId} triggeredBy=${triggeredBy} forceFullScan=${forceFullScan} - scan start requested`);
+    const reextractMetadata = options.reextractMetadata ?? false;
+    let forceFullScan = (options.forceFullScan ?? false) || reextractMetadata;
+    this.logger.log(
+      `[${event}] [start] libraryId=${libraryId} triggeredBy=${triggeredBy} forceFullScan=${forceFullScan} reextractMetadata=${reextractMetadata} - scan start requested`,
+    );
     if (!this.scanJobStore.acquireStartLock(libraryId)) {
       throw new ConflictException(`A scan is already starting for library ${libraryId}`);
     }
@@ -670,6 +682,7 @@ export class ScannerService implements OnApplicationBootstrap {
         excludePatterns,
         organizationMode,
         forceFullScan,
+        reextractMetadata,
       ).catch((err) => {
         const errorClass = err instanceof Error ? err.name : 'Error';
         const errorMessage = sanitizeLogValue(err instanceof Error ? err.message : String(err));
@@ -1272,11 +1285,12 @@ export class ScannerService implements OnApplicationBootstrap {
     excludePatterns: string[],
     organizationMode: OrganizationMode,
     forceFullScan = false,
+    reextractMetadata = false,
   ): Promise<void> {
     const event = 'scanner.run_scan';
     const startedAt = Date.now();
     this.logger.log(
-      `[${event}] [start] libraryId=${libraryId} jobId=${jobId} folderCount=${folders.length} forceFullScan=${forceFullScan} - scan job started`,
+      `[${event}] [start] libraryId=${libraryId} jobId=${jobId} folderCount=${folders.length} forceFullScan=${forceFullScan} reextractMetadata=${reextractMetadata} - scan job started`,
     );
 
     let totalCandidates = 0;
@@ -1352,6 +1366,7 @@ export class ScannerService implements OnApplicationBootstrap {
           organizationMode,
           skippedDirs,
           unchangedDirs,
+          reextractMetadata,
         );
         totals.addedCount += counts.addedCount;
         totals.updatedCount += counts.updatedCount;
@@ -1439,6 +1454,7 @@ export class ScannerService implements OnApplicationBootstrap {
     organizationMode: OrganizationMode,
     skippedDirs: Set<string> = new Set(),
     unchangedDirs: Set<string> = new Set(),
+    reextractMetadata = false,
   ): Promise<ScanCounts> {
     const event = 'scanner.scan_folder_candidates';
     const startedAt = Date.now();
@@ -1471,6 +1487,7 @@ export class ScannerService implements OnApplicationBootstrap {
           isFirstScan,
           candidateFolderPaths,
           organizationMode,
+          reextractMetadata,
         );
         seenBookIds.add(result.bookId);
         if (result.created) importedBookIds.push(result.bookId);
@@ -1551,6 +1568,7 @@ export class ScannerService implements OnApplicationBootstrap {
     isFirstScan: boolean,
     candidateFolderPaths: Set<string>,
     organizationMode: OrganizationMode,
+    reextractMetadata = false,
   ): Promise<ProcessCandidateResult> {
     const { bookByFolderPath, booksByParentDir, fileByPath, fileByIno } = maps;
     const counts = { added: 0, updated: 0 };
@@ -1615,6 +1633,10 @@ export class ScannerService implements OnApplicationBootstrap {
       counts.updated += fileCount.addedCount + fileCount.updatedCount;
 
       if (processResult.fileId !== null) {
+        // reextractMetadata forces content/metadata files through extraction even when nothing on
+        // disk changed. Cover/supplement files keep their real change state - re-importing covers
+        // stays the job of Refresh covers and its clobber guards.
+        const forcedChanged = reextractMetadata && (role === 'content' || role === 'metadata');
         registeredFiles.push({
           fileId: processResult.fileId,
           format,
@@ -1622,7 +1644,7 @@ export class ScannerService implements OnApplicationBootstrap {
           absolutePath: fileStat.absolutePath,
           isNew: processResult.isNew,
           wasReassigned: processResult.reassigned,
-          wasChanged: processResult.changed,
+          wasChanged: forcedChanged || processResult.changed,
           storedFileHash: fileByPath.get(fileStat.absolutePath)?.fileHash ?? null,
         });
         retainedFileIds.add(processResult.fileId);

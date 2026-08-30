@@ -27,4 +27,13 @@ describe('ScannerController', () => {
 
     expect(scannerService.refreshCovers).toHaveBeenCalledWith(9);
   });
+
+  it('delegates re-extract metadata requests to ScannerService.startScan with reextractMetadata', () => {
+    const scannerService = { startScan: vi.fn().mockResolvedValue({ jobId: 12 }), refreshCovers: vi.fn() } as any;
+    const controller = new ScannerController(scannerService);
+
+    void controller.reExtractMetadata(42);
+
+    expect(scannerService.startScan).toHaveBeenCalledWith(42, 'manual', { reextractMetadata: true });
+  });
 });
