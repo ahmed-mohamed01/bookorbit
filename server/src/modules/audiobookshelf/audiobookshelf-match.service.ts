@@ -494,6 +494,9 @@ export class AudiobookshelfMatchService {
     // Pending-review rows a forced rescan re-tests. An exact hit replaces the stored proposal;
     // otherwise they join the residuals and are re-scored by the fuzzy tier like fresh items.
     const toUpgrade: AbsMatchInput[] = [];
+    // Skipped rows still get their ABS context (library, series, path) refreshed: matching writes it
+    // through the upsert, but settled rows never reach the upsert again.
+    const skippedWithState: AbsMatchInput[] = [];
     for (const item of items) {
       const state = stateByItemId.get(item.absLibraryItemId);
       if (state) {
@@ -504,11 +507,13 @@ export class AudiobookshelfMatchService {
             toUpgrade.push(item);
           } else {
             summary.skipped++;
+            skippedWithState.push(item);
           }
           continue;
         }
         if (!options.force && state.manualUnlinked) {
           summary.skipped++;
+          skippedWithState.push(item);
           continue;
         }
         if (!options.force && state.lastMatchAttemptAt) {
@@ -516,12 +521,23 @@ export class AudiobookshelfMatchService {
           const unchanged = !changedAtMemo.value || state.lastMatchAttemptAt.getTime() >= changedAtMemo.value.getTime();
           if (unchanged) {
             summary.skipped++;
+            skippedWithState.push(item);
             continue;
           }
         }
       }
       toMatch.push(item);
     }
+
+    await this.repo.refreshAbsContext(
+      user.id,
+      skippedWithState.map((item) => ({
+        absLibraryItemId: item.absLibraryItemId,
+        absSeriesName: item.seriesName,
+        absLibraryName: item.libraryName,
+        absPath: item.path,
+      })),
+    );
 
     summary.processed = toMatch.length + toUpgrade.length;
     if (toMatch.length === 0 && toUpgrade.length === 0) {

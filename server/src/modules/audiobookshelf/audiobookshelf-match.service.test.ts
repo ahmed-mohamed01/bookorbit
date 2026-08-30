@@ -17,6 +17,7 @@ const mockRepo = {
   findDistinctBookFolderPaths: vi.fn(),
   findLibraryChangedAt: vi.fn(),
   bulkUpsertBookStates: vi.fn(),
+  refreshAbsContext: vi.fn(),
 };
 
 const mockClient = {
@@ -78,6 +79,7 @@ describe('AudiobookshelfMatchService', () => {
     mockRepo.findDistinctBookFolderPaths.mockResolvedValue([]);
     mockRepo.findLibraryChangedAt.mockResolvedValue(null);
     mockRepo.bulkUpsertBookStates.mockResolvedValue(undefined);
+    mockRepo.refreshAbsContext.mockResolvedValue(undefined);
     mockRepo.findSettings.mockResolvedValue({ enabled: true, serverUrl: 'https://abs.example', apiToken: 'token', excludedLibraryIds: [] });
     mockRepo.findBookStateCleanupCandidates.mockResolvedValue([]);
     mockRepo.deleteBookStatesByAbsItemIds.mockResolvedValue(0);
@@ -98,6 +100,40 @@ describe('AudiobookshelfMatchService', () => {
 
       const [, rows, readAt] = mockRepo.bulkUpsertBookStates.mock.calls[0]! as [number, AbsBookStateUpsert[], Date];
       expect(readAt.getTime()).toBeLessThan(rows[0]!.lastMatchAttemptAt.getTime());
+    });
+  });
+
+  describe('matchItems - ABS context refresh for skipped rows', () => {
+    it('refreshes library, series, and path for a settled row without re-upserting it', async () => {
+      mockRepo.findBookStatesByAbsItemIds.mockResolvedValue([
+        { absLibraryItemId: 'i-linked', bookId: 7, matchMethod: 'asin', needsReview: false, manualUnlinked: false, lastMatchAttemptAt: null },
+      ]);
+      const linked = makeItem({ absLibraryItemId: 'i-linked', seriesName: 'Mistborn', libraryName: 'Graphic Audio', path: '/abs/mistborn-6' });
+      const fresh = makeItem({ absLibraryItemId: 'i-new', title: 'T', author: 'A' });
+
+      await makeService().matchItems(superuser, [linked, fresh], { force: false });
+
+      expect(mockRepo.refreshAbsContext).toHaveBeenCalledWith(42, [
+        { absLibraryItemId: 'i-linked', absSeriesName: 'Mistborn', absLibraryName: 'Graphic Audio', absPath: '/abs/mistborn-6' },
+      ]);
+      const upserts = capturedUpserts();
+      expect(upserts.has('i-linked')).toBe(false);
+      expect(upserts.has('i-new')).toBe(true);
+    });
+
+    it('still refreshes context when every item on the page is skipped', async () => {
+      mockRepo.findBookStatesByAbsItemIds.mockResolvedValue([
+        { absLibraryItemId: 'i-linked', bookId: 7, matchMethod: 'manual', needsReview: false, manualUnlinked: false, lastMatchAttemptAt: null },
+      ]);
+      const linked = makeItem({ absLibraryItemId: 'i-linked', seriesName: null, libraryName: 'Fiction', path: '/abs/somewhere' });
+
+      const summary = await makeService().matchItems(superuser, [linked], { force: false });
+
+      expect(summary.skipped).toBe(1);
+      expect(mockRepo.bulkUpsertBookStates).not.toHaveBeenCalled();
+      expect(mockRepo.refreshAbsContext).toHaveBeenCalledWith(42, [
+        { absLibraryItemId: 'i-linked', absSeriesName: null, absLibraryName: 'Fiction', absPath: '/abs/somewhere' },
+      ]);
     });
   });
 

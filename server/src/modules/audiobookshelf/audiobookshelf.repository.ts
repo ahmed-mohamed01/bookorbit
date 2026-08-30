@@ -573,6 +573,37 @@ export class AudiobookshelfRepository {
    * skip any row touched since. A skipped row is simply re-evaluated by the next run from fresh
    * state, which is why abandoning the write is safe rather than something to retry here.
    */
+  /**
+   * Refreshes only the ABS-side context columns (library, series, path) shown on the review cards.
+   * Settled rows never re-enter the match upsert, so this is their only write path; it deliberately
+   * cannot touch match state or updated_at, and the IS DISTINCT FROM guard keeps the steady-state
+   * reconcile at zero row writes.
+   */
+  async refreshAbsContext(
+    userId: number,
+    rows: { absLibraryItemId: string; absSeriesName: string | null; absLibraryName: string | null; absPath: string | null }[],
+  ): Promise<void> {
+    if (rows.length === 0) return;
+    for (const group of chunk(rows, BOOK_STATE_UPSERT_CHUNK)) {
+      const values = sql.join(
+        group.map(
+          (row) => sql`(${row.absLibraryItemId}::varchar, ${row.absSeriesName}::varchar, ${row.absLibraryName}::varchar, ${row.absPath}::text)`,
+        ),
+        sql`, `,
+      );
+      await this.db.execute(sql`
+        update ${audiobookshelfBookState} as s
+        set abs_series_name = v.abs_series_name, abs_library_name = v.abs_library_name, abs_path = v.abs_path
+        from (values ${values}) as v(abs_library_item_id, abs_series_name, abs_library_name, abs_path)
+        where s.user_id = ${userId}
+          and s.abs_library_item_id = v.abs_library_item_id
+          and (s.abs_series_name is distinct from v.abs_series_name
+            or s.abs_library_name is distinct from v.abs_library_name
+            or s.abs_path is distinct from v.abs_path)
+      `);
+    }
+  }
+
   async bulkUpsertBookStates(userId: number, rows: AbsBookStateUpsert[], readAt: Date): Promise<void> {
     if (rows.length === 0) return;
     for (const group of chunk(rows, BOOK_STATE_UPSERT_CHUNK)) {

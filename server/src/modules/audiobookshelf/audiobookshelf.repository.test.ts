@@ -623,6 +623,49 @@ describe('AudiobookshelfRepository', () => {
     });
   });
 
+  describe('refreshAbsContext', () => {
+    const row = (id: string) => ({ absLibraryItemId: id, absSeriesName: 'S', absLibraryName: 'L', absPath: `/p/${id}` });
+
+    it('short-circuits for an empty row list', async () => {
+      const db = { execute: vi.fn() };
+      const repo = new AudiobookshelfRepository(db as never);
+
+      await repo.refreshAbsContext(1, []);
+      expect(db.execute).not.toHaveBeenCalled();
+    });
+
+    it('updates only the context columns, guarded so unchanged rows write nothing', async () => {
+      const db = { execute: vi.fn().mockResolvedValue({ rows: [] }) };
+      const repo = new AudiobookshelfRepository(db as never);
+
+      await repo.refreshAbsContext(1, [row('a'), row('b')]);
+
+      expect(db.execute).toHaveBeenCalledTimes(1);
+      const query = db.execute.mock.calls[0]![0] as { queryChunks?: unknown[] };
+      const rendered = (query.queryChunks ?? [])
+        .map((chunk) => {
+          const value = (chunk as { value?: unknown }).value;
+          return Array.isArray(value) ? value.join('') : '';
+        })
+        .join(' ');
+      expect(rendered).toContain('is distinct from');
+      expect(rendered).toContain('abs_library_name');
+      expect(rendered).not.toContain('updated_at');
+      expect(rendered).not.toContain('match_method');
+    });
+
+    it('chunks large row sets', async () => {
+      const db = { execute: vi.fn().mockResolvedValue({ rows: [] }) };
+      const repo = new AudiobookshelfRepository(db as never);
+
+      await repo.refreshAbsContext(
+        1,
+        Array.from({ length: 501 }, (_, i) => row(`i${i}`)),
+      );
+      expect(db.execute).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('findCoverFilesForBooks', () => {
     it('short-circuits for an empty book list', async () => {
       const db = { select: vi.fn() };
