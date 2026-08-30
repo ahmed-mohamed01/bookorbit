@@ -43,6 +43,7 @@ function makeItem(overrides: Partial<AbsMatchInput> = {}): AbsMatchInput {
     author: null,
     seriesName: null,
     path: null,
+    libraryName: null,
     ...overrides,
   };
 }
@@ -176,6 +177,43 @@ describe('AudiobookshelfMatchService', () => {
 
       expect(mockRepo.findBookIdsByIsbns).toHaveBeenCalledWith([1, 2], undefined, ['979835X']);
       expect(capturedUpserts().get('i1')).toMatchObject({ bookId: 8, matchMethod: 'isbn' });
+    });
+
+    it('carries the ABS series, library, and path facts from the item into every upsert row', async () => {
+      const item = makeItem({
+        absLibraryItemId: 'i1',
+        isbn: '9781234567890',
+        seriesName: 'The Expanse #3',
+        path: '/audiobooks/Author/Title',
+        libraryName: 'Audiobooks',
+      });
+      mockRepo.findBookIdsByIsbns.mockResolvedValue([exactRow('9781234567890', 12)]);
+
+      await makeService().matchItems(superuser, [item], { force: false });
+
+      expect(capturedUpserts().get('i1')).toMatchObject({
+        absSeriesName: 'The Expanse #3',
+        absPath: '/audiobooks/Author/Title',
+        absLibraryName: 'Audiobooks',
+      });
+    });
+
+    it('carries the ABS series, library, and path facts through an unmatched (no-hit) row too', async () => {
+      const item = makeItem({
+        absLibraryItemId: 'i1',
+        seriesName: 'Some Series',
+        path: '/audiobooks/Author/Title',
+        libraryName: 'Audiobooks',
+      });
+
+      await makeService().matchItems(superuser, [item], { force: false });
+
+      expect(capturedUpserts().get('i1')).toMatchObject({
+        absSeriesName: 'Some Series',
+        absPath: '/audiobooks/Author/Title',
+        absLibraryName: 'Audiobooks',
+        bookId: null,
+      });
     });
   });
 
@@ -668,6 +706,29 @@ describe('AudiobookshelfMatchService', () => {
       expect(summary.totalItems).toBe(1);
       expect(summary.autoLinked).toBe(1);
       expect(capturedUpserts().get('i1')).toMatchObject({ bookId: 5, matchMethod: 'asin' });
+    });
+
+    it('threads the ABS library name from the inventory walk into the upsert row', async () => {
+      mockClient.getLibraries.mockResolvedValue({
+        libraries: [{ id: 'lib-book', name: 'My Audiobooks', mediaType: 'book', folderPaths: ['/audiobooks'] }],
+      });
+      mockClient.getLibraryItems.mockResolvedValue({
+        results: [
+          {
+            id: 'i1',
+            libraryId: 'lib-book',
+            mediaType: 'book',
+            media: { metadata: { title: 'T', subtitle: null, authorName: 'A', seriesName: null, isbn: null, asin: null }, duration: null },
+          },
+        ],
+        total: 1,
+        limit: 500,
+        page: 0,
+      });
+
+      await makeService().matchLibrary(superuser, 'https://abs.example', 'token', { force: true });
+
+      expect(capturedUpserts().get('i1')).toMatchObject({ absLibraryName: 'My Audiobooks' });
     });
 
     it('excludes libraries listed in excludedLibraryIds', async () => {

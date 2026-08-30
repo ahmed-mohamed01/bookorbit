@@ -44,6 +44,7 @@ export interface AbsMatchInput {
   author: string | null;
   seriesName: string | null;
   path: string | null;
+  libraryName: string | null;
 }
 
 export interface AudiobookshelfMatchSummary {
@@ -560,6 +561,9 @@ export class AudiobookshelfMatchService {
       absLibraryItemId: item.absLibraryItemId,
       absTitle: item.title,
       absAuthorName: item.author,
+      absSeriesName: item.seriesName,
+      absLibraryName: item.libraryName,
+      absPath: item.path,
       lastMatchAttemptAt: now,
     });
 
@@ -761,7 +765,7 @@ export class AudiobookshelfMatchService {
       let page = 0;
       while (true) {
         const response = await this.client.getLibraryItems(userId, serverUrl, token, library.id, { limit: ABS_LIBRARY_ITEMS_PAGE_SIZE, page });
-        const items = response.results.map((item) => this.toMatchInput(item));
+        const items = response.results.map((item) => this.toMatchInput(item, library.name));
         if (items.length > 0) await onPage(items);
         // Actual items retrieved so far: every prior page in this loop was full-size (or the loop would
         // already have exited), so this is exact, not an estimate.
@@ -782,7 +786,7 @@ export class AudiobookshelfMatchService {
     }
   }
 
-  private toMatchInput(item: AbsLibraryItem): AbsMatchInput {
+  private toMatchInput(item: AbsLibraryItem, libraryName: string | null): AbsMatchInput {
     const metadata = item.media?.metadata;
     return {
       absLibraryItemId: item.id,
@@ -792,6 +796,7 @@ export class AudiobookshelfMatchService {
       author: metadata?.authorName ?? null,
       seriesName: metadata?.seriesName ?? null,
       path: item.path ?? null,
+      libraryName,
     };
   }
 }

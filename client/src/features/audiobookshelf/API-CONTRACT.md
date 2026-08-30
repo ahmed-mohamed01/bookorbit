@@ -99,9 +99,15 @@ The client applies confirm/link/unlink/exclusion updates locally from the respon
   absLibraryItemId: string
   absTitle: string
   absAuthorName: string | null
+  absSeriesName: string | null
+  absLibraryName: string | null
+  absPath: string | null
   bookId: number | null
   bookTitle: string | null
   bookAuthorName: string | null
+  bookSeriesName: string | null
+  bookLibraryName: string | null
+  bookFolderPath: string | null
   matchMethod: 'asin' | 'isbn' | 'path' | 'title_author_series' | 'manual' | null
   matchConfidence: number | null
   needsReview: boolean
@@ -111,6 +117,8 @@ The client applies confirm/link/unlink/exclusion updates locally from the respon
   lastSyncedAt: string | null
 }
 ```
+
+`absSeriesName`, `absLibraryName`, and `absPath` describe the Audiobookshelf side of a candidate (its series, the ABS library it lives in, and its item path); `bookSeriesName`, `bookLibraryName`, and `bookFolderPath` describe the matched BookOrbit book the same way. The review card shows library and path on both sides so a user can tell which physical item a candidate points at before confirming or rejecting it. The `book*` fields are `null` until the row has a linked `bookId`. The `abs*` fields are ABS facts, not user decisions: they are refreshed from the live Audiobookshelf inventory on every reconcile (sync, rescan, or scheduled match), so a renamed series or a moved library folder on the ABS side shows up on the next reconcile rather than staying stale.
 
 `AudiobookshelfCleanupResult`:
 

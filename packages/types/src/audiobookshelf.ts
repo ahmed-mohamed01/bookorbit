@@ -89,9 +89,15 @@ export interface AudiobookshelfBookState {
   absLibraryItemId: string;
   absTitle: string;
   absAuthorName: string | null;
+  absSeriesName: string | null;
+  absLibraryName: string | null;
+  absPath: string | null;
   bookId: number | null;
   bookTitle: string | null;
   bookAuthorName: string | null;
+  bookSeriesName: string | null;
+  bookLibraryName: string | null;
+  bookFolderPath: string | null;
   matchMethod: AudiobookshelfMatchMethod | null;
   matchConfidence: number | null;
   needsReview: boolean;

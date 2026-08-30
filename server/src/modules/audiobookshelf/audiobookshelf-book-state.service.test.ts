@@ -43,9 +43,15 @@ function makeView(overrides: Partial<AbsBookStateView> = {}): AbsBookStateView {
     absLibraryItemId: 'abs-1',
     absTitle: 'ABS Title',
     absAuthorName: 'ABS Author',
+    absSeriesName: 'ABS Series',
+    absLibraryName: 'ABS Library',
+    absPath: '/audiobooks/Author/Title',
     bookId: 42,
     bookTitle: 'Book Title',
     bookAuthorName: 'Book Author',
+    bookSeriesName: 'Book Series',
+    bookLibraryName: 'Book Library',
+    bookFolderPath: '/books/Author/Title',
     matchMethod: 'manual',
     matchConfidence: null,
     needsReview: false,
@@ -82,9 +88,15 @@ describe('AudiobookshelfBookStateService', () => {
             absLibraryItemId: 'abs-1',
             absTitle: 'ABS Title',
             absAuthorName: 'ABS Author',
+            absSeriesName: 'ABS Series',
+            absLibraryName: 'ABS Library',
+            absPath: '/audiobooks/Author/Title',
             bookId: 42,
             bookTitle: 'Book Title',
             bookAuthorName: 'Book Author',
+            bookSeriesName: 'Book Series',
+            bookLibraryName: 'Book Library',
+            bookFolderPath: '/books/Author/Title',
             matchMethod: 'manual',
             matchConfidence: null,
             needsReview: false,
@@ -97,6 +109,38 @@ describe('AudiobookshelfBookStateService', () => {
         total: 1,
         page: 2,
         pageSize: 10,
+      });
+    });
+
+    it('maps the six review-context fields through unchanged, null when unlinked and populated when linked', async () => {
+      const unlinked = makeView({
+        bookId: null,
+        bookTitle: null,
+        bookAuthorName: null,
+        bookSeriesName: null,
+        bookLibraryName: null,
+        bookFolderPath: null,
+      });
+      const linked = makeView({ bookId: 42 });
+      mockRepo.listBookStates.mockResolvedValue({ items: [unlinked, linked], total: 2 });
+
+      const result = await makeService().list(baseUser, { bucket: 'linked' } as never);
+
+      expect(result.items[0]).toMatchObject({
+        absSeriesName: 'ABS Series',
+        absLibraryName: 'ABS Library',
+        absPath: '/audiobooks/Author/Title',
+        bookSeriesName: null,
+        bookLibraryName: null,
+        bookFolderPath: null,
+      });
+      expect(result.items[1]).toMatchObject({
+        absSeriesName: 'ABS Series',
+        absLibraryName: 'ABS Library',
+        absPath: '/audiobooks/Author/Title',
+        bookSeriesName: 'Book Series',
+        bookLibraryName: 'Book Library',
+        bookFolderPath: '/books/Author/Title',
       });
     });
 

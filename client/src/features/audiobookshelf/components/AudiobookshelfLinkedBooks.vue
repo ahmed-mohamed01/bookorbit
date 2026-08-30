@@ -103,6 +103,19 @@ function confidenceLabel(item: AudiobookshelfBookState): string | null {
   return `${Math.round(percentage)}% confidence`
 }
 
+function joinLibrarySeries(libraryName: string | null, seriesName: string | null): string | null {
+  const parts = [libraryName, seriesName].filter((part): part is string => Boolean(part))
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
+function absMetaLine(item: AudiobookshelfBookState): string | null {
+  return joinLibrarySeries(item.absLibraryName, item.absSeriesName)
+}
+
+function bookMetaLine(item: AudiobookshelfBookState): string | null {
+  return joinLibrarySeries(item.bookLibraryName, item.bookSeriesName)
+}
+
 function beginManualLink(item: AudiobookshelfBookState): void {
   pickerItemId.value = item.absLibraryItemId
   searchQuery.value = ''
@@ -276,6 +289,17 @@ async function handleNextPage(): Promise<void> {
               <span v-if="item.syncExcluded" class="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Excluded</span>
             </div>
             <p class="mt-0.5 truncate text-xs text-muted-foreground">{{ item.absAuthorName ?? 'Unknown Audiobookshelf author' }}</p>
+            <p v-if="absMetaLine(item)" data-testid="abs-item-meta" class="mt-0.5 truncate text-xs text-muted-foreground">
+              {{ absMetaLine(item) }}
+            </p>
+            <p
+              v-if="item.absPath"
+              data-testid="abs-item-path"
+              :title="item.absPath"
+              class="mt-0.5 break-all font-mono text-[11px] text-muted-foreground"
+            >
+              {{ item.absPath }}
+            </p>
           </div>
           <div v-if="actionId === item.absLibraryItemId" class="flex shrink-0 items-center text-muted-foreground">
             <Loader2 class="size-4 animate-spin" />
@@ -289,6 +313,17 @@ async function handleNextPage(): Promise<void> {
             {{ item.bookAuthorName ?? 'Unknown author' }}
             <span v-if="item.matchMethod"> · {{ matchMethodLabel(item.matchMethod) }}</span>
             <span v-if="confidenceLabel(item)"> · {{ confidenceLabel(item) }}</span>
+          </p>
+          <p v-if="bookMetaLine(item)" data-testid="abs-book-meta" class="mt-0.5 text-xs text-muted-foreground">
+            {{ bookMetaLine(item) }}
+          </p>
+          <p
+            v-if="item.bookFolderPath"
+            data-testid="abs-book-path"
+            :title="item.bookFolderPath"
+            class="mt-0.5 break-all font-mono text-[11px] text-muted-foreground"
+          >
+            {{ item.bookFolderPath }}
           </p>
         </div>
 

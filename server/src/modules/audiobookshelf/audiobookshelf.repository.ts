@@ -94,9 +94,15 @@ export interface AbsBookStateView {
   absLibraryItemId: string;
   absTitle: string | null;
   absAuthorName: string | null;
+  absSeriesName: string | null;
+  absLibraryName: string | null;
+  absPath: string | null;
   bookId: number | null;
   bookTitle: string | null;
   bookAuthorName: string | null;
+  bookSeriesName: string | null;
+  bookLibraryName: string | null;
+  bookFolderPath: string | null;
   matchMethod: string | null;
   matchConfidence: number | null;
   needsReview: boolean;
@@ -110,6 +116,9 @@ export interface AbsBookStateUpsert {
   absLibraryItemId: string;
   absTitle: string | null;
   absAuthorName: string | null;
+  absSeriesName: string | null;
+  absLibraryName: string | null;
+  absPath: string | null;
   bookId: number | null;
   matchMethod: string | null;
   matchConfidence: number | null;
@@ -575,6 +584,9 @@ export class AudiobookshelfRepository {
             absLibraryItemId: row.absLibraryItemId,
             absTitle: row.absTitle,
             absAuthorName: row.absAuthorName,
+            absSeriesName: row.absSeriesName,
+            absLibraryName: row.absLibraryName,
+            absPath: row.absPath,
             bookId: row.bookId,
             matchMethod: row.matchMethod,
             matchConfidence: row.matchConfidence,
@@ -590,6 +602,9 @@ export class AudiobookshelfRepository {
           set: {
             absTitle: sql`excluded.abs_title`,
             absAuthorName: sql`excluded.abs_author_name`,
+            absSeriesName: sql`excluded.abs_series_name`,
+            absLibraryName: sql`excluded.abs_library_name`,
+            absPath: sql`excluded.abs_path`,
             bookId: sql`excluded.book_id`,
             matchMethod: sql`excluded.match_method`,
             matchConfidence: sql`excluded.match_confidence`,
@@ -687,9 +702,15 @@ export class AudiobookshelfRepository {
       absLibraryItemId: audiobookshelfBookState.absLibraryItemId,
       absTitle: audiobookshelfBookState.absTitle,
       absAuthorName: audiobookshelfBookState.absAuthorName,
+      absSeriesName: audiobookshelfBookState.absSeriesName,
+      absLibraryName: audiobookshelfBookState.absLibraryName,
+      absPath: audiobookshelfBookState.absPath,
       bookId: audiobookshelfBookState.bookId,
       bookTitle: schema.bookMetadata.title,
       bookAuthorName: this.bookAuthorNameSql(),
+      bookSeriesName: schema.bookMetadata.seriesName,
+      bookLibraryName: schema.libraries.name,
+      bookFolderPath: schema.books.folderPath,
       matchMethod: audiobookshelfBookState.matchMethod,
       matchConfidence: audiobookshelfBookState.matchConfidence,
       needsReview: audiobookshelfBookState.needsReview,
@@ -757,6 +778,7 @@ export class AudiobookshelfRepository {
       .from(audiobookshelfBookState)
       .leftJoin(schema.books, eq(schema.books.id, audiobookshelfBookState.bookId))
       .leftJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, audiobookshelfBookState.bookId))
+      .leftJoin(schema.libraries, eq(schema.libraries.id, schema.books.libraryId))
       .where(where)
       .orderBy(desc(audiobookshelfBookState.updatedAt), asc(audiobookshelfBookState.absLibraryItemId))
       .limit(pageSize)
@@ -776,6 +798,7 @@ export class AudiobookshelfRepository {
       .from(audiobookshelfBookState)
       .leftJoin(schema.books, eq(schema.books.id, audiobookshelfBookState.bookId))
       .leftJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, audiobookshelfBookState.bookId))
+      .leftJoin(schema.libraries, eq(schema.libraries.id, schema.books.libraryId))
       .where(and(...clauses))
       .limit(1);
     return row ?? null;

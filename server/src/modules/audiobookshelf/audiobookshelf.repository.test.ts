@@ -259,6 +259,9 @@ describe('AudiobookshelfRepository', () => {
       absLibraryItemId: id,
       absTitle: `t-${id}`,
       absAuthorName: `a-${id}`,
+      absSeriesName: null,
+      absLibraryName: null,
+      absPath: null,
       bookId: 1,
       matchMethod: 'isbn',
       matchConfidence: 100,
@@ -266,6 +269,12 @@ describe('AudiobookshelfRepository', () => {
       matchError: null,
       lastMatchAttemptAt: new Date(),
     });
+
+    /** Renders a `sql\`excluded.x\`` conflict-set value back to its literal text, e.g. `excluded.abs_path`. */
+    function renderSqlValue(value: unknown): string {
+      const chunks = (value as { queryChunks?: unknown[] })?.queryChunks ?? [];
+      return chunks.map((c) => ((c as { value?: string[] }).value ?? []).join('')).join('');
+    }
 
     const readAt = new Date('2026-08-30T10:00:00Z');
 
@@ -298,6 +307,36 @@ describe('AudiobookshelfRepository', () => {
       const conflictArg = conflictArgOf(chain);
       expect(conflictArg.target).toEqual([audiobookshelfBookState.userId, audiobookshelfBookState.absLibraryItemId]);
       expect(conflictArg.set.manualUnlinked).toBe(false);
+    });
+
+    /**
+     * The three ABS facts (series, library, path) are captured at match time and are ABS-owned data,
+     * not a user decision, so a reconcile must refresh them on every conflict just like `absTitle`.
+     */
+    it('carries the three ABS facts into both the insert values and the conflict set', async () => {
+      const chain = makeChain(undefined);
+      const db = { insert: vi.fn(() => chain) };
+      const repo = new AudiobookshelfRepository(db as never);
+
+      const row: AbsBookStateUpsert = {
+        ...makeRow('abs-1'),
+        absSeriesName: 'The Expanse',
+        absLibraryName: 'Audiobooks',
+        absPath: '/audiobooks/Author/Title',
+      };
+      await repo.bulkUpsertBookStates(7, [row], readAt);
+
+      const values = chain.values.mock.calls[0][0] as Array<Record<string, unknown>>;
+      expect(values[0]).toMatchObject({
+        absSeriesName: 'The Expanse',
+        absLibraryName: 'Audiobooks',
+        absPath: '/audiobooks/Author/Title',
+      });
+
+      const conflictArg = conflictArgOf(chain);
+      expect(renderSqlValue(conflictArg.set.absSeriesName)).toBe('excluded.abs_series_name');
+      expect(renderSqlValue(conflictArg.set.absLibraryName)).toBe('excluded.abs_library_name');
+      expect(renderSqlValue(conflictArg.set.absPath)).toBe('excluded.abs_path');
     });
 
     /**
@@ -710,6 +749,44 @@ describe('AudiobookshelfRepository', () => {
 
       await expect(repo.findBookStatesByAbsItemIds(7, ['abs-1'])).resolves.toEqual([row]);
       expect(someCall(eq, (c, v) => c === audiobookshelfBookState.userId && v === 7)).toBe(true);
+    });
+  });
+
+  /**
+   * The review card needs enough context on both sides to judge a match, so the view columns and the
+   * `libraries` join that supplies `bookLibraryName` are pinned here for both read paths.
+   */
+  describe('review-context columns (bookStateViewColumns)', () => {
+    const reviewContextColumns = expect.objectContaining({
+      absSeriesName: audiobookshelfBookState.absSeriesName,
+      absLibraryName: audiobookshelfBookState.absLibraryName,
+      absPath: audiobookshelfBookState.absPath,
+      bookSeriesName: schema.bookMetadata.seriesName,
+      bookLibraryName: schema.libraries.name,
+      bookFolderPath: schema.books.folderPath,
+    });
+
+    it('listBookStates selects the six review-context fields and left-joins libraries for the item rows', async () => {
+      const countChain = makeChain([{ total: 0 }]);
+      const itemsChain = makeChain([]);
+      const db = { select: vi.fn().mockReturnValueOnce(countChain).mockReturnValueOnce(itemsChain) };
+      const repo = new AudiobookshelfRepository(db as never);
+
+      await repo.listBookStates(7, { libraryIds: [1, 2] }, 'linked', 0, 20, undefined);
+
+      expect(db.select).toHaveBeenCalledWith(reviewContextColumns);
+      expect(itemsChain.leftJoin.mock.calls.some((c) => c[0] === schema.libraries)).toBe(true);
+    });
+
+    it('findBookStateView selects the six review-context fields and left-joins libraries', async () => {
+      const chain = makeChain([]);
+      const db = { select: vi.fn(() => chain) };
+      const repo = new AudiobookshelfRepository(db as never);
+
+      await repo.findBookStateView(7, 'abs-1');
+
+      expect(db.select).toHaveBeenCalledWith(reviewContextColumns);
+      expect(chain.leftJoin.mock.calls.some((c) => c[0] === schema.libraries)).toBe(true);
     });
   });
 });

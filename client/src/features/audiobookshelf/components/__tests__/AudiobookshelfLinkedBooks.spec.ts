@@ -1,12 +1,46 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { reactive, ref } from 'vue'
-import type { AudiobookshelfBookStateBucket, AudiobookshelfBookStatePage, AudiobookshelfCleanupResult } from '@bookorbit/types'
+import type {
+  AudiobookshelfBookState,
+  AudiobookshelfBookStateBucket,
+  AudiobookshelfBookStatePage,
+  AudiobookshelfCleanupResult,
+} from '@bookorbit/types'
 import type { BookSearchOption } from '../../api/audiobookshelf.api'
 import AudiobookshelfLinkedBooks from '../AudiobookshelfLinkedBooks.vue'
 
 function emptyPage(): AudiobookshelfBookStatePage {
   return { items: [], total: 0, page: 0, pageSize: 20 }
+}
+
+function bookState(overrides: Partial<AudiobookshelfBookState> = {}): AudiobookshelfBookState {
+  return {
+    absLibraryItemId: 'li-1',
+    absTitle: 'ABS Title',
+    absAuthorName: 'ABS Author',
+    absSeriesName: null,
+    absLibraryName: null,
+    absPath: null,
+    bookId: null,
+    bookTitle: null,
+    bookAuthorName: null,
+    bookSeriesName: null,
+    bookLibraryName: null,
+    bookFolderPath: null,
+    matchMethod: null,
+    matchConfidence: null,
+    needsReview: false,
+    matchError: null,
+    syncExcluded: false,
+    syncError: null,
+    lastSyncedAt: null,
+    ...overrides,
+  }
+}
+
+function setBucketItems(bucket: AudiobookshelfBookStateBucket, items: AudiobookshelfBookState[]): void {
+  pages[bucket] = { items, total: items.length, page: 0, pageSize: 20 }
 }
 
 const pages = reactive<Record<AudiobookshelfBookStateBucket, AudiobookshelfBookStatePage>>({
@@ -63,6 +97,10 @@ type Wrapper = ReturnType<typeof mount>
 
 function rescanButton(wrapper: Wrapper) {
   return wrapper.findAll('button').find((button) => button.text().includes('Rescan matches'))!
+}
+
+function tabButton(wrapper: Wrapper, label: string) {
+  return wrapper.findAll('button').find((button) => button.text().includes(label))!
 }
 
 async function mountLinkedBooks() {
@@ -131,5 +169,75 @@ describe('AudiobookshelfLinkedBooks header actions', () => {
     cleaningUp.value = false
     await flushPromises()
     expect(rescanButton(wrapper).attributes('disabled')).toBeUndefined()
+  })
+})
+
+describe('AudiobookshelfLinkedBooks item details', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    loading.value = false
+    rescanning.value = false
+    cleaningUp.value = false
+    error.value = null
+    mocks.loadAllBuckets.mockResolvedValue(undefined)
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    pages.linked = emptyPage()
+    pages['needs-review'] = emptyPage()
+    pages.unmatched = emptyPage()
+  })
+
+  it('shows the Audiobookshelf library, series, and path alongside the linked BookOrbit book', async () => {
+    setBucketItems('linked', [
+      bookState({
+        absLibraryName: 'Library A',
+        absSeriesName: 'Series One',
+        absPath: '/mnt/abs/library-a/series-one/book',
+        bookId: 42,
+        bookTitle: 'Book Title',
+        bookAuthorName: 'Book Author',
+        bookLibraryName: 'BookOrbit Library',
+        bookSeriesName: 'BO Series',
+        bookFolderPath: '/books/library/author/book',
+      }),
+    ])
+    const wrapper = await mountLinkedBooks()
+
+    expect(wrapper.get('[data-testid="abs-item-meta"]').text()).toBe('Library A · Series One')
+    expect(wrapper.get('[data-testid="abs-item-path"]').text()).toBe('/mnt/abs/library-a/series-one/book')
+    expect(wrapper.get('[data-testid="abs-book-meta"]').text()).toBe('BookOrbit Library · BO Series')
+    expect(wrapper.get('[data-testid="abs-book-path"]').text()).toBe('/books/library/author/book')
+  })
+
+  it('omits the missing half of the meta line when only one of library or series is present', async () => {
+    setBucketItems('linked', [bookState({ absLibraryName: 'Library A', absSeriesName: null, absPath: null })])
+    const wrapper = await mountLinkedBooks()
+
+    expect(wrapper.get('[data-testid="abs-item-meta"]').text()).toBe('Library A')
+    expect(wrapper.find('[data-testid="abs-item-path"]').exists()).toBe(false)
+  })
+
+  it('renders no meta line when both the library and series are null', async () => {
+    setBucketItems('linked', [bookState({ absLibraryName: null, absSeriesName: null, absPath: '/mnt/abs/only-path' })])
+    const wrapper = await mountLinkedBooks()
+
+    expect(wrapper.find('[data-testid="abs-item-meta"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="abs-item-path"]').text()).toBe('/mnt/abs/only-path')
+  })
+
+  it('does not render the BookOrbit meta or path lines for an unlinked item', async () => {
+    setBucketItems('unmatched', [
+      bookState({ absLibraryName: 'Library A', absSeriesName: 'Series One', absPath: '/mnt/abs/unmatched', bookId: null }),
+    ])
+    const wrapper = await mountLinkedBooks()
+    await tabButton(wrapper, 'Unmatched').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="abs-book-meta"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="abs-book-path"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="abs-item-meta"]').text()).toBe('Library A · Series One')
+    expect(wrapper.get('[data-testid="abs-item-path"]').text()).toBe('/mnt/abs/unmatched')
   })
 })
