@@ -79,6 +79,8 @@ The token is never returned to the browser. These routes and shapes are verified
 
 `bucket` is one of `linked`, `needs-review`, or `unmatched`. Pagination is zero-based, so `page=0` is the first page. The client requests 20 rows per page and the server caps `pageSize` at 100. `q` is optional free text matching either the Audiobookshelf title or the matched BookOrbit title; the client debounces it 300ms and resets every bucket to page 0 on change. `queued` is the number of items that entered matching during a rescan.
 
+Rows from an ABS library currently deselected for sync are omitted from all three buckets and from sync work. They are not deleted: re-selecting the library restores them with their links and decisions intact. A row remembers which ABS library it came from once a reconcile has walked that library; a row created before this behavior carries no library tag until then, so a legacy row from a deselected library keeps showing up until one re-select, Rescan, deselect cycle tags it (an unlinked one can also be removed sooner with Clean up).
+
 The client applies confirm/link/unlink/exclusion updates locally from the response (moving the item between bucket arrays and adjusting totals) instead of reloading all three buckets, since the response already carries the fields (`bookId`, `needsReview`, `matchError`) that determine bucket membership. A rescan still triggers a full reload since `{ queued: number }` isn't enough to update locally.
 
 `AudiobookshelfBookStatePage`:

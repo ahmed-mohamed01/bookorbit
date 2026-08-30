@@ -120,7 +120,7 @@ export class AudiobookshelfSessionsService {
 
         const includedSessions = sessions.filter((session) => !session.libraryId || !excludedLibraryIds.has(session.libraryId));
         acc.skipped += sessions.length - includedSessions.length;
-        await this.processPage(user.id, scope, timeZone, includedSessions, acc);
+        await this.processPage(user.id, scope, timeZone, includedSessions, acc, settings.excludedLibraryIds ?? []);
 
         // Checkpoint after the page's transactions commit: persist the next page to resume from and
         // the accumulated max updatedAt, without promoting the real watermark until the run completes.
@@ -169,9 +169,10 @@ export class AudiobookshelfSessionsService {
     timeZone: string,
     sessions: AbsListeningSession[],
     acc: IngestAccumulator,
+    excludedAbsLibraryIds: string[],
   ): Promise<void> {
     const itemIds = [...new Set(sessions.filter((session) => session.libraryItemId && !session.episodeId).map((session) => session.libraryItemId!))];
-    const states = await this.repo.findSyncableBookStatesByAbsItemIds(userId, scope, itemIds);
+    const states = await this.repo.findSyncableBookStatesByAbsItemIds(userId, scope, itemIds, excludedAbsLibraryIds);
     const stateByItem = new Map(states.map((state) => [state.absLibraryItemId, state]));
 
     // Per-page caches: resolve library ids and ordered audio files for every linked book in this page

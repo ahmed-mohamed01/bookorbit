@@ -11,6 +11,7 @@ export const AUDIOBOOKSHELF_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS "audiobooks
 	"abs_series_name" varchar(1000),
 	"abs_library_name" varchar(500),
 	"abs_path" text,
+	"abs_library_id" varchar(255),
 	"book_id" integer,
 	"match_method" varchar(20),
 	"match_confidence" real,
@@ -63,6 +64,8 @@ ALTER TABLE "audiobookshelf_book_state" ADD COLUMN IF NOT EXISTS "abs_series_nam
 ALTER TABLE "audiobookshelf_book_state" ADD COLUMN IF NOT EXISTS "abs_library_name" varchar(500);
 --> statement-breakpoint
 ALTER TABLE "audiobookshelf_book_state" ADD COLUMN IF NOT EXISTS "abs_path" text;
+--> statement-breakpoint
+ALTER TABLE "audiobookshelf_book_state" ADD COLUMN IF NOT EXISTS "abs_library_id" varchar(255);
 --> statement-breakpoint
 ALTER TABLE "audiobookshelf_book_state" DROP COLUMN IF EXISTS "last_synced_progress";
 --> statement-breakpoint

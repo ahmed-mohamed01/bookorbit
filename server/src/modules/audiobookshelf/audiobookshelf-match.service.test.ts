@@ -45,6 +45,7 @@ function makeItem(overrides: Partial<AbsMatchInput> = {}): AbsMatchInput {
     seriesName: null,
     path: null,
     libraryName: null,
+    libraryId: null,
     ...overrides,
   };
 }
@@ -108,13 +109,25 @@ describe('AudiobookshelfMatchService', () => {
       mockRepo.findBookStatesByAbsItemIds.mockResolvedValue([
         { absLibraryItemId: 'i-linked', bookId: 7, matchMethod: 'asin', needsReview: false, manualUnlinked: false, lastMatchAttemptAt: null },
       ]);
-      const linked = makeItem({ absLibraryItemId: 'i-linked', seriesName: 'Mistborn', libraryName: 'Graphic Audio', path: '/abs/mistborn-6' });
+      const linked = makeItem({
+        absLibraryItemId: 'i-linked',
+        seriesName: 'Mistborn',
+        libraryName: 'Graphic Audio',
+        libraryId: 'lib-ga',
+        path: '/abs/mistborn-6',
+      });
       const fresh = makeItem({ absLibraryItemId: 'i-new', title: 'T', author: 'A' });
 
       await makeService().matchItems(superuser, [linked, fresh], { force: false });
 
       expect(mockRepo.refreshAbsContext).toHaveBeenCalledWith(42, [
-        { absLibraryItemId: 'i-linked', absSeriesName: 'Mistborn', absLibraryName: 'Graphic Audio', absPath: '/abs/mistborn-6' },
+        {
+          absLibraryItemId: 'i-linked',
+          absSeriesName: 'Mistborn',
+          absLibraryName: 'Graphic Audio',
+          absPath: '/abs/mistborn-6',
+          absLibraryId: 'lib-ga',
+        },
       ]);
       const upserts = capturedUpserts();
       expect(upserts.has('i-linked')).toBe(false);
@@ -132,7 +145,7 @@ describe('AudiobookshelfMatchService', () => {
       expect(summary.skipped).toBe(1);
       expect(mockRepo.bulkUpsertBookStates).not.toHaveBeenCalled();
       expect(mockRepo.refreshAbsContext).toHaveBeenCalledWith(42, [
-        { absLibraryItemId: 'i-linked', absSeriesName: null, absLibraryName: 'Fiction', absPath: '/abs/somewhere' },
+        { absLibraryItemId: 'i-linked', absSeriesName: null, absLibraryName: 'Fiction', absPath: '/abs/somewhere', absLibraryId: null },
       ]);
     });
   });
@@ -765,6 +778,29 @@ describe('AudiobookshelfMatchService', () => {
       await makeService().matchLibrary(superuser, 'https://abs.example', 'token', { force: true });
 
       expect(capturedUpserts().get('i1')).toMatchObject({ absLibraryName: 'My Audiobooks' });
+    });
+
+    it('threads the ABS library id from the inventory walk into the upsert row', async () => {
+      mockClient.getLibraries.mockResolvedValue({
+        libraries: [{ id: 'lib-book', name: 'My Audiobooks', mediaType: 'book', folderPaths: ['/audiobooks'] }],
+      });
+      mockClient.getLibraryItems.mockResolvedValue({
+        results: [
+          {
+            id: 'i1',
+            libraryId: 'lib-book',
+            mediaType: 'book',
+            media: { metadata: { title: 'T', subtitle: null, authorName: 'A', seriesName: null, isbn: null, asin: null }, duration: null },
+          },
+        ],
+        total: 1,
+        limit: 500,
+        page: 0,
+      });
+
+      await makeService().matchLibrary(superuser, 'https://abs.example', 'token', { force: true });
+
+      expect(capturedUpserts().get('i1')).toMatchObject({ absLibraryId: 'lib-book' });
     });
 
     it('excludes libraries listed in excludedLibraryIds', async () => {

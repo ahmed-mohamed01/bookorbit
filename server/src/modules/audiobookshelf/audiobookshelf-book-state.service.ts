@@ -21,8 +21,8 @@ export class AudiobookshelfBookStateService {
   async list(user: RequestUser, dto: ListAudiobookshelfBookStatesDto): Promise<AudiobookshelfBookStatePage> {
     const page = dto.page ?? 0;
     const pageSize = dto.pageSize ?? 20;
-    const scope = await buildBookAccessScope(user, this.libraryService);
-    const { items, total } = await this.repo.listBookStates(user.id, scope, dto.bucket, page, pageSize, dto.q);
+    const [scope, settings] = await Promise.all([buildBookAccessScope(user, this.libraryService), this.repo.findSettings(user.id)]);
+    const { items, total } = await this.repo.listBookStates(user.id, scope, dto.bucket, page, pageSize, dto.q, settings?.excludedLibraryIds ?? []);
     return { items: items.map((item) => this.toApi(item)), total, page, pageSize };
   }
 

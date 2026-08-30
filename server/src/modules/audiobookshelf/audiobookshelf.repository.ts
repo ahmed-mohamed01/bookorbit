@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { AudiobookshelfBookStateBucket, ContentFilterRules } from '@bookorbit/types';
 import { Permission } from '@bookorbit/types';
-import { and, asc, desc, eq, gt, ilike, inArray, isNotNull, isNull, lt, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, ilike, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { DB } from '../../db';
@@ -119,6 +119,7 @@ export interface AbsBookStateUpsert {
   absSeriesName: string | null;
   absLibraryName: string | null;
   absPath: string | null;
+  absLibraryId: string | null;
   bookId: number | null;
   matchMethod: string | null;
   matchConfidence: number | null;
@@ -581,25 +582,33 @@ export class AudiobookshelfRepository {
    */
   async refreshAbsContext(
     userId: number,
-    rows: { absLibraryItemId: string; absSeriesName: string | null; absLibraryName: string | null; absPath: string | null }[],
+    rows: {
+      absLibraryItemId: string;
+      absSeriesName: string | null;
+      absLibraryName: string | null;
+      absPath: string | null;
+      absLibraryId: string | null;
+    }[],
   ): Promise<void> {
     if (rows.length === 0) return;
     for (const group of chunk(rows, BOOK_STATE_UPSERT_CHUNK)) {
       const values = sql.join(
         group.map(
-          (row) => sql`(${row.absLibraryItemId}::varchar, ${row.absSeriesName}::varchar, ${row.absLibraryName}::varchar, ${row.absPath}::text)`,
+          (row) =>
+            sql`(${row.absLibraryItemId}::varchar, ${row.absSeriesName}::varchar, ${row.absLibraryName}::varchar, ${row.absPath}::text, ${row.absLibraryId}::varchar)`,
         ),
         sql`, `,
       );
       await this.db.execute(sql`
         update ${audiobookshelfBookState} as s
-        set abs_series_name = v.abs_series_name, abs_library_name = v.abs_library_name, abs_path = v.abs_path
-        from (values ${values}) as v(abs_library_item_id, abs_series_name, abs_library_name, abs_path)
+        set abs_series_name = v.abs_series_name, abs_library_name = v.abs_library_name, abs_path = v.abs_path, abs_library_id = v.abs_library_id
+        from (values ${values}) as v(abs_library_item_id, abs_series_name, abs_library_name, abs_path, abs_library_id)
         where s.user_id = ${userId}
           and s.abs_library_item_id = v.abs_library_item_id
           and (s.abs_series_name is distinct from v.abs_series_name
             or s.abs_library_name is distinct from v.abs_library_name
-            or s.abs_path is distinct from v.abs_path)
+            or s.abs_path is distinct from v.abs_path
+            or s.abs_library_id is distinct from v.abs_library_id)
       `);
     }
   }
@@ -618,6 +627,7 @@ export class AudiobookshelfRepository {
             absSeriesName: row.absSeriesName,
             absLibraryName: row.absLibraryName,
             absPath: row.absPath,
+            absLibraryId: row.absLibraryId,
             bookId: row.bookId,
             matchMethod: row.matchMethod,
             matchConfidence: row.matchConfidence,
@@ -636,6 +646,7 @@ export class AudiobookshelfRepository {
             absSeriesName: sql`excluded.abs_series_name`,
             absLibraryName: sql`excluded.abs_library_name`,
             absPath: sql`excluded.abs_path`,
+            absLibraryId: sql`excluded.abs_library_id`,
             bookId: sql`excluded.book_id`,
             matchMethod: sql`excluded.match_method`,
             matchConfidence: sql`excluded.match_confidence`,
@@ -777,6 +788,16 @@ export class AudiobookshelfRepository {
     return and(isNotNull(audiobookshelfBookState.bookId), ...this.scopedBookClauses(scope))!;
   }
 
+  /**
+   * A row tags the ABS library it came from once a reconcile has walked it; a NULL tag means the row
+   * predates tagging and must stay visible rather than be silently hidden. Only libraries currently
+   * deselected for sync are excluded, so re-selecting one restores its rows immediately.
+   */
+  private excludedAbsLibraryClause(excludedAbsLibraryIds: string[]): SQL | undefined {
+    if (excludedAbsLibraryIds.length === 0) return undefined;
+    return or(isNull(audiobookshelfBookState.absLibraryId), notInArray(audiobookshelfBookState.absLibraryId, excludedAbsLibraryIds));
+  }
+
   async listBookStates(
     userId: number,
     scope: AbsBookAccessScope,
@@ -784,6 +805,7 @@ export class AudiobookshelfRepository {
     page: number,
     pageSize: number,
     q: string | undefined,
+    excludedAbsLibraryIds: string[],
   ): Promise<{ items: AbsBookStateView[]; total: number }> {
     const clauses: SQL[] = [eq(audiobookshelfBookState.userId, userId)];
     const bucketClause = this.bucketClause(bucket);
@@ -791,6 +813,8 @@ export class AudiobookshelfRepository {
     if (bucket === 'linked' || bucket === 'needs-review') {
       clauses.push(this.linkedStateScopeClause(scope));
     }
+    const excludedClause = this.excludedAbsLibraryClause(excludedAbsLibraryIds);
+    if (excludedClause) clauses.push(excludedClause);
     if (q && q.trim()) {
       const pattern = `%${q.trim()}%`;
       clauses.push(or(ilike(audiobookshelfBookState.absTitle, pattern), ilike(schema.bookMetadata.title, pattern))!);
@@ -859,8 +883,10 @@ export class AudiobookshelfRepository {
     userId: number,
     scope: AbsBookAccessScope,
     absLibraryItemIds: string[],
+    excludedAbsLibraryIds: string[],
   ): Promise<AudiobookshelfBookState[]> {
     if (absLibraryItemIds.length === 0) return [];
+    const excludedClause = this.excludedAbsLibraryClause(excludedAbsLibraryIds);
     const results: AudiobookshelfBookState[] = [];
     for (const group of chunk(absLibraryItemIds, ISBN_ASIN_LOOKUP_CHUNK)) {
       const rows = await this.db
@@ -875,6 +901,7 @@ export class AudiobookshelfRepository {
             eq(audiobookshelfBookState.syncExcluded, false),
             isNull(audiobookshelfBookState.matchError),
             this.linkedStateScopeClause(scope),
+            ...(excludedClause ? [excludedClause] : []),
           ),
         );
       results.push(...rows.map((row) => row.audiobookshelf_book_state));

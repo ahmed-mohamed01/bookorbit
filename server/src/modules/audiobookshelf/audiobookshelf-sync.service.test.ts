@@ -252,9 +252,22 @@ describe('AudiobookshelfSyncService.sync', () => {
 
       await makeService().sync(user, { hotInProgressOnly: true });
 
-      expect(mockRepo.findSyncableBookStatesByAbsItemIds).toHaveBeenCalledWith(user.id, expect.anything(), ['item-hot']);
+      expect(mockRepo.findSyncableBookStatesByAbsItemIds).toHaveBeenCalledWith(user.id, expect.anything(), ['item-hot'], []);
       expect(mockSessionsService.syncSessions).not.toHaveBeenCalled();
       expect(mockSessionsService.deepReconciliationScan).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('deselected-library exclusion', () => {
+    it("passes the user's excludedLibraryIds through to the linked-row selection", async () => {
+      const inProgress = makeMp({ id: 'mp-hot', libraryItemId: 'item-hot', isFinished: false, progress: 0.4, currentTime: 400 });
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [inProgress] });
+      mockRepo.findSettings.mockResolvedValue(makeSettings({ excludedLibraryIds: ['lib-graphicaudio'] }));
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ absLibraryItemId: 'item-hot', bookId: 77 })]);
+
+      await makeService().sync(user, { hotInProgressOnly: true });
+
+      expect(mockRepo.findSyncableBookStatesByAbsItemIds).toHaveBeenCalledWith(user.id, expect.anything(), ['item-hot'], ['lib-graphicaudio']);
     });
   });
 

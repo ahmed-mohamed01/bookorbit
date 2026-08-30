@@ -10,6 +10,7 @@ const mockRepo = {
   findBookStateView: vi.fn(),
   findBookStateRow: vi.fn(),
   updateBookState: vi.fn(),
+  findSettings: vi.fn(),
 };
 
 const mockBookService = {
@@ -71,6 +72,7 @@ describe('AudiobookshelfBookStateService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLibraryService.findAccessibleLibraryIds.mockResolvedValue([1, 2]);
+    mockRepo.findSettings.mockResolvedValue({ excludedLibraryIds: [] });
   });
 
   describe('list', () => {
@@ -81,7 +83,7 @@ describe('AudiobookshelfBookStateService', () => {
       const result = await makeService().list(baseUser, { bucket: 'linked', page: 2, pageSize: 10 } as never);
 
       expect(mockLibraryService.findAccessibleLibraryIds).toHaveBeenCalledWith(baseUser);
-      expect(mockRepo.listBookStates).toHaveBeenCalledWith(7, { libraryIds: [1, 2], contentFilters }, 'linked', 2, 10, undefined);
+      expect(mockRepo.listBookStates).toHaveBeenCalledWith(7, { libraryIds: [1, 2], contentFilters }, 'linked', 2, 10, undefined, []);
       expect(result).toEqual({
         items: [
           {
@@ -149,7 +151,7 @@ describe('AudiobookshelfBookStateService', () => {
 
       const result = await makeService().list(baseUser, { bucket: 'needs-review', q: 'dune' } as never);
 
-      expect(mockRepo.listBookStates).toHaveBeenCalledWith(7, expect.anything(), 'needs-review', 0, 20, 'dune');
+      expect(mockRepo.listBookStates).toHaveBeenCalledWith(7, expect.anything(), 'needs-review', 0, 20, 'dune', []);
       expect(result).toEqual({ items: [], total: 0, page: 0, pageSize: 20 });
     });
 
@@ -159,7 +161,25 @@ describe('AudiobookshelfBookStateService', () => {
 
       await makeService().list(superuser, { bucket: 'unmatched' } as never);
 
-      expect(mockRepo.listBookStates).toHaveBeenCalledWith(7, { libraryIds: [1, 2], contentFilters: undefined }, 'unmatched', 0, 20, undefined);
+      expect(mockRepo.listBookStates).toHaveBeenCalledWith(7, { libraryIds: [1, 2], contentFilters: undefined }, 'unmatched', 0, 20, undefined, []);
+    });
+
+    it("passes the user's deselected ABS library ids from settings through to the repository", async () => {
+      mockRepo.listBookStates.mockResolvedValue({ items: [], total: 0 });
+      mockRepo.findSettings.mockResolvedValue({ excludedLibraryIds: ['lib-graphicaudio'] });
+
+      await makeService().list(baseUser, { bucket: 'needs-review' } as never);
+
+      expect(mockRepo.listBookStates).toHaveBeenCalledWith(7, expect.anything(), 'needs-review', 0, 20, undefined, ['lib-graphicaudio']);
+    });
+
+    it('falls back to an empty excluded-id list when settings are missing', async () => {
+      mockRepo.listBookStates.mockResolvedValue({ items: [], total: 0 });
+      mockRepo.findSettings.mockResolvedValue(undefined);
+
+      await makeService().list(baseUser, { bucket: 'unmatched' } as never);
+
+      expect(mockRepo.listBookStates).toHaveBeenCalledWith(7, expect.anything(), 'unmatched', 0, 20, undefined, []);
     });
 
     it('maps a null absTitle to an empty string', async () => {

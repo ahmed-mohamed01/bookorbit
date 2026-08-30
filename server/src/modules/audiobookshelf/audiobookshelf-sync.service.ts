@@ -189,7 +189,9 @@ export class AudiobookshelfSyncService {
       const progressItemIds = progresses.map((mp) => mp.libraryItemId!);
       const scope = await buildBookAccessScope(user, this.libraryService);
       const timeZone = resolveUserTimeZone(user);
-      const states = progressItemIds.length ? await this.repo.findSyncableBookStatesByAbsItemIds(user.id, scope, progressItemIds) : [];
+      const states = progressItemIds.length
+        ? await this.repo.findSyncableBookStatesByAbsItemIds(user.id, scope, progressItemIds, settings.excludedLibraryIds ?? [])
+        : [];
       const stateByItemId = new Map(states.map((state) => [state.absLibraryItemId, state]));
 
       const dueBooks: AbsDueBook[] = [];

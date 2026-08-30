@@ -249,6 +249,16 @@ describe('AudiobookshelfSessionsService', () => {
       expect(mockRepo.updateSettings).not.toHaveBeenCalled();
       expect(result).toEqual({ inserted: 0, updated: 0 });
     });
+
+    it("passes the user's excludedLibraryIds through to the linked-row selection", async () => {
+      const settings = makeSettings({ lastSessionWatermark: null, excludedLibraryIds: ['lib-graphicaudio'] });
+      wireLinked();
+      mockClient.getListeningSessions.mockResolvedValueOnce(page([makeSession({ id: 'a', updatedAt: 1000 })], 1));
+
+      await makeService().syncSessions(user, settings);
+
+      expect(mockRepo.findSyncableBookStatesByAbsItemIds).toHaveBeenCalledWith(user.id, expect.anything(), ['item-1'], ['lib-graphicaudio']);
+    });
   });
 
   describe('achievements', () => {

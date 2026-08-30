@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { and, asc, eq, gt, inArray, isNull, isNotNull, ne } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull, isNotNull, ne, notInArray } from 'drizzle-orm';
 
 import { AudiobookshelfRepository, type AbsBookStateUpsert } from './audiobookshelf.repository';
 import { audiobookshelfBookState, audiobookshelfUserSettings } from './schema/audiobookshelf.schema';
@@ -21,6 +21,7 @@ vi.mock('drizzle-orm', async (importOriginal) => {
     gt: record('gt'),
     lt: record('lt'),
     inArray: record('inArray'),
+    notInArray: record('notInArray'),
     isNull: record('isNull'),
     isNotNull: record('isNotNull'),
     asc: record('asc'),
@@ -262,6 +263,7 @@ describe('AudiobookshelfRepository', () => {
       absSeriesName: null,
       absLibraryName: null,
       absPath: null,
+      absLibraryId: null,
       bookId: 1,
       matchMethod: 'isbn',
       matchConfidence: 100,
@@ -310,10 +312,10 @@ describe('AudiobookshelfRepository', () => {
     });
 
     /**
-     * The three ABS facts (series, library, path) are captured at match time and are ABS-owned data,
-     * not a user decision, so a reconcile must refresh them on every conflict just like `absTitle`.
+     * The ABS facts (series, library, path, library id) are captured at match time and are ABS-owned
+     * data, not a user decision, so a reconcile must refresh them on every conflict just like `absTitle`.
      */
-    it('carries the three ABS facts into both the insert values and the conflict set', async () => {
+    it('carries the ABS facts into both the insert values and the conflict set', async () => {
       const chain = makeChain(undefined);
       const db = { insert: vi.fn(() => chain) };
       const repo = new AudiobookshelfRepository(db as never);
@@ -323,6 +325,7 @@ describe('AudiobookshelfRepository', () => {
         absSeriesName: 'The Expanse',
         absLibraryName: 'Audiobooks',
         absPath: '/audiobooks/Author/Title',
+        absLibraryId: 'lib-1',
       };
       await repo.bulkUpsertBookStates(7, [row], readAt);
 
@@ -331,12 +334,14 @@ describe('AudiobookshelfRepository', () => {
         absSeriesName: 'The Expanse',
         absLibraryName: 'Audiobooks',
         absPath: '/audiobooks/Author/Title',
+        absLibraryId: 'lib-1',
       });
 
       const conflictArg = conflictArgOf(chain);
       expect(renderSqlValue(conflictArg.set.absSeriesName)).toBe('excluded.abs_series_name');
       expect(renderSqlValue(conflictArg.set.absLibraryName)).toBe('excluded.abs_library_name');
       expect(renderSqlValue(conflictArg.set.absPath)).toBe('excluded.abs_path');
+      expect(renderSqlValue(conflictArg.set.absLibraryId)).toBe('excluded.abs_library_id');
     });
 
     /**
@@ -501,7 +506,7 @@ describe('AudiobookshelfRepository', () => {
       const db = { select: vi.fn() };
       const repo = new AudiobookshelfRepository(db as never);
 
-      await expect(repo.findSyncableBookStatesByAbsItemIds(7, scope as never, [])).resolves.toEqual([]);
+      await expect(repo.findSyncableBookStatesByAbsItemIds(7, scope as never, [], [])).resolves.toEqual([]);
       expect(db.select).not.toHaveBeenCalled();
     });
 
@@ -511,7 +516,7 @@ describe('AudiobookshelfRepository', () => {
       const db = { select: vi.fn(() => chain) };
       const repo = new AudiobookshelfRepository(db as never);
 
-      await expect(repo.findSyncableBookStatesByAbsItemIds(7, scope as never, ['abs-1'])).resolves.toEqual([stateRow]);
+      await expect(repo.findSyncableBookStatesByAbsItemIds(7, scope as never, ['abs-1'], [])).resolves.toEqual([stateRow]);
 
       // The guards that prevent syncing wrong / low-confidence / excluded matches:
       expect(someCall(eq, (c, v) => c === audiobookshelfBookState.needsReview && v === false)).toBe(true);
@@ -524,6 +529,29 @@ describe('AudiobookshelfRepository', () => {
       expect(someCall(eq, (c, v) => c === schema.books.status && v === 'present')).toBe(true);
       // Sanity: `and` was used to combine the predicates.
       expect((and as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBeGreaterThan(0);
+    });
+
+    it('adds the deselected-library predicate (NULL tag or not one of the excluded ids) when ids are passed', async () => {
+      const chain = makeChain([]);
+      const db = { select: vi.fn(() => chain) };
+      const repo = new AudiobookshelfRepository(db as never);
+
+      await repo.findSyncableBookStatesByAbsItemIds(7, scope as never, ['abs-1'], ['lib-excluded']);
+
+      expect(someCall(isNull, (c) => c === audiobookshelfBookState.absLibraryId)).toBe(true);
+      expect(
+        someCall(notInArray, (c, v) => c === audiobookshelfBookState.absLibraryId && Array.isArray(v) && v.length === 1 && v[0] === 'lib-excluded'),
+      ).toBe(true);
+    });
+
+    it('adds no library predicate when the excluded id list is empty', async () => {
+      const chain = makeChain([]);
+      const db = { select: vi.fn(() => chain) };
+      const repo = new AudiobookshelfRepository(db as never);
+
+      await repo.findSyncableBookStatesByAbsItemIds(7, scope as never, ['abs-1'], []);
+
+      expect((notInArray as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(0);
     });
   });
 
@@ -624,7 +652,7 @@ describe('AudiobookshelfRepository', () => {
   });
 
   describe('refreshAbsContext', () => {
-    const row = (id: string) => ({ absLibraryItemId: id, absSeriesName: 'S', absLibraryName: 'L', absPath: `/p/${id}` });
+    const row = (id: string) => ({ absLibraryItemId: id, absSeriesName: 'S', absLibraryName: 'L', absPath: `/p/${id}`, absLibraryId: 'lib-1' });
 
     it('short-circuits for an empty row list', async () => {
       const db = { execute: vi.fn() };
@@ -650,6 +678,7 @@ describe('AudiobookshelfRepository', () => {
         .join(' ');
       expect(rendered).toContain('is distinct from');
       expect(rendered).toContain('abs_library_name');
+      expect(rendered).toContain('abs_library_id');
       expect(rendered).not.toContain('updated_at');
       expect(rendered).not.toContain('match_method');
     });
@@ -815,7 +844,7 @@ describe('AudiobookshelfRepository', () => {
       const db = { select: vi.fn().mockReturnValueOnce(countChain).mockReturnValueOnce(itemsChain) };
       const repo = new AudiobookshelfRepository(db as never);
 
-      await repo.listBookStates(7, { libraryIds: [1, 2] }, 'linked', 0, 20, undefined);
+      await repo.listBookStates(7, { libraryIds: [1, 2] }, 'linked', 0, 20, undefined, []);
 
       expect(db.select).toHaveBeenCalledWith(reviewContextColumns);
       expect(itemsChain.leftJoin.mock.calls.some((c) => c[0] === schema.libraries)).toBe(true);
@@ -830,6 +859,41 @@ describe('AudiobookshelfRepository', () => {
 
       expect(db.select).toHaveBeenCalledWith(reviewContextColumns);
       expect(chain.leftJoin.mock.calls.some((c) => c[0] === schema.libraries)).toBe(true);
+    });
+  });
+
+  /**
+   * A row remembers which ABS library it came from, and every bucket read honors the current
+   * exclusion so a deselected library's rows stop polluting the buckets without ever being deleted.
+   * A NULL tag (a row that predates tagging) always stays visible.
+   */
+  describe('listBookStates - deselected-library exclusion', () => {
+    it('adds no library predicate for an empty excluded-id list', async () => {
+      const countChain = makeChain([{ total: 0 }]);
+      const itemsChain = makeChain([]);
+      const db = { select: vi.fn().mockReturnValueOnce(countChain).mockReturnValueOnce(itemsChain) };
+      const repo = new AudiobookshelfRepository(db as never);
+
+      await repo.listBookStates(7, { libraryIds: [1, 2] }, 'unmatched', 0, 20, undefined, []);
+
+      expect((notInArray as unknown as { mock: { calls: unknown[] } }).mock.calls.length).toBe(0);
+    });
+
+    it('adds the (NULL tag or not excluded) predicate for a non-empty excluded-id list, on every bucket', async () => {
+      for (const bucket of ['linked', 'needs-review', 'unmatched'] as const) {
+        vi.clearAllMocks();
+        const countChain = makeChain([{ total: 0 }]);
+        const itemsChain = makeChain([]);
+        const db = { select: vi.fn().mockReturnValueOnce(countChain).mockReturnValueOnce(itemsChain) };
+        const repo = new AudiobookshelfRepository(db as never);
+
+        await repo.listBookStates(7, { libraryIds: [1, 2] }, bucket, 0, 20, undefined, ['lib-excluded']);
+
+        expect(someCall(isNull, (c) => c === audiobookshelfBookState.absLibraryId)).toBe(true);
+        expect(
+          someCall(notInArray, (c, v) => c === audiobookshelfBookState.absLibraryId && Array.isArray(v) && v.length === 1 && v[0] === 'lib-excluded'),
+        ).toBe(true);
+      }
     });
   });
 });
