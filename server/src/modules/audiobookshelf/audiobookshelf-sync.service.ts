@@ -40,6 +40,10 @@ export interface AudiobookshelfSyncOptions {
   warmSessions?: boolean;
 }
 
+// Bounds the per-process duration-warning dedupe map (see `logDurationWarning`) across many users;
+// cleared wholesale rather than evicted individually since a stale entry only costs one extra warn.
+const DURATION_WARNING_SIGNATURE_CAP = 10_000;
+
 // Upgrade-only ranking. A sync may promote a book toward completion but never move it backward.
 // `abandoned` is terminal: in-progress ABS state never resurrects it, but `isFinished` still promotes to `read`.
 const COMPLETION_RANK: Record<ReadStatus, number> = {
@@ -111,6 +115,9 @@ interface AbsSyncPreload {
 export class AudiobookshelfSyncService {
   private readonly logger = new Logger(AudiobookshelfSyncService.name);
   private readonly runningUsers = new Set<number>();
+  // Last warned position-skip signature per "userId:bookId", so the hot tier's 30s cadence doesn't
+  // re-warn every tick for a book stuck out of tolerance. See `logDurationWarning`.
+  private readonly durationWarningSignatures = new Map<string, string>();
 
   constructor(
     private readonly repo: AudiobookshelfRepository,
@@ -329,9 +336,8 @@ export class AudiobookshelfSyncService {
 
       // Attempts FIRST, then status. Reversing this creates a duplicate manual attempt dated today
       // and loses the ABS finish date.
-      await this.attempts.importExternalRead(userId, bookId, {
-        provider: 'audiobookshelf',
-        externalId: mp.id,
+      await this.attempts.importUnlinkedRead(userId, bookId, {
+        origin: 'audiobookshelf',
         startedOn,
         endedOn,
       });
@@ -368,7 +374,12 @@ export class AudiobookshelfSyncService {
     if (files.length === 0) return skipped;
 
     if (!Number.isFinite(mp.duration) || mp.duration <= 0) {
-      this.logger.warn(`[abs.sync] userId=${userId} bookId=${bookId} absDuration=${mp.duration} - position skipped: invalid ABS duration`);
+      this.logDurationWarning(
+        userId,
+        bookId,
+        'invalid',
+        `[abs.sync] userId=${userId} bookId=${bookId} absDuration=${mp.duration} - position skipped: invalid ABS duration`,
+      );
       return skipped;
     }
 
@@ -377,7 +388,10 @@ export class AudiobookshelfSyncService {
       Math.max(AUDIOBOOKSHELF_DURATION_TOLERANCE_BASE_SECONDS, files.length * AUDIOBOOKSHELF_DURATION_TOLERANCE_PER_FILE_SECONDS) +
       totalDuration * AUDIOBOOKSHELF_DURATION_TOLERANCE_RELATIVE;
     if (Math.abs(totalDuration - mp.duration) > durationTolerance) {
-      this.logger.warn(
+      this.logDurationWarning(
+        userId,
+        bookId,
+        `${totalDuration}:${mp.duration}`,
         `[abs.sync] userId=${userId} bookId=${bookId} localDuration=${totalDuration} absDuration=${mp.duration} - position skipped: duration mismatch`,
       );
       return skipped;
@@ -414,6 +428,7 @@ export class AudiobookshelfSyncService {
       this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress won the write race`);
       return { applied: false, watermarkAdvanced: true, progressAt: local?.updatedAt ?? null };
     }
+    this.durationWarningSignatures.delete(`${userId}:${bookId}`);
     preload.audioProgressByBookId.set(bookId, { percentage, updatedAt: written.updatedAt });
     // Announce the position write on the shared bus like every other progress writer (web reader, Kobo,
     // KOReader), so source-agnostic listeners such as the reading-alignment sync observe ABS advances.
@@ -428,5 +443,25 @@ export class AudiobookshelfSyncService {
       ...(mp.lastUpdate ? { occurredAt: new Date(mp.lastUpdate) } : {}),
     });
     return { applied: true, watermarkAdvanced: true, progressAt: written.updatedAt };
+  }
+
+  /**
+   * The hot tier re-runs position apply every 30s for every in-progress book, so a book stuck out of
+   * duration tolerance would otherwise log the same warning forever. Only the first occurrence of a
+   * given signature (or a changed one) logs at warn; an identical repeat logs the same line at debug
+   * so the condition stays visible in logs without flooding warn level. The map is cleared on an
+   * applied position (see `applyPosition`) and capped so it cannot grow unbounded across many users.
+   */
+  private logDurationWarning(userId: number, bookId: number, signature: string, message: string): void {
+    const key = `${userId}:${bookId}`;
+    if (this.durationWarningSignatures.get(key) === signature) {
+      this.logger.debug(message);
+      return;
+    }
+    if (!this.durationWarningSignatures.has(key) && this.durationWarningSignatures.size >= DURATION_WARNING_SIGNATURE_CAP) {
+      this.durationWarningSignatures.clear();
+    }
+    this.durationWarningSignatures.set(key, signature);
+    this.logger.warn(message);
   }
 }

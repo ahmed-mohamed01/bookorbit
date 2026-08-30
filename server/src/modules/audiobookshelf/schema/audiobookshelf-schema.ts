@@ -8,6 +8,9 @@ export const AUDIOBOOKSHELF_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS "audiobooks
 	"abs_library_item_id" varchar(255) NOT NULL,
 	"abs_title" varchar(1000),
 	"abs_author_name" varchar(1000),
+	"abs_series_name" varchar(1000),
+	"abs_library_name" varchar(500),
+	"abs_path" text,
 	"book_id" integer,
 	"match_method" varchar(20),
 	"match_confidence" real,
@@ -54,6 +57,12 @@ ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "initial_rec
 ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "path_mappings" jsonb DEFAULT '[]'::jsonb NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "stale_count" integer DEFAULT 0 NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "audiobookshelf_book_state" ADD COLUMN IF NOT EXISTS "abs_series_name" varchar(1000);
+--> statement-breakpoint
+ALTER TABLE "audiobookshelf_book_state" ADD COLUMN IF NOT EXISTS "abs_library_name" varchar(500);
+--> statement-breakpoint
+ALTER TABLE "audiobookshelf_book_state" ADD COLUMN IF NOT EXISTS "abs_path" text;
 --> statement-breakpoint
 ALTER TABLE "audiobookshelf_book_state" DROP COLUMN IF EXISTS "last_synced_progress";
 --> statement-breakpoint
@@ -106,6 +115,8 @@ DO $$ BEGIN
 		ALTER TABLE "reading_attempts" ADD CONSTRAINT "reading_attempts_origin_chk" CHECK ("reading_attempts"."origin" in ('manual', 'bookorbit', 'kobo', 'koreader', 'hardcover', 'audiobookshelf', 'migration'));
 	END IF;
 END $$;
+--> statement-breakpoint
+UPDATE "reading_attempts" SET "external_provider" = NULL, "external_id" = NULL WHERE "external_provider" = 'audiobookshelf';
 --> statement-breakpoint
 DO $$ BEGIN
 	IF EXISTS (

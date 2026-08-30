@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Logger } from '@nestjs/common';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { AudiobookshelfApiError, type AbsMediaProgress } from './audiobookshelf-client.service';
@@ -23,7 +23,7 @@ const mockMatchService = {
 };
 
 const mockAttempts = {
-  importExternalRead: vi.fn(),
+  importUnlinkedRead: vi.fn(),
 };
 
 const mockStatusService = {
@@ -191,7 +191,7 @@ describe('AudiobookshelfSyncService.sync', () => {
     mockRepo.upsertAudioProgressGuarded.mockResolvedValue({ updatedAt: new Date('2026-07-20T00:00:00Z') });
     mockClient.getMe.mockResolvedValue({ mediaProgress: [] });
     mockMatchService.matchLibrary.mockResolvedValue({ autoLinked: 0 });
-    mockAttempts.importExternalRead.mockResolvedValue(undefined);
+    mockAttempts.importUnlinkedRead.mockResolvedValue(undefined);
     mockStatusService.updateManual.mockResolvedValue(undefined);
     mockSessionsService.syncSessions.mockResolvedValue({ inserted: 0, updated: 0 });
     mockSessionsService.deepReconciliationScan.mockResolvedValue({ inserted: 0, updated: 0 });
@@ -343,7 +343,7 @@ describe('AudiobookshelfSyncService.sync', () => {
   });
 
   describe('status is not double-written', () => {
-    it('routes a finish through importExternalRead + a single updateManual, and position through upsertAudioProgressGuarded', async () => {
+    it('routes a finish through importUnlinkedRead + a single updateManual, and position through upsertAudioProgressGuarded', async () => {
       const finished = makeMp({ isFinished: true, progress: 1, currentTime: 1000, duration: 1000, finishedAt: 1_700_000_000_000 });
       mockClient.getMe.mockResolvedValue({ mediaProgress: [finished] });
       mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10 })]);
@@ -352,7 +352,8 @@ describe('AudiobookshelfSyncService.sync', () => {
 
       await makeService().sync(user);
 
-      expect(mockAttempts.importExternalRead).toHaveBeenCalledTimes(1);
+      expect(mockAttempts.importUnlinkedRead).toHaveBeenCalledTimes(1);
+      expect(mockAttempts.importUnlinkedRead).toHaveBeenCalledWith(user.id, 10, expect.objectContaining({ origin: 'audiobookshelf' }));
       expect(mockStatusService.updateManual).toHaveBeenCalledTimes(1);
       expect(mockStatusService.updateManual).toHaveBeenCalledWith(user.id, 10, { status: 'read' });
       // Position write goes through the bare ABS upsert (no status side-effect), never a second status derivation.
@@ -424,6 +425,65 @@ describe('AudiobookshelfSyncService.sync', () => {
       expect(mockRepo.upsertAudioProgressGuarded).toHaveBeenCalledWith(user.id, 10, 501, 500, 50, null);
       // status disabled -> no status derivation on the position path.
       expect(mockStatusService.updateManual).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('position skip warning dedupe', () => {
+    function messagesContaining(spy: ReturnType<typeof vi.spyOn>, substring: string): number {
+      return spy.mock.calls.filter((call) => typeof call[0] === 'string' && call[0].includes(substring)).length;
+    }
+
+    beforeEach(() => {
+      mockRepo.findSettings.mockResolvedValue(makeSettings({ syncStatus: false, syncPosition: true }));
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10 })]);
+      mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map([[10, [{ id: 501, format: 'm4b', durationSeconds: 1000 }]]]));
+    });
+
+    it('warns once for the first invalid-duration occurrence, then logs identical repeats at debug', async () => {
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const debugSpy = vi.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ duration: 0 })] });
+      const service = makeService();
+
+      await service.sync(user);
+      await service.sync(user);
+
+      expect(messagesContaining(warnSpy, 'invalid ABS duration')).toBe(1);
+      expect(messagesContaining(debugSpy, 'invalid ABS duration')).toBe(1);
+    });
+
+    it('warns on first mismatch, dedupes identical repeats to debug, warns again when the mismatch changes, and resets after an applied position', async () => {
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const debugSpy = vi.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+      const service = makeService();
+      const counts = () => ({
+        warn: messagesContaining(warnSpy, 'duration mismatch'),
+        debug: messagesContaining(debugSpy, 'duration mismatch'),
+      });
+
+      // 1) First mismatch occurrence -> warn.
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ duration: 5000 })] });
+      await service.sync(user);
+      expect(counts()).toEqual({ warn: 1, debug: 0 });
+
+      // 2) Identical repeat (same signature) -> debug, not another warn.
+      await service.sync(user);
+      expect(counts()).toEqual({ warn: 1, debug: 1 });
+
+      // 3) The mismatch numbers change -> warns again.
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ duration: 6000 })] });
+      await service.sync(user);
+      expect(counts()).toEqual({ warn: 2, debug: 1 });
+
+      // 4) Duration now within tolerance -> position is actually applied, clearing the dedupe key.
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ duration: 1000, currentTime: 500 })] });
+      const result = await service.sync(user);
+      expect(result.positionApplied).toBe(1);
+
+      // 5) The original mismatch recurs -> warns again because the key was reset by the applied write.
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ duration: 5000 })] });
+      await service.sync(user);
+      expect(counts()).toEqual({ warn: 3, debug: 1 });
     });
   });
 

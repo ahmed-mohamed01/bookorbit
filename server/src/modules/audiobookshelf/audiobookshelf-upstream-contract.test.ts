@@ -20,7 +20,7 @@
  * -------------------------------------------------------------------------------------
  * DB-bound upstream dependencies are not exercised here because they require a live database,
  * scoped users, and real table rows:
- *   - ReadingAttemptService.importExternalRead      (writes reading_attempts)
+ *   - ReadingAttemptService.importUnlinkedRead      (writes reading_attempts)
  *   - MetadataService.applyCoverFromSources         (cover precedence + disk/DB writes)
  *   - BookService.saveAudioProgress / ABS upsertAudioProgress (audio_progress writes)
  *   - shared reading-session / daily-stats table writes

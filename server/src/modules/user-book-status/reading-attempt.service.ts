@@ -356,7 +356,7 @@ export class ReadingAttemptService {
   async importExternalRead(
     userId: number,
     bookId: number,
-    input: { provider: 'hardcover' | 'audiobookshelf'; externalId: string; startedOn: string | null; endedOn: string | null },
+    input: { provider: 'hardcover'; externalId: string; startedOn: string | null; endedOn: string | null },
   ): Promise<void> {
     this.validateDates(input.startedOn, input.endedOn);
     await this.repo.transaction(async (tx) => {
@@ -369,34 +369,77 @@ export class ReadingAttemptService {
         });
         return;
       }
-      const active = await this.repo.findActive(tx, userId, bookId);
+      const active = input.endedOn === null ? await this.repo.findActive(tx, userId, bookId) : null;
+      if (input.endedOn === null && !active) {
+        await this.repo.createActive(tx, {
+          userId,
+          bookId,
+          startedOn: input.startedOn,
+          origin: 'hardcover',
+          externalProvider: input.provider,
+          externalId: input.externalId,
+        });
+      } else {
+        await this.repo.create(tx, {
+          userId,
+          bookId,
+          startedOn: input.startedOn,
+          endedOn: input.endedOn,
+          outcome: input.endedOn ? 'completed' : 'abandoned',
+          origin: 'hardcover',
+          externalProvider: input.provider,
+          externalId: input.externalId,
+        });
+      }
+    });
+  }
 
+  /**
+   * ABS imports never touch external_provider/external_id: that slot is Hardcover's link target
+   * (see hardcover.repository.ts linkReadingAttempt), and stamping it from ABS made every
+   * ABS-touched book fail Hardcover sync with a read_link_conflict. Provenance comes from `origin`
+   * alone; dedupe keys on origin + endedOn instead of an external id, including soft-deleted rows
+   * so a user-deleted import stays deleted instead of resurrecting on the next sync.
+   */
+  async importUnlinkedRead(
+    userId: number,
+    bookId: number,
+    input: { origin: 'audiobookshelf'; startedOn: string | null; endedOn: string | null },
+  ): Promise<void> {
+    this.validateDates(input.startedOn, input.endedOn);
+    await this.repo.transaction(async (tx) => {
       if (input.endedOn === null) {
-        // In-progress import: adopt an existing active attempt, or open a new external one. Do not
-        // create a parallel attempt when one is already active.
-        if (!active) {
-          await this.repo.createActive(tx, {
-            userId,
-            bookId,
-            startedOn: input.startedOn,
-            origin: input.provider,
-            externalProvider: input.provider,
-            externalId: input.externalId,
-          });
+        const active = await this.repo.findActive(tx, userId, bookId);
+        if (active) return;
+        const deletedActive = await this.repo.findDeletedActiveByOrigin(tx, userId, bookId, input.origin);
+        if (deletedActive) return;
+        await this.repo.createActive(tx, {
+          userId,
+          bookId,
+          startedOn: input.startedOn,
+          origin: input.origin,
+        });
+        return;
+      }
+
+      const existing = await this.repo.findByOriginAndEndedOn(tx, userId, bookId, input.origin, input.endedOn);
+      if (existing) {
+        if (existing.deletedAt) return;
+        if (existing.startedOn === null && input.startedOn !== null) {
+          await this.repo.update(tx, userId, bookId, existing.id, { startedOn: input.startedOn });
         }
         return;
       }
 
-      if (active && active.externalProvider === null) {
-        // Finished import with a pre-existing local active attempt: close THAT attempt as this
-        // completion (carrying the external finish date and identity) instead of creating a second
-        // completed attempt, which the follow-up status->read transition would otherwise duplicate.
+      // A newer-than-the-finish active attempt belongs to a later read; leave it running and record
+      // the ABS finish as a separate completed attempt instead of force-closing it with an earlier
+      // date, which used to violate reading_attempts_end_after_start_chk.
+      const active = await this.repo.findActive(tx, userId, bookId);
+      if (active && (active.startedOn === null || active.startedOn <= input.endedOn)) {
         await this.repo.update(tx, userId, bookId, active.id, {
           ...(active.startedOn === null && input.startedOn !== null ? { startedOn: input.startedOn } : {}),
           endedOn: input.endedOn,
           outcome: 'completed',
-          externalProvider: input.provider,
-          externalId: input.externalId,
         });
         return;
       }
@@ -407,9 +450,7 @@ export class ReadingAttemptService {
         startedOn: input.startedOn,
         endedOn: input.endedOn,
         outcome: 'completed',
-        origin: input.provider,
-        externalProvider: input.provider,
-        externalId: input.externalId,
+        origin: input.origin,
       });
     });
   }

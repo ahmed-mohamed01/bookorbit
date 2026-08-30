@@ -249,6 +249,16 @@ removable (drop the plugin and the member is simply unused). It belongs on the s
 list as those enum members - the alternative, reusing a false `web_reader`/`koreader` literal, would
 write dishonest source data.
 
+**ABS never writes `reading_attempts.external_provider`/`external_id`.** That slot is upstream
+Hardcover's link target (`hardcover.repository.ts` `linkReadingAttempt` only stamps an attempt whose
+slot is empty or already Hardcover's, else reports a conflict), and an earlier version of ABS sync
+stamped it too, so every ABS-touched book permanently failed Hardcover sync with `read_link_conflict`.
+ABS provenance is `origin: 'audiobookshelf'` alone; `ReadingAttemptService.importUnlinkedRead` dedupes
+finished imports by origin plus finish date, checking soft-deleted rows too so a user-deleted import
+stays deleted instead of resurrecting on the next sync. The schema-bootstrap overlay in
+`audiobookshelf-schema.ts` runs an idempotent `UPDATE` on every boot to clear any legacy stamps left
+by the old behaviour.
+
 **`dashboard-widget.service.ts` live-cache invalidation (generic, not ABS-coupled).** The
 "Currently Reading" header is served from a 120s `liveCache`, while the scrollers
 (`dashboard.service.ts`, e.g. Continue Listening) are uncached. So a status change - from **any**
