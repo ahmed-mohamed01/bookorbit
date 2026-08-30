@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AudiobookshelfBookState, AudiobookshelfBookStateBucket, AudiobookshelfBookStatePage } from '@bookorbit/types'
+import type {
+  AudiobookshelfBookState,
+  AudiobookshelfBookStateBucket,
+  AudiobookshelfBookStatePage,
+  AudiobookshelfCleanupResult,
+} from '@bookorbit/types'
 
 vi.mock('../../api/audiobookshelf.api', () => ({
   fetchAudiobookshelfBookStates:
@@ -9,9 +14,17 @@ vi.mock('../../api/audiobookshelf.api', () => ({
   unlinkAudiobookshelfBook: vi.fn<() => Promise<AudiobookshelfBookState>>(),
   updateAudiobookshelfBookExclusion: vi.fn<() => Promise<AudiobookshelfBookState>>(),
   rescanAudiobookshelfMatches: vi.fn<() => Promise<{ queued: number }>>(),
+  cleanupAudiobookshelfStaleEntries: vi.fn<(payload?: { includeManuallyUnlinked?: boolean }) => Promise<AudiobookshelfCleanupResult>>(),
+}))
+
+const mockFetchSettings = vi.hoisted(() => vi.fn<() => Promise<void>>())
+
+vi.mock('../useAudiobookshelfSettings', () => ({
+  useAudiobookshelfSettings: () => ({ fetchSettings: mockFetchSettings }),
 }))
 
 import {
+  cleanupAudiobookshelfStaleEntries,
   confirmAudiobookshelfMatch,
   fetchAudiobookshelfBookStates,
   linkAudiobookshelfBook,
@@ -26,6 +39,7 @@ const mockLink = vi.mocked(linkAudiobookshelfBook)
 const mockUnlink = vi.mocked(unlinkAudiobookshelfBook)
 const mockSetExcluded = vi.mocked(updateAudiobookshelfBookExclusion)
 const mockRescan = vi.mocked(rescanAudiobookshelfMatches)
+const mockCleanupStale = vi.mocked(cleanupAudiobookshelfStaleEntries)
 
 function page(total = 0): AudiobookshelfBookStatePage {
   return { items: [], total, page: 0, pageSize: 20 }
@@ -214,7 +228,7 @@ describe('useAudiobookshelfLinkedBooks', () => {
     expect(mockFetchBookStates).toHaveBeenCalledWith('linked', 1, 20, 'dune')
   })
 
-  it('rescan toggles the rescanning flag and reloads buckets', async () => {
+  it('rescan toggles the rescanning flag, refreshes the settings and reloads buckets', async () => {
     mockRescan.mockResolvedValue({ queued: 2 })
     const c = await loadComposable()
 
@@ -222,7 +236,70 @@ describe('useAudiobookshelfLinkedBooks', () => {
 
     expect(ok).toBe(true)
     expect(c.rescanning.value).toBe(false)
+    // The settings carry the recalculated staleCount behind the cleanup indicator.
+    expect(mockFetchSettings).toHaveBeenCalledTimes(1)
     expect(mockFetchBookStates).toHaveBeenCalledTimes(3)
+  })
+
+  it('rescan reports a failure without refreshing the settings or the buckets', async () => {
+    mockRescan.mockRejectedValue(new Error('An Audiobookshelf inventory walk is already running'))
+    const c = await loadComposable()
+
+    const ok = await c.rescan()
+
+    expect(ok).toBe(false)
+    expect(c.error.value).toBe('An Audiobookshelf inventory walk is already running')
+    expect(mockFetchSettings).not.toHaveBeenCalled()
+    expect(mockFetchBookStates).not.toHaveBeenCalled()
+  })
+
+  it('cleanupStale posts the cleanup with an empty payload by default, reloads all three buckets and returns the counts', async () => {
+    const cleanup: AudiobookshelfCleanupResult = { removed: 4988, staleLinked: 3, staleExcluded: 1, staleManuallyUnlinked: 0, seenItems: 120 }
+    mockCleanupStale.mockResolvedValue(cleanup)
+    const c = await loadComposable()
+
+    const result = await c.cleanupStale()
+
+    expect(mockCleanupStale).toHaveBeenCalledTimes(1)
+    expect(mockCleanupStale).toHaveBeenCalledWith({})
+    expect(result).toEqual(cleanup)
+    expect(c.cleaningUp.value).toBe(false)
+    expect(mockFetchBookStates).toHaveBeenCalledTimes(3)
+    const buckets = mockFetchBookStates.mock.calls.map((call) => call[0]).sort()
+    expect(buckets).toEqual(['linked', 'needs-review', 'unmatched'])
+  })
+
+  it('cleanupStale forwards the includeManuallyUnlinked flag to the API call', async () => {
+    const cleanup: AudiobookshelfCleanupResult = { removed: 10, staleLinked: 0, staleExcluded: 0, staleManuallyUnlinked: 4, seenItems: 50 }
+    mockCleanupStale.mockResolvedValue(cleanup)
+    const c = await loadComposable()
+
+    await c.cleanupStale({ includeManuallyUnlinked: true })
+
+    expect(mockCleanupStale).toHaveBeenCalledWith({ includeManuallyUnlinked: true })
+  })
+
+  it('cleanupStale returns null and records its own error without reloading when the request fails', async () => {
+    mockCleanupStale.mockRejectedValue(new Error('Refusing to clean against an empty inventory'))
+    const c = await loadComposable()
+
+    const result = await c.cleanupStale()
+
+    expect(result).toBeNull()
+    expect(c.cleanupError.value).toBe('Refusing to clean against an empty inventory')
+    expect(c.cleaningUp.value).toBe(false)
+    expect(mockFetchBookStates).not.toHaveBeenCalled()
+  })
+
+  it('cleanupStale leaves the linked-books error banner alone when it fails', async () => {
+    mockCleanupStale.mockRejectedValue(new Error('Refusing to clean against an empty inventory'))
+    const c = await loadComposable()
+    c.error.value = 'Failed to update Audiobookshelf book'
+
+    await c.cleanupStale()
+
+    expect(c.error.value).toBe('Failed to update Audiobookshelf book')
+    expect(c.cleanupError.value).toBe('Refusing to clean against an empty inventory')
   })
 
   it('drops a stale bucket response when a newer request for the same bucket resolves first', async () => {

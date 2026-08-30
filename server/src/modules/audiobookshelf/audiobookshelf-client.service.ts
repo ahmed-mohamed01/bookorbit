@@ -67,21 +67,48 @@ interface AbsListeningSessionsResponse {
   sessions: AbsListeningSession[];
 }
 
-interface AbsLibrary {
+export interface AbsLibrary {
   id: string;
   name: string;
   mediaType: string;
-  provider: string;
+  // Absolute paths of the library's root folders on the ABS server, from `folders[].fullPath`.
+  folderPaths: string[];
 }
 
-interface AbsLibrariesResponse {
+export interface AbsLibrariesResponse {
   libraries: AbsLibrary[];
+}
+
+// Raw `/api/libraries` shape: `folders` is untyped because older ABS versions and podcast libraries
+// can omit it, and a malformed entry must degrade to no paths rather than throw.
+interface AbsRawLibrary {
+  id: string;
+  name: string;
+  mediaType: string;
+  folders?: unknown;
+}
+
+interface AbsRawLibrariesResponse {
+  libraries?: AbsRawLibrary[];
+}
+
+function parseFolderPaths(folders: unknown): string[] {
+  if (!Array.isArray(folders)) return [];
+  const paths: string[] = [];
+  for (const folder of folders) {
+    const fullPath = (folder as { fullPath?: unknown } | null)?.fullPath;
+    if (typeof fullPath === 'string' && fullPath.trim()) paths.push(fullPath.trim());
+  }
+  return [...new Set(paths)];
 }
 
 export interface AbsLibraryItem {
   id: string;
   libraryId: string;
   mediaType: string;
+  // Absolute path on the ABS server: the item folder, or the file itself for a single-file item.
+  // Present on the minified payload returned by GET /api/libraries/:id/items.
+  path: string | null;
   media: {
     metadata: {
       title: string | null;
@@ -128,7 +155,16 @@ export class AudiobookshelfClientService {
   }
 
   async getLibraries(userId: number, serverUrl: string, token: string): Promise<AbsLibrariesResponse> {
-    return this.request<AbsLibrariesResponse>(userId, serverUrl, token, '/api/libraries');
+    const response = await this.request<AbsRawLibrariesResponse>(userId, serverUrl, token, '/api/libraries');
+    const libraries = Array.isArray(response?.libraries) ? response.libraries : [];
+    return {
+      libraries: libraries.map((library) => ({
+        id: library.id,
+        name: library.name,
+        mediaType: library.mediaType,
+        folderPaths: parseFolderPaths(library.folders),
+      })),
+    };
   }
 
   async getLibraryItems(

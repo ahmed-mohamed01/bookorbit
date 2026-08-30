@@ -3,6 +3,7 @@ import type {
   AudiobookshelfConnectionTestPayload,
   AudiobookshelfConnectionTestResult,
   AudiobookshelfLibrary,
+  AudiobookshelfMappingSuggestions,
   AudiobookshelfSettings,
   UpsertAudiobookshelfSettingsPayload,
 } from '@bookorbit/types'
@@ -10,6 +11,7 @@ import {
   disconnectAudiobookshelf,
   fetchAudiobookshelfLibraries,
   fetchAudiobookshelfSettings,
+  suggestAudiobookshelfPathMappings,
   testAudiobookshelfConnection,
   updateAudiobookshelfSettings,
 } from '../api/audiobookshelf.api'
@@ -18,9 +20,11 @@ const settings = ref<AudiobookshelfSettings | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
+const suggestingMappings = ref(false)
 const error = ref<string | null>(null)
 const testError = ref<string | null>(null)
 const libraries = ref<AudiobookshelfLibrary[]>([])
+const localFolderPaths = ref<string[]>([])
 const librariesLoading = ref(false)
 const librariesError = ref<string | null>(null)
 
@@ -45,7 +49,10 @@ export function useAudiobookshelfSettings() {
     librariesError.value = null
     try {
       const nextLibraries = await fetchAudiobookshelfLibraries()
-      if (requestId === currentLibraryRequestId) libraries.value = nextLibraries.libraries
+      if (requestId === currentLibraryRequestId) {
+        libraries.value = nextLibraries.libraries
+        localFolderPaths.value = nextLibraries.localFolderPaths
+      }
     } catch (err) {
       if (requestId === currentLibraryRequestId) {
         librariesError.value = err instanceof Error ? err.message : 'Failed to load Audiobookshelf libraries'
@@ -74,6 +81,21 @@ export function useAudiobookshelfSettings() {
     }
   }
 
+  // Returns the inferred mappings on success (the caller decides which rows to add) and null on
+  // failure, where `error` carries the reason. Nothing is saved: the user still saves the rows.
+  async function suggestPathMappings(): Promise<AudiobookshelfMappingSuggestions | null> {
+    error.value = null
+    suggestingMappings.value = true
+    try {
+      return await suggestAudiobookshelfPathMappings()
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : 'Failed to suggest folder mappings'
+      return null
+    } finally {
+      suggestingMappings.value = false
+    }
+  }
+
   async function disconnect(): Promise<boolean> {
     saving.value = true
     error.value = null
@@ -82,6 +104,7 @@ export function useAudiobookshelfSettings() {
       settings.value = null
       currentLibraryRequestId++
       libraries.value = []
+      localFolderPaths.value = []
       librariesLoading.value = false
       librariesError.value = null
       return true
@@ -115,14 +138,17 @@ export function useAudiobookshelfSettings() {
     loading,
     saving,
     testing,
+    suggestingMappings,
     error,
     testError,
     libraries,
+    localFolderPaths,
     librariesLoading,
     librariesError,
     fetchSettings,
     fetchLibraries,
     saveSettings,
+    suggestPathMappings,
     disconnect,
     testConnection,
   }

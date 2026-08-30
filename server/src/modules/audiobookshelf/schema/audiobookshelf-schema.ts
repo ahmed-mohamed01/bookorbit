@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS "audiobookshelf_user_settings" (
 	"sync_position" boolean DEFAULT true NOT NULL,
 	"sync_sessions" boolean DEFAULT true NOT NULL,
 	"excluded_library_ids" text[] DEFAULT '{}'::text[] NOT NULL,
+	"path_mappings" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"stale_count" integer DEFAULT 0 NOT NULL,
 	"last_synced_at" timestamp with time zone,
 	"last_sync_error" text,
 	"last_session_watermark" bigint,
@@ -48,6 +50,10 @@ CREATE TABLE IF NOT EXISTS "audiobookshelf_user_settings" (
 );
 --> statement-breakpoint
 ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "initial_reconcile_completed_at" timestamp with time zone;
+--> statement-breakpoint
+ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "path_mappings" jsonb DEFAULT '[]'::jsonb NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "stale_count" integer DEFAULT 0 NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "audiobookshelf_book_state" DROP COLUMN IF EXISTS "last_synced_progress";
 --> statement-breakpoint

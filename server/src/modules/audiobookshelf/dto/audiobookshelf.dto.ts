@@ -1,15 +1,47 @@
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 
 import type {
   AudiobookshelfBookStateBucket,
+  AudiobookshelfCleanupPayload,
   AudiobookshelfConnectionTestPayload,
   AudiobookshelfExclusionPayload,
   AudiobookshelfLinkBookPayload,
+  AudiobookshelfPathMapping,
   UpsertAudiobookshelfSettingsPayload,
 } from '@bookorbit/types';
 
 const AUDIOBOOKSHELF_BOOK_STATE_BUCKETS: AudiobookshelfBookStateBucket[] = ['linked', 'needs-review', 'unmatched'];
+const PATH_PREFIX_MAX_LENGTH = 500;
+
+const trimString = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
+
+export class AudiobookshelfPathMappingDto implements AudiobookshelfPathMapping {
+  @Transform(trimString)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(PATH_PREFIX_MAX_LENGTH)
+  absPrefix!: string;
+
+  @Transform(trimString)
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(PATH_PREFIX_MAX_LENGTH)
+  localPrefix!: string;
+}
 
 export class UpsertAudiobookshelfSettingsDto implements UpsertAudiobookshelfSettingsPayload {
   @IsOptional()
@@ -45,6 +77,13 @@ export class UpsertAudiobookshelfSettingsDto implements UpsertAudiobookshelfSett
   @IsNotEmpty({ each: true })
   @MaxLength(255, { each: true })
   excludedLibraryIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => AudiobookshelfPathMappingDto)
+  pathMappings?: AudiobookshelfPathMappingDto[];
 }
 
 export class TestAudiobookshelfConnectionDto implements AudiobookshelfConnectionTestPayload {
@@ -93,4 +132,10 @@ export class LinkAudiobookshelfBookDto implements AudiobookshelfLinkBookPayload 
 export class UpdateAudiobookshelfExclusionDto implements AudiobookshelfExclusionPayload {
   @IsBoolean()
   syncExcluded!: boolean;
+}
+
+export class CleanupAudiobookshelfStaleDto implements AudiobookshelfCleanupPayload {
+  @IsOptional()
+  @IsBoolean()
+  includeManuallyUnlinked?: boolean;
 }

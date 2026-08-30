@@ -5,6 +5,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
 import { TestAudiobookshelfConnectionDto, UpsertAudiobookshelfSettingsDto } from './dto';
+import { AudiobookshelfMatchService } from './audiobookshelf-match.service';
 import { AudiobookshelfSettingsService } from './audiobookshelf-settings.service';
 import { AudiobookshelfSyncService } from './audiobookshelf-sync.service';
 
@@ -14,6 +15,7 @@ export class AudiobookshelfController {
   constructor(
     private readonly settingsService: AudiobookshelfSettingsService,
     private readonly syncService: AudiobookshelfSyncService,
+    private readonly matchService: AudiobookshelfMatchService,
   ) {}
 
   @Get('settings')
@@ -23,7 +25,7 @@ export class AudiobookshelfController {
 
   @Get('libraries')
   getLibraries(@CurrentUser() user: RequestUser) {
-    return this.settingsService.getLibraries(user.id);
+    return this.settingsService.getLibraries(user);
   }
 
   @Patch('settings')
@@ -39,6 +41,11 @@ export class AudiobookshelfController {
   @Post('test-connection')
   testConnection(@CurrentUser() user: RequestUser, @Body() dto: TestAudiobookshelfConnectionDto) {
     return this.settingsService.testConnection(user.id, dto);
+  }
+
+  @Post('path-mappings/suggest')
+  suggestPathMappings(@CurrentUser() user: RequestUser) {
+    return this.matchService.suggestPathMappings(user);
   }
 
   @Post('sync')

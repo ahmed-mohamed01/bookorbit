@@ -16,6 +16,7 @@ const {
   loading,
   bucketLoading,
   rescanning,
+  cleaningUp,
   error,
   bucketErrors,
   actionId,
@@ -84,6 +85,8 @@ function matchMethodLabel(method: AudiobookshelfBookState['matchMethod']): strin
       return 'ASIN'
     case 'isbn':
       return 'ISBN'
+    case 'path':
+      return 'Path match'
     case 'title_author_series':
       return 'Title, author, and series'
     case 'manual':
@@ -93,9 +96,10 @@ function matchMethodLabel(method: AudiobookshelfBookState['matchMethod']): strin
   }
 }
 
-function confidenceLabel(confidence: number | null): string | null {
-  if (confidence === null) return null
-  const percentage = confidence <= 1 ? confidence * 100 : confidence
+// A path match is an identity, not a score, so it shows no percentage.
+function confidenceLabel(item: AudiobookshelfBookState): string | null {
+  if (item.matchMethod === 'path' || item.matchConfidence === null) return null
+  const percentage = item.matchConfidence <= 1 ? item.matchConfidence * 100 : item.matchConfidence
   return `${Math.round(percentage)}% confidence`
 }
 
@@ -204,7 +208,7 @@ async function handleNextPage(): Promise<void> {
       </div>
       <button
         type="button"
-        :disabled="rescanning || loading"
+        :disabled="rescanning || cleaningUp || loading"
         class="flex items-center justify-center gap-1.5 self-start rounded-md border border-border bg-muted px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/80 disabled:cursor-not-allowed disabled:opacity-40"
         @click="handleRescan"
       >
@@ -284,7 +288,7 @@ async function handleNextPage(): Promise<void> {
           <p class="text-xs text-muted-foreground">
             {{ item.bookAuthorName ?? 'Unknown author' }}
             <span v-if="item.matchMethod"> · {{ matchMethodLabel(item.matchMethod) }}</span>
-            <span v-if="confidenceLabel(item.matchConfidence)"> · {{ confidenceLabel(item.matchConfidence) }}</span>
+            <span v-if="confidenceLabel(item)"> · {{ confidenceLabel(item) }}</span>
           </p>
         </div>
 

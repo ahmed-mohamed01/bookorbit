@@ -8,6 +8,7 @@ vi.mock('@/lib/api', () => ({
 
 import { api } from '@/lib/api'
 import {
+  cleanupAudiobookshelfStaleEntries,
   confirmAudiobookshelfMatch,
   disconnectAudiobookshelf,
   fetchAudiobookshelfBookStates,
@@ -18,6 +19,7 @@ import {
   searchAudiobookshelfLinkCandidates,
   startAudiobookshelfFullResync,
   startAudiobookshelfSync,
+  suggestAudiobookshelfPathMappings,
   testAudiobookshelfConnection,
   unlinkAudiobookshelfBook,
   updateAudiobookshelfBookExclusion,
@@ -40,12 +42,18 @@ describe('audiobookshelf.api', () => {
   })
 
   it('fetches settings and libraries with GET requests', async () => {
-    mockApi
-      .mockResolvedValueOnce(jsonResponse({ serverUrl: 'https://abs.example.com', tokenConfigured: true }))
-      .mockResolvedValueOnce(jsonResponse({ libraries: [{ id: 'lib-1', name: 'Audiobooks' }] }))
+    mockApi.mockResolvedValueOnce(jsonResponse({ serverUrl: 'https://abs.example.com', tokenConfigured: true })).mockResolvedValueOnce(
+      jsonResponse({
+        libraries: [{ id: 'lib-1', name: 'Audiobooks', mediaType: 'book', folderPaths: ['/audiobooks'] }],
+        localFolderPaths: ['/books'],
+      }),
+    )
 
     await expect(fetchAudiobookshelfSettings()).resolves.toEqual({ serverUrl: 'https://abs.example.com', tokenConfigured: true })
-    await expect(fetchAudiobookshelfLibraries()).resolves.toEqual({ libraries: [{ id: 'lib-1', name: 'Audiobooks' }] })
+    await expect(fetchAudiobookshelfLibraries()).resolves.toEqual({
+      libraries: [{ id: 'lib-1', name: 'Audiobooks', mediaType: 'book', folderPaths: ['/audiobooks'] }],
+      localFolderPaths: ['/books'],
+    })
 
     expect(mockApi).toHaveBeenNthCalledWith(1, '/api/v1/audiobookshelf/settings')
     expect(mockApi).toHaveBeenNthCalledWith(2, '/api/v1/audiobookshelf/libraries')
@@ -148,11 +156,47 @@ describe('audiobookshelf.api', () => {
     )
   })
 
-  it('rescans matches with a POST', async () => {
-    mockApi.mockResolvedValueOnce(jsonResponse({ queued: 3 }))
+  it('rescans matches with a POST and maps a 409 to the conflict message', async () => {
+    mockApi.mockResolvedValueOnce(jsonResponse({ queued: 3 })).mockResolvedValueOnce(jsonResponse({}, false, 409))
 
     await expect(rescanAudiobookshelfMatches()).resolves.toEqual({ queued: 3 })
     expect(mockApi).toHaveBeenCalledWith('/api/v1/audiobookshelf/books/rescan', { method: 'POST' })
+
+    await expect(rescanAudiobookshelfMatches()).rejects.toThrow('An Audiobookshelf inventory walk is already running')
+  })
+
+  it('cleans up stale entries with a POST body and maps a 409 to the conflict message', async () => {
+    const result = { removed: 4988, staleLinked: 2, staleExcluded: 1, staleManuallyUnlinked: 0, seenItems: 120 }
+    mockApi.mockResolvedValueOnce(jsonResponse(result)).mockResolvedValueOnce(jsonResponse({}, false, 409))
+
+    await expect(cleanupAudiobookshelfStaleEntries()).resolves.toEqual(result)
+    expect(mockApi).toHaveBeenCalledWith(
+      '/api/v1/audiobookshelf/books/cleanup-stale',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({}) }),
+    )
+
+    await expect(cleanupAudiobookshelfStaleEntries()).rejects.toThrow('An Audiobookshelf cleanup is already running')
+  })
+
+  it('sends the includeManuallyUnlinked flag in the cleanup body when set', async () => {
+    const result = { removed: 10, staleLinked: 0, staleExcluded: 0, staleManuallyUnlinked: 3, seenItems: 50 }
+    mockApi.mockResolvedValueOnce(jsonResponse(result))
+
+    await expect(cleanupAudiobookshelfStaleEntries({ includeManuallyUnlinked: true })).resolves.toEqual(result)
+    expect(mockApi).toHaveBeenCalledWith(
+      '/api/v1/audiobookshelf/books/cleanup-stale',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ includeManuallyUnlinked: true }) }),
+    )
+  })
+
+  it('suggests folder mappings with a POST and maps a 409 to the conflict message', async () => {
+    const result = { suggestions: [{ absPrefix: '/audiobooks', localPrefix: '/books', supportCount: 412 }], scannedItems: 431 }
+    mockApi.mockResolvedValueOnce(jsonResponse(result)).mockResolvedValueOnce(jsonResponse({}, false, 409))
+
+    await expect(suggestAudiobookshelfPathMappings()).resolves.toEqual(result)
+    expect(mockApi).toHaveBeenCalledWith('/api/v1/audiobookshelf/path-mappings/suggest', { method: 'POST' })
+
+    await expect(suggestAudiobookshelfPathMappings()).rejects.toThrow('An Audiobookshelf inventory walk is already running')
   })
 
   it('searches link candidates against the shared book search endpoint', async () => {

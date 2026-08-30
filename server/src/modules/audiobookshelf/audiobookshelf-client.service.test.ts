@@ -120,6 +120,71 @@ describe('AudiobookshelfClientService', () => {
     });
   });
 
+  describe('getLibraries', () => {
+    it('carries each library folder fullPath through as folderPaths', async () => {
+      fetchMock.mockResolvedValueOnce(
+        makeResponse({
+          status: 200,
+          json: {
+            libraries: [
+              {
+                id: 'lib-1',
+                name: 'Audiobooks',
+                mediaType: 'book',
+                folders: [
+                  { id: 'f1', fullPath: '/audiobooks' },
+                  { id: 'f2', fullPath: '/media/audiobooks' },
+                ],
+              },
+            ],
+          },
+        }),
+      );
+
+      const result = await makeService().getLibraries(1, SERVER_URL, TOKEN);
+
+      expect(result.libraries).toEqual([{ id: 'lib-1', name: 'Audiobooks', mediaType: 'book', folderPaths: ['/audiobooks', '/media/audiobooks'] }]);
+    });
+
+    it('returns an empty folderPaths list when the library has no folders key', async () => {
+      fetchMock.mockResolvedValueOnce(makeResponse({ status: 200, json: { libraries: [{ id: 'lib-1', name: 'Audiobooks', mediaType: 'book' }] } }));
+
+      const result = await makeService().getLibraries(1, SERVER_URL, TOKEN);
+
+      expect(result.libraries[0]!.folderPaths).toEqual([]);
+    });
+
+    it('tolerates malformed folder entries by keeping only usable paths', async () => {
+      fetchMock.mockResolvedValueOnce(
+        makeResponse({
+          status: 200,
+          json: {
+            libraries: [
+              { id: 'lib-1', name: 'Broken folders', mediaType: 'book', folders: 'not-an-array' },
+              {
+                id: 'lib-2',
+                name: 'Mixed folders',
+                mediaType: 'book',
+                folders: [null, { id: 'no-path' }, { fullPath: 42 }, { fullPath: '  ' }, { fullPath: ' /audiobooks ' }, { fullPath: '/audiobooks' }],
+              },
+            ],
+          },
+        }),
+      );
+
+      const result = await makeService().getLibraries(1, SERVER_URL, TOKEN);
+
+      expect(result.libraries[0]!.folderPaths).toEqual([]);
+      expect(result.libraries[1]!.folderPaths).toEqual(['/audiobooks']);
+    });
+
+    it('returns an empty library list when the payload has no libraries array', async () => {
+      fetchMock.mockResolvedValueOnce(makeResponse({ status: 200, json: {} }));
+
+      await expect(makeService().getLibraries(1, SERVER_URL, TOKEN)).resolves.toEqual({ libraries: [] });
+    });
+  });
+
   describe('error mapping', () => {
     it('maps a non-2xx response to an http AudiobookshelfApiError carrying the status', async () => {
       fetchMock.mockResolvedValueOnce(makeResponse({ status: 500 }));

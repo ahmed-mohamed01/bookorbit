@@ -61,6 +61,9 @@ import {
 // 7) cover decode gate - ABS's sidecar cover handler gates writes on this.
 import { isDecodableImage } from '../metadata/lib/cover';
 
+// 8) migration planner path helpers - ABS's path match tier rewrites ABS item paths through these.
+import { applyPathMappings, pathMatchesPrefix } from '../migration/planner/matching.service';
+
 /**
  * ABS thresholds, copied verbatim from audiobookshelf-match.service.ts. If upstream scorer
  * behaviour drifts relative to these numbers, ABS auto-linking silently shifts, so we pin the
@@ -270,6 +273,68 @@ describe('upstream contract: reading daily-stats utils (ABS reading-log ingest)'
     expect(range).not.toBeNull();
     expect(range!.start.toISOString()).toBe('2026-07-10T00:00:00.000Z');
     expect(range!.end.toISOString()).toBe('2026-07-11T00:00:00.000Z');
+  });
+});
+
+/**
+ * ABS's path match tier (`audiobookshelf-match.utils.ts`) builds on these two: `pathMatchesPrefix`
+ * decides whether a saved mapping covers an ABS item path at all, and `applyPathMappings` performs
+ * the rewrite. ABS relies on three behaviours in particular, none of them visible in the signatures:
+ * the unchanged-input passthrough (which is why coverage is checked separately before mapping),
+ * longest-source-prefix-wins, and the silent skipping of a prefix that normalizes to empty.
+ */
+describe('upstream contract: planner path mapping helpers (ABS path match tier)', () => {
+  it('applyPathMappings returns the input unchanged when no mapping matches', () => {
+    const mappings = [{ sourcePrefix: '/audiobooks', targetPrefix: '/books' }];
+    expect(applyPathMappings('/podcasts/Author/Title', mappings)).toBe('/podcasts/Author/Title');
+    // A prefix that only matches as a string, not as a path boundary, is not a match either.
+    expect(applyPathMappings('/audiobooks-archive/Author/Title', mappings)).toBe('/audiobooks-archive/Author/Title');
+  });
+
+  it('applyPathMappings rewrites a covered path and tolerates a trailing slash on either prefix', () => {
+    expect(applyPathMappings('/audiobooks/Author/Title', [{ sourcePrefix: '/audiobooks', targetPrefix: '/books' }])).toBe('/books/Author/Title');
+    expect(applyPathMappings('/audiobooks/Author/Title', [{ sourcePrefix: '/audiobooks/', targetPrefix: '/books/' }])).toBe('/books/Author/Title');
+  });
+
+  it('applyPathMappings: the longest matching source prefix wins, whatever the array order', () => {
+    const broad = { sourcePrefix: '/audiobooks', targetPrefix: '/books' };
+    const specific = { sourcePrefix: '/audiobooks/scifi', targetPrefix: '/media/scifi' };
+    expect(applyPathMappings('/audiobooks/scifi/Author/Title', [broad, specific])).toBe('/media/scifi/Author/Title');
+    expect(applyPathMappings('/audiobooks/scifi/Author/Title', [specific, broad])).toBe('/media/scifi/Author/Title');
+    // The broad mapping still owns everything the specific one does not cover.
+    expect(applyPathMappings('/audiobooks/fantasy/Author/Title', [broad, specific])).toBe('/books/fantasy/Author/Title');
+  });
+
+  it('applyPathMappings skips a mapping whose prefix normalizes to empty, returning the raw input', () => {
+    // THE TRAP ABS GUARDS AGAINST: `/` matches every absolute path, but normalizes to '' here and is
+    // skipped, so the caller gets back an untranslated ABS path that looks like a mapped one.
+    expect(applyPathMappings('/audiobooks/Author/Title', [{ sourcePrefix: '/', targetPrefix: '/books' }])).toBe('/audiobooks/Author/Title');
+    expect(applyPathMappings('/audiobooks/Author/Title', [{ sourcePrefix: '/audiobooks', targetPrefix: '/' }])).toBe('/audiobooks/Author/Title');
+    expect(applyPathMappings('/audiobooks/Author/Title', [{ sourcePrefix: '', targetPrefix: '/books' }])).toBe('/audiobooks/Author/Title');
+  });
+
+  it('applyPathMappings: a null path stays null and an empty mapping list changes nothing', () => {
+    expect(applyPathMappings(null, [{ sourcePrefix: '/audiobooks', targetPrefix: '/books' }])).toBeNull();
+    expect(applyPathMappings('/audiobooks/Author/Title', [])).toBe('/audiobooks/Author/Title');
+  });
+
+  it('pathMatchesPrefix matches on a path boundary or an exact equality, never a bare string prefix', () => {
+    expect(pathMatchesPrefix('/books/Author/Title', '/books')).toBe(true);
+    expect(pathMatchesPrefix('/books', '/books')).toBe(true);
+    expect(pathMatchesPrefix('/books-archive/Author', '/books')).toBe(false);
+    expect(pathMatchesPrefix('/other/Author', '/books')).toBe(false);
+  });
+
+  it('pathMatchesPrefix does NOT normalize a trailing slash on the prefix (unlike applyPathMappings)', () => {
+    // ABS canonicalizes its own prefixes before calling this precisely because of this asymmetry.
+    expect(pathMatchesPrefix('/books/Author/Title', '/books/')).toBe(false);
+    expect(pathMatchesPrefix('/books/', '/books/')).toBe(true);
+  });
+
+  it('pathMatchesPrefix treats "/" as matching every absolute path and no relative one', () => {
+    expect(pathMatchesPrefix('/anything/at/all', '/')).toBe(true);
+    expect(pathMatchesPrefix('/', '/')).toBe(true);
+    expect(pathMatchesPrefix('relative/path', '/')).toBe(false);
   });
 });
 

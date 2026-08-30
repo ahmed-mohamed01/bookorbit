@@ -1,5 +1,7 @@
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, index, integer, pgTable, real, serial, text, timestamp, unique, varchar } from 'drizzle-orm/pg-core';
+import { bigint, boolean, index, integer, jsonb, pgTable, real, serial, text, timestamp, unique, varchar } from 'drizzle-orm/pg-core';
+
+import type { AudiobookshelfPathMapping } from '@bookorbit/types';
 
 import { books } from '../../../db/schema/books';
 import { users } from '../../../db/schema/auth';
@@ -20,6 +22,8 @@ export const audiobookshelfUserSettings = pgTable('audiobookshelf_user_settings'
     .array()
     .notNull()
     .default(sql`'{}'::text[]`),
+  pathMappings: jsonb('path_mappings').$type<AudiobookshelfPathMapping[]>().notNull().default([]),
+  staleCount: integer('stale_count').notNull().default(0),
   lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
   lastSyncError: text('last_sync_error'),
   lastSessionWatermark: bigint('last_session_watermark', { mode: 'number' }),

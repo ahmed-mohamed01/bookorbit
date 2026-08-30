@@ -3,18 +3,28 @@ import type {
   AudiobookshelfBookState,
   AudiobookshelfBookStateBucket,
   AudiobookshelfBookStatePage,
+  AudiobookshelfCleanupPayload,
+  AudiobookshelfCleanupResult,
   AudiobookshelfConnectionTestPayload,
   AudiobookshelfConnectionTestResult,
   AudiobookshelfExclusionPayload,
   AudiobookshelfLinkBookPayload,
   AudiobookshelfLibrariesResponse,
+  AudiobookshelfMappingSuggestions,
   AudiobookshelfRescanResult,
   AudiobookshelfSettings,
   AudiobookshelfSyncResult,
   UpsertAudiobookshelfSettingsPayload,
 } from '@bookorbit/types'
 
-export type { AudiobookshelfBookState, AudiobookshelfBookStateBucket, AudiobookshelfBookStatePage, AudiobookshelfSyncResult } from '@bookorbit/types'
+export type {
+  AudiobookshelfBookState,
+  AudiobookshelfBookStateBucket,
+  AudiobookshelfBookStatePage,
+  AudiobookshelfCleanupPayload,
+  AudiobookshelfCleanupResult,
+  AudiobookshelfSyncResult,
+} from '@bookorbit/types'
 
 const BASE = '/api/v1/audiobookshelf'
 const BOOK_SEARCH_PATH = '/api/v1/books/search'
@@ -53,6 +63,14 @@ export async function updateAudiobookshelfSettings(payload: UpsertAudiobookshelf
     body: JSON.stringify(payload),
   })
   if (!response.ok) throw await responseError(response, 'Failed to save Audiobookshelf settings')
+  return response.json()
+}
+
+export async function suggestAudiobookshelfPathMappings(): Promise<AudiobookshelfMappingSuggestions> {
+  const response = await api(`${BASE}/path-mappings/suggest`, { method: 'POST' })
+  if (!response.ok) {
+    throw await responseError(response, 'Failed to suggest folder mappings', 'An Audiobookshelf inventory walk is already running')
+  }
   return response.json()
 }
 
@@ -124,7 +142,21 @@ export async function updateAudiobookshelfBookExclusion(
 
 export async function rescanAudiobookshelfMatches(): Promise<AudiobookshelfRescanResult> {
   const response = await api(`${BASE}/books/rescan`, { method: 'POST' })
-  if (!response.ok) throw await responseError(response, 'Failed to rescan Audiobookshelf matches')
+  if (!response.ok) {
+    throw await responseError(response, 'Failed to rescan Audiobookshelf matches', 'An Audiobookshelf inventory walk is already running')
+  }
+  return response.json()
+}
+
+export async function cleanupAudiobookshelfStaleEntries(payload: AudiobookshelfCleanupPayload = {}): Promise<AudiobookshelfCleanupResult> {
+  const response = await api(`${BASE}/books/cleanup-stale`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) {
+    throw await responseError(response, 'Failed to clean up stale Audiobookshelf entries', 'An Audiobookshelf cleanup is already running')
+  }
   return response.json()
 }
 

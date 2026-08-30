@@ -16,6 +16,8 @@ const mockRepo = {
   upsertSettings: vi.fn(),
   updateSettings: vi.fn(),
   deleteSettings: vi.fn(),
+  findLibraryFolderPaths: vi.fn(),
+  clearMatchMemoForUnmatched: vi.fn(),
 };
 
 const mockClient = {
@@ -23,12 +25,14 @@ const mockClient = {
   getLibraries: vi.fn(),
 };
 
-const mockConfig = {
-  get: vi.fn().mockReturnValue(undefined),
+const mockLibraryService = {
+  findAccessibleLibraryIds: vi.fn(),
 };
 
+const mockUser = { id: 1, isSuperuser: false, active: true, permissions: [], contentFilters: undefined };
+
 function makeService() {
-  return new AudiobookshelfSettingsService(mockRepo as any, mockClient as any, mockConfig as any);
+  return new AudiobookshelfSettingsService(mockRepo as any, mockClient as any, mockLibraryService as any);
 }
 
 function configuredRow(overrides: Record<string, unknown> = {}) {
@@ -40,8 +44,10 @@ function configuredRow(overrides: Record<string, unknown> = {}) {
     syncPosition: true,
     syncSessions: true,
     excludedLibraryIds: [],
+    pathMappings: [],
     lastSyncedAt: null,
     lastSyncError: null,
+    staleCount: 0,
     ...overrides,
   };
 }
@@ -51,6 +57,7 @@ describe('AudiobookshelfSettingsService', () => {
     vi.clearAllMocks();
     mockedEnsureSafeUrl.mockResolvedValue(undefined as never);
     mockRepo.userHasAudiobookshelfSyncPermission.mockResolvedValue(true);
+    mockRepo.clearMatchMemoForUnmatched.mockResolvedValue(0);
   });
 
   describe('getSettings', () => {
@@ -119,6 +126,14 @@ describe('AudiobookshelfSettingsService', () => {
       expect(result.disabledReason).toBe('missing_config');
     });
 
+    it('exposes the stored stale count, defaulting to zero without a row', async () => {
+      mockRepo.findSettings.mockResolvedValue(configuredRow({ staleCount: 4930 }));
+      await expect(makeService().getSettings(1)).resolves.toMatchObject({ staleCount: 4930 });
+
+      mockRepo.findSettings.mockResolvedValue(undefined);
+      await expect(makeService().getSettings(1)).resolves.toMatchObject({ staleCount: 0 });
+    });
+
     it('serializes lastSyncedAt to an ISO string', async () => {
       const syncedAt = new Date('2026-01-02T03:04:05Z');
       mockRepo.findSettings.mockResolvedValue(configuredRow({ lastSyncedAt: syncedAt }));
@@ -167,6 +182,113 @@ describe('AudiobookshelfSettingsService', () => {
       await makeService().upsertSettings(1, { excludedLibraryIds: [' a ', 'a', 'b'] });
 
       expect(mockRepo.updateSettings).toHaveBeenCalledWith(1, { excludedLibraryIds: ['a', 'b'] });
+    });
+
+    it('persists path mappings and reads them back on the settings response', async () => {
+      const pathMappings = [{ absPrefix: '/audiobooks', localPrefix: '/books' }];
+      mockRepo.findSettings.mockResolvedValueOnce(configuredRow()).mockResolvedValue(configuredRow({ pathMappings }));
+      mockRepo.updateSettings.mockResolvedValue(configuredRow({ pathMappings }));
+
+      const result = await makeService().upsertSettings(1, { pathMappings });
+
+      expect(mockRepo.updateSettings).toHaveBeenCalledWith(1, { pathMappings });
+      expect(result.pathMappings).toEqual(pathMappings);
+    });
+
+    it('stores path prefixes canonicalized and drops a repeated ABS prefix', async () => {
+      mockRepo.findSettings.mockResolvedValue(configuredRow());
+      mockRepo.updateSettings.mockResolvedValue(configuredRow());
+
+      await makeService().upsertSettings(1, {
+        pathMappings: [
+          { absPrefix: ' /audiobooks// ', localPrefix: '/books/' },
+          { absPrefix: '/audiobooks', localPrefix: '/other' },
+        ],
+      });
+
+      expect(mockRepo.updateSettings).toHaveBeenCalledWith(1, { pathMappings: [{ absPrefix: '/audiobooks', localPrefix: '/books' }] });
+    });
+
+    it('rejects a mapping rooted at the filesystem root, which would never translate anything', async () => {
+      mockRepo.findSettings.mockResolvedValue(configuredRow());
+
+      await expect(makeService().upsertSettings(1, { pathMappings: [{ absPrefix: '/', localPrefix: '/books' }] })).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(makeService().upsertSettings(1, { pathMappings: [{ absPrefix: '/audiobooks', localPrefix: '/' }] })).rejects.toThrow(
+        /at least one folder segment/i,
+      );
+      await expect(makeService().upsertSettings(1, { pathMappings: [{ absPrefix: '/audiobooks//', localPrefix: '  /  ' }] })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockRepo.updateSettings).not.toHaveBeenCalled();
+    });
+
+    it('rejects a mapping whose prefix is blank on either side', async () => {
+      mockRepo.findSettings.mockResolvedValue(configuredRow());
+
+      await expect(makeService().upsertSettings(1, { pathMappings: [{ absPrefix: '   ', localPrefix: '/books' }] })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockRepo.updateSettings).not.toHaveBeenCalled();
+    });
+
+    it('defaults pathMappings to an empty list when no row exists', async () => {
+      mockRepo.findSettings.mockResolvedValue(undefined);
+
+      const result = await makeService().getSettings(1);
+
+      expect(result.pathMappings).toEqual([]);
+    });
+
+    it('clears the negative-match memo for unmatched rows when the mappings actually change', async () => {
+      mockRepo.findSettings.mockResolvedValue(configuredRow({ pathMappings: [{ absPrefix: '/audiobooks', localPrefix: '/books' }] }));
+      mockRepo.updateSettings.mockResolvedValue(configuredRow());
+      mockRepo.clearMatchMemoForUnmatched.mockResolvedValue(12);
+
+      await makeService().upsertSettings(1, { pathMappings: [{ absPrefix: '/audiobooks', localPrefix: '/media/books' }] });
+
+      expect(mockRepo.clearMatchMemoForUnmatched).toHaveBeenCalledWith(1);
+    });
+
+    it('leaves the memo alone when the saved mappings are the same set in another order', async () => {
+      const stored = [
+        { absPrefix: '/audiobooks', localPrefix: '/books' },
+        { absPrefix: '/podcasts', localPrefix: '/media/podcasts' },
+      ];
+      mockRepo.findSettings.mockResolvedValue(configuredRow({ pathMappings: stored }));
+      mockRepo.updateSettings.mockResolvedValue(configuredRow({ pathMappings: stored }));
+
+      await makeService().upsertSettings(1, {
+        pathMappings: [
+          { absPrefix: '/podcasts/', localPrefix: '/media/podcasts' },
+          { absPrefix: '/audiobooks', localPrefix: '/books/' },
+        ],
+      });
+
+      expect(mockRepo.clearMatchMemoForUnmatched).not.toHaveBeenCalled();
+    });
+
+    it('leaves the memo alone when the save does not touch the mappings at all', async () => {
+      mockRepo.findSettings.mockResolvedValue(configuredRow({ pathMappings: [{ absPrefix: '/audiobooks', localPrefix: '/books' }] }));
+      mockRepo.updateSettings.mockResolvedValue(configuredRow());
+
+      await makeService().upsertSettings(1, { enabled: false });
+
+      expect(mockRepo.clearMatchMemoForUnmatched).not.toHaveBeenCalled();
+    });
+
+    it('does not clear a memo for a first-time connection, which has no state rows yet', async () => {
+      mockRepo.findSettings.mockResolvedValueOnce(undefined).mockResolvedValue(configuredRow());
+      mockRepo.upsertSettings.mockResolvedValue(configuredRow());
+
+      await makeService().upsertSettings(1, {
+        serverUrl: 'https://abs.example.com',
+        apiToken: 'secret-token',
+        pathMappings: [{ absPrefix: '/audiobooks', localPrefix: '/books' }],
+      });
+
+      expect(mockRepo.clearMatchMemoForUnmatched).not.toHaveBeenCalled();
     });
 
     it('throws BadRequestException for an invalid server URL', async () => {
@@ -258,6 +380,37 @@ describe('AudiobookshelfSettingsService', () => {
 
       expect(result.success).toBe(false);
       expect(mockClient.testConnection).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getLibraries', () => {
+    it('returns book libraries with their folder paths and the accessible local folder roots', async () => {
+      mockRepo.findSettings.mockResolvedValue(configuredRow());
+      mockLibraryService.findAccessibleLibraryIds.mockResolvedValue([3, 5]);
+      mockRepo.findLibraryFolderPaths.mockResolvedValue(['/books', '/media/books']);
+      mockClient.getLibraries.mockResolvedValue({
+        libraries: [
+          { id: 'lib-1', name: 'Audiobooks', mediaType: 'book', folderPaths: ['/audiobooks'] },
+          { id: 'lib-2', name: 'Podcasts', mediaType: 'podcast', folderPaths: ['/podcasts'] },
+        ],
+      });
+
+      const result = await makeService().getLibraries(mockUser as any);
+
+      expect(result).toEqual({
+        libraries: [{ id: 'lib-1', name: 'Audiobooks', mediaType: 'book', folderPaths: ['/audiobooks'] }],
+        localFolderPaths: ['/books', '/media/books'],
+      });
+      expect(mockLibraryService.findAccessibleLibraryIds).toHaveBeenCalledWith(mockUser);
+      expect(mockRepo.findLibraryFolderPaths).toHaveBeenCalledWith([3, 5]);
+    });
+
+    it('throws BadRequestException when the integration is not configured', async () => {
+      mockRepo.findSettings.mockResolvedValue(undefined);
+
+      await expect(makeService().getLibraries(mockUser as any)).rejects.toThrow(BadRequestException);
+      expect(mockClient.getLibraries).not.toHaveBeenCalled();
+      expect(mockRepo.findLibraryFolderPaths).not.toHaveBeenCalled();
     });
   });
 

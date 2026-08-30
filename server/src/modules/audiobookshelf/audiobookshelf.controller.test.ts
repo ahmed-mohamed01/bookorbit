@@ -17,10 +17,14 @@ const mockSyncService = {
   fullResync: vi.fn(),
 };
 
+const mockMatchService = {
+  suggestPathMappings: vi.fn(),
+};
+
 const mockUser = { id: 1, isSuperuser: false, permissions: [] };
 
 function makeController() {
-  return new AudiobookshelfController(mockSettingsService as never, mockSyncService as never);
+  return new AudiobookshelfController(mockSettingsService as never, mockSyncService as never, mockMatchService as never);
 }
 
 describe('AudiobookshelfController', () => {
@@ -37,11 +41,11 @@ describe('AudiobookshelfController', () => {
     expect(mockSettingsService.getSettings).toHaveBeenCalledWith(1);
   });
 
-  it('getLibraries delegates to the settings service with the user id', async () => {
-    mockSettingsService.getLibraries.mockResolvedValue([{ id: 'lib-1' }]);
+  it('getLibraries delegates to the settings service with the whole user so the local scope resolves', async () => {
+    mockSettingsService.getLibraries.mockResolvedValue({ libraries: [{ id: 'lib-1' }], localFolderPaths: ['/books'] });
     const result = await makeController().getLibraries(mockUser as never);
-    expect(result).toEqual([{ id: 'lib-1' }]);
-    expect(mockSettingsService.getLibraries).toHaveBeenCalledWith(1);
+    expect(result).toEqual({ libraries: [{ id: 'lib-1' }], localFolderPaths: ['/books'] });
+    expect(mockSettingsService.getLibraries).toHaveBeenCalledWith(mockUser);
   });
 
   it('upsertSettings threads the user id and dto body', async () => {
@@ -64,6 +68,14 @@ describe('AudiobookshelfController', () => {
     const result = await makeController().testConnection(mockUser as never, dto as never);
     expect(result).toEqual({ ok: true });
     expect(mockSettingsService.testConnection).toHaveBeenCalledWith(1, dto);
+  });
+
+  it('suggestPathMappings delegates to the match service with the whole user', async () => {
+    const suggestions = { suggestions: [{ absPrefix: '/audiobooks', localPrefix: '/books', supportCount: 12 }], scannedItems: 431 };
+    mockMatchService.suggestPathMappings.mockResolvedValue(suggestions);
+    const result = await makeController().suggestPathMappings(mockUser as never);
+    expect(result).toEqual(suggestions);
+    expect(mockMatchService.suggestPathMappings).toHaveBeenCalledWith(mockUser);
   });
 
   it('sync delegates to the sync service with the whole user', async () => {

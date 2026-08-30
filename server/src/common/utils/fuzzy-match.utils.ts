@@ -6,6 +6,28 @@ export function normalizeIsbn(value: string | null | undefined): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+// A number, plus the ordinal suffix it carries when it has one. Matching the suffix as part of the
+// token is what keeps "50th" from degrading into a bare "50" under backtracking.
+const NUMBER_TOKEN = /\d+(?:\.\d+)?(?:st|nd|rd|th)?/g;
+const ORDINAL_TOKEN = /(?:st|nd|rd|th)$/;
+
+/**
+ * True when both titles carry a number and the numbers differ: "The Primal Hunter 3" vs
+ * "The Primal Hunter 16" is a different volume of the same series, not a fuzzy near-miss, and edit
+ * distance is nearly blind to it (2 edits over 20 characters reads as 90% similar). One-sided
+ * numbers stay allowed - subtitles and editions often drop the volume.
+ *
+ * Ordinals are not volumes: "50th Anniversary Edition" names the same book as any other printing of
+ * it, so those numbers are excluded rather than read as volume 50.
+ */
+export function titleVolumeConflict(a: string, b: string): boolean {
+  const numbersOf = (value: string) => (normalizeName(value).match(NUMBER_TOKEN) ?? []).filter((token) => !ORDINAL_TOKEN.test(token));
+  const left = numbersOf(a);
+  const right = numbersOf(b);
+  if (left.length === 0 || right.length === 0) return false;
+  return Number.parseFloat(left[left.length - 1]) !== Number.parseFloat(right[right.length - 1]);
+}
+
 export function scoreTitle(a: string, b: string): number {
   const left = normalizeTitle(a);
   const right = normalizeTitle(b);

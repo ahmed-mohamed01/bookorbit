@@ -306,6 +306,17 @@ listener simply isn't registered; the link/alignment controls hide when no pair 
 component files must remain for the client to compile (expected UI-registration coupling). The three
 tables are left in place, unused.
 
+**Watched cross-module import:** `audiobookshelf-match.utils.ts` imports the pure helpers
+`applyPathMappings`/`pathMatchesPrefix` (and the `PathMapping` type) from upstream's
+`migration/planner/` for the path-mapping match tier - deliberate reuse over reinvention. Signature
+drift (a rename, a moved file, a changed parameter) breaks this at typecheck; behaviour drift that
+keeps the signature is caught by the upstream-contract tests in
+`audiobookshelf-upstream-contract.test.ts`, which pin the no-match passthrough, longest-source-prefix
+ordering, the skipping of a prefix that normalizes to empty, and `pathMatchesPrefix`'s trailing-slash
+handling. Re-point or inline the two functions if they move. `audiobookshelf.repository.ts` also
+imports `AUDIO_FORMATS` from `scanner/lib/classify.ts` for the audio-only candidate predicate, the
+same seam `reading-alignment` and `edition-link` already lean on.
+
 **Merge notes:** the progress-sync projection into reading-state is the irreducible core coupling (like
 ABS). `extractSpineText` on `epub.service.ts` is the one seam worth watching on an upstream EPUB
 refactor. The `occurredAt` widening is shared with ABS - resolve it once.

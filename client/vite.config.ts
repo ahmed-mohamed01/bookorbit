@@ -141,6 +141,10 @@ export default defineConfig({
   server: {
     host: true,
     allowedHosts: true,
+    // Native file watching (chokidar) silently dies on some setups, leaving stale transforms that
+    // survive hard refreshes. Opt into polling with VITE_WATCH_POLLING=true when that happens;
+    // polling is slower but cannot die.
+    ...(process.env.VITE_WATCH_POLLING === 'true' ? { watch: { usePolling: true, interval: 300 } } : {}),
     proxy: {
       '/api': {
         target: 'http://localhost:3000',

@@ -1,5 +1,6 @@
 import { reactive, ref } from 'vue'
 import {
+  cleanupAudiobookshelfStaleEntries,
   confirmAudiobookshelfMatch,
   fetchAudiobookshelfBookStates,
   linkAudiobookshelfBook,
@@ -9,7 +10,10 @@ import {
   type AudiobookshelfBookState,
   type AudiobookshelfBookStatePage,
   type AudiobookshelfBookStateBucket,
+  type AudiobookshelfCleanupPayload,
+  type AudiobookshelfCleanupResult,
 } from '../api/audiobookshelf.api'
+import { useAudiobookshelfSettings } from './useAudiobookshelfSettings'
 
 const PAGE_SIZE = 20
 const BUCKETS = ['linked', 'needs-review', 'unmatched'] as const
@@ -25,7 +29,11 @@ const pages = reactive<Record<AudiobookshelfBookStateBucket, AudiobookshelfBookS
 })
 const loading = ref(false)
 const rescanning = ref(false)
+const cleaningUp = ref(false)
 const error = ref<string | null>(null)
+// Cleanup is driven from the sync-progress card, not the linked-books list, so it keeps its own
+// error instead of clearing or hijacking the banner that list renders from `error`.
+const cleanupError = ref<string | null>(null)
 const actionId = ref<string | null>(null)
 const bucketLoading = reactive<Record<AudiobookshelfBookStateBucket, boolean>>({
   linked: false,
@@ -182,8 +190,10 @@ export function useAudiobookshelfLinkedBooks() {
     rescanning.value = true
     try {
       // A rescan can re-match many items across all three buckets asynchronously - its response is just
-      // a queued count, not enough to update locally, so this still falls back to a full reload.
+      // a queued count, not enough to update locally, so this still falls back to a full reload. The
+      // settings come along because they carry the recalculated staleCount the cleanup indicator reads.
       await rescanAudiobookshelfMatches()
+      await useAudiobookshelfSettings().fetchSettings()
       await loadAllBuckets()
       return true
     } catch (err) {
@@ -191,6 +201,23 @@ export function useAudiobookshelfLinkedBooks() {
       return false
     } finally {
       rescanning.value = false
+    }
+  }
+
+  // Returns the server's counts on success (the caller reports them) and null on failure, where
+  // `cleanupError` carries the reason. A successful run can drop rows from any bucket, so all three reload.
+  async function cleanupStale(payload: AudiobookshelfCleanupPayload = {}): Promise<AudiobookshelfCleanupResult | null> {
+    cleanupError.value = null
+    cleaningUp.value = true
+    try {
+      const result = await cleanupAudiobookshelfStaleEntries(payload)
+      await loadAllBuckets()
+      return result
+    } catch (err) {
+      cleanupError.value = err instanceof Error ? err.message : 'Failed to clean up stale Audiobookshelf entries'
+      return null
+    } finally {
+      cleaningUp.value = false
     }
   }
 
@@ -216,7 +243,9 @@ export function useAudiobookshelfLinkedBooks() {
     loading,
     bucketLoading,
     rescanning,
+    cleaningUp,
     error,
+    cleanupError,
     bucketErrors,
     actionId,
     loadBucket,
@@ -227,5 +256,6 @@ export function useAudiobookshelfLinkedBooks() {
     unlinkBook,
     setExcluded,
     rescan,
+    cleanupStale,
   }
 }

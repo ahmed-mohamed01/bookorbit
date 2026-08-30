@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   AudiobookshelfConnectionTestResult,
   AudiobookshelfLibrariesResponse,
+  AudiobookshelfMappingSuggestions,
   AudiobookshelfSettings,
   UpsertAudiobookshelfSettingsPayload,
 } from '@bookorbit/types'
@@ -12,12 +13,14 @@ vi.mock('../../api/audiobookshelf.api', () => ({
   updateAudiobookshelfSettings: vi.fn<(payload: UpsertAudiobookshelfSettingsPayload) => Promise<AudiobookshelfSettings>>(),
   disconnectAudiobookshelf: vi.fn<() => Promise<void>>(),
   testAudiobookshelfConnection: vi.fn<() => Promise<AudiobookshelfConnectionTestResult>>(),
+  suggestAudiobookshelfPathMappings: vi.fn<() => Promise<AudiobookshelfMappingSuggestions>>(),
 }))
 
 import {
   disconnectAudiobookshelf,
   fetchAudiobookshelfLibraries,
   fetchAudiobookshelfSettings,
+  suggestAudiobookshelfPathMappings,
   testAudiobookshelfConnection,
   updateAudiobookshelfSettings,
 } from '../../api/audiobookshelf.api'
@@ -27,6 +30,7 @@ const mockFetchLibraries = vi.mocked(fetchAudiobookshelfLibraries)
 const mockUpdate = vi.mocked(updateAudiobookshelfSettings)
 const mockDisconnect = vi.mocked(disconnectAudiobookshelf)
 const mockTest = vi.mocked(testAudiobookshelfConnection)
+const mockSuggest = vi.mocked(suggestAudiobookshelfPathMappings)
 
 function makeSettings(overrides: Partial<AudiobookshelfSettings> = {}): AudiobookshelfSettings {
   return {
@@ -39,8 +43,10 @@ function makeSettings(overrides: Partial<AudiobookshelfSettings> = {}): Audioboo
     syncPosition: true,
     syncSessions: true,
     excludedLibraryIds: [],
+    pathMappings: [],
     lastSyncedAt: null,
     lastSyncError: null,
+    staleCount: 0,
     ...overrides,
   }
 }
@@ -54,7 +60,7 @@ describe('useAudiobookshelfSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.resetModules()
-    mockFetchLibraries.mockResolvedValue({ libraries: [] })
+    mockFetchLibraries.mockResolvedValue({ libraries: [], localFolderPaths: [] })
   })
 
   afterEach(() => {
@@ -96,6 +102,30 @@ describe('useAudiobookshelfSettings', () => {
     expect(c.saving.value).toBe(false)
   })
 
+  it('saveSettings round-trips pathMappings through the api and the shared ref', async () => {
+    const pathMappings = [{ absPrefix: '/audiobooks', localPrefix: '/books' }]
+    mockUpdate.mockResolvedValue(makeSettings({ pathMappings }))
+    const c = await loadComposable()
+
+    const ok = await c.saveSettings({ pathMappings })
+
+    expect(ok).toBe(true)
+    expect(mockUpdate).toHaveBeenCalledWith({ pathMappings })
+    expect(c.settings.value?.pathMappings).toEqual(pathMappings)
+    // No credential change, so the libraries list is not refetched.
+    expect(mockFetchLibraries).not.toHaveBeenCalled()
+  })
+
+  it('fetchSettings exposes the stored pathMappings', async () => {
+    const pathMappings = [{ absPrefix: '/audiobooks', localPrefix: '/books' }]
+    mockFetchSettings.mockResolvedValue(makeSettings({ pathMappings }))
+    const c = await loadComposable()
+
+    await c.fetchSettings()
+
+    expect(c.settings.value?.pathMappings).toEqual(pathMappings)
+  })
+
   it('saveSettings returns false and sets error on failure', async () => {
     mockUpdate.mockRejectedValue(new Error('Invalid token'))
     const c = await loadComposable()
@@ -109,13 +139,17 @@ describe('useAudiobookshelfSettings', () => {
 
   it('saveSettings reloads libraries when credentials change and the token is configured', async () => {
     mockUpdate.mockResolvedValue(makeSettings())
-    mockFetchLibraries.mockResolvedValue({ libraries: [{ id: 'lib-1', name: 'Audiobooks', mediaType: 'book' }] })
+    mockFetchLibraries.mockResolvedValue({
+      libraries: [{ id: 'lib-1', name: 'Audiobooks', mediaType: 'book', folderPaths: ['/audiobooks'] }],
+      localFolderPaths: ['/books'],
+    })
     const c = await loadComposable()
 
     await c.saveSettings({ apiToken: 'new-token' })
 
     expect(mockFetchLibraries).toHaveBeenCalledTimes(1)
-    expect(c.libraries.value).toEqual([{ id: 'lib-1', name: 'Audiobooks', mediaType: 'book' }])
+    expect(c.libraries.value).toEqual([{ id: 'lib-1', name: 'Audiobooks', mediaType: 'book', folderPaths: ['/audiobooks'] }])
+    expect(c.localFolderPaths.value).toEqual(['/books'])
   })
 
   it('saveSettings does not reload libraries for a non-credential change', async () => {
@@ -141,7 +175,10 @@ describe('useAudiobookshelfSettings', () => {
   it('disconnect clears settings and library state', async () => {
     mockFetchSettings.mockResolvedValue(makeSettings())
     mockDisconnect.mockResolvedValue(undefined)
-    mockFetchLibraries.mockResolvedValue({ libraries: [{ id: 'lib-1', name: 'Audiobooks', mediaType: 'book' }] })
+    mockFetchLibraries.mockResolvedValue({
+      libraries: [{ id: 'lib-1', name: 'Audiobooks', mediaType: 'book', folderPaths: ['/audiobooks'] }],
+      localFolderPaths: ['/books'],
+    })
     const c = await loadComposable()
     await c.fetchSettings()
     await c.fetchLibraries()
@@ -152,6 +189,7 @@ describe('useAudiobookshelfSettings', () => {
     expect(ok).toBe(true)
     expect(c.settings.value).toBeNull()
     expect(c.libraries.value).toEqual([])
+    expect(c.localFolderPaths.value).toEqual([])
     expect(c.librariesError.value).toBeNull()
   })
 
@@ -187,6 +225,25 @@ describe('useAudiobookshelfSettings', () => {
     expect(c.testError.value).toBe('Wait for the current Audiobookshelf settings change to finish')
   })
 
+  it('suggestPathMappings returns the inferred mappings and clears the busy flag', async () => {
+    const result = { suggestions: [{ absPrefix: '/audiobooks', localPrefix: '/books', supportCount: 412 }], scannedItems: 431 }
+    mockSuggest.mockResolvedValue(result)
+    const c = await loadComposable()
+
+    await expect(c.suggestPathMappings()).resolves.toEqual(result)
+    expect(c.suggestingMappings.value).toBe(false)
+    expect(mockUpdate).not.toHaveBeenCalled()
+  })
+
+  it('suggestPathMappings returns null and records the error message when the api rejects', async () => {
+    mockSuggest.mockRejectedValue(new Error('An Audiobookshelf inventory walk is already running'))
+    const c = await loadComposable()
+
+    await expect(c.suggestPathMappings()).resolves.toBeNull()
+    expect(c.error.value).toBe('An Audiobookshelf inventory walk is already running')
+    expect(c.suggestingMappings.value).toBe(false)
+  })
+
   it('fetchLibraries keeps only the latest response when calls overlap', async () => {
     const resolvers: Array<(value: AudiobookshelfLibrariesResponse) => void> = []
     mockFetchLibraries.mockImplementation(() => new Promise<AudiobookshelfLibrariesResponse>((resolve) => resolvers.push(resolve)))
@@ -195,10 +252,11 @@ describe('useAudiobookshelfSettings', () => {
     const first = c.fetchLibraries()
     const second = c.fetchLibraries()
 
-    resolvers[1]!({ libraries: [{ id: 'fresh', name: 'Fresh', mediaType: 'book' }] })
-    resolvers[0]!({ libraries: [{ id: 'stale', name: 'Stale', mediaType: 'book' }] })
+    resolvers[1]!({ libraries: [{ id: 'fresh', name: 'Fresh', mediaType: 'book', folderPaths: ['/fresh'] }], localFolderPaths: ['/books/fresh'] })
+    resolvers[0]!({ libraries: [{ id: 'stale', name: 'Stale', mediaType: 'book', folderPaths: ['/stale'] }], localFolderPaths: ['/books/stale'] })
     await Promise.all([first, second])
 
-    expect(c.libraries.value).toEqual([{ id: 'fresh', name: 'Fresh', mediaType: 'book' }])
+    expect(c.libraries.value).toEqual([{ id: 'fresh', name: 'Fresh', mediaType: 'book', folderPaths: ['/fresh'] }])
+    expect(c.localFolderPaths.value).toEqual(['/books/fresh'])
   })
 })

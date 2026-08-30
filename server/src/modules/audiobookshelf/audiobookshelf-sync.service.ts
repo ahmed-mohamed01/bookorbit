@@ -162,6 +162,7 @@ export class AudiobookshelfSyncService {
         const matchSummary = await this.matchService.matchLibrary(user, settings.serverUrl, settings.apiToken, {
           force: options.force === true,
           excludedLibraryIds: settings.excludedLibraryIds ?? [],
+          pathMappings: settings.pathMappings ?? [],
         });
         result.matched = matchSummary.autoLinked;
         // Stamp completion only after matchLibrary returns: a partial (page-by-page) reconcile that

@@ -14,6 +14,7 @@ const mockBookStateService = {
 
 const mockMatchService = {
   rescan: vi.fn(),
+  cleanupStale: vi.fn(),
 };
 
 const mockUser = { id: 1, isSuperuser: false, permissions: [] };
@@ -42,6 +43,26 @@ describe('AudiobookshelfBooksController', () => {
     const result = await makeController().rescan(mockUser as never);
     expect(result).toEqual({ scanned: 3 });
     expect(mockMatchService.rescan).toHaveBeenCalledWith(mockUser);
+  });
+
+  it('cleanupStale delegates to the match service with the user and returns its result', async () => {
+    const cleanup = { removed: 4988, staleLinked: 2, staleExcluded: 1, staleManuallyUnlinked: 0, seenItems: 120 };
+    mockMatchService.cleanupStale.mockResolvedValue(cleanup);
+
+    const result = await makeController().cleanupStale(mockUser as never, {} as never);
+
+    expect(result).toEqual(cleanup);
+    expect(mockMatchService.cleanupStale).toHaveBeenCalledWith(mockUser, { includeManuallyUnlinked: false });
+  });
+
+  it('cleanupStale threads includeManuallyUnlinked through when set', async () => {
+    const cleanup = { removed: 10, staleLinked: 0, staleExcluded: 0, staleManuallyUnlinked: 0, seenItems: 10 };
+    mockMatchService.cleanupStale.mockResolvedValue(cleanup);
+
+    const result = await makeController().cleanupStale(mockUser as never, { includeManuallyUnlinked: true } as never);
+
+    expect(result).toEqual(cleanup);
+    expect(mockMatchService.cleanupStale).toHaveBeenCalledWith(mockUser, { includeManuallyUnlinked: true });
   });
 
   it('confirm passes the item id through to the book-state service', async () => {

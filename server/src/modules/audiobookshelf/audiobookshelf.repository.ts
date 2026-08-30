@@ -7,6 +7,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
+import { AUDIO_FORMATS } from '../scanner/lib/classify';
 import {
   aggregateReadingSessionDailyStats,
   getDayRangeForDateKeys,
@@ -61,9 +62,14 @@ type AbsProgressDeltaSqlRow = {
 };
 
 const ISBN_ASIN_LOOKUP_CHUNK = 1000;
+// Paths are up to 4096 chars, so the IN-list is chunked tighter than the ISBN/ASIN one.
+const PATH_LOOKUP_CHUNK = 500;
 const BOOK_STATE_UPSERT_CHUNK = 500;
+const BOOK_STATE_DELETE_CHUNK = 500;
 const FUZZY_TITLE_LOOKUP_CHUNK = 100;
 const BOOK_ID_LOOKUP_CHUNK = 500;
+// Folder roots are a UI hint list, so the read stays bounded even for a user with many libraries.
+const LIBRARY_FOLDER_PATH_LIMIT = 500;
 const normalizedAudibleId = sql<string>`upper(trim(${schema.bookMetadata.audibleId}))`;
 const normalizedIsbn10 = sql<string>`upper(trim(${schema.bookMetadata.isbn10}))`;
 
@@ -110,6 +116,15 @@ export interface AbsBookStateUpsert {
   needsReview: boolean;
   matchError: string | null;
   lastMatchAttemptAt: Date;
+}
+
+/** Minimal columns the stale-entry cleanup needs to classify a row without loading the whole state. */
+export interface AbsBookStateCleanupCandidate {
+  id: number;
+  absLibraryItemId: string;
+  bookId: number | null;
+  syncExcluded: boolean;
+  manualUnlinked: boolean;
 }
 
 export interface AbsBookAccessScope {
@@ -210,6 +225,14 @@ export class AudiobookshelfRepository {
     return row;
   }
 
+  /**
+   * Narrow single-column write for the stale-entry counter, kept apart from `updateSettings` so a
+   * bookkeeping write never reads the credential row back.
+   */
+  async updateStaleCount(userId: number, staleCount: number): Promise<void> {
+    await this.db.update(audiobookshelfUserSettings).set({ staleCount, updatedAt: new Date() }).where(eq(audiobookshelfUserSettings.userId, userId));
+  }
+
   async deleteSettings(userId: number): Promise<void> {
     await this.db.delete(audiobookshelfUserSettings).where(eq(audiobookshelfUserSettings.userId, userId));
   }
@@ -232,6 +255,52 @@ export class AudiobookshelfRepository {
   }
 
   /**
+   * Distinct root folder paths of the given libraries, sorted, for the folder-mapping hints on the
+   * connection card. Callers pass the user's accessible library ids, so the result never leaves that
+   * scope, and the read is capped so a very large setup cannot return an unbounded list.
+   */
+  async findLibraryFolderPaths(libraryIds: number[]): Promise<string[]> {
+    if (libraryIds.length === 0) return [];
+    const rows = await this.db
+      .selectDistinct({ path: schema.libraryFolders.path })
+      .from(schema.libraryFolders)
+      .where(inArray(schema.libraryFolders.libraryId, libraryIds))
+      .orderBy(asc(schema.libraryFolders.path))
+      .limit(LIBRARY_FOLDER_PATH_LIMIT);
+    return rows.map((row) => row.path);
+  }
+
+  /**
+   * One keyset page of the distinct book folder paths in the user's accessible scope, ascending, for
+   * folder-mapping inference. Same scoping as the exact match tiers (accessible libraries, content
+   * filters, status 'present'). Keyset on the path itself (not offset) so a library with tens of
+   * thousands of books is walked in bounded pages; callers pass the last path of the prior page.
+   */
+  async findDistinctBookFolderPaths(
+    libraryIds: number[],
+    contentFilters: ContentFilterRules | undefined,
+    afterPath: string | null,
+    limit: number,
+  ): Promise<string[]> {
+    if (libraryIds.length === 0) return [];
+    const filters = contentFilters ? buildContentFilterClauses(contentFilters, this.db) : [];
+    const rows = await this.db
+      .selectDistinct({ folderPath: schema.books.folderPath })
+      .from(schema.books)
+      .where(
+        and(
+          inArray(schema.books.libraryId, libraryIds),
+          eq(schema.books.status, 'present'),
+          ...(afterPath != null ? [gt(schema.books.folderPath, afterPath)] : []),
+          ...filters,
+        ),
+      )
+      .orderBy(asc(schema.books.folderPath))
+      .limit(limit);
+    return rows.map((row) => row.folderPath);
+  }
+
+  /**
    * A monotonic "library changed" signal for negative-match memoization: the newest change to any
    * accessible book or its metadata. Unmatched items only re-attempt when this advances past their
    * last attempt, so a stable library performs no candidate load on repeat runs.
@@ -249,6 +318,20 @@ export class AudiobookshelfRepository {
     return row.changedAt instanceof Date ? row.changedAt : new Date(row.changedAt);
   }
 
+  /**
+   * ABS links target the audiobook copy of a work; ebook-only rows are edition-link territory. Every
+   * candidate query carries this so an ABS item can never match (exactly or fuzzily) a book that has
+   * no audio content at all.
+   */
+  private audioContentExists(): SQL {
+    return sql`exists (
+      select 1 from ${schema.bookFiles}
+      where ${schema.bookFiles.bookId} = ${schema.books.id}
+        and ${schema.bookFiles.role} = 'content'
+        and ${inArray(schema.bookFiles.format, [...AUDIO_FORMATS])}
+    )`;
+  }
+
   private async matchByKey(libraryIds: number[], filters: SQL[], keyExpr: SQL<string>, values: string[]): Promise<AbsExactMatchRow[]> {
     const results: AbsExactMatchRow[] = [];
     for (const group of chunk(values, ISBN_ASIN_LOOKUP_CHUNK)) {
@@ -256,7 +339,15 @@ export class AudiobookshelfRepository {
         .select({ key: keyExpr, bookId: schema.books.id })
         .from(schema.books)
         .innerJoin(schema.bookMetadata, eq(schema.bookMetadata.bookId, schema.books.id))
-        .where(and(inArray(schema.books.libraryId, libraryIds), eq(schema.books.status, 'present'), inArray(keyExpr, group), ...filters));
+        .where(
+          and(
+            inArray(schema.books.libraryId, libraryIds),
+            eq(schema.books.status, 'present'),
+            inArray(keyExpr, group),
+            this.audioContentExists(),
+            ...filters,
+          ),
+        );
       for (const row of rows) if (row.key) results.push({ key: row.key, bookId: row.bookId });
     }
     return results;
@@ -277,6 +368,53 @@ export class AudiobookshelfRepository {
       ...(await this.matchByKey(libraryIds, filters, sql<string>`${schema.bookMetadata.isbn13}`, isbn13s)),
       ...(await this.matchByKey(libraryIds, filters, normalizedIsbn10, isbn10s)),
     ];
+  }
+
+  /**
+   * Books whose on-disk location equals one of the given BookOrbit absolute paths, keyed by the path
+   * that matched. An ABS library item path is the item FOLDER for a folder-per-book library and the
+   * file itself for a single-file item, so both domains are probed: the book's folder path and its
+   * content-role files. Same scoping as the ISBN/ASIN tiers (accessible libraries, content filters,
+   * status 'present'), and the same chunked IN-lists, so it stays index-driven on a large library.
+   */
+  async findBookIdsByPaths(libraryIds: number[], contentFilters: ContentFilterRules | undefined, paths: string[]): Promise<AbsExactMatchRow[]> {
+    if (libraryIds.length === 0 || paths.length === 0) return [];
+    const filters = contentFilters ? buildContentFilterClauses(contentFilters, this.db) : [];
+    const results: AbsExactMatchRow[] = [];
+
+    for (const group of chunk(paths, PATH_LOOKUP_CHUNK)) {
+      const fileRows = await this.db
+        .select({ key: schema.bookFiles.absolutePath, bookId: schema.books.id })
+        .from(schema.books)
+        .innerJoin(schema.bookFiles, eq(schema.bookFiles.bookId, schema.books.id))
+        .where(
+          and(
+            inArray(schema.books.libraryId, libraryIds),
+            eq(schema.books.status, 'present'),
+            eq(schema.bookFiles.role, 'content'),
+            inArray(schema.bookFiles.absolutePath, group),
+            this.audioContentExists(),
+            ...filters,
+          ),
+        );
+      for (const row of fileRows) if (row.key) results.push({ key: row.key, bookId: row.bookId });
+
+      const folderRows = await this.db
+        .select({ key: schema.books.folderPath, bookId: schema.books.id })
+        .from(schema.books)
+        .where(
+          and(
+            inArray(schema.books.libraryId, libraryIds),
+            eq(schema.books.status, 'present'),
+            inArray(schema.books.folderPath, group),
+            this.audioContentExists(),
+            ...filters,
+          ),
+        );
+      for (const row of folderRows) if (row.key) results.push({ key: row.key, bookId: row.bookId });
+    }
+
+    return results;
   }
 
   /**
@@ -333,6 +471,7 @@ export class AudiobookshelfRepository {
               where ${schema.books.id} = ${schema.bookMetadata.bookId}
                 and ${inArray(schema.books.libraryId, libraryIds)}
                 and ${eq(schema.books.status, 'present')}
+                and ${this.audioContentExists()}
                 ${filterSql}
               offset 0
             )
@@ -414,7 +553,18 @@ export class AudiobookshelfRepository {
     return results;
   }
 
-  async bulkUpsertBookStates(userId: number, rows: AbsBookStateUpsert[]): Promise<void> {
+  /**
+   * Writes a matched batch, yielding to any user decision taken while the batch was being computed.
+   * A match run reads state rows, then spends seconds on candidate queries before writing, so a
+   * Confirm / manual link / unlink / exclude landing in that window would otherwise be overwritten by
+   * a write built from state the user has already moved on from.
+   *
+   * `readAt` is when the caller read the state it based these rows on. It rides along as the inserted
+   * `updated_at`, so the conflict branch can compare it against the row's current `updated_at` and
+   * skip any row touched since. A skipped row is simply re-evaluated by the next run from fresh
+   * state, which is why abandoning the write is safe rather than something to retry here.
+   */
+  async bulkUpsertBookStates(userId: number, rows: AbsBookStateUpsert[], readAt: Date): Promise<void> {
     if (rows.length === 0) return;
     for (const group of chunk(rows, BOOK_STATE_UPSERT_CHUNK)) {
       await this.db
@@ -432,6 +582,7 @@ export class AudiobookshelfRepository {
             matchError: row.matchError,
             lastMatchAttemptAt: row.lastMatchAttemptAt,
             manualUnlinked: false,
+            updatedAt: readAt,
           })),
         )
         .onConflictDoUpdate({
@@ -448,8 +599,76 @@ export class AudiobookshelfRepository {
             manualUnlinked: false,
             updatedAt: new Date(),
           },
+          setWhere: sql`${audiobookshelfBookState.updatedAt} <= excluded.updated_at`,
         });
     }
+  }
+
+  /**
+   * Drops the negative-match memo for the user's still-unmatched rows in one scoped UPDATE, so the
+   * next scheduled sync re-attempts them instead of short-circuiting on `lastMatchAttemptAt`. Linked
+   * rows keep theirs. Rows that never recorded an attempt are excluded so the write stays as narrow
+   * as the memo it clears.
+   */
+  async clearMatchMemoForUnmatched(userId: number): Promise<number> {
+    const result = await this.db
+      .update(audiobookshelfBookState)
+      .set({ lastMatchAttemptAt: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(audiobookshelfBookState.userId, userId),
+          isNull(audiobookshelfBookState.bookId),
+          isNotNull(audiobookshelfBookState.lastMatchAttemptAt),
+        ),
+      );
+    return (result as { rowCount?: number }).rowCount ?? 0;
+  }
+
+  /**
+   * One keyset page of the user's book-state rows, ascending by id, for the stale-entry cleanup scan.
+   * Keyset (not offset) so a large library is walked in bounded memory without re-reading rows.
+   */
+  async findBookStateCleanupCandidates(userId: number, afterId: number, limit: number): Promise<AbsBookStateCleanupCandidate[]> {
+    return this.db
+      .select({
+        id: audiobookshelfBookState.id,
+        absLibraryItemId: audiobookshelfBookState.absLibraryItemId,
+        bookId: audiobookshelfBookState.bookId,
+        syncExcluded: audiobookshelfBookState.syncExcluded,
+        manualUnlinked: audiobookshelfBookState.manualUnlinked,
+      })
+      .from(audiobookshelfBookState)
+      .where(and(eq(audiobookshelfBookState.userId, userId), gt(audiobookshelfBookState.id, afterId)))
+      .orderBy(asc(audiobookshelfBookState.id))
+      .limit(limit);
+  }
+
+  /**
+   * Deletes only rows that are still pure unmatched at delete time. The caller classifies them in
+   * paged reads seconds earlier, so a row that gained a link, an exclusion, or (unless opted in) a
+   * manual unlink in between would otherwise be deleted on evidence that no longer holds. The
+   * row-state predicates mirror the caller's classification exactly; a row that no longer qualifies
+   * simply survives and is reported as still stale.
+   */
+  async deleteBookStatesByAbsItemIds(userId: number, absLibraryItemIds: string[], options: { includeManuallyUnlinked: boolean }): Promise<number> {
+    if (absLibraryItemIds.length === 0) return 0;
+    let removed = 0;
+    for (const group of chunk(absLibraryItemIds, BOOK_STATE_DELETE_CHUNK)) {
+      const rows = await this.db
+        .delete(audiobookshelfBookState)
+        .where(
+          and(
+            eq(audiobookshelfBookState.userId, userId),
+            inArray(audiobookshelfBookState.absLibraryItemId, group),
+            isNull(audiobookshelfBookState.bookId),
+            eq(audiobookshelfBookState.syncExcluded, false),
+            ...(options.includeManuallyUnlinked ? [] : [eq(audiobookshelfBookState.manualUnlinked, false)]),
+          ),
+        )
+        .returning({ id: audiobookshelfBookState.id });
+      removed += rows.length;
+    }
+    return removed;
   }
 
   private bookAuthorNameSql(): SQL<string | null> {

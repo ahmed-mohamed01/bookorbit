@@ -6,7 +6,7 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import type { RequestUser } from '../../common/types/request-user';
 import { AudiobookshelfBookStateService } from './audiobookshelf-book-state.service';
 import { AudiobookshelfMatchService } from './audiobookshelf-match.service';
-import { LinkAudiobookshelfBookDto, ListAudiobookshelfBookStatesDto, UpdateAudiobookshelfExclusionDto } from './dto';
+import { CleanupAudiobookshelfStaleDto, LinkAudiobookshelfBookDto, ListAudiobookshelfBookStatesDto, UpdateAudiobookshelfExclusionDto } from './dto';
 
 @Controller('audiobookshelf/books')
 @RequirePermission(Permission.AudiobookshelfSync)
@@ -24,6 +24,11 @@ export class AudiobookshelfBooksController {
   @Post('rescan')
   rescan(@CurrentUser() user: RequestUser) {
     return this.matchService.rescan(user);
+  }
+
+  @Post('cleanup-stale')
+  cleanupStale(@CurrentUser() user: RequestUser, @Body() dto: CleanupAudiobookshelfStaleDto) {
+    return this.matchService.cleanupStale(user, { includeManuallyUnlinked: dto.includeManuallyUnlinked ?? false });
   }
 
   @Post(':absLibraryItemId/confirm')
