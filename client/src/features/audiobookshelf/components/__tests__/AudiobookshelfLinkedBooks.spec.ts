@@ -205,8 +205,9 @@ describe('AudiobookshelfLinkedBooks item details', () => {
     ])
     const wrapper = await mountLinkedBooks()
 
-    expect(wrapper.get('[data-testid="abs-item-meta"]').text()).toBe('Library A · Series One')
-    expect(wrapper.get('[data-testid="abs-item-path"]').text()).toBe('/mnt/abs/library-a/series-one/book')
+    expect(wrapper.get('[data-testid="abs-pill"]').text()).toBe('ABS')
+    expect(wrapper.get('[data-testid="abs-item-meta"]').text()).toBe('ABS library: Library A · Series One')
+    expect(wrapper.get('[data-testid="abs-item-path"]').text()).toBe('ABS path: /mnt/abs/library-a/series-one/book')
     expect(wrapper.get('[data-testid="abs-book-meta"]').text()).toBe('BookOrbit Library · BO Series')
     expect(wrapper.get('[data-testid="abs-book-path"]').text()).toBe('/books/library/author/book')
   })
@@ -215,7 +216,7 @@ describe('AudiobookshelfLinkedBooks item details', () => {
     setBucketItems('linked', [bookState({ absLibraryName: 'Library A', absSeriesName: null, absPath: null })])
     const wrapper = await mountLinkedBooks()
 
-    expect(wrapper.get('[data-testid="abs-item-meta"]').text()).toBe('Library A')
+    expect(wrapper.get('[data-testid="abs-item-meta"]').text()).toBe('ABS library: Library A')
     expect(wrapper.find('[data-testid="abs-item-path"]').exists()).toBe(false)
   })
 
@@ -224,7 +225,7 @@ describe('AudiobookshelfLinkedBooks item details', () => {
     const wrapper = await mountLinkedBooks()
 
     expect(wrapper.find('[data-testid="abs-item-meta"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="abs-item-path"]').text()).toBe('/mnt/abs/only-path')
+    expect(wrapper.get('[data-testid="abs-item-path"]').text()).toBe('ABS path: /mnt/abs/only-path')
   })
 
   it('does not render the BookOrbit meta or path lines for an unlinked item', async () => {
@@ -237,7 +238,7 @@ describe('AudiobookshelfLinkedBooks item details', () => {
 
     expect(wrapper.find('[data-testid="abs-book-meta"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="abs-book-path"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="abs-item-meta"]').text()).toBe('Library A · Series One')
-    expect(wrapper.get('[data-testid="abs-item-path"]').text()).toBe('/mnt/abs/unmatched')
+    expect(wrapper.get('[data-testid="abs-item-meta"]').text()).toBe('ABS library: Library A · Series One')
+    expect(wrapper.get('[data-testid="abs-item-path"]').text()).toBe('ABS path: /mnt/abs/unmatched')
   })
 })

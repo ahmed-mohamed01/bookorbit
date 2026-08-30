@@ -109,7 +109,10 @@ function joinLibrarySeries(libraryName: string | null, seriesName: string | null
 }
 
 function absMetaLine(item: AudiobookshelfBookState): string | null {
-  return joinLibrarySeries(item.absLibraryName, item.absSeriesName)
+  const parts: string[] = []
+  if (item.absLibraryName) parts.push(`ABS library: ${item.absLibraryName}`)
+  if (item.absSeriesName) parts.push(item.absSeriesName)
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 function bookMetaLine(item: AudiobookshelfBookState): string | null {
@@ -286,19 +289,15 @@ async function handleNextPage(): Promise<void> {
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">
               <p class="truncate text-sm font-medium">{{ item.absTitle }}</p>
+              <span data-testid="abs-pill" class="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-primary">ABS</span>
               <span v-if="item.syncExcluded" class="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Excluded</span>
             </div>
             <p class="mt-0.5 truncate text-xs text-muted-foreground">{{ item.absAuthorName ?? 'Unknown Audiobookshelf author' }}</p>
             <p v-if="absMetaLine(item)" data-testid="abs-item-meta" class="mt-0.5 truncate text-xs text-muted-foreground">
               {{ absMetaLine(item) }}
             </p>
-            <p
-              v-if="item.absPath"
-              data-testid="abs-item-path"
-              :title="item.absPath"
-              class="mt-0.5 break-all font-mono text-[11px] text-muted-foreground"
-            >
-              {{ item.absPath }}
+            <p v-if="item.absPath" data-testid="abs-item-path" :title="item.absPath" class="mt-0.5 break-all text-[11px] text-muted-foreground">
+              ABS path: <span class="font-mono">{{ item.absPath }}</span>
             </p>
           </div>
           <div v-if="actionId === item.absLibraryItemId" class="flex shrink-0 items-center text-muted-foreground">
@@ -307,7 +306,7 @@ async function handleNextPage(): Promise<void> {
         </div>
 
         <div v-if="item.bookId" class="rounded-md border border-border bg-muted/30 px-3 py-2">
-          <p class="text-xs text-muted-foreground">BookOrbit match</p>
+          <p class="text-xs text-muted-foreground">Matched BookOrbit book</p>
           <p class="mt-0.5 text-sm">{{ item.bookTitle ?? 'Untitled' }}</p>
           <p class="text-xs text-muted-foreground">
             {{ item.bookAuthorName ?? 'Unknown author' }}
