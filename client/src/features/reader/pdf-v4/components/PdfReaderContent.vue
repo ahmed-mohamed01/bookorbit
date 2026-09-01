@@ -17,13 +17,14 @@ import { useFullscreen } from '../../shared/composables/useFullscreen'
 import PdfDocumentViewport from './PdfDocumentViewport.vue'
 import PdfPasswordPrompt from './PdfPasswordPrompt.vue'
 import PdfReaderSettingsPanel from './PdfReaderSettingsPanel.vue'
-import PdfReaderSidebar, { type PdfSidebarTab } from './PdfReaderSidebar.vue'
+import PdfReaderSidebar from './PdfReaderSidebar.vue'
 import PdfReaderToolbar from './PdfReaderToolbar.vue'
 import { fromRotation, safeExternalPdfUrl } from '../pdf-viewer-utils'
 import { usePdfFullscreenChrome } from '../composables/usePdfFullscreenChrome'
 import { usePdfHighlights } from '../composables/usePdfHighlights'
 import { usePdfPagination } from '../composables/usePdfPagination'
 import { usePdfResponsiveSpread } from '../composables/usePdfResponsiveSpread'
+import { usePdfSidebarLayout, type PdfSidebarTab } from '../composables/usePdfSidebarLayout'
 import NoteDialog from '../../shared/components/NoteDialog.vue'
 import PdfSelectionPopup from './PdfSelectionPopup.vue'
 
@@ -56,8 +57,7 @@ const { provides: selectionCapability } = useSelectionCapability()
 const { provides: annotationCapability } = useAnnotationCapability()
 const { isFullscreen, isFullscreenSupported, toggleFullscreen } = useFullscreen()
 
-const sidebarOpen = ref(false)
-const sidebarTab = ref<PdfSidebarTab>('thumbnails')
+const sidebar = usePdfSidebarLayout()
 const settingsOpen = ref(false)
 const pendingExternalUrl = ref<URL | null>(null)
 const restoredInitialPage = ref(false)
@@ -75,9 +75,7 @@ const currentZoomMode = computed<PdfReaderSettings['zoomMode']>(() => {
 })
 const currentRotation = computed(() => fromRotation(rotation.value))
 const externalHost = computed(() => pendingExternalUrl.value?.hostname ?? '')
-const searchOpen = computed(() => sidebarOpen.value && sidebarTab.value === 'search')
-const highlightsOpen = computed(() => sidebarOpen.value && sidebarTab.value === 'highlights')
-const hasOpenUi = computed(() => sidebarOpen.value || settingsOpen.value || pendingExternalUrl.value !== null)
+const hasOpenUi = computed(() => sidebar.open.value || settingsOpen.value || pendingExternalUrl.value !== null)
 const {
   pinned: headerPinned,
   visible: headerVisible,
@@ -121,38 +119,19 @@ function handleZoomIn() {
 }
 
 function handleToggleSidebar() {
-  if (sidebarOpen.value && sidebarTab.value !== 'search') {
-    sidebarOpen.value = false
-    return
-  }
-  sidebarTab.value = 'thumbnails'
-  sidebarOpen.value = true
-}
-
-function handleToggleSearch() {
-  if (sidebarOpen.value && sidebarTab.value === 'search') {
-    sidebarOpen.value = false
-    return
-  }
-  sidebarTab.value = 'search'
-  sidebarOpen.value = true
-}
-
-function handleToggleHighlights() {
-  if (sidebarOpen.value && sidebarTab.value === 'highlights') {
-    sidebarOpen.value = false
-    return
-  }
-  sidebarTab.value = 'highlights'
-  sidebarOpen.value = true
+  sidebar.setOpen(!sidebar.open.value)
 }
 
 function handleSidebarClose() {
-  sidebarOpen.value = false
+  sidebar.close()
 }
 
 function handleSidebarTab(tab: PdfSidebarTab) {
-  sidebarTab.value = tab
+  sidebar.selectTab(tab)
+}
+
+function handleSidebarWidth(width: number) {
+  sidebar.setWidth(width)
 }
 
 function handleTogglePan() {
@@ -197,7 +176,7 @@ function handleHighlightDismiss() {
 
 function handleNavigateHighlight(annotation: AnnotationItem) {
   highlights.navigateTo(annotation)
-  if (window.innerWidth < 768) sidebarOpen.value = false
+  if (sidebar.layout.value === 'sheet') sidebar.close()
 }
 
 function handleDeleteHighlight(id: number) {
@@ -284,7 +263,7 @@ function handleKeydown(event: KeyboardEvent) {
 
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
     event.preventDefault()
-    handleToggleSearch()
+    sidebar.selectTab('search')
     return
   }
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c' && !editing) {
@@ -295,7 +274,7 @@ function handleKeydown(event: KeyboardEvent) {
 
   if (event.key === 'Escape') {
     if (pendingExternalUrl.value) handleCancelExternalLink()
-    else if (sidebarOpen.value) handleSidebarClose()
+    else if (sidebar.open.value) handleSidebarClose()
     return
   }
   if (event.key === 'ArrowLeft' || event.key === 'PageUp') {
@@ -430,9 +409,8 @@ onUnmounted(() => {
       :current-page-end="pageRange.end"
       :total-pages="scrollState.totalPages"
       :zoom-percent="zoomPercent"
-      :sidebar-open="sidebarOpen"
-      :search-open="searchOpen"
-      :highlights-open="highlightsOpen"
+      :sidebar-open="sidebar.open.value"
+      :show-sidebar-toggle="sidebar.layout.value === 'sheet'"
       :settings-open="settingsOpen"
       :pan-active="isPanning"
       :fullscreen="isFullscreen"
@@ -446,8 +424,6 @@ onUnmounted(() => {
       @zoom-out="handleZoomOut"
       @zoom-in="handleZoomIn"
       @toggle-sidebar="handleToggleSidebar"
-      @toggle-search="handleToggleSearch"
-      @toggle-highlights="handleToggleHighlights"
       @toggle-pan="handleTogglePan"
       @select-tool="handleSelectTool"
       @toggle-fullscreen="toggleFullscreen"
@@ -474,10 +450,11 @@ onUnmounted(() => {
 
     <div class="relative flex min-h-0 flex-1 overflow-hidden">
       <PdfReaderSidebar
-        v-if="sidebarOpen"
         :document-id="props.documentId"
-        :active-tab="sidebarTab"
-        :header-visible="headerVisible"
+        :active-tab="sidebar.activeTab.value"
+        :open="sidebar.open.value"
+        :layout="sidebar.layout.value"
+        :width="sidebar.width.value"
         :annotations="highlights.annotations.value"
         :load-error="highlights.loadError.value"
         :loading="highlights.loading.value"
@@ -485,6 +462,7 @@ onUnmounted(() => {
         :has-more="highlights.hasMore.value"
         @close="handleSidebarClose"
         @update:active-tab="handleSidebarTab"
+        @update:width="handleSidebarWidth"
         @navigate-highlight="handleNavigateHighlight"
         @delete-highlight="handleDeleteHighlight"
         @retry-highlights="handleRetryHighlights"

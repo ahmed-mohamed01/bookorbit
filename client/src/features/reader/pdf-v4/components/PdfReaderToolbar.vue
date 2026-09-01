@@ -4,7 +4,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Hand,
-  Highlighter,
   Maximize,
   Minimize,
   Minus,
@@ -14,7 +13,6 @@ import {
   Pin,
   PinOff,
   Plus,
-  Search,
   Settings,
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
@@ -27,8 +25,7 @@ const props = defineProps<{
   totalPages: number
   zoomPercent: number
   sidebarOpen: boolean
-  searchOpen: boolean
-  highlightsOpen: boolean
+  showSidebarToggle: boolean
   settingsOpen: boolean
   panActive: boolean
   fullscreen: boolean
@@ -47,8 +44,6 @@ const emit = defineEmits<{
   zoomOut: []
   zoomIn: []
   toggleSidebar: []
-  toggleSearch: []
-  toggleHighlights: []
   togglePan: []
   selectTool: []
   toggleFullscreen: []
@@ -92,13 +87,6 @@ function handleZoomIn() {
 function handleToggleSidebar() {
   emit('toggleSidebar')
 }
-function handleToggleSearch() {
-  emit('toggleSearch')
-}
-
-function handleToggleHighlights() {
-  emit('toggleHighlights')
-}
 
 function handleTogglePan() {
   emit('togglePan')
@@ -137,49 +125,24 @@ function handleStartReading() {
         <TooltipContent>{{ t('reader.header.goBack') }}</TooltipContent>
       </Tooltip>
 
-      <div class="viewer-sep" />
+      <template v-if="props.showSidebarToggle">
+        <div class="viewer-sep" />
 
-      <Tooltip>
-        <TooltipTrigger as-child>
-          <button
-            class="viewer-btn"
-            :class="props.sidebarOpen ? '!bg-muted !text-foreground' : ''"
-            :aria-label="t('reader.pdf.toolbar.navigation')"
-            @click="handleToggleSidebar"
-          >
-            <PanelLeft :size="18" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>{{ t('reader.pdf.toolbar.navigation') }}</TooltipContent>
-      </Tooltip>
-
-      <Tooltip>
-        <TooltipTrigger as-child>
-          <button
-            class="viewer-btn hidden md:flex"
-            :class="props.searchOpen ? '!bg-muted !text-foreground' : ''"
-            :aria-label="t('reader.pdf.toolbar.search')"
-            @click="handleToggleSearch"
-          >
-            <Search :size="17" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>{{ t('reader.pdf.toolbar.search') }}</TooltipContent>
-      </Tooltip>
-
-      <Tooltip>
-        <TooltipTrigger as-child>
-          <button
-            class="viewer-btn"
-            :class="props.highlightsOpen ? '!bg-muted !text-foreground' : ''"
-            :aria-label="t('reader.sidebar.tabs.highlights')"
-            @click="handleToggleHighlights"
-          >
-            <Highlighter :size="17" />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>{{ t('reader.sidebar.tabs.highlights') }}</TooltipContent>
-      </Tooltip>
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <button
+              class="viewer-btn"
+              :class="props.sidebarOpen ? '!bg-muted !text-foreground' : ''"
+              :aria-label="t('reader.pdf.toolbar.navigation')"
+              :aria-expanded="props.sidebarOpen"
+              @click="handleToggleSidebar"
+            >
+              <PanelLeft :size="18" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{{ t('reader.pdf.toolbar.navigation') }}</TooltipContent>
+        </Tooltip>
+      </template>
     </div>
 
     <div class="mx-auto flex min-w-0 items-center gap-1 sm:absolute sm:inset-x-0 sm:pointer-events-none sm:justify-center">
@@ -304,9 +267,6 @@ function handleStartReading() {
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" side="bottom" :side-offset="8" class="w-56 border-border bg-card p-1.5 shadow-xl">
-          <button class="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-muted" @click="handleToggleSearch">
-            <Search :size="15" /> {{ t('reader.pdf.toolbar.searchShort') }}
-          </button>
           <button
             class="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs hover:bg-muted"
             :class="!props.panActive ? 'bg-muted text-foreground' : ''"

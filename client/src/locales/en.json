@@ -1932,7 +1932,6 @@
         "wordSpacingHint": "Space between words. Book default preserves the publisher's spacing.",
         "textIndent": "First-line indent",
         "textIndentHint": "Indent at the start of ordinary paragraphs. Book default preserves the publisher's indentation.",
-        "bookDefault": "Book default",
         "custom": "Custom",
         "emValue": "{value} em",
         "justify": "Justify text",
@@ -8641,12 +8640,17 @@
         "searchPrompt": "Type a term to search this PDF.",
         "searchTooShort": "Enter at least {min} characters to search this PDF.",
         "noSearchResults": "No searchable text matched your query.",
-        "page": "Page {page}"
+        "page": "Page {page}",
+        "filterOutline": "Filter outline",
+        "noOutlineMatch": "No outline entries match your filter.",
+        "loadingOutline": "Loading outline",
+        "expandSection": "Expand {title}",
+        "collapseSection": "Collapse {title}",
+        "jumpToPage": "Jump to page",
+        "resizePanel": "Resize navigation panel"
       },
       "toolbar": {
         "navigation": "Document navigation",
-        "search": "Search document",
-        "searchShort": "Search",
         "previousPage": "Previous page",
         "currentPage": "Current page",
         "nextPage": "Next page",
@@ -8957,6 +8961,10 @@
       "playerSettings": "Player settings",
       "skipBack": "Skip back",
       "skipForward": "Skip forward"
+    },
+    "sheet": {
+      "expand": "Expand panel",
+      "collapse": "Collapse panel"
     }
   },
   "scanner": {
