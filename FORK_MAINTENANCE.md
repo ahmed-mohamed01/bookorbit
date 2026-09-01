@@ -275,7 +275,10 @@ lag visible.
 
 The fork carries a **second** overlay beside Audiobookshelf: **ebook <-> audiobook cross-format
 alignment**. A Whisper build samples the audiobook, matches transcripts to EPUB spine text, and stores
-anchors; a progress-sync listener projects progress across a linked pair, and an open-time resolver
+anchors; a progress-sync listener projects progress across a linked pair - gated by a movement
+classifier that only trusts an actively-read side (sudden seeks are quarantined until reading
+continues from them for two minutes) - a one-shot reconcile pulls the ebook status up to a fresher,
+positionally-ahead audiobook when a pair becomes ready, and an open-time resolver
 returns a precise ebook resume point. Upstream has no analogue, so this is maintained here indefinitely
 under the same rules as ABS.
 
@@ -304,11 +307,14 @@ interrupted `building` rows on boot.
 | client `DetailsTab.vue`                                 | `<LinkBookControl>` in the action bar                                                                                         | keep additive (do not relocate upstream buttons)                    |
 | client `ReadingLogTab.vue` / `ReadingAttemptHistory`    | `<ReadingAlignmentControl>` via the generic `#actions` slot                                                                   | clean slot pattern                                                  |
 | client `ReaderView.vue`                                 | open-time `fetchEbookCrossFormatResume` + resume ladder                                                                       | fork-owned logic invoked from the reader open path                  |
+| `book/book.repository.ts`                               | card progress merge reads linked-pair counterpart progress via `book_edition_links` (raw SQL, no module import)               | one query + merge branch in `enrichBookIds`                         |
 | `Dockerfile`                                            | `whisper-builder` stage compiles whisper.cpp `v1.9.1` (CPU-only, static) -> `whisper-cli`; runtime adds `libstdc++`/`libgomp` | isolated stage + one COPY                                           |
 
 **Runtime deps (feature is OFF by default):** `whisper-cli` (bundled) + `ffmpeg` (already present) +
-a GGML model (NOT bundled - mount and set `WHISPER_MODEL`). Enable with `READING_ALIGNMENT_ENABLED=true`;
-`WHISPER_PATH` defaults to the bundled binary; `FFMPEG_PATH` defaults to `ffmpeg`. See `.env.example`.
+a GGML model, downloaded automatically on first build into `<APP_DATA_PATH>/models` (`WhisperModelService`;
+`WHISPER_MODEL` defaults to `base.en`, accepts any whisper.cpp model name or an absolute file path).
+Enable with `READING_ALIGNMENT_ENABLED=true`; `WHISPER_PATH` defaults to the bundled binary;
+`FFMPEG_PATH` defaults to `ffmpeg`. See `.env.example`.
 
 **Plugin removal:** unregister both modules in `app.module.ts`. The app still builds and runs: the
 resolver route 404s and the client falls back to its normal saved-position restore; the progress-sync

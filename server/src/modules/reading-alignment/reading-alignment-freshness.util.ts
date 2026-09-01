@@ -5,3 +5,11 @@ export function isStrictlyNewer(candidate: Date, other: Date | undefined): boole
   if (!other) return true;
   return candidate.getTime() > other.getTime();
 }
+
+// Upper-clamps a device-reported activity time. A client with a broken clock (far future) must never
+// have its timestamp written into newest-wins state, where it would outrank every genuine later
+// update forever. Past timestamps pass through: they lose newest-wins naturally.
+export function clampToPresent(candidate: Date, maxSkewMs: number): Date {
+  const ceiling = Date.now() + maxSkewMs;
+  return candidate.getTime() > ceiling ? new Date(ceiling) : candidate;
+}

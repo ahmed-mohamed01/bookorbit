@@ -14,6 +14,7 @@ import { ReadingAlignmentStatusService } from './reading-alignment-status.servic
 import { ReadingAlignmentSyncService } from './reading-alignment-sync.service';
 import { ReadingAlignmentController } from './reading-alignment.controller';
 import { ReadingAlignmentRepository } from './reading-alignment.repository';
+import { WhisperModelService } from './whisper-model.service';
 import { WhisperService } from './whisper.service';
 
 @Module({
@@ -22,6 +23,7 @@ import { WhisperService } from './whisper.service';
   providers: [
     ReadingAlignmentRepository,
     ReadingAlignmentSchemaBootstrapService,
+    WhisperModelService,
     WhisperService,
     ReadingAlignmentPairService,
     ReadingAlignmentBuildService,

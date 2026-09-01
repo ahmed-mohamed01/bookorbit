@@ -7,6 +7,7 @@ import { Permission, type BookDetail } from '@bookorbit/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { getBookLinkModality, useEditionLink, type EditionLinkCandidate } from '@/features/book/composables/useEditionLink'
+import { useReadingAlignment } from '@/features/book/composables/useReadingAlignment'
 
 const props = withDefaults(defineProps<{ book: BookDetail; triggerClass?: string }>(), {
   triggerClass: 'flex flex-1 items-center justify-center h-9 rounded-md border border-input bg-background text-sm hover:bg-muted transition-colors',
@@ -25,6 +26,8 @@ const counterpartLabel = computed(() =>
   counterpartIsAudio.value ? t('book.detail.editionLink.counterpartAudiobook') : t('book.detail.editionLink.counterpartEbook'),
 )
 const counterpartIcon = computed(() => (counterpartIsAudio.value ? Headphones : BookOpen))
+
+const alignment = useReadingAlignment()
 
 const { hasPermission } = usePermissions()
 const canEditMetadata = computed(() => hasPermission(Permission.LibraryEditMetadata))
@@ -49,7 +52,22 @@ const {
 // The button already carries the action, so its hover title carries the *reason*: an unlinked book
 // gets the modality-specific "link the counterpart to enable position alignment" prompt; a linked one
 // just says it manages the existing link.
+const alignmentBusy = computed(() => alignment.mutating.value || alignment.status.value === 'building' || alignment.status.value === 'pending')
+
+// The trigger icon narrates the match lifecycle: blue while the alignment is processing, green once
+// the pair is linked and aligned, the default linked accent for a link whose alignment isn't built.
+const iconClass = computed(() => {
+  if (!link.value) return ''
+  if (alignmentBusy.value) return 'text-sky-500'
+  if (alignment.status.value === 'ready') return 'text-emerald-500'
+  if (alignment.status.value === 'failed') return 'text-destructive'
+  return 'text-primary'
+})
+
 const linkTooltip = computed(() => {
+  if (link.value && alignmentBusy.value) return t('book.detail.editionLink.tooltipAligning')
+  if (link.value && alignment.status.value === 'ready') return t('book.detail.editionLink.tooltipAligned')
+  if (link.value && alignment.status.value === 'failed') return t('book.detail.editionLink.tooltipAlignFailed')
   if (link.value) return t('book.detail.editionLink.tooltipLinked')
   return modality.value === 'audio' ? t('book.detail.editionLink.tooltipNeedsText') : t('book.detail.editionLink.tooltipNeedsAudio')
 })
@@ -57,8 +75,13 @@ const linkTooltip = computed(() => {
 // Load the link state up front (only for a link-eligible book) so the trigger's hover title reflects
 // whether a link already exists, without the user having to open the popover first. One cheap fetch
 // per book-detail view; the popover refreshes it on open.
+function refreshAlignmentStatus() {
+  if (link.value) void alignment.fetchStatus(props.book.id)
+}
+
 onMounted(() => {
-  if (isEligible.value) void loadForBook()
+  if (!isEligible.value) return
+  void loadForBook().then(refreshAlignmentStatus)
 })
 
 const open = ref(false)
@@ -76,6 +99,7 @@ async function handleOpenChange(next: boolean) {
   resetSearch()
 
   await loadForBook()
+  refreshAlignmentStatus()
   if (canEditMetadata.value && !link.value && !proposed.value) {
     searchOpen.value = true
     hasSearched.value = true
@@ -103,6 +127,9 @@ async function confirmLink(counterpartId: number) {
     toast.success(t('book.detail.editionLink.linkedSuccess'))
     searchOpen.value = false
     query.value = ''
+    // Matching flows straight into alignment: kick the build off so the icon can narrate
+    // blue (processing) -> green (linked and aligned) without a separate manual step.
+    void alignment.build(props.book.id)
   } else {
     toast.error(error.value ?? t('book.detail.editionLink.linkFailed'))
   }
@@ -130,7 +157,7 @@ async function handleUnlinkClick() {
   <Popover v-if="isEligible" :open="open" @update:open="handleOpenChange">
     <PopoverTrigger as-child>
       <button type="button" :class="triggerClass" :title="linkTooltip" :aria-label="t('book.detail.editionLink.trigger')">
-        <Link2 class="size-3.5" :class="{ 'text-primary': link }" />
+        <Link2 class="size-3.5" :class="iconClass" />
       </button>
     </PopoverTrigger>
     <PopoverContent align="end" class="w-80 p-3">

@@ -8,6 +8,8 @@ import type { ConfigType } from '@nestjs/config';
 
 import { appConfig } from '../../config/config';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { describeError } from './reading-alignment-error.util';
+import { WhisperModelService } from './whisper-model.service';
 
 const TRANSCRIBE_EVENT = 'reading_alignment.transcribe';
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -21,15 +23,18 @@ const TIMEOUT_PER_WINDOW_SECOND_MS = 4_000;
 export class WhisperService {
   private readonly logger = new Logger(WhisperService.name);
 
-  constructor(@Inject(appConfig.KEY) private readonly config: ConfigType<typeof appConfig>) {}
+  constructor(
+    @Inject(appConfig.KEY) private readonly config: ConfigType<typeof appConfig>,
+    private readonly models: WhisperModelService,
+  ) {}
 
   isAvailable(): boolean {
-    return Boolean(this.config.whisperPath && this.config.whisperModel);
+    return Boolean(this.config.whisperPath);
   }
 
   async transcribeWindow(audioFilePath: string, offsetSeconds: number, durationSeconds: number): Promise<string> {
     if (!this.isAvailable()) {
-      throw new Error('Whisper is not configured - set WHISPER_PATH and WHISPER_MODEL to enable transcription');
+      throw new Error('Whisper is not configured - set WHISPER_PATH to enable transcription');
     }
 
     const startedAt = Date.now();
@@ -42,6 +47,7 @@ export class WhisperService {
     const timeoutMs = Math.max(MIN_TIMEOUT_MS, Math.ceil(durationSeconds) * TIMEOUT_PER_WINDOW_SECOND_MS);
 
     try {
+      const modelPath = await this.models.ensureModelReady();
       await this.runProcess(
         this.config.ffmpegPath,
         ['-nostdin', '-ss', String(offsetSeconds), '-t', String(durationSeconds), '-i', audioFilePath, '-ac', '1', '-ar', '16000', '-y', clipPath],
@@ -49,12 +55,7 @@ export class WhisperService {
         'ffmpeg',
       );
 
-      const output = await this.runProcess(
-        this.config.whisperPath as string,
-        ['-m', this.config.whisperModel as string, '-f', clipPath, '-nt'],
-        timeoutMs,
-        'whisper',
-      );
+      const output = await this.runProcess(this.config.whisperPath as string, ['-m', modelPath, '-f', clipPath, '-nt'], timeoutMs, 'whisper');
       const transcript = output.trim();
 
       const durationMs = Date.now() - startedAt;
@@ -64,8 +65,7 @@ export class WhisperService {
       return transcript;
     } catch (error) {
       const durationMs = Date.now() - startedAt;
-      const errorClass = error instanceof Error ? error.constructor.name : 'Error';
-      const message = error instanceof Error ? error.message : String(error);
+      const { errorClass, message } = describeError(error);
       this.logger.error(
         `[${TRANSCRIBE_EVENT}] [fail] offsetSeconds=${offsetSeconds} durationSeconds=${durationSeconds} durationMs=${durationMs} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - transcription failed`,
       );

@@ -42,6 +42,12 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
   } as never;
 }
 
+function makeModels() {
+  return {
+    ensureModelReady: vi.fn().mockResolvedValue('/models/ggml-base.en.bin'),
+  } as never;
+}
+
 function queueChildren(...children: FakeChild[]): void {
   for (const child of children) {
     spawnMock.mockImplementationOnce(() => child as never);
@@ -66,35 +72,38 @@ describe('WhisperService', () => {
 
   describe('isAvailable', () => {
     it('is true when both whisper path and model are configured', () => {
-      const service = new WhisperService(makeConfig());
+      const service = new WhisperService(makeConfig(), makeModels());
       expect(service.isAvailable()).toBe(true);
     });
 
     it('is false when the whisper path is missing', () => {
-      const service = new WhisperService(makeConfig({ whisperPath: undefined }));
+      const service = new WhisperService(makeConfig({ whisperPath: undefined }), makeModels());
       expect(service.isAvailable()).toBe(false);
     });
 
-    it('is false when the whisper model is missing', () => {
-      const service = new WhisperService(makeConfig({ whisperModel: undefined }));
-      expect(service.isAvailable()).toBe(false);
+    it('stays true without a configured model - the model service resolves or downloads it', () => {
+      const service = new WhisperService(makeConfig({ whisperModel: undefined }), makeModels());
+      expect(service.isAvailable()).toBe(true);
     });
   });
 
   describe('transcribeWindow', () => {
     it('throws a clear error and never spawns when whisper is unavailable', async () => {
-      const service = new WhisperService(makeConfig({ whisperPath: undefined }));
+      const service = new WhisperService(makeConfig({ whisperPath: undefined }), makeModels());
       await expect(service.transcribeWindow('/audio/book.m4b', 120, 15)).rejects.toThrow(/not configured/i);
       expect(spawnMock).not.toHaveBeenCalled();
     });
 
     it('decodes only the window and returns the trimmed transcript', async () => {
-      const service = new WhisperService(makeConfig());
+      const service = new WhisperService(makeConfig(), makeModels());
       const ffmpeg = makeChild();
       const whisper = makeChild();
       queueChildren(ffmpeg, whisper);
 
       const promise = service.transcribeWindow('/audio/book.m4b', 120, 15);
+      // transcribeWindow awaits the model service before spawning ffmpeg - flush that microtask
+      // so the fake ffmpeg child is live before events are emitted at it.
+      await Promise.resolve();
 
       ffmpeg.emit('close', 0);
       await Promise.resolve();
@@ -125,12 +134,13 @@ describe('WhisperService', () => {
     });
 
     it('throws and logs a fail entry when whisper exits non-zero', async () => {
-      const service = new WhisperService(makeConfig());
+      const service = new WhisperService(makeConfig(), makeModels());
       const ffmpeg = makeChild();
       const whisper = makeChild();
       queueChildren(ffmpeg, whisper);
 
       const promise = service.transcribeWindow('/audio/book.m4b', 300, 15);
+      await Promise.resolve();
 
       ffmpeg.emit('close', 0);
       await Promise.resolve();
@@ -145,11 +155,12 @@ describe('WhisperService', () => {
     });
 
     it('throws when ffmpeg fails to spawn', async () => {
-      const service = new WhisperService(makeConfig());
+      const service = new WhisperService(makeConfig(), makeModels());
       const ffmpeg = makeChild();
       queueChildren(ffmpeg);
 
       const promise = service.transcribeWindow('/audio/book.m4b', 0, 15);
+      await Promise.resolve();
       ffmpeg.emit('error', new Error('ENOENT'));
 
       await expect(promise).rejects.toThrow(/Failed to spawn ffmpeg/);
@@ -160,13 +171,14 @@ describe('WhisperService', () => {
 
     it('times out, kills both processes, and throws', async () => {
       vi.useFakeTimers();
-      const service = new WhisperService(makeConfig());
+      const service = new WhisperService(makeConfig(), makeModels());
       const ffmpeg = makeChild();
       const whisper = makeChild();
       queueChildren(ffmpeg, whisper);
 
       const promise = service.transcribeWindow('/audio/book.m4b', 60, 15);
       const assertion = expect(promise).rejects.toThrow(/timed out/);
+      await Promise.resolve();
 
       ffmpeg.emit('close', 0);
       await Promise.resolve();

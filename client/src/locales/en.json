@@ -5305,7 +5305,10 @@
         "linkFailed": "Failed to link book.",
         "unlinkedSuccess": "Books unlinked.",
         "unlinkFailed": "Failed to unlink book.",
-        "searchFailed": "Couldn't search for a match. Try again."
+        "searchFailed": "Couldn't search for a match. Try again.",
+        "tooltipAligning": "Linked - aligning positions...",
+        "tooltipAligned": "Linked - positions aligned.",
+        "tooltipAlignFailed": "Linked - alignment failed. Retry from the Reading Log tab."
       },
       "readingAlignment": {
         "title": "Position alignment",

@@ -106,8 +106,16 @@ function createService(overrides: Overrides = {}) {
       .mockResolvedValue(overrides.pair === undefined ? { textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID } : overrides.pair),
   };
 
-  const service = new ReadingAlignmentBuildService(config as never, repo as never, whisper as never, epub as never, pairService as never);
-  return { service, repo, whisper, epub, pairService, config };
+  const syncService = { reconcilePairOnReady: vi.fn().mockResolvedValue(undefined) };
+  const service = new ReadingAlignmentBuildService(
+    config as never,
+    repo as never,
+    whisper as never,
+    epub as never,
+    pairService as never,
+    syncService as never,
+  );
+  return { service, repo, whisper, epub, pairService, config, syncService };
 }
 
 const USER = { id: 42, isSuperuser: false } as unknown as RequestUser;
@@ -393,5 +401,62 @@ describe('ReadingAlignmentBuildService', () => {
     );
     expect(whisper.transcribeWindow).not.toHaveBeenCalled();
     expect(repo.setAlignmentStatus).not.toHaveBeenCalled();
+  });
+
+  it('runs the one-shot reconcile after a build completes ready', async () => {
+    const { service, syncService } = createService();
+
+    await service.buildAlignment(TEXT_BOOK_ID, USER);
+
+    expect(syncService.reconcilePairOnReady).toHaveBeenCalledWith({ textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID }, USER.id);
+  });
+
+  it('still reconciles when the build is skipped as up to date (relink of a built pair)', async () => {
+    const existing = {
+      id: 1,
+      status: 'ready',
+      audioContentHash: AUDIO_HASH,
+      epubContentHash: EPUB_HASH,
+      samplesDone: 5,
+      anchorCount: 3,
+    };
+    const { service, syncService } = createService({ existing });
+
+    await service.buildAlignment(TEXT_BOOK_ID, USER);
+
+    expect(syncService.reconcilePairOnReady).toHaveBeenCalledWith({ textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID }, USER.id);
+  });
+
+  it('does not reconcile when the build ends unalignable', async () => {
+    const { service, syncService } = createService({ transcripts: {} });
+
+    await service.buildAlignment(TEXT_BOOK_ID, USER);
+
+    expect(syncService.reconcilePairOnReady).not.toHaveBeenCalled();
+  });
+
+  it('aborts a resumed build after sustained consecutive transcription failures', async () => {
+    const audioFiles = [{ fileId: 9, absolutePath: '/books/x.m4b', durationSeconds: 400 }];
+    const existing = {
+      id: 1,
+      status: 'failed',
+      audioContentHash: hash(audioFiles.map((f) => [f.fileId, f.absolutePath, f.durationSeconds])),
+      epubContentHash: EPUB_HASH,
+      samplesDone: 2,
+      anchorCount: 1,
+    };
+    const { service, repo, whisper } = createService({
+      audioFiles,
+      existing,
+      countAnchors: 1,
+      maxAnchorSpineIndex: 0,
+      transcribeImpl: () => Promise.reject(new Error('model unreachable')),
+    });
+
+    await service.buildAlignment(TEXT_BOOK_ID, USER);
+
+    // Existing anchors defeat the zero-anchor early abort, but the hard ceiling still stops the burn.
+    expect(whisper.transcribeWindow).toHaveBeenCalledTimes(10);
+    expect(repo.setAlignmentStatus).toHaveBeenCalledWith(1, 'failed', expect.objectContaining({ anchorCount: 1 }));
   });
 });

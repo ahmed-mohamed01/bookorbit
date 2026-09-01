@@ -11,7 +11,9 @@ import { BookService } from '../book/book.service';
 import { LibraryService } from '../library/library.service';
 import { UserService } from '../user/user.service';
 import { absoluteSecondsToFilePosition, buildAudioTimeline, filePositionToAbsoluteSeconds } from './reading-alignment-audio-timeline.util';
-import { isStrictlyNewer } from './reading-alignment-freshness.util';
+import { clampToPresent, isStrictlyNewer } from './reading-alignment-freshness.util';
+import { describeError } from './reading-alignment-error.util';
+import { classifyMovement, type MovementState } from './reading-alignment-movement.util';
 import type { ReadingAlignmentPair } from './reading-alignment-pair.service';
 import { ReadingAlignmentPairService } from './reading-alignment-pair.service';
 import type { Anchor } from './reading-alignment-resolver.util';
@@ -21,6 +23,16 @@ import { ReadingAlignmentRepository } from './reading-alignment.repository';
 import type { AudiobookAlignmentAnchor } from './schema/reading-alignment.schema';
 
 const SYNC_EVENT = 'reading_alignment.progress_sync';
+const RECONCILE_EVENT = 'reading_alignment.reconcile';
+// Bounds the in-memory movement-state map (one entry per user+pair+side with recent activity).
+const MAX_MOVEMENT_STATES = 5000;
+// Ceiling on how far ahead of the server clock a device-reported activity time may claim to be.
+const MAX_OCCURRED_AT_SKEW_MS = 5 * 60_000;
+// Match-time reconcile refuses to force-complete an ebook the user actually read this recently while
+// still mid-book: audiobook_progress.updatedAt is a server write time, so a fresh import can fake
+// recency, and active reading is the ground truth.
+const RECENT_EBOOK_ACTIVITY_MS = 7 * 24 * 3_600_000;
+const ESTABLISHED_EBOOK_PERCENTAGE = 90;
 const MIN_ANCHORS = 2;
 const DEFAULT_FINISH_THRESHOLD = 98;
 const MAX_PERCENTAGE = 100;
@@ -37,6 +49,7 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
   private readonly onProgressChanged = (payload: BookProgressChangedPayload): void => {
     void this.handleProgressChanged(payload);
   };
+  private readonly movement = new Map<string, MovementState>();
 
   constructor(
     private readonly achievementEvents: AchievementEventsService,
@@ -61,8 +74,7 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     try {
       await this.project(payload);
     } catch (error: unknown) {
-      const errorClass = error instanceof Error ? error.constructor.name : 'Error';
-      const message = error instanceof Error ? error.message : String(error);
+      const { errorClass, message } = describeError(error);
       this.logger.warn(
         `[${SYNC_EVENT}] [fail] userId=${payload.userId} bookId=${payload.bookId} source=${payload.source} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - progress sync failed`,
       );
@@ -97,6 +109,102 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     } else {
       await this.projectAudioToEbook(payload, pair, ready, anchors);
     }
+  }
+
+  // One-shot reconcile for when a pair first becomes alignable (link created + alignment ready). The
+  // audiobook is the preferred side, but it only pulls the ebook's reading state forward when it is
+  // BOTH the more recently active side AND positionally ahead; an ebook with newer activity is left
+  // untouched until real listening resumes. Never writes a position - the ebook keeps its own CFI and
+  // the open-time resolver provides the precise jump.
+  async reconcilePairOnReady(pair: ReadingAlignmentPair, userId: number): Promise<void> {
+    const startedAt = Date.now();
+    try {
+      if (pair.textBookId === pair.audioBookId) return;
+
+      this.logger.log(
+        `[${RECONCILE_EVENT}] [start] userId=${userId} textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} - reconcile started`,
+      );
+
+      const ready = await this.repo.getReadyAlignmentWithAnchors(pair.textBookId, pair.audioBookId);
+      if (!ready || ready.alignment.ebookFileId == null) return this.logReconcileEnd(pair, userId, startedAt, 'not_ready');
+      const anchors = usableAnchors(ready.anchors);
+      if (anchors.length < MIN_ANCHORS) return this.logReconcileEnd(pair, userId, startedAt, 'too_few_anchors');
+
+      const [audioProgress, ebookProgress] = await Promise.all([
+        this.repo.getAudiobookProgress(userId, pair.audioBookId),
+        this.repo.getReadingProgress(ready.alignment.ebookFileId, userId),
+      ]);
+      if (!audioProgress) return this.logReconcileEnd(pair, userId, startedAt, 'no_audio_progress');
+      // A 0% row (e.g. an untouched ABS import) must not clamp to the first anchor and flip an
+      // unread ebook to "reading".
+      if (audioProgress.percentage <= 0) return this.logReconcileEnd(pair, userId, startedAt, 'audio_not_started');
+      // KOReader deliberately freezes reading_progress.updatedAt, so ebook recency must come from
+      // lastReadAt - the honest last-actually-read column - with updatedAt as a safety fallback.
+      const ebookActiveAt = ebookProgress ? (ebookProgress.lastReadAt ?? ebookProgress.updatedAt) : undefined;
+      if (ebookActiveAt && !isStrictlyNewer(audioProgress.updatedAt, ebookActiveAt)) {
+        return this.logReconcileEnd(pair, userId, startedAt, 'ebook_newer');
+      }
+
+      const timeline = buildAudioTimeline(await this.repo.resolveAudioPlayOrder(pair.audioBookId));
+      if (timeline.incomplete || timeline.entries.length === 0) return this.logReconcileEnd(pair, userId, startedAt, 'incomplete_timeline');
+
+      const absoluteSeconds = filePositionToAbsoluteSeconds(timeline, audioProgress.currentFileId, audioProgress.positionSeconds);
+      const resolution = audioSecondsToEbook(anchors, absoluteSeconds);
+      if (!resolution) return this.logReconcileEnd(pair, userId, startedAt, 'unresolvable_position');
+
+      // A finished audiobook counts as fully ahead even when its last anchor maps short of 100% -
+      // but only when its source actually marked it read; a bare percentage can be a parked scrub.
+      const finished = (await this.isFinished(pair.audioBookId, audioProgress.percentage)) && (await this.isMarkedRead(userId, pair.audioBookId));
+      const projectedPercentage = finished ? MAX_PERCENTAGE : resolution.percentage;
+      if (projectedPercentage <= (ebookProgress?.percentage ?? 0)) {
+        return this.logReconcileEnd(pair, userId, startedAt, 'audio_not_ahead');
+      }
+
+      if (
+        projectedPercentage >= MAX_PERCENTAGE &&
+        ebookProgress &&
+        ebookProgress.percentage < ESTABLISHED_EBOOK_PERCENTAGE &&
+        Date.now() - (ebookProgress.lastReadAt ?? ebookProgress.updatedAt).getTime() < RECENT_EBOOK_ACTIVITY_MS
+      ) {
+        return this.logReconcileEnd(pair, userId, startedAt, 'ebook_recently_active');
+      }
+
+      if (!(await this.userCanAccess(userId, pair.textBookId))) return this.logReconcileEnd(pair, userId, startedAt, 'no_access');
+
+      await this.syncCounterpartStatus(userId, pair.textBookId, pair.audioBookId, audioProgress.percentage, projectedPercentage);
+      this.logReconcileEnd(pair, userId, startedAt, 'ebook_status_updated');
+    } catch (error: unknown) {
+      const { errorClass, message } = describeError(error);
+      this.logger.warn(
+        `[${RECONCILE_EVENT}] [fail] userId=${userId} textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - reconcile failed`,
+      );
+    }
+  }
+
+  private logReconcileEnd(pair: ReadingAlignmentPair, userId: number, startedAt: number, outcome: string): void {
+    this.logger.log(
+      `[${RECONCILE_EVENT}] [end] userId=${userId} textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} durationMs=${Date.now() - startedAt} outcome=${outcome} - reconcile completed`,
+    );
+  }
+
+  // The "actively reading" gate (see reading-alignment-movement.util): classifies the sample AND
+  // records it as the new tracking state. Re-setting the key on every
+  // event keeps the map in access order, so overflow eviction drops the longest-idle entry.
+  private trackMovement(key: string, posSeconds: number, atMs: number): boolean {
+    const decision = classifyMovement(this.movement.get(key), posSeconds, atMs);
+    this.movement.delete(key);
+    if (this.movement.size >= MAX_MOVEMENT_STATES) {
+      const oldest = this.movement.keys().next().value;
+      if (oldest !== undefined) this.movement.delete(oldest);
+    }
+    this.movement.set(key, decision.state);
+    return decision.accept;
+  }
+
+  private logQuarantined(payload: BookProgressChangedPayload, pair: ReadingAlignmentPair, direction: ProjectionDirection, startedAt: number): void {
+    this.logger.log(
+      `[${SYNC_EVENT}] [end] userId=${payload.userId} bookId=${payload.bookId} textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} direction=${direction} durationMs=${Date.now() - startedAt} skipped=jump_quarantined - sudden position jump held until reading continues from it`,
+    );
   }
 
   private async userCanAccess(userId: number, bookId: number): Promise<boolean> {
@@ -145,6 +253,7 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     ready: ReadyAlignmentWithAnchors,
     anchors: Anchor[],
   ): Promise<void> {
+    const startedAt = Date.now();
     const ebookFileId = ready.alignment.ebookFileId;
     if (ebookFileId == null) return;
 
@@ -155,7 +264,8 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     // side's last real update, so a fresher counterpart position is never clobbered. reading_progress
     // .updatedAt is intentionally frozen by some sources (KOReader), so trust the event's real activity
     // time (occurredAt) when present and fall back to the row's timestamp otherwise.
-    const advancedAt = payload.occurredAt ?? ebookProgress.updatedAt;
+    // Clamped: a device clock in the future must not poison newest-wins state (see clampToPresent).
+    const advancedAt = clampToPresent(payload.occurredAt ?? ebookProgress.updatedAt, MAX_OCCURRED_AT_SKEW_MS);
     const audioProgress = await this.repo.getAudiobookProgress(payload.userId, pair.audioBookId);
     if (!isStrictlyNewer(advancedAt, audioProgress?.updatedAt)) return;
 
@@ -169,10 +279,21 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     const audioSeconds = finished ? timeline.totalSeconds : ebookFractionToAudioSeconds(anchors, ebookProgress.percentage / 100);
     if (audioSeconds == null) return;
 
+    if (!this.trackMovement(`${payload.userId}:${pair.audioBookId}:ebook`, audioSeconds, advancedAt.getTime())) {
+      if (!finished || !(await this.isMarkedRead(payload.userId, pair.textBookId))) {
+        return this.logQuarantined(payload, pair, 'ebook_to_audio', startedAt);
+      }
+      // Finished is the one jump honored while unconfirmed: the source has actually marked the book
+      // read (a bare percentage can be a scrub parked near the end), it may never emit another event
+      // to confirm with, and a status-only completion cannot corrupt a position. The position write
+      // below stays gated.
+      await this.syncCounterpartStatus(payload.userId, pair.audioBookId, pair.textBookId, ebookProgress.percentage, MAX_PERCENTAGE);
+      return this.logEnd(payload, pair, 'ebook_to_audio', MAX_PERCENTAGE, startedAt);
+    }
+
     const { fileId, positionSeconds } = absoluteSecondsToFilePosition(timeline, audioSeconds);
     const audioPercentage = finished ? MAX_PERCENTAGE : clampPercentage((audioSeconds / timeline.totalSeconds) * 100);
 
-    const startedAt = Date.now();
     this.logStart(payload, pair, 'ebook_to_audio');
     // The write may be a no-op if a concurrent fresher counterpart write beat it (setWhere guard). Only
     // sync status when the position actually changed, so it never runs off stale data. This projection
@@ -197,6 +318,7 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     ready: ReadyAlignmentWithAnchors,
     anchors: Anchor[],
   ): Promise<void> {
+    const startedAt = Date.now();
     const ebookFileId = ready.alignment.ebookFileId;
     if (ebookFileId == null) return;
 
@@ -205,22 +327,33 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
 
     // audiobook_progress.updatedAt is reliably stamped by every audio writer, so the row time is a
     // sound fallback; occurredAt still wins when a source reports a real activity time.
-    const advancedAt = payload.occurredAt ?? audioProgress.updatedAt;
+    const advancedAt = clampToPresent(payload.occurredAt ?? audioProgress.updatedAt, MAX_OCCURRED_AT_SKEW_MS);
     const ebookProgress = await this.repo.getReadingProgress(ebookFileId, payload.userId);
-    if (!isStrictlyNewer(advancedAt, ebookProgress?.updatedAt)) return;
+    // KOReader freezes reading_progress.updatedAt; lastReadAt carries the real reading recency, so
+    // an actively re-read ebook is never dragged forward by stale audio events.
+    const ebookActiveAt = ebookProgress ? (ebookProgress.lastReadAt ?? ebookProgress.updatedAt) : undefined;
+    if (!isStrictlyNewer(advancedAt, ebookActiveAt)) return;
 
     const timeline = buildAudioTimeline(await this.repo.resolveAudioPlayOrder(pair.audioBookId));
     if (timeline.incomplete || timeline.entries.length === 0) return;
 
+    // A finished audiobook marks the ebook complete at 100% even when anchor coverage stops short.
+    const finished = await this.isFinished(pair.audioBookId, audioProgress.percentage);
     const absoluteSeconds = filePositionToAbsoluteSeconds(timeline, audioProgress.currentFileId, audioProgress.positionSeconds);
+    if (!this.trackMovement(`${payload.userId}:${pair.audioBookId}:audio`, absoluteSeconds, advancedAt.getTime())) {
+      if (!finished || !(await this.isMarkedRead(payload.userId, pair.audioBookId))) {
+        return this.logQuarantined(payload, pair, 'audio_to_ebook', startedAt);
+      }
+      // Finished-and-marked-read skips the gate for this status-only direction (see the twin above).
+      await this.syncCounterpartStatus(payload.userId, pair.textBookId, pair.audioBookId, audioProgress.percentage, MAX_PERCENTAGE);
+      return this.logEnd(payload, pair, 'audio_to_ebook', MAX_PERCENTAGE, startedAt);
+    }
+
     const resolution = audioSecondsToEbook(anchors, absoluteSeconds);
     if (!resolution) return;
 
-    // A finished audiobook marks the ebook complete at 100% even when anchor coverage stops short.
-    const finished = await this.isFinished(pair.audioBookId, audioProgress.percentage);
     const ebookPercentage = finished ? MAX_PERCENTAGE : resolution.percentage;
 
-    const startedAt = Date.now();
     this.logStart(payload, pair, 'audio_to_ebook');
     await this.syncCounterpartStatus(payload.userId, pair.textBookId, pair.audioBookId, audioProgress.percentage, ebookPercentage);
     this.logEnd(payload, pair, 'audio_to_ebook', ebookPercentage, startedAt);
@@ -245,6 +378,13 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     const advancingFinished = await this.isFinished(advancingBookId, advancingPercentage);
     const statusPercentage = advancingFinished ? MAX_PERCENTAGE : counterpartPercentage;
     await this.bookService.autoUpdateReadStatusForProgress(userId, { bookId: counterpartBookId, libraryId: counterpartLibraryId }, statusPercentage);
+  }
+
+  // The finished exception only fires when the advancing book's own source has actually marked it
+  // read - a bare percentage over the threshold can be a scrub parked near the end.
+  private async isMarkedRead(userId: number, bookId: number): Promise<boolean> {
+    const status = await this.repo.getUserBookStatus(userId, bookId);
+    return status?.status === 'read';
   }
 
   private async isFinished(bookId: number, percentage: number): Promise<boolean> {

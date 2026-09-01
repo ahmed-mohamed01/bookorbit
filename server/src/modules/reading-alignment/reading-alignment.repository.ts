@@ -24,7 +24,7 @@ export type ReadyAlignmentWithAnchors = { alignment: AudiobookAlignment; anchors
 
 // Minimal progress projections. Only the fields the resolver compares (freshness)
 // and maps (position) are read; the wide progress rows are never returned whole.
-type ReadingProgressSnapshot = { percentage: number; updatedAt: Date };
+type ReadingProgressSnapshot = { percentage: number; updatedAt: Date; lastReadAt: Date };
 type AudiobookProgressSnapshot = { currentFileId: number; positionSeconds: number; percentage: number; updatedAt: Date };
 
 // An audio content file resolved in play order, carrying both the on-disk path the transcriber needs
@@ -227,9 +227,26 @@ export class ReadingAlignmentRepository {
   // The user's ebook progress for a specific file, projected to just the fields the resolver needs.
   async getReadingProgress(bookFileId: number, userId: number): Promise<ReadingProgressSnapshot | undefined> {
     const [row] = await this.db
-      .select({ percentage: schema.readingProgress.percentage, updatedAt: schema.readingProgress.updatedAt })
+      .select({
+        percentage: schema.readingProgress.percentage,
+        updatedAt: schema.readingProgress.updatedAt,
+        // updatedAt is deliberately frozen by some writers (KOReader); lastReadAt is the honest
+        // "when did the user actually read this" ordering column (see the schema comment).
+        lastReadAt: schema.readingProgress.lastReadAt,
+      })
       .from(schema.readingProgress)
       .where(and(eq(schema.readingProgress.bookFileId, bookFileId), eq(schema.readingProgress.userId, userId)))
+      .limit(1);
+    return row;
+  }
+
+  // The user's own status row for a book: read only to check whether its source actually marked it
+  // finished, which gates the movement gate's finished exception.
+  async getUserBookStatus(userId: number, bookId: number): Promise<{ status: string } | undefined> {
+    const [row] = await this.db
+      .select({ status: schema.userBookStatus.status })
+      .from(schema.userBookStatus)
+      .where(and(eq(schema.userBookStatus.userId, userId), eq(schema.userBookStatus.bookId, bookId)))
       .limit(1);
     return row;
   }

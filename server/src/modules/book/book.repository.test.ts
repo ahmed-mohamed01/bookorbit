@@ -138,6 +138,7 @@ describe('BookRepository', () => {
         .mockReturnValueOnce(makeSelectChain('where', statusRows))
         .mockReturnValueOnce(makeSelectChain('where', fileProgressRows))
         .mockReturnValueOnce(makeSelectChain('where', [])),
+      execute: vi.fn().mockResolvedValue({ rows: [] }),
     };
     const repo = new BookRepository(db as never);
 
@@ -176,12 +177,94 @@ describe('BookRepository', () => {
         .mockReturnValueOnce(makeSelectChain('where', []))
         .mockReturnValueOnce(makeSelectChain('where', readingProgressRows))
         .mockReturnValueOnce(makeSelectChain('where', audiobookProgressRows)),
+      execute: vi.fn().mockResolvedValue({ rows: [] }),
     };
     const repo = new BookRepository(db as never);
 
     const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
 
     expect(result.progressRows).toEqual([{ bookFileId: 1001, percentage: 48 }]);
+  });
+
+  it("findCards maps a linked audiobook's newer progress onto the ebook card", async () => {
+    const rows = [{ id: 10, primaryFileId: 1001, _total: 1 }];
+    const readingProgressRows = [{ bookFileId: 1001, percentage: 30, lastReadAt: new Date('2026-01-01T00:00:00.000Z') }];
+    // Raw execute() delivers timestamps as strings at runtime - the merge must normalize them.
+    const linkedAudioRows = [{ bookId: 10, percentage: 62, at: '2026-01-03 00:00:00.000+00' }];
+
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(makeSelectChain('offset', rows))
+        .mockReturnValueOnce(makeSelectChain('orderBy', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('orderBy', []))
+        .mockReturnValueOnce(makeSelectChain('orderBy', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('where', readingProgressRows))
+        .mockReturnValueOnce(makeSelectChain('where', [])),
+      execute: vi.fn().mockResolvedValue({ rows: linkedAudioRows }),
+    };
+    const repo = new BookRepository(db as never);
+
+    const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
+
+    expect(result.progressRows).toEqual([{ bookFileId: 1001, percentage: 62 }]);
+  });
+
+  it("keeps the ebook's own progress when it is fresher than the linked audiobook", async () => {
+    const rows = [{ id: 10, primaryFileId: 1001, _total: 1 }];
+    const readingProgressRows = [{ bookFileId: 1001, percentage: 71, lastReadAt: new Date('2026-01-05T00:00:00.000Z') }];
+    const linkedAudioRows = [{ bookId: 10, percentage: 40, at: new Date('2026-01-03T00:00:00.000Z') }];
+
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(makeSelectChain('offset', rows))
+        .mockReturnValueOnce(makeSelectChain('orderBy', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('orderBy', []))
+        .mockReturnValueOnce(makeSelectChain('orderBy', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('where', readingProgressRows))
+        .mockReturnValueOnce(makeSelectChain('where', [])),
+      execute: vi.fn().mockResolvedValue({ rows: linkedAudioRows }),
+    };
+    const repo = new BookRepository(db as never);
+
+    const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
+
+    expect(result.progressRows).toEqual([{ bookFileId: 1001, percentage: 71 }]);
+  });
+
+  it("maps the linked ebook's reading progress onto the audiobook card (reverse direction)", async () => {
+    const rows = [{ id: 20, primaryFileId: 2001, _total: 1 }];
+    const linkedEbookRows = [{ bookId: 20, percentage: 33, at: new Date('2026-01-03T00:00:00.000Z') }];
+
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(makeSelectChain('offset', rows))
+        .mockReturnValueOnce(makeSelectChain('orderBy', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('orderBy', []))
+        .mockReturnValueOnce(makeSelectChain('orderBy', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('where', [])),
+      execute: vi.fn().mockResolvedValue({ rows: linkedEbookRows }),
+    };
+    const repo = new BookRepository(db as never);
+
+    const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
+
+    expect(result.progressRows).toEqual([{ bookFileId: 2001, percentage: 33 }]);
   });
 
   it('findCardsByBookIds returns empty payload when no ids are requested', async () => {

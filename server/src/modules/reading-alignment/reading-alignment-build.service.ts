@@ -4,6 +4,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { describeError } from './reading-alignment-error.util';
 import type { RequestUser } from '../../common/types/request-user';
 import { appConfig } from '../../config/config';
 import { EpubService } from '../reader/epub/epub.service';
@@ -13,6 +14,7 @@ import { matchTranscript } from './reading-alignment-matcher.util';
 import type { SpineText } from './reading-alignment-matcher.util';
 import type { ReadingAlignmentPair } from './reading-alignment-pair.service';
 import { ReadingAlignmentPairService } from './reading-alignment-pair.service';
+import { ReadingAlignmentSyncService } from './reading-alignment-sync.service';
 import { ReadingAlignmentRepository } from './reading-alignment.repository';
 import { WhisperService } from './whisper.service';
 
@@ -27,11 +29,17 @@ const MAX_CONCURRENT_BUILDS = 2;
 // failed: whisper/ffmpeg is almost certainly misconfigured, and continuing would spawn a doomed
 // subprocess for every remaining sample.
 const EARLY_ABORT_FAILURES = 3;
+// Hard ceiling on consecutive failures for a RESUMED build (existing anchors defeat the early-abort
+// above): stops a build with an unreachable model from burning a subprocess or download attempt on
+// every remaining sample.
+const MAX_CONSECUTIVE_FAILURES = 10;
 // How far a stored error message is allowed to grow before truncation.
 const MAX_ERROR_CHARS = 500;
 
 type SampleOutcome =
-  { kind: 'anchored'; spineIndex: number; fraction: number | null; inserted: boolean } | { kind: 'transcribe_failed' } | { kind: 'skipped' };
+  | { kind: 'anchored'; spineIndex: number; fraction: number | null; inserted: boolean }
+  | { kind: 'transcribe_failed'; message: string }
+  | { kind: 'skipped' };
 
 @Injectable()
 export class ReadingAlignmentBuildService {
@@ -46,6 +54,7 @@ export class ReadingAlignmentBuildService {
     private readonly whisper: WhisperService,
     private readonly epub: EpubService,
     private readonly pairService: ReadingAlignmentPairService,
+    private readonly syncService: ReadingAlignmentSyncService,
   ) {}
 
   async buildAlignment(bookId: number, user: RequestUser, force = false): Promise<void> {
@@ -128,6 +137,9 @@ export class ReadingAlignmentBuildService {
       this.logger.log(
         `[${BUILD_EVENT}] [end] textBookId=${textBookId} audioBookId=${audioBookId} alignmentId=${existing.id} status=skipped reason=up_to_date - already built`,
       );
+      // A relink of an already-built pair reaches here: the pair just became alignable again, so the
+      // one-shot reconcile still runs (it logs and swallows its own failures).
+      await this.syncService.reconcilePairOnReady({ textBookId, audioBookId }, user.id);
       return;
     }
 
@@ -200,6 +212,7 @@ export class ReadingAlignmentBuildService {
       let attempted = 0;
       let transcribeFailures = 0;
       let consecutiveFailures = 0;
+      let lastTranscribeError = '';
 
       for (let i = resumeFrom; i < samplesTotal; i++) {
         const offset = i * sampleIntervalSec;
@@ -226,8 +239,9 @@ export class ReadingAlignmentBuildService {
           } else if (outcome.kind === 'transcribe_failed') {
             transcribeFailures++;
             consecutiveFailures++;
-            if (anchorCount === 0 && consecutiveFailures >= EARLY_ABORT_FAILURES) {
-              const error = `transcription failed on ${consecutiveFailures} consecutive samples - verify WHISPER_PATH, WHISPER_MODEL, and ffmpeg`;
+            lastTranscribeError = outcome.message;
+            if ((anchorCount === 0 && consecutiveFailures >= EARLY_ABORT_FAILURES) || consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+              const error = `transcription failed on ${consecutiveFailures} consecutive samples (last error: ${lastTranscribeError.slice(0, 200)}) - verify WHISPER_PATH, WHISPER_MODEL, and ffmpeg`;
               await this.repo.setAlignmentStatus(alignmentId, 'failed', { error, samplesDone: i + 1, anchorCount });
               this.logger.error(
                 `[${BUILD_EVENT}] [fail] textBookId=${textBookId} audioBookId=${audioBookId} alignmentId=${alignmentId} durationMs=${Date.now() - startedAt} samplesDone=${i + 1} status=failed reason=transcribe_unavailable - ${error}`,
@@ -247,7 +261,9 @@ export class ReadingAlignmentBuildService {
         // that genuinely cannot be aligned - surface it as `failed` with a cause so it is retryable.
         const systemic = attempted > 0 && transcribeFailures === attempted;
         const status = systemic ? 'failed' : 'unalignable';
-        const error = systemic ? `all ${attempted} transcription samples failed - verify WHISPER_PATH, WHISPER_MODEL, and ffmpeg` : null;
+        const error = systemic
+          ? `all ${attempted} transcription samples failed (last error: ${lastTranscribeError.slice(0, 200)}) - verify WHISPER_PATH, WHISPER_MODEL, and ffmpeg`
+          : null;
         await this.repo.setAlignmentStatus(alignmentId, status, { error, samplesDone: samplesTotal, anchorCount });
         this.logger.log(
           `[${BUILD_EVENT}] [end] textBookId=${textBookId} audioBookId=${audioBookId} alignmentId=${alignmentId} durationMs=${durationMs} samplesTotal=${samplesTotal} anchorsFound=${anchorCount} transcribeFailures=${transcribeFailures} status=${status} - too few anchors`,
@@ -259,10 +275,10 @@ export class ReadingAlignmentBuildService {
       this.logger.log(
         `[${BUILD_EVENT}] [end] textBookId=${textBookId} audioBookId=${audioBookId} alignmentId=${alignmentId} durationMs=${durationMs} samplesTotal=${samplesTotal} anchorsFound=${anchorCount} status=ready - build completed`,
       );
+      await this.syncService.reconcilePairOnReady({ textBookId, audioBookId }, user.id);
     } catch (error) {
       const durationMs = Date.now() - startedAt;
-      const errorClass = error instanceof Error ? error.constructor.name : 'Error';
-      const message = error instanceof Error ? error.message : String(error);
+      const { errorClass, message } = describeError(error);
       if (alignmentId != null) {
         await this.repo.setAlignmentStatus(alignmentId, 'failed', { error: message.slice(0, MAX_ERROR_CHARS) }).catch(() => {});
       }
@@ -305,7 +321,7 @@ export class ReadingAlignmentBuildService {
       this.logger.warn(
         `[${BUILD_EVENT}] skipped=true alignmentId=${alignmentId} offsetSeconds=${offset} reason=transcribe_failed error="${sanitizeLogValue(message)}" - clip transcription failed`,
       );
-      return { kind: 'transcribe_failed' };
+      return { kind: 'transcribe_failed', message };
     }
 
     const match = matchTranscript(transcript, spines, { spineWindow: { min: lastSpineIndex, max: maxSpineIndex } });

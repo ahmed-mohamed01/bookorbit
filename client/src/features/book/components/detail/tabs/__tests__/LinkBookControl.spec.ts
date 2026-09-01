@@ -39,6 +39,27 @@ vi.mock('@/features/book/composables/useEditionLink', async (importOriginal) => 
   return { ...actual, useEditionLink: () => mockState }
 })
 
+function createAlignmentState() {
+  return {
+    status: ref<string>('none'),
+    samplesDone: ref<number | null>(null),
+    samplesTotal: ref<number | null>(null),
+    anchorCount: ref<number | null>(null),
+    builtAt: ref<string | null>(null),
+    mutating: ref(false),
+    error: ref<string | null>(null),
+    buildBlocked: ref<string | null>(null),
+    fetchStatus: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    build: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+  }
+}
+
+let mockAlignment = createAlignmentState()
+
+vi.mock('@/features/book/composables/useReadingAlignment', () => ({
+  useReadingAlignment: () => mockAlignment,
+}))
+
 const stubs = {
   Popover: { name: 'Popover', props: ['open'], emits: ['update:open'], template: '<div><slot /></div>' },
   PopoverTrigger: { template: '<div><slot /></div>' },
@@ -113,6 +134,7 @@ async function openPopover(wrapper: ReturnType<typeof mountControl>) {
 describe('LinkBookControl', () => {
   beforeEach(() => {
     mockState = createMockState()
+    mockAlignment = createAlignmentState()
     toastMocks.success.mockReset()
     toastMocks.error.mockReset()
     permissionMocks.hasPermission.mockReset()
@@ -333,6 +355,45 @@ describe('LinkBookControl', () => {
     expect(wrapper.find('[data-testid="edition-link-search-error"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="edition-link-search-error"]').text()).toContain("Couldn't search")
     expect(wrapper.text()).not.toContain('No matches found.')
+  })
+
+  it('kicks off the alignment build right after a successful link', async () => {
+    mockState.loadForBook.mockImplementation(async () => {
+      mockState.proposed.value = { bookId: 99, title: 'Proposed Audiobook', authorName: 'Some Narrator', score: 82 }
+    })
+
+    const wrapper = mountControl()
+    await openPopover(wrapper)
+
+    const linkButton = wrapper.find('[data-testid="edition-link-proposed"]').find('button')
+    await linkButton.trigger('click')
+    await flushPromises()
+
+    expect(mockState.linkBook).toHaveBeenCalledWith(99)
+    expect(mockAlignment.build).toHaveBeenCalledWith(10)
+  })
+
+  it('tints the icon blue while the alignment is processing and green once aligned', () => {
+    mockState.link.value = { id: 1, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+
+    mockAlignment.status.value = 'building'
+    const processing = mountControl()
+    expect(processing.find('button').find('svg').classes()).toContain('text-sky-500')
+    expect(processing.find('button').attributes('title')).toContain('aligning positions')
+
+    mockAlignment = createAlignmentState()
+    mockAlignment.status.value = 'ready'
+    mockState.link.value = { id: 1, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+    const aligned = mountControl()
+    expect(aligned.find('button').find('svg').classes()).toContain('text-emerald-500')
+    expect(aligned.find('button').attributes('title')).toContain('positions aligned')
+
+    mockAlignment = createAlignmentState()
+    mockAlignment.status.value = 'failed'
+    mockState.link.value = { id: 1, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+    const failed = mountControl()
+    expect(failed.find('button').find('svg').classes()).toContain('text-destructive')
+    expect(failed.find('button').attributes('title')).toContain('alignment failed')
   })
 
   describe('without library_edit_metadata permission', () => {

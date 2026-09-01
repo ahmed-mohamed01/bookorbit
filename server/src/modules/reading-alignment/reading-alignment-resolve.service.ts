@@ -95,11 +95,14 @@ export class ReadingAlignmentResolveService {
   private async resolveEbookResume(
     audioBookId: number,
     anchors: Anchor[],
-    ebookProgress: { updatedAt: Date } | undefined,
+    ebookProgress: { updatedAt: Date; lastReadAt?: Date } | undefined,
     audioProgress: { currentFileId: number; positionSeconds: number; updatedAt: Date } | undefined,
   ): Promise<CrossFormatResume> {
     if (!audioProgress) return UNAVAILABLE;
-    if (!isStrictlyNewer(audioProgress.updatedAt, ebookProgress?.updatedAt)) return UNAVAILABLE;
+    // KOReader freezes reading_progress.updatedAt; lastReadAt carries the real reading recency, so a
+    // user actively re-reading on a device is never yanked forward to a stale audio position.
+    const ebookActiveAt = ebookProgress ? (ebookProgress.lastReadAt ?? ebookProgress.updatedAt) : undefined;
+    if (!isStrictlyNewer(audioProgress.updatedAt, ebookActiveAt)) return UNAVAILABLE;
 
     const timeline = buildAudioTimeline(await this.repo.resolveAudioPlayOrder(audioBookId));
     if (timeline.incomplete || timeline.entries.length === 0) return UNAVAILABLE;

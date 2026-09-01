@@ -4,6 +4,7 @@ import type { ConfigType } from '@nestjs/config';
 import { appConfig } from '../../config/config';
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { describeError } from './reading-alignment-error.util';
 import { BookService } from '../book/book.service';
 import { ReadingAlignmentBuildService } from './reading-alignment-build.service';
 import type { ReadingAlignmentPair } from './reading-alignment-pair.service';
@@ -53,8 +54,7 @@ export class ReadingAlignmentStatusService {
     }
 
     void this.buildService.buildAlignment(bookId, user, force).catch((error: unknown) => {
-      const errorClass = error instanceof Error ? error.constructor.name : 'Error';
-      const message = error instanceof Error ? error.message : String(error);
+      const { errorClass, message } = describeError(error);
       this.logger.error(
         `[${REQUEST_EVENT}] [fail] bookId=${bookId} userId=${user.id} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - background build failed`,
       );

@@ -34,10 +34,11 @@ function playOrder() {
 interface Overrides {
   pair?: { textBookId: number; audioBookId: number } | null;
   ready?: unknown;
-  ebookProgress?: { percentage: number; updatedAt: Date } | undefined;
+  ebookProgress?: { percentage: number; updatedAt: Date; lastReadAt?: Date } | undefined;
   audioProgress?: { currentFileId: number; positionSeconds: number; percentage: number; updatedAt: Date } | undefined;
   bookFileKind?: 'text' | 'audio' | null;
   finishThreshold?: number;
+  advancingReadStatus?: { status: string } | undefined;
 }
 
 function build(overrides: Overrides = {}) {
@@ -54,6 +55,7 @@ function build(overrides: Overrides = {}) {
     resolveAudioPlayOrder: vi.fn().mockResolvedValue(playOrder()),
     resolveBookFileKind: vi.fn().mockResolvedValue(overrides.bookFileKind ?? null),
     projectAudiobookProgress: vi.fn().mockResolvedValue(true),
+    getUserBookStatus: vi.fn().mockResolvedValue('advancingReadStatus' in overrides ? overrides.advancingReadStatus : { status: 'read' }),
   };
   const achievementEvents = { on: vi.fn(), removeListener: vi.fn(), emit: vi.fn() };
   const bookReadService = { findLibraryIdByBookId: vi.fn().mockResolvedValue(1) };
@@ -354,5 +356,241 @@ describe('ReadingAlignmentSyncService', () => {
       // ...but a self-pair shares one status row and the ebook position is left untouched, so nothing is written.
       expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('ReadingAlignmentSyncService movement gate', () => {
+  const t = (seconds: number) => new Date(1_700_000_000_000 + seconds * 1000);
+
+  it('quarantines a sudden audio jump and accepts it after listening continues for the confirmation window', async () => {
+    const { service, repo, bookService } = build({ ebookProgress: undefined });
+
+    // Gradual listening at the start of the book: trusted and synced.
+    repo.getAudiobookProgress.mockResolvedValueOnce({ currentFileId: AUDIO_FILE_A, positionSeconds: 0, percentage: 0, updatedAt: t(0) });
+    await dispatch(service, audioEvent({ occurredAt: t(0) }));
+    expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenCalledTimes(1);
+
+    // One second later the position is deep into the 200s book (not finished, so the finished
+    // exception does not apply): physically impossible pace, quarantined.
+    repo.getAudiobookProgress.mockResolvedValueOnce({ currentFileId: AUDIO_FILE_B, positionSeconds: 90, percentage: 95, updatedAt: t(1) });
+    await dispatch(service, audioEvent({ occurredAt: t(1) }));
+    expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenCalledTimes(1);
+
+    // Listening continues from the jumped position past the 2-minute window: now trusted.
+    repo.getAudiobookProgress.mockResolvedValueOnce({ currentFileId: AUDIO_FILE_B, positionSeconds: 90, percentage: 95, updatedAt: t(130) });
+    await dispatch(service, audioEvent({ occurredAt: t(130) }));
+    expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenCalledTimes(2);
+  });
+
+  it('quarantines a sudden ebook jump so it never projects onto the audiobook', async () => {
+    const { service, repo } = build({ audioProgress: undefined });
+
+    repo.getReadingProgress.mockResolvedValueOnce({ percentage: 0, updatedAt: t(0) });
+    await dispatch(service, ebookEvent({ occurredAt: t(0) }));
+    expect(repo.projectAudiobookProgress).toHaveBeenCalledTimes(1);
+
+    // A scroll to the end of the book one second later is not reading; nothing is written.
+    repo.getReadingProgress.mockResolvedValueOnce({ percentage: 100, updatedAt: t(1) });
+    await dispatch(service, ebookEvent({ occurredAt: t(1) }));
+    expect(repo.projectAudiobookProgress).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops an abandoned jump when reading resumes near the accepted position', async () => {
+    const { service, repo } = build({ audioProgress: undefined });
+
+    repo.getReadingProgress.mockResolvedValueOnce({ percentage: 5, updatedAt: t(0) });
+    await dispatch(service, ebookEvent({ occurredAt: t(0) }));
+    repo.getReadingProgress.mockResolvedValueOnce({ percentage: 100, updatedAt: t(1) });
+    await dispatch(service, ebookEvent({ occurredAt: t(1) }));
+    expect(repo.projectAudiobookProgress).toHaveBeenCalledTimes(1);
+
+    // Back near the old position and reading on: trusted immediately, the pending jump is discarded.
+    repo.getReadingProgress.mockResolvedValueOnce({ percentage: 6, updatedAt: t(30) });
+    await dispatch(service, ebookEvent({ occurredAt: t(30) }));
+    expect(repo.projectAudiobookProgress).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('ReadingAlignmentSyncService adversarial fixes', () => {
+  const t = (seconds: number) => new Date(1_700_000_000_000 + seconds * 1000);
+
+  it('honors a finished ebook jump as a status-only completion instead of quarantining it', async () => {
+    const { service, repo, bookService } = build({ audioProgress: undefined });
+
+    repo.getReadingProgress.mockResolvedValueOnce({ percentage: 5, updatedAt: t(0) });
+    await dispatch(service, ebookEvent({ occurredAt: t(0) }));
+    expect(repo.projectAudiobookProgress).toHaveBeenCalledTimes(1);
+
+    // A sudden jump to 100% one second later is a movement-gate jump, but the source says finished:
+    // the audiobook status completes while the position write stays quarantined.
+    repo.getReadingProgress.mockResolvedValueOnce({ percentage: 100, updatedAt: t(1) });
+    await dispatch(service, ebookEvent({ occurredAt: t(1) }));
+
+    expect(repo.projectAudiobookProgress).toHaveBeenCalledTimes(1);
+    expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenCalledWith(USER_ID, { bookId: AUDIO_BOOK_ID, libraryId: 1 }, 100);
+  });
+
+  it('honors a finished audiobook jump as a status completion for the ebook', async () => {
+    const { service, repo, bookService } = build({ ebookProgress: undefined });
+
+    repo.getAudiobookProgress.mockResolvedValueOnce({ currentFileId: AUDIO_FILE_A, positionSeconds: 0, percentage: 0, updatedAt: t(0) });
+    await dispatch(service, audioEvent({ occurredAt: t(0) }));
+    const callsAfterFirst = bookService.autoUpdateReadStatusForProgress.mock.calls.length;
+
+    repo.getAudiobookProgress.mockResolvedValueOnce({ currentFileId: AUDIO_FILE_B, positionSeconds: 100, percentage: 100, updatedAt: t(1) });
+    await dispatch(service, audioEvent({ occurredAt: t(1) }));
+
+    expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenCalledTimes(callsAfterFirst + 1);
+    expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenLastCalledWith(USER_ID, { bookId: TEXT_BOOK_ID, libraryId: 1 }, 100);
+  });
+
+  it('keeps a near-end scrub quarantined when the source has not marked the book read', async () => {
+    const { service, repo, bookService } = build({ ebookProgress: undefined, advancingReadStatus: { status: 'reading' } });
+
+    repo.getAudiobookProgress.mockResolvedValueOnce({ currentFileId: AUDIO_FILE_A, positionSeconds: 0, percentage: 0, updatedAt: t(0) });
+    await dispatch(service, audioEvent({ occurredAt: t(0) }));
+    const callsAfterFirst = bookService.autoUpdateReadStatusForProgress.mock.calls.length;
+
+    // Scrubbed to 99% - over the finish threshold, but the source never marked the book read.
+    repo.getAudiobookProgress.mockResolvedValueOnce({ currentFileId: AUDIO_FILE_B, positionSeconds: 90, percentage: 99, updatedAt: t(1) });
+    await dispatch(service, audioEvent({ occurredAt: t(1) }));
+
+    expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenCalledTimes(callsAfterFirst);
+  });
+
+  it('clamps a far-future device timestamp before it reaches newest-wins state', async () => {
+    const farFuture = new Date('9999-01-01T00:00:00Z');
+    const { service, repo } = build({
+      ebookProgress: { percentage: 50, updatedAt: farFuture },
+      audioProgress: undefined,
+    });
+
+    await dispatch(service, ebookEvent({ occurredAt: farFuture }));
+
+    expect(repo.projectAudiobookProgress).toHaveBeenCalledTimes(1);
+    const writtenAt = repo.projectAudiobookProgress.mock.calls[0][5] as Date;
+    expect(writtenAt.getTime()).toBeLessThanOrEqual(Date.now() + 5 * 60_000 + 1000);
+  });
+
+  it('respects active KOReader re-reading in the ongoing sync (frozen updatedAt, newer lastReadAt)', async () => {
+    const { service, bookService } = build({
+      audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 50, percentage: 25, updatedAt: MIDDLE },
+      ebookProgress: { percentage: 60, updatedAt: OLDER, lastReadAt: NEWER },
+    });
+
+    await dispatch(service, audioEvent({ occurredAt: MIDDLE }));
+
+    expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
+  });
+});
+
+describe('reconcilePairOnReady', () => {
+  const PAIR = { textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID };
+
+  it('pulls the ebook status up to the audiobook when audio is fresher and positionally ahead', async () => {
+    const { service, bookService, repo } = build({
+      // Audio at absolute 100s of 200s -> projected ebook 50%, fresher than the 20% ebook.
+      audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 100, percentage: 50, updatedAt: NEWER },
+      ebookProgress: { percentage: 20, updatedAt: OLDER },
+    });
+
+    await service.reconcilePairOnReady(PAIR, USER_ID);
+
+    expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenCalledWith(USER_ID, { bookId: TEXT_BOOK_ID, libraryId: 1 }, 50);
+    // Reconcile is status-only: the ebook position row is never written.
+    expect(repo.projectAudiobookProgress).not.toHaveBeenCalled();
+  });
+
+  it('leaves the ebook alone when its activity is newer than the audiobook', async () => {
+    const { service, bookService } = build({
+      audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 100, percentage: 50, updatedAt: OLDER },
+      ebookProgress: { percentage: 20, updatedAt: NEWER },
+    });
+
+    await service.reconcilePairOnReady(PAIR, USER_ID);
+
+    expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
+  });
+
+  it('leaves the ebook alone when the audiobook is fresher but positionally behind', async () => {
+    const { service, bookService } = build({
+      // Audio projects to 50% but the ebook already sits at 80%.
+      audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 100, percentage: 50, updatedAt: NEWER },
+      ebookProgress: { percentage: 80, updatedAt: OLDER },
+    });
+
+    await service.reconcilePairOnReady(PAIR, USER_ID);
+
+    expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
+  });
+
+  it('respects recent KOReader ebook reading whose updatedAt is frozen (lastReadAt is newer)', async () => {
+    const { service, bookService } = build({
+      audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 100, percentage: 50, updatedAt: MIDDLE },
+      // KOReader freezes updatedAt; lastReadAt carries the real (newer) reading activity.
+      ebookProgress: { percentage: 20, updatedAt: OLDER, lastReadAt: NEWER },
+    });
+
+    await service.reconcilePairOnReady(PAIR, USER_ID);
+
+    expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
+  });
+
+  it('treats a finished audiobook as fully ahead even when its last anchor maps short of 100%', async () => {
+    const { service, bookService } = build({
+      // Absolute 192s of 200s -> anchors map to 96%, below the 97% ebook - but percentage 100 is finished.
+      audioProgress: { currentFileId: AUDIO_FILE_B, positionSeconds: 92, percentage: 100, updatedAt: NEWER },
+      ebookProgress: { percentage: 97, updatedAt: OLDER },
+    });
+
+    await service.reconcilePairOnReady(PAIR, USER_ID);
+
+    expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenCalledWith(USER_ID, { bookId: TEXT_BOOK_ID, libraryId: 1 }, 100);
+  });
+
+  it('ignores an untouched 0% audiobook row instead of flipping the ebook to reading', async () => {
+    const { service, bookService } = build({
+      audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 0, percentage: 0, updatedAt: NEWER },
+      ebookProgress: undefined,
+    });
+
+    await service.reconcilePairOnReady(PAIR, USER_ID);
+
+    expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
+  });
+
+  it('does not force-complete a recently-and-actively-read ebook at match time', async () => {
+    const now = Date.now();
+    const { service, bookService } = build({
+      // Audio claims "finished just now" (a fresh import stamps updatedAt with the server clock).
+      audioProgress: { currentFileId: AUDIO_FILE_B, positionSeconds: 100, percentage: 100, updatedAt: new Date(now - 3_600_000) },
+      // The user actually read the ebook two days ago and is mid-book.
+      ebookProgress: { percentage: 30, updatedAt: new Date(now - 30 * 86_400_000), lastReadAt: new Date(now - 2 * 86_400_000) },
+    });
+
+    await service.reconcilePairOnReady(PAIR, USER_ID);
+
+    expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
+  });
+
+  it('does not treat a scrubbed-but-unread audiobook as finished at reconcile', async () => {
+    const { service, bookService } = build({
+      audioProgress: { currentFileId: AUDIO_FILE_B, positionSeconds: 92, percentage: 99, updatedAt: NEWER },
+      ebookProgress: { percentage: 97, updatedAt: OLDER },
+      advancingReadStatus: { status: 'reading' },
+    });
+
+    await service.reconcilePairOnReady(PAIR, USER_ID);
+
+    // Without the marked-read finished override, 192s maps to 96% which is not ahead of 97%.
+    expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the user has never played the audiobook', async () => {
+    const { service, bookService } = build({ audioProgress: undefined, ebookProgress: { percentage: 20, updatedAt: OLDER } });
+
+    await service.reconcilePairOnReady(PAIR, USER_ID);
+
+    expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
   });
 });

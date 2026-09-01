@@ -59,7 +59,7 @@ describe('config', () => {
       koboCloudscraperPython: undefined,
       koreaderPluginSourcePath: undefined,
       whisperPath: undefined,
-      whisperModel: undefined,
+      whisperModel: 'base.en',
       ffmpegPath: 'ffmpeg',
       readingAlignmentEnabled: false,
       readingAlignmentSampleIntervalSec: 1200,
