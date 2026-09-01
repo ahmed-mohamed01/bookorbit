@@ -117,7 +117,8 @@ export interface MetadataProviderSearchStatus {
   outcome: MetadataProviderSearchOutcome;
 }
 
-export type MetadataFetchEmptyReason = "no_active_providers" | "providers_throttled" | "no_candidates" | "no_resolved_fields";
+export type MetadataFetchEmptyReason =
+  "no_active_providers" | "no_existing_provider_ids" | "providers_throttled" | "no_candidates" | "no_resolved_fields";
 
 export interface MetadataFetchDiagnostics {
   reason: MetadataFetchEmptyReason | null;

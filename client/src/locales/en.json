@@ -1634,6 +1634,10 @@
           "storeProviderIds": {
             "label": "Store provider IDs on books",
             "hint": "When fetching metadata, save the returned provider IDs (ISBN, ASIN, Goodreads ID, etc.) on the book record for more accurate future lookups."
+          },
+          "existingProviderIdsOnly": {
+            "label": "Use existing provider IDs only",
+            "hint": "For books already in the library, query only providers with a stored ID and never fall back to a search when an ID lookup fails. Manual search and new-book discovery are unaffected."
           }
         },
         "library": {
@@ -5094,6 +5098,7 @@
         "writeToFile": "Write to file",
         "autoFill": "Auto-fill",
         "fetchingMetadata": "Fetching metadata...",
+        "noExistingProviderIds": "No metadata fetched: none of the active Field Rule providers has an ID stored on this book.",
         "allFieldsLocked": "All fields are locked",
         "autoFillTooltip": "Auto-fill fields using your metadata preferences",
         "lockAll": "Lock all",

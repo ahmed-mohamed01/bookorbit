@@ -12,7 +12,12 @@ export interface MetadataSearchParams {
   // True when `title` is a query the caller typed rather than the book's own stored title. Stored
   // series context may then fill in what the query omits, but must not override what it states.
   titleIsExplicitQuery?: boolean;
+  // Presence, including an empty map, identifies a refresh of an established book. Discovery
+  // flows omit this property because they have no stored provider identity to preserve.
   existingProviderIds?: Partial<Record<MetadataProviderKey, string>>;
+  // Restricts refreshes to exact stored identities. Providers must not fall back to search when an
+  // ID lookup returns no usable candidate.
+  existingProviderIdsOnly?: boolean;
   // Pins a Hardcover refresh to a previously chosen edition instead of re-deriving one by ISBN.
   hardcoverEditionId?: string;
   // Media type of the edition being searched. Providers that carry both editions of a title use it to
