@@ -437,6 +437,11 @@ const {
 
 const personalNoteUpdatedLabel = computed(() => (props.book.personalNoteUpdatedAt ? formatDateTime(props.book.personalNoteUpdatedAt) : null))
 
+function startVisiblePersonalNoteEdit() {
+  showPersonalReview.value = true
+  startPersonalNoteEdit()
+}
+
 watch(
   () => props.book.id,
   () => {
@@ -1188,22 +1193,24 @@ watch(
   </div>
 
   <!--
-    Direction A. Below xl the page is a single scrolling column. From xl the pane owns the
-    height: three columns fill row one, the discovery shelf takes row two, and any column
-    that runs long scrolls inside itself so the page itself never does.
+    Direction A. Below 46rem of pane width the page is a single scrolling column. Above it
+    the pane owns the height: three columns fill row one, the discovery shelf takes row two,
+    and any column that runs long scrolls inside itself so the page itself never does.
   -->
   <div
-    class="flex flex-col gap-5 xl:grid xl:h-full xl:min-h-0 xl:grid-cols-[17rem_minmax(0,1fr)_19.25rem] xl:grid-rows-[minmax(0,1fr)_clamp(11.25rem,29%,17.5rem)] xl:gap-x-6 xl:gap-y-5"
+    class="flex flex-col gap-5 @min-[46rem]/book-detail:grid @min-[46rem]/book-detail:h-full @min-[46rem]/book-detail:min-h-0 @min-[46rem]/book-detail:grid-cols-[clamp(12rem,23cqi,17rem)_minmax(16rem,1fr)_clamp(15rem,26cqi,19.25rem)] @min-[46rem]/book-detail:grid-rows-[minmax(0,1fr)_clamp(11.25rem,29%,17.5rem)] @min-[46rem]/book-detail:gap-x-6 @min-[46rem]/book-detail:gap-y-5"
   >
     <!-- Cover column -->
-    <div class="flex min-w-0 flex-col gap-3 xl:min-h-0 xl:col-start-1 xl:row-start-1">
-      <div class="flex items-start gap-4 sm:gap-5 xl:block xl:min-h-0 xl:flex-1">
+    <div
+      class="flex min-w-0 flex-col gap-3 @min-[46rem]/book-detail:col-start-1 @min-[46rem]/book-detail:row-start-1 @min-[46rem]/book-detail:min-h-0"
+    >
+      <div class="flex items-start gap-4 sm:gap-5 @min-[46rem]/book-detail:block @min-[46rem]/book-detail:min-h-0 @min-[46rem]/book-detail:flex-1">
         <div
           ref="coverSlotEl"
-          class="w-28 shrink-0 sm:w-36 xl:flex xl:h-full xl:w-full xl:items-center xl:justify-center"
+          class="w-28 shrink-0 sm:w-36 @min-[46rem]/book-detail:flex @min-[46rem]/book-detail:h-full @min-[46rem]/book-detail:w-full @min-[46rem]/book-detail:items-center @min-[46rem]/book-detail:justify-center"
           :class="hasCover && coverLoaded && !coverFailed ? 'cursor-zoom-in' : ''"
         >
-          <div class="w-full xl:max-h-full" :style="{ maxWidth: coverMaxWidth }">
+          <div class="w-full @min-[46rem]/book-detail:max-h-full" :style="{ maxWidth: coverMaxWidth }">
             <BookCoverSurface
               class="book-cover-surface--spine-fitted group relative w-full overflow-hidden rounded-lg shadow-lg shadow-black/40"
               :disable-spine="isPrimaryAudio"
@@ -1243,8 +1250,8 @@ watch(
           </div>
         </div>
 
-        <!-- Compact identity, replaced by the full block in column two from xl -->
-        <div class="min-w-0 flex-1 xl:hidden">
+        <!-- Compact identity, replaced by the full block in column two from 46rem -->
+        <div class="min-w-0 flex-1 @min-[46rem]/book-detail:hidden">
           <h1 class="text-lg font-bold leading-snug break-words sm:text-xl">{{ book.title ?? t('book.detail.details.untitled') }}</h1>
           <p v-if="book.subtitle" class="mt-1 text-sm leading-snug text-muted-foreground break-words">{{ book.subtitle }}</p>
           <p v-if="authorLinks.length" class="mt-2 text-[13px] break-words">
@@ -1468,8 +1475,10 @@ watch(
     </div>
 
     <!-- Main column -->
-    <div class="flex min-w-0 flex-col gap-2.5 xl:col-start-2 xl:row-start-1 xl:min-h-0 xl:overflow-y-auto">
-      <div class="hidden xl:block">
+    <div
+      class="flex min-w-0 flex-col gap-2.5 @min-[46rem]/book-detail:col-start-2 @min-[46rem]/book-detail:row-start-1 @min-[46rem]/book-detail:min-h-0 @min-[46rem]/book-detail:overflow-y-auto"
+    >
+      <div class="hidden @min-[46rem]/book-detail:block">
         <!-- Identity block -->
         <div class="flex items-center flex-wrap gap-x-3 gap-y-2 -mt-1">
           <h1 class="text-2xl font-bold leading-tight">{{ book.title ?? t('book.detail.details.untitled') }}</h1>
@@ -1827,7 +1836,6 @@ watch(
       </div>
 
       <section class="rounded-xl border border-border bg-card px-4 py-3.5">
-        <!-- Synopsis. Expanding scrolls inside this block, never the column. -->
         <div>
           <div class="flex items-baseline gap-3">
             <p class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1835,7 +1843,10 @@ watch(
             </p>
             <button
               v-if="book.description"
+              type="button"
               class="ml-auto shrink-0 text-[11px] font-semibold text-primary transition-colors hover:underline"
+              :aria-controls="`book-${book.id}-synopsis`"
+              :aria-expanded="descriptionExpanded"
               @click="toggleDescription"
             >
               {{ descriptionExpanded ? t('book.detail.details.showLess') : t('book.detail.details.showMore') }}
@@ -1843,8 +1854,9 @@ watch(
           </div>
           <div
             v-if="book.description"
+            :id="`book-${book.id}-synopsis`"
             class="mt-2 text-sm leading-relaxed text-foreground"
-            :class="descriptionExpanded ? 'max-h-44 overflow-y-auto pr-2' : 'line-clamp-4'"
+            :class="{ 'line-clamp-4': !descriptionExpanded }"
             v-html="safeDescription"
           />
           <p v-else class="mt-2 text-sm italic text-muted-foreground">{{ t('book.detail.details.noDescription') }}</p>
@@ -1859,7 +1871,7 @@ watch(
           <button
             type="button"
             class="ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-input px-2.5 text-xs font-medium transition-colors hover:bg-muted"
-            @click="startPersonalNoteEdit"
+            @click="startVisiblePersonalNoteEdit"
           >
             <Pencil class="size-3" />
             {{ t('book.detail.details.writeReview') }}
@@ -1867,13 +1879,20 @@ watch(
         </div>
       </section>
 
-      <BookReadingActivityCard class="xl:min-h-0 xl:flex-1" :stats="readingStats" :sessions="readingSessions" :loading="readingLogLoading" />
+      <BookReadingActivityCard
+        class="@min-[46rem]/book-detail:min-h-0 @min-[46rem]/book-detail:flex-1"
+        :stats="readingStats"
+        :sessions="readingSessions"
+        :loading="readingLogLoading"
+      />
     </div>
 
     <!-- Detail rail -->
-    <div class="flex min-w-0 flex-col gap-3 xl:col-start-3 xl:row-start-1 xl:min-h-0 xl:overflow-y-auto">
+    <div
+      class="flex min-w-0 flex-col gap-3 @min-[46rem]/book-detail:col-start-3 @min-[46rem]/book-detail:row-start-1 @min-[46rem]/book-detail:min-h-0 @min-[46rem]/book-detail:overflow-y-auto"
+    >
       <section
-        class="flex min-h-0 flex-col rounded-xl border border-border bg-card px-4 pb-2 pt-3 xl:flex-1"
+        class="flex min-h-0 flex-col rounded-xl border border-border bg-card px-4 pt-3 pb-2 @min-[46rem]/book-detail:flex-1"
         :aria-label="t('book.detail.details.detailsHeading')"
       >
         <h3 class="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1881,7 +1900,7 @@ watch(
         </h3>
 
         <dl class="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[7px] last:border-b-0">
+          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0">
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.publisher') }}</dt>
             <template v-if="book.publisher">
               <Tooltip>
@@ -1893,37 +1912,37 @@ watch(
             </template>
             <dd v-else class="truncate text-[13px] font-medium">-</dd>
           </div>
-          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[7px] last:border-b-0">
+          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0">
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.published') }}</dt>
             <dd class="truncate text-[13px] font-medium">
               {{ book.publishedDate ? formatDisplayDate(book.publishedDate) : book.publishedYear || '-' }}
             </dd>
           </div>
-          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[7px] last:border-b-0">
+          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0">
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.language') }}</dt>
             <dd class="truncate text-[13px] font-medium capitalize">{{ book.language || '-' }}</dd>
           </div>
-          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[7px] last:border-b-0">
+          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0">
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.pages') }}</dt>
             <dd class="truncate text-[13px] font-medium">{{ book.pageCount || '-' }}</dd>
           </div>
           <div
             v-if="book.audioMetadata?.durationSeconds != null"
-            class="flex items-baseline justify-between gap-3 border-b border-border py-[7px] last:border-b-0"
+            class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0"
           >
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.duration') }}</dt>
             <dd class="truncate text-[13px] font-medium">{{ formatDuration(book.audioMetadata.durationSeconds) }}</dd>
           </div>
           <div
             v-if="book.audioMetadata?.durationSeconds != null"
-            class="flex items-baseline justify-between gap-3 border-b border-border py-[7px] last:border-b-0"
+            class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0"
           >
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.edition') }}</dt>
             <dd class="truncate text-[13px] font-medium">
               {{ book.audioMetadata.abridged ? t('book.detail.details.abridged') : t('book.detail.details.unabridged') }}
             </dd>
           </div>
-          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[7px] last:border-b-0">
+          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0">
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.isbn') }}</dt>
             <dd v-if="book.isbn13 || book.isbn10" class="truncate text-right text-[13px] font-medium font-mono">
               <div v-if="book.isbn13">{{ book.isbn13 }}</div>
@@ -1931,15 +1950,15 @@ watch(
             </dd>
             <dd v-else class="truncate text-[13px] font-medium">-</dd>
           </div>
-          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[7px] last:border-b-0">
+          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0">
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.fileSize') }}</dt>
             <dd class="truncate text-[13px] font-medium">{{ formatFileSize(primaryFile?.sizeBytes) }}</dd>
           </div>
-          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[7px] last:border-b-0">
+          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0">
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.library') }}</dt>
             <dd class="truncate text-[13px] font-medium">{{ book.libraryName || '-' }}</dd>
           </div>
-          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[7px] last:border-b-0">
+          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0">
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.added') }}</dt>
             <template v-if="editingAddedDate">
               <dd class="mt-1">
@@ -1998,7 +2017,7 @@ watch(
           </div>
           <HardcoverBookSyncGridItem :book-id="book.id" />
           <StorygraphBookSyncGridItem :book-id="book.id" />
-          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[7px] last:border-b-0">
+          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0">
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.dateStarted') }}</dt>
             <template v-if="isEditingReadingDate('startedAt')">
               <dd class="mt-1">
@@ -2041,7 +2060,7 @@ watch(
               </button>
             </dd>
           </div>
-          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[7px] last:border-b-0">
+          <div class="flex items-baseline justify-between gap-3 border-b border-border py-[6px] last:border-b-0">
             <dt class="shrink-0 text-[11px] font-medium text-muted-foreground">{{ t('book.detail.details.dateFinished') }}</dt>
             <template v-if="isEditingReadingDate('finishedAt')">
               <dd class="mt-1">
@@ -2112,7 +2131,7 @@ watch(
     </div>
 
     <!-- Discovery shelf -->
-    <div class="min-w-0 xl:col-span-3 xl:row-start-2 xl:min-h-0">
+    <div class="min-w-0 @min-[46rem]/book-detail:col-span-3 @min-[46rem]/book-detail:row-start-2 @min-[46rem]/book-detail:min-h-0">
       <DiscoverRow class="h-full" :book-id="book.id" :series-name="book.seriesName" :author-count="book.authors.length" size="lg" flush />
     </div>
   </div>

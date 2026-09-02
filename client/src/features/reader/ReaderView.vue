@@ -8,6 +8,7 @@ import type { SelectionDetail } from './epub/composables/useFoliateSelection'
 import { useReaderProgress } from './shared/composables/useReaderProgress'
 import { fetchEbookCrossFormatResume } from './shared/composables/useCrossFormatResume'
 import { useReadingSession } from './shared/composables/useReadingSession'
+import { useReaderPageTitle } from './shared/composables/useReaderPageTitle'
 import { useReaderState } from './epub/composables/useReaderState'
 import { useReaderSettings } from './shared/composables/useReaderSettings'
 import { useCustomFonts } from './epub/composables/useCustomFonts'
@@ -28,7 +29,7 @@ import ReaderSidebar from './epub/components/ReaderSidebar.vue'
 import ReaderSettingsPanel from './epub/components/ReaderSettingsPanel.vue'
 import SelectionPopup from './epub/components/SelectionPopup.vue'
 import ReaderSearchPanel from './epub/components/ReaderSearchPanel.vue'
-import NoteDialog from './epub/components/NoteDialog.vue'
+import NoteDialog from './shared/components/NoteDialog.vue'
 import DictionaryPopover from './epub/components/DictionaryPopover.vue'
 import TranslationPopover from './epub/components/TranslationPopover.vue'
 import TranslationSheet from './epub/components/TranslationSheet.vue'
@@ -50,6 +51,7 @@ const router = useRouter()
 const bookId = Number(route.params.bookId)
 const fileId = Number(route.params.fileId)
 const fileFormat = (route.query.format as string) || 'epub'
+useReaderPageTitle(bookId)
 const isAudioFormat = getFormatGroup(fileFormat) === 'audio'
 const isPdfFormat = fileFormat === 'pdf'
 const isComicFormat = fileFormat === 'cbz' || fileFormat === 'cbr' || fileFormat === 'cb7'
@@ -81,6 +83,10 @@ const {
   applyToRenderer,
   setFontSize,
   setLineHeight,
+  setParagraphSpacing,
+  setLetterSpacing,
+  setWordSpacing,
+  setTextIndent,
   setFontFamily,
   setFontWeight,
   setFontStyle,
@@ -109,7 +115,9 @@ const { onActivity, elapsedMinutes } = useReadingSession(
   { trackingEnabled },
 )
 
-const progress = useReaderProgress(bookId, fileId, elapsedMinutes, 0, { trackingEnabled })
+const progress = useReaderProgress(bookId, fileId, elapsedMinutes, 0, {
+  trackingEnabled,
+})
 const { cfi, chapterTitle, sectionIndex, totalSections, fraction, locationTotal, footerMode, cycleFooterMode, updateHeadsFeet } = progress
 
 const visibility = useVisibility()
@@ -330,7 +338,13 @@ onMounted(async () => {
   await annotations.load(bookId)
   const drawableAnnotations = annotations.annotations.value.filter((a): a is typeof a & { cfi: string } => a.cfi != null)
   if (drawableAnnotations.length > 0) {
-    addAnnotations(drawableAnnotations.map((a) => ({ cfi: a.cfi, color: a.color, style: a.style })))
+    addAnnotations(
+      drawableAnnotations.map((a) => ({
+        cfi: a.cfi,
+        color: a.color,
+        style: a.style,
+      })),
+    )
   }
   void hydrateSidebarLocationMeta()
 
@@ -370,6 +384,10 @@ function undoCrossFormatResume(priorCfi: string | null, priorFraction: number | 
 const epubSetters: Record<string, (v: unknown) => void> = {
   fontSize: (v) => setFontSize(v as number),
   lineHeight: (v) => setLineHeight(v as number),
+  paragraphSpacing: (v) => setParagraphSpacing(v as number),
+  letterSpacing: (v) => setLetterSpacing(v as number | null),
+  wordSpacing: (v) => setWordSpacing(v as number | null),
+  textIndent: (v) => setTextIndent(v as number | null),
   fontFamily: (v) => setFontFamily(v as string | null),
   fontWeight: (v) => setFontWeight(v as number),
   fontStyle: (v) => setFontStyle(v as EpubReaderSettings['fontStyle']),
@@ -504,7 +522,10 @@ function pruneSidebarLocationMeta(targets: string[]) {
   sidebarLocationMetaByCfi.value = next
 }
 
-function toSidebarLocationMeta(context: FoliateLocationContext): { chapterTitle: string | null; percentage: number | null } {
+function toSidebarLocationMeta(context: FoliateLocationContext): {
+  chapterTitle: string | null
+  percentage: number | null
+} {
   const percentage =
     typeof context.fraction === 'number' && Number.isFinite(context.fraction) ? Math.max(0, Math.min(100, Math.round(context.fraction * 100))) : null
   return { chapterTitle: context.chapterTitle, percentage }
@@ -531,7 +552,10 @@ async function hydrateSidebarLocationMeta() {
   )
 
   if (requestSeq !== sidebarLocationResolveSeq) return
-  sidebarLocationMetaByCfi.value = { ...sidebarLocationMetaByCfi.value, ...Object.fromEntries(entries) }
+  sidebarLocationMetaByCfi.value = {
+    ...sidebarLocationMetaByCfi.value,
+    ...Object.fromEntries(entries),
+  }
 }
 
 function onSearchQuery(q: string) {
@@ -659,13 +683,17 @@ watch(
       <div v-if="loading" class="absolute inset-0 flex items-center justify-center z-10 bg-background">
         <div class="flex flex-col items-center gap-3">
           <div class="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-          <p class="text-sm text-muted-foreground">{{ t('reader.loadingBook') }}</p>
+          <p class="text-sm text-muted-foreground">
+            {{ t('reader.loadingBook') }}
+          </p>
         </div>
       </div>
 
       <div v-if="error && !loading" class="absolute inset-0 flex items-center justify-center z-10 p-8 bg-background">
         <div class="text-center max-w-sm">
-          <p class="text-sm font-medium mb-2 text-foreground">{{ t('reader.failedToLoadBook') }}</p>
+          <p class="text-sm font-medium mb-2 text-foreground">
+            {{ t('reader.failedToLoadBook') }}
+          </p>
           <p class="text-xs text-muted-foreground">{{ error }}</p>
         </div>
       </div>

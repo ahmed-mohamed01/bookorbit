@@ -4,6 +4,7 @@ import { BookDockService } from './book-dock.service';
 
 vi.mock('fs/promises', () => ({
   unlink: vi.fn(),
+  rmdir: vi.fn().mockResolvedValue(undefined),
 }));
 
 import { unlink } from 'fs/promises';
@@ -46,6 +47,8 @@ function makeService() {
     setTargetsByIds: vi.fn(),
     countsByStatus: vi.fn(),
     getStatistics: vi.fn(),
+    findUnitFiles: vi.fn().mockResolvedValue([]),
+    findUnitFilesByDockFileIds: vi.fn().mockResolvedValue(new Map()),
   };
   const ingestService = {
     retryFetch: vi.fn(),
@@ -329,13 +332,14 @@ describe('BookDockService', () => {
       .mockResolvedValueOnce([]);
 
     await service.discardFile(1, 1, false);
-    await service.bulkDiscard([], true);
+    await service.bulkDiscard([], true, [], undefined, undefined, 1, true, undefined, true);
 
     expect(vi.mocked(unlink)).toHaveBeenCalledWith('/bucket/book.epub');
     expect(vi.mocked(unlink)).toHaveBeenCalledWith('/covers/1.png');
     expect(vi.mocked(unlink)).toHaveBeenCalledWith('/covers/1_thumb.jpg');
     expect(repo.deleteById).toHaveBeenCalledWith(1);
     expect(repo.deleteByIds).toHaveBeenCalledWith([2]);
+    expect(repo.findSelectionBatch).toHaveBeenCalledWith(expect.objectContaining({ readyToFile: true }));
   });
 
   it('proxies summary and statistics repository queries', async () => {

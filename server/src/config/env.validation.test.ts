@@ -79,6 +79,16 @@ describe('validateEnv', () => {
     ).toThrow('OIDC_ALLOW_LOCAL_ISSUERS must be one of true/false/1/0/yes/no/on/off');
   });
 
+  it('accepts boolean-like values for DISABLE_LOCAL_AUTH', () => {
+    for (const DISABLE_LOCAL_AUTH of ['true', 'false', '1', '0', 'yes', 'no', 'on', 'off']) {
+      expect(() => validateEnv({ ...BASE_ENV, DISABLE_LOCAL_AUTH })).not.toThrow();
+    }
+  });
+
+  it('rejects invalid DISABLE_LOCAL_AUTH values', () => {
+    expect(() => validateEnv({ ...BASE_ENV, DISABLE_LOCAL_AUTH: 'maybe' })).toThrow('DISABLE_LOCAL_AUTH must be one of true/false/1/0/yes/no/on/off');
+  });
+
   it('accepts boolean-like values for SWAGGER_ENABLED', () => {
     for (const SWAGGER_ENABLED of ['true', 'false', '1', '0', 'yes', 'no', 'on', 'off']) {
       expect(() =>
@@ -97,6 +107,18 @@ describe('validateEnv', () => {
         SWAGGER_ENABLED: 'maybe',
       }),
     ).toThrow('SWAGGER_ENABLED must be one of true/false/1/0/yes/no/on/off');
+  });
+
+  it('accepts explicit trusted proxy addresses and boolean values', () => {
+    for (const TRUST_PROXY of ['', 'true', 'false', 'yes', 'no', 'on', 'off', 'loopback,linklocal,uniquelocal', '127.0.0.1', '10.0.0.0/8']) {
+      expect(() => validateEnv({ ...BASE_ENV, TRUST_PROXY })).not.toThrow();
+    }
+  });
+
+  it.each(['0', '1', '2', '10', '1.5', '-1', '1e2'])('rejects numeric TRUST_PROXY hop count %s', (TRUST_PROXY) => {
+    expect(() => validateEnv({ ...BASE_ENV, TRUST_PROXY })).toThrow(
+      'TRUST_PROXY must be a boolean value or trusted proxy IP/CIDR; numeric hop counts are not supported',
+    );
   });
 
   it('accepts a custom Book Dock container path', () => {

@@ -5,7 +5,17 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 
-import { appConfig, authConfig, dbConfig, emailConfig, fileWriteConfig, migrationConfig, oidcRuntimeConfig, storageConfig } from './config/config';
+import {
+  appConfig,
+  authConfig,
+  bookRequestConfig,
+  dbConfig,
+  emailConfig,
+  fileWriteConfig,
+  migrationConfig,
+  oidcRuntimeConfig,
+  storageConfig,
+} from './config/config';
 import { validateEnv } from './config/env.validation';
 import { loggerConfig } from './common/logger.config';
 import { CommonModule } from './common/common.module';
@@ -44,6 +54,7 @@ import { SeedModule } from './modules/seed/seed.module';
 import { EmailModule } from './modules/email/email.module';
 import { EpubModule } from './modules/reader/epub/epub.module';
 import { BookDockModule } from './modules/book-dock/book-dock.module';
+import { BookRequestModule } from './modules/book-request/book-request.module';
 import { BrowseCountsModule } from './modules/browse-counts/browse-counts.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { UserModule } from './modules/user/user.module';
@@ -86,7 +97,7 @@ import { ReadingAlignmentModule } from './modules/reading-alignment/reading-alig
     ConfigModule.forRoot({
       isGlobal: true,
       validate: validateEnv,
-      load: [appConfig, dbConfig, authConfig, storageConfig, fileWriteConfig, emailConfig, migrationConfig, oidcRuntimeConfig],
+      load: [appConfig, dbConfig, authConfig, storageConfig, fileWriteConfig, emailConfig, migrationConfig, bookRequestConfig, oidcRuntimeConfig],
     }),
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot({
@@ -135,6 +146,7 @@ import { ReadingAlignmentModule } from './modules/reading-alignment/reading-alig
     UserPreferencesModule,
     EpubModule,
     BookDockModule,
+    BookRequestModule,
     EmailModule,
     MetadataScoreModule,
     StatisticsModule,

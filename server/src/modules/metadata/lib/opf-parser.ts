@@ -38,6 +38,28 @@ export interface ParsedOpf {
   renditionLayout: string | null;
 }
 
+/**
+ * Extensions a converter leaves behind when it names `dc:title` after the file it was handed
+ * rather than after the book. Common enough on redistributed EPUBs to be worth undoing: one seen
+ * in the wild carried `D:\wwwroot\cleverpdf-web\523660\Circe - Madeline Miller.epub`, which
+ * matches against no provider at all.
+ */
+const FILE_NAMED_TITLE = /^(?:.*[\\/])?([^\\/]+)\.(?:epub|kepub|mobi|azw3?|azw|fb2|pdf|djvu|lit|rtf|txt|cbz|cbr|cb7|cbt)$/i;
+
+/**
+ * A title that is really a path or a filename, reduced to the part that could be a title.
+ *
+ * The extension is what proves it. A real title may contain a slash or a colon, so neither is
+ * enough on its own, but none ends in `.epub`. Anything else is returned untouched, because a
+ * title BookOrbit does not understand is still the one the book claims.
+ */
+function titleFromFileName(value: string): string {
+  const stem = FILE_NAMED_TITLE.exec(value.trim())?.[1];
+  if (!stem) return value;
+  const cleaned = stem.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
+  return cleaned || value;
+}
+
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
@@ -79,6 +101,15 @@ function parseNumber(raw: string | null): number | null {
   if (!raw) return null;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseCalibreSeriesIndex(raw: string): string | null {
+  const parsed = parseSeriesIndex(raw);
+  if (parsed === null) return null;
+
+  // Calibre serializes whole-number series positions with a single `.0`; other
+  // fractional digits are exact user-facing labels and must remain untouched.
+  return /^\d+\.0$/.test(parsed) ? parsed.slice(0, -2) : parsed;
 }
 
 function parseBookOrbitTags(raw: string | null): string[] {
@@ -300,6 +331,7 @@ export function parseOpf(xml: string): ParsedOpf {
     }
     title ??= getText(rawTitles[0]);
   }
+  if (title) title = titleFromFileName(title);
   subtitle ??= namedMeta('bookorbit:subtitle');
   subtitle ??= calibreUser.subtitle;
 
@@ -461,7 +493,7 @@ export function parseOpf(xml: string): ParsedOpf {
   let seriesIndex: string | null = null;
   const rawSeriesIdx = namedMeta('calibre:series_index');
   if (rawSeriesIdx) {
-    seriesIndex = parseSeriesIndex(rawSeriesIdx);
+    seriesIndex = parseCalibreSeriesIndex(rawSeriesIdx);
   }
 
   if (!seriesName) {

@@ -90,7 +90,8 @@ function isLinkLocalAddress(address: string): boolean {
   return family === 6 && /^(fe8|fe9|fea|feb)/.test(maybeV4);
 }
 
-function isPrivateOrLocalAddress(address: string): boolean {
+/** Exported so the one lookup a connection actually uses can apply the same policy. */
+export function isPrivateOrLocalAddress(address: string): boolean {
   const normalized = address.toLowerCase();
   const mappedV4Prefix = '::ffff:';
   const maybeV4 = normalized.startsWith(mappedV4Prefix) ? normalized.slice(mappedV4Prefix.length) : normalized;
