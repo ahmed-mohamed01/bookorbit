@@ -2078,6 +2078,28 @@ describe('BookDockFinalizeService', () => {
     ).resolves.toBe('/library/original.epub');
   });
 
+  it('resolveDestination files legacy BookDock metadata with a numeric series index', async () => {
+    const { service } = makeService();
+    const row = makeRow({
+      fileName: 'Day, Sylvia - Crossfire 03 - Entwined With You - Day, Sylvia.epub',
+      selectedMetadata: {
+        title: 'Entwined With You',
+        authors: ['Sylvia Day'],
+        seriesName: 'Crossfire',
+        seriesIndex: 3,
+      } as unknown as BookDockMetadata,
+    });
+
+    await expect(
+      (service as any).resolveDestination(
+        { fileNamingPattern: '<{authors:first}|Unknown Author>/<{series}/><{seriesIndex}. >{title}' },
+        '/library',
+        row,
+        'epub',
+      ),
+    ).resolves.toBe('/library/Sylvia Day/Crossfire/03. Entwined With You.epub');
+  });
+
   it('resolveDestination uses folder-mode global pattern for book_per_folder libraries', async () => {
     const { service, appSettings } = makeService();
     appSettings.getUploadPatternBookPerFolder.mockResolvedValue('{title}/');
