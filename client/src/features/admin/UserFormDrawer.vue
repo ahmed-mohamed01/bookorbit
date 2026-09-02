@@ -37,6 +37,7 @@ const props = defineProps<{
   canManageSuperuser?: boolean
   currentUserId?: number
   canDelete?: boolean
+  passwordLoginEnabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -203,6 +204,14 @@ watch(
   },
 )
 
+watch(
+  [() => props.user, () => props.passwordLoginEnabled],
+  ([user, passwordLoginEnabled]) => {
+    if (!user && passwordLoginEnabled !== true) isSharedAccount.value = true
+  },
+  { immediate: true },
+)
+
 function selectSection(section: UserFormSection) {
   activeSection.value = section
 }
@@ -339,7 +348,10 @@ async function handleSubmit() {
           </ul>
 
           <section v-else-if="activeSection === 'profile'" class="space-y-5">
-            <label v-if="!isEdit" class="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card px-3 py-2.5">
+            <label
+              v-if="!isEdit && passwordLoginEnabled"
+              class="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-card px-3 py-2.5"
+            >
               <input v-model="isSharedAccount" type="checkbox" class="mt-0.5 size-4 shrink-0 rounded border-input accent-primary" />
               <span>
                 <span class="block text-sm font-medium text-foreground">{{ t('adminFeature.userForm.sharedAccount') }}</span>

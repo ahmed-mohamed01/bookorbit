@@ -113,6 +113,7 @@ export const refreshTokens = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     tokenHash: varchar('token_hash', { length: 255 }).notNull().unique(),
+    authenticationMethod: varchar('authentication_method', { length: 20 }).notNull().default('legacy'),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     rotatedAt: timestamp('rotated_at', { withTimezone: true }),
@@ -123,6 +124,7 @@ export const refreshTokens = pgTable(
     index('refresh_tokens_user_id_idx').on(t.userId),
     index('refresh_tokens_expires_at_idx').on(t.expiresAt),
     check('refresh_tokens_expires_after_created_chk', sql`${t.expiresAt} > ${t.createdAt}`),
+    check('refresh_tokens_authentication_method_chk', sql`${t.authenticationMethod} in ('password', 'oidc', 'magic_link', 'setup', 'legacy')`),
   ],
 );
 

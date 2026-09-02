@@ -68,7 +68,7 @@ type Drawer = ReturnType<typeof mount>
 
 async function mountDrawer(props: Record<string, unknown> = {}): Promise<Drawer> {
   const wrapper = mount(UserFormDrawer, {
-    props: { user: USER, libraries: LIBRARIES, defaultLibraryIds: [], ...props },
+    props: { user: USER, libraries: LIBRARIES, defaultLibraryIds: [], passwordLoginEnabled: true, ...props },
   })
   await flushPromises()
   return wrapper

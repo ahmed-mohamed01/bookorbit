@@ -23,6 +23,7 @@ export const authConfig = registerAs('auth', () => ({
   jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '7d',
   setupBootstrapToken: process.env.SETUP_BOOTSTRAP_TOKEN ?? '',
   refreshRotationGraceMs: parsePositiveInteger(process.env.AUTH_REFRESH_ROTATION_GRACE_MS, 30_000),
+  passwordLoginEnabled: !parseBooleanFlag(process.env.DISABLE_LOCAL_AUTH, false),
 }));
 
 export const storageConfig = registerAs('storage', () => {

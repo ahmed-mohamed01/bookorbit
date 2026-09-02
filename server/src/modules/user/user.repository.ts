@@ -10,14 +10,13 @@ import type { UserAttentionReason, UserListSortDirection, UserListSortField, Use
 import { RequestUser } from '../../common/types/request-user';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
+import { AuthenticationPolicyService } from '../../common/services/authentication-policy.service';
 
 type Db = NodePgDatabase<typeof schema>;
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
 
-const SUPERUSER_LIFECYCLE_LOCK_KEY = 'bookorbit:superuser-lifecycle';
-
 export type ManagedUserMutationStatus = 'updated' | 'target_not_found' | 'requester_not_superuser' | 'last_superuser';
-export type SuperuserTransitionStatus = ManagedUserMutationStatus | 'unchanged' | 'self_target' | 'shared_target';
+export type SuperuserTransitionStatus = ManagedUserMutationStatus | 'unchanged' | 'self_target' | 'shared_target' | 'target_no_oidc';
 
 /**
  * An account needs an administrator's attention when it is locked out, is still on the
@@ -64,7 +63,10 @@ export interface UserListQuery {
 
 @Injectable()
 export class UserRepository {
-  constructor(@Inject(DB) private readonly db: Db) {}
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    private readonly authenticationPolicy: AuthenticationPolicyService,
+  ) {}
 
   async findAll(query: UserListQuery) {
     const { page, pageSize } = query;
@@ -407,7 +409,7 @@ export class UserRepository {
     data: Partial<Pick<typeof schema.users.$inferInsert, 'name' | 'email' | 'active'>>,
   ): Promise<{ status: ManagedUserMutationStatus; user?: Awaited<ReturnType<UserRepository['update']>> }> {
     return this.db.transaction(async (tx) => {
-      await this.lockSuperuserLifecycle(tx);
+      await this.authenticationPolicy.lockAdministratorAvailability(tx);
       const { requester, target } = await this.findLifecycleUsers(tx, requestingUserId, targetUserId);
       if (!target) return { status: 'target_not_found' };
       if (target.isSuperuser && !this.isActiveSuperuser(requester)) return { status: 'requester_not_superuser' };
@@ -430,6 +432,7 @@ export class UserRepository {
           createdAt: schema.users.createdAt,
           updatedAt: schema.users.updatedAt,
         });
+      await this.authenticationPolicy.assertUsableOidcSuperuser(tx);
       return user ? { status: 'updated', user } : { status: 'target_not_found' };
     });
   }
@@ -440,7 +443,7 @@ export class UserRepository {
 
   async deleteManagedUser(requestingUserId: number, targetUserId: number, beforeDelete?: () => Promise<void>): Promise<ManagedUserMutationStatus> {
     return this.db.transaction(async (tx) => {
-      await this.lockSuperuserLifecycle(tx);
+      await this.authenticationPolicy.lockAdministratorAvailability(tx);
       const { requester, target } = await this.findLifecycleUsers(tx, requestingUserId, targetUserId);
       if (!target) return 'target_not_found';
       if (target.isSuperuser && !this.isActiveSuperuser(requester)) return 'requester_not_superuser';
@@ -448,6 +451,7 @@ export class UserRepository {
 
       if (beforeDelete) await beforeDelete();
       await tx.delete(schema.users).where(eq(schema.users.id, targetUserId));
+      await this.authenticationPolicy.assertUsableOidcSuperuser(tx);
       return 'updated';
     });
   }
@@ -471,13 +475,20 @@ export class UserRepository {
 
   async setSuperuser(requestingUserId: number, targetUserId: number, isSuperuser: boolean): Promise<SuperuserTransitionStatus> {
     return this.db.transaction(async (tx) => {
-      await this.lockSuperuserLifecycle(tx);
+      await this.authenticationPolicy.lockAdministratorAvailability(tx);
       const { requester, target } = await this.findLifecycleUsers(tx, requestingUserId, targetUserId);
       if (requestingUserId === targetUserId) return 'self_target';
       if (!this.isActiveSuperuser(requester)) return 'requester_not_superuser';
       if (!target) return 'target_not_found';
       if (isSuperuser && target.provisioningMethod === 'shared') return 'shared_target';
       if (target.isSuperuser === isSuperuser) return 'unchanged';
+      if (
+        isSuperuser &&
+        !this.authenticationPolicy.isPasswordLoginEnabled() &&
+        !(await this.authenticationPolicy.hasEnabledOidcIdentityForUser(tx, targetUserId))
+      ) {
+        return 'target_no_oidc';
+      }
       if (!isSuperuser && (await this.countOtherActiveSuperusers(tx, targetUserId)) === 0) return 'last_superuser';
 
       const now = new Date();
@@ -497,6 +508,7 @@ export class UserRepository {
         .update(schema.passwordResetTokens)
         .set({ usedAt: now })
         .where(and(eq(schema.passwordResetTokens.userId, targetUserId), isNull(schema.passwordResetTokens.usedAt)));
+      await this.authenticationPolicy.assertUsableOidcSuperuser(tx);
       return 'updated';
     });
   }
@@ -507,10 +519,6 @@ export class UserRepository {
       .from(schema.users)
       .where(and(eq(schema.users.isSuperuser, true), ne(schema.users.id, excludeUserId)));
     return Number(total);
-  }
-
-  private async lockSuperuserLifecycle(tx: Tx): Promise<void> {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${SUPERUSER_LIFECYCLE_LOCK_KEY})::bigint)`);
   }
 
   private async findLifecycleUsers(tx: Tx, requestingUserId: number, targetUserId: number) {

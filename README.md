@@ -95,6 +95,8 @@ docker compose up -d
 
 Open `http://your-server-ip:3000` and complete setup using your `SETUP_BOOTSTRAP_TOKEN`.
 
+After configuring OIDC and linking at least one active administrator, you can set `DISABLE_LOCAL_AUTH=true` and restart BookOrbit to remove and reject password sign-in. BookOrbit refuses to start if that would leave no usable OIDC administrator. Set it back to `false` and restart to recover access during an identity-provider outage.
+
 For the full installation guide including reverse proxy setup, file permissions on NAS, external databases, and environment variable reference, see **[bookorbit.app/installation](https://bookorbit.app/installation)**.
 
 ## KOReader Plugin

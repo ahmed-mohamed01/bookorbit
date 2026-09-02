@@ -4,10 +4,11 @@ import { flushPromises, mount, shallowMount } from '@vue/test-utils'
 import UsersPage from '../UsersPage.vue'
 import UserRosterTable from '../components/UserRosterTable.vue'
 
-const { apiMock, authState, permState } = vi.hoisted(() => ({
+const { apiMock, authState, permState, policyState } = vi.hoisted(() => ({
   apiMock: vi.fn<(input: string, init?: RequestInit) => Promise<unknown>>(),
   authState: { userId: 1 },
   permState: { isSuperuser: true, denied: [] as string[] },
+  policyState: { passwordLoginEnabled: true },
 }))
 
 vi.mock('@/lib/api', () => ({ api: apiMock }))
@@ -29,6 +30,21 @@ vi.mock('@/features/auth/composables/usePermissions', () => ({
 vi.mock('@/features/auth/composables/useAuth', () => ({
   useAuth: () => ({
     user: computed(() => ({ id: authState.userId })),
+  }),
+}))
+
+vi.mock('@/features/auth/composables/useLoginOptions', () => ({
+  useLoginOptions: () => ({
+    loginOptions: computed(() => ({
+      passwordLoginEnabled: policyState.passwordLoginEnabled,
+      allowRegistration: false,
+      oidcProviders: [],
+    })),
+    fetchLoginOptions: vi.fn<() => Promise<{ passwordLoginEnabled: boolean; allowRegistration: boolean; oidcProviders: never[] }>>(async () => ({
+      passwordLoginEnabled: policyState.passwordLoginEnabled,
+      allowRegistration: false,
+      oidcProviders: [],
+    })),
   }),
 }))
 
@@ -122,6 +138,7 @@ beforeEach(() => {
   permState.isSuperuser = true
   permState.denied = []
   authState.userId = 1
+  policyState.passwordLoginEnabled = true
   stubApi()
 })
 

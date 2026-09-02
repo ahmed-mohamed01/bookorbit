@@ -10,6 +10,7 @@ import { api } from '@/lib/api'
 import { formatNumber } from '@/i18n/formatters'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useAuth } from '@/features/auth/composables/useAuth'
+import { useLoginOptions } from '@/features/auth/composables/useLoginOptions'
 import { useUsers, type UserRow } from './composables/useUsers'
 import { useSelfRegistration } from './composables/useSelfRegistration'
 import UserFormDrawer from './UserFormDrawer.vue'
@@ -24,6 +25,8 @@ const HEADER_ACTIONS_TARGET = '#settings-header-actions'
 const { t } = useI18n()
 const { isSuperuser, hasPermission } = usePermissions()
 const { user: currentUser } = useAuth()
+const { loginOptions, fetchLoginOptions } = useLoginOptions()
+const passwordLoginEnabled = computed(() => loginOptions.value?.passwordLoginEnabled === true)
 
 const {
   users,
@@ -119,7 +122,7 @@ const superuserConfirmLabel = computed(() => {
 
 onMounted(async () => {
   headerSlotAvailable.value = document.getElementById(HEADER_ACTIONS_TARGET.slice(1)) !== null
-  await Promise.all([reload(), loadStatic()])
+  await Promise.all([reload(), loadStatic(), fetchLoginOptions().catch(() => undefined)])
   if (canManageAppSettings.value) await loadSelfRegistration()
 })
 
@@ -186,7 +189,7 @@ function canManage(user: UserRow): boolean {
 }
 
 function isPasswordResettable(user: UserRow): boolean {
-  return user.provisioningMethod !== 'oidc' && user.provisioningMethod !== 'shared'
+  return passwordLoginEnabled.value && user.provisioningMethod !== 'oidc' && user.provisioningMethod !== 'shared'
 }
 
 function isLocked(user: UserRow): boolean {
@@ -363,7 +366,7 @@ async function saveDefaultLibraryAccess() {
       <p class="hidden text-sm text-muted-foreground lg:block">{{ pageSubtitle }}</p>
       <Button size="sm" type="button" @click="openCreate">
         <UserPlus :size="14" aria-hidden="true" />
-        {{ t('adminFeature.usersPage.createUser') }}
+        {{ passwordLoginEnabled ? t('adminFeature.usersPage.createUser') : t('adminFeature.userForm.createSharedAccount') }}
       </Button>
     </Teleport>
 
@@ -375,6 +378,7 @@ async function saveDefaultLibraryAccess() {
         :items="attention"
         :total="summary.attention"
         :busy-user-id="busyUserId"
+        :password-login-enabled="passwordLoginEnabled"
         @unlock="handleUnlock"
         @send-reset-link="handleResetPassword"
         @open="openById"
@@ -468,6 +472,7 @@ async function saveDefaultLibraryAccess() {
             :is-locked="isLocked"
             :is-resettable="isPasswordResettable"
             :needs-attention="needsAttention"
+            :password-login-enabled="passwordLoginEnabled"
             @sort="handleSort"
             @edit="openEdit"
             @unlock="unlockUser"
@@ -500,7 +505,7 @@ async function saveDefaultLibraryAccess() {
 
     <NewAccountDefaults
       v-if="showDefaults"
-      :show-self-registration="canManageAppSettings"
+      :show-self-registration="canManageAppSettings && passwordLoginEnabled"
       :show-library-defaults="canManageUserDefaults"
       :allow-registration="allowRegistration"
       :saving-self-registration="savingSelfRegistration"
@@ -523,6 +528,7 @@ async function saveDefaultLibraryAccess() {
       :can-manage-superuser="isSuperuser"
       :current-user-id="currentUser?.id"
       :can-delete="canDeleteEditingUser"
+      :password-login-enabled="passwordLoginEnabled"
       @close="closeDrawer"
       @saved="onSaved"
       @request-superuser-change="requestSuperuserChange"

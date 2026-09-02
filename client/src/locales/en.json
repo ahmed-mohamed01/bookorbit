@@ -3640,6 +3640,7 @@
       "resetPasswordSharedHint": "Shared accounts do not have passwords",
       "resetPasswordOidcHintFull": "OIDC users reset passwords in their identity provider.",
       "resetPasswordSharedHintFull": "Shared accounts do not have passwords.",
+      "resetPasswordDisabledHintFull": "Password authentication is disabled by the server configuration.",
       "deleteUserAction": "Delete user",
       "deleteDialogTitle": "Delete user?",
       "deleteDialogBody": "Delete user \"{username}\". This action cannot be undone.",
@@ -4245,6 +4246,8 @@
       "errors": {
         "invalidCredentials": "Invalid username or password",
         "tooManyAttempts": "Too many login attempts. Please wait a minute and try again.",
+        "passwordDisabled": "Password sign-in is disabled. Use a single sign-on provider.",
+        "optionsUnavailable": "Sign-in options could not be loaded. Please refresh the page or contact your administrator.",
         "accountLocked": "Your password is correct, but this account is temporarily locked after too many failed sign-in attempts. Try again in {minutes, plural, one {# minute} other {# minutes}}, or reset your password to unlock it now."
       }
     },

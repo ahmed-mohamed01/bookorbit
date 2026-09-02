@@ -68,7 +68,9 @@ describe('UserService', () => {
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     events = new UserEventsService();
-    service = new UserService(userRepo as any, config as any, contentFilterRepo as any, appSettingsService as any, userStatistics as any, events);
+    service = new UserService(userRepo as any, config as any, contentFilterRepo as any, appSettingsService as any, userStatistics as any, events, {
+      assertPasswordLoginEnabled: vi.fn(),
+    } as any);
 
     mockHash.mockResolvedValue('hashed-secret');
     mockRandomBytes.mockReturnValue(Buffer.from('abcd', 'hex'));
@@ -567,6 +569,14 @@ describe('UserService', () => {
     await expect(service.setSuperuser(2, false, reqUser({ isSuperuser: true }))).rejects.toBeInstanceOf(ConflictException);
   });
 
+  it('setSuperuser rejects promotion without an enabled OIDC identity in SSO-only mode', async () => {
+    userRepo.setSuperuser.mockResolvedValue('target_no_oidc');
+
+    await expect(service.setSuperuser(2, true, reqUser({ isSuperuser: true }))).rejects.toThrow(
+      'An administrator must link an enabled OIDC provider while password authentication is disabled',
+    );
+  });
+
   it('setSuperuser writes the target superuser flag when allowed', async () => {
     await expect(service.setSuperuser(2, true, reqUser({ isSuperuser: true }))).resolves.toBeUndefined();
     expect(userRepo.setSuperuser).toHaveBeenCalledWith(1, 2, true);
@@ -782,6 +792,7 @@ describe('UserService.updateSeriesCollapsePreferences', () => {
       appSettingsService as any,
       userStatistics as any,
       new UserEventsService(),
+      { assertPasswordLoginEnabled: vi.fn() } as any,
     );
   });
 

@@ -64,7 +64,15 @@ describe('UserRepository', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
-    repo = new UserRepository(db as any);
+    repo = new UserRepository(
+      db as any,
+      {
+        lockAdministratorAvailability: vi.fn((tx: { execute: () => unknown }) => tx.execute()),
+        assertUsableOidcSuperuser: vi.fn(),
+        isPasswordLoginEnabled: vi.fn().mockReturnValue(true),
+        hasEnabledOidcIdentityForUser: vi.fn().mockResolvedValue(true),
+      } as any,
+    );
 
     db.update.mockImplementation(() => ({ set: updateSet }));
     db.insert.mockImplementation(() => ({ values: insertValues }));

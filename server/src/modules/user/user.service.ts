@@ -21,6 +21,7 @@ import { USER_DELETING, UserEventsService, type UserDeletingEvent } from './user
 import { UserRepository, type UserListQuery } from './user.repository';
 import { AppSettingsService } from '../app-settings/app-settings.service';
 import { UserStatisticsService } from '../user-statistics/user-statistics.service';
+import { AuthenticationPolicyService } from '../../common/services/authentication-policy.service';
 
 /** The band is a to-do list, not a second roster. */
 const ATTENTION_BAND_LIMIT = 8;
@@ -37,6 +38,7 @@ export class UserService {
     private readonly appSettingsService: AppSettingsService,
     private readonly userStatistics: UserStatisticsService,
     private readonly events: UserEventsService,
+    private readonly authenticationPolicy: AuthenticationPolicyService,
   ) {}
 
   findByUsername(username: string) {
@@ -130,6 +132,7 @@ export class UserService {
   }
 
   async createUser(dto: CreateUserDto) {
+    this.authenticationPolicy.assertPasswordLoginEnabled();
     const existing = await this.userRepo.findByUsername(dto.username);
     if (existing) throw new ConflictException('Username already taken');
     const existingEmail = await this.userRepo.findByEmail(dto.email);
@@ -399,6 +402,9 @@ export class UserService {
     if (result === 'requester_not_superuser') throw new ForbiddenException('Only administrators can change superuser status');
     if (result === 'target_not_found') throw new NotFoundException('User not found');
     if (result === 'shared_target') throw new BadRequestException('Shared accounts cannot be made superuser');
+    if (result === 'target_no_oidc') {
+      throw new ConflictException('An administrator must link an enabled OIDC provider while password authentication is disabled');
+    }
     if (result === 'last_superuser') throw new ConflictException('Cannot remove the last administrator');
   }
 
@@ -421,6 +427,7 @@ export class UserService {
   }
 
   async adminResetPassword(targetUserId: number, requestingUser: RequestUser) {
+    this.authenticationPolicy.assertPasswordLoginEnabled();
     const target = await this.userRepo.findByIdWithPermissions(targetUserId);
     if (!target) throw new NotFoundException('User not found');
     if (target.isSuperuser && !requestingUser.isSuperuser) {
