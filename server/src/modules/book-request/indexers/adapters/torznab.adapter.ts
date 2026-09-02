@@ -35,6 +35,7 @@ const MAX_FEED_FIELD_CHARS = MAX_INDEXER_RELEASE_GUID_LENGTH;
 const REQUEST_TIMEOUT_MS = 25_000;
 /** The same ceiling the direct fetcher uses, and for the same reason: a chain, not a loop. */
 const MAX_REDIRECTS = 5;
+const XML_ACCEPT = 'application/rss+xml, application/xml, text/xml, */*;q=0.1';
 
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_', textNodeName: '#text' });
 
@@ -162,7 +163,7 @@ export class TorznabAdapter implements IndexerAdapter {
 
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       try {
-        response = await safeFetch(current.href, { signal, redirect: 'manual', headers: { Accept: 'application/xml, text/xml' } }, options);
+        response = await safeFetch(current.href, { signal, redirect: 'manual', headers: { Accept: XML_ACCEPT } }, options);
       } catch (error) {
         if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
           throw new IndexerSearchException('timeout', `${config.name} did not answer in time`);
@@ -200,7 +201,8 @@ export class TorznabAdapter implements IndexerAdapter {
   /**
    * `new URL('/api', base)` throws away any path the base carries, which breaks every Jackett
    * deployment (its endpoints live under `/api/v2.0/indexers/<id>/results/torznab`). Join under
-   * the base's own path instead, and accept a base that already ends in `/api`.
+   * the base's own path instead, and accept either the conventional endpoint ending in `/api` or
+   * Prowlarr's REST-shaped `/api/v1/indexer/<id>/newznab` endpoint as complete.
    *
    * Anything the base's own query string carries is kept underneath what this call asks for. Some
    * proxies hand the operator a base with the key already in it (`.../api?apikey=...`), and
@@ -212,7 +214,8 @@ export class TorznabAdapter implements IndexerAdapter {
     const base = await ensureSafeUrl(config.baseUrl, { allowPrivate: config.allowPrivateAddress });
     const prefix = base.pathname.replace(/\/+$/, '');
     const target = new URL(base.href);
-    target.pathname = prefix.endsWith('/api') ? prefix : `${prefix}/api`;
+    const completeEndpoint = prefix.endsWith('/api') || /\/api\/v\d+\/indexer\/\d+\/newznab$/i.test(prefix);
+    target.pathname = completeEndpoint ? prefix : `${prefix}/api`;
 
     const merged = new URLSearchParams(base.search);
     for (const key of new Set(params.keys())) merged.delete(key);

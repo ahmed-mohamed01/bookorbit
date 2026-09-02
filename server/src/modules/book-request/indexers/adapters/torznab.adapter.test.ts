@@ -165,6 +165,16 @@ describe('TorznabAdapter', () => {
     expect(lastUrl().pathname).toBe('/api');
   });
 
+  it('uses Prowlarr REST Torznab feed URLs without appending /api', async () => {
+    fetchMock.mockResolvedValue(new Response('<caps><server title="Prowlarr" /></caps>'));
+
+    await expect(new TorznabAdapter().test(config({ baseUrl: 'http://127.0.0.1:9696/api/v1/indexer/7/newznab' }))).resolves.toEqual({
+      success: true,
+      indexerName: 'Prowlarr',
+    });
+    expect(lastUrl().pathname).toBe('/api/v1/indexer/7/newznab');
+  });
+
   it('reads seeders, size, infohash and freeleech off the torznab attributes', async () => {
     fetchMock.mockResolvedValue(new Response(feed(ITEM)));
 
@@ -229,6 +239,17 @@ describe('TorznabAdapter', () => {
     fetchMock.mockResolvedValue(new Response('<html><body>hello</body></html>'));
 
     await expect(new TorznabAdapter().test(config())).resolves.toMatchObject({ success: false });
+  });
+
+  it('reports a Prowlarr server URL as a non-torznab response instead of an opaque 406', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ current: 'v1', deprecated: [] }), { headers: { 'content-type': 'application/json' } }));
+
+    await expect(new TorznabAdapter().test(config({ name: 'Prowlarr', baseUrl: 'http://127.0.0.1:9696' }))).resolves.toEqual({
+      success: false,
+      error: 'That URL answered, but not with a torznab capabilities document',
+    });
+    expect(lastUrl().pathname).toBe('/api');
+    expect(new Headers(fetchMock.mock.calls.at(-1)![1].headers).get('accept')).toBe('application/rss+xml, application/xml, text/xml, */*;q=0.1');
   });
 
   /**
