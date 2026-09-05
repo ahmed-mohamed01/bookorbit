@@ -3,20 +3,23 @@ run-name: >-
   ${{ github.event_name == 'workflow_run' && format('Image - {0} ({1})', github.event.workflow_run.head_commit.message, github.event.workflow_run.head_branch) || format('Image - {0}', github.ref_name) }}
 
 on:
-  # Break-glass: bypasses CI/E2E gate. Use only when CI is broken and a hotfix image is urgently needed.
+  # Manual build for any branch. From main this is break-glass: it bypasses the CI/E2E gate,
+  # so use it there only when CI is broken and a hotfix image is urgently needed.
   workflow_dispatch:
     inputs:
       force_rebuild:
         description: Rebuild even if image for this SHA already exists in GHCR
         type: boolean
         default: false
+  push:
+    branches: [monitored]
   workflow_run:
     workflows: ["CI"]
     types: [completed]
     branches: [main]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || (github.event_name == 'push' && github.ref || github.sha) }}
   cancel-in-progress: true
 
 permissions:
@@ -33,6 +36,7 @@ jobs:
     name: Resolve Build Context
     if: >
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'push' ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push')
@@ -45,6 +49,7 @@ jobs:
       source_sha: ${{ steps.ctx.outputs.source_sha }}
       source_sha_short: ${{ steps.ctx.outputs.source_sha_short }}
       update_main: ${{ steps.ctx.outputs.update_main }}
+      branch_tag: ${{ steps.ctx.outputs.branch_tag }}
       skip_build: ${{ steps.ctx.outputs.skip_build }}
     steps:
       - name: Resolve build context
@@ -59,10 +64,11 @@ jobs:
           IMAGE_NAME: ${{ github.repository }}
           FORCE_REBUILD: ${{ inputs.force_rebuild }}
         run: |
-          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$GH_REF" != "refs/heads/main" ]]; then
-            echo "::error::workflow_dispatch is only supported from main."
-            exit 1
+          BRANCH_TAG=""
+          if [[ "$EVENT_NAME" != "workflow_run" && "$GH_REF" == refs/heads/* && "$GH_REF" != "refs/heads/main" ]]; then
+            BRANCH_TAG=$(echo "${GH_REF#refs/heads/}" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^[.-]+//' | cut -c1-128)
           fi
+          echo "branch_tag=${BRANCH_TAG}" >> "$GITHUB_OUTPUT"
           if [[ "$EVENT_NAME" == "workflow_run" ]]; then
             SOURCE_SHA="$WORKFLOW_RUN_HEAD_SHA"
             echo "update_main=true" >> "$GITHUB_OUTPUT"
@@ -247,6 +253,22 @@ jobs:
           FULL_IMAGE="${REGISTRY}/${IMAGE}"
           docker buildx imagetools create \
             --tag "${FULL_IMAGE}:main" \
+            "${FULL_IMAGE}@${AMD64_DIGEST}" \
+            "${FULL_IMAGE}@${ARM64_DIGEST}"
+
+      - name: Update branch tag
+        if: needs.prepare.outputs.branch_tag != ''
+        shell: bash
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE_NAME }}
+          BRANCH_TAG: ${{ needs.prepare.outputs.branch_tag }}
+          AMD64_DIGEST: ${{ needs.build-amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ needs.build-arm64.outputs.digest }}
+        run: |
+          FULL_IMAGE="${REGISTRY}/${IMAGE}"
+          docker buildx imagetools create \
+            --tag "${FULL_IMAGE}:${BRANCH_TAG}" \
             "${FULL_IMAGE}@${AMD64_DIGEST}" \
             "${FULL_IMAGE}@${ARM64_DIGEST}"
 
