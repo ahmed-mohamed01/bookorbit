@@ -3,6 +3,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import type { BookDetail } from '@bookorbit/types'
 import DetailsTab from '../DetailsTab.vue'
+import BookReadingActivityCard from '../../details/BookReadingActivityCard.vue'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 
 const mocks = vi.hoisted(() => ({
@@ -116,6 +117,7 @@ function mountDetails(book: BookDetail) {
       stubs: {
         BookCoverArtwork: false,
         BookCoverSurface: false,
+        BookReadingActivityCard: false,
         RouterLink: RouterLinkStub,
         Popover: { template: '<div><slot /><slot name="content" /></div>' },
         PopoverTrigger: { template: '<div><slot /></div>' },
@@ -333,6 +335,15 @@ describe('DetailsTab cover surface', () => {
     expect(synopsis.classes()).toContain('line-clamp-4')
     expect(toggle!.text()).toBe('Show more')
     expect(toggle!.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('keeps the reading activity card tall enough for its content', async () => {
+    const wrapper = mountDetails(makeBook())
+    await flushPromises()
+
+    const activityCard = wrapper.getComponent(BookReadingActivityCard)
+    expect(activityCard.classes()).toContain('@min-[46rem]/book-detail:flex-1')
+    expect(activityCard.classes().some((className) => className.includes('min-h-0'))).toBe(false)
   })
 
   it('summarizes pending Kobo sync state for each affected device', async () => {

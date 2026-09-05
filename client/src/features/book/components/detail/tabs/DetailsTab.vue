@@ -1869,7 +1869,7 @@ watch(
       </section>
 
       <BookReadingActivityCard
-        class="@min-[46rem]/book-detail:min-h-0 @min-[46rem]/book-detail:flex-1"
+        class="@min-[46rem]/book-detail:flex-1"
         :stats="readingStats"
         :sessions="readingSessions"
         :loading="readingLogLoading"
