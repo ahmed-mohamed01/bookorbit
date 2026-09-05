@@ -4513,7 +4513,8 @@
       "rowLabel": "{name}, {count, plural, =0 {no books} one {# book} other {# books}}",
       "actionsFor": "Actions for {name}",
       "refreshing": "Refreshing metadata for {name}",
-      "deleting": "Deleting {name}"
+      "deleting": "Deleting {name}",
+      "monitoring": "Preparing to monitor {name}"
     }
   },
   "book": {
@@ -10206,6 +10207,7 @@
     },
     "actions": {
       "monitor": "Monitor",
+      "monitorAuthor": "Monitor Author",
       "monitorThisBook": "Monitor this book",
       "alreadyMonitoringThisBook": "Already monitoring this book",
       "pause": "Pause",

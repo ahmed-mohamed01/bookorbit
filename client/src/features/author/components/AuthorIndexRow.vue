@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ExternalLink, Loader2, MoreHorizontal, RefreshCw, Trash2 } from '@lucide/vue'
+import { Bell, Check, ExternalLink, Loader2, MoreHorizontal, RefreshCw, Trash2 } from '@lucide/vue'
 import type { AuthorSummary, TableDensity } from '@bookorbit/types'
 import { formatNumber, formatRelativeFromNow } from '@/i18n/formatters'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -17,8 +17,10 @@ const props = withDefaults(
     selected?: boolean
     canRefresh?: boolean
     canDelete?: boolean
+    canMonitor?: boolean
     refreshing?: boolean
     deleting?: boolean
+    monitoring?: boolean
     coverFallback?: boolean
   }>(),
   { density: 'comfortable', maxBookCount: 1, coverFallback: true },
@@ -29,6 +31,7 @@ const emit = defineEmits<{
   select: [event: MouseEvent]
   refresh: [authorId: number]
   delete: [authorId: number]
+  monitor: [authorId: number]
 }>()
 
 const { t } = useI18n()
@@ -71,10 +74,12 @@ const secondaryLine = computed(() => {
 const accessibleLabel = computed(() => t('author.index.rowLabel', { name: props.author.name, count: props.author.bookCount }))
 
 const menuOpen = ref(false)
-const busy = computed(() => Boolean(props.refreshing || props.deleting))
-const busyLabel = computed(() =>
-  props.deleting ? t('author.index.deleting', { name: props.author.name }) : t('author.index.refreshing', { name: props.author.name }),
-)
+const busy = computed(() => Boolean(props.refreshing || props.deleting || props.monitoring))
+const busyLabel = computed(() => {
+  if (props.deleting) return t('author.index.deleting', { name: props.author.name })
+  if (props.monitoring) return t('author.index.monitoring', { name: props.author.name })
+  return t('author.index.refreshing', { name: props.author.name })
+})
 
 function handleActivate(event: MouseEvent) {
   if (props.selectionMode || event.metaKey || event.ctrlKey || event.shiftKey) {
@@ -92,6 +97,11 @@ function handleRefresh() {
 function handleDelete() {
   if (!props.canDelete || props.deleting) return
   emit('delete', props.author.id)
+}
+
+function handleMonitor() {
+  if (!props.canMonitor || props.monitoring) return
+  emit('monitor', props.author.id)
 }
 </script>
 
@@ -188,6 +198,11 @@ function handleDelete() {
           <Loader2 v-if="refreshing" class="mr-2 h-4 w-4 animate-spin" />
           <RefreshCw v-else class="mr-2 h-4 w-4" />
           {{ t('author.card.refreshMetadata') }}
+        </DropdownMenuItem>
+        <DropdownMenuItem v-if="canMonitor" :disabled="monitoring" @click="handleMonitor">
+          <Loader2 v-if="monitoring" class="mr-2 h-4 w-4 animate-spin" />
+          <Bell v-else class="mr-2 h-4 w-4" />
+          {{ t('monitored.actions.monitorAuthor') }}
         </DropdownMenuItem>
         <DropdownMenuItem
           :disabled="!canDelete || deleting"

@@ -23,6 +23,10 @@ function mountTile(props: Record<string, unknown> = {}) {
   })
 }
 
+function findMonitorItem(wrapper: ReturnType<typeof mountTile>) {
+  return wrapper.findAll('div').find((node) => node.text() === 'Monitor Author')
+}
+
 describe('AuthorTile', () => {
   it('stretches the activate button over the whole tile, not just the artwork', () => {
     const wrapper = mountTile()
@@ -100,5 +104,20 @@ describe('AuthorTile', () => {
     await wrapper.get('button.inset-0').trigger('click')
 
     expect(wrapper.emitted('open')?.[0]).toEqual([1])
+  })
+
+  it('hides the monitor action from a user without the permission', () => {
+    expect(findMonitorItem(mountTile())).toBeUndefined()
+  })
+
+  it('offers the monitor action once the permission is granted', () => {
+    expect(findMonitorItem(mountTile({ canMonitor: true }))).toBeDefined()
+  })
+
+  it('emits monitor with the author id', async () => {
+    const wrapper = mountTile({ canMonitor: true })
+    await findMonitorItem(wrapper)!.trigger('click')
+
+    expect(wrapper.emitted('monitor')?.[0]).toEqual([1])
   })
 })

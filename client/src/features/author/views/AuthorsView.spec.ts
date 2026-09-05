@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { flushPromises, shallowMount } from '@vue/test-utils'
-import type { AuthorSummary } from '@bookorbit/types'
+import { toast } from 'vue-sonner'
+import type { AuthorSummary, MonitoredAuthorSearchResult } from '@bookorbit/types'
 import type { AuthorListSort, SortDirection } from '../types/author'
 import AuthorsView from './AuthorsView.vue'
 import AuthorFilterChips from '../components/AuthorFilterChips.vue'
+import AuthorTile from '../components/AuthorTile.vue'
+import MonitorAuthorModal from '@/features/monitored/components/MonitorAuthorModal.vue'
 
 class MockIntersectionObserver {
   observe = vi.fn<(target: Element) => void>()
@@ -15,6 +18,19 @@ class MockIntersectionObserver {
 
 function author(id: number, name: string, extra: Partial<AuthorSummary> = {}): AuthorSummary {
   return { id, name, sortName: null, bookCount: 1, lastAddedAt: null, coverBookId: null, ...extra }
+}
+
+function searchResult(extra: Partial<MonitoredAuthorSearchResult> = {}): MonitoredAuthorSearchResult {
+  return {
+    name: 'Blake Crouch',
+    providerIds: { hardcover: 'hc-1' },
+    localAuthorId: null,
+    bookCount: 12,
+    imageUrl: null,
+    genres: [],
+    alreadyMonitoredId: null,
+    ...extra,
+  }
 }
 
 const mocks = vi.hoisted(() => ({
@@ -34,6 +50,12 @@ const mocks = vi.hoisted(() => ({
   addedWithinDays: null as unknown as { value: number | null },
   minBookCount: null as unknown as { value: number | null },
   viewMode: null as unknown as { value: string },
+  searchMonitoredAuthors: vi.fn<(query: string) => Promise<MonitoredAuthorSearchResult[]>>(),
+}))
+
+vi.mock('@/features/monitored/api/monitored', () => ({
+  searchMonitoredAuthors: mocks.searchMonitoredAuthors,
+  monitorAuthor: vi.fn<() => Promise<never>>(),
 }))
 
 vi.mock('vue-router', () => ({
@@ -42,7 +64,12 @@ vi.mock('vue-router', () => ({
 }))
 
 vi.mock('vue-sonner', () => ({
-  toast: { success: vi.fn<(message: string) => void>(), error: vi.fn<(message: string) => void>(), warning: vi.fn<(message: string) => void>() },
+  toast: {
+    success: vi.fn<(message: string) => void>(),
+    error: vi.fn<(message: string) => void>(),
+    warning: vi.fn<(message: string) => void>(),
+    info: vi.fn<(message: string) => void>(),
+  },
 }))
 
 vi.mock('@/composables/useDisplaySettings', () => ({
@@ -146,6 +173,7 @@ describe('AuthorsView', () => {
     mocks.addedWithinDays = ref(null)
     mocks.minBookCount = ref(null)
     mocks.viewMode = ref('list')
+    mocks.searchMonitoredAuthors.mockResolvedValue([])
   })
 
   afterEach(() => {
@@ -201,5 +229,82 @@ describe('AuthorsView', () => {
     const wrapper = await mountView()
 
     expect(wrapper.findAll('[data-letter]')).toHaveLength(0)
+  })
+
+  describe('monitoring an author from the kebab menu', () => {
+    async function mountGalleryAndMonitor() {
+      mocks.items = ref([author(7, 'Blake Crouch')])
+      mocks.viewMode = ref('grid')
+      const wrapper = await mountView()
+
+      wrapper.findComponent(AuthorTile).vm.$emit('monitor', 7)
+      await flushPromises()
+      return wrapper
+    }
+
+    it('opens the modal with the search result that maps to the local author', async () => {
+      const match = searchResult({ localAuthorId: 7 })
+      mocks.searchMonitoredAuthors.mockResolvedValue([searchResult({ name: 'Someone Else', localAuthorId: 9 }), match])
+
+      const modal = (await mountGalleryAndMonitor()).findComponent(MonitorAuthorModal)
+
+      expect(mocks.searchMonitoredAuthors).toHaveBeenCalledWith('Blake Crouch')
+      expect(modal.props('open')).toBe(true)
+      expect(modal.props('result')).toEqual(match)
+    })
+
+    it('says so and stays closed when the author is already monitored', async () => {
+      mocks.searchMonitoredAuthors.mockResolvedValue([searchResult({ localAuthorId: 7, alreadyMonitoredId: 'mon-1' })])
+
+      const modal = (await mountGalleryAndMonitor()).findComponent(MonitorAuthorModal)
+
+      expect(toast.info).toHaveBeenCalledWith('Already monitoring Blake Crouch')
+      expect(modal.props('open')).toBe(false)
+      expect(modal.props('result')).toBeNull()
+    })
+
+    it('falls back to the local author when the search matches nothing', async () => {
+      mocks.searchMonitoredAuthors.mockResolvedValue([searchResult({ name: 'Someone Else', localAuthorId: 9 })])
+
+      const modal = (await mountGalleryAndMonitor()).findComponent(MonitorAuthorModal)
+
+      expect(modal.props('open')).toBe(true)
+      expect(modal.props('result')).toEqual({
+        name: 'Blake Crouch',
+        providerIds: {},
+        localAuthorId: 7,
+        bookCount: 1,
+        imageUrl: null,
+        genres: [],
+        alreadyMonitoredId: null,
+      })
+    })
+
+    it('refuses to bind a same-name result that already belongs to another local author', async () => {
+      mocks.searchMonitoredAuthors.mockResolvedValue([searchResult({ name: 'Blake Crouch', localAuthorId: 9 })])
+
+      const modal = (await mountGalleryAndMonitor()).findComponent(MonitorAuthorModal)
+
+      expect(modal.props('open')).toBe(true)
+      expect(modal.props('result')).toEqual({
+        name: 'Blake Crouch',
+        providerIds: {},
+        localAuthorId: 7,
+        bookCount: 1,
+        imageUrl: null,
+        genres: [],
+        alreadyMonitoredId: null,
+      })
+    })
+
+    it('reports a failed search and releases the tile', async () => {
+      mocks.searchMonitoredAuthors.mockRejectedValue(new Error('network down'))
+
+      const wrapper = await mountGalleryAndMonitor()
+
+      expect(toast.error).toHaveBeenCalledWith('Failed to search authors.')
+      expect(wrapper.findComponent(MonitorAuthorModal).props('open')).toBe(false)
+      expect(wrapper.findComponent(AuthorTile).props('monitoring')).toBe(false)
+    })
   })
 })

@@ -15,6 +15,8 @@ import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useScrollRestoreOnActivate } from '@/features/book/composables/useScrollRestoreOnActivate'
 import { useLibraries } from '@/features/library/composables/useLibraries'
 import JumpRail from '@/features/book/components/JumpRail.vue'
+import MonitorAuthorModal from '@/features/monitored/components/MonitorAuthorModal.vue'
+import { useMonitorAuthorAction } from '@/features/monitored/composables/useMonitorAuthorAction'
 import { bulkRefreshAuthorsMetadata, deleteAuthors, refreshAuthorMetadata } from '../api/author'
 import AuthorConfirmDialog from '../components/AuthorConfirmDialog.vue'
 import AuthorFilterChips from '../components/AuthorFilterChips.vue'
@@ -59,8 +61,18 @@ const confirmingBulkDelete = ref(false)
 const pendingDeleteIds = ref<number[]>([])
 const deleteDialogOpen = ref(false)
 
+const {
+  resolvingId: monitorResolvingId,
+  target: monitorTarget,
+  initialFormats: monitorInitialFormats,
+  beginMonitor,
+  closeModal: closeMonitorModal,
+  handleCreated: handleMonitoredAuthorCreated,
+} = useMonitorAuthorAction()
+
 const canRefreshMetadata = computed(() => hasPermission('library_edit_metadata') && !isDemoRestrictedAccount.value)
 const canDeleteAuthors = computed(() => isSuperuser.value)
+const canMonitorAuthors = computed(() => hasPermission('book_request_access'))
 
 /** The page offers exactly the two views the design has; `table` is not one of them. */
 const authorViewMode = computed<BookViewMode>({
@@ -342,6 +354,15 @@ async function refreshSingleAuthorMetadata(authorId: number) {
   } finally {
     clearRefreshing([authorId])
   }
+}
+
+function monitorSingleAuthor(authorId: number) {
+  if (!canMonitorAuthors.value) return
+
+  const author = items.value.find((item) => item.id === authorId)
+  if (!author) return
+
+  void beginMonitor(author)
 }
 
 function promptDeleteSingleAuthor(authorId: number) {
@@ -637,12 +658,15 @@ defineOptions({ name: 'AuthorsView' })
                 :selected="isSelected(author.id)"
                 :can-refresh="canRefreshMetadata"
                 :can-delete="canDeleteAuthors"
+                :can-monitor="canMonitorAuthors"
                 :refreshing="isRefreshing(author.id)"
                 :deleting="deletingAuthorId === author.id"
+                :monitoring="monitorResolvingId === author.id"
                 @open="openAuthor"
                 @select="handleAuthorSelect(author.id, $event)"
                 @refresh="refreshSingleAuthorMetadata"
                 @delete="promptDeleteSingleAuthor"
+                @monitor="monitorSingleAuthor"
               />
             </div>
 
@@ -661,12 +685,15 @@ defineOptions({ name: 'AuthorsView' })
                 :selected="isSelected(author.id)"
                 :can-refresh="canRefreshMetadata"
                 :can-delete="canDeleteAuthors"
+                :can-monitor="canMonitorAuthors"
                 :refreshing="isRefreshing(author.id)"
                 :deleting="deletingAuthorId === author.id"
+                :monitoring="monitorResolvingId === author.id"
                 @open="openAuthor"
                 @select="handleAuthorSelect(author.id, $event)"
                 @refresh="refreshSingleAuthorMetadata"
                 @delete="promptDeleteSingleAuthor"
+                @monitor="monitorSingleAuthor"
               />
             </div>
           </section>
@@ -808,6 +835,14 @@ defineOptions({ name: 'AuthorsView' })
       destructive
       @confirm="confirmDeleteAuthors"
       @cancel="cancelDeleteAuthors"
+    />
+
+    <MonitorAuthorModal
+      :open="Boolean(monitorTarget)"
+      :result="monitorTarget"
+      :initial-formats="monitorInitialFormats"
+      @close="closeMonitorModal"
+      @created="handleMonitoredAuthorCreated"
     />
   </div>
 </template>
