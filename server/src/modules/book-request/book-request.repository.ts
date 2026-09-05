@@ -589,6 +589,7 @@ export class BookRequestRepository {
    * Bounded, and oldest first, so a backlog is worked off across ticks instead of in one sweep.
    */
   async findDueForResearch(
+    instanceAutomationOn: boolean,
     baseIntervalHours: number,
     maxAgeDays: number,
     backoffCap: number,
@@ -601,6 +602,7 @@ export class BookRequestRepository {
       .where(
         and(
           eq(bookRequests.status, 'approved'),
+          sql`coalesce(${bookRequests.autoGrab}, ${instanceAutomationOn}) = true`,
           sql`${bookRequests.targetLibraryId} is not null`,
           sql`${bookRequests.createdAt} > now() - make_interval(days => ${maxAgeDays})`,
           sql`now() - ${bookRequests.updatedAt} >= make_interval(hours => ${baseIntervalHours}) * least(

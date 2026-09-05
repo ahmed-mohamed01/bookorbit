@@ -34,6 +34,8 @@ function makeContext(
     bookDockTotal: number
     outstandingRequestTotal: number
     outstandingRequestLabel: string
+    monitoredReleaseTotal: number
+    monitoredReleaseLabel: string
     browseCounts: BrowseCounts | null
   }> = {},
 ) {
@@ -41,6 +43,8 @@ function makeContext(
   return {
     hasPermission: (name: string) => permissions.includes(name),
     bookDockTotal: overrides.bookDockTotal ?? 0,
+    monitoredReleaseTotal: overrides.monitoredReleaseTotal ?? 0,
+    monitoredReleaseLabel: overrides.monitoredReleaseLabel ?? '',
     outstandingRequestTotal: overrides.outstandingRequestTotal ?? 0,
     outstandingRequestLabel: overrides.outstandingRequestLabel ?? '',
     browseCounts: overrides.browseCounts ?? null,
@@ -70,10 +74,10 @@ describe('sidebar nav registry', () => {
     expect(allowedIds(makeContext())).toEqual(['dashboard', 'authors', 'series', 'annotations'])
   })
 
-  it('places Dashboard, Book Dock, Requests and Tools in the primary zone, above the entity sections', () => {
+  it('places Dashboard, Book Dock, Requests, Monitored and Tools in the primary zone, above the entity sections', () => {
     const primary = SIDEBAR_NAV_REGISTRY.filter((candidate) => candidate.zone === 'primary').map((candidate) => candidate.id)
 
-    expect(primary).toEqual(['dashboard', 'book-dock', 'book-requests', 'tools'])
+    expect(primary).toEqual(['dashboard', 'book-dock', 'book-requests', 'monitored', 'tools'])
   })
 
   it('leaves Statistics and Achievements to the header', () => {
@@ -89,6 +93,14 @@ describe('sidebar nav registry', () => {
 
   it('shows Requests once the user holds book_request_access', () => {
     expect(allowedIds(makeContext({ permissions: ['book_request_access'] }))).toContain('book-requests')
+  })
+
+  it('hides Monitored from a user without book_request_access', () => {
+    expect(allowedIds(makeContext())).not.toContain('monitored')
+  })
+
+  it('shows Monitored once the user holds book_request_access', () => {
+    expect(allowedIds(makeContext({ permissions: ['book_request_access'] }))).toContain('monitored')
   })
 
   it('hides Requests from a user without book_request_access', () => {
@@ -191,5 +203,23 @@ describe('sidebar nav registry', () => {
     for (const candidate of SIDEBAR_NAV_REGISTRY) {
       expect(['primary', 'browse']).toContain(candidate.zone)
     }
+  })
+})
+
+describe('monitored sidebar badge', () => {
+  it('stays hidden while no release sits in the window', () => {
+    const monitored = entry('monitored')
+
+    expect(monitored.badge?.(makeContext())).toBeNull()
+  })
+
+  it('reports the release count once the summary has one', () => {
+    const monitored = entry('monitored')
+
+    expect(monitored.badge?.(makeContext({ monitoredReleaseTotal: 4, monitoredReleaseLabel: '4 releases in the window' }))).toEqual({
+      value: 4,
+      label: '4 releases in the window',
+      tone: 'accent',
+    })
   })
 })

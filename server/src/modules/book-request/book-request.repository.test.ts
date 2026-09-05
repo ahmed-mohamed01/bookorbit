@@ -109,6 +109,36 @@ describe('BookRequestRepository.updateIf', () => {
   });
 });
 
+describe('BookRequestRepository.findDueForResearch', () => {
+  function makeSelectingDb() {
+    const chain = {
+      select: vi.fn(),
+      from: vi.fn(),
+      where: vi.fn(),
+      orderBy: vi.fn(),
+      limit: vi.fn(),
+    };
+    chain.select.mockReturnValue(chain);
+    chain.from.mockReturnValue(chain);
+    chain.where.mockReturnValue(chain);
+    chain.orderBy.mockReturnValue(chain);
+    chain.limit.mockResolvedValue([]);
+    return chain;
+  }
+
+  it.each([true, false])('coalesces nullable request automation against instanceAutomationOn=%s', async (instanceAutomationOn) => {
+    const db = makeSelectingDb();
+    const repo = new BookRequestRepository(db as never);
+
+    await repo.findDueForResearch(instanceAutomationOn, 24, 60, 8, 7 * 24 * 60 * 60 * 1000, 25);
+
+    const condition = db.where.mock.calls[0]?.[0] as SQL;
+    const query = new PgDialect().sqlToQuery(condition);
+    expect(query.sql).toContain('coalesce("book_requests"."auto_grab"');
+    expect(query.params).toContain(instanceAutomationOn);
+  });
+});
+
 describe('BookRequestRepository.claimForGrab', () => {
   it('reports the claim as taken when a row matched', async () => {
     const db = makeDb();

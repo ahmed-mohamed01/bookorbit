@@ -73,6 +73,8 @@ describe('Architecture boundaries', () => {
       'src/modules/upload/upload.service.ts',
       'src/modules/app-settings/oidc-group-mapping-admin.service.ts',
       'src/modules/auth/oidc/oidc-cleanup.service.ts',
+      'src/modules/monitored/monitored-catalog.service.ts',
+      'src/modules/monitored/monitored-store.service.ts',
     ].sort();
 
     const allFiles = await listFilesRecursive(modulesRoot);

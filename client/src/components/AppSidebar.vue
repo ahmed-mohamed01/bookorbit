@@ -33,6 +33,7 @@ import { useAppInfo } from '@/features/settings/composables/useAppInfo'
 import SettingsSidebar from '@/features/settings/components/SettingsSidebar.vue'
 import { useWhatsNew } from '@/features/whats-new/composables/useWhatsNew'
 import { useBookRequestSummary } from '@/features/book-requests/composables/useBookRequestSummary'
+import { useMonitoredSummary } from '@/features/monitored/composables/useMonitoredSummary'
 import { useBookRequestProgress } from '@/features/book-requests/composables/useBookRequestProgress'
 
 const { t } = useI18n()
@@ -49,10 +50,14 @@ const { hasUnseen: hasUnseenWhatsNew } = useWhatsNew()
 const { fetchSummary: fetchBookDockSummary, subscribe: subscribeBookDockSummary } = useBookDockSummary()
 const { fetchCounts: fetchBrowseCounts, refreshCounts: refreshBrowseCounts } = useBrowseCounts()
 const { summary: bookRequestSummary, fetchSummary: fetchBookRequestSummary, refreshSummary: refreshBookRequestSummary } = useBookRequestSummary()
+const { summary: monitoredSummary, fetchSummary: fetchMonitoredSummaryBadge } = useMonitoredSummary()
 const outstandingRequestTotal = computed(() =>
   hasPermission(Permission.ManageBookRequests) ? (bookRequestSummary.value?.active ?? 0) : (bookRequestSummary.value?.mine ?? 0),
 )
-const { zones } = useSidebarNav(() => outstandingRequestTotal.value)
+const { zones } = useSidebarNav(
+  () => outstandingRequestTotal.value,
+  () => monitoredSummary.value?.releases ?? 0,
+)
 const requestProgress = hasPermission(Permission.BookRequestAccess) ? useBookRequestProgress() : null
 useLibraryScanRefresh()
 
@@ -159,7 +164,10 @@ onMounted(async () => {
   void fetchSmartScopes()
   void fetchCollections()
   void fetchBrowseCounts()
-  if (hasPermission(Permission.BookRequestAccess)) void fetchBookRequestSummary()
+  if (hasPermission(Permission.BookRequestAccess)) {
+    void fetchBookRequestSummary()
+    void fetchMonitoredSummaryBadge()
+  }
   void loadAppInfo()
   if (hasPermission('book_dock_access')) {
     void fetchBookDockSummary()

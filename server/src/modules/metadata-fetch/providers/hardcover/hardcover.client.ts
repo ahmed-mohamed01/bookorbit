@@ -5,7 +5,16 @@ import { fetchWithThrottle } from '../../fetch-with-throttle';
 import { ProviderThrottleError } from '../../provider-throttle.error';
 import { PROVIDER_DELAYS_MS, PROVIDER_LIMITS, PROVIDER_TIMEOUT_MS } from '../provider-constants';
 import { buildRequestSignal, sanitizeLogError, sleep } from '../provider-utils';
-import { HardcoverBookWithEditions, HardcoverBooksResponse, HardcoverSearchDocument, HardcoverSearchResponse } from './hardcover.types';
+import {
+  HardcoverAuthorSearchDocument,
+  HardcoverAuthorSearchResponse,
+  HardcoverAuthorWithContributions,
+  HardcoverAuthorContributionsResponse,
+  HardcoverBookWithEditions,
+  HardcoverBooksResponse,
+  HardcoverSearchDocument,
+  HardcoverSearchResponse,
+} from './hardcover.types';
 
 const GRAPHQL_ENDPOINT = 'https://api.hardcover.app/v1/graphql';
 
@@ -65,6 +74,51 @@ const SEARCH_BOOKS_QUERY = `
   }
 `;
 
+const SEARCH_AUTHORS_QUERY = `
+  query AuthorSearch($q: String!) {
+    search(query: $q, query_type: "Author", per_page: 5, page: 1) {
+      results
+    }
+  }
+`;
+
+const FETCH_AUTHOR_CONTRIBUTIONS_QUERY = `
+  query AuthorContributions($id: Int!, $off: Int!) {
+    authors(where: { id: { _eq: $id } }) {
+      id
+      name
+      books_count
+      contributions(limit: 100, offset: $off, order_by: { book: { id: asc } }) {
+        contribution
+        book {
+          id
+          slug
+          title
+          subtitle
+          description
+          canonical_id
+          compilation
+          release_date
+          release_year
+          pages
+          users_count
+          rating
+          ratings_count
+          image { url }
+          featured_book_series { position series { name books_count } }
+          book_series { position series { id name books_count } }
+          cached_contributors
+          lang_editions: editions(distinct_on: language_id, order_by: [{ language_id: asc }, { users_count: desc }], limit: 5) {
+            language {
+              code2
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
 const LOOKUP_BY_SLUG_QUERY = `
   query BookBySlug($slug: String!) {
     books(where: { slug: { _eq: $slug } }) {
@@ -111,13 +165,38 @@ export class HardcoverClient {
     return body?.data?.search?.results?.hits?.map((h) => h.document).filter((d): d is HardcoverSearchDocument => d != null) ?? [];
   }
 
+  async searchAuthors(query: string, apiKey: string, signal?: AbortSignal): Promise<HardcoverAuthorSearchDocument[]> {
+    const body = await this.post<HardcoverAuthorSearchResponse>('author-search', SEARCH_AUTHORS_QUERY, { q: query }, apiKey, signal);
+    return (
+      body?.data?.search?.results?.hits
+        ?.map((hit) => hit.document)
+        .filter((document): document is HardcoverAuthorSearchDocument => document != null) ?? []
+    );
+  }
+
+  async fetchAuthorContributions(
+    authorId: number,
+    offset: number,
+    apiKey: string,
+    signal?: AbortSignal,
+  ): Promise<HardcoverAuthorWithContributions | null> {
+    const body = await this.post<HardcoverAuthorContributionsResponse>(
+      'author-contributions',
+      FETCH_AUTHOR_CONTRIBUTIONS_QUERY,
+      { id: authorId, off: offset },
+      apiKey,
+      signal,
+    );
+    return body?.data?.authors?.[0] ?? null;
+  }
+
   async lookupBySlug(slug: string, apiKey: string, signal?: AbortSignal): Promise<HardcoverBookWithEditions | null> {
     const body = await this.post<HardcoverBooksResponse>('lookup', LOOKUP_BY_SLUG_QUERY, { slug }, apiKey, signal);
     return body?.data?.books?.[0] ?? null;
   }
 
   private async post<T>(
-    op: 'search-by-isbn' | 'search' | 'lookup',
+    op: 'search-by-isbn' | 'search' | 'lookup' | 'author-search' | 'author-contributions',
     query: string,
     variables: Record<string, unknown>,
     apiKey: string,

@@ -1865,6 +1865,7 @@
       },
       "preferences": {
         "toast": {
+          "updateFailed": "Could not update this book.",
           "saved": "Metadata preferences saved",
           "saveFailed": "Could not save metadata preferences. Check your connection and try again.",
           "globalReset": "Global field rules reset to system defaults",
@@ -7118,7 +7119,9 @@
         "dropped": "{name} dropped at position {position} of {total}",
         "cancelled": "Reorder cancelled. {name} returned to position {position} of {total}.",
         "filteredHint": "Clear the filter to reorder"
-      }
+      },
+      "monitored": "Monitored",
+      "monitoredBadge": "{count, plural, one {# release in the window} other {# releases in the window}}"
     },
     "selectionActionBar": {
       "setReadingStatus": "Set reading status",
@@ -10082,6 +10085,271 @@
     "missingResources": "Missing Resources",
     "bookRequests": "Requests",
     "bookRequestDetail": "Request",
-    "bookRequestReleases": "Pick a release"
+    "bookRequestReleases": "Pick a release",
+    "monitored": "Monitored",
+    "monitoredAuthor": "Monitored Author"
+  },
+  "monitored": {
+    "controlsBar": {
+      "filter": "Filter",
+      "filterAll": "All",
+      "filterRecent": "Recent",
+      "filterSoon": "Soon",
+      "filterYear": "This year",
+      "sortDate": "Date",
+      "sortTitle": "Title",
+      "sortAuthor": "Author",
+      "sortAdded": "Added",
+      "groupNone": "No grouping",
+      "groupStatus": "Status",
+      "sortName": "Name",
+      "sortBooks": "Books",
+      "sortProgress": "Progress",
+      "sectionReleased": "Recently released",
+      "sectionUpcoming": "Upcoming"
+    },
+    "panel": {
+      "title": "Monitored book",
+      "titleFor": "Details for {title}",
+      "description": "Cover, metadata, files and release search for a monitored book.",
+      "notInLibrary": "Not in your library yet.",
+      "availableLabel": "Available:",
+      "monitoringLabel": "Monitoring:",
+      "hidePill": "Hide",
+      "hiddenPill": "Hidden",
+      "grab": "Grab",
+      "autoDownload": "Auto-download",
+      "notReleasedYet": "Not released yet",
+      "requestEbook": "Request ebook",
+      "requestAudiobook": "Request audiobook",
+      "series": "Series",
+      "ebookRelease": "Ebook release",
+      "audioRelease": "Audiobook release",
+      "noDescription": "No description available.",
+      "searchReleases": "Search for releases",
+      "searching": "Searching for releases...",
+      "releaseSearchIntro": "Search indexers for a release to grab.",
+      "releaseCount": "{count, plural, one {# release} other {# releases}}",
+      "noReleases": "No releases found",
+      "noReleasesHint": "Try again later or adjust this book's monitored formats.",
+      "tabs": {
+        "details": "Details",
+        "files": "Files",
+        "ebookReleases": "Ebook releases",
+        "audiobookReleases": "Audiobook releases"
+      },
+      "verdict": {
+        "verified": "Verified",
+        "probable": "Probable",
+        "suspect": "Suspect"
+      },
+      "flags": {
+        "compilation": "Compilation",
+        "placeholder": "Placeholder",
+        "adaptation_split": "Adaptation or split",
+        "foreign_language": "Foreign language",
+        "wrong_contributor": "Wrong contributor"
+      },
+      "releaseSearchIdle": "No releases searched yet",
+      "releaseSearchIdleHint": "Search the indexers to see what is available for this book.",
+      "progress": {
+        "label": "Download progress",
+        "openInRequests": "Open in Requests",
+        "noTransfer": "No release has been taken for this request yet.",
+        "notFound": "This request is no longer there.",
+        "forbidden": "This request belongs to someone else.",
+        "loadFailed": "Could not load progress for this request."
+      }
+    },
+    "title": "Monitored",
+    "searchPlaceholder": "Filter monitored items...",
+    "tabs": {
+      "label": "Monitored sections",
+      "authors": "Authors",
+      "books": "Books",
+      "releases": "Releases",
+      "add": "Add Monitored"
+    },
+    "formats": {
+      "ebook": "Ebook",
+      "audiobook": "Audiobook",
+      "ebooks": "Ebooks",
+      "audiobooks": "Audiobooks",
+      "audiobookOff": "Audiobook off",
+      "both": "Both"
+    },
+    "status": {
+      "monitoring": "Monitoring",
+      "paused": "Paused",
+      "stopped": "Stopped",
+      "upcoming": "Upcoming",
+      "available": "Available",
+      "queued": "Queued",
+      "grabbed": "Grabbed"
+    },
+    "modes": {
+      "notify": "Notify Upcoming",
+      "auto-upcoming": "Autodownload Upcoming",
+      "auto-all": "Autodownload All",
+      "off": "Unmonitor"
+    },
+    "modeHelp": {
+      "notify": "Alert on new releases. Nothing is downloaded.",
+      "auto-upcoming": "Grab new releases automatically on release day.",
+      "auto-all": "Backfill the full catalog and grab new releases.",
+      "off": "Ignore this format for this author."
+    },
+    "common": {
+      "tba": "TBA",
+      "unknownBooks": "Book count unavailable",
+      "bookCount": "{count, plural, =0 {No books} one {# book} other {# books}}"
+    },
+    "actions": {
+      "monitor": "Monitor",
+      "monitorThisBook": "Monitor this book",
+      "alreadyMonitoringThisBook": "Already monitoring this book",
+      "pause": "Pause",
+      "resume": "Resume",
+      "refresh": "Refresh",
+      "actions": "Actions",
+      "stopMonitoring": "Stop monitoring",
+      "alreadyMonitoring": "Already monitoring {name}",
+      "stopMonitoringNamed": "Stop monitoring {name}",
+      "refreshProgress": "Refreshing authors: {processed} of {total}",
+      "quickMonitor": "Monitor {name} and get notified about new ebook releases"
+    },
+    "errors": {
+      "load": "Failed to load monitored items.",
+      "loadAuthor": "Failed to load this monitored author.",
+      "unsupportedFormat": "This release format is not supported.",
+      "noIndexers": "No indexers are enabled. Configure one under request settings.",
+      "searchFailed": "Release search failed.",
+      "missingReleaseId": "This release is missing an identifier.",
+      "grabFailed": "Failed to grab this release."
+    },
+    "authorCard": {
+      "portraitAlt": "Portrait of {name}",
+      "menu": "Monitoring options for {name}",
+      "open": "{name}, {count, plural, =0 {no books} one {# book} other {# books}}"
+    },
+    "authors": {
+      "progressHint": "Pills show monitored progress for ebooks and audiobooks in your library against the author's full catalog."
+    },
+    "books": {
+      "expected": "Expected {date}",
+      "menu": "Monitoring options for {title}"
+    },
+    "releases": {
+      "today": "today",
+      "inDays": "in {count, plural, one {# day} other {# days}}",
+      "daysAgo": "{count, plural, one {# day ago} other {# days ago}}",
+      "getAutomatically": "Get automatically"
+    },
+    "add": {
+      "placeholder": "Search by author name",
+      "monitorFormats": "Monitor formats:",
+      "results": "Results",
+      "noResults": "No authors matched your search.",
+      "searchFailed": "Failed to search authors."
+    },
+    "modal": {
+      "title": "Monitor {name}",
+      "description": "Choose how BookOrbit should watch this author's catalog and handle new releases.",
+      "targetLibrary": "Target library",
+      "monitoringMode": "Monitoring mode",
+      "noLibrary": "No target library",
+      "start": "Start monitoring",
+      "failed": "Failed to monitor author."
+    },
+    "empty": {
+      "authorsTitle": "No monitored authors",
+      "authorsDescription": "Add an author to watch their catalog and hear about new releases.",
+      "booksTitle": "No individually monitored books",
+      "booksDescription": "Books monitored outside an author's full catalog will appear here.",
+      "releasesTitle": "No monitored releases",
+      "releasesDescription": "Upcoming and recently available releases will appear here."
+    },
+    "toast": {
+      "monitoring": "Now monitoring {name}.",
+      "stopped": "Stopped monitoring {name}.",
+      "paused": "Paused monitoring for {name}.",
+      "resumed": "Resumed monitoring for {name}.",
+      "bookPaused": "Paused monitoring for {title}.",
+      "bookResumed": "Resumed monitoring for {title}.",
+      "bookStopped": "Stopped monitoring {title}.",
+      "bookMonitoring": "Now monitoring {title}.",
+      "bookMonitorFailed": "Failed to monitor this book.",
+      "workStopped": "Stopped monitoring {title}.",
+      "updateFailed": "Failed to update monitoring.",
+      "authorRefreshed": "Refreshed releases for {name}.",
+      "refreshFailed": "Failed to refresh monitored releases.",
+      "queued": "{title} ({format}) was sent to Requests.",
+      "sendingToRequests": "{title} ({format}) sent to Requests. Searching indexers...",
+      "queueFailed": "Failed to send this release to Requests.",
+      "refreshedAll": "Refreshed {refreshed, plural, =0 {no authors} one {# author} other {# authors}}.",
+      "refreshedAllPartial": "Refreshed {refreshed, plural, =0 {no authors} one {# author} other {# authors}}. {skipped} on cooldown, {failed} failed."
+    },
+    "detail": {
+      "back": "Back to Monitored",
+      "headerDescription": "Monitored catalog and release activity",
+      "booksHeading": "Books · {shown} of {total} monitored releases shown",
+      "booksHeadingShort": "Books · {shown}/{total}",
+      "bookMenu": "Actions for {title}",
+      "quickView": "Quick view",
+      "quickLook": "Quick look",
+      "downloadEbook": "Download ebook",
+      "downloadAudiobook": "Download audiobook",
+      "ebookOwned": "Ebook in library",
+      "audiobookOwned": "Audiobook in library",
+      "ebookQueued": "Ebook queued",
+      "audiobookQueued": "Audiobook queued",
+      "badges": {
+        "queued": "Queued"
+      },
+      "stats": {
+        "books": "Books",
+        "nextRelease": "Next release"
+      },
+      "controls": {
+        "sort": "Sort",
+        "releaseDate": "Release date",
+        "title": "Title",
+        "order": "Order",
+        "descending": "Descending",
+        "ascending": "Ascending",
+        "group": "Group",
+        "none": "None",
+        "series": "Series",
+        "year": "Year",
+        "status": "Upcoming / Recent / Backlist"
+      },
+      "groups": {
+        "all": "All books",
+        "standalone": "Standalone",
+        "unknownYear": "Unknown year",
+        "upcoming": "Upcoming",
+        "recent": "Recent: last 12 months",
+        "backlist": "Backlist"
+      },
+      "stopDialog": {
+        "title": "Stop monitoring this author?",
+        "description": "BookOrbit will stop checking this author's catalog for releases."
+      },
+      "showDetails": "Show details",
+      "hideDetails": "Hide details",
+      "showReview": "Show {count} under review",
+      "hideReview": "Hide review",
+      "ebookWanted": "Ebook wanted",
+      "audiobookWanted": "Audiobook wanted"
+    },
+    "list": {
+      "stopBookDialog": {
+        "title": "Stop monitoring this book?",
+        "description": "BookOrbit will stop watching for new releases of this book."
+      },
+      "allLoadedAuthors": "All {total} authors loaded",
+      "allLoadedBooks": "All {total} books loaded",
+      "allLoadedReleases": "All {total} releases loaded"
+    }
   }
 }

@@ -52,6 +52,11 @@ interface IndexerSearchOptions {
   indexerMode?: IndexerSearchMode;
 }
 
+export type IndexerSearchRequest = Pick<
+  BookRequestRow,
+  'id' | 'mediaKind' | 'title' | 'authors' | 'isbn10' | 'isbn13' | 'metadataSources' | 'preferredFormats' | 'language'
+>;
+
 @Injectable()
 export class IndexerSearchService {
   private readonly logger = new Logger(IndexerSearchService.name);
@@ -64,7 +69,7 @@ export class IndexerSearchService {
     private readonly operationLock: IndexerOperationLock,
   ) {}
 
-  async search(request: BookRequestRow, options: IndexerSearchOptions = {}): Promise<ReleaseSearchResult> {
+  async search(request: IndexerSearchRequest, options: IndexerSearchOptions = {}): Promise<ReleaseSearchResult> {
     const searchKey = JSON.stringify({ overrides: options.overrides ?? null, indexerMode: options.indexerMode ?? 'all' });
     const cacheKey = `${request.id}:${searchKey}`;
     const cached = this.cache.get(cacheKey);
@@ -377,7 +382,7 @@ function toQuery(request: ScoringRequest): ReleaseQuery {
 }
 
 function prepareScoringRequest(
-  request: BookRequestRow,
+  request: IndexerSearchRequest,
   tiers: readonly ReleaseTier[],
   overrides?: ReleaseSearchOverrides,
 ): { scoringRequest: ScoringRequest; availableIsbns: string[] } {
@@ -414,7 +419,7 @@ function toSearchCriteria(request: ScoringRequest, availableIsbns: string[]): Re
   };
 }
 
-export function bookRequestSearchIsbns(request: BookRequestRow): string[] {
+export function bookRequestSearchIsbns(request: IndexerSearchRequest): string[] {
   const values = [
     canonicalizeBookRequestIsbn(request.isbn10, request.isbn13),
     ...(request.metadataSources ?? []).map((source) => canonicalizeBookRequestIsbn(source.isbn10, source.isbn13)),

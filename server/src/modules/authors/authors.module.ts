@@ -74,6 +74,13 @@ const AUTHOR_PROVIDER_CLASSES = [AudnexusAuthorMetadataProvider, GoodreadsAuthor
     AuthorsRepository,
     AuthorPhotoFlagBackfillService,
   ],
-  exports: [AuthorsService, AuthorsRepository, AuthorImageStorageService, AuthorEnrichmentOrchestratorService, AuthorMetadataPreferencesService],
+  exports: [
+    AuthorsService,
+    AuthorsRepository,
+    AuthorImageStorageService,
+    AuthorEnrichmentExecutorService,
+    AuthorEnrichmentOrchestratorService,
+    AuthorMetadataPreferencesService,
+  ],
 })
 export class AuthorsModule {}

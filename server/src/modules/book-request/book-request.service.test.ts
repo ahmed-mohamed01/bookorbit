@@ -62,6 +62,7 @@ function row(overrides: Record<string, unknown> = {}) {
     matchedBookId: null,
     bookDockFileId: null,
     selfServe: false,
+    autoGrab: null,
     fulfillerUserId: null,
     statusReason: null,
     dedupeKey: 'work:dune:frankherbert:ebook',
@@ -205,6 +206,18 @@ describe('BookRequestService.submit', () => {
         scope: { kind: 'permission', permission: Permission.ManageBookRequests },
       }),
     );
+  });
+
+  it.each([
+    ['absent', undefined, null],
+    ['enabled', true, true],
+    ['disabled', false, false],
+  ])('persists autoGrab as %s', async (_label, autoGrab, expected) => {
+    const { service, repo } = makeService();
+
+    await service.submit({ ...dto, ...(autoGrab === undefined ? {} : { autoGrab }) }, user());
+
+    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ autoGrab: expected }), expect.any(Array));
   });
 
   it('rejects a blank title rather than storing one', async () => {
@@ -440,6 +453,18 @@ describe('BookRequestService.submit', () => {
     // Skipping the notification here is only safe because automation knows nobody was told, and
     // announces the request itself if it ends up handing it back.
     expect(automation.considerRequest).toHaveBeenCalledWith(10, 'auto_approval');
+  });
+
+  it.each([
+    ['autoGrab is false', { autoGrab: false }],
+    ['automation is deferred', { deferAutomation: true }],
+  ])('does not start the immediate attempt when %s', async (_label, patch) => {
+    const { service, automation } = makeService();
+    const autoApprover = user({ permissions: [Permission.BookRequestAccess, Permission.BookRequestAutoApprove] });
+
+    await service.submit({ ...dto, targetLibraryId: 5, ...patch }, autoApprover);
+
+    expect(automation.considerRequest).not.toHaveBeenCalled();
   });
 
   it('refuses a self-serve request from somebody without the permission', async () => {

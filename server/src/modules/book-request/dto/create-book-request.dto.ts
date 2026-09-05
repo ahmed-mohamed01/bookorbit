@@ -117,6 +117,14 @@ export class CreateBookRequestDto {
   selfServe?: boolean;
 
   @IsOptional()
+  @IsBoolean()
+  autoGrab?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  deferAutomation?: boolean;
+
+  @IsOptional()
   @IsString()
   @MaxLength(50)
   providerKey?: string;

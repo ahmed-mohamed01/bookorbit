@@ -63,6 +63,6 @@ const PROVIDER_CLASSES = [
     MetadataFetchPipeline,
   ],
   controllers: [MetadataFetchController],
-  exports: [MetadataFetchService, MetadataFetchPipeline, ProviderRegistry, ProviderThrottleTracker],
+  exports: [MetadataFetchService, MetadataFetchPipeline, ProviderRegistry, ProviderThrottleTracker, HardcoverClient],
 })
 export class MetadataFetchModule {}

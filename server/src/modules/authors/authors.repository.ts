@@ -77,6 +77,10 @@ export class AuthorsRepository {
     minBookCount?: number;
     contentFilters?: ContentFilterRules;
   }): Promise<{ items: AuthorListItemRow[]; total: number; page: number; size: number }> {
+    // No accessible libraries means no visible authors, and the cover subquery cannot build an
+    // empty IN list without producing invalid SQL.
+    if (params.libraryIds.length === 0) return { items: [], total: 0, page: params.page, size: params.size };
+
     const where = this.buildAuthorWhere({
       q: params.q,
       libraryIds: params.libraryIds,
@@ -252,6 +256,52 @@ export class AuthorsRepository {
     return row ?? null;
   }
 
+  async findIdByName(name: string): Promise<number | null> {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const [row] = await this.db
+      .select({ id: authors.id })
+      .from(authors)
+      .where(sql`lower(${authors.name}) = lower(${trimmed})`)
+      .orderBy(asc(authors.id))
+      .limit(1);
+    return row?.id ?? null;
+  }
+
+  async findIdByNormalizedName(name: string): Promise<number | null> {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const [row] = await this.db
+      .select({ id: authors.id })
+      .from(authors)
+      .where(sql`regexp_replace(lower(${authors.name}), '[^a-z0-9]', '', 'g') = regexp_replace(lower(${trimmed}), '[^a-z0-9]', '', 'g')`)
+      .orderBy(asc(authors.id))
+      .limit(1);
+    return row?.id ?? null;
+  }
+
+  async findOrCreateByName(name: string): Promise<number | null> {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const existing = await this.findIdByNormalizedName(trimmed);
+    if (existing != null) return existing;
+    const [inserted] = await this.db.insert(authors).values({ name: trimmed }).onConflictDoNothing().returning({ id: authors.id });
+    return inserted?.id ?? (await this.findIdByNormalizedName(trimmed));
+  }
+
+  async findPortraitCandidates(ids: number[], names: string[]): Promise<{ id: number; name: string; hasPhoto: boolean }[]> {
+    const uniqueIds = [...new Set(ids.filter((value): value is number => value != null))];
+    const loweredNames = [...new Set(names.map((value) => value.trim().toLowerCase()).filter(Boolean))];
+    if (uniqueIds.length === 0 && loweredNames.length === 0) return [];
+    const clauses: SQL[] = [];
+    if (uniqueIds.length) clauses.push(inArray(authors.id, uniqueIds));
+    if (loweredNames.length) clauses.push(inArray(sql`lower(${authors.name})`, loweredNames));
+    return this.db
+      .select({ id: authors.id, name: authors.name, hasPhoto: authors.hasPhoto })
+      .from(authors)
+      .where(or(...clauses));
+  }
+
   async findBookIdsPage(params: {
     authorId: number;
     page: number;
@@ -400,6 +450,29 @@ export class AuthorsRepository {
         sourceRelations.map((row) => row.bookId),
       );
     });
+  }
+
+  /**
+   * Removes an author row that exists only because something linked to it, never because a book
+   * carries it. The NOT EXISTS re-check runs inside the delete so a concurrent import that just
+   * attached a book to this author cannot lose it to a stale caller-side count.
+   */
+  /**
+   * Deletes a bookless, unmonitored author row. Both predicates live in the DELETE itself: a monitor
+   * or a book created between a separate check and this statement would otherwise lose its author.
+   */
+  async deleteOrphanAuthor(authorId: number): Promise<boolean> {
+    const deleted = await this.db
+      .delete(authors)
+      .where(
+        and(
+          eq(authors.id, authorId),
+          sql`NOT EXISTS (SELECT 1 FROM ${bookAuthors} WHERE ${bookAuthors.authorId} = ${authors.id})`,
+          sql`NOT EXISTS (SELECT 1 FROM ${schema.monitoredAuthors} WHERE ${schema.monitoredAuthors.localAuthorId} = ${authors.id})`,
+        ),
+      )
+      .returning({ id: authors.id });
+    return deleted.length > 0;
   }
 
   async deleteAuthors(authorIds: number[]): Promise<void> {

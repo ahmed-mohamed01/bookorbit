@@ -51,10 +51,14 @@ export class AuthorEnrichmentExecutorService {
     private readonly authorImageStorage: AuthorImageStorageService,
   ) {}
 
-  async execute(params: { authorId: number; preferences: AuthorMetadataPreferences }): Promise<AuthorEnrichmentExecutionResult> {
+  async execute(params: {
+    authorId: number;
+    preferences: AuthorMetadataPreferences;
+    allowOrphan?: boolean;
+  }): Promise<AuthorEnrichmentExecutionResult> {
     const author = await this.authorsRepo.findByIdForEnrichment(params.authorId);
     if (!author) return this.skipped('author_not_found');
-    if (author.bookCount <= 0) return this.skipped('orphaned');
+    if (!params.allowOrphan && author.bookCount <= 0) return this.skipped('orphaned');
 
     const providerOrder = this.providersInUse(params.preferences);
     if (providerOrder.length === 0) return this.skipped('provider_disabled');

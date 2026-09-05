@@ -315,6 +315,7 @@ export class BookRequestService {
       mediaKind: dto.mediaKind,
       status: availableOnCreate ? ('available' as const) : approvedOnCreate ? ('approved' as const) : ('pending' as const),
       selfServe,
+      autoGrab: dto.autoGrab ?? null,
       title: work.title,
       subtitle: dto.subtitle ?? null,
       authors: work.authors,
@@ -383,7 +384,9 @@ export class BookRequestService {
     //
     // Never for a self-server, who is on their way to the picker right now. Automation would race
     // them onto a release they did not choose, which is the opposite of what they asked for.
-    if (!availableOnCreate && autoApproved && !selfServe) this.automation.considerRequest(row.id, 'auto_approval');
+    if (!availableOnCreate && autoApproved && !selfServe && dto.autoGrab !== false && dto.deferAutomation !== true) {
+      this.automation.considerRequest(row.id, 'auto_approval');
+    }
 
     // Every page answers this with a fetch, so it is what puts a new submission in front of the
     // approvers without them reloading. After the create rather than after the notification: an

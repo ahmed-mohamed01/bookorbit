@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import {
+  BellPlus,
+  BellRing,
   BookOpen,
   Check,
   ChevronDown,
@@ -51,6 +53,8 @@ import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useMetadataSearch } from '@/features/book/composables/useMetadataSearch'
 import { providerIconPathSafe } from '@/features/book/lib/provider-icons'
 import { useLibraries } from '@/features/library/composables/useLibraries'
+import { monitorAuthor } from '@/features/monitored/api/monitored'
+import { MonitoredApiError, monitoredErrorText } from '@/features/monitored/lib/api-error'
 import { getProviderColor } from '@/lib/provider-colors'
 import { useCandidateGroups, type CandidateGroup, type CandidateIsbnChoice } from '../composables/useCandidateGroups'
 import { formatLanguageName } from '@/i18n/formatters'
@@ -106,6 +110,9 @@ const targetFolderId = ref<number | null>(null)
 const activeCoverUrls = ref<Record<string, string | null>>({})
 const failedProviderIcons = ref(new Set<MetadataProviderKey>())
 const expandedMetadataGroups = ref(new Set<string>())
+const monitoringKeys = ref(new Set<string>())
+// Author name to monitored author id, so a bell that already fired stops inviting a second click.
+const monitoredAuthorNames = ref(new Set<string>())
 const { groups } = useCandidateGroups(filteredResults, mediaKind, getAvailability, coverProviderOrder, language, resultProviderOrder)
 
 // Nobody approves these requests afterwards, so this is the only chance to say where the book goes.
@@ -516,6 +523,58 @@ async function requestTitleAuthor(group: CandidateGroup): Promise<void> {
   await requestGroupChoice(group, group.candidate, null, true)
 }
 
+function isGroupMonitored(group: CandidateGroup): boolean {
+  const name = group.authors[0]
+  return name !== undefined && monitoredAuthorNames.value.has(name)
+}
+
+function isGroupMonitoring(group: CandidateGroup): boolean {
+  return monitoringKeys.value.has(group.key)
+}
+
+function monitorAuthorLabel(group: CandidateGroup): string {
+  const name = group.authors[0] ?? ''
+  return isGroupMonitored(group) ? t('monitored.actions.alreadyMonitoring', { name }) : t('monitored.actions.quickMonitor', { name })
+}
+
+function markGroupMonitored(name: string) {
+  monitoredAuthorNames.value = new Set([...monitoredAuthorNames.value, name])
+}
+
+/**
+ * Quick-monitor is deliberately opinionated: ebook notifications, no target library. The full
+ * choice lives on the Monitored page, so this stays one click.
+ */
+async function monitorGroupAuthor(group: CandidateGroup): Promise<void> {
+  const name = group.authors[0]
+  if (!name || isGroupMonitoring(group) || isGroupMonitored(group)) return
+  monitoringKeys.value = new Set([...monitoringKeys.value, group.key])
+  try {
+    await monitorAuthor({
+      authorName: name,
+      formats: {
+        ebook: { mode: 'notify', libraryId: null, folderId: null },
+        audiobook: { mode: 'off', libraryId: null, folderId: null },
+      },
+    })
+    markGroupMonitored(name)
+    toast.success(t('monitored.toast.monitoring', { name }))
+  } catch (cause) {
+    // The one refusal this well-formed request can draw is the duplicate guard, so show the row
+    // as monitored rather than as a failure the reader cannot act on.
+    if (cause instanceof MonitoredApiError && cause.status === 400) {
+      markGroupMonitored(name)
+      toast.info(cause.serverMessage ?? t('monitored.actions.alreadyMonitoring', { name }))
+    } else {
+      toast.error(monitoredErrorText(cause, t('monitored.modal.failed')))
+    }
+  } finally {
+    const next = new Set(monitoringKeys.value)
+    next.delete(group.key)
+    monitoringKeys.value = next
+  }
+}
+
 async function requestGroupChoice(group: CandidateGroup, candidate: MetadataCandidate, isbn: string | null, openPicker = true): Promise<void> {
   const hasSelectedCover = Object.prototype.hasOwnProperty.call(activeCoverUrls.value, group.key)
   const result = await submit(candidate, {
@@ -884,6 +943,22 @@ function mediaIconFor(kind: BookRequestMediaKind) {
             </template>
           </div>
         </div>
+
+        <Button
+          v-if="group.authors.length"
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          class="shrink-0 rounded-full text-muted-foreground"
+          :disabled="isGroupMonitoring(group) || isGroupMonitored(group)"
+          :title="monitorAuthorLabel(group)"
+          :aria-label="monitorAuthorLabel(group)"
+          @click="monitorGroupAuthor(group)"
+        >
+          <Loader2 v-if="isGroupMonitoring(group)" :size="15" class="animate-spin" aria-hidden="true" />
+          <BellRing v-else-if="isGroupMonitored(group)" :size="15" aria-hidden="true" />
+          <BellPlus v-else :size="15" aria-hidden="true" />
+        </Button>
 
         <div v-if="choosesRelease && !isJoinable(group)" class="flex shrink-0 items-center gap-1.5">
           <Popover>

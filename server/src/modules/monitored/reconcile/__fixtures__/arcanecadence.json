@@ -1,0 +1,205 @@
+{
+  "name": "ArcaneCadence",
+  "slug": "arcanecadence",
+  "fetchedAt": "2026-09-03T17:06:34.688Z",
+  "hardcover": {
+    "author": { "id": 1290429, "name": "ArcaneCadence", "books_count": 3 },
+    "identityExact": true,
+    "books": [
+      {
+        "contribution": "Author",
+        "id": 2215249,
+        "slug": "new-life-as-a-max-level-archmage-web-serial",
+        "title": "New Life As A Max Level Archmage (Web Serial)",
+        "subtitle": null,
+        "description": "It's a fitting irony, then, when one day she wakes in the body of her maxed-out demon-mage 'Vivisari'—and finds that now, the game really is her life.\n\nBut the world of Seven Cataclysms isn't what she remembers. A hundred years have passed since the game's concluding events, and Vivisari is a hero of myth thought long dead. As she meets old faces and new in this familiar-yet-not world—casting spells of mass destruction and slowly reforming the scattered-to-the-wind remnants of her Guild—she starts to wonder if she was sent here with a purpose. \n\nRumors of a sequel had been circulating just before her unbelievable reincarnation. Did she, perhaps, need to fear an impending Eighth Cataclysm?\n\nIf so, it's a good thing she has firepower in spades.",
+        "canonical_id": null,
+        "compilation": false,
+        "release_date": "2025-06-02",
+        "release_year": 2025,
+        "pages": null,
+        "users_count": 6,
+        "rating": 4,
+        "ratings_count": 2,
+        "image": { "url": "https://assets.hardcover.app/user/44998/41977e25-7814-4851-a843-b8fe9cd07c0a.jpg" },
+        "featured_book_series": null,
+        "cached_contributors": [{ "author": { "id": 1290429, "slug": "arcanecadence", "name": "ArcaneCadence", "image": {} }, "contribution": null }]
+      },
+      {
+        "contribution": "Author",
+        "id": 2582478,
+        "slug": "new-life-as-a-max-level-archmage",
+        "title": "New Life as a Max Level Archmage",
+        "subtitle": "An OP MC LitRPG Adventure",
+        "description": "Vivienne, a top-tier gamer, wakes up inhabiting the body and god-like powers of her legendary Archmage avatar in the first installment of the New Life As A Max Level Archmage series.\n\nVivienne has poured so many hours into the massively popular VRMMO, The Seven Cataclysms, that she has more of a life inside the game than out.\n\nIt's a fitting irony, then, when one day she wakes in the body of her maxed-out demon-mage 'Vivisari'—and finds that now, the game really is her life.\n\nBut the world of Seven Cataclysms isn't what she remembers.\n\nA hundred years have passed since the game's concluding events, and Vivisari is a hero of myth thought long dead. As she meets old faces and new in this familiar-yet-not world—casting spells of mass destruction and slowly reforming the scattered-to-the-wind remnants of her Guild—she starts to wonder if she was sent here with a purpose.\n\nRumors of a sequel had been circulating just before her unbelievable reincarnation. Did she, perhaps, need to fear an impending Eighth Cataclysm?\n\nIf so, it's a good thing she has firepower in spades.\n\nVivisari is back to remind the world why she was the only one to survive the first seven Cataclysms in volume 1 of a LitRPG progression fantasy series which was one of the most popular webserials of all time with more than 10 million views.",
+        "canonical_id": null,
+        "compilation": false,
+        "release_date": "2026-05-04",
+        "release_year": 2026,
+        "pages": null,
+        "users_count": 13,
+        "rating": 4.857142857142857,
+        "ratings_count": 7,
+        "image": { "url": "https://assets.hardcover.app/edition/32883446/aac8e256-6a13-4fea-b79c-479a2f10f665.jpg" },
+        "featured_book_series": { "position": 1, "series": { "name": "New Life as a Max Level Archmage", "books_count": 2 } },
+        "cached_contributors": [
+          { "author": { "id": 1290429, "slug": "arcanecadence", "name": "ArcaneCadence", "image": {} }, "contribution": null },
+          { "author": { "id": 869210, "slug": "tess-irondale", "name": "Tess Irondale", "image": {} }, "contribution": "Narrator" }
+        ]
+      },
+      {
+        "contribution": "Author",
+        "id": 2582481,
+        "slug": "new-life-as-a-max-level-archmage-book-2",
+        "title": "New Life as a Max Level Archmage, Book 2",
+        "subtitle": null,
+        "description": null,
+        "canonical_id": null,
+        "compilation": false,
+        "release_date": "2026-12-09",
+        "release_year": 2026,
+        "pages": null,
+        "users_count": 1,
+        "rating": null,
+        "ratings_count": 0,
+        "image": null,
+        "featured_book_series": { "position": 2, "series": { "name": "New Life as a Max Level Archmage", "books_count": 2 } },
+        "cached_contributors": [{ "author": { "id": 1290429, "slug": "arcanecadence", "name": "ArcaneCadence", "image": {} }, "contribution": null }]
+      },
+      {
+        "contribution": "Author",
+        "id": 2652216,
+        "slug": "new-life-as-a-max-level-archmage-an-op-mc-litrpg-adventure",
+        "title": "New Life as a Max Level Archmage: An OP MC LitRPG Adventure",
+        "subtitle": "An OP MC LitRPG Adventure",
+        "description": null,
+        "canonical_id": null,
+        "compilation": false,
+        "release_date": "2026-01-01",
+        "release_year": 2026,
+        "pages": 704,
+        "users_count": 0,
+        "rating": null,
+        "ratings_count": 0,
+        "image": null,
+        "featured_book_series": null,
+        "cached_contributors": [{ "author": { "id": 1290429, "slug": "arcanecadence", "name": "ArcaneCadence", "image": {} }, "contribution": null }]
+      }
+    ]
+  },
+  "audible": {
+    "products": [
+      {
+        "asin": "B0GYZTMGVM",
+        "asset_details": [],
+        "authors": [{ "asin": "B0GWVPNZS5", "name": "Arcane Cadence" }],
+        "available_codecs": [
+          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
+          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
+          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
+          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
+          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+        ],
+        "content_delivery_type": "MultiPartBook",
+        "content_type": "Product",
+        "format_type": "unabridged",
+        "has_children": true,
+        "is_adult_product": false,
+        "is_listenable": true,
+        "is_purchasability_suppressed": false,
+        "is_vvab": false,
+        "issue_date": "2026-05-04",
+        "language": "english",
+        "merchandising_summary": "<p>Vivienne has poured so many hours into the massively popular VRMMO The Seven Cataclysms that she has more of a life inside the game than out. It's a fitting irony, then, when one day she wakes in the body of her maxed-out demon-mage 'Vivisari'—and finds that now, the game really is her life.</p>",
+        "narrators": [{ "name": "Tess Irondale" }],
+        "product_images": { "500": "https://m.media-amazon.com/images/I/518xPepgn1L._SL500_.jpg" },
+        "publication_datetime": "2026-05-04T15:43:00Z",
+        "publication_name": "New Life as a Max Level Archmage",
+        "publisher_name": "Arcane Cadence",
+        "rating": {
+          "num_reviews": 73,
+          "overall_distribution": {
+            "average_rating": 4.85,
+            "display_average_rating": "4.9",
+            "display_stars": 5,
+            "num_five_star_ratings": 430,
+            "num_four_star_ratings": 37,
+            "num_one_star_ratings": 3,
+            "num_ratings": 480,
+            "num_three_star_ratings": 7,
+            "num_two_star_ratings": 3
+          },
+          "performance_distribution": {
+            "average_rating": 4.875,
+            "display_average_rating": "4.9",
+            "display_stars": 5,
+            "num_five_star_ratings": 387,
+            "num_four_star_ratings": 28,
+            "num_one_star_ratings": 2,
+            "num_ratings": 424,
+            "num_three_star_ratings": 4,
+            "num_two_star_ratings": 3
+          },
+          "story_distribution": {
+            "average_rating": 4.813679245283019,
+            "display_average_rating": "4.8",
+            "display_stars": 5,
+            "num_five_star_ratings": 368,
+            "num_four_star_ratings": 41,
+            "num_one_star_ratings": 3,
+            "num_ratings": 424,
+            "num_three_star_ratings": 10,
+            "num_two_star_ratings": 2
+          }
+        },
+        "release_date": "2026-05-04",
+        "runtime_length_min": 1343,
+        "series": [
+          {
+            "asin": "B0GZ2RTXDM",
+            "sequence": "1",
+            "title": "New Life as a Max Level Archmage",
+            "url": "/pd/New-Life-as-a-Max-Level-Archmage-Audiobook/B0GZ2RTXDM"
+          }
+        ],
+        "sku": "BK_ACX0_509337",
+        "sku_lite": "BK_ACX0_509337",
+        "social_media_images": {
+          "facebook": "https://m.media-amazon.com/images/I/518xPepgn1L._SL10_UR1600,800_CR200,50,1200,630_CLa%7C1200,630%7C518xPepgn1L.jpg%7C0,0,1200,630+82,82,465,465_PJAdblSocialShare-Gradientoverlay-largeasin-0to70,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Large,TopLeft,600,270_OU01_ZBLISTENING%20ON,617,216,52,500,AudibleSansMd,30,255,255,255.jpg",
+          "ig_bg": "https://m.media-amazon.com/images/I/518xPepgn1L._SL200_BL80_UR1080,2160.jpg",
+          "ig_static_with_bg": "https://m.media-amazon.com/images/I/518xPepgn1L._SL200_BL80_UR1080,2160_CLa%7C1080,2160%7C518xPepgn1L.jpg%7C0,0,1080,2160+288,614,500,500_PJAdblSocialShare-Gradientoverlay-Radial,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Small,TopLeft,290,461_ZBLISTENING%20ON,290,410,52,500,AudibleSansMd,34,255,255,255_ZBNew%20Life%20as%20a%20Max%20Level...,290,1183,52,500,AudibleSansSm,32,255,255,255_ZBArcane%20Cadence,290,1247,52,500,AudibleSansRg,28,255,255,255.jpg",
+          "ig_sticker": "https://m.media-amazon.com/images/I/71UyRin7-TL._CLa%7C614,913%7C518xPepgn1L.jpg%7C0,0,614,913+70,79,471,473_FMpng_PJAudible-logo-dk,BottomLeft,70,-100_ZANew%20Life%20as%20a%20M...,70,560,65,500,AudibleSansSm,42,54,54,54_ZAby%20Arcane%20Cadence,70,640,52,517,AudibleSansRg,32,0,0,0.png",
+          "twitter": "https://m.media-amazon.com/images/I/518xPepgn1L._SL10_UR1600,800_CR200,50,1024,512_CLa%7C1024,512%7C518xPepgn1L.jpg%7C0,0,1024,512+67,67,376,376_PJAdblSocialShare-Gradientoverlay-twitter-largeasin-0to60,TopLeft,0,0_PJAdblSocialShare-AudibleLogo-Medium,TopLeft,490,223_OU01_ZBLISTENING%20ON,483,152,55,450,AudibleSansMd,32,255,255,255.jpg"
+        },
+        "thesaurus_subject_keywords": ["literature-and-fiction"],
+        "title": "New Life as a Max Level Archmage"
+      }
+    ],
+    "queryUsed": "Arcane Cadence"
+  },
+  "goodreads": {
+    "authorId": 68477331,
+    "authorName": "Arcane Cadence",
+    "totalListed": 2,
+    "rows": [
+      {
+        "title": "New Life as a Max Level Archmage, Book 1 (New Life as a Max Level Archmage, #1)",
+        "bookId": "250330385",
+        "avgRating": "4.66",
+        "ratings": 816,
+        "year": "2026",
+        "expected": false,
+        "editions": "3"
+      },
+      {
+        "title": "New Life as a Max Level Archmage, Book 2",
+        "bookId": "251311894",
+        "avgRating": "4.00",
+        "ratings": 11,
+        "year": null,
+        "expected": false,
+        "editions": null
+      }
+    ]
+  }
+}

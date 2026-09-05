@@ -44,6 +44,7 @@ function joined(overrides: Partial<BookRequestRow> = {}) {
       targetLibraryId: 2,
       mediaKind: 'ebook',
       authors: ['Frank Herbert'],
+      autoGrab: null,
       ...overrides,
     } as BookRequestRow,
     requesterUsername: 'bob',
@@ -140,6 +141,40 @@ describe('RequestAutomationService.considerRequest', () => {
     // no reason to stamp "automation is off" on an approval nobody asked automation to handle.
     expect(fulfillment.setRequestStatus).not.toHaveBeenCalled();
     expect(notifier.notifyApprovers).not.toHaveBeenCalled();
+  });
+
+  it('honors a request override when instance auto-grab is off', async () => {
+    const { service, fulfillment } = makeService({ settings: { autoGrabEnabled: false }, request: { autoGrab: true } });
+
+    service.considerRequest(7);
+    await settle();
+
+    expect(fulfillment.grab).toHaveBeenCalledWith(7, { indexerId: 9, releaseGuid: 'release-1' }, null);
+  });
+
+  it('silently leaves an approval alone when the request disables auto-grab', async () => {
+    const { service, fulfillment, releases } = makeService({ settings: { autoGrabEnabled: true }, request: { autoGrab: false } });
+
+    service.considerRequest(7);
+    await settle();
+
+    expect(releases.search).not.toHaveBeenCalled();
+    expect(fulfillment.setRequestStatus).not.toHaveBeenCalled();
+  });
+
+  it('hands back an auto-approved request that disables auto-grab', async () => {
+    const { service, fulfillment } = makeService({ settings: { autoGrabEnabled: true }, request: { autoGrab: false } });
+
+    service.considerRequest(7, 'auto_approval');
+    await settle();
+
+    expect(fulfillment.setRequestStatus).toHaveBeenCalledWith(
+      7,
+      'approved',
+      expect.stringContaining('Automatic grabbing is off'),
+      { code: 'AUTOMATION_DISABLED', meta: undefined },
+      FROM_APPROVED,
+    );
   });
 
   /**
@@ -814,7 +849,7 @@ describe('RequestAutomationService.sweepUnfulfilled', () => {
 
     await service.sweepUnfulfilled();
 
-    expect(requests.findDueForResearch).toHaveBeenCalledWith(24, 60, 8, 7 * 24 * 60 * 60 * 1000, 25);
+    expect(requests.findDueForResearch).toHaveBeenCalledWith(true, 24, 60, 8, 7 * 24 * 60 * 60 * 1000, 25);
     expect(releases.search).toHaveBeenCalledTimes(2);
   });
 
@@ -826,21 +861,42 @@ describe('RequestAutomationService.sweepUnfulfilled', () => {
     expect(fulfillment.grab).toHaveBeenCalledWith(7, { indexerId: 9, releaseGuid: 'release-1' }, null);
   });
 
-  it('asks for nothing while the sweep is switched off', async () => {
-    const { service, requests } = makeService({ settings: { autoSearchEnabled: false, autoGrabEnabled: true }, due: [{ id: 7 }] });
+  it('queries override-eligible rows while instance auto-search is off', async () => {
+    const { service, requests } = makeService({ settings: { autoSearchEnabled: false, autoGrabEnabled: true } });
 
     await service.sweepUnfulfilled();
 
-    expect(requests.findDueForResearch).not.toHaveBeenCalled();
+    expect(requests.findDueForResearch).toHaveBeenCalledWith(false, 24, 60, 8, 7 * 24 * 60 * 60 * 1000, 25);
   });
 
-  /** A search has nothing to do with what it finds while auto-grab is off: it only costs traffic. */
-  it('asks for nothing while unattended grabbing is off', async () => {
-    const { service, requests } = makeService({ settings: { autoSearchEnabled: true, autoGrabEnabled: false }, due: [{ id: 7 }] });
+  it('queries override-eligible rows while instance auto-grab is off', async () => {
+    const { service, requests } = makeService({ settings: { autoSearchEnabled: true, autoGrabEnabled: false } });
 
     await service.sweepUnfulfilled();
 
-    expect(requests.findDueForResearch).not.toHaveBeenCalled();
+    expect(requests.findDueForResearch).toHaveBeenCalledWith(false, 24, 60, 8, 7 * 24 * 60 * 60 * 1000, 25);
+  });
+
+  it('sweeps a request override while instance automation is off', async () => {
+    const { service, releases, fulfillment } = makeService({
+      settings: { autoSearchEnabled: false, autoGrabEnabled: false },
+      request: { autoGrab: true },
+      due: [{ id: 7 }],
+    });
+
+    await service.sweepUnfulfilled();
+
+    expect(releases.search).toHaveBeenCalledOnce();
+    expect(fulfillment.grab).toHaveBeenCalledOnce();
+  });
+
+  it('silently skips a periodic row that disables auto-grab', async () => {
+    const { service, releases, fulfillment } = makeService({ request: { autoGrab: false }, due: [{ id: 7 }] });
+
+    await service.sweepUnfulfilled();
+
+    expect(releases.search).not.toHaveBeenCalled();
+    expect(fulfillment.setRequestStatus).not.toHaveBeenCalled();
   });
 
   it('waits between requests rather than searching every tracker at once', async () => {

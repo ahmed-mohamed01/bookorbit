@@ -97,6 +97,46 @@ function makeDb() {
 }
 
 describe('AuthorsRepository', () => {
+  it('returns an empty page without building SQL when no library is accessible', async () => {
+    const { db } = makeDb();
+    const repo = new AuthorsRepository(db as never);
+
+    await expect(repo.findPage({ page: 0, size: 5, sort: 'name', order: 'asc', libraryIds: [] })).resolves.toEqual({
+      items: [],
+      total: 0,
+      page: 0,
+      size: 5,
+    });
+    expect(db.select).not.toHaveBeenCalled();
+  });
+
+  it('deletes an orphan author in one statement guarded on both books and monitors', async () => {
+    const deleteBuilder = { where: vi.fn(), returning: vi.fn() };
+    deleteBuilder.where.mockReturnValue(deleteBuilder);
+    deleteBuilder.returning.mockResolvedValue([]);
+    const db = { delete: vi.fn().mockReturnValue(deleteBuilder) };
+    const repo = new AuthorsRepository(db as never);
+    vi.mocked(sql).mockClear();
+
+    await expect(repo.deleteOrphanAuthor(35)).resolves.toBe(false);
+
+    // Checking either predicate outside the DELETE lets a monitor or a book created in between
+    // survive the read and lose its author row, so both live in this one WHERE.
+    const guards = vi.mocked(sql).mock.calls.filter(([strings]) => (strings as unknown as string[]).join('').includes('NOT EXISTS'));
+    expect(guards).toHaveLength(2);
+    expect(deleteBuilder.where).toHaveBeenCalledOnce();
+    expect(eq).toHaveBeenCalledWith(expect.anything(), 35);
+  });
+
+  it('finds an author by punctuation-insensitive normalized name', async () => {
+    const { db, selectBuilder } = makeDb();
+    selectBuilder.limit.mockResolvedValueOnce([{ id: 7 }]);
+    const repo = new AuthorsRepository(db as never);
+
+    await expect(repo.findIdByNormalizedName('Arcane Cadence')).resolves.toBe(7);
+    expect(sql).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.anything());
+  });
+
   it('updateAuthorDescriptionIfEmpty treats whitespace-only descriptions as empty', async () => {
     const updateBuilder = {
       set: vi.fn(),

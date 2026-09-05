@@ -153,11 +153,10 @@ export class RequestAutomationService implements OnModuleInit {
 
   private async researchDueRequests(): Promise<void> {
     const settings = await this.settings.get();
-    // Both, because an unattended search has nothing to do with what it finds while auto-grab is
-    // off: every request it touched would be handed straight back, having cost a real search.
-    if (!settings.autoSearchEnabled || !settings.autoGrabEnabled) return;
+    const instanceAutomationOn = settings.autoSearchEnabled && settings.autoGrabEnabled;
 
     const due = await this.requests.findDueForResearch(
+      instanceAutomationOn,
       settings.autoSearchIntervalHours,
       settings.autoSearchMaxAgeDays,
       MAX_AUTO_SEARCH_BACKOFF_FACTOR,
@@ -221,7 +220,7 @@ export class RequestAutomationService implements OnModuleInit {
 
     // After the guards, not before them: this writes a status, and `considerRequest` is fire and
     // forget, so a request cancelled in the meantime would otherwise be resurrected to `approved`.
-    if (!settings.autoGrabEnabled) {
+    if (!this.grabAllowed(request, settings)) {
       // An approver who just approved is about to open the picker, and stamping "automatic
       // grabbing is off" on every approval an operator never asked to automate is noise. An
       // auto-approved request has nobody behind it, so the same silence strands it.
@@ -322,6 +321,10 @@ export class RequestAutomationService implements OnModuleInit {
     }
 
     await this.grabFirstThatStarts(requestId, trigger, settings, pick, spent);
+  }
+
+  private grabAllowed(request: BookRequestRow, settings: BookRequestAutomationSettings): boolean {
+    return request.autoGrab ?? settings.autoGrabEnabled;
   }
 
   /**

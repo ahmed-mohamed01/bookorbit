@@ -92,10 +92,49 @@ describe('HardcoverClient', () => {
     expect(result).toEqual([]);
   });
 
-  it('rethrows ProviderThrottleError on 429', async () => {
-    const { ProviderThrottleError } = await import('../../provider-throttle.error');
+  it('unwraps author search hit documents', async () => {
     const mockFetch = vi.mocked(fetchWithThrottleModule.fetchWithThrottle);
-    mockFetch.mockRejectedValue(new ProviderThrottleError('google', 100));
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          data: { search: { results: { hits: [{ document: { id: 42, name: 'Arcane Cadence', books_count: 12 } }, {}] } } },
+        }),
+    } as Response);
+
+    const result = await client.searchAuthors('Arcane Cadence', apiKey);
+
+    expect(result).toEqual([{ id: 42, name: 'Arcane Cadence', books_count: 12 }]);
+    const body = vi.mocked(mockFetch).mock.calls[0][1]?.body;
+    expect(typeof body).toBe('string');
+    expect(JSON.parse(body as string)).toMatchObject({
+      variables: { q: 'Arcane Cadence' },
+    });
+  });
+
+  it('fetches one page of author contributions', async () => {
+    const mockFetch = vi.mocked(fetchWithThrottleModule.fetchWithThrottle);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ data: { authors: [{ id: 42, name: 'Author', contributions: [] }] } }),
+    } as Response);
+
+    const result = await client.fetchAuthorContributions(42, 100, apiKey);
+
+    expect(result).toEqual({ id: 42, name: 'Author', contributions: [] });
+    const body = vi.mocked(mockFetch).mock.calls[0][1]?.body;
+    expect(typeof body).toBe('string');
+    expect(JSON.parse(body as string)).toMatchObject({
+      variables: { id: 42, off: 100 },
+    });
+  });
+
+  it('rethrows ProviderThrottleError on 429', async () => {
+    const { ProviderThrottleError } = await import('../../provider-throttle.error.js');
+    const mockFetch = vi.mocked(fetchWithThrottleModule.fetchWithThrottle);
+    mockFetch.mockRejectedValue(new ProviderThrottleError(100, 'google'));
 
     await expect(client.searchByIsbn('123', 'key')).rejects.toThrow(ProviderThrottleError);
   });

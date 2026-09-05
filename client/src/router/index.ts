@@ -601,6 +601,18 @@ export const routes: RouteRecordRaw[] = [
         },
       },
       {
+        path: '/monitored',
+        name: 'monitored',
+        component: () => import('@/features/monitored/views/MonitoredView.vue'),
+        meta: { title: () => t('titles.monitored') },
+      },
+      {
+        path: '/monitored/authors/:id',
+        name: 'monitored-author',
+        component: () => import('@/features/monitored/views/MonitoredAuthorDetailView.vue'),
+        meta: { title: () => t('titles.monitoredAuthor') },
+      },
+      {
         path: '/series',
         name: 'series',
         component: () => import('@/features/series/views/SeriesView.vue'),

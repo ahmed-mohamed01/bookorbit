@@ -1,7 +1,7 @@
 import { computed, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, type RouteLocationNormalizedLoaded, type RouteLocationRaw } from 'vue-router'
-import { BookPlus, Highlighter, LayoutDashboard, Library, PackageOpen, Users, Wrench } from '@lucide/vue'
+import { Bell, BookPlus, Highlighter, LayoutDashboard, Library, PackageOpen, Users, Wrench } from '@lucide/vue'
 import { Permission, type BrowseCounts, type SidebarSectionId } from '@bookorbit/types'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useBookDockSummary } from '@/features/book-dock/composables/useBookDockSummary'
@@ -15,6 +15,8 @@ interface NavContext {
   bookDockTotal: number
   outstandingRequestTotal: number
   outstandingRequestLabel: string
+  monitoredReleaseTotal: number
+  monitoredReleaseLabel: string
   browseCounts: BrowseCounts | null
 }
 
@@ -112,6 +114,17 @@ export const SIDEBAR_NAV_REGISTRY: readonly SidebarNavEntry[] = [
       context.outstandingRequestTotal > 0 ? { value: context.outstandingRequestTotal, label: context.outstandingRequestLabel, tone: 'accent' } : null,
   },
   {
+    id: 'monitored',
+    labelKey: 'components.sidebar.monitored',
+    icon: Bell,
+    zone: 'primary',
+    to: { name: 'monitored' },
+    isActive: (route) => routeNameStartsWith(route, 'monitored'),
+    permission: 'book_request_access',
+    badge: (context) =>
+      context.monitoredReleaseTotal > 0 ? { value: context.monitoredReleaseTotal, label: context.monitoredReleaseLabel, tone: 'accent' } : null,
+  },
+  {
     id: 'tools',
     labelKey: 'components.sidebar.tools',
     icon: Wrench,
@@ -169,7 +182,7 @@ export function resolveNavEntry(entry: SidebarNavEntry, context: NavContext, rou
   } satisfies ResolvedSidebarNavEntry
 }
 
-export function useSidebarNav(getOutstandingRequestTotal: () => number = () => 0) {
+export function useSidebarNav(getOutstandingRequestTotal: () => number = () => 0, getMonitoredReleaseTotal: () => number = () => 0) {
   const { t } = useI18n()
   const route = useRoute()
   const { hasPermission } = usePermissions()
@@ -178,6 +191,7 @@ export function useSidebarNav(getOutstandingRequestTotal: () => number = () => 0
 
   const context = computed<NavContext>(() => {
     const outstandingRequestTotal = getOutstandingRequestTotal()
+    const monitoredReleaseTotal = getMonitoredReleaseTotal()
     const outstandingRequestLabelKey = hasPermission(Permission.ManageBookRequests)
       ? 'components.sidebar.requestBadge.allActive'
       : 'components.sidebar.requestBadge.mineActive'
@@ -187,6 +201,8 @@ export function useSidebarNav(getOutstandingRequestTotal: () => number = () => 0
       bookDockTotal: bookDockSummary.value.total,
       outstandingRequestTotal,
       outstandingRequestLabel: t(outstandingRequestLabelKey, { count: outstandingRequestTotal }),
+      monitoredReleaseTotal,
+      monitoredReleaseLabel: t('components.sidebar.monitoredBadge', { count: monitoredReleaseTotal }),
       browseCounts: browseCounts.value,
     }
   })

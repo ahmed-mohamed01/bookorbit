@@ -1,0 +1,1 @@
+ALTER TABLE "book_requests" ADD COLUMN "auto_grab" boolean;
