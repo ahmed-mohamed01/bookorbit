@@ -109,6 +109,7 @@ const RouterLinkStub = defineComponent({
 })
 
 let mountedWrappers: Array<{ unmount: () => void }> = []
+let resizeObserverCallbacks: ResizeObserverCallback[] = []
 
 function mountDetails(book: BookDetail) {
   const wrapper = shallowMount(DetailsTab, {
@@ -147,6 +148,7 @@ describe('DetailsTab cover surface', () => {
   const { bookSpineOverlay, bookCoverDisplayMode } = useDisplaySettings()
 
   beforeEach(() => {
+    resizeObserverCallbacks = []
     mocks.api.mockReset()
     mocks.push.mockReset()
     mocks.hasPermission.mockReset()
@@ -174,6 +176,10 @@ describe('DetailsTab cover surface', () => {
     vi.stubGlobal(
       'ResizeObserver',
       class {
+        constructor(callback: ResizeObserverCallback) {
+          resizeObserverCallbacks.push(callback)
+        }
+
         observe() {}
         unobserve() {}
         disconnect() {}
@@ -222,6 +228,21 @@ describe('DetailsTab cover surface', () => {
     const surfaces = wrapper.findAll('.book-cover-surface')
     expect(surfaces.length).toBe(1)
     expect(surfaces.every((surface) => surface.attributes('style')?.includes('aspect-ratio: 2 / 1'))).toBe(true)
+  })
+
+  it('only constrains cover width from the observed slot height in the wide layout', async () => {
+    const wrapper = mountDetails(makeBook())
+    await flushPromises()
+
+    const surface = wrapper.get('.book-cover-surface')
+    const frame = surface.element.parentElement as HTMLElement
+
+    resizeObserverCallbacks.at(-1)?.([{ contentRect: { height: 220 } } as ResizeObserverEntry], {} as ResizeObserver)
+    await flushPromises()
+
+    expect(frame.style.maxWidth).toBe('')
+    expect(frame.style.getPropertyValue('--detail-cover-max-width')).toBe('146px')
+    expect(frame.classList).toContain('@min-[46rem]/book-detail:max-w-[var(--detail-cover-max-width)]')
   })
 
   it('forces spine overlay off for audiobook details covers', async () => {
