@@ -1194,15 +1194,20 @@ watch(
 
   <!--
     Direction A. Below 46rem of pane width the page is a single scrolling column. Above it
-    the pane owns the height: three columns fill row one, the discovery shelf takes row two,
-    and any column that runs long scrolls inside itself so the page itself never does.
+    row one is as tall as its columns need, capped at the pane height, the discovery shelf
+    takes row two, and any column that runs long scrolls inside itself so the page never does.
+
+    Fork divergence from upstream: upstream sizes row one with minmax(0,1fr), which stretches it
+    to the full pane and leaves a void above the shelf on tall windows (their commit 2861aff3).
+    The max-content row and the contain-size on the cover column below are our fix. If upstream
+    fixes this themselves, drop both and take their version.
   -->
   <div
-    class="flex flex-col gap-5 @min-[46rem]/book-detail:grid @min-[46rem]/book-detail:h-full @min-[46rem]/book-detail:min-h-0 @min-[46rem]/book-detail:grid-cols-[clamp(12rem,23cqi,17rem)_minmax(16rem,1fr)_clamp(15rem,26cqi,19.25rem)] @min-[46rem]/book-detail:grid-rows-[minmax(0,1fr)_clamp(11.25rem,29%,17.5rem)] @min-[46rem]/book-detail:gap-x-6 @min-[46rem]/book-detail:gap-y-5"
+    class="flex flex-col gap-5 @min-[46rem]/book-detail:grid @min-[46rem]/book-detail:h-full @min-[46rem]/book-detail:min-h-0 @min-[46rem]/book-detail:grid-cols-[clamp(12rem,23cqi,17rem)_minmax(16rem,1fr)_clamp(15rem,26cqi,19.25rem)] @min-[46rem]/book-detail:grid-rows-[minmax(0,max-content)_clamp(11.25rem,29%,17.5rem)] @min-[46rem]/book-detail:gap-x-6 @min-[46rem]/book-detail:gap-y-5"
   >
-    <!-- Cover column -->
+    <!-- contain-size keeps this column out of the row's intrinsic height: the cover is sized from the row via a ResizeObserver, so letting it contribute would feed back into the row. -->
     <div
-      class="flex min-w-0 flex-col gap-3 @min-[46rem]/book-detail:col-start-1 @min-[46rem]/book-detail:row-start-1 @min-[46rem]/book-detail:min-h-0"
+      class="flex min-w-0 flex-col gap-3 @min-[46rem]/book-detail:col-start-1 @min-[46rem]/book-detail:row-start-1 @min-[46rem]/book-detail:min-h-0 @min-[46rem]/book-detail:contain-size"
     >
       <div class="flex items-start gap-4 sm:gap-5 @min-[46rem]/book-detail:block @min-[46rem]/book-detail:min-h-0 @min-[46rem]/book-detail:flex-1">
         <div
