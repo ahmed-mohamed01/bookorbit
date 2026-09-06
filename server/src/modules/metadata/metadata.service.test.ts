@@ -1718,6 +1718,53 @@ describe('MetadataService', () => {
     });
   });
 
+  it('extractAudioChaptersAndNarrators does not clobber audibleId/librofmId with a null from the audio tags', async () => {
+    const { db, updateSet } = makeDb();
+    const narratorService = { replaceForBook: vi.fn().mockResolvedValue(undefined) };
+    const lockService = {
+      isFieldLocked: vi.fn().mockResolvedValue(false),
+      filterAutomatedBookUpdate: vi.fn().mockResolvedValue({
+        dto: {
+          audibleId: null,
+          librofmId: null,
+          audioMetadata: { chapters: [{ title: 'Chapter 1', startMs: 0 }], narrators: ['Narrator A'] },
+        },
+        skippedFields: [],
+      }),
+    };
+    const service = makeService(db, undefined, { narratorService, bookMetadataLockService: lockService });
+
+    mockExtractAudioMetadata.mockResolvedValueOnce({
+      title: null,
+      subtitle: null,
+      authors: [],
+      narrators: ['Narrator A'],
+      publisher: null,
+      publishedYear: null,
+      description: null,
+      language: null,
+      seriesName: null,
+      seriesIndex: null,
+      genres: [],
+      audibleId: null,
+      librofmId: null,
+      durationSeconds: null,
+      chapters: [{ title: 'Chapter 1', startMs: 0 }],
+      coverBytes: null,
+    });
+
+    await service.extractAudioChaptersAndNarrators(70, '/tmp/audio.m4b', 'm4b');
+
+    // A null provider id from the audio tags must not overwrite one the winning source (e.g. the ABS
+    // metadata.json sidecar) already set - otherwise exact-match ABS linking breaks.
+    const audibleWrites = updateSet.mock.calls.filter((call) => 'audibleId' in (call[0] as object));
+    const librofmWrites = updateSet.mock.calls.filter((call) => 'librofmId' in (call[0] as object));
+    expect(audibleWrites).toHaveLength(0);
+    expect(librofmWrites).toHaveLength(0);
+    // The audio-specific fields it does own are still written.
+    expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ chapters: [{ title: 'Chapter 1', startMs: 0 }] }));
+  });
+
   it('extractAudioFileDuration writes duration only when parser returns a value', async () => {
     const { db, updateSet } = makeDb();
     const service = makeService(db);

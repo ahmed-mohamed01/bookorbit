@@ -46,6 +46,17 @@ export async function normalizeProgressiveJpeg(bytes: Buffer): Promise<Buffer> {
   return sharp(bytes, { failOn: 'error' }).keepMetadata().jpeg({ quality: 90, progressive: false }).toBuffer();
 }
 
+/** Whether the given bytes decode as a real raster image. Guards against writing a corrupt cover file over an existing one. */
+export async function isDecodableImage(bytes: Buffer): Promise<boolean> {
+  if (bytes.length === 0) return false;
+  try {
+    const metadata = await sharp(bytes).metadata();
+    return Boolean(metadata.width && metadata.height);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Extract cover bytes from a book file based on its format.
  * Returns null if no cover can be extracted.

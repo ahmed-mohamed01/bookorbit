@@ -28,17 +28,19 @@ describe('source-bucket-colors', () => {
       bookorbit: '--pill-web',
       koreader: '--pill-koreader',
       kobo: '--pill-kobo',
+      audiobookshelf: '--pill-audiobookshelf',
     })
   })
 
   it('converts oklch tokens to a zrender-parseable hex so bars do not vanish on hover', () => {
     const colors = resolveSourceBucketColors('dark:violet')
 
-    expect(colors).toEqual({ bookorbit: '#abcdef', koreader: '#abcdef', kobo: '#abcdef' })
+    expect(colors).toEqual({ bookorbit: '#abcdef', koreader: '#abcdef', kobo: '#abcdef', audiobookshelf: '#abcdef' })
     expect(mocks.readCssColor).toHaveBeenCalledWith('--pill-web')
     expect(mocks.readCssColor).toHaveBeenCalledWith('--pill-koreader')
     expect(mocks.readCssColor).toHaveBeenCalledWith('--pill-kobo')
-    expect(mocks.oklchToHex).toHaveBeenCalledTimes(3)
+    expect(mocks.readCssColor).toHaveBeenCalledWith('--pill-audiobookshelf')
+    expect(mocks.oklchToHex).toHaveBeenCalledTimes(4)
   })
 
   it('passes through values that are already rgb/hex', () => {

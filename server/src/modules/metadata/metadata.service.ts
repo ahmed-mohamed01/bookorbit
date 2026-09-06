@@ -34,10 +34,12 @@ import { MetadataScoreService } from '../metadata-score/metadata-score.service';
 import { NarratorService } from '../narrator/narrator.service';
 import { authors, bookAuthors, bookGenres, bookMetadata, books, bookTags, genres, tags } from '../../db/schema';
 import { type AudiobookChapter, type ComicMetadataFields, isAudioFormat } from '@bookorbit/types';
+import { type CoverSource, type CoverSourceApplyOutcome, type CoverSourceHandler, EXTRA_COVER_SOURCE_HANDLERS } from './cover-source-handler';
 import { chaptersReachLastFile, mergeAudioChapters, type AudioChapterSource } from './extractors/audio-chapter-merge';
 import { parseAudioDuration, probeAudioChapters } from './extractors/audio.extractor';
 import type { ParsedBookData } from './extractors/format-extractor.interface';
 import { generateThumbnail, imageExt } from './lib/cover';
+import type { CoverReadSource } from './lib/cover-source-resolution';
 import { METADATA_AUDIO_FORMATS, MetadataExtractionService } from './metadata-extraction.service';
 import { MetadataEventsService, METADATA_AUTHORS_REPLACED } from './metadata-events.service';
 
@@ -67,6 +69,7 @@ function normalizePublishedYear(year: number | null | undefined): number | null 
 export class MetadataService {
   private readonly logger = new Logger(MetadataService.name);
   private readonly appDataPath: string;
+  private readonly coverSourceHandlers: ReadonlyMap<string, CoverSourceHandler>;
 
   constructor(
     @Inject(DB) private readonly db: Db,
@@ -81,8 +84,10 @@ export class MetadataService {
     @Optional() private readonly seriesIdentity?: SeriesIdentityService,
     @Optional() private readonly seriesMemberships?: SeriesMembershipService,
     @Optional() private readonly seriesExpectedCount?: SeriesExpectedCountService,
+    @Optional() @Inject(EXTRA_COVER_SOURCE_HANDLERS) extraCoverSourceHandlers: readonly CoverSourceHandler[] = [],
   ) {
     this.appDataPath = this.config.get<string>('storage.appDataPath')!;
+    this.coverSourceHandlers = new Map(extraCoverSourceHandlers.map((handler) => [handler.kind, handler]));
   }
 
   // ── Public API ───────────────────────────────────────────────────────────────
@@ -155,11 +160,14 @@ export class MetadataService {
 
     const updates: Promise<unknown>[] = [];
 
-    if (filtered.audibleId !== undefined) {
+    // Only write a provider id the audio file actually carries. This method supplements a non-audio
+    // winner's metadata with audio-specific fields; writing null here would clobber an audibleId/
+    // librofmId the winning source already set, breaking downstream exact-id matching.
+    if (filtered.audibleId != null) {
       updates.push(this.db.update(bookMetadata).set({ audibleId: filtered.audibleId, updatedAt: new Date() }).where(eq(bookMetadata.bookId, bookId)));
     }
 
-    if (filtered.librofmId !== undefined) {
+    if (filtered.librofmId != null) {
       updates.push(this.db.update(bookMetadata).set({ librofmId: filtered.librofmId, updatedAt: new Date() }).where(eq(bookMetadata.bookId, bookId)));
     }
 
@@ -258,6 +266,58 @@ export class MetadataService {
       `[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} refreshed=true - cover refresh completed`,
     );
     return true;
+  }
+
+  async applyCoverFromSources(bookId: number, readOrder: CoverReadSource[]): Promise<boolean> {
+    for (const source of readOrder) {
+      if (source.kind === 'embedded') {
+        if (await this.refreshCoverForBook(bookId, source.absolutePath, source.format)) return true;
+        continue;
+      }
+
+      const outcome = await this.applyCoverSource(bookId, source);
+      if (outcome === 'saved') return true;
+      if (outcome === 'locked') return false;
+    }
+    return false;
+  }
+
+  async applyCoverSource(bookId: number, source: CoverSource): Promise<CoverSourceApplyOutcome> {
+    const event = 'metadata.apply_cover_source';
+    const startedAt = Date.now();
+    const kind = sanitizeLogValue(source.kind);
+    const handler = this.coverSourceHandlers.get(source.kind);
+    if (!handler) return 'failed';
+
+    try {
+      if (await this.bookMetadataLockService.isFieldLocked(bookId, 'cover')) {
+        this.logger.debug(
+          `[${event}] [end] bookId=${bookId} kind="${kind}" durationMs=${Date.now() - startedAt} applied=false locked=true - cover source application skipped`,
+        );
+        return 'locked';
+      }
+
+      const bytes = await handler.resolve(bookId, source);
+      if (!bytes) return 'failed';
+
+      await this.persistCover(bookId, bytes, false);
+      this.logger.debug(
+        `[${event}] [end] bookId=${bookId} kind="${kind}" durationMs=${Date.now() - startedAt} applied=true - cover source application completed`,
+      );
+      return 'saved';
+    } catch (error) {
+      const errorClass = error instanceof Error ? error.name : 'Error';
+      const errorMessage = sanitizeLogValue(error instanceof Error ? error.message : String(error));
+      this.logger.warn(
+        `[${event}] [fail] bookId=${bookId} kind="${kind}" durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${errorMessage}" - cover source application failed`,
+      );
+      return 'failed';
+    }
+  }
+
+  async getCoverSource(bookId: number): Promise<string | null> {
+    const [row] = await this.db.select({ coverSource: bookMetadata.coverSource }).from(bookMetadata).where(eq(bookMetadata.bookId, bookId)).limit(1);
+    return row?.coverSource ?? null;
   }
 
   // ── Audio helpers ────────────────────────────────────────────────────────────
@@ -644,7 +704,7 @@ export class MetadataService {
   // ── Persistence ──────────────────────────────────────────────────────────────
 
   private async persistMetadata(bookId: number, data: ParsedBookData, format: string): Promise<void> {
-    if (isAudioFormat(format)) {
+    if (isAudioFormat(format) || format === 'json') {
       await this.persistAudioMetadata(bookId, data);
     } else {
       await this.persistBookMetadata(bookId, data, format);
@@ -657,24 +717,31 @@ export class MetadataService {
   }
 
   private async persistAudioMetadata(bookId: number, data: ParsedBookData): Promise<void> {
-    const { dto: filtered } = await this.bookMetadataLockService.filterAutomatedBookUpdate(bookId, {
+    const useMemberships = data.seriesMemberships !== undefined && this.seriesMemberships != null;
+
+    const { dto: filtered, skippedFields } = await this.bookMetadataLockService.filterAutomatedBookUpdate(bookId, {
       title: data.title,
       subtitle: data.subtitle,
       description: data.description,
+      ...(data.isbn10 === undefined ? {} : { isbn10: data.isbn10 ? data.isbn10.replace(/[^0-9Xx]/g, '') : data.isbn10 }),
+      ...(data.isbn13 === undefined ? {} : { isbn13: data.isbn13 ? data.isbn13.replace(/[^0-9]/g, '') : data.isbn13 }),
       publisher: normalizeMetadataText(data.publisher),
       publishedDate: data.publishedDate,
       publishedYear: data.publishedYear,
       language: data.language,
-      seriesName: normalizeMetadataText(data.seriesName),
-      seriesIndex: data.seriesIndex,
+      ...(useMemberships
+        ? { seriesMemberships: data.seriesMemberships }
+        : { seriesName: normalizeMetadataText(data.seriesName), seriesIndex: data.seriesIndex }),
       authors: data.authors.map((author) => author.name),
       genres: data.genres,
+      ...(data.tags === undefined ? {} : { tags: data.tags }),
       audibleId: boundProviderId('audibleId', data.audibleId),
       librofmId: boundProviderId('librofmId', data.librofmId),
       audioMetadata: {
         durationSeconds: data.durationSeconds ?? null,
-        chapters: data.chapters && data.chapters.length > 0 ? data.chapters : null,
+        ...(data.chapters === undefined ? {} : { chapters: data.chapters.length > 0 ? data.chapters : null }),
         narrators: data.narrators,
+        ...(data.abridged == null ? {} : { abridged: data.abridged }),
       },
     });
 
@@ -682,6 +749,8 @@ export class MetadataService {
     if (filtered.title !== undefined) scalarFields.title = filtered.title;
     if (filtered.subtitle !== undefined) scalarFields.subtitle = filtered.subtitle;
     if (filtered.description !== undefined) scalarFields.description = filtered.description;
+    if (filtered.isbn10 !== undefined) scalarFields.isbn10 = filtered.isbn10;
+    if (filtered.isbn13 !== undefined) scalarFields.isbn13 = filtered.isbn13;
     if (filtered.publisher !== undefined) scalarFields.publisher = normalizeMetadataText(filtered.publisher);
     const publishedDate = normalizePublishedDate(filtered.publishedDate);
     if (publishedDate !== undefined) {
@@ -700,6 +769,9 @@ export class MetadataService {
     if (filtered.audibleId !== undefined) scalarFields.audibleId = filtered.audibleId;
     if (filtered.librofmId !== undefined) scalarFields.librofmId = filtered.librofmId;
     if (filtered.audioMetadata?.durationSeconds !== undefined) scalarFields.durationSeconds = filtered.audioMetadata.durationSeconds;
+    if (filtered.audioMetadata?.abridged !== undefined && filtered.audioMetadata.abridged !== null) {
+      scalarFields.abridged = filtered.audioMetadata.abridged;
+    }
     if (filtered.audioMetadata?.chapters !== undefined) scalarFields.chapters = filtered.audioMetadata.chapters;
     if (Object.keys(scalarFields).length > 0) {
       const shouldSyncSeries =
@@ -712,11 +784,19 @@ export class MetadataService {
       }
     }
 
+    if (useMemberships) {
+      const seriesLocked = skippedFields.includes('seriesName') || skippedFields.includes('seriesIndex');
+      await this.persistSeriesMemberships(bookId, data.seriesMemberships!, seriesLocked);
+    }
+
     if (filtered.authors !== undefined) {
       await this.replaceAuthors(bookId, data.authors);
     }
     if (filtered.genres !== undefined) {
       await this.replaceGenres(bookId, filtered.genres);
+    }
+    if (filtered.tags !== undefined) {
+      await this.replaceTags(bookId, filtered.tags);
     }
 
     if (filtered.audioMetadata?.narrators !== undefined) {
@@ -724,6 +804,46 @@ export class MetadataService {
     }
 
     this.logger.debug(`[metadata.persist_audio] [end] bookId=${bookId} title="${sanitizeLogValue(data.title ?? '')}" - audio metadata persisted`);
+  }
+
+  private async persistSeriesMemberships(
+    bookId: number,
+    memberships: { seriesName: string; seriesIndex: string | null }[],
+    seriesLocked: boolean,
+  ): Promise<void> {
+    if (!this.seriesMemberships) return;
+
+    if (!seriesLocked) {
+      await this.seriesMemberships.replaceForBook(bookId, memberships);
+      return;
+    }
+
+    const current = await this.seriesMemberships.findByBookId(bookId);
+    const seen = new Set<string>();
+    for (const membership of current) {
+      const key = this.normalizeSeriesKey(membership.seriesName);
+      if (key) seen.add(key);
+    }
+
+    const additions = memberships.filter((membership) => {
+      const key = this.normalizeSeriesKey(membership.seriesName);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    if (additions.length === 0) return;
+
+    await this.seriesMemberships.replaceForBook(bookId, [
+      ...current.map((membership) => ({ seriesName: membership.seriesName, seriesIndex: membership.seriesIndex })),
+      ...additions,
+    ]);
+  }
+
+  private normalizeSeriesKey(name: string): string | null {
+    if (this.seriesIdentity) return this.seriesIdentity.normalizeName(name);
+    const trimmed = name.trim().toLowerCase();
+    return trimmed.length > 0 ? trimmed : null;
   }
 
   private async persistBookMetadata(bookId: number, data: ParsedBookData, format: string): Promise<void> {

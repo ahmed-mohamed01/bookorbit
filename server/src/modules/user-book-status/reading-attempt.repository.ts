@@ -1,5 +1,5 @@
 import { Inject, Injectable, InternalServerErrorException } from '@nestjs/common';
-import { and, asc, count, desc, eq, isNull, notExists, notInArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, isNotNull, isNull, notExists, notInArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { ReadingAttemptOrigin, ReadingAttemptOutcome, ReadStatus, ReadStatusSource } from '@bookorbit/types';
 
@@ -254,6 +254,41 @@ export class ReadingAttemptRepository {
       .select()
       .from(readingAttempts)
       .where(and(eq(readingAttempts.userId, userId), eq(readingAttempts.externalProvider, provider), eq(readingAttempts.externalId, externalId)))
+      .limit(1)
+      .for('update');
+    return row ?? null;
+  }
+
+  async findByOriginAndEndedOn(tx: Tx, userId: number, bookId: number, origin: ReadingAttemptOrigin, endedOn: string) {
+    const [row] = await tx
+      .select()
+      .from(readingAttempts)
+      .where(
+        and(
+          eq(readingAttempts.userId, userId),
+          eq(readingAttempts.bookId, bookId),
+          eq(readingAttempts.origin, origin),
+          eq(readingAttempts.endedOn, endedOn),
+        ),
+      )
+      .limit(1)
+      .for('update');
+    return row ?? null;
+  }
+
+  async findDeletedActiveByOrigin(tx: Tx, userId: number, bookId: number, origin: ReadingAttemptOrigin) {
+    const [row] = await tx
+      .select()
+      .from(readingAttempts)
+      .where(
+        and(
+          eq(readingAttempts.userId, userId),
+          eq(readingAttempts.bookId, bookId),
+          eq(readingAttempts.origin, origin),
+          isNull(readingAttempts.outcome),
+          isNotNull(readingAttempts.deletedAt),
+        ),
+      )
       .limit(1)
       .for('update');
     return row ?? null;

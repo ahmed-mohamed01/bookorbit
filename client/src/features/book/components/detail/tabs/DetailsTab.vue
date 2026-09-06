@@ -46,6 +46,7 @@ import { useDeleteBook } from '@/features/book/composables/useDeleteBook'
 import { useMetadataLocks } from '@/features/book/composables/useMetadataLocks'
 import { usePersonalNote, PERSONAL_NOTE_MAX_LENGTH } from '@/features/book/composables/usePersonalNote'
 import { useResetReadingState } from '@/features/book/composables/useResetReadingState'
+import LinkBookControl from '@/features/book/components/detail/tabs/LinkBookControl.vue'
 import DeleteBookDialog from '@/features/book/components/DeleteBookDialog.vue'
 import MoveToLibrarySheet from '@/features/book/components/MoveToLibrarySheet.vue'
 import ResetReadingStateDialog from '@/features/book/components/ResetReadingStateDialog.vue'
@@ -55,6 +56,7 @@ import MetadataScoreBadge from '@/features/metadata-score/components/MetadataSco
 import MetadataScoreBreakdown from '@/features/metadata-score/components/MetadataScoreBreakdown.vue'
 import { useMetadataScoreWeights } from '@/features/metadata-score/composables/useMetadataScoreWeights'
 import { useSafeHtml } from '@/features/book/composables/useSafeHtml'
+import { useBookEvents } from '@/features/book/composables/useBookEvents'
 import { useKoreaderBookProgress } from '@/features/koreader/composables/useKoreaderBookProgress'
 import { RATING_STARS, getRatingStarClass } from '@/features/book/lib/rating-stars'
 import { formatCommunityRatingValue } from '@/features/book/lib/community-rating'
@@ -1028,6 +1030,11 @@ function openBook() {
   openBookWithMode()
 }
 
+const { onBookProgressChanged } = useBookEvents()
+onBookProgressChanged((event) => {
+  if (event.bookId === props.book.id) void loadSupplemental()
+})
+
 function peekBook() {
   openBookWithMode('peek')
 }
@@ -1379,6 +1386,10 @@ watch(
             </TooltipTrigger>
             <TooltipContent>{{ t('book.detail.details.peek') }}</TooltipContent>
           </Tooltip>
+          <LinkBookControl
+            :book="book"
+            trigger-class="flex items-center justify-center h-9 w-12 shrink-0 rounded-md border border-input bg-background hover:bg-muted transition-colors"
+          />
         </div>
 
         <div class="flex gap-2">

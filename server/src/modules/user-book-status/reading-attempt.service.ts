@@ -394,6 +394,67 @@ export class ReadingAttemptService {
     });
   }
 
+  /**
+   * ABS imports never touch external_provider/external_id: that slot is Hardcover's link target
+   * (see hardcover.repository.ts linkReadingAttempt), and stamping it from ABS made every
+   * ABS-touched book fail Hardcover sync with a read_link_conflict. Provenance comes from `origin`
+   * alone; dedupe keys on origin + endedOn instead of an external id, including soft-deleted rows
+   * so a user-deleted import stays deleted instead of resurrecting on the next sync.
+   */
+  async importUnlinkedRead(
+    userId: number,
+    bookId: number,
+    input: { origin: 'audiobookshelf'; startedOn: string | null; endedOn: string | null },
+  ): Promise<void> {
+    this.validateDates(input.startedOn, input.endedOn);
+    await this.repo.transaction(async (tx) => {
+      if (input.endedOn === null) {
+        const active = await this.repo.findActive(tx, userId, bookId);
+        if (active) return;
+        const deletedActive = await this.repo.findDeletedActiveByOrigin(tx, userId, bookId, input.origin);
+        if (deletedActive) return;
+        await this.repo.createActive(tx, {
+          userId,
+          bookId,
+          startedOn: input.startedOn,
+          origin: input.origin,
+        });
+        return;
+      }
+
+      const existing = await this.repo.findByOriginAndEndedOn(tx, userId, bookId, input.origin, input.endedOn);
+      if (existing) {
+        if (existing.deletedAt) return;
+        if (existing.startedOn === null && input.startedOn !== null) {
+          await this.repo.update(tx, userId, bookId, existing.id, { startedOn: input.startedOn });
+        }
+        return;
+      }
+
+      // A newer-than-the-finish active attempt belongs to a later read; leave it running and record
+      // the ABS finish as a separate completed attempt instead of force-closing it with an earlier
+      // date, which used to violate reading_attempts_end_after_start_chk.
+      const active = await this.repo.findActive(tx, userId, bookId);
+      if (active && (active.startedOn === null || active.startedOn <= input.endedOn)) {
+        await this.repo.update(tx, userId, bookId, active.id, {
+          ...(active.startedOn === null && input.startedOn !== null ? { startedOn: input.startedOn } : {}),
+          endedOn: input.endedOn,
+          outcome: 'completed',
+        });
+        return;
+      }
+
+      await this.repo.create(tx, {
+        userId,
+        bookId,
+        startedOn: input.startedOn,
+        endedOn: input.endedOn,
+        outcome: 'completed',
+        origin: input.origin,
+      });
+    });
+  }
+
   async update(userId: number, bookId: number, attemptId: number, patch: ReadingAttemptPatch): Promise<ReadingAttempt> {
     const existing = await this.repo.findOwned(userId, bookId, attemptId);
     if (!existing) throw new NotFoundException('Reading attempt not found');

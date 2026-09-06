@@ -7,6 +7,7 @@ export const SOURCE_BUCKET_COLOR_TOKENS: Record<ReadingSessionSourceBucket, stri
   bookorbit: '--pill-web',
   koreader: '--pill-koreader',
   kobo: '--pill-kobo',
+  audiobookshelf: '--pill-audiobookshelf',
 }
 
 const cache = new Map<string, Record<ReadingSessionSourceBucket, string>>()
@@ -41,6 +42,7 @@ export function resolveSourceBucketColors(themeKey: string): Record<ReadingSessi
     bookorbit: toParseableColor(readCssColor(SOURCE_BUCKET_COLOR_TOKENS.bookorbit)),
     koreader: toParseableColor(readCssColor(SOURCE_BUCKET_COLOR_TOKENS.koreader)),
     kobo: toParseableColor(readCssColor(SOURCE_BUCKET_COLOR_TOKENS.kobo)),
+    audiobookshelf: toParseableColor(readCssColor(SOURCE_BUCKET_COLOR_TOKENS.audiobookshelf)),
   }
   cache.set(themeKey, colors)
   return colors

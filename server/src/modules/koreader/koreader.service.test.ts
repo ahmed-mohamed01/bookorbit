@@ -428,6 +428,7 @@ describe('KoreaderService', () => {
         bookFileId: 44,
         progress: 50,
         source: 'koreader',
+        occurredAt: new Date(1700000000 * 1000),
       });
       expect(mockAchievementEvents.emit.mock.invocationCallOrder[0]!).toBeGreaterThan(
         mockBookService.autoUpdateReadStatusForProgress.mock.invocationCallOrder[0]!,

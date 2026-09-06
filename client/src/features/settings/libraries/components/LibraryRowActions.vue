@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { FileEdit, Images, MoreHorizontal, Pencil, RefreshCw, Trash2 } from '@lucide/vue'
+import { FileEdit, FileScan, Images, MoreHorizontal, Pencil, RefreshCw, Trash2 } from '@lucide/vue'
 import type { Library } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -11,6 +11,7 @@ const emit = defineEmits<{
   scan: [library: Library]
   edit: [library: Library]
   refreshCovers: [library: Library]
+  reextractMetadata: [library: Library]
   syncFiles: [library: Library]
   remove: [library: Library]
 }>()
@@ -25,6 +26,9 @@ function requestEdit() {
 }
 function requestRefreshCovers() {
   emit('refreshCovers', props.library)
+}
+function requestReextractMetadata() {
+  emit('reextractMetadata', props.library)
 }
 function requestSyncFiles() {
   emit('syncFiles', props.library)
@@ -54,6 +58,10 @@ function requestRemove() {
         <DropdownMenuItem :disabled="refreshingCovers" @click="requestRefreshCovers">
           <Images :class="refreshingCovers ? 'animate-pulse motion-reduce:animate-none' : ''" />
           {{ t('settings.admin.libraries.refreshCovers') }}
+        </DropdownMenuItem>
+        <DropdownMenuItem :disabled="scanning" @click="requestReextractMetadata">
+          <FileScan :class="scanning ? 'animate-pulse motion-reduce:animate-none' : ''" />
+          {{ t('settings.admin.libraries.reextractMetadata') }}
         </DropdownMenuItem>
         <DropdownMenuItem :disabled="syncingFiles || !library.fileWriteEnabled" @click="requestSyncFiles">
           <FileEdit :class="syncingFiles ? 'animate-pulse motion-reduce:animate-none' : ''" />

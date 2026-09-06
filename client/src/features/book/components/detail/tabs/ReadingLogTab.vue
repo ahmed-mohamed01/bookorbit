@@ -13,6 +13,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import ReadingLogVitals from '../reading-log/ReadingLogVitals.vue'
 import ReadingLogLedger from '../reading-log/ReadingLogLedger.vue'
 import ReadingLogAttempts from '../reading-log/ReadingLogAttempts.vue'
+import ReadingAlignmentControl from './ReadingAlignmentControl.vue'
+import { useBookEvents } from '@/features/book/composables/useBookEvents'
 import ReadingLogRecords from '../reading-log/ReadingLogRecords.vue'
 import ReadingLogBand from '../reading-log/ReadingLogBand.vue'
 import ReadingLogEmptyStage from '../reading-log/ReadingLogEmptyStage.vue'
@@ -102,6 +104,14 @@ const bookTitle = computed(() => props.book.title ?? t('book.detail.readingLog.u
 // One panel that explains where sessions come from beats three that each say "nothing yet".
 const emptyStageDismissed = ref(false)
 const attemptsRef = ref<InstanceType<typeof ReadingLogAttempts> | null>(null)
+
+const { onBookProgressChanged } = useBookEvents()
+onBookProgressChanged((event) => {
+  if (event.bookId === props.book.id) {
+    void reload()
+    void reloadAttempts({ silent: true })
+  }
+})
 
 // Both lists have to have landed before the tab can claim there is nothing here: deciding on the
 // sessions alone flashes the empty stage and then jumps back to the full layout.
@@ -272,12 +282,12 @@ const quickFilters = computed<{ label: string; value: QuickFilter }[]>(() => [
         </div>
       </div>
 
-      <ReadingLogEmptyStage
-        v-else-if="blank"
-        class="xl:col-start-2 xl:row-start-1"
-        @add-session="handleOpenAddSession"
-        @record-past="handleRecordPast"
-      />
+      <template v-else-if="blank">
+        <ReadingLogEmptyStage class="xl:col-start-2 xl:row-start-1" @add-session="handleOpenAddSession" @record-past="handleRecordPast" />
+        <div class="flex min-h-0 flex-col gap-4 xl:col-start-3 xl:row-start-1">
+          <ReadingAlignmentControl :book="book" />
+        </div>
+      </template>
 
       <template v-else>
         <ReadingLogLedger
@@ -349,6 +359,7 @@ const quickFilters = computed<{ label: string; value: QuickFilter }[]>(() => [
         </ReadingLogLedger>
 
         <div class="flex min-h-0 flex-col gap-4 xl:col-start-3 xl:row-start-1">
+          <ReadingAlignmentControl :book="book" />
           <ReadingLogAttempts
             ref="attemptsRef"
             class="max-h-80 xl:min-h-0 xl:max-h-none xl:flex-1"

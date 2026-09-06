@@ -1104,8 +1104,22 @@ export class AchievementRepository {
   }
 
   async countDistinctSources(userId: number): Promise<number> {
-    const [web, koreader, kobo] = await Promise.all([this.hasWebSession(userId), this.hasKoreaderSync(userId), this.hasKoboSync(userId)]);
-    return (web ? 1 : 0) + (koreader ? 1 : 0) + (kobo ? 1 : 0);
+    const [web, koreader, kobo, audiobookshelf] = await Promise.all([
+      this.hasWebSession(userId),
+      this.hasKoreaderSync(userId),
+      this.hasKoboSync(userId),
+      this.hasAudiobookshelfSession(userId),
+    ]);
+    return (web ? 1 : 0) + (koreader ? 1 : 0) + (kobo ? 1 : 0) + (audiobookshelf ? 1 : 0);
+  }
+
+  async hasAudiobookshelfSession(userId: number): Promise<boolean> {
+    const [row] = await this.db
+      .select({ id: readingSessions.id })
+      .from(readingSessions)
+      .where(and(eq(readingSessions.userId, userId), eq(readingSessions.source, 'audiobookshelf')))
+      .limit(1);
+    return !!row;
   }
 
   async maxSourcesOnSingleBook(userId: number): Promise<number> {
@@ -1122,6 +1136,10 @@ export class AchievementRepository {
           UNION
           SELECT krs.book_id, 'kobo' AS src
           FROM kobo_reading_states krs WHERE krs.user_id = ${userId}
+          UNION
+          SELECT bf.book_id, 'audiobookshelf' AS src
+          FROM reading_sessions rs JOIN book_files bf ON bf.id = rs.book_file_id
+          WHERE rs.user_id = ${userId} AND rs.source = 'audiobookshelf'
         ) sources
         GROUP BY book_id
       ) per_book

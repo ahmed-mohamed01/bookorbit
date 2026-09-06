@@ -7,8 +7,10 @@ import {
   Headers,
   HttpCode,
   HttpStatus,
+  Inject,
   Logger,
   NotFoundException,
+  Optional,
   Param,
   ParseIntPipe,
   Patch,
@@ -54,6 +56,7 @@ import { Permission, AuditAction, AuditResource } from '@bookorbit/types';
 import type { BookDeletionAuditMeta } from '@bookorbit/types';
 import type { BookQuery } from '@bookorbit/types';
 import { UpdateBookMetadataLocksDto } from '../book-metadata-lock/dto/update-book-metadata-locks.dto';
+import { BULK_COVER_REFRESHER, type BulkCoverRefresher } from './bulk-cover-refresher';
 
 function shouldSyncFileWrite(value: string | undefined): boolean {
   return value === 'true';
@@ -96,6 +99,7 @@ export class BookController {
   constructor(
     private readonly bookService: BookService,
     private readonly fileWriteService: FileWriteService,
+    @Optional() @Inject(BULK_COVER_REFRESHER) private readonly bulkCoverRefresher: BulkCoverRefresher = bookService,
   ) {}
 
   @Post('embed-all')
@@ -193,7 +197,7 @@ export class BookController {
     const ids = await this.bookService.resolveSelectionToIds(dto, user);
     const stream = this.createSseStream(reply);
     try {
-      const result = await this.bookService.bulkReExtractCover(
+      const result = await this.bulkCoverRefresher.bulkReExtractCover(
         ids,
         user,
         (bookId) => {
@@ -212,7 +216,7 @@ export class BookController {
   @Post(':id/re-extract-cover')
   @RequirePermission(Permission.LibraryEditMetadata)
   reExtractCover(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: RequestUser) {
-    return this.bookService.bulkReExtractCover([id], user);
+    return this.bulkCoverRefresher.bulkReExtractCover([id], user);
   }
 
   @Post('export')

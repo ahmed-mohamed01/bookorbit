@@ -416,6 +416,15 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         keywords: 'storygraph shelves progress mirror',
         isVisible: anyPermission(Permission.StorygraphSync),
       },
+      {
+        id: 'audiobookshelf',
+        routeName: 'settings-audiobookshelf',
+        labelKey: 'settings.integrations.tabs.audiobookshelf',
+        descriptionKey: 'settings.integrations.providerSubtitles.audiobookshelf',
+        icon: Headphones,
+        keywords: 'audiobookshelf audiobook sync listening progress sessions',
+        isVisible: anyPermission(Permission.AudiobookshelfSync),
+      },
     ],
   },
   {

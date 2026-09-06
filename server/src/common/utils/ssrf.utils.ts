@@ -13,6 +13,7 @@ export class PrivateAddressException extends BadRequestException {
 export interface SafeRemoteHostOptions {
   allowLocal?: boolean;
   allowPrivate?: boolean;
+  blockLinkLocal?: boolean;
 }
 
 export async function ensureSafeUrl(rawUrl: string, options?: SafeRemoteHostOptions): Promise<URL> {
@@ -50,6 +51,9 @@ export async function ensureSafeRemoteHost(hostname: string, options?: SafeRemot
 
   const ipFamily = isIP(bareHost);
   if (ipFamily > 0) {
+    if (options?.blockLinkLocal && isLinkLocalAddress(bareHost)) {
+      throw new PrivateAddressException();
+    }
     if (isPrivateOrLocalAddress(bareHost) && !options?.allowPrivate) {
       throw new PrivateAddressException();
     }
@@ -64,9 +68,26 @@ export async function ensureSafeRemoteHost(hostname: string, options?: SafeRemot
   }
 
   if (resolved.length === 0) throw new BadRequestException('Unable to resolve URL host');
+  if (options?.blockLinkLocal && resolved.some((entry) => isLinkLocalAddress(entry.address))) {
+    throw new PrivateAddressException();
+  }
   if (resolved.some((entry) => isPrivateOrLocalAddress(entry.address)) && !options?.allowPrivate) {
     throw new PrivateAddressException();
   }
+}
+
+function isLinkLocalAddress(address: string): boolean {
+  const normalized = address.toLowerCase();
+  const mappedV4Prefix = '::ffff:';
+  const maybeV4 = normalized.startsWith(mappedV4Prefix) ? normalized.slice(mappedV4Prefix.length) : normalized;
+  const family = isIP(maybeV4);
+
+  if (family === 4) {
+    const octets = maybeV4.split('.').map((part) => Number(part));
+    return octets[0] === 169 && octets[1] === 254;
+  }
+
+  return family === 6 && /^(fe8|fe9|fea|feb)/.test(maybeV4);
 }
 
 /** Exported so the one lookup a connection actually uses can apply the same policy. */

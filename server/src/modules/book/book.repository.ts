@@ -636,95 +636,136 @@ export class BookRepository {
       };
     }
 
-    const [authorRows, fileRows, genreRows, tagRows, narratorRows, seriesMembershipRows, statusRows, fileProgressRows, audiobookProgressRows] =
-      await Promise.all([
-        this.db
-          .select({ bookId: bookAuthors.bookId, name: authors.name })
-          .from(bookAuthors)
-          .innerJoin(authors, eq(authors.id, bookAuthors.authorId))
-          .where(inArray(bookAuthors.bookId, bookIds))
-          .orderBy(bookAuthors.displayOrder),
-        this.db
-          .select({ bookId: bookFiles.bookId, id: bookFiles.id, format: bookFiles.format, role: bookFiles.role, sizeBytes: bookFiles.sizeBytes })
-          .from(bookFiles)
-          .where(inArray(bookFiles.bookId, bookIds)),
-        this.db
-          .select({ bookId: bookGenres.bookId, name: genres.name })
-          .from(bookGenres)
-          .innerJoin(genres, eq(genres.id, bookGenres.genreId))
-          .where(inArray(bookGenres.bookId, bookIds)),
-        this.db
-          .select({ bookId: bookTags.bookId, name: tags.name })
-          .from(bookTags)
-          .innerJoin(tags, eq(tags.id, bookTags.tagId))
-          .where(inArray(bookTags.bookId, bookIds)),
-        this.db
-          .select({ bookId: bookNarrators.bookId, name: narrators.name })
-          .from(bookNarrators)
-          .innerJoin(narrators, eq(narrators.id, bookNarrators.narratorId))
-          .where(inArray(bookNarrators.bookId, bookIds))
-          .orderBy(bookNarrators.displayOrder),
-        this.db
-          .select({
-            bookId: bookSeriesMemberships.bookId,
-            seriesId: bookSeriesMemberships.seriesId,
-            seriesName: bookSeries.name,
-            seriesIndex: bookSeriesMemberships.seriesIndex,
-            displayOrder: bookSeriesMemberships.displayOrder,
-            expectedBookCount: bookSeries.expectedBookCount,
-          })
-          .from(bookSeriesMemberships)
-          .innerJoin(bookSeries, eq(bookSeries.id, bookSeriesMemberships.seriesId))
-          .where(inArray(bookSeriesMemberships.bookId, bookIds))
-          .orderBy(asc(bookSeriesMemberships.bookId), asc(bookSeriesMemberships.displayOrder), asc(bookSeriesMemberships.seriesId)),
-        this.db
-          .select({
-            bookId: userBookStatus.bookId,
-            status: userBookStatus.status,
-            source: userBookStatus.source,
-            startedAt: userBookStatus.startedAt,
-            finishedAt: userBookStatus.finishedAt,
-            updatedAt: userBookStatus.updatedAt,
-          })
-          .from(userBookStatus)
-          .where(and(eq(userBookStatus.userId, userId), inArray(userBookStatus.bookId, bookIds))),
-        primaryFileIds.length > 0
-          ? this.db
-              .select({
-                bookFileId: readingProgress.bookFileId,
-                percentage: readingProgress.percentage,
-                lastReadAt: readingProgress.lastReadAt,
-              })
-              .from(readingProgress)
-              .where(and(eq(readingProgress.userId, userId), inArray(readingProgress.bookFileId, primaryFileIds)))
-          : Promise.resolve([] as { bookFileId: number; percentage: number; lastReadAt: Date }[]),
-        this.db
-          .select({
-            bookId: audiobookProgress.bookId,
-            percentage: audiobookProgress.percentage,
-            updatedAt: audiobookProgress.updatedAt,
-          })
-          .from(audiobookProgress)
-          .where(and(eq(audiobookProgress.userId, userId), inArray(audiobookProgress.bookId, bookIds))),
-      ]);
+    const [
+      authorRows,
+      fileRows,
+      genreRows,
+      tagRows,
+      narratorRows,
+      seriesMembershipRows,
+      statusRows,
+      fileProgressRows,
+      audiobookProgressRows,
+      linkedCounterpartProgressResult,
+    ] = await Promise.all([
+      this.db
+        .select({ bookId: bookAuthors.bookId, name: authors.name })
+        .from(bookAuthors)
+        .innerJoin(authors, eq(authors.id, bookAuthors.authorId))
+        .where(inArray(bookAuthors.bookId, bookIds))
+        .orderBy(bookAuthors.displayOrder),
+      this.db
+        .select({ bookId: bookFiles.bookId, id: bookFiles.id, format: bookFiles.format, role: bookFiles.role, sizeBytes: bookFiles.sizeBytes })
+        .from(bookFiles)
+        .where(inArray(bookFiles.bookId, bookIds)),
+      this.db
+        .select({ bookId: bookGenres.bookId, name: genres.name })
+        .from(bookGenres)
+        .innerJoin(genres, eq(genres.id, bookGenres.genreId))
+        .where(inArray(bookGenres.bookId, bookIds)),
+      this.db
+        .select({ bookId: bookTags.bookId, name: tags.name })
+        .from(bookTags)
+        .innerJoin(tags, eq(tags.id, bookTags.tagId))
+        .where(inArray(bookTags.bookId, bookIds)),
+      this.db
+        .select({ bookId: bookNarrators.bookId, name: narrators.name })
+        .from(bookNarrators)
+        .innerJoin(narrators, eq(narrators.id, bookNarrators.narratorId))
+        .where(inArray(bookNarrators.bookId, bookIds))
+        .orderBy(bookNarrators.displayOrder),
+      this.db
+        .select({
+          bookId: bookSeriesMemberships.bookId,
+          seriesId: bookSeriesMemberships.seriesId,
+          seriesName: bookSeries.name,
+          seriesIndex: bookSeriesMemberships.seriesIndex,
+          displayOrder: bookSeriesMemberships.displayOrder,
+          expectedBookCount: bookSeries.expectedBookCount,
+        })
+        .from(bookSeriesMemberships)
+        .innerJoin(bookSeries, eq(bookSeries.id, bookSeriesMemberships.seriesId))
+        .where(inArray(bookSeriesMemberships.bookId, bookIds))
+        .orderBy(asc(bookSeriesMemberships.bookId), asc(bookSeriesMemberships.displayOrder), asc(bookSeriesMemberships.seriesId)),
+      this.db
+        .select({
+          bookId: userBookStatus.bookId,
+          status: userBookStatus.status,
+          source: userBookStatus.source,
+          startedAt: userBookStatus.startedAt,
+          finishedAt: userBookStatus.finishedAt,
+          updatedAt: userBookStatus.updatedAt,
+        })
+        .from(userBookStatus)
+        .where(and(eq(userBookStatus.userId, userId), inArray(userBookStatus.bookId, bookIds))),
+      primaryFileIds.length > 0
+        ? this.db
+            .select({
+              bookFileId: readingProgress.bookFileId,
+              percentage: readingProgress.percentage,
+              lastReadAt: readingProgress.lastReadAt,
+            })
+            .from(readingProgress)
+            .where(and(eq(readingProgress.userId, userId), inArray(readingProgress.bookFileId, primaryFileIds)))
+        : Promise.resolve([] as { bookFileId: number; percentage: number; lastReadAt: Date }[]),
+      this.db
+        .select({
+          bookId: audiobookProgress.bookId,
+          percentage: audiobookProgress.percentage,
+          updatedAt: audiobookProgress.updatedAt,
+        })
+        .from(audiobookProgress)
+        .where(and(eq(audiobookProgress.userId, userId), inArray(audiobookProgress.bookId, bookIds))),
+      // Cross-format display progress for LINKED pairs (book_edition_links is the edition-link
+      // module's bootstrap table, referenced by name to avoid a circular module dependency): each
+      // side of a link surfaces the counterpart's progress, so both cards stay live while only one
+      // format is being read. The ebook's reading_progress row is deliberately never written by the
+      // alignment sync (it would clobber the precise CFI and defeat the open-time resolver's
+      // newest-wins check), so the merge happens here at read time instead.
+      this.db.execute<{ bookId: number; percentage: number; at: Date }>(sql`
+          select bel.text_book_id as "bookId", ab.percentage as "percentage", ab.updated_at as "at"
+          from book_edition_links bel
+          join ${audiobookProgress} ab on ab.book_id = bel.audio_book_id and ab.user_id = ${userId}
+          where bel.text_book_id in ${bookIds}
+          union all
+          select bel.audio_book_id as "bookId", rp.percentage as "percentage", rp.last_read_at as "at"
+          from book_edition_links bel
+          join ${books} tb on tb.id = bel.text_book_id
+          join ${readingProgress} rp on rp.book_file_id = tb.primary_file_id and rp.user_id = ${userId}
+          where bel.audio_book_id in ${bookIds}
+        `),
+    ]);
 
     const fileProgressById = new Map(fileProgressRows.map((row) => [row.bookFileId, row]));
     const audiobookProgressByBookId = new Map(audiobookProgressRows.map((row) => [row.bookId, row]));
+    // Raw execute() bypasses drizzle's column mapping, so timestamps arrive as strings: normalize to
+    // Date here or the newest-wins comparison against real Date columns silently coerces to NaN.
+    const linkedCounterpartByBookId = new Map(
+      linkedCounterpartProgressResult.rows.map((row) => [row.bookId, { percentage: row.percentage, at: new Date(row.at) }]),
+    );
     const progressRows = bookRefs.flatMap((book) => {
       if (book.primaryFileId == null) return [];
 
       const fileProgress = fileProgressById.get(book.primaryFileId);
       const audioProgress = audiobookProgressByBookId.get(book.id);
-      if (!fileProgress && !audioProgress) return [];
+      const linkedCounterpart = linkedCounterpartByBookId.get(book.id);
+      if (!fileProgress && !audioProgress && !linkedCounterpart) return [];
 
-      const mergedPercentage =
-        fileProgress && audioProgress
-          ? fileProgress.lastReadAt >= audioProgress.updatedAt
-            ? fileProgress.percentage
-            : audioProgress.percentage
-          : (fileProgress?.percentage ?? audioProgress?.percentage ?? null);
+      // Newest-wins across the book's own file progress, its own audiobook progress, and the linked
+      // counterpart's progress. A missing timestamp counts as oldest; on a tie the earlier candidate
+      // wins, preserving the pre-existing file-over-audio precedence.
+      const candidates = [
+        fileProgress ? { at: fileProgress.lastReadAt ?? new Date(0), percentage: fileProgress.percentage } : null,
+        audioProgress ? { at: audioProgress.updatedAt ?? new Date(0), percentage: audioProgress.percentage } : null,
+        linkedCounterpart ? { at: linkedCounterpart.at ?? new Date(0), percentage: linkedCounterpart.percentage } : null,
+      ].filter((candidate): candidate is { at: Date; percentage: number } => candidate != null);
 
-      return [{ bookFileId: book.primaryFileId, percentage: mergedPercentage }];
+      let newest = candidates[0]!;
+      for (const candidate of candidates.slice(1)) {
+        if (candidate.at > newest.at) newest = candidate;
+      }
+
+      return [{ bookFileId: book.primaryFileId, percentage: newest.percentage }];
     });
 
     return { authorRows, fileRows, genreRows, tagRows, progressRows, statusRows, narratorRows, seriesMembershipRows };

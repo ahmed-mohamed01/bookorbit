@@ -53,6 +53,7 @@ const deleteConfirmName = ref('')
 const deleting = ref(false)
 const fileSyncingMap = ref<Record<number, boolean>>({})
 const confirmSyncLibrary = ref<LibraryType | null>(null)
+const confirmReextractLibrary = ref<LibraryType | null>(null)
 
 /**
  * The header renders the primary actions beside the title. Falling back to rendering in place keeps
@@ -178,6 +179,31 @@ async function refreshCovers(lib: LibraryType) {
     if (!res.ok) toast.error(t('settings.admin.libraries.refreshCoversFailed', { name: lib.name }))
   } catch {
     toast.error(t('settings.admin.libraries.refreshCoversFailed', { name: lib.name }))
+  }
+}
+
+function promptReextractMetadata(lib: LibraryType) {
+  confirmReextractLibrary.value = lib
+}
+
+function cancelReextractMetadata() {
+  confirmReextractLibrary.value = null
+}
+
+async function confirmReextractMetadata() {
+  const lib = confirmReextractLibrary.value
+  if (!lib) return
+  confirmReextractLibrary.value = null
+  try {
+    const res = await api(`/api/v1/scanner/libraries/${lib.id}/re-extract-metadata`, { method: 'POST' })
+    if (res.ok) {
+      toast.success(t('settings.admin.libraries.reextractStarted', { name: lib.name }))
+      subscribeLibrary(lib.id)
+    } else {
+      toast.error(t('settings.admin.libraries.reextractStartFailed', { name: lib.name }))
+    }
+  } catch {
+    toast.error(t('settings.admin.libraries.reextractStartFailed', { name: lib.name }))
   }
 }
 
@@ -360,6 +386,7 @@ async function confirmDelete() {
             @scan="scan"
             @edit="openEdit"
             @refresh-covers="refreshCovers"
+            @reextract-metadata="promptReextractMetadata"
             @sync-files="promptSyncFiles"
             @remove="openDelete"
           />
@@ -374,6 +401,7 @@ async function confirmDelete() {
             @scan="scan"
             @edit="openEdit"
             @refresh-covers="refreshCovers"
+            @reextract-metadata="promptReextractMetadata"
             @sync-files="promptSyncFiles"
             @remove="openDelete"
           />
@@ -430,6 +458,17 @@ async function confirmDelete() {
       :confirm-label="t('settings.admin.libraries.syncFiles')"
       @confirm="confirmSyncFiles"
       @cancel="cancelLibrarySync"
+    />
+
+    <ConfirmDialog
+      v-if="confirmReextractLibrary"
+      open
+      :destructive="false"
+      :title="t('settings.admin.libraries.reextractConfirmTitle')"
+      :description="t('settings.admin.libraries.reextractConfirmBody', { name: confirmReextractLibrary.name })"
+      :confirm-label="t('settings.admin.libraries.reextractMetadata')"
+      @confirm="confirmReextractMetadata"
+      @cancel="cancelReextractMetadata"
     />
   </TooltipProvider>
 </template>

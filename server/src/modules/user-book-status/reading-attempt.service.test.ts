@@ -114,6 +114,14 @@ function makeFakeRepo() {
     findByExternal: vi.fn((_tx: object, userId: number, provider: string, externalId: string) =>
       Promise.resolve(rows.find((row) => row.userId === userId && row.externalProvider === provider && row.externalId === externalId)),
     ),
+    findByOriginAndEndedOn: vi.fn((_tx: object, userId: number, bookId: number, origin: ReadingAttemptOrigin, endedOn: string) =>
+      Promise.resolve(rows.find((row) => row.userId === userId && row.bookId === bookId && row.origin === origin && row.endedOn === endedOn)),
+    ),
+    findDeletedActiveByOrigin: vi.fn((_tx: object, userId: number, bookId: number, origin: ReadingAttemptOrigin) =>
+      Promise.resolve(
+        rows.find((row) => row.userId === userId && row.bookId === bookId && row.origin === origin && row.outcome === null && row.deletedAt !== null),
+      ),
+    ),
     findOwned: vi.fn((userId: number, bookId: number, id: number) =>
       Promise.resolve(rows.find((row) => row.id === id && row.userId === userId && row.bookId === bookId && row.deletedAt === null)),
     ),
@@ -574,6 +582,168 @@ describe('ReadingAttemptService', () => {
 
       expect(active).toMatchObject({ startedOn: '2026-11-01', endedOn: null, outcome: null });
       expect(fake.repo.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('importUnlinkedRead', () => {
+    it('adopts an existing active attempt silently for an in-progress import', async () => {
+      const active = await fake.repo.createActive({}, { userId: 1, bookId: 10, startedOn: '2026-01-01', origin: 'kobo' });
+
+      await service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: '2026-01-05', endedOn: null });
+
+      expect(fake.rows).toHaveLength(1);
+      expect(active).toMatchObject({ startedOn: '2026-01-01', origin: 'kobo', outcome: null });
+    });
+
+    it('opens a new active attempt with no external identity when none exists', async () => {
+      await service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: '2026-01-05', endedOn: null });
+
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.rows[0]).toMatchObject({
+        startedOn: '2026-01-05',
+        endedOn: null,
+        outcome: null,
+        origin: 'audiobookshelf',
+        externalProvider: null,
+        externalId: null,
+      });
+    });
+
+    it('does not resurrect a soft-deleted in-progress ABS import', async () => {
+      const row = await fake.repo.create(
+        {},
+        { userId: 1, bookId: 10, startedOn: '2026-01-01', endedOn: null, outcome: null, origin: 'audiobookshelf' },
+      );
+      row.deletedAt = new Date();
+
+      await service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: '2026-01-05', endedOn: null });
+
+      expect(fake.rows).toHaveLength(1);
+      expect(row.deletedAt).not.toBeNull();
+    });
+
+    it('dedupes a finished import already recorded for this origin and finish date', async () => {
+      await fake.repo.create(
+        {},
+        {
+          userId: 1,
+          bookId: 10,
+          startedOn: '2026-01-01',
+          endedOn: '2026-01-10',
+          outcome: 'completed',
+          origin: 'audiobookshelf',
+        },
+      );
+
+      await service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: '2026-01-05', endedOn: '2026-01-10' });
+
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.rows[0]).toMatchObject({ startedOn: '2026-01-01', endedOn: '2026-01-10' });
+    });
+
+    it('does not resurrect a soft-deleted finished ABS tombstone with the same finish date', async () => {
+      const row = await fake.repo.create(
+        {},
+        {
+          userId: 1,
+          bookId: 10,
+          startedOn: '2026-01-01',
+          endedOn: '2026-01-10',
+          outcome: 'completed',
+          origin: 'audiobookshelf',
+        },
+      );
+      row.deletedAt = new Date();
+
+      await service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: '2026-01-01', endedOn: '2026-01-10' });
+
+      expect(fake.rows).toHaveLength(1);
+      expect(row.deletedAt).not.toBeNull();
+    });
+
+    it('backfills a missing startedOn on a deduped finished import', async () => {
+      await fake.repo.create(
+        {},
+        {
+          userId: 1,
+          bookId: 10,
+          startedOn: null,
+          endedOn: '2026-01-10',
+          outcome: 'completed',
+          origin: 'audiobookshelf',
+        },
+      );
+
+      await service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: '2026-01-02', endedOn: '2026-01-10' });
+
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.rows[0]).toMatchObject({ startedOn: '2026-01-02', endedOn: '2026-01-10' });
+    });
+
+    it('closes an active attempt whose start date is on or before the ABS finish date', async () => {
+      const active = await fake.repo.createActive({}, { userId: 1, bookId: 10, startedOn: '2026-01-01', origin: 'audiobookshelf' });
+
+      await service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: null, endedOn: '2026-01-10' });
+
+      expect(fake.rows).toHaveLength(1);
+      expect(active).toMatchObject({ startedOn: '2026-01-01', endedOn: '2026-01-10', outcome: 'completed' });
+    });
+
+    it('keeps a Hardcover-stamped active attempt identity when closing it from an ABS finish', async () => {
+      const active = await fake.repo.create(
+        {},
+        {
+          userId: 1,
+          bookId: 10,
+          startedOn: '2026-01-01',
+          endedOn: null,
+          outcome: null,
+          origin: 'hardcover',
+          externalProvider: 'hardcover',
+          externalId: '99',
+        },
+      );
+
+      await service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: null, endedOn: '2026-01-10' });
+
+      expect(fake.rows).toHaveLength(1);
+      expect(active).toMatchObject({
+        endedOn: '2026-01-10',
+        outcome: 'completed',
+        externalProvider: 'hardcover',
+        externalId: '99',
+      });
+    });
+
+    it('creates a separate completed attempt when the active attempt started after the ABS finish date', async () => {
+      const active = await fake.repo.createActive({}, { userId: 1, bookId: 10, startedOn: '2026-02-01', origin: 'audiobookshelf' });
+
+      await service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: '2026-01-01', endedOn: '2026-01-10' });
+
+      expect(fake.rows).toHaveLength(2);
+      expect(active).toMatchObject({ startedOn: '2026-02-01', endedOn: null, outcome: null });
+      expect(fake.rows[1]).toMatchObject({
+        startedOn: '2026-01-01',
+        endedOn: '2026-01-10',
+        outcome: 'completed',
+        origin: 'audiobookshelf',
+        externalProvider: null,
+        externalId: null,
+      });
+    });
+
+    it('creates a completed attempt with no external identity when no active attempt exists', async () => {
+      await service.importUnlinkedRead(1, 10, { origin: 'audiobookshelf', startedOn: '2026-01-01', endedOn: '2026-01-10' });
+
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.rows[0]).toMatchObject({
+        startedOn: '2026-01-01',
+        endedOn: '2026-01-10',
+        outcome: 'completed',
+        origin: 'audiobookshelf',
+        externalProvider: null,
+        externalId: null,
+      });
     });
   });
 });

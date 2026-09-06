@@ -24,6 +24,10 @@ describe("toReadingSessionSourceBucket", () => {
     expect(toReadingSessionSourceBucket("kobo")).toBe("kobo");
   });
 
+  it("maps audiobookshelf to audiobookshelf", () => {
+    expect(toReadingSessionSourceBucket("audiobookshelf")).toBe("audiobookshelf");
+  });
+
   it("maps null/undefined to bookorbit", () => {
     expect(toReadingSessionSourceBucket(null)).toBe("bookorbit");
     expect(toReadingSessionSourceBucket(undefined)).toBe("bookorbit");
@@ -31,8 +35,8 @@ describe("toReadingSessionSourceBucket", () => {
 });
 
 describe("reading session source bucket constants", () => {
-  it("exposes exactly three buckets", () => {
-    expect(READING_SESSION_SOURCE_BUCKETS).toEqual(["bookorbit", "koreader", "kobo"]);
+  it("exposes exactly four buckets", () => {
+    expect(READING_SESSION_SOURCE_BUCKETS).toEqual(["bookorbit", "koreader", "kobo", "audiobookshelf"]);
   });
 
   it("labels every bucket", () => {
@@ -44,6 +48,6 @@ describe("reading session source bucket constants", () => {
   });
 
   it("builds a zero-filled record", () => {
-    expect(emptySourceBucketRecord()).toEqual({ bookorbit: 0, koreader: 0, kobo: 0 });
+    expect(emptySourceBucketRecord()).toEqual({ bookorbit: 0, koreader: 0, kobo: 0, audiobookshelf: 0 });
   });
 });

@@ -80,6 +80,7 @@ import { AchievementModule } from './modules/achievement/achievement.module';
 import { HardcoverModule } from './modules/hardcover/hardcover.module';
 import { ReadwiseModule } from './modules/readwise/readwise.module';
 import { StorygraphModule } from './modules/storygraph/storygraph.module';
+import { AudiobookshelfModule } from './modules/audiobookshelf/audiobookshelf.module';
 import { CustomMetadataModule } from './modules/custom-metadata/custom-metadata.module';
 import { CustomIconModule } from './modules/custom-icon/custom-icon.module';
 import { AccountActivityModule } from './modules/account-activity/account-activity.module';
@@ -88,6 +89,8 @@ import { BookDuplicatesModule } from './modules/book-duplicates/book-duplicates.
 import { MaintenanceModule } from './modules/maintenance/maintenance.module';
 import { BookMoveModule } from './modules/book-move/book-move.module';
 import { MonitoredModule } from './modules/monitored/monitored.module';
+import { EditionLinkModule } from './modules/edition-link/edition-link.module';
+import { ReadingAlignmentModule } from './modules/reading-alignment/reading-alignment.module';
 
 @Module({
   imports: [
@@ -166,6 +169,7 @@ import { MonitoredModule } from './modules/monitored/monitored.module';
     HardcoverModule,
     ReadwiseModule,
     StorygraphModule,
+    AudiobookshelfModule,
     AccountActivityModule,
     SharedReadingInsightsModule,
     BookDuplicatesModule,
@@ -173,6 +177,8 @@ import { MonitoredModule } from './modules/monitored/monitored.module';
     BookMoveModule,
     BrowseCountsModule,
     MonitoredModule,
+    EditionLinkModule,
+    ReadingAlignmentModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },

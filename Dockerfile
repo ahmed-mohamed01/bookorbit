@@ -3,6 +3,17 @@ ARG NODE_IMAGE=node:26.8.1-alpine3.23@sha256:871eb674ad6e692c91330a8959f1ce2f80b
 FROM ${NODE_IMAGE} AS base
 RUN npm install -g pnpm@11.22.0
 
+# Stage: build the whisper.cpp CLI used for ebook <-> audiobook position alignment.
+# Statically links ggml/whisper (BUILD_SHARED_LIBS=OFF); only libgomp + libstdc++ are
+# needed in the runtime image. The GGML model is NOT bundled - provide it via WHISPER_MODEL.
+# Pinned to a release tag so the shipped binary is reproducible across rebuilds.
+FROM ${NODE_IMAGE} AS whisper-builder
+ARG WHISPER_CPP_REF=v1.9.1
+RUN apk add --no-cache build-base cmake git && \
+    git clone --depth 1 --branch ${WHISPER_CPP_REF} https://github.com/ggerganov/whisper.cpp /whisper && \
+    cmake -S /whisper -B /whisper/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON && \
+    cmake --build /whisper/build -j --target whisper-cli
+
 # Stage 1: Build client
 FROM base AS client-builder
 WORKDIR /app
@@ -52,13 +63,14 @@ ARG APP_VERSION=dev
 ENV APP_VERSION=${APP_VERSION}
 ENV KOBO_CLOUDSCRAPER_PYTHON=/opt/bookorbit-python/bin/python
 ENV KOREADER_PLUGIN_PATH=/app/koreader-plugin/bookorbit.koplugin
+ENV WHISPER_PATH=/usr/local/bin/whisper-cli
 
 COPY server/requirements/kobo-cloudscraper.txt /tmp/kobo-cloudscraper-requirements.txt
 
 # pip is build-only here. Leaving it installed also leaves pip/_vendor/vendor.txt,
 # which Trivy reads as installed msgpack and setuptools and fails the image scan on.
 RUN apk upgrade --no-cache && \
-    apk add --no-cache poppler-utils su-exec ffmpeg python3 py3-pip tini tzdata && \
+    apk add --no-cache poppler-utils su-exec ffmpeg python3 py3-pip tini tzdata libstdc++ libgomp && \
     python3 -m venv /opt/bookorbit-python && \
     /opt/bookorbit-python/bin/python -m pip install --no-cache-dir -r /tmp/kobo-cloudscraper-requirements.txt && \
     /opt/bookorbit-python/bin/python -m pip uninstall -y pip && \
@@ -74,6 +86,7 @@ COPY --from=client-builder --chown=node:node /app/client/dist ./public
 COPY --from=server-builder --chown=node:node /app/server/entrypoint.sh ./entrypoint.sh
 COPY --chown=node:node server/bin/kepubify/ ./bin/kepubify/
 COPY --chown=node:node koreader-plugin/bookorbit.koplugin/ ./koreader-plugin/bookorbit.koplugin/
+COPY --from=whisper-builder /whisper/build/bin/whisper-cli /usr/local/bin/whisper-cli
 
 RUN sed -i 's/\r$//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh /app/bin/kepubify/* && mkdir -p /books /data/covers /data/book-bucket /tmp && chown -R node:node /data /tmp
 

@@ -30,7 +30,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   },
   {
     id: 'readingIntegrations',
-    use: [Permission.HardcoverSync, Permission.ReadwiseSync, Permission.StorygraphSync],
+    use: [Permission.HardcoverSync, Permission.ReadwiseSync, Permission.StorygraphSync, Permission.AudiobookshelfSync],
     manage: [],
   },
   {

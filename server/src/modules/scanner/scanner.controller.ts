@@ -33,4 +33,11 @@ export class ScannerController {
   refreshCovers(@Param('id', ParseIntPipe) libraryId: number) {
     return this.scannerService.refreshCovers(libraryId);
   }
+
+  @Post('libraries/:id/re-extract-metadata')
+  @RequirePermission(Permission.ManageLibraries)
+  @HttpCode(HttpStatus.ACCEPTED)
+  reExtractMetadata(@Param('id', ParseIntPipe) libraryId: number) {
+    return this.scannerService.startScan(libraryId, 'manual', { reextractMetadata: true });
+  }
 }
