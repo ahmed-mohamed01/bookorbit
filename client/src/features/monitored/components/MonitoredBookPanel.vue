@@ -12,6 +12,7 @@ import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { useBookDetail } from '@/features/book/composables/useBookDetail'
 import { useSafeHtml } from '@/features/book/composables/useSafeHtml'
 import { useMonitoredReleases } from '../composables/useMonitoredReleases'
+import { isMonitoredAcquisitionState, monitoredFormatState, monitoredPendingLabelKey } from '../lib/monitored-format-state'
 import { monitoredReleaseWindowStarted, parseMonitoredDate } from '../lib/release-date'
 import MonitoredFormatPill from './MonitoredFormatPill.vue'
 import MonitoredRequestProgress from './MonitoredRequestProgress.vue'
@@ -93,7 +94,9 @@ const grabbedRows = ref<Record<string, { releaseKey: string; requestId: number }
  * the page refetches the work it is now wrong about.
  */
 function handleProgressFiled(requestId: number) {
-  if (props.work) emit('filed', props.work, requestId)
+  if (!props.work) return
+  grabbedRows.value = Object.fromEntries(Object.entries(grabbedRows.value).filter(([, grabbed]) => grabbed.requestId !== requestId))
+  emit('filed', props.work, requestId)
 }
 
 function releaseKey(release: ReleaseCandidateItem): string {
@@ -102,25 +105,6 @@ function releaseKey(release: ReleaseCandidateItem): string {
 
 const activeGrabKey = computed(() => (props.work ? `${props.work.id}:${activeFormat.value}` : null))
 const activeGrab = computed(() => (activeGrabKey.value ? (grabbedRows.value[activeGrabKey.value] ?? null) : null))
-
-/**
- * The request this work and format is downloading under. The local marker leads so a fresh grab
- * reports immediately whatever the parent does with the work, and the work's own id carries the
- * case this panel did not create: a queued book reopened later still has progress to show.
- */
-const activeRequestId = computed<number | null>(() => activeGrab.value?.requestId ?? props.work?.requestIds?.[activeFormat.value] ?? null)
-
-/** Only a row grabbed here can be named, so only that one expands. */
-const expandedReleaseKey = computed(() => (activeRequestId.value === null ? null : (activeGrab.value?.releaseKey ?? null)))
-const expandedRowOnScreen = computed(
-  () => expandedReleaseKey.value !== null && activeReleases.value.releases.value.some((release) => releaseKey(release) === expandedReleaseKey.value),
-)
-
-/**
- * Where the block goes when no row owns it: a request that predates this panel session, or one
- * whose row has been searched away. Above the list, because it is the first thing to read.
- */
-const topProgressRequestId = computed(() => (expandedRowOnScreen.value ? null : activeRequestId.value))
 
 const tabs = computed<{ key: PanelTab; label: string }[]>(() => [
   { key: 'details', label: t('monitored.panel.tabs.details') },
@@ -133,10 +117,41 @@ function isFormatMonitored(format: MonitoredFormat): boolean {
   return props.monitoredFormats == null || props.monitoredFormats.includes(format)
 }
 
-const ebookOwned = computed(() => Boolean(props.work?.ownedFormats.includes('ebook') || props.work?.matchedBookIds?.ebook != null))
-const audiobookOwned = computed(() => Boolean(props.work?.ownedFormats.includes('audiobook') || props.work?.matchedBookIds?.audiobook != null))
-const ebookQueued = computed(() => !ebookOwned.value && props.work?.requestIds.ebook != null)
-const audiobookQueued = computed(() => !audiobookOwned.value && props.work?.requestIds.audiobook != null)
+const ebookState = computed(() => (props.work ? monitoredFormatState(props.work, 'ebook') : 'wanted'))
+const audiobookState = computed(() => (props.work ? monitoredFormatState(props.work, 'audiobook') : 'wanted'))
+const ebookOwned = computed(() => ebookState.value === 'available')
+const audiobookOwned = computed(() => audiobookState.value === 'available')
+const ebookQueued = computed(() => isMonitoredAcquisitionState(ebookState.value))
+const audiobookQueued = computed(() => isMonitoredAcquisitionState(audiobookState.value))
+
+/**
+ * The request this work and format is downloading under. The local marker leads so a fresh grab
+ * reports immediately whatever the parent does with the work. A server request stays for as long as
+ * it has acquisition work left, and one more beat after it fails: a download that died is the one
+ * outcome the user cannot see anywhere else on this panel, and the block names the reason. The
+ * request buttons are enabled again beside it, because fulfilment will take a fresh attempt.
+ */
+const activeRequestId = computed<number | null>(() => {
+  if (activeGrab.value) return activeGrab.value.requestId
+  const work = props.work
+  if (!work) return null
+  const state = activeFormat.value === 'ebook' ? ebookState.value : audiobookState.value
+  if (state === 'available') return null
+  if (!isMonitoredAcquisitionState(state) && work.requestStatuses?.[activeFormat.value] !== 'failed') return null
+  return work.requestIds?.[activeFormat.value] ?? null
+})
+
+/** Only a row grabbed here can be named, so only that one expands. */
+const expandedReleaseKey = computed(() => (activeRequestId.value === null ? null : (activeGrab.value?.releaseKey ?? null)))
+const expandedRowOnScreen = computed(
+  () => expandedReleaseKey.value !== null && activeReleases.value.releases.value.some((release) => releaseKey(release) === expandedReleaseKey.value),
+)
+
+/**
+ * Where the block goes when no row owns it: a request that predates this panel session, or one
+ * whose row has been searched away. Above the list, because it is the first thing to read.
+ */
+const topProgressRequestId = computed(() => (expandedRowOnScreen.value ? null : activeRequestId.value))
 const monitorEbookOn = computed(() => props.work?.monitorFormats?.ebook !== false)
 const monitorAudiobookOn = computed(() => props.work?.monitorFormats?.audiobook !== false)
 const ebookReleaseStarted = computed(() => monitoredReleaseWindowStarted(props.work?.ebookReleaseDate, props.work?.ebookDatePrecision))
@@ -150,6 +165,10 @@ const isHidden = computed(() => {
 })
 const pillBase = 'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors'
 const pillMuted = 'border-border bg-muted text-muted-foreground hover:text-foreground'
+
+function pendingLabel(format: MonitoredFormat): string {
+  return t(monitoredPendingLabelKey(format === 'ebook' ? ebookState.value : audiobookState.value, format))
+}
 
 function toggleMonitor(format: MonitoredFormat) {
   if (!props.work) return
@@ -193,8 +212,22 @@ watch(
     imageFailed.value = false
     autoDownload.value = true
     resetReleaseState()
-    if (props.work?.matchedBookId != null) void fetchDetail(props.work.matchedBookId)
-    if (secondaryBookId.value != null) void fetchSecondaryDetail(secondaryBookId.value)
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.work?.matchedBookId ?? null,
+  (bookId) => {
+    if (bookId != null) void fetchDetail(bookId)
+  },
+  { immediate: true },
+)
+
+watch(
+  secondaryBookId,
+  (bookId) => {
+    if (bookId != null) void fetchSecondaryDetail(bookId)
   },
   { immediate: true },
 )
@@ -482,7 +515,7 @@ function handleRequestAudiobook() {
           >
             <Check v-if="ebookOwned || ebookQueued" :size="16" aria-hidden="true" />
             <BookOpen v-else :size="16" aria-hidden="true" />
-            {{ ebookOwned ? t('monitored.detail.ebookOwned') : ebookQueued ? t('monitored.detail.ebookQueued') : t('monitored.panel.requestEbook') }}
+            {{ ebookOwned ? t('monitored.detail.ebookOwned') : ebookQueued ? pendingLabel('ebook') : t('monitored.panel.requestEbook') }}
           </Button>
           <Button
             v-if="showAudiobookRequest"
@@ -498,7 +531,7 @@ function handleRequestAudiobook() {
               audiobookOwned
                 ? t('monitored.detail.audiobookOwned')
                 : audiobookQueued
-                  ? t('monitored.detail.audiobookQueued')
+                  ? pendingLabel('audiobook')
                   : t('monitored.panel.requestAudiobook')
             }}
           </Button>

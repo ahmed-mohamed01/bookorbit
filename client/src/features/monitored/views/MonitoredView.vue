@@ -10,6 +10,7 @@ import {
   MONITORED_LIST_ORDERS,
   MONITORED_RELEASE_FILTERS,
   MONITORED_RELEASE_LIST_SORTS,
+  monitoredAcquisitionState,
   Permission,
 } from '@bookorbit/types'
 import type {
@@ -21,6 +22,7 @@ import type {
   MonitoredReleaseFilter,
   MonitoredReleaseItem,
   MonitoredReleaseListSort,
+  MonitoredReleaseStatus,
   MonitoredWork,
   MonitoredWorkPatch,
 } from '@bookorbit/types'
@@ -44,6 +46,7 @@ import {
 } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
 import { onMonitoredBookCreated } from '../lib/monitored-book-state'
+import { isMonitoredAcquisitionState } from '../lib/monitored-format-state'
 import { refreshAllAuthorsSequentially, type MonitoredRefreshSummary } from '../lib/refresh-summary'
 import { collapseReleaseItems, type MonitoredReleaseEntry } from '../lib/grouping'
 import { monitoredDateTime } from '../lib/release-date'
@@ -152,6 +155,7 @@ function handlePanelOpen(value: boolean) {
  */
 function handlePanelGrabbed(work: MonitoredWork, format: MonitoredFormat, requestId: number) {
   work.requestIds = { ...work.requestIds, [format]: requestId }
+  work.requestStatuses = { ...work.requestStatuses, [format]: 'grabbed' }
   for (const item of releases.value) {
     if (item.workId === work.id && item.format === format) {
       item.status = 'queued'
@@ -171,13 +175,24 @@ async function handlePanelFiled(work: MonitoredWork) {
   if (reloaded) panelWork.value = reloaded
 }
 
+/**
+ * One work, one object. The server's answer replaces the work every list renders from, so the card,
+ * its release rows and the open panel cannot drift apart while the page waits for its refetch.
+ */
+function applyWorkUpdate(updated: MonitoredWork): void {
+  for (const item of releases.value) if (item.workId === updated.id) item.work = updated
+  for (const item of books.value) if (item.work.id === updated.id) item.work = updated
+  if (panelWork.value?.id === updated.id) panelWork.value = updated
+}
+
 async function requestWorkFormat(work: MonitoredWork, format: MonitoredFormat, autoDownload?: boolean) {
   if (!canManage.value) return
   try {
-    await requestMonitoredWork(work.id, {
+    const updated = await requestMonitoredWork(work.id, {
       format,
       ...(autoDownload !== undefined ? { autoDownload } : {}),
     })
+    applyWorkUpdate(updated)
     toast.success(t('monitored.toast.sendingToRequests', { title: work.title, format: t(`monitored.formats.${format}`) }))
     void reloadActive(true)
   } catch (cause) {
@@ -702,6 +717,11 @@ function releaseKey(item: MonitoredReleaseItem): string {
   return `${item.workId}:${item.format}`
 }
 
+/** The row a request was just filed from reads that request's phase; anything else leaves it be. */
+function releaseStatusForWork(work: MonitoredWork, format: MonitoredFormat, fallback: MonitoredReleaseStatus): MonitoredReleaseStatus {
+  return monitoredAcquisitionState(work.requestStatuses?.[format]) ?? fallback
+}
+
 function isReleaseRequesting(item: MonitoredReleaseItem): boolean {
   return requestingReleases.value.has(releaseKey(item))
 }
@@ -712,11 +732,11 @@ function isReleaseRequesting(item: MonitoredReleaseItem): boolean {
  * date, which is exactly the state it was in before the download started.
  */
 function entryQueued(entry: MonitoredReleaseEntry): boolean {
-  return entry.items.some((item) => isReleaseRequesting(item) || item.status === 'queued')
+  return entry.items.some((item) => isReleaseRequesting(item) || isMonitoredAcquisitionState(item.status))
 }
 
 function entryFormatQueued(entry: MonitoredReleaseEntry, format: MonitoredFormat): boolean {
-  return entry.items.some((item) => item.format === format && (isReleaseRequesting(item) || item.status === 'queued'))
+  return entry.items.some((item) => item.format === format && (isReleaseRequesting(item) || isMonitoredAcquisitionState(item.status)))
 }
 
 function entryCanManage(entry: MonitoredReleaseEntry): boolean {
@@ -736,7 +756,13 @@ async function handleReleaseRequest(item: MonitoredReleaseItem) {
   item.status = 'queued'
   try {
     const result = await requestMonitoredWork(item.workId, { format: item.format })
-    item.requestId = result.requestIds[item.format] ?? null
+    applyWorkUpdate(result)
+    for (const candidate of releases.value) {
+      if (candidate.workId === item.workId && candidate.format === item.format) {
+        candidate.requestId = result.requestIds[item.format] ?? null
+        candidate.status = releaseStatusForWork(result, item.format, previousStatus)
+      }
+    }
     toast.success(t('monitored.toast.queued', { title: item.title, format: t(`monitored.formats.${item.format}`) }))
   } catch (cause) {
     item.status = previousStatus

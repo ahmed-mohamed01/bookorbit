@@ -107,6 +107,41 @@ describe('MonitoredStoreService work composition', () => {
     });
   });
 
+  it('withholds a filed request match the viewer cannot reach in any of their libraries', () => {
+    const result = Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [
+      workRow({ matchedBookId: null, matchedEbookBookId: null, matchedAudioBookId: null, ownedFormats: [] }),
+      [],
+      overlayRow({ workId: 'monitor-1:hardcover:1', ebookRequestId: 17 }),
+      new Set([10]),
+      true,
+      new Map([[17, { id: 17, status: 'available', matchedBookId: 30 }]]),
+    ]);
+
+    expect(result).toMatchObject({
+      matchedBookId: null,
+      matchedBookIds: {},
+      ownedFormats: [],
+      requestStatuses: { ebook: 'available' },
+    });
+  });
+
+  it('keeps the ebook as the primary match when only the audiobook request has filed', () => {
+    const result = Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [
+      workRow({ matchedBookId: 10, matchedEbookBookId: 10, matchedAudioBookId: null, ownedFormats: ['ebook'] }),
+      [],
+      overlayRow({ workId: 'monitor-1:hardcover:1', audiobookRequestId: 22 }),
+      null,
+      true,
+      new Map([[22, { id: 22, status: 'available', matchedBookId: 30 }]]),
+    ]);
+
+    expect(result).toMatchObject({
+      matchedBookId: 10,
+      matchedBookIds: { ebook: 10, audiobook: 30 },
+      ownedFormats: ['ebook', 'audiobook'],
+    });
+  });
+
   it('builds precision-aware SQL overlap conditions for summary release counts', () => {
     const query = new PgDialect().sqlToQuery(
       releaseRangeOverlapsSql(authorCatalogWorks.ebookReleaseDate, authorCatalogWorks.ebookDatePrecision, '2026-06-07', '2027-09-05'),
@@ -153,38 +188,56 @@ describe('MonitoredStoreService viewer-aware composition', () => {
   const shown = workRow({ id: 'w-shown', matchedBookId: null, matchedEbookBookId: null, matchedAudioBookId: null, ownedFormats: [] });
   const hidden = workRow({ id: 'w-hidden', matchedBookId: null, matchedEbookBookId: null, matchedAudioBookId: null, ownedFormats: [] });
   const overlays = [overlayRow({ workId: 'w-shown', ebookRequestId: 17 }), overlayRow({ workId: 'w-hidden', userVisibility: 'hidden' })];
+  const requests = [{ id: 17, status: 'downloading', matchedBookId: null }];
   const libraries = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([]) };
 
   it('withholds the owner overlay and the owner-hidden work from a non-owner', async () => {
-    const db = queuedSelectDb([[], overlays, []]);
+    const db = queuedSelectDb([[], overlays, requests, []]);
     const store = new MonitoredStoreService(db as never, libraries as never);
 
     const composed = await composeWorks(store, [shown, hidden], { id: 2, isSuperuser: false } as RequestUser);
 
     expect(composed.map((item) => item.work.id)).toEqual(['w-shown']);
     expect(composed[0].work.requestIds).toEqual({});
+    expect(composed[0].work.requestStatuses).toEqual({});
     expect(composed[0].work).not.toHaveProperty('userVisibility');
   });
 
   it('keeps the whole overlay for the monitor owner', async () => {
-    const db = queuedSelectDb([[], overlays, [{ id: 'monitor-1' }]]);
+    const db = queuedSelectDb([[], overlays, requests, [{ id: 'monitor-1' }]]);
     const store = new MonitoredStoreService(db as never, libraries as never);
 
     const composed = await composeWorks(store, [shown, hidden], { id: 1, isSuperuser: false } as RequestUser);
 
     expect(composed.map((item) => item.work.id)).toEqual(['w-shown', 'w-hidden']);
     expect(composed[0].work.requestIds).toEqual({ ebook: 17 });
+    expect(composed[0].work.requestStatuses).toEqual({ ebook: 'downloading' });
     expect(composed[1].work.userVisibility).toBe('hidden');
   });
 
   it('keeps the whole overlay for an internal caller that passes no viewer', async () => {
-    const db = queuedSelectDb([[], overlays]);
+    const db = queuedSelectDb([[], overlays, requests]);
     const store = new MonitoredStoreService(db as never, libraries as never);
 
     const composed = await composeWorks(store, [shown, hidden]);
 
     expect(composed.map((item) => item.work.id)).toEqual(['w-shown', 'w-hidden']);
     expect(composed[0].work.requestIds).toEqual({ ebook: 17 });
+    expect(composed[0].work.requestStatuses).toEqual({ ebook: 'downloading' });
+  });
+
+  it('projects an available request match into the library-owned work state', async () => {
+    const db = queuedSelectDb([[], overlays, [{ id: 17, status: 'available', matchedBookId: 30 }]]);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    const composed = await composeWorks(store, [shown, hidden]);
+
+    expect(composed[0].work).toMatchObject({
+      matchedBookId: 30,
+      matchedBookIds: { ebook: 30 },
+      ownedFormats: ['ebook'],
+      requestStatuses: { ebook: 'available' },
+    });
   });
 });
 
@@ -193,7 +246,7 @@ describe('MonitoredStoreService author aggregate counting', () => {
   // JOINed, so an unreviewed work has a NULL user_visibility: without coalesce the visibility
   // expression is NULL, `not NULL` is NULL, and the row lands in neither total nor hidden. That is
   // not something a store mock can catch, so this asserts the SQL the aggregate actually issues.
-  async function aggregateFields(viewer: RequestUser): Promise<Record<string, unknown>> {
+  async function aggregateFields(viewer: RequestUser, libraryIds: number[] = [1]): Promise<Record<string, unknown>> {
     let captured: Record<string, unknown> = {};
     const builder: Record<string, unknown> = {};
     for (const method of ['from', 'innerJoin', 'leftJoin', 'where']) builder[method] = vi.fn(() => builder);
@@ -204,9 +257,17 @@ describe('MonitoredStoreService author aggregate counting', () => {
         return builder;
       }),
     };
-    const store = new MonitoredStoreService(db as never, { findAccessibleLibraryIds: vi.fn().mockResolvedValue([1]) } as never);
+    const store = new MonitoredStoreService(db as never, { findAccessibleLibraryIds: vi.fn().mockResolvedValue(libraryIds) } as never);
     await store.getAuthorAggregates(['monitor-1'], viewer, '2026-09-05');
     return captured;
+  }
+
+  /** One line, and blind to where the binds fall, so an assertion reads as the predicate it checks. */
+  function countSql(field: unknown): string {
+    return new PgDialect()
+      .sqlToQuery(field as SQL)
+      .sql.replace(/\s+/g, ' ')
+      .replace(/\$\d+/g, '$?');
   }
 
   it('buckets a work with no overlay row into exactly one of total and hidden', async () => {
@@ -231,6 +292,28 @@ describe('MonitoredStoreService author aggregate counting', () => {
     expect(dialect.sqlToQuery(viewerFields.total as SQL).sql).toContain('case when "monitored_authors"."owner_user_id" =');
     expect(dialect.sqlToQuery(viewerFields.hidden as SQL).sql).toContain('is distinct from');
     expect(dialect.sqlToQuery(superuserFields.total as SQL).sql).not.toContain('case when "monitored_authors"."owner_user_id" =');
+  });
+
+  it('counts an available request match as owned, reading only this work request and the viewer libraries', async () => {
+    const fields = await aggregateFields({ id: 1, isSuperuser: false } as RequestUser, [7, 9]);
+
+    // Correlated to the overlay column, so the count can only ever see the request this work filed,
+    // and joined through books, so a filed book outside the viewer's libraries counts for nobody.
+    expect(countSql(fields.ebookOwned)).toContain(
+      'exists ( select 1 from "book_requests" inner join "books" on "books"."id" = "book_requests"."matched_book_id" ' +
+        'where "book_requests"."id" = "monitored_author_works"."ebook_request_id" and "book_requests"."status" = \'available\' ' +
+        'and "books"."library_id" in ($?, $?) )',
+    );
+    expect(countSql(fields.audioOwned)).toContain('"book_requests"."id" = "monitored_author_works"."audiobook_request_id"');
+    // Both branches, the stored match and the filed request, bind the same accessible libraries.
+    expect(new PgDialect().sqlToQuery(fields.ebookOwned as SQL).params.slice(-4)).toEqual([7, 9, 7, 9]);
+  });
+
+  it('counts nothing owned for a viewer with no accessible library', async () => {
+    const fields = await aggregateFields({ id: 1, isSuperuser: false } as RequestUser, []);
+
+    expect(countSql(fields.ebookOwned)).toContain(' and false)::int');
+    expect(countSql(fields.audioOwned)).toContain(' and false)::int');
   });
 });
 

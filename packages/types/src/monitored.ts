@@ -1,4 +1,5 @@
 import type { ReleaseSearchResult } from "./indexer";
+import type { BookRequestStatus } from "./book-request";
 
 export const MONITORED_FORMATS = ["ebook", "audiobook"] as const;
 export type MonitoredFormat = (typeof MONITORED_FORMATS)[number];
@@ -15,8 +16,38 @@ export type MonitoredWorkFlag = (typeof MONITORED_WORK_FLAGS)[number];
 export const MONITORED_WORK_STATES = ["monitoring", "paused", "stopped"] as const;
 export type MonitoredWorkState = (typeof MONITORED_WORK_STATES)[number];
 
-export const MONITORED_RELEASE_STATUSES = ["upcoming", "available", "queued", "grabbed"] as const;
+export const MONITORED_RELEASE_STATUSES = ["upcoming", "available", "queued", "downloading", "moving", "needs_review", "grabbed"] as const;
 export type MonitoredReleaseStatus = (typeof MONITORED_RELEASE_STATUSES)[number];
+
+export const MONITORED_ACQUISITION_STATES = ["queued", "downloading", "moving", "needs_review"] as const;
+export type MonitoredAcquisitionState = (typeof MONITORED_ACQUISITION_STATES)[number];
+
+/**
+ * How far along a book request is, in the terms monitoring shows. Null means the request has no
+ * acquisition work left, so the format it belongs to reads from the library instead: a request id
+ * is history once it settles, never proof that a download is still coming.
+ *
+ * Every request status is spelled out on purpose. A new one must state its monitoring phase here
+ * rather than falling through to "nothing is happening", which would re-open the request button on
+ * a work the fulfilment pipeline is still working on.
+ */
+export const MONITORED_ACQUISITION_STATE_BY_REQUEST_STATUS: Record<BookRequestStatus, MonitoredAcquisitionState | null> = {
+  pending: "queued",
+  approved: "queued",
+  searching: "queued",
+  grabbed: "queued",
+  downloading: "downloading",
+  importing: "moving",
+  needs_review: "needs_review",
+  available: null,
+  failed: null,
+  cancelled: null,
+  rejected: null,
+};
+
+export function monitoredAcquisitionState(status: BookRequestStatus | null | undefined): MonitoredAcquisitionState | null {
+  return status ? MONITORED_ACQUISITION_STATE_BY_REQUEST_STATUS[status] : null;
+}
 
 export const MONITORED_GROUPINGS = ["none", "series", "year", "status"] as const;
 export type MonitoredGrouping = (typeof MONITORED_GROUPINGS)[number];
@@ -109,6 +140,8 @@ export interface MonitoredWork {
   userVisibility?: "hidden" | "visible";
   /** Book-request ids created from this work, per format. */
   requestIds: Partial<Record<MonitoredFormat, number>>;
+  /** Current state of those requests. Request ids remain as history after a request settles. */
+  requestStatuses?: Partial<Record<MonitoredFormat, BookRequestStatus>>;
 }
 
 export interface MonitoredBookEntry {

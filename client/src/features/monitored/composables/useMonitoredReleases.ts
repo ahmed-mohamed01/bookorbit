@@ -19,7 +19,8 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
   const searched = ref(false)
   const error = ref<string | null>(null)
   const grabbing = ref(new Set<string>())
-  // Survives the grab so the row it was clicked on stays settled while the panel is still open.
+  // Survives the grab so the row it was clicked on stays settled until the next search. A grab that
+  // failed, or whose request was deleted, must not leave its row settled for the life of the panel.
   const grabbed = ref(new Set<string>())
   // Indexer searches are slow enough that a response can land after the panel moved to another
   // work, so every search claims a generation and only the newest one may write state.
@@ -41,6 +42,7 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
       if (token !== generation || workId.value !== requestedWorkId) return
       releases.value = result.releases
       searched.value = true
+      forgetGrabs(requestedWorkId)
       // An empty list with zero enabled indexers is a configuration state, not a search result.
       if (result.enabledIndexerCount === 0) {
         error.value = t('monitored.errors.noIndexers')
@@ -61,6 +63,16 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
    */
   function grabKey(forWorkId: string, release: ReleaseCandidateItem): string {
     return `${forWorkId}:${format}:${release.indexerId}:${release.guid}`
+  }
+
+  /**
+   * A search answers with what the indexers hold now, so the marks left by earlier grabs of this
+   * work and format stop being true the moment it lands: the request behind them may have failed,
+   * or been deleted from Requests, and its rows have to be grabbable again.
+   */
+  function forgetGrabs(forWorkId: string): void {
+    const prefix = `${forWorkId}:${format}:`
+    grabbed.value = new Set([...grabbed.value].filter((key) => !key.startsWith(prefix)))
   }
 
   function isGrabbing(release: ReleaseCandidateItem): boolean {

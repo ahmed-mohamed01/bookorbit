@@ -146,6 +146,7 @@ describe('MonitoredService', () => {
   it('emits independent ebook and audiobook releases with per-format status', async () => {
     const monitoredWork = work({
       requestIds: { audiobook: 22 },
+      requestStatuses: { audiobook: 'grabbed' },
       matchedBookIds: { ebook: 11 },
       ownedFormats: ['ebook'],
     });
@@ -188,6 +189,27 @@ describe('MonitoredService', () => {
 
     // The request id outliving the download must not pin the row to "queued" forever.
     expect(result.items[0]).toEqual(expect.objectContaining({ status: 'grabbed', requestId: 22 }));
+  });
+
+  it.each([
+    ['downloading', 'downloading'],
+    ['importing', 'moving'],
+    ['needs_review', 'needs_review'],
+    ['failed', 'available'],
+  ] as const)('maps a %s request to the %s release state', async (requestStatus, expectedStatus) => {
+    const monitoredWork = work({ requestIds: { ebook: 22 }, requestStatuses: { ebook: requestStatus } });
+    const store = {
+      findReleasePage: vi.fn().mockResolvedValue({
+        items: [{ monitor: author(), work: monitoredWork, format: 'ebook', releaseDate: '2026-09-01' }],
+        total: 1,
+        page: 0,
+        size: 50,
+      }),
+    };
+
+    const result = await service(store).listReleases(viewer, { page: 0, size: 50, sort: 'date', order: 'asc', filter: 'all' });
+
+    expect(result.items[0]?.status).toBe(expectedStatus);
   });
 
   it('lists year, month, and day precision releases whose ranges overlap the window edges', async () => {

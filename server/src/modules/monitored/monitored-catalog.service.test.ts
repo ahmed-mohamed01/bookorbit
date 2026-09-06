@@ -421,7 +421,7 @@ describe('targeted availability recompute', () => {
   }
 
   it('rematches only the works whose filed request has outrun their stored match', async () => {
-    const queued = work({ id: 'w-queued', requestIds: { ebook: 42 } });
+    const queued = work({ id: 'w-queued', requestIds: { ebook: 42 }, requestStatuses: { ebook: 'available' } });
     const alreadyOwned = work({
       id: 'w-owned',
       title: 'The Primal Hunter 14',
@@ -445,7 +445,7 @@ describe('targeted availability recompute', () => {
   });
 
   it('writes the owned-match columns and nothing else, leaving the caller its own works', async () => {
-    const queued = work({ id: 'w-queued', requestIds: { ebook: 42 } });
+    const queued = work({ id: 'w-queued', requestIds: { ebook: 42 }, requestStatuses: { ebook: 'available' } });
     const { service, store } = harness([[libraryRow()]]);
 
     await service.recomputeWorkAvailability([{ monitor: monitor(), works: [queued] }]);
@@ -458,11 +458,22 @@ describe('targeted availability recompute', () => {
     expect(queued.ownedFormats).toEqual([]);
   });
 
+  it('does not spend the rematch cooldown before a request reaches available', async () => {
+    const downloading = work({ id: 'w-downloading', requestIds: { ebook: 42 }, requestStatuses: { ebook: 'downloading' } });
+    const { service, store, db } = harness([]);
+
+    const healed = await service.recomputeWorkAvailability([{ monitor: monitor(), works: [downloading] }]);
+
+    expect(healed.size).toBe(0);
+    expect(db.select).not.toHaveBeenCalled();
+    expect(store.updateWorkMatch).not.toHaveBeenCalled();
+  });
+
   it('leaves a work alone for the cooldown window however often it is read', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-05T12:00:00.000Z'));
     try {
-      const queued = work({ id: 'w-queued', requestIds: { ebook: 42 } });
+      const queued = work({ id: 'w-queued', requestIds: { ebook: 42 }, requestStatuses: { ebook: 'available' } });
       const { service, store, db } = harness([[libraryRow()], [libraryRow()]]);
       const group = [{ monitor: monitor(), works: [queued] }];
 
@@ -487,6 +498,7 @@ describe('targeted availability recompute', () => {
       title: 'The Shattered Lens',
       seriesName: 'Alcatraz vs. the Evil Librarians',
       requestIds: { audiobook: 42 },
+      requestStatuses: { audiobook: 'available' },
     });
     const { service, store } = harness([
       [libraryRow({ bookId: 8, title: 'Alcatraz versus the Shattered Lens', seriesName: 'Alcatraz', format: 'm4b' })],
@@ -503,7 +515,7 @@ describe('targeted availability recompute', () => {
   });
 
   it('reports nothing healed, and writes nothing, when the library still has no such book', async () => {
-    const queued = work({ id: 'w-queued', requestIds: { ebook: 42 } });
+    const queued = work({ id: 'w-queued', requestIds: { ebook: 42 }, requestStatuses: { ebook: 'available' } });
     const { service, store } = harness([[]]);
 
     const healed = await service.recomputeWorkAvailability([{ monitor: monitor(), works: [queued] }]);

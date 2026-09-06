@@ -47,12 +47,12 @@ export interface WorkAvailabilityGroup {
 }
 
 /**
- * A work whose owner filed a request for a format that still has no book behind it. That is the
- * ordinary state of a queued work right up until its download lands, which is exactly the moment
- * the stored match goes stale, so it is a candidate for a rematch rather than a fault.
+ * A filed request that did not carry a usable book id is the only request-backed work that needs
+ * fuzzy matching. Earlier request states have no library book to find yet, and attempting them
+ * would consume the cooldown before the import lands.
  */
 export function needsAvailabilityRecompute(work: MonitoredWork): boolean {
-  return MONITORED_FORMATS.some((format) => work.requestIds?.[format] != null && work.matchedBookIds?.[format] == null);
+  return MONITORED_FORMATS.some((format) => work.requestStatuses?.[format] === 'available' && work.matchedBookIds?.[format] == null);
 }
 
 /** Work ids for a log line: enough to find the work, capped so a batch cannot become a blob. */

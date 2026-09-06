@@ -255,6 +255,7 @@ async function queue(work: MonitoredWork, format: MonitoredFormat, autoDownload?
   if (!canEdit.value || isQueued(work.id, format)) return
   try {
     await queueWork(work.id, format, autoDownload)
+    if (panelWork.value?.id === work.id) panelWork.value = detail.value?.works.find((candidate) => candidate.id === work.id) ?? panelWork.value
     toast.success(t('monitored.toast.sendingToRequests', { title: work.title, format: t(`monitored.formats.${format}`) }))
   } catch (cause) {
     toast.error(monitoredErrorText(cause, t('monitored.toast.queueFailed')))

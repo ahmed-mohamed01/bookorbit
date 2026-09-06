@@ -7,6 +7,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import { bookCoverStyle } from '@/features/book/lib/book-cover'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
+import {
+  isMonitoredAcquisitionState,
+  monitoredFormatState,
+  monitoredPendingLabelKey,
+  type MonitoredAcquisitionState,
+  type MonitoredFormatState,
+} from '../lib/monitored-format-state'
 import { releaseDateForWork } from '../lib/grouping'
 import { parseMonitoredDate } from '../lib/release-date'
 
@@ -49,16 +56,37 @@ const seriesIndex = computed(() => (props.seriesMembership === undefined ? props
 const showBelowCoverLabel = computed(() => cardInfoMode.value === 'below-cover')
 const showHoverTitle = computed(() => cardInfoMode.value === 'hover-overlay')
 
-const queuedBadge = computed(() => ({ label: t('monitored.detail.badges.queued'), class: 'bg-primary text-primary-foreground' }))
+function isFormatMonitored(format: MonitoredFormat): boolean {
+  return props.monitoredFormats == null || props.monitoredFormats.includes(format)
+}
 
-const ebookOwned = computed(() => props.work.ownedFormats.includes('ebook') || props.work.matchedBookIds?.ebook != null)
-const audiobookOwned = computed(() => props.work.ownedFormats.includes('audiobook') || props.work.matchedBookIds?.audiobook != null)
-const ebookPending = computed(() => !ebookOwned.value && (props.ebookQueued || props.work.requestIds.ebook != null))
-const audiobookPending = computed(() => !audiobookOwned.value && (props.audiobookQueued || props.work.requestIds.audiobook != null))
+const ebookState = computed(() =>
+  monitoredFormatState(props.work, 'ebook', { monitored: isFormatMonitored('ebook'), optimisticQueued: props.ebookQueued }),
+)
+const audiobookState = computed(() =>
+  monitoredFormatState(props.work, 'audiobook', { monitored: isFormatMonitored('audiobook'), optimisticQueued: props.audiobookQueued }),
+)
+const ebookOwned = computed(() => ebookState.value === 'available')
+const audiobookOwned = computed(() => audiobookState.value === 'available')
+const ebookPending = computed(() => isMonitoredAcquisitionState(ebookState.value))
+const audiobookPending = computed(() => isMonitoredAcquisitionState(audiobookState.value))
+
+const acquisitionBadge = computed(() => {
+  const states = [ebookState.value, audiobookState.value]
+  const state = (['needs_review', 'moving', 'downloading', 'queued'] as const).find((candidate) => states.includes(candidate))
+  if (!state) return null
+  const classes: Record<MonitoredAcquisitionState, string> = {
+    queued: 'bg-primary text-primary-foreground',
+    downloading: 'bg-[var(--pill-info)] text-background',
+    moving: 'bg-[var(--pill-koreader)] text-background',
+    needs_review: 'bg-[var(--pill-warning)] text-background',
+  }
+  return { label: t(`monitored.detail.badges.${state}`), class: classes[state] }
+})
 
 const badge = computed(() => {
   // A download that is on its way is newer news than the release date, so it takes the badge.
-  if (ebookPending.value || audiobookPending.value) return queuedBadge.value
+  if (acquisitionBadge.value) return acquisitionBadge.value
   if (props.timeBadge) {
     return {
       label: props.timeBadge,
@@ -75,20 +103,13 @@ const badge = computed(() => {
   return null
 })
 
-// A format icon reads as an availability light: green when the book is in the library, amber when it
-// is monitored but still missing (wanted), and hidden when that format is not being monitored at all.
-type FormatState = 'available' | 'wanted' | 'off'
-function formatState(format: MonitoredFormat, owned: boolean): FormatState {
-  if (owned) return 'available'
-  const monitored = props.monitoredFormats == null || props.monitoredFormats.includes(format)
-  return monitored ? 'wanted' : 'off'
-}
-const ebookState = computed(() => formatState('ebook', ebookOwned.value))
-const audiobookState = computed(() => formatState('audiobook', audiobookOwned.value))
 // Same colour language as the release rows: success = have it, warning = wanted.
-const availabilityIconClass: Record<Exclude<FormatState, 'off'>, string> = {
-  available: 'text-success',
-  wanted: 'text-warning',
+function availabilityIconClass(state: MonitoredFormatState): string {
+  return state === 'available' ? 'text-success' : 'text-warning'
+}
+
+function pendingLabel(format: MonitoredFormat): string {
+  return t(monitoredPendingLabelKey(format === 'ebook' ? ebookState.value : audiobookState.value, format))
 }
 
 function handleImageError() {
@@ -158,7 +179,7 @@ function handleMonitorBook() {
             class="flex items-center justify-center rounded-full bg-black/60 p-1"
             :title="ebookState === 'available' ? t('monitored.detail.ebookOwned') : t('monitored.formats.ebook')"
           >
-            <BookOpen :size="12" :class="availabilityIconClass[ebookState]" aria-hidden="true" />
+            <BookOpen :size="12" :class="availabilityIconClass(ebookState)" aria-hidden="true" />
             <span class="sr-only">{{ ebookState === 'available' ? t('monitored.detail.ebookOwned') : t('monitored.detail.ebookWanted') }}</span>
           </span>
           <span
@@ -166,7 +187,7 @@ function handleMonitorBook() {
             class="flex items-center justify-center rounded-full bg-black/60 p-1"
             :title="audiobookState === 'available' ? t('monitored.detail.audiobookOwned') : t('monitored.formats.audiobook')"
           >
-            <Headphones :size="12" :class="availabilityIconClass[audiobookState]" aria-hidden="true" />
+            <Headphones :size="12" :class="availabilityIconClass(audiobookState)" aria-hidden="true" />
             <span class="sr-only">{{
               audiobookState === 'available' ? t('monitored.detail.audiobookOwned') : t('monitored.detail.audiobookWanted')
             }}</span>
@@ -226,9 +247,7 @@ function handleMonitorBook() {
               <BookOpen v-if="ebookOwned" />
               <Check v-else-if="ebookPending" />
               <Download v-else />
-              {{
-                ebookOwned ? t('monitored.detail.ebookOwned') : ebookPending ? t('monitored.detail.ebookQueued') : t('monitored.detail.downloadEbook')
-              }}
+              {{ ebookOwned ? t('monitored.detail.ebookOwned') : ebookPending ? pendingLabel('ebook') : t('monitored.detail.downloadEbook') }}
             </DropdownMenuItem>
             <DropdownMenuItem :disabled="audiobookOwned || audiobookPending" @click="handleDownloadAudiobook">
               <Headphones v-if="audiobookOwned" />
@@ -238,7 +257,7 @@ function handleMonitorBook() {
                 audiobookOwned
                   ? t('monitored.detail.audiobookOwned')
                   : audiobookPending
-                    ? t('monitored.detail.audiobookQueued')
+                    ? pendingLabel('audiobook')
                     : t('monitored.detail.downloadAudiobook')
               }}
             </DropdownMenuItem>
@@ -290,13 +309,7 @@ function handleMonitorBook() {
                 <BookOpen v-if="ebookOwned" />
                 <Check v-else-if="ebookPending" />
                 <Download v-else />
-                {{
-                  ebookOwned
-                    ? t('monitored.detail.ebookOwned')
-                    : ebookPending
-                      ? t('monitored.detail.ebookQueued')
-                      : t('monitored.detail.downloadEbook')
-                }}
+                {{ ebookOwned ? t('monitored.detail.ebookOwned') : ebookPending ? pendingLabel('ebook') : t('monitored.detail.downloadEbook') }}
               </DropdownMenuItem>
               <DropdownMenuItem :disabled="audiobookOwned || audiobookPending" @click="handleDownloadAudiobook">
                 <Headphones v-if="audiobookOwned" />
@@ -306,7 +319,7 @@ function handleMonitorBook() {
                   audiobookOwned
                     ? t('monitored.detail.audiobookOwned')
                     : audiobookPending
-                      ? t('monitored.detail.audiobookQueued')
+                      ? pendingLabel('audiobook')
                       : t('monitored.detail.downloadAudiobook')
                 }}
               </DropdownMenuItem>

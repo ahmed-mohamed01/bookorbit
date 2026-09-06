@@ -10265,6 +10265,9 @@
       "upcoming": "Upcoming",
       "available": "Available",
       "queued": "Queued",
+      "downloading": "Downloading",
+      "moving": "Moving to library",
+      "needs_review": "Needs review",
       "grabbed": "Grabbed"
     },
     "modes": {
@@ -10390,7 +10393,10 @@
       "ebookQueued": "Ebook queued",
       "audiobookQueued": "Audiobook queued",
       "badges": {
-        "queued": "Queued"
+        "queued": "Queued",
+        "downloading": "Downloading",
+        "moving": "Moving",
+        "needs_review": "Needs review"
       },
       "stats": {
         "books": "Books",

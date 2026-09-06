@@ -9,16 +9,21 @@ import ReleaseResultRow from './ReleaseResultRow.vue'
 import { useMonitoredReleases } from '../composables/useMonitoredReleases'
 
 vi.mock('../composables/useMonitoredReleases', () => ({ useMonitoredReleases: vi.fn<() => unknown>() }))
+const bookDetailFetchMocks = vi.hoisted(() => [] as Array<ReturnType<typeof vi.fn>>)
 vi.mock('@/features/book/composables/useBookDetail', async () => {
   const { ref: reactiveRef } = await import('vue')
   return {
-    useBookDetail: () => ({
-      detail: reactiveRef(null),
-      loading: reactiveRef(false),
-      error: reactiveRef(null),
-      notFound: reactiveRef(false),
-      fetch: vi.fn<() => Promise<void>>(),
-    }),
+    useBookDetail: () => {
+      const fetch = vi.fn<() => Promise<void>>()
+      bookDetailFetchMocks.push(fetch)
+      return {
+        detail: reactiveRef(null),
+        loading: reactiveRef(false),
+        error: reactiveRef(null),
+        notFound: reactiveRef(false),
+        fetch,
+      }
+    },
   }
 })
 
@@ -130,6 +135,7 @@ async function mountPanel(work: MonitoredWork = baseWork, releases: ReleaseCandi
 describe('MonitoredBookPanel release grab', () => {
   beforeEach(() => {
     grabMock.mockReset()
+    bookDetailFetchMocks.length = 0
     useReleasesMock.mockReset()
     const shared = fakeReleases()
     useReleasesMock.mockImplementation(() => shared as unknown as ReturnType<typeof useMonitoredReleases>)
@@ -157,7 +163,7 @@ describe('MonitoredBookPanel release grab', () => {
   })
 
   it('shows progress for a request the work already had when the panel opened', async () => {
-    const queued: MonitoredWork = { ...baseWork, id: 'work-2', requestIds: { ebook: 99 } }
+    const queued: MonitoredWork = { ...baseWork, id: 'work-2', requestIds: { ebook: 99 }, requestStatuses: { ebook: 'downloading' } }
     const wrapper = await mountPanel(queued)
 
     // No row can be named for a grab this panel did not make, so the block leads the tab instead.
@@ -170,7 +176,7 @@ describe('MonitoredBookPanel release grab', () => {
   })
 
   it('keeps the pre-existing request visible while its row is off the list', async () => {
-    const queued: MonitoredWork = { ...baseWork, id: 'work-3', requestIds: { audiobook: 7 } }
+    const queued: MonitoredWork = { ...baseWork, id: 'work-3', requestIds: { audiobook: 7 }, requestStatuses: { audiobook: 'grabbed' } }
     const wrapper = await mountPanel(queued, [])
 
     const tab = wrapper.findAll('button').find((button) => button.text() === 'Audiobook releases')
@@ -230,7 +236,12 @@ describe('MonitoredBookPanel release grab', () => {
   })
 
   it('uses owned and queued labels and hides the checkbox when neither format is actionable', async () => {
-    const unavailable: MonitoredWork = { ...releasedWork, ownedFormats: ['ebook'], requestIds: { audiobook: 83 } }
+    const unavailable: MonitoredWork = {
+      ...releasedWork,
+      ownedFormats: ['ebook'],
+      requestIds: { audiobook: 83 },
+      requestStatuses: { audiobook: 'grabbed' },
+    }
     const wrapper = await mountPanel(unavailable)
 
     expect(wrapper.findAll('button').some((button) => button.text() === 'Ebook in library')).toBe(true)
@@ -267,7 +278,7 @@ describe('MonitoredBookPanel release grab', () => {
   })
 
   it('uses the queued label for a format that already has a request', async () => {
-    const queued: MonitoredWork = { ...releasedWork, requestIds: { ebook: 83 } }
+    const queued: MonitoredWork = { ...releasedWork, requestIds: { ebook: 83 }, requestStatuses: { ebook: 'grabbed' } }
     const wrapper = await mountPanel(queued)
 
     expect(wrapper.findAll('button').some((button) => button.text() === 'Ebook queued')).toBe(true)
@@ -301,6 +312,19 @@ describe('MonitoredBookPanel release grab', () => {
     expect(wrapper.text()).not.toContain('In library')
     expect(wrapper.text()).not.toContain('Monitor this book')
     expect(wrapper.vm.$options.emits).not.toContain('monitor')
+    wrapper.unmount()
+  })
+
+  it('loads file details when the same work gains matched library book ids', async () => {
+    const wrapper = await mountPanel(releasedWork, [], null)
+
+    await wrapper.setProps({
+      work: { ...releasedWork, matchedBookId: 71, matchedBookIds: { ebook: 71, audiobook: 72 }, ownedFormats: ['ebook', 'audiobook'] },
+    })
+    await nextTick()
+
+    expect(bookDetailFetchMocks[0]).toHaveBeenCalledWith(71)
+    expect(bookDetailFetchMocks[1]).toHaveBeenCalledWith(72)
     wrapper.unmount()
   })
 })

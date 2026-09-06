@@ -1,16 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, ref } from 'vue'
 import { mount } from '@vue/test-utils'
-import type { BookRequestItem, ReleaseCandidateItem } from '@bookorbit/types'
-import { grabWorkRelease } from '../api/monitored'
+import type { BookRequestItem, MonitoredWorkReleasesResponse, ReleaseCandidateItem } from '@bookorbit/types'
+import { grabWorkRelease, searchWorkReleases } from '../api/monitored'
 import { useMonitoredReleases } from './useMonitoredReleases'
 
 vi.mock('../api/monitored', () => ({
   grabWorkRelease: vi.fn<() => Promise<BookRequestItem>>(),
-  searchWorkReleases: vi.fn<() => Promise<never>>(),
+  searchWorkReleases: vi.fn<() => Promise<MonitoredWorkReleasesResponse>>(),
 }))
 
 const grabMock = vi.mocked(grabWorkRelease)
+const searchMock = vi.mocked(searchWorkReleases)
 const release = { guid: 'release-1', indexerId: 7 } as ReleaseCandidateItem
 
 function request(id: number): BookRequestItem {
@@ -33,6 +34,7 @@ function mountComposable(workId = ref<string | null>('work-1')) {
 describe('useMonitoredReleases grab', () => {
   beforeEach(() => {
     grabMock.mockReset()
+    searchMock.mockReset()
   })
 
   it('resolves to the id of the book request the download runs under', async () => {
@@ -122,6 +124,20 @@ describe('useMonitoredReleases grab', () => {
 
     await composable.grab(release)
     expect(grabMock).toHaveBeenCalledTimes(2)
+    wrapper.unmount()
+  })
+
+  it('lets a searched-again release be grabbed after its request was deleted', async () => {
+    grabMock.mockResolvedValueOnce(request(4242))
+    searchMock.mockResolvedValueOnce({ releases: [release], enabledIndexerCount: 1 } as MonitoredWorkReleasesResponse)
+    const { composable, wrapper } = mountComposable()
+
+    await composable.grab(release)
+    expect(composable.isGrabbed(release)).toBe(true)
+
+    await composable.search()
+
+    expect(composable.isGrabbed(release)).toBe(false)
     wrapper.unmount()
   })
 })

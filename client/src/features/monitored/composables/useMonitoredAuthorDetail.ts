@@ -77,21 +77,6 @@ export function useMonitoredAuthorDetail() {
     return (Object.keys(formats) as MonitoredFormat[]).filter((format) => formats[format]?.mode !== 'off')
   })
 
-  function pruneOwnedQueuedFormats(works: readonly MonitoredWork[]): void {
-    const worksById = new Map(works.map((work) => [work.id, work]))
-    const next = new Map<string, Set<MonitoredFormat>>()
-    for (const [workId, formats] of queued.value) {
-      const work = worksById.get(workId)
-      if (!work) {
-        next.set(workId, formats)
-        continue
-      }
-      const pending = new Set([...formats].filter((format) => !work.ownedFormats.includes(format) && work.matchedBookIds?.[format] == null))
-      if (pending.size > 0) next.set(workId, pending)
-    }
-    queued.value = next
-  }
-
   function syncRouteQuery() {
     void router.replace({
       name: 'monitored-author',
@@ -116,7 +101,6 @@ export function useMonitoredAuthorDetail() {
         includeHidden: showReview.value,
       })
       detail.value = loaded
-      pruneOwnedQueuedFormats(loaded.works)
     } catch (cause) {
       error.value = monitoredErrorText(cause, t('monitored.errors.loadAuthor'))
     } finally {
@@ -164,38 +148,49 @@ export function useMonitoredAuthorDetail() {
     }
   }
 
+  function forgetOptimisticQueue(workId: string, format: MonitoredFormat): void {
+    const next = new Map(queued.value)
+    const formats = new Set(next.get(workId) ?? [])
+    formats.delete(format)
+    if (formats.size === 0) next.delete(workId)
+    else next.set(workId, formats)
+    queued.value = next
+  }
+
   async function queueWork(workId: string, format: MonitoredFormat, autoDownload?: boolean): Promise<number | null> {
     const current = new Map(queued.value)
     current.set(workId, new Set([...(current.get(workId) ?? []), format]))
     queued.value = current
     try {
-      const result = await requestMonitoredWork(workId, {
+      const updated = await requestMonitoredWork(workId, {
         format,
         ...(autoDownload !== undefined ? { autoDownload } : {}),
       })
-      return result.requestIds[format] ?? null
+      const works = detail.value?.works
+      const index = works?.findIndex((candidate) => candidate.id === workId) ?? -1
+      // The optimistic mark is only safe to drop once the server's own state is on the work in its
+      // place. A work the list no longer holds has nothing to read that state from, so it keeps it.
+      if (works && index >= 0) {
+        works.splice(index, 1, updated)
+        forgetOptimisticQueue(workId, format)
+      }
+      return updated.requestIds[format] ?? null
     } catch (cause) {
-      const reverted = new Map(queued.value)
-      const formats = new Set(reverted.get(workId) ?? [])
-      formats.delete(format)
-      if (formats.size === 0) reverted.delete(workId)
-      else reverted.set(workId, formats)
-      queued.value = reverted
+      forgetOptimisticQueue(workId, format)
       throw cause
     }
   }
 
   /**
    * A release grabbed from the panel already has its book request, so the card behind it flips to
-   * queued without a round trip. The id is written onto the work as well as into the local marker,
-   * so the badge survives a reload that has not caught up with the new request yet.
+   * queued without a round trip. The server status replaces this optimistic state on the next read.
    */
   function markQueued(workId: string, format: MonitoredFormat, requestId: number): void {
-    const current = new Map(queued.value)
-    current.set(workId, new Set([...(current.get(workId) ?? []), format]))
-    queued.value = current
     const work = detail.value?.works.find((candidate) => candidate.id === workId)
-    if (work) work.requestIds = { ...work.requestIds, [format]: requestId }
+    if (work) {
+      work.requestIds = { ...work.requestIds, [format]: requestId }
+      work.requestStatuses = { ...work.requestStatuses, [format]: 'grabbed' }
+    }
   }
 
   function isQueued(workId: string, format?: MonitoredFormat): boolean {

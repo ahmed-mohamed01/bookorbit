@@ -67,9 +67,24 @@ describe('MonitoredWorkCard queued badge', () => {
   })
 
   it('shows queued while a requested ebook is not owned', () => {
-    const wrapper = mountCard(work({ requestIds: { ebook: 41 } }))
+    const wrapper = mountCard(work({ requestIds: { ebook: 41 }, requestStatuses: { ebook: 'grabbed' } }))
 
     expect(wrapper.text()).toContain('Queued')
+    wrapper.unmount()
+  })
+
+  it('shows the current transfer phase instead of a generic queued badge', () => {
+    const wrapper = mountCard(work({ requestIds: { ebook: 41 }, requestStatuses: { ebook: 'downloading' } }))
+
+    expect(wrapper.text()).toContain('Downloading')
+    expect(wrapper.text()).not.toContain('Queued')
+    wrapper.unmount()
+  })
+
+  it('does not treat a terminal request id as queued', () => {
+    const wrapper = mountCard(work({ requestIds: { ebook: 41 }, requestStatuses: { ebook: 'failed' } }))
+
+    expect(wrapper.text()).not.toContain('Queued')
     wrapper.unmount()
   })
 

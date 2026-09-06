@@ -16,6 +16,7 @@ import type {
   MonitoredSummary,
   MonitoredWork,
   MonitoredWorkPatch,
+  BookRequestStatus,
 } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
@@ -83,6 +84,12 @@ interface ReleasePageRef extends Record<string, unknown> {
   monitorAuthorId: string;
   format: MonitoredFormat;
   releaseDate: string;
+}
+
+interface RequestProjection {
+  id: number;
+  status: BookRequestStatus;
+  matchedBookId: number | null;
 }
 
 type AuthorWrite = Omit<MonitoredAuthorConfig, 'id'> & { id?: string };
@@ -987,16 +994,34 @@ export class MonitoredStoreService {
 
   private ownedFormatCondition(format: 'ebook' | 'audiobook', libraryIds: number[] | null) {
     const matchedBookId = format === 'ebook' ? schema.authorCatalogWorks.matchedEbookBookId : schema.authorCatalogWorks.matchedAudioBookId;
+    const requestId = format === 'ebook' ? schema.monitoredAuthorWorks.ebookRequestId : schema.monitoredAuthorWorks.audiobookRequestId;
     const hasOwnedFormat = sql`${schema.authorCatalogWorks.ownedFormats} @> ${JSON.stringify([format])}::jsonb`;
-    if (libraryIds === null) return and(hasOwnedFormat, sql`${matchedBookId} is not null`)!;
+    const requestFiled = sql<boolean>`exists (
+      select 1 from ${dbSchema.bookRequests}
+      where ${dbSchema.bookRequests.id} = ${requestId}
+        and ${dbSchema.bookRequests.status} = 'available'
+        and ${dbSchema.bookRequests.matchedBookId} is not null
+    )`;
+    if (libraryIds === null) return or(and(hasOwnedFormat, sql`${matchedBookId} is not null`), requestFiled)!;
     if (!libraryIds.length) return sql<boolean>`false`;
     return and(
-      hasOwnedFormat,
-      sql`exists (
-        select 1 from ${upstreamBooks}
-        where ${upstreamBooks.id} = ${matchedBookId}
-          and ${inArray(upstreamBooks.libraryId, libraryIds)}
-      )`,
+      or(
+        and(
+          hasOwnedFormat,
+          sql`exists (
+            select 1 from ${upstreamBooks}
+            where ${upstreamBooks.id} = ${matchedBookId}
+              and ${inArray(upstreamBooks.libraryId, libraryIds)}
+          )`,
+        ),
+        sql`exists (
+          select 1 from ${dbSchema.bookRequests}
+          inner join ${upstreamBooks} on ${upstreamBooks.id} = ${dbSchema.bookRequests.matchedBookId}
+          where ${dbSchema.bookRequests.id} = ${requestId}
+            and ${dbSchema.bookRequests.status} = 'available'
+            and ${inArray(upstreamBooks.libraryId, libraryIds)}
+        )`,
+      ),
     )!;
   }
 
@@ -1049,7 +1074,15 @@ export class MonitoredStoreService {
     const overlayMap = new Map(overlays.map((overlay) => [overlay.workId, overlay]));
     const sourceMap = new Map<string, Array<typeof schema.authorCatalogSourceWorks.$inferSelect>>();
     for (const source of sources) sourceMap.set(source.workId, [...(sourceMap.get(source.workId) ?? []), source]);
-    const [accessibleBooks, ownedMonitorIds] = await Promise.all([this.accessibleMatchedBooks(rows, viewer), this.ownedMonitorIds(rows, viewer)]);
+    const requestIds = [
+      ...new Set(overlays.flatMap((overlay) => [overlay.ebookRequestId, overlay.audiobookRequestId]).filter((id): id is number => id != null)),
+    ];
+    // Only the accessible-book read depends on the requests, so the ownership read runs beside them
+    // rather than behind: a works page is a hot path and this keeps it at two waits, not three.
+    const [requestRows, ownedMonitorIds] = await Promise.all([this.requestProjections(requestIds), this.ownedMonitorIds(rows, viewer)]);
+    const requestMap = new Map(requestRows.map((request) => [request.id, request]));
+    const requestedBookIds = requestRows.map((request) => request.matchedBookId).filter((id): id is number => id != null);
+    const accessibleBooks = await this.accessibleMatchedBooks(rows, requestedBookIds, viewer);
     return rows.flatMap((row) => {
       const overlay = overlayMap.get(row.id);
       const isOwner = ownedMonitorIds === null || ownedMonitorIds.has(row.monitorAuthorId);
@@ -1057,7 +1090,7 @@ export class MonitoredStoreService {
       return [
         {
           monitorAuthorId: row.monitorAuthorId,
-          work: this.composeWork(row, sourceMap.get(row.id) ?? [], overlay, accessibleBooks, isOwner),
+          work: this.composeWork(row, sourceMap.get(row.id) ?? [], overlay, accessibleBooks, isOwner, requestMap),
         },
       ];
     });
@@ -1080,13 +1113,24 @@ export class MonitoredStoreService {
     overlay: MonitoredAuthorWorkRow | undefined,
     accessibleBooks: Set<number> | null,
     isOwner = true,
+    requests = new Map<number, RequestProjection>(),
   ): MonitoredWork {
-    const ebookId =
-      row.matchedEbookBookId != null && (!accessibleBooks || accessibleBooks.has(row.matchedEbookBookId)) ? row.matchedEbookBookId : undefined;
-    const audioId =
-      row.matchedAudioBookId != null && (!accessibleBooks || accessibleBooks.has(row.matchedAudioBookId)) ? row.matchedAudioBookId : undefined;
-    const matchedBookId =
-      row.matchedBookId != null && (!accessibleBooks || accessibleBooks.has(row.matchedBookId)) ? row.matchedBookId : (ebookId ?? audioId ?? null);
+    const ebookRequest = overlay?.ebookRequestId == null ? undefined : requests.get(overlay.ebookRequestId);
+    const audiobookRequest = overlay?.audiobookRequestId == null ? undefined : requests.get(overlay.audiobookRequestId);
+    const accessible = (bookId: number | null | undefined): bookId is number => bookId != null && (!accessibleBooks || accessibleBooks.has(bookId));
+    const filedEbookId = ebookRequest?.status === 'available' && accessible(ebookRequest.matchedBookId) ? ebookRequest.matchedBookId : undefined;
+    const filedAudioId =
+      audiobookRequest?.status === 'available' && accessible(audiobookRequest.matchedBookId) ? audiobookRequest.matchedBookId : undefined;
+    const storedEbookId = accessible(row.matchedEbookBookId) ? row.matchedEbookBookId : undefined;
+    const storedAudioId = accessible(row.matchedAudioBookId) ? row.matchedAudioBookId : undefined;
+    const ebookId = filedEbookId ?? storedEbookId;
+    const audioId = filedAudioId ?? storedAudioId;
+    // Same precedence the catalog persists when it writes the primary match, so a filed request
+    // cannot make the audiobook the primary of a work whose ebook is already in the library.
+    const matchedBookId = ebookId ?? audioId ?? (accessible(row.matchedBookId) ? row.matchedBookId : null);
+    const ownedFormats = row.ownedFormats.filter((format) => (format === 'ebook' ? storedEbookId != null : storedAudioId != null));
+    if (filedEbookId != null && !ownedFormats.includes('ebook')) ownedFormats.push('ebook');
+    if (filedAudioId != null && !ownedFormats.includes('audiobook')) ownedFormats.push('audiobook');
     return {
       id: row.id,
       title: row.title,
@@ -1108,7 +1152,7 @@ export class MonitoredStoreService {
       monitorState: overlay?.monitorState ?? 'monitoring',
       matchedBookId,
       matchedBookIds: { ...(ebookId ? { ebook: ebookId } : {}), ...(audioId ? { audiobook: audioId } : {}) },
-      ownedFormats: row.ownedFormats.filter((format) => (format === 'ebook' ? ebookId != null : audioId != null)),
+      ownedFormats,
       monitorFormats: {
         ...(overlay?.monitorEbook != null ? { ebook: overlay.monitorEbook } : {}),
         ...(overlay?.monitorAudiobook != null ? { audiobook: overlay.monitorAudiobook } : {}),
@@ -1120,15 +1164,34 @@ export class MonitoredStoreService {
             ...(overlay?.audiobookRequestId != null ? { audiobook: overlay.audiobookRequestId } : {}),
           }
         : {},
+      requestStatuses: isOwner
+        ? {
+            ...(ebookRequest ? { ebook: ebookRequest.status } : {}),
+            ...(audiobookRequest ? { audiobook: audiobookRequest.status } : {}),
+          }
+        : {},
     };
   }
 
-  private async accessibleMatchedBooks(rows: AuthorCatalogWorkRow[], viewer?: RequestUser): Promise<Set<number> | null> {
+  /** The live state of the requests a page of works points at, so a settled id is read as history. */
+  private async requestProjections(requestIds: number[]): Promise<RequestProjection[]> {
+    if (!requestIds.length) return [];
+    const rows = await this.db
+      .select({ id: dbSchema.bookRequests.id, status: dbSchema.bookRequests.status, matchedBookId: dbSchema.bookRequests.matchedBookId })
+      .from(dbSchema.bookRequests)
+      .where(inArray(dbSchema.bookRequests.id, requestIds));
+    return rows as RequestProjection[];
+  }
+
+  private async accessibleMatchedBooks(rows: AuthorCatalogWorkRow[], requestedBookIds: number[], viewer?: RequestUser): Promise<Set<number> | null> {
     if (!viewer || viewer.isSuperuser) return null;
     const libraryIds = await this.libraries.findAccessibleLibraryIds(viewer);
     if (!libraryIds.length) return new Set();
     const ids = [
-      ...new Set(rows.flatMap((row) => [row.matchedBookId, row.matchedEbookBookId, row.matchedAudioBookId]).filter((id): id is number => id != null)),
+      ...new Set([
+        ...rows.flatMap((row) => [row.matchedBookId, row.matchedEbookBookId, row.matchedAudioBookId]).filter((id): id is number => id != null),
+        ...requestedBookIds,
+      ]),
     ];
     if (!ids.length) return new Set();
     const books = await this.db

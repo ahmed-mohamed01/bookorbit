@@ -166,20 +166,16 @@ describe('useMonitoredAuthorDetail', () => {
     wrapper.unmount()
   })
 
-  it('prunes an optimistic queued format after a reload reports it owned', async () => {
-    requestWorkMock.mockResolvedValue(work({ requestIds: { ebook: 41 } }))
-    const loaded = detail()
-    loaded.works = [work({ requestIds: { ebook: 41 }, ownedFormats: ['ebook'] })]
-    fetchDetailMock.mockResolvedValue(loaded)
+  it('replaces optimistic queue state with the request state returned by the server', async () => {
+    requestWorkMock.mockResolvedValue(work({ requestIds: { ebook: 41 }, requestStatuses: { ebook: 'grabbed' } }))
     const { composable, wrapper } = mountComposable()
+    await composable.load()
 
     await composable.queueWork('work-1', 'ebook')
-    expect(composable.isQueued('work-1', 'ebook')).toBe(true)
-
-    await composable.load()
 
     expect(composable.isQueued('work-1', 'ebook')).toBe(false)
     expect(composable.isQueued('work-1')).toBe(false)
+    expect(composable.detail.value?.works[0]?.requestStatuses).toEqual({ ebook: 'grabbed' })
     wrapper.unmount()
   })
 })

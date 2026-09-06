@@ -10,7 +10,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { MONITORED_FORMATS } from '@bookorbit/types';
+import { MONITORED_FORMATS, monitoredAcquisitionState } from '@bookorbit/types';
 import type {
   MonitorAuthorRequest,
   MonitorFormatConfig,
@@ -22,6 +22,7 @@ import type {
   MonitoredFormat,
   MonitoredPage,
   MonitoredReleaseItem,
+  MonitoredReleaseStatus,
   MonitoredSummary,
   MonitoredWork,
   MonitoredWorkPatch,
@@ -79,6 +80,11 @@ type AuthorProfileMetadata = { description: string | null; website: string | nul
  */
 function isOwnerView(ownerUserId: number, user: RequestUser): boolean {
   return user.isSuperuser || ownerUserId === user.id;
+}
+
+function monitoredReleaseStatus(work: MonitoredWork, format: MonitoredFormat, releaseDate: string, today: string): MonitoredReleaseStatus {
+  if (work.matchedBookIds?.[format] != null || work.ownedFormats.includes(format)) return 'grabbed';
+  return monitoredAcquisitionState(work.requestStatuses?.[format]) ?? (releaseDate <= today ? 'available' : 'upcoming');
 }
 
 /**
@@ -449,7 +455,6 @@ export class MonitoredService {
       ...page,
       items: page.items.map(({ monitor, work, format, releaseDate }) => {
         const requestId = work.requestIds[format] ?? null;
-        const grabbed = work.matchedBookIds?.[format] != null || work.ownedFormats.includes(format);
         return {
           workId: work.id,
           work,
@@ -460,9 +465,7 @@ export class MonitoredService {
           coverUrl: work.coverUrl,
           format,
           releaseDate,
-          // Having the file outranks having a request: a filed download leaves its request behind on
-          // the work, and reading that first would leave the row saying "queued" for good.
-          status: grabbed ? 'grabbed' : requestId ? 'queued' : releaseDate <= today ? 'available' : 'upcoming',
+          status: monitoredReleaseStatus(work, format, releaseDate, today),
           requestId,
         };
       }),
