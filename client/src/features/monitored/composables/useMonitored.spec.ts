@@ -10,7 +10,7 @@ const api = vi.hoisted(() => ({
   fetchMonitoredAuthors: vi.fn<(request: PageRequest) => Promise<PageResponse>>(),
   fetchMonitoredBooks: vi.fn<(request: PageRequest) => Promise<PageResponse>>(),
   fetchMonitoredReleases: vi.fn<(request: PageRequest) => Promise<PageResponse>>(),
-  fetchMonitoredSummary: vi.fn<() => Promise<{ authors: number; books: number; releases: number }>>(),
+  fetchMonitoredSummary: vi.fn<() => Promise<{ authors: number; books: number; releases: number; hardcoverConfigured: boolean }>>(),
 }))
 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))

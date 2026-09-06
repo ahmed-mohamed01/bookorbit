@@ -19,8 +19,8 @@ export interface AuthorBibliographyProvider {
   readonly source: ObservationSource;
   readonly curated: boolean;
   isEnabled(config: ProviderConfigurations): boolean;
-  resolveAuthor(name: string, existingId?: string, signal?: AbortSignal): Promise<BibliographyAuthorRef | null>;
-  fetchObservations(authorRef: BibliographyAuthorRef, signal?: AbortSignal): Promise<Observation[]>;
+  resolveAuthor(name: string, config: ProviderConfigurations, existingId?: string, signal?: AbortSignal): Promise<BibliographyAuthorRef | null>;
+  fetchObservations(authorRef: BibliographyAuthorRef, config: ProviderConfigurations, signal?: AbortSignal): Promise<Observation[]>;
   toObservations(rawRows: unknown[]): Observation[];
 }
 

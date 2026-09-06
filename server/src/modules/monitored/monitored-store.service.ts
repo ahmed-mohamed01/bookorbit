@@ -73,6 +73,8 @@ export interface MonitoredReleasePageEntry {
   releaseDate: string;
 }
 
+export type MonitoredCounts = Pick<MonitoredSummary, 'authors' | 'books' | 'releases'>;
+
 interface ReleasePageRef extends Record<string, unknown> {
   workId: string;
   monitorAuthorId: string;
@@ -885,7 +887,7 @@ export class MonitoredStoreService {
     return sql`true`;
   }
 
-  async countSummary(viewer: RequestUser, earliest: string, latest: string): Promise<MonitoredSummary> {
+  async countSummary(viewer: RequestUser, earliest: string, latest: string): Promise<MonitoredCounts> {
     const authorScope = this.readScope(viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared);
     const visible = this.visibleWorkCondition(viewer);
     const active = this.activeWorkCondition(visible);

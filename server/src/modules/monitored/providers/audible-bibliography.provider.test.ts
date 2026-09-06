@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ProviderConfigService } from '../../metadata-preferences/provider-config.service';
+import type { ProviderConfigurations } from '@bookorbit/types';
 import { AudibleBibliographyProvider } from './audible-bibliography.provider';
 
 vi.mock('../../metadata-fetch/providers/provider-utils', async (importOriginal) => ({
@@ -14,8 +14,8 @@ function product(index: number): Record<string, unknown> {
   return { asin: `ASIN${index}`, title: `Book ${index}`, authors: [{ name: AUTHOR }] };
 }
 
-function providerConfig(): ProviderConfigService {
-  return { getConfig: vi.fn(() => Promise.resolve({ audible: { enabled: true, domain: 'com' } })) } as unknown as ProviderConfigService;
+function providerConfig(): ProviderConfigurations {
+  return { audible: { enabled: true, domain: 'com' } } as ProviderConfigurations;
 }
 
 /** One fetch stub serving `total` products in pages of 50, recording the pages it was asked for. */
@@ -43,12 +43,12 @@ describe('AudibleBibliographyProvider pagination', () => {
 
   beforeEach(() => {
     vi.unstubAllGlobals();
-    provider = new AudibleBibliographyProvider(providerConfig());
+    provider = new AudibleBibliographyProvider();
   });
 
   it('pages past the old three-page cap up to the provider-reported total', async () => {
     const catalog = stubCatalog(201);
-    const author = await provider.resolveAuthor(AUTHOR);
+    const author = await provider.resolveAuthor(AUTHOR, providerConfig());
 
     expect(author?.bookCount).toBe(201);
     expect(catalog.pages).toEqual([0, 1, 2, 3, 4]);
@@ -56,7 +56,7 @@ describe('AudibleBibliographyProvider pagination', () => {
 
   it('stops on the empty page after an exact multiple of the page size', async () => {
     const catalog = stubCatalog(100);
-    const author = await provider.resolveAuthor(AUTHOR);
+    const author = await provider.resolveAuthor(AUTHOR, providerConfig());
 
     expect(author?.bookCount).toBe(100);
     expect(catalog.pages).toEqual([0, 1, 2]);
@@ -64,7 +64,7 @@ describe('AudibleBibliographyProvider pagination', () => {
 
   it('keeps paging past an understated total_results rather than truncating the catalog', async () => {
     const catalog = stubCatalog(201, 60);
-    const author = await provider.resolveAuthor(AUTHOR);
+    const author = await provider.resolveAuthor(AUTHOR, providerConfig());
 
     expect(author?.bookCount).toBe(201);
     expect(catalog.pages).toEqual([0, 1, 2, 3, 4]);
@@ -72,7 +72,7 @@ describe('AudibleBibliographyProvider pagination', () => {
 
   it('stops on a short page when the provider reports no total', async () => {
     const catalog = stubCatalog(70, null);
-    const author = await provider.resolveAuthor(AUTHOR);
+    const author = await provider.resolveAuthor(AUTHOR, providerConfig());
 
     expect(author?.bookCount).toBe(70);
     expect(catalog.pages).toEqual([0, 1]);
@@ -81,7 +81,7 @@ describe('AudibleBibliographyProvider pagination', () => {
   it('caps at ten pages and warns when the author has more than the cap holds', async () => {
     const catalog = stubCatalog(900);
     const warn = vi.spyOn(provider['logger'], 'warn').mockImplementation(() => {});
-    const author = await provider.resolveAuthor(AUTHOR);
+    const author = await provider.resolveAuthor(AUTHOR, providerConfig());
 
     expect(author?.bookCount).toBe(500);
     expect(catalog.pages).toHaveLength(10);

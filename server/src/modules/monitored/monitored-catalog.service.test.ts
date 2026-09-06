@@ -1,7 +1,7 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { MonitoredAuthorConfig, MonitoredWork } from '@bookorbit/types';
+import type { MonitoredAuthorConfig, MonitoredWork, ProviderConfigurations } from '@bookorbit/types';
 import type { MergedWork, Observation } from './reconcile/observation.types';
 import type { MonitoredCatalog } from './monitored-store.service';
 import {
@@ -94,7 +94,7 @@ describe('monitored catalog helpers', () => {
   });
 
   it('uses previous work only for stable identity, not mutable user state', () => {
-    const service = new MonitoredCatalogService({} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
+    const service = new MonitoredCatalogService({} as never, {} as never, {} as never, {} as never, {} as never);
     const previousWork = {
       id: 'stable-id',
       providerWorkIds: { hardcover: '1' },
@@ -254,6 +254,14 @@ function monitorConfig(): MonitoredAuthorConfig {
   };
 }
 
+function providerConfig(): ProviderConfigurations {
+  return {
+    hardcover: { enabled: true, apiKey: 'key' },
+    goodreads: { enabled: true },
+    audible: { enabled: true, domain: 'com' },
+  } as ProviderConfigurations;
+}
+
 function previousWorks(count: number): MonitoredCatalog {
   return {
     fetchedAt: '2026-01-01T00:00:00.000Z',
@@ -270,7 +278,6 @@ function catalogService(providers: { hardcover: unknown; goodreads: unknown; aud
     providers.hardcover as never,
     providers.goodreads as never,
     providers.audible as never,
-    { getConfig: vi.fn().mockResolvedValue({}) } as never,
     store as never,
     {} as never,
   );
@@ -290,7 +297,7 @@ describe('fetchCatalog provider failure guards', () => {
       store,
     );
 
-    await expect(service.fetchCatalog(monitorConfig())).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(service.fetchCatalog(monitorConfig(), providerConfig())).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(store.saveCatalog).not.toHaveBeenCalled();
   });
 
@@ -305,7 +312,7 @@ describe('fetchCatalog provider failure guards', () => {
       store,
     );
 
-    await expect(service.fetchCatalog(monitorConfig())).rejects.toBeInstanceOf(ServiceUnavailableException);
+    await expect(service.fetchCatalog(monitorConfig(), providerConfig())).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(store.saveCatalog).not.toHaveBeenCalled();
   });
 
@@ -320,7 +327,7 @@ describe('fetchCatalog provider failure guards', () => {
       store,
     );
 
-    await expect(service.fetchCatalog(monitorConfig())).resolves.toMatchObject({ catalog: { works: [] } });
+    await expect(service.fetchCatalog(monitorConfig(), providerConfig())).resolves.toMatchObject({ catalog: { works: [] } });
     expect(store.saveCatalog).toHaveBeenCalledOnce();
   });
 
@@ -335,7 +342,7 @@ describe('fetchCatalog provider failure guards', () => {
       store,
     );
 
-    await expect(service.fetchCatalog(monitorConfig())).resolves.toMatchObject({ catalog: { works: [] } });
+    await expect(service.fetchCatalog(monitorConfig(), providerConfig())).resolves.toMatchObject({ catalog: { works: [] } });
     expect(store.saveCatalog).toHaveBeenCalledOnce();
   });
 });
@@ -409,7 +416,7 @@ describe('targeted availability recompute', () => {
   function harness(rows: unknown[][]) {
     const store = { updateWorkMatch: vi.fn().mockResolvedValue(undefined), saveCatalog: vi.fn(), updateWorkUserState: vi.fn() };
     const db = queuedSelectDb(rows);
-    const service = new MonitoredCatalogService({} as never, {} as never, {} as never, {} as never, store as never, db as never);
+    const service = new MonitoredCatalogService({} as never, {} as never, {} as never, store as never, db as never);
     return { service, store, db };
   }
 

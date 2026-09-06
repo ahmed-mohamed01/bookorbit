@@ -10326,6 +10326,14 @@
       "start": "Start monitoring",
       "failed": "Failed to monitor author."
     },
+    "hardcoverNotice": {
+      "title": "Monitoring needs Hardcover.",
+      "connect": "Connect your Hardcover account so authors can be added and their catalogs and release dates refreshed.",
+      "connectHardcover": "Connect Hardcover",
+      "hint": "Enable the Hardcover metadata source with an API key so authors can be added and their catalogs and release dates refreshed.",
+      "askAdmin": "Ask an administrator to grant Hardcover sync or enable the Hardcover metadata source. Until then, authors cannot be added or refreshed.",
+      "openSettings": "Open metadata sources"
+    },
     "empty": {
       "authorsTitle": "No monitored authors",
       "authorsDescription": "Add an author to watch their catalog and hear about new releases.",

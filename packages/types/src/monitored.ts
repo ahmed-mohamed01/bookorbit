@@ -170,6 +170,7 @@ export interface MonitoredSummary {
   authors: number;
   books: number;
   releases: number;
+  hardcoverConfigured: boolean;
 }
 
 export interface MonitoredPage<T> {

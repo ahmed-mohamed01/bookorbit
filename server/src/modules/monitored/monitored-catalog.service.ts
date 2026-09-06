@@ -9,13 +9,13 @@ import {
   type MonitoredAuthorConfig,
   type MonitoredFormat,
   type MonitoredWork,
+  type ProviderConfigurations,
 } from '@bookorbit/types';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { bookAuthors, bookFiles, bookMetadata, books } from '../../db/schema';
-import { ProviderConfigService } from '../metadata-preferences/provider-config.service';
 import { AudibleBibliographyProvider } from './providers/audible-bibliography.provider';
 import { enabledBibliographyProviders, type AuthorBibliographyProvider, type BibliographyAuthorRef } from './providers/author-bibliography-provider';
 import { GoodreadsBibliographyProvider } from './providers/goodreads-bibliography.provider';
@@ -427,20 +427,18 @@ export class MonitoredCatalogService {
     private readonly hardcover: HardcoverBibliographyProvider,
     private readonly goodreads: GoodreadsBibliographyProvider,
     private readonly audible: AudibleBibliographyProvider,
-    private readonly providerConfig: ProviderConfigService,
     private readonly store: MonitoredStoreService,
     @Inject(DB) private readonly db: Db,
   ) {}
 
-  async fetchCatalog(monitor: MonitoredAuthorConfig): Promise<CatalogFetchResult> {
+  async fetchCatalog(monitor: MonitoredAuthorConfig, config: ProviderConfigurations): Promise<CatalogFetchResult> {
     const startedAt = Date.now();
     this.logger.log(
       `[monitored.catalog] [start] monitorId=${monitor.id} authorName="${sanitizeLogValue(monitor.authorName)}" - catalog fetch started`,
     );
     try {
-      const config = await this.providerConfig.getConfig();
       const providers = enabledBibliographyProviders([this.hardcover, this.goodreads, this.audible], config);
-      const results = await Promise.all(providers.map((provider) => this.fetchProvider(provider, monitor)));
+      const results = await Promise.all(providers.map((provider) => this.fetchProvider(provider, monitor, config)));
       const observations = results.flatMap((result) => result.observations);
       // A provider missing from `results` was filtered out as disabled or unconfigured, which is not
       // an outage: attempted=false keeps both guards off. Everything in `results` really ran, and its
@@ -579,18 +577,28 @@ export class MonitoredCatalogService {
     if (this.availabilityRecomputedAt.size >= AVAILABILITY_COOLDOWN_MAX_ENTRIES) this.availabilityRecomputedAt.clear();
   }
 
-  private async fetchProvider(provider: AuthorBibliographyProvider, monitor: MonitoredAuthorConfig): Promise<ProviderResult> {
+  private async fetchProvider(
+    provider: AuthorBibliographyProvider,
+    monitor: MonitoredAuthorConfig,
+    config: ProviderConfigurations,
+  ): Promise<ProviderResult> {
     const startedAt = Date.now();
     try {
       let authorRef: BibliographyAuthorRef | null;
       if (provider.source === 'hardcover') {
-        const authorId = await this.resolveHardcoverAuthorId(monitor);
+        const authorId = await this.resolveHardcoverAuthorId(monitor, config);
         authorRef = authorId == null ? null : { id: String(authorId), name: monitor.authorName, bookCount: null, imageUrl: null };
       } else {
-        authorRef = await provider.resolveAuthor(monitor.authorName, monitor.providerIds[provider.source]);
+        authorRef = await provider.resolveAuthor(monitor.authorName, config, monitor.providerIds[provider.source]);
       }
       if (!authorRef) return { source: provider.source, authorRef: null, observations: [], attempted: true, failed: false };
-      return { source: provider.source, authorRef, observations: await provider.fetchObservations(authorRef), attempted: true, failed: false };
+      return {
+        source: provider.source,
+        authorRef,
+        observations: await provider.fetchObservations(authorRef, config),
+        attempted: true,
+        failed: false,
+      };
     } catch (error) {
       const errorClass = error instanceof Error ? error.name : 'Error';
       const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
@@ -601,8 +609,8 @@ export class MonitoredCatalogService {
     }
   }
 
-  private async resolveHardcoverAuthorId(monitor: MonitoredAuthorConfig): Promise<number | null> {
-    const author = await this.hardcover.resolveAuthor(monitor.authorName, monitor.providerIds.hardcover);
+  private async resolveHardcoverAuthorId(monitor: MonitoredAuthorConfig, config: ProviderConfigurations): Promise<number | null> {
+    const author = await this.hardcover.resolveAuthor(monitor.authorName, config, monitor.providerIds.hardcover);
     const authorId = Number(author?.id);
     return Number.isSafeInteger(authorId) && authorId > 0 ? authorId : null;
   }

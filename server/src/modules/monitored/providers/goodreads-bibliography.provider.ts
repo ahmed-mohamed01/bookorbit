@@ -5,7 +5,6 @@ import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import { fetchWithThrottle } from '../../metadata-fetch/fetch-with-throttle';
 import { PROVIDER_DELAYS_MS, PROVIDER_TIMEOUT_MS } from '../../metadata-fetch/providers/provider-constants';
 import { buildRequestSignal, sleep, stripHtml } from '../../metadata-fetch/providers/provider-utils';
-import { ProviderConfigService } from '../../metadata-preferences/provider-config.service';
 import { normalizeText } from '../reconcile/observation-matcher';
 import type { Observation } from '../reconcile/observation.types';
 import type { AuthorBibliographyProvider, BibliographyAuthorRef } from './author-bibliography-provider';
@@ -87,13 +86,17 @@ export class GoodreadsBibliographyProvider implements AuthorBibliographyProvider
   readonly curated = false;
   private readonly logger = new Logger(GoodreadsBibliographyProvider.name);
 
-  constructor(private readonly providerConfig: ProviderConfigService) {}
-
   isEnabled(config: ProviderConfigurations): boolean {
     return config.goodreads.enabled;
   }
 
-  async resolveAuthor(name: string, existingId?: string, signal?: AbortSignal): Promise<BibliographyAuthorRef | null> {
+  async resolveAuthor(
+    name: string,
+    config: ProviderConfigurations,
+    existingId?: string,
+    signal?: AbortSignal,
+  ): Promise<BibliographyAuthorRef | null> {
+    if (!this.isEnabled(config)) return null;
     if (existingId) return { id: existingId, name, bookCount: null, imageUrl: null };
     const startedAt = Date.now();
     this.logger.log(`[monitored.provider.goodreads] [start] op=resolve authorName="${sanitizeLogValue(name)}" - author resolution started`);
@@ -121,7 +124,8 @@ export class GoodreadsBibliographyProvider implements AuthorBibliographyProvider
     }
   }
 
-  async fetchObservations(authorRef: BibliographyAuthorRef, signal?: AbortSignal): Promise<Observation[]> {
+  async fetchObservations(authorRef: BibliographyAuthorRef, config: ProviderConfigurations, signal?: AbortSignal): Promise<Observation[]> {
+    if (!this.isEnabled(config)) return [];
     const startedAt = Date.now();
     this.logger.log(
       `[monitored.provider.goodreads] [start] authorId="${sanitizeLogValue(authorRef.id)}" op=fetch authorName="${sanitizeLogValue(authorRef.name)}" - bibliography fetch started`,

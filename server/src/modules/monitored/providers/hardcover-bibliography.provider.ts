@@ -4,13 +4,16 @@ import type { ProviderConfigurations } from '@bookorbit/types';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import { HardcoverClient } from '../../metadata-fetch/providers/hardcover/hardcover.client';
 import type { HardcoverAuthorContribution, HardcoverContributionBook } from '../../metadata-fetch/providers/hardcover/hardcover.types';
-import { ProviderConfigService } from '../../metadata-preferences/provider-config.service';
 import { normalizeText } from '../reconcile/observation-matcher';
 import type { Observation, SeriesMembership } from '../reconcile/observation.types';
 import type { AuthorBibliographyProvider, BibliographyAuthorRef } from './author-bibliography-provider';
 
 const PAGE_SIZE = 100;
 const MAX_CONTRIBUTIONS = 1500;
+
+export function isHardcoverConfigured(config: ProviderConfigurations): boolean {
+  return config.hardcover.enabled && Boolean(config.hardcover.apiKey);
+}
 
 type HardcoverRawRow = HardcoverAuthorContribution | (HardcoverContributionBook & { contribution?: string | null });
 
@@ -107,19 +110,20 @@ export class HardcoverBibliographyProvider implements AuthorBibliographyProvider
   readonly curated = false;
   private readonly logger = new Logger(HardcoverBibliographyProvider.name);
 
-  constructor(
-    private readonly hardcover: HardcoverClient,
-    private readonly providerConfig: ProviderConfigService,
-  ) {}
+  constructor(private readonly hardcover: HardcoverClient) {}
 
   isEnabled(config: ProviderConfigurations): boolean {
-    return config.hardcover.enabled && Boolean(config.hardcover.apiKey);
+    return isHardcoverConfigured(config);
   }
 
-  async resolveAuthor(name: string, existingId?: string, signal?: AbortSignal): Promise<BibliographyAuthorRef | null> {
+  async resolveAuthor(
+    name: string,
+    config: ProviderConfigurations,
+    existingId?: string,
+    signal?: AbortSignal,
+  ): Promise<BibliographyAuthorRef | null> {
     const startedAt = Date.now();
     try {
-      const config = await this.providerConfig.getConfig();
       if (!this.isEnabled(config)) return null;
       if (existingId && Number.isSafeInteger(Number(existingId)) && Number(existingId) > 0) {
         return { id: existingId, name, bookCount: null, imageUrl: null };
@@ -142,13 +146,12 @@ export class HardcoverBibliographyProvider implements AuthorBibliographyProvider
     }
   }
 
-  async fetchObservations(authorRef: BibliographyAuthorRef, signal?: AbortSignal): Promise<Observation[]> {
+  async fetchObservations(authorRef: BibliographyAuthorRef, config: ProviderConfigurations, signal?: AbortSignal): Promise<Observation[]> {
     const startedAt = Date.now();
     this.logger.log(
       `[monitored.provider.hardcover] [start] authorId=${authorRef.id} op=fetch authorName="${sanitizeLogValue(authorRef.name)}" - bibliography fetch started`,
     );
     try {
-      const config = await this.providerConfig.getConfig();
       if (!this.isEnabled(config)) return [];
       const authorId = Number(authorRef.id);
       if (!Number.isSafeInteger(authorId) || authorId <= 0) return [];

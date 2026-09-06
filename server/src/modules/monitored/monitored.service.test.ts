@@ -1,4 +1,12 @@
-import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MonitoredAuthorConfig, MonitoredWork } from '@bookorbit/types';
 
@@ -63,7 +71,7 @@ type ServiceDeps = {
   enrichmentExecutor?: Record<string, unknown>;
   authorImageStorage?: Record<string, unknown>;
   hardcover?: Record<string, unknown>;
-  providerConfig?: Record<string, unknown>;
+  providerConfigs?: Record<string, unknown>;
   libraryService?: Record<string, unknown>;
   indexerSearch?: Record<string, unknown>;
   fulfillment?: Record<string, unknown>;
@@ -79,7 +87,7 @@ function service(store: Record<string, unknown>, bookRequests: Record<string, un
     { recomputeWorkAvailability: vi.fn().mockResolvedValue(new Set<string>()), ...deps.catalog } as never,
     autoRequests as never,
     (deps.hardcover ?? {}) as never,
-    (deps.providerConfig ?? {}) as never,
+    (deps.providerConfigs ?? { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' } }) }) as never,
     (deps.authorsRepository ?? {}) as never,
     (deps.authorMetadataPreferences ?? {}) as never,
     (deps.enrichmentExecutor ?? {}) as never,
@@ -113,7 +121,7 @@ function refreshHarness(profile: { hasPhoto: boolean; description: string | null
 }
 
 /** A create path that reaches the catalog fetch: everything before it resolves, nothing else matters. */
-function createHarness(fetchCatalog: ReturnType<typeof vi.fn>) {
+function createHarness(fetchCatalog: ReturnType<typeof vi.fn>, providerConfigs?: Record<string, unknown>) {
   const store = {
     hasAuthorNamed: vi.fn().mockResolvedValue(false),
     upsertAuthor: vi.fn().mockImplementation((input: Record<string, unknown>) => Promise.resolve({ ...input, id: input.id ?? 'monitor-1' })),
@@ -125,6 +133,7 @@ function createHarness(fetchCatalog: ReturnType<typeof vi.fn>) {
     {},
     {
       catalog: { fetchCatalog },
+      providerConfigs,
       authorsRepository: { findIdByNormalizedName: vi.fn().mockResolvedValue(null), findOrCreateByName: vi.fn().mockResolvedValue(null) },
     },
   );
@@ -276,8 +285,25 @@ describe('MonitoredService', () => {
 
   it('derives summary counts directly from the store count query', async () => {
     const countSummary = vi.fn().mockResolvedValue({ authors: 2, books: 3, releases: 4 });
-    await expect(service({ countSummary }).getSummary(viewer)).resolves.toEqual({ authors: 2, books: 3, releases: 4 });
+    await expect(service({ countSummary }).getSummary(viewer)).resolves.toEqual({
+      authors: 2,
+      books: 3,
+      releases: 4,
+      hardcoverConfigured: true,
+    });
     expect(countSummary).toHaveBeenCalledOnce();
+  });
+
+  it('reports Hardcover as unconfigured when the provider is disabled', async () => {
+    const countSummary = vi.fn().mockResolvedValue({ authors: 2, books: 3, releases: 4 });
+    const providerConfigs = { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: false, apiKey: 'key' } }) };
+
+    await expect(service({ countSummary }, {}, { providerConfigs }).getSummary(viewer)).resolves.toEqual({
+      authors: 2,
+      books: 3,
+      releases: 4,
+      hardcoverConfigured: false,
+    });
   });
 
   // This pins the wiring only: the aggregate is read from the store instead of composing catalogs.
@@ -390,6 +416,67 @@ describe('MonitoredService', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('rejects refresh when Hardcover is unconfigured before fetching the catalog', async () => {
+    const fetchCatalog = vi.fn();
+    const instance = service(
+      { getAuthor: vi.fn().mockResolvedValue(author()) },
+      {},
+      {
+        catalog: { fetchCatalog },
+        providerConfigs: { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: false, apiKey: 'key' } }) },
+      },
+    );
+
+    await expect(instance.refreshAuthor('monitor-1', viewer)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(fetchCatalog).not.toHaveBeenCalled();
+  });
+
+  it('resolves refresh config for the monitor owner and passes it to the catalog', async () => {
+    const monitor = author({ ownerUserId: 27 });
+    const config = { hardcover: { enabled: true, apiKey: 'owner-key' } };
+    const forUser = vi.fn().mockResolvedValue(config);
+    const failure = new Error('stop after fetch');
+    const fetchCatalog = vi.fn().mockRejectedValue(failure);
+    const instance = service({ getAuthor: vi.fn().mockResolvedValue(monitor) }, {}, { catalog: { fetchCatalog }, providerConfigs: { forUser } });
+    const superuser = { id: 99, isSuperuser: true } as RequestUser;
+
+    await expect(instance.refreshAuthor(monitor.id, superuser)).rejects.toBe(failure);
+    expect(forUser).toHaveBeenCalledWith(monitor.ownerUserId);
+    expect(fetchCatalog).toHaveBeenCalledWith(monitor, config);
+  });
+
+  it.each([
+    ['disabled', { enabled: false, apiKey: 'key' }],
+    ['missing API key', { enabled: true, apiKey: '' }],
+  ])('rejects create when Hardcover is %s before writing or fetching the catalog', async (_label, hardcover) => {
+    const upsertAuthor = vi.fn();
+    const fetchCatalog = vi.fn();
+    const instance = service(
+      { hasAuthorNamed: vi.fn().mockResolvedValue(false), upsertAuthor },
+      {},
+      {
+        catalog: { fetchCatalog },
+        providerConfigs: { forUser: vi.fn().mockResolvedValue({ hardcover }) },
+      },
+    );
+
+    await expect(instance.createAuthor({ authorName: 'Test Author', formats: {} }, viewer)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(upsertAuthor).not.toHaveBeenCalled();
+    expect(fetchCatalog).not.toHaveBeenCalled();
+  });
+
+  it('passes the resolved user config to the create catalog fetch', async () => {
+    const config = { hardcover: { enabled: true, apiKey: 'user-key' } };
+    const forUser = vi.fn().mockResolvedValue(config);
+    const failure = new Error('stop after fetch');
+    const fetchCatalog = vi.fn().mockRejectedValue(failure);
+    const { instance } = createHarness(fetchCatalog, { forUser });
+
+    await expect(instance.createAuthor({ authorName: 'Test Author', formats: {} }, viewer)).rejects.toBe(failure);
+    expect(forUser).toHaveBeenCalledWith(viewer.id);
+    expect(fetchCatalog).toHaveBeenCalledWith(expect.objectContaining({ ownerUserId: viewer.id }), config);
+  });
+
   it('runs create fan-out after reading the saved catalog and succeeds when items failed', async () => {
     const monitoredWork = work();
     const getCatalog = vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [monitoredWork] });
@@ -494,7 +581,7 @@ describe('MonitoredService', () => {
       {
         authorsRepository: { findPage },
         libraryService: { findAccessibleLibraryIds: vi.fn().mockResolvedValue([]) },
-        providerConfig: { getConfig: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' } }) },
+        providerConfigs: { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' } }) },
         hardcover: { searchAuthors: vi.fn().mockResolvedValue([{ id: 344878, name: 'Zogarth', books_count: 25 }]) },
       },
     );
@@ -518,7 +605,7 @@ describe('MonitoredService', () => {
       {
         authorsRepository: { findPage: vi.fn().mockResolvedValue({ items: [], total: 0, page: 0, size: 5 }) },
         libraryService: { findAccessibleLibraryIds: vi.fn().mockResolvedValue([]) },
-        providerConfig: { getConfig: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' } }) },
+        providerConfigs: { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' } }) },
         hardcover: { searchAuthors: vi.fn().mockResolvedValue([{ id: 344878, name: 'Zogarth', books_count: 25 }]) },
       },
     );

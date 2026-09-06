@@ -53,6 +53,7 @@ import MonitoredBookPanel from '../components/MonitoredBookPanel.vue'
 import MonitoredBookRow from '../components/MonitoredBookRow.vue'
 import MonitoredEmptyState from '../components/MonitoredEmptyState.vue'
 import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
+import MonitoredHardcoverNotice from '../components/MonitoredHardcoverNotice.vue'
 import MonitoredReleaseRow from '../components/MonitoredReleaseRow.vue'
 import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
 import MonitoredVirtualGrid from '../components/MonitoredVirtualGrid.vue'
@@ -85,6 +86,7 @@ const {
   bookHasMore,
   releaseHasMore,
   counts,
+  hardcoverConfigured,
   error,
   loadSummary,
   loadAuthors,
@@ -847,9 +849,13 @@ onMounted(async () => {
 
 onActivated(() => {
   viewActive = true
-  if (!reloadOnActivate) return
-  reloadOnActivate = false
-  handleChanged()
+  if (reloadOnActivate) {
+    reloadOnActivate = false
+    handleChanged()
+    return
+  }
+  // A user who left to connect Hardcover must see the notice clear on return.
+  if (initialLoadComplete) void loadSummary()
 })
 
 onDeactivated(() => {
@@ -1008,6 +1014,7 @@ defineOptions({ name: 'MonitoredView' })
         <span class="min-w-0">{{ error }}</span>
         <Button variant="outline" size="sm" @click="handleRetry">{{ t('common.retry') }}</Button>
       </div>
+      <MonitoredHardcoverNotice v-if="!hardcoverConfigured" class="mx-1 mt-4" />
       <!-- Retention drops the earliest pages once a list passes the cap; scrolling back to this edge
            means the top of the render is no longer page 0, so a reset is the only way back to it. -->
       <div v-if="activeTab !== 'add'" ref="topSentinel" aria-hidden="true" />

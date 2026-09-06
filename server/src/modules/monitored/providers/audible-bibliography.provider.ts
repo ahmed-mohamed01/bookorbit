@@ -8,7 +8,6 @@ import type { AudibleProduct, AudibleSearchResponse } from '../../metadata-fetch
 import { normalizeAudibleDomain } from '../../metadata-fetch/providers/audible/normalize-audible-domain';
 import { PROVIDER_TIMEOUT_MS } from '../../metadata-fetch/providers/provider-constants';
 import { buildRequestSignal, sleep, stripHtml } from '../../metadata-fetch/providers/provider-utils';
-import { ProviderConfigService } from '../../metadata-preferences/provider-config.service';
 import { normalizeText } from '../reconcile/observation-matcher';
 import type { Observation } from '../reconcile/observation.types';
 import type { AuthorBibliographyProvider, BibliographyAuthorRef } from './author-bibliography-provider';
@@ -79,17 +78,19 @@ export class AudibleBibliographyProvider implements AuthorBibliographyProvider {
   private readonly logger = new Logger(AudibleBibliographyProvider.name);
   private readonly resolvedProducts = new Map<string, AudibleProduct[]>();
 
-  constructor(private readonly providerConfig: ProviderConfigService) {}
-
   isEnabled(config: ProviderConfigurations): boolean {
     return config.audible.enabled;
   }
 
-  async resolveAuthor(name: string, existingId?: string, signal?: AbortSignal): Promise<BibliographyAuthorRef | null> {
+  async resolveAuthor(
+    name: string,
+    config: ProviderConfigurations,
+    existingId?: string,
+    signal?: AbortSignal,
+  ): Promise<BibliographyAuthorRef | null> {
     const startedAt = Date.now();
     this.logger.log(`[monitored.provider.audible] [start] op=resolve authorName="${sanitizeLogValue(name)}" - author resolution started`);
     try {
-      const config = await this.providerConfig.getConfig();
       if (!this.isEnabled(config)) return null;
       for (const variant of nameVariants(existingId || name)) {
         const products = await this.fetchProducts(variant, config.audible.domain, signal);
@@ -111,11 +112,10 @@ export class AudibleBibliographyProvider implements AuthorBibliographyProvider {
     }
   }
 
-  async fetchObservations(authorRef: BibliographyAuthorRef, signal?: AbortSignal): Promise<Observation[]> {
+  async fetchObservations(authorRef: BibliographyAuthorRef, config: ProviderConfigurations, signal?: AbortSignal): Promise<Observation[]> {
     const startedAt = Date.now();
     this.logger.log(`[monitored.provider.audible] [start] op=fetch authorName="${sanitizeLogValue(authorRef.name)}" - bibliography fetch started`);
     try {
-      const config = await this.providerConfig.getConfig();
       if (!this.isEnabled(config)) return [];
       const cached = this.resolvedProducts.get(authorKey(authorRef.name));
       const fetched = cached ?? (await this.fetchProducts(authorRef.id, config.audible.domain, signal));

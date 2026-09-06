@@ -1,6 +1,15 @@
 import { randomUUID } from 'node:crypto';
 
-import { BadRequestException, ForbiddenException, HttpException, HttpStatus, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { MONITORED_FORMATS } from '@bookorbit/types';
 import type {
   MonitorAuthorRequest,
@@ -16,6 +25,7 @@ import type {
   MonitoredSummary,
   MonitoredWork,
   MonitoredWorkPatch,
+  ProviderConfigurations,
   ReleaseSearchOverrides,
   RequestFromWorkPayload,
   UpdateMonitoredAuthorRequest,
@@ -33,11 +43,12 @@ import { RequestFulfillmentService } from '../book-request/fulfillment/request-f
 import { IndexerSearchService } from '../book-request/indexers/indexer-search.service';
 import type { IndexerSearchRequest } from '../book-request/indexers/indexer-search.service';
 import { HardcoverClient } from '../metadata-fetch/providers/hardcover/hardcover.client';
-import { ProviderConfigService } from '../metadata-preferences/provider-config.service';
 import { LibraryService } from '../library/library.service';
 import { MonitoredCatalogService, normalizeMonitoredName, type WorkAvailabilityGroup } from './monitored-catalog.service';
 import { MonitoredAutoRequestService } from './monitored-autorequest.service';
+import { MonitoredProviderConfigService } from './monitored-provider-config.service';
 import { MonitoredStoreService } from './monitored-store.service';
+import { isHardcoverConfigured } from './providers/hardcover-bibliography.provider';
 import { isWorkVisible } from './monitored-work-visibility';
 import type { MonitoredAuthorAggregate, MonitoredReleasePageEntry } from './monitored-store.service';
 import type {
@@ -56,6 +67,8 @@ const RELEASE_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
 const RELEASE_LOOKAHEAD_MS = 365 * 24 * 60 * 60 * 1000;
 const DEFAULT_FORMAT_CONFIG: MonitorFormatConfig = { mode: 'off', libraryId: null, folderId: null };
 const CREATE_FETCH_COOLDOWN_MS = 10 * 1000;
+const HARDCOVER_REQUIRED_MESSAGE =
+  'Monitoring needs a Hardcover token. Connect your Hardcover account under Settings > Integrations > Hardcover, or ask an administrator to enable the Hardcover metadata source.';
 
 type AuthorProfileMetadata = { description: string | null; website: string | null; genres: string[]; portraitAuthorId: number | null };
 
@@ -91,7 +104,7 @@ export class MonitoredService {
     private readonly catalog: MonitoredCatalogService,
     private readonly autoRequests: MonitoredAutoRequestService,
     private readonly hardcover: HardcoverClient,
-    private readonly providerConfig: ProviderConfigService,
+    private readonly providerConfigs: MonitoredProviderConfigService,
     private readonly authorsRepository: AuthorsRepository,
     private readonly authorMetadataPreferences: AuthorMetadataPreferencesService,
     private readonly enrichmentExecutor: AuthorEnrichmentExecutorService,
@@ -106,7 +119,8 @@ export class MonitoredService {
     const now = Date.now();
     const earliest = new Date(now - RELEASE_LOOKBACK_MS).toISOString().slice(0, 10);
     const latest = new Date(now + RELEASE_LOOKAHEAD_MS).toISOString().slice(0, 10);
-    return this.store.countSummary(user, earliest, latest);
+    const [counts, config] = await Promise.all([this.store.countSummary(user, earliest, latest), this.providerConfigs.forUser(user.id)]);
+    return { ...counts, hardcoverConfigured: isHardcoverConfigured(config) };
   }
 
   async listAuthors(user: RequestUser, query: ListMonitoredAuthorsDto): Promise<MonitoredPage<MonitoredAuthorItem>> {
@@ -171,6 +185,8 @@ export class MonitoredService {
     if (await this.store.hasAuthorNamed(user.id, authorName)) throw new BadRequestException('This author is already monitored');
     const formats = this.mergeFormats(undefined, input.formats);
     await this.assertDestinationsAllowed(formats, user);
+    const config = await this.providerConfigs.forUser(user.id);
+    this.assertHardcoverAvailable(config);
     this.assertCatalogFetchAllowed(user);
 
     const monitorId = randomUUID();
@@ -195,7 +211,7 @@ export class MonitoredService {
         user,
       );
       this.recordCatalogFetch(user);
-      const result = await this.catalog.fetchCatalog(monitor);
+      const result = await this.catalog.fetchCatalog(monitor, config);
       const localAuthorId = await this.resolveLocalAuthorId(monitor);
       const refreshed = await this.store.upsertAuthor(
         {
@@ -284,7 +300,10 @@ export class MonitoredService {
       if (monitor.lastRefreshedAt && Date.now() - new Date(monitor.lastRefreshedAt).getTime() < REFRESH_COOLDOWN_MS) {
         throw new HttpException('Monitored author was refreshed a moment ago; try again shortly', HttpStatus.TOO_MANY_REQUESTS);
       }
-      const result = await this.catalog.fetchCatalog(monitor);
+      // Use the owner's token so delegated and future background refreshes spend the owner's quota.
+      const config = await this.providerConfigs.forUser(monitor.ownerUserId);
+      this.assertHardcoverAvailable(config);
+      const result = await this.catalog.fetchCatalog(monitor, config);
       const localAuthorId = await this.resolveLocalAuthorId(monitor);
       if (localAuthorId != null) {
         const profile = await this.authorsRepository.findByIdForEnrichment(localAuthorId);
@@ -450,7 +469,10 @@ export class MonitoredService {
   async searchAuthors(query: string, user: RequestUser): Promise<MonitoredAuthorSearchResult[]> {
     const q = query.trim();
     if (!q) return [];
-    const [libraryIds, providerConfig] = await Promise.all([this.libraryService.findAccessibleLibraryIds(user), this.providerConfig.getConfig()]);
+    const [libraryIds, providerConfig] = await Promise.all([
+      this.libraryService.findAccessibleLibraryIds(user),
+      this.providerConfigs.forUser(user.id),
+    ]);
     const local = await this.authorsRepository.findPage({
       q,
       page: 0,
@@ -460,10 +482,7 @@ export class MonitoredService {
       libraryIds,
       contentFilters: user.isSuperuser ? undefined : user.contentFilters,
     });
-    const hardcoverResults =
-      providerConfig.hardcover.enabled && providerConfig.hardcover.apiKey
-        ? await this.hardcover.searchAuthors(q, providerConfig.hardcover.apiKey)
-        : [];
+    const hardcoverResults = isHardcoverConfigured(providerConfig) ? await this.hardcover.searchAuthors(q, providerConfig.hardcover.apiKey) : [];
     const byName = new Map<string, MonitoredAuthorSearchResult>();
     for (const author of local.items) {
       byName.set(normalizeMonitoredName(author.name), {
@@ -503,6 +522,10 @@ export class MonitoredService {
     const entry = await this.store.getWorkWithMonitor(workId, user);
     if (entry) await this.healWorkAvailability([{ monitor: entry.monitor, works: [entry.work] }], user);
     return entry;
+  }
+
+  private assertHardcoverAvailable(config: ProviderConfigurations): void {
+    if (!isHardcoverConfigured(config)) throw new ServiceUnavailableException(HARDCOVER_REQUIRED_MESSAGE);
   }
 
   /**

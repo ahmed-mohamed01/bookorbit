@@ -45,17 +45,18 @@ async function main(): Promise<void> {
 
   const pool = new Pool(createPostgresClientConfig(process.env.DATABASE_URL ?? '', { max: 2 }));
   const providerConfig = new ProviderConfigService(drizzle(pool, { schema }));
+  const config = await providerConfig.getConfig();
   const providers: AuthorBibliographyProvider[] = [
-    new HardcoverBibliographyProvider(new HardcoverClient(), providerConfig),
-    new GoodreadsBibliographyProvider(providerConfig),
-    new AudibleBibliographyProvider(providerConfig),
+    new HardcoverBibliographyProvider(new HardcoverClient()),
+    new GoodreadsBibliographyProvider(),
+    new AudibleBibliographyProvider(),
   ];
 
   try {
     const observations: Observation[] = [];
     let hardcoverAuthorId: number | null = null;
     for (const provider of providers) {
-      const authorRef = await provider.resolveAuthor(authorName);
+      const authorRef = await provider.resolveAuthor(authorName, config);
       if (!authorRef) {
         logger.warn(
           `[monitored.fixture_capture] [fail] slug=${slug} source=${provider.source} durationMs=${Date.now() - startedAt} errorClass=AuthorNotResolved error="provider did not resolve the author" - source skipped`,
@@ -63,7 +64,7 @@ async function main(): Promise<void> {
         continue;
       }
       if (provider.source === 'hardcover') hardcoverAuthorId = Number(authorRef.id);
-      observations.push(...(await provider.fetchObservations(authorRef)));
+      observations.push(...(await provider.fetchObservations(authorRef, config)));
     }
 
     const fixture = {
