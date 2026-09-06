@@ -10313,9 +10313,6 @@
       "menu": "Monitoring options for {name}",
       "open": "{name}, {count, plural, =0 {no books} one {# book} other {# books}}"
     },
-    "authors": {
-      "progressHint": "Pills show monitored progress for ebooks and audiobooks in your library against the author's full catalog."
-    },
     "books": {
       "expected": "Expected {date}",
       "menu": "Monitoring options for {title}"

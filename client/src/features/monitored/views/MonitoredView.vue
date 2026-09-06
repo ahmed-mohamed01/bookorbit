@@ -1054,7 +1054,6 @@ defineOptions({ name: 'MonitoredView' })
           :action-label="canManage ? t('monitored.tabs.add') : undefined"
           @action="openAddTab"
         />
-        <p v-if="sortedAuthors.length > 0" class="mt-3 text-xs text-muted-foreground">{{ t('monitored.authors.progressHint') }}</p>
       </section>
 
       <section v-else-if="activeTab === 'books'" class="mt-4 px-1">
