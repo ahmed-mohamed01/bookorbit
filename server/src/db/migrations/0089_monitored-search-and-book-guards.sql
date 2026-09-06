@@ -1,4 +1,0 @@
-CREATE INDEX "author_catalog_works_title_unaccent_trgm_idx" ON "author_catalog_works" USING gin (public.bookorbit_unaccent("title") gin_trgm_ops);--> statement-breakpoint
-CREATE INDEX "monitored_authors_name_unaccent_trgm_idx" ON "monitored_authors" USING gin (public.bookorbit_unaccent("author_name") gin_trgm_ops);--> statement-breakpoint
-CREATE INDEX "monitored_books_owner_user_id_idx" ON "monitored_books" USING btree ("owner_user_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "monitored_books_owner_monitor_work_uidx" ON "monitored_books" USING btree ("owner_user_id","monitor_author_id","work_id");

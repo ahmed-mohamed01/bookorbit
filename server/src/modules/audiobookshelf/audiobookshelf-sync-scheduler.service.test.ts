@@ -32,9 +32,11 @@ function makeService() {
 }
 
 describe('AudiobookshelfSyncSchedulerService', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
 
@@ -50,11 +52,27 @@ describe('AudiobookshelfSyncSchedulerService', () => {
   });
 
   describe('runScheduledSync', () => {
+    it('logs nothing when no users are configured', async () => {
+      mockRepo.findEnabledConfiguredUsers.mockResolvedValue([]);
+
+      await makeService().runScheduledSync();
+
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
     it('syncs each eligible user with full options', async () => {
       await makeService().runScheduledSync();
 
       expect(mockSyncService.sync).toHaveBeenCalledTimes(1);
       expect(mockSyncService.sync).toHaveBeenCalledWith(eligibleUser(1), {});
+    });
+
+    it('logs start and end when a user is synced', async () => {
+      await makeService().runScheduledSync();
+
+      expect(logSpy).toHaveBeenCalledTimes(2);
+      expect(logSpy).toHaveBeenCalledWith('[abs.scheduler] [start] - run started');
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[abs.scheduler] [end]'));
     });
 
     it('walks keyset pages, advancing afterUserId to the last user of the page', async () => {
@@ -138,11 +156,26 @@ describe('AudiobookshelfSyncSchedulerService', () => {
   });
 
   describe('runHotSync', () => {
+    it('logs nothing when no users are configured', async () => {
+      mockRepo.findEnabledConfiguredUsers.mockResolvedValue([]);
+
+      await makeService().runHotSync();
+
+      expect(logSpy).not.toHaveBeenCalled();
+    });
+
     it('syncs each eligible user with hotInProgressOnly (and warmSessions on the first tick)', async () => {
       await makeService().runHotSync();
 
       // First hot tick for a user always warms (no prior warm timestamp).
       expect(mockSyncService.sync).toHaveBeenCalledWith(eligibleUser(1), { hotInProgressOnly: true, warmSessions: true });
+    });
+
+    it('does not log start or end when a user is synced', async () => {
+      await makeService().runHotSync();
+
+      expect(mockSyncService.sync).toHaveBeenCalledTimes(1);
+      expect(logSpy).not.toHaveBeenCalled();
     });
 
     it('sets warmSessions at most once per 90s per user across successive hot ticks', async () => {

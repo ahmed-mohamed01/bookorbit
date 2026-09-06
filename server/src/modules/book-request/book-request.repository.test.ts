@@ -139,6 +139,26 @@ describe('BookRequestRepository.findDueForResearch', () => {
   });
 });
 
+describe('BookRequestRepository.findById', () => {
+  it('reads the auto-grab override through the fork overlay', async () => {
+    const result = {
+      request: { id: 7, decidedByUserId: null },
+      autoGrab: false,
+      requesterUsername: 'reader',
+      requesterName: 'Reader',
+      targetLibraryName: null,
+    };
+    const builder: Record<string, ReturnType<typeof vi.fn>> = {};
+    for (const method of ['from', 'innerJoin', 'leftJoin', 'where']) builder[method] = vi.fn(() => builder);
+    builder.limit = vi.fn().mockResolvedValue([result]);
+    const db = { select: vi.fn(() => builder) };
+
+    await expect(new BookRequestRepository(db as never).findById(7)).resolves.toMatchObject({ request: { id: 7, autoGrab: false } });
+
+    expect(db.select.mock.calls[0]![0]).toHaveProperty('autoGrab');
+  });
+});
+
 describe('BookRequestRepository.claimForGrab', () => {
   it('reports the claim as taken when a row matched', async () => {
     const db = makeDb();
@@ -191,12 +211,14 @@ describe('BookRequestRepository.remove', () => {
 describe('BookRequestRepository.create', () => {
   function makeInsertingDb() {
     const insertValues = vi.fn();
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
     const tx = {
       insert: vi.fn().mockReturnValue({
         values: insertValues.mockReturnValue({ returning: vi.fn().mockResolvedValue([{ id: 7, dedupeKey: 'isbn13:9780441013593:ebook' }]) }),
       }),
+      update: vi.fn().mockReturnValue({ set: updateSet }),
     };
-    return { db: { transaction: vi.fn().mockImplementation((cb: (t: unknown) => unknown) => cb(tx)) }, tx, insertValues };
+    return { db: { transaction: vi.fn().mockImplementation((cb: (t: unknown) => unknown) => cb(tx)) }, tx, insertValues, updateSet };
   }
 
   /** A row without its aliases is one the next requester silently fails to collide with. */
@@ -218,6 +240,17 @@ describe('BookRequestRepository.create', () => {
     await repo.create({ title: 'Dune' } as never, ['isbn13:9780441013593:ebook']);
 
     expect(insertValues).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes an explicit auto-grab override through the overlay in the insert transaction', async () => {
+    const { db, tx, insertValues, updateSet } = makeInsertingDb();
+    const repo = new BookRequestRepository(db as never);
+
+    await repo.create({ title: 'Dune' } as never, [], false);
+
+    expect(insertValues).toHaveBeenCalledWith({ title: 'Dune' });
+    expect(tx.update).toHaveBeenCalledTimes(1);
+    expect(updateSet).toHaveBeenCalledWith({ autoGrab: false });
   });
 });
 

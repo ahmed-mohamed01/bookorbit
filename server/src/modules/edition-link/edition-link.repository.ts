@@ -8,6 +8,7 @@ import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { authors, bookAuthors, bookFiles, bookMetadata, books } from '../../db/schema';
 import { normalizeName, scoreAuthors, scoreTitle } from '../../common/utils/fuzzy-match.utils';
+import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { AUDIO_FORMATS, isAudioFormat } from '../scanner/lib/classify';
 import { bookEditionLinks, type BookEditionLink } from './schema/edition-link.schema';
 
@@ -31,10 +32,12 @@ export interface FindCounterpartCandidatesOptions {
 export class EditionLinkRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
 
+  async findMissingTables(tableNames: readonly string[]): Promise<string[]> {
+    return findMissingTables(this.db, tableNames);
+  }
+
   async applySchemaStatements(statements: readonly string[]): Promise<void> {
-    for (const statement of statements) {
-      await this.db.execute(sql.raw(statement));
-    }
+    return applySchemaStatements(this.db, statements);
   }
 
   async getBookModality(bookId: number): Promise<BookModality> {

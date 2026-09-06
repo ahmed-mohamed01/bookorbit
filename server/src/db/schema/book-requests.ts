@@ -97,12 +97,6 @@ export const bookRequests = pgTable(
     selfServe: boolean('self_serve').notNull().default(false),
 
     /**
-     * Null follows instance automation settings. True may grab while instance auto-grab is off,
-     * still under autoGrabMinScore and maxAutoGrabAttempts. False always waits for a person to pick.
-     */
-    autoGrab: boolean('auto_grab'),
-
-    /**
      * Who may drive fulfilment, when that is somebody other than the requester.
      *
      * One live request per work, so a self-fulfiller whose own submission collides with somebody

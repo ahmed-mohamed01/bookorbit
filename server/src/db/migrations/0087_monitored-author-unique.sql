@@ -1,1 +1,0 @@
-CREATE UNIQUE INDEX "monitored_authors_owner_lower_name_uidx" ON "monitored_authors" USING btree ("owner_user_id",lower("author_name"));

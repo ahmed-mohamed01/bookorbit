@@ -4,6 +4,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
+import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { isAudioFormat } from '../scanner/lib/classify';
 import type { AudioTimelineFile } from './reading-alignment-audio-timeline.util';
 import { audiobookAlignment, audiobookAlignmentAnchor } from './schema/reading-alignment.schema';
@@ -41,12 +42,14 @@ type AlignmentProgress = { samplesDone: number; anchorCount: number };
 export class ReadingAlignmentRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
 
+  async findMissingTables(tableNames: readonly string[]): Promise<string[]> {
+    return findMissingTables(this.db, tableNames);
+  }
+
   // Applies the reading-alignment schema bootstrap statements. DB access lives here rather than in
   // the bootstrap service so services never inject the Drizzle instance directly.
   async applySchemaStatements(statements: readonly string[]): Promise<void> {
-    for (const statement of statements) {
-      await this.db.execute(sql.raw(statement));
-    }
+    return applySchemaStatements(this.db, statements);
   }
 
   async resolveAudioPlayOrder(audioBookId: number): Promise<AudioTimelineFile[]> {

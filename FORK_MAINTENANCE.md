@@ -176,6 +176,45 @@ ABS schema is **not** a Drizzle migration. It is applied at runtime by
 - Consequence: ABS tables use `db.select()`, **not** Drizzle's `db.query.<table>`
   relational API (which only knows tables in the schema barrel).
 
+**Rules that keep the database switchable between this fork and the upstream image.**
+Prod must survive a switch to the upstream container and a later return to the fork.
+Every fork feature with schema (ABS, edition links, reading alignment, monitored) follows
+these; the pattern is a deliberate fork exception to the CLAUDE.md rule "never hand-write
+migration SQL", which exists for upstream contributions - fork schema never goes upstream.
+
+- Never add files under `server/src/db/migrations/`. Fork schema is bootstrap SQL only, so
+  the Drizzle ledger holds upstream hashes only. Drizzle applies every journal entry newer
+  than the ledger's latest timestamp, so one fork migration in the ledger makes the
+  upstream image silently skip any upstream migration generated before it.
+- Fork tables live in `modules/<feature>/schema/` and are never exported from
+  `db/schema/index.ts`.
+- A fork column on an upstream table must be nullable, added with
+  `ADD COLUMN IF NOT EXISTS` by the module that reads it, and read or written through a
+  module-local `pgTable` declared for the same table name - never by editing the upstream
+  schema file. Example: `book_requests.auto_grab` is owned by the book-request module
+  (`modules/book-request/schema/book-request-auto-grab.schema.ts` plus its bootstrap, which
+  runs in `onModuleInit` so the column exists before that module's crons tick).
+- A database that ever applied a fork migration must have those ledger rows removed, or
+  both images will skip upstream migrations older than them. Between 2026-09-04 and
+  2026-09-06 the `monitored` branch shipped migrations 0086 to 0090; on any database that
+  ran it (dev and test instances only, never prod), run once:
+  `delete from drizzle.__drizzle_migrations where left(hash, 12) in ('960f1671810e',
+'550a44aa480d', '8b83e5f0ee7b', '20c8ec37ddf6', 'c5c3e317e464');`
+- Do not modify upstream CHECK constraints. The `audiobookshelf` value in
+  `reading_sessions_source_chk` and `reading_attempts_origin_chk` is the one accepted
+  exception. If an upstream migration ever recreates either constraint it will fail on
+  those rows: relabel or remove the `audiobookshelf` rows first, then migrate; the
+  bootstrap re-extends the constraint on the next fork boot.
+- Bootstrap services log only when they create something or fail. A no-op boot is silent.
+
+**Switching images on prod (fork to upstream and back)**
+
+- `pg_dump -Fc` before any switch. That dump is the rollback.
+- Upstream ignores fork tables and nullable fork columns, so switching to the upstream
+  image loses nothing; fork features simply disappear from the UI until you return.
+- Before returning to the fork, merge it forward to at least the upstream version that
+  last ran against the database. Never run older code against a newer schema.
+
 ## Landed seams - the pattern to copy
 
 Both live in upstream files, contain **zero ABS identifiers**, and are supplied from

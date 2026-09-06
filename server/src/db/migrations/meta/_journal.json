@@ -603,41 +603,6 @@
       "when": 1788321273908,
       "tag": "0085_add_authentication_method",
       "breakpoints": true
-    },
-    {
-      "idx": 86,
-      "version": "7",
-      "when": 1788563855904,
-      "tag": "0086_monitored-tables",
-      "breakpoints": true
-    },
-    {
-      "idx": 87,
-      "version": "7",
-      "when": 1788575376538,
-      "tag": "0087_monitored-author-unique",
-      "breakpoints": true
-    },
-    {
-      "idx": 88,
-      "version": "7",
-      "when": 1788600256580,
-      "tag": "0088_matched-book-indexes",
-      "breakpoints": true
-    },
-    {
-      "idx": 89,
-      "version": "7",
-      "when": 1788610368295,
-      "tag": "0089_monitored-search-and-book-guards",
-      "breakpoints": true
-    },
-    {
-      "idx": 90,
-      "version": "7",
-      "when": 1788631214727,
-      "tag": "0090_monitored-auto-grab",
-      "breakpoints": true
     }
   ]
 }

@@ -233,12 +233,24 @@ describe('WhisperModelService boot probe', () => {
     return new WhisperModelService({ whisperModel: model, readingAlignmentEnabled: enabled } as never, { appDataPath: '/data' } as never);
   }
 
-  it('reports a cached named model ready at boot without downloading', async () => {
+  it('resolves a cached named model at boot without downloading or logging a probe outcome', async () => {
     statMock.mockResolvedValue({ isFile: () => true, size: MODEL_BYTES } as never);
     makeBootService('base.en', true).onApplicationBootstrap();
-    await vi.waitFor(() => expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[reading_alignment.model_probe] [end]')));
-    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('outcome=ready'));
+    await vi.waitFor(() => expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[reading_alignment.model_resolve] [end]')));
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('[reading_alignment.model_probe]'));
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('is silent when the model is ready', async () => {
+    const service = makeBootService('/models/ready.bin', true);
+    const readySpy = vi.spyOn(service, 'ensureModelReady').mockResolvedValue('/models/ready.bin');
+
+    service.onApplicationBootstrap();
+    await vi.waitFor(() => expect(readySpy).toHaveBeenCalledTimes(1));
+
+    expect(logSpy).not.toHaveBeenCalled();
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it('reports pending_download for an uncached named model and does NOT download at boot', async () => {

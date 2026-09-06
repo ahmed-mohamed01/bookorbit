@@ -1,26 +1,24 @@
 import { Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ReadingAlignmentSchemaBootstrapService } from './reading-alignment-schema-bootstrap.service';
-import { READING_ALIGNMENT_SCHEMA_SQL } from './schema/reading-alignment-schema';
+import { EditionLinkSchemaBootstrapService } from './edition-link-schema-bootstrap.service';
+import { EDITION_LINK_SCHEMA_SQL } from './schema/edition-link-schema';
 
 type RepoMock = {
   findMissingTables: ReturnType<typeof vi.fn>;
   applySchemaStatements: ReturnType<typeof vi.fn>;
-  failInterruptedBuilds: ReturnType<typeof vi.fn>;
 };
 
-function createService(): { service: ReadingAlignmentSchemaBootstrapService; repo: RepoMock } {
+function createService(): { service: EditionLinkSchemaBootstrapService; repo: RepoMock } {
   const repo: RepoMock = {
     findMissingTables: vi.fn().mockResolvedValue([]),
     applySchemaStatements: vi.fn().mockResolvedValue(undefined),
-    failInterruptedBuilds: vi.fn().mockResolvedValue(0),
   };
-  const service = new ReadingAlignmentSchemaBootstrapService(repo as never);
+  const service = new EditionLinkSchemaBootstrapService(repo as never);
   return { service, repo };
 }
 
-describe('ReadingAlignmentSchemaBootstrapService', () => {
+describe('EditionLinkSchemaBootstrapService', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -38,25 +36,19 @@ describe('ReadingAlignmentSchemaBootstrapService', () => {
 
     await service.onApplicationBootstrap();
 
-    expect(repo.findMissingTables).toHaveBeenCalledWith(['audiobook_alignment', 'audiobook_alignment_anchor']);
+    expect(repo.findMissingTables).toHaveBeenCalledWith(['book_edition_links']);
     expect(repo.applySchemaStatements).toHaveBeenCalledTimes(1);
     const statements = repo.applySchemaStatements.mock.calls[0]![0] as string[];
-    const expectedCount = READING_ALIGNMENT_SCHEMA_SQL.split('--> statement-breakpoint')
+    const expectedCount = EDITION_LINK_SCHEMA_SQL.split('--> statement-breakpoint')
       .map((s) => s.trim())
       .filter(Boolean).length;
     expect(statements).toHaveLength(expectedCount);
     expect(statements.every((statement) => statement.length > 0 && !statement.includes('--> statement-breakpoint'))).toBe(true);
-    expect(statements.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "audiobook_alignment"'))).toBe(true);
-    expect(statements.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "audiobook_alignment_anchor"'))).toBe(true);
-    expect(statements[0]).toContain('"text_book_id" integer NOT NULL');
-    expect(statements[0]).toContain('"audio_book_id" integer NOT NULL');
-    expect(statements[0]).toContain('UNIQUE("text_book_id","audio_book_id")');
-    expect(statements[0]).not.toContain('"book_id" integer NOT NULL');
+    expect(statements.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "book_edition_links"'))).toBe(true);
     expect(repo.findMissingTables.mock.invocationCallOrder[0]).toBeLessThan(repo.applySchemaStatements.mock.invocationCallOrder[0]!);
-    expect(repo.applySchemaStatements.mock.invocationCallOrder[0]).toBeLessThan(repo.failInterruptedBuilds.mock.invocationCallOrder[0]!);
   });
 
-  it('is silent when no tables are missing and no interrupted builds were reset', async () => {
+  it('is silent when no tables are missing', async () => {
     const { service } = createService();
 
     await service.onApplicationBootstrap();
@@ -67,26 +59,13 @@ describe('ReadingAlignmentSchemaBootstrapService', () => {
 
   it('logs the number of tables created when tables were missing', async () => {
     const { service, repo } = createService();
-    repo.findMissingTables.mockResolvedValue(['audiobook_alignment', 'audiobook_alignment_anchor']);
+    repo.findMissingTables.mockResolvedValue(['book_edition_links']);
 
     await service.onApplicationBootstrap();
 
     expect(logSpy).toHaveBeenCalledTimes(1);
     expect(logSpy.mock.calls[0]![0]).toMatch(
-      /^\[reading_alignment\.schema_bootstrap\] \[end\] durationMs=\d+ tablesCreated=2 interruptedBuildsReset=0 - schema bootstrap completed$/,
-    );
-    expect(errorSpy).not.toHaveBeenCalled();
-  });
-
-  it('logs when interrupted builds were reset', async () => {
-    const { service, repo } = createService();
-    repo.failInterruptedBuilds.mockResolvedValue(3);
-
-    await service.onApplicationBootstrap();
-
-    expect(logSpy).toHaveBeenCalledTimes(1);
-    expect(logSpy.mock.calls[0]![0]).toMatch(
-      /^\[reading_alignment\.schema_bootstrap\] \[end\] durationMs=\d+ tablesCreated=0 interruptedBuildsReset=3 - schema bootstrap completed$/,
+      /^\[edition_link\.schema_bootstrap\] \[end\] durationMs=\d+ tablesCreated=1 - schema bootstrap created tables$/,
     );
     expect(errorSpy).not.toHaveBeenCalled();
   });
@@ -100,7 +79,7 @@ describe('ReadingAlignmentSchemaBootstrapService', () => {
 
     expect(errorSpy).toHaveBeenCalledTimes(1);
     const message = errorSpy.mock.calls[0]![0] as string;
-    expect(message).toContain('[reading_alignment.schema_bootstrap] [fail]');
+    expect(message).toContain('[edition_link.schema_bootstrap] [fail]');
     expect(message).toContain('errorClass=Error');
     expect(message).toContain('error="boom \\"quoted\\""');
     expect(message).toContain('durationMs=');

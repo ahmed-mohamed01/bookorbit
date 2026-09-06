@@ -468,7 +468,7 @@ export class AuthorsRepository {
         and(
           eq(authors.id, authorId),
           sql`NOT EXISTS (SELECT 1 FROM ${bookAuthors} WHERE ${bookAuthors.authorId} = ${authors.id})`,
-          sql`NOT EXISTS (SELECT 1 FROM ${schema.monitoredAuthors} WHERE ${schema.monitoredAuthors.localAuthorId} = ${authors.id})`,
+          sql`NOT EXISTS (SELECT 1 FROM monitored_authors WHERE monitored_authors.local_author_id = ${authors.id})`,
         ),
       )
       .returning({ id: authors.id });

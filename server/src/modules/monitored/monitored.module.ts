@@ -16,6 +16,7 @@ import { AudibleBibliographyProvider } from './providers/audible-bibliography.pr
 import { GoodreadsBibliographyProvider } from './providers/goodreads-bibliography.provider';
 import { HardcoverBibliographyProvider } from './providers/hardcover-bibliography.provider';
 import { MonitoredService } from './monitored.service';
+import { MonitoredSchemaBootstrapService } from './monitored-schema-bootstrap.service';
 import { MonitoredStoreService } from './monitored-store.service';
 
 @Module({
@@ -23,6 +24,7 @@ import { MonitoredStoreService } from './monitored-store.service';
   controllers: [MonitoredController],
   providers: [
     MonitoredStoreService,
+    MonitoredSchemaBootstrapService,
     HardcoverBibliographyProvider,
     GoodreadsBibliographyProvider,
     AudibleBibliographyProvider,

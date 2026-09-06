@@ -315,7 +315,6 @@ export class BookRequestService {
       mediaKind: dto.mediaKind,
       status: availableOnCreate ? ('available' as const) : approvedOnCreate ? ('approved' as const) : ('pending' as const),
       selfServe,
-      autoGrab: dto.autoGrab ?? null,
       title: work.title,
       subtitle: dto.subtitle ?? null,
       authors: work.authors,
@@ -355,7 +354,7 @@ export class BookRequestService {
     for (let attempt = 0; row === undefined; attempt++) {
       const lastAttempt = attempt >= SUBMIT_INSERT_ATTEMPTS - 1;
       try {
-        row = await this.createRequest(selfServe && !availableOnCreate, insert, aliasKeys);
+        row = await this.createRequest(selfServe && !availableOnCreate, insert, aliasKeys, dto.autoGrab);
       } catch (error: unknown) {
         if (!isUniqueViolation(error)) throw error;
         const winner = await this.dedupe.findActiveRequestFor(work);
@@ -416,10 +415,14 @@ export class BookRequestService {
    * transaction, because counting first and inserting after is not a cap - two submissions for
    * different works each see nine and both proceed.
    */
-  private async createRequest(selfServe: boolean, data: Parameters<BookRequestRepository['create']>[0], aliasKeys: string[]) {
-    if (!selfServe) return this.repo.create(data, aliasKeys);
+  private async createRequest(selfServe: boolean, data: Parameters<BookRequestRepository['create']>[0], aliasKeys: string[], autoGrab?: boolean) {
+    // This shape keeps upstream's tests asserting the two-argument call passing without editing upstream test files.
+    if (!selfServe) return autoGrab === undefined ? this.repo.create(data, aliasKeys) : this.repo.create(data, aliasKeys, autoGrab);
 
-    const row = await this.repo.createWithinSelfServeCap(data, aliasKeys, MAX_LIVE_SELF_SERVE_REQUESTS);
+    const row =
+      autoGrab === undefined
+        ? await this.repo.createWithinSelfServeCap(data, aliasKeys, MAX_LIVE_SELF_SERVE_REQUESTS)
+        : await this.repo.createWithinSelfServeCap(data, aliasKeys, MAX_LIVE_SELF_SERVE_REQUESTS, autoGrab);
     if (!row) {
       throw submitForbidden(
         'SUBMIT_SELF_SERVE_LIMIT',

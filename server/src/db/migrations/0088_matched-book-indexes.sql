@@ -1,3 +1,0 @@
-CREATE INDEX "author_catalog_works_matched_book_id_idx" ON "author_catalog_works" USING btree ("matched_book_id");--> statement-breakpoint
-CREATE INDEX "author_catalog_works_matched_ebook_book_id_idx" ON "author_catalog_works" USING btree ("matched_ebook_book_id");--> statement-breakpoint
-CREATE INDEX "author_catalog_works_matched_audio_book_id_idx" ON "author_catalog_works" USING btree ("matched_audio_book_id");

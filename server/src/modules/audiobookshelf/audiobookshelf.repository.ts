@@ -15,6 +15,7 @@ import {
   type ReadingDailyStatsSegment,
 } from '../../common/utils/reading-daily-stats.utils';
 import { chunk } from '../../common/utils/batch.utils';
+import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import type { AbsMappedSession } from './audiobookshelf-sessions.util';
 import { AUDIOBOOKSHELF_DAILY_STATS_RECOMPUTE_SPAN_DAYS } from './audiobookshelf.constants';
 import {
@@ -178,12 +179,14 @@ function groupDaysByBoundedSpan(days: string[], maxSpanDays: number): string[][]
 export class AudiobookshelfRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
 
+  async findMissingTables(tableNames: readonly string[]): Promise<string[]> {
+    return findMissingTables(this.db, tableNames);
+  }
+
   // Applies the Audiobookshelf schema bootstrap statements. DB access lives here rather than in the
   // bootstrap service so services never inject the Drizzle instance directly.
   async applySchemaStatements(statements: readonly string[]): Promise<void> {
-    for (const statement of statements) {
-      await this.db.execute(sql.raw(statement));
-    }
+    return applySchemaStatements(this.db, statements);
   }
 
   async findSettings(userId: number): Promise<AudiobookshelfUserSetting | undefined> {

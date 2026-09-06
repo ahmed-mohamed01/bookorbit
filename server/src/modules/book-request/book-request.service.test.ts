@@ -209,7 +209,7 @@ describe('BookRequestService.submit', () => {
   });
 
   it.each([
-    ['absent', undefined, null],
+    ['absent', undefined, undefined],
     ['enabled', true, true],
     ['disabled', false, false],
   ])('persists autoGrab as %s', async (_label, autoGrab, expected) => {
@@ -217,7 +217,9 @@ describe('BookRequestService.submit', () => {
 
     await service.submit({ ...dto, ...(autoGrab === undefined ? {} : { autoGrab }) }, user());
 
-    expect(repo.create).toHaveBeenCalledWith(expect.objectContaining({ autoGrab: expected }), expect.any(Array));
+    const [insert, , override] = repo.create.mock.calls[0] as [Record<string, unknown>, string[], boolean | undefined];
+    expect(insert).not.toHaveProperty('autoGrab');
+    expect(override).toBe(expected);
   });
 
   it('rejects a blank title rather than storing one', async () => {

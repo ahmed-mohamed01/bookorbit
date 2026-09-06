@@ -63,16 +63,16 @@ export class AudiobookshelfSyncSchedulerService {
 
   private async runForAllUsers(event: string, options: AudiobookshelfSyncOptions): Promise<void> {
     const startedAt = Date.now();
-    this.logger.log(`[${event}] [start] hotInProgressOnly=${options.hotInProgressOnly === true} - run started`);
     let usersProcessed = 0;
     let usersFailed = 0;
     try {
-      let afterUserId = 0;
-      while (true) {
-        const users = await this.repo.findEnabledConfiguredUsers(afterUserId, AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE);
-        if (users.length === 0) break;
-        afterUserId = users[users.length - 1]!.userId;
+      let users = await this.repo.findEnabledConfiguredUsers(0, AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE);
+      if (users.length === 0) return;
 
+      const quiet = options.hotInProgressOnly === true;
+      if (!quiet) this.logger.log(`[${event}] [start] - run started`);
+
+      while (true) {
         for (const group of chunk(users, AUDIOBOOKSHELF_SCHEDULER_CONCURRENCY)) {
           const outcomes = await Promise.all(group.map((user) => this.syncUser(event, user, options)));
           for (const outcome of outcomes) {
@@ -82,11 +82,16 @@ export class AudiobookshelfSyncSchedulerService {
         }
 
         if (users.length < AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE) break;
+        const afterUserId = users[users.length - 1]!.userId;
+        users = await this.repo.findEnabledConfiguredUsers(afterUserId, AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE);
+        if (users.length === 0) break;
       }
 
-      this.logger.log(
-        `[${event}] [end] durationMs=${Date.now() - startedAt} usersProcessed=${usersProcessed} usersFailed=${usersFailed} - run completed`,
-      );
+      if (!quiet) {
+        this.logger.log(
+          `[${event}] [end] durationMs=${Date.now() - startedAt} usersProcessed=${usersProcessed} usersFailed=${usersFailed} - run completed`,
+        );
+      }
     } catch (err) {
       const { errorClass, error } = describeError(err);
       this.logger.error(

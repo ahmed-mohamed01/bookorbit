@@ -10,11 +10,11 @@ import type {
   MonitorMode,
 } from '@bookorbit/types';
 
-import { authors } from './metadata';
-import { users } from './auth';
-import { bookRequests } from './book-requests';
-import { books } from './books';
-import { libraries, libraryFolders } from './libraries';
+import { authors } from '../../../db/schema/metadata';
+import { users } from '../../../db/schema/auth';
+import { bookRequests } from '../../../db/schema/book-requests';
+import { books } from '../../../db/schema/books';
+import { libraries, libraryFolders } from '../../../db/schema/libraries';
 
 // These literal CHECK lists are mirrored against @bookorbit/types in monitored.schema.test.ts.
 export const monitoredAuthors = pgTable(

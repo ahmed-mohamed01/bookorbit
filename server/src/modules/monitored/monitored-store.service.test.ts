@@ -3,10 +3,10 @@ import type { SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgDialect } from 'drizzle-orm/pg-core';
 
-import * as schema from '../../db/schema';
-import { authorCatalogWorks, type AuthorCatalogWorkRow } from '../../db/schema';
 import type { RequestUser } from '../../common/types/request-user';
 import { MonitoredStoreService, releaseRangeOverlapsSql } from './monitored-store.service';
+import * as schema from './schema/monitored.schema';
+import { authorCatalogWorks, type AuthorCatalogWorkRow } from './schema/monitored.schema';
 
 type OverlayRow = typeof schema.monitoredAuthorWorks.$inferSelect;
 

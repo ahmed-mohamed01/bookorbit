@@ -21,11 +21,14 @@ import type {
 import type { RequestUser } from '../../common/types/request-user';
 import { accentInsensitiveIlike, buildSearchPattern } from '../../common/utils/accent-insensitive-search.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { normalizeMonitoredName } from './monitored-text.utils';
 import { DB } from '../../db';
-import * as schema from '../../db/schema';
-import type { AuthorCatalogWorkRow, MonitoredAuthorRow, MonitoredAuthorWorkRow } from '../../db/schema';
+import * as dbSchema from '../../db/schema';
+import { books as upstreamBooks } from '../../db/schema';
 import { LibraryService } from '../library/library.service';
+import * as schema from './schema/monitored.schema';
+import type { AuthorCatalogWorkRow, MonitoredAuthorRow, MonitoredAuthorWorkRow } from './schema/monitored.schema';
 
 const WRITE_BATCH_SIZE = 250;
 
@@ -85,7 +88,7 @@ interface ReleasePageRef extends Record<string, unknown> {
 type AuthorWrite = Omit<MonitoredAuthorConfig, 'id'> & { id?: string };
 type AuthorFields = Partial<Omit<MonitoredAuthorConfig, 'id'>>;
 type BookWrite = Omit<MonitoredBookEntry, 'id'> & { id?: string };
-type Db = NodePgDatabase<typeof schema>;
+type Db = NodePgDatabase<typeof dbSchema>;
 type DbSnapshot = Parameters<Parameters<Db['transaction']>[0]>[0];
 type WorkStatePatch = MonitoredWorkPatch & {
   monitorState?: MonitoredWork['monitorState'];
@@ -118,6 +121,14 @@ export class MonitoredStoreService {
     @Inject(DB) private readonly db: Db,
     private readonly libraries: LibraryService,
   ) {}
+
+  async findMissingTables(tableNames: readonly string[]): Promise<string[]> {
+    return findMissingTables(this.db, tableNames);
+  }
+
+  async applySchemaStatements(statements: readonly string[]): Promise<void> {
+    return applySchemaStatements(this.db, statements);
+  }
 
   async findAuthorPage(params: {
     viewer: RequestUser;
@@ -982,9 +993,9 @@ export class MonitoredStoreService {
     return and(
       hasOwnedFormat,
       sql`exists (
-        select 1 from ${schema.books}
-        where ${schema.books.id} = ${matchedBookId}
-          and ${inArray(schema.books.libraryId, libraryIds)}
+        select 1 from ${upstreamBooks}
+        where ${upstreamBooks.id} = ${matchedBookId}
+          and ${inArray(upstreamBooks.libraryId, libraryIds)}
       )`,
     )!;
   }
@@ -1121,9 +1132,9 @@ export class MonitoredStoreService {
     ];
     if (!ids.length) return new Set();
     const books = await this.db
-      .select({ id: schema.books.id })
-      .from(schema.books)
-      .where(and(inArray(schema.books.id, ids), inArray(schema.books.libraryId, libraryIds)));
+      .select({ id: upstreamBooks.id })
+      .from(upstreamBooks)
+      .where(and(inArray(upstreamBooks.id, ids), inArray(upstreamBooks.libraryId, libraryIds)));
     return new Set(books.map((book) => book.id));
   }
 

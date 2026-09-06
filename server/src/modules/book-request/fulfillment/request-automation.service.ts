@@ -24,7 +24,7 @@ import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import type { BookRequestRow } from '../../../db/schema';
 import { BOOK_REQUEST_DOWNLOAD_FAILED, BookRequestEventsService } from '../book-request-events.service';
 import { BookRequestNotifier } from '../book-request-notifier.service';
-import { BookRequestRepository } from '../book-request.repository';
+import { BookRequestRepository, type BookRequestWithAutoGrab } from '../book-request.repository';
 import { bookRequestSearchIsbns, type IndexerSearchMode, IndexerSearchService } from '../indexers/indexer-search.service';
 import { BookRequestDownloadRepository } from './book-request-download.repository';
 import { grabFailureCode, RequestAlreadyClaimedException, RequestFulfillmentService } from './request-fulfillment.service';
@@ -323,7 +323,7 @@ export class RequestAutomationService implements OnModuleInit {
     await this.grabFirstThatStarts(requestId, trigger, settings, pick, spent);
   }
 
-  private grabAllowed(request: BookRequestRow, settings: BookRequestAutomationSettings): boolean {
+  private grabAllowed(request: BookRequestWithAutoGrab, settings: BookRequestAutomationSettings): boolean {
     return request.autoGrab ?? settings.autoGrabEnabled;
   }
 

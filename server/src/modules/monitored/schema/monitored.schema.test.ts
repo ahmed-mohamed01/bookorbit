@@ -1,7 +1,7 @@
 import { PgDialect, getTableConfig } from 'drizzle-orm/pg-core';
 import { MONITORED_WORK_STATES, MONITORED_WORK_VERDICTS, MONITOR_MODES } from '@bookorbit/types';
 
-import { authorCatalogWorks, monitoredAuthors, monitoredAuthorWorks, monitoredBooks } from './monitored';
+import { authorCatalogWorks, monitoredAuthors, monitoredAuthorWorks, monitoredBooks } from './monitored.schema';
 
 const dialect = new PgDialect();
 

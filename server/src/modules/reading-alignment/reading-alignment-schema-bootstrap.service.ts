@@ -1,10 +1,11 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { splitSchemaStatements } from '../../common/utils/schema-bootstrap.utils';
 import { ReadingAlignmentRepository } from './reading-alignment.repository';
 import { READING_ALIGNMENT_SCHEMA_SQL } from './schema/reading-alignment-schema';
 
-const STATEMENT_BREAKPOINT = '--> statement-breakpoint';
+const TABLE_NAMES = ['audiobook_alignment', 'audiobook_alignment_anchor'] as const;
 
 @Injectable()
 export class ReadingAlignmentSchemaBootstrapService implements OnApplicationBootstrap {
@@ -14,19 +15,19 @@ export class ReadingAlignmentSchemaBootstrapService implements OnApplicationBoot
 
   async onApplicationBootstrap(): Promise<void> {
     const startedAt = Date.now();
-    this.logger.log('[reading_alignment.schema_bootstrap] [start] - schema bootstrap started');
 
     try {
-      const statements = READING_ALIGNMENT_SCHEMA_SQL.split(STATEMENT_BREAKPOINT)
-        .map((statement) => statement.trim())
-        .filter(Boolean);
+      const missing = await this.repo.findMissingTables(TABLE_NAMES);
+      const statements = splitSchemaStatements(READING_ALIGNMENT_SCHEMA_SQL);
 
       await this.repo.applySchemaStatements(statements);
       const interruptedBuildsReset = await this.repo.failInterruptedBuilds();
 
-      this.logger.log(
-        `[reading_alignment.schema_bootstrap] [end] durationMs=${Date.now() - startedAt} interruptedBuildsReset=${interruptedBuildsReset} - schema bootstrap completed`,
-      );
+      if (missing.length > 0 || interruptedBuildsReset > 0) {
+        this.logger.log(
+          `[reading_alignment.schema_bootstrap] [end] durationMs=${Date.now() - startedAt} tablesCreated=${missing.length} interruptedBuildsReset=${interruptedBuildsReset} - schema bootstrap completed`,
+        );
+      }
     } catch (err) {
       const errorClass = err instanceof Error ? err.name : 'UnknownError';
       const errorMessage = err instanceof Error ? err.message : String(err);

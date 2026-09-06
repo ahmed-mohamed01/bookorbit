@@ -11,6 +11,7 @@ import type {
 } from '@bookorbit/types';
 
 import { isUniqueViolation } from '../../common/utils/db-error.utils';
+import { applySchemaStatements, findMissingColumns } from '../../common/utils/schema-bootstrap.utils';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import {
@@ -31,6 +32,7 @@ import {
   type BookRequestRow,
   type NewBookRequestRow,
 } from '../../db/schema';
+import { bookRequestAutoGrab } from './schema/book-request-auto-grab.schema';
 
 /**
  * What happened to a grab claim. `moved` is somebody else's decision landing first; `duplicate` is
@@ -40,8 +42,9 @@ export type GrabClaimOutcome = 'claimed' | 'moved' | 'duplicate';
 
 type Db = NodePgDatabase<typeof schema>;
 /** What the write helpers below need, so they take a transaction as readily as the pool. */
-type RequestWriteExecutor = Pick<Db, 'insert'>;
+type RequestWriteExecutor = Pick<Db, 'insert' | 'update'>;
 type RequestReadExecutor = Pick<Db, 'select'>;
+export type BookRequestWithAutoGrab = BookRequestRow & Pick<typeof bookRequestAutoGrab.$inferSelect, 'autoGrab'>;
 
 /**
  * A new `statusReason` clears the classified fields unless the caller supplies them, so a stale
@@ -117,6 +120,8 @@ export interface BookRequestJoinedRow {
   targetLibraryName: string | null;
 }
 
+type BookRequestJoinedWithAutoGrab = Omit<BookRequestJoinedRow, 'request'> & { request: BookRequestWithAutoGrab };
+
 /** A book that shares a title with a search candidate, plus the authors that decide the match. */
 export interface OwnedTitleMatch {
   bookId: number;
@@ -131,6 +136,14 @@ export interface OwnedMatchLookup {
 @Injectable()
 export class BookRequestRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
+
+  async findMissingColumns(tableName: string, columnNames: readonly string[]): Promise<string[]> {
+    return findMissingColumns(this.db, tableName, columnNames);
+  }
+
+  async applySchemaStatements(statements: readonly string[]): Promise<void> {
+    return applySchemaStatements(this.db, statements);
+  }
 
   async findAll(opts: ListRequestsOptions): Promise<{ items: BookRequestJoinedRow[]; total: number }> {
     const conditions: SQL[] = [];
@@ -215,10 +228,11 @@ export class BookRequestRepository {
       .limit(REQUESTER_OPTION_LIMIT);
   }
 
-  async findById(id: number): Promise<BookRequestJoinedRow | undefined> {
+  async findById(id: number): Promise<BookRequestJoinedWithAutoGrab | undefined> {
     const [row] = await this.db
       .select({
         request: bookRequests,
+        autoGrab: bookRequestAutoGrab.autoGrab,
         requesterUsername: users.username,
         requesterName: users.name,
         targetLibraryName: libraries.name,
@@ -234,6 +248,7 @@ export class BookRequestRepository {
     const names = await this.findUsernames([row.request.decidedByUserId]);
     return {
       ...row,
+      request: { ...row.request, autoGrab: row.autoGrab },
       decidedByUsername: row.request.decidedByUserId != null ? (names.get(row.request.decidedByUserId) ?? null) : null,
     };
   }
@@ -249,8 +264,8 @@ export class BookRequestRepository {
    * The aliases go in with the row rather than after it: a request that exists without them is one
    * the next requester will not collide with, and nothing would ever notice.
    */
-  async create(data: NewBookRequestRow, aliasKeys: string[] = []): Promise<BookRequestRow> {
-    return this.db.transaction(async (tx) => this.insertWithAliases(tx, data, aliasKeys));
+  async create(data: NewBookRequestRow, aliasKeys: string[] = [], autoGrab?: boolean | null): Promise<BookRequestRow> {
+    return this.db.transaction(async (tx) => this.insertWithAliases(tx, data, aliasKeys, autoGrab));
   }
 
   /**
@@ -261,22 +276,38 @@ export class BookRequestRepository {
    * and the limit an operator was promised turns out to be a suggestion. The lock is per user, so
    * two people submitting at the same time never wait on each other. Null means the cap refused.
    */
-  async createWithinSelfServeCap(data: NewBookRequestRow, aliasKeys: string[], maxLive: number): Promise<BookRequestRow | null> {
+  async createWithinSelfServeCap(
+    data: NewBookRequestRow,
+    aliasKeys: string[],
+    maxLive: number,
+    autoGrab?: boolean | null,
+  ): Promise<BookRequestRow | null> {
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(${SELF_SERVE_CAP_LOCK_NAMESPACE}, ${data.userId})`);
       if ((await countLiveSelfServe(tx, data.userId)) >= maxLive) return null;
-      return this.insertWithAliases(tx, data, aliasKeys);
+      return this.insertWithAliases(tx, data, aliasKeys, autoGrab);
     });
   }
 
-  private async insertWithAliases(tx: RequestWriteExecutor, data: NewBookRequestRow, aliasKeys: string[]): Promise<BookRequestRow> {
+  private async insertWithAliases(
+    tx: RequestWriteExecutor,
+    data: NewBookRequestRow,
+    aliasKeys: string[],
+    autoGrab?: boolean | null,
+  ): Promise<BookRequestRow> {
     const [row] = await tx.insert(bookRequests).values(data).returning();
+
+    if (autoGrab != null) await this.setAutoGrab(row.id, autoGrab, tx);
 
     const keys = [...new Set(aliasKeys)].filter((key) => key !== row.dedupeKey);
     if (keys.length > 0) {
       await tx.insert(bookRequestDedupeAliases).values(keys.map((dedupeKey) => ({ requestId: row.id, dedupeKey })));
     }
     return row;
+  }
+
+  private async setAutoGrab(id: number, autoGrab: boolean, executor: RequestWriteExecutor): Promise<void> {
+    await executor.update(bookRequestAutoGrab).set({ autoGrab }).where(eq(bookRequestAutoGrab.id, id));
   }
 
   /**
@@ -609,7 +640,7 @@ export class BookRequestRepository {
       .where(
         and(
           eq(bookRequests.status, 'approved'),
-          sql`coalesce(${bookRequests.autoGrab}, ${instanceAutomationOn}) = true`,
+          sql`coalesce(${bookRequestAutoGrab.autoGrab}, ${instanceAutomationOn}) = true`,
           sql`${bookRequests.targetLibraryId} is not null`,
           sql`${bookRequests.createdAt} > now() - make_interval(days => ${maxAgeDays})`,
           sql`now() - ${bookRequests.updatedAt} >= make_interval(hours => ${baseIntervalHours}) * least(

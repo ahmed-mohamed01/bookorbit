@@ -76,9 +76,9 @@ export class WhisperModelService implements OnApplicationBootstrap {
     @Inject(storageConfig.KEY) private readonly storage: ConfigType<typeof storageConfig>,
   ) {}
 
-  // Boot-time readiness probe: CHECK-only (a stat plus name validation), so the startup log answers
-  // "is the model ready?" without a large download delaying boot. A named model that is not cached
-  // yet stays pending and is downloaded lazily by the first alignment build.
+  // Boot-time readiness probe: CHECK-only (a stat plus name validation), so a large download cannot
+  // delay boot. A named model that is not cached stays pending and is downloaded lazily by the first
+  // alignment build.
   onApplicationBootstrap(): void {
     if (!this.config.readingAlignmentEnabled) return;
     void this.probeAtBoot();
@@ -86,7 +86,6 @@ export class WhisperModelService implements OnApplicationBootstrap {
 
   private async probeAtBoot(): Promise<void> {
     const startedAt = Date.now();
-    this.logger.log(`[${PROBE_EVENT}] [start] - checking whisper model readiness`);
 
     const value = this.config.whisperModel;
     if (!isExplicitPath(value) && KNOWN_MODELS.has(value)) {
@@ -103,7 +102,6 @@ export class WhisperModelService implements OnApplicationBootstrap {
 
     try {
       await this.ensureModelReady();
-      this.logger.log(`[${PROBE_EVENT}] [end] durationMs=${Date.now() - startedAt} outcome=ready - whisper model ready`);
     } catch {
       // The resolution failure was already logged with its cause by resolve()'s [fail] entry.
       this.logger.warn(`[${PROBE_EVENT}] [end] durationMs=${Date.now() - startedAt} outcome=not_ready - whisper model not ready`);
