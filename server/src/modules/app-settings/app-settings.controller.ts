@@ -9,6 +9,7 @@ import { OidcProviderService } from './oidc-provider.service';
 import { UpdateAppSettingDto } from './dto/update-app-setting.dto';
 import { UpdateFilePatternDto } from './dto/update-file-pattern.dto';
 import { UpdateBooleanSettingDto } from './dto/update-boolean-setting.dto';
+import { UpdateMonitoredSettingsDto } from './dto/update-monitored-settings.dto';
 import { UpdateDefaultLibraryAccessDto } from './dto/update-default-library-access.dto';
 import { CreateOidcProviderDto } from './dto/create-oidc-provider.dto';
 import { UpdateOidcProviderDto } from './dto/update-oidc-provider.dto';
@@ -97,6 +98,22 @@ export class AppSettingsController {
   async setCrossPlatformPathSanitization(@Body() dto: UpdateBooleanSettingDto) {
     await this.appSettingsService.setCrossPlatformPathSanitizationEnabled(dto.enabled);
     return { enabled: dto.enabled };
+  }
+
+  @Get('monitored')
+  getMonitoredSettings() {
+    return this.appSettingsService.getMonitoredSettings();
+  }
+
+  @Put('monitored')
+  @HttpCode(HttpStatus.OK)
+  @Auditable({
+    action: AuditAction.AppSettingsUpdate,
+    resource: AuditResource.AppSettings,
+    description: 'Updated monitored author settings',
+  })
+  setMonitoredSettings(@Body() dto: UpdateMonitoredSettingsDto) {
+    return this.appSettingsService.setMonitoredSettings(dto);
   }
 
   @Get('default-library-access')

@@ -95,6 +95,7 @@ const ADMIN_ROUTES: Record<AdminTab, string> = {
 const SYSTEM_ROUTES: Record<SystemTab, string> = {
   'file-naming': 'settings-file-naming',
   'book-dock': 'settings-admin-book-dock',
+  monitored: 'settings-admin-monitored',
   requests: 'settings-admin-requests',
   maintenance: 'settings-maintenance',
   'audit-log': 'settings-admin-audit-log',
@@ -451,6 +452,13 @@ export const routes: RouteRecordRaw[] = [
             component: () => import('@/features/settings/BookDockSettings.vue'),
             props: { embedded: true },
             meta: { maxWidth: 'max-w-3xl', title: () => t('titles.system.book-dock') },
+          },
+          {
+            path: 'admin/monitored',
+            name: 'settings-admin-monitored',
+            component: () => import('@/features/settings/MonitoredSettings.vue'),
+            props: { embedded: true },
+            meta: { maxWidth: 'max-w-3xl', title: () => t('titles.system.monitored') },
           },
           {
             path: 'admin/requests',

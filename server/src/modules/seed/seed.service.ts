@@ -6,6 +6,7 @@ import {
   APP_SETTING_KEYS,
   DEFAULT_AUDIT_RETENTION_DAYS,
   DEFAULT_AUTHOR_ENRICHMENT_CONFIG,
+  DEFAULT_MONITORED_REFRESH_COOLDOWN_MINUTES,
   DEFAULT_OIDC_CONFIG,
 } from '../../common/constants/app-settings.constants';
 import { DB } from '../../db';
@@ -42,6 +43,7 @@ const DEFAULT_APP_SETTINGS: Array<typeof schema.appSettings.$inferInsert> = [
   { key: APP_SETTING_KEYS.UPDATE_CHECK_ENABLED, value: 'true' },
   { key: APP_SETTING_KEYS.CROSS_PLATFORM_PATH_SANITIZATION_ENABLED, value: 'true' },
   { key: APP_SETTING_KEYS.MAX_UPLOAD_SIZE_MB, value: '500' },
+  { key: APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES, value: String(DEFAULT_MONITORED_REFRESH_COOLDOWN_MINUTES) },
 ];
 
 @Injectable()

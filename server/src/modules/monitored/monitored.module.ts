@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { AuthorsModule } from '../authors/authors.module';
+import { AppSettingsModule } from '../app-settings/app-settings.module';
 import { BookRequestModule } from '../book-request/book-request.module';
 import { CoverModule } from '../cover/cover.module';
 import { HardcoverModule } from '../hardcover/hardcover.module';
@@ -20,7 +21,16 @@ import { MonitoredSchemaBootstrapService } from './monitored-schema-bootstrap.se
 import { MonitoredStoreService } from './monitored-store.service';
 
 @Module({
-  imports: [AuthorsModule, BookRequestModule, CoverModule, HardcoverModule, LibraryModule, MetadataFetchModule, MetadataPreferencesModule],
+  imports: [
+    AppSettingsModule,
+    AuthorsModule,
+    BookRequestModule,
+    CoverModule,
+    HardcoverModule,
+    LibraryModule,
+    MetadataFetchModule,
+    MetadataPreferencesModule,
+  ],
   controllers: [MonitoredController],
   providers: [
     MonitoredStoreService,

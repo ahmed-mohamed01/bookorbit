@@ -2819,9 +2819,23 @@
       "tabs": {
         "file-naming": "File Naming",
         "book-dock": "Book Dock",
+        "monitored": "Monitored",
         "requests": "Requests",
         "maintenance": "Maintenance",
         "audit-log": "Audit Log"
+      },
+      "monitored": {
+        "title": "Monitored",
+        "subtitle": "Control how BookOrbit refreshes monitored author catalogs.",
+        "refreshGroup": "Refresh",
+        "refreshCooldown": "Author refresh cooldown",
+        "refreshCooldownHint": "How long each monitored author must wait after a successful catalog fetch before it can be refreshed again.",
+        "minutes": "minutes",
+        "save": "Save",
+        "saved": "Monitored settings saved",
+        "loadFailed": "Could not load monitored settings",
+        "saveFailed": "Could not save monitored settings",
+        "invalidCooldown": "Refresh cooldown must be a whole number from 1 to 1440 minutes"
       },
       "requests": {
         "title": "Requests",
@@ -3291,6 +3305,7 @@
         "oidc": "Single sign-on provider, claims, and provisioning.",
         "serverFonts": "Fonts installed for every reader on this server.",
         "bookDock": "Quick actions shown on book pages.",
+        "monitored": "Refresh timing and automation for monitored authors.",
         "auditLog": "Who changed what, and when.",
         "requests": "Sources, download clients, and what happens to a book once it downloads."
       },
@@ -10134,6 +10149,7 @@
     "system": {
       "file-naming": "File Naming",
       "book-dock": "Book Dock",
+      "monitored": "Monitored",
       "requests": "Requests",
       "maintenance": "Maintenance",
       "audit-log": "Audit Log"

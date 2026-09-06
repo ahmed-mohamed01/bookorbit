@@ -35,6 +35,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { isUniqueViolation } from '../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { AuthorEnrichmentExecutorService } from '../authors/author-enrichment-executor.service';
+import { AppSettingsService } from '../app-settings/app-settings.service';
 import { AuthorImageStorageService } from '../authors/author-image-storage.service';
 import { AuthorMetadataPreferencesService } from '../authors/author-metadata-preferences.service';
 import { AuthorsRepository } from '../authors/authors.repository';
@@ -62,7 +63,6 @@ import type {
 } from './dto/monitored.dto';
 import { releaseDateWithinWindow } from './release-window';
 
-const REFRESH_COOLDOWN_MS = 10 * 60 * 1000;
 const RELEASE_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
 const RELEASE_LOOKAHEAD_MS = 365 * 24 * 60 * 60 * 1000;
 const DEFAULT_FORMAT_CONFIG: MonitorFormatConfig = { mode: 'off', libraryId: null, folderId: null };
@@ -113,6 +113,7 @@ export class MonitoredService {
     private readonly fulfillment: RequestFulfillmentService,
     private readonly indexerSearch: IndexerSearchService,
     private readonly authorImageStorage: AuthorImageStorageService,
+    private readonly appSettings: AppSettingsService,
   ) {}
 
   async getSummary(user: RequestUser): Promise<MonitoredSummary> {
@@ -297,7 +298,9 @@ export class MonitoredService {
     this.logger.log(`[monitored.author.refresh] [start] monitorId="${sanitizeLogValue(id)}" userId=${user.id} - monitored author refresh started`);
     try {
       const monitor = await this.getWritableAuthor(id, user);
-      if (monitor.lastRefreshedAt && Date.now() - new Date(monitor.lastRefreshedAt).getTime() < REFRESH_COOLDOWN_MS) {
+      const { refreshCooldownMinutes } = await this.appSettings.getMonitoredSettings();
+      const refreshCooldownMs = refreshCooldownMinutes * 60 * 1000;
+      if (monitor.lastRefreshedAt && Date.now() - new Date(monitor.lastRefreshedAt).getTime() < refreshCooldownMs) {
         throw new HttpException('Monitored author was refreshed a moment ago; try again shortly', HttpStatus.TOO_MANY_REQUESTS);
       }
       // Use the owner's token so delegated and future background refreshes spend the owner's quota.

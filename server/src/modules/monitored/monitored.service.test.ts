@@ -76,6 +76,7 @@ type ServiceDeps = {
   indexerSearch?: Record<string, unknown>;
   fulfillment?: Record<string, unknown>;
   autoRequests?: Record<string, unknown>;
+  appSettings?: Record<string, unknown>;
 };
 
 function service(store: Record<string, unknown>, bookRequests: Record<string, unknown> = {}, deps: ServiceDeps = {}): MonitoredService {
@@ -96,6 +97,7 @@ function service(store: Record<string, unknown>, bookRequests: Record<string, un
     (deps.fulfillment ?? {}) as never,
     (deps.indexerSearch ?? {}) as never,
     (deps.authorImageStorage ?? {}) as never,
+    (deps.appSettings ?? { getMonitoredSettings: vi.fn().mockResolvedValue({ refreshCooldownMinutes: 10 }) }) as never,
   );
 }
 
@@ -443,6 +445,54 @@ describe('MonitoredService', () => {
     await expect(instance.refreshAuthor(monitor.id, superuser)).rejects.toBe(failure);
     expect(forUser).toHaveBeenCalledWith(monitor.ownerUserId);
     expect(fetchCatalog).toHaveBeenCalledWith(monitor, config);
+  });
+
+  it('uses the configured refresh cooldown for each monitored author', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-06T12:00:00.000Z'));
+    try {
+      const monitor = author({ lastRefreshedAt: '2026-09-06T11:55:00.000Z' });
+      const fetchCatalog = vi.fn();
+      const instance = service(
+        { getAuthor: vi.fn().mockResolvedValue(monitor) },
+        {},
+        {
+          catalog: { fetchCatalog },
+          appSettings: { getMonitoredSettings: vi.fn().mockResolvedValue({ refreshCooldownMinutes: 10 }) },
+        },
+      );
+
+      const failure = await instance.refreshAuthor(monitor.id, viewer).catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(HttpException);
+      expect((failure as HttpException).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect(fetchCatalog).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('allows a refresh once the configured cooldown has elapsed', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-06T12:00:00.000Z'));
+    try {
+      const monitor = author({ lastRefreshedAt: '2026-09-06T11:55:00.000Z' });
+      const failure = new Error('stop after fetch');
+      const fetchCatalog = vi.fn().mockRejectedValue(failure);
+      const instance = service(
+        { getAuthor: vi.fn().mockResolvedValue(monitor) },
+        {},
+        {
+          catalog: { fetchCatalog },
+          appSettings: { getMonitoredSettings: vi.fn().mockResolvedValue({ refreshCooldownMinutes: 5 }) },
+        },
+      );
+
+      await expect(instance.refreshAuthor(monitor.id, viewer)).rejects.toBe(failure);
+      expect(fetchCatalog).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([

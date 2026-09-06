@@ -12,6 +12,7 @@ import {
   DEFAULT_UPLOAD_PATTERN_BOOK_PER_FOLDER,
   DEFAULT_METADATA_SCORE_WEIGHTS,
   type MetadataScoreWeights,
+  type MonitoredSettings,
   type BookDockAutoFinalizeMetadataMode,
   type BookDockSettings,
   type UpdateBookDockSettingsRequest,
@@ -23,6 +24,7 @@ import {
   APP_SETTING_KEYS,
   BOOK_DOCK_MANAGED_SETTING_KEYS,
   DEFAULT_LIBRARY_ACCESS_CONFIG,
+  DEFAULT_MONITORED_REFRESH_COOLDOWN_MINUTES,
   DEFAULT_OIDC_CONFIG,
   type OidcFullConfig,
 } from '../../common/constants/app-settings.constants';
@@ -88,6 +90,9 @@ export class AppSettingsService {
       if (isNaN(parsed) || parsed <= 0) {
         throw new BadRequestException('Upload size limit must be an integer greater than 0');
       }
+    }
+    if (key === APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES) {
+      throw new BadRequestException(`Setting '${key}' is managed by the Monitored endpoints and cannot be written here`);
     }
     const setting = await this.repo.updateByKey(key, value);
     if (!setting) throw new NotFoundException(`Setting '${key}' not found`);
@@ -206,8 +211,30 @@ export class AppSettingsService {
     this.clearRuntimeSettingCache(APP_SETTING_KEYS.CROSS_PLATFORM_PATH_SANITIZATION_ENABLED);
   }
 
+  async getMonitoredSettings(): Promise<MonitoredSettings> {
+    const refreshCooldownMinutes = await this.runtimeSettingCache.get(
+      'app-settings',
+      APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES,
+      async () => {
+        const row = await this.repo.findByKey(APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES);
+        const parsed = Number(row?.value);
+        return Number.isInteger(parsed) && parsed >= 1 && parsed <= 1440 ? parsed : DEFAULT_MONITORED_REFRESH_COOLDOWN_MINUTES;
+      },
+    );
+    return { refreshCooldownMinutes };
+  }
+
+  async setMonitoredSettings(settings: MonitoredSettings): Promise<MonitoredSettings> {
+    if (!Number.isInteger(settings.refreshCooldownMinutes) || settings.refreshCooldownMinutes < 1 || settings.refreshCooldownMinutes > 1440) {
+      throw new BadRequestException('Monitored refresh cooldown must be an integer from 1 to 1440 minutes');
+    }
+    await this.repo.upsert(APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES, String(settings.refreshCooldownMinutes));
+    this.clearRuntimeSettingCache(APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES);
+    return this.getMonitoredSettings();
+  }
+
   private clearRuntimeSettingCache(key: string): void {
-    if (key === APP_SETTING_KEYS.CROSS_PLATFORM_PATH_SANITIZATION_ENABLED) {
+    if (key === APP_SETTING_KEYS.CROSS_PLATFORM_PATH_SANITIZATION_ENABLED || key === APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES) {
       this.runtimeSettingCache.clearForScope('app-settings');
     }
   }

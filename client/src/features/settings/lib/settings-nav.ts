@@ -23,6 +23,7 @@ import {
   Palette,
   PanelBottom,
   Rss,
+  RefreshCw,
   ScrollText,
   Server,
   Shield,
@@ -476,6 +477,15 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
             isVisible: anyPermission('manage_app_settings'),
           },
         ],
+      },
+      {
+        id: 'monitored',
+        routeName: 'settings-admin-monitored',
+        labelKey: 'settings.system.tabs.monitored',
+        descriptionKey: 'settings.nav.descriptions.monitored',
+        icon: RefreshCw,
+        keywords: 'monitored authors refresh cooldown provider throttle',
+        isVisible: anyPermission(Permission.ManageAppSettings),
       },
       {
         id: 'requests',

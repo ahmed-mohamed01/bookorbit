@@ -3,12 +3,12 @@ import { SYSTEM_TABS, normalizeSystemTab } from '../lib/system-tabs'
 
 describe('system-tabs', () => {
   describe('SYSTEM_TABS', () => {
-    it('contains exactly file-naming, book-dock, requests, maintenance, audit-log', () => {
-      expect(SYSTEM_TABS).toEqual(['file-naming', 'book-dock', 'requests', 'maintenance', 'audit-log'])
+    it('contains exactly file-naming, book-dock, monitored, requests, maintenance, audit-log', () => {
+      expect(SYSTEM_TABS).toEqual(['file-naming', 'book-dock', 'monitored', 'requests', 'maintenance', 'audit-log'])
     })
 
     it('has length 5', () => {
-      expect(SYSTEM_TABS.length).toBe(5)
+      expect(SYSTEM_TABS.length).toBe(6)
     })
   })
 
@@ -43,6 +43,10 @@ describe('system-tabs', () => {
 
     it('returns requests when given "requests"', () => {
       expect(normalizeSystemTab('requests')).toBe('requests')
+    })
+
+    it('returns monitored when given "monitored"', () => {
+      expect(normalizeSystemTab('monitored')).toBe('monitored')
     })
 
     it('returns maintenance when given "maintenance"', () => {

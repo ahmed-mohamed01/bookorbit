@@ -1,4 +1,4 @@
-export const SYSTEM_TABS = ['file-naming', 'book-dock', 'requests', 'maintenance', 'audit-log'] as const
+export const SYSTEM_TABS = ['file-naming', 'book-dock', 'monitored', 'requests', 'maintenance', 'audit-log'] as const
 
 export type SystemTab = (typeof SYSTEM_TABS)[number]
 

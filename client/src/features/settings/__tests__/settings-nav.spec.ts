@@ -46,6 +46,14 @@ describe('settings navigation model', () => {
     expect(findSettingsNavItem('settings-readwise')?.item.icon).toBe(Highlighter)
     expect(findSettingsNavItem('settings-storygraph')?.item.icon).toBe(LibraryBig)
   })
+
+  it('places monitored settings immediately above requests', () => {
+    const serverItems = SETTINGS_NAV.find((group) => group.id === 'server')?.items.map((item) => item.id)
+    const requestsIndex = serverItems?.indexOf('requests') ?? -1
+
+    expect(requestsIndex).toBeGreaterThan(0)
+    expect(serverItems?.[requestsIndex - 1]).toBe('monitored')
+  })
 })
 
 describe('visibleSettingsNav', () => {

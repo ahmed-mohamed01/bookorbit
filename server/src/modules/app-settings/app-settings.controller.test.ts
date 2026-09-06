@@ -20,6 +20,8 @@ function makeService(): jest.Mocked<AppSettingsService> {
     setDownloadPattern: vi.fn(),
     isCrossPlatformPathSanitizationEnabled: vi.fn(),
     setCrossPlatformPathSanitizationEnabled: vi.fn(),
+    getMonitoredSettings: vi.fn(),
+    setMonitoredSettings: vi.fn(),
     getDefaultLibraryAccess: vi.fn(),
     setDefaultLibraryAccess: vi.fn(),
     getAutoFinalizeSettings: vi.fn(),
@@ -122,6 +124,17 @@ describe('AppSettingsController', () => {
       const result = await controller.setDownloadPattern({ pattern: '{originalFilename}' });
       expect(service.setDownloadPattern).toHaveBeenCalledWith('{originalFilename}');
       expect(result).toEqual({ pattern: '{originalFilename}' });
+    });
+  });
+
+  describe('monitored settings', () => {
+    it('gets and updates the typed settings document', async () => {
+      service.getMonitoredSettings.mockResolvedValue({ refreshCooldownMinutes: 10 });
+      service.setMonitoredSettings.mockResolvedValue({ refreshCooldownMinutes: 30 });
+
+      await expect(controller.getMonitoredSettings()).resolves.toEqual({ refreshCooldownMinutes: 10 });
+      await expect(controller.setMonitoredSettings({ refreshCooldownMinutes: 30 })).resolves.toEqual({ refreshCooldownMinutes: 30 });
+      expect(service.setMonitoredSettings).toHaveBeenCalledWith({ refreshCooldownMinutes: 30 });
     });
   });
 

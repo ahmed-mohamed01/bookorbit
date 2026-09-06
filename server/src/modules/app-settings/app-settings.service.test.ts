@@ -105,6 +105,11 @@ describe('AppSettingsService', () => {
       await expect(service.update(key, 'anything')).rejects.toThrow(BadRequestException);
       expect(repo.updateByKey).not.toHaveBeenCalled();
     });
+
+    it('rejects the monitored cooldown key so it cannot bypass typed validation', async () => {
+      await expect(service.update('monitored_refresh_cooldown_minutes', '0')).rejects.toThrow(BadRequestException);
+      expect(repo.updateByKey).not.toHaveBeenCalled();
+    });
   });
 
   describe('isBookDockAutoFetchEnabled', () => {
@@ -633,6 +638,30 @@ describe('AppSettingsService', () => {
     it('returns 500 when value is invalid or <= 0', async () => {
       repo.findByKey.mockResolvedValue({ key: 'max_upload_size_mb', value: '-50' } as never);
       expect(await service.getMaxUploadSizeMb()).toBe(500);
+    });
+  });
+
+  describe('monitored settings', () => {
+    it('returns the ten minute default when the setting is absent or invalid', async () => {
+      repo.findByKey.mockResolvedValue(undefined);
+      expect(await service.getMonitoredSettings()).toEqual({ refreshCooldownMinutes: 10 });
+
+      service = new AppSettingsService(repo, config, { appDataPath: '/data', bookDockPath: '/data/book-dock', libraryBrowseRoot: '/' });
+      repo.findByKey.mockResolvedValue({ key: 'monitored_refresh_cooldown_minutes', value: '0' } as never);
+      expect(await service.getMonitoredSettings()).toEqual({ refreshCooldownMinutes: 10 });
+    });
+
+    it('persists and returns a new refresh cooldown', async () => {
+      repo.findByKey.mockResolvedValue({ key: 'monitored_refresh_cooldown_minutes', value: '30' } as never);
+
+      await expect(service.setMonitoredSettings({ refreshCooldownMinutes: 30 })).resolves.toEqual({ refreshCooldownMinutes: 30 });
+
+      expect(repo.upsert).toHaveBeenCalledWith('monitored_refresh_cooldown_minutes', '30');
+    });
+
+    it.each([0, 1441, 1.5])('rejects an invalid refresh cooldown of %s', async (refreshCooldownMinutes) => {
+      await expect(service.setMonitoredSettings({ refreshCooldownMinutes })).rejects.toThrow(BadRequestException);
+      expect(repo.upsert).not.toHaveBeenCalled();
     });
   });
 
