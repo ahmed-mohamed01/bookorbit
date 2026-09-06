@@ -22,7 +22,9 @@ export const AUDIOBOOKSHELF_DURATION_TOLERANCE_RELATIVE = 0.01;
 // Cron cadence for the full scheduled sync (every 15 minutes): matching-if-fresh, all progress, sessions.
 export const AUDIOBOOKSHELF_SCHEDULER_CRON = '*/15 * * * *';
 // Cron cadence for the hot tier (every 30 seconds): near-live position for in-progress books only.
-export const AUDIOBOOKSHELF_HOT_SCHEDULER_CRON = '*/30 * * * * *';
+// Offset to :15/:45 so it never fires in the same second as the full poll. When both fired at :00 the
+// hot tick could take the per-user in-flight lock first and the full poll was skipped for that user.
+export const AUDIOBOOKSHELF_HOT_SCHEDULER_CRON = '15,45 * * * * *';
 // Warm cadence: at most this often per user the hot tier ALSO ingests incremental sessions for
 // in-progress books (position stays on the 30s hot tier). Deliberately >= 90s so actively-listened
 // books get fresh reading-log sessions without paying the session-ingest cost on every 30s tick.

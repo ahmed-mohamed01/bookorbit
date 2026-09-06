@@ -1,7 +1,9 @@
 import { ConflictException, Logger } from '@nestjs/common';
+import { CronTime } from 'cron';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AudiobookshelfSyncSchedulerService } from './audiobookshelf-sync-scheduler.service';
+import { AUDIOBOOKSHELF_HOT_SCHEDULER_CRON, AUDIOBOOKSHELF_SCHEDULER_CRON } from './audiobookshelf.constants';
 
 const mockRepo = {
   findEnabledConfiguredUsers: vi.fn(),
@@ -29,6 +31,18 @@ function makeDeferred<T>() {
 
 function makeService() {
   return new AudiobookshelfSyncSchedulerService(mockRepo as any, mockSyncService as any, mockUserService as any);
+}
+
+/** Distinct seconds-of-minute at which the expression fires over the next `ticks` firings. */
+function fireSeconds(expression: string, ticks: number): number[] {
+  const time = new CronTime(expression);
+  let next = new Date('2026-01-01T00:00:00Z');
+  const seconds = new Set<number>();
+  for (let i = 0; i < ticks; i++) {
+    next = time.getNextDateFrom(next).toJSDate();
+    seconds.add(next.getUTCSeconds());
+  }
+  return [...seconds].sort((a, b) => a - b);
 }
 
 describe('AudiobookshelfSyncSchedulerService', () => {
@@ -253,6 +267,15 @@ describe('AudiobookshelfSyncSchedulerService', () => {
 
       pending.resolve();
       await Promise.all([full, hot]);
+    });
+  });
+
+  describe('cron cadence', () => {
+    it('never fires the hot tier in the same second as the full poll', () => {
+      // The full poll fires on the minute; if the hot tier also did, whichever tick took the per-user
+      // in-flight lock first would win and the other would be skipped - starving the full poll.
+      expect(fireSeconds(AUDIOBOOKSHELF_SCHEDULER_CRON, 8)).toEqual([0]);
+      expect(fireSeconds(AUDIOBOOKSHELF_HOT_SCHEDULER_CRON, 8)).toEqual([15, 45]);
     });
   });
 });

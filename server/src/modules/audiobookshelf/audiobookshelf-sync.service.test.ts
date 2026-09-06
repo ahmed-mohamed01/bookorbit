@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Logger } from '@nestjs/common';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AudiobookshelfApiError, type AbsMediaProgress } from './audiobookshelf-client.service';
 import { AudiobookshelfSyncService, resolveAbsPosition, resolveAbsTargetStatus } from './audiobookshelf-sync.service';
@@ -572,6 +572,66 @@ describe('AudiobookshelfSyncService.sync', () => {
       expect(result.positionApplied).toBe(0);
       expect(result.failed).toBe(0);
       expect(mockAchievementEvents.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('hot tier logging', () => {
+    let logSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      logSpy.mockRestore();
+    });
+
+    function syncLines(): string[] {
+      return logSpy.mock.calls.map(([message]) => String(message)).filter((message) => message.startsWith('[abs.sync]'));
+    }
+
+    function wireInProgress() {
+      const inProgress = makeMp({ id: 'mp-hot', libraryItemId: 'item-hot', isFinished: false, progress: 0.4, currentTime: 400 });
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [inProgress] });
+    }
+
+    it('logs start and end on the full poll even when nothing changed', async () => {
+      await makeService().sync(user);
+
+      expect(syncLines()).toEqual([expect.stringContaining('[abs.sync] [start]'), expect.stringContaining('[abs.sync] [end]')]);
+    });
+
+    it('logs nothing on a hot tick that changed nothing', async () => {
+      wireInProgress();
+
+      await makeService().sync(user, { hotInProgressOnly: true });
+
+      expect(syncLines()).toEqual([]);
+    });
+
+    it('logs the end line on a hot tick that applied sessions', async () => {
+      wireInProgress();
+      mockRepo.findSettings.mockResolvedValue(makeSettings({ syncSessions: true }));
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ absLibraryItemId: 'item-hot', bookId: 77 })]);
+      mockSessionsService.syncSessions.mockResolvedValue({ inserted: 2, updated: 0 });
+
+      await makeService().sync(user, { hotInProgressOnly: true, warmSessions: true });
+
+      expect(syncLines()).toEqual([expect.stringContaining('[abs.sync] [end]')]);
+      expect(syncLines()[0]).toContain('sessionsApplied=2');
+    });
+
+    it('asks for a quiet session ingest on a warm hot tick but not on the full poll', async () => {
+      wireInProgress();
+      mockRepo.findSettings.mockResolvedValue(makeSettings({ syncSessions: true }));
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ absLibraryItemId: 'item-hot', bookId: 77 })]);
+
+      await makeService().sync(user, { hotInProgressOnly: true, warmSessions: true });
+      expect(mockSessionsService.syncSessions).toHaveBeenCalledWith(user, expect.anything(), { quiet: true });
+
+      mockSessionsService.syncSessions.mockClear();
+      await makeService().sync(user);
+      expect(mockSessionsService.syncSessions).toHaveBeenCalledWith(user, expect.anything(), { quiet: false });
     });
   });
 });

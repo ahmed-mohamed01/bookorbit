@@ -156,9 +156,13 @@ export class AudiobookshelfSyncService {
     // tier never reconciles - it only refreshes position for already-matched in-progress books.
     const reconcile = options.hotInProgressOnly ? false : (options.reconcile ?? settings.initialReconcileCompletedAt == null);
     const startedAt = Date.now();
-    this.logger.log(
-      `[abs.sync] [start] userId=${user.id} syncStatus=${settings.syncStatus} syncPosition=${settings.syncPosition} force=${options.force === true} deepSessions=${options.deepSessions === true} reconcile=${reconcile} - sync started`,
-    );
+    // The 30s hot tier is silent unless it changed something or failed; the full poll keeps start/end.
+    const quiet = options.hotInProgressOnly === true;
+    if (!quiet) {
+      this.logger.log(
+        `[abs.sync] [start] userId=${user.id} syncStatus=${settings.syncStatus} syncPosition=${settings.syncPosition} force=${options.force === true} deepSessions=${options.deepSessions === true} reconcile=${reconcile} - sync started`,
+      );
+    }
 
     const result: AudiobookshelfSyncResult = { matched: 0, statusApplied: 0, positionApplied: 0, sessionsApplied: 0, skipped: 0, failed: 0 };
     try {
@@ -261,7 +265,7 @@ export class AudiobookshelfSyncService {
           const sessions =
             options.deepSessions && !options.hotInProgressOnly
               ? await this.sessionsService.deepReconciliationScan(user, settings)
-              : await this.sessionsService.syncSessions(user, settings);
+              : await this.sessionsService.syncSessions(user, settings, { quiet });
           result.sessionsApplied = sessions.inserted + sessions.updated;
         } catch (err) {
           // Isolate session-ingest failures: status/position work is already committed, so record the
@@ -275,9 +279,12 @@ export class AudiobookshelfSyncService {
       }
 
       await this.repo.updateSettings(user.id, { lastSyncedAt: new Date(), lastSyncError: sessionsError });
-      this.logger.log(
-        `[abs.sync] [end] userId=${user.id} durationMs=${Date.now() - startedAt} matched=${result.matched} statusApplied=${result.statusApplied} positionApplied=${result.positionApplied} sessionsApplied=${result.sessionsApplied} skipped=${result.skipped} failed=${result.failed} - sync completed`,
-      );
+      const changed = result.statusApplied + result.positionApplied + result.sessionsApplied + result.failed > 0 || sessionsError != null;
+      if (!quiet || changed) {
+        this.logger.log(
+          `[abs.sync] [end] userId=${user.id} durationMs=${Date.now() - startedAt} matched=${result.matched} statusApplied=${result.statusApplied} positionApplied=${result.positionApplied} sessionsApplied=${result.sessionsApplied} skipped=${result.skipped} failed=${result.failed} - sync completed`,
+        );
+      }
       return result;
     } catch (err) {
       const { errorClass, error } = describeError(err);

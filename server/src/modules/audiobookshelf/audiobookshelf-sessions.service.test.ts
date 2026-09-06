@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Logger } from '@nestjs/common';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Shrink the session page size so multi-page pagination can be exercised with tiny arrays. Everything
 // else in the constants module (overlap window, ingest chunk, backfill threshold) keeps its real value.
@@ -342,6 +343,57 @@ describe('AudiobookshelfSessionsService', () => {
       await makeService().syncSessions(user, settings);
 
       expect(mockAchievements.emit).not.toHaveBeenCalledWith(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, expect.anything());
+    });
+  });
+
+  describe('quiet mode (warm hot ticks)', () => {
+    let logSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      logSpy.mockRestore();
+    });
+
+    function sessionLines(): string[] {
+      return logSpy.mock.calls.map(([message]) => String(message)).filter((message) => message.startsWith('[abs.sessions]'));
+    }
+
+    it('logs start and end by default', async () => {
+      const settings = makeSettings({ lastSessionWatermark: 5000 });
+      mockClient.getListeningSessions.mockResolvedValueOnce(page([], 0));
+
+      await makeService().syncSessions(user, settings);
+
+      expect(sessionLines()).toEqual([expect.stringContaining('[abs.sessions] [start]'), expect.stringContaining('[abs.sessions] [end]')]);
+    });
+
+    it('logs nothing when quiet and no session was inserted or updated', async () => {
+      const settings = makeSettings({ lastSessionWatermark: 5000 });
+      mockClient.getListeningSessions.mockResolvedValueOnce(page([], 0));
+
+      await makeService().syncSessions(user, settings, { quiet: true });
+
+      expect(sessionLines()).toEqual([]);
+    });
+
+    it('logs the end line when quiet and a session was inserted', async () => {
+      const settings = makeSettings({ lastSessionWatermark: 5000 });
+      wireLinked();
+      mockClient.getListeningSessions.mockResolvedValueOnce(page([makeSession({ id: 'a', updatedAt: 6000 })], 1));
+      mockRepo.ingestSessions.mockResolvedValueOnce({
+        insertedSessionIds: ['a'],
+        updated: 0,
+        affectedSessionIds: ['a'],
+        progressDeltaBySessionId: new Map(),
+      });
+
+      await makeService().syncSessions(user, settings, { quiet: true });
+
+      expect(sessionLines()).toEqual([expect.stringContaining('[abs.sessions] [end]')]);
+      expect(sessionLines()[0]).toContain('inserted=1');
     });
   });
 });

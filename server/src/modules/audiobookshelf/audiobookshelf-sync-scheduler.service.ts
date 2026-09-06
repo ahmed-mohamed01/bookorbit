@@ -47,9 +47,10 @@ export class AudiobookshelfSyncSchedulerService {
     }
   }
 
-  // Hot tier: near-live position for in-progress books only. Every 30 seconds. Separate overlap guard
-  // so a slow full poll never blocks the hot tier and vice versa; the per-user in-flight guard in
-  // sync() keeps a hot tick and a full tick for the same user from colliding.
+  // Hot tier: near-live position for in-progress books only. Every 30 seconds at :15/:45 so it never
+  // fires in the same second as the full poll. Separate overlap guard so a slow full poll never blocks
+  // the hot tier and vice versa; the per-user in-flight guard in sync() keeps a hot tick and a full
+  // tick for the same user from colliding.
   @Cron(AUDIOBOOKSHELF_HOT_SCHEDULER_CRON)
   async runHotSync(): Promise<void> {
     if (this.hotRunning) return;

@@ -64,9 +64,15 @@ export class AudiobookshelfSessionsService {
   /**
    * Incremental session sync: paginate newest-first and stop once a whole page predates the
    * watermark minus the overlap window, then advance the watermark. Called from the main pipeline.
+   * `quiet` (the hot tier's warm ticks) drops the start line and logs the end line only when a
+   * session was inserted or updated; failures always log.
    */
-  async syncSessions(user: RequestUser, settings: AudiobookshelfUserSetting): Promise<AudiobookshelfSessionsResult> {
-    return this.ingest(user, settings, 'incremental');
+  async syncSessions(
+    user: RequestUser,
+    settings: AudiobookshelfUserSetting,
+    options: { quiet?: boolean } = {},
+  ): Promise<AudiobookshelfSessionsResult> {
+    return this.ingest(user, settings, 'incremental', options.quiet === true);
   }
 
   /**
@@ -79,9 +85,9 @@ export class AudiobookshelfSessionsService {
     return this.ingest(user, settings, 'deep');
   }
 
-  private async ingest(user: RequestUser, settings: AudiobookshelfUserSetting, mode: SyncMode): Promise<AudiobookshelfSessionsResult> {
+  private async ingest(user: RequestUser, settings: AudiobookshelfUserSetting, mode: SyncMode, quiet = false): Promise<AudiobookshelfSessionsResult> {
     const startedAt = Date.now();
-    this.logger.log(`[abs.sessions] [start] userId=${user.id} mode=${mode} - session ingest started`);
+    if (!quiet) this.logger.log(`[abs.sessions] [start] userId=${user.id} mode=${mode} - session ingest started`);
 
     const timeZone = resolveUserTimeZone(user);
     const existingWatermark = settings.lastSessionWatermark ?? 0;
@@ -150,9 +156,11 @@ export class AudiobookshelfSessionsService {
       this.emitAchievements(user, acc);
       this.emitProgressChanged(user, acc);
 
-      this.logger.log(
-        `[abs.sessions] [end] userId=${user.id} mode=${mode} durationMs=${Date.now() - startedAt} inserted=${acc.inserted} updated=${acc.updated} skipped=${acc.skipped} - session ingest completed`,
-      );
+      if (!quiet || acc.inserted + acc.updated > 0) {
+        this.logger.log(
+          `[abs.sessions] [end] userId=${user.id} mode=${mode} durationMs=${Date.now() - startedAt} inserted=${acc.inserted} updated=${acc.updated} skipped=${acc.skipped} - session ingest completed`,
+        );
+      }
       return { inserted: acc.inserted, updated: acc.updated };
     } catch (err) {
       const { errorClass, error } = describeError(err);
