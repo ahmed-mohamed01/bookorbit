@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { MergedWork, Observation } from './observation.types';
-import { resolveSlots } from './slot-resolution';
+import { resolveSlots, slotReasonKind } from './slot-resolution';
 
 const today = '2026-09-07';
 
@@ -714,5 +714,27 @@ describe('resolveSlots', () => {
     expect([...result.rejected].sort()).toEqual([0, 2]);
     expect(result.reasons.get(0)).toBe('foreign_bundle');
     expect(result.reasons.get(2)).toBe('slot_loser');
+  });
+});
+
+describe('slotReasonKind', () => {
+  it('names the tray kind behind each hide reason', () => {
+    expect(slotReasonKind('collection_repackaging')).toBe('collection');
+    expect(slotReasonKind('collection_weak')).toBe('collection');
+    expect(slotReasonKind('multi_author_anthology')).toBe('anthology');
+    expect(slotReasonKind('format_variant')).toBe('format_variant');
+    expect(slotReasonKind('graphic_novel')).toBe('graphic_novel');
+  });
+
+  it('reads a composite reason as its leading token', () => {
+    expect(slotReasonKind('graphic_novel:multi_author_anthology')).toBe('graphic_novel');
+    expect(slotReasonKind('graphic_novel:slot_loser')).toBe('graphic_novel');
+  });
+
+  it('has no kind for a reject reason or a work nothing decided', () => {
+    // Rejects are never persisted, so a kind for one could only ever mislabel a surviving row.
+    expect(slotReasonKind('slot_loser')).toBeNull();
+    expect(slotReasonKind('status')).toBeNull();
+    expect(slotReasonKind(undefined)).toBeNull();
   });
 });

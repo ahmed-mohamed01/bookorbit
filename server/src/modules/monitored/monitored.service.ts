@@ -235,7 +235,9 @@ export class MonitoredService {
       let works = (await this.store.getCatalog(refreshed.id, user))?.works ?? [];
       const fanOut = await this.autoRequests.fanOut(refreshed, works, user);
       if (fanOut.created > 0) works = (await this.store.getCatalog(refreshed.id, user))?.works ?? [];
-      const detail = await this.buildDetail(refreshed, works, user, { sort: 'releaseDate', order: 'desc', includeHidden: false });
+      // These two writes are owner-only and their answer replaces the detail view's own copy, which
+      // reads every class to count them. Withholding the hidden ones here empties those counts.
+      const detail = await this.buildDetail(refreshed, works, user, { sort: 'releaseDate', order: 'desc', includeHidden: true });
       this.logger.log(
         `[monitored.author.create] [end] monitorId="${sanitizeLogValue(monitor.id)}" userId=${user.id} durationMs=${Date.now() - startedAt} works=${works.length} - monitored author creation completed`,
       );
@@ -332,7 +334,7 @@ export class MonitoredService {
       let works = (await this.store.getCatalog(id, user))?.works ?? [];
       const fanOut = await this.autoRequests.fanOut(refreshed, works, user);
       if (fanOut.created > 0) works = (await this.store.getCatalog(id, user))?.works ?? [];
-      const detail = await this.buildDetail(refreshed, works, user, { sort: 'releaseDate', order: 'desc', includeHidden: false });
+      const detail = await this.buildDetail(refreshed, works, user, { sort: 'releaseDate', order: 'desc', includeHidden: true });
       this.logger.log(
         `[monitored.author.refresh] [end] monitorId="${sanitizeLogValue(id)}" userId=${user.id} durationMs=${Date.now() - startedAt} works=${works.length} - monitored author refresh completed`,
       );

@@ -5,6 +5,7 @@ import type {
   MonitoredFormat,
   MonitoredSeriesMembership,
   MonitoredWorkFlag,
+  MonitoredWorkKind,
   MonitoredWorkState,
   MonitoredWorkVerdict,
   MonitorMode,
@@ -90,6 +91,7 @@ export const authorCatalogWorks = pgTable(
     description: text('description'),
     verdict: varchar('verdict', { length: 10 }).$type<MonitoredWorkVerdict>().notNull(),
     flags: jsonb('flags').$type<MonitoredWorkFlag[]>().notNull().default([]),
+    kind: varchar('kind', { length: 20 }).$type<MonitoredWorkKind>(),
     sources: jsonb('sources').$type<string[]>().notNull().default([]),
     matchedBookId: integer('matched_book_id').references(() => books.id, { onDelete: 'set null' }),
     matchedEbookBookId: integer('matched_ebook_book_id').references(() => books.id, { onDelete: 'set null' }),
@@ -106,6 +108,10 @@ export const authorCatalogWorks = pgTable(
     // that holds every work of every monitor - tens of thousands of rows on a real library.
     index('author_catalog_works_title_unaccent_trgm_idx').using('gin', sql`public.bookorbit_unaccent(${t.title}) gin_trgm_ops`),
     check('author_catalog_works_verdict_chk', sql`${t.verdict} in ('verified', 'probable', 'suspect')`),
+    check(
+      'author_catalog_works_kind_chk',
+      sql`${t.kind} is null or ${t.kind} in ('collection', 'anthology', 'graphic_novel', 'format_variant', 'duplicate')`,
+    ),
   ],
 );
 

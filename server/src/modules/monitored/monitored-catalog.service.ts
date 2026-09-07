@@ -9,6 +9,7 @@ import {
   type MonitoredAuthorConfig,
   type MonitoredFormat,
   type MonitoredWork,
+  type MonitoredWorkKind,
   type ProviderConfigurations,
 } from '@bookorbit/types';
 
@@ -23,7 +24,7 @@ import { HardcoverBibliographyProvider } from './providers/hardcover-bibliograph
 import { mergeCluster } from './reconcile/cluster-merger';
 import { matchObservations, normalizeCore } from './reconcile/observation-matcher';
 import type { MergedWork, Observation } from './reconcile/observation.types';
-import { resolveSlots } from './reconcile/slot-resolution';
+import { resolveSlots, slotReasonKind } from './reconcile/slot-resolution';
 import { assignVerdict, computePopularityFloor, type VerdictResult } from './reconcile/verdict';
 import { foldDiacritics, normalizeMonitoredName } from './monitored-text.utils';
 import { MonitoredStoreService, type MonitoredCatalog } from './monitored-store.service';
@@ -314,7 +315,8 @@ function isFreshCorroborated(work: MergedWork, today: string): boolean {
 // pieces, where two entries at one index are usually two different works. Across the 48-author
 // validation set this demotes nothing, and the 25% ratio is what keeps it that way - it is a narrow
 // safety net for a lopsided fractional duplicate, not a second slot resolver.
-export function demoteSlotDuplicates(works: MergedWork[], verdicts: VerdictResult[]): void {
+export function demoteSlotDuplicates(works: MergedWork[], verdicts: VerdictResult[]): number[] {
+  const demoted: number[] = [];
   const slots = new Map<string, number[]>();
   works.forEach((work, index) => {
     if (verdicts[index].verdict !== 'verified' || verdicts[index].flags.length > 0) return;
@@ -331,9 +333,12 @@ export function demoteSlotDuplicates(works: MergedWork[], verdicts: VerdictResul
     const winner = bucket.reduce((best, index) => (slotPopularity(works[index]) > slotPopularity(works[best]) ? index : best));
     const winnerPopularity = slotPopularity(works[winner]);
     for (const index of bucket) {
-      if (index !== winner && slotPopularity(works[index]) < winnerPopularity * 0.25) verdicts[index].verdict = 'suspect';
+      if (index === winner || slotPopularity(works[index]) >= winnerPopularity * 0.25) continue;
+      verdicts[index].verdict = 'suspect';
+      demoted.push(index);
     }
   }
+  return demoted;
 }
 
 // Strongest identity signal first: Hardcover work id, then series slot, then title. A previous work
@@ -467,14 +472,17 @@ export class MonitoredCatalogService {
       const survivors = clustered.map((work, index) => ({ work, index })).filter(({ index }) => !slots.rejected.has(index));
       const merged = survivors.map(({ work }) => work);
       const hiddenBySlots = new Set(survivors.flatMap(({ index }, position) => (slots.hidden.has(index) ? [position] : [])));
+      // Reasons are positional over `clustered`; survivors carry theirs across to the persisted array
+      // so the review tray can say WHAT each row is rather than only that it is unverified.
+      const kinds = survivors.map(({ index }) => slotReasonKind(slots.reasons.get(index)));
       const floor = computePopularityFloor(merged);
       const previous = await this.store.getCatalog(monitor.id);
       const verdicts = merged.map((work) => assignVerdict(work, { today, floor }));
       // Hidden works stay in the catalog but drop to the review tray, where the owner can promote them.
       for (const index of hiddenBySlots) verdicts[index].verdict = 'suspect';
-      demoteSlotDuplicates(merged, verdicts);
+      for (const index of demoteSlotDuplicates(merged, verdicts)) kinds[index] = 'duplicate';
       const previousWorks = resolvePreviousWorks(merged, previous);
-      const works = merged.map((work, index) => this.mapWork(monitor.id, work, verdicts[index], previousWorks[index]));
+      const works = merged.map((work, index) => this.mapWork(monitor.id, work, verdicts[index], previousWorks[index], kinds[index]));
       for (const collision of enforceUniqueWorkIds(works)) {
         this.logger.warn(
           `[monitored.catalog.work_id] [fail] monitorId=${monitor.id} workId="${sanitizeLogValue(collision)}" errorClass=DuplicateWorkId error="two clusters resolved to one previous work" - duplicate work id renamed to keep the catalog writable`,
@@ -630,7 +638,13 @@ export class MonitoredCatalogService {
     return Number.isSafeInteger(authorId) && authorId > 0 ? authorId : null;
   }
 
-  private mapWork(monitorId: string, work: MergedWork, result: ReturnType<typeof assignVerdict>, old: MonitoredWork | undefined): MonitoredWork {
+  private mapWork(
+    monitorId: string,
+    work: MergedWork,
+    result: ReturnType<typeof assignVerdict>,
+    old: MonitoredWork | undefined,
+    kind: MonitoredWorkKind | null,
+  ): MonitoredWork {
     const seedSource = work.sources.find((source) => work.providerWorkIds[source]) ?? work.sources[0];
     const seedId = seedSource ? work.providerWorkIds[seedSource] : null;
     return {
@@ -649,6 +663,7 @@ export class MonitoredCatalogService {
       description: work.description,
       verdict: result.verdict,
       flags: result.flags,
+      ...(kind ? { kind } : {}),
       sources: work.sources,
       providerWorkIds: work.providerWorkIds,
       monitorState: 'monitoring',

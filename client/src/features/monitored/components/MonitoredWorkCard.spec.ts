@@ -95,3 +95,43 @@ describe('MonitoredWorkCard queued badge', () => {
     wrapper.unmount()
   })
 })
+
+describe('MonitoredWorkCard review kind badge', () => {
+  it('names what a review work is, so a comic and a box set are not both just suspect', () => {
+    const wrapper = mountCard(work({ verdict: 'suspect', kind: 'graphic_novel' }))
+
+    expect(wrapper.text()).toContain('Comic')
+    wrapper.unmount()
+  })
+
+  it('says nothing on a work the default list already shows', () => {
+    // A kind can survive a promotion, and shouting a stale judgement over an accepted book is noise.
+    const wrapper = mountCard(work({ verdict: 'suspect', kind: 'collection', userVisibility: 'visible' }))
+
+    expect(wrapper.text()).not.toContain('Collection')
+    wrapper.unmount()
+  })
+
+  it('marks an unnamed review work as unverified rather than leaving it bare', () => {
+    const wrapper = mountCard(work({ verdict: 'probable' }))
+
+    expect(wrapper.text()).toContain('Unverified')
+    wrapper.unmount()
+  })
+
+  it('says nothing on a work the owner hid, whatever its verdict was', () => {
+    // Hiding is the owner's own call and has its own switch; badging it from the review
+    // vocabulary reads as a verdict the reconciler never reached.
+    const wrapper = mountCard(work({ verdict: 'verified', userVisibility: 'hidden' }))
+
+    expect(wrapper.text()).not.toContain('Unverified')
+    wrapper.unmount()
+  })
+
+  it('says nothing on a placeholder, which has a switch of its own too', () => {
+    const wrapper = mountCard(work({ verdict: 'probable', flags: ['placeholder'] }))
+
+    expect(wrapper.text()).not.toContain('Unverified')
+    wrapper.unmount()
+  })
+})

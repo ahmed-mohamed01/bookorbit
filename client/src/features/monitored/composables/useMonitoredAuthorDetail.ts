@@ -22,6 +22,14 @@ import {
 import { monitoredErrorText } from '../lib/api-error'
 import { groupWorks, sortWorks } from '../lib/grouping'
 import { isMonitoredBookForWork, notifyMonitoredBookCreated } from '../lib/monitored-book-state'
+import {
+  countReviewKinds,
+  DEFAULT_MONITORED_DISPLAY,
+  isWorkDisplayed,
+  readDisplayOptions,
+  workDisplayClass,
+  type MonitoredDisplayOptions,
+} from '../lib/work-visibility'
 import { MONITORED_MAX_RETAINED_ITEMS } from './useMonitored'
 
 const BOOK_MEMBERSHIP_PAGE_SIZE = 200
@@ -31,6 +39,7 @@ type SortOrder = 'asc' | 'desc'
 const SORT_STORAGE_KEY = 'monitored:authorDetail:sort'
 const ORDER_STORAGE_KEY = 'monitored:authorDetail:order'
 const GROUP_STORAGE_KEY = 'monitored:authorDetail:group'
+const DISPLAY_STORAGE_KEY = 'monitored:authorDetail:display'
 
 function firstQueryValue(value: unknown): string | undefined {
   return Array.isArray(value) ? value[0] : typeof value === 'string' ? value : undefined
@@ -57,7 +66,7 @@ export function useMonitoredAuthorDetail() {
   const loading = ref(false)
   const error = ref<string | null>(null)
   const updating = ref(false)
-  const showReview = ref(false)
+  const display = ref<MonitoredDisplayOptions>(readDisplayOptions(storage.get<unknown>(DISPLAY_STORAGE_KEY, null)))
   const queued = ref(new Map<string, Set<MonitoredFormat>>())
   const hiddenWorkIds = ref(new Set<string>())
   const bookEntries = ref<MonitoredBookEntry[]>([])
@@ -67,8 +76,17 @@ export function useMonitoredAuthorDetail() {
   const grouping = ref<MonitoredGrouping>(parseGrouping(route.query.group ?? storage.get<string | null>(GROUP_STORAGE_KEY, null)))
 
   const authorId = computed(() => String(route.params.id ?? ''))
-  const reviewCount = computed(() => detail.value?.author.counts.hidden ?? 0)
-  const visibleWorks = computed(() => detail.value?.works.filter((work) => !hiddenWorkIds.value.has(work.id)) ?? [])
+  const loadedWorks = computed(() => detail.value?.works.filter((work) => !hiddenWorkIds.value.has(work.id)) ?? [])
+  const displayCounts = computed(() => {
+    const counts = { hidden: 0, placeholder: 0, review: 0 }
+    for (const work of loadedWorks.value) {
+      const displayClass = workDisplayClass(work)
+      if (displayClass !== 'default') counts[displayClass] += 1
+    }
+    return counts
+  })
+  const reviewKindCounts = computed(() => countReviewKinds(loadedWorks.value.filter((work) => workDisplayClass(work) === 'review')))
+  const visibleWorks = computed(() => loadedWorks.value.filter((work) => isWorkDisplayed(work, display.value)))
   const sortedWorks = computed(() => sortWorks(visibleWorks.value, sort.value, order.value))
   const groups = computed(() => groupWorks(sortedWorks.value, grouping.value, order.value, sort.value))
   const monitoredFormats = computed<MonitoredFormat[]>(() => {
@@ -98,9 +116,21 @@ export function useMonitoredAuthorDetail() {
       const loaded = await fetchMonitoredAuthorDetail(authorId.value, {
         sort: sort.value,
         order: order.value,
-        includeHidden: showReview.value,
+        // Every class is fetched every time so the Display menu can state its counts the moment it
+        // opens. The withheld classes measured 13-59 kB of extra text on the largest catalogs here,
+        // which buys instant switches and counts that are never a guess.
+        includeHidden: true,
       })
       detail.value = loaded
+      // Another author, or a promotion that emptied the kind, leaves no row to click back out of:
+      // an empty kind is not listed, so a stale one would strand the grid on an unfixable filter.
+      const selection = display.value.reviewKinds
+      const counts = reviewKindCounts.value
+      // A selection naming only kinds this author has none of would show an empty list with every
+      // box that could fix it already unticked, so it falls back to everything.
+      if (selection !== 'all' && !selection.some((kind) => counts[kind] > 0)) {
+        setDisplay({ ...display.value, reviewKinds: 'all' })
+      }
     } catch (cause) {
       error.value = monitoredErrorText(cause, t('monitored.errors.loadAuthor'))
     } finally {
@@ -128,9 +158,13 @@ export function useMonitoredAuthorDetail() {
     syncRouteQuery()
   }
 
-  async function toggleReview(): Promise<void> {
-    showReview.value = !showReview.value
-    await load()
+  function setDisplay(value: MonitoredDisplayOptions): void {
+    display.value = value
+    storage.set(DISPLAY_STORAGE_KEY, value)
+  }
+
+  function resetDisplay(): void {
+    setDisplay({ ...DEFAULT_MONITORED_DISPLAY })
   }
 
   async function setPaused(paused: boolean): Promise<void> {
@@ -270,14 +304,16 @@ export function useMonitoredAuthorDetail() {
     grouping,
     groups,
     visibleWorks,
-    showReview,
-    reviewCount,
+    display,
+    displayCounts,
+    reviewKindCounts,
     monitoredFormats,
     load,
     setSort,
     setOrder,
     setGrouping,
-    toggleReview,
+    setDisplay,
+    resetDisplay,
     setPaused,
     queueWork,
     markQueued,

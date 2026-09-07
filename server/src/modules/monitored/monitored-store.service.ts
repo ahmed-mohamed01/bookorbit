@@ -807,6 +807,7 @@ export class MonitoredStoreService {
               description: sql`excluded.description`,
               verdict: sql`excluded.verdict`,
               flags: sql`excluded.flags`,
+              kind: sql`excluded.kind`,
               sources: sql`excluded.sources`,
               matchedBookId: sql`excluded.matched_book_id`,
               matchedEbookBookId: sql`excluded.matched_ebook_book_id`,
@@ -1147,6 +1148,7 @@ export class MonitoredStoreService {
       description: row.description,
       verdict: row.verdict,
       flags: row.flags,
+      ...(row.kind ? { kind: row.kind } : {}),
       sources: row.sources,
       providerWorkIds: Object.fromEntries(sources.map((source) => [source.source, source.providerWorkId])),
       monitorState: overlay?.monitorState ?? 'monitoring',
@@ -1273,6 +1275,7 @@ export class MonitoredStoreService {
       description: work.description,
       verdict: work.verdict,
       flags: work.flags,
+      kind: work.kind ?? null,
       sources: work.sources,
       ...this.matchValues(work),
     };

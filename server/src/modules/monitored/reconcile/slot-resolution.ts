@@ -1,3 +1,5 @@
+import type { MonitoredWorkKind } from '@bookorbit/types';
+
 import { normalizeText } from './observation-matcher';
 import { COLLECTION_TITLE_PATTERN, DRAMATIZED_ADAPTATION_PATTERN } from './work-shape';
 import type { MergedWork, Observation } from './observation.types';
@@ -17,6 +19,28 @@ export interface SlotResolutionResult {
   hidden: Set<number>;
   /** Short machine-readable reason per decided index, for logging. */
   reasons: Map<number, string>;
+}
+
+/**
+ * The review-tray taxonomy behind each hide reason. Reject reasons are deliberately absent: a
+ * rejected work is never persisted, so it can never need a kind.
+ */
+const KIND_BY_HIDE_REASON: Record<string, MonitoredWorkKind> = {
+  collection_repackaging: 'collection',
+  collection_weak: 'collection',
+  format_variant: 'format_variant',
+  multi_author_anthology: 'anthology',
+  graphic_novel: 'graphic_novel',
+};
+
+/**
+ * The tray kind for a hide reason. A composite reason keeps its real cause for the logs but reads
+ * as its leading token here: a comic hidden as an anthology is still, on the shelf, a comic, and
+ * the format is what lets the owner tell one tray row from the next.
+ */
+export function slotReasonKind(reason: string | undefined): MonitoredWorkKind | null {
+  if (!reason) return null;
+  return KIND_BY_HIDE_REASON[reason.split(':')[0]] ?? null;
 }
 
 const HARDCOVER_LIVE_STATUS_ID = 1;

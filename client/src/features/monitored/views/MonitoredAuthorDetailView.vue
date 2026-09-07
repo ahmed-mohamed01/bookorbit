@@ -1,19 +1,6 @@
 <script setup lang="ts">
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
-import {
-  BookCopy,
-  BookOpen,
-  CalendarDays,
-  Check,
-  ChevronLeft,
-  Eye,
-  EyeOff,
-  Headphones,
-  Loader2,
-  MoreHorizontal,
-  RefreshCw,
-  Trash2,
-} from '@lucide/vue'
+import { BookCopy, BookOpen, CalendarDays, Check, ChevronLeft, Headphones, Loader2, MoreHorizontal, RefreshCw, Trash2 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
@@ -33,6 +20,7 @@ import { monitoredPortraitUrl } from '../lib/portrait-url'
 import MonitoredWorkCard from '../components/MonitoredWorkCard.vue'
 import MonitoredBookPanel from '../components/MonitoredBookPanel.vue'
 import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
+import MonitoredDisplayMenu from '../components/MonitoredDisplayMenu.vue'
 import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
 import MonitoredVirtualGrid from '../components/MonitoredVirtualGrid.vue'
 import { useMonitoredAuthorDetail } from '../composables/useMonitoredAuthorDetail'
@@ -54,14 +42,16 @@ const {
   grouping,
   groups,
   visibleWorks,
-  showReview,
-  reviewCount,
+  display,
+  displayCounts,
+  reviewKindCounts,
   monitoredFormats,
   load,
   setSort,
   setOrder,
   setGrouping,
-  toggleReview,
+  setDisplay,
+  resetDisplay,
   setPaused,
   queueWork,
   markQueued,
@@ -123,9 +113,6 @@ const groupOptions = computed<{ value: MonitoredGrouping; label: string }[]>(() 
   { value: 'year', label: t('monitored.detail.controls.year') },
   { value: 'status', label: t('monitored.detail.controls.status') },
 ])
-const reviewLabel = computed(() =>
-  showReview.value ? t('monitored.detail.hideReview') : t('monitored.detail.showReview', { count: reviewCount.value }),
-)
 const bioExpanded = ref(false)
 watch(bio, () => {
   bioExpanded.value = false
@@ -545,20 +532,14 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                 @update:order="setOrder"
               />
               <MonitoredGroupMenu :options="groupOptions" :model-value="grouping" default-value="series" @update:model-value="setGrouping" />
-              <DropdownMenu v-if="reviewCount > 0 || showReview">
-                <DropdownMenuTrigger as-child>
-                  <Button variant="outline" size="icon-sm" class="rounded-lg" :aria-label="t('monitored.actions.actions')">
-                    <MoreHorizontal :size="14" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem @click="toggleReview">
-                    <EyeOff v-if="showReview" />
-                    <Eye v-else />
-                    {{ reviewLabel }}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <MonitoredDisplayMenu
+                :model-value="display"
+                :counts="displayCounts"
+                :review-kind-counts="reviewKindCounts"
+                :can-curate="canEdit"
+                @update:model-value="setDisplay"
+                @reset="resetDisplay"
+              />
             </div>
           </div>
 

@@ -27,12 +27,14 @@ CREATE TABLE IF NOT EXISTS "author_catalog_works" (
 	"description" text,
 	"verdict" varchar(10) NOT NULL,
 	"flags" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"kind" varchar(20),
 	"sources" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"matched_book_id" integer,
 	"matched_ebook_book_id" integer,
 	"matched_audio_book_id" integer,
 	"owned_formats" jsonb DEFAULT '[]'::jsonb NOT NULL,
-	CONSTRAINT "author_catalog_works_verdict_chk" CHECK ("author_catalog_works"."verdict" in ('verified', 'probable', 'suspect'))
+	CONSTRAINT "author_catalog_works_verdict_chk" CHECK ("author_catalog_works"."verdict" in ('verified', 'probable', 'suspect')),
+	CONSTRAINT "author_catalog_works_kind_chk" CHECK ("author_catalog_works"."kind" is null or "author_catalog_works"."kind" in ('collection', 'anthology', 'graphic_novel', 'format_variant', 'duplicate'))
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "author_provider_identities" (
@@ -283,4 +285,15 @@ CREATE INDEX IF NOT EXISTS "monitored_authors_name_unaccent_trgm_idx" ON "monito
 CREATE INDEX IF NOT EXISTS "monitored_books_owner_user_id_idx" ON "monitored_books" USING btree ("owner_user_id");
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "monitored_books_owner_monitor_work_uidx" ON "monitored_books" USING btree ("owner_user_id","monitor_author_id","work_id");
+--> statement-breakpoint
+ALTER TABLE "author_catalog_works" ADD COLUMN IF NOT EXISTS "kind" varchar(20);
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'author_catalog_works_kind_chk'
+	) THEN
+		ALTER TABLE "author_catalog_works" ADD CONSTRAINT "author_catalog_works_kind_chk" CHECK ("author_catalog_works"."kind" is null or "author_catalog_works"."kind" in ('collection', 'anthology', 'graphic_novel', 'format_variant', 'duplicate'));
+	END IF;
+END $$;
 `;

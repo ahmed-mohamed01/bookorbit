@@ -1,7 +1,8 @@
 import { PgDialect, getTableConfig } from 'drizzle-orm/pg-core';
-import { MONITORED_WORK_STATES, MONITORED_WORK_VERDICTS, MONITOR_MODES } from '@bookorbit/types';
+import { MONITORED_WORK_KINDS, MONITORED_WORK_STATES, MONITORED_WORK_VERDICTS, MONITOR_MODES } from '@bookorbit/types';
 
 import { authorCatalogWorks, monitoredAuthors, monitoredAuthorWorks, monitoredBooks } from './monitored.schema';
+import { MONITORED_SCHEMA_SQL } from './monitored-schema';
 
 const dialect = new PgDialect();
 
@@ -9,7 +10,7 @@ function checkValues(table: Parameters<typeof getTableConfig>[0], name: string):
   const check = getTableConfig(table).checks.find((candidate) => candidate.name === name);
   expect(check).toBeDefined();
   const statement = dialect.sqlToQuery(check!.value).sql;
-  return [...statement.matchAll(/'([a-z-]+)'/g)].map((match) => match[1]);
+  return [...statement.matchAll(/'([a-z_-]+)'/g)].map((match) => match[1]);
 }
 
 describe('monitored CHECK SQL matches shared constants', () => {
@@ -20,6 +21,10 @@ describe('monitored CHECK SQL matches shared constants', () => {
 
   it('accepts exactly the declared work verdicts', () => {
     expect(checkValues(authorCatalogWorks, 'author_catalog_works_verdict_chk').sort()).toEqual([...MONITORED_WORK_VERDICTS].sort());
+  });
+
+  it('accepts exactly the declared work kinds', () => {
+    expect(checkValues(authorCatalogWorks, 'author_catalog_works_kind_chk').sort()).toEqual([...MONITORED_WORK_KINDS].sort());
   });
 
   it('accepts exactly the declared work monitor states', () => {
@@ -66,6 +71,24 @@ describe('monitored search indexes', () => {
       expect(expression).toContain('bookorbit_unaccent');
       expect(expression).toContain(column);
       expect(expression).toContain('gin_trgm_ops');
+    }
+  });
+});
+
+// The bootstrap SQL is a second, hand-maintained copy of the table. A column that exists only in the
+// Drizzle definition typechecks perfectly and then fails at runtime on the first insert.
+describe('bootstrap SQL carries the columns the table declares', () => {
+  it('creates the kind column on a fresh database and adds it to an existing one', () => {
+    expect(MONITORED_SCHEMA_SQL).toContain('"kind" varchar(20)');
+    expect(MONITORED_SCHEMA_SQL).toContain('ALTER TABLE "author_catalog_works" ADD COLUMN IF NOT EXISTS "kind" varchar(20);');
+  });
+
+  it('constrains kind to the shared vocabulary on both paths', () => {
+    const constraints = [...MONITORED_SCHEMA_SQL.matchAll(/"author_catalog_works"\."kind" is null or[^)]+\)/g)].map((match) => match[0]);
+
+    expect(constraints).toHaveLength(2);
+    for (const constraint of constraints) {
+      expect([...constraint.matchAll(/'([a-z_-]+)'/g)].map((match) => match[1]).sort()).toEqual([...MONITORED_WORK_KINDS].sort());
     }
   });
 });

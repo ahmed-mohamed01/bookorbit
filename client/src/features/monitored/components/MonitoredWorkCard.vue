@@ -15,6 +15,7 @@ import {
   type MonitoredFormatState,
 } from '../lib/monitored-format-state'
 import { releaseDateForWork } from '../lib/grouping'
+import { reviewKindOf, workDisplayClass } from '../lib/work-visibility'
 import { parseMonitoredDate } from '../lib/release-date'
 
 const props = defineProps<{
@@ -52,6 +53,11 @@ const year = computed(() => String(props.work.releaseYear ?? releaseDate.value?.
 
 // The series name lives in the group header, so the card overlay shows only the position within it.
 const seriesIndex = computed(() => (props.seriesMembership === undefined ? props.work.seriesIndex : props.seriesMembership?.index))
+
+// Only the review class carries a kind worth naming. A work the owner hid, or a placeholder, has
+// its own switch and its own meaning, and labelling either of them from the review vocabulary reads
+// as a verdict the reconciler never reached.
+const kindLabel = computed(() => (workDisplayClass(props.work) === 'review' ? t(`monitored.review.badges.${reviewKindOf(props.work)}`) : null))
 
 const showBelowCoverLabel = computed(() => cardInfoMode.value === 'below-cover')
 const showHoverTitle = computed(() => cardInfoMode.value === 'hover-overlay')
@@ -194,6 +200,7 @@ function handleMonitorBook() {
           </span>
         </div>
         <span v-if="badge" class="rounded px-2 py-0.5 text-[10px] font-bold shadow-sm" :class="badge.class">{{ badge.label }}</span>
+        <span v-if="kindLabel" class="rounded bg-black/65 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">{{ kindLabel }}</span>
       </div>
 
       <!-- Top-right: series position -->

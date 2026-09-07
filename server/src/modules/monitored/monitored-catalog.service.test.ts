@@ -524,3 +524,53 @@ describe('targeted availability recompute', () => {
     expect(store.updateWorkMatch).not.toHaveBeenCalled();
   });
 });
+
+// The reason slot resolution hides a work used to be computed and thrown away, leaving the review
+// tray unable to say whether a row was a box set, a comic or an anthology.
+describe('fetchCatalog review kinds', () => {
+  /** matchOwnedBooks runs on every fetch; nothing in this library matches, so every select is empty. */
+  function emptySelectDb() {
+    const select = vi.fn(() => {
+      const builder: Record<string, unknown> = {};
+      for (const step of ['from', 'innerJoin', 'leftJoin']) builder[step] = vi.fn(() => builder);
+      builder.where = vi.fn(() => Promise.resolve([]));
+      return builder;
+    });
+    return { select };
+  }
+
+  const hardcoverBook = (id: number, title: string, raw: Record<string, unknown> = {}) =>
+    observation({
+      source: 'hardcover',
+      id: `hc:${id}`,
+      title,
+      popularity: 400,
+      popularityKind: 'users',
+      language: 'english',
+      role: 'Author',
+      raw: { id, title, book_status: { id: 1, name: 'Published' }, contributor_role_id: 1, users_count: 400, ...raw },
+    });
+
+  it('persists the kind of a work it hid, and none for one it never judged', async () => {
+    const crowd = Array.from({ length: 6 }, (_, index) => ({ contribution: 'Author', author: { id: index + 1, name: `Author ${index}` } }));
+    const store = { getCatalog: vi.fn().mockResolvedValue(null), saveCatalog: vi.fn() };
+    const service = new MonitoredCatalogService(
+      fakeProvider('hardcover', {
+        observations: [hardcoverBook(1, 'A Real Novel'), hardcoverBook(2, 'Voices of the Deep', { cached_contributors: crowd })],
+      }) as never,
+      fakeProvider('goodreads', { enabled: false }) as never,
+      fakeProvider('audible', { enabled: false }) as never,
+      store as never,
+      emptySelectDb() as never,
+    );
+
+    await service.fetchCatalog(monitorConfig(), providerConfig());
+    const works = (store.saveCatalog.mock.calls[0][1] as MonitoredCatalog).works;
+    const anthology = works.find((work) => work.title === 'Voices of the Deep');
+
+    // Suspect alone is what the tray already knew; the kind is what lets it be filtered to.
+    expect(anthology?.verdict).toBe('suspect');
+    expect(anthology?.kind).toBe('anthology');
+    expect(works.find((work) => work.title === 'A Real Novel')?.kind).toBeUndefined();
+  });
+});

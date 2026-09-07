@@ -14,6 +14,7 @@ import { useSafeHtml } from '@/features/book/composables/useSafeHtml'
 import { useMonitoredReleases } from '../composables/useMonitoredReleases'
 import { isMonitoredAcquisitionState, monitoredFormatState, monitoredPendingLabelKey } from '../lib/monitored-format-state'
 import { monitoredReleaseWindowStarted, parseMonitoredDate } from '../lib/release-date'
+import { isWorkVisible } from '../lib/work-visibility'
 import MonitoredFormatPill from './MonitoredFormatPill.vue'
 import MonitoredRequestProgress from './MonitoredRequestProgress.vue'
 import MonitoredWorkFiles from './MonitoredWorkFiles.vue'
@@ -156,13 +157,7 @@ const monitorEbookOn = computed(() => props.work?.monitorFormats?.ebook !== fals
 const monitorAudiobookOn = computed(() => props.work?.monitorFormats?.audiobook !== false)
 const ebookReleaseStarted = computed(() => monitoredReleaseWindowStarted(props.work?.ebookReleaseDate, props.work?.ebookDatePrecision))
 const audiobookReleaseStarted = computed(() => monitoredReleaseWindowStarted(props.work?.audioReleaseDate, props.work?.audioDatePrecision))
-const isHidden = computed(() => {
-  const work = props.work
-  if (!work) return false
-  if (work.userVisibility === 'hidden') return true
-  if (work.userVisibility === 'visible') return false
-  return work.verdict !== 'verified' || work.flags.length > 0
-})
+const isHidden = computed(() => props.work != null && !isWorkVisible(props.work))
 const pillBase = 'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors'
 const pillMuted = 'border-border bg-muted text-muted-foreground hover:text-foreground'
 

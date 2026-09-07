@@ -10378,6 +10378,35 @@
       "refreshedAll": "Refreshed {refreshed, plural, =0 {no authors} one {# author} other {# authors}}.",
       "refreshedAllPartial": "Refreshed {refreshed, plural, =0 {no authors} one {# author} other {# authors}}. {skipped} on cooldown, {failed} failed."
     },
+    "display": {
+      "title": "Display",
+      "released": "Show released",
+      "upcoming": "Show upcoming",
+      "hidden": "Show hidden",
+      "placeholders": "Show placeholders",
+      "review": "Show under review",
+      "reset": "Reset to defaults"
+    },
+    "review": {
+      "filter": "Filter review",
+      "kinds": {
+        "all": "All",
+        "collection": "Collections",
+        "anthology": "Anthologies",
+        "graphic_novel": "Comics",
+        "format_variant": "Alternate editions",
+        "duplicate": "Duplicates",
+        "other": "Other"
+      },
+      "badges": {
+        "collection": "Collection",
+        "anthology": "Anthology",
+        "graphic_novel": "Comic",
+        "format_variant": "Alt edition",
+        "duplicate": "Duplicate",
+        "other": "Unverified"
+      }
+    },
     "detail": {
       "back": "Back to Monitored",
       "headerDescription": "Monitored catalog and release activity",
@@ -10429,8 +10458,6 @@
       },
       "showDetails": "Show details",
       "hideDetails": "Hide details",
-      "showReview": "Show {count} under review",
-      "hideReview": "Hide review",
       "ebookWanted": "Ebook wanted",
       "audiobookWanted": "Audiobook wanted"
     },

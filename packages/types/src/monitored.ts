@@ -13,6 +13,14 @@ export type MonitoredWorkVerdict = (typeof MONITORED_WORK_VERDICTS)[number];
 export const MONITORED_WORK_FLAGS = ["compilation", "placeholder", "adaptation_split", "foreign_language", "wrong_contributor"] as const;
 export type MonitoredWorkFlag = (typeof MONITORED_WORK_FLAGS)[number];
 
+/**
+ * Why a work sits in the review tray, in the terms the tray shows. Only slot resolution and
+ * duplicate demotion set one: a work that is merely unverified carries no kind, because nothing
+ * about its shape is known - it just failed to earn the default list.
+ */
+export const MONITORED_WORK_KINDS = ["collection", "anthology", "graphic_novel", "format_variant", "duplicate"] as const;
+export type MonitoredWorkKind = (typeof MONITORED_WORK_KINDS)[number];
+
 export const MONITORED_WORK_STATES = ["monitoring", "paused", "stopped"] as const;
 export type MonitoredWorkState = (typeof MONITORED_WORK_STATES)[number];
 
@@ -120,6 +128,8 @@ export interface MonitoredWork {
   description: string | null;
   verdict: MonitoredWorkVerdict;
   flags: MonitoredWorkFlag[];
+  /** What kind of thing kept this work out of the default list, when the reconciler could tell. */
+  kind?: MonitoredWorkKind;
   sources: string[];
   providerWorkIds: { hardcover?: string; goodreads?: string; audible?: string };
   monitorState: MonitoredWorkState;

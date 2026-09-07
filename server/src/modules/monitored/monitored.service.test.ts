@@ -601,6 +601,37 @@ describe('MonitoredService', () => {
     expect(getCatalog.mock.invocationCallOrder[0]).toBeLessThan(fanOut.mock.invocationCallOrder[0]);
   });
 
+  it('hands the refreshed detail every class, so the caller can still count what it is not showing', async () => {
+    // The detail view replaces its whole copy with this answer and reads every class to count them.
+    // Returning only the default class emptied those counts until the next navigation.
+    const monitoredAuthor = author({ localAuthorId: 7 });
+    const shown = work({ id: 'shown' });
+    const underReview = work({ id: 'suspect', verdict: 'suspect' });
+    const store = {
+      getAuthor: vi.fn().mockResolvedValue(monitoredAuthor),
+      updateAuthorFields: vi.fn().mockResolvedValue(monitoredAuthor),
+      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [shown, underReview] }),
+    };
+    const instance = service(
+      store,
+      {},
+      {
+        catalog: { fetchCatalog: vi.fn().mockResolvedValue({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null }) },
+        autoRequests: { fanOut: vi.fn().mockResolvedValue({ created: 0, skipped: 0, failed: 0 }) },
+        authorsRepository: {
+          findByIdForEnrichment: vi.fn().mockResolvedValue({ description: 'bio', website: null, genres: [], hasPhoto: true }),
+        },
+      },
+    );
+
+    const detail = await instance.refreshAuthor(monitoredAuthor.id, viewer);
+
+    expect(detail.works.map((entry) => entry.id)).toEqual(['shown', 'suspect']);
+    // The headline count still reports only what the default list shows.
+    expect(detail.author.counts.total).toBe(1);
+    expect(detail.author.counts.hidden).toBe(1);
+  });
+
   it('does not revert a concurrent paused patch when refresh finishes from an older snapshot', async () => {
     let current = author({ localAuthorId: 7, paused: false });
     const updateAuthorFields = vi.fn().mockImplementation((_id: string, fields: Partial<MonitoredAuthorConfig>) => {
