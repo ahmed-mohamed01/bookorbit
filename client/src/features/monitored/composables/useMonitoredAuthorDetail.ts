@@ -165,8 +165,19 @@ export function useMonitoredAuthorDetail() {
     syncRouteQuery()
   }
 
+  /**
+   * The same name means different things under another grouping, and a section named like a year or
+   * a status would otherwise inherit that section's state, so each grouping keeps its own record.
+   */
+  function groupCollapseKey(key: string): string {
+    return `${grouping.value}:${key}`
+  }
+
+  // Read as a boolean rather than for absence: series names are provider data, and one matching a
+  // member of the record's prototype would otherwise read as permanently collapsed.
   function isGroupCollapsed(key: string): boolean {
-    return collapse.value.groups[key] ?? collapse.value.all
+    const stored = collapse.value.groups[groupCollapseKey(key)]
+    return typeof stored === 'boolean' ? stored : collapse.value.all
   }
 
   /**
@@ -182,11 +193,15 @@ export function useMonitoredAuthorDetail() {
 
   function toggleGroup(key: string): void {
     const collapsed = !isGroupCollapsed(key)
-    const groups = { ...collapse.value.groups }
+    const stored = groupCollapseKey(key)
     // A section back in step with the collapse-all state has nothing left worth remembering.
-    if (collapsed === collapse.value.all) delete groups[key]
-    else groups[key] = collapsed
-    persistCollapse({ all: collapse.value.all, groups })
+    if (collapsed === collapse.value.all) {
+      const groups = { ...collapse.value.groups }
+      delete groups[stored]
+      persistCollapse({ all: collapse.value.all, groups })
+      return
+    }
+    persistCollapse({ all: collapse.value.all, groups: { ...collapse.value.groups, [stored]: collapsed } })
   }
 
   function setAllGroupsCollapsed(collapsed: boolean): void {
@@ -199,8 +214,6 @@ export function useMonitoredAuthorDetail() {
 
   function setGrouping(value: MonitoredGrouping) {
     grouping.value = value
-    // Group keys mean something else under another grouping, so per-section choices do not carry over.
-    persistCollapse({ all: collapse.value.all, groups: {} })
     storage.set(GROUP_STORAGE_KEY, value)
     syncRouteQuery()
   }

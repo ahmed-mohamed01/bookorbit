@@ -26,6 +26,13 @@ describe('readCollapseStore', () => {
       'author-3': { all: false, groups: {} },
     })
   })
+
+  it('keeps a section named __proto__ as an entry rather than letting it rewrite the record', () => {
+    const store = readCollapseStore(JSON.parse('{"author-1":{"all":false,"groups":{"__proto__":true}}}'))
+
+    expect(store['author-1']?.groups).toEqual(JSON.parse('{"__proto__":true}'))
+    expect(Object.getPrototypeOf(store['author-1']?.groups ?? {})).toBe(Object.prototype)
+  })
 })
 
 describe('collapseEntryFor', () => {

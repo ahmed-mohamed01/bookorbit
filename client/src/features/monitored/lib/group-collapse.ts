@@ -19,21 +19,24 @@ export function emptyCollapseEntry(): MonitoredCollapseEntry {
 /** Authors are monitored in bulk, so the record is capped and the least recently touched fall off. */
 export const MONITORED_COLLAPSE_AUTHOR_LIMIT = 50
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Section keys carry series names, which are provider data. They are collected into the record by
+ * `fromEntries` rather than assigned key by key, so a series named `__proto__` becomes an ordinary
+ * entry instead of rewriting the prototype of the record it lands in.
+ */
 export function readCollapseStore(stored: unknown): MonitoredCollapseStore {
-  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {}
-  const store: MonitoredCollapseStore = {}
-  for (const [authorId, raw] of Object.entries(stored as Record<string, unknown>)) {
-    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue
-    const entry = raw as Partial<Record<keyof MonitoredCollapseEntry, unknown>>
-    const groups: Record<string, boolean> = {}
-    if (typeof entry.groups === 'object' && entry.groups !== null && !Array.isArray(entry.groups)) {
-      for (const [key, value] of Object.entries(entry.groups as Record<string, unknown>)) {
-        if (typeof value === 'boolean') groups[key] = value
-      }
-    }
-    store[authorId] = { all: entry.all === true, groups }
+  if (!isRecord(stored)) return {}
+  const entries: [string, MonitoredCollapseEntry][] = []
+  for (const [authorId, raw] of Object.entries(stored)) {
+    if (!isRecord(raw)) continue
+    const groups = isRecord(raw.groups) ? Object.entries(raw.groups).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean') : []
+    entries.push([authorId, { all: raw.all === true, groups: Object.fromEntries(groups) }])
   }
-  return store
+  return Object.fromEntries(entries)
 }
 
 export function collapseEntryFor(store: MonitoredCollapseStore, authorId: string): MonitoredCollapseEntry {
@@ -51,13 +54,7 @@ export function writeCollapseEntry(
   entry: MonitoredCollapseEntry,
   limit = MONITORED_COLLAPSE_AUTHOR_LIMIT,
 ): MonitoredCollapseStore {
-  const next: MonitoredCollapseStore = {}
-  for (const [key, value] of Object.entries(store)) {
-    if (key !== authorId) next[key] = value
-  }
-  if (entry.all || Object.keys(entry.groups).length > 0) next[authorId] = entry
-  const authorIds = Object.keys(next)
-  if (authorIds.length <= limit) return next
-  for (const stale of authorIds.slice(0, authorIds.length - limit)) delete next[stale]
-  return next
+  const kept = Object.entries(store).filter(([key]) => key !== authorId)
+  if (entry.all || Object.keys(entry.groups).length > 0) kept.push([authorId, entry])
+  return Object.fromEntries(kept.slice(Math.max(0, kept.length - limit)))
 }

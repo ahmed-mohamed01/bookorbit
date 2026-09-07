@@ -559,22 +559,45 @@ describe('useMonitoredAuthorDetail group collapsing', () => {
     first.composable.toggleGroup('standalone')
 
     expect(storage.get<Record<string, unknown>>('monitored:authorDetail:collapsed', {})).toEqual({
-      'author-1': { all: false, groups: { 'A Series': true, standalone: true } },
+      'author-1': { all: false, groups: { 'series:A Series': true, 'series:standalone': true } },
       'author-2': { all: true, groups: {} },
     })
     first.wrapper.unmount()
     second.wrapper.unmount()
   })
 
-  it('drops per-section choices when the grouping changes, since the keys no longer mean the same thing', async () => {
+  it("keeps each grouping's sections apart, since the same name means something else under another", async () => {
     const { composable, wrapper } = mountComposable()
     await composable.load()
 
     composable.toggleGroup('A Series')
     composable.setGrouping('year')
 
+    // A year section named like the collapsed series must not inherit its state.
     expect(composable.isGroupCollapsed('A Series')).toBe(false)
-    expect(storage.get<Record<string, unknown>>('monitored:authorDetail:collapsed', {})).toEqual({})
+
+    composable.setGrouping('series')
+    expect(composable.isGroupCollapsed('A Series')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it("lets a section named after a member of the record's prototype be opened again", async () => {
+    // Series names are provider data: 'toString' read straight off the record would come back as a
+    // function, which is not nullish, and the section could never be opened.
+    fetchDetailMock.mockResolvedValue({
+      author: detail().author,
+      works: [work({ id: 'odd', title: 'Odd', seriesName: 'toString', seriesMemberships: [{ name: 'toString', index: '1' }] })],
+    })
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+
+    expect(composable.isGroupCollapsed('toString')).toBe(false)
+
+    composable.toggleGroup('toString')
+    expect(composable.isGroupCollapsed('toString')).toBe(true)
+
+    composable.toggleGroup('toString')
+    expect(composable.isGroupCollapsed('toString')).toBe(false)
     wrapper.unmount()
   })
 })
