@@ -1,6 +1,20 @@
 <script setup lang="ts">
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
-import { BookCopy, BookOpen, CalendarDays, Check, ChevronLeft, Headphones, Loader2, MoreHorizontal, RefreshCw, Trash2 } from '@lucide/vue'
+import {
+  BookCopy,
+  BookOpen,
+  CalendarDays,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Headphones,
+  Loader2,
+  MoreHorizontal,
+  RefreshCw,
+  Trash2,
+} from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
@@ -41,6 +55,10 @@ const {
   order,
   grouping,
   groups,
+  allGroupsCollapsed,
+  isGroupCollapsed,
+  toggleGroup,
+  toggleAllGroups,
   visibleWorks,
   display,
   displayCounts,
@@ -113,6 +131,7 @@ const groupOptions = computed<{ value: MonitoredGrouping; label: string }[]>(() 
   { value: 'year', label: t('monitored.detail.controls.year') },
   { value: 'status', label: t('monitored.detail.controls.status') },
 ])
+const collapseAllLabel = computed(() => t(allGroupsCollapsed.value ? 'monitored.detail.controls.expandAll' : 'monitored.detail.controls.collapseAll'))
 const bioExpanded = ref(false)
 watch(bio, () => {
   bioExpanded.value = false
@@ -532,6 +551,23 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                 @update:order="setOrder"
               />
               <MonitoredGroupMenu :options="groupOptions" :model-value="grouping" default-value="series" @update:model-value="setGrouping" />
+              <button
+                v-if="groups.length > 1"
+                type="button"
+                class="flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors"
+                :class="
+                  allGroupsCollapsed
+                    ? 'border-primary/55 bg-primary/10 text-primary'
+                    : 'border-input bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                "
+                :aria-label="collapseAllLabel"
+                :title="collapseAllLabel"
+                @click="toggleAllGroups"
+              >
+                <ChevronsUpDown v-if="allGroupsCollapsed" :size="13" />
+                <ChevronsDownUp v-else :size="13" />
+                <span class="hidden lg:inline">{{ collapseAllLabel }}</span>
+              </button>
               <MonitoredDisplayMenu
                 :model-value="display"
                 :counts="displayCounts"
@@ -546,11 +582,29 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
           <div class="mt-5 space-y-6">
             <section v-for="group in groups" :key="group.key">
               <div class="mb-3 flex items-center gap-2">
-                <h3 class="text-xs font-semibold text-foreground">{{ groupLabel(group.key, group.label) }}</h3>
-                <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{{ group.works.length }}</span>
+                <h3 class="min-w-0">
+                  <button
+                    type="button"
+                    class="flex min-w-0 items-center gap-2 rounded-md text-left transition-colors hover:text-primary focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                    :aria-expanded="!isGroupCollapsed(group.key)"
+                    @click="toggleGroup(group.key)"
+                  >
+                    <ChevronDown
+                      :size="14"
+                      class="shrink-0 text-muted-foreground transition-transform"
+                      :class="{ '-rotate-90': isGroupCollapsed(group.key) }"
+                      aria-hidden="true"
+                    />
+                    <span class="truncate text-xs font-semibold text-foreground">{{ groupLabel(group.key, group.label) }}</span>
+                    <span class="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{{
+                      group.works.length
+                    }}</span>
+                  </button>
+                </h3>
                 <div class="h-px flex-1 bg-border" />
               </div>
               <MonitoredVirtualGrid
+                v-if="!isGroupCollapsed(group.key)"
                 :virtualized="grouping === 'none'"
                 :items="group.works"
                 :card-size="DETAIL_WORK_CARD_SIZE"

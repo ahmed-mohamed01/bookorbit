@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import type {
@@ -20,6 +20,7 @@ import {
   updateMonitoredWork,
 } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
+import { collapseEntryFor, emptyCollapseEntry, readCollapseStore, writeCollapseEntry, type MonitoredCollapseEntry } from '../lib/group-collapse'
 import { groupWorks, sortWorks } from '../lib/grouping'
 import { isMonitoredBookForWork, notifyMonitoredBookCreated } from '../lib/monitored-book-state'
 import {
@@ -40,6 +41,7 @@ const SORT_STORAGE_KEY = 'monitored:authorDetail:sort'
 const ORDER_STORAGE_KEY = 'monitored:authorDetail:order'
 const GROUP_STORAGE_KEY = 'monitored:authorDetail:group'
 const DISPLAY_STORAGE_KEY = 'monitored:authorDetail:display'
+const COLLAPSE_STORAGE_KEY = 'monitored:authorDetail:collapsed'
 
 function firstQueryValue(value: unknown): string | undefined {
   return Array.isArray(value) ? value[0] : typeof value === 'string' ? value : undefined
@@ -74,8 +76,18 @@ export function useMonitoredAuthorDetail() {
   const sort = ref<MonitoredSort>(parseSort(route.query.sort ?? storage.get<string | null>(SORT_STORAGE_KEY, null)))
   const order = ref<SortOrder>(parseOrder(route.query.order ?? storage.get<string | null>(ORDER_STORAGE_KEY, null)))
   const grouping = ref<MonitoredGrouping>(parseGrouping(route.query.group ?? storage.get<string | null>(GROUP_STORAGE_KEY, null)))
+  const collapse = ref<MonitoredCollapseEntry>(emptyCollapseEntry())
 
   const authorId = computed(() => String(route.params.id ?? ''))
+  // Collapsed sections are remembered per author, so returning to one finds the catalog as it was
+  // left and a sibling author is untouched by it.
+  watch(
+    authorId,
+    (id) => {
+      collapse.value = collapseEntryFor(readCollapseStore(storage.get<unknown>(COLLAPSE_STORAGE_KEY, null)), id)
+    },
+    { immediate: true },
+  )
   const loadedWorks = computed(() => detail.value?.works.filter((work) => !hiddenWorkIds.value.has(work.id)) ?? [])
   const displayCounts = computed(() => {
     const counts = { hidden: 0, placeholder: 0, review: 0 }
@@ -89,6 +101,7 @@ export function useMonitoredAuthorDetail() {
   const visibleWorks = computed(() => loadedWorks.value.filter((work) => isWorkDisplayed(work, display.value)))
   const sortedWorks = computed(() => sortWorks(visibleWorks.value, sort.value, order.value))
   const groups = computed(() => groupWorks(sortedWorks.value, grouping.value, order.value, sort.value))
+  const allGroupsCollapsed = computed(() => groups.value.length > 0 && groups.value.every((group) => isGroupCollapsed(group.key)))
   const monitoredFormats = computed<MonitoredFormat[]>(() => {
     const formats = detail.value?.author.formats
     if (!formats) return ['ebook', 'audiobook']
@@ -152,8 +165,42 @@ export function useMonitoredAuthorDetail() {
     syncRouteQuery()
   }
 
+  function isGroupCollapsed(key: string): boolean {
+    return collapse.value.groups[key] ?? collapse.value.all
+  }
+
+  /**
+   * Several author pages stay mounted at once, so the record is reread on the way out rather than
+   * held: a copy taken when this page opened would write back over whatever the others have since
+   * remembered.
+   */
+  function persistCollapse(entry: MonitoredCollapseEntry): void {
+    collapse.value = entry
+    const stored = readCollapseStore(storage.get<unknown>(COLLAPSE_STORAGE_KEY, null))
+    storage.set(COLLAPSE_STORAGE_KEY, writeCollapseEntry(stored, authorId.value, entry))
+  }
+
+  function toggleGroup(key: string): void {
+    const collapsed = !isGroupCollapsed(key)
+    const groups = { ...collapse.value.groups }
+    // A section back in step with the collapse-all state has nothing left worth remembering.
+    if (collapsed === collapse.value.all) delete groups[key]
+    else groups[key] = collapsed
+    persistCollapse({ all: collapse.value.all, groups })
+  }
+
+  function setAllGroupsCollapsed(collapsed: boolean): void {
+    persistCollapse({ all: collapsed, groups: {} })
+  }
+
+  function toggleAllGroups(): void {
+    setAllGroupsCollapsed(!allGroupsCollapsed.value)
+  }
+
   function setGrouping(value: MonitoredGrouping) {
     grouping.value = value
+    // Group keys mean something else under another grouping, so per-section choices do not carry over.
+    persistCollapse({ all: collapse.value.all, groups: {} })
     storage.set(GROUP_STORAGE_KEY, value)
     syncRouteQuery()
   }
@@ -303,6 +350,10 @@ export function useMonitoredAuthorDetail() {
     order,
     grouping,
     groups,
+    allGroupsCollapsed,
+    isGroupCollapsed,
+    toggleGroup,
+    toggleAllGroups,
     visibleWorks,
     display,
     displayCounts,

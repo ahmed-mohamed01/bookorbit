@@ -7,8 +7,10 @@ import { onMonitoredBookCreated } from '../lib/monitored-book-state'
 import { storage } from '@/services/storage'
 import { useMonitoredAuthorDetail } from './useMonitoredAuthorDetail'
 
+const routeState = vi.hoisted(() => ({ authorId: 'author-1' }))
+
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { id: 'author-1' }, query: {} }),
+  useRoute: () => ({ params: { id: routeState.authorId }, query: {} }),
   useRouter: () => ({ replace: vi.fn<() => Promise<void>>() }),
 }))
 
@@ -463,6 +465,116 @@ describe('useMonitoredAuthorDetail release switches', () => {
 
     composable.setDisplay({ ...composable.display.value, upcoming: true, released: false })
     expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['soon', 'tba'])
+    wrapper.unmount()
+  })
+})
+
+describe('useMonitoredAuthorDetail group collapsing', () => {
+  const seriesDetail = (): MonitoredAuthorDetail => ({
+    author: detail().author,
+    works: [
+      work({ id: 'first', title: 'First', seriesName: 'A Series', seriesMemberships: [{ name: 'A Series', index: '1' }] }),
+      work({ id: 'alone', title: 'Alone' }),
+    ],
+  })
+
+  beforeEach(() => {
+    routeState.authorId = 'author-1'
+    storage.remove('monitored:authorDetail:collapsed')
+    storage.remove('monitored:authorDetail:group')
+    fetchDetailMock.mockReset()
+    fetchBooksMock.mockReset()
+    fetchDetailMock.mockResolvedValue(seriesDetail())
+    fetchBooksMock.mockResolvedValue(emptyBooksPage())
+  })
+
+  it('starts expanded and collapses one section without touching the others', async () => {
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+
+    expect(composable.groups.value.map((group) => group.key)).toEqual(['A Series', 'standalone'])
+    expect(composable.allGroupsCollapsed.value).toBe(false)
+
+    composable.toggleGroup('A Series')
+
+    expect(composable.isGroupCollapsed('A Series')).toBe(true)
+    expect(composable.isGroupCollapsed('standalone')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('collapses and expands every section from the one toggle', async () => {
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+
+    composable.toggleAllGroups()
+    expect(composable.allGroupsCollapsed.value).toBe(true)
+
+    composable.toggleAllGroups()
+    expect(composable.isGroupCollapsed('A Series')).toBe(false)
+    expect(composable.allGroupsCollapsed.value).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('finds the same sections collapsed on a later visit to that author', async () => {
+    const first = mountComposable()
+    await first.composable.load()
+    first.composable.toggleGroup('A Series')
+    first.wrapper.unmount()
+
+    const revisit = mountComposable()
+    await revisit.composable.load()
+
+    expect(revisit.composable.isGroupCollapsed('A Series')).toBe(true)
+    expect(revisit.composable.isGroupCollapsed('standalone')).toBe(false)
+    revisit.wrapper.unmount()
+  })
+
+  it('remembers each author separately, so collapsing one leaves the next as it was', async () => {
+    const first = mountComposable()
+    await first.composable.load()
+    first.composable.toggleAllGroups()
+    first.wrapper.unmount()
+
+    routeState.authorId = 'author-2'
+    const second = mountComposable()
+    await second.composable.load()
+
+    expect(second.composable.allGroupsCollapsed.value).toBe(false)
+    expect(storage.get<Record<string, unknown>>('monitored:authorDetail:collapsed', {})).toEqual({ 'author-1': { all: true, groups: {} } })
+    second.wrapper.unmount()
+  })
+
+  it('keeps what another open author page has remembered, since several stay mounted at once', async () => {
+    const first = mountComposable()
+    await first.composable.load()
+    first.composable.toggleGroup('A Series')
+
+    routeState.authorId = 'author-2'
+    const second = mountComposable()
+    await second.composable.load()
+    second.composable.toggleAllGroups()
+
+    // The first page is still mounted, so its next write must not roll the second one back.
+    routeState.authorId = 'author-1'
+    first.composable.toggleGroup('standalone')
+
+    expect(storage.get<Record<string, unknown>>('monitored:authorDetail:collapsed', {})).toEqual({
+      'author-1': { all: false, groups: { 'A Series': true, standalone: true } },
+      'author-2': { all: true, groups: {} },
+    })
+    first.wrapper.unmount()
+    second.wrapper.unmount()
+  })
+
+  it('drops per-section choices when the grouping changes, since the keys no longer mean the same thing', async () => {
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+
+    composable.toggleGroup('A Series')
+    composable.setGrouping('year')
+
+    expect(composable.isGroupCollapsed('A Series')).toBe(false)
+    expect(storage.get<Record<string, unknown>>('monitored:authorDetail:collapsed', {})).toEqual({})
     wrapper.unmount()
   })
 })
