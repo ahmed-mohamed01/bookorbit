@@ -10350,6 +10350,12 @@
       "askAdmin": "Ask an administrator to grant Hardcover sync or enable the Hardcover metadata source. Until then, authors cannot be added or refreshed.",
       "openSettings": "Open metadata sources"
     },
+    "audibleNotice": {
+      "title": "Only Ebook release dates displayed as no audiobook metadata providers configured.",
+      "hint": "Enable Audiobook metadata source and refresh to display audiobook release dates.",
+      "askAdmin": "Ask an administrator to enable an audiobook metadata source to display audiobook release dates.",
+      "openSettings": "Open metadata sources"
+    },
     "empty": {
       "authorsTitle": "No monitored authors",
       "authorsDescription": "Add an author to watch their catalog and hear about new releases.",

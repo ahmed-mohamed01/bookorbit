@@ -50,6 +50,7 @@ import { MonitoredCatalogService, normalizeMonitoredName, type WorkAvailabilityG
 import { MonitoredAutoRequestService } from './monitored-autorequest.service';
 import { MonitoredProviderConfigService } from './monitored-provider-config.service';
 import { MonitoredStoreService } from './monitored-store.service';
+import { isAudibleConfigured } from './providers/audible-bibliography.provider';
 import { isHardcoverConfigured } from './providers/hardcover-bibliography.provider';
 import { isWorkVisible } from './monitored-work-visibility';
 import type { MonitoredAuthorAggregate, MonitoredReleasePageEntry } from './monitored-store.service';
@@ -127,7 +128,7 @@ export class MonitoredService {
     const earliest = new Date(now - RELEASE_LOOKBACK_MS).toISOString().slice(0, 10);
     const latest = new Date(now + RELEASE_LOOKAHEAD_MS).toISOString().slice(0, 10);
     const [counts, config] = await Promise.all([this.store.countSummary(user, earliest, latest), this.providerConfigs.forUser(user.id)]);
-    return { ...counts, hardcoverConfigured: isHardcoverConfigured(config) };
+    return { ...counts, hardcoverConfigured: isHardcoverConfigured(config), audibleConfigured: isAudibleConfigured(config) };
   }
 
   async listAuthors(user: RequestUser, query: ListMonitoredAuthorsDto): Promise<MonitoredPage<MonitoredAuthorItem>> {

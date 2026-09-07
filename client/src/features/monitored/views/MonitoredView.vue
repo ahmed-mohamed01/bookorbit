@@ -56,6 +56,7 @@ import MonitoredBookPanel from '../components/MonitoredBookPanel.vue'
 import MonitoredBookRow from '../components/MonitoredBookRow.vue'
 import MonitoredEmptyState from '../components/MonitoredEmptyState.vue'
 import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
+import MonitoredAudibleNotice from '../components/MonitoredAudibleNotice.vue'
 import MonitoredHardcoverNotice from '../components/MonitoredHardcoverNotice.vue'
 import MonitoredReleaseRow from '../components/MonitoredReleaseRow.vue'
 import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
@@ -90,6 +91,7 @@ const {
   releaseHasMore,
   counts,
   hardcoverConfigured,
+  audibleConfigured,
   error,
   loadSummary,
   loadAuthors,
@@ -421,6 +423,10 @@ const releaseSections = computed(() =>
     return { ...group, entries, count: releaseHasMore.value ? null : count }
   }),
 )
+
+// Audiobook release dates are sourced from Audible alone, so with that provider off the feed is
+// silently ebook-only rather than empty. The notice belongs where that gap is visible.
+const showAudibleNotice = computed(() => activeTab.value === 'releases' && !audibleConfigured.value)
 
 const sortedBooks = computed(() => books.value)
 
@@ -1041,6 +1047,7 @@ defineOptions({ name: 'MonitoredView' })
         <Button variant="outline" size="sm" @click="handleRetry">{{ t('common.retry') }}</Button>
       </div>
       <MonitoredHardcoverNotice v-if="!hardcoverConfigured" class="mx-1 mt-4" />
+      <MonitoredAudibleNotice v-if="showAudibleNotice" class="mx-1 mt-4" />
       <!-- Retention drops the earliest pages once a list passes the cap; scrolling back to this edge
            means the top of the render is no longer page 0, so a reset is the only way back to it. -->
       <div v-if="activeTab !== 'add'" ref="topSentinel" aria-hidden="true" />

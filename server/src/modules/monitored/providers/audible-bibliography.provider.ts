@@ -71,6 +71,11 @@ export function mapAudibleObservations(rawRows: unknown[]): Observation[] {
   });
 }
 
+/** Audible is the only source of audiobook release dates, so the catalog carries none without it. */
+export function isAudibleConfigured(config: ProviderConfigurations): boolean {
+  return config.audible.enabled;
+}
+
 @Injectable()
 export class AudibleBibliographyProvider implements AuthorBibliographyProvider {
   readonly source = 'audible' as const;
@@ -79,7 +84,7 @@ export class AudibleBibliographyProvider implements AuthorBibliographyProvider {
   private readonly resolvedProducts = new Map<string, AudibleProduct[]>();
 
   isEnabled(config: ProviderConfigurations): boolean {
-    return config.audible.enabled;
+    return isAudibleConfigured(config);
   }
 
   async resolveAuthor(

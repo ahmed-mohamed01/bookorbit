@@ -214,6 +214,7 @@ export interface MonitoredSummary {
   books: number;
   releases: number;
   hardcoverConfigured: boolean;
+  audibleConfigured: boolean;
 }
 
 export interface MonitoredPage<T> {

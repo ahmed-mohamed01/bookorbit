@@ -24,7 +24,7 @@ export const MONITORED_RELEASE_GROUPS = ['status', 'none'] as const
 export type MonitoredReleaseGroup = (typeof MONITORED_RELEASE_GROUPS)[number]
 
 // Assume configured until the summary loads so the notice does not flash during startup.
-const EMPTY_SUMMARY: MonitoredSummary = { authors: 0, books: 0, releases: 0, hardcoverConfigured: true }
+const EMPTY_SUMMARY: MonitoredSummary = { authors: 0, books: 0, releases: 0, hardcoverConfigured: true, audibleConfigured: true }
 const PAGE_SIZE = 50
 export const MONITORED_MAX_RETAINED_ITEMS = 1500
 export const MONITORED_IDLE_TRIM_MS = 10 * 60 * 1000
@@ -69,6 +69,7 @@ export function useMonitored() {
     releases: summary.value.releases,
   }))
   const hardcoverConfigured = computed(() => summary.value.hardcoverConfigured)
+  const audibleConfigured = computed(() => summary.value.audibleConfigured)
   const authorHasMore = computed(() => authorPage.value * PAGE_SIZE < authorTotal.value)
   const bookHasMore = computed(() => bookPage.value * PAGE_SIZE < bookTotal.value)
   const releaseHasMore = computed(() => releasePage.value * PAGE_SIZE < releaseTotal.value)
@@ -256,6 +257,7 @@ export function useMonitored() {
     releaseHasMore,
     counts,
     hardcoverConfigured,
+    audibleConfigured,
     error,
     loadSummary,
     loadAuthors,

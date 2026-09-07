@@ -88,7 +88,9 @@ function service(store: Record<string, unknown>, bookRequests: Record<string, un
     { recomputeWorkAvailability: vi.fn().mockResolvedValue(new Set<string>()), ...deps.catalog } as never,
     autoRequests as never,
     (deps.hardcover ?? {}) as never,
-    (deps.providerConfigs ?? { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' } }) }) as never,
+    (deps.providerConfigs ?? {
+      forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' }, audible: { enabled: true, domain: 'com' } }),
+    }) as never,
     (deps.authorsRepository ?? {}) as never,
     (deps.authorMetadataPreferences ?? {}) as never,
     (deps.enrichmentExecutor ?? {}) as never,
@@ -314,19 +316,38 @@ describe('MonitoredService', () => {
       books: 3,
       releases: 4,
       hardcoverConfigured: true,
+      audibleConfigured: true,
     });
     expect(countSummary).toHaveBeenCalledOnce();
   });
 
   it('reports Hardcover as unconfigured when the provider is disabled', async () => {
     const countSummary = vi.fn().mockResolvedValue({ authors: 2, books: 3, releases: 4 });
-    const providerConfigs = { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: false, apiKey: 'key' } }) };
+    const providerConfigs = {
+      forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: false, apiKey: 'key' }, audible: { enabled: true, domain: 'com' } }),
+    };
 
     await expect(service({ countSummary }, {}, { providerConfigs }).getSummary(viewer)).resolves.toEqual({
       authors: 2,
       books: 3,
       releases: 4,
       hardcoverConfigured: false,
+      audibleConfigured: true,
+    });
+  });
+
+  it('reports Audible as unconfigured when the provider is disabled, since audiobook dates come only from it', async () => {
+    const countSummary = vi.fn().mockResolvedValue({ authors: 2, books: 3, releases: 4 });
+    const providerConfigs = {
+      forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' }, audible: { enabled: false, domain: 'com' } }),
+    };
+
+    await expect(service({ countSummary }, {}, { providerConfigs }).getSummary(viewer)).resolves.toEqual({
+      authors: 2,
+      books: 3,
+      releases: 4,
+      hardcoverConfigured: true,
+      audibleConfigured: false,
     });
   });
 
