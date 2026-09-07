@@ -45,6 +45,7 @@ import { RequestFulfillmentService } from '../book-request/fulfillment/request-f
 import { IndexerSearchService } from '../book-request/indexers/indexer-search.service';
 import type { IndexerSearchRequest } from '../book-request/indexers/indexer-search.service';
 import { HardcoverClient } from '../metadata-fetch/providers/hardcover/hardcover.client';
+import type { HardcoverAuthorSearchDocument } from '../metadata-fetch/providers/hardcover/hardcover.types';
 import { LibraryService } from '../library/library.service';
 import { MonitoredCatalogService, normalizeMonitoredName, type WorkAvailabilityGroup } from './monitored-catalog.service';
 import { MonitoredAutoRequestService } from './monitored-autorequest.service';
@@ -86,6 +87,23 @@ function isOwnerView(ownerUserId: number, user: RequestUser): boolean {
 function monitoredReleaseStatus(work: MonitoredWork, format: MonitoredFormat, releaseDate: string, today: string): MonitoredReleaseStatus {
   if (work.matchedBookIds?.[format] != null || work.ownedFormats.includes(format)) return 'grabbed';
   return monitoredAcquisitionState(work.requestStatuses?.[format]) ?? (releaseDate <= today ? 'available' : 'upcoming');
+}
+
+/**
+ * One Hardcover hit per author name, keeping whichever record carries the most books. Hardcover holds
+ * several records for the same author - a populated one and empty stubs - and they all fold onto one
+ * key here. Keeping whichever hit the search returned last would hand the monitor a stub's id, and a
+ * bibliography fetch pinned to a stub comes back with nothing. This is the same tie-break the
+ * bibliography provider applies when it has to resolve the author by name itself.
+ */
+function strongestHitPerName(hits: HardcoverAuthorSearchDocument[]): HardcoverAuthorSearchDocument[] {
+  const best = new Map<string, HardcoverAuthorSearchDocument>();
+  for (const hit of hits) {
+    const key = normalizeMonitoredName(hit.name);
+    const current = best.get(key);
+    if (!current || (hit.books_count ?? 0) > (current.books_count ?? 0)) best.set(key, hit);
+  }
+  return [...best.values()];
 }
 
 /**
@@ -188,7 +206,11 @@ export class MonitoredService {
 
   async createAuthor(input: MonitorAuthorRequest, user: RequestUser): Promise<MonitoredAuthorDetail> {
     const startedAt = Date.now();
-    const authorName = input.authorName.trim();
+    // Hardcover files some authors under a name carrying runs of internal whitespace ("Alexander
+    // Olson" is stored there with three spaces). HTML collapses those on screen, so the name reaches
+    // us looking ordinary while the owner-unique index and the local-author lookup, both exact
+    // compares, treat it as a name of its own.
+    const authorName = input.authorName.trim().replace(/\s+/g, ' ');
     if (!authorName) throw new BadRequestException('Author name is required');
     if (await this.store.hasAuthorNamed(user.id, authorName)) throw new BadRequestException('This author is already monitored');
     const formats = this.mergeFormats(undefined, input.formats);
@@ -504,7 +526,7 @@ export class MonitoredService {
         alreadyMonitoredId: null,
       });
     }
-    for (const hit of hardcoverResults) {
+    for (const hit of strongestHitPerName(hardcoverResults)) {
       const key = normalizeMonitoredName(hit.name);
       const current = byName.get(key);
       byName.set(key, {

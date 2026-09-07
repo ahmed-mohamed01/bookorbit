@@ -721,6 +721,66 @@ describe('MonitoredService', () => {
     expect(findMonitoredIdsByNames).toHaveBeenCalledWith(['Zogarth'], viewer);
   });
 
+  // Hardcover carries "Alexander   Olson" (7 books) and "Alexander Olson" (an empty stub) as two
+  // records. Both normalize to one key, and taking the later hit bound the monitor to the stub.
+  function searchService(hits: unknown[], local: unknown[] = []) {
+    return service(
+      { listAuthors: vi.fn(), findMonitoredIdsByNames: vi.fn().mockResolvedValue(new Map()) },
+      {},
+      {
+        authorsRepository: { findPage: vi.fn().mockResolvedValue({ items: local, total: local.length, page: 0, size: 5 }) },
+        libraryService: { findAccessibleLibraryIds: vi.fn().mockResolvedValue([]) },
+        providerConfigs: { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' } }) },
+        hardcover: { searchAuthors: vi.fn().mockResolvedValue(hits) },
+      },
+    );
+  }
+
+  const fullOlson = { id: 685771, name: 'Alexander   Olson', books_count: 7 };
+  const stubOlson = { id: 1163778, name: 'Alexander Olson', books_count: 0 };
+
+  it('keeps the fullest Hardcover record when two of them fold onto one author name', async () => {
+    const results = await searchService([fullOlson, stubOlson]).searchAuthors('Alexander Olson', viewer);
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ providerIds: { hardcover: '685771' }, bookCount: 7 });
+  });
+
+  it('picks the fullest record whichever order the provider returned them in', async () => {
+    const results = await searchService([stubOlson, fullOlson]).searchAuthors('Alexander Olson', viewer);
+
+    expect(results[0]).toMatchObject({ providerIds: { hardcover: '685771' }, bookCount: 7 });
+  });
+
+  it('holds the first record when neither carries a book count to separate them', async () => {
+    const results = await searchService([
+      { id: 1, name: 'Alexander Olson' },
+      { id: 2, name: 'Alexander   Olson', books_count: 0 },
+    ]).searchAuthors('Alexander Olson', viewer);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].providerIds).toEqual({ hardcover: '1' });
+  });
+
+  it('leaves a library author its own name and id when a provider record folds onto it', async () => {
+    const results = await searchService([fullOlson, stubOlson], [{ id: 62, name: 'Alexander Olson', bookCount: 3 }]).searchAuthors(
+      'Alexander Olson',
+      viewer,
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ name: 'Alexander Olson', localAuthorId: 62, providerIds: { hardcover: '685771' } });
+  });
+
+  it('keeps two genuinely different authors apart', async () => {
+    const results = await searchService([fullOlson, { id: 1544174, name: 'Alexander I. Olson', books_count: 1 }]).searchAuthors(
+      'Alexander Olson',
+      viewer,
+    );
+
+    expect(results.map((result) => result.providerIds.hardcover)).toEqual(['685771', '1544174']);
+  });
+
   it('annotates a search hit with the monitor id the bounded lookup returned', async () => {
     const findMonitoredIdsByNames = vi.fn().mockResolvedValue(new Map([['zogarth', 'monitor-9']]));
     const instance = service(
@@ -912,6 +972,15 @@ describe('MonitoredService', () => {
       instance.createAuthor({ authorName: 'Probe', formats: { ebook: { mode: 'auto-all', libraryId: 4, folderId: null } } }, viewer),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(upsertAuthor).not.toHaveBeenCalled();
+  });
+
+  it('collapses the internal whitespace a provider name arrives with', async () => {
+    const hasAuthorNamed = vi.fn().mockResolvedValue(true);
+    const instance = service({ listAuthors: vi.fn(), hasAuthorNamed });
+
+    await expect(instance.createAuthor({ authorName: 'Alexander   Olson', formats: {} }, viewer)).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(hasAuthorNamed).toHaveBeenCalledWith(viewer.id, 'Alexander Olson');
   });
 
   it('checks a create duplicate with one owner-scoped existence query', async () => {
