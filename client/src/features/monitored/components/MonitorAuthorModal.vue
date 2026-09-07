@@ -6,12 +6,14 @@ import { DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRo
 import type { MonitorAuthorRequest, MonitoredAuthorDetail, MonitoredAuthorSearchResult, MonitoredFormat, MonitorMode } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import { useLibraries } from '@/features/library/composables/useLibraries'
+import { useRequestDestinationDefault } from '@/features/book-requests/composables/useRequestDestinationDefault'
 import { bookCoverStyle } from '@/features/book/lib/book-cover'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { monitorAuthor } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
+import { monitorDestinationDefault } from '../lib/monitor-destination'
 
-type FormatState = { mode: MonitorMode; libraryId: number | null }
+type FormatState = { mode: MonitorMode; libraryId: number | null; folderId: number | null }
 
 const props = defineProps<{
   open: boolean
@@ -21,9 +23,11 @@ const props = defineProps<{
 const emit = defineEmits<{ close: []; created: [detail: MonitoredAuthorDetail] }>()
 const { t } = useI18n()
 const { libraries, fetchLibraries } = useLibraries()
-const ebook = ref<FormatState>({ mode: 'auto-upcoming', libraryId: null })
-const audiobook = ref<FormatState>({ mode: 'notify', libraryId: null })
+const { load: loadRequestDestinations, defaultFor } = useRequestDestinationDefault()
+const ebook = ref<FormatState>({ mode: 'notify', libraryId: null, folderId: null })
+const audiobook = ref<FormatState>({ mode: 'notify', libraryId: null, folderId: null })
 const saving = ref(false)
+const loading = ref(false)
 const error = ref<string | null>(null)
 const imageFailed = ref(false)
 
@@ -61,9 +65,14 @@ function formatSummary(format: MonitoredFormat, state: FormatState): string {
 }
 
 function resetState() {
-  const firstLibrary = libraries.value[0]?.id ?? null
-  ebook.value = { mode: props.initialFormats.includes('ebook') ? 'auto-upcoming' : 'off', libraryId: firstLibrary }
-  audiobook.value = { mode: props.initialFormats.includes('audiobook') ? 'notify' : 'off', libraryId: firstLibrary }
+  ebook.value = {
+    mode: props.initialFormats.includes('ebook') ? 'notify' : 'off',
+    ...monitorDestinationDefault(libraries.value, defaultFor('ebook')),
+  }
+  audiobook.value = {
+    mode: props.initialFormats.includes('audiobook') ? 'notify' : 'off',
+    ...monitorDestinationDefault(libraries.value, defaultFor('audiobook')),
+  }
   error.value = null
   imageFailed.value = false
 }
@@ -72,8 +81,15 @@ watch(
   () => props.open,
   async (open) => {
     if (!open) return
-    await fetchLibraries()
-    resetState()
+    // Both defaults arrive over the network, and until they do the form holds no destination at
+    // all: submitting inside that window would monitor the author with nowhere to file its grabs.
+    loading.value = true
+    try {
+      await Promise.all([fetchLibraries(), loadRequestDestinations()])
+      resetState()
+    } finally {
+      loading.value = false
+    }
   },
 )
 
@@ -89,12 +105,18 @@ function handleImageError() {
   imageFailed.value = true
 }
 
+function selectedLibraryId(event: Event): number | null {
+  return Number((event.target as HTMLSelectElement).value) || null
+}
+
+// A folder belongs to the library it was chosen under, so picking another library drops it rather
+// than filing this author's grabs into a folder of the library left behind.
 function handleEbookLibrary(event: Event) {
-  ebook.value.libraryId = Number((event.target as HTMLSelectElement).value) || null
+  ebook.value = { ...ebook.value, libraryId: selectedLibraryId(event), folderId: null }
 }
 
 function handleAudiobookLibrary(event: Event) {
-  audiobook.value.libraryId = Number((event.target as HTMLSelectElement).value) || null
+  audiobook.value = { ...audiobook.value, libraryId: selectedLibraryId(event), folderId: null }
 }
 
 function handleEbookMode(event: Event) {
@@ -113,8 +135,8 @@ async function handleSubmit() {
     authorName: props.result.name,
     providerIds: props.result.providerIds,
     formats: {
-      ebook: { mode: ebook.value.mode, libraryId: ebook.value.libraryId, folderId: null },
-      audiobook: { mode: audiobook.value.mode, libraryId: audiobook.value.libraryId, folderId: null },
+      ebook: { mode: ebook.value.mode, libraryId: ebook.value.libraryId, folderId: ebook.value.folderId },
+      audiobook: { mode: audiobook.value.mode, libraryId: audiobook.value.libraryId, folderId: audiobook.value.folderId },
     },
   }
   if (props.result.localAuthorId !== null) payload.localAuthorId = props.result.localAuthorId
@@ -236,8 +258,8 @@ async function handleSubmit() {
           <p class="min-w-0 flex-1 text-xs text-muted-foreground">{{ summary }}</p>
           <div class="flex justify-end gap-2">
             <Button variant="outline" :disabled="saving" @click="handleClose">{{ t('common.cancel') }}</Button>
-            <Button :disabled="saving" @click="handleSubmit">
-              <Loader2 v-if="saving" class="animate-spin" />
+            <Button :disabled="saving || loading" @click="handleSubmit">
+              <Loader2 v-if="saving || loading" class="animate-spin" />
               {{ t('monitored.modal.start') }}
             </Button>
           </div>
