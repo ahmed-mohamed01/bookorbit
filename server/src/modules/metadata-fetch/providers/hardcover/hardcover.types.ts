@@ -79,6 +79,7 @@ export interface HardcoverAuthorWithContributions {
 
 export interface HardcoverAuthorContribution {
   contribution?: string | null;
+  contributor_role_id?: number | null;
   book?: HardcoverContributionBook | null;
 }
 
@@ -96,10 +97,15 @@ export interface HardcoverContributionBook {
   users_count?: number | null;
   rating?: number | null;
   ratings_count?: number | null;
+  book_status?: { id: number; name: string } | null;
+  book_category_id?: number | null;
+  users_read_count?: number | null;
+  editions_count?: number | null;
   image?: HardcoverImage | null;
   featured_book_series?: {
     position?: number | string | null;
     series?: {
+      id?: number;
       name?: string | null;
       books_count?: number | null;
     } | null;

@@ -1,13 +1,15 @@
 {
   "name": "RinoZ",
   "slug": "rinoz",
-  "fetchedAt": "2026-09-03T16:14:36.550Z",
+  "fetchedAt": "2026-09-07T08:52:32.903Z",
   "hardcover": {
-    "author": { "id": 407182, "name": "RinoZ", "books_count": 21 },
+    "author": {
+      "id": 407182,
+      "name": "RinoZ"
+    },
     "identityExact": true,
     "books": [
       {
-        "contribution": "Author",
         "id": 597938,
         "slug": "the-antventure-begins",
         "title": "The Antventure Begins",
@@ -18,11 +20,30 @@
         "release_date": "2009-04-10",
         "release_year": 2009,
         "pages": 662,
-        "users_count": 204,
-        "rating": 3.914473684210526,
-        "ratings_count": 76,
-        "image": { "url": "https://assets.hardcover.app/editions/30567041/8268801137219837.jpg" },
-        "featured_book_series": { "position": 1, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "users_count": 207,
+        "rating": 3.9155844155844157,
+        "ratings_count": 77,
+        "image": {
+          "url": "https://assets.hardcover.app/editions/30567041/8268801137219837.jpg"
+        },
+        "featured_book_series": {
+          "position": 1,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 1,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -40,10 +61,24 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 138,
+        "editions_count": 4,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 684615,
         "slug": "book-of-the-dead-2021",
         "title": "Book Of The Dead",
@@ -57,8 +92,11 @@
         "users_count": 0,
         "rating": null,
         "ratings_count": 0,
-        "image": { "url": "https://assets.hardcover.app/edition/30671912/61310611._SX98_.jpg" },
+        "image": {
+          "url": "https://assets.hardcover.app/edition/30671912/61310611._SX98_.jpg"
+        },
         "featured_book_series": null,
+        "book_series": [],
         "cached_contributors": [
           {
             "author": {
@@ -76,10 +114,18 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 4,
+          "name": "Deduped"
+        },
+        "book_category_id": 1,
+        "users_read_count": 0,
+        "editions_count": 0,
+        "lang_editions": [],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 768876,
         "slug": "between-a-rock-and-a-carapace",
         "title": "Between a Rock and a Carapace",
@@ -90,11 +136,30 @@
         "release_date": "2023-06-20",
         "release_year": 2023,
         "pages": 604,
-        "users_count": 102,
-        "rating": 4.344444444444444,
-        "ratings_count": 45,
-        "image": { "url": "https://assets.hardcover.app/editions/30770566/4264173522375587.jpg" },
-        "featured_book_series": { "position": 4, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "users_count": 105,
+        "rating": 4.336956521739131,
+        "ratings_count": 46,
+        "image": {
+          "url": "https://assets.hardcover.app/editions/31229765/3953328386885316.jpg"
+        },
+        "featured_book_series": {
+          "position": 4,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 4,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -112,10 +177,24 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 86,
+        "editions_count": 4,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 768925,
         "slug": "upping-the-ante-2022",
         "title": "Upping the Ante",
@@ -126,11 +205,30 @@
         "release_date": "2022-09-06",
         "release_year": 2022,
         "pages": 708,
-        "users_count": 116,
-        "rating": 4.134615384615385,
-        "ratings_count": 52,
-        "image": { "url": "https://assets.hardcover.app/editions/30770614/3035393054224902.jpg" },
-        "featured_book_series": { "position": 2, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "users_count": 119,
+        "rating": 4.132075471698113,
+        "ratings_count": 53,
+        "image": {
+          "url": "https://assets.hardcover.app/editions/30770614/3035393054224902.jpg"
+        },
+        "featured_book_series": {
+          "position": 2,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 2,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -148,10 +246,27 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 103,
+        "editions_count": 3,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          },
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 769239,
         "slug": "antelligent-design",
         "title": "Antelligent Design",
@@ -162,11 +277,30 @@
         "release_date": "2022-01-01",
         "release_year": 2022,
         "pages": 734,
-        "users_count": 107,
-        "rating": 4.288888888888889,
-        "ratings_count": 45,
-        "image": { "url": "https://assets.hardcover.app/editions/30770925/640680492175705.jpg" },
-        "featured_book_series": { "position": 3, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "users_count": 110,
+        "rating": 4.282608695652174,
+        "ratings_count": 46,
+        "image": {
+          "url": "https://assets.hardcover.app/editions/31229764/5410320381089699.jpg"
+        },
+        "featured_book_series": {
+          "position": 3,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 3,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -184,10 +318,27 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 99,
+        "editions_count": 5,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          },
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 1184387,
         "slug": "enemy-a-n-t-the-gates",
         "title": "Enemy A(n)t the Gates",
@@ -198,11 +349,30 @@
         "release_date": "2024-01-31",
         "release_year": 2024,
         "pages": 662,
-        "users_count": 92,
-        "rating": 4.35,
-        "ratings_count": 40,
-        "image": { "url": "https://assets.hardcover.app/editions/31209095/6570814781344638.jpg" },
-        "featured_book_series": { "position": 5, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "users_count": 94,
+        "rating": 4.341463414634147,
+        "ratings_count": 41,
+        "image": {
+          "url": "https://assets.hardcover.app/editions/31209095/6570814781344638.jpg"
+        },
+        "featured_book_series": {
+          "position": 5,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 5,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -220,10 +390,27 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 80,
+        "editions_count": 4,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          },
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 1438408,
         "slug": "sacrifice-2023",
         "title": "Sacrifice",
@@ -234,11 +421,30 @@
         "release_date": "2023-12-01",
         "release_year": 2023,
         "pages": 504,
-        "users_count": 57,
-        "rating": 4.2407407407407405,
-        "ratings_count": 27,
-        "image": { "url": "https://assets.hardcover.app/edition/32098533/b0d2d141-b912-4682-bafd-8915c778c208.jpg" },
-        "featured_book_series": { "position": 2, "series": { "name": "Book of the Dead", "books_count": 5 } },
+        "users_count": 58,
+        "rating": 4.232142857142857,
+        "ratings_count": 28,
+        "image": {
+          "url": "https://assets.hardcover.app/edition/32098533/b0d2d141-b912-4682-bafd-8915c778c208.jpg"
+        },
+        "featured_book_series": {
+          "position": 2,
+          "series": {
+            "id": 128042,
+            "name": "Book of the Dead",
+            "books_count": 5
+          }
+        },
+        "book_series": [
+          {
+            "position": 2,
+            "series": {
+              "id": 128042,
+              "name": "Book of the Dead",
+              "books_count": 5
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -256,10 +462,24 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 48,
+        "editions_count": 3,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 1450206,
         "slug": "antvance-into-the-unknown",
         "title": "Antvance into the Unknown",
@@ -270,11 +490,30 @@
         "release_date": "2024-09-11",
         "release_year": 2024,
         "pages": 626,
-        "users_count": 86,
-        "rating": 4.486111111111111,
-        "ratings_count": 36,
-        "image": { "url": "https://assets.hardcover.app/users/8674/6221976777077869.jpg" },
-        "featured_book_series": { "position": 6, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "users_count": 88,
+        "rating": 4.472972972972973,
+        "ratings_count": 37,
+        "image": {
+          "url": "https://assets.hardcover.app/users/8674/6221976777077869.jpg"
+        },
+        "featured_book_series": {
+          "position": 6,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 6,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -292,10 +531,27 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 66,
+        "editions_count": 5,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          },
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 1451556,
         "slug": "book-of-the-dead-awakening-2021",
         "title": "Book of the Dead: Awakening",
@@ -306,11 +562,30 @@
         "release_date": "2021-01-01",
         "release_year": 2021,
         "pages": null,
-        "users_count": 94,
-        "rating": 4.090909090909091,
-        "ratings_count": 33,
-        "image": { "url": "https://assets.hardcover.app/edition/32469106/3c39b98b-9741-470a-999f-ed53743c42ca.jpg" },
-        "featured_book_series": { "position": 1, "series": { "name": "Book of the Dead", "books_count": 5 } },
+        "users_count": 96,
+        "rating": 4.088235294117647,
+        "ratings_count": 34,
+        "image": {
+          "url": "https://assets.hardcover.app/edition/32469106/3c39b98b-9741-470a-999f-ed53743c42ca.jpg"
+        },
+        "featured_book_series": {
+          "position": 1,
+          "series": {
+            "id": 128042,
+            "name": "Book of the Dead",
+            "books_count": 5
+          }
+        },
+        "book_series": [
+          {
+            "position": 1,
+            "series": {
+              "id": 128042,
+              "name": "Book of the Dead",
+              "books_count": 5
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -344,10 +619,27 @@
             },
             "contribution": "Narrator"
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 63,
+        "editions_count": 7,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          },
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 1832507,
         "slug": "masquerade-masquerade-a-litrpg-adventure-2024",
         "title": "Masquerade",
@@ -358,11 +650,30 @@
         "release_date": "2024-12-24",
         "release_year": 2024,
         "pages": 678,
-        "users_count": 40,
-        "rating": 4.25,
-        "ratings_count": 20,
-        "image": { "url": "https://assets.hardcover.app/edition/31959829/902a7834-2e2b-4f41-a666-228f00d5a0e6.jpg" },
-        "featured_book_series": { "position": 3, "series": { "name": "Book of the Dead", "books_count": 5 } },
+        "users_count": 42,
+        "rating": 4.238095238095238,
+        "ratings_count": 21,
+        "image": {
+          "url": "https://assets.hardcover.app/edition/31959829/902a7834-2e2b-4f41-a666-228f00d5a0e6.jpg"
+        },
+        "featured_book_series": {
+          "position": 3,
+          "series": {
+            "id": 128042,
+            "name": "Book of the Dead",
+            "books_count": 5
+          }
+        },
+        "book_series": [
+          {
+            "position": 3,
+            "series": {
+              "id": 128042,
+              "name": "Book of the Dead",
+              "books_count": 5
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -380,10 +691,27 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 37,
+        "editions_count": 3,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          },
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 1874211,
         "slug": "fated-antagonist",
         "title": "Fated Antagonist",
@@ -394,11 +722,30 @@
         "release_date": "2025-06-18",
         "release_year": 2025,
         "pages": 652,
-        "users_count": 70,
-        "rating": 4.3478260869565215,
-        "ratings_count": 23,
-        "image": { "url": "https://assets.hardcover.app/editions/32011133/96dfb0f0-be8f-4be7-b65d-54a677f8627d.jpg" },
-        "featured_book_series": { "position": 7, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "users_count": 72,
+        "rating": 4.333333333333333,
+        "ratings_count": 24,
+        "image": {
+          "url": "https://assets.hardcover.app/editions/32011133/96dfb0f0-be8f-4be7-b65d-54a677f8627d.jpg"
+        },
+        "featured_book_series": {
+          "position": 7,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 7,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -416,10 +763,27 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 54,
+        "editions_count": 5,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          },
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 1943819,
         "slug": "book-of-the-dead-4",
         "title": "Book of the Dead 4: Vengeance",
@@ -433,8 +797,27 @@
         "users_count": 0,
         "rating": null,
         "ratings_count": 0,
-        "image": { "url": "https://assets.hardcover.app/undefined/24050/048fba17-99b7-44ae-bf99-de4d2bab2352.jpg" },
-        "featured_book_series": { "position": 4, "series": { "name": "Book of the Dead", "books_count": 5 } },
+        "image": {
+          "url": "https://assets.hardcover.app/undefined/24050/048fba17-99b7-44ae-bf99-de4d2bab2352.jpg"
+        },
+        "featured_book_series": {
+          "position": 4,
+          "series": {
+            "id": 128042,
+            "name": "Book of the Dead",
+            "books_count": 5
+          }
+        },
+        "book_series": [
+          {
+            "position": 4,
+            "series": {
+              "id": 128042,
+              "name": "Book of the Dead",
+              "books_count": 5
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -452,10 +835,18 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 4,
+          "name": "Deduped"
+        },
+        "book_category_id": 1,
+        "users_read_count": 0,
+        "editions_count": 0,
+        "lang_editions": [],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 1948337,
         "slug": "chrysalis-1331cd68-d1cc-4d53-ad22-ac0c4be2d997",
         "title": "Chrysalis",
@@ -469,8 +860,27 @@
         "users_count": 0,
         "rating": null,
         "ratings_count": 0,
-        "image": { "url": "https://assets.hardcover.app/external_data/702018/c1420f25818b0155aed3522be618a9db62ea5bf6.jpeg" },
-        "featured_book_series": { "position": 1, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "image": {
+          "url": "https://assets.hardcover.app/external_data/702018/c1420f25818b0155aed3522be618a9db62ea5bf6.jpeg"
+        },
+        "featured_book_series": {
+          "position": 1,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 1,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -488,10 +898,18 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 4,
+          "name": "Deduped"
+        },
+        "book_category_id": 1,
+        "users_read_count": 0,
+        "editions_count": 0,
+        "lang_editions": [],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 1948738,
         "slug": "chrysalis-5",
         "title": "Chrysalis 5: Enemy A(n)t the Gates: A LitRPG Adventure",
@@ -507,6 +925,7 @@
         "ratings_count": 0,
         "image": null,
         "featured_book_series": null,
+        "book_series": [],
         "cached_contributors": [
           {
             "author": {
@@ -524,10 +943,18 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 4,
+          "name": "Deduped"
+        },
+        "book_category_id": 1,
+        "users_read_count": 0,
+        "editions_count": 0,
+        "lang_editions": [],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2129677,
         "slug": "book-of-the-dead-4-vengeance",
         "title": "Vengeance",
@@ -541,8 +968,27 @@
         "users_count": 33,
         "rating": 4.266666666666667,
         "ratings_count": 15,
-        "image": { "url": "https://assets.hardcover.app/edition/32332819/b8a7b18f-9eeb-425f-93fb-ba6e99e43da9.jpg" },
-        "featured_book_series": { "position": 4, "series": { "name": "Book of the Dead", "books_count": 5 } },
+        "image": {
+          "url": "https://assets.hardcover.app/edition/32332819/b8a7b18f-9eeb-425f-93fb-ba6e99e43da9.jpg"
+        },
+        "featured_book_series": {
+          "position": 4,
+          "series": {
+            "id": 128042,
+            "name": "Book of the Dead",
+            "books_count": 5
+          }
+        },
+        "book_series": [
+          {
+            "position": 4,
+            "series": {
+              "id": 128042,
+              "name": "Book of the Dead",
+              "books_count": 5
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -560,10 +1006,24 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 27,
+        "editions_count": 2,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2132790,
         "slug": "chrysalis-6",
         "title": "Chrysalis 6: Antvance into the Unknown",
@@ -577,8 +1037,27 @@
         "users_count": 0,
         "rating": null,
         "ratings_count": 0,
-        "image": { "url": "https://assets.hardcover.app/edition/32337108/80d5a85ff9cb87ee026b630721841549807a7e57.jpeg" },
-        "featured_book_series": { "position": 6, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "image": {
+          "url": "https://assets.hardcover.app/edition/32337108/80d5a85ff9cb87ee026b630721841549807a7e57.jpeg"
+        },
+        "featured_book_series": {
+          "position": 6,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 6,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -596,10 +1075,18 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 4,
+          "name": "Deduped"
+        },
+        "book_category_id": 1,
+        "users_read_count": 0,
+        "editions_count": 0,
+        "lang_editions": [],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2167602,
         "slug": "chrysalis-7",
         "title": "Chrysalis 7: Fated Antagonist",
@@ -615,6 +1102,7 @@
         "ratings_count": 0,
         "image": null,
         "featured_book_series": null,
+        "book_series": [],
         "cached_contributors": [
           {
             "author": {
@@ -632,10 +1120,18 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 4,
+          "name": "Deduped"
+        },
+        "book_category_id": 1,
+        "users_read_count": 0,
+        "editions_count": 0,
+        "lang_editions": [],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2167603,
         "slug": "book-of-the-dead-awakening",
         "title": "Book of the Dead: Awakening",
@@ -649,8 +1145,27 @@
         "users_count": 0,
         "rating": null,
         "ratings_count": 0,
-        "image": { "url": "https://assets.hardcover.app/edition/32469106/3c39b98b-9741-470a-999f-ed53743c42ca.jpg" },
-        "featured_book_series": { "position": 1, "series": { "name": "Book of the Dead", "books_count": 5 } },
+        "image": {
+          "url": "https://assets.hardcover.app/edition/32469106/3c39b98b-9741-470a-999f-ed53743c42ca.jpg"
+        },
+        "featured_book_series": {
+          "position": 1,
+          "series": {
+            "id": 128042,
+            "name": "Book of the Dead",
+            "books_count": 5
+          }
+        },
+        "book_series": [
+          {
+            "position": 1,
+            "series": {
+              "id": 128042,
+              "name": "Book of the Dead",
+              "books_count": 5
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -684,10 +1199,18 @@
             },
             "contribution": "Narrator"
           }
-        ]
+        ],
+        "book_status": {
+          "id": 4,
+          "name": "Deduped"
+        },
+        "book_category_id": 1,
+        "users_read_count": 0,
+        "editions_count": 0,
+        "lang_editions": [],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2167605,
         "slug": "book-of-the-dead-2",
         "title": "Book of the Dead 2: Sacrifice: A LitRPG Adventure",
@@ -703,6 +1226,7 @@
         "ratings_count": 2,
         "image": null,
         "featured_book_series": null,
+        "book_series": [],
         "cached_contributors": [
           {
             "author": {
@@ -720,10 +1244,22 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 4,
+        "editions_count": 2,
+        "lang_editions": [
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2176532,
         "slug": "book-of-the-dead-5-ascension",
         "title": "Ascension",
@@ -735,10 +1271,29 @@
         "release_year": 2026,
         "pages": 674,
         "users_count": 14,
-        "rating": 3.75,
-        "ratings_count": 2,
-        "image": { "url": "https://assets.hardcover.app/edition/32392216/72a223d6-ca01-4430-966e-4083cce1ee0b.jpg" },
-        "featured_book_series": { "position": 5, "series": { "name": "Book of the Dead", "books_count": 5 } },
+        "rating": 3.8333333333333335,
+        "ratings_count": 3,
+        "image": {
+          "url": "https://assets.hardcover.app/edition/32392216/72a223d6-ca01-4430-966e-4083cce1ee0b.jpg"
+        },
+        "featured_book_series": {
+          "position": 5,
+          "series": {
+            "id": 128042,
+            "name": "Book of the Dead",
+            "books_count": 5
+          }
+        },
+        "book_series": [
+          {
+            "position": 5,
+            "series": {
+              "id": 128042,
+              "name": "Book of the Dead",
+              "books_count": 5
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -756,10 +1311,24 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 6,
+        "editions_count": 2,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2215963,
         "slug": "chrysalis-books-1-3",
         "title": "Chrysalis, Books 1-3",
@@ -770,11 +1339,30 @@
         "release_date": "2024-02-14",
         "release_year": 2024,
         "pages": null,
-        "users_count": 14,
+        "users_count": 16,
         "rating": 4.333333333333333,
         "ratings_count": 3,
-        "image": { "url": "https://assets.hardcover.app/user/30016/c3685336-c9bd-423c-a0a8-97f430d74b55.jpg" },
-        "featured_book_series": { "position": null, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "image": {
+          "url": "https://assets.hardcover.app/user/30016/c3685336-c9bd-423c-a0a8-97f430d74b55.jpg"
+        },
+        "featured_book_series": {
+          "position": null,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": null,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -808,11 +1396,33 @@
             },
             "contribution": "Narrator"
           },
-          { "author": { "id": 588575, "slug": "annie-ellicott", "name": "Annie Ellicott", "image": {} }, "contribution": "Narrator" }
-        ]
+          {
+            "author": {
+              "id": 588575,
+              "slug": "annie-ellicott",
+              "name": "Annie Ellicott",
+              "image": {}
+            },
+            "contribution": "Narrator"
+          }
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 8,
+        "editions_count": 1,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2290660,
         "slug": "anticipate-the-fall",
         "title": "Anticipate the Fall",
@@ -823,11 +1433,30 @@
         "release_date": "2026-03-18",
         "release_year": 2026,
         "pages": 738,
-        "users_count": 31,
-        "rating": 4.5,
-        "ratings_count": 3,
-        "image": { "url": "https://assets.hardcover.app/edition/32536830/dfcb7267-5726-4e83-92ca-691554433700.jpg" },
-        "featured_book_series": { "position": 8, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "users_count": 33,
+        "rating": 4.375,
+        "ratings_count": 4,
+        "image": {
+          "url": "https://assets.hardcover.app/edition/32536830/dfcb7267-5726-4e83-92ca-691554433700.jpg"
+        },
+        "featured_book_series": {
+          "position": 8,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 8,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -845,10 +1474,24 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 15,
+        "editions_count": 1,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2552701,
         "slug": "antdustrial-revolution",
         "title": "Antdustrial Revolution",
@@ -859,11 +1502,30 @@
         "release_date": "2026-07-15",
         "release_year": 2026,
         "pages": 802,
-        "users_count": 20,
-        "rating": 5,
-        "ratings_count": 1,
-        "image": { "url": "https://assets.hardcover.app/edition/32850042/2db35fde-db61-4731-b3c1-23b11f80cf5c.jpg" },
-        "featured_book_series": { "position": 9, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "users_count": 22,
+        "rating": 4.5,
+        "ratings_count": 2,
+        "image": {
+          "url": "https://assets.hardcover.app/edition/32850042/2db35fde-db61-4731-b3c1-23b11f80cf5c.jpg"
+        },
+        "featured_book_series": {
+          "position": 9,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 9,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -881,10 +1543,24 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 8,
+        "editions_count": 1,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2732474,
         "slug": "chrysalis-6-antvance-into-the-unknown-a-litrpg-adventure",
         "title": "Chrysalis 6: Antvance into the Unknown: A LitRPG Adventure",
@@ -899,7 +1575,24 @@
         "rating": null,
         "ratings_count": 0,
         "image": null,
-        "featured_book_series": { "position": 6, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "featured_book_series": {
+          "position": 6,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 6,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -933,11 +1626,27 @@
             },
             "contribution": null
           },
-          { "author": { "id": 588575, "slug": "annie-ellicott", "name": "Annie Ellicott", "image": {} }, "contribution": null }
-        ]
+          {
+            "author": {
+              "id": 588575,
+              "slug": "annie-ellicott",
+              "name": "Annie Ellicott",
+              "image": {}
+            },
+            "contribution": null
+          }
+        ],
+        "book_status": {
+          "id": 4,
+          "name": "Deduped"
+        },
+        "book_category_id": 1,
+        "users_read_count": 2,
+        "editions_count": 1,
+        "lang_editions": [],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2769420,
         "slug": "crueltys-antidote",
         "title": "Cruelty's Antidote",
@@ -951,8 +1660,27 @@
         "users_count": 6,
         "rating": null,
         "ratings_count": 0,
-        "image": { "url": "https://assets.hardcover.app/edition/33089330/0002f290-8797-487e-94ff-cd9f0d6389a3.jpg" },
-        "featured_book_series": { "position": 10, "series": { "name": "Chrysalis", "books_count": 11 } },
+        "image": {
+          "url": "https://assets.hardcover.app/edition/33089330/0002f290-8797-487e-94ff-cd9f0d6389a3.jpg"
+        },
+        "featured_book_series": {
+          "position": 10,
+          "series": {
+            "id": 30466,
+            "name": "Chrysalis",
+            "books_count": 11
+          }
+        },
+        "book_series": [
+          {
+            "position": 10,
+            "series": {
+              "id": 30466,
+              "name": "Chrysalis",
+              "books_count": 11
+            }
+          }
+        ],
         "cached_contributors": [
           {
             "author": {
@@ -970,10 +1698,24 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 0,
+        "editions_count": 1,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2844892,
         "slug": "fated-antagonist-a-litrpg-adventure",
         "title": "Fated Antagonist — A LitRPG Adventure",
@@ -989,6 +1731,7 @@
         "ratings_count": 0,
         "image": null,
         "featured_book_series": null,
+        "book_series": [],
         "cached_contributors": [
           {
             "author": {
@@ -1006,10 +1749,22 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 1,
+        "editions_count": 1,
+        "lang_editions": [
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2844893,
         "slug": "enemy-a-n-t-the-gates-chrysalis-5",
         "title": "Enemy A(n)t the Gates — Chrysalis 5",
@@ -1017,14 +1772,15 @@
         "description": null,
         "canonical_id": null,
         "compilation": false,
-        "release_date": null,
-        "release_year": null,
+        "release_date": "2024-06-11",
+        "release_year": 2024,
         "pages": null,
-        "users_count": 1,
+        "users_count": 5,
         "rating": null,
         "ratings_count": 0,
         "image": null,
         "featured_book_series": null,
+        "book_series": [],
         "cached_contributors": [
           {
             "author": {
@@ -1042,10 +1798,27 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 5,
+        "editions_count": 2,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          },
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2844894,
         "slug": "upping-the-ante-chrysalis-book-2",
         "title": "Upping the Ante — Chrysalis, Book 2",
@@ -1053,14 +1826,15 @@
         "description": null,
         "canonical_id": null,
         "compilation": false,
-        "release_date": null,
-        "release_year": null,
+        "release_date": "2022-11-30",
+        "release_year": 2022,
         "pages": null,
-        "users_count": 1,
-        "rating": null,
-        "ratings_count": 0,
+        "users_count": 3,
+        "rating": 5,
+        "ratings_count": 1,
         "image": null,
         "featured_book_series": null,
+        "book_series": [],
         "cached_contributors": [
           {
             "author": {
@@ -1078,10 +1852,27 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 3,
+        "editions_count": 2,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          },
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2871229,
         "slug": "chrysalis-the-antventure-begins-a-litrpg-adventure",
         "title": "Chrysalis The Antventure Begins A LitRPG Adventure",
@@ -1092,11 +1883,12 @@
         "release_date": null,
         "release_year": null,
         "pages": null,
-        "users_count": 4,
+        "users_count": 6,
         "rating": 5,
         "ratings_count": 1,
         "image": null,
         "featured_book_series": null,
+        "book_series": [],
         "cached_contributors": [
           {
             "author": {
@@ -1114,7 +1906,195 @@
             },
             "contribution": null
           }
-        ]
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 4,
+        "editions_count": 1,
+        "lang_editions": [
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
+      }
+    ]
+  },
+  "goodreads": {
+    "rows": [
+      {
+        "title": "The Antventure Begins (Chrysalis, #1)",
+        "bookId": "60677825",
+        "avgRating": "4.15",
+        "ratings": 4657,
+        "year": "2022",
+        "expected": false,
+        "editions": "5"
+      },
+      {
+        "title": "Upping the Ante (Chrysalis, #2)",
+        "bookId": "61359739",
+        "avgRating": "4.34",
+        "ratings": 3076,
+        "year": "2022",
+        "expected": false,
+        "editions": "5"
+      },
+      {
+        "title": "Awakening (Book of the Dead #1)",
+        "bookId": "131942335",
+        "avgRating": "4.39",
+        "ratings": 2835,
+        "year": "2021",
+        "expected": false,
+        "editions": "8"
+      },
+      {
+        "title": "Antelligent Design (Chrysalis, #3)",
+        "bookId": "62311102",
+        "avgRating": "4.46",
+        "ratings": 2748,
+        "year": "2022",
+        "expected": false,
+        "editions": "3"
+      },
+      {
+        "title": "Between a Rock and a Carapace (Chrysalis, #4)",
+        "bookId": "75568099",
+        "avgRating": "4.49",
+        "ratings": 2351,
+        "year": "2023",
+        "expected": false,
+        "editions": "3"
+      },
+      {
+        "title": "Sacrifice (Book of the Dead #2)",
+        "bookId": "197593944",
+        "avgRating": "4.55",
+        "ratings": 2109,
+        "year": "2023",
+        "expected": false,
+        "editions": "6"
+      },
+      {
+        "title": "Enemy A[n]t the Gates (Chrysalis #5)",
+        "bookId": "201150434",
+        "avgRating": "4.55",
+        "ratings": 2084,
+        "year": "2024",
+        "expected": false,
+        "editions": "3"
+      },
+      {
+        "title": "Antvance into the Unknown (Chrysalis, #6)",
+        "bookId": "216284589",
+        "avgRating": "4.51",
+        "ratings": 1728,
+        "year": "2024",
+        "expected": false,
+        "editions": "4"
+      },
+      {
+        "title": "Fated Antagonist (Chrysalis, #7)",
+        "bookId": "231806063",
+        "avgRating": "4.57",
+        "ratings": 1427,
+        "year": "2025",
+        "expected": false,
+        "editions": "4"
+      },
+      {
+        "title": "Masquerade (Book of the Dead #3)",
+        "bookId": "221894956",
+        "avgRating": "4.51",
+        "ratings": 1373,
+        "year": "2024",
+        "expected": false,
+        "editions": "5"
+      },
+      {
+        "title": "Vengeance (Book of the Dead #4)",
+        "bookId": "235162755",
+        "avgRating": "4.64",
+        "ratings": 1060,
+        "year": "2025",
+        "expected": false,
+        "editions": "5"
+      },
+      {
+        "title": "Anticipate the Fall (Chrysalis #8)",
+        "bookId": "245137826",
+        "avgRating": "4.73",
+        "ratings": 680,
+        "year": "2026",
+        "expected": false,
+        "editions": "2"
+      },
+      {
+        "title": "Ascension (Book of the Dead #5)",
+        "bookId": "241392509",
+        "avgRating": "4.66",
+        "ratings": 465,
+        "year": "2026",
+        "expected": false,
+        "editions": "4"
+      },
+      {
+        "title": "Antdustrial Revolution (Chrysalis #9)",
+        "bookId": "249283614",
+        "avgRating": "4.73",
+        "ratings": 425,
+        "year": "2026",
+        "expected": false,
+        "editions": null
+      },
+      {
+        "title": "Chrysalis: Books 1-3 Box Set (Chrysalis, #1-3)",
+        "bookId": "204908833",
+        "avgRating": "4.45",
+        "ratings": 254,
+        "year": "2024",
+        "expected": false,
+        "editions": "2"
+      },
+      {
+        "title": "Chrysalis 10: Cruelty's Antidote: A LitRPG Adventure",
+        "bookId": "255034734",
+        "avgRating": "5.00",
+        "ratings": 1,
+        "year": null,
+        "expected": false,
+        "editions": null
+      },
+      {
+        "title": "Chrysalis 9: Antdustrial Revolution: A LitRPG Adventure",
+        "bookId": "255450986",
+        "avgRating": "0.00",
+        "ratings": 0,
+        "year": null,
+        "expected": false,
+        "editions": null
+      },
+      {
+        "title": "Chrysalis 3: Monstermäßige LitRPG-Evolutionsreihe",
+        "bookId": "257108717",
+        "avgRating": "0.00",
+        "ratings": 0,
+        "year": null,
+        "expected": false,
+        "editions": null
+      },
+      {
+        "title": "Chrysalis",
+        "bookId": "258019084",
+        "avgRating": "0.00",
+        "ratings": 0,
+        "year": null,
+        "expected": false,
+        "editions": null
       }
     ]
   },
@@ -1123,13 +2103,43 @@
       {
         "asin": "B0H9Z6TYP8",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -1142,50 +2152,63 @@
         "issue_date": "2026-08-19",
         "language": "english",
         "merchandising_summary": "<p>The Western Province has fallen, its population purged and the survivors have fled over the mountains and into a magick scoured wasteland. No matter how far they go, or how well they hide, the Empire will not rest until the heretics and rebels have been crushed.</p>",
-        "narrators": [{ "name": "Phil Thron" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51nNzR1xqjL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Phil Thron"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51nNzR1xqjL._SL500_.jpg"
+        },
         "publication_datetime": "2026-08-19T07:00:00Z",
         "publication_name": "Book of the Dead",
         "publisher_name": "Aethon Audio",
         "rating": {
-          "num_reviews": 22,
+          "num_reviews": 30,
           "overall_distribution": {
-            "average_rating": 4.875,
+            "average_rating": 4.873303167420814,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 172,
-            "num_four_star_ratings": 6,
+            "num_five_star_ratings": 205,
+            "num_four_star_ratings": 9,
             "num_one_star_ratings": 1,
-            "num_ratings": 184,
-            "num_three_star_ratings": 2,
+            "num_ratings": 221,
+            "num_three_star_ratings": 3,
             "num_two_star_ratings": 3
           },
           "performance_distribution": {
-            "average_rating": 4.894736842105263,
+            "average_rating": 4.901477832512315,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 157,
-            "num_four_star_ratings": 12,
+            "num_five_star_ratings": 187,
+            "num_four_star_ratings": 14,
             "num_one_star_ratings": 1,
-            "num_ratings": 171,
+            "num_ratings": 203,
             "num_three_star_ratings": 1,
             "num_two_star_ratings": 0
           },
           "story_distribution": {
-            "average_rating": 4.8654970760233915,
+            "average_rating": 4.862068965517241,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 157,
-            "num_four_star_ratings": 9,
+            "num_five_star_ratings": 185,
+            "num_four_star_ratings": 12,
             "num_one_star_ratings": 1,
-            "num_ratings": 171,
-            "num_three_star_ratings": 2,
+            "num_ratings": 203,
+            "num_three_star_ratings": 3,
             "num_two_star_ratings": 2
           }
         },
         "release_date": "2026-08-19",
         "runtime_length_min": 1341,
-        "series": [{ "asin": "B0CPHQTMHN", "sequence": "5", "title": "Book of the Dead", "url": "/pd/Book-of-the-Dead-Audiobook/B0CPHQTMHN" }],
+        "series": [
+          {
+            "asin": "B0CPHQTMHN",
+            "sequence": "5",
+            "title": "Book of the Dead",
+            "url": "/pd/Book-of-the-Dead-Audiobook/B0CPHQTMHN"
+          }
+        ],
         "sku": "BK_ACX0_523829",
         "sku_lite": "BK_ACX0_523829",
         "social_media_images": {
@@ -1202,13 +2225,43 @@
       {
         "asin": "B0H8FHP7GG",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -1221,8 +2274,14 @@
         "issue_date": "2026-07-13",
         "language": "german",
         "merchandising_summary": "<p>Ein Nekromant auf der Flucht. Tyron Steelarm, begleitet vom Geist seines Mentors und Freundes Dove, kämpft verzweifelt darum, sein Potenzial zu entfalten und sein Schicksal selbst zu bestimmen.</p>",
-        "narrators": [{ "name": "Björn Boresch" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51kIwsjo6VL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Björn Boresch"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51kIwsjo6VL._SL500_.jpg"
+        },
         "publication_datetime": "2026-07-13T15:05:00Z",
         "publication_name": "Buch der Toten",
         "publisher_name": "Zweihänder Publishing",
@@ -1264,7 +2323,14 @@
         },
         "release_date": "2026-07-13",
         "runtime_length_min": 1099,
-        "series": [{ "asin": "B0GSX8GDVH", "sequence": "2", "title": "Buch der Toten", "url": "/pd/Buch-der-Toten-Audiobook/B0GSX8GDVH" }],
+        "series": [
+          {
+            "asin": "B0GSX8GDVH",
+            "sequence": "2",
+            "title": "Buch der Toten",
+            "url": "/pd/Buch-der-Toten-Audiobook/B0GSX8GDVH"
+          }
+        ],
         "sku": "BK_ACX0_519839",
         "sku_lite": "BK_ACX0_519839",
         "social_media_images": {
@@ -1281,13 +2347,43 @@
       {
         "asin": "B0GSGQCM85",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -1300,8 +2396,14 @@
         "issue_date": "2026-03-13",
         "language": "german",
         "merchandising_summary": "<p>Mit nur einer Berührung des Erwachenssteins erhält Tyron eine verbotene Klasse–und sein Leben ändert sich für immer. Seine vielversprechende Zukunft als Spross zweier berühmter Monsterjäger wird jäh zerschlagen, und er steht vor einer Entscheidung.</p>",
-        "narrators": [{ "name": "Björn Boresch" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51oeOcjmSML._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Björn Boresch"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51oeOcjmSML._SL500_.jpg"
+        },
         "publication_datetime": "2026-03-13T22:27:00Z",
         "publication_name": "Buch der Toten",
         "publisher_name": "Zweihänder Publishing",
@@ -1343,7 +2445,14 @@
         },
         "release_date": "2026-03-13",
         "runtime_length_min": 1242,
-        "series": [{ "asin": "B0GSX8GDVH", "sequence": "1", "title": "Buch der Toten", "url": "/pd/Buch-der-Toten-Audiobook/B0GSX8GDVH" }],
+        "series": [
+          {
+            "asin": "B0GSX8GDVH",
+            "sequence": "1",
+            "title": "Buch der Toten",
+            "url": "/pd/Buch-der-Toten-Audiobook/B0GSX8GDVH"
+          }
+        ],
         "sku": "BK_ACX0_502376",
         "sku_lite": "BK_ACX0_502376",
         "social_media_images": {
@@ -1360,13 +2469,43 @@
       {
         "asin": "B0GF9NSVCT",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -1379,50 +2518,63 @@
         "issue_date": "2026-02-04",
         "language": "english",
         "merchandising_summary": "<p>Tyron has bided his time and amassed his strength, but for how long will he be willing to wait for his vengeance? The rebellion grows stronger every passing day while the Noble houses attempt to purge the corruption of heresy from the people.</p>",
-        "narrators": [{ "name": "Phil Thron" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51huvuG42RL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Phil Thron"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51huvuG42RL._SL500_.jpg"
+        },
         "publication_datetime": "2026-02-04T08:00:00Z",
         "publication_name": "Book of the Dead",
         "publisher_name": "Aethon Audio",
         "rating": {
           "num_reviews": 78,
           "overall_distribution": {
-            "average_rating": 4.888695652173913,
+            "average_rating": 4.889273356401384,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 526,
+            "num_five_star_ratings": 529,
             "num_four_star_ratings": 36,
             "num_one_star_ratings": 0,
-            "num_ratings": 575,
+            "num_ratings": 578,
             "num_three_star_ratings": 11,
             "num_two_star_ratings": 2
           },
           "performance_distribution": {
-            "average_rating": 4.919540229885057,
+            "average_rating": 4.919694072657744,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 485,
+            "num_five_star_ratings": 486,
             "num_four_star_ratings": 33,
             "num_one_star_ratings": 0,
-            "num_ratings": 522,
+            "num_ratings": 523,
             "num_three_star_ratings": 3,
             "num_two_star_ratings": 1
           },
           "story_distribution": {
-            "average_rating": 4.873563218390805,
+            "average_rating": 4.873804971319312,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 477,
+            "num_five_star_ratings": 478,
             "num_four_star_ratings": 29,
             "num_one_star_ratings": 0,
-            "num_ratings": 522,
+            "num_ratings": 523,
             "num_three_star_ratings": 11,
             "num_two_star_ratings": 5
           }
         },
         "release_date": "2026-02-04",
         "runtime_length_min": 1306,
-        "series": [{ "asin": "B0CPHQTMHN", "sequence": "4", "title": "Book of the Dead", "url": "/pd/Book-of-the-Dead-Audiobook/B0CPHQTMHN" }],
+        "series": [
+          {
+            "asin": "B0CPHQTMHN",
+            "sequence": "4",
+            "title": "Book of the Dead",
+            "url": "/pd/Book-of-the-Dead-Audiobook/B0CPHQTMHN"
+          }
+        ],
         "sku": "BK_ACX0_491410",
         "sku_lite": "BK_ACX0_491410",
         "social_media_images": {
@@ -1439,13 +2591,43 @@
       {
         "asin": "B0FSLRPWT4",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -1458,50 +2640,66 @@
         "issue_date": "2025-10-14",
         "language": "english",
         "merchandising_summary": "<p>As the Colony continues to develop and thrive, there's too much to do! Territory to seize, nests to build, Champions to train! Anthony will have his mandibles full trying to teach his new protege Brilliant while trying to keep a war from breaking out with the ka'armodo.</p>",
-        "narrators": [{ "name": "Jeff Hays" }, { "name": "Annie Ellicott" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/61ViYQCqXQL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Jeff Hays"
+          },
+          {
+            "name": "Annie Ellicott"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/61ViYQCqXQL._SL500_.jpg"
+        },
         "publication_datetime": "2025-10-14T07:00:00Z",
         "publication_name": "Chrysalis",
         "publisher_name": "Aethon Audio, Soundbooth Theater",
         "rating": {
-          "num_reviews": 156,
+          "num_reviews": 157,
           "overall_distribution": {
-            "average_rating": 4.920348475420037,
+            "average_rating": 4.920693928128872,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 1497,
+            "num_five_star_ratings": 1504,
             "num_four_star_ratings": 95,
             "num_one_star_ratings": 0,
-            "num_ratings": 1607,
+            "num_ratings": 1614,
             "num_three_star_ratings": 12,
             "num_two_star_ratings": 3
           },
           "performance_distribution": {
-            "average_rating": 4.962809917355372,
+            "average_rating": 4.962277091906722,
             "display_average_rating": "5.0",
             "display_stars": 5,
-            "num_five_star_ratings": 1409,
-            "num_four_star_ratings": 34,
+            "num_five_star_ratings": 1414,
+            "num_four_star_ratings": 35,
             "num_one_star_ratings": 0,
-            "num_ratings": 1452,
+            "num_ratings": 1458,
             "num_three_star_ratings": 7,
             "num_two_star_ratings": 2
           },
           "story_distribution": {
-            "average_rating": 4.891798759476223,
+            "average_rating": 4.891557995881949,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 1324,
-            "num_four_star_ratings": 104,
+            "num_five_star_ratings": 1329,
+            "num_four_star_ratings": 105,
             "num_one_star_ratings": 1,
-            "num_ratings": 1451,
+            "num_ratings": 1457,
             "num_three_star_ratings": 17,
             "num_two_star_ratings": 5
           }
         },
         "release_date": "2025-10-14",
         "runtime_length_min": 1221,
-        "series": [{ "asin": "B0B14YZ92Z", "sequence": "7", "title": "Chrysalis", "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z" }],
+        "series": [
+          {
+            "asin": "B0B14YZ92Z",
+            "sequence": "7",
+            "title": "Chrysalis",
+            "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z"
+          }
+        ],
         "sku": "BK_ACX0_473460",
         "sku_lite": "BK_ACX0_473460",
         "social_media_images": {
@@ -1518,13 +2716,43 @@
       {
         "asin": "B0FNNCB21P",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -1537,50 +2765,66 @@
         "issue_date": "2025-09-02",
         "language": "english",
         "merchandising_summary": "<p>The Ants go marching and it sure isn't one by one! The Dungeon of Pangera is a dangerous place and for Anthony, there's only way to go: down! The third stratum beckons, a place of fire, ash and the monsters classed as demons. So, so, many demons.</p>",
-        "narrators": [{ "name": "Jeff Hays" }, { "name": "Annie Ellicott" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51CuldMS5rL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Jeff Hays"
+          },
+          {
+            "name": "Annie Ellicott"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51CuldMS5rL._SL500_.jpg"
+        },
         "publication_datetime": "2025-09-02T07:00:00Z",
         "publication_name": "Chrysalis",
         "publisher_name": "Aethon Audio, Soundbooth Theater",
         "rating": {
           "num_reviews": 123,
           "overall_distribution": {
-            "average_rating": 4.882402707275804,
+            "average_rating": 4.882700421940928,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 1067,
+            "num_five_star_ratings": 1070,
             "num_four_star_ratings": 95,
             "num_one_star_ratings": 0,
-            "num_ratings": 1182,
+            "num_ratings": 1185,
             "num_three_star_ratings": 16,
             "num_two_star_ratings": 4
           },
           "performance_distribution": {
-            "average_rating": 4.94383149448345,
+            "average_rating": 4.943887775551103,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 955,
+            "num_five_star_ratings": 956,
             "num_four_star_ratings": 33,
             "num_one_star_ratings": 1,
-            "num_ratings": 997,
+            "num_ratings": 998,
             "num_three_star_ratings": 5,
             "num_two_star_ratings": 3
           },
           "story_distribution": {
-            "average_rating": 4.876629889669007,
+            "average_rating": 4.876753507014028,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 896,
+            "num_five_star_ratings": 897,
             "num_four_star_ratings": 84,
             "num_one_star_ratings": 1,
-            "num_ratings": 997,
+            "num_ratings": 998,
             "num_three_star_ratings": 13,
             "num_two_star_ratings": 3
           }
         },
         "release_date": "2025-09-02",
         "runtime_length_min": 1175,
-        "series": [{ "asin": "B0B14YZ92Z", "sequence": "6", "title": "Chrysalis", "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z" }],
+        "series": [
+          {
+            "asin": "B0B14YZ92Z",
+            "sequence": "6",
+            "title": "Chrysalis",
+            "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z"
+          }
+        ],
         "sku": "BK_ACX0_467802",
         "sku_lite": "BK_ACX0_467802",
         "social_media_images": {
@@ -1597,13 +2841,43 @@
       {
         "asin": "B0FFBMSL71",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -1616,50 +2890,63 @@
         "issue_date": "2025-07-15",
         "language": "english",
         "merchandising_summary": "<p>Book 3 of the next hit LitRPG series from RinoZ, the author of <i>Chrysalis</i>. <i>Book of the Dead</i> takes on all aspects of Necromancy headfirst, from the tactical manuevering of skeletons to what it's like spending so much time amongst the undead.</p>",
-        "narrators": [{ "name": "Phil Thron" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51Ehm7VRTeL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Phil Thron"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51Ehm7VRTeL._SL500_.jpg"
+        },
         "publication_datetime": "2025-07-15T07:00:00Z",
         "publication_name": "Book of the Dead",
         "publisher_name": "Aethon Audio",
         "rating": {
           "num_reviews": 45,
           "overall_distribution": {
-            "average_rating": 4.8353982300884955,
+            "average_rating": 4.836555360281195,
             "display_average_rating": "4.8",
             "display_stars": 5,
-            "num_five_star_ratings": 489,
+            "num_five_star_ratings": 493,
             "num_four_star_ratings": 61,
             "num_one_star_ratings": 0,
-            "num_ratings": 565,
+            "num_ratings": 569,
             "num_three_star_ratings": 13,
             "num_two_star_ratings": 2
           },
           "performance_distribution": {
-            "average_rating": 4.897058823529412,
+            "average_rating": 4.897489539748954,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 429,
+            "num_five_star_ratings": 431,
             "num_four_star_ratings": 45,
             "num_one_star_ratings": 0,
-            "num_ratings": 476,
+            "num_ratings": 478,
             "num_three_star_ratings": 2,
             "num_two_star_ratings": 0
           },
           "story_distribution": {
-            "average_rating": 4.840336134453781,
+            "average_rating": 4.841004184100418,
             "display_average_rating": "4.8",
             "display_stars": 5,
-            "num_five_star_ratings": 418,
+            "num_five_star_ratings": 420,
             "num_four_star_ratings": 45,
             "num_one_star_ratings": 2,
-            "num_ratings": 476,
+            "num_ratings": 478,
             "num_three_star_ratings": 10,
             "num_two_star_ratings": 1
           }
         },
         "release_date": "2025-07-15",
         "runtime_length_min": 1333,
-        "series": [{ "asin": "B0CPHQTMHN", "sequence": "3", "title": "Book of the Dead", "url": "/pd/Book-of-the-Dead-Audiobook/B0CPHQTMHN" }],
+        "series": [
+          {
+            "asin": "B0CPHQTMHN",
+            "sequence": "3",
+            "title": "Book of the Dead",
+            "url": "/pd/Book-of-the-Dead-Audiobook/B0CPHQTMHN"
+          }
+        ],
         "sku": "BK_ACX0_457431",
         "sku_lite": "BK_ACX0_457431",
         "social_media_images": {
@@ -1676,13 +2963,43 @@
       {
         "asin": "B0D4W3331P",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -1695,50 +3012,66 @@
         "issue_date": "2024-06-11",
         "language": "english",
         "merchandising_summary": "<p>Anthony is free! And he brought friends back to the Colony in the form of the monstrous bear Sarah, and the devious worm, Jim. But things aren't all going the way of our antrepid antventurer.<br /> </p>",
-        "narrators": [{ "name": "Jeff Hays" }, { "name": "Annie Ellicott" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51SD18l6fqL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Jeff Hays"
+          },
+          {
+            "name": "Annie Ellicott"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51SD18l6fqL._SL500_.jpg"
+        },
         "publication_datetime": "2024-06-11T07:00:00Z",
         "publication_name": "Chrysalis",
         "publisher_name": "Aethon Audio, Soundbooth Theater",
         "rating": {
           "num_reviews": 198,
           "overall_distribution": {
-            "average_rating": 4.8815,
+            "average_rating": 4.881618381618382,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 1820,
+            "num_five_star_ratings": 1822,
             "num_four_star_ratings": 142,
             "num_one_star_ratings": 6,
-            "num_ratings": 2000,
+            "num_ratings": 2002,
             "num_three_star_ratings": 25,
             "num_two_star_ratings": 7
           },
           "performance_distribution": {
-            "average_rating": 4.952214452214452,
+            "average_rating": 4.9522422830518344,
             "display_average_rating": "5.0",
             "display_stars": 5,
-            "num_five_star_ratings": 1647,
+            "num_five_star_ratings": 1648,
             "num_four_star_ratings": 59,
             "num_one_star_ratings": 1,
-            "num_ratings": 1716,
+            "num_ratings": 1717,
             "num_three_star_ratings": 8,
             "num_two_star_ratings": 1
           },
           "story_distribution": {
-            "average_rating": 4.854312354312355,
+            "average_rating": 4.854397204426325,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 1534,
+            "num_five_star_ratings": 1535,
             "num_four_star_ratings": 136,
             "num_one_star_ratings": 7,
-            "num_ratings": 1716,
+            "num_ratings": 1717,
             "num_three_star_ratings": 31,
             "num_two_star_ratings": 8
           }
         },
         "release_date": "2024-06-11",
         "runtime_length_min": 1249,
-        "series": [{ "asin": "B0B14YZ92Z", "sequence": "5", "title": "Chrysalis", "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z" }],
+        "series": [
+          {
+            "asin": "B0B14YZ92Z",
+            "sequence": "5",
+            "title": "Chrysalis",
+            "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z"
+          }
+        ],
         "sku": "BK_ACX0_400119",
         "sku_lite": "BK_ACX0_400119",
         "social_media_images": {
@@ -1755,13 +3088,43 @@
       {
         "asin": "B0CRSC3RQF",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -1774,50 +3137,66 @@
         "issue_date": "2024-02-27",
         "language": "english",
         "merchandising_summary": "<p>With Garralosh defeated and the Colony secured, Anthony has triumphed over the wave. What now for our intrepid adventurer? In the Dungeon, there’s only one place to go: down....</p>",
-        "narrators": [{ "name": "Jeff Hays" }, { "name": "Annie Ellicott" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51RUfpL0YoL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Jeff Hays"
+          },
+          {
+            "name": "Annie Ellicott"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51RUfpL0YoL._SL500_.jpg"
+        },
         "publication_datetime": "2024-02-27T08:00:00Z",
         "publication_name": "Chrysalis",
         "publisher_name": "Aethon Audio, Soundbooth Theater",
         "rating": {
           "num_reviews": 153,
           "overall_distribution": {
-            "average_rating": 4.8869653767820775,
+            "average_rating": 4.88713777325877,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 1782,
+            "num_five_star_ratings": 1785,
             "num_four_star_ratings": 149,
             "num_one_star_ratings": 2,
-            "num_ratings": 1964,
+            "num_ratings": 1967,
             "num_three_star_ratings": 28,
             "num_two_star_ratings": 3
           },
           "performance_distribution": {
-            "average_rating": 4.964634146341464,
+            "average_rating": 4.964677222898904,
             "display_average_rating": "5.0",
             "display_stars": 5,
-            "num_five_star_ratings": 1589,
+            "num_five_star_ratings": 1591,
             "num_four_star_ratings": 44,
             "num_one_star_ratings": 0,
-            "num_ratings": 1640,
+            "num_ratings": 1642,
             "num_three_star_ratings": 7,
             "num_two_star_ratings": 0
           },
           "story_distribution": {
-            "average_rating": 4.874390243902439,
+            "average_rating": 4.874543239951279,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 1477,
+            "num_five_star_ratings": 1479,
             "num_four_star_ratings": 132,
             "num_one_star_ratings": 3,
-            "num_ratings": 1640,
+            "num_ratings": 1642,
             "num_three_star_ratings": 22,
             "num_two_star_ratings": 6
           }
         },
         "release_date": "2024-02-27",
         "runtime_length_min": 1062,
-        "series": [{ "asin": "B0B14YZ92Z", "sequence": "4", "title": "Chrysalis", "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z" }],
+        "series": [
+          {
+            "asin": "B0B14YZ92Z",
+            "sequence": "4",
+            "title": "Chrysalis",
+            "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z"
+          }
+        ],
         "sku": "BK_ACX0_382025",
         "sku_lite": "BK_ACX0_382025",
         "social_media_images": {
@@ -1834,11 +3213,31 @@
       {
         "asin": "B0CS3XXW7C",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -1851,50 +3250,66 @@
         "issue_date": "2024-02-14",
         "language": "english",
         "merchandising_summary": "<p>Books 1-3 in the hit Chrysalis Monster-Evolution LitRPG series are now available in this special bundle, filled with action, laughs, and army-building to the extreme....</p>",
-        "narrators": [{ "name": "Jeff Hays" }, { "name": "Annie Ellicott" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51C3L+U+7JL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Jeff Hays"
+          },
+          {
+            "name": "Annie Ellicott"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51C3L+U+7JL._SL500_.jpg"
+        },
         "publication_datetime": "2024-02-14T08:00:00Z",
         "publication_name": "Chrysalis",
         "publisher_name": "Aethon Audio, Soundbooth Theater",
         "rating": {
-          "num_reviews": 472,
+          "num_reviews": 475,
           "overall_distribution": {
-            "average_rating": 4.702196908055329,
+            "average_rating": 4.701462225832656,
             "display_average_rating": "4.7",
             "display_stars": 4.5,
-            "num_five_star_ratings": 2000,
+            "num_five_star_ratings": 2003,
             "num_four_star_ratings": 290,
             "num_one_star_ratings": 31,
-            "num_ratings": 2458,
+            "num_ratings": 2462,
             "num_three_star_ratings": 93,
-            "num_two_star_ratings": 44
+            "num_two_star_ratings": 45
           },
           "performance_distribution": {
-            "average_rating": 4.864326375711575,
+            "average_rating": 4.864109848484849,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 1923,
-            "num_four_star_ratings": 127,
+            "num_five_star_ratings": 1927,
+            "num_four_star_ratings": 126,
             "num_one_star_ratings": 15,
-            "num_ratings": 2108,
-            "num_three_star_ratings": 30,
+            "num_ratings": 2112,
+            "num_three_star_ratings": 31,
             "num_two_star_ratings": 13
           },
           "story_distribution": {
-            "average_rating": 4.664451827242525,
+            "average_rating": 4.663192799621033,
             "display_average_rating": "4.7",
             "display_stars": 4.5,
-            "num_five_star_ratings": 1680,
+            "num_five_star_ratings": 1683,
             "num_four_star_ratings": 270,
-            "num_one_star_ratings": 41,
-            "num_ratings": 2107,
+            "num_one_star_ratings": 42,
+            "num_ratings": 2111,
             "num_three_star_ratings": 75,
             "num_two_star_ratings": 41
           }
         },
         "release_date": "2024-02-14",
         "runtime_length_min": 3281,
-        "series": [{ "asin": "B0B14YZ92Z", "sequence": "1-3", "title": "Chrysalis", "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z" }],
+        "series": [
+          {
+            "asin": "B0B14YZ92Z",
+            "sequence": "1-3",
+            "title": "Chrysalis",
+            "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z"
+          }
+        ],
         "sku": "BK_ACX0_382583",
         "sku_lite": "BK_ACX0_382583",
         "social_media_images": {
@@ -1911,13 +3326,43 @@
       {
         "asin": "B0CPFYLS81",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -1930,50 +3375,63 @@
         "issue_date": "2023-12-04",
         "language": "english",
         "merchandising_summary": "<p>A Necromancer on the run. Tyron Steelarm, accompanied by the spirit of his mentor and friend, Dove, is desperate to realise his potential and change his destiny. To achieve his aims, he must outwit and outrun the marshals who seek to track him down, and the slayers who want him dead....</p>",
-        "narrators": [{ "name": "Phil Thron" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51IluQbYEiL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Phil Thron"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51IluQbYEiL._SL500_.jpg"
+        },
         "publication_datetime": "2023-12-04T19:27:00Z",
         "publication_name": "Book of the Dead",
         "publisher_name": "Aethon Audio",
         "rating": {
-          "num_reviews": 124,
+          "num_reviews": 125,
           "overall_distribution": {
-            "average_rating": 4.837552742616034,
+            "average_rating": 4.83718487394958,
             "display_average_rating": "4.8",
             "display_stars": 5,
-            "num_five_star_ratings": 836,
-            "num_four_star_ratings": 84,
+            "num_five_star_ratings": 839,
+            "num_four_star_ratings": 85,
             "num_one_star_ratings": 5,
-            "num_ratings": 948,
+            "num_ratings": 952,
             "num_three_star_ratings": 19,
             "num_two_star_ratings": 4
           },
           "performance_distribution": {
-            "average_rating": 4.90851334180432,
+            "average_rating": 4.907477820025348,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 728,
-            "num_four_star_ratings": 51,
+            "num_five_star_ratings": 729,
+            "num_four_star_ratings": 52,
             "num_one_star_ratings": 2,
-            "num_ratings": 787,
+            "num_ratings": 789,
             "num_three_star_ratings": 5,
             "num_two_star_ratings": 1
           },
           "story_distribution": {
-            "average_rating": 4.844980940279543,
+            "average_rating": 4.842839036755387,
             "display_average_rating": "4.8",
             "display_stars": 5,
-            "num_five_star_ratings": 709,
+            "num_five_star_ratings": 710,
             "num_four_star_ratings": 51,
             "num_one_star_ratings": 7,
-            "num_ratings": 787,
-            "num_three_star_ratings": 17,
+            "num_ratings": 789,
+            "num_three_star_ratings": 18,
             "num_two_star_ratings": 3
           }
         },
         "release_date": "2023-12-04",
         "runtime_length_min": 991,
-        "series": [{ "asin": "B0CPHQTMHN", "sequence": "2", "title": "Book of the Dead", "url": "/pd/Book-of-the-Dead-Audiobook/B0CPHQTMHN" }],
+        "series": [
+          {
+            "asin": "B0CPHQTMHN",
+            "sequence": "2",
+            "title": "Book of the Dead",
+            "url": "/pd/Book-of-the-Dead-Audiobook/B0CPHQTMHN"
+          }
+        ],
         "sku": "BK_ACX0_378531",
         "sku_lite": "BK_ACX0_378531",
         "social_media_images": {
@@ -1989,17 +3447,67 @@
       {
         "asin": "B0C8ZLK13G",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "mp42232", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_22_32" },
-          { "enhanced_codec": "mp444128", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_44_128" },
-          { "enhanced_codec": "mp42264", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_22_64" },
-          { "enhanced_codec": "mp44464", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_44_64" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "mp42232",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_22_32"
+          },
+          {
+            "enhanced_codec": "mp444128",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_44_128"
+          },
+          {
+            "enhanced_codec": "mp42264",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_22_64"
+          },
+          {
+            "enhanced_codec": "mp44464",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_44_64"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -2012,50 +3520,63 @@
         "issue_date": "2023-09-05",
         "language": "english",
         "merchandising_summary": "<p>With one touch of the stone, Tyron receives his Class and his life changes forever. In an instant his bright and promising future as the scion of two powerful Slayers is torn apart and he must make a decision....</p> <p></p>",
-        "narrators": [{ "name": "Phil Thron" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/61OuwUU4Z4L._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Phil Thron"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/61OuwUU4Z4L._SL500_.jpg"
+        },
         "publication_datetime": "2023-09-05T07:00:00Z",
         "publication_name": "Book of the Dead",
         "publisher_name": "Aethon Audio",
         "rating": {
-          "num_reviews": 170,
+          "num_reviews": 171,
           "overall_distribution": {
-            "average_rating": 4.694627709707823,
+            "average_rating": 4.694756554307116,
             "display_average_rating": "4.7",
             "display_stars": 4.5,
-            "num_five_star_ratings": 851,
+            "num_five_star_ratings": 857,
             "num_four_star_ratings": 130,
             "num_one_star_ratings": 10,
-            "num_ratings": 1061,
-            "num_three_star_ratings": 56,
+            "num_ratings": 1068,
+            "num_three_star_ratings": 57,
             "num_two_star_ratings": 14
           },
           "performance_distribution": {
-            "average_rating": 4.783062645011601,
+            "average_rating": 4.782006920415225,
             "display_average_rating": "4.8",
             "display_stars": 5,
-            "num_five_star_ratings": 734,
+            "num_five_star_ratings": 738,
             "num_four_star_ratings": 93,
             "num_one_star_ratings": 6,
-            "num_ratings": 862,
-            "num_three_star_ratings": 17,
+            "num_ratings": 867,
+            "num_three_star_ratings": 18,
             "num_two_star_ratings": 12
           },
           "story_distribution": {
-            "average_rating": 4.687935034802784,
+            "average_rating": 4.687427912341407,
             "display_average_rating": "4.7",
             "display_stars": 4.5,
-            "num_five_star_ratings": 689,
-            "num_four_star_ratings": 111,
+            "num_five_star_ratings": 692,
+            "num_four_star_ratings": 113,
             "num_one_star_ratings": 9,
-            "num_ratings": 862,
+            "num_ratings": 867,
             "num_three_star_ratings": 37,
             "num_two_star_ratings": 16
           }
         },
         "release_date": "2023-09-05",
         "runtime_length_min": 1133,
-        "series": [{ "asin": "B0CPHQTMHN", "sequence": "1", "title": "Book of the Dead", "url": "/pd/Book-of-the-Dead-Audiobook/B0CPHQTMHN" }],
+        "series": [
+          {
+            "asin": "B0CPHQTMHN",
+            "sequence": "1",
+            "title": "Book of the Dead",
+            "url": "/pd/Book-of-the-Dead-Audiobook/B0CPHQTMHN"
+          }
+        ],
         "sku": "BK_ACX0_357238",
         "sku_lite": "BK_ACX0_357238",
         "social_media_images": {
@@ -2072,17 +3593,67 @@
       {
         "asin": "B0C1CTZ33T",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "mp444128", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_44_128" },
-          { "enhanced_codec": "mp42264", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_22_64" },
-          { "enhanced_codec": "mp42232", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_22_32" },
-          { "enhanced_codec": "mp44464", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_44_64" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "mp444128",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_44_128"
+          },
+          {
+            "enhanced_codec": "mp42264",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_22_64"
+          },
+          {
+            "enhanced_codec": "mp42232",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_22_32"
+          },
+          {
+            "enhanced_codec": "mp44464",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_44_64"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -2095,8 +3666,17 @@
         "issue_date": "2023-04-12",
         "language": "english",
         "merchandising_summary": "<p>Garralosh is on the surface, and she has bad intentions toward Anthony and his Colony. The first generation of super-intelligent ants hatches, and our \"antrepid\" protagonist has his mandibles full teaching them what it means to be a member of the family....</p>",
-        "narrators": [{ "name": "Jeff Hays" }, { "name": "Annie Ellicott" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51LxCqCaOWL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Jeff Hays"
+          },
+          {
+            "name": "Annie Ellicott"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51LxCqCaOWL._SL500_.jpg"
+        },
         "publication_datetime": "2023-04-12T07:00:00Z",
         "publication_name": "Chrysalis",
         "publisher_name": "Aethon Audio",
@@ -2138,7 +3718,14 @@
         },
         "release_date": "2023-04-12",
         "runtime_length_min": 1149,
-        "series": [{ "asin": "B0B14YZ92Z", "sequence": "3", "title": "Chrysalis", "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z" }],
+        "series": [
+          {
+            "asin": "B0B14YZ92Z",
+            "sequence": "3",
+            "title": "Chrysalis",
+            "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z"
+          }
+        ],
         "sku": "BK_ACX0_347446",
         "sku_lite": "BK_ACX0_347446",
         "social_media_images": {
@@ -2155,17 +3742,67 @@
       {
         "asin": "B0BM4XV6Y6",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "mp42264", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_22_64" },
-          { "enhanced_codec": "mp44464", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_44_64" },
-          { "enhanced_codec": "mp42232", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_22_32" },
-          { "enhanced_codec": "mp444128", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_44_128" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "mp42264",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_22_64"
+          },
+          {
+            "enhanced_codec": "mp44464",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_44_64"
+          },
+          {
+            "enhanced_codec": "mp42232",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_22_32"
+          },
+          {
+            "enhanced_codec": "mp444128",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_44_128"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -2178,8 +3815,17 @@
         "issue_date": "2022-11-30",
         "language": "english",
         "merchandising_summary": "<p>Our antrepid adventurer must lead his new family to the surface to escape the relentless wave of monsters below. After all, the surface only has much weaker monsters and humans to deal with....</p>",
-        "narrators": [{ "name": "Jeff Hays" }, { "name": "Annie Ellicott" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51SiMqZyOWL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Jeff Hays"
+          },
+          {
+            "name": "Annie Ellicott"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51SiMqZyOWL._SL500_.jpg"
+        },
         "publication_datetime": "2022-11-30T08:00:00Z",
         "publication_name": "Chrysalis",
         "publisher_name": "Aethon Audio, Soundbooth Theater",
@@ -2221,7 +3867,14 @@
         },
         "release_date": "2022-11-30",
         "runtime_length_min": 1089,
-        "series": [{ "asin": "B0B14YZ92Z", "sequence": "2", "title": "Chrysalis", "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z" }],
+        "series": [
+          {
+            "asin": "B0B14YZ92Z",
+            "sequence": "2",
+            "title": "Chrysalis",
+            "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z"
+          }
+        ],
         "sku": "BK_ACX0_330409",
         "sku_lite": "BK_ACX0_330409",
         "social_media_images": {
@@ -2238,18 +3891,73 @@
       {
         "asin": "B0B135B28T",
         "asset_details": [],
-        "authors": [{ "asin": "B09TDCYJSX", "name": "RinoZ" }],
+        "authors": [
+          {
+            "asin": "B09TDCYJSX",
+            "name": "RinoZ"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "format4", "format": "Format4", "is_kindle_enhanced": false, "name": "format4" },
-          { "enhanced_codec": "mp44464", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_44_64" },
-          { "enhanced_codec": "mp42232", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_22_32" },
-          { "enhanced_codec": "mp444128", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_44_128" },
-          { "enhanced_codec": "mp42264", "format": "Enhanced", "is_kindle_enhanced": true, "name": "mp4_22_64" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "format4",
+            "format": "Format4",
+            "is_kindle_enhanced": false,
+            "name": "format4"
+          },
+          {
+            "enhanced_codec": "mp44464",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_44_64"
+          },
+          {
+            "enhanced_codec": "mp42232",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_22_32"
+          },
+          {
+            "enhanced_codec": "mp444128",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_44_128"
+          },
+          {
+            "enhanced_codec": "mp42264",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "mp4_22_64"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -2262,50 +3970,66 @@
         "issue_date": "2022-06-07",
         "language": "english",
         "merchandising_summary": "<p> </p> <p>Follow Anthony as he attempts to adjust to his new life as an ant in his new Dungeon home. He'll have to learn how to survive, level-up, and grow both himself and his bite-sized colony into a force to be reckoned with....</p>",
-        "narrators": [{ "name": "Jeff Hays" }, { "name": "Annie Ellicott" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/51+WaBp58JL._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Jeff Hays"
+          },
+          {
+            "name": "Annie Ellicott"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/51+WaBp58JL._SL500_.jpg"
+        },
         "publication_datetime": "2022-06-07T07:00:00Z",
         "publication_name": "Chrysalis",
         "publisher_name": "Aethon Audio",
         "rating": {
           "num_reviews": 230,
           "overall_distribution": {
-            "average_rating": 4.715235173824131,
+            "average_rating": 4.715380684721513,
             "display_average_rating": "4.7",
             "display_stars": 4.5,
-            "num_five_star_ratings": 1574,
+            "num_five_star_ratings": 1575,
             "num_four_star_ratings": 273,
             "num_one_star_ratings": 18,
-            "num_ratings": 1956,
+            "num_ratings": 1957,
             "num_three_star_ratings": 61,
             "num_two_star_ratings": 30
           },
           "performance_distribution": {
-            "average_rating": 4.853544229642648,
+            "average_rating": 4.853629976580796,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 1532,
+            "num_five_star_ratings": 1533,
             "num_four_star_ratings": 131,
             "num_one_star_ratings": 10,
-            "num_ratings": 1707,
+            "num_ratings": 1708,
             "num_three_star_ratings": 23,
             "num_two_star_ratings": 11
           },
           "story_distribution": {
-            "average_rating": 4.683156654888104,
+            "average_rating": 4.683343143025309,
             "display_average_rating": "4.7",
             "display_stars": 4.5,
-            "num_five_star_ratings": 1326,
+            "num_five_star_ratings": 1327,
             "num_four_star_ratings": 266,
             "num_one_star_ratings": 17,
-            "num_ratings": 1698,
+            "num_ratings": 1699,
             "num_three_star_ratings": 63,
             "num_two_star_ratings": 26
           }
         },
         "release_date": "2022-06-07",
         "runtime_length_min": 1038,
-        "series": [{ "asin": "B0B14YZ92Z", "sequence": "1", "title": "Chrysalis", "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z" }],
+        "series": [
+          {
+            "asin": "B0B14YZ92Z",
+            "sequence": "1",
+            "title": "Chrysalis",
+            "url": "/pd/Chrysalis-Audiobook/B0B14YZ92Z"
+          }
+        ],
         "sku": "BK_ACX0_308946",
         "sku_lite": "BK_ACX0_308946",
         "social_media_images": {
@@ -2319,176 +4043,6 @@
         "thesaurus_subject_keywords": ["literature-and-fiction"],
         "title": "Chrysalis: The Antventure Begins"
       }
-    ]
-  },
-  "goodreads": {
-    "authorId": 20656418,
-    "authorName": "RinoZ",
-    "totalListed": 19,
-    "rows": [
-      {
-        "title": "The Antventure Begins (Chrysalis, #1)",
-        "bookId": "60677825",
-        "avgRating": "4.15",
-        "ratings": 4635,
-        "year": "2022",
-        "expected": false,
-        "editions": "5"
-      },
-      {
-        "title": "Upping the Ante (Chrysalis, #2)",
-        "bookId": "61359739",
-        "avgRating": "4.34",
-        "ratings": 3062,
-        "year": "2022",
-        "expected": false,
-        "editions": "5"
-      },
-      {
-        "title": "Awakening (Book of the Dead #1)",
-        "bookId": "131942335",
-        "avgRating": "4.39",
-        "ratings": 2822,
-        "year": "2021",
-        "expected": false,
-        "editions": "8"
-      },
-      {
-        "title": "Antelligent Design (Chrysalis, #3)",
-        "bookId": "62311102",
-        "avgRating": "4.46",
-        "ratings": 2729,
-        "year": "2022",
-        "expected": false,
-        "editions": "3"
-      },
-      {
-        "title": "Between a Rock and a Carapace (Chrysalis, #4)",
-        "bookId": "75568099",
-        "avgRating": "4.50",
-        "ratings": 2335,
-        "year": "2023",
-        "expected": false,
-        "editions": "3"
-      },
-      {
-        "title": "Sacrifice (Book of the Dead #2)",
-        "bookId": "197593944",
-        "avgRating": "4.55",
-        "ratings": 2095,
-        "year": "2023",
-        "expected": false,
-        "editions": "6"
-      },
-      {
-        "title": "Enemy A[n]t the Gates (Chrysalis #5)",
-        "bookId": "201150434",
-        "avgRating": "4.55",
-        "ratings": 2071,
-        "year": "2024",
-        "expected": false,
-        "editions": "3"
-      },
-      {
-        "title": "Antvance into the Unknown (Chrysalis, #6)",
-        "bookId": "216284589",
-        "avgRating": "4.51",
-        "ratings": 1715,
-        "year": "2024",
-        "expected": false,
-        "editions": "4"
-      },
-      {
-        "title": "Fated Antagonist (Chrysalis, #7)",
-        "bookId": "231806063",
-        "avgRating": "4.57",
-        "ratings": 1419,
-        "year": "2025",
-        "expected": false,
-        "editions": "4"
-      },
-      {
-        "title": "Masquerade (Book of the Dead #3)",
-        "bookId": "221894956",
-        "avgRating": "4.51",
-        "ratings": 1363,
-        "year": "2024",
-        "expected": false,
-        "editions": "5"
-      },
-      {
-        "title": "Vengeance (Book of the Dead #4)",
-        "bookId": "235162755",
-        "avgRating": "4.65",
-        "ratings": 1053,
-        "year": "2025",
-        "expected": false,
-        "editions": "5"
-      },
-      {
-        "title": "Anticipate the Fall (Chrysalis #8)",
-        "bookId": "245137826",
-        "avgRating": "4.73",
-        "ratings": 675,
-        "year": "2026",
-        "expected": false,
-        "editions": "2"
-      },
-      {
-        "title": "Ascension (Book of the Dead #5)",
-        "bookId": "241392509",
-        "avgRating": "4.68",
-        "ratings": 447,
-        "year": "2026",
-        "expected": false,
-        "editions": "4"
-      },
-      {
-        "title": "Antdustrial Revolution (Chrysalis #9)",
-        "bookId": "249283614",
-        "avgRating": "4.73",
-        "ratings": 420,
-        "year": "2026",
-        "expected": false,
-        "editions": null
-      },
-      {
-        "title": "Chrysalis: Books 1-3 Box Set (Chrysalis, #1-3)",
-        "bookId": "204908833",
-        "avgRating": "4.46",
-        "ratings": 252,
-        "year": "2024",
-        "expected": false,
-        "editions": "2"
-      },
-      {
-        "title": "Chrysalis 10: Cruelty's Antidote: A LitRPG Adventure",
-        "bookId": "255034734",
-        "avgRating": "5.00",
-        "ratings": 1,
-        "year": null,
-        "expected": false,
-        "editions": null
-      },
-      {
-        "title": "Chrysalis 9: Antdustrial Revolution: A LitRPG Adventure",
-        "bookId": "255450986",
-        "avgRating": "0.00",
-        "ratings": 0,
-        "year": null,
-        "expected": false,
-        "editions": null
-      },
-      {
-        "title": "Chrysalis 3: Monstermäßige LitRPG-Evolutionsreihe",
-        "bookId": "257108717",
-        "avgRating": "0.00",
-        "ratings": 0,
-        "year": null,
-        "expected": false,
-        "editions": null
-      },
-      { "title": "Chrysalis", "bookId": "258019084", "avgRating": "0.00", "ratings": 0, "year": null, "expected": false, "editions": null }
     ]
   }
 }

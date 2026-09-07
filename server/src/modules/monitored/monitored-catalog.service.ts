@@ -23,6 +23,7 @@ import { HardcoverBibliographyProvider } from './providers/hardcover-bibliograph
 import { mergeCluster } from './reconcile/cluster-merger';
 import { matchObservations, normalizeCore } from './reconcile/observation-matcher';
 import type { MergedWork, Observation } from './reconcile/observation.types';
+import { resolveSlots } from './reconcile/slot-resolution';
 import { assignVerdict, computePopularityFloor, type VerdictResult } from './reconcile/verdict';
 import { foldDiacritics, normalizeMonitoredName } from './monitored-text.utils';
 import { MonitoredStoreService, type MonitoredCatalog } from './monitored-store.service';
@@ -307,6 +308,12 @@ function isFreshCorroborated(work: MergedWork, today: string): boolean {
 // the far more-read "The Alloy of Law"). Demote such slot-losers to 'suspect' so they drop to the
 // review tray instead of duplicating - often in another language - the canonical in the default list.
 // The strict ratio protects two comparably-popular real books that share a loose meta-series index.
+//
+// resolveSlots now settles every INTEGER slot before this runs, so what is left to it are fractional
+// slots, which resolveSlots deliberately ignores: those hold novellas, interquels and anthology
+// pieces, where two entries at one index are usually two different works. Across the 48-author
+// validation set this demotes nothing, and the 25% ratio is what keeps it that way - it is a narrow
+// safety net for a lopsided fractional duplicate, not a second slot resolver.
 export function demoteSlotDuplicates(works: MergedWork[], verdicts: VerdictResult[]): void {
   const slots = new Map<string, number[]>();
   works.forEach((work, index) => {
@@ -451,12 +458,20 @@ export class MonitoredCatalogService {
       // Hardcover is the catalog spine: Audible/Goodreads enrich and corroborate Hardcover works but
       // never stand alone. A cluster with no Hardcover edition is a translation-only audiobook or a
       // dramatized adaptation that has no Hardcover twin, so it is dropped rather than shown as junk.
-      const merged = matchObservations(observations)
+      const clustered = matchObservations(observations)
         .map((cluster) => mergeCluster(cluster, today))
         .filter((work) => work.sources.includes('hardcover') || isFreshCorroborated(work, today));
+      // Slot resolution runs BEFORE the popularity floor, so the floor is computed over the works that
+      // will actually be persisted rather than over duplicates about to be dropped.
+      const slots = resolveSlots(clustered, today);
+      const survivors = clustered.map((work, index) => ({ work, index })).filter(({ index }) => !slots.rejected.has(index));
+      const merged = survivors.map(({ work }) => work);
+      const hiddenBySlots = new Set(survivors.flatMap(({ index }, position) => (slots.hidden.has(index) ? [position] : [])));
       const floor = computePopularityFloor(merged);
       const previous = await this.store.getCatalog(monitor.id);
       const verdicts = merged.map((work) => assignVerdict(work, { today, floor }));
+      // Hidden works stay in the catalog but drop to the review tray, where the owner can promote them.
+      for (const index of hiddenBySlots) verdicts[index].verdict = 'suspect';
       demoteSlotDuplicates(merged, verdicts);
       const previousWorks = resolvePreviousWorks(merged, previous);
       const works = merged.map((work, index) => this.mapWork(monitor.id, work, verdicts[index], previousWorks[index]));
@@ -476,7 +491,7 @@ export class MonitoredCatalogService {
       await this.store.saveCatalog(monitor.id, catalog);
       const hardcoverAuthorId = results.find((result) => result.source === 'hardcover')?.authorRef?.id ?? monitor.providerIds.hardcover ?? '';
       this.logger.log(
-        `[monitored.catalog] [end] monitorId=${monitor.id} durationMs=${Date.now() - startedAt} observations=${observations.length} clusters=${merged.length} verified=${works.filter((work) => work.verdict === 'verified' && work.flags.length === 0).length} - catalog fetch completed`,
+        `[monitored.catalog] [end] monitorId=${monitor.id} durationMs=${Date.now() - startedAt} observations=${observations.length} clusters=${clustered.length} slotRejected=${slots.rejected.size} slotHidden=${slots.hidden.size} works=${merged.length} verified=${works.filter((work) => work.verdict === 'verified' && work.flags.length === 0).length} - catalog fetch completed`,
       );
       return { catalog, hardcoverAuthorId };
     } catch (error) {

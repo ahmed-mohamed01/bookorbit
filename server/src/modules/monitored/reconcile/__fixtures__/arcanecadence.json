@@ -1,13 +1,15 @@
 {
   "name": "ArcaneCadence",
   "slug": "arcanecadence",
-  "fetchedAt": "2026-09-03T17:06:34.688Z",
+  "fetchedAt": "2026-09-07T08:52:36.960Z",
   "hardcover": {
-    "author": { "id": 1290429, "name": "ArcaneCadence", "books_count": 3 },
+    "author": {
+      "id": 1290429,
+      "name": "ArcaneCadence"
+    },
     "identityExact": true,
     "books": [
       {
-        "contribution": "Author",
         "id": 2215249,
         "slug": "new-life-as-a-max-level-archmage-web-serial",
         "title": "New Life As A Max Level Archmage (Web Serial)",
@@ -21,12 +23,39 @@
         "users_count": 6,
         "rating": 4,
         "ratings_count": 2,
-        "image": { "url": "https://assets.hardcover.app/user/44998/41977e25-7814-4851-a843-b8fe9cd07c0a.jpg" },
+        "image": {
+          "url": "https://assets.hardcover.app/user/44998/41977e25-7814-4851-a843-b8fe9cd07c0a.jpg"
+        },
         "featured_book_series": null,
-        "cached_contributors": [{ "author": { "id": 1290429, "slug": "arcanecadence", "name": "ArcaneCadence", "image": {} }, "contribution": null }]
+        "book_series": [],
+        "cached_contributors": [
+          {
+            "author": {
+              "id": 1290429,
+              "slug": "arcanecadence",
+              "name": "ArcaneCadence",
+              "image": {}
+            },
+            "contribution": null
+          }
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 9,
+        "users_read_count": 4,
+        "editions_count": 1,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2582478,
         "slug": "new-life-as-a-max-level-archmage",
         "title": "New Life as a Max Level Archmage",
@@ -37,18 +66,67 @@
         "release_date": "2026-05-04",
         "release_year": 2026,
         "pages": null,
-        "users_count": 13,
-        "rating": 4.857142857142857,
-        "ratings_count": 7,
-        "image": { "url": "https://assets.hardcover.app/edition/32883446/aac8e256-6a13-4fea-b79c-479a2f10f665.jpg" },
-        "featured_book_series": { "position": 1, "series": { "name": "New Life as a Max Level Archmage", "books_count": 2 } },
+        "users_count": 15,
+        "rating": 4.875,
+        "ratings_count": 8,
+        "image": {
+          "url": "https://assets.hardcover.app/edition/32883446/aac8e256-6a13-4fea-b79c-479a2f10f665.jpg"
+        },
+        "featured_book_series": {
+          "position": 1,
+          "series": {
+            "id": 269298,
+            "name": "New Life as a Max Level Archmage",
+            "books_count": 2
+          }
+        },
+        "book_series": [
+          {
+            "position": 1,
+            "series": {
+              "id": 269298,
+              "name": "New Life as a Max Level Archmage",
+              "books_count": 2
+            }
+          }
+        ],
         "cached_contributors": [
-          { "author": { "id": 1290429, "slug": "arcanecadence", "name": "ArcaneCadence", "image": {} }, "contribution": null },
-          { "author": { "id": 869210, "slug": "tess-irondale", "name": "Tess Irondale", "image": {} }, "contribution": "Narrator" }
-        ]
+          {
+            "author": {
+              "id": 1290429,
+              "slug": "arcanecadence",
+              "name": "ArcaneCadence",
+              "image": {}
+            },
+            "contribution": null
+          },
+          {
+            "author": {
+              "id": 869210,
+              "slug": "tess-irondale",
+              "name": "Tess Irondale",
+              "image": {}
+            },
+            "contribution": "Narrator"
+          }
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 13,
+        "editions_count": 3,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2582481,
         "slug": "new-life-as-a-max-level-archmage-book-2",
         "title": "New Life as a Max Level Archmage, Book 2",
@@ -63,11 +141,52 @@
         "rating": null,
         "ratings_count": 0,
         "image": null,
-        "featured_book_series": { "position": 2, "series": { "name": "New Life as a Max Level Archmage", "books_count": 2 } },
-        "cached_contributors": [{ "author": { "id": 1290429, "slug": "arcanecadence", "name": "ArcaneCadence", "image": {} }, "contribution": null }]
+        "featured_book_series": {
+          "position": 2,
+          "series": {
+            "id": 269298,
+            "name": "New Life as a Max Level Archmage",
+            "books_count": 2
+          }
+        },
+        "book_series": [
+          {
+            "position": 2,
+            "series": {
+              "id": 269298,
+              "name": "New Life as a Max Level Archmage",
+              "books_count": 2
+            }
+          }
+        ],
+        "cached_contributors": [
+          {
+            "author": {
+              "id": 1290429,
+              "slug": "arcanecadence",
+              "name": "ArcaneCadence",
+              "image": {}
+            },
+            "contribution": null
+          }
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 0,
+        "editions_count": 1,
+        "lang_editions": [
+          {
+            "language": {
+              "code2": "en"
+            }
+          }
+        ],
+        "contribution": "Author"
       },
       {
-        "contribution": "Author",
         "id": 2652216,
         "slug": "new-life-as-a-max-level-archmage-an-op-mc-litrpg-adventure",
         "title": "New Life as a Max Level Archmage: An OP MC LitRPG Adventure",
@@ -83,7 +202,53 @@
         "ratings_count": 0,
         "image": null,
         "featured_book_series": null,
-        "cached_contributors": [{ "author": { "id": 1290429, "slug": "arcanecadence", "name": "ArcaneCadence", "image": {} }, "contribution": null }]
+        "book_series": [],
+        "cached_contributors": [
+          {
+            "author": {
+              "id": 1290429,
+              "slug": "arcanecadence",
+              "name": "ArcaneCadence",
+              "image": {}
+            },
+            "contribution": null
+          }
+        ],
+        "book_status": {
+          "id": 1,
+          "name": "OK"
+        },
+        "book_category_id": 1,
+        "users_read_count": 0,
+        "editions_count": 0,
+        "lang_editions": [
+          {
+            "language": null
+          }
+        ],
+        "contribution": "Author"
+      }
+    ]
+  },
+  "goodreads": {
+    "rows": [
+      {
+        "title": "New Life as a Max Level Archmage, Book 1 (New Life as a Max Level Archmage, #1)",
+        "bookId": "250330385",
+        "avgRating": "4.66",
+        "ratings": 824,
+        "year": "2026",
+        "expected": false,
+        "editions": "3"
+      },
+      {
+        "title": "New Life as a Max Level Archmage, Book 2",
+        "bookId": "251311894",
+        "avgRating": "4.00",
+        "ratings": 11,
+        "year": null,
+        "expected": false,
+        "editions": null
       }
     ]
   },
@@ -92,13 +257,43 @@
       {
         "asin": "B0GYZTMGVM",
         "asset_details": [],
-        "authors": [{ "asin": "B0GWVPNZS5", "name": "Arcane Cadence" }],
+        "authors": [
+          {
+            "asin": "B0GWVPNZS5",
+            "name": "Arcane Cadence"
+          }
+        ],
         "available_codecs": [
-          { "enhanced_codec": "LC_64_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_64" },
-          { "enhanced_codec": "LC_32_22050_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_22_32" },
-          { "enhanced_codec": "LC_64_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_64" },
-          { "enhanced_codec": "LC_128_44100_stereo", "format": "Enhanced", "is_kindle_enhanced": true, "name": "aax_44_128" },
-          { "enhanced_codec": "aax", "format": "Enhanced", "is_kindle_enhanced": false, "name": "aax" }
+          {
+            "enhanced_codec": "LC_64_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_64"
+          },
+          {
+            "enhanced_codec": "LC_32_22050_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_22_32"
+          },
+          {
+            "enhanced_codec": "LC_64_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_64"
+          },
+          {
+            "enhanced_codec": "LC_128_44100_stereo",
+            "format": "Enhanced",
+            "is_kindle_enhanced": true,
+            "name": "aax_44_128"
+          },
+          {
+            "enhanced_codec": "aax",
+            "format": "Enhanced",
+            "is_kindle_enhanced": false,
+            "name": "aax"
+          }
         ],
         "content_delivery_type": "MultiPartBook",
         "content_type": "Product",
@@ -111,43 +306,49 @@
         "issue_date": "2026-05-04",
         "language": "english",
         "merchandising_summary": "<p>Vivienne has poured so many hours into the massively popular VRMMO The Seven Cataclysms that she has more of a life inside the game than out. It's a fitting irony, then, when one day she wakes in the body of her maxed-out demon-mage 'Vivisari'—and finds that now, the game really is her life.</p>",
-        "narrators": [{ "name": "Tess Irondale" }],
-        "product_images": { "500": "https://m.media-amazon.com/images/I/518xPepgn1L._SL500_.jpg" },
+        "narrators": [
+          {
+            "name": "Tess Irondale"
+          }
+        ],
+        "product_images": {
+          "500": "https://m.media-amazon.com/images/I/518xPepgn1L._SL500_.jpg"
+        },
         "publication_datetime": "2026-05-04T15:43:00Z",
         "publication_name": "New Life as a Max Level Archmage",
         "publisher_name": "Arcane Cadence",
         "rating": {
-          "num_reviews": 73,
+          "num_reviews": 74,
           "overall_distribution": {
-            "average_rating": 4.85,
+            "average_rating": 4.851851851851852,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 430,
+            "num_five_star_ratings": 436,
             "num_four_star_ratings": 37,
             "num_one_star_ratings": 3,
-            "num_ratings": 480,
+            "num_ratings": 486,
             "num_three_star_ratings": 7,
             "num_two_star_ratings": 3
           },
           "performance_distribution": {
-            "average_rating": 4.875,
+            "average_rating": 4.876456876456876,
             "display_average_rating": "4.9",
             "display_stars": 5,
-            "num_five_star_ratings": 387,
+            "num_five_star_ratings": 392,
             "num_four_star_ratings": 28,
             "num_one_star_ratings": 2,
-            "num_ratings": 424,
+            "num_ratings": 429,
             "num_three_star_ratings": 4,
             "num_two_star_ratings": 3
           },
           "story_distribution": {
-            "average_rating": 4.813679245283019,
+            "average_rating": 4.8158508158508155,
             "display_average_rating": "4.8",
             "display_stars": 5,
-            "num_five_star_ratings": 368,
+            "num_five_star_ratings": 373,
             "num_four_star_ratings": 41,
             "num_one_star_ratings": 3,
-            "num_ratings": 424,
+            "num_ratings": 429,
             "num_three_star_ratings": 10,
             "num_two_star_ratings": 2
           }
@@ -173,32 +374,6 @@
         },
         "thesaurus_subject_keywords": ["literature-and-fiction"],
         "title": "New Life as a Max Level Archmage"
-      }
-    ],
-    "queryUsed": "Arcane Cadence"
-  },
-  "goodreads": {
-    "authorId": 68477331,
-    "authorName": "Arcane Cadence",
-    "totalListed": 2,
-    "rows": [
-      {
-        "title": "New Life as a Max Level Archmage, Book 1 (New Life as a Max Level Archmage, #1)",
-        "bookId": "250330385",
-        "avgRating": "4.66",
-        "ratings": 816,
-        "year": "2026",
-        "expected": false,
-        "editions": "3"
-      },
-      {
-        "title": "New Life as a Max Level Archmage, Book 2",
-        "bookId": "251311894",
-        "avgRating": "4.00",
-        "ratings": 11,
-        "year": null,
-        "expected": false,
-        "editions": null
       }
     ]
   }

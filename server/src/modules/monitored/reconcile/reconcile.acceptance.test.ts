@@ -10,6 +10,7 @@ import { mapHardcoverObservations } from '../providers/hardcover-bibliography.pr
 import { mergeCluster } from './cluster-merger';
 import { matchObservations, normalizeCore } from './observation-matcher';
 import type { MergedWork, Observation } from './observation.types';
+import { resolveSlots } from './slot-resolution';
 import { assignVerdict, computePopularityFloor } from './verdict';
 
 const TODAY = '2026-09-03';
@@ -45,9 +46,18 @@ function observationsOf(input: Fixture): Observation[] {
 }
 
 function reconcileObservations(observations: Observation[]): ReconciledWork[] {
-  const merged = matchObservations(observations).map((cluster) => mergeCluster(cluster, TODAY));
+  const clustered = matchObservations(observations).map((cluster) => mergeCluster(cluster, TODAY));
+  // Mirrors fetchCatalog: slot resolution drops duplicates before the floor is computed, and hidden
+  // works stay in the catalog demoted to the review tray. Without this the suite would stop covering
+  // the stage entirely, because it reassembles the pipeline rather than calling the service.
+  const slots = resolveSlots(clustered, TODAY);
+  const survivors = clustered.map((work, index) => ({ work, index })).filter(({ index }) => !slots.rejected.has(index));
+  const merged = survivors.map(({ work }) => work);
   const floor = computePopularityFloor(merged);
-  return merged.map((work) => ({ ...work, ...assignVerdict(work, { today: TODAY, floor }) }));
+  return survivors.map(({ work, index }) => {
+    const verdict = assignVerdict(work, { today: TODAY, floor });
+    return { ...work, ...verdict, verdict: slots.hidden.has(index) ? ('suspect' as const) : verdict.verdict };
+  });
 }
 
 function reconcile(input: Fixture): ReconciledWork[] {
@@ -109,7 +119,9 @@ describe('multi-source reconciliation acceptance', () => {
       expect(works.length).toBeLessThanOrEqual(130);
       expect(works.some((work) => NON_LATIN_SCRIPT_PATTERN.test(work.title))).toBe(false);
       expect(works.some((work) => normalizeCore(work.title, work.seriesName) === '')).toBe(false);
-      expect(works.some((work) => /^Untitled Stormlight Archive #(?:[6-9]|10)$/i.test(work.title))).toBe(false);
+      // These are announced books whose titles are not public yet, and each holds a numbered place in
+      // the series - the most valuable rows a monitoring catalog can carry, not junk to suppress.
+      expect(works.filter((work) => /^Untitled Stormlight Archive #(?:[6-9]|10)$/i.test(work.title)).length).toBeGreaterThanOrEqual(5);
       expect(works.some((work) => /books?\s*\d+\s*[-\u2013\u2014]\s*\d+|box(?:ed)?\s*set|omnibus/i.test(work.title))).toBe(false);
       expect(new Set(identities).size).toBe(identities.length);
     }

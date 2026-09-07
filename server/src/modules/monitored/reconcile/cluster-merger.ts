@@ -98,6 +98,22 @@ function seriesKey(name: string): string {
   return normalizeText(name).replace(/\bversus\b/g, 'vs');
 }
 
+/**
+ * True when the longer name only adds a BRACKETED qualifier - "[Dramatized Adaptation]", "(Split
+ * Volume Edition)". That marks a format re-listing of one series. Anything else appended is a
+ * sub-series with its own numbering and must survive on its own: "The Mistborn Saga" against "The
+ * Mistborn Saga: The Original Trilogy" (10 books vs 3, both numbering the same book #1), or against
+ * ": Wax & Wayne", or "Skyward" against "Skyward Flight". Collapsing those hands the parent slot to
+ * whatever junk row claims it next - it is how the Mistborn Adventure Game came to hold
+ * The Mistborn Saga #1 instead of The Final Empire.
+ */
+function isFormatQualified(shortName: string, longName: string): boolean {
+  const short = shortName.trim();
+  const long = longName.trim();
+  if (!long.toLowerCase().startsWith(short.toLowerCase())) return false;
+  return /^[[(]/.test(long.slice(short.length).trim());
+}
+
 function mergeSeriesMemberships(observations: Observation[]): SeriesMembership[] {
   // Hardcover is the series authority; Audible/Goodreads carry unreliable variant spellings
   // ("Alcatraz versus ...") that would fan a book into duplicate groups. Take memberships from the
@@ -115,13 +131,23 @@ function mergeSeriesMemberships(observations: Observation[]): SeriesMembership[]
       else if (current.index == null && membership.index != null) current.index = membership.index;
     }
   }
-  // Collapse a short alias into the fuller series name: Hardcover lists "Alcatraz" AND "Alcatraz vs.
-  // the Evil Librarians" for the same book, and the short one is a duplicate of the longer.
+  // Collapse a short alias into the fuller series name: Hardcover lists "Alcatraz vs. the Evil
+  // Librarians" AND "... [Dramatized Adaptation]" for the same book, and the short one is a duplicate.
+  //
+  // A shared name prefix is NOT enough on its own. The two entries must also agree on where the book
+  // sits, or the short one must say nothing. Every real alias in the validation set agrees (Alcatraz
+  // 3 vs 3, Stormlight 1.1 vs 1.1) and every differing pair is a genuinely different series that
+  // merely starts with the same words: "The Mistborn Saga" #4 against "The Mistborn Saga : Wax &
+  // Wayne" #1, "Skyward" #2.1 against "Skyward Flight" #1, "The Stormlight Archive" #4.1 against its
+  // "(Split Volume Edition)" #7. Collapsing those silently deletes a real slot claim - it is what
+  // stripped The Alloy of Law of its Mistborn Saga #4 and renumbered The Hero of Ages from Cosmere
+  // #5 to #4.
   const kept = [...memberships.entries()];
   const result: SeriesMembership[] = [];
   for (const [key, membership] of kept) {
-    const supersededBy = kept.find(([otherKey]) => otherKey !== key && (otherKey.startsWith(`${key} `) || otherKey === key));
-    if (supersededBy && supersededBy[0].length > key.length) {
+    const supersededBy = kept.find(([otherKey, other]) => otherKey.startsWith(`${key} `) && isFormatQualified(membership.name, other.name));
+    const agrees = supersededBy && (membership.index == null || supersededBy[1].index == null || membership.index === supersededBy[1].index);
+    if (supersededBy && agrees) {
       if (supersededBy[1].index == null && membership.index != null) supersededBy[1].index = membership.index;
       continue;
     }

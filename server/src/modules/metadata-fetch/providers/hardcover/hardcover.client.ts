@@ -88,8 +88,17 @@ const FETCH_AUTHOR_CONTRIBUTIONS_QUERY = `
       id
       name
       books_count
-      contributions(limit: 100, offset: $off, order_by: { book: { id: asc } }) {
+      contributions(
+        # Roughly 65% of rows are edition-level (contributable_type "Edition") and return book: null,
+        # so filter them server-side before pagination spends its budget.
+        where: { contributable_type: { _eq: "Book" } }
+        # Keep this literal in sync with PAGE_SIZE = 100 in server/src/modules/monitored/providers/hardcover-bibliography.provider.ts.
+        limit: 100
+        offset: $off
+        order_by: { book: { id: asc } }
+      ) {
         contribution
+        contributor_role_id
         book {
           id
           slug
@@ -105,9 +114,13 @@ const FETCH_AUTHOR_CONTRIBUTIONS_QUERY = `
           rating
           ratings_count
           image { url }
-          featured_book_series { position series { name books_count } }
+          featured_book_series { position series { id name books_count } }
           book_series { position series { id name books_count } }
           cached_contributors
+          book_status { id name }
+          book_category_id
+          users_read_count
+          editions_count
           lang_editions: editions(distinct_on: language_id, order_by: [{ language_id: asc }, { users_count: desc }], limit: 5) {
             language {
               code2

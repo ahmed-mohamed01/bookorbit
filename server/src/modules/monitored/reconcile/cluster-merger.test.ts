@@ -174,3 +174,64 @@ describe('mergeCluster', () => {
     for (const permuted of permutations) expect(mergeCluster(cluster(...permuted), '2026-09-03')).toEqual(expected);
   });
 });
+
+describe('mergeSeriesMemberships alias collapse', () => {
+  it('collapses a short alias that agrees on position', () => {
+    const work = mergeCluster(
+      cluster(
+        observation('hardcover', {
+          title: 'The Dark Talent',
+          seriesMemberships: [
+            { name: 'Alcatraz vs. the Evil Librarians', index: '3' },
+            { name: 'Alcatraz vs. the Evil Librarians [Dramatized Adaptation]', index: '3' },
+          ],
+        }),
+      ),
+      '2026-09-07',
+    );
+
+    expect(work.seriesMemberships.map((membership) => membership.name)).toEqual(['Alcatraz vs. the Evil Librarians [Dramatized Adaptation]']);
+  });
+
+  it('keeps both when a shared name prefix hides two different series', () => {
+    const work = mergeCluster(
+      cluster(
+        observation('hardcover', {
+          title: 'The Alloy of Law',
+          seriesMemberships: [
+            { name: 'The Mistborn Saga', index: '4' },
+            { name: 'The Mistborn Saga : Wax & Wayne', index: '1' },
+          ],
+        }),
+      ),
+      '2026-09-07',
+    );
+
+    expect(work.seriesMemberships.map((membership) => `${membership.name}#${membership.index}`).sort()).toEqual([
+      'The Mistborn Saga : Wax & Wayne#1',
+      'The Mistborn Saga#4',
+    ]);
+  });
+
+  it('keeps a sub-series that shares the parent name and the same position', () => {
+    const work = mergeCluster(
+      cluster(
+        observation('hardcover', {
+          title: 'Mistborn: The Final Empire',
+          seriesMemberships: [
+            { name: 'The Mistborn Saga', index: '1' },
+            { name: 'The Mistborn Saga: The Original Trilogy', index: '1' },
+          ],
+        }),
+      ),
+      '2026-09-07',
+    );
+
+    // The Saga runs to ten books and the Original Trilogy to three; both number this book #1, so an
+    // index match alone must not collapse them or the parent slot is left for a junk row to claim.
+    expect(work.seriesMemberships.map((membership) => `${membership.name}#${membership.index}`).sort()).toEqual([
+      'The Mistborn Saga#1',
+      'The Mistborn Saga: The Original Trilogy#1',
+    ]);
+  });
+});
