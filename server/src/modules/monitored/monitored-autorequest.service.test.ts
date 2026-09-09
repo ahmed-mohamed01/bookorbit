@@ -11,7 +11,6 @@ function monitor(patch: Partial<MonitoredAuthorConfig> = {}): MonitoredAuthorCon
   return {
     id: 'monitor-1',
     ownerUserId: 4,
-    isShared: false,
     authorName: 'Test Author',
     localAuthorId: null,
     providerIds: { hardcover: 'author-1' },

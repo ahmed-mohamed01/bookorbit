@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 import type { SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
@@ -167,7 +168,7 @@ describe('MonitoredStoreService work composition', () => {
     expect(values).toEqual({ paused: true, lastRefreshedAt: new Date('2026-09-02T00:00:00.000Z') });
   });
 
-  it('counts only monitored books with a readable author and matching catalog work', () => {
+  it('counts only monitored books with an owned author and matching catalog work', () => {
     const queryStore = new MonitoredStoreService(drizzle.mock({ schema }) as never, {} as never);
     const query = Reflect.apply(
       (queryStore as unknown as { bookSummaryQuery: (...args: unknown[]) => { toSQL: () => { sql: string } } }).bookSummaryQuery,
@@ -178,9 +179,7 @@ describe('MonitoredStoreService work composition', () => {
     expect(query.toSQL().sql).toContain(
       'inner join "monitored_authors" on "monitored_authors"."id" = "monitored_books"."monitor_author_id" inner join "author_catalog_works" on ("author_catalog_works"."id" = "monitored_books"."work_id" and "author_catalog_works"."monitor_author_id" = "monitored_books"."monitor_author_id")',
     );
-    expect(query.toSQL().sql).toContain(
-      'where (("monitored_books"."owner_user_id" = $1 or "monitored_books"."is_shared" = $2) and ("monitored_authors"."owner_user_id" = $3 or "monitored_authors"."is_shared" = $4))',
-    );
+    expect(query.toSQL().sql).toContain('where ("monitored_books"."owner_user_id" = $1 and "monitored_authors"."owner_user_id" = $2)');
   });
 });
 
@@ -284,14 +283,17 @@ describe('MonitoredStoreService author aggregate counting', () => {
     expect(hidden.replace('not coalesce(', 'coalesce(')).toContain(total.slice(total.indexOf('coalesce('), total.lastIndexOf(')::int')));
   });
 
-  it('judges a viewer on the verdict alone, never on the owner curation of a shared monitor', async () => {
+  it("uses the scoped owner's curation directly when evaluating aggregate visibility", async () => {
     const dialect = new PgDialect();
     const viewerFields = await aggregateFields({ id: 2, isSuperuser: false } as RequestUser);
     const superuserFields = await aggregateFields({ id: 3, isSuperuser: true } as RequestUser);
+    const viewerTotal = dialect.sqlToQuery(viewerFields.total as SQL).sql;
+    const superuserTotal = dialect.sqlToQuery(superuserFields.total as SQL).sql;
 
-    expect(dialect.sqlToQuery(viewerFields.total as SQL).sql).toContain('case when "monitored_authors"."owner_user_id" =');
-    expect(dialect.sqlToQuery(viewerFields.hidden as SQL).sql).toContain('is distinct from');
-    expect(dialect.sqlToQuery(superuserFields.total as SQL).sql).not.toContain('case when "monitored_authors"."owner_user_id" =');
+    expect(viewerTotal).toContain('"monitored_author_works"."user_visibility"');
+    expect(viewerTotal).not.toContain('case when "monitored_authors"."owner_user_id" =');
+    expect(dialect.sqlToQuery(viewerFields.hidden as SQL).sql).not.toContain('is distinct from');
+    expect(superuserTotal).toBe(viewerTotal);
   });
 
   it('counts an available request match as owned, reading only this work request and the viewer libraries', async () => {
@@ -336,6 +338,86 @@ describe('MonitoredStoreService paged lists', () => {
     const transaction = vi.fn((run: (tx: unknown) => Promise<unknown>) => run({ select }));
     return { db: { select, transaction }, builders, transaction };
   }
+
+  it('scopes a superuser monitored author read to the superuser owner id', () => {
+    const store = new MonitoredStoreService({} as never, {} as never);
+    const predicate = Reflect.apply((store as unknown as { readScope: (...args: unknown[]) => SQL }).readScope, store, [
+      { id: 9, isSuperuser: true } as RequestUser,
+      schema.monitoredAuthors.ownerUserId,
+    ]);
+    const query = new PgDialect().sqlToQuery(predicate);
+
+    expect(query.sql).toBe('"monitored_authors"."owner_user_id" = $1');
+    expect(query.sql).not.toContain('"monitored_authors"."is_shared"');
+    expect(query.params).toEqual([9]);
+  });
+
+  it('scopes name lookups to the caller for regular and superuser viewers', async () => {
+    const tracked = pagedSelectDb([[], []]);
+    const store = new MonitoredStoreService(tracked.db as never, {} as never);
+
+    await store.findMonitoredIdsByNames(['Target Author'], { id: 2, isSuperuser: false } as RequestUser);
+    await store.findMonitoredIdsByNames(['Target Author'], { id: 9, isSuperuser: true } as RequestUser);
+
+    for (const [index, userId] of [2, 9].entries()) {
+      const predicate = tracked.builders[index]?.where.mock.calls[0]?.[0] as SQL;
+      const query = new PgDialect().sqlToQuery(predicate);
+      expect(query.sql).toContain('"monitored_authors"."owner_user_id" = $1');
+      expect(query.sql).not.toContain('"monitored_authors"."is_shared"');
+      expect(query.params[0]).toBe(userId);
+    }
+  });
+
+  it("returns only a superuser viewer's own monitored author ids", async () => {
+    const tracked = pagedSelectDb([[{ id: 'mine-1' }], [{ total: 1 }]]);
+    const store = new MonitoredStoreService(tracked.db as never, {} as never);
+
+    const result = await store.findOwnedAuthorIdsPage({ id: 9, isSuperuser: true } as RequestUser, 0, 200);
+
+    expect(result).toEqual({ items: ['mine-1'], total: 1, page: 0, size: 200 });
+    for (const builder of tracked.builders) {
+      const predicate = builder.where.mock.calls[0]?.[0] as SQL;
+      const query = new PgDialect().sqlToQuery(predicate);
+      expect(query.sql).toBe('"monitored_authors"."owner_user_id" = $1');
+      expect(query.params).toEqual([9]);
+    }
+  });
+
+  it('refuses a superuser write to another user monitored author', async () => {
+    const tracked = pagedSelectDb([[{ ownerUserId: 1 }]]);
+    const store = new MonitoredStoreService(tracked.db as never, {} as never);
+
+    await expect(
+      Reflect.apply((store as unknown as { assertAuthorWritable: (...args: unknown[]) => Promise<void> }).assertAuthorWritable, store, [
+        'monitor-1',
+        { id: 9, isSuperuser: true } as RequestUser,
+      ]),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('refuses a superuser write to another user monitored book', async () => {
+    const tracked = pagedSelectDb([[{ ownerUserId: 1 }]]);
+    const store = new MonitoredStoreService(tracked.db as never, {} as never);
+
+    await expect(
+      Reflect.apply((store as unknown as { assertBookWritable: (...args: unknown[]) => Promise<void> }).assertBookWritable, store, [
+        'book-1',
+        { id: 9, isSuperuser: true } as RequestUser,
+      ]),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('refuses a superuser write to a work on another user monitored author', async () => {
+    const tracked = pagedSelectDb([[{ ownerUserId: 1 }]]);
+    const store = new MonitoredStoreService(tracked.db as never, {} as never);
+
+    await expect(
+      Reflect.apply((store as unknown as { assertWorkWritable: (...args: unknown[]) => Promise<void> }).assertWorkWritable, store, [
+        'work-1',
+        { id: 9, isSuperuser: true } as RequestUser,
+      ]),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
 
   it('applies LIMIT/OFFSET to the author data query and gets total from a separate count query', async () => {
     const tracked = pagedSelectDb([[], [{ total: 123 }]]);

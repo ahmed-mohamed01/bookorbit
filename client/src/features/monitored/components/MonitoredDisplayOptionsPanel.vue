@@ -18,7 +18,6 @@ const props = defineProps<{
   modelValue: MonitoredDisplayOptions
   counts: MonitoredDisplayClassCounts
   reviewKindCounts: MonitoredReviewKindCounts
-  /** Curation is the owner's own view of their catalog; a shared viewer is never sent those works. */
   canCurate: boolean
 }>()
 const emit = defineEmits<{ 'update:modelValue': [value: MonitoredDisplayOptions]; reset: [] }>()

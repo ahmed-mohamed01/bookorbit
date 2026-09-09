@@ -25,7 +25,6 @@ export const monitoredAuthors = pgTable(
     ownerUserId: integer('owner_user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    isShared: boolean('is_shared').notNull().default(false),
     authorName: varchar('author_name', { length: 500 }).notNull(),
     localAuthorId: integer('local_author_id').references(() => authors.id, { onDelete: 'set null' }),
     paused: boolean('paused').notNull().default(false),
@@ -157,7 +156,6 @@ export const monitoredBooks = pgTable(
     ownerUserId: integer('owner_user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    isShared: boolean('is_shared').notNull().default(false),
     monitorAuthorId: varchar('monitor_author_id', { length: 36 })
       .notNull()
       .references(() => monitoredAuthors.id, { onDelete: 'cascade' }),

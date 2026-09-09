@@ -105,10 +105,6 @@ export class MonitorAuthorDto {
   @Type(() => MonitoredProviderIdsDto)
   providerIds?: MonitoredProviderIdsDto;
 
-  @IsOptional()
-  @IsBoolean()
-  isShared?: boolean;
-
   @IsObject()
   @ValidateNested()
   @Type(() => MonitorFormatsDto)
@@ -125,10 +121,6 @@ export class UpdateMonitoredAuthorDto {
   @IsOptional()
   @IsBoolean()
   paused?: boolean;
-
-  @IsOptional()
-  @IsBoolean()
-  isShared?: boolean;
 }
 
 export class MonitoredAuthorDetailQueryDto {

@@ -96,7 +96,6 @@ export interface MonitoredAuthorProviderIds {
 export interface MonitoredAuthorConfig {
   id: string;
   ownerUserId: number;
-  isShared: boolean;
   authorName: string;
   /** Link to the local authors table when the author exists in the library. */
   localAuthorId: number | null;
@@ -157,7 +156,6 @@ export interface MonitoredWork {
 export interface MonitoredBookEntry {
   id: string;
   ownerUserId: number;
-  isShared: boolean;
   monitorAuthorId: string;
   workId: string;
   formats: MonitoredFormat[];
@@ -198,7 +196,6 @@ export interface MonitoredReleaseItem {
   /** The full catalog work, so release surfaces can reuse the system work card and book panel. */
   work: MonitoredWork;
   monitorAuthorId: string;
-  /** Whether the viewer may act on this release (owner or superuser); shared monitors are read-only. */
   isOwner: boolean;
   title: string;
   authorName: string;
@@ -238,14 +235,12 @@ export interface MonitorAuthorRequest {
   authorName: string;
   localAuthorId?: number;
   providerIds?: MonitoredAuthorProviderIds;
-  isShared?: boolean;
   formats: Partial<Record<MonitoredFormat, MonitorFormatConfig>>;
 }
 
 export interface UpdateMonitoredAuthorRequest {
   formats?: Partial<Record<MonitoredFormat, MonitorFormatConfig>>;
   paused?: boolean;
-  isShared?: boolean;
 }
 
 export interface RequestFromWorkPayload {

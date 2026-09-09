@@ -60,7 +60,6 @@ CREATE TABLE IF NOT EXISTS "monitored_author_works" (
 CREATE TABLE IF NOT EXISTS "monitored_authors" (
 	"id" varchar(36) PRIMARY KEY NOT NULL,
 	"owner_user_id" integer NOT NULL,
-	"is_shared" boolean DEFAULT false NOT NULL,
 	"author_name" varchar(500) NOT NULL,
 	"local_author_id" integer,
 	"paused" boolean DEFAULT false NOT NULL,
@@ -79,7 +78,6 @@ CREATE TABLE IF NOT EXISTS "monitored_authors" (
 CREATE TABLE IF NOT EXISTS "monitored_books" (
 	"id" varchar(36) PRIMARY KEY NOT NULL,
 	"owner_user_id" integer NOT NULL,
-	"is_shared" boolean DEFAULT false NOT NULL,
 	"monitor_author_id" varchar(36) NOT NULL,
 	"work_id" varchar(255) NOT NULL,
 	"formats" jsonb DEFAULT '[]'::jsonb NOT NULL,
@@ -294,6 +292,30 @@ DO $$ BEGIN
 		WHERE conname = 'author_catalog_works_kind_chk'
 	) THEN
 		ALTER TABLE "author_catalog_works" ADD CONSTRAINT "author_catalog_works_kind_chk" CHECK ("author_catalog_works"."kind" is null or "author_catalog_works"."kind" in ('collection', 'anthology', 'graphic_novel', 'format_variant', 'duplicate'));
+	END IF;
+END $$;
+--> statement-breakpoint
+-- The catalog guard avoids ACCESS EXCLUSIVE locks on every boot because PostgreSQL locks before
+-- evaluating a bare DROP COLUMN IF EXISTS. The inner IF EXISTS makes concurrent boots safe.
+DO $$ BEGIN
+	IF EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'monitored_authors'
+			AND column_name = 'is_shared'
+	) THEN
+		ALTER TABLE "monitored_authors" DROP COLUMN IF EXISTS "is_shared";
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'monitored_books'
+			AND column_name = 'is_shared'
+	) THEN
+		ALTER TABLE "monitored_books" DROP COLUMN IF EXISTS "is_shared";
 	END IF;
 END $$;
 `;

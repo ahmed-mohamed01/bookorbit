@@ -20,7 +20,6 @@ function author(patch: Partial<MonitoredAuthorConfig> = {}): MonitoredAuthorConf
   return {
     id: 'monitor-1',
     ownerUserId: 1,
-    isShared: false,
     authorName: 'Test Author',
     localAuthorId: null,
     providerIds: {},
@@ -240,11 +239,14 @@ describe('MonitoredService', () => {
     }
   });
 
-  it('does not write a shared monitor owned by another user', async () => {
+  it.each([
+    ['regular user', viewer],
+    ['superuser', { id: 9, isSuperuser: true } as RequestUser],
+  ])('does not let a %s request work from a monitor owned by another user', async (_label, actor) => {
     const submit = vi.fn();
-    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author({ ownerUserId: 2, isShared: true }), work: work() }) };
+    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author({ ownerUserId: 2 }), work: work() }) };
 
-    await expect(service(store, { submit }).requestFromWork(viewer, work().id, { format: 'ebook' })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service(store, { submit }).requestFromWork(actor, work().id, { format: 'ebook' })).rejects.toBeInstanceOf(ForbiddenException);
     expect(submit).not.toHaveBeenCalled();
   });
 
@@ -296,9 +298,9 @@ describe('MonitoredService', () => {
     expect(submitWorkRequest).toHaveBeenCalledWith(viewer, monitoredAuthor, monitoredWork, 'ebook', undefined);
   });
 
-  it('rejects an overlay update for a readable monitor owned by another user', async () => {
+  it('rejects an overlay update for a monitor owned by another user', async () => {
     const updateWorkUserState = vi.fn();
-    const foreign = author({ ownerUserId: 2, isShared: true });
+    const foreign = author({ ownerUserId: 2 });
     const store = {
       getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: foreign, work: work() }),
       getAuthor: vi.fn().mockResolvedValue(foreign),
@@ -476,16 +478,16 @@ describe('MonitoredService', () => {
     expect(fetchCatalog).not.toHaveBeenCalled();
   });
 
-  it('resolves refresh config for the monitor owner and passes it to the catalog', async () => {
+  it("passes the caller's refresh config to the catalog", async () => {
     const monitor = author({ ownerUserId: 27 });
     const config = { hardcover: { enabled: true, apiKey: 'owner-key' } };
     const forUser = vi.fn().mockResolvedValue(config);
     const failure = new Error('stop after fetch');
     const fetchCatalog = vi.fn().mockRejectedValue(failure);
     const instance = service({ getAuthor: vi.fn().mockResolvedValue(monitor) }, {}, { catalog: { fetchCatalog }, providerConfigs: { forUser } });
-    const superuser = { id: 99, isSuperuser: true } as RequestUser;
+    const owner = { id: monitor.ownerUserId, isSuperuser: false } as RequestUser;
 
-    await expect(instance.refreshAuthor(monitor.id, superuser)).rejects.toBe(failure);
+    await expect(instance.refreshAuthor(monitor.id, owner)).rejects.toBe(failure);
     expect(forUser).toHaveBeenCalledWith(monitor.ownerUserId);
     expect(fetchCatalog).toHaveBeenCalledWith(monitor, config);
   });
@@ -698,9 +700,8 @@ describe('MonitoredService', () => {
   it('returns provider matches when the viewer can reach no local library', async () => {
     const findPage = vi.fn().mockResolvedValue({ items: [], total: 0, page: 0, size: 5 });
     const findMonitoredIdsByNames = vi.fn().mockResolvedValue(new Map());
-    const listAuthors = vi.fn().mockResolvedValue([]);
     const instance = service(
-      { listAuthors, findMonitoredIdsByNames },
+      { findMonitoredIdsByNames },
       {},
       {
         authorsRepository: { findPage },
@@ -716,8 +717,6 @@ describe('MonitoredService', () => {
     expect(results).toEqual([
       expect.objectContaining({ name: 'Zogarth', providerIds: { hardcover: '344878' }, localAuthorId: null, alreadyMonitoredId: null }),
     ]);
-    // The annotation asks only about the names on screen instead of loading every readable monitor.
-    expect(listAuthors).not.toHaveBeenCalled();
     expect(findMonitoredIdsByNames).toHaveBeenCalledWith(['Zogarth'], viewer);
   });
 
@@ -725,7 +724,7 @@ describe('MonitoredService', () => {
   // records. Both normalize to one key, and taking the later hit bound the monitor to the stub.
   function searchService(hits: unknown[], local: unknown[] = []) {
     return service(
-      { listAuthors: vi.fn(), findMonitoredIdsByNames: vi.fn().mockResolvedValue(new Map()) },
+      { findMonitoredIdsByNames: vi.fn().mockResolvedValue(new Map()) },
       {},
       {
         authorsRepository: { findPage: vi.fn().mockResolvedValue({ items: local, total: local.length, page: 0, size: 5 }) },
@@ -784,7 +783,7 @@ describe('MonitoredService', () => {
   it('annotates a search hit with the monitor id the bounded lookup returned', async () => {
     const findMonitoredIdsByNames = vi.fn().mockResolvedValue(new Map([['zogarth', 'monitor-9']]));
     const instance = service(
-      { listAuthors: vi.fn(), findMonitoredIdsByNames },
+      { findMonitoredIdsByNames },
       {},
       {
         authorsRepository: { findPage: vi.fn().mockResolvedValue({ items: [], total: 0, page: 0, size: 5 }) },
@@ -799,9 +798,9 @@ describe('MonitoredService', () => {
     expect(results[0].alreadyMonitoredId).toBe('monitor-9');
   });
 
-  it('does not run an indexer search on a shared monitor owned by another user', async () => {
+  it('does not run an indexer search on a monitor owned by another user', async () => {
     const search = vi.fn();
-    const foreign = author({ ownerUserId: 2, isShared: true });
+    const foreign = author({ ownerUserId: 2 });
     const store = {
       getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: foreign, work: work() }),
       getAuthor: vi.fn().mockResolvedValue(foreign),
@@ -816,7 +815,7 @@ describe('MonitoredService', () => {
   // Masking is the store's single enforcement point, so what the service owes is reading through it
   // with the viewer attached and passing the result on untouched.
   it('reads the detail catalog through the viewer-scoped store', async () => {
-    const foreign = author({ ownerUserId: 2, isShared: true });
+    const foreign = author({ ownerUserId: 2 });
     const getCatalog = vi.fn().mockResolvedValue({
       fetchedAt: '2026-09-01T00:00:00.000Z',
       works: [work({ id: 'w-shown', requestIds: {} })],
@@ -866,7 +865,7 @@ describe('MonitoredService', () => {
   });
 
   it('does not let includeHidden reveal works the owner curated away from viewers', async () => {
-    const foreign = author({ ownerUserId: 2, isShared: true });
+    const foreign = author({ ownerUserId: 2 });
     const store = {
       getAuthor: vi.fn().mockResolvedValue(foreign),
       getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [work({ userVisibility: 'hidden' })] }),
@@ -883,7 +882,7 @@ describe('MonitoredService', () => {
     const findReleasePage = vi.fn().mockResolvedValue({
       items: [
         {
-          monitor: author({ ownerUserId: 2, isShared: true }),
+          monitor: author({ ownerUserId: 2 }),
           work: monitoredWork,
           format: 'ebook',
           releaseDate: monitoredWork.ebookReleaseDate,
@@ -903,10 +902,10 @@ describe('MonitoredService', () => {
   });
 
   it('refuses to monitor a work the viewer-scoped catalog does not carry', async () => {
-    const foreign = author({ ownerUserId: 2, isShared: true });
+    const owned = author({ ownerUserId: viewer.id });
     const getCatalog = vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [] });
     const upsertBook = vi.fn();
-    const store = { getAuthor: vi.fn().mockResolvedValue(foreign), getCatalog, hasBookForWork: vi.fn().mockResolvedValue(false), upsertBook };
+    const store = { getAuthor: vi.fn().mockResolvedValue(owned), getCatalog, hasBookForWork: vi.fn().mockResolvedValue(false), upsertBook };
 
     await expect(
       service(store).createBook({ monitorAuthorId: 'monitor-1', workId: 'w-hidden', formats: ['ebook'] } as never, viewer),
@@ -915,14 +914,29 @@ describe('MonitoredService', () => {
     expect(upsertBook).not.toHaveBeenCalled();
   });
 
-  it('returns the viewer-scoped work from createBook and updateBook on a shared monitor', async () => {
-    const foreign = author({ ownerUserId: 2, isShared: true });
+  it('attributes a created monitored book to the caller', async () => {
+    const owned = author({ ownerUserId: viewer.id });
+    const monitoredWork = work({ id: 'w-shown' });
+    const upsertBook = vi.fn().mockImplementation((input: Record<string, unknown>) => Promise.resolve({ ...input, id: 'book-1' }));
+    const store = {
+      getAuthor: vi.fn().mockResolvedValue(owned),
+      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [monitoredWork] }),
+      hasBookForWork: vi.fn().mockResolvedValue(false),
+      upsertBook,
+    };
+
+    await service(store).createBook({ monitorAuthorId: owned.id, workId: monitoredWork.id, formats: ['ebook'] } as never, viewer);
+
+    expect(upsertBook).toHaveBeenCalledWith(expect.objectContaining({ ownerUserId: viewer.id }), viewer);
+  });
+
+  it('returns the viewer-scoped work from createBook and updateBook', async () => {
+    const owned = author({ ownerUserId: viewer.id });
     const masked = work({ id: 'w-shown', requestIds: {} });
     const getCatalog = vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [masked] });
     const entry = {
       id: 'book-1',
       ownerUserId: viewer.id,
-      isShared: true,
       monitorAuthorId: 'monitor-1',
       workId: 'w-shown',
       formats: ['ebook'],
@@ -930,7 +944,7 @@ describe('MonitoredService', () => {
       addedAt: '2026-01-01T00:00:00.000Z',
     };
     const store = {
-      getAuthor: vi.fn().mockResolvedValue(foreign),
+      getAuthor: vi.fn().mockResolvedValue(owned),
       getCatalog,
       hasBookForWork: vi.fn().mockResolvedValue(false),
       getBook: vi.fn().mockResolvedValue(entry),
@@ -976,7 +990,7 @@ describe('MonitoredService', () => {
 
   it('collapses the internal whitespace a provider name arrives with', async () => {
     const hasAuthorNamed = vi.fn().mockResolvedValue(true);
-    const instance = service({ listAuthors: vi.fn(), hasAuthorNamed });
+    const instance = service({ hasAuthorNamed });
 
     await expect(instance.createAuthor({ authorName: 'Alexander   Olson', formats: {} }, viewer)).rejects.toBeInstanceOf(BadRequestException);
 
@@ -984,14 +998,12 @@ describe('MonitoredService', () => {
   });
 
   it('checks a create duplicate with one owner-scoped existence query', async () => {
-    const listAuthors = vi.fn();
     const hasAuthorNamed = vi.fn().mockResolvedValue(true);
-    const instance = service({ listAuthors, hasAuthorNamed });
+    const instance = service({ hasAuthorNamed });
 
     await expect(instance.createAuthor({ authorName: ' existing author ', formats: {} }, viewer)).rejects.toBeInstanceOf(BadRequestException);
 
     expect(hasAuthorNamed).toHaveBeenCalledWith(viewer.id, 'existing author');
-    expect(listAuthors).not.toHaveBeenCalled();
   });
 
   it('refuses a download folder with no library selected', async () => {
@@ -1116,9 +1128,9 @@ describe('MonitoredService', () => {
     expect(result).toMatchObject({ ebook: { mode: 'notify' }, audiobook: { mode: 'off' } });
   });
 
-  it("reports isOwner for a superuser on another user's monitor, matching the write gates", async () => {
+  it('reports isOwner only when the viewer id matches the owner id', async () => {
     const superuser = { id: 9, isSuperuser: true } as RequestUser;
-    const foreign = author({ ownerUserId: 1, isShared: true });
+    const foreign = author({ ownerUserId: 1 });
     const aggregate = { counts: { total: 0, ebookOwned: 0, audioOwned: 0, hidden: 0 }, nextReleaseAt: null };
     const store = {
       findAuthorPage: vi.fn().mockResolvedValue({ items: [{ author: foreign, aggregate }], total: 1, page: 0, size: 50 }),
@@ -1130,20 +1142,49 @@ describe('MonitoredService', () => {
     const [ownerItem] = (await instance.listAuthors({ id: 1, isSuperuser: false } as RequestUser, query)).items;
     const [strangerItem] = (await instance.listAuthors({ id: 5, isSuperuser: false } as RequestUser, query)).items;
 
-    expect(item.isOwner).toBe(true);
+    expect(item.isOwner).toBe(false);
     expect(ownerItem.isOwner).toBe(true);
     expect(strangerItem.isOwner).toBe(false);
   });
 
+  it('refuses a superuser write to another user monitored author', async () => {
+    const superuser = { id: 9, isSuperuser: true } as RequestUser;
+    const updateAuthorFields = vi.fn();
+    const store = { getAuthor: vi.fn().mockResolvedValue(author({ ownerUserId: 1 })), updateAuthorFields };
+
+    await expect(service(store).updateAuthor('monitor-1', { paused: true }, superuser)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(store.getAuthor).toHaveBeenCalledWith('monitor-1');
+    expect(updateAuthorFields).not.toHaveBeenCalled();
+  });
+
+  it('refuses a superuser write to another user monitored book', async () => {
+    const superuser = { id: 9, isSuperuser: true } as RequestUser;
+    const upsertBook = vi.fn();
+    const store = {
+      getBook: vi.fn().mockResolvedValue({
+        id: 'book-1',
+        ownerUserId: 1,
+        monitorAuthorId: 'monitor-1',
+        workId: 'w-1',
+        formats: ['ebook'],
+        paused: false,
+        addedAt: '2026-01-01T00:00:00.000Z',
+      }),
+      upsertBook,
+    };
+
+    await expect(service(store).updateBook('book-1', { paused: true }, superuser)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(store.getBook).toHaveBeenCalledWith('book-1');
+    expect(upsertBook).not.toHaveBeenCalled();
+  });
+
   it("rejects a duplicate monitored book with an owner-scoped lookup instead of reading every user's rows", async () => {
     const monitor = author();
-    const listBooks = vi.fn();
     const hasBookForWork = vi.fn().mockResolvedValue(true);
     const store = {
       getAuthor: vi.fn().mockResolvedValue(monitor),
       getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [work({ id: 'w-1' })] }),
       hasBookForWork,
-      listBooks,
       upsertBook: vi.fn(),
     };
 
@@ -1151,7 +1192,6 @@ describe('MonitoredService', () => {
       service(store).createBook({ monitorAuthorId: 'monitor-1', workId: 'w-1', formats: ['ebook'] } as never, viewer),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(hasBookForWork).toHaveBeenCalledWith(viewer.id, 'monitor-1', 'w-1');
-    expect(listBooks).not.toHaveBeenCalled();
   });
 });
 

@@ -47,7 +47,7 @@ describe('MonitoredDisplayOptionsPanel', () => {
     wrapper.unmount()
   })
 
-  it('offers a shared viewer only the release switches, never a curation one', () => {
+  it('shows only release switches when curation is unavailable', () => {
     const wrapper = mountPanel({}, kindCounts({ all: 45 }), false)
     const rows = wrapper.findAll('[role="checkbox"]').map((box) => box.text())
 

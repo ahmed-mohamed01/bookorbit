@@ -83,6 +83,30 @@ describe('bootstrap SQL carries the columns the table declares', () => {
     expect(MONITORED_SCHEMA_SQL).toContain('ALTER TABLE "author_catalog_works" ADD COLUMN IF NOT EXISTS "kind" varchar(20);');
   });
 
+  it('leaves no is_shared column on either a fresh or an existing database', () => {
+    expect(MONITORED_SCHEMA_SQL).not.toContain('"is_shared" boolean');
+    expect(MONITORED_SCHEMA_SQL).toContain(
+      "WHERE table_schema = 'public'\n\t\t\tAND table_name = 'monitored_authors'\n\t\t\tAND column_name = 'is_shared'\n\t) THEN\n\t\tALTER TABLE \"monitored_authors\" DROP COLUMN IF EXISTS \"is_shared\";",
+    );
+    expect(MONITORED_SCHEMA_SQL).toContain(
+      "WHERE table_schema = 'public'\n\t\t\tAND table_name = 'monitored_books'\n\t\t\tAND column_name = 'is_shared'\n\t) THEN\n\t\tALTER TABLE \"monitored_books\" DROP COLUMN IF EXISTS \"is_shared\";",
+    );
+  });
+
+  it('drops legacy sharing columns only after their tables exist', () => {
+    const authorCreateIndex = MONITORED_SCHEMA_SQL.indexOf('CREATE TABLE IF NOT EXISTS "monitored_authors"');
+    const authorDropIndex = MONITORED_SCHEMA_SQL.indexOf('ALTER TABLE "monitored_authors" DROP COLUMN IF EXISTS "is_shared";');
+    const bookCreateIndex = MONITORED_SCHEMA_SQL.indexOf('CREATE TABLE IF NOT EXISTS "monitored_books"');
+    const bookDropIndex = MONITORED_SCHEMA_SQL.indexOf('ALTER TABLE "monitored_books" DROP COLUMN IF EXISTS "is_shared";');
+
+    expect(authorCreateIndex).toBeGreaterThanOrEqual(0);
+    expect(authorDropIndex).toBeGreaterThanOrEqual(0);
+    expect(bookCreateIndex).toBeGreaterThanOrEqual(0);
+    expect(bookDropIndex).toBeGreaterThanOrEqual(0);
+    expect(authorDropIndex).toBeGreaterThan(authorCreateIndex);
+    expect(bookDropIndex).toBeGreaterThan(bookCreateIndex);
+  });
+
   it('constrains kind to the shared vocabulary on both paths', () => {
     const constraints = [...MONITORED_SCHEMA_SQL.matchAll(/"author_catalog_works"\."kind" is null or[^)]+\)/g)].map((match) => match[0]);
 

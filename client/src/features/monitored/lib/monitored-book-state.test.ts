@@ -6,7 +6,6 @@ function entry(overrides: Partial<MonitoredBookEntry> = {}): MonitoredBookEntry 
   return {
     id: 'book-1',
     ownerUserId: 1,
-    isShared: false,
     monitorAuthorId: 'author-1',
     workId: 'work-1',
     formats: ['ebook'],

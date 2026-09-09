@@ -75,13 +75,8 @@ const HARDCOVER_REQUIRED_MESSAGE =
 
 type AuthorProfileMetadata = { description: string | null; website: string | null; genres: string[]; portraitAuthorId: number | null };
 
-/**
- * Whether the viewer holds owner rights over a row. A superuser passes every write gate on this
- * module (getWritableAuthor, getWritableBook, buildDetail), so reporting isOwner:false to them left
- * the client hiding controls the backend would have accepted.
- */
 function isOwnerView(ownerUserId: number, user: RequestUser): boolean {
-  return user.isSuperuser || ownerUserId === user.id;
+  return ownerUserId === user.id;
 }
 
 function monitoredReleaseStatus(work: MonitoredWork, format: MonitoredFormat, releaseDate: string, today: string): MonitoredReleaseStatus {
@@ -229,7 +224,6 @@ export class MonitoredService {
         {
           id: monitorId,
           ownerUserId: user.id,
-          isShared: input.isShared ?? false,
           authorName,
           localAuthorId: input.localAuthorId ?? null,
           providerIds: input.providerIds ?? {},
@@ -300,7 +294,6 @@ export class MonitoredService {
       {
         ...(input.formats ? { formats } : {}),
         ...(input.paused !== undefined ? { paused: input.paused } : {}),
-        ...(input.isShared !== undefined ? { isShared: input.isShared } : {}),
       },
       user,
     );
@@ -334,7 +327,6 @@ export class MonitoredService {
       if (monitor.lastRefreshedAt && Date.now() - new Date(monitor.lastRefreshedAt).getTime() < refreshCooldownMs) {
         throw new HttpException('Monitored author was refreshed a moment ago; try again shortly', HttpStatus.TOO_MANY_REQUESTS);
       }
-      // Use the owner's token so delegated and future background refreshes spend the owner's quota.
       const config = await this.providerConfigs.forUser(monitor.ownerUserId);
       this.assertHardcoverAvailable(config);
       const result = await this.catalog.fetchCatalog(monitor, config);
@@ -398,7 +390,7 @@ export class MonitoredService {
   }
 
   async createBook(input: CreateMonitoredBookDto, user: RequestUser): Promise<MonitoredBookItem> {
-    const monitor = await this.getReadableAuthor(input.monitorAuthorId, user);
+    const monitor = await this.getWritableAuthor(input.monitorAuthorId, user);
     const work = (await this.store.getCatalog(monitor.id, user))?.works.find((candidate) => candidate.id === input.workId);
     if (!work) throw new NotFoundException('Monitored work not found');
     // The pre-check answers the common case with a clean message; the unique index behind it is what
@@ -408,7 +400,6 @@ export class MonitoredService {
       const entry = await this.store.upsertBook(
         {
           ownerUserId: user.id,
-          isShared: monitor.isShared,
           monitorAuthorId: monitor.id,
           workId: work.id,
           formats: [...new Set(input.formats)],
@@ -426,6 +417,9 @@ export class MonitoredService {
 
   async updateBook(id: string, input: UpdateMonitoredBookDto, user: RequestUser): Promise<MonitoredBookItem> {
     const entry = await this.getWritableBook(id, user);
+    const monitor = await this.store.getAuthor(entry.monitorAuthorId, user);
+    const work = (await this.store.getCatalog(entry.monitorAuthorId, user))?.works.find((candidate) => candidate.id === entry.workId);
+    if (!monitor || !work) throw new NotFoundException('Monitored book not found');
     const updated = await this.store.upsertBook(
       {
         ...entry,
@@ -434,9 +428,6 @@ export class MonitoredService {
       },
       user,
     );
-    const monitor = await this.store.getAuthor(updated.monitorAuthorId, user);
-    const work = (await this.store.getCatalog(updated.monitorAuthorId, user))?.works.find((candidate) => candidate.id === updated.workId);
-    if (!monitor || !work) throw new NotFoundException('Monitored book not found');
     return { ...updated, isOwner: isOwnerView(updated.ownerUserId, user), authorName: monitor.authorName, work };
   }
 
@@ -548,13 +539,6 @@ export class MonitoredService {
     return results.map((result) => ({ ...result, alreadyMonitoredId: monitoredIds.get(normalizeMonitoredName(result.name)) ?? null }));
   }
 
-  /** The monitor and work for one work id, or null when no readable monitored author carries it. */
-  private async findWorkEntry(user: RequestUser, workId: string) {
-    const entry = await this.store.getWorkWithMonitor(workId, user);
-    if (entry) await this.healWorkAvailability([{ monitor: entry.monitor, works: [entry.work] }], user);
-    return entry;
-  }
-
   private assertHardcoverAvailable(config: ProviderConfigurations): void {
     if (!isHardcoverConfigured(config)) throw new ServiceUnavailableException(HARDCOVER_REQUIRED_MESSAGE);
   }
@@ -595,9 +579,10 @@ export class MonitoredService {
 
   /** Per-work monitor/hide toggles, persisted on the catalog work and preserved across refreshes. */
   async updateWork(user: RequestUser, workId: string, patch: MonitoredWorkPatch): Promise<MonitoredWork> {
-    const entry = await this.findWorkEntry(user, workId);
+    const entry = await this.store.getWorkWithMonitor(workId);
     if (!entry) throw new NotFoundException('Monitored work not found');
-    await this.getWritableAuthor(entry.monitor.id, user);
+    if (entry.monitor.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored work');
+    await this.healWorkAvailability([{ monitor: entry.monitor, works: [entry.work] }], user);
     const changes = Object.values(patch).filter((value) => value !== undefined);
     if (changes.length === 0) return entry.work;
     return this.store.updateWorkUserState(workId, patch, user);
@@ -614,9 +599,10 @@ export class MonitoredService {
       `[monitored.work.search_releases] [start] workId="${sanitizeLogValue(workId)}" userId=${user.id} format=${format} - monitored release search started`,
     );
     try {
-      const entry = await this.findWorkEntry(user, workId);
+      const entry = await this.store.getWorkWithMonitor(workId);
       if (!entry) throw new NotFoundException('Monitored work not found');
-      await this.getWritableAuthor(entry.monitor.id, user);
+      if (entry.monitor.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored work');
+      await this.healWorkAvailability([{ monitor: entry.monitor, works: [entry.work] }], user);
       const synthetic = this.buildSearchRequest(entry.monitor, entry.work, format);
       const result = await this.indexerSearch.search(synthetic, { refresh: true });
       // Nothing ever reads this entry back: this search always refreshes, and a grab resolves its
@@ -641,9 +627,10 @@ export class MonitoredService {
     let requestId: number | null = null;
     let warm = { searched: false, found: false };
     try {
-      const entry = await this.findWorkEntry(user, workId);
+      const entry = await this.store.getWorkWithMonitor(workId);
       if (!entry) throw new NotFoundException('Monitored work not found');
-      await this.getWritableAuthor(entry.monitor.id, user);
+      if (entry.monitor.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored work');
+      await this.healWorkAvailability([{ monitor: entry.monitor, works: [entry.work] }], user);
       requestId = await this.ensureWorkRequestId(user, entry, payload.format);
       const joined = await this.bookRequests.assertCanFulfil(requestId, user);
       warm = await this.warmPickedRelease(requestId, joined.request, entry, payload);
@@ -689,7 +676,7 @@ export class MonitoredService {
   async requestFromWork(user: RequestUser, workId: string, payload: RequestFromWorkPayload): Promise<MonitoredWork> {
     const entry = await this.store.getWorkWithMonitor(workId);
     if (!entry) throw new NotFoundException('Monitored work not found');
-    if (!user.isSuperuser && entry.monitor.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored work');
+    if (entry.monitor.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored work');
     if (payload.format === 'ebook' && entry.work.ebookReleaseDate == null && entry.work.audioReleaseDate != null) {
       throw new BadRequestException('This work is audiobook-only and cannot be requested as an ebook');
     }
@@ -738,7 +725,7 @@ export class MonitoredService {
   }
 
   /**
-   * Monitoring an author creates a bookless row in the shared authors table. Nothing else can reach
+   * Monitoring an author creates a bookless row in the monitored authors table. Nothing else can reach
    * that row once the monitor is gone, so the monitor that created it is what cleans it up.
    */
   private async removeOrphanLocalAuthor(localAuthorId: number | null): Promise<boolean> {
@@ -782,14 +769,14 @@ export class MonitoredService {
   private async getWritableAuthor(id: string, user: RequestUser): Promise<MonitoredAuthorConfig> {
     const monitor = await this.store.getAuthor(id);
     if (!monitor) throw new NotFoundException('Monitored author not found');
-    if (!user.isSuperuser && monitor.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored author');
+    if (monitor.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored author');
     return monitor;
   }
 
   private async getWritableBook(id: string, user: RequestUser) {
     const book = await this.store.getBook(id);
     if (!book) throw new NotFoundException('Monitored book not found');
-    if (!user.isSuperuser && book.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored book');
+    if (book.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored book');
     return book;
   }
 

@@ -244,7 +244,6 @@ function monitorConfig(): MonitoredAuthorConfig {
   return {
     id: 'monitor-1',
     ownerUserId: 1,
-    isShared: false,
     authorName: 'Test Author',
     localAuthorId: null,
     providerIds: {},
@@ -397,7 +396,6 @@ describe('targeted availability recompute', () => {
     return {
       id: 'monitor-1',
       ownerUserId: 1,
-      isShared: false,
       authorName: 'Zogarth',
       localAuthorId: 7,
       providerIds: {},

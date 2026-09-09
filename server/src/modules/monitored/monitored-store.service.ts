@@ -147,10 +147,9 @@ export class MonitoredStoreService {
     today: string;
   }): Promise<{ items: MonitoredAuthorPageEntry[]; total: number; page: number; size: number }> {
     const { viewer } = params;
-    const scope = this.readScope(viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared);
+    const scope = this.readScope(viewer, schema.monitoredAuthors.ownerUserId);
     const where = and(scope, params.q ? accentInsensitiveIlike(schema.monitoredAuthors.authorName, buildSearchPattern(params.q)) : undefined)!;
-    const visible = this.visibleWorkCondition(viewer);
-    const readable = this.viewerReadableWorkCondition(viewer);
+    const visible = this.visibleWorkCondition();
     const active = this.activeWorkCondition(visible);
     const ebookRelease = and(
       active,
@@ -167,10 +166,10 @@ export class MonitoredStoreService {
     const libraryIds = viewer.isSuperuser ? null : await this.libraries.findAccessibleLibraryIds(viewer);
     const ebookOwned = this.ownedFormatCondition('ebook', libraryIds);
     const audioOwned = this.ownedFormatCondition('audiobook', libraryIds);
-    const totalExpr = sql<number>`count(*) filter (where ${readable} and ${visible})::int`;
-    const ebookOwnedExpr = sql<number>`count(*) filter (where ${readable} and ${visible} and ${ebookOwned})::int`;
-    const audioOwnedExpr = sql<number>`count(*) filter (where ${readable} and ${visible} and ${audioOwned})::int`;
-    const hiddenExpr = sql<number>`count(*) filter (where ${readable} and not ${visible})::int`;
+    const totalExpr = sql<number>`count(*) filter (where ${visible})::int`;
+    const ebookOwnedExpr = sql<number>`count(*) filter (where ${visible} and ${ebookOwned})::int`;
+    const audioOwnedExpr = sql<number>`count(*) filter (where ${visible} and ${audioOwned})::int`;
+    const hiddenExpr = sql<number>`count(*) filter (where not ${visible})::int`;
     const progressExpr = sql<number>`(${ebookOwnedExpr} + ${audioOwnedExpr})::float / greatest((${totalExpr}) * 2, 1)`;
     const sortExpression =
       params.sort === 'added'
@@ -239,7 +238,7 @@ export class MonitoredStoreService {
     page: number,
     size: number,
   ): Promise<{ items: string[]; total: number; page: number; size: number }> {
-    const where = viewer.isSuperuser ? sql<boolean>`true` : eq(schema.monitoredAuthors.ownerUserId, viewer.id);
+    const where = this.readScope(viewer, schema.monitoredAuthors.ownerUserId);
     const [rows, [countRow]] = await this.snapshotRead(async (tx) => {
       const dataQuery = tx
         .select({ id: schema.monitoredAuthors.id })
@@ -262,13 +261,12 @@ export class MonitoredStoreService {
     sort: MonitoredBookListSort;
     order: MonitoredListOrder;
   }): Promise<{ items: MonitoredBookPageEntry[]; total: number; page: number; size: number }> {
-    const bookScope = this.readScope(params.viewer, schema.monitoredBooks.ownerUserId, schema.monitoredBooks.isShared);
-    const authorScope = this.readScope(params.viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared);
+    const bookScope = this.readScope(params.viewer, schema.monitoredBooks.ownerUserId);
+    const authorScope = this.readScope(params.viewer, schema.monitoredAuthors.ownerUserId);
     const qPattern = params.q ? buildSearchPattern(params.q) : null;
     const where = and(
       bookScope,
       authorScope,
-      this.viewerReadableWorkCondition(params.viewer),
       qPattern
         ? or(accentInsensitiveIlike(schema.authorCatalogWorks.title, qPattern), accentInsensitiveIlike(schema.monitoredAuthors.authorName, qPattern))
         : undefined,
@@ -397,17 +395,9 @@ export class MonitoredStoreService {
     return this.db.transaction(run, { isolationLevel: 'repeatable read', accessMode: 'read only' });
   }
 
-  async listAuthors(viewer?: RequestUser): Promise<MonitoredAuthorConfig[]> {
-    const rows = await this.db
-      .select()
-      .from(schema.monitoredAuthors)
-      .where(viewer ? this.readScope(viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared) : undefined);
-    return this.composeAuthors(rows);
-  }
-
   /**
-   * The monitor id behind each of these author names, for the viewer's readable monitors only.
-   * Annotating a ten-row search by loading EVERY readable monitor (and the provider identities
+   * The monitor id behind each of these author names, for the viewer's own monitors only.
+   * Annotating a ten-row search by loading EVERY monitor owned by the viewer (and the provider identities
    * hanging off each of them) scaled with how much the viewer monitors instead of with the answer.
    * The SQL fold mirrors normalizeMonitoredName, and the names that come back are re-folded in
    * TypeScript so that function stays the authority on what counts as the same name.
@@ -420,7 +410,7 @@ export class MonitoredStoreService {
       .from(schema.monitoredAuthors)
       .where(
         and(
-          this.readScope(viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared),
+          this.readScope(viewer, schema.monitoredAuthors.ownerUserId),
           inArray(sql`regexp_replace(lower(public.bookorbit_unaccent(${schema.monitoredAuthors.authorName})), '[^[:alnum:]]', '', 'g')`, normalized),
         ),
       );
@@ -448,7 +438,7 @@ export class MonitoredStoreService {
 
   async getAuthor(id: string, viewer?: RequestUser): Promise<MonitoredAuthorConfig | null> {
     const clauses = [eq(schema.monitoredAuthors.id, id)];
-    if (viewer) clauses.push(this.readScope(viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared));
+    if (viewer) clauses.push(this.readScope(viewer, schema.monitoredAuthors.ownerUserId));
     const [row] = await this.db
       .select()
       .from(schema.monitoredAuthors)
@@ -472,7 +462,17 @@ export class MonitoredStoreService {
       );
       if (identities.length) await tx.insert(schema.authorProviderIdentities).values(identities);
     });
-    return { ...input, id };
+    return {
+      id,
+      ownerUserId: input.ownerUserId,
+      authorName: input.authorName,
+      localAuthorId: input.localAuthorId,
+      providerIds: input.providerIds,
+      formats: input.formats,
+      paused: input.paused,
+      addedAt: input.addedAt,
+      lastRefreshedAt: input.lastRefreshedAt,
+    };
   }
 
   async updateAuthorFields(id: string, fields: AuthorFields, actor?: RequestUser): Promise<MonitoredAuthorConfig> {
@@ -523,14 +523,6 @@ export class MonitoredStoreService {
     }
   }
 
-  async listBooks(viewer?: RequestUser): Promise<MonitoredBookEntry[]> {
-    const rows = await this.db
-      .select()
-      .from(schema.monitoredBooks)
-      .where(viewer ? this.readScope(viewer, schema.monitoredBooks.ownerUserId, schema.monitoredBooks.isShared) : undefined);
-    return rows.map((row) => this.composeBook(row));
-  }
-
   /**
    * Whether this owner already tracks that work on that monitor. The duplicate check used to read
    * every monitored_books row of every user and filter in memory, which scaled with the deployment
@@ -553,7 +545,7 @@ export class MonitoredStoreService {
 
   async getBook(id: string, viewer?: RequestUser): Promise<MonitoredBookEntry | null> {
     const clauses = [eq(schema.monitoredBooks.id, id)];
-    if (viewer) clauses.push(this.readScope(viewer, schema.monitoredBooks.ownerUserId, schema.monitoredBooks.isShared));
+    if (viewer) clauses.push(this.readScope(viewer, schema.monitoredBooks.ownerUserId));
     const [row] = await this.db
       .select()
       .from(schema.monitoredBooks)
@@ -569,7 +561,15 @@ export class MonitoredStoreService {
       .insert(schema.monitoredBooks)
       .values(this.bookValues({ ...input, id }))
       .onConflictDoUpdate({ target: schema.monitoredBooks.id, set: this.bookUpdateValues(input) });
-    return { ...input, id };
+    return {
+      id,
+      ownerUserId: input.ownerUserId,
+      monitorAuthorId: input.monitorAuthorId,
+      workId: input.workId,
+      formats: input.formats,
+      paused: input.paused,
+      addedAt: input.addedAt,
+    };
   }
 
   async removeBook(id: string, actor?: RequestUser): Promise<boolean> {
@@ -587,7 +587,7 @@ export class MonitoredStoreService {
     const result = new Map<string, MonitoredCatalog | null>(monitorIds.map((id) => [id, null]));
     if (!monitorIds.length) return result;
     const monitorClauses = [inArray(schema.monitoredAuthors.id, monitorIds)];
-    if (viewer) monitorClauses.push(this.readScope(viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared));
+    if (viewer) monitorClauses.push(this.readScope(viewer, schema.monitoredAuthors.ownerUserId));
     const states = await this.db
       .select({ monitorId: schema.monitoredAuthors.id, fetchedAt: schema.authorCatalogState.fetchedAt })
       .from(schema.monitoredAuthors)
@@ -613,8 +613,7 @@ export class MonitoredStoreService {
       monitorIds.map((id) => [id, { counts: { total: 0, ebookOwned: 0, audioOwned: 0, hidden: 0 }, nextReleaseAt: null }]),
     );
     if (!monitorIds.length) return result;
-    const visible = this.visibleWorkCondition(viewer);
-    const readable = this.viewerReadableWorkCondition(viewer);
+    const visible = this.visibleWorkCondition();
     const active = this.activeWorkCondition(visible);
     const ebookRelease = and(
       active,
@@ -634,10 +633,10 @@ export class MonitoredStoreService {
     const rows = await this.db
       .select({
         monitorId: schema.monitoredAuthors.id,
-        total: sql<number>`count(*) filter (where ${readable} and ${visible})::int`,
-        ebookOwned: sql<number>`count(*) filter (where ${readable} and ${visible} and ${ebookOwned})::int`,
-        audioOwned: sql<number>`count(*) filter (where ${readable} and ${visible} and ${audioOwned})::int`,
-        hidden: sql<number>`count(*) filter (where ${readable} and not ${visible})::int`,
+        total: sql<number>`count(*) filter (where ${visible})::int`,
+        ebookOwned: sql<number>`count(*) filter (where ${visible} and ${ebookOwned})::int`,
+        audioOwned: sql<number>`count(*) filter (where ${visible} and ${audioOwned})::int`,
+        hidden: sql<number>`count(*) filter (where not ${visible})::int`,
         nextReleaseAt: sql<string | null>`least(
           min(case when ${ebookRelease} then ${schema.authorCatalogWorks.ebookReleaseDate} end),
           min(case when ${audioRelease} then ${schema.authorCatalogWorks.audioReleaseDate} end)
@@ -647,12 +646,7 @@ export class MonitoredStoreService {
       .innerJoin(schema.authorCatalogState, eq(schema.authorCatalogState.monitorAuthorId, schema.monitoredAuthors.id))
       .innerJoin(schema.authorCatalogWorks, eq(schema.authorCatalogWorks.monitorAuthorId, schema.monitoredAuthors.id))
       .leftJoin(schema.monitoredAuthorWorks, eq(schema.monitoredAuthorWorks.workId, schema.authorCatalogWorks.id))
-      .where(
-        and(
-          inArray(schema.monitoredAuthors.id, monitorIds),
-          this.readScope(viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared),
-        ),
-      )
+      .where(and(inArray(schema.monitoredAuthors.id, monitorIds), this.readScope(viewer, schema.monitoredAuthors.ownerUserId)))
       .groupBy(schema.monitoredAuthors.id);
     for (const row of rows) {
       result.set(row.monitorId, {
@@ -666,7 +660,7 @@ export class MonitoredStoreService {
   async getReleaseWorks(monitorIds: string[], viewer: RequestUser, earliest: string, latest: string): Promise<Map<string, MonitoredWork[]>> {
     const result = new Map<string, MonitoredWork[]>(monitorIds.map((id) => [id, []]));
     if (!monitorIds.length) return result;
-    const visible = this.visibleWorkCondition(viewer);
+    const visible = this.visibleWorkCondition();
     const active = this.activeWorkCondition(visible);
     const ebook = and(
       ne(schema.monitoredAuthors.ebookMode, 'off'),
@@ -685,12 +679,7 @@ export class MonitoredStoreService {
       .innerJoin(schema.authorCatalogState, eq(schema.authorCatalogState.monitorAuthorId, schema.monitoredAuthors.id))
       .leftJoin(schema.monitoredAuthorWorks, eq(schema.monitoredAuthorWorks.workId, schema.authorCatalogWorks.id))
       .where(
-        and(
-          inArray(schema.monitoredAuthors.id, monitorIds),
-          this.readScope(viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared),
-          active,
-          or(ebook, audio),
-        ),
+        and(inArray(schema.monitoredAuthors.id, monitorIds), this.readScope(viewer, schema.monitoredAuthors.ownerUserId), active, or(ebook, audio)),
       );
     const composed = await this.composeWorks(
       rows.map((row) => row.work),
@@ -702,7 +691,7 @@ export class MonitoredStoreService {
 
   async getWorkWithMonitor(workId: string, viewer?: RequestUser): Promise<MonitoredWorkEntry | null> {
     const clauses = [eq(schema.authorCatalogWorks.id, workId)];
-    if (viewer) clauses.push(this.readScope(viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared));
+    if (viewer) clauses.push(this.readScope(viewer, schema.monitoredAuthors.ownerUserId));
     const [row] = await this.db
       .select({ work: schema.authorCatalogWorks, monitor: schema.monitoredAuthors })
       .from(schema.authorCatalogWorks)
@@ -716,7 +705,8 @@ export class MonitoredStoreService {
     return { monitor, work: composed.work };
   }
 
-  async updateWorkUserState(workId: string, patch: WorkStatePatch, viewer?: RequestUser): Promise<MonitoredWork> {
+  async updateWorkUserState(workId: string, patch: WorkStatePatch, actor: RequestUser): Promise<MonitoredWork> {
+    await this.assertWorkWritable(workId, actor);
     const [work] = await this.db.select().from(schema.authorCatalogWorks).where(eq(schema.authorCatalogWorks.id, workId)).limit(1);
     if (!work) throw new NotFoundException('Monitored work not found');
     const values = {
@@ -730,7 +720,7 @@ export class MonitoredStoreService {
       ...(patch.requestIds?.audiobook !== undefined ? { audiobookRequestId: patch.requestIds.audiobook } : {}),
     };
     await this.db.insert(schema.monitoredAuthorWorks).values(values).onConflictDoUpdate({ target: schema.monitoredAuthorWorks.workId, set: values });
-    const [composed] = await this.composeWorks([work], viewer);
+    const [composed] = await this.composeWorks([work], actor);
     if (!composed) throw new NotFoundException('Monitored work not found');
     return composed.work;
   }
@@ -743,7 +733,7 @@ export class MonitoredStoreService {
   async getComposedWorks(workIds: string[], viewer?: RequestUser): Promise<Map<string, MonitoredWork>> {
     if (!workIds.length) return new Map();
     const clauses = [inArray(schema.authorCatalogWorks.id, workIds)];
-    if (viewer) clauses.push(this.readScope(viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared));
+    if (viewer) clauses.push(this.readScope(viewer, schema.monitoredAuthors.ownerUserId));
     const rows = await this.db
       .select({ work: schema.authorCatalogWorks })
       .from(schema.authorCatalogWorks)
@@ -832,9 +822,8 @@ export class MonitoredStoreService {
     soonLatest: string;
     currentYear: string;
   }): SQL {
-    const authorScope = this.readScope(params.viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared);
-    const visible = this.visibleWorkCondition(params.viewer);
-    const readable = this.viewerReadableWorkCondition(params.viewer);
+    const authorScope = this.readScope(params.viewer, schema.monitoredAuthors.ownerUserId);
+    const visible = this.visibleWorkCondition();
     const active = this.activeWorkCondition(visible);
     const qPattern = params.q ? buildSearchPattern(params.q) : null;
     const search = qPattern
@@ -880,7 +869,7 @@ export class MonitoredStoreService {
         ${schema.authorCatalogWorks.title} as title,
         ${schema.monitoredAuthors.authorName} as "authorName"
       ${joins}
-      where ${and(authorScope, readable, active, search, ebook)}
+      where ${and(authorScope, active, search, ebook)}
       union all
       select
         ${schema.authorCatalogWorks.id} as "workId",
@@ -890,7 +879,7 @@ export class MonitoredStoreService {
         ${schema.authorCatalogWorks.title} as title,
         ${schema.monitoredAuthors.authorName} as "authorName"
       ${joins}
-      where ${and(authorScope, readable, active, search, audiobook)}
+      where ${and(authorScope, active, search, audiobook)}
     `;
   }
 
@@ -907,8 +896,8 @@ export class MonitoredStoreService {
   }
 
   async countSummary(viewer: RequestUser, earliest: string, latest: string): Promise<MonitoredCounts> {
-    const authorScope = this.readScope(viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared);
-    const visible = this.visibleWorkCondition(viewer);
+    const authorScope = this.readScope(viewer, schema.monitoredAuthors.ownerUserId);
+    const visible = this.visibleWorkCondition();
     const active = this.activeWorkCondition(visible);
     const ebook = and(
       ne(schema.monitoredAuthors.ebookMode, 'off'),
@@ -936,8 +925,8 @@ export class MonitoredStoreService {
   }
 
   private bookSummaryQuery(viewer: RequestUser) {
-    const bookScope = this.readScope(viewer, schema.monitoredBooks.ownerUserId, schema.monitoredBooks.isShared);
-    const authorScope = this.readScope(viewer, schema.monitoredAuthors.ownerUserId, schema.monitoredAuthors.isShared);
+    const bookScope = this.readScope(viewer, schema.monitoredBooks.ownerUserId);
+    const authorScope = this.readScope(viewer, schema.monitoredAuthors.ownerUserId);
     return this.db
       .select({ value: count() })
       .from(schema.monitoredBooks)
@@ -958,11 +947,10 @@ export class MonitoredStoreService {
    * `user_visibility = 'visible'` yields NULL, not false: `NULL or false` stayed NULL, and a row
    * whose visibility was NULL counted in NEITHER the visible bucket nor its negation - the author
    * list reported 7 hidden works where the detail page showed 156. coalesce puts every row in
-   * exactly one bucket. The overlay is also the monitor OWNER's curation, so a viewer reading a
-   * shared monitor is judged on the verdict alone, matching what masking will hand them.
+   * exactly one bucket.
    */
-  private visibleWorkCondition(viewer?: RequestUser) {
-    const overlayVisibility = this.viewerVisibility(viewer);
+  private visibleWorkCondition() {
+    const overlayVisibility = schema.monitoredAuthorWorks.userVisibility;
     return sql<boolean>`coalesce(${or(
       sql`${overlayVisibility} = 'visible'`,
       and(
@@ -971,18 +959,6 @@ export class MonitoredStoreService {
         sql`jsonb_array_length(${schema.authorCatalogWorks.flags}) = 0`,
       ),
     )}, false)`;
-  }
-
-  /** The overlay visibility the viewer is allowed to be judged by: the owner's own, or nothing. */
-  private viewerVisibility(viewer?: RequestUser) {
-    if (!viewer || viewer.isSuperuser) return sql`${schema.monitoredAuthorWorks.userVisibility}`;
-    return sql`case when ${eq(schema.monitoredAuthors.ownerUserId, viewer.id)} then ${schema.monitoredAuthorWorks.userVisibility} end`;
-  }
-
-  /** A work the owner hid is not in a viewer's list at all, so it counts in neither bucket. */
-  private viewerReadableWorkCondition(viewer: RequestUser) {
-    if (viewer.isSuperuser) return sql<boolean>`true`;
-    return sql<boolean>`(${eq(schema.monitoredAuthors.ownerUserId, viewer.id)} or ${schema.monitoredAuthorWorks.userVisibility} is distinct from 'hidden')`;
   }
 
   private activeWorkCondition(visible: ReturnType<typeof this.visibleWorkCondition>) {
@@ -1044,7 +1020,6 @@ export class MonitoredStoreService {
     return rows.map((row) => ({
       id: row.id,
       ownerUserId: row.ownerUserId,
-      isShared: row.isShared,
       authorName: row.authorName,
       localAuthorId: row.localAuthorId,
       providerIds: Object.fromEntries((byAuthor.get(row.id) ?? []).map((identity) => [identity.source, identity.providerId])),
@@ -1058,13 +1033,6 @@ export class MonitoredStoreService {
     }));
   }
 
-  /**
-   * The single enforcement point for viewer-aware work data. A shared monitor is readable by
-   * everyone, but the per-work overlay on it is the owner's own: which requests they filed, and which
-   * works they curated out of their list. A viewer gets the EFFECT of that curation (a hidden work is
-   * not returned at all) and never the state behind it. Internal callers pass no viewer and keep the
-   * full row, so the pipeline still sees everything it writes.
-   */
   private async composeWorks(rows: AuthorCatalogWorkRow[], viewer?: RequestUser): Promise<Array<{ monitorAuthorId: string; work: MonitoredWork }>> {
     if (!rows.length) return [];
     const ids = rows.map((row) => row.id);
@@ -1210,7 +1178,6 @@ export class MonitoredStoreService {
   private authorUpdateValues(author: Omit<MonitoredAuthorConfig, 'id'>) {
     return {
       ownerUserId: author.ownerUserId,
-      isShared: author.isShared,
       authorName: author.authorName,
       localAuthorId: author.localAuthorId,
       paused: author.paused,
@@ -1228,7 +1195,6 @@ export class MonitoredStoreService {
   private authorFieldUpdateValues(fields: AuthorFields): Partial<typeof schema.monitoredAuthors.$inferInsert> {
     return {
       ...(fields.ownerUserId !== undefined ? { ownerUserId: fields.ownerUserId } : {}),
-      ...(fields.isShared !== undefined ? { isShared: fields.isShared } : {}),
       ...(fields.authorName !== undefined ? { authorName: fields.authorName } : {}),
       ...(fields.localAuthorId !== undefined ? { localAuthorId: fields.localAuthorId } : {}),
       ...(fields.paused !== undefined ? { paused: fields.paused } : {}),
@@ -1294,7 +1260,6 @@ export class MonitoredStoreService {
   private bookUpdateValues(book: Omit<MonitoredBookEntry, 'id'>) {
     return {
       ownerUserId: book.ownerUserId,
-      isShared: book.isShared,
       monitorAuthorId: book.monitorAuthorId,
       workId: book.workId,
       formats: book.formats,
@@ -1304,11 +1269,19 @@ export class MonitoredStoreService {
   }
 
   private composeBook(row: typeof schema.monitoredBooks.$inferSelect): MonitoredBookEntry {
-    return { ...row, addedAt: row.addedAt.toISOString() };
+    return {
+      id: row.id,
+      ownerUserId: row.ownerUserId,
+      monitorAuthorId: row.monitorAuthorId,
+      workId: row.workId,
+      formats: row.formats,
+      paused: row.paused,
+      addedAt: row.addedAt.toISOString(),
+    };
   }
 
-  private readScope(user: RequestUser, owner: AnyPgColumn, shared: AnyPgColumn) {
-    return user.isSuperuser ? sql`true` : or(eq(owner, user.id), eq(shared, true))!;
+  private readScope(user: RequestUser, owner: AnyPgColumn) {
+    return eq(owner, user.id);
   }
 
   private async assertAuthorWritable(id: string, user: RequestUser, allowMissing = false): Promise<void> {
@@ -1321,7 +1294,7 @@ export class MonitoredStoreService {
       if (allowMissing) return;
       throw new NotFoundException('Monitored author not found');
     }
-    if (!user.isSuperuser && row.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored author');
+    if (row.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored author');
   }
 
   private async assertBookWritable(id: string, user: RequestUser): Promise<void> {
@@ -1331,7 +1304,18 @@ export class MonitoredStoreService {
       .where(eq(schema.monitoredBooks.id, id))
       .limit(1);
     if (!row) throw new NotFoundException('Monitored book not found');
-    if (!user.isSuperuser && row.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored book');
+    if (row.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored book');
+  }
+
+  private async assertWorkWritable(id: string, user: RequestUser): Promise<void> {
+    const [row] = await this.db
+      .select({ ownerUserId: schema.monitoredAuthors.ownerUserId })
+      .from(schema.authorCatalogWorks)
+      .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, schema.authorCatalogWorks.monitorAuthorId))
+      .where(eq(schema.authorCatalogWorks.id, id))
+      .limit(1);
+    if (!row) throw new NotFoundException('Monitored work not found');
+    if (row.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored work');
   }
 
   private logFailure(event: string, idKey: string, id: string, startedAt: number, error: unknown): void {

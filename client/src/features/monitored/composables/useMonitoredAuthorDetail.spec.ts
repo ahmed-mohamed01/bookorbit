@@ -37,7 +37,6 @@ function bookItem(overrides: Partial<MonitoredBookItem> = {}): MonitoredBookItem
   return {
     id: 'book-1',
     ownerUserId: 1,
-    isShared: false,
     monitorAuthorId: 'author-1',
     workId: 'work-1',
     formats: ['ebook'],
@@ -82,7 +81,6 @@ function detail(): MonitoredAuthorDetail {
     author: {
       id: 'author-1',
       ownerUserId: 1,
-      isShared: false,
       authorName: 'A Writer',
       localAuthorId: null,
       providerIds: {},
