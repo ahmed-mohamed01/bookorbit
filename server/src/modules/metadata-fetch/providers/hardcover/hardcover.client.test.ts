@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as fetchWithThrottleModule from '../../fetch-with-throttle';
 import { HardcoverClient } from './hardcover.client';
+import { HardcoverRequestError } from './hardcover.errors';
 
 vi.mock('../../fetch-with-throttle', () => ({
   fetchWithThrottle: vi.fn(),
@@ -137,5 +138,106 @@ describe('HardcoverClient', () => {
     mockFetch.mockRejectedValue(new ProviderThrottleError(100, 'google'));
 
     await expect(client.searchByIsbn('123', 'key')).rejects.toThrow(ProviderThrottleError);
+  });
+});
+
+// A failed request used to be indistinguishable from an empty answer. The metadata providers still
+// want it that way; the bibliography path cannot afford it, because its caller decides from the
+// outcome whether to overwrite a stored catalog.
+describe('HardcoverClient failure surfacing', () => {
+  const apiKey = 'test-api-key';
+  let client: HardcoverClient;
+
+  beforeEach(() => {
+    client = new HardcoverClient();
+    vi.clearAllMocks();
+  });
+
+  it('throws with the status when a caller opted in and the response is not ok', async () => {
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockResolvedValue({ ok: false, status: 503 } as Response);
+
+    await expect(client.searchAuthors('Alexander Olson', apiKey, undefined, { surfaceFailures: true })).rejects.toMatchObject({
+      name: 'HardcoverRequestError',
+      status: 503,
+    });
+  });
+
+  it('throws without a status when the request never reached a response', async () => {
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockRejectedValue(new Error('socket hang up'));
+
+    const failure = await client.searchAuthors('Alexander Olson', apiKey, undefined, { surfaceFailures: true }).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(HardcoverRequestError);
+    expect(failure.status).toBeNull();
+    expect((failure.cause as Error).message).toBe('socket hang up');
+  });
+
+  it('treats a 200 carrying GraphQL errors as a failed request', async () => {
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ errors: [{ message: 'rate limited' }], data: null }),
+    } as Response);
+
+    await expect(client.searchAuthors('Alexander Olson', apiKey, undefined, { surfaceFailures: true })).rejects.toMatchObject({
+      name: 'HardcoverRequestError',
+      status: 200,
+    });
+  });
+
+  // Half-served pages are the dangerous shape: the author is there, so nothing looks wrong, and the
+  // short page ends pagination and quietly shortens the catalog.
+  it('treats a partly served contributions page as a failed request', async () => {
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ errors: [{ message: 'timeout' }], data: { authors: [{ id: 1, contributions: null }] } }),
+    } as Response);
+
+    await expect(client.fetchAuthorContributions(1, 100, apiKey, undefined, { surfaceFailures: true })).rejects.toBeInstanceOf(HardcoverRequestError);
+  });
+
+  it('leaves GraphQL errors alone for a caller that did not opt in', async () => {
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ errors: [{ message: 'rate limited' }], data: null }),
+    } as Response);
+
+    await expect(client.searchAuthors('Alexander Olson', apiKey)).resolves.toEqual([]);
+  });
+
+  it('keeps an internal timeout a failure even once the caller aborts a moment later', async () => {
+    const controller = new AbortController();
+    const timeout = Object.assign(new Error('timed out'), { name: 'TimeoutError' });
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(timeout);
+    });
+
+    const failure = await client.searchAuthors('Alexander Olson', apiKey, controller.signal, { surfaceFailures: true }).catch((error) => error);
+
+    expect(failure).toBeInstanceOf(HardcoverRequestError);
+    expect(failure.cause).toBe(timeout);
+  });
+
+  it('hands back the abort of a caller that cancelled its own request', async () => {
+    const controller = new AbortController();
+    const abort = Object.assign(new Error('aborted'), { name: 'AbortError' });
+    // fetch rejects with the signal's own reason, so the mock has to abort with it to be faithful.
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockImplementation(() => {
+      controller.abort(abort);
+      return Promise.reject(abort);
+    });
+
+    await expect(client.searchAuthors('Alexander Olson', apiKey, controller.signal, { surfaceFailures: true })).rejects.toBe(abort);
+  });
+
+  it('leaves a caller that did not opt in with the empty answer it has always had', async () => {
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockResolvedValue({ ok: false, status: 503 } as Response);
+
+    await expect(client.searchAuthors('Alexander Olson', apiKey)).resolves.toEqual([]);
+    await expect(client.searchByIsbn('1234567890', apiKey)).resolves.toEqual([]);
+    await expect(client.lookupBySlug('some-slug', apiKey)).resolves.toBeNull();
   });
 });

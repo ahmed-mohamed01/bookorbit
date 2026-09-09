@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { toBearerAuthorization } from '../../../../common/utils/bearer-token.utils';
 import { fetchWithThrottle } from '../../fetch-with-throttle';
 import { ProviderThrottleError } from '../../provider-throttle.error';
+import { HardcoverRequestError } from './hardcover.errors';
 import { PROVIDER_DELAYS_MS, PROVIDER_LIMITS, PROVIDER_TIMEOUT_MS } from '../provider-constants';
 import { buildRequestSignal, sanitizeLogError, sleep } from '../provider-utils';
 import {
@@ -17,6 +18,16 @@ import {
 } from './hardcover.types';
 
 const GRAPHQL_ENDPOINT = 'https://api.hardcover.app/v1/graphql';
+
+/**
+ * `surfaceFailures` turns a failed request into a thrown HardcoverRequestError instead of the null
+ * every caller here has always received. It is opt-in per call because the metadata providers rely
+ * on a failure reading as "nothing found", while the bibliography path must be able to tell the two
+ * apart before it decides to persist a catalog.
+ */
+export interface HardcoverRequestOptions {
+  surfaceFailures?: boolean;
+}
 
 const BOOK_FIELDS = `
   id
@@ -178,8 +189,13 @@ export class HardcoverClient {
     return body?.data?.search?.results?.hits?.map((h) => h.document).filter((d): d is HardcoverSearchDocument => d != null) ?? [];
   }
 
-  async searchAuthors(query: string, apiKey: string, signal?: AbortSignal): Promise<HardcoverAuthorSearchDocument[]> {
-    const body = await this.post<HardcoverAuthorSearchResponse>('author-search', SEARCH_AUTHORS_QUERY, { q: query }, apiKey, signal);
+  async searchAuthors(
+    query: string,
+    apiKey: string,
+    signal?: AbortSignal,
+    options?: HardcoverRequestOptions,
+  ): Promise<HardcoverAuthorSearchDocument[]> {
+    const body = await this.post<HardcoverAuthorSearchResponse>('author-search', SEARCH_AUTHORS_QUERY, { q: query }, apiKey, signal, options);
     return (
       body?.data?.search?.results?.hits
         ?.map((hit) => hit.document)
@@ -192,6 +208,7 @@ export class HardcoverClient {
     offset: number,
     apiKey: string,
     signal?: AbortSignal,
+    options?: HardcoverRequestOptions,
   ): Promise<HardcoverAuthorWithContributions | null> {
     const body = await this.post<HardcoverAuthorContributionsResponse>(
       'author-contributions',
@@ -199,6 +216,7 @@ export class HardcoverClient {
       { id: authorId, off: offset },
       apiKey,
       signal,
+      options,
     );
     return body?.data?.authors?.[0] ?? null;
   }
@@ -214,6 +232,7 @@ export class HardcoverClient {
     variables: Record<string, unknown>,
     apiKey: string,
     signal?: AbortSignal,
+    options?: HardcoverRequestOptions,
   ): Promise<T | null> {
     await this.rateLimiter.throttle(signal);
     const startedAt = Date.now();
@@ -234,10 +253,21 @@ export class HardcoverClient {
         this.logger.warn(
           `[hardcover] [fail] op=${op} method=POST status=${res.status} durationMs=${Date.now() - startedAt} message="non-ok response"`,
         );
+        if (options?.surfaceFailures) throw new HardcoverRequestError(op, res.status);
         return null;
       }
 
       const body = (await res.json()) as T;
+      // GraphQL reports a refused or half-served query as errors beside a 200, so an opted-in caller
+      // has to read them: unread, they reach it as an author with no book, or as a contributions page
+      // that ends pagination early and silently shortens the catalog.
+      const errors = (body as { errors?: unknown } | null)?.errors;
+      if (options?.surfaceFailures && Array.isArray(errors) && errors.length > 0) {
+        this.logger.warn(
+          `[hardcover] [fail] op=${op} method=POST status=${res.status} durationMs=${Date.now() - startedAt} errors=${errors.length} message="graphql errors"`,
+        );
+        throw new HardcoverRequestError(op, res.status, { cause: errors });
+      }
       this.logger.log(`[hardcover] [end] op=${op} method=POST status=${res.status} durationMs=${Date.now() - startedAt}`);
       return body;
     } catch (err) {
@@ -245,7 +275,16 @@ export class HardcoverClient {
         this.logger.warn(`[hardcover] [fail] op=${op} method=POST durationMs=${Date.now() - startedAt} message="throttled"`);
         throw err;
       }
+      // The branches above throw from inside the try, so their error arrives here already shaped.
+      if (options?.surfaceFailures && err instanceof HardcoverRequestError) throw err;
       this.logger.warn(`[hardcover] [fail] op=${op} method=POST durationMs=${Date.now() - startedAt} message="${sanitizeLogError(err)}"`);
+      if (options?.surfaceFailures) {
+        // A caller that aborted its own request wants that abort, not a report that Hardcover is down.
+        // Identity, not `signal.aborted`: the composite signal carries whichever source reason fired,
+        // so an internal timeout stays a timeout even once the caller aborts a moment later.
+        if (signal?.aborted && err === signal.reason) throw err;
+        throw new HardcoverRequestError(op, null, { cause: err });
+      }
       return null;
     }
   }

@@ -12,7 +12,11 @@ import {
   shouldKeepPreviousCatalog,
   shouldRejectEmptyCatalog,
 } from './monitored-catalog.service';
-import { mapHardcoverObservations } from './providers/hardcover-bibliography.provider';
+import { HardcoverBibliographyProvider, mapHardcoverObservations } from './providers/hardcover-bibliography.provider';
+import { HardcoverClient } from '../metadata-fetch/providers/hardcover/hardcover.client';
+import * as fetchWithThrottleModule from '../metadata-fetch/fetch-with-throttle';
+
+vi.mock('../metadata-fetch/fetch-with-throttle', () => ({ fetchWithThrottle: vi.fn() }));
 
 describe('monitored catalog helpers', () => {
   it('normalizes author identity without punctuation or diacritics', () => {
@@ -329,6 +333,34 @@ describe('fetchCatalog provider failure guards', () => {
 
     await expect(service.fetchCatalog(monitorConfig(), providerConfig())).resolves.toMatchObject({ catalog: { works: [] } });
     expect(store.saveCatalog).toHaveBeenCalledOnce();
+  });
+
+  // Driven through the real client and a 503 on the wire, because the whole defect was the client
+  // answering a failed request with an empty list: a provider mocked to throw would prove nothing.
+  function outagingCatalogService(store: Record<string, unknown>) {
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockResolvedValue({ ok: false, status: 503 } as Response);
+    return catalogService(
+      {
+        hardcover: new HardcoverBibliographyProvider(new HardcoverClient()),
+        goodreads: fakeProvider('goodreads', { enabled: false }),
+        audible: fakeProvider('audible', { enabled: false }),
+      },
+      store,
+    );
+  }
+
+  it('refuses a first catalog when the author search itself failed', async () => {
+    const store = { getCatalog: vi.fn().mockResolvedValue(null), saveCatalog: vi.fn() };
+
+    await expect(outagingCatalogService(store).fetchCatalog(monitorConfig(), providerConfig())).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(store.saveCatalog).not.toHaveBeenCalled();
+  });
+
+  it('keeps a populated catalog when a refresh cannot resolve the author', async () => {
+    const store = { getCatalog: vi.fn().mockResolvedValue(previousWorks(5)), saveCatalog: vi.fn() };
+
+    await expect(outagingCatalogService(store).fetchCatalog(monitorConfig(), providerConfig())).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(store.saveCatalog).not.toHaveBeenCalled();
   });
 
   it('lets a genuinely empty Hardcover bibliography shrink the catalog', async () => {

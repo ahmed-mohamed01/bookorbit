@@ -3,12 +3,20 @@ import type { ProviderConfigurations } from '@bookorbit/types';
 
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import { HardcoverClient } from '../../metadata-fetch/providers/hardcover/hardcover.client';
+import { HardcoverAuthorGoneError } from '../../metadata-fetch/providers/hardcover/hardcover.errors';
 import type { HardcoverAuthorContribution, HardcoverContributionBook } from '../../metadata-fetch/providers/hardcover/hardcover.types';
 import { normalizeText } from '../reconcile/observation-matcher';
 import type { Observation, SeriesMembership } from '../reconcile/observation.types';
 import type { AuthorBibliographyProvider, BibliographyAuthorRef } from './author-bibliography-provider';
 
 const PAGE_SIZE = 100;
+/**
+ * This provider's callers decide from its outcome whether to overwrite a stored catalog, so a failed
+ * request has to reach them as a failure. Without this the client answers an outage with an empty
+ * list, the catalog guards read that as an author with no books, and a transient Hardcover error
+ * quietly empties a good catalog.
+ */
+const SURFACE_FAILURES = { surfaceFailures: true } as const;
 const MAX_CONTRIBUTIONS = 1500;
 
 export function isHardcoverConfigured(config: ProviderConfigurations): boolean {
@@ -129,7 +137,7 @@ export class HardcoverBibliographyProvider implements AuthorBibliographyProvider
         return { id: existingId, name, bookCount: null, imageUrl: null };
       }
       const target = normalizeText(name).replace(/ /g, '');
-      const matches = (await this.hardcover.searchAuthors(name, config.hardcover.apiKey, signal))
+      const matches = (await this.hardcover.searchAuthors(name, config.hardcover.apiKey, signal, SURFACE_FAILURES))
         .filter((hit) => normalizeText(hit.name).replace(/ /g, '') === target)
         .sort((left, right) => (right.books_count ?? 0) - (left.books_count ?? 0));
       const match = matches[0];
@@ -157,8 +165,8 @@ export class HardcoverBibliographyProvider implements AuthorBibliographyProvider
       if (!Number.isSafeInteger(authorId) || authorId <= 0) return [];
       const rows: HardcoverAuthorContribution[] = [];
       for (let offset = 0; offset < MAX_CONTRIBUTIONS; offset += PAGE_SIZE) {
-        const author = await this.hardcover.fetchAuthorContributions(authorId, offset, config.hardcover.apiKey, signal);
-        if (!author) throw new Error('Hardcover returned no author contribution page');
+        const author = await this.hardcover.fetchAuthorContributions(authorId, offset, config.hardcover.apiKey, signal, SURFACE_FAILURES);
+        if (!author) throw new HardcoverAuthorGoneError(authorId);
         const page = author.contributions ?? [];
         rows.push(...page.slice(0, MAX_CONTRIBUTIONS - rows.length));
         if (page.length < PAGE_SIZE) break;
