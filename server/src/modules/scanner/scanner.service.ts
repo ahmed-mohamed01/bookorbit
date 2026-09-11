@@ -6,6 +6,7 @@ import { pathsReferToSameEntry } from '../../common/utils/path-identity.utils';
 import { SelfWriteRegistry } from '../../common/services/self-write-registry.service';
 
 import type {
+  AddedAtSource,
   BookMissingEvent,
   BookTransferredEvent,
   CoverRefreshedEvent,
@@ -31,7 +32,15 @@ import { classifyFile, DEFAULT_FORMAT_PRIORITY, FileRole, isAudioFormat } from '
 import { computeFileHash } from './lib/hash';
 import { buildSidecarCoverPathByBookId, resolveCoverReadOrder } from '../metadata/lib/cover-source-resolution';
 import { waitForStability } from './lib/stability';
-import { BookCandidate, FileStat, findBookCandidates, findLooseFileCandidates, buildSingleBookCandidate, type WalkResult } from './lib/walk';
+import {
+  BookCandidate,
+  FileStat,
+  earliestContentTime,
+  findBookCandidates,
+  findLooseFileCandidates,
+  buildSingleBookCandidate,
+  type WalkResult,
+} from './lib/walk';
 import { ScannerRepository } from './scanner.repository';
 import { EXTRA_METADATA_SOURCES, type MetadataSourceProvider } from './metadata-source-provider';
 import { assembleBookCards } from '../book/utils/assemble-book-cards';
@@ -47,6 +56,7 @@ interface BookEntry {
 interface FileByPathEntry {
   id: number;
   bookId: number;
+  relPath: string | null;
   ino: bigint;
   sizeBytes: number | null;
   mtime: Date | null;
@@ -78,6 +88,7 @@ interface LibraryScanSettings {
   metadataPrecedence: string[];
   excludePatterns: string[];
   organizationMode: OrganizationMode;
+  addedAtSource: AddedAtSource;
 }
 
 type TargetedScanJob = { type: 'book'; path: string; libraryId: number } | { type: 'directory'; path: string; libraryId: number };
@@ -167,6 +178,10 @@ interface ScanOptions {
 
 function normalizeOrganizationMode(mode: string | null | undefined): OrganizationMode {
   return mode === 'book_per_file' ? 'book_per_file' : 'book_per_folder';
+}
+
+function normalizeAddedAtSource(source: string | null | undefined): AddedAtSource {
+  return source === 'file_modified' || source === 'file_created' ? source : 'imported';
 }
 
 // `extraKeys` are precedence keys contributed by registered MetadataSourceProviders. With none
@@ -314,6 +329,7 @@ export class ScannerService implements OnApplicationBootstrap {
       id: number;
       bookId: number;
       absolutePath: string;
+      relPath: string | null;
       ino: bigint;
       sizeBytes: number | null;
       mtime: Date | null;
@@ -344,6 +360,7 @@ export class ScannerService implements OnApplicationBootstrap {
         {
           id: f.id,
           bookId: f.bookId,
+          relPath: f.relPath,
           ino: f.ino,
           sizeBytes: f.sizeBytes,
           mtime: f.mtime,
@@ -653,6 +670,7 @@ export class ScannerService implements OnApplicationBootstrap {
       const metadataPrecedence = settings?.metadataPrecedence ?? [...LIBRARY_METADATA_PRECEDENCE_DEFAULT];
       const excludePatterns = settings?.excludePatterns ?? [];
       const organizationMode = normalizeOrganizationMode(settings?.organizationMode);
+      const addedAtSource = normalizeAddedAtSource(settings?.addedAtSource);
 
       // Invalidate incremental scan cache when scan-affecting settings change.
       // On first scan after restart (no stored hash), force full scan to avoid
@@ -681,6 +699,7 @@ export class ScannerService implements OnApplicationBootstrap {
         metadataPrecedence,
         excludePatterns,
         organizationMode,
+        addedAtSource,
         forceFullScan,
         reextractMetadata,
       ).catch((err) => {
@@ -877,6 +896,7 @@ export class ScannerService implements OnApplicationBootstrap {
       metadataPrecedence: rawSettings?.metadataPrecedence ?? [...LIBRARY_METADATA_PRECEDENCE_DEFAULT],
       excludePatterns: rawSettings?.excludePatterns ?? [],
       organizationMode: normalizeOrganizationMode(rawSettings?.organizationMode),
+      addedAtSource: normalizeAddedAtSource(rawSettings?.addedAtSource),
     };
 
     if (settings.organizationMode === 'book_per_file') {
@@ -919,6 +939,7 @@ export class ScannerService implements OnApplicationBootstrap {
       metadataPrecedence: rawSettings?.metadataPrecedence ?? [...LIBRARY_METADATA_PRECEDENCE_DEFAULT],
       excludePatterns: rawSettings?.excludePatterns ?? [],
       organizationMode: normalizeOrganizationMode(rawSettings?.organizationMode),
+      addedAtSource: normalizeAddedAtSource(rawSettings?.addedAtSource),
     };
 
     const walkLogger = (msg: string) =>
@@ -992,6 +1013,7 @@ export class ScannerService implements OnApplicationBootstrap {
         maps,
         settings.formatPriority,
         settings.metadataPrecedence,
+        settings.addedAtSource,
         false,
         candidateFolderPaths,
         settings.organizationMode,
@@ -1025,12 +1047,14 @@ export class ScannerService implements OnApplicationBootstrap {
         id: f.id,
         bookId: f.bookId,
         absolutePath: f.absolutePath,
+        relPath: f.relPath,
         ino: f.ino,
         sizeBytes: f.sizeBytes,
         mtime: f.mtime,
         fileHash: f.fileHash,
         format: f.format,
         role: f.role,
+        sortOrder: f.sortOrder,
       })),
     );
   }
@@ -1086,6 +1110,7 @@ export class ScannerService implements OnApplicationBootstrap {
           ino: fileStat.ino,
           sizeBytes: Number(fileStat.size),
           mtime: fileStat.mtime,
+          birthtime: fileStat.birthtime,
           format,
           role,
         },
@@ -1100,6 +1125,7 @@ export class ScannerService implements OnApplicationBootstrap {
       maps,
       settings.formatPriority,
       settings.metadataPrecedence,
+      settings.addedAtSource,
       false,
       new Set([candidate.folderPath]),
       settings.organizationMode,
@@ -1156,6 +1182,7 @@ export class ScannerService implements OnApplicationBootstrap {
           ino: fileStat.ino,
           sizeBytes: Number(fileStat.size),
           mtime: fileStat.mtime,
+          birthtime: fileStat.birthtime,
           format,
           role,
         },
@@ -1170,6 +1197,7 @@ export class ScannerService implements OnApplicationBootstrap {
       maps,
       settings.formatPriority,
       settings.metadataPrecedence,
+      settings.addedAtSource,
       false,
       new Set([candidate.folderPath]),
       settings.organizationMode,
@@ -1260,6 +1288,7 @@ export class ScannerService implements OnApplicationBootstrap {
       maps,
       settings.formatPriority,
       settings.metadataPrecedence,
+      settings.addedAtSource,
       false,
       new Set([candidate.folderPath]),
       settings.organizationMode,
@@ -1284,6 +1313,7 @@ export class ScannerService implements OnApplicationBootstrap {
     metadataPrecedence: string[],
     excludePatterns: string[],
     organizationMode: OrganizationMode,
+    addedAtSource: AddedAtSource,
     forceFullScan = false,
     reextractMetadata = false,
   ): Promise<void> {
@@ -1369,6 +1399,7 @@ export class ScannerService implements OnApplicationBootstrap {
           formatPriority,
           metadataPrecedence,
           organizationMode,
+          addedAtSource,
           skippedDirs,
           unchangedDirs,
           reextractMetadata,
@@ -1456,6 +1487,7 @@ export class ScannerService implements OnApplicationBootstrap {
     formatPriority: string[],
     metadataPrecedence: string[],
     organizationMode: OrganizationMode,
+    addedAtSource: AddedAtSource,
     skippedDirs: Set<string> = new Set(),
     unchangedDirs: Set<string> = new Set(),
     reextractMetadata = false,
@@ -1488,6 +1520,7 @@ export class ScannerService implements OnApplicationBootstrap {
           maps,
           formatPriority,
           metadataPrecedence,
+          addedAtSource,
           isFirstScan,
           candidateFolderPaths,
           organizationMode,
@@ -1569,6 +1602,7 @@ export class ScannerService implements OnApplicationBootstrap {
     maps: ScanLookupMaps,
     formatPriority: string[],
     metadataPrecedence: string[],
+    addedAtSource: AddedAtSource,
     isFirstScan: boolean,
     candidateFolderPaths: Set<string>,
     organizationMode: OrganizationMode,
@@ -1589,6 +1623,7 @@ export class ScannerService implements OnApplicationBootstrap {
       fileByIno,
       fileCounts,
       candidateFolderPaths,
+      addedAtSource,
     );
     // If the book was transferred from another library, its files exist globally
     // but not in our local maps - we need global lookups even on a "first scan"
@@ -1955,6 +1990,7 @@ export class ScannerService implements OnApplicationBootstrap {
     fileByIno: Map<bigint, FileByInoEntry>,
     counts: ScanCounts,
     candidateFolderPaths: Set<string>,
+    addedAtSource: AddedAtSource,
   ): Promise<UpsertBookResult> {
     const existing = bookByFolderPath.get(candidate.folderPath);
     const candidateOwnedBookIds = new Set<number>();
@@ -2011,11 +2047,17 @@ export class ScannerService implements OnApplicationBootstrap {
       const transferred = await this.tryTransferMissingBook(candidate, libraryId, libraryFolderId, bookByFolderPath, counts);
       if (transferred) return { ...transferred, created: false };
 
+      // date added per the library's addedAtSource: 'imported' leaves addedAt unset
+      // so the DB defaultNow() (import time) applies; on-disk sources derive it from
+      // the earliest content-file time, still falling back to import time when no
+      // content file yields a usable time.
+      const addedAt = addedAtSource === 'imported' ? undefined : earliestContentTime(candidate.files, addedAtSource);
       const book = await this.scannerRepo.createBook({
         libraryId,
         libraryFolderId,
         folderPath: candidate.folderPath,
         status: 'processing',
+        addedAt,
       });
       counts.addedCount++;
       const entry = { id: book.id, status: book.status, folderPath: book.folderPath, primaryFileId: book.primaryFileId ?? null };
@@ -2354,20 +2396,22 @@ export class ScannerService implements OnApplicationBootstrap {
     const sizeUnchanged = fileStat.sizeBytes === byPath.sizeBytes;
     const mtimeUnchanged = fileStat.mtime.getTime() === byPath.mtime?.getTime();
     const inoUnchanged = fileStat.ino === byPath.ino;
+    const relPathUnchanged = fileStat.relPath === byPath.relPath;
     const reassigned = byPath.bookId !== bookId;
     const sortOrderUnchanged = sortOrder === byPath.sortOrder;
     const classificationChanged = roleReclassified(byPath, role);
 
-    if (sizeUnchanged && mtimeUnchanged && inoUnchanged && !reassigned && sortOrderUnchanged && !classificationChanged) {
+    if (sizeUnchanged && mtimeUnchanged && inoUnchanged && relPathUnchanged && !reassigned && sortOrderUnchanged && !classificationChanged) {
       return { isNew: false, reassigned: false, changed: false, fileId: byPath.id };
     }
 
     await waitForStability(fileStat.absolutePath, fileStat.mtime.getTime());
 
-    if (!sizeUnchanged || !mtimeUnchanged || !inoUnchanged || reassigned || classificationChanged) {
+    if (!sizeUnchanged || !mtimeUnchanged || !inoUnchanged || !relPathUnchanged || reassigned || classificationChanged) {
       await this.scannerRepo.updateBookFile(byPath.id, {
         ...(reassigned && { bookId }),
         libraryFolderId,
+        relPath: fileStat.relPath,
         ino: fileStat.ino,
         sizeBytes: fileStat.sizeBytes,
         mtime: fileStat.mtime,
@@ -2388,6 +2432,7 @@ export class ScannerService implements OnApplicationBootstrap {
     fileByPath.set(fileStat.absolutePath, {
       id: byPath.id,
       bookId,
+      relPath: fileStat.relPath,
       ino: fileStat.ino,
       sizeBytes: fileStat.sizeBytes,
       mtime: fileStat.mtime,
@@ -2446,6 +2491,7 @@ export class ScannerService implements OnApplicationBootstrap {
     fileByPath.set(fileStat.absolutePath, {
       id: byIno.id,
       bookId,
+      relPath: fileStat.relPath,
       ino: fileStat.ino,
       sizeBytes: fileStat.sizeBytes,
       mtime: fileStat.mtime,
@@ -2520,6 +2566,7 @@ export class ScannerService implements OnApplicationBootstrap {
     fileByPath.set(fileStat.absolutePath, {
       id: globalByIno.file.id,
       bookId,
+      relPath: fileStat.relPath,
       ino: fileStat.ino,
       sizeBytes: fileStat.sizeBytes,
       mtime: fileStat.mtime,
@@ -2598,6 +2645,7 @@ export class ScannerService implements OnApplicationBootstrap {
         fileByPath.set(fileStat.absolutePath, {
           id: byHash.id,
           bookId,
+          relPath: fileStat.relPath,
           ino: fileStat.ino,
           sizeBytes: fileStat.sizeBytes,
           mtime: fileStat.mtime,
@@ -2661,6 +2709,7 @@ export class ScannerService implements OnApplicationBootstrap {
         fileByPath.set(fileStat.absolutePath, {
           id: globalByHash.file.id,
           bookId,
+          relPath: fileStat.relPath,
           ino: fileStat.ino,
           sizeBytes: fileStat.sizeBytes,
           mtime: fileStat.mtime,
@@ -2710,6 +2759,7 @@ export class ScannerService implements OnApplicationBootstrap {
         {
           id: concurrent.file.id,
           bookId: concurrent.file.bookId,
+          relPath: concurrent.file.relPath,
           ino: concurrent.file.ino,
           sizeBytes: concurrent.file.sizeBytes,
           mtime: concurrent.file.mtime,
@@ -2733,6 +2783,7 @@ export class ScannerService implements OnApplicationBootstrap {
     fileByPath.set(fileStat.absolutePath, {
       id: created.id,
       bookId,
+      relPath: fileStat.relPath,
       ino: fileStat.ino,
       sizeBytes: fileStat.sizeBytes,
       mtime: fileStat.mtime,

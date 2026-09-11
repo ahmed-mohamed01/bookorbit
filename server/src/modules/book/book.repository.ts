@@ -67,7 +67,7 @@ type JsonObj = Record<string, unknown>;
 type BookRepositoryTx = Parameters<Parameters<NodePgDatabase<typeof schema>['transaction']>[0]>[0];
 
 type CollapsedRawRow = {
-  id: number;
+  id: number | null;
   status: string;
   cover_aspect_ratio: string;
   primary_file_id: number | null;
@@ -101,6 +101,7 @@ type CollapsedRawRow = {
   latest_volume_book_id: number | null;
   first_unread_book_id: number | null;
   total_count: string;
+  book_total: string;
 };
 type PatternMetadataRow = {
   bookId: number;
@@ -863,6 +864,7 @@ export class BookRepository {
       expectedBookCount: number | null;
     }[];
     total: number;
+    bookTotal: number;
   }> {
     const { where, sort, limit, offset, userId, defaultCollectionId } = opts;
     if (defaultCollectionId !== undefined && (!Number.isSafeInteger(defaultCollectionId) || defaultCollectionId <= 0)) {
@@ -1082,16 +1084,28 @@ export class BookRepository {
           ON sfu2.series_id = base.series_id
           AND sfu2.library_id = base.library_id
         ORDER BY ${sql.raw(COLLAPSE_REPRESENTATIVE_PICK_SQL)}
+      ),
+      totals AS (
+        SELECT
+          COUNT(*) AS total_count,
+          COALESCE(SUM(COALESCE(book_count, 1)), 0) AS book_total
+        FROM representatives
       )
-      SELECT r.*,
-        COUNT(*) OVER () AS total_count
-      FROM representatives r
+      SELECT r.*, totals.total_count, totals.book_total
+      FROM totals
+      LEFT JOIN LATERAL (
+        SELECT r.*
+        FROM representatives r
+        ORDER BY ${sql.raw(orderBy)}
+        LIMIT ${limit} OFFSET ${offset}
+      ) r ON true
       ORDER BY ${sql.raw(orderBy)}
-      LIMIT ${limit} OFFSET ${offset}
     `);
 
-    const rawRows = result.rows as CollapsedRawRow[];
-    const total = rawRows.length > 0 ? Number(rawRows[0].total_count) : 0;
+    const queryRows = result.rows as CollapsedRawRow[];
+    const total = Number(queryRows[0]?.total_count ?? 0);
+    const bookTotal = Number(queryRows[0]?.book_total ?? 0);
+    const rawRows = queryRows.filter((row): row is CollapsedRawRow & { id: number } => row.id !== null);
 
     const mappedRows = rawRows.map((r) => ({
       id: r.id,
@@ -1131,7 +1145,7 @@ export class BookRepository {
     const bookRefs = mappedRows.map((row) => ({ id: row.id, primaryFileId: row.primaryFileId ?? null }));
     const enrichment = await this.enrichBookIds(bookRefs, userId);
 
-    return { rows: mappedRows, ...enrichment, total };
+    return { rows: mappedRows, ...enrichment, total, bookTotal };
   }
 
   async findJumpBuckets(opts: {
@@ -1500,16 +1514,19 @@ export class BookRepository {
       .select({
         id: bookFiles.id,
         absolutePath: bookFiles.absolutePath,
+        relPath: bookFiles.relPath,
         format: bookFiles.format,
         role: bookFiles.role,
         bookId: bookFiles.bookId,
         libraryId: books.libraryId,
+        libraryFolderPath: libraryFolders.path,
         fileHash: bookFiles.fileHash,
         sizeBytes: bookFiles.sizeBytes,
         durationSeconds: bookFiles.durationSeconds,
       })
       .from(bookFiles)
       .innerJoin(books, eq(books.id, bookFiles.bookId))
+      .innerJoin(libraryFolders, eq(libraryFolders.id, bookFiles.libraryFolderId))
       .where(eq(bookFiles.id, fileId))
       .limit(1);
     return file ?? null;
@@ -1519,7 +1536,10 @@ export class BookRepository {
     await this.db.delete(bookFiles).where(eq(bookFiles.id, fileId));
   }
 
-  async updateBookFile(fileId: number, data: { format?: string | null; role?: string; absolutePath?: string; sizeBytes?: number }): Promise<void> {
+  async updateBookFile(
+    fileId: number,
+    data: { format?: string | null; role?: string; absolutePath?: string; relPath?: string | null; sizeBytes?: number },
+  ): Promise<void> {
     await this.db
       .update(bookFiles)
       .set({ ...data, updatedAt: new Date() })
