@@ -1,6 +1,8 @@
 // ABS-specific matching helpers. Everything else the matcher needs (title/author similarity, ISBN
-// normalization) is imported directly from upstream's hardcover-import.service so upstream fixes
-// reach this fork without a copy to keep in sync.
+// normalization) comes from `common/utils/fuzzy-match.utils`, the fork-owned copy of the upstream
+// code Hardcover used before its rewrite. Upstream fixes do NOT flow in automatically: the behaviour
+// ABS relies on is pinned by `audiobookshelf-upstream-contract.test.ts`, and the copy has to be
+// re-checked against upstream's `hardcover-import-fuzzy-index.ts` on each merge.
 
 import type { AudiobookshelfPathMapping } from '@bookorbit/types';
 

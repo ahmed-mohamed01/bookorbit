@@ -17,6 +17,17 @@ import { bookRequests } from '../../../db/schema/book-requests';
 import { books } from '../../../db/schema/books';
 import { libraries, libraryFolders } from '../../../db/schema/libraries';
 
+export const monitoredSettings = pgTable(
+  'monitored_settings',
+  {
+    id: integer('id').primaryKey().default(1),
+    refreshCooldownMinutes: integer('refresh_cooldown_minutes').notNull().default(10),
+    syncEnabled: boolean('sync_enabled').notNull().default(true),
+    syncIntervalHours: integer('sync_interval_hours').notNull().default(12),
+  },
+  (t) => [check('monitored_settings_single_row_chk', sql`${t.id} = 1`)],
+);
+
 // These literal CHECK lists are mirrored against @bookorbit/types in monitored.schema.test.ts.
 export const monitoredAuthors = pgTable(
   'monitored_authors',
@@ -208,9 +219,6 @@ export const monitoredBooks = pgTable(
 );
 
 export type MonitoredAuthorRow = typeof monitoredAuthors.$inferSelect;
-export type NewMonitoredAuthorRow = typeof monitoredAuthors.$inferInsert;
 export type AuthorCatalogWorkRow = typeof authorCatalogWorks.$inferSelect;
-export type NewAuthorCatalogWorkRow = typeof authorCatalogWorks.$inferInsert;
 export type MonitoredAuthorWorkRow = typeof monitoredAuthorWorks.$inferSelect;
 export type MonitoredBookRow = typeof monitoredBooks.$inferSelect;
-export type NewMonitoredBookRow = typeof monitoredBooks.$inferInsert;

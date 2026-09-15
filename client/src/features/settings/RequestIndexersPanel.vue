@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Loader2, Plug, Plus, Server as ServerIcon, Trash2, TriangleAlert, Upload } from '@lucide/vue'
+import { Loader2, Plug, Plus, RefreshCw, Server as ServerIcon, Trash2, TriangleAlert, Upload } from '@lucide/vue'
 import { toast } from 'vue-sonner'
-import { BOOK_REQUEST_MEDIA_KINDS } from '@bookorbit/types'
+import { BOOK_REQUEST_MEDIA_KINDS, INDEXER_ADAPTER_TYPES, MAX_INDEXER_SEED_TIME_MINUTES } from '@bookorbit/types'
 import type { IndexerAdapterDescriptor, IndexerItem, IndexerSettingsField } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -13,6 +13,7 @@ import ConnectionHealth from './ConnectionHealth.vue'
 import PluginDirectoryLink from './components/PluginDirectoryLink.vue'
 import RequestSourceRow from './components/RequestSourceRow.vue'
 import PluginVersionBadge from './components/PluginVersionBadge.vue'
+import PluginUpdateControls from './components/PluginUpdateControls.vue'
 import RequestSourcesEmpty from './components/RequestSourcesEmpty.vue'
 import SettingsEditorSheet from './components/SettingsEditorSheet.vue'
 import SettingsField from './components/SettingsField.vue'
@@ -34,6 +35,7 @@ const {
   indexers,
   adapters,
   pluginFailures,
+  pluginUpdates,
   adapterFor,
   encryptionConfigured,
   loading,
@@ -46,6 +48,10 @@ const {
   inspectPlugin,
   installPlugin,
   removePlugin,
+  fetchPluginUpdates,
+  inspectPluginUpdate,
+  installPluginUpdate,
+  setPluginAutomaticUpdate,
 } = useIndexers()
 
 watch(encryptionConfigured, (configured) => emit('encryptionState', configured))
@@ -54,6 +60,8 @@ const { isSuperuser } = usePermissions()
 
 /** Installing a plugin runs its code in the server process, so only an administrator may. */
 const canInstallPlugins = isSuperuser
+const hasPluginUpdateChannels = computed(() => adapters.value.some((adapter) => !adapter.builtIn && adapter.updateable))
+const reviewedPublishedUpdate = computed(() => (pluginReview.value && 'verified' in pluginReview.value ? pluginReview.value : null))
 
 /** The row whose test is in flight, and the row whose enabled flag is; both go inert on their own. */
 const testingId = ref<number | null>(null)
@@ -72,10 +80,17 @@ const {
   describeFailure,
   startCreate,
   startCreateFor,
+  handleCreateTypeChange,
   startEdit,
   cancelEdit,
   handleNameInput,
   handleBaseUrlInput,
+  handleSeedRatioInput,
+  handleSeedTimeInput,
+  seedingAtDefaults,
+  resetSeedingSettings,
+  ratioSeedSummary,
+  timeSeedSummary,
   markCredentialTouched,
   canClearCredential,
   toggleClearCredential,
@@ -104,10 +119,11 @@ const {
   pluginReview,
   pluginBusy,
   pluginRestartPending,
+  checkingPluginUpdates,
   removingPlugin,
   pluginPendingRemoval,
   pluginRows,
-  torznabRows,
+  builtInRows,
   nothingConfigured,
   allSourcesDisabled,
   editingPluginType,
@@ -115,12 +131,16 @@ const {
   pluginUseCount,
   pluginUsage,
   pendingRemovalUsage,
+  updateStatusFor,
   askRemovePlugin,
   askRemovePluginType,
   cancelRemovePlugin,
   confirmRemovePlugin,
   handleRowPluginUpdate,
   handleRowPluginRemove,
+  checkPluginUpdates,
+  reviewPublishedUpdate,
+  setAutomaticUpdate,
   startPluginInstall,
   startPluginUpdate,
   handlePluginChosen,
@@ -131,17 +151,27 @@ const {
   indexers,
   adapters,
   pluginFailures,
+  pluginUpdates,
   adapterFor,
   inspectPlugin,
   installPlugin,
   removePlugin,
+  fetchPluginUpdates,
+  inspectPluginUpdate,
+  installPluginUpdate,
+  setPluginAutomaticUpdate,
   fetchIndexers,
   editingType,
   cancelEdit,
   startCreateFor,
 })
 
-onMounted(fetchIndexers)
+async function loadPanel() {
+  await fetchIndexers()
+  if (canInstallPlugins.value) await fetchPluginUpdates(false)
+}
+
+onMounted(loadPanel)
 
 /**
  * A built-in adapter has translated copy keyed on its type; a plugin can only supply untranslated
@@ -283,9 +313,8 @@ function handleTestCurrent() {
     />
 
     <!--
-      Two things, added two ways. A plugin is a file you install and then fill in; a Torznab indexer
-      is an address you already have. Everything else on this page used to be the seam between those
-      two being explained rather than shown.
+      Two things, added two ways. A plugin is a file you install and then fill in; a built-in
+      indexer is an address you already have.
     -->
     <!-- A wider gap than anything inside a group takes, so the two labels read as a boundary. -->
     <div v-else class="space-y-6">
@@ -297,10 +326,23 @@ function handleTestCurrent() {
             <h2 id="request-plugins-heading" class="settings-group-label mb-0">{{ t('settings.system.requests.indexers.plugins.title') }}</h2>
             <!-- Only while the group has rows. With none, the one call to action lives in the slot
                  below rather than twice on the same line of the page. -->
-            <Button v-if="canInstallPlugins && pluginRows.length" size="sm" variant="outline" :disabled="pluginBusy" @click="startPluginInstall">
-              <Upload :size="14" aria-hidden="true" />
-              {{ t('settings.system.requests.indexers.plugins.install') }}
-            </Button>
+            <div v-if="canInstallPlugins && pluginRows.length" class="flex items-center gap-2">
+              <Button
+                v-if="hasPluginUpdateChannels"
+                size="sm"
+                variant="outline"
+                :disabled="checkingPluginUpdates || pluginBusy"
+                @click="checkPluginUpdates"
+              >
+                <Loader2 v-if="checkingPluginUpdates" class="animate-spin" aria-hidden="true" />
+                <RefreshCw v-else :size="14" aria-hidden="true" />
+                {{ t('settings.system.requests.indexers.plugins.checkUpdates') }}
+              </Button>
+              <Button size="sm" variant="outline" :disabled="pluginBusy" @click="startPluginInstall">
+                <Upload :size="14" aria-hidden="true" />
+                {{ t('settings.system.requests.indexers.plugins.install') }}
+              </Button>
+            </div>
           </div>
 
           <p class="settings-hint settings-prose mt-1.5">
@@ -369,6 +411,13 @@ function handleTestCurrent() {
                     </span>
                   </div>
                   <p class="mt-1 font-mono text-xs break-all text-muted-foreground">{{ row.adapter.type }}</p>
+                  <PluginUpdateControls
+                    :updateable="row.adapter.updateable === true"
+                    :status="updateStatusFor(row.adapter.type)"
+                    :busy="pluginBusy"
+                    @review="reviewPublishedUpdate(row.adapter.type)"
+                    @automatic="setAutomaticUpdate(row.adapter.type, $event)"
+                  />
                 </div>
               </div>
 
@@ -425,6 +474,8 @@ function handleTestCurrent() {
               :busy="togglingId === row.indexer.id"
               :available="isAvailable(row.indexer.adapterType)"
               :plugin-version="adapterFor(row.indexer.adapterType)?.version"
+              :plugin-updateable="adapterFor(row.indexer.adapterType)?.updateable"
+              :plugin-update-status="updateStatusFor(row.indexer.adapterType)"
               :manage-plugin="canInstallPlugins"
               :plugin-busy="pluginBusy || removingPlugin === row.indexer.adapterType"
               @test="handleTest(row.indexer)"
@@ -432,6 +483,8 @@ function handleTestCurrent() {
               @toggle="handleToggleEnabled(row.indexer, $event)"
               @update-plugin="handleRowPluginUpdate(row.indexer.adapterType)"
               @remove-plugin="handleRowPluginRemove(row.indexer.adapterType)"
+              @review-plugin-update="reviewPublishedUpdate(row.indexer.adapterType)"
+              @automatic-plugin-update="setAutomaticUpdate(row.indexer.adapterType, $event)"
             />
           </li>
         </ul>
@@ -441,7 +494,7 @@ function handleTestCurrent() {
         <div>
           <div class="flex min-h-8 items-center justify-between gap-2">
             <h2 id="request-indexers-heading" class="settings-group-label mb-0">{{ t('settings.system.requests.indexers.title') }}</h2>
-            <Button v-if="torznabRows.length" size="sm" variant="outline" @click="startCreate">
+            <Button v-if="builtInRows.length" size="sm" variant="outline" @click="startCreate">
               <Plus :size="14" aria-hidden="true" />
               {{ t('settings.system.requests.indexers.add') }}
             </Button>
@@ -450,7 +503,7 @@ function handleTestCurrent() {
           <p class="settings-hint settings-prose mt-1.5">{{ t('settings.system.requests.indexers.hint') }}</p>
         </div>
 
-        <div v-if="!torznabRows.length" class="settings-empty-state flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5 text-start md:px-5">
+        <div v-if="!builtInRows.length" class="settings-empty-state flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3.5 text-start md:px-5">
           <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground" aria-hidden="true">
             <ServerIcon :size="17" />
           </span>
@@ -464,7 +517,7 @@ function handleTestCurrent() {
         </div>
 
         <ul v-else class="space-y-2">
-          <li v-for="indexer in torznabRows" :key="indexer.id" class="settings-card">
+          <li v-for="indexer in builtInRows" :key="indexer.id" class="settings-card">
             <RequestSourceRow
               :indexer="indexer"
               :testing="testingId === indexer.id"
@@ -544,10 +597,22 @@ function handleTestCurrent() {
 
       <template #default>
         <SettingsSection :title="t('settings.system.requests.sections.connection')">
-          <!-- The type is settled in the picker before this form exists, and is fixed afterwards:
-               a row carries that adapter's base URL, categories and settings, so swapping it here
-               would leave every one of them describing an adapter that no longer applies. It is
-               stated in the header badge instead. -->
+          <SettingsField v-if="draft.id === null" :label="t('settings.system.requests.indexers.fields.type')" input-id="indexer-type">
+            <template #default="{ describedBy }">
+              <select
+                id="indexer-type"
+                :value="draft.adapterType"
+                class="settings-control"
+                :aria-describedby="describedBy"
+                @change="handleCreateTypeChange"
+              >
+                <option v-for="type in INDEXER_ADAPTER_TYPES" :key="type" :value="type">
+                  {{ t(`settings.system.requests.indexers.types.${type}`) }}
+                </option>
+              </select>
+            </template>
+          </SettingsField>
+
           <SettingsField :label="t('settings.system.requests.indexers.fields.name')" input-id="indexer-name" required :error="fieldErrors.name">
             <template #default="{ describedBy, invalid }">
               <input
@@ -680,6 +745,83 @@ function handleTestCurrent() {
               </template>
             </SettingsField>
           </div>
+        </SettingsSection>
+
+        <SettingsSection v-if="currentAdapter?.seedsBack" :title="t('settings.system.requests.sections.seeding')">
+          <SettingsToggleField
+            v-model="draft.applyTrackerSeedGoals"
+            :label="t('settings.system.requests.indexers.seeding.applyTracker')"
+            input-id="indexer-apply-tracker-seed-goals"
+            :brief="t('settings.system.requests.indexers.seeding.applyTrackerBrief')"
+          />
+
+          <div class="grid gap-4 sm:grid-cols-2">
+            <SettingsField
+              :label="t('settings.system.requests.indexers.seeding.ratio')"
+              input-id="indexer-seed-ratio"
+              :brief="t('settings.system.requests.indexers.seeding.ratioBrief')"
+              :error="fieldErrors.seedRatioGoal"
+            >
+              <template #default="{ describedBy, invalid }">
+                <input
+                  id="indexer-seed-ratio"
+                  :value="draft.seedRatioGoal"
+                  type="number"
+                  min="0"
+                  step="any"
+                  inputmode="decimal"
+                  class="settings-control"
+                  :aria-describedby="describedBy"
+                  :aria-invalid="invalid || undefined"
+                  @input="handleSeedRatioInput"
+                />
+              </template>
+            </SettingsField>
+
+            <SettingsField
+              :label="t('settings.system.requests.indexers.seeding.time')"
+              input-id="indexer-seed-time"
+              :brief="t('settings.system.requests.indexers.seeding.timeBrief')"
+              :error="fieldErrors.seedTimeMinutes"
+            >
+              <template #default="{ describedBy, invalid }">
+                <input
+                  id="indexer-seed-time"
+                  :value="draft.seedTimeMinutes"
+                  type="number"
+                  min="1"
+                  :max="MAX_INDEXER_SEED_TIME_MINUTES"
+                  step="1"
+                  inputmode="numeric"
+                  class="settings-control"
+                  :aria-describedby="describedBy"
+                  :aria-invalid="invalid || undefined"
+                  @input="handleSeedTimeInput"
+                />
+              </template>
+            </SettingsField>
+          </div>
+
+          <p class="settings-hint">{{ t('settings.system.requests.indexers.seeding.clientSupport') }}</p>
+          <p class="settings-hint">{{ t('settings.system.requests.indexers.seeding.futureGrabs') }}</p>
+
+          <div class="rounded-md border border-border bg-muted/30 p-3">
+            <p class="settings-label">{{ t('settings.system.requests.indexers.seeding.summary.title') }}</p>
+            <dl class="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+              <div>
+                <dt class="text-muted-foreground">{{ t('settings.system.requests.indexers.seeding.summary.ratio') }}</dt>
+                <dd class="text-foreground">{{ ratioSeedSummary }}</dd>
+              </div>
+              <div>
+                <dt class="text-muted-foreground">{{ t('settings.system.requests.indexers.seeding.summary.time') }}</dt>
+                <dd class="text-foreground">{{ timeSeedSummary }}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <Button type="button" size="sm" variant="outline" :disabled="seedingAtDefaults" @click="resetSeedingSettings">
+            {{ t('settings.system.requests.indexers.seeding.reset') }}
+          </Button>
         </SettingsSection>
 
         <SettingsSection v-if="currentAdapter?.settingsFields.length" :title="t('settings.system.requests.sections.access')">
@@ -877,6 +1019,16 @@ function handleTestCurrent() {
                 {{ pluginReview.version ?? t('settings.system.requests.indexers.plugins.versionUnknownValue') }}
               </dd>
             </div>
+            <div v-if="reviewedPublishedUpdate">
+              <dt class="settings-hint">{{ t('settings.system.requests.indexers.plugins.installedVersion') }}</dt>
+              <dd class="text-foreground">
+                {{ reviewedPublishedUpdate.currentVersion ?? t('settings.system.requests.indexers.plugins.versionUnknownValue') }}
+              </dd>
+            </div>
+            <div v-if="pluginReview.update" class="sm:col-span-2">
+              <dt class="settings-hint">{{ t('settings.system.requests.indexers.plugins.updateChannel') }}</dt>
+              <dd class="font-mono text-xs break-all text-foreground">{{ pluginReview.update.manifestUrl }}</dd>
+            </div>
             <div>
               <dt class="settings-hint">{{ t('settings.system.requests.indexers.plugins.media') }}</dt>
               <dd class="text-foreground">{{ pluginReview.mediaKinds.join(', ') }}</dd>
@@ -895,6 +1047,9 @@ function handleTestCurrent() {
 
           <p role="alert" class="settings-hint text-destructive">
             {{ t('settings.system.requests.indexers.plugins.trustWarning') }}
+          </p>
+          <p v-if="reviewedPublishedUpdate" role="status" class="settings-hint text-primary">
+            {{ t('settings.system.requests.indexers.plugins.signatureVerified') }}
           </p>
           <p v-if="pluginReview.replaces" role="status" class="settings-hint text-primary">
             {{ t('settings.system.requests.indexers.plugins.replaces', { type: pluginReview.type }) }}

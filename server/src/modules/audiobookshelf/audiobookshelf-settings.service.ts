@@ -10,13 +10,12 @@ import type {
 } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
-import { ensureSafeUrl, type SafeRemoteHostOptions } from '../../common/utils/ssrf.utils';
 import { LibraryService } from '../library/library.service';
 import { AudiobookshelfClientService } from './audiobookshelf-client.service';
 import { AudiobookshelfRepository } from './audiobookshelf.repository';
 import { isMappablePathPrefix, normalizeMatchPath } from './audiobookshelf-match.utils';
 import { buildBookAccessScope } from './audiobookshelf-user.utils';
-import { audiobookshelfSafeRemoteHostOptions, parseAndNormalizeServerUrl } from './audiobookshelf-url.utils';
+import { ensureSafeAudiobookshelfUrl, parseAndNormalizeServerUrl } from './audiobookshelf-url.utils';
 
 /**
  * Stores prefixes in the same canonical form the matcher compares in, so a mapping saved as
@@ -71,15 +70,12 @@ function samePathMappings(left: AudiobookshelfPathMapping[], right: Audiobookshe
 @Injectable()
 export class AudiobookshelfSettingsService {
   private readonly logger = new Logger(AudiobookshelfSettingsService.name);
-  private readonly safeRemoteHostOptions: SafeRemoteHostOptions;
 
   constructor(
     private readonly repo: AudiobookshelfRepository,
     private readonly client: AudiobookshelfClientService,
     private readonly libraryService: LibraryService,
-  ) {
-    this.safeRemoteHostOptions = audiobookshelfSafeRemoteHostOptions();
-  }
+  ) {}
 
   async getSettings(userId: number): Promise<AudiobookshelfSettings> {
     const [row, hasSyncPermission] = await Promise.all([this.repo.findSettings(userId), this.repo.userHasAudiobookshelfSyncPermission(userId)]);
@@ -230,6 +226,6 @@ export class AudiobookshelfSettingsService {
   }
 
   private async assertSafeServerUrl(serverUrl: string): Promise<void> {
-    await ensureSafeUrl(serverUrl, this.safeRemoteHostOptions);
+    await ensureSafeAudiobookshelfUrl(serverUrl);
   }
 }

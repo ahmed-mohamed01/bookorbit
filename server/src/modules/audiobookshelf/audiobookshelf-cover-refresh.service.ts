@@ -13,6 +13,14 @@ import { AudiobookshelfRepository } from './audiobookshelf.repository';
 const COVER_LOOKUP_BATCH_SIZE = 500;
 const COVER_APPLY_CONCURRENCY = 5;
 
+/**
+ * Copied from upstream `BookService.bulkReExtractCover` and kept in step with it. It diverges
+ * deliberately in two ways: it consults the sidecar cover candidate lookup for a read order, and it
+ * applies covers in bounded-concurrency batches instead of upstream's strictly sequential loop, which
+ * is what makes it usable over a library of tens of thousands of books. Upstream exposes no per-book
+ * cover-source hook, so a thin wrapper is not possible. Re-check against upstream on each merge and
+ * delete this file the moment upstream grows such a hook.
+ */
 @Injectable()
 export class AudiobookshelfCoverRefreshService implements BulkCoverRefresher {
   private readonly logger = new Logger(AudiobookshelfCoverRefreshService.name);

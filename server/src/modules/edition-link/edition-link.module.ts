@@ -2,13 +2,14 @@ import { Module } from '@nestjs/common';
 
 import { BookModule } from '../book/book.module';
 import { LibraryModule } from '../library/library.module';
+import { EditionLinkProgressModule } from './edition-link-progress.module';
 import { EditionLinkController } from './edition-link.controller';
 import { EditionLinkRepository } from './edition-link.repository';
 import { EditionLinkSchemaBootstrapService } from './edition-link-schema-bootstrap.service';
 import { EditionLinkService } from './edition-link.service';
 
 @Module({
-  imports: [BookModule, LibraryModule],
+  imports: [BookModule, LibraryModule, EditionLinkProgressModule],
   controllers: [EditionLinkController],
   providers: [EditionLinkRepository, EditionLinkSchemaBootstrapService, EditionLinkService],
   exports: [EditionLinkRepository],

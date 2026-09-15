@@ -56,7 +56,7 @@ export function normalizeCore(title: string, seriesName?: string | null): string
   return core.replace(/\s+/g, ' ').trim() || normalizeText(title);
 }
 
-export function diceTokens(left: string, right: string): number {
+function diceTokens(left: string, right: string): number {
   const leftTokens = new Set(left.split(' ').filter(Boolean));
   const rightTokens = new Set(right.split(' ').filter(Boolean));
   if (leftTokens.size === 0 || rightTokens.size === 0) return 0;

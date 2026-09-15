@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Check, Download, Globe, Loader2, Magnet } from '@lucide/vue'
+import { Check, Download, Globe, Loader2, Magnet, Newspaper } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import type { ReleaseCandidateItem } from '@bookorbit/types'
+import type { DownloadDelivery, ReleaseCandidateItem } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
+import { protocolChipClass } from '@/features/book-requests/sourceColors'
 import { formatBytes } from '@/lib/formatting'
 import { formatDate, formatLanguageName } from '@/i18n/formatters'
 
 const props = defineProps<{
   release: ReleaseCandidateItem
+  /** What grabbing this release will do, stated by the indexer it came from. */
+  delivery: DownloadDelivery
   busy?: boolean
   grabbed?: boolean
   /** Renders the `expansion` slot under the row, for the request this release is downloading under. */
@@ -16,9 +19,6 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ grab: [release: ReleaseCandidateItem] }>()
 const { t } = useI18n()
-
-/** A swarm source states a seeder count; a direct source reports none. Same fallback the picker uses. */
-const seedsBack = computed(() => props.release.seeders !== null)
 
 /** Rank has to read before the number does, so the score carries a band colour. */
 const scoreClass = computed(() => {
@@ -37,11 +37,12 @@ const scoreSurfaceClass = computed(() => {
   return 'border-border bg-muted'
 })
 
-const protocolChipClass = computed(() =>
-  seedsBack.value
-    ? 'border-[var(--pill-torrent)]/40 bg-[var(--pill-torrent)]/10 text-[var(--pill-torrent)]'
-    : 'border-[var(--pill-direct)]/40 bg-[var(--pill-direct)]/10 text-[var(--pill-direct)]',
-)
+const protocolClass = computed(() => protocolChipClass(props.delivery))
+
+const protocolText = computed(() => t(`bookRequests.releases.protocol.${props.delivery === 'file' ? 'directPill' : props.delivery}`))
+
+/** Only a swarm has a position to report, "unknown" included; a file source has nothing to be unknown about. */
+const showsSeeders = computed(() => props.delivery === 'torrent')
 
 const seederText = computed(() =>
   props.release.seeders === null
@@ -56,7 +57,7 @@ const metaFacts = computed<string[]>(() => {
   if (props.release.formats.length > 0) facts.push(props.release.formats.map((value) => value.toUpperCase()).join(' + '))
   if (props.release.sizeBytes) facts.push(formatBytes(props.release.sizeBytes))
   if (props.release.fileCount !== null) facts.push(t('bookRequests.releases.fileCount', { count: props.release.fileCount }))
-  if (seedsBack.value) facts.push(seederText.value)
+  if (showsSeeders.value) facts.push(seederText.value)
   if (props.release.publishedAt) facts.push(formatDate(new Date(props.release.publishedAt)))
   return facts
 })
@@ -85,10 +86,11 @@ function handleGrab() {
           <p class="line-clamp-2 text-sm font-medium text-foreground">{{ release.title }}</p>
 
           <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
-            <span class="inline-flex items-center gap-1 rounded-full border px-1.5 py-px font-medium" :class="protocolChipClass">
-              <Magnet v-if="seedsBack" :size="11" aria-hidden="true" />
+            <span class="inline-flex items-center gap-1 rounded-full border px-1.5 py-px font-medium" :class="protocolClass">
+              <Magnet v-if="delivery === 'torrent'" :size="11" aria-hidden="true" />
+              <Newspaper v-else-if="delivery === 'usenet'" :size="11" aria-hidden="true" />
               <Globe v-else :size="11" aria-hidden="true" />
-              {{ seedsBack ? t('bookRequests.releases.protocol.torrent') : t('bookRequests.releases.protocol.directPill') }}
+              {{ protocolText }}
             </span>
             <span class="rounded-full border border-border px-1.5 py-px font-medium text-muted-foreground">{{ release.indexerName }}</span>
             <span v-if="release.tierName" class="rounded-full border border-primary/45 bg-primary/10 px-1.5 py-px font-medium text-primary">

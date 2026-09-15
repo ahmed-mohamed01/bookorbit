@@ -162,7 +162,7 @@ describe('DetailsTab cover surface', () => {
     mocks.api.mockImplementation(async (input) => {
       const url = String(input)
       if (url.includes('/metadata-score/weights')) return response({})
-      if (url.includes('/audio-progress')) return response(null)
+      if (url.includes('/playback-state')) return response(null)
       if (url.includes('/collections/membership')) return response([])
       if (url.includes('/kobo-state')) {
         return response({
@@ -429,7 +429,7 @@ describe('DetailsTab cover surface', () => {
     mocks.api.mockImplementation(async (input) => {
       const url = String(input)
       if (url.includes('/metadata-score/weights')) return response({})
-      if (url.includes('/audio-progress')) return response(null)
+      if (url.includes('/playback-state')) return response(null)
       if (url.includes('/collections/membership')) return response([])
       if (url.includes('/kobo-state')) {
         return response({
@@ -660,7 +660,7 @@ describe('DetailsTab cover surface', () => {
       const url = String(input)
       if (url.endsWith('/added-at')) return response(updated)
       if (url.includes('/metadata-score/weights')) return response({})
-      if (url.includes('/audio-progress')) return response(null)
+      if (url.includes('/playback-state')) return response(null)
       if (url.includes('/collections/membership')) return response([])
       if (url.includes('/kobo-state')) return response({ eligibleForKoboSync: false, syncCollections: [], readingState: null, snapshots: [] })
       if (url.includes('/koreader/books/')) return response(null)

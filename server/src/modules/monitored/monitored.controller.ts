@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query, Res, UseFilters } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Put, Query, Res, UseFilters } from '@nestjs/common';
 import { createReadStream } from 'fs';
 import { stat } from 'fs/promises';
 import type { FastifyReply } from 'fastify';
-import { Permission } from '@bookorbit/types';
+import { AuditAction, AuditResource, Permission } from '@bookorbit/types';
 
+import { Auditable } from '../../common/decorators/auditable.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { imageContentTypeFromPath } from '../../common/image-content-type';
@@ -28,6 +29,8 @@ import {
 import { MonitoredCoverService } from './monitored-cover.service';
 import { MonitoredExceptionFilter } from './monitored-exception.filter';
 import { MonitoredService } from './monitored.service';
+import { MonitoredSettingsService } from './monitored-settings.service';
+import { UpdateMonitoredSettingsDto } from './dto/update-monitored-settings.dto';
 
 @Controller('monitored')
 @UseFilters(MonitoredExceptionFilter)
@@ -35,7 +38,26 @@ export class MonitoredController {
   constructor(
     private readonly service: MonitoredService,
     private readonly monitoredCoverService: MonitoredCoverService,
+    private readonly monitoredSettings: MonitoredSettingsService,
   ) {}
+
+  @Get('settings')
+  @RequirePermission(Permission.ManageAppSettings)
+  getSettings() {
+    return this.monitoredSettings.getMonitoredSettings();
+  }
+
+  @Put('settings')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(Permission.ManageAppSettings)
+  @Auditable({
+    action: AuditAction.AppSettingsUpdate,
+    resource: AuditResource.AppSettings,
+    description: 'Updated monitored author settings',
+  })
+  setSettings(@Body() dto: UpdateMonitoredSettingsDto) {
+    return this.monitoredSettings.setMonitoredSettings(dto);
+  }
 
   @Get()
   getSummary(@CurrentUser() user: RequestUser) {

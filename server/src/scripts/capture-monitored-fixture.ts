@@ -13,6 +13,7 @@ import { Pool } from 'pg';
 
 import { createPostgresClientConfig } from '../db/postgres-connection-config';
 import * as schema from '../db/schema';
+import { GoodreadsProvider } from '../modules/metadata-fetch/providers/goodreads/goodreads.provider';
 import { HardcoverClient } from '../modules/metadata-fetch/providers/hardcover/hardcover.client';
 import { ProviderConfigService } from '../modules/metadata-preferences/provider-config.service';
 import { AudibleBibliographyProvider } from '../modules/monitored/providers/audible-bibliography.provider';
@@ -48,7 +49,7 @@ async function main(): Promise<void> {
   const config = await providerConfig.getConfig();
   const providers: AuthorBibliographyProvider[] = [
     new HardcoverBibliographyProvider(new HardcoverClient()),
-    new GoodreadsBibliographyProvider(),
+    new GoodreadsBibliographyProvider(new GoodreadsProvider(providerConfig)),
     new AudibleBibliographyProvider(),
   ];
 

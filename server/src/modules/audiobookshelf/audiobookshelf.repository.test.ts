@@ -740,40 +740,50 @@ describe('AudiobookshelfRepository', () => {
       expect(db.select).not.toHaveBeenCalled();
     });
 
-    it('keys the newest-wins inputs by bookId, scoped to the user', async () => {
+    it('keys the newest-wins inputs and the CAS revision by bookId, scoped to the user', async () => {
       const updatedAt = new Date('2026-07-19T00:00:00Z');
-      const chain = makeChain([{ bookId: 10, percentage: 42, updatedAt }]);
+      const chain = makeChain([{ bookId: 10, percentage: 42, updatedAt, revision: 4 }]);
       const db = { select: vi.fn(() => chain) };
       const repo = new AudiobookshelfRepository(db as never);
 
-      await expect(repo.findAudioProgressForBooks(7, [10])).resolves.toEqual(new Map([[10, { percentage: 42, updatedAt }]]));
+      await expect(repo.findAudioProgressForBooks(7, [10])).resolves.toEqual(new Map([[10, { percentage: 42, updatedAt, revision: 4 }]]));
       expect(someCall(eq, (c, v) => c === schema.audiobookProgress.userId && v === 7)).toBe(true);
       expect(someCall(inArray, (c, v) => c === schema.audiobookProgress.bookId && Array.isArray(v))).toBe(true);
     });
   });
 
   describe('upsertAudioProgressGuarded', () => {
-    it('inserts with conflict-yield when there is no snapshot row', async () => {
-      const chain = makeChain([{ updatedAt: new Date('2026-07-20T00:00:00Z') }]);
+    it('inserts with conflict-yield and the ABS capturedAt when there is no snapshot row', async () => {
+      const capturedAt = new Date('2026-07-20T09:00:00Z');
+      const chain = makeChain([{ updatedAt: new Date('2026-07-20T00:00:00Z'), revision: 1 }]);
       const db = { insert: vi.fn(() => chain) };
       const repo = new AudiobookshelfRepository(db as never);
 
-      const row = await repo.upsertAudioProgressGuarded(7, 10, 501, 1000, 100, null);
+      const row = await repo.upsertAudioProgressGuarded(7, 10, 501, 1000, 100, null, capturedAt);
       expect(row).toBeDefined();
       expect(db.insert).toHaveBeenCalledOnce();
       expect(chain.onConflictDoNothing).toHaveBeenCalledOnce();
+      expect(chain.values).toHaveBeenCalledWith(expect.objectContaining({ capturedAt }));
+      // Insert leaves `revision` to the column default of 1.
+      expect(chain.values.mock.calls[0][0]).not.toHaveProperty('revision');
     });
 
-    it('updates only when updatedAt still matches the snapshot, yielding to a concurrent local write', async () => {
-      const expected = new Date('2026-07-19T00:00:00Z');
+    it('updates only when revision still matches the snapshot, bumping it and stamping capturedAt', async () => {
+      const capturedAt = new Date('2026-07-19T09:00:00Z');
       const chain = makeChain([]);
       const db = { update: vi.fn(() => chain) };
       const repo = new AudiobookshelfRepository(db as never);
 
-      const row = await repo.upsertAudioProgressGuarded(7, 10, 501, 1000, 100, expected);
+      const row = await repo.upsertAudioProgressGuarded(7, 10, 501, 1000, 100, 4, capturedAt);
       expect(row).toBeUndefined();
       expect(db.update).toHaveBeenCalledOnce();
-      expect(someCall(eq, (c, v) => c === schema.audiobookProgress.updatedAt && v === expected)).toBe(true);
+      expect(someCall(eq, (c, v) => c === schema.audiobookProgress.revision && v === 4)).toBe(true);
+      const values = chain.set.mock.calls[0][0] as Record<string, unknown>;
+      expect(values.capturedAt).toBe(capturedAt);
+      expect(values.revision).toBeDefined();
+      // operationId / manifestRevision identify a player save; ABS must not claim one.
+      expect(values).not.toHaveProperty('operationId');
+      expect(values).not.toHaveProperty('manifestRevision');
     });
   });
 

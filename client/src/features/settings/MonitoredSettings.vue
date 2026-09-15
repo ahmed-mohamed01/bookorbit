@@ -39,7 +39,7 @@ function applySettings(settings: MonitoredSettings) {
 
 async function loadSettings() {
   try {
-    const response = await api('/api/v1/app-settings/monitored')
+    const response = await api('/api/v1/monitored/settings')
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     applySettings(await response.json())
   } catch {
@@ -68,7 +68,7 @@ async function saveSettings() {
     syncIntervalHours: interval,
   }
   try {
-    const response = await api('/api/v1/app-settings/monitored', {
+    const response = await api('/api/v1/monitored/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

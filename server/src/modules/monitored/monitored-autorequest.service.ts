@@ -1,12 +1,11 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { MONITORED_FORMATS } from '@bookorbit/types';
+import { isWorkVisible, MONITORED_FORMATS } from '@bookorbit/types';
 import type { MonitoredAuthorConfig, MonitoredFormat, MonitoredWork } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { BookRequestService } from '../book-request/book-request.service';
 import { MonitoredStoreService } from './monitored-store.service';
-import { isWorkVisible } from './monitored-work-visibility';
 import { releaseDateRange } from './release-window';
 
 type AutoRequestOptions = { autoGrab?: boolean; deferAutomation?: boolean };
@@ -132,6 +131,7 @@ export class MonitoredAutoRequestService {
         const results = await Promise.allSettled(
           active.map(({ candidate, index }) =>
             this.submitWorkRequest(user, monitor, candidate.work, candidate.format, {
+              // The auto_grab override feeds findDueForResearch even when instance auto-search is off; operators disable monitoring to stop that spend.
               autoGrab: true,
               ...(index >= FAN_OUT_CONCURRENCY ? { deferAutomation: true } : {}),
             }),

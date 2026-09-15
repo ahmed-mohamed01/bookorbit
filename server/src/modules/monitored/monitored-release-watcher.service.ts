@@ -37,7 +37,7 @@ function groupByWork(releases: MonitoredDueRelease[]): MonitoredDueRelease[][] {
   return [...groups.values()];
 }
 
-export interface ReleaseSweepResult {
+interface ReleaseSweepResult {
   monitorsChecked: number;
   monitorsFailed: number;
   seeded: number;

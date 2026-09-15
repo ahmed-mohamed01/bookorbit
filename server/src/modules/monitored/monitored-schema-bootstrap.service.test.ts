@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MonitoredSchemaBootstrapService } from './monitored-schema-bootstrap.service';
 
 const TABLE_NAMES = [
+  'monitored_settings',
   'monitored_authors',
   'monitored_books',
   'monitored_author_works',
@@ -48,7 +49,7 @@ describe('MonitoredSchemaBootstrapService', () => {
     expect(store.findMissingTables).toHaveBeenCalledWith(TABLE_NAMES);
     expect(store.applySchemaStatements).toHaveBeenCalledTimes(1);
     const statements = store.applySchemaStatements.mock.calls[0]![0] as string[];
-    expect(statements.filter((statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'))).toHaveLength(8);
+    expect(statements.filter((statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'))).toHaveLength(9);
     expect(statements.some((statement) => statement.includes('auto_grab'))).toBe(false);
     expect(statements.some((statement) => statement.includes('public.bookorbit_unaccent("title") gin_trgm_ops'))).toBe(true);
     expect(statements.every((statement) => !statement.includes('--> statement-breakpoint'))).toBe(true);
@@ -65,7 +66,7 @@ describe('MonitoredSchemaBootstrapService', () => {
     const message = logSpy.mock.calls[0]![0] as string;
     expect(message).toContain('[monitored.schema_bootstrap] [end]');
     expect(message).toContain('durationMs=');
-    expect(message).toContain('tablesCreated=8');
+    expect(message).toContain('tablesCreated=9');
     expect(errorSpy).not.toHaveBeenCalled();
   });
 

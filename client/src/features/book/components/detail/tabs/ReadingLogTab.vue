@@ -14,7 +14,7 @@ import ReadingLogVitals from '../reading-log/ReadingLogVitals.vue'
 import ReadingLogLedger from '../reading-log/ReadingLogLedger.vue'
 import ReadingLogAttempts from '../reading-log/ReadingLogAttempts.vue'
 import ReadingAlignmentControl from './ReadingAlignmentControl.vue'
-import { useBookEvents } from '@/features/book/composables/useBookEvents'
+import { useBookProgressRefresh } from '@/features/book/composables/useBookProgressRefresh'
 import ReadingLogRecords from '../reading-log/ReadingLogRecords.vue'
 import ReadingLogBand from '../reading-log/ReadingLogBand.vue'
 import ReadingLogEmptyStage from '../reading-log/ReadingLogEmptyStage.vue'
@@ -105,12 +105,9 @@ const bookTitle = computed(() => props.book.title ?? t('book.detail.readingLog.u
 const emptyStageDismissed = ref(false)
 const attemptsRef = ref<InstanceType<typeof ReadingLogAttempts> | null>(null)
 
-const { onBookProgressChanged } = useBookEvents()
-onBookProgressChanged((event) => {
-  if (event.bookId === props.book.id) {
-    void reload()
-    void reloadAttempts({ silent: true })
-  }
+useBookProgressRefresh(() => {
+  void reload()
+  void reloadAttempts({ silent: true })
 })
 
 // Both lists have to have landed before the tab can claim there is nothing here: deciding on the
@@ -282,12 +279,12 @@ const quickFilters = computed<{ label: string; value: QuickFilter }[]>(() => [
         </div>
       </div>
 
-      <template v-else-if="blank">
-        <ReadingLogEmptyStage class="xl:col-start-2 xl:row-start-1" @add-session="handleOpenAddSession" @record-past="handleRecordPast" />
-        <div class="flex min-h-0 flex-col gap-4 xl:col-start-3 xl:row-start-1">
-          <ReadingAlignmentControl :book="book" />
-        </div>
-      </template>
+      <ReadingLogEmptyStage
+        v-else-if="blank"
+        class="xl:col-start-2 xl:row-start-1"
+        @add-session="handleOpenAddSession"
+        @record-past="handleRecordPast"
+      />
 
       <template v-else>
         <ReadingLogLedger
@@ -377,6 +374,11 @@ const quickFilters = computed<{ label: string; value: QuickFilter }[]>(() => [
 
         <ReadingLogBand class="h-56 xl:col-span-full xl:row-start-2 xl:h-auto" :sessions="sessions" :stats="stats" :loading="loading" />
       </template>
+
+      <!-- Outside the v-if chain above on purpose: the grid places it by explicit column/row. -->
+      <div v-if="resolved && blank" class="flex min-h-0 flex-col gap-4 xl:col-start-3 xl:row-start-1">
+        <ReadingAlignmentControl :book="book" />
+      </div>
     </div>
 
     <AddSessionDialog

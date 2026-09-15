@@ -40,7 +40,7 @@ describe('MonitoredSettings', () => {
   it('loads the current server setting', async () => {
     const wrapper = await mountSettings()
 
-    expect(apiMock).toHaveBeenCalledWith('/api/v1/app-settings/monitored')
+    expect(apiMock).toHaveBeenCalledWith('/api/v1/monitored/settings')
     const inputs = wrapper.findAll('input[type="number"]')
     expect((inputs[0].element as HTMLInputElement).value).toBe('10')
     expect((inputs[1].element as HTMLInputElement).value).toBe('12')
@@ -54,7 +54,7 @@ describe('MonitoredSettings', () => {
     await wrapper.get('button:not([role="switch"])').trigger('click')
     await flushPromises()
 
-    expect(apiMock).toHaveBeenLastCalledWith('/api/v1/app-settings/monitored', {
+    expect(apiMock).toHaveBeenLastCalledWith('/api/v1/monitored/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshCooldownMinutes: 30, syncEnabled: true, syncIntervalHours: 24 }),

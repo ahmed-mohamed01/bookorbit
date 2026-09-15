@@ -1,20 +1,17 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import type { ProviderConfigurations } from '@bookorbit/types';
 
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import { fetchWithThrottle } from '../../metadata-fetch/fetch-with-throttle';
-import { PROVIDER_DELAYS_MS, PROVIDER_TIMEOUT_MS } from '../../metadata-fetch/providers/provider-constants';
-import { buildRequestSignal, sleep, stripHtml } from '../../metadata-fetch/providers/provider-utils';
+import { ProviderThrottleError } from '../../metadata-fetch/provider-throttle.error';
+import { GoodreadsProvider } from '../../metadata-fetch/providers/goodreads/goodreads.provider';
+import { PROVIDER_BUDGETS_MS, PROVIDER_DELAYS_MS, PROVIDER_TIMEOUT_MS } from '../../metadata-fetch/providers/provider-constants';
+import { buildRequestSignal, createSearchDeadline, sleep, stripHtml } from '../../metadata-fetch/providers/provider-utils';
 import { normalizeText } from '../reconcile/observation-matcher';
 import type { Observation } from '../reconcile/observation.types';
 import type { AuthorBibliographyProvider, BibliographyAuthorRef } from './author-bibliography-provider';
+import { authorKey, nameVariants } from './provider-author-name.utils';
 
-const HEADERS: HeadersInit = {
-  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-  accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-  'accept-language': 'en-US,en;q=0.9',
-};
-const JSON_HEADERS: HeadersInit = { ...HEADERS, accept: 'application/json,text/plain,*/*' };
 const MAX_PAGES = 3;
 
 export interface GoodreadsBibliographyRow {
@@ -29,18 +26,6 @@ export interface GoodreadsBibliographyRow {
 
 type GoodreadsAutocompleteAuthor = { id: string | number; name: string };
 type GoodreadsAutocompleteRow = { author?: GoodreadsAutocompleteAuthor };
-
-function authorKey(name: string): string {
-  return normalizeText(name).replace(/ /g, '');
-}
-
-function nameVariants(name: string): string[] {
-  return [...new Set([name, name.replace(/([a-z])([A-Z])/g, '$1 $2')])];
-}
-
-function isWafChallenge(status: number, html: string): boolean {
-  return status === 202 || /awsWafCookieDomainList|AwsWafIntegration|id=["']challenge-container["']/.test(html);
-}
 
 export function mapGoodreadsObservations(rawRows: unknown[]): Observation[] {
   return (rawRows as GoodreadsBibliographyRow[]).flatMap((row) => {
@@ -86,6 +71,8 @@ export class GoodreadsBibliographyProvider implements AuthorBibliographyProvider
   readonly curated = false;
   private readonly logger = new Logger(GoodreadsBibliographyProvider.name);
 
+  constructor(private readonly goodreads: GoodreadsProvider) {}
+
   isEnabled(config: ProviderConfigurations): boolean {
     return config.goodreads.enabled;
   }
@@ -103,7 +90,7 @@ export class GoodreadsBibliographyProvider implements AuthorBibliographyProvider
     try {
       for (const variant of nameVariants(name)) {
         const url = `https://www.goodreads.com/book/auto_complete?format=json&q=${encodeURIComponent(variant)}`;
-        const response = await fetchWithThrottle(url, { headers: JSON_HEADERS, signal: buildRequestSignal(PROVIDER_TIMEOUT_MS.SCRAPE, signal) });
+        const response = await fetchWithThrottle(url, { signal: buildRequestSignal(PROVIDER_TIMEOUT_MS.SCRAPE, signal) });
         if (!response.ok) continue;
         const rows = (await response.json()) as GoodreadsAutocompleteRow[];
         const match = rows.find((row) => row.author && authorKey(row.author.name) === authorKey(name))?.author;
@@ -130,15 +117,16 @@ export class GoodreadsBibliographyProvider implements AuthorBibliographyProvider
     this.logger.log(
       `[monitored.provider.goodreads] [start] authorId="${sanitizeLogValue(authorRef.id)}" op=fetch authorName="${sanitizeLogValue(authorRef.name)}" - bibliography fetch started`,
     );
+    const deadline = createSearchDeadline(PROVIDER_BUDGETS_MS.GOODREADS_SEARCH, signal);
     try {
       const rows: GoodreadsBibliographyRow[] = [];
       for (let page = 1; page <= MAX_PAGES; page++) {
         if (page > 1) await sleep(PROVIDER_DELAYS_MS.GOODREADS_BETWEEN_REQUESTS, signal);
         const url = `https://www.goodreads.com/author/list/${encodeURIComponent(authorRef.id)}?per_page=100&page=${page}`;
-        const response = await fetchWithThrottle(url, { headers: HEADERS, redirect: 'follow', signal: buildRequestSignal(30_000, signal) });
-        if (!response.ok) throw new Error(`Goodreads list returned HTTP ${response.status}`);
-        const html = await response.text();
-        if (isWafChallenge(response.status, html)) throw new Error('Goodreads served a bot challenge instead of the author list');
+        const result = await this.goodreads.fetchHtml(url, 'lookup', { providerId: authorRef.id, deadline });
+        if (result.outcome === 'blocked') throw new ProviderThrottleError(undefined, 'bot challenge');
+        if (!result.html) throw new ServiceUnavailableException('Goodreads author list is temporarily unavailable');
+        const html = result.html;
         const chunks = html.split(/class="bookTitle"/).slice(1);
         for (const chunk of chunks) {
           const title = chunk.match(/<span itemprop=.name.[^>]*>([^<]+)</)?.[1];
@@ -163,6 +151,8 @@ export class GoodreadsBibliographyProvider implements AuthorBibliographyProvider
     } catch (error) {
       this.logFailure('fetch', authorRef.name, startedAt, error, authorRef.id);
       throw error;
+    } finally {
+      deadline.dispose();
     }
   }
 

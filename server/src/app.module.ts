@@ -91,6 +91,7 @@ import { BookMoveModule } from './modules/book-move/book-move.module';
 import { MonitoredModule } from './modules/monitored/monitored.module';
 import { EditionLinkModule } from './modules/edition-link/edition-link.module';
 import { ReadingAlignmentModule } from './modules/reading-alignment/reading-alignment.module';
+import { AudiobookModule } from './modules/audiobook/audiobook.module';
 
 @Module({
   imports: [
@@ -123,6 +124,7 @@ import { ReadingAlignmentModule } from './modules/reading-alignment/reading-alig
     LibraryModule,
     PathModule,
     BookModule,
+    AudiobookModule,
     CatalogModule,
     CoverModule,
     CollectionModule,

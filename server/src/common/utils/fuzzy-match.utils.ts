@@ -6,6 +6,10 @@ export function normalizeIsbn(value: string | null | undefined): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+// Matches upstream's cap in hardcover-import-fuzzy-index.ts. `normalizeName` feeds an O(n*m)
+// Levenshtein from user-supplied text, so the input is bounded before any scoring runs.
+const MAX_MATCH_TEXT_LENGTH = 512;
+
 // A number, plus the ordinal suffix it carries when it has one. Matching the suffix as part of the
 // token is what keeps "50th" from degrading into a bare "50" under backtracking.
 const NUMBER_TOKEN = /\d+(?:\.\d+)?(?:st|nd|rd|th)?/g;
@@ -71,6 +75,7 @@ function normalizeTitle(value: string): string {
 
 export function normalizeName(value: string): string {
   return value
+    .slice(0, MAX_MATCH_TEXT_LENGTH)
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()

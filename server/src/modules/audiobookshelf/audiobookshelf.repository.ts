@@ -1,13 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { AudiobookshelfBookStateBucket, ContentFilterRules } from '@bookorbit/types';
-import { Permission } from '@bookorbit/types';
+import { AUDIO_FORMAT_LIST, Permission } from '@bookorbit/types';
 import { and, asc, desc, eq, gt, ilike, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
-import { AUDIO_FORMATS } from '../scanner/lib/classify';
 import {
   aggregateReadingSessionDailyStats,
   getDayRangeForDateKeys,
@@ -341,7 +340,7 @@ export class AudiobookshelfRepository {
       select 1 from ${schema.bookFiles}
       where ${schema.bookFiles.bookId} = ${schema.books.id}
         and ${schema.bookFiles.role} = 'content'
-        and ${inArray(schema.bookFiles.format, [...AUDIO_FORMATS])}
+        and ${inArray(schema.bookFiles.format, [...AUDIO_FORMAT_LIST])}
     )`;
   }
 
@@ -997,9 +996,12 @@ export class AudiobookshelfRepository {
   }
 
   // Local audio position rows for a batch of books, keyed by bookId. Feeds the sync loop's
-  // newest-wins guard, which needs the same (percentage, updatedAt) pair the single-book read returned.
-  async findAudioProgressForBooks(userId: number, bookIds: number[]): Promise<Map<number, { percentage: number; updatedAt: Date }>> {
-    const byBook = new Map<number, { percentage: number; updatedAt: Date }>();
+  // newest-wins guard (percentage, updatedAt) and the CAS base version (revision).
+  async findAudioProgressForBooks(
+    userId: number,
+    bookIds: number[],
+  ): Promise<Map<number, { percentage: number; updatedAt: Date; revision: number }>> {
+    const byBook = new Map<number, { percentage: number; updatedAt: Date; revision: number }>();
     if (bookIds.length === 0) return byBook;
     for (const group of chunk([...new Set(bookIds)], BOOK_ID_LOOKUP_CHUNK)) {
       const rows = await this.db
@@ -1007,20 +1009,27 @@ export class AudiobookshelfRepository {
           bookId: schema.audiobookProgress.bookId,
           percentage: schema.audiobookProgress.percentage,
           updatedAt: schema.audiobookProgress.updatedAt,
+          revision: schema.audiobookProgress.revision,
         })
         .from(schema.audiobookProgress)
         .where(and(eq(schema.audiobookProgress.userId, userId), inArray(schema.audiobookProgress.bookId, group)));
-      for (const row of rows) byBook.set(row.bookId, { percentage: row.percentage, updatedAt: row.updatedAt });
+      for (const row of rows) byBook.set(row.bookId, { percentage: row.percentage, updatedAt: row.updatedAt, revision: row.revision });
     }
     return byBook;
   }
 
   /**
-   * Position write with a compare-and-swap on updatedAt: the batched pre-load's snapshot is the row
-   * version this write is allowed to replace. A concurrent local write (web player, Kobo, KOReader)
-   * between pre-load and apply changes updatedAt, the guard misses, and the write is dropped, so a
-   * stale ABS position can never rewind live local playback. With no snapshot the insert yields to
-   * any row that appeared since (local playback started mid-run, local wins).
+   * Position write with a compare-and-swap on `revision`, the same optimistic-concurrency token the
+   * web player's `AudiobookRepository.updatePlaybackState` predicates on: the batched pre-load's
+   * snapshot is the row version this write is allowed to replace. A concurrent local write (web
+   * player, Kobo, KOReader) between pre-load and apply bumps revision, the guard misses, and the
+   * write is dropped, so a stale ABS position can never rewind live local playback. Bumping revision
+   * here is what makes the player's next save see a 409 and reload. With no snapshot the insert
+   * yields to any row that appeared since (local playback started mid-run, local wins).
+   *
+   * `capturedAt` is the ABS-side timestamp of the position, not the write time, so the API reports
+   * when the listening actually happened. `operationId`/`manifestRevision` stay untouched: they
+   * identify a player save, and ABS is not one.
    */
   async upsertAudioProgressGuarded(
     userId: number,
@@ -1028,25 +1037,33 @@ export class AudiobookshelfRepository {
     currentFileId: number,
     positionSeconds: number,
     percentage: number,
-    expectedUpdatedAt: Date | null,
+    expectedRevision: number | null,
+    capturedAt: Date,
   ) {
     const now = new Date();
-    if (expectedUpdatedAt == null) {
+    if (expectedRevision == null) {
       const [row] = await this.db
         .insert(schema.audiobookProgress)
-        .values({ userId, bookId, currentFileId, positionSeconds, percentage, updatedAt: now })
+        .values({ userId, bookId, currentFileId, positionSeconds, percentage, capturedAt, updatedAt: now })
         .onConflictDoNothing({ target: [schema.audiobookProgress.userId, schema.audiobookProgress.bookId] })
         .returning();
       return row;
     }
     const [row] = await this.db
       .update(schema.audiobookProgress)
-      .set({ currentFileId, positionSeconds, percentage, updatedAt: now })
+      .set({
+        currentFileId,
+        positionSeconds,
+        percentage,
+        capturedAt,
+        revision: sql`${schema.audiobookProgress.revision} + 1`,
+        updatedAt: now,
+      })
       .where(
         and(
           eq(schema.audiobookProgress.userId, userId),
           eq(schema.audiobookProgress.bookId, bookId),
-          eq(schema.audiobookProgress.updatedAt, expectedUpdatedAt),
+          eq(schema.audiobookProgress.revision, expectedRevision),
         ),
       )
       .returning();

@@ -1,11 +1,16 @@
 import { IsBoolean, IsInt, IsOptional, Max, Min } from 'class-validator';
 
-import { MAX_MONITORED_SYNC_INTERVAL_HOURS, MIN_MONITORED_SYNC_INTERVAL_HOURS } from '../../../common/constants/app-settings.constants';
+import {
+  MAX_MONITORED_REFRESH_COOLDOWN_MINUTES,
+  MAX_MONITORED_SYNC_INTERVAL_HOURS,
+  MIN_MONITORED_REFRESH_COOLDOWN_MINUTES,
+  MIN_MONITORED_SYNC_INTERVAL_HOURS,
+} from '../monitored-settings.constants';
 
 export class UpdateMonitoredSettingsDto {
   @IsInt()
-  @Min(1)
-  @Max(1440)
+  @Min(MIN_MONITORED_REFRESH_COOLDOWN_MINUTES)
+  @Max(MAX_MONITORED_REFRESH_COOLDOWN_MINUTES)
   refreshCooldownMinutes: number;
 
   @IsOptional()

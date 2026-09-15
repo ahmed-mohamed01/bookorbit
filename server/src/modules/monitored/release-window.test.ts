@@ -27,6 +27,8 @@ describe('releaseDateRange', () => {
     expect(releaseDateRange('2026', 'day')).toBeNull();
     expect(releaseDateRange('2026', 'month')).toBeNull();
     expect(releaseDateRange('not a date', null)).toBeNull();
+    expect(releaseDateRange('2026-13', null)).toBeNull();
+    expect(releaseDateRange('2026-02-30', null)).toBeNull();
     expect(releaseDateRange('', null)).toBeNull();
   });
 });
@@ -62,6 +64,8 @@ describe('releaseDueDay', () => {
     ['2026-12', '2027-01-01'],
     ['2026', '2027-01-01'],
     ['not a date', null],
+    ['2026-13', null],
+    ['2026-02-30', null],
   ])('returns the first SQL due day for %s', (storedDate, expected) => {
     expect(releaseDueDay(storedDate)).toBe(expected);
   });

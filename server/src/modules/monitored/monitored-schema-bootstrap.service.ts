@@ -6,6 +6,7 @@ import { MonitoredStoreService } from './monitored-store.service';
 import { MONITORED_SCHEMA_SQL } from './schema/monitored-schema';
 
 const TABLE_NAMES = [
+  'monitored_settings',
   'monitored_authors',
   'monitored_books',
   'monitored_author_works',

@@ -35,6 +35,7 @@ function descriptor(overrides: Partial<IndexerAdapterDescriptor> = {}): IndexerA
     mediaKinds: ['ebook', 'audiobook', 'comic'],
     usesCategories: true,
     seedsBack: true,
+    delivery: 'torrent',
     supportsIsbnSearch: false,
     defaultCategories: { ebook: [7020], audiobook: [3030], comic: [7030] },
     settingsFields: [],
@@ -44,8 +45,8 @@ function descriptor(overrides: Partial<IndexerAdapterDescriptor> = {}): IndexerA
 
 /**
  * An open library: no credential, no categories, nothing seeded back, and an address of its own.
- * A plugin rather than a built-in, because torznab is the only built-in and it is the opposite of
- * this on every one of those.
+ * A plugin rather than a built-in because it serves files directly rather than speaking one of
+ * the built-in indexer protocols.
  */
 const OPEN_LIBRARY = descriptor({
   type: 'open-library',
@@ -55,6 +56,7 @@ const OPEN_LIBRARY = descriptor({
   mediaKinds: ['ebook'],
   usesCategories: false,
   seedsBack: false,
+  delivery: 'file',
   defaultCategories: { ebook: [], audiobook: [], comic: [] },
   defaultBaseUrl: 'https://openlibrary.example',
 })
@@ -65,6 +67,7 @@ const PLUGIN = descriptor({
   label: 'Demo Tracker',
   builtIn: false,
   version: '2.4.1',
+  updateable: true,
   requiresCredential: true,
   credentialKind: 'sessionId',
   baseUrlHint: "The tracker's own address.",
@@ -92,6 +95,9 @@ function indexer(overrides: Partial<IndexerItem> = {}): IndexerItem {
     baseUrl: 'http://127.0.0.1:9696/1',
     hasCredential: true,
     allowPrivateAddress: true,
+    applyTrackerSeedGoals: true,
+    seedRatioGoal: null,
+    seedTimeMinutes: null,
     categories: { ebook: [7020], audiobook: [3030], comic: [7030] },
     disabledMediaKinds: [],
     isbnSearchDisabled: false,
@@ -128,11 +134,22 @@ function response(body: unknown, ok = true): Response {
 }
 
 async function mountPanel(
-  options: { indexers?: IndexerItem[]; adapters?: IndexerAdapterDescriptor[]; pluginFailures?: Array<{ directory: string; reason: string }> } = {},
+  options: {
+    indexers?: IndexerItem[]
+    adapters?: IndexerAdapterDescriptor[]
+    pluginFailures?: Array<{ directory: string; reason: string }>
+    pluginUpdates?: unknown[]
+  } = {},
 ) {
-  const { indexers = [], adapters = [descriptor(), OPEN_LIBRARY], pluginFailures = [] } = options
+  const { indexers = [], adapters = [descriptor(), OPEN_LIBRARY], pluginFailures = [], pluginUpdates = [] } = options
   apiMock.mockImplementation((url: string) =>
-    Promise.resolve(url.endsWith('/adapters') ? response({ adapters, pluginFailures }) : response({ indexers, encryptionConfigured: true })),
+    Promise.resolve(
+      url.endsWith('/adapters')
+        ? response({ adapters, pluginFailures })
+        : url.endsWith('/plugins/updates')
+          ? response({ updates: pluginUpdates })
+          : response({ indexers, encryptionConfigured: true }),
+    ),
   )
   const wrapper = mount(RequestIndexersPanel, { global: { stubs: DROPDOWN_STUBS } })
   mounted = wrapper
@@ -345,6 +362,65 @@ describe('RequestIndexersPanel', () => {
       const labels = [...sheet().querySelectorAll('button')].map((button) => button.textContent?.trim())
       expect(labels).toContain('Install plugin')
       expect(labels).not.toContain('Save')
+    })
+
+    it('shows, verifies and installs a published signed update', async () => {
+      const updates = [{ type: 'demo-tracker', currentVersion: '2.4.1', latestVersion: '2.5.0', state: 'available', autoUpdate: false }]
+      const review = {
+        ...INSPECTION,
+        type: 'demo-tracker',
+        label: 'Demo Tracker',
+        version: '2.5.0',
+        currentVersion: '2.4.1',
+        sha256: 'a'.repeat(64),
+        verified: true,
+        replaces: true,
+      }
+      const usingPlugin = indexer({ adapterType: 'demo-tracker', name: 'A tracker' })
+      apiMock.mockImplementation((url: string, init?: RequestInit) => {
+        if (url.endsWith('/plugins/demo-tracker/update/inspect')) return Promise.resolve(response(review))
+        if (url.endsWith('/plugins/demo-tracker/update') && init?.method === 'POST') {
+          return Promise.resolve(response({ ...updates[0], currentVersion: '2.5.0', state: 'current' }))
+        }
+        if (url.endsWith('/plugins/updates')) return Promise.resolve(response({ updates }))
+        if (url.endsWith('/adapters')) return Promise.resolve(response({ adapters: [descriptor(), PLUGIN], pluginFailures: [] }))
+        return Promise.resolve(response({ indexers: [usingPlugin], encryptionConfigured: true }))
+      })
+      const wrapper = mount(RequestIndexersPanel, { global: { stubs: DROPDOWN_STUBS } })
+      mounted = wrapper
+      await flushPromises()
+
+      expect(wrapper.text()).toContain('Version 2.5.0 available')
+      await clickInPanel(wrapper, 'Review update')
+      expect(sheet().textContent).toContain("matches the publisher's Ed25519 signature")
+
+      clickInSheet('Replace plugin')
+      await flushPromises()
+
+      expect(apiMock).toHaveBeenCalledWith(
+        `${PATH}/plugins/demo-tracker/update`,
+        expect.objectContaining({ method: 'POST', body: JSON.stringify({ sha256: 'a'.repeat(64) }) }),
+      )
+      expect(toastMock.success).toHaveBeenCalledWith('Updated Demo Tracker to 2.5.0.')
+    })
+
+    it('requires an explicit per-plugin opt-in for automatic signed updates', async () => {
+      const status = { type: 'demo-tracker', currentVersion: '2.4.1', latestVersion: '2.5.0', state: 'available', autoUpdate: false }
+      const usingPlugin = indexer({ adapterType: 'demo-tracker', name: 'A tracker' })
+      const wrapper = await mountPanel({ indexers: [usingPlugin], adapters: [descriptor(), PLUGIN], pluginUpdates: [status] })
+      apiMock.mockClear()
+      apiMock.mockResolvedValue(response({ ...status, autoUpdate: true }))
+
+      const automatic = wrapper.find('[aria-label="Install signed updates automatically"]')
+      expect(automatic.attributes('aria-checked')).toBe('false')
+      await automatic.trigger('click')
+      await flushPromises()
+
+      expect(apiMock).toHaveBeenCalledWith(
+        `${PATH}/plugins/demo-tracker/auto-update`,
+        expect.objectContaining({ method: 'PUT', body: JSON.stringify({ enabled: true }) }),
+      )
+      expect(automatic.attributes('aria-checked')).toBe('true')
     })
 
     /**
@@ -600,18 +676,25 @@ describe('RequestIndexersPanel', () => {
     expect(torznab.findAll('button').filter((button) => button.text().includes('Add indexer'))).toHaveLength(1)
   })
 
-  /**
-   * Two groups, because there are two things. Torznab is the only built-in, so adding an indexer
-   * asks nothing about which kind it is: that question only existed because plugins shared the list.
-   */
-  it('adds a torznab indexer without asking which kind it is', async () => {
-    const wrapper = await mountPanel({ adapters: [descriptor(), OPEN_LIBRARY, PLUGIN] })
+  it('offers every built-in indexer type for a new source', async () => {
+    const newznab = descriptor({ type: 'newznab', label: 'Newznab', seedsBack: false, delivery: 'usenet' })
+    const wrapper = await mountPanel({ adapters: [descriptor(), newznab, OPEN_LIBRARY, PLUGIN] })
 
     await clickInPanel(wrapper, 'Add indexer')
 
-    expect(sheet().querySelector('input[name="indexer-adapter-type"]')).toBeNull()
+    expect([...sheet().querySelectorAll<HTMLOptionElement>('#indexer-type option')].map((option) => option.value)).toEqual(['torznab', 'newznab'])
     expect(sheet().querySelector('#indexer-name')).not.toBeNull()
     expect(sheet().textContent).toContain('torznab')
+
+    const name = sheet().querySelector<HTMLInputElement>('#indexer-name')!
+    name.value = 'My indexer'
+    name.dispatchEvent(new Event('input', { bubbles: true }))
+    const type = sheet().querySelector<HTMLSelectElement>('#indexer-type')!
+    type.value = 'newznab'
+    type.dispatchEvent(new Event('change', { bubbles: true }))
+    await flushPromises()
+
+    expect(sheet().querySelector<HTMLInputElement>('#indexer-name')?.value).toBe('My indexer')
   })
 
   it('keeps plugins and torznab indexers in groups of their own', async () => {
@@ -688,6 +771,155 @@ describe('RequestIndexersPanel', () => {
     await openCreate(wrapper)
 
     expect(sheet().querySelector('#indexer-categories-ebook')).not.toBeNull()
+  })
+
+  describe('seeding policy', () => {
+    it('shows controls for torrent adapters but not non-seeding sources', async () => {
+      const torrent = await mountPanel({ adapters: [descriptor()] })
+      await openCreate(torrent)
+      expect(sheet().querySelector('#indexer-seed-ratio')).not.toBeNull()
+      torrent.unmount()
+      document.body.innerHTML = ''
+
+      const plugin = await mountPanel({ adapters: [PLUGIN] })
+      await openCreate(plugin, 'demo-tracker')
+      expect(sheet().querySelector('#indexer-seed-time')).not.toBeNull()
+      plugin.unmount()
+      document.body.innerHTML = ''
+
+      const direct = await mountPanel({ adapters: [OPEN_LIBRARY] })
+      await openCreate(direct, 'open-library')
+      expect(sheet().querySelector('#indexer-seed-ratio')).toBeNull()
+    })
+
+    it('starts enabled with blank manual values and sends exact DTO field names', async () => {
+      const wrapper = await mountPanel({ adapters: [descriptor()] })
+      await openCreate(wrapper)
+      expect(sheet().querySelector('#indexer-apply-tracker-seed-goals')?.getAttribute('aria-checked')).toBe('true')
+      expect(sheet().querySelector<HTMLInputElement>('#indexer-seed-ratio')?.value).toBe('')
+      typeInto('#indexer-name', 'MAM')
+      typeInto('#indexer-url', 'https://tracker.example')
+      typeInto('#indexer-seed-ratio', '1.5')
+      typeInto('#indexer-seed-time', '60')
+
+      clickInSheet('Save')
+      await flushPromises()
+
+      const post = apiMock.mock.calls.find(([, init]) => init?.method === 'POST')!
+      expect(JSON.parse(String((post[1] as RequestInit).body))).toMatchObject({
+        applyTrackerSeedGoals: true,
+        seedRatioGoal: 1.5,
+        seedTimeMinutes: 60,
+      })
+    })
+
+    it('populates values and serializes a clear as null rather than zero', async () => {
+      const wrapper = await mountPanel({
+        adapters: [descriptor()],
+        indexers: [indexer({ applyTrackerSeedGoals: false, seedRatioGoal: 2.5, seedTimeMinutes: 90 })],
+      })
+      await clickInPanel(wrapper, 'Edit My Prowlarr')
+      expect(sheet().querySelector<HTMLInputElement>('#indexer-seed-ratio')?.value).toBe('2.5')
+      expect(sheet().querySelector('#indexer-apply-tracker-seed-goals')?.getAttribute('aria-checked')).toBe('false')
+      typeInto('#indexer-seed-ratio', '')
+
+      clickInSheet('Save')
+      await flushPromises()
+
+      const put = apiMock.mock.calls.find(([, init]) => init?.method === 'PUT')!
+      expect(JSON.parse(String((put[1] as RequestInit).body))).toMatchObject({ seedRatioGoal: null, seedTimeMinutes: 90 })
+    })
+
+    it('keeps manual inputs usable when tracker fallback is off', async () => {
+      const wrapper = await mountPanel({ adapters: [descriptor()] })
+      await openCreate(wrapper)
+      sheet().querySelector<HTMLButtonElement>('#indexer-apply-tracker-seed-goals')!.click()
+      await flushPromises()
+
+      expect(sheet().querySelector<HTMLInputElement>('#indexer-seed-time')?.disabled).toBe(false)
+      expect(sheet().textContent).toContain('Client default')
+    })
+
+    it('associates invalid values, blocks saving, and focuses the first invalid field', async () => {
+      const wrapper = await mountPanel({ adapters: [descriptor()] })
+      await openCreate(wrapper)
+      typeInto('#indexer-name', 'MAM')
+      typeInto('#indexer-url', 'https://tracker.example')
+      typeInto('#indexer-seed-ratio', '0')
+      typeInto('#indexer-seed-time', '1.5')
+      apiMock.mockClear()
+
+      clickInSheet('Save')
+      await flushPromises()
+
+      expect(sheet().querySelector('#indexer-seed-ratio-error')).not.toBeNull()
+      expect(sheet().querySelector('#indexer-seed-time-error')).not.toBeNull()
+      expect(sheet().querySelector('#indexer-seed-ratio')?.getAttribute('aria-describedby')).toBe('indexer-seed-ratio-error')
+      expect(document.activeElement?.id).toBe('indexer-seed-ratio')
+      expect(apiMock).not.toHaveBeenCalled()
+    })
+
+    it('resets only the draft and updates the summaries', async () => {
+      const wrapper = await mountPanel({
+        adapters: [descriptor()],
+        indexers: [indexer({ applyTrackerSeedGoals: false, seedRatioGoal: 2, seedTimeMinutes: 90 })],
+      })
+      await clickInPanel(wrapper, 'Edit My Prowlarr')
+      expect(sheet().textContent).toContain('Manual: 90')
+
+      clickInSheet('Reset seeding settings')
+      await flushPromises()
+
+      expect(sheet().querySelector<HTMLInputElement>('#indexer-seed-time')?.value).toBe('')
+      expect(sheet().textContent).toContain('Tracker fallback')
+      expect(apiMock.mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false)
+    })
+
+    it('does not serialize hidden fields when a saved plugin descriptor is missing', async () => {
+      const wrapper = await mountPanel({
+        adapters: [descriptor()],
+        indexers: [indexer({ adapterType: 'missing-plugin', seedRatioGoal: 2, seedTimeMinutes: 90 })],
+      })
+      await clickInPanel(wrapper, 'Edit My Prowlarr')
+      expect(sheet().querySelector('#indexer-seed-ratio')).toBeNull()
+
+      clickInSheet('Save')
+      await flushPromises()
+
+      const put = apiMock.mock.calls.find(([, init]) => init?.method === 'PUT')!
+      const body = JSON.parse(String((put[1] as RequestInit).body))
+      expect(body).not.toHaveProperty('seedRatioGoal')
+      expect(body).not.toHaveProperty('seedTimeMinutes')
+    })
+
+    it('retains a changed seed draft after save failure and restores persisted values after cancel', async () => {
+      const stored = indexer({ seedRatioGoal: 2 })
+      const wrapper = await mountPanel({ adapters: [descriptor()], indexers: [stored] })
+      await clickInPanel(wrapper, 'Edit My Prowlarr')
+      typeInto('#indexer-seed-ratio', '3')
+      await flushPromises()
+
+      expect(sheet().querySelector('button[aria-label="Test connection"]')).toBeNull()
+      apiMock.mockImplementation((url: string, init?: RequestInit) =>
+        Promise.resolve(
+          init?.method === 'PUT'
+            ? response({ errorCode: 'INDEXER_SETTINGS_INVALID', message: 'invalid policy' }, false)
+            : url.endsWith('/adapters')
+              ? response({ adapters: [descriptor()], pluginFailures: [] })
+              : response({ indexers: [stored], encryptionConfigured: true }),
+        ),
+      )
+
+      clickInSheet('Save')
+      await flushPromises()
+
+      expect(sheet().querySelector<HTMLInputElement>('#indexer-seed-ratio')?.value).toBe('3')
+      expect(toastMock.error).toHaveBeenCalledWith('One or more source settings are invalid. Review the available choices.')
+
+      clickInSheet('Cancel')
+      await clickInPanel(wrapper, 'Edit My Prowlarr')
+      expect(sheet().querySelector<HTMLInputElement>('#indexer-seed-ratio')?.value).toBe('2')
+    })
   })
 
   /** A plugin declares its own fields, and the form has never heard of them at build time. */

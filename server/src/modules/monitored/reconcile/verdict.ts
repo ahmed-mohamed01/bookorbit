@@ -4,8 +4,6 @@ import { normalizeText } from './observation-matcher';
 import type { MergedWork, ObservationSource } from './observation.types';
 import { COLLECTION_TITLE_PATTERN, DRAMATIZED_ADAPTATION_PATTERN, SPLIT_PART_SUFFIX_PATTERN } from './work-shape';
 
-export const CATALOG_VERDICT_VERSION = 1;
-
 const NON_LATIN_SCRIPT_PATTERN =
   /\p{Script=Greek}|\p{Script=Cyrillic}|\p{Script=Hebrew}|\p{Script=Arabic}|\p{Script=Devanagari}|\p{Script=Thai}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Han}|\p{Script=Hangul}/u;
 

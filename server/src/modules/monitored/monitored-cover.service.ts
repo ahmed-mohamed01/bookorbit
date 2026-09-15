@@ -30,7 +30,7 @@ export function selectCacheEvictions(entries: Array<{ path: string; mtimeMs: num
     .slice(0, Math.max(0, entries.length - CACHE_SWEEP_TARGET));
 }
 
-export interface MonitoredCoverImage {
+interface MonitoredCoverImage {
   buffer: Buffer;
   contentType: string;
 }

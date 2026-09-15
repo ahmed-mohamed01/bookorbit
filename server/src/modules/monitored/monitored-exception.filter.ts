@@ -5,9 +5,9 @@ import { GlobalExceptionFilter } from '../../common/filters/http-exception.filte
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 
 /**
- * Postgres rejects input the API layer never validated (NUL bytes, out-of-range ids, missing FKs).
- * Those are client mistakes, not server faults, and the driver's message names tables, columns and
- * parameter values, so the client gets a fixed generic string instead.
+ * Postgres rejects some input the API layer never validated, while a foreign key violation here is
+ * a server fault. The driver's message names tables, columns and values, so every mapped response
+ * remains generic even when the server log severity differs.
  */
 const PG_ERROR_RESPONSES: Record<string, { status: HttpStatus; message: string }> = {
   '22001': { status: HttpStatus.BAD_REQUEST, message: 'Invalid request data' },
@@ -26,6 +26,7 @@ interface MappedPgError {
   message: string;
   errorClass: string;
   driverMessage: string;
+  stack?: string;
 }
 
 /**
@@ -51,6 +52,7 @@ function findMappedPgError(exception: unknown): MappedPgError | undefined {
         message: mapped.message,
         errorClass: (candidate.constructor as { name?: string } | undefined)?.name ?? 'Object',
         driverMessage: typeof candidate.message === 'string' ? candidate.message : '',
+        stack: typeof candidate.stack === 'string' ? candidate.stack : undefined,
       };
     }
 
@@ -78,9 +80,9 @@ export class MonitoredExceptionFilter extends GlobalExceptionFilter {
       return;
     }
     const request = host.switchToHttp().getRequest<FastifyRequest>();
-    this.monitoredLogger.warn(
-      `[monitored.request.database_error] [fail] requestId=${sanitizeLogValue(String(request.id))} path="${sanitizeLogValue(request.url)}" pgCode=${sanitizeLogValue(mapped.code)} status=${mapped.status} errorClass=${sanitizeLogValue(mapped.errorClass)} error="${sanitizeLogValue(mapped.driverMessage)}" - database rejected a monitored request`,
-    );
+    const message = `[monitored.request.database_error] [fail] requestId=${sanitizeLogValue(String(request.id))} path="${sanitizeLogValue(request.url)}" pgCode=${sanitizeLogValue(mapped.code)} status=${mapped.status} errorClass=${sanitizeLogValue(mapped.errorClass)} error="${sanitizeLogValue(mapped.driverMessage)}" - database rejected a monitored request`;
+    if (mapped.code === '23503') this.monitoredLogger.error(message, mapped.stack);
+    else this.monitoredLogger.warn(message);
     super.catch(new HttpException(mapped.message, mapped.status), host);
   }
 }

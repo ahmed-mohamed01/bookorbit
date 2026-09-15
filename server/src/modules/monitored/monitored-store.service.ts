@@ -123,7 +123,7 @@ type WorkStatePatch = MonitoredWorkPatch & {
 };
 
 /** What owned-matching decides about a work: system truth, never the owner's overlay. */
-export type WorkMatchUpdate = Pick<MonitoredWork, 'matchedBookId' | 'matchedBookIds' | 'ownedFormats'>;
+type WorkMatchUpdate = Pick<MonitoredWork, 'matchedBookId' | 'matchedBookIds' | 'ownedFormats'>;
 
 export function releaseEventKey(workId: string, format: MonitoredFormat): string {
   return `${workId}:${format}`;

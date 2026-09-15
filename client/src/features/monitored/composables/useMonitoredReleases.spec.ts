@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, ref } from 'vue'
 import { mount } from '@vue/test-utils'
-import type { BookRequestItem, MonitoredWorkReleasesResponse, ReleaseCandidateItem } from '@bookorbit/types'
+import type { BookRequestItem, DownloadDelivery, IndexerSearchStatus, MonitoredWorkReleasesResponse, ReleaseCandidateItem } from '@bookorbit/types'
 import { grabWorkRelease, searchWorkReleases } from '../api/monitored'
 import { useMonitoredReleases } from './useMonitoredReleases'
 
@@ -12,10 +12,18 @@ vi.mock('../api/monitored', () => ({
 
 const grabMock = vi.mocked(grabWorkRelease)
 const searchMock = vi.mocked(searchWorkReleases)
-const release = { guid: 'release-1', indexerId: 7 } as ReleaseCandidateItem
+const release = { guid: 'release-1', indexerId: 7, seeders: null } as ReleaseCandidateItem
 
 function request(id: number): BookRequestItem {
   return { id } as BookRequestItem
+}
+
+function indexerStatus(indexerId: number, delivery: DownloadDelivery): IndexerSearchStatus {
+  return { indexerId, delivery, seedsBack: delivery === 'torrent' } as IndexerSearchStatus
+}
+
+function searchResult(indexers: IndexerSearchStatus[]): MonitoredWorkReleasesResponse {
+  return { releases: [release], indexers, enabledIndexerCount: indexers.length } as MonitoredWorkReleasesResponse
 }
 
 function mountComposable(workId = ref<string | null>('work-1')) {
@@ -129,7 +137,7 @@ describe('useMonitoredReleases grab', () => {
 
   it('lets a searched-again release be grabbed after its request was deleted', async () => {
     grabMock.mockResolvedValueOnce(request(4242))
-    searchMock.mockResolvedValueOnce({ releases: [release], enabledIndexerCount: 1 } as MonitoredWorkReleasesResponse)
+    searchMock.mockResolvedValueOnce(searchResult([indexerStatus(7, 'torrent')]))
     const { composable, wrapper } = mountComposable()
 
     await composable.grab(release)
@@ -138,6 +146,49 @@ describe('useMonitoredReleases grab', () => {
     await composable.search()
 
     expect(composable.isGrabbed(release)).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+describe('useMonitoredReleases delivery', () => {
+  beforeEach(() => {
+    searchMock.mockReset()
+  })
+
+  it.each([
+    ['usenet', 'usenet'],
+    ['torrent', 'torrent'],
+    ['file', 'file'],
+  ] as const)('reports the %s delivery its indexer stated', async (delivery, expected) => {
+    searchMock.mockResolvedValueOnce(searchResult([indexerStatus(7, delivery)]))
+    const { composable, wrapper } = mountComposable()
+
+    await composable.search()
+
+    expect(composable.deliveryFor(release)).toBe(expected)
+    wrapper.unmount()
+  })
+
+  it('falls back to the release evidence when the status list omits its indexer', async () => {
+    searchMock.mockResolvedValueOnce(searchResult([indexerStatus(9, 'usenet')]))
+    const { composable, wrapper } = mountComposable()
+
+    await composable.search()
+
+    expect(composable.deliveryFor(release)).toBe('file')
+    expect(composable.deliveryFor({ ...release, seeders: 3 } as ReleaseCandidateItem)).toBe('torrent')
+    wrapper.unmount()
+  })
+
+  it('drops the indexer statuses when a search fails', async () => {
+    searchMock.mockResolvedValueOnce(searchResult([indexerStatus(7, 'usenet')]))
+    const { composable, wrapper } = mountComposable()
+    await composable.search()
+
+    searchMock.mockRejectedValueOnce(new Error('nope'))
+    await composable.search()
+
+    expect(composable.deliveryFor(release)).toBe('file')
     wrapper.unmount()
   })
 })

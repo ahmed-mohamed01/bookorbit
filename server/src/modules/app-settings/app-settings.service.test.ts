@@ -106,11 +106,6 @@ describe('AppSettingsService', () => {
       await expect(service.update(key, 'anything')).rejects.toThrow(BadRequestException);
       expect(repo.updateByKey).not.toHaveBeenCalled();
     });
-
-    it('rejects the monitored cooldown key so it cannot bypass typed validation', async () => {
-      await expect(service.update('monitored_refresh_cooldown_minutes', '0')).rejects.toThrow(BadRequestException);
-      expect(repo.updateByKey).not.toHaveBeenCalled();
-    });
   });
 
   describe('isBookDockAutoFetchEnabled', () => {
@@ -639,77 +634,6 @@ describe('AppSettingsService', () => {
     it('returns 500 when value is invalid or <= 0', async () => {
       repo.findByKey.mockResolvedValue({ key: 'max_upload_size_mb', value: '-50' } as never);
       expect(await service.getMaxUploadSizeMb()).toBe(500);
-    });
-  });
-
-  describe('monitored settings', () => {
-    const monitoredSettings = { refreshCooldownMinutes: 30, syncEnabled: true, syncIntervalHours: 12 };
-    const defaults = { refreshCooldownMinutes: 10, syncEnabled: true, syncIntervalHours: 12 };
-
-    it('returns the ten minute default when the setting is absent or invalid', async () => {
-      repo.findByKey.mockResolvedValue(undefined);
-      expect(await service.getMonitoredSettings()).toEqual(defaults);
-
-      service = new AppSettingsService(repo, config, { appDataPath: '/data', bookDockPath: '/data/book-dock', libraryBrowseRoot: '/' });
-      repo.findByKey.mockResolvedValue({ key: 'monitored_refresh_cooldown_minutes', value: '0' } as never);
-      expect(await service.getMonitoredSettings()).toEqual(defaults);
-    });
-
-    it('persists and returns a new refresh cooldown', async () => {
-      repo.findByKey.mockResolvedValue({ key: 'monitored_refresh_cooldown_minutes', value: '30' } as never);
-
-      await expect(service.setMonitoredSettings(monitoredSettings)).resolves.toEqual(expect.objectContaining({ refreshCooldownMinutes: 30 }));
-
-      expect(repo.upsertMany).toHaveBeenCalledWith([
-        { key: 'monitored_refresh_cooldown_minutes', value: '30' },
-        { key: 'monitored_sync_enabled', value: 'true' },
-        { key: 'monitored_sync_interval_hours', value: '12' },
-      ]);
-    });
-
-    it('persists the sync toggle and interval alongside the cooldown', async () => {
-      repo.findByKey.mockResolvedValue({ key: 'monitored_sync_interval_hours', value: '24' } as never);
-
-      await service.setMonitoredSettings({ ...monitoredSettings, syncEnabled: false, syncIntervalHours: 24 });
-
-      expect(repo.upsertMany).toHaveBeenCalledWith([
-        { key: 'monitored_refresh_cooldown_minutes', value: '30' },
-        { key: 'monitored_sync_enabled', value: 'false' },
-        { key: 'monitored_sync_interval_hours', value: '24' },
-      ]);
-    });
-
-    it('keeps stored sync values when only the refresh cooldown is provided', async () => {
-      const stored: Record<string, string> = {
-        monitored_refresh_cooldown_minutes: '10',
-        monitored_sync_enabled: 'false',
-        monitored_sync_interval_hours: '24',
-      };
-      repo.findByKey.mockImplementation((key) => Promise.resolve({ key, value: stored[key] } as never));
-
-      await service.setMonitoredSettings({ refreshCooldownMinutes: 45 });
-
-      expect(repo.upsertMany).toHaveBeenCalledWith([
-        { key: 'monitored_refresh_cooldown_minutes', value: '45' },
-        { key: 'monitored_sync_enabled', value: 'false' },
-        { key: 'monitored_sync_interval_hours', value: '24' },
-      ]);
-    });
-
-    it('reads a stored sync toggle of false rather than falling back to the default', async () => {
-      repo.findByKey.mockResolvedValue({ key: 'monitored_sync_enabled', value: 'false' } as never);
-
-      expect((await service.getMonitoredSettings()).syncEnabled).toBe(false);
-    });
-
-    it.each([0, 1441, 1.5])('rejects an invalid refresh cooldown of %s', async (refreshCooldownMinutes) => {
-      await expect(service.setMonitoredSettings({ ...monitoredSettings, refreshCooldownMinutes })).rejects.toThrow(BadRequestException);
-      expect(repo.upsertMany).not.toHaveBeenCalled();
-    });
-
-    it.each([0, 169, 1.5])('rejects an invalid sync interval of %s', async (syncIntervalHours) => {
-      await expect(service.setMonitoredSettings({ ...monitoredSettings, syncIntervalHours })).rejects.toThrow(BadRequestException);
-      expect(repo.upsertMany).not.toHaveBeenCalled();
     });
   });
 

@@ -103,7 +103,6 @@ const FETCH_AUTHOR_CONTRIBUTIONS_QUERY = `
         # Roughly 65% of rows are edition-level (contributable_type "Edition") and return book: null,
         # so filter them server-side before pagination spends its budget.
         where: { contributable_type: { _eq: "Book" } }
-        # Keep this literal in sync with PAGE_SIZE = 100 in server/src/modules/monitored/providers/hardcover-bibliography.provider.ts.
         limit: 100
         offset: $off
         order_by: { book: { id: asc } }
@@ -111,23 +110,12 @@ const FETCH_AUTHOR_CONTRIBUTIONS_QUERY = `
         contribution
         contributor_role_id
         book {
-          id
-          slug
-          title
-          subtitle
-          description
+          ${BOOK_FIELDS}
           canonical_id
           compilation
-          release_date
-          release_year
-          pages
           users_count
-          rating
-          ratings_count
-          image { url }
-          featured_book_series { position series { id name books_count } }
+          featured_book_series { series { id } }
           book_series { position series { id name books_count } }
-          cached_contributors
           book_status { id name }
           book_category_id
           users_read_count

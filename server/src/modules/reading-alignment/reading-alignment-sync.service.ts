@@ -292,6 +292,9 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     }
 
     const { fileId, positionSeconds } = absoluteSecondsToFilePosition(timeline, audioSeconds);
+    // The denominator is deliberately the sum of the file durations, because the anchors this position
+    // comes from are built against that same file timeline. It differs from the player's percentage only
+    // when book_metadata.duration_seconds has been overridden, which the player prefers over the sum.
     const audioPercentage = finished ? MAX_PERCENTAGE : clampPercentage((audioSeconds / timeline.totalSeconds) * 100);
 
     this.logStart(payload, pair, 'ebook_to_audio');

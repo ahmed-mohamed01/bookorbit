@@ -10,7 +10,7 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { MONITORED_FORMATS, monitoredAcquisitionState } from '@bookorbit/types';
+import { isWorkVisible, MONITORED_FORMATS, monitoredAcquisitionState } from '@bookorbit/types';
 import type {
   MonitorAuthorRequest,
   MonitorFormatConfig,
@@ -36,7 +36,6 @@ import type { RequestUser } from '../../common/types/request-user';
 import { isUniqueViolation } from '../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { AuthorEnrichmentExecutorService } from '../authors/author-enrichment-executor.service';
-import { AppSettingsService } from '../app-settings/app-settings.service';
 import { AuthorImageStorageService } from '../authors/author-image-storage.service';
 import { AuthorMetadataPreferencesService } from '../authors/author-metadata-preferences.service';
 import { AuthorsRepository } from '../authors/authors.repository';
@@ -52,9 +51,10 @@ import { MonitoredAutoRequestService } from './monitored-autorequest.service';
 import { MonitoredProviderConfigService } from './monitored-provider-config.service';
 import { MonitoredReleaseWatcher } from './monitored-release-watcher.service';
 import { MonitoredStoreService } from './monitored-store.service';
+import { MonitoredAuthorStoreService } from './monitored-author-store.service';
+import { MonitoredSettingsService } from './monitored-settings.service';
 import { isAudibleConfigured } from './providers/audible-bibliography.provider';
 import { isHardcoverConfigured } from './providers/hardcover-bibliography.provider';
-import { isWorkVisible } from './monitored-work-visibility';
 import type { MonitoredAuthorAggregate, MonitoredReleasePageEntry } from './monitored-store.service';
 import type {
   CreateMonitoredBookDto,
@@ -127,6 +127,7 @@ export class MonitoredService {
     private readonly hardcover: HardcoverClient,
     private readonly providerConfigs: MonitoredProviderConfigService,
     private readonly authorsRepository: AuthorsRepository,
+    private readonly monitoredAuthorStore: MonitoredAuthorStoreService,
     private readonly authorMetadataPreferences: AuthorMetadataPreferencesService,
     private readonly enrichmentExecutor: AuthorEnrichmentExecutorService,
     private readonly libraryService: LibraryService,
@@ -134,7 +135,7 @@ export class MonitoredService {
     private readonly fulfillment: RequestFulfillmentService,
     private readonly indexerSearch: IndexerSearchService,
     private readonly authorImageStorage: AuthorImageStorageService,
-    private readonly appSettings: AppSettingsService,
+    private readonly settings: MonitoredSettingsService,
     private readonly releaseWatcher: MonitoredReleaseWatcher,
   ) {}
 
@@ -311,7 +312,7 @@ export class MonitoredService {
     this.logger.log(`[monitored.author.refresh] [start] monitorId="${sanitizeLogValue(id)}" userId=${user.id} - monitored author refresh started`);
     try {
       const monitor = await this.getWritableAuthor(id, user);
-      const { refreshCooldownMinutes } = await this.appSettings.getMonitoredSettings();
+      const { refreshCooldownMinutes } = await this.settings.getMonitoredSettings();
       const refreshCooldownMs = refreshCooldownMinutes * 60 * 1000;
       if (monitor.lastRefreshedAt && Date.now() - new Date(monitor.lastRefreshedAt).getTime() < refreshCooldownMs) {
         throw new HttpException('Monitored author was refreshed a moment ago; try again shortly', HttpStatus.TOO_MANY_REQUESTS);
@@ -606,14 +607,6 @@ export class MonitoredService {
     return requestId;
   }
 
-  /**
-   * Effective visibility: the verdict decides unless the user overrode it. 'visible' promotes a
-   * review-hidden work into the default list and into monitoring; 'hidden' removes any work.
-   */
-  private isWorkVisible(work: MonitoredWork): boolean {
-    return isWorkVisible(work);
-  }
-
   /** Per-work monitor/hide toggles, persisted on the catalog work and preserved across refreshes. */
   async updateWork(user: RequestUser, workId: string, patch: MonitoredWorkPatch): Promise<MonitoredWork> {
     const entry = await this.store.getWorkWithMonitor(workId);
@@ -772,7 +765,7 @@ export class MonitoredService {
     try {
       // Both "no books" and "no monitors" are predicates of the DELETE itself: checking them here
       // first let a monitor or a book created in between survive the read and lose its author row.
-      const removed = await this.authorsRepository.deleteOrphanAuthor(localAuthorId);
+      const removed = await this.monitoredAuthorStore.deleteOrphanAuthor(localAuthorId);
       this.logger.log(
         `[monitored.author.cleanup_local] [end] authorId=${localAuthorId} durationMs=${Date.now() - startedAt} removed=${removed} - orphan local author cleanup completed`,
       );
@@ -936,7 +929,7 @@ export class MonitoredService {
     // Showing hidden works is the owner reviewing their own curation, not a viewer opting out of it.
     const isOwner = isOwnerView(monitor.ownerUserId, user);
     const works = allWorks
-      .filter((work) => (isOwner && query.includeHidden) || this.isWorkVisible(work))
+      .filter((work) => (isOwner && query.includeHidden) || isWorkVisible(work))
       .sort((left, right) => {
         if (query.sort === 'releaseDate') {
           const leftDate = this.earliestReleaseDate(left);
@@ -954,7 +947,7 @@ export class MonitoredService {
   }
 
   private summarizeWorks(author: MonitoredAuthorConfig, works: MonitoredWork[]): MonitoredAuthorAggregate {
-    const visibleWorks = works.filter((work) => this.isWorkVisible(work));
+    const visibleWorks = works.filter(isWorkVisible);
     const today = new Date().toISOString().slice(0, 10);
     const dated = author.paused
       ? []

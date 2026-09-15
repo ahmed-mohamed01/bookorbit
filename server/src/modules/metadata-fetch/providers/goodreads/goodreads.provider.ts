@@ -194,7 +194,7 @@ export class GoodreadsProvider implements IdentifiableProvider {
    * bare 503 that clears within seconds, so the same URL usually succeeds on a second or third try;
    * a bot challenge or a missing page is returned as-is, since neither improves by asking again.
    */
-  private async fetchHtml(url: string, op: GoodreadsFetchOp, context: GoodreadsFetchContext): Promise<GoodreadsHtmlFetch> {
+  async fetchHtml(url: string, op: GoodreadsFetchOp, context: GoodreadsFetchContext): Promise<GoodreadsHtmlFetch> {
     const backoffs = PROVIDER_RETRY.GOODREADS_TRANSIENT_BACKOFF_MS;
     let last: GoodreadsHtmlFetch = { html: null, outcome: 'unavailable' };
 

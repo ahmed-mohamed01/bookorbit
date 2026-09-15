@@ -82,6 +82,7 @@ const release: ReleaseCandidateItem = {
   score: 71,
   tier: null,
   tierName: null,
+  profileMismatch: null,
   reasons: [],
 }
 
@@ -94,6 +95,7 @@ function fakeReleases() {
     error: ref<string | null>(null),
     isGrabbing: () => false,
     isGrabbed: () => false,
+    deliveryFor: () => 'torrent',
     search: vi.fn<() => Promise<void>>(),
     grab: grabMock,
   }

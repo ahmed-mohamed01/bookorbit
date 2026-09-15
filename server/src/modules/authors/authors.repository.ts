@@ -256,18 +256,6 @@ export class AuthorsRepository {
     return row ?? null;
   }
 
-  async findIdByName(name: string): Promise<number | null> {
-    const trimmed = name.trim();
-    if (!trimmed) return null;
-    const [row] = await this.db
-      .select({ id: authors.id })
-      .from(authors)
-      .where(sql`lower(${authors.name}) = lower(${trimmed})`)
-      .orderBy(asc(authors.id))
-      .limit(1);
-    return row?.id ?? null;
-  }
-
   async findIdByNormalizedName(name: string): Promise<number | null> {
     const trimmed = name.trim();
     if (!trimmed) return null;
@@ -474,29 +462,6 @@ export class AuthorsRepository {
         sourceRelations.map((row) => row.bookId),
       );
     });
-  }
-
-  /**
-   * Removes an author row that exists only because something linked to it, never because a book
-   * carries it. The NOT EXISTS re-check runs inside the delete so a concurrent import that just
-   * attached a book to this author cannot lose it to a stale caller-side count.
-   */
-  /**
-   * Deletes a bookless, unmonitored author row. Both predicates live in the DELETE itself: a monitor
-   * or a book created between a separate check and this statement would otherwise lose its author.
-   */
-  async deleteOrphanAuthor(authorId: number): Promise<boolean> {
-    const deleted = await this.db
-      .delete(authors)
-      .where(
-        and(
-          eq(authors.id, authorId),
-          sql`NOT EXISTS (SELECT 1 FROM ${bookAuthors} WHERE ${bookAuthors.authorId} = ${authors.id})`,
-          sql`NOT EXISTS (SELECT 1 FROM monitored_authors WHERE monitored_authors.local_author_id = ${authors.id})`,
-        ),
-      )
-      .returning({ id: authors.id });
-    return deleted.length > 0;
   }
 
   async deleteAuthors(authorIds: number[]): Promise<void> {

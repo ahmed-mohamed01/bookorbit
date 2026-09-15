@@ -1,16 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { ProviderConfigurations } from '@bookorbit/types';
+import { parseSeriesIndex as parseSeriesIndexLabel } from '@bookorbit/types';
+import type { MonitoredSeriesMembership, ProviderConfigurations } from '@bookorbit/types';
 
 import { audibleApiOrigin } from '../../../common/utils/metadata-provider-hosts.utils';
+import { parsePublishedDateKey, publishedYearFromDateKey } from '../../../common/utils/published-date.utils';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import { fetchWithThrottle } from '../../metadata-fetch/fetch-with-throttle';
 import type { AudibleProduct, AudibleSearchResponse } from '../../metadata-fetch/providers/audible/audible.types';
 import { normalizeAudibleDomain } from '../../metadata-fetch/providers/audible/normalize-audible-domain';
 import { PROVIDER_TIMEOUT_MS } from '../../metadata-fetch/providers/provider-constants';
 import { buildRequestSignal, sleep, stripHtml } from '../../metadata-fetch/providers/provider-utils';
-import { normalizeText } from '../reconcile/observation-matcher';
 import type { Observation } from '../reconcile/observation.types';
 import type { AuthorBibliographyProvider, BibliographyAuthorRef } from './author-bibliography-provider';
+import { authorKey, nameVariants } from './provider-author-name.utils';
 
 // Audible reports how many products an author has (total_results), and prolific authors report far
 // more than three pages held: a 201-product author lost 51 audiobooks to the old fixed cap, and every
@@ -22,25 +24,32 @@ const PAGE_DELAY_MS = 400;
 
 type BibliographyAudibleProduct = AudibleProduct & { issue_date?: string };
 
-function authorKey(name: string): string {
-  return normalizeText(name).replace(/ /g, '');
-}
-
-function nameVariants(name: string): string[] {
-  return [...new Set([name, name.replace(/([a-z])([A-Z])/g, '$1 $2')])];
-}
-
 export function filterAudibleProductsByAuthor(products: AudibleProduct[], authorName: string): AudibleProduct[] {
   const target = authorKey(authorName);
   return products.filter((product) => product.authors?.some((author) => authorKey(author.name) === target));
 }
 
+function extractSeriesMemberships(product: AudibleProduct): MonitoredSeriesMembership[] {
+  // Keep dedupe and primary-series order aligned with audible.mapper.ts's extractSeriesMemberships.
+  const memberships: MonitoredSeriesMembership[] = [];
+  const seen = new Set<string>();
+  for (const series of product.series ?? []) {
+    const name = series.title.trim();
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+    memberships.push({ name, index: parseSeriesIndexLabel(series.sequence) });
+  }
+  return memberships;
+}
+
 export function mapAudibleObservations(rawRows: unknown[]): Observation[] {
   return (rawRows as BibliographyAudibleProduct[]).flatMap((product) => {
     if (!product.asin || !product.title?.trim()) return [];
-    const releaseDate = (product.release_date || product.issue_date || '').slice(0, 10) || null;
-    const seriesName = product.series?.[0]?.title?.trim() || null;
-    const seriesIndex = product.series?.[0]?.sequence == null ? null : String(product.series[0].sequence);
+    const releaseDate = parsePublishedDateKey(product.release_date || product.issue_date) ?? null;
+    const seriesMemberships = extractSeriesMemberships(product);
+    const seriesName = seriesMemberships[0]?.name ?? null;
+    const seriesIndex = seriesMemberships[0]?.index ?? null;
     return [
       {
         source: 'audible' as const,
@@ -48,15 +57,15 @@ export function mapAudibleObservations(rawRows: unknown[]): Observation[] {
         canonicalId: null,
         title: product.title.trim(),
         subtitle: product.subtitle?.trim() || null,
-        hasDesc: Boolean(product.merchandising_summary || product.publisher_summary),
-        description: stripHtml(product.merchandising_summary || product.publisher_summary || '').trim() || null,
-        cover: product.product_images?.['500'] ?? product.product_images?.['1024'] ?? null,
+        hasDesc: Boolean(product.publisher_summary || product.merchandising_summary),
+        description: stripHtml(product.publisher_summary || product.merchandising_summary || '').trim() || null,
+        cover: product.product_images?.['1024'] ?? product.product_images?.['500'] ?? null,
         releaseDate,
-        releaseYear: releaseDate ? Number(releaseDate.slice(0, 4)) : null,
+        releaseYear: releaseDate ? publishedYearFromDateKey(releaseDate) : null,
         precision: releaseDate ? ('day' as const) : null,
         seriesName,
         seriesIndex,
-        seriesMemberships: seriesName ? [{ name: seriesName, index: seriesIndex }] : [],
+        seriesMemberships,
         popularity: product.rating?.overall_distribution?.num_ratings ?? 0,
         popularityKind: 'ratings' as const,
         format: 'audiobook' as const,

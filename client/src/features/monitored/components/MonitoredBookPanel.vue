@@ -474,6 +474,7 @@ function handleRequestAudiobook() {
                 v-for="release in activeReleases.releases.value"
                 :key="`${release.indexerId}:${release.guid}`"
                 :release="release"
+                :delivery="activeReleases.deliveryFor(release)"
                 :busy="activeReleases.loading.value || activeReleases.isGrabbing(release)"
                 :grabbed="activeReleases.isGrabbed(release)"
                 :expanded="releaseKey(release) === expandedReleaseKey"

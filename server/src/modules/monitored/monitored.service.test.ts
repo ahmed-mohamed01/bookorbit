@@ -66,6 +66,7 @@ function work(patch: Partial<MonitoredWork> = {}): MonitoredWork {
 type ServiceDeps = {
   catalog?: Record<string, unknown>;
   authorsRepository?: Record<string, unknown>;
+  monitoredAuthorStore?: Record<string, unknown>;
   authorMetadataPreferences?: Record<string, unknown>;
   enrichmentExecutor?: Record<string, unknown>;
   authorImageStorage?: Record<string, unknown>;
@@ -92,6 +93,7 @@ function service(store: Record<string, unknown>, bookRequests: Record<string, un
       forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' }, audible: { enabled: true, domain: 'com' } }),
     }) as never,
     (deps.authorsRepository ?? {}) as never,
+    (deps.monitoredAuthorStore ?? {}) as never,
     (deps.authorMetadataPreferences ?? {}) as never,
     (deps.enrichmentExecutor ?? {}) as never,
     (deps.libraryService ?? {}) as never,
@@ -1227,7 +1229,7 @@ describe('MonitoredService', () => {
     const deleteOrphanAuthor = vi.fn().mockResolvedValue(true);
     const store = { getAuthor: vi.fn().mockResolvedValue(author({ localAuthorId: 7 })), removeAuthor: vi.fn().mockResolvedValue(true) };
 
-    await service(store, {}, { authorsRepository: { deleteOrphanAuthor } }).deleteAuthor('monitor-1', viewer);
+    await service(store, {}, { monitoredAuthorStore: { deleteOrphanAuthor } }).deleteAuthor('monitor-1', viewer);
 
     expect(deleteOrphanAuthor).toHaveBeenCalledExactlyOnceWith(7);
   });
@@ -1236,15 +1238,15 @@ describe('MonitoredService', () => {
     const deleteOrphanAuthor = vi.fn().mockResolvedValue(false);
     const store = { getAuthor: vi.fn().mockResolvedValue(author({ localAuthorId: 7 })), removeAuthor: vi.fn().mockResolvedValue(true) };
 
-    await expect(service(store, {}, { authorsRepository: { deleteOrphanAuthor } }).deleteAuthor('monitor-1', viewer)).resolves.toBeUndefined();
+    await expect(service(store, {}, { monitoredAuthorStore: { deleteOrphanAuthor } }).deleteAuthor('monitor-1', viewer)).resolves.toBeUndefined();
     expect(store.removeAuthor).toHaveBeenCalledWith('monitor-1', viewer);
   });
 
   it('leaves the monitor deleted when orphan cleanup fails', async () => {
     const store = { getAuthor: vi.fn().mockResolvedValue(author({ localAuthorId: 7 })), removeAuthor: vi.fn().mockResolvedValue(true) };
-    const authorsRepository = { deleteOrphanAuthor: vi.fn().mockRejectedValue(new Error('db down')) };
+    const monitoredAuthorStore = { deleteOrphanAuthor: vi.fn().mockRejectedValue(new Error('db down')) };
 
-    await expect(service(store, {}, { authorsRepository }).deleteAuthor('monitor-1', viewer)).resolves.toBeUndefined();
+    await expect(service(store, {}, { monitoredAuthorStore }).deleteAuthor('monitor-1', viewer)).resolves.toBeUndefined();
     expect(store.removeAuthor).toHaveBeenCalledWith('monitor-1', viewer);
   });
 

@@ -26,6 +26,16 @@ function emitProgressChanged(bookId: number) {
   for (const cb of mocks.progressChangedCallbacks) cb({ bookId, progress: 50, source: 'web_reader' })
 }
 
+// `useBookProgressRefresh` debounces by 250ms, so the refetch lands a tick after the event.
+async function flushProgressDebounce() {
+  await new Promise((resolve) => setTimeout(resolve, 320))
+  await flushPromises()
+}
+
+function sessionsCalls() {
+  return mocks.api.mock.calls.filter((call) => typeof call[0] === 'string' && (call[0] as string).includes('/api/v1/books/10/sessions?'))
+}
+
 vi.mock('@/lib/api', () => ({
   api: mocks.api,
 }))
@@ -343,7 +353,7 @@ describe('ReadingLogTab', () => {
     expect(wrapper.findAll('button').some((button) => button.text() === 'Reset reading state')).toBe(false)
   })
 
-  it('reloads the reading log when a progress-changed event arrives for the current book', async () => {
+  it('reloads the reading log when a progress-changed event arrives, once the debounce elapses', async () => {
     const wrapper = mountTab(makeBook({ id: 10 }))
     await flushPromises()
 
@@ -352,26 +362,29 @@ describe('ReadingLogTab', () => {
 
     emitProgressChanged(10)
     await flushPromises()
+    expect(sessionsCalls()).toHaveLength(0)
 
-    const sessionsCall = mocks.api.mock.calls.find(
-      (call) => typeof call[0] === 'string' && (call[0] as string).includes('/api/v1/books/10/sessions?'),
-    )
-    expect(sessionsCall).toBeDefined()
+    await flushProgressDebounce()
+
+    expect(sessionsCalls()).toHaveLength(1)
     void wrapper
   })
 
-  it('does not reload the reading log when a progress-changed event arrives for a different book', async () => {
+  // The shared composable carries no bookId filter, so an event for another book refreshes this tab
+  // too. That is deliberate: the debounce caps the cost of any burst at a single refetch.
+  it('coalesces a burst of progress events, whatever book they name, into one reload', async () => {
     const wrapper = mountTab(makeBook({ id: 10 }))
     await flushPromises()
 
     mocks.api.mockClear()
     mocks.api.mockImplementation(routeApi())
 
+    emitProgressChanged(10)
     emitProgressChanged(999)
-    await flushPromises()
+    emitProgressChanged(10)
+    await flushProgressDebounce()
 
-    const sessionsCall = mocks.api.mock.calls.find((call) => typeof call[0] === 'string' && (call[0] as string).includes('/sessions?'))
-    expect(sessionsCall).toBeUndefined()
+    expect(sessionsCalls()).toHaveLength(1)
     void wrapper
   })
 })

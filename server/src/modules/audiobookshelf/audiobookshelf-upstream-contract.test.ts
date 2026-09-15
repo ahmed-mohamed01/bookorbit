@@ -22,7 +22,7 @@
  * scoped users, and real table rows:
  *   - ReadingAttemptService.importUnlinkedRead      (writes reading_attempts)
  *   - MetadataService.applyCoverFromSources         (cover precedence + disk/DB writes)
- *   - BookService.saveAudioProgress / ABS upsertAudioProgress (audio_progress writes)
+ *   - AudiobookService.putPlaybackState / ABS upsertAudioProgressGuarded (audiobook_progress writes)
  *   - shared reading-session / daily-stats table writes
  * Their PURE helpers (aggregateReadingSessionDailyStats, getDayRangeForDateKeys,
  * getReadingSessionDayKeys, the timezone utils) ARE covered here; only the DB round-trip is
@@ -191,8 +191,17 @@ describe('upstream contract: ensureSafeUrl SSRF guard (ABS outbound requests)', 
     await expect(ensureSafeUrl('http://10.0.0.1/status')).rejects.toThrow();
   });
 
-  it('rejects link-local metadata IP http://169.254.169.254 (cloud metadata SSRF vector)', async () => {
-    await expect(ensureSafeUrl('http://169.254.169.254/latest/meta-data/')).rejects.toThrow();
+  // ABS always sets allowLocal/allowPrivate (a self-hosted server on the LAN is the normal case), so
+  // upstream's default private-range rejection is not what protects it here - `blockLinkLocal` is.
+  // Asserted as a pair so deleting the fork option cannot pass: with it the metadata IP is rejected,
+  // without it upstream's allowPrivate path lets exactly the same IP through.
+  it('rejects link-local metadata IP http://169.254.169.254 under the ABS options (cloud metadata SSRF vector)', async () => {
+    await expect(ensureSafeUrl('http://169.254.169.254/latest/meta-data/', { allowPrivate: true, blockLinkLocal: true })).rejects.toThrow();
+  });
+
+  it('accepts the same link-local IP with allowPrivate alone, which is what blockLinkLocal exists to override', async () => {
+    const url = await ensureSafeUrl('http://169.254.169.254/latest/meta-data/', { allowPrivate: true });
+    expect(url.hostname).toBe('169.254.169.254');
   });
 
   it('allows a normal public https IP literal (no DNS needed)', async () => {

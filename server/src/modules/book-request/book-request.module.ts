@@ -34,6 +34,7 @@ import { PathMappingService } from './download-clients/path-mapping.service';
 import { QbittorrentAdapter } from './download-clients/adapters/qbittorrent.adapter';
 import { TransmissionAdapter } from './download-clients/adapters/transmission.adapter';
 import { DelugeAdapter } from './download-clients/adapters/deluge.adapter';
+import { NzbgetAdapter } from './download-clients/adapters/nzbget.adapter';
 import { INDEXER_ADAPTERS } from './indexers/indexer-adapter';
 import { IndexerConfigService } from './indexers/indexer-config.service';
 import { IndexerController } from './indexers/indexer.controller';
@@ -43,9 +44,11 @@ import { IndexerOperationLock } from './indexers/indexer-operation-lock';
 import { IndexerRegistry } from './indexers/indexer-registry';
 import { PluginLoaderService } from './indexers/plugins/plugin-loader.service';
 import { PluginInstallService } from './indexers/plugins/plugin-install.service';
+import { PluginUpdateService } from './indexers/plugins/plugin-update.service';
 import { IndexerRepository } from './indexers/indexer.repository';
 import { IndexerSearchService } from './indexers/indexer-search.service';
 import { TorznabAdapter } from './indexers/adapters/torznab.adapter';
+import { NewznabAdapter } from './indexers/adapters/newznab.adapter';
 import { BookRequestDownloadRepository } from './fulfillment/book-request-download.repository';
 import { DirectDownloadService } from './fulfillment/direct-download.service';
 import { DownloadMonitorService } from './fulfillment/download-monitor.service';
@@ -109,26 +112,34 @@ import { RequestWatchdogService } from './fulfillment/request-watchdog.service';
     QbittorrentAdapter,
     TransmissionAdapter,
     DelugeAdapter,
+    NzbgetAdapter,
     {
       provide: DOWNLOAD_CLIENT_ADAPTERS,
-      useFactory: (qbittorrent: QbittorrentAdapter, transmission: TransmissionAdapter, deluge: DelugeAdapter) => [qbittorrent, transmission, deluge],
-      inject: [QbittorrentAdapter, TransmissionAdapter, DelugeAdapter],
+      useFactory: (qbittorrent: QbittorrentAdapter, transmission: TransmissionAdapter, deluge: DelugeAdapter, nzbget: NzbgetAdapter) => [
+        qbittorrent,
+        transmission,
+        deluge,
+        nzbget,
+      ],
+      inject: [QbittorrentAdapter, TransmissionAdapter, DelugeAdapter, NzbgetAdapter],
     },
 
     IndexerRepository,
     IndexerConfigService,
     IndexerRegistry,
     PluginInstallService,
+    PluginUpdateService,
     PluginLoaderService,
     IndexerCredentialStore,
     IndexerSearchService,
     IndexerKeepaliveService,
     IndexerOperationLock,
     TorznabAdapter,
+    NewznabAdapter,
     {
       provide: INDEXER_ADAPTERS,
-      useFactory: (torznab: TorznabAdapter) => [torznab],
-      inject: [TorznabAdapter],
+      useFactory: (torznab: TorznabAdapter, newznab: NewznabAdapter) => [torznab, newznab],
+      inject: [TorznabAdapter, NewznabAdapter],
     },
 
     BookRequestDownloadRepository,

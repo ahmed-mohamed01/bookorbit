@@ -1,4 +1,12 @@
-export const MONITORED_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS "author_catalog_source_works" (
+export const MONITORED_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS "monitored_settings" (
+	"id" integer DEFAULT 1 PRIMARY KEY NOT NULL,
+	"refresh_cooldown_minutes" integer DEFAULT 10 NOT NULL,
+	"sync_enabled" boolean DEFAULT true NOT NULL,
+	"sync_interval_hours" integer DEFAULT 12 NOT NULL,
+	CONSTRAINT "monitored_settings_single_row_chk" CHECK ("monitored_settings"."id" = 1)
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "author_catalog_source_works" (
 	"work_id" varchar(255) NOT NULL,
 	"source" varchar(20) NOT NULL,
 	"provider_work_id" varchar(255) NOT NULL,

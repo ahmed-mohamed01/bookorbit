@@ -108,7 +108,7 @@ interface AbsDueBook {
  */
 interface AbsSyncPreload {
   audioFilesByBookId: Map<number, { id: number; format: string | null; durationSeconds: number | null }[]>;
-  audioProgressByBookId: Map<number, { percentage: number; updatedAt: Date }>;
+  audioProgressByBookId: Map<number, { percentage: number; updatedAt: Date; revision: number }>;
 }
 
 @Injectable()
@@ -306,7 +306,7 @@ export class AudiobookshelfSyncService {
    * One batched read per kind for the whole run for the position phase. Status reads stay per-book:
    * status transitions are rare, and a fresh read is what lets the upgrade-only rank guard see a
    * status the user set while the run was in flight. The position maps are safe to snapshot because
-   * the write itself is guarded (CAS on updatedAt) against concurrent local writes.
+   * the write itself is guarded (CAS on revision) against concurrent local writes.
    */
   private async preloadForDueBooks(userId: number, dueBooks: AbsDueBook[]): Promise<AbsSyncPreload> {
     const positionBookIds = dueBooks.filter((book) => book.positionDue).map((book) => book.bookId);
@@ -423,13 +423,15 @@ export class AudiobookshelfSyncService {
     if (!resolved) return skipped;
 
     const percentage = Math.max(0, Math.min(100, (mp.currentTime / mp.duration) * 100));
+    const capturedAt = mp.lastUpdate ? new Date(mp.lastUpdate) : new Date();
     const written = await this.repo.upsertAudioProgressGuarded(
       userId,
       bookId,
       resolved.currentFileId,
       resolved.positionSeconds,
       percentage,
-      local?.updatedAt ?? null,
+      local?.revision ?? null,
+      capturedAt,
     );
     if (!written) {
       // The CAS missed: local playback wrote the row between the pre-load snapshot and this apply.
@@ -438,7 +440,7 @@ export class AudiobookshelfSyncService {
       return { applied: false, watermarkAdvanced: true, progressAt: local?.updatedAt ?? null };
     }
     this.durationWarningSignatures.delete(`${userId}:${bookId}`);
-    preload.audioProgressByBookId.set(bookId, { percentage, updatedAt: written.updatedAt });
+    preload.audioProgressByBookId.set(bookId, { percentage, updatedAt: written.updatedAt, revision: written.revision });
     // Announce the position write on the shared bus like every other progress writer (web reader, Kobo,
     // KOReader), so source-agnostic listeners such as the reading-alignment sync observe ABS advances.
     this.achievementEvents.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {

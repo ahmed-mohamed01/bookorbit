@@ -1,5 +1,7 @@
 import type { MonitoredDatePrecision } from '@bookorbit/types';
 
+import { isPublishedDateKey } from '../../common/utils/published-date.utils';
+
 const DATE_SHAPE = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/;
 
 /**
@@ -12,6 +14,8 @@ export function releaseDateRange(value: string, precision: MonitoredDatePrecisio
   const match = DATE_SHAPE.exec(value.trim());
   if (!match) return null;
   const [, year, month, day] = match;
+  if (month && (month < '01' || month > '12')) return null;
+  if (day && !isPublishedDateKey(`${year}-${month}-${day}`)) return null;
   const effective = precision ?? (day ? 'day' : month ? 'month' : 'year');
   if (effective === 'day') return day ? { start: `${year}-${month}-${day}`, end: `${year}-${month}-${day}` } : null;
   if (effective === 'month') {

@@ -53,8 +53,7 @@ import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useMetadataSearch } from '@/features/book/composables/useMetadataSearch'
 import { providerIconPathSafe } from '@/features/book/lib/provider-icons'
 import { useLibraries } from '@/features/library/composables/useLibraries'
-import { monitorAuthor } from '@/features/monitored/api/monitored'
-import { MonitoredApiError, monitoredErrorText } from '@/features/monitored/lib/api-error'
+import { useMonitorGroupAction } from '@/features/monitored/composables/useMonitorGroupAction'
 import { getProviderColor } from '@/lib/provider-colors'
 import { useCandidateGroups, type CandidateGroup, type CandidateIsbnChoice } from '../composables/useCandidateGroups'
 import { formatLanguageName } from '@/i18n/formatters'
@@ -110,9 +109,7 @@ const targetFolderId = ref<number | null>(null)
 const activeCoverUrls = ref<Record<string, string | null>>({})
 const failedProviderIcons = ref(new Set<MetadataProviderKey>())
 const expandedMetadataGroups = ref(new Set<string>())
-const monitoringKeys = ref(new Set<string>())
-// Author name to monitored author id, so a bell that already fired stops inviting a second click.
-const monitoredAuthorNames = ref(new Set<string>())
+const { isGroupMonitored, isGroupMonitoring, monitorAuthorLabel, monitorGroupAuthor } = useMonitorGroupAction()
 const { groups } = useCandidateGroups(filteredResults, mediaKind, getAvailability, coverProviderOrder, language, resultProviderOrder)
 
 // Nobody approves these requests afterwards, so this is the only chance to say where the book goes.
@@ -523,58 +520,6 @@ async function requestTitleAuthor(group: CandidateGroup): Promise<void> {
   await requestGroupChoice(group, group.candidate, null, true)
 }
 
-function isGroupMonitored(group: CandidateGroup): boolean {
-  const name = group.authors[0]
-  return name !== undefined && monitoredAuthorNames.value.has(name)
-}
-
-function isGroupMonitoring(group: CandidateGroup): boolean {
-  return monitoringKeys.value.has(group.key)
-}
-
-function monitorAuthorLabel(group: CandidateGroup): string {
-  const name = group.authors[0] ?? ''
-  return isGroupMonitored(group) ? t('monitored.actions.alreadyMonitoring', { name }) : t('monitored.actions.quickMonitor', { name })
-}
-
-function markGroupMonitored(name: string) {
-  monitoredAuthorNames.value = new Set([...monitoredAuthorNames.value, name])
-}
-
-/**
- * Quick-monitor is deliberately opinionated: ebook notifications, no target library. The full
- * choice lives on the Monitored page, so this stays one click.
- */
-async function monitorGroupAuthor(group: CandidateGroup): Promise<void> {
-  const name = group.authors[0]
-  if (!name || isGroupMonitoring(group) || isGroupMonitored(group)) return
-  monitoringKeys.value = new Set([...monitoringKeys.value, group.key])
-  try {
-    await monitorAuthor({
-      authorName: name,
-      formats: {
-        ebook: { mode: 'notify', libraryId: null, folderId: null },
-        audiobook: { mode: 'off', libraryId: null, folderId: null },
-      },
-    })
-    markGroupMonitored(name)
-    toast.success(t('monitored.toast.monitoring', { name }))
-  } catch (cause) {
-    // The one refusal this well-formed request can draw is the duplicate guard, so show the row
-    // as monitored rather than as a failure the reader cannot act on.
-    if (cause instanceof MonitoredApiError && cause.status === 400) {
-      markGroupMonitored(name)
-      toast.info(cause.serverMessage ?? t('monitored.actions.alreadyMonitoring', { name }))
-    } else {
-      toast.error(monitoredErrorText(cause, t('monitored.modal.failed')))
-    }
-  } finally {
-    const next = new Set(monitoringKeys.value)
-    next.delete(group.key)
-    monitoringKeys.value = next
-  }
-}
-
 async function requestGroupChoice(group: CandidateGroup, candidate: MetadataCandidate, isbn: string | null, openPicker = true): Promise<void> {
   const hasSelectedCover = Object.prototype.hasOwnProperty.call(activeCoverUrls.value, group.key)
   const result = await submit(candidate, {
@@ -660,7 +605,7 @@ function mediaIconFor(kind: BookRequestMediaKind) {
               :key="kind"
               type="button"
               class="inline-flex h-full items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-reduce:transition-none"
-              :class="mediaKind === kind ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+              :class="mediaKind === kind ? 'bg-primary text-primary-foreground shadow-sm' : 'text-foreground hover:bg-accent'"
               :aria-pressed="mediaKind === kind"
               @click="selectMediaKind(kind)"
             >
@@ -677,7 +622,7 @@ function mediaIconFor(kind: BookRequestMediaKind) {
             <button
               type="button"
               class="inline-flex h-full flex-1 items-center justify-center rounded-md px-2.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-reduce:transition-none sm:flex-none"
-              :class="fulfillmentMode === 'automatic' ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'"
+              :class="fulfillmentMode === 'automatic' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-foreground hover:bg-accent'"
               :aria-pressed="fulfillmentMode === 'automatic'"
               @click="selectAutomaticFulfillment"
             >
@@ -686,9 +631,7 @@ function mediaIconFor(kind: BookRequestMediaKind) {
             <button
               type="button"
               class="inline-flex h-full flex-1 items-center justify-center rounded-md px-2.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-reduce:transition-none sm:flex-none"
-              :class="
-                fulfillmentMode === 'choose_release' ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground'
-              "
+              :class="fulfillmentMode === 'choose_release' ? 'bg-primary text-primary-foreground shadow-sm' : 'text-foreground hover:bg-accent'"
               :aria-pressed="fulfillmentMode === 'choose_release'"
               @click="selectReleaseFulfillment"
             >

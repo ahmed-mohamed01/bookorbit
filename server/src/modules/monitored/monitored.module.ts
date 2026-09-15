@@ -11,6 +11,7 @@ import { MetadataPreferencesModule } from '../metadata-preferences/metadata-pref
 import { NotificationModule } from '../notification/notification.module';
 import { UserModule } from '../user/user.module';
 import { MonitoredCatalogService } from './monitored-catalog.service';
+import { MonitoredAuthorStoreService } from './monitored-author-store.service';
 import { MonitoredAutoRequestService } from './monitored-autorequest.service';
 import { MonitoredCoverService } from './monitored-cover.service';
 import { MonitoredReleaseNotifier } from './monitored-release-notifier.service';
@@ -24,6 +25,7 @@ import { HardcoverBibliographyProvider } from './providers/hardcover-bibliograph
 import { MonitoredService } from './monitored.service';
 import { MonitoredSchemaBootstrapService } from './monitored-schema-bootstrap.service';
 import { MonitoredStoreService } from './monitored-store.service';
+import { MonitoredSettingsService } from './monitored-settings.service';
 
 @Module({
   imports: [
@@ -41,7 +43,9 @@ import { MonitoredStoreService } from './monitored-store.service';
   controllers: [MonitoredController],
   providers: [
     MonitoredStoreService,
+    MonitoredAuthorStoreService,
     MonitoredSchemaBootstrapService,
+    MonitoredSettingsService,
     HardcoverBibliographyProvider,
     GoodreadsBibliographyProvider,
     AudibleBibliographyProvider,

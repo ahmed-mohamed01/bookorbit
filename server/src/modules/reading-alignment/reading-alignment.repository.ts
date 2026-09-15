@@ -1,11 +1,14 @@
+import { basename } from 'node:path';
+
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
+import { isAudioFormat } from '@bookorbit/types';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
+import { naturalCompare } from '../../common/utils/natural-sort.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
-import { isAudioFormat } from '../scanner/lib/classify';
 import type { AudioTimelineFile } from './reading-alignment-audio-timeline.util';
 import { audiobookAlignment, audiobookAlignmentAnchor } from './schema/reading-alignment.schema';
 import type {
@@ -38,6 +41,19 @@ type EbookFileRef = { id: number; absolutePath: string; sizeBytes: number | null
 
 type AlignmentProgress = { samplesDone: number; anchorCount: number };
 
+type AudioPlayOrderRow = { sortOrder: number | null; absolutePath: string };
+
+// Mirrors upstream's audiobook manifest ordering (audiobook.service.ts loadManifestContext). Absolute
+// audio positions are derived from the file order on both sides, so a divergence here would silently
+// map every alignment anchor onto the wrong point of the player's timeline.
+export function compareAudioPlayOrder(left: AudioPlayOrderRow, right: AudioPlayOrderRow): number {
+  if (left.sortOrder !== null || right.sortOrder !== null) {
+    const byOrder = (left.sortOrder ?? Number.MAX_SAFE_INTEGER) - (right.sortOrder ?? Number.MAX_SAFE_INTEGER);
+    if (byOrder !== 0) return byOrder;
+  }
+  return naturalCompare(basename(left.absolutePath), basename(right.absolutePath));
+}
+
 @Injectable()
 export class ReadingAlignmentRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
@@ -57,14 +73,17 @@ export class ReadingAlignmentRepository {
       .select({
         id: schema.bookFiles.id,
         format: schema.bookFiles.format,
+        absolutePath: schema.bookFiles.absolutePath,
+        sortOrder: schema.bookFiles.sortOrder,
         durationSeconds: schema.bookFiles.durationSeconds,
       })
       .from(schema.bookFiles)
       .where(and(eq(schema.bookFiles.bookId, audioBookId), eq(schema.bookFiles.role, 'content')))
-      .orderBy(asc(schema.bookFiles.sortOrder), asc(schema.bookFiles.id));
+      .orderBy(asc(schema.bookFiles.sortOrder));
 
     return rows
       .filter((row) => row.format != null && isAudioFormat(row.format))
+      .sort(compareAudioPlayOrder)
       .map((row) => ({ fileId: row.id, durationSeconds: row.durationSeconds }));
   }
 
@@ -76,14 +95,16 @@ export class ReadingAlignmentRepository {
         id: schema.bookFiles.id,
         format: schema.bookFiles.format,
         absolutePath: schema.bookFiles.absolutePath,
+        sortOrder: schema.bookFiles.sortOrder,
         durationSeconds: schema.bookFiles.durationSeconds,
       })
       .from(schema.bookFiles)
       .where(and(eq(schema.bookFiles.bookId, audioBookId), eq(schema.bookFiles.role, 'content')))
-      .orderBy(asc(schema.bookFiles.sortOrder), asc(schema.bookFiles.id));
+      .orderBy(asc(schema.bookFiles.sortOrder));
 
     return rows
       .filter((row) => row.format != null && isAudioFormat(row.format))
+      .sort(compareAudioPlayOrder)
       .map((row) => ({ fileId: row.id, absolutePath: row.absolutePath, durationSeconds: row.durationSeconds }));
   }
 
@@ -299,10 +320,19 @@ export class ReadingAlignmentRepository {
   ): Promise<boolean> {
     const rows = await this.db
       .insert(schema.audiobookProgress)
-      .values({ userId, bookId: audioBookId, currentFileId, positionSeconds, percentage, updatedAt })
+      .values({ userId, bookId: audioBookId, currentFileId, positionSeconds, percentage, capturedAt: updatedAt, updatedAt })
       .onConflictDoUpdate({
         target: [schema.audiobookProgress.userId, schema.audiobookProgress.bookId],
-        set: { currentFileId, positionSeconds, percentage, updatedAt },
+        // Bumping revision invalidates any baseRevision a web player is holding, so its next save
+        // conflicts (409) and it reloads this projection instead of silently overwriting it.
+        set: {
+          currentFileId,
+          positionSeconds,
+          percentage,
+          revision: sql`${schema.audiobookProgress.revision} + 1`,
+          capturedAt: updatedAt,
+          updatedAt,
+        },
         setWhere: lt(schema.audiobookProgress.updatedAt, updatedAt),
       })
       .returning({ userId: schema.audiobookProgress.userId });

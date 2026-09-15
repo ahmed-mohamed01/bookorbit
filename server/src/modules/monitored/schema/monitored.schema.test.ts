@@ -1,7 +1,14 @@
 import { PgDialect, getTableConfig } from 'drizzle-orm/pg-core';
 import { MONITORED_FORMATS, MONITORED_WORK_KINDS, MONITORED_WORK_STATES, MONITORED_WORK_VERDICTS, MONITOR_MODES } from '@bookorbit/types';
 
-import { authorCatalogWorks, monitoredAuthors, monitoredAuthorWorks, monitoredBooks, monitoredReleaseEvents } from './monitored.schema';
+import {
+  authorCatalogWorks,
+  monitoredAuthors,
+  monitoredAuthorWorks,
+  monitoredBooks,
+  monitoredReleaseEvents,
+  monitoredSettings,
+} from './monitored.schema';
 import { MONITORED_SCHEMA_SQL } from './monitored-schema';
 
 const dialect = new PgDialect();
@@ -14,6 +21,11 @@ function checkValues(table: Parameters<typeof getTableConfig>[0], name: string):
 }
 
 describe('monitored CHECK SQL matches shared constants', () => {
+  it('keeps monitored settings in a single fixed row', () => {
+    expect(checkValues(monitoredSettings, 'monitored_settings_single_row_chk')).toEqual([]);
+    expect(MONITORED_SCHEMA_SQL).toContain('CONSTRAINT "monitored_settings_single_row_chk"');
+  });
+
   it('accepts exactly the declared monitor modes for both formats', () => {
     expect(checkValues(monitoredAuthors, 'monitored_authors_ebook_mode_chk').sort()).toEqual([...MONITOR_MODES].sort());
     expect(checkValues(monitoredAuthors, 'monitored_authors_audiobook_mode_chk').sort()).toEqual([...MONITOR_MODES].sort());

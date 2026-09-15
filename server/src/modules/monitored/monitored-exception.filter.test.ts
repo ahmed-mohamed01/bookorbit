@@ -24,6 +24,7 @@ function makePgError(code: string) {
 describe('MonitoredExceptionFilter', () => {
   beforeEach(() => {
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -64,7 +65,7 @@ describe('MonitoredExceptionFilter', () => {
   });
 
   it('warns instead of logging a mapped driver error as a server fault', () => {
-    const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const errorSpy = vi.mocked(Logger.prototype.error);
     const { host } = makeHost();
 
     new MonitoredExceptionFilter().catch(makePgError('22021'), host);
@@ -72,6 +73,19 @@ describe('MonitoredExceptionFilter', () => {
     expect(errorSpy).not.toHaveBeenCalled();
     expect(Logger.prototype.warn).toHaveBeenCalledWith(expect.stringContaining('[monitored.request.database_error] [fail]'));
     expect(Logger.prototype.warn).toHaveBeenCalledWith(expect.stringContaining('pgCode=22021'));
+  });
+
+  it('logs a foreign key violation as a fork bug with its stack', () => {
+    const { host } = makeHost();
+    const failure = makePgError('23503');
+
+    new MonitoredExceptionFilter().catch(failure, host);
+
+    expect(Logger.prototype.error).toHaveBeenCalledWith(
+      expect.stringContaining('pgCode=23503'),
+      expect.stringContaining('Error: duplicate key value'),
+    );
+    expect(Logger.prototype.warn).not.toHaveBeenCalled();
   });
 
   /** Drizzle rethrows the driver failure wrapped, so the code is only reachable down the cause chain. */
@@ -88,7 +102,6 @@ describe('MonitoredExceptionFilter', () => {
   });
 
   it('stops at a self-referencing cause chain instead of looping', () => {
-    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const { host, status } = makeHost();
     const looping = new Error('outer') as Error & { cause?: unknown };
     looping.cause = looping;
@@ -99,7 +112,7 @@ describe('MonitoredExceptionFilter', () => {
   });
 
   it('leaves an unmapped pg code as a logged 500', () => {
-    const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const errorSpy = vi.mocked(Logger.prototype.error);
     const { host, status, send } = makeHost();
 
     new MonitoredExceptionFilter().catch(makePgError('42P01'), host);

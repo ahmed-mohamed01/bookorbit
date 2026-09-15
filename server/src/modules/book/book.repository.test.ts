@@ -46,6 +46,27 @@ function makeSelectChain<T>(terminalMethod: string, terminalResult: T) {
   return chain;
 }
 
+// The ten select() chains enrichBookIds issues, in order: the card page itself, then authors, files,
+// genres, tags, narrators, series memberships, statuses, file progress and audiobook progress.
+function makeEnrichSelect(cardRows: unknown[], fileProgressRows: unknown[]) {
+  return vi
+    .fn()
+    .mockReturnValueOnce(makeSelectChain('offset', cardRows))
+    .mockReturnValueOnce(makeSelectChain('orderBy', []))
+    .mockReturnValueOnce(makeSelectChain('where', []))
+    .mockReturnValueOnce(makeSelectChain('where', []))
+    .mockReturnValueOnce(makeSelectChain('where', []))
+    .mockReturnValueOnce(makeSelectChain('orderBy', []))
+    .mockReturnValueOnce(makeSelectChain('orderBy', []))
+    .mockReturnValueOnce(makeSelectChain('where', []))
+    .mockReturnValueOnce(makeSelectChain('where', fileProgressRows))
+    .mockReturnValueOnce(makeSelectChain('where', []));
+}
+
+function makeExtraProgressSource(entries: [number, { percentage: number; updatedAt: Date }][]) {
+  return { findProgressForBooks: vi.fn().mockResolvedValue(new Map(entries)) };
+}
+
 function makeInsertChain() {
   const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
   const values = vi.fn().mockReturnValue({ onConflictDoUpdate });
@@ -277,85 +298,56 @@ describe('BookRepository', () => {
     expect(result.progressRows).toEqual([{ bookFileId: 1001, percentage: 48 }]);
   });
 
-  it("findCards maps a linked audiobook's newer progress onto the ebook card", async () => {
+  it("findCards maps an extra source's newer progress onto the card", async () => {
     const rows = [{ id: 10, primaryFileId: 1001, _total: 1 }];
     const readingProgressRows = [{ bookFileId: 1001, percentage: 30, lastReadAt: new Date('2026-01-01T00:00:00.000Z') }];
-    // Raw execute() delivers timestamps as strings at runtime - the merge must normalize them.
-    const linkedAudioRows = [{ bookId: 10, percentage: 62, at: '2026-01-03 00:00:00.000+00' }];
+    const extraProgress = makeExtraProgressSource([[10, { percentage: 62, updatedAt: new Date('2026-01-03T00:00:00.000Z') }]]);
 
-    const db = {
-      select: vi
-        .fn()
-        .mockReturnValueOnce(makeSelectChain('offset', rows))
-        .mockReturnValueOnce(makeSelectChain('orderBy', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('orderBy', []))
-        .mockReturnValueOnce(makeSelectChain('orderBy', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('where', readingProgressRows))
-        .mockReturnValueOnce(makeSelectChain('where', [])),
-      execute: vi.fn().mockResolvedValue({ rows: linkedAudioRows }),
-    };
-    const repo = new BookRepository(db as never);
+    const db = { select: makeEnrichSelect(rows, readingProgressRows), execute: vi.fn() };
+    const repo = new BookRepository(db as never, undefined, undefined, extraProgress);
 
     const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
 
+    expect(extraProgress.findProgressForBooks).toHaveBeenCalledWith(7, [10]);
     expect(result.progressRows).toEqual([{ bookFileId: 1001, percentage: 62 }]);
   });
 
-  it("keeps the ebook's own progress when it is fresher than the linked audiobook", async () => {
+  it("keeps the card's own progress when it is fresher than the extra source's", async () => {
     const rows = [{ id: 10, primaryFileId: 1001, _total: 1 }];
     const readingProgressRows = [{ bookFileId: 1001, percentage: 71, lastReadAt: new Date('2026-01-05T00:00:00.000Z') }];
-    const linkedAudioRows = [{ bookId: 10, percentage: 40, at: new Date('2026-01-03T00:00:00.000Z') }];
+    const extraProgress = makeExtraProgressSource([[10, { percentage: 40, updatedAt: new Date('2026-01-03T00:00:00.000Z') }]]);
 
-    const db = {
-      select: vi
-        .fn()
-        .mockReturnValueOnce(makeSelectChain('offset', rows))
-        .mockReturnValueOnce(makeSelectChain('orderBy', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('orderBy', []))
-        .mockReturnValueOnce(makeSelectChain('orderBy', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('where', readingProgressRows))
-        .mockReturnValueOnce(makeSelectChain('where', [])),
-      execute: vi.fn().mockResolvedValue({ rows: linkedAudioRows }),
-    };
-    const repo = new BookRepository(db as never);
+    const db = { select: makeEnrichSelect(rows, readingProgressRows), execute: vi.fn() };
+    const repo = new BookRepository(db as never, undefined, undefined, extraProgress);
 
     const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
 
     expect(result.progressRows).toEqual([{ bookFileId: 1001, percentage: 71 }]);
   });
 
-  it("maps the linked ebook's reading progress onto the audiobook card (reverse direction)", async () => {
+  it("surfaces an extra source's progress for a card that has none of its own", async () => {
     const rows = [{ id: 20, primaryFileId: 2001, _total: 1 }];
-    const linkedEbookRows = [{ bookId: 20, percentage: 33, at: new Date('2026-01-03T00:00:00.000Z') }];
+    const extraProgress = makeExtraProgressSource([[20, { percentage: 33, updatedAt: new Date('2026-01-03T00:00:00.000Z') }]]);
 
-    const db = {
-      select: vi
-        .fn()
-        .mockReturnValueOnce(makeSelectChain('offset', rows))
-        .mockReturnValueOnce(makeSelectChain('orderBy', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('orderBy', []))
-        .mockReturnValueOnce(makeSelectChain('orderBy', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
-        .mockReturnValueOnce(makeSelectChain('where', [])),
-      execute: vi.fn().mockResolvedValue({ rows: linkedEbookRows }),
-    };
-    const repo = new BookRepository(db as never);
+    const db = { select: makeEnrichSelect(rows, []), execute: vi.fn() };
+    const repo = new BookRepository(db as never, undefined, undefined, extraProgress);
 
     const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
 
     expect(result.progressRows).toEqual([{ bookFileId: 2001, percentage: 33 }]);
+  });
+
+  it('merges no extra progress when no source is injected', async () => {
+    const rows = [{ id: 10, primaryFileId: 1001, _total: 1 }];
+    const readingProgressRows = [{ bookFileId: 1001, percentage: 30, lastReadAt: new Date('2026-01-01T00:00:00.000Z') }];
+
+    const db = { select: makeEnrichSelect(rows, readingProgressRows), execute: vi.fn() };
+    const repo = new BookRepository(db as never);
+
+    const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
+
+    expect(result.progressRows).toEqual([{ bookFileId: 1001, percentage: 30 }]);
+    expect(db.execute).not.toHaveBeenCalled();
   });
 
   it('findCardsByBookIds returns empty payload when no ids are requested', async () => {
@@ -816,41 +808,25 @@ describe('BookRepository', () => {
     await expect(repo.findPrimaryFile(2)).resolves.toBeNull();
   });
 
-  it('writes deletion, metadata updates, and audio progress rows', async () => {
+  it('writes deletion and metadata updates', async () => {
     const deleteWhere = vi.fn().mockResolvedValue(undefined);
     const deleteBuilder = { where: deleteWhere };
     const updateWhere = vi.fn().mockResolvedValue(undefined);
     const updateBuilder = { set: vi.fn().mockReturnValue({ where: updateWhere }) };
-    const audioInsert = {
-      values: vi.fn().mockReturnValue({
-        onConflictDoUpdate: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([{ bookId: 10, percentage: 33 }]),
-        }),
-      }),
-    };
-    const audioProgressSelect = makeSelectChain('limit', [{ percentage: 22 }]);
-    const missingAudioProgressSelect = makeSelectChain('limit', []);
     const db = {
       delete: vi.fn().mockReturnValue(deleteBuilder),
       update: vi.fn().mockReturnValue(updateBuilder),
-      insert: vi.fn().mockReturnValue(audioInsert),
-      select: vi.fn().mockReturnValueOnce(audioProgressSelect).mockReturnValueOnce(missingAudioProgressSelect),
     };
     const repo = new BookRepository(db as never);
 
     await repo.deleteByIds([10, 11]);
     await repo.updateMetadataFields(10, { title: 'Updated' });
-    await expect(repo.findAudioProgress(1, 10)).resolves.toEqual({ percentage: 22 });
-    await expect(repo.findAudioProgress(1, 11)).resolves.toBeNull();
-    await expect(repo.upsertAudioProgress(1, 10, 4, 120, 33)).resolves.toEqual({ bookId: 10, percentage: 33 });
-
     expect(db.delete).toHaveBeenCalledTimes(1);
     expect(deleteWhere).toHaveBeenCalledTimes(1);
     expect(db.update).toHaveBeenCalledTimes(2);
     expect(updateBuilder.set).toHaveBeenNthCalledWith(1, { title: 'Updated' });
     expect(updateBuilder.set).toHaveBeenNthCalledWith(2, expect.objectContaining({ updatedAt: expect.any(Date) }));
     expect(updateWhere).toHaveBeenCalledTimes(2);
-    expect(db.insert).toHaveBeenCalledTimes(1);
   });
 
   it('replaces all community rating rows: deletes old then inserts new', async () => {

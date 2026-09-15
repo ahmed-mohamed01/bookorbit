@@ -44,6 +44,7 @@ describe('Architecture boundaries', () => {
       'src/modules/book/book-query-builder.service.ts',
       'src/modules/book-metadata-fetch/book-metadata-fetch-config.service.ts',
       'src/modules/cover/cover.service.ts',
+      'src/modules/edition-link/edition-link-progress.service.ts',
       'src/modules/entity-manager/duplicate-compute.service.ts',
       'src/modules/kobo/services/kobo-analytics-resolver.service.ts',
       'src/modules/kobo/services/kobo-book-access.service.ts',
@@ -72,7 +73,9 @@ describe('Architecture boundaries', () => {
       'src/modules/upload/upload.service.ts',
       'src/modules/app-settings/oidc-group-mapping-admin.service.ts',
       'src/modules/auth/oidc/oidc-cleanup.service.ts',
+      'src/modules/monitored/monitored-author-store.service.ts',
       'src/modules/monitored/monitored-catalog.service.ts',
+      'src/modules/monitored/monitored-settings.service.ts',
       'src/modules/monitored/monitored-store.service.ts',
     ].sort();
 

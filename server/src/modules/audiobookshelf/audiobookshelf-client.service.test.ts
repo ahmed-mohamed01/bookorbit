@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ensureSafeUrl } from '../../common/utils/ssrf.utils';
 import { AudiobookshelfApiError, AudiobookshelfClientService } from './audiobookshelf-client.service';
 
-vi.mock('../../common/utils/ssrf.utils', () => ({
+vi.mock('../../common/utils/ssrf.utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../common/utils/ssrf.utils')>()),
   ensureSafeUrl: vi.fn().mockResolvedValue(undefined),
 }));
 

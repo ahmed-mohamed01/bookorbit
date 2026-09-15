@@ -3,13 +3,13 @@ import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import type { ContentFilterRules, EditionLinkCandidate, EditionLinkCounterpartSummary } from '@bookorbit/types';
+import { AUDIO_FORMAT_LIST, isAudioFormat } from '@bookorbit/types';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { authors, bookAuthors, bookFiles, bookMetadata, books } from '../../db/schema';
 import { normalizeName, scoreAuthors, scoreTitle } from '../../common/utils/fuzzy-match.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
-import { AUDIO_FORMATS, isAudioFormat } from '../scanner/lib/classify';
 import { bookEditionLinks, type BookEditionLink } from './schema/edition-link.schema';
 
 type Db = NodePgDatabase<typeof schema>;
@@ -123,7 +123,7 @@ export class EditionLinkRepository {
 
     const contentFilters = options.contentFilters ? buildContentFilterClauses(options.contentFilters, this.db) : [];
     const audioFormats = sql.join(
-      [...AUDIO_FORMATS].map((format) => sql`${format}`),
+      AUDIO_FORMAT_LIST.map((format) => sql`${format}`),
       sql`, `,
     );
     const requiredModality =

@@ -1,6 +1,6 @@
-import { ref, type Ref } from 'vue'
+import { computed, ref, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MONITORED_FORMATS, type MonitoredFormat, type ReleaseCandidateItem } from '@bookorbit/types'
+import { MONITORED_FORMATS, type DownloadDelivery, type IndexerSearchStatus, type MonitoredFormat, type ReleaseCandidateItem } from '@bookorbit/types'
 
 import { grabWorkRelease, searchWorkReleases } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
@@ -15,6 +15,7 @@ import { monitoredErrorText } from '../lib/api-error'
 export function useMonitoredReleases(workId: Ref<string | null>, format: MonitoredFormat) {
   const { t } = useI18n()
   const releases = ref<ReleaseCandidateItem[]>([])
+  const indexers = ref<IndexerSearchStatus[]>([])
   const loading = ref(false)
   const searched = ref(false)
   const error = ref<string | null>(null)
@@ -41,6 +42,7 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
       const result = await searchWorkReleases(requestedWorkId, format)
       if (token !== generation || workId.value !== requestedWorkId) return
       releases.value = result.releases
+      indexers.value = result.indexers
       searched.value = true
       forgetGrabs(requestedWorkId)
       // An empty list with zero enabled indexers is a configuration state, not a search result.
@@ -50,11 +52,22 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
     } catch (cause) {
       if (token !== generation || workId.value !== requestedWorkId) return
       releases.value = []
+      indexers.value = []
       searched.value = true
       error.value = monitoredErrorText(cause, t('monitored.errors.searchFailed'))
     } finally {
       if (token === generation) loading.value = false
     }
+  }
+
+  const deliveryByIndexer = computed(() => new Map(indexers.value.map((indexer) => [indexer.indexerId, indexer.delivery])))
+
+  /**
+   * Delivery belongs to the source, not to the release, so the server states it once per indexer.
+   * The seeder fallback only covers a response whose status list omits the indexer a release names.
+   */
+  function deliveryFor(release: ReleaseCandidateItem): DownloadDelivery {
+    return deliveryByIndexer.value.get(release.indexerId) ?? (release.seeders !== null ? 'torrent' : 'file')
   }
 
   /**
@@ -118,5 +131,5 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
     }
   }
 
-  return { releases, loading, searched, error, isGrabbing, isGrabbed, search, grab }
+  return { releases, loading, searched, error, isGrabbing, isGrabbed, deliveryFor, search, grab }
 }

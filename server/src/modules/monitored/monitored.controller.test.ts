@@ -11,6 +11,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { MonitoredController } from './monitored.controller';
 import { MonitoredCoverService } from './monitored-cover.service';
 import { MonitoredService } from './monitored.service';
+import { MonitoredSettingsService } from './monitored-settings.service';
 
 vi.mock('fs', async () => {
   const actual = await vi.importActual('fs');
@@ -22,12 +23,17 @@ vi.mock('fs/promises', async () => {
   return { ...actual, stat: vi.fn() };
 });
 
-async function makeController(service: Record<string, unknown>, coverService: Record<string, unknown> = {}) {
+async function makeController(
+  service: Record<string, unknown>,
+  coverService: Record<string, unknown> = {},
+  settingsService: Record<string, unknown> = {},
+) {
   const module = await Test.createTestingModule({
     controllers: [MonitoredController],
     providers: [
       { provide: MonitoredService, useValue: service },
       { provide: MonitoredCoverService, useValue: coverService },
+      { provide: MonitoredSettingsService, useValue: settingsService },
     ],
   }).compile();
   return module.get(MonitoredController);
@@ -63,6 +69,21 @@ describe('MonitoredController', () => {
     expect(Reflect.getMetadata(PERMISSION_KEY, MonitoredController.prototype[method])).toBe(Permission.BookRequestAccess);
   });
 
+  it.each(['getSettings', 'setSettings'] as const)('gates %s with ManageAppSettings', (method) => {
+    expect(Reflect.getMetadata(PERMISSION_KEY, MonitoredController.prototype[method])).toBe(Permission.ManageAppSettings);
+  });
+
+  it('gets and updates monitored settings through the monitored service', async () => {
+    const getMonitoredSettings = vi.fn().mockResolvedValue({ refreshCooldownMinutes: 10, syncEnabled: true, syncIntervalHours: 12 });
+    const setMonitoredSettings = vi.fn().mockResolvedValue({ refreshCooldownMinutes: 30, syncEnabled: false, syncIntervalHours: 24 });
+    const controller = await makeController({}, {}, { getMonitoredSettings, setMonitoredSettings });
+    const update = { refreshCooldownMinutes: 30, syncEnabled: false, syncIntervalHours: 24 };
+
+    await expect(controller.getSettings()).resolves.toEqual({ refreshCooldownMinutes: 10, syncEnabled: true, syncIntervalHours: 12 });
+    await expect(controller.setSettings(update)).resolves.toEqual(update);
+    expect(setMonitoredSettings).toHaveBeenCalledWith(update);
+  });
+
   it('returns 404 when an author is not visible to the caller', async () => {
     const service = {
       getAuthor: vi.fn().mockRejectedValue(new NotFoundException('Monitored author not found')),
@@ -72,6 +93,7 @@ describe('MonitoredController', () => {
       providers: [
         { provide: MonitoredService, useValue: service },
         { provide: MonitoredCoverService, useValue: {} },
+        { provide: MonitoredSettingsService, useValue: {} },
       ],
     }).compile();
     const controller = module.get(MonitoredController);

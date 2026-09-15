@@ -4,11 +4,11 @@ import type { MonitoredAuthorConfig } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
-import { AppSettingsService } from '../app-settings/app-settings.service';
 import { UserService } from '../user/user.service';
 import { MonitoredReleaseWatcher } from './monitored-release-watcher.service';
 import { MonitoredService } from './monitored.service';
 import { MonitoredStoreService } from './monitored-store.service';
+import { MonitoredSettingsService } from './monitored-settings.service';
 
 /**
  * Monitors refreshed per tick. Each one is three provider fetches for the owner, so this is the
@@ -40,7 +40,7 @@ export class MonitoredSyncSchedulerService {
     private readonly monitored: MonitoredService,
     private readonly watcher: MonitoredReleaseWatcher,
     private readonly users: UserService,
-    private readonly appSettings: AppSettingsService,
+    private readonly settings: MonitoredSettingsService,
   ) {}
 
   @Cron(SYNC_CRON)
@@ -55,7 +55,7 @@ export class MonitoredSyncSchedulerService {
     let skipped = 0;
     let failed = 0;
     try {
-      const { syncEnabled, syncIntervalHours } = await this.appSettings.getMonitoredSettings();
+      const { syncEnabled, syncIntervalHours } = await this.settings.getMonitoredSettings();
       if (!syncEnabled) return;
 
       const staleBefore = new Date(Date.now() - syncIntervalHours * 60 * 60 * 1000);

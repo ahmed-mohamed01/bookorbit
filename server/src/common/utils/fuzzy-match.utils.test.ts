@@ -69,4 +69,8 @@ describe('normalizeName', () => {
   it('keeps digits, which is what the volume guard reads', () => {
     expect(normalizeName('The Primal Hunter #3')).toBe('the primal hunter 3');
   });
+
+  it('caps the input at 512 characters before scoring, bounding the O(n*m) edit distance', () => {
+    expect(normalizeName('a'.repeat(1000))).toHaveLength(512);
+  });
 });

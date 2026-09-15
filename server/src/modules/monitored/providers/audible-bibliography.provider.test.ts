@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ProviderConfigurations } from '@bookorbit/types';
-import { AudibleBibliographyProvider } from './audible-bibliography.provider';
+import { AudibleBibliographyProvider, mapAudibleObservations } from './audible-bibliography.provider';
 
 vi.mock('../../metadata-fetch/providers/provider-utils', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../metadata-fetch/providers/provider-utils')>()),
@@ -87,5 +87,45 @@ describe('AudibleBibliographyProvider pagination', () => {
     expect(catalog.pages).toHaveLength(10);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('capped=true'));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('fetched=500 total=900'));
+  });
+});
+
+describe('mapAudibleObservations', () => {
+  it('rejects invalid release dates and uses the upstream summary and cover precedence', () => {
+    const [observation] = mapAudibleObservations([
+      {
+        asin: 'ASIN1',
+        title: 'Book',
+        release_date: '0000-00-00',
+        publisher_summary: '<p>Publisher</p>',
+        merchandising_summary: '<p>Merchandising</p>',
+        product_images: { 500: 'small', 1024: 'large' },
+      },
+    ]);
+
+    expect(observation).toMatchObject({ releaseDate: null, releaseYear: null, description: 'Publisher', cover: 'large' });
+  });
+
+  it('records every unique series membership with normalized indices', () => {
+    const [observation] = mapAudibleObservations([
+      {
+        asin: 'ASIN1',
+        title: 'Book',
+        series: [
+          { title: 'First', sequence: ' 2.5 ' },
+          { title: 'Second', sequence: 'volume 3' },
+          { title: 'first', sequence: '9' },
+        ],
+      },
+    ]);
+
+    expect(observation).toMatchObject({
+      seriesName: 'First',
+      seriesIndex: '2.5',
+      seriesMemberships: [
+        { name: 'First', index: '2.5' },
+        { name: 'Second', index: null },
+      ],
+    });
   });
 });

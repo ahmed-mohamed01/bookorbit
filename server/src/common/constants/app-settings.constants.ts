@@ -27,23 +27,7 @@ export const APP_SETTING_KEYS = {
   INITIAL_SETUP_COMPLETED_AT: 'initial_setup_completed_at',
   UPDATE_CHECK_ENABLED: 'update_check_enabled',
   MAX_UPLOAD_SIZE_MB: 'max_upload_size_mb',
-  MONITORED_REFRESH_COOLDOWN_MINUTES: 'monitored_refresh_cooldown_minutes',
-  MONITORED_SYNC_ENABLED: 'monitored_sync_enabled',
-  MONITORED_SYNC_INTERVAL_HOURS: 'monitored_sync_interval_hours',
 } as const;
-
-export const DEFAULT_MONITORED_REFRESH_COOLDOWN_MINUTES = 10;
-export const DEFAULT_MONITORED_SYNC_ENABLED = true;
-export const DEFAULT_MONITORED_SYNC_INTERVAL_HOURS = 12;
-export const MIN_MONITORED_SYNC_INTERVAL_HOURS = 1;
-export const MAX_MONITORED_SYNC_INTERVAL_HOURS = 168;
-
-/** Written only through the Monitored settings endpoint, which validates them as one shape. */
-export const MONITORED_MANAGED_SETTING_KEYS: readonly string[] = [
-  APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES,
-  APP_SETTING_KEYS.MONITORED_SYNC_ENABLED,
-  APP_SETTING_KEYS.MONITORED_SYNC_INTERVAL_HOURS,
-];
 
 export const BOOK_DOCK_MANAGED_SETTING_KEYS: readonly string[] = [
   APP_SETTING_KEYS.BOOK_DOCK_PAUSED,

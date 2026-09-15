@@ -53,7 +53,7 @@ export interface WorkAvailabilityGroup {
  * fuzzy matching. Earlier request states have no library book to find yet, and attempting them
  * would consume the cooldown before the import lands.
  */
-export function needsAvailabilityRecompute(work: MonitoredWork): boolean {
+function needsAvailabilityRecompute(work: MonitoredWork): boolean {
   return MONITORED_FORMATS.some((format) => work.requestStatuses?.[format] === 'available' && work.matchedBookIds?.[format] == null);
 }
 
@@ -157,7 +157,7 @@ export function chooseOwnedCandidate(
  * the file. The stripped variants are gated on length so a short core ("Lux") cannot alias works.
  */
 /** The title with the spellings that drift between a library and a provider folded together. */
-export function foldedTitleKey(title: string): string {
+function foldedTitleKey(title: string): string {
   return normalizeToken(
     title
       .toLowerCase()
@@ -270,7 +270,7 @@ function slotPopularity(work: MergedWork): number {
 }
 
 /** Whether a provider was actually run this refresh, and whether that run errored. */
-export interface ProviderOutcome {
+interface ProviderOutcome {
   attempted: boolean;
   failed: boolean;
 }
@@ -418,7 +418,7 @@ export function enforceUniqueWorkIds(works: MonitoredWork[]): string[] {
   return collisions;
 }
 
-export interface CatalogFetchResult {
+interface CatalogFetchResult {
   catalog: MonitoredCatalog;
   hardcoverAuthorId: string;
 }

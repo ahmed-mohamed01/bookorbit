@@ -1,13 +1,8 @@
-import type { MonitoredWork } from '@bookorbit/types'
+import { isWorkVisible, type MonitoredWork } from '@bookorbit/types'
 import { releaseDateForWork } from './grouping'
 import { parseMonitoredDate } from './release-date'
 
-/** Mirrors the server predicate: what the default list holds with nothing extra switched on. */
-export function isWorkVisible(work: MonitoredWork): boolean {
-  if (work.userVisibility === 'hidden') return false
-  if (work.userVisibility === 'visible') return true
-  return work.verdict === 'verified' && work.flags.length === 0
-}
+export { isWorkVisible }
 
 export const MONITORED_REVIEW_KINDS = ['collection', 'anthology', 'graphic_novel', 'format_variant', 'duplicate', 'other'] as const
 export type MonitoredReviewKind = (typeof MONITORED_REVIEW_KINDS)[number]
