@@ -71,6 +71,8 @@ CREATE TABLE IF NOT EXISTS "monitored_authors" (
 	"audiobook_folder_id" integer,
 	"added_at" timestamp with time zone NOT NULL,
 	"last_refreshed_at" timestamp with time zone,
+	"last_sync_attempted_at" timestamp with time zone,
+	"last_release_check_at" timestamp with time zone,
 	CONSTRAINT "monitored_authors_ebook_mode_chk" CHECK ("monitored_authors"."ebook_mode" in ('notify', 'auto-upcoming', 'auto-all', 'off')),
 	CONSTRAINT "monitored_authors_audiobook_mode_chk" CHECK ("monitored_authors"."audiobook_mode" in ('notify', 'auto-upcoming', 'auto-all', 'off'))
 );
@@ -83,6 +85,19 @@ CREATE TABLE IF NOT EXISTS "monitored_books" (
 	"formats" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"paused" boolean DEFAULT false NOT NULL,
 	"added_at" timestamp with time zone NOT NULL
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "monitored_release_events" (
+	"work_id" varchar(255) NOT NULL,
+	"monitor_author_id" varchar(36) NOT NULL,
+	"owner_user_id" integer NOT NULL,
+	"format" varchar(10) NOT NULL,
+	"title" varchar(1000),
+	"release_date" varchar(10) NOT NULL,
+	"detected_at" timestamp with time zone NOT NULL,
+	"notified_at" timestamp with time zone,
+	CONSTRAINT "monitored_release_events_work_id_format_pk" PRIMARY KEY("work_id","format"),
+	CONSTRAINT "monitored_release_events_format_chk" CHECK ("monitored_release_events"."format" in ('ebook', 'audiobook'))
 );
 --> statement-breakpoint
 DO $$ BEGIN
@@ -256,6 +271,24 @@ DO $$ BEGIN
 	END IF;
 END $$;
 --> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'monitored_release_events_monitor_author_id_monitored_authors_id_fk'
+	) THEN
+		ALTER TABLE "monitored_release_events" ADD CONSTRAINT "monitored_release_events_monitor_author_id_monitored_authors_id_fk" FOREIGN KEY ("monitor_author_id") REFERENCES "public"."monitored_authors"("id") ON DELETE cascade ON UPDATE no action;
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'monitored_release_events_owner_user_id_users_id_fk'
+	) THEN
+		ALTER TABLE "monitored_release_events" ADD CONSTRAINT "monitored_release_events_owner_user_id_users_id_fk" FOREIGN KEY ("owner_user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+	END IF;
+END $$;
+--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "author_catalog_source_works_provider_work_id_idx" ON "author_catalog_source_works" USING btree ("provider_work_id");
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "author_catalog_works_monitor_author_id_idx" ON "author_catalog_works" USING btree ("monitor_author_id");
@@ -284,7 +317,53 @@ CREATE INDEX IF NOT EXISTS "monitored_books_owner_user_id_idx" ON "monitored_boo
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "monitored_books_owner_monitor_work_uidx" ON "monitored_books" USING btree ("owner_user_id","monitor_author_id","work_id");
 --> statement-breakpoint
-ALTER TABLE "author_catalog_works" ADD COLUMN IF NOT EXISTS "kind" varchar(20);
+CREATE INDEX IF NOT EXISTS "monitored_release_events_owner_user_id_idx" ON "monitored_release_events" USING btree ("owner_user_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "monitored_release_events_monitor_author_id_idx" ON "monitored_release_events" USING btree ("monitor_author_id");
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'author_catalog_works'
+			AND column_name = 'kind'
+	) THEN
+		ALTER TABLE "author_catalog_works" ADD COLUMN IF NOT EXISTS "kind" varchar(20);
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'monitored_authors'
+			AND column_name = 'last_release_check_at'
+	) THEN
+		ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "last_release_check_at" timestamp with time zone;
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'monitored_authors'
+			AND column_name = 'last_sync_attempted_at'
+	) THEN
+		ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "last_sync_attempted_at" timestamp with time zone;
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'monitored_release_events'
+			AND column_name = 'title'
+	) THEN
+		ALTER TABLE "monitored_release_events" ADD COLUMN IF NOT EXISTS "title" varchar(1000);
+	END IF;
+END $$;
 --> statement-breakpoint
 DO $$ BEGIN
 	IF NOT EXISTS (
@@ -292,6 +371,45 @@ DO $$ BEGIN
 		WHERE conname = 'author_catalog_works_kind_chk'
 	) THEN
 		ALTER TABLE "author_catalog_works" ADD CONSTRAINT "author_catalog_works_kind_chk" CHECK ("author_catalog_works"."kind" is null or "author_catalog_works"."kind" in ('collection', 'anthology', 'graphic_novel', 'format_variant', 'duplicate'));
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'monitored_release_events_work_id_author_catalog_works_id_fk'
+	) THEN
+		ALTER TABLE "monitored_release_events" DROP CONSTRAINT IF EXISTS "monitored_release_events_work_id_author_catalog_works_id_fk";
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF EXISTS (
+		SELECT 1 FROM pg_class
+		WHERE relname = 'author_catalog_works_monitor_ebook_release_idx'
+			AND relkind = 'i'
+	) THEN
+		DROP INDEX IF EXISTS "author_catalog_works_monitor_ebook_release_idx";
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF EXISTS (
+		SELECT 1 FROM pg_class
+		WHERE relname = 'author_catalog_works_monitor_audio_release_idx'
+			AND relkind = 'i'
+	) THEN
+		DROP INDEX IF EXISTS "author_catalog_works_monitor_audio_release_idx";
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF EXISTS (
+		SELECT 1 FROM pg_class
+		WHERE relname = 'monitored_release_events_pending_idx'
+			AND relkind = 'i'
+	) THEN
+		DROP INDEX IF EXISTS "monitored_release_events_pending_idx";
 	END IF;
 END $$;
 --> statement-breakpoint

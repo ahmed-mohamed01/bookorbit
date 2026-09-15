@@ -33,7 +33,7 @@ describe('MonitoredSettings', () => {
     vi.clearAllMocks()
     apiMock.mockImplementation(async (_url, init) => {
       if (init?.method === 'PUT') return response(JSON.parse(String(init.body)))
-      return response({ refreshCooldownMinutes: 10 })
+      return response({ refreshCooldownMinutes: 10, syncEnabled: true, syncIntervalHours: 12 })
     })
   })
 
@@ -41,27 +41,40 @@ describe('MonitoredSettings', () => {
     const wrapper = await mountSettings()
 
     expect(apiMock).toHaveBeenCalledWith('/api/v1/app-settings/monitored')
-    expect((wrapper.get('input[type="number"]').element as HTMLInputElement).value).toBe('10')
+    const inputs = wrapper.findAll('input[type="number"]')
+    expect((inputs[0].element as HTMLInputElement).value).toBe('10')
+    expect((inputs[1].element as HTMLInputElement).value).toBe('12')
   })
 
-  it('saves a typed cooldown through the protected endpoint', async () => {
+  it('saves the cooldown and the sync settings together through the protected endpoint', async () => {
     const wrapper = await mountSettings()
-    await wrapper.get('input[type="number"]').setValue('30')
-    await wrapper.get('button').trigger('click')
+    const inputs = wrapper.findAll('input[type="number"]')
+    await inputs[0].setValue('30')
+    await inputs[1].setValue('24')
+    await wrapper.get('button:not([role="switch"])').trigger('click')
     await flushPromises()
 
     expect(apiMock).toHaveBeenLastCalledWith('/api/v1/app-settings/monitored', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshCooldownMinutes: 30 }),
+      body: JSON.stringify({ refreshCooldownMinutes: 30, syncEnabled: true, syncIntervalHours: 24 }),
     })
     expect(toastSuccessMock).toHaveBeenCalledOnce()
   })
 
+  it('rejects a sync interval outside the supported range before making a request', async () => {
+    const wrapper = await mountSettings()
+    await wrapper.findAll('input[type="number"]')[1].setValue('0')
+    await wrapper.get('button:not([role="switch"])').trigger('click')
+
+    expect(apiMock).toHaveBeenCalledTimes(1)
+    expect(toastErrorMock).toHaveBeenCalledOnce()
+  })
+
   it('rejects values outside the supported range before making a request', async () => {
     const wrapper = await mountSettings()
-    await wrapper.get('input[type="number"]').setValue('0')
-    await wrapper.get('button').trigger('click')
+    await wrapper.findAll('input[type="number"]')[0].setValue('0')
+    await wrapper.get('button:not([role="switch"])').trigger('click')
 
     expect(apiMock).toHaveBeenCalledTimes(1)
     expect(toastErrorMock).toHaveBeenCalledOnce()

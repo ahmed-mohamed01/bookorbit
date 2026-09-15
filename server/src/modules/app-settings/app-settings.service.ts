@@ -25,6 +25,11 @@ import {
   BOOK_DOCK_MANAGED_SETTING_KEYS,
   DEFAULT_LIBRARY_ACCESS_CONFIG,
   DEFAULT_MONITORED_REFRESH_COOLDOWN_MINUTES,
+  DEFAULT_MONITORED_SYNC_ENABLED,
+  DEFAULT_MONITORED_SYNC_INTERVAL_HOURS,
+  MAX_MONITORED_SYNC_INTERVAL_HOURS,
+  MIN_MONITORED_SYNC_INTERVAL_HOURS,
+  MONITORED_MANAGED_SETTING_KEYS,
   DEFAULT_OIDC_CONFIG,
   type OidcFullConfig,
 } from '../../common/constants/app-settings.constants';
@@ -91,7 +96,7 @@ export class AppSettingsService {
         throw new BadRequestException('Upload size limit must be an integer greater than 0');
       }
     }
-    if (key === APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES) {
+    if (MONITORED_MANAGED_SETTING_KEYS.includes(key)) {
       throw new BadRequestException(`Setting '${key}' is managed by the Monitored endpoints and cannot be written here`);
     }
     const setting = await this.repo.updateByKey(key, value);
@@ -221,20 +226,48 @@ export class AppSettingsService {
         return Number.isInteger(parsed) && parsed >= 1 && parsed <= 1440 ? parsed : DEFAULT_MONITORED_REFRESH_COOLDOWN_MINUTES;
       },
     );
-    return { refreshCooldownMinutes };
+    const syncEnabled = await this.runtimeSettingCache.get('app-settings', APP_SETTING_KEYS.MONITORED_SYNC_ENABLED, async () => {
+      const row = await this.repo.findByKey(APP_SETTING_KEYS.MONITORED_SYNC_ENABLED);
+      return parseBooleanSetting(row?.value, DEFAULT_MONITORED_SYNC_ENABLED);
+    });
+    const syncIntervalHours = await this.runtimeSettingCache.get('app-settings', APP_SETTING_KEYS.MONITORED_SYNC_INTERVAL_HOURS, async () => {
+      const row = await this.repo.findByKey(APP_SETTING_KEYS.MONITORED_SYNC_INTERVAL_HOURS);
+      const parsed = Number(row?.value);
+      return Number.isInteger(parsed) && parsed >= MIN_MONITORED_SYNC_INTERVAL_HOURS && parsed <= MAX_MONITORED_SYNC_INTERVAL_HOURS
+        ? parsed
+        : DEFAULT_MONITORED_SYNC_INTERVAL_HOURS;
+    });
+    return { refreshCooldownMinutes, syncEnabled, syncIntervalHours };
   }
 
-  async setMonitoredSettings(settings: MonitoredSettings): Promise<MonitoredSettings> {
+  async setMonitoredSettings(provided: Partial<MonitoredSettings> & Pick<MonitoredSettings, 'refreshCooldownMinutes'>): Promise<MonitoredSettings> {
+    const settings = { ...(await this.getMonitoredSettings()), ...provided };
     if (!Number.isInteger(settings.refreshCooldownMinutes) || settings.refreshCooldownMinutes < 1 || settings.refreshCooldownMinutes > 1440) {
       throw new BadRequestException('Monitored refresh cooldown must be an integer from 1 to 1440 minutes');
     }
-    await this.repo.upsert(APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES, String(settings.refreshCooldownMinutes));
+    if (typeof settings.syncEnabled !== 'boolean') {
+      throw new BadRequestException('Monitored sync enabled must be a boolean');
+    }
+    if (
+      !Number.isInteger(settings.syncIntervalHours) ||
+      settings.syncIntervalHours < MIN_MONITORED_SYNC_INTERVAL_HOURS ||
+      settings.syncIntervalHours > MAX_MONITORED_SYNC_INTERVAL_HOURS
+    ) {
+      throw new BadRequestException(
+        `Monitored sync interval must be an integer from ${MIN_MONITORED_SYNC_INTERVAL_HOURS} to ${MAX_MONITORED_SYNC_INTERVAL_HOURS} hours`,
+      );
+    }
+    await this.repo.upsertMany([
+      { key: APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES, value: String(settings.refreshCooldownMinutes) },
+      { key: APP_SETTING_KEYS.MONITORED_SYNC_ENABLED, value: String(settings.syncEnabled) },
+      { key: APP_SETTING_KEYS.MONITORED_SYNC_INTERVAL_HOURS, value: String(settings.syncIntervalHours) },
+    ]);
     this.clearRuntimeSettingCache(APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES);
     return this.getMonitoredSettings();
   }
 
   private clearRuntimeSettingCache(key: string): void {
-    if (key === APP_SETTING_KEYS.CROSS_PLATFORM_PATH_SANITIZATION_ENABLED || key === APP_SETTING_KEYS.MONITORED_REFRESH_COOLDOWN_MINUTES) {
+    if (key === APP_SETTING_KEYS.CROSS_PLATFORM_PATH_SANITIZATION_ENABLED || MONITORED_MANAGED_SETTING_KEYS.includes(key)) {
       this.runtimeSettingCache.clearForScope('app-settings');
     }
   }

@@ -22,6 +22,17 @@ export function releaseDateRange(value: string, precision: MonitoredDatePrecisio
   return { start: `${year}-01-01`, end: `${year}-12-31` };
 }
 
+export function releaseDueDay(storedDate: string): string | null {
+  const match = DATE_SHAPE.exec(storedDate.trim());
+  const range = releaseDateRange(storedDate, null);
+  if (!match || !range) return null;
+  if (match[3]) return range.start;
+
+  const due = new Date(`${range.end}T00:00:00.000Z`);
+  due.setUTCDate(due.getUTCDate() + 1);
+  return due.toISOString().slice(0, 10);
+}
+
 /** True when the release could fall inside the inclusive `earliest`..`latest` day window. */
 export function releaseDateWithinWindow(value: string, precision: MonitoredDatePrecision | null, earliest: string, latest: string): boolean {
   const range = releaseDateRange(value, precision);

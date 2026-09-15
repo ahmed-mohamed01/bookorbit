@@ -27,6 +27,7 @@ export const NotificationType = {
   BulkRenameCompleted: "bulk_rename_completed",
   BulkRenameFailed: "bulk_rename_failed",
   AchievementUnlocked: "achievement_unlocked",
+  MonitoredReleaseAvailable: "monitored_release_available",
 } as const;
 
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
@@ -56,6 +57,7 @@ export const NOTIFICATION_CATEGORY_IDS = [
   "fileRename",
   "bulkRename",
   "achievements",
+  "monitored",
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORY_IDS)[number];
@@ -99,6 +101,7 @@ export const NOTIFICATION_TYPE_META: Record<NotificationType, NotificationTypeMe
   [NotificationType.BulkRenameCompleted]: { category: "bulkRename", severity: "success" },
   [NotificationType.BulkRenameFailed]: { category: "bulkRename", severity: "warning" },
   [NotificationType.AchievementUnlocked]: { category: "achievements", severity: "success" },
+  [NotificationType.MonitoredReleaseAvailable]: { category: "monitored", severity: "success" },
 };
 
 export const NOTIFICATION_CATEGORIES: Record<NotificationCategory, readonly NotificationType[]> = NOTIFICATION_CATEGORY_IDS.reduce(

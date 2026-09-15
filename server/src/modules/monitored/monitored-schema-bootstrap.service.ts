@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { splitSchemaStatements } from '../../common/utils/schema-bootstrap.utils';
@@ -9,6 +9,7 @@ const TABLE_NAMES = [
   'monitored_authors',
   'monitored_books',
   'monitored_author_works',
+  'monitored_release_events',
   'author_catalog_works',
   'author_catalog_state',
   'author_catalog_source_works',
@@ -16,12 +17,12 @@ const TABLE_NAMES = [
 ] as const;
 
 @Injectable()
-export class MonitoredSchemaBootstrapService implements OnApplicationBootstrap {
+export class MonitoredSchemaBootstrapService implements OnModuleInit {
   private readonly logger = new Logger(MonitoredSchemaBootstrapService.name);
 
   constructor(private readonly store: MonitoredStoreService) {}
 
-  async onApplicationBootstrap(): Promise<void> {
+  async onModuleInit(): Promise<void> {
     const startedAt = Date.now();
 
     try {

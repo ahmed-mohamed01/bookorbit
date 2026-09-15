@@ -5,7 +5,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgDialect } from 'drizzle-orm/pg-core';
 
 import type { RequestUser } from '../../common/types/request-user';
-import { MonitoredStoreService, releaseRangeOverlapsSql } from './monitored-store.service';
+import { MonitoredStoreService, releaseEventKey, releaseRangeOverlapsSql, type MonitoredDueRelease } from './monitored-store.service';
 import * as schema from './schema/monitored.schema';
 import { authorCatalogWorks, type AuthorCatalogWorkRow } from './schema/monitored.schema';
 
@@ -492,5 +492,168 @@ describe('MonitoredStoreService paged lists', () => {
     expect(total?.sql).not.toContain('limit');
     expect(total?.sql).not.toContain('offset');
     expect(result).toEqual({ items: [], total: 456, page: 4, size: 25 });
+  });
+});
+
+describe('MonitoredStoreService release detection', () => {
+  const monitor = {
+    id: 'monitor-1',
+    ownerUserId: 4,
+    authorName: 'Test Author',
+    localAuthorId: null,
+    providerIds: {},
+    formats: {
+      ebook: { mode: 'notify' as const, libraryId: null, folderId: null },
+      audiobook: { mode: 'notify' as const, libraryId: null, folderId: null },
+    },
+    paused: false,
+    addedAt: '2026-03-15T10:00:00.000Z',
+    lastRefreshedAt: null,
+  };
+
+  const dueRelease: MonitoredDueRelease = {
+    workId: 'work-1',
+    title: 'Test Work',
+    seriesName: null,
+    seriesIndex: null,
+    format: 'ebook',
+    releaseDate: '2026-09-01',
+    storedDate: '2026-09-01',
+    claimed: false,
+  };
+
+  it('builds both precision-aware due legs with ownership and ledger dedupe', async () => {
+    const dialect = new PgDialect();
+    let captured: { sql: string; params: unknown[] } | undefined;
+    const db = {
+      execute: vi.fn((statement: SQL) => {
+        captured = dialect.sqlToQuery(statement);
+        return Promise.resolve({ rows: [] });
+      }),
+    };
+    const store = new MonitoredStoreService(db as never, { findAccessibleLibraryIds: vi.fn().mockResolvedValue([7]) } as never);
+
+    await store.findDueReleases({ owner: { id: 4, isSuperuser: false } as RequestUser, monitor, today: '2026-09-10', limit: 25 });
+
+    const statement = captured!.sql.replace(/\s+/g, ' ');
+    expect(statement).toContain(' union all ');
+    expect(statement.match(/inner join "monitored_authors"/g)).toHaveLength(2);
+    expect(statement).toMatch(/case when .* = 'day' then case .*'-01-01'.* <= \$\d+ else case .*'-12-31'.* < \$\d+ end/);
+    expect(statement).toMatch(/'-31'.* >= \$\d+/);
+    expect(statement).toContain('not (');
+    expect(statement).toContain('left join "monitored_release_events"');
+    expect(statement).toContain('"monitored_release_events"."notified_at" is null');
+    expect(statement).toContain('not exists ( select 1 from "monitored_release_events" as prior_release');
+    expect(statement).toMatch(/prior_release\.monitor_author_id = \$\d+/);
+    expect(statement).toContain('prior_release.notified_at is not null');
+    expect(statement).toContain('lower(public.bookorbit_unaccent(prior_release.title))');
+    expect(statement).toContain('lower(public.bookorbit_unaccent("author_catalog_works"."title"))');
+  });
+
+  it.each([
+    [[] as Array<{ workId: string }>, false],
+    [[{ workId: 'work-1' }], true],
+  ])('leases only when the owner-scoped update returns a row', async (rows, expected) => {
+    const dialect = new PgDialect();
+    let captured: { sql: string; params: unknown[] } | undefined;
+    const returning = vi.fn().mockResolvedValue(rows);
+    const where = vi.fn((condition: SQL) => {
+      captured = dialect.sqlToQuery(condition);
+      return { returning };
+    });
+    const set = vi.fn(() => ({ where }));
+    const store = new MonitoredStoreService({ update: vi.fn(() => ({ set })) } as never, {} as never);
+
+    await expect(store.leaseReleaseEvent('work-1', 'ebook', 4)).resolves.toBe(expected);
+    expect(captured?.sql).toContain('"monitored_release_events"."work_id" = $1');
+    expect(captured?.sql).toContain('"monitored_release_events"."format" = $2');
+    expect(captured?.sql).toContain('"monitored_release_events"."owner_user_id" = $3');
+    expect(captured?.sql).toContain('"monitored_release_events"."notified_at" is null');
+    expect(captured?.params).toEqual(['work-1', 'ebook', 4]);
+  });
+
+  it('orders sync candidates by the latest attempt or refresh timestamp', async () => {
+    const dialect = new PgDialect();
+    let whereSql = '';
+    let orderSql = '';
+    const builder: Record<string, unknown> = {};
+    builder.from = vi.fn(() => builder);
+    builder.where = vi.fn((condition: SQL) => {
+      whereSql = dialect.sqlToQuery(condition).sql;
+      return builder;
+    });
+    builder.orderBy = vi.fn((...conditions: SQL[]) => {
+      orderSql = conditions.map((condition) => dialect.sqlToQuery(condition).sql).join(' ');
+      return builder;
+    });
+    builder.limit = vi.fn(() => Promise.resolve([]));
+    const store = new MonitoredStoreService({ select: vi.fn(() => builder) } as never, {} as never);
+
+    await store.findMonitorsDueForSync(new Date('2026-09-01T00:00:00.000Z'), 10);
+
+    expect(whereSql).toContain('greatest("monitored_authors"."last_sync_attempted_at", "monitored_authors"."last_refreshed_at")');
+    expect(orderSql).toContain('greatest("monitored_authors"."last_sync_attempted_at", "monitored_authors"."last_refreshed_at") asc nulls first');
+  });
+
+  it('writes the release title into every claimed ledger row', async () => {
+    let insertedValues: unknown;
+    const builder: Record<string, unknown> = {};
+    builder.values = vi.fn((values: unknown) => {
+      insertedValues = values;
+      return builder;
+    });
+    builder.onConflictDoNothing = vi.fn(() => builder);
+    builder.returning = vi.fn().mockResolvedValue([{ workId: 'work-1', format: 'ebook' }]);
+    const store = new MonitoredStoreService({ insert: vi.fn(() => builder) } as never, {} as never);
+
+    await expect(store.claimReleaseEvents(monitor, [dueRelease], true)).resolves.toEqual(new Set([releaseEventKey('work-1', 'ebook')]));
+    expect(insertedValues).toEqual([expect.objectContaining({ workId: 'work-1', title: 'Test Work' })]);
+  });
+
+  // Flipping this ternary would spam every seeded monitor on its next tick and stay green otherwise.
+  it('inserts a seeded row already notified and an announce row still pending', async () => {
+    const inserted: unknown[] = [];
+    const builder: Record<string, unknown> = {};
+    builder.values = vi.fn((values: unknown) => {
+      inserted.push(values);
+      return builder;
+    });
+    builder.onConflictDoNothing = vi.fn(() => builder);
+    builder.returning = vi.fn().mockResolvedValue([{ workId: 'work-1', format: 'ebook' }]);
+    const store = new MonitoredStoreService({ insert: vi.fn(() => builder) } as never, {} as never);
+
+    await store.claimReleaseEvents(monitor, [dueRelease], false);
+    await store.claimReleaseEvents(monitor, [dueRelease], true);
+
+    const [seeded] = inserted[0] as Array<{ detectedAt: Date; notifiedAt: Date | null }>;
+    const [pending] = inserted[1] as Array<{ notifiedAt: Date | null }>;
+    expect(seeded.notifiedAt).toBeInstanceOf(Date);
+    expect(seeded.notifiedAt).toEqual(seeded.detectedAt);
+    expect(pending.notifiedAt).toBeNull();
+  });
+
+  // An earlier version set a fresh timestamp here instead of null, which made a failed dispatch
+  // look delivered forever; nothing pinned it.
+  it('releases a lease by clearing notified_at under the owner-scoped key', async () => {
+    const dialect = new PgDialect();
+    let setValues: Record<string, unknown> | undefined;
+    let captured: { sql: string; params: unknown[] } | undefined;
+    const where = vi.fn((condition: SQL) => {
+      captured = dialect.sqlToQuery(condition);
+      return Promise.resolve(undefined);
+    });
+    const set = vi.fn((values: Record<string, unknown>) => {
+      setValues = values;
+      return { where };
+    });
+    const store = new MonitoredStoreService({ update: vi.fn(() => ({ set })) } as never, {} as never);
+
+    await store.releaseReleaseEventLease('work-1', 'ebook', 4);
+
+    expect(setValues).toEqual({ notifiedAt: null });
+    expect(captured?.sql).toContain('"monitored_release_events"."work_id" = $1');
+    expect(captured?.sql).toContain('"monitored_release_events"."format" = $2');
+    expect(captured?.sql).toContain('"monitored_release_events"."owner_user_id" = $3');
+    expect(captured?.params).toEqual(['work-1', 'ebook', 4]);
   });
 });

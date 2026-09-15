@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { releaseDateRange, releaseDateWithinWindow } from './release-window';
+import { releaseDateRange, releaseDateWithinWindow, releaseDueDay } from './release-window';
 
 describe('releaseDateRange', () => {
   it('expands a year to the whole calendar year', () => {
@@ -50,5 +50,19 @@ describe('releaseDateWithinWindow', () => {
 
   it('is false for an unparseable release date', () => {
     expect(releaseDateWithinWindow('soon', null, '2026-01-01', '2026-12-31')).toBe(false);
+  });
+});
+
+describe('releaseDueDay', () => {
+  it.each([
+    ['2026-09-15', '2026-09-15'],
+    ['2026-01', '2026-02-01'],
+    ['2026-02', '2026-03-01'],
+    ['2026-04', '2026-05-01'],
+    ['2026-12', '2027-01-01'],
+    ['2026', '2027-01-01'],
+    ['not a date', null],
+  ])('returns the first SQL due day for %s', (storedDate, expected) => {
+    expect(releaseDueDay(storedDate)).toBe(expected);
   });
 });

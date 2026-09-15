@@ -50,6 +50,7 @@ import { LibraryService } from '../library/library.service';
 import { MonitoredCatalogService, normalizeMonitoredName, type WorkAvailabilityGroup } from './monitored-catalog.service';
 import { MonitoredAutoRequestService } from './monitored-autorequest.service';
 import { MonitoredProviderConfigService } from './monitored-provider-config.service';
+import { MonitoredReleaseWatcher } from './monitored-release-watcher.service';
 import { MonitoredStoreService } from './monitored-store.service';
 import { isAudibleConfigured } from './providers/audible-bibliography.provider';
 import { isHardcoverConfigured } from './providers/hardcover-bibliography.provider';
@@ -134,6 +135,7 @@ export class MonitoredService {
     private readonly indexerSearch: IndexerSearchService,
     private readonly authorImageStorage: AuthorImageStorageService,
     private readonly appSettings: AppSettingsService,
+    private readonly releaseWatcher: MonitoredReleaseWatcher,
   ) {}
 
   async getSummary(user: RequestUser): Promise<MonitoredSummary> {
@@ -220,6 +222,7 @@ export class MonitoredService {
     );
     let monitor: MonitoredAuthorConfig | null = null;
     try {
+      const now = new Date().toISOString();
       monitor = await this.store.upsertAuthor(
         {
           id: monitorId,
@@ -229,29 +232,15 @@ export class MonitoredService {
           providerIds: input.providerIds ?? {},
           formats,
           paused: false,
-          addedAt: new Date().toISOString(),
+          addedAt: now,
           lastRefreshedAt: null,
+          lastReleaseCheckAt: now,
         },
         user,
       );
       this.recordCatalogFetch(user);
-      const result = await this.catalog.fetchCatalog(monitor, config);
-      const localAuthorId = await this.resolveLocalAuthorId(monitor);
-      const refreshed = await this.store.upsertAuthor(
-        {
-          ...monitor,
-          localAuthorId: localAuthorId ?? monitor.localAuthorId,
-          providerIds: {
-            ...monitor.providerIds,
-            ...(result.hardcoverAuthorId ? { hardcover: result.hardcoverAuthorId } : {}),
-          },
-          lastRefreshedAt: result.catalog.fetchedAt,
-        },
-        user,
-      );
-      let works = (await this.store.getCatalog(refreshed.id, user))?.works ?? [];
-      const fanOut = await this.autoRequests.fanOut(refreshed, works, user);
-      if (fanOut.created > 0) works = (await this.store.getCatalog(refreshed.id, user))?.works ?? [];
+      const { refreshed, works } = await this.runCatalogRefresh(monitor, config, user);
+      await this.checkReleasesAfterInteractiveRefresh(refreshed);
       // These two writes are owner-only and their answer replaces the detail view's own copy, which
       // reads every class to count them. Withholding the hidden ones here empties those counts.
       const detail = await this.buildDetail(refreshed, works, user, { sort: 'releaseDate', order: 'desc', includeHidden: true });
@@ -329,26 +318,8 @@ export class MonitoredService {
       }
       const config = await this.providerConfigs.forUser(monitor.ownerUserId);
       this.assertHardcoverAvailable(config);
-      const result = await this.catalog.fetchCatalog(monitor, config);
-      const localAuthorId = await this.resolveLocalAuthorId(monitor);
-      if (localAuthorId != null) {
-        const profile = await this.authorsRepository.findByIdForEnrichment(localAuthorId);
-        if (profile && (!profile.hasPhoto || !profile.description)) {
-          await this.enrichLocalAuthor(localAuthorId);
-        }
-      }
-      const refreshed = await this.store.updateAuthorFields(
-        id,
-        {
-          ...(localAuthorId != null ? { localAuthorId } : {}),
-          ...(result.hardcoverAuthorId ? { providerIds: { hardcover: result.hardcoverAuthorId } } : {}),
-          lastRefreshedAt: result.catalog.fetchedAt,
-        },
-        user,
-      );
-      let works = (await this.store.getCatalog(id, user))?.works ?? [];
-      const fanOut = await this.autoRequests.fanOut(refreshed, works, user);
-      if (fanOut.created > 0) works = (await this.store.getCatalog(id, user))?.works ?? [];
+      const { refreshed, works } = await this.runCatalogRefresh(monitor, config, user);
+      await this.checkReleasesAfterInteractiveRefresh(refreshed);
       const detail = await this.buildDetail(refreshed, works, user, { sort: 'releaseDate', order: 'desc', includeHidden: true });
       this.logger.log(
         `[monitored.author.refresh] [end] monitorId="${sanitizeLogValue(id)}" userId=${user.id} durationMs=${Date.now() - startedAt} works=${works.length} - monitored author refresh completed`,
@@ -357,6 +328,72 @@ export class MonitoredService {
     } catch (error) {
       this.logOperationFailure('monitored.author.refresh', id, user.id, startedAt, error);
       throw error;
+    }
+  }
+
+  /**
+   * A catalog refresh with no HTTP concerns: fetch, re-resolve the local author, persist, and fan
+   * out unless told not to.
+   *
+   * Shared with the background sweep, which must not inherit the two things that belong to the
+   * interactive route - the cooldown, which exists to stop a user hammering the button, and the 503
+   * when the owner has no Hardcover token, which the sweep treats as "skip this monitor" instead.
+   */
+  private async runCatalogRefresh(
+    monitor: MonitoredAuthorConfig,
+    config: ProviderConfigurations,
+    user: RequestUser,
+    fanOut = true,
+  ): Promise<{ refreshed: MonitoredAuthorConfig; works: MonitoredWork[] }> {
+    const result = await this.catalog.fetchCatalog(monitor, config);
+    const { id: localAuthorId, created: localAuthorCreated } = await this.resolveLocalAuthorId(monitor);
+    if (localAuthorId != null && !localAuthorCreated) {
+      const profile = await this.authorsRepository.findByIdForEnrichment(localAuthorId);
+      if (profile && (!profile.hasPhoto || !profile.description)) {
+        await this.enrichLocalAuthor(localAuthorId);
+      }
+    }
+    const refreshed = await this.store.updateAuthorFields(
+      monitor.id,
+      {
+        ...(localAuthorId != null ? { localAuthorId } : {}),
+        ...(result.hardcoverAuthorId ? { providerIds: { hardcover: result.hardcoverAuthorId } } : {}),
+        lastRefreshedAt: result.catalog.fetchedAt,
+      },
+      user,
+    );
+    let works = (await this.store.getCatalog(monitor.id, user))?.works ?? [];
+    if (fanOut) {
+      const outcome = await this.autoRequests.fanOut(refreshed, works, user);
+      if (outcome.created > 0) works = (await this.store.getCatalog(monitor.id, user))?.works ?? [];
+    }
+    return { refreshed, works };
+  }
+
+  /**
+   * The background sweep's way in. Returns false when the owner has no usable Hardcover token, so
+   * the scheduler can count a skip rather than treat a configuration gap as a failure.
+   *
+   * It refreshes and detects but never files requests: unattended requesting is the auto-request
+   * follow-up, and until it lands a request must trace back to a human clicking Refresh.
+   */
+  async refreshForSchedule(monitor: MonitoredAuthorConfig, owner: RequestUser): Promise<boolean> {
+    const config = await this.providerConfigs.forUser(monitor.ownerUserId);
+    if (!isHardcoverConfigured(config)) return false;
+    await this.runCatalogRefresh(monitor, config, owner, false);
+    return true;
+  }
+
+  private async checkReleasesAfterInteractiveRefresh(monitor: MonitoredAuthorConfig): Promise<void> {
+    const startedAt = Date.now();
+    try {
+      await this.releaseWatcher.checkMonitor(monitor);
+    } catch (error) {
+      const errorClass = error instanceof Error ? error.constructor.name : 'UnknownError';
+      const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
+      this.logger.warn(
+        `[monitored.release.check] [fail] monitorId="${sanitizeLogValue(monitor.id)}" userId=${monitor.ownerUserId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${message}" - interactive release check failed`,
+      );
     }
   }
 
@@ -801,20 +838,21 @@ export class MonitoredService {
   // A monitored author is often added from a provider search with no local link. Resolve the local
   // authors row by id or name; when it does not exist yet, create it and run the existing author
   // enrichment so the detail page can READ its portrait, bio, website, and genres from one relation.
-  private async resolveLocalAuthorId(monitor: MonitoredAuthorConfig): Promise<number | null> {
+  private async resolveLocalAuthorId(monitor: MonitoredAuthorConfig): Promise<{ id: number | null; created: boolean }> {
     const startedAt = Date.now();
     try {
-      if (monitor.localAuthorId != null) return monitor.localAuthorId;
+      if (monitor.localAuthorId != null) return { id: monitor.localAuthorId, created: false };
       const existing = await this.authorsRepository.findIdByNormalizedName(monitor.authorName);
-      if (existing != null) return existing;
-      return await this.createAndEnrichLocalAuthor(monitor.authorName);
+      if (existing != null) return { id: existing, created: false };
+      const created = await this.createAndEnrichLocalAuthor(monitor.authorName);
+      return { id: created, created: created != null };
     } catch (error) {
       const errorClass = error instanceof Error ? error.name : 'Error';
       const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
       this.logger.warn(
         `[monitored.author.link_local] [fail] monitorId="${sanitizeLogValue(monitor.id)}" durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${message}" - local author link failed`,
       );
-      return null;
+      return { id: null, created: false };
     }
   }
 

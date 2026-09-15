@@ -1,5 +1,6 @@
 import { BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Mocked } from 'vitest';
 
 import { DEFAULT_DOWNLOAD_PATTERN, DEFAULT_UPLOAD_PATTERN_BOOK_PER_FILE, DEFAULT_UPLOAD_PATTERN_BOOK_PER_FOLDER } from '@bookorbit/types';
 
@@ -12,7 +13,7 @@ import { ensureSafeUrl } from '../../common/utils/ssrf.utils';
 import { AppSettingsRepository } from './app-settings.repository';
 import { AppSettingsService } from './app-settings.service';
 
-function makeRepo(): jest.Mocked<AppSettingsRepository> {
+function makeRepo(): Mocked<AppSettingsRepository> {
   return {
     listPublic: vi.fn().mockResolvedValue([]),
     findByKey: vi.fn().mockResolvedValue(undefined),
@@ -21,7 +22,7 @@ function makeRepo(): jest.Mocked<AppSettingsRepository> {
     updateByKey: vi.fn().mockResolvedValue(null),
     upsert: vi.fn().mockResolvedValue(undefined),
     upsertMany: vi.fn().mockResolvedValue(undefined),
-  } as unknown as jest.Mocked<AppSettingsRepository>;
+  } as unknown as Mocked<AppSettingsRepository>;
 }
 
 function makeConfig(nodeEnv = 'development', oidcAllowLocalIssuers = false): ConfigService {
@@ -642,26 +643,73 @@ describe('AppSettingsService', () => {
   });
 
   describe('monitored settings', () => {
+    const monitoredSettings = { refreshCooldownMinutes: 30, syncEnabled: true, syncIntervalHours: 12 };
+    const defaults = { refreshCooldownMinutes: 10, syncEnabled: true, syncIntervalHours: 12 };
+
     it('returns the ten minute default when the setting is absent or invalid', async () => {
       repo.findByKey.mockResolvedValue(undefined);
-      expect(await service.getMonitoredSettings()).toEqual({ refreshCooldownMinutes: 10 });
+      expect(await service.getMonitoredSettings()).toEqual(defaults);
 
       service = new AppSettingsService(repo, config, { appDataPath: '/data', bookDockPath: '/data/book-dock', libraryBrowseRoot: '/' });
       repo.findByKey.mockResolvedValue({ key: 'monitored_refresh_cooldown_minutes', value: '0' } as never);
-      expect(await service.getMonitoredSettings()).toEqual({ refreshCooldownMinutes: 10 });
+      expect(await service.getMonitoredSettings()).toEqual(defaults);
     });
 
     it('persists and returns a new refresh cooldown', async () => {
       repo.findByKey.mockResolvedValue({ key: 'monitored_refresh_cooldown_minutes', value: '30' } as never);
 
-      await expect(service.setMonitoredSettings({ refreshCooldownMinutes: 30 })).resolves.toEqual({ refreshCooldownMinutes: 30 });
+      await expect(service.setMonitoredSettings(monitoredSettings)).resolves.toEqual(expect.objectContaining({ refreshCooldownMinutes: 30 }));
 
-      expect(repo.upsert).toHaveBeenCalledWith('monitored_refresh_cooldown_minutes', '30');
+      expect(repo.upsertMany).toHaveBeenCalledWith([
+        { key: 'monitored_refresh_cooldown_minutes', value: '30' },
+        { key: 'monitored_sync_enabled', value: 'true' },
+        { key: 'monitored_sync_interval_hours', value: '12' },
+      ]);
+    });
+
+    it('persists the sync toggle and interval alongside the cooldown', async () => {
+      repo.findByKey.mockResolvedValue({ key: 'monitored_sync_interval_hours', value: '24' } as never);
+
+      await service.setMonitoredSettings({ ...monitoredSettings, syncEnabled: false, syncIntervalHours: 24 });
+
+      expect(repo.upsertMany).toHaveBeenCalledWith([
+        { key: 'monitored_refresh_cooldown_minutes', value: '30' },
+        { key: 'monitored_sync_enabled', value: 'false' },
+        { key: 'monitored_sync_interval_hours', value: '24' },
+      ]);
+    });
+
+    it('keeps stored sync values when only the refresh cooldown is provided', async () => {
+      const stored: Record<string, string> = {
+        monitored_refresh_cooldown_minutes: '10',
+        monitored_sync_enabled: 'false',
+        monitored_sync_interval_hours: '24',
+      };
+      repo.findByKey.mockImplementation((key) => Promise.resolve({ key, value: stored[key] } as never));
+
+      await service.setMonitoredSettings({ refreshCooldownMinutes: 45 });
+
+      expect(repo.upsertMany).toHaveBeenCalledWith([
+        { key: 'monitored_refresh_cooldown_minutes', value: '45' },
+        { key: 'monitored_sync_enabled', value: 'false' },
+        { key: 'monitored_sync_interval_hours', value: '24' },
+      ]);
+    });
+
+    it('reads a stored sync toggle of false rather than falling back to the default', async () => {
+      repo.findByKey.mockResolvedValue({ key: 'monitored_sync_enabled', value: 'false' } as never);
+
+      expect((await service.getMonitoredSettings()).syncEnabled).toBe(false);
     });
 
     it.each([0, 1441, 1.5])('rejects an invalid refresh cooldown of %s', async (refreshCooldownMinutes) => {
-      await expect(service.setMonitoredSettings({ refreshCooldownMinutes })).rejects.toThrow(BadRequestException);
-      expect(repo.upsert).not.toHaveBeenCalled();
+      await expect(service.setMonitoredSettings({ ...monitoredSettings, refreshCooldownMinutes })).rejects.toThrow(BadRequestException);
+      expect(repo.upsertMany).not.toHaveBeenCalled();
+    });
+
+    it.each([0, 169, 1.5])('rejects an invalid sync interval of %s', async (syncIntervalHours) => {
+      await expect(service.setMonitoredSettings({ ...monitoredSettings, syncIntervalHours })).rejects.toThrow(BadRequestException);
+      expect(repo.upsertMany).not.toHaveBeenCalled();
     });
   });
 

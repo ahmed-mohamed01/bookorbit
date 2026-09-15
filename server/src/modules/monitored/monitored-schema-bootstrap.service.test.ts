@@ -7,6 +7,7 @@ const TABLE_NAMES = [
   'monitored_authors',
   'monitored_books',
   'monitored_author_works',
+  'monitored_release_events',
   'author_catalog_works',
   'author_catalog_state',
   'author_catalog_source_works',
@@ -42,12 +43,12 @@ describe('MonitoredSchemaBootstrapService', () => {
   it('is silent when no tables are missing', async () => {
     const { service, store } = createService();
 
-    await service.onApplicationBootstrap();
+    await service.onModuleInit();
 
     expect(store.findMissingTables).toHaveBeenCalledWith(TABLE_NAMES);
     expect(store.applySchemaStatements).toHaveBeenCalledTimes(1);
     const statements = store.applySchemaStatements.mock.calls[0]![0] as string[];
-    expect(statements.filter((statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'))).toHaveLength(7);
+    expect(statements.filter((statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'))).toHaveLength(8);
     expect(statements.some((statement) => statement.includes('auto_grab'))).toBe(false);
     expect(statements.some((statement) => statement.includes('public.bookorbit_unaccent("title") gin_trgm_ops'))).toBe(true);
     expect(statements.every((statement) => !statement.includes('--> statement-breakpoint'))).toBe(true);
@@ -58,13 +59,13 @@ describe('MonitoredSchemaBootstrapService', () => {
   it('logs the number of tables created when all are missing', async () => {
     const { service } = createService(TABLE_NAMES);
 
-    await service.onApplicationBootstrap();
+    await service.onModuleInit();
 
     expect(logSpy).toHaveBeenCalledTimes(1);
     const message = logSpy.mock.calls[0]![0] as string;
     expect(message).toContain('[monitored.schema_bootstrap] [end]');
     expect(message).toContain('durationMs=');
-    expect(message).toContain('tablesCreated=7');
+    expect(message).toContain('tablesCreated=8');
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
@@ -73,7 +74,7 @@ describe('MonitoredSchemaBootstrapService', () => {
     const failure = new Error('boom "quoted" \\ path');
     store.applySchemaStatements.mockRejectedValue(failure);
 
-    await expect(service.onApplicationBootstrap()).rejects.toThrow(failure);
+    await expect(service.onModuleInit()).rejects.toThrow(failure);
 
     expect(logSpy).not.toHaveBeenCalled();
     expect(errorSpy).toHaveBeenCalledTimes(1);

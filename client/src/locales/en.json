@@ -2836,7 +2836,14 @@
         "saved": "Monitored settings saved",
         "loadFailed": "Could not load monitored settings",
         "saveFailed": "Could not save monitored settings",
-        "invalidCooldown": "Refresh cooldown must be a whole number from 1 to 1440 minutes"
+        "invalidCooldown": "Refresh cooldown must be a whole number from 1 to 1440 minutes",
+        "syncGroup": "Background sync",
+        "syncEnabled": "Refresh catalogs automatically",
+        "syncEnabledHint": "Re-fetch monitored author catalogs on a schedule so newly announced books and changed release dates are picked up without anyone clicking Refresh.",
+        "syncInterval": "Sync interval",
+        "syncIntervalHint": "How stale a monitored author's catalog must be before the background sweep refreshes it.",
+        "hours": "hours",
+        "invalidInterval": "Sync interval must be a whole number from 1 to 168 hours"
       },
       "requests": {
         "title": "Requests",
@@ -8742,6 +8749,10 @@
         "bookRequests": {
           "label": "Book requests",
           "description": "When a book request is submitted, decided, or the book becomes available."
+        },
+        "monitored": {
+          "label": "Monitored releases",
+          "description": "When a book by an author you monitor reaches its release date."
         }
       }
     }

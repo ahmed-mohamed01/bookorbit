@@ -36,6 +36,10 @@ export const monitoredAuthors = pgTable(
     audiobookFolderId: integer('audiobook_folder_id').references(() => libraryFolders.id, { onDelete: 'set null' }),
     addedAt: timestamp('added_at', { withTimezone: true }).notNull(),
     lastRefreshedAt: timestamp('last_refreshed_at', { withTimezone: true }),
+    lastSyncAttemptedAt: timestamp('last_sync_attempted_at', { withTimezone: true }),
+    // Null means the release watcher has never looked at this monitor. The first pass seeds the
+    // ledger silently instead of announcing every book that came out since the monitor was added.
+    lastReleaseCheckAt: timestamp('last_release_check_at', { withTimezone: true }),
   },
   (t) => [
     index('monitored_authors_owner_user_id_idx').on(t.ownerUserId),
@@ -146,6 +150,36 @@ export const monitoredAuthorWorks = pgTable(
     index('monitored_author_works_monitor_author_id_idx').on(t.monitorAuthorId),
     check('monitored_author_works_monitor_state_chk', sql`${t.monitorState} in ('monitoring', 'paused', 'stopped')`),
     check('monitored_author_works_user_visibility_chk', sql`${t.userVisibility} is null or ${t.userVisibility} in ('hidden', 'visible')`),
+  ],
+);
+
+/**
+ * One row per work and format that has crossed its release date while somebody was monitoring it.
+ *
+ * A null `notifiedAt` is pending work. Setting it is the dispatch lease, so concurrent passes cannot
+ * announce the same release, and a failed dispatch clears it for a later retry.
+ */
+export const monitoredReleaseEvents = pgTable(
+  'monitored_release_events',
+  {
+    workId: varchar('work_id', { length: 255 }).notNull(),
+    monitorAuthorId: varchar('monitor_author_id', { length: 36 })
+      .notNull()
+      .references(() => monitoredAuthors.id, { onDelete: 'cascade' }),
+    ownerUserId: integer('owner_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    format: varchar('format', { length: 10 }).$type<MonitoredFormat>().notNull(),
+    title: varchar('title', { length: 1000 }),
+    releaseDate: varchar('release_date', { length: 10 }).notNull(),
+    detectedAt: timestamp('detected_at', { withTimezone: true }).notNull(),
+    notifiedAt: timestamp('notified_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.workId, t.format] }),
+    index('monitored_release_events_owner_user_id_idx').on(t.ownerUserId),
+    index('monitored_release_events_monitor_author_id_idx').on(t.monitorAuthorId),
+    check('monitored_release_events_format_chk', sql`${t.format} in ('ebook', 'audiobook')`),
   ],
 );
 

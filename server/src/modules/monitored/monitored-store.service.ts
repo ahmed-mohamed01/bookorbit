@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { and, asc, count, desc, eq, inArray, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, lt, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type {
@@ -49,6 +49,26 @@ export interface MonitoredWorkEntry {
   work: MonitoredWork;
 }
 
+/** One work and format whose release window has opened and which the owner has not been told about. */
+export interface MonitoredDueRelease extends Record<string, unknown> {
+  workId: string;
+  title: string;
+  seriesName: string | null;
+  seriesIndex: string | null;
+  format: MonitoredFormat;
+  /** The first day the release window covers, already resolved from the stored date's precision. */
+  releaseDate: string;
+  /**
+   * The date exactly as the catalog holds it - '2026', '2026-09' or '2026-09-10'. `releaseDate`
+   * resolves a coarse date to its first day so it can be compared, which is right for the ledger and
+   * wrong for prose: telling somebody a book "released on 2026-01-01" when all we know is the year
+   * invents a day we were never given.
+   */
+  storedDate: string;
+  /** True when a ledger row already exists, i.e. this is a retry of a dispatch that failed. */
+  claimed: boolean;
+}
+
 export interface MonitoredAuthorAggregate {
   counts: {
     total: number;
@@ -92,7 +112,7 @@ interface RequestProjection {
   matchedBookId: number | null;
 }
 
-type AuthorWrite = Omit<MonitoredAuthorConfig, 'id'> & { id?: string };
+type AuthorWrite = Omit<MonitoredAuthorConfig, 'id'> & { id?: string; lastReleaseCheckAt?: string | null };
 type AuthorFields = Partial<Omit<MonitoredAuthorConfig, 'id'>>;
 type BookWrite = Omit<MonitoredBookEntry, 'id'> & { id?: string };
 type Db = NodePgDatabase<typeof dbSchema>;
@@ -104,6 +124,10 @@ type WorkStatePatch = MonitoredWorkPatch & {
 
 /** What owned-matching decides about a work: system truth, never the owner's overlay. */
 export type WorkMatchUpdate = Pick<MonitoredWork, 'matchedBookId' | 'matchedBookIds' | 'ownedFormats'>;
+
+export function releaseEventKey(workId: string, format: MonitoredFormat): string {
+  return `${workId}:${format}`;
+}
 
 export function releaseRangeOverlapsSql(date: AnyPgColumn, precision: AnyPgColumn, earliest: string, latest: string) {
   // A stored precision of NULL is not day precision: release-window.ts reads the precision off the
@@ -118,6 +142,14 @@ export function releaseRangeOverlapsSql(date: AnyPgColumn, precision: AnyPgColum
 function releaseRangeStartSql(date: AnyPgColumn, precision: AnyPgColumn) {
   const effective = sql`case when ${precision} is not null then ${precision} when length(${date}) = 4 then 'year' when length(${date}) = 7 then 'month' else 'day' end`;
   return sql<string>`case ${effective} when 'year' then ${date} || '-01-01' when 'month' then ${date} || '-01' else ${date} end`;
+}
+
+function releaseDueSql(date: AnyPgColumn, precision: AnyPgColumn, addedDay: string, today: string) {
+  const effective = sql`case when ${precision} is not null then ${precision} when length(${date}) = 4 then 'year' when length(${date}) = 7 then 'month' else 'day' end`;
+  const rangeStart = sql<string>`case ${effective} when 'year' then ${date} || '-01-01' when 'month' then ${date} || '-01' else ${date} end`;
+  const rangeEnd = sql<string>`case ${effective} when 'year' then ${date} || '-12-31' when 'month' then ${date} || '-31' else ${date} end`;
+  // Strict comparison with lexical padding makes coarse dates due on the day after their real range ends.
+  return sql<boolean>`case when ${effective} = 'day' then ${rangeStart} <= ${today} else ${rangeEnd} < ${today} end and ${rangeEnd} >= ${addedDay}`;
 }
 
 @Injectable()
@@ -812,6 +844,217 @@ export class MonitoredStoreService {
     });
   }
 
+  /**
+   * Monitors the release watcher should look at, oldest check first so a big instance works through
+   * them evenly instead of starving the tail. A monitor with both formats off is excluded: nothing
+   * it holds could produce a release anybody asked to hear about.
+   */
+  async findMonitorsDueForReleaseCheck(limit: number): Promise<Array<{ monitor: MonitoredAuthorConfig; lastReleaseCheckAt: Date | null }>> {
+    const rows = await this.db
+      .select()
+      .from(schema.monitoredAuthors)
+      .where(
+        and(
+          ne(schema.monitoredAuthors.paused, true),
+          or(ne(schema.monitoredAuthors.ebookMode, 'off'), ne(schema.monitoredAuthors.audiobookMode, 'off')),
+        ),
+      )
+      .orderBy(sql`${schema.monitoredAuthors.lastReleaseCheckAt} asc nulls first`, asc(schema.monitoredAuthors.id))
+      .limit(limit);
+    const monitors = await this.composeAuthors(rows);
+    return monitors.map((monitor, index) => ({ monitor, lastReleaseCheckAt: rows[index]?.lastReleaseCheckAt ?? null }));
+  }
+
+  /**
+   * Monitors whose latest sync attempt or refresh is older than the interval, staleness first.
+   */
+  async findMonitorsDueForSync(staleBefore: Date, limit: number): Promise<MonitoredAuthorConfig[]> {
+    const lastAttempt = sql`greatest(${schema.monitoredAuthors.lastSyncAttemptedAt}, ${schema.monitoredAuthors.lastRefreshedAt})`;
+    const rows = await this.db
+      .select()
+      .from(schema.monitoredAuthors)
+      .where(
+        and(
+          ne(schema.monitoredAuthors.paused, true),
+          or(ne(schema.monitoredAuthors.ebookMode, 'off'), ne(schema.monitoredAuthors.audiobookMode, 'off')),
+          or(sql`${lastAttempt} is null`, lt(lastAttempt, staleBefore)),
+        ),
+      )
+      .orderBy(sql`${lastAttempt} asc nulls first`, asc(schema.monitoredAuthors.id))
+      .limit(limit);
+    return this.composeAuthors(rows);
+  }
+
+  async countMonitorsDueForSync(staleBefore: Date): Promise<number> {
+    const lastAttempt = sql`greatest(${schema.monitoredAuthors.lastSyncAttemptedAt}, ${schema.monitoredAuthors.lastRefreshedAt})`;
+    const [row] = await this.db
+      .select({ total: count() })
+      .from(schema.monitoredAuthors)
+      .where(
+        and(
+          ne(schema.monitoredAuthors.paused, true),
+          or(ne(schema.monitoredAuthors.ebookMode, 'off'), ne(schema.monitoredAuthors.audiobookMode, 'off')),
+          or(sql`${lastAttempt} is null`, lt(lastAttempt, staleBefore)),
+        ),
+      );
+    return Number(row?.total ?? 0);
+  }
+
+  /** Null when the release watcher has never swept this monitor, which is what triggers seeding. */
+  async findReleaseCheckStamp(monitorId: string): Promise<Date | null> {
+    const [row] = await this.db
+      .select({ lastReleaseCheckAt: schema.monitoredAuthors.lastReleaseCheckAt })
+      .from(schema.monitoredAuthors)
+      .where(eq(schema.monitoredAuthors.id, monitorId))
+      .limit(1);
+    return row?.lastReleaseCheckAt ?? null;
+  }
+
+  /**
+   * Works of one monitor whose release window has opened since the owner started monitoring, in a
+   * format they do not already own and have not been told about.
+   *
+   * The window is `[monitor.addedAt, today]` on purpose, for every mode including `auto-all`. A
+   * back-catalog book is not news: `auto-all` may legitimately go and fetch it, but announcing that
+   * a twenty-year-old novel is "out now" is never right.
+   *
+   * A row whose ledger entry exists but never got its `notifiedAt` stamp comes back again - that is
+   * the retry for a dispatch that threw, and it costs one extra arm on the join rather than a
+   * second pass.
+   */
+  async findDueReleases(params: {
+    owner: RequestUser;
+    monitor: MonitoredAuthorConfig;
+    today: string;
+    limit: number;
+  }): Promise<MonitoredDueRelease[]> {
+    const { monitor, today } = params;
+    const addedDay = monitor.addedAt.slice(0, 10);
+    if (addedDay > today) return [];
+    const libraryIds = params.owner.isSuperuser ? null : await this.libraries.findAccessibleLibraryIds(params.owner);
+    const visible = this.visibleWorkCondition();
+    const active = this.activeWorkCondition(visible);
+
+    const leg = (format: MonitoredFormat): SQL => {
+      const isEbook = format === 'ebook';
+      const date = isEbook ? schema.authorCatalogWorks.ebookReleaseDate : schema.authorCatalogWorks.audioReleaseDate;
+      const precision = isEbook ? schema.authorCatalogWorks.ebookDatePrecision : schema.authorCatalogWorks.audioDatePrecision;
+      const mode = isEbook ? schema.monitoredAuthors.ebookMode : schema.monitoredAuthors.audiobookMode;
+      const toggle = isEbook ? schema.monitoredAuthorWorks.monitorEbook : schema.monitoredAuthorWorks.monitorAudiobook;
+      const owned = this.ownedFormatCondition(format, libraryIds);
+      const where = and(
+        eq(schema.monitoredAuthors.id, monitor.id),
+        active,
+        ne(mode, 'off'),
+        or(ne(toggle, false), sql`${toggle} is null`),
+        releaseDueSql(date, precision, addedDay, today),
+        sql`not ${owned}`,
+        sql`(${schema.monitoredReleaseEvents.workId} is null or ${schema.monitoredReleaseEvents.notifiedAt} is null)`,
+        sql`not exists (
+          select 1 from ${schema.monitoredReleaseEvents} as prior_release
+          where prior_release.monitor_author_id = ${monitor.id}
+            and prior_release.format = ${format}
+            and prior_release.notified_at is not null
+            and prior_release.title is not null
+            and lower(public.bookorbit_unaccent(prior_release.title)) = lower(public.bookorbit_unaccent(${schema.authorCatalogWorks.title}))
+        )`,
+      );
+      return sql`
+        select
+          ${schema.authorCatalogWorks.id} as "workId",
+          ${schema.authorCatalogWorks.title} as title,
+          ${schema.authorCatalogWorks.seriesName} as "seriesName",
+          ${schema.authorCatalogWorks.seriesIndex} as "seriesIndex",
+          ${format}::text as format,
+          ${releaseRangeStartSql(date, precision)} as "releaseDate",
+          ${date} as "storedDate",
+          (${schema.monitoredReleaseEvents.workId} is not null) as "claimed"
+        from ${schema.authorCatalogWorks}
+        inner join ${schema.monitoredAuthors}
+          on ${schema.monitoredAuthors.id} = ${schema.authorCatalogWorks.monitorAuthorId}
+        left join ${schema.monitoredAuthorWorks}
+          on ${schema.monitoredAuthorWorks.workId} = ${schema.authorCatalogWorks.id}
+        left join ${schema.monitoredReleaseEvents}
+          on ${schema.monitoredReleaseEvents.workId} = ${schema.authorCatalogWorks.id}
+          and ${schema.monitoredReleaseEvents.format} = ${format}
+        where ${where}
+      `;
+    };
+
+    const result = await this.db.execute<MonitoredDueRelease>(
+      sql`${leg('ebook')} union all ${leg('audiobook')} order by "releaseDate" asc, "workId" asc limit ${params.limit}`,
+    );
+    return result.rows;
+  }
+
+  /**
+   * Writes missing ledger rows. Dispatch ownership is established separately by leasing notifiedAt.
+   */
+  async claimReleaseEvents(monitor: MonitoredAuthorConfig, releases: MonitoredDueRelease[], notify: boolean): Promise<Set<string>> {
+    const won = new Set<string>();
+    const fresh = releases.filter((release) => !release.claimed);
+    if (!fresh.length) return won;
+    const detectedAt = new Date();
+    for (const batch of batches(fresh)) {
+      const inserted = await this.db
+        .insert(schema.monitoredReleaseEvents)
+        .values(
+          batch.map((release) => ({
+            workId: release.workId,
+            monitorAuthorId: monitor.id,
+            ownerUserId: monitor.ownerUserId,
+            format: release.format,
+            title: release.title,
+            releaseDate: release.releaseDate,
+            detectedAt,
+            // A seeding pass records the release without announcing it, so the row is born notified.
+            notifiedAt: notify ? null : detectedAt,
+          })),
+        )
+        .onConflictDoNothing()
+        .returning({ workId: schema.monitoredReleaseEvents.workId, format: schema.monitoredReleaseEvents.format });
+      for (const row of inserted) won.add(releaseEventKey(row.workId, row.format));
+    }
+    return won;
+  }
+
+  async leaseReleaseEvent(workId: string, format: MonitoredFormat, ownerUserId: number): Promise<boolean> {
+    const rows = await this.db
+      .update(schema.monitoredReleaseEvents)
+      .set({ notifiedAt: sql`now()` })
+      .where(
+        and(
+          eq(schema.monitoredReleaseEvents.workId, workId),
+          eq(schema.monitoredReleaseEvents.format, format),
+          eq(schema.monitoredReleaseEvents.ownerUserId, ownerUserId),
+          sql`${schema.monitoredReleaseEvents.notifiedAt} is null`,
+        ),
+      )
+      .returning({ workId: schema.monitoredReleaseEvents.workId });
+    return rows.length > 0;
+  }
+
+  async releaseReleaseEventLease(workId: string, format: MonitoredFormat, ownerUserId: number): Promise<void> {
+    await this.db
+      .update(schema.monitoredReleaseEvents)
+      .set({ notifiedAt: null })
+      .where(
+        and(
+          eq(schema.monitoredReleaseEvents.workId, workId),
+          eq(schema.monitoredReleaseEvents.format, format),
+          eq(schema.monitoredReleaseEvents.ownerUserId, ownerUserId),
+        ),
+      );
+  }
+
+  async stampReleaseCheck(monitorId: string, at: Date): Promise<void> {
+    await this.db.update(schema.monitoredAuthors).set({ lastReleaseCheckAt: at }).where(eq(schema.monitoredAuthors.id, monitorId));
+  }
+
+  async stampSyncAttempt(monitorId: string, at: Date): Promise<void> {
+    await this.db.update(schema.monitoredAuthors).set({ lastSyncAttemptedAt: at }).where(eq(schema.monitoredAuthors.id, monitorId));
+  }
+
   private releaseRowsSql(params: {
     viewer: RequestUser;
     q?: string;
@@ -1171,11 +1414,11 @@ export class MonitoredStoreService {
     return new Set(books.map((book) => book.id));
   }
 
-  private authorValues(author: MonitoredAuthorConfig) {
+  private authorValues(author: AuthorWrite & { id: string }) {
     return { id: author.id, ...this.authorUpdateValues(author) };
   }
 
-  private authorUpdateValues(author: Omit<MonitoredAuthorConfig, 'id'>) {
+  private authorUpdateValues(author: Omit<AuthorWrite, 'id'>) {
     return {
       ownerUserId: author.ownerUserId,
       authorName: author.authorName,
@@ -1189,6 +1432,9 @@ export class MonitoredStoreService {
       audiobookFolderId: author.formats.audiobook.folderId,
       addedAt: new Date(author.addedAt),
       lastRefreshedAt: author.lastRefreshedAt ? new Date(author.lastRefreshedAt) : null,
+      ...(author.lastReleaseCheckAt !== undefined
+        ? { lastReleaseCheckAt: author.lastReleaseCheckAt ? new Date(author.lastReleaseCheckAt) : null }
+        : {}),
     };
   }
 
