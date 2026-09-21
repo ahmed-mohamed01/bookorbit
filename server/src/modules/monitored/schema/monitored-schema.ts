@@ -3,6 +3,7 @@ export const MONITORED_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS "monitored_setti
 	"refresh_cooldown_minutes" integer DEFAULT 10 NOT NULL,
 	"sync_enabled" boolean DEFAULT true NOT NULL,
 	"sync_interval_hours" integer DEFAULT 12 NOT NULL,
+	"release_probe_enabled" boolean DEFAULT true NOT NULL,
 	CONSTRAINT "monitored_settings_single_row_chk" CHECK ("monitored_settings"."id" = 1)
 );
 --> statement-breakpoint
@@ -43,6 +44,36 @@ CREATE TABLE IF NOT EXISTS "author_catalog_works" (
 	"owned_formats" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	CONSTRAINT "author_catalog_works_verdict_chk" CHECK ("author_catalog_works"."verdict" in ('verified', 'probable', 'suspect')),
 	CONSTRAINT "author_catalog_works_kind_chk" CHECK ("author_catalog_works"."kind" is null or "author_catalog_works"."kind" in ('collection', 'anthology', 'graphic_novel', 'format_variant', 'duplicate'))
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "author_catalog_work_releases" (
+	"work_id" varchar(255) NOT NULL,
+	"monitor_author_id" varchar(36) NOT NULL,
+	"owner_user_id" integer NOT NULL,
+	"format" varchar(10) NOT NULL,
+	"status" varchar(10) NOT NULL,
+	"release_date" varchar(10),
+	"date_precision" varchar(5),
+	"last_release_date" varchar(10),
+	"last_date_precision" varchar(5),
+	"last_date_source" varchar(20),
+	"previous_release_date" varchar(10),
+	"previous_date_precision" varchar(5),
+	"date_changed_at" timestamp with time zone,
+	"auto_release_date" varchar(10),
+	"auto_date_precision" varchar(5),
+	"auto_source" varchar(20),
+	"auto_changed_at" timestamp with time zone,
+	"source" varchar(20),
+	"asin" varchar(16),
+	"checked_at" timestamp with time zone,
+	"next_check_at" timestamp with time zone NOT NULL,
+	"attempts" integer DEFAULT 0 NOT NULL,
+	"last_error_class" varchar(100),
+	CONSTRAINT "author_catalog_work_releases_work_id_format_pk" PRIMARY KEY("work_id","format"),
+	CONSTRAINT "author_catalog_work_releases_format_chk" CHECK ("author_catalog_work_releases"."format" in ('ebook', 'audiobook')),
+	CONSTRAINT "author_catalog_work_releases_status_chk" CHECK ("author_catalog_work_releases"."status" in ('pending', 'expected', 'dated', 'unlisted')),
+	CONSTRAINT "author_catalog_work_releases_source_chk" CHECK ("author_catalog_work_releases"."source" is null or "author_catalog_work_releases"."source" in ('hardcover_edition', 'apple', 'amazon', 'amazon_search', 'audible', 'user'))
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "author_provider_identities" (
@@ -107,6 +138,24 @@ CREATE TABLE IF NOT EXISTS "monitored_release_events" (
 	CONSTRAINT "monitored_release_events_work_id_format_pk" PRIMARY KEY("work_id","format"),
 	CONSTRAINT "monitored_release_events_format_chk" CHECK ("monitored_release_events"."format" in ('ebook', 'audiobook'))
 );
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'author_catalog_work_releases_monitor_author_id_monitored_authors_id_fk'
+	) THEN
+		ALTER TABLE "author_catalog_work_releases" ADD CONSTRAINT "author_catalog_work_releases_monitor_author_id_monitored_authors_id_fk" FOREIGN KEY ("monitor_author_id") REFERENCES "public"."monitored_authors"("id") ON DELETE cascade ON UPDATE no action;
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'author_catalog_work_releases_owner_user_id_users_id_fk'
+	) THEN
+		ALTER TABLE "author_catalog_work_releases" ADD CONSTRAINT "author_catalog_work_releases_owner_user_id_users_id_fk" FOREIGN KEY ("owner_user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
+	END IF;
+END $$;
 --> statement-breakpoint
 DO $$ BEGIN
 	IF NOT EXISTS (
@@ -299,6 +348,14 @@ END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "author_catalog_source_works_provider_work_id_idx" ON "author_catalog_source_works" USING btree ("provider_work_id");
 --> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "author_catalog_work_releases_next_check_at_work_id_idx" ON "author_catalog_work_releases" USING btree ("next_check_at","work_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "author_catalog_work_releases_monitor_author_id_idx" ON "author_catalog_work_releases" USING btree ("monitor_author_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "author_catalog_work_releases_owner_user_id_idx" ON "author_catalog_work_releases" USING btree ("owner_user_id");
+--> statement-breakpoint
+DROP INDEX IF EXISTS "author_catalog_work_releases_next_check_at_idx";
+--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "author_catalog_works_monitor_author_id_idx" ON "author_catalog_works" USING btree ("monitor_author_id");
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "author_catalog_works_monitor_author_verdict_idx" ON "author_catalog_works" USING btree ("monitor_author_id","verdict");
@@ -328,6 +385,119 @@ CREATE UNIQUE INDEX IF NOT EXISTS "monitored_books_owner_monitor_work_uidx" ON "
 CREATE INDEX IF NOT EXISTS "monitored_release_events_owner_user_id_idx" ON "monitored_release_events" USING btree ("owner_user_id");
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "monitored_release_events_monitor_author_id_idx" ON "monitored_release_events" USING btree ("monitor_author_id");
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'monitored_settings'
+			AND column_name = 'release_probe_enabled'
+	) THEN
+		ALTER TABLE "monitored_settings" ADD COLUMN IF NOT EXISTS "release_probe_enabled" boolean NOT NULL DEFAULT true;
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'author_catalog_work_releases'
+			AND column_name = 'last_date_source'
+	) THEN
+		ALTER TABLE "author_catalog_work_releases"
+			ADD COLUMN IF NOT EXISTS "last_release_date" varchar(10),
+			ADD COLUMN IF NOT EXISTS "last_date_precision" varchar(5),
+			ADD COLUMN IF NOT EXISTS "previous_release_date" varchar(10),
+			ADD COLUMN IF NOT EXISTS "previous_date_precision" varchar(5),
+			ADD COLUMN IF NOT EXISTS "date_changed_at" timestamp with time zone,
+			ADD COLUMN IF NOT EXISTS "last_date_source" varchar(20);
+		UPDATE "author_catalog_work_releases"
+		SET "last_release_date" = "release_date",
+			"last_date_precision" = "date_precision",
+			"last_date_source" = "source",
+			"date_changed_at" = COALESCE("date_changed_at", now())
+		WHERE "release_date" IS NOT NULL
+			AND "source" IS DISTINCT FROM 'user';
+	END IF;
+END $$;
+--> statement-breakpoint
+CREATE OR REPLACE FUNCTION "author_catalog_work_releases_track_date"() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+	IF TG_OP = 'UPDATE' THEN
+		NEW.last_release_date := OLD.last_release_date;
+		NEW.last_date_precision := OLD.last_date_precision;
+		NEW.last_date_source := OLD.last_date_source;
+		NEW.previous_release_date := OLD.previous_release_date;
+		NEW.previous_date_precision := OLD.previous_date_precision;
+		NEW.date_changed_at := OLD.date_changed_at;
+	END IF;
+
+	IF NEW.release_date IS NULL OR NEW.source = 'user' THEN
+		RETURN NEW;
+	END IF;
+
+	IF NEW.last_release_date IS NULL
+		OR (CASE WHEN NEW.source IS NULL THEN 'inherited' ELSE 'listed' END)
+			IS DISTINCT FROM (CASE WHEN NEW.last_date_source IS NULL THEN 'inherited' ELSE 'listed' END) THEN
+		NEW.previous_release_date := NULL;
+		NEW.previous_date_precision := NULL;
+		NEW.last_release_date := NEW.release_date;
+		NEW.last_date_precision := NEW.date_precision;
+		NEW.last_date_source := NEW.source;
+		NEW.date_changed_at := statement_timestamp();
+	ELSIF NEW.release_date IS DISTINCT FROM NEW.last_release_date THEN
+		IF (length(NEW.release_date) < length(NEW.last_release_date)
+				AND left(NEW.last_release_date, length(NEW.release_date)) = NEW.release_date)
+			OR (length(NEW.last_release_date) < length(NEW.release_date)
+				AND left(NEW.release_date, length(NEW.last_release_date)) = NEW.last_release_date) THEN
+			NEW.last_release_date := NEW.release_date;
+			NEW.last_date_precision := NEW.date_precision;
+			NEW.last_date_source := NEW.source;
+		ELSE
+			NEW.previous_release_date := NEW.last_release_date;
+			NEW.previous_date_precision := NEW.last_date_precision;
+			NEW.last_release_date := NEW.release_date;
+			NEW.last_date_precision := NEW.date_precision;
+			NEW.last_date_source := NEW.source;
+			NEW.date_changed_at := statement_timestamp();
+		END IF;
+	ELSIF NEW.date_precision IS DISTINCT FROM NEW.last_date_precision
+		OR NEW.source IS DISTINCT FROM NEW.last_date_source THEN
+		NEW.last_date_precision := NEW.date_precision;
+		NEW.last_date_source := NEW.source;
+	END IF;
+
+	RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_trigger
+		WHERE tgname = 'author_catalog_work_releases_track_date_trg'
+			AND tgrelid = 'author_catalog_work_releases'::regclass
+			AND NOT tgisinternal
+	) THEN
+		CREATE TRIGGER "author_catalog_work_releases_track_date_trg"
+			BEFORE INSERT OR UPDATE ON "author_catalog_work_releases"
+			FOR EACH ROW EXECUTE FUNCTION "author_catalog_work_releases_track_date"();
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'author_catalog_work_releases'
+			AND column_name = 'auto_changed_at'
+	) THEN
+		ALTER TABLE "author_catalog_work_releases"
+			ADD COLUMN IF NOT EXISTS "auto_release_date" varchar(10),
+			ADD COLUMN IF NOT EXISTS "auto_date_precision" varchar(5),
+			ADD COLUMN IF NOT EXISTS "auto_source" varchar(20),
+			ADD COLUMN IF NOT EXISTS "auto_changed_at" timestamp with time zone;
+	END IF;
+END $$;
 --> statement-breakpoint
 DO $$ BEGIN
 	IF NOT EXISTS (

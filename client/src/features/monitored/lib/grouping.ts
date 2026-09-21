@@ -34,9 +34,29 @@ export function collapseReleaseItems(items: readonly MonitoredReleaseItem[]): Mo
   return entries
 }
 
+/**
+ * The probe clears a format's date column once it turns out to be a hint rather than a listing, so
+ * a work whose only known date is an unconfirmed print or ebook hint would otherwise fall back to
+ * January 1 of its release year and read as long past. The hints are ranked below the columns and
+ * above the year so such a book still lands in Upcoming, on the date somebody actually published.
+ */
 export function releaseDateForWork(work: MonitoredWork): string | null {
   const dates = [work.ebookReleaseDate, work.audioReleaseDate].filter((value): value is string => Boolean(value)).sort()
-  return dates[0] ?? (work.releaseYear === null ? null : `${work.releaseYear}-01-01`)
+  if (dates[0]) return dates[0]
+  const hints = Object.values(work.formatReleases ?? {})
+    .filter((release) => release.status !== 'unlisted')
+    .map((release) => release.releaseDate)
+    .filter((value): value is string => Boolean(value))
+    .sort()
+  return hints[0] ?? (work.releaseYear === null ? null : `${work.releaseYear}-01-01`)
+}
+
+/**
+ * Whether an update moved the date a work is listed, grouped and counted by. A re-check that found
+ * nothing new answers false, so a list is not reloaded, and its scrolled pages dropped, for nothing.
+ */
+export function releaseDateMoved(before: MonitoredWork | null, after: MonitoredWork): boolean {
+  return before === null || releaseDateForWork(before) !== releaseDateForWork(after)
 }
 
 export function sortWorks(works: readonly MonitoredWork[], sort: MonitoredSort, order: 'asc' | 'desc'): MonitoredWork[] {

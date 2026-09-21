@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { CalendarClock, Loader2, RefreshCw } from '@lucide/vue'
+import { CalendarClock, CalendarSearch, Loader2, RefreshCw } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import type { MonitoredSettings, UpdateMonitoredSettingsRequest } from '@bookorbit/types'
@@ -18,6 +18,8 @@ const syncEnabled = ref(true)
 const savedSyncEnabled = ref(true)
 const syncIntervalHours = ref(12)
 const savedSyncIntervalHours = ref(12)
+const releaseProbeEnabled = ref(true)
+const savedReleaseProbeEnabled = ref(true)
 const loading = ref(true)
 const saving = ref(false)
 
@@ -25,7 +27,8 @@ const dirty = computed(
   () =>
     refreshCooldownMinutes.value !== savedRefreshCooldownMinutes.value ||
     syncEnabled.value !== savedSyncEnabled.value ||
-    syncIntervalHours.value !== savedSyncIntervalHours.value,
+    syncIntervalHours.value !== savedSyncIntervalHours.value ||
+    releaseProbeEnabled.value !== savedReleaseProbeEnabled.value,
 )
 
 function applySettings(settings: MonitoredSettings) {
@@ -35,6 +38,8 @@ function applySettings(settings: MonitoredSettings) {
   savedSyncEnabled.value = settings.syncEnabled
   syncIntervalHours.value = settings.syncIntervalHours
   savedSyncIntervalHours.value = settings.syncIntervalHours
+  releaseProbeEnabled.value = settings.releaseProbeEnabled
+  savedReleaseProbeEnabled.value = settings.releaseProbeEnabled
 }
 
 async function loadSettings() {
@@ -66,6 +71,7 @@ async function saveSettings() {
     refreshCooldownMinutes: value,
     syncEnabled: syncEnabled.value,
     syncIntervalHours: interval,
+    releaseProbeEnabled: releaseProbeEnabled.value,
   }
   try {
     const response = await api('/api/v1/monitored/settings', {
@@ -181,6 +187,25 @@ onMounted(loadSettings)
             />
             <span class="text-sm text-muted-foreground">{{ t('settings.system.monitored.hours') }}</span>
           </div>
+        </div>
+        <div class="settings-row">
+          <div class="flex items-start gap-3">
+            <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+              <CalendarSearch :size="16" class="text-primary" aria-hidden="true" />
+            </div>
+            <div class="min-w-0">
+              <span id="monitored-release-probe-label" class="settings-label">{{ t('settings.system.monitored.releaseProbe') }}</span>
+              <p class="settings-hint">
+                {{ t('settings.system.monitored.releaseProbeHint') }}
+              </p>
+            </div>
+          </div>
+          <ToggleSwitch
+            v-model="releaseProbeEnabled"
+            :disabled="saving"
+            aria-labelledby="monitored-release-probe-label"
+            class="self-start md:self-auto md:ml-4"
+          />
         </div>
       </div>
     </section>

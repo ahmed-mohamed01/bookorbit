@@ -80,6 +80,81 @@ export type MonitoredReleaseFilter = (typeof MONITORED_RELEASE_FILTERS)[number];
 
 export type MonitoredDatePrecision = "day" | "month" | "year";
 
+/**
+ * What the release probe knows about one format of a work.
+ * - pending: enrolled, not checked yet.
+ * - expected: a date exists only as a hint (inherited from the book level or a placeholder edition);
+ *   it never drives release detection or auto-requests.
+ * - dated: a source listed this format with this date, or the owner chose it.
+ * - unlisted: no source lists this format.
+ */
+export const MONITORED_RELEASE_PROBE_STATUSES = ["pending", "expected", "dated", "unlisted"] as const;
+export type MonitoredReleaseProbeStatus = (typeof MONITORED_RELEASE_PROBE_STATUSES)[number];
+
+/** `user` is a date the owner picked by hand; the probe never overrides it until it is cleared. */
+export const MONITORED_RELEASE_DATE_SOURCES = ["hardcover_edition", "apple", "amazon", "amazon_search", "audible", "user"] as const;
+export type MonitoredReleaseDateSource = (typeof MONITORED_RELEASE_DATE_SOURCES)[number];
+
+export interface MonitoredFormatRelease {
+  status: MonitoredReleaseProbeStatus;
+  /** The confirmed date when dated, the unconfirmed hint when expected or pending, otherwise null. */
+  releaseDate: string | null;
+  precision: MonitoredDatePrecision | null;
+  /** Null when the date is only inherited from the catalog, or when nothing lists the format. */
+  source: MonitoredReleaseDateSource | null;
+  checkedAt: string | null;
+  /** When this format's date last took a new value: the first sighting, or the latest move. */
+  dateChangedAt: string | null;
+  /** The date it moved from, null while the first date seen is still the current one. */
+  previousReleaseDate: string | null;
+  previousPrecision: MonitoredDatePrecision | null;
+  /**
+   * Only on a date the owner chose: a listing the automatic check found, or saw change, after that
+   * choice and that disagrees with it. Null once the owner sets or confirms a date again.
+   */
+  suggested: MonitoredSuggestedReleaseDate | null;
+}
+
+export interface MonitoredSuggestedReleaseDate {
+  releaseDate: string;
+  precision: MonitoredDatePrecision | null;
+  source: MonitoredReleaseDateSource | null;
+  /** When the automatic check first saw this value. */
+  changedAt: string;
+}
+
+/** Providers the on-demand release date lookup can ask. */
+export const MONITORED_RELEASE_LOOKUP_SOURCES = ["hardcover_edition", "apple", "audible", "audnexus", "librofm", "amazon"] as const;
+export type MonitoredReleaseLookupSource = (typeof MONITORED_RELEASE_LOOKUP_SOURCES)[number];
+
+export interface MonitoredReleaseDateCandidate {
+  source: MonitoredReleaseLookupSource;
+  releaseDate: string;
+  precision: MonitoredDatePrecision;
+  /** How the provider describes the listing, for example "Kindle, Orbit" or the store title. */
+  label: string | null;
+  /** A placeholder-quality record: no identifiers and hardly any readers. Shown, but marked. */
+  weak: boolean;
+  url: string | null;
+}
+
+export interface MonitoredReleaseDateLookup {
+  format: MonitoredFormat;
+  candidates: MonitoredReleaseDateCandidate[];
+  /** Providers that could not be asked, so an empty list is never read as "nothing exists". */
+  unavailable: Array<{ source: MonitoredReleaseLookupSource; reason: "not_configured" | "throttled" | "failed" }>;
+  /**
+   * Providers that were asked and returned no dated match, so the owner can see who was checked. Some
+   * upstream providers hide their own failures, so this means "no date came back", not "none exists".
+   */
+  empty: MonitoredReleaseLookupSource[];
+}
+
+/** A full YYYY-MM-DD date sets the owner's choice; null clears it and hands the format back to the probe. */
+export interface SetMonitoredReleaseDatePayload {
+  releaseDate: string | null;
+}
+
 export interface MonitorFormatConfig {
   mode: MonitorMode;
   libraryId: number | null;
@@ -123,6 +198,8 @@ export interface MonitoredWork {
   ebookDatePrecision: MonitoredDatePrecision | null;
   audioReleaseDate: string | null;
   audioDatePrecision: MonitoredDatePrecision | null;
+  /** Per-format release probe results; absent for works outside the probe window. */
+  formatReleases?: Partial<Record<MonitoredFormat, MonitoredFormatRelease>>;
   coverUrl: string | null;
   description: string | null;
   verdict: MonitoredWorkVerdict;

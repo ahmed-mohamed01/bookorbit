@@ -22,4 +22,8 @@ export class UpdateMonitoredSettingsDto {
   @Min(MIN_MONITORED_SYNC_INTERVAL_HOURS)
   @Max(MAX_MONITORED_SYNC_INTERVAL_HOURS)
   syncIntervalHours?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  releaseProbeEnabled?: boolean;
 }

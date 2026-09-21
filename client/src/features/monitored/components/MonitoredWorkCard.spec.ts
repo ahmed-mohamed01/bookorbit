@@ -135,3 +135,87 @@ describe('MonitoredWorkCard review kind badge', () => {
     wrapper.unmount()
   })
 })
+
+describe('MonitoredWorkCard availability tooltips', () => {
+  function tooltips(cardWork: MonitoredWork): (string | undefined)[] {
+    const wrapper = mountCard(cardWork)
+    const titles = wrapper.findAll('span[title]').map((light) => light.attributes('title'))
+    wrapper.unmount()
+    return titles
+  }
+
+  it('separates a format that is out from one that is only due', () => {
+    const [ebook, audiobook] = tooltips(
+      work({
+        formatReleases: {
+          ebook: {
+            status: 'dated',
+            releaseDate: '2099-04-10',
+            precision: 'day',
+            source: 'apple',
+            checkedAt: null,
+            dateChangedAt: null,
+            previousReleaseDate: null,
+            previousPrecision: null,
+            suggested: null,
+          },
+          audiobook: {
+            status: 'dated',
+            releaseDate: '2020-05-06',
+            precision: 'day',
+            source: 'audible',
+            checkedAt: null,
+            dateChangedAt: null,
+            previousReleaseDate: null,
+            previousPrecision: null,
+            suggested: null,
+          },
+        },
+      }),
+    )
+
+    expect(ebook).toMatch(/^Ebook: due .*2099$/)
+    expect(audiobook).toMatch(/^Audiobook: out .*2020$/)
+  })
+
+  it('distinguishes an unconfirmed hint from a format nothing lists', () => {
+    const [ebook, audiobook] = tooltips(
+      work({
+        formatReleases: {
+          ebook: {
+            status: 'expected',
+            releaseDate: '2099-01-10',
+            precision: 'day',
+            source: 'hardcover_edition',
+            checkedAt: null,
+            dateChangedAt: null,
+            previousReleaseDate: null,
+            previousPrecision: null,
+            suggested: null,
+          },
+          audiobook: {
+            status: 'unlisted',
+            releaseDate: null,
+            precision: null,
+            source: null,
+            checkedAt: null,
+            dateChangedAt: null,
+            previousReleaseDate: null,
+            previousPrecision: null,
+            suggested: null,
+          },
+        },
+      }),
+    )
+
+    expect(ebook).toMatch(/^Ebook: expected .*2099$/)
+    expect(audiobook).toBe('Audiobook: not announced yet')
+  })
+
+  it('keeps the owned label and stays quiet about a format nobody has looked at', () => {
+    const [ebook, audiobook] = tooltips(work({ ownedFormats: ['ebook'] }))
+
+    expect(ebook).toBe('Ebook in library')
+    expect(audiobook).toBe('Audiobook')
+  })
+})

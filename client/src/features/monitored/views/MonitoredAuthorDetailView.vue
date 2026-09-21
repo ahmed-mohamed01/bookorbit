@@ -74,6 +74,7 @@ const {
   queueWork,
   markQueued,
   isQueued,
+  applyWorkUpdate,
   updateWork,
   loadMonitoredBooks,
   isBookMonitored,
@@ -237,6 +238,11 @@ function handlePanelGrabbed(work: MonitoredWork, format: MonitoredFormat, reques
 async function handlePanelFiled(work: MonitoredWork) {
   await load()
   panelWork.value = detail.value?.works.find((candidate) => candidate.id === work.id) ?? panelWork.value
+}
+
+function handleWorkUpdated(updated: MonitoredWork) {
+  applyWorkUpdate(updated)
+  if (panelWork.value?.id === updated.id) panelWork.value = updated
 }
 
 async function handleToggleMonitor(work: MonitoredWork, format: MonitoredFormat, value: boolean) {
@@ -659,6 +665,7 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
       @filed="handlePanelFiled"
       @toggle-monitor="handleToggleMonitor"
       @toggle-hidden="handleToggleHidden"
+      @work-updated="handleWorkUpdated"
     />
   </main>
 </template>

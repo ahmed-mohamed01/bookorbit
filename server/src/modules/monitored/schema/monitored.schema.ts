@@ -3,6 +3,8 @@ import { boolean, check, index, integer, jsonb, pgTable, primaryKey, text, times
 import type {
   MonitoredDatePrecision,
   MonitoredFormat,
+  MonitoredReleaseDateSource,
+  MonitoredReleaseProbeStatus,
   MonitoredSeriesMembership,
   MonitoredWorkFlag,
   MonitoredWorkKind,
@@ -24,6 +26,7 @@ export const monitoredSettings = pgTable(
     refreshCooldownMinutes: integer('refresh_cooldown_minutes').notNull().default(10),
     syncEnabled: boolean('sync_enabled').notNull().default(true),
     syncIntervalHours: integer('sync_interval_hours').notNull().default(12),
+    releaseProbeEnabled: boolean('release_probe_enabled').notNull().default(true),
   },
   (t) => [check('monitored_settings_single_row_chk', sql`${t.id} = 1`)],
 );
@@ -139,6 +142,51 @@ export const authorCatalogSourceWorks = pgTable(
     providerWorkId: varchar('provider_work_id', { length: 255 }).notNull(),
   },
   (t) => [primaryKey({ columns: [t.workId, t.source] }), index('author_catalog_source_works_provider_work_id_idx').on(t.providerWorkId)],
+);
+
+export const authorCatalogWorkReleases = pgTable(
+  'author_catalog_work_releases',
+  {
+    workId: varchar('work_id', { length: 255 }).notNull(),
+    monitorAuthorId: varchar('monitor_author_id', { length: 36 })
+      .notNull()
+      .references(() => monitoredAuthors.id, { onDelete: 'cascade' }),
+    ownerUserId: integer('owner_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    format: varchar('format', { length: 10 }).$type<MonitoredFormat>().notNull(),
+    status: varchar('status', { length: 10 }).$type<MonitoredReleaseProbeStatus>().notNull(),
+    releaseDate: varchar('release_date', { length: 10 }),
+    datePrecision: varchar('date_precision', { length: 5 }).$type<MonitoredDatePrecision>(),
+    lastReleaseDate: varchar('last_release_date', { length: 10 }),
+    lastDatePrecision: varchar('last_date_precision', { length: 5 }).$type<MonitoredDatePrecision>(),
+    lastDateSource: varchar('last_date_source', { length: 20 }).$type<MonitoredReleaseDateSource>(),
+    previousReleaseDate: varchar('previous_release_date', { length: 10 }),
+    previousDatePrecision: varchar('previous_date_precision', { length: 5 }).$type<MonitoredDatePrecision>(),
+    dateChangedAt: timestamp('date_changed_at', { withTimezone: true }),
+    autoReleaseDate: varchar('auto_release_date', { length: 10 }),
+    autoDatePrecision: varchar('auto_date_precision', { length: 5 }).$type<MonitoredDatePrecision>(),
+    autoSource: varchar('auto_source', { length: 20 }).$type<MonitoredReleaseDateSource>(),
+    autoChangedAt: timestamp('auto_changed_at', { withTimezone: true }),
+    source: varchar('source', { length: 20 }).$type<MonitoredReleaseDateSource>(),
+    asin: varchar('asin', { length: 16 }),
+    checkedAt: timestamp('checked_at', { withTimezone: true }),
+    nextCheckAt: timestamp('next_check_at', { withTimezone: true }).notNull(),
+    attempts: integer('attempts').notNull().default(0),
+    lastErrorClass: varchar('last_error_class', { length: 100 }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.workId, t.format] }),
+    index('author_catalog_work_releases_next_check_at_work_id_idx').on(t.nextCheckAt, t.workId),
+    index('author_catalog_work_releases_monitor_author_id_idx').on(t.monitorAuthorId),
+    index('author_catalog_work_releases_owner_user_id_idx').on(t.ownerUserId),
+    check('author_catalog_work_releases_format_chk', sql`${t.format} in ('ebook', 'audiobook')`),
+    check('author_catalog_work_releases_status_chk', sql`${t.status} in ('pending', 'expected', 'dated', 'unlisted')`),
+    check(
+      'author_catalog_work_releases_source_chk',
+      sql`${t.source} is null or ${t.source} in ('hardcover_edition', 'apple', 'amazon', 'amazon_search', 'audible', 'user')`,
+    ),
+  ],
 );
 
 export const monitoredAuthorWorks = pgTable(

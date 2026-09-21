@@ -14,6 +14,7 @@ const TABLE_NAMES = [
   'author_catalog_works',
   'author_catalog_state',
   'author_catalog_source_works',
+  'author_catalog_work_releases',
   'author_provider_identities',
 ] as const;
 

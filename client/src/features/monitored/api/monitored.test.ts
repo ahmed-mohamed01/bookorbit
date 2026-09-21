@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
-import type { BookRequestItem, MonitoredBookItem } from '@bookorbit/types'
-import { createMonitoredBook, grabWorkRelease } from './monitored'
+import type { BookRequestItem, MonitoredBookItem, MonitoredReleaseDateLookup } from '@bookorbit/types'
+import { createMonitoredBook, fetchWorkReleaseDateCandidates, grabWorkRelease, refreshWorkReleaseDates, setWorkReleaseDate } from './monitored'
 
 vi.mock('@/lib/api', () => ({ api: vi.fn<(...args: unknown[]) => unknown>() }))
 
@@ -117,5 +117,71 @@ describe('grabWorkRelease', () => {
     await expect(grabWorkRelease('work-1', { format: 'ebook', indexerId: 7, releaseGuid: 'release-1' })).rejects.toThrow(
       'Another release is already being sent for this request',
     )
+  })
+})
+
+describe('release date lookup and choice', () => {
+  const lookup: MonitoredReleaseDateLookup = {
+    format: 'ebook',
+    candidates: [{ source: 'apple', releaseDate: '2026-07-15', precision: 'day', label: 'Kindle, Orbit', weak: false, url: null }],
+    unavailable: [{ source: 'audible', reason: 'not_configured' }],
+    empty: ['hardcover_edition'],
+  }
+
+  it('asks the providers what they have for one format of one work', async () => {
+    mockedApi.mockResolvedValue(mockOkResponse(lookup))
+
+    const result = await fetchWorkReleaseDateCandidates('author:1:work:2', 'ebook')
+
+    expect(mockedApi).toHaveBeenCalledWith('/api/v1/monitored/works/author%3A1%3Awork%3A2/release-dates/ebook/candidates')
+    expect(result).toEqual(lookup)
+  })
+
+  it('PUTs only the release date and answers with the fresh work', async () => {
+    const work = bookItem().work
+    mockedApi.mockResolvedValue(mockOkResponse(work))
+
+    const result = await setWorkReleaseDate('work-1', 'audiobook', '2026-11-03')
+
+    expect(mockedApi).toHaveBeenCalledWith(
+      '/api/v1/monitored/works/work-1/release-dates/audiobook',
+      expect.objectContaining({
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ releaseDate: '2026-11-03' }),
+      }),
+    )
+    expect(result).toEqual(work)
+  })
+
+  it('sends a null date to hand the format back to the automatic check', async () => {
+    mockedApi.mockResolvedValue(mockOkResponse(bookItem().work))
+
+    await setWorkReleaseDate('work-1', 'ebook', null)
+
+    const [, init] = mockedApi.mock.calls[0]
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ releaseDate: null })
+  })
+
+  it('POSTs the re-check and answers with the fresh work', async () => {
+    const work = bookItem().work
+    mockedApi.mockResolvedValue(mockOkResponse(work))
+
+    const result = await refreshWorkReleaseDates('work-1')
+
+    expect(mockedApi).toHaveBeenCalledWith('/api/v1/monitored/works/work-1/release-dates/refresh', expect.objectContaining({ method: 'POST' }))
+    expect(result).toEqual(work)
+  })
+
+  it('carries the status of a refused re-check so the caller can name it', async () => {
+    mockedApi.mockResolvedValue(mockErrorResponse(429))
+
+    await expect(refreshWorkReleaseDates('work-1')).rejects.toMatchObject({ status: 429 })
+  })
+
+  it('throws with the server message when a date is refused', async () => {
+    mockedApi.mockResolvedValue(mockErrorResponse(400, 'releaseDate must be a valid date'))
+
+    await expect(setWorkReleaseDate('work-1', 'ebook', 'nope')).rejects.toThrow('releaseDate must be a valid date')
   })
 })

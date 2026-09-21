@@ -12,6 +12,7 @@ import type {
   MonitoredFormat,
   MonitoredListOrder,
   MonitoredPage,
+  MonitoredReleaseDateLookup,
   MonitoredReleaseFilter,
   MonitoredReleaseItem,
   MonitoredReleaseListSort,
@@ -21,6 +22,7 @@ import type {
   MonitoredWorkReleasesResponse,
   MonitoredSummary,
   RequestFromWorkPayload,
+  SetMonitoredReleaseDatePayload,
   UpdateMonitoredAuthorRequest,
 } from '@bookorbit/types'
 import { MonitoredApiError } from '../lib/api-error'
@@ -187,6 +189,28 @@ export async function grabWorkRelease(
       body: JSON.stringify(payload),
     }),
   )
+}
+
+/** What every provider the on-demand lookup can reach says about one format's release date. */
+export async function fetchWorkReleaseDateCandidates(workId: string, format: MonitoredFormat): Promise<MonitoredReleaseDateLookup> {
+  return readJson(await api(`${BASE_PATH}/works/${encodeURIComponent(workId)}/release-dates/${format}/candidates`))
+}
+
+/** A full date sets the owner's choice; null clears it and hands the format back to the automatic check. */
+export async function setWorkReleaseDate(workId: string, format: MonitoredFormat, releaseDate: string | null): Promise<MonitoredWork> {
+  const payload: SetMonitoredReleaseDatePayload = { releaseDate }
+  return readJson(
+    await api(`${BASE_PATH}/works/${encodeURIComponent(workId)}/release-dates/${format}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  )
+}
+
+/** Answers 429 when asked again too soon, and 409 when release checking is switched off in settings. */
+export async function refreshWorkReleaseDates(workId: string): Promise<MonitoredWork> {
+  return readJson(await api(`${BASE_PATH}/works/${encodeURIComponent(workId)}/release-dates/refresh`, { method: 'POST' }))
 }
 
 export async function updateMonitoredWork(workId: string, patch: MonitoredWorkPatch): Promise<MonitoredWork> {

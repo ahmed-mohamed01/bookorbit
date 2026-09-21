@@ -1,8 +1,17 @@
 import { PgDialect, getTableConfig } from 'drizzle-orm/pg-core';
-import { MONITORED_FORMATS, MONITORED_WORK_KINDS, MONITORED_WORK_STATES, MONITORED_WORK_VERDICTS, MONITOR_MODES } from '@bookorbit/types';
+import {
+  MONITORED_FORMATS,
+  MONITORED_RELEASE_DATE_SOURCES,
+  MONITORED_RELEASE_PROBE_STATUSES,
+  MONITORED_WORK_KINDS,
+  MONITORED_WORK_STATES,
+  MONITORED_WORK_VERDICTS,
+  MONITOR_MODES,
+} from '@bookorbit/types';
 
 import {
   authorCatalogWorks,
+  authorCatalogWorkReleases,
   monitoredAuthors,
   monitoredAuthorWorks,
   monitoredBooks,
@@ -46,6 +55,16 @@ describe('monitored CHECK SQL matches shared constants', () => {
   it('accepts exactly the declared formats on a release event', () => {
     expect(checkValues(monitoredReleaseEvents, 'monitored_release_events_format_chk').sort()).toEqual([...MONITORED_FORMATS].sort());
   });
+
+  it('accepts exactly the declared release probe vocabularies', () => {
+    expect(checkValues(authorCatalogWorkReleases, 'author_catalog_work_releases_format_chk').sort()).toEqual([...MONITORED_FORMATS].sort());
+    expect(checkValues(authorCatalogWorkReleases, 'author_catalog_work_releases_status_chk').sort()).toEqual(
+      [...MONITORED_RELEASE_PROBE_STATUSES].sort(),
+    );
+    expect(checkValues(authorCatalogWorkReleases, 'author_catalog_work_releases_source_chk').sort()).toEqual(
+      [...MONITORED_RELEASE_DATE_SOURCES].sort(),
+    );
+  });
 });
 
 describe('monitored_release_events ledger', () => {
@@ -70,6 +89,143 @@ describe('monitored_release_events ledger', () => {
     expect(MONITORED_SCHEMA_SQL).toContain(
       'ALTER TABLE "monitored_release_events" DROP CONSTRAINT IF EXISTS "monitored_release_events_work_id_author_catalog_works_id_fk";',
     );
+  });
+});
+
+describe('author_catalog_work_releases probe state', () => {
+  it('keys one row per work and format without a catalog-work foreign key', () => {
+    const config = getTableConfig(authorCatalogWorkReleases);
+    expect(config.primaryKeys[0].columns.map((column) => column.name)).toEqual(['work_id', 'format']);
+    expect(config.foreignKeys.some((foreignKey) => foreignKey.reference().columns.some((column) => column.name === 'work_id'))).toBe(false);
+    expect(MONITORED_SCHEMA_SQL).not.toContain('author_catalog_work_releases_work_id_author_catalog_works_id_fk');
+  });
+
+  it('indexes the scheduler and monitor lookup columns', () => {
+    expect(getTableConfig(authorCatalogWorkReleases).indexes.map((candidate) => candidate.config.name)).toEqual(
+      expect.arrayContaining(['author_catalog_work_releases_next_check_at_work_id_idx', 'author_catalog_work_releases_monitor_author_id_idx']),
+    );
+  });
+
+  it('carries the due-sweep index on both schema copies', () => {
+    const index = getTableConfig(authorCatalogWorkReleases).indexes.find(
+      (candidate) => candidate.config.name === 'author_catalog_work_releases_next_check_at_work_id_idx',
+    );
+    expect(index).toBeDefined();
+    expect(index!.config.columns.map((column) => ('name' in column ? column.name : ''))).toEqual(['next_check_at', 'work_id']);
+    expect(MONITORED_SCHEMA_SQL).toContain(
+      'CREATE INDEX IF NOT EXISTS "author_catalog_work_releases_next_check_at_work_id_idx" ON "author_catalog_work_releases" USING btree ("next_check_at","work_id");',
+    );
+  });
+
+  it('drops the redundant scheduler-prefix index after creating the covering index', () => {
+    const names = getTableConfig(authorCatalogWorkReleases).indexes.map((candidate) => candidate.config.name);
+    const coveringIndexAt = MONITORED_SCHEMA_SQL.indexOf('CREATE INDEX IF NOT EXISTS "author_catalog_work_releases_next_check_at_work_id_idx"');
+    const dropAt = MONITORED_SCHEMA_SQL.indexOf('DROP INDEX IF EXISTS "author_catalog_work_releases_next_check_at_idx";');
+
+    expect(names).not.toContain('author_catalog_work_releases_next_check_at_idx');
+    expect(MONITORED_SCHEMA_SQL).not.toContain('CREATE INDEX IF NOT EXISTS "author_catalog_work_releases_next_check_at_idx"');
+    expect(dropAt).toBeGreaterThan(coveringIndexAt);
+  });
+
+  it('tracks release date history in both schema copies', () => {
+    const config = getTableConfig(authorCatalogWorkReleases);
+    const names = [
+      'last_release_date',
+      'last_date_precision',
+      'last_date_source',
+      'previous_release_date',
+      'previous_date_precision',
+      'date_changed_at',
+    ];
+    const createStart = MONITORED_SCHEMA_SQL.indexOf('CREATE TABLE IF NOT EXISTS "author_catalog_work_releases"');
+    const createEnd = MONITORED_SCHEMA_SQL.indexOf('--> statement-breakpoint', createStart);
+    const createTable = MONITORED_SCHEMA_SQL.slice(createStart, createEnd);
+
+    for (const name of names) {
+      expect(config.columns.find((column) => column.name === name)?.notNull).toBe(false);
+      expect(createTable).toContain(`"${name}"`);
+    }
+  });
+
+  it('adds and backfills release date history once on an existing table', () => {
+    const guardAt = MONITORED_SCHEMA_SQL.indexOf("AND column_name = 'last_date_source'");
+    const blockStart = MONITORED_SCHEMA_SQL.lastIndexOf('DO $$ BEGIN', guardAt);
+    const blockEnd = MONITORED_SCHEMA_SQL.indexOf('END $$;', guardAt);
+    const block = MONITORED_SCHEMA_SQL.slice(blockStart, blockEnd + 'END $$;'.length);
+
+    expect(block).toContain("AND table_name = 'author_catalog_work_releases'");
+    expect(block).toContain('ADD COLUMN IF NOT EXISTS "last_release_date" varchar(10)');
+    expect(block).toContain('ADD COLUMN IF NOT EXISTS "last_date_precision" varchar(5)');
+    expect(block).toContain('ADD COLUMN IF NOT EXISTS "last_date_source" varchar(20)');
+    expect(block).toContain('ADD COLUMN IF NOT EXISTS "previous_release_date" varchar(10)');
+    expect(block).toContain('ADD COLUMN IF NOT EXISTS "previous_date_precision" varchar(5)');
+    expect(block).toContain('ADD COLUMN IF NOT EXISTS "date_changed_at" timestamp with time zone');
+    expect(block).toContain('SET "last_release_date" = "release_date"');
+    expect(block).toContain('"last_date_precision" = "date_precision"');
+    expect(block).toContain('"last_date_source" = "source"');
+    expect(block).toContain('"date_changed_at" = COALESCE("date_changed_at", now())');
+    expect(block).toContain('AND "source" IS DISTINCT FROM \'user\'');
+  });
+
+  it('installs one trigger-owned history function after the upgrade block', () => {
+    const guardAt = MONITORED_SCHEMA_SQL.indexOf("AND column_name = 'last_date_source'");
+    const functionStart = MONITORED_SCHEMA_SQL.indexOf('CREATE OR REPLACE FUNCTION "author_catalog_work_releases_track_date"');
+    expect(functionStart).toBeGreaterThanOrEqual(0);
+    expect(functionStart).toBeGreaterThan(guardAt);
+    expect(MONITORED_SCHEMA_SQL.slice(functionStart, MONITORED_SCHEMA_SQL.indexOf('$$;', functionStart))).toContain('statement_timestamp()');
+  });
+
+  it('carries the automatic-date columns in both schema copies', () => {
+    const config = getTableConfig(authorCatalogWorkReleases);
+    const names = ['auto_release_date', 'auto_date_precision', 'auto_source', 'auto_changed_at'];
+    const createStart = MONITORED_SCHEMA_SQL.indexOf('CREATE TABLE IF NOT EXISTS "author_catalog_work_releases"');
+    const createEnd = MONITORED_SCHEMA_SQL.indexOf('--> statement-breakpoint', createStart);
+    const createTable = MONITORED_SCHEMA_SQL.slice(createStart, createEnd);
+
+    for (const name of names) {
+      expect(config.columns.find((column) => column.name === name)?.notNull).toBe(false);
+      expect(createTable).toContain(`"${name}"`);
+    }
+  });
+
+  it('adds the automatic-date columns to an existing table without backfilling them', () => {
+    const guardAt = MONITORED_SCHEMA_SQL.indexOf("AND column_name = 'auto_changed_at'");
+    const blockStart = MONITORED_SCHEMA_SQL.lastIndexOf('DO $$ BEGIN', guardAt);
+    const blockEnd = MONITORED_SCHEMA_SQL.indexOf('END $$;', guardAt);
+    const block = MONITORED_SCHEMA_SQL.slice(blockStart, blockEnd + 'END $$;'.length);
+
+    expect(block).toContain("AND table_name = 'author_catalog_work_releases'");
+    expect(block).toContain('ADD COLUMN IF NOT EXISTS "auto_release_date" varchar(10)');
+    expect(block).toContain('ADD COLUMN IF NOT EXISTS "auto_date_precision" varchar(5)');
+    expect(block).toContain('ADD COLUMN IF NOT EXISTS "auto_source" varchar(20)');
+    expect(block).toContain('ADD COLUMN IF NOT EXISTS "auto_changed_at" timestamp with time zone');
+    expect(block).not.toContain('UPDATE "author_catalog_work_releases"');
+  });
+
+  it('keeps the automatic-date columns out of the trigger-owned history block', () => {
+    const historyGuardAt = MONITORED_SCHEMA_SQL.indexOf("AND column_name = 'last_date_source'");
+    const historyBlock = MONITORED_SCHEMA_SQL.slice(
+      MONITORED_SCHEMA_SQL.lastIndexOf('DO $$ BEGIN', historyGuardAt),
+      MONITORED_SCHEMA_SQL.indexOf('END $$;', historyGuardAt),
+    );
+    const trackerFunction = MONITORED_SCHEMA_SQL.slice(
+      MONITORED_SCHEMA_SQL.indexOf('CREATE OR REPLACE FUNCTION "author_catalog_work_releases_track_date"'),
+      MONITORED_SCHEMA_SQL.indexOf('$$;', MONITORED_SCHEMA_SQL.indexOf('CREATE OR REPLACE FUNCTION "author_catalog_work_releases_track_date"')),
+    );
+
+    expect(historyBlock).not.toContain('auto_');
+    expect(trackerFunction).not.toContain('auto_');
+  });
+
+  it('creates the date tracker trigger only when it is absent', () => {
+    const triggerAt = MONITORED_SCHEMA_SQL.indexOf("WHERE tgname = 'author_catalog_work_releases_track_date_trg'");
+    const blockStart = MONITORED_SCHEMA_SQL.lastIndexOf('DO $$ BEGIN', triggerAt);
+    const blockEnd = MONITORED_SCHEMA_SQL.indexOf('END $$;', triggerAt);
+    const block = MONITORED_SCHEMA_SQL.slice(blockStart, blockEnd + 'END $$;'.length);
+
+    expect(triggerAt).toBeGreaterThanOrEqual(0);
+    expect(block).toMatch(/SELECT 1 FROM pg_trigger[\s\S]+tgrelid = 'author_catalog_work_releases'::regclass[\s\S]+NOT tgisinternal/);
+    expect(block).toContain('CREATE TRIGGER "author_catalog_work_releases_track_date_trg"');
   });
 });
 
@@ -150,6 +306,29 @@ describe('bootstrap SQL carries the columns the table declares', () => {
     const authorColumns = getTableConfig(monitoredAuthors).columns.map((column) => column.name);
     expect(authorColumns).toContain('last_release_check_at');
     expect(authorColumns).toContain('last_sync_attempted_at');
+  });
+
+  it('creates the release probe table and settings flag on fresh and existing databases', () => {
+    expect(MONITORED_SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS "author_catalog_work_releases"');
+    expect(MONITORED_SCHEMA_SQL).toContain('"release_probe_enabled" boolean DEFAULT true NOT NULL');
+    expect(MONITORED_SCHEMA_SQL).toContain(
+      'ALTER TABLE "monitored_settings" ADD COLUMN IF NOT EXISTS "release_probe_enabled" boolean NOT NULL DEFAULT true;',
+    );
+    expect(getTableConfig(monitoredSettings).columns.map((column) => column.name)).toContain('release_probe_enabled');
+  });
+
+  it('constrains release probe vocabularies to the shared constants on the bootstrap path', () => {
+    const cases = [
+      ['format', MONITORED_FORMATS],
+      ['status', MONITORED_RELEASE_PROBE_STATUSES],
+      ['source', MONITORED_RELEASE_DATE_SOURCES],
+    ] as const;
+
+    for (const [column, values] of cases) {
+      const constraint = MONITORED_SCHEMA_SQL.match(new RegExp(`"author_catalog_work_releases"\\."${column}"[^\\n]+`));
+      expect(constraint).not.toBeNull();
+      expect([...constraint![0].matchAll(/'([a-z_-]+)'/g)].map((match) => match[1]).sort()).toEqual([...values].sort());
+    }
   });
 
   it('constrains a release event format to the shared vocabulary', () => {

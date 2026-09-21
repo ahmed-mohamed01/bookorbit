@@ -13,6 +13,8 @@ import {
   HardcoverAuthorContributionsResponse,
   HardcoverBookWithEditions,
   HardcoverBooksResponse,
+  HardcoverEditionsBySlugsResponse,
+  HardcoverEditionsProbeBook,
   HardcoverSearchDocument,
   HardcoverSearchResponse,
 } from './hardcover.types';
@@ -142,6 +144,34 @@ const LOOKUP_BY_SLUG_QUERY = `
   }
 `;
 
+const PROBE_EDITION_FIELDS = `
+  reading_format_id
+  release_date
+  asin
+  isbn_13
+  isbn_10
+  users_count
+  language { code2 }
+`;
+
+const EDITIONS_BY_SLUGS_QUERY = `
+  query EditionsBySlugs($slugs: [String!]!) {
+    books(where: { slug: { _in: $slugs } }) {
+      slug
+      release_date
+      ebook_editions: editions(where: { reading_format_id: { _eq: 4 } }, order_by: { users_count: desc }, limit: 15) {
+        ${PROBE_EDITION_FIELDS}
+      }
+      audio_editions: editions(where: { reading_format_id: { _eq: 2 } }, order_by: { users_count: desc }, limit: 15) {
+        ${PROBE_EDITION_FIELDS}
+      }
+      print_editions: editions(where: { reading_format_id: { _eq: 1 } }, order_by: { users_count: desc }, limit: 15) {
+        ${PROBE_EDITION_FIELDS}
+      }
+    }
+  }
+`;
+
 class RateLimiter {
   private nextAllowedTime = 0;
 
@@ -214,8 +244,23 @@ export class HardcoverClient {
     return body?.data?.books?.[0] ?? null;
   }
 
+  async fetchEditionsBySlugs(
+    slugs: string[],
+    apiKey: string,
+    signal?: AbortSignal,
+    options?: HardcoverRequestOptions,
+  ): Promise<HardcoverEditionsProbeBook[]> {
+    if (slugs.length === 0) return [];
+    const body = await this.post<HardcoverEditionsBySlugsResponse>('editions-by-slugs', EDITIONS_BY_SLUGS_QUERY, { slugs }, apiKey, signal, options);
+    return (body?.data?.books ?? []).map((book) => ({
+      slug: book.slug,
+      release_date: book.release_date,
+      editions: [...(book.ebook_editions ?? []), ...(book.audio_editions ?? []), ...(book.print_editions ?? [])],
+    }));
+  }
+
   private async post<T>(
-    op: 'search-by-isbn' | 'search' | 'lookup' | 'author-search' | 'author-contributions',
+    op: 'search-by-isbn' | 'search' | 'lookup' | 'author-search' | 'author-contributions' | 'editions-by-slugs',
     query: string,
     variables: Record<string, unknown>,
     apiKey: string,

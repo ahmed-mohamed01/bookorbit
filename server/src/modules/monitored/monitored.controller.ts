@@ -26,6 +26,7 @@ import {
   UpdateMonitoredAuthorDto,
   UpdateMonitoredBookDto,
 } from './dto/monitored.dto';
+import { MonitoredWorkFormatParamsDto, MonitoredWorkParamsDto, SetMonitoredReleaseDateDto } from './dto/monitored-release-date.dto';
 import { MonitoredCoverService } from './monitored-cover.service';
 import { MonitoredExceptionFilter } from './monitored-exception.filter';
 import { MonitoredService } from './monitored.service';
@@ -195,5 +196,25 @@ export class MonitoredController {
   @RequirePermission(Permission.BookRequestAccess)
   grabWorkRelease(@Param('workId') workId: string, @Body() dto: GrabWorkReleaseDto, @CurrentUser() user: RequestUser) {
     return this.service.grabWorkRelease(user, workId, dto);
+  }
+
+  @Get('works/:workId/release-dates/:format/candidates')
+  @RequirePermission(Permission.BookRequestAccess)
+  listReleaseDateCandidates(@Param() params: MonitoredWorkFormatParamsDto, @CurrentUser() user: RequestUser) {
+    return this.service.listReleaseDateCandidates(user, params.workId, params.format);
+  }
+
+  @Put('works/:workId/release-dates/:format')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(Permission.BookRequestAccess)
+  setReleaseDate(@Param() params: MonitoredWorkFormatParamsDto, @Body() dto: SetMonitoredReleaseDateDto, @CurrentUser() user: RequestUser) {
+    return this.service.setWorkReleaseDate(user, params.workId, params.format, dto.releaseDate);
+  }
+
+  @Post('works/:workId/release-dates/refresh')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(Permission.BookRequestAccess)
+  refreshReleaseDates(@Param() params: MonitoredWorkParamsDto, @CurrentUser() user: RequestUser) {
+    return this.service.refreshWorkReleaseDates(user, params.workId);
   }
 }

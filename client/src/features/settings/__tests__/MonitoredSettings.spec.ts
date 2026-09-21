@@ -33,7 +33,7 @@ describe('MonitoredSettings', () => {
     vi.clearAllMocks()
     apiMock.mockImplementation(async (_url, init) => {
       if (init?.method === 'PUT') return response(JSON.parse(String(init.body)))
-      return response({ refreshCooldownMinutes: 10, syncEnabled: true, syncIntervalHours: 12 })
+      return response({ refreshCooldownMinutes: 10, syncEnabled: true, syncIntervalHours: 12, releaseProbeEnabled: true })
     })
   })
 
@@ -57,9 +57,30 @@ describe('MonitoredSettings', () => {
     expect(apiMock).toHaveBeenLastCalledWith('/api/v1/monitored/settings', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshCooldownMinutes: 30, syncEnabled: true, syncIntervalHours: 24 }),
+      body: JSON.stringify({ refreshCooldownMinutes: 30, syncEnabled: true, syncIntervalHours: 24, releaseProbeEnabled: true }),
     })
     expect(toastSuccessMock).toHaveBeenCalledOnce()
+  })
+
+  it('saves the release probe toggle with the rest of the section', async () => {
+    const wrapper = await mountSettings()
+    const switches = wrapper.findAll('button[role="switch"]')
+    expect(switches).toHaveLength(2)
+
+    const save = wrapper.get('button:not([role="switch"])')
+    expect(save.attributes('disabled')).toBeDefined()
+    await switches[1].trigger('click')
+    expect(save.attributes('disabled')).toBeUndefined()
+
+    await save.trigger('click')
+    await flushPromises()
+
+    expect(apiMock).toHaveBeenLastCalledWith('/api/v1/monitored/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshCooldownMinutes: 10, syncEnabled: true, syncIntervalHours: 12, releaseProbeEnabled: false }),
+    })
+    expect(save.attributes('disabled')).toBeDefined()
   })
 
   it('rejects a sync interval outside the supported range before making a request', async () => {

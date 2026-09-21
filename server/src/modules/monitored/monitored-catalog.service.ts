@@ -28,6 +28,7 @@ import { resolveSlots, slotReasonKind } from './reconcile/slot-resolution';
 import { assignVerdict, computePopularityFloor, type VerdictResult } from './reconcile/verdict';
 import { foldDiacritics, normalizeMonitoredName } from './monitored-text.utils';
 import { MonitoredStoreService, type MonitoredCatalog } from './monitored-store.service';
+import { MonitoredSettingsService } from './monitored-settings.service';
 
 export { normalizeMonitoredName };
 
@@ -441,6 +442,7 @@ export class MonitoredCatalogService {
     private readonly audible: AudibleBibliographyProvider,
     private readonly store: MonitoredStoreService,
     @Inject(DB) private readonly db: Db,
+    private readonly settings: MonitoredSettingsService,
   ) {}
 
   async fetchCatalog(monitor: MonitoredAuthorConfig, config: ProviderConfigurations): Promise<CatalogFetchResult> {
@@ -496,7 +498,8 @@ export class MonitoredCatalogService {
       }
       await this.matchOwnedBooks(works, monitor.localAuthorId);
       const catalog = { works, fetchedAt: new Date().toISOString() };
-      await this.store.saveCatalog(monitor.id, catalog);
+      const { releaseProbeEnabled } = await this.settings.getMonitoredSettings();
+      await this.store.saveCatalog(monitor.id, catalog, { enrolReleaseProbes: releaseProbeEnabled });
       const hardcoverAuthorId = results.find((result) => result.source === 'hardcover')?.authorRef?.id ?? monitor.providerIds.hardcover ?? '';
       this.logger.log(
         `[monitored.catalog] [end] monitorId=${monitor.id} durationMs=${Date.now() - startedAt} observations=${observations.length} clusters=${clustered.length} slotRejected=${slots.rejected.size} slotHidden=${slots.hidden.size} works=${merged.length} verified=${works.filter((work) => work.verdict === 'verified' && work.flags.length === 0).length} - catalog fetch completed`,

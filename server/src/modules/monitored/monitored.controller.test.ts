@@ -8,6 +8,7 @@ import { Permission } from '@bookorbit/types';
 
 import { PERMISSION_KEY } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
+import { MonitoredWorkFormatParamsDto, MonitoredWorkParamsDto } from './dto/monitored-release-date.dto';
 import { MonitoredController } from './monitored.controller';
 import { MonitoredCoverService } from './monitored-cover.service';
 import { MonitoredService } from './monitored.service';
@@ -65,6 +66,9 @@ describe('MonitoredController', () => {
     'requestFromWork',
     'searchWorkReleases',
     'grabWorkRelease',
+    'listReleaseDateCandidates',
+    'setReleaseDate',
+    'refreshReleaseDates',
   ] as const)('gates %s with BookRequestAccess', (method) => {
     expect(Reflect.getMetadata(PERMISSION_KEY, MonitoredController.prototype[method])).toBe(Permission.BookRequestAccess);
   });
@@ -126,6 +130,45 @@ describe('MonitoredController', () => {
     expect(listAuthors).toHaveBeenCalledWith(user, authorsQuery);
     expect(listBooks).toHaveBeenCalledWith(user, booksQuery);
     expect(listReleases).toHaveBeenCalledWith(user, releasesQuery);
+  });
+
+  it.each([
+    ['listReleaseDateCandidates', MonitoredWorkFormatParamsDto],
+    ['setReleaseDate', MonitoredWorkFormatParamsDto],
+    ['refreshReleaseDates', MonitoredWorkParamsDto],
+  ] as const)('validates the %s route params as a whole object', (method, dto) => {
+    const paramTypes = Reflect.getMetadata('design:paramtypes', MonitoredController.prototype, method) as unknown[];
+    expect(paramTypes[0]).toBe(dto);
+  });
+
+  it('forwards the release date routes with the work id, format and body', async () => {
+    const listReleaseDateCandidates = vi.fn().mockResolvedValue({ format: 'audiobook', candidates: [], unavailable: [] });
+    const setWorkReleaseDate = vi.fn().mockResolvedValue({ id: 'monitor-1:hardcover:1' });
+    const refreshWorkReleaseDates = vi.fn().mockResolvedValue({ id: 'monitor-1:hardcover:1' });
+    const controller = await makeController({ listReleaseDateCandidates, setWorkReleaseDate, refreshWorkReleaseDates });
+    const user = { id: 7 } as RequestUser;
+    // Work ids carry colons, so the route hands the whole param object over untouched.
+    const params = { workId: 'monitor-1:hardcover:1', format: 'audiobook' as const };
+
+    await Promise.all([
+      controller.listReleaseDateCandidates(params, user),
+      controller.setReleaseDate(params, { releaseDate: '2027-01-02' }, user),
+      controller.refreshReleaseDates({ workId: params.workId }, user),
+    ]);
+
+    expect(listReleaseDateCandidates).toHaveBeenCalledWith(user, params.workId, 'audiobook');
+    expect(setWorkReleaseDate).toHaveBeenCalledWith(user, params.workId, 'audiobook', '2027-01-02');
+    expect(refreshWorkReleaseDates).toHaveBeenCalledWith(user, params.workId);
+  });
+
+  it('forwards a cleared release date as null', async () => {
+    const setWorkReleaseDate = vi.fn().mockResolvedValue({ id: 'work-1' });
+    const controller = await makeController({ setWorkReleaseDate });
+    const user = { id: 7 } as RequestUser;
+
+    await controller.setReleaseDate({ workId: 'work-1', format: 'ebook' }, { releaseDate: null }, user);
+
+    expect(setWorkReleaseDate).toHaveBeenCalledWith(user, 'work-1', 'ebook', null);
   });
 
   it('passes the current user id to monitored cover fetching', async () => {

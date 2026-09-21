@@ -78,6 +78,8 @@ type ServiceDeps = {
   autoRequests?: Record<string, unknown>;
   appSettings?: Record<string, unknown>;
   releaseWatcher?: Record<string, unknown>;
+  releaseProbe?: Record<string, unknown>;
+  releaseDateLookup?: Record<string, unknown>;
 };
 
 function service(store: Record<string, unknown>, bookRequests: Record<string, unknown> = {}, deps: ServiceDeps = {}): MonitoredService {
@@ -101,8 +103,10 @@ function service(store: Record<string, unknown>, bookRequests: Record<string, un
     (deps.fulfillment ?? {}) as never,
     (deps.indexerSearch ?? {}) as never,
     (deps.authorImageStorage ?? {}) as never,
-    (deps.appSettings ?? { getMonitoredSettings: vi.fn().mockResolvedValue({ refreshCooldownMinutes: 10 }) }) as never,
+    (deps.appSettings ?? { getMonitoredSettings: vi.fn().mockResolvedValue({ refreshCooldownMinutes: 10, releaseProbeEnabled: true }) }) as never,
     (deps.releaseWatcher ?? { checkMonitor: vi.fn().mockResolvedValue({ announced: 0 }) }) as never,
+    (deps.releaseProbe ?? { enrolAndProbe: vi.fn().mockResolvedValue(undefined) }) as never,
+    (deps.releaseDateLookup ?? { lookup: vi.fn().mockResolvedValue({ format: 'ebook', candidates: [], unavailable: [] }) }) as never,
   );
 }
 
@@ -308,6 +312,168 @@ describe('MonitoredService', () => {
     await service(store, {}, { autoRequests: { submitWorkRequest } }).requestFromWork(viewer, monitoredWork.id, { format: 'ebook' });
 
     expect(submitWorkRequest).toHaveBeenCalledWith(viewer, monitoredAuthor, monitoredWork, 'ebook', undefined);
+  });
+
+  it('asks the lookup service with the work, its monitor and its provider ids', async () => {
+    const lookup = vi.fn().mockResolvedValue({ format: 'ebook', candidates: [], unavailable: [] });
+    const target = work({ providerWorkIds: { hardcover: 'the-infinite-extent', audible: 'B012345678' } });
+    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author(), work: target }) };
+
+    await expect(service(store, {}, { releaseDateLookup: { lookup } }).listReleaseDateCandidates(viewer, target.id, 'ebook')).resolves.toEqual({
+      format: 'ebook',
+      candidates: [],
+      unavailable: [],
+    });
+    expect(lookup).toHaveBeenCalledWith({
+      workId: target.id,
+      title: target.title,
+      authorName: author().authorName,
+      hardcoverSlug: 'the-infinite-extent',
+      audibleAsin: 'B012345678',
+      format: 'ebook',
+      userId: viewer.id,
+    });
+  });
+
+  it('refuses candidates and asks no provider while the release probe is off', async () => {
+    const lookup = vi.fn();
+    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author(), work: work() }) };
+    const instance = service(
+      store,
+      {},
+      {
+        appSettings: { getMonitoredSettings: vi.fn().mockResolvedValue({ refreshCooldownMinutes: 10, releaseProbeEnabled: false }) },
+        releaseDateLookup: { lookup },
+      },
+    );
+
+    await expect(instance.listReleaseDateCandidates(viewer, work().id, 'ebook')).rejects.toMatchObject({
+      status: HttpStatus.CONFLICT,
+      message: 'The release date probe is turned off',
+    });
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('still asks the providers while the release probe is on', async () => {
+    const lookup = vi.fn().mockResolvedValue({ format: 'ebook', candidates: [], unavailable: [] });
+    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author(), work: work() }) };
+    const instance = service(
+      store,
+      {},
+      {
+        appSettings: { getMonitoredSettings: vi.fn().mockResolvedValue({ refreshCooldownMinutes: 10, releaseProbeEnabled: true }) },
+        releaseDateLookup: { lookup },
+      },
+    );
+
+    await expect(instance.listReleaseDateCandidates(viewer, work().id, 'ebook')).resolves.toMatchObject({ format: 'ebook' });
+    expect(lookup).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['a work that does not exist', null, NotFoundException],
+    ['a monitor owned by another user', { monitor: author({ ownerUserId: 2 }), work: work() }, ForbiddenException],
+  ])('answers for %s before it reads the release probe setting', async (_label, entry, expected) => {
+    const getMonitoredSettings = vi.fn();
+    const lookup = vi.fn();
+    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue(entry) };
+    const instance = service(store, {}, { appSettings: { getMonitoredSettings }, releaseDateLookup: { lookup } });
+
+    await expect(instance.listReleaseDateCandidates(viewer, work().id, 'ebook')).rejects.toBeInstanceOf(expected);
+    expect(getMonitoredSettings).not.toHaveBeenCalled();
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['candidates', (instance: MonitoredService) => instance.listReleaseDateCandidates(viewer, work().id, 'ebook')],
+    ['a chosen date', (instance: MonitoredService) => instance.setWorkReleaseDate(viewer, work().id, 'ebook', '2027-01-02')],
+    ['a refresh', (instance: MonitoredService) => instance.refreshWorkReleaseDates(viewer, work().id)],
+  ])('refuses %s on a monitor owned by another user', async (_label, call) => {
+    const releaseProbe = { setUserReleaseDate: vi.fn(), clearUserReleaseDate: vi.fn(), refreshWork: vi.fn() };
+    const lookup = vi.fn();
+    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author({ ownerUserId: 2 }), work: work() }) };
+
+    await expect(call(service(store, {}, { releaseProbe, releaseDateLookup: { lookup } }))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(releaseProbe.setUserReleaseDate).not.toHaveBeenCalled();
+    expect(releaseProbe.refreshWork).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['candidates', (instance: MonitoredService) => instance.listReleaseDateCandidates(viewer, 'gone', 'ebook')],
+    ['a chosen date', (instance: MonitoredService) => instance.setWorkReleaseDate(viewer, 'gone', 'ebook', null)],
+    ['a refresh', (instance: MonitoredService) => instance.refreshWorkReleaseDates(viewer, 'gone')],
+  ])('answers 404 for %s on a work that does not exist', async (_label, call) => {
+    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue(null) };
+
+    await expect(call(service(store))).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('stores a chosen date against the work and its monitor, then returns the fresh work', async () => {
+    const setUserReleaseDate = vi.fn().mockResolvedValue(1);
+    // A chosen date changes the probe row, not what the providers list, so the lookup cache stands.
+    const forget = vi.fn();
+    const stored = work({
+      formatReleases: {
+        ebook: {
+          status: 'dated',
+          releaseDate: '2027-01-02',
+          precision: 'day',
+          source: 'user',
+          checkedAt: null,
+          dateChangedAt: null,
+          previousReleaseDate: null,
+          previousPrecision: null,
+          suggested: null,
+        },
+      },
+    });
+    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author(), work: stored }) };
+
+    await expect(
+      service(store, {}, { releaseProbe: { setUserReleaseDate }, releaseDateLookup: { forget } }).setWorkReleaseDate(
+        viewer,
+        stored.id,
+        'ebook',
+        '2027-01-02',
+      ),
+    ).resolves.toBe(stored);
+
+    expect(setUserReleaseDate).toHaveBeenCalledWith({ id: stored.id, monitorAuthorId: author().id, ownerUserId: 1 }, 'ebook', '2027-01-02');
+    expect(forget).not.toHaveBeenCalled();
+  });
+
+  it('clears a chosen date instead of storing one when the date is null', async () => {
+    const releaseProbe = { setUserReleaseDate: vi.fn(), clearUserReleaseDate: vi.fn().mockResolvedValue(true) };
+    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author(), work: work() }) };
+
+    await service(store, {}, { releaseProbe }).setWorkReleaseDate(viewer, work().id, 'audiobook', null);
+
+    expect(releaseProbe.clearUserReleaseDate).toHaveBeenCalledWith(work().id, 'audiobook');
+    expect(releaseProbe.setUserReleaseDate).not.toHaveBeenCalled();
+  });
+
+  it('refreshes one work through the probe and returns what it wrote', async () => {
+    const refreshWork = vi.fn().mockResolvedValue(undefined);
+    const refreshed = work({ ebookReleaseDate: '2027-02-02' });
+    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author(), work: refreshed }) };
+
+    await expect(service(store, {}, { releaseProbe: { refreshWork } }).refreshWorkReleaseDates(viewer, refreshed.id)).resolves.toBe(refreshed);
+
+    expect(refreshWork).toHaveBeenCalledWith({ id: author().id, ownerUserId: 1 }, refreshed.id);
+  });
+
+  it('surfaces a failed work refresh without dropping cached candidates', async () => {
+    const refreshWork = vi.fn().mockRejectedValue(new Error('probe failed'));
+    const forget = vi.fn();
+    const stored = work();
+    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author(), work: stored }) };
+
+    await expect(
+      service(store, {}, { releaseProbe: { refreshWork }, releaseDateLookup: { forget } }).refreshWorkReleaseDates(viewer, stored.id),
+    ).rejects.toThrow('probe failed');
+
+    expect(forget).not.toHaveBeenCalled();
   });
 
   it('rejects an overlay update for a monitor owned by another user', async () => {
@@ -754,6 +920,69 @@ describe('MonitoredService', () => {
       viewer,
     );
     expect(fanOut).not.toHaveBeenCalled();
+  });
+
+  it('probes after the catalog fetch and before reading the catalog or filing requests', async () => {
+    const monitoredAuthor = author({ localAuthorId: 7 });
+    const calls: string[] = [];
+    const store = {
+      getAuthor: vi.fn().mockResolvedValue(monitoredAuthor),
+      updateAuthorFields: vi.fn().mockResolvedValue(monitoredAuthor),
+      getCatalog: vi.fn().mockImplementation(() => {
+        calls.push('getCatalog');
+        return Promise.resolve({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [] });
+      }),
+    };
+    const fanOut = vi.fn().mockImplementation(() => {
+      calls.push('fanOut');
+      return Promise.resolve({ created: 0, skipped: 0, failed: 0 });
+    });
+    const instance = service(
+      store,
+      {},
+      {
+        catalog: {
+          fetchCatalog: vi.fn().mockImplementation(() => {
+            calls.push('fetchCatalog');
+            return Promise.resolve({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null });
+          }),
+        },
+        releaseProbe: {
+          enrolAndProbe: vi.fn().mockImplementation(() => {
+            calls.push('probe');
+            return Promise.resolve();
+          }),
+        },
+        autoRequests: { fanOut },
+        authorsRepository: { findByIdForEnrichment: vi.fn().mockResolvedValue({ description: 'bio', website: null, genres: [], hasPhoto: true }) },
+      },
+    );
+
+    await instance.refreshAuthor(monitoredAuthor.id, viewer);
+
+    expect(calls).toEqual(['fetchCatalog', 'probe', 'getCatalog', 'fanOut']);
+  });
+
+  it('continues a catalog refresh when the release probe rejects', async () => {
+    const monitoredAuthor = author({ localAuthorId: 7 });
+    const store = {
+      getAuthor: vi.fn().mockResolvedValue(monitoredAuthor),
+      updateAuthorFields: vi.fn().mockResolvedValue(monitoredAuthor),
+      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [] }),
+    };
+    const instance = service(
+      store,
+      {},
+      {
+        catalog: { fetchCatalog: vi.fn().mockResolvedValue({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null }) },
+        releaseProbe: { enrolAndProbe: vi.fn().mockRejectedValue(new TypeError('probe failed')) },
+        autoRequests: { fanOut: vi.fn().mockResolvedValue({ created: 0, skipped: 0, failed: 0 }) },
+        authorsRepository: { findByIdForEnrichment: vi.fn().mockResolvedValue({ description: 'bio', website: null, genres: [], hasPhoto: true }) },
+      },
+    );
+
+    await expect(instance.refreshAuthor(monitoredAuthor.id, viewer)).resolves.toMatchObject({ works: [] });
+    expect(store.getCatalog).toHaveBeenCalled();
   });
 
   it('hands the refreshed detail every class, so the caller can still count what it is not showing', async () => {

@@ -102,6 +102,38 @@ describe('workReleaseStatus', () => {
   it('calls a work with no date at all undated rather than guessing', () => {
     expect(workReleaseStatus(work(), now)).toBe('undated')
   })
+
+  it('reads an upcoming format hint instead of demoting the work to its release year', () => {
+    const lordOfDemons = work({
+      releaseYear: 2026,
+      formatReleases: {
+        ebook: {
+          status: 'unlisted',
+          releaseDate: null,
+          precision: null,
+          source: null,
+          checkedAt: null,
+          dateChangedAt: null,
+          previousReleaseDate: null,
+          previousPrecision: null,
+          suggested: null,
+        },
+        audiobook: {
+          status: 'expected',
+          releaseDate: '2026-10-06',
+          precision: 'day',
+          source: 'amazon_search',
+          checkedAt: null,
+          dateChangedAt: null,
+          previousReleaseDate: null,
+          previousPrecision: null,
+          suggested: null,
+        },
+      },
+    })
+
+    expect(workReleaseStatus(lordOfDemons, now)).toBe('upcoming')
+  })
 })
 
 describe('isWorkDisplayed', () => {

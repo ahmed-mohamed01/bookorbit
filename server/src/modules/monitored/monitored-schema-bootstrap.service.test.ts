@@ -12,6 +12,7 @@ const TABLE_NAMES = [
   'author_catalog_works',
   'author_catalog_state',
   'author_catalog_source_works',
+  'author_catalog_work_releases',
   'author_provider_identities',
 ];
 
@@ -49,9 +50,15 @@ describe('MonitoredSchemaBootstrapService', () => {
     expect(store.findMissingTables).toHaveBeenCalledWith(TABLE_NAMES);
     expect(store.applySchemaStatements).toHaveBeenCalledTimes(1);
     const statements = store.applySchemaStatements.mock.calls[0]![0] as string[];
-    expect(statements.filter((statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'))).toHaveLength(9);
+    expect(statements.filter((statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'))).toHaveLength(10);
     expect(statements.some((statement) => statement.includes('auto_grab'))).toBe(false);
     expect(statements.some((statement) => statement.includes('public.bookorbit_unaccent("title") gin_trgm_ops'))).toBe(true);
+    expect(statements).toContain('DROP INDEX IF EXISTS "author_catalog_work_releases_next_check_at_idx";');
+    expect(statements.some((statement) => statement.includes('CREATE INDEX IF NOT EXISTS "author_catalog_work_releases_next_check_at_idx"'))).toBe(
+      false,
+    );
+    expect(statements.some((statement) => statement.startsWith('CREATE OR REPLACE FUNCTION "author_catalog_work_releases_track_date"'))).toBe(true);
+    expect(statements.some((statement) => statement.includes('CREATE TRIGGER "author_catalog_work_releases_track_date_trg"'))).toBe(true);
     expect(statements.every((statement) => !statement.includes('--> statement-breakpoint'))).toBe(true);
     expect(logSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
@@ -66,7 +73,7 @@ describe('MonitoredSchemaBootstrapService', () => {
     const message = logSpy.mock.calls[0]![0] as string;
     expect(message).toContain('[monitored.schema_bootstrap] [end]');
     expect(message).toContain('durationMs=');
-    expect(message).toContain('tablesCreated=9');
+    expect(message).toContain('tablesCreated=10');
     expect(errorSpy).not.toHaveBeenCalled();
   });
 

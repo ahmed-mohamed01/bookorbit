@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { MonitoredFormat, MonitoredReleaseItem, MonitoredWork } from '@bookorbit/types'
-import { collapseReleaseItems, groupWorks, releaseDateForWork, seriesMembershipForGroup, sortWorks } from './grouping'
+import { collapseReleaseItems, groupWorks, releaseDateForWork, releaseDateMoved, seriesMembershipForGroup, sortWorks } from './grouping'
 
 function work(overrides: Partial<MonitoredWork> & Pick<MonitoredWork, 'id' | 'title'>): MonitoredWork {
   const { id, title, ...rest } = overrides
@@ -34,6 +34,84 @@ describe('monitored work grouping', () => {
   it('uses the earliest format date and falls back to release year', () => {
     expect(releaseDateForWork(work({ id: 'a', title: 'A', ebookReleaseDate: '2027-02-01', audioReleaseDate: '2026-12-01' }))).toBe('2026-12-01')
     expect(releaseDateForWork(work({ id: 'b', title: 'B', releaseYear: 1999 }))).toBe('1999-01-01')
+  })
+
+  it('falls back to the earliest probe hint before the release year', () => {
+    // The Lord of Demons: no store lists the ebook, and the audiobook is only expected in October.
+    const lordOfDemons = work({
+      id: 'demons',
+      title: 'The Lord of Demons',
+      releaseYear: 2026,
+      formatReleases: {
+        ebook: {
+          status: 'unlisted',
+          releaseDate: null,
+          precision: null,
+          source: null,
+          checkedAt: null,
+          dateChangedAt: null,
+          previousReleaseDate: null,
+          previousPrecision: null,
+          suggested: null,
+        },
+        audiobook: {
+          status: 'expected',
+          releaseDate: '2026-10-06',
+          precision: 'day',
+          source: 'hardcover_edition',
+          checkedAt: null,
+          dateChangedAt: null,
+          previousReleaseDate: null,
+          previousPrecision: null,
+          suggested: null,
+        },
+      },
+    })
+
+    expect(releaseDateForWork(lordOfDemons)).toBe('2026-10-06')
+  })
+
+  it('keeps the columns ahead of the hints and the year behind them', () => {
+    const withColumn = work({
+      id: 'column',
+      title: 'Column',
+      ebookReleaseDate: '2026-02-01',
+      releaseYear: 2026,
+      formatReleases: {
+        audiobook: {
+          status: 'expected',
+          releaseDate: '2026-10-06',
+          precision: 'day',
+          source: null,
+          checkedAt: null,
+          dateChangedAt: null,
+          previousReleaseDate: null,
+          previousPrecision: null,
+          suggested: null,
+        },
+      },
+    })
+    const withoutHints = work({
+      id: 'no-hints',
+      title: 'No hints',
+      releaseYear: 2026,
+      formatReleases: {
+        ebook: {
+          status: 'unlisted',
+          releaseDate: null,
+          precision: null,
+          source: null,
+          checkedAt: null,
+          dateChangedAt: null,
+          previousReleaseDate: null,
+          previousPrecision: null,
+          suggested: null,
+        },
+      },
+    })
+
+    expect(releaseDateForWork(withColumn)).toBe('2026-02-01')
+    expect(releaseDateForWork(withoutHints)).toBe('2026-01-01')
   })
 
   it('sorts by date in both directions while keeping unknown dates last', () => {
@@ -151,5 +229,25 @@ describe('collapseReleaseItems', () => {
     expect(entries[0].items.map(({ format }) => format)).toEqual(['ebook', 'audiobook'])
     expect(entries[1].items.map(({ releaseDate }) => releaseDate)).toEqual(['2026-07-10', '2026-07-28'])
     expect(entries[2].items).toHaveLength(1)
+  })
+})
+
+describe('releaseDateMoved', () => {
+  it('says nothing moved when a re-check leaves the listed date where it was', () => {
+    const before = work({ id: 'w', title: 'W', ebookReleaseDate: '2026-10-06', ebookDatePrecision: 'day' })
+    const after = { ...before, description: 'refreshed' }
+
+    expect(releaseDateMoved(before, after)).toBe(false)
+  })
+
+  it('says the date moved when the owner sets another one', () => {
+    const before = work({ id: 'w', title: 'W', ebookReleaseDate: '2026-10-06', ebookDatePrecision: 'day' })
+    const after = { ...before, ebookReleaseDate: '2026-12-01' }
+
+    expect(releaseDateMoved(before, after)).toBe(true)
+  })
+
+  it('treats a work it has no earlier copy of as moved, since it cannot know', () => {
+    expect(releaseDateMoved(null, work({ id: 'w', title: 'W' }))).toBe(true)
   })
 })

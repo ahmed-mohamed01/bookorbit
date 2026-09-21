@@ -1,21 +1,25 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BookOpen, Check, Headphones, Loader2, Search, Eye, EyeOff, X } from '@lucide/vue'
-import type { MonitoredDatePrecision, MonitoredFormat, MonitoredWork, ReleaseCandidateItem } from '@bookorbit/types'
+import { BellDot, BookOpen, Check, Headphones, Loader2, RefreshCw, Search, Eye, EyeOff, TriangleAlert, X } from '@lucide/vue'
+import type { MonitoredFormat, MonitoredWork, ReleaseCandidateItem } from '@bookorbit/types'
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { bookCoverStyle } from '@/features/book/lib/book-cover'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { useBookDetail } from '@/features/book/composables/useBookDetail'
 import { useSafeHtml } from '@/features/book/composables/useSafeHtml'
 import { useMonitoredReleases } from '../composables/useMonitoredReleases'
+import { useReleaseRows } from '../composables/useReleaseRows'
+import { useWorkReleaseDates } from '../composables/useWorkReleaseDates'
 import { isMonitoredAcquisitionState, monitoredFormatState, monitoredPendingLabelKey } from '../lib/monitored-format-state'
-import { monitoredReleaseWindowStarted, parseMonitoredDate } from '../lib/release-date'
+import { monitoredReleaseWindowStarted } from '../lib/release-date'
 import { isWorkVisible } from '../lib/work-visibility'
 import MonitoredFormatPill from './MonitoredFormatPill.vue'
+import MonitoredReleaseDatePopover from './MonitoredReleaseDatePopover.vue'
 import MonitoredRequestProgress from './MonitoredRequestProgress.vue'
 import MonitoredWorkFiles from './MonitoredWorkFiles.vue'
 import ReleaseResultRow from './ReleaseResultRow.vue'
@@ -36,9 +40,11 @@ const emit = defineEmits<{
   filed: [work: MonitoredWork, requestId: number]
   'toggle-monitor': [work: MonitoredWork, format: MonitoredFormat, value: boolean]
   'toggle-hidden': [work: MonitoredWork, value: boolean]
+  /** A release date change answers with the whole work, for every list showing it to read from. */
+  'work-updated': [work: MonitoredWork]
 }>()
 
-const { t, d } = useI18n()
+const { t } = useI18n()
 
 const activeTab = ref<PanelTab>('details')
 const imageFailed = ref(false)
@@ -79,6 +85,9 @@ const secondaryBookId = computed(() => {
 
 const ebookReleases = useMonitoredReleases(workIdRef, 'ebook')
 const audioReleases = useMonitoredReleases(workIdRef, 'audiobook')
+const releaseDates = useWorkReleaseDates(workIdRef)
+/** Only one lookup is open at a time, and a saved date closes the one that saved it. */
+const openDatesFormat = ref<MonitoredFormat | null>(null)
 const activeReleases = computed(() => (activeTab.value === 'audiobook' ? audioReleases : ebookReleases))
 const activeFormat = computed<MonitoredFormat>(() => (activeTab.value === 'audiobook' ? 'audiobook' : 'ebook'))
 
@@ -182,8 +191,13 @@ function handleToggleAudiobookMonitor() {
 function toggleHidden() {
   if (props.work) emit('toggle-hidden', props.work, !isHidden.value)
 }
-const showEbookRequest = computed(() => props.canManage && isFormatMonitored('ebook'))
-const showAudiobookRequest = computed(() => props.canManage && isFormatMonitored('audiobook'))
+/** The same rule that decides whether this viewer may act on a format at all. */
+function canEditFormat(format: MonitoredFormat): boolean {
+  return props.canManage && isFormatMonitored(format)
+}
+
+const showEbookRequest = computed(() => canEditFormat('ebook'))
+const showAudiobookRequest = computed(() => canEditFormat('audiobook'))
 const showAutoDownload = computed(
   () =>
     (showEbookRequest.value && !ebookOwned.value && !ebookQueued.value) ||
@@ -206,6 +220,7 @@ watch(
     activeTab.value = 'details'
     imageFailed.value = false
     autoDownload.value = true
+    openDatesFormat.value = null
     resetReleaseState()
   },
   { immediate: true },
@@ -227,16 +242,41 @@ watch(
   { immediate: true },
 )
 
-function formatReleaseDate(value: string | null, precision: MonitoredDatePrecision | null): string | null {
-  const parsed = parseMonitoredDate(value, precision)
-  if (!parsed) return null
-  if (parsed.precision === 'year') return String(parsed.date.getFullYear())
-  if (parsed.precision === 'month') return d(parsed.date, { year: 'numeric', month: 'long' })
-  return d(parsed.date, { year: 'numeric', month: 'long', day: 'numeric' })
+const releaseRows = useReleaseRows(
+  computed(() => props.work),
+  computed(() => props.canManage),
+  (format) => releaseDates.stateFor(format),
+)
+
+function handleReleaseDatesOpen(format: MonitoredFormat, open: boolean) {
+  openDatesFormat.value = open ? format : null
+  if (open) void releaseDates.loadCandidates(format)
 }
 
-const ebookReleaseLabel = computed(() => (props.work ? formatReleaseDate(props.work.ebookReleaseDate, props.work.ebookDatePrecision) : null))
-const audioReleaseLabel = computed(() => (props.work ? formatReleaseDate(props.work.audioReleaseDate, props.work.audioDatePrecision) : null))
+async function applyReleaseDate(format: MonitoredFormat, releaseDate: string | null) {
+  const updated = await releaseDates.setDate(format, releaseDate)
+  if (!updated) return
+  // The panel may have moved to another book while the save was in flight; its popover is not ours to close.
+  if (props.work?.id === updated.id) openDatesFormat.value = null
+  emit('work-updated', updated)
+}
+
+function handleReleaseDateSet(format: MonitoredFormat, releaseDate: string) {
+  void applyReleaseDate(format, releaseDate)
+}
+
+function handleReleaseDateClear(format: MonitoredFormat) {
+  void applyReleaseDate(format, null)
+}
+
+async function refreshReleaseDates() {
+  const updated = await releaseDates.refresh()
+  if (updated) emit('work-updated', updated)
+}
+
+function handleRefreshReleaseDates() {
+  void refreshReleaseDates()
+}
 
 function selectTab(tab: PanelTab) {
   activeTab.value = tab
@@ -398,25 +438,107 @@ function handleRequestAudiobook() {
               </span>
             </div>
 
-            <dl v-if="work.seriesMemberships.length || ebookReleaseLabel || audioReleaseLabel" class="space-y-3">
-              <div v-if="work.seriesMemberships.length">
-                <dt class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{{ t('monitored.panel.series') }}</dt>
-                <dd class="mt-0.5 text-sm text-foreground">
-                  <span v-for="(membership, index) in work.seriesMemberships" :key="`${membership.name}-${index}`">
-                    <span v-if="index > 0" class="text-muted-foreground"> &middot; </span>
-                    {{ membership.index != null ? `${membership.name} #${membership.index}` : membership.name }}
-                  </span>
-                </dd>
-              </div>
-              <div v-if="ebookReleaseLabel">
-                <dt class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{{ t('monitored.panel.ebookRelease') }}</dt>
-                <dd class="mt-0.5 text-sm text-foreground">{{ ebookReleaseLabel }}</dd>
-              </div>
-              <div v-if="audioReleaseLabel">
-                <dt class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{{ t('monitored.panel.audioRelease') }}</dt>
-                <dd class="mt-0.5 text-sm text-foreground">{{ audioReleaseLabel }}</dd>
-              </div>
+            <dl v-if="work.seriesMemberships.length">
+              <dt class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{{ t('monitored.panel.series') }}</dt>
+              <dd class="mt-0.5 text-sm text-foreground">
+                <span v-for="(membership, index) in work.seriesMemberships" :key="`${membership.name}-${index}`">
+                  <span v-if="index > 0" class="text-muted-foreground"> &middot; </span>
+                  {{ membership.index != null ? `${membership.name} #${membership.index}` : membership.name }}
+                </span>
+              </dd>
             </dl>
+
+            <section>
+              <div class="flex min-h-8 items-center justify-between gap-2">
+                <h3 class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                  {{ t('monitored.panel.releaseDates.heading') }}
+                </h3>
+                <TooltipProvider v-if="canManage">
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <button
+                        type="button"
+                        class="-mr-1.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60"
+                        :disabled="releaseDates.refreshing.value"
+                        :aria-label="t('monitored.panel.releaseDates.refresh')"
+                        @click="handleRefreshReleaseDates"
+                      >
+                        <RefreshCw :size="14" :class="releaseDates.refreshing.value ? 'animate-spin' : undefined" aria-hidden="true" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{{ t('monitored.panel.releaseDates.refresh') }}</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+
+              <dl class="mt-1 space-y-3">
+                <div v-for="row in releaseRows" :key="row.format">
+                  <dt class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{{ row.label }}</dt>
+                  <dd
+                    class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
+                    :class="row.muted ? 'text-muted-foreground' : 'text-foreground'"
+                  >
+                    <MonitoredReleaseDatePopover
+                      v-if="row.editable"
+                      :format="row.format"
+                      :open="openDatesFormat === row.format"
+                      :label="row.value"
+                      :muted="row.muted"
+                      :current-date="row.date"
+                      :source="row.source"
+                      :details="row.details"
+                      :suggestion="row.suggestion"
+                      :state="row.dates"
+                      @open-change="handleReleaseDatesOpen"
+                      @set="handleReleaseDateSet"
+                      @clear="handleReleaseDateClear"
+                    />
+                    <TooltipProvider v-else-if="row.details.length">
+                      <Tooltip>
+                        <TooltipTrigger as-child>
+                          <span tabindex="0" class="rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">{{
+                            row.value
+                          }}</span>
+                        </TooltipTrigger>
+                        <TooltipContent class="max-w-64">
+                          <span v-for="line in row.details" :key="line" class="block">{{ line }}</span>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <span v-else>{{ row.value }}</span>
+                    <TooltipProvider v-if="row.suggestion && row.editable">
+                      <Tooltip>
+                        <TooltipTrigger as-child>
+                          <span
+                            tabindex="0"
+                            data-testid="release-date-suggestion"
+                            class="inline-flex items-center rounded-sm text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                          >
+                            <BellDot :size="14" aria-hidden="true" />
+                            <span class="sr-only">{{ t('monitored.panel.releaseDates.suggestedLabel') }}</span>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent class="max-w-64">
+                          <span class="block">{{ row.suggestion.text }}</span>
+                          <span class="block">{{ row.suggestionHint }}</span>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <TooltipProvider v-if="row.unconfirmed">
+                      <Tooltip>
+                        <TooltipTrigger as-child>
+                          <span tabindex="0" class="inline-flex items-center rounded-sm text-warning">
+                            <TriangleAlert :size="14" aria-hidden="true" />
+                            <span class="sr-only">{{ t('monitored.panel.releaseDates.notConfirmed') }}</span>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent class="max-w-64">{{ row.unconfirmedHint }}</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </dd>
+                </div>
+              </dl>
+            </section>
 
             <div class="border-t border-border pt-4">
               <div v-if="work.description" class="text-sm leading-relaxed text-foreground" v-html="safeDescription" />

@@ -11,6 +11,10 @@ import { authorCatalogWorks, type AuthorCatalogWorkRow } from './schema/monitore
 
 type OverlayRow = typeof schema.monitoredAuthorWorks.$inferSelect;
 
+function rendered(statement: SQL): string {
+  return new PgDialect().sqlToQuery(statement).sql;
+}
+
 function overlayRow(patch: Partial<OverlayRow> & { workId: string }): OverlayRow {
   return {
     monitorAuthorId: 'monitor-1',
@@ -74,8 +78,49 @@ function workRow(patch: Partial<AuthorCatalogWorkRow> = {}): AuthorCatalogWorkRo
   };
 }
 
+type ReleaseRow = typeof schema.authorCatalogWorkReleases.$inferSelect;
+
+function releaseRow(patch: Partial<ReleaseRow> = {}) {
+  return {
+    workId: 'monitor-1:hardcover:1',
+    monitorAuthorId: 'monitor-1',
+    ownerUserId: 1,
+    format: 'ebook' as const,
+    status: 'dated' as const,
+    releaseDate: '2026-10-01',
+    datePrecision: 'day' as const,
+    lastReleaseDate: '2026-10-01',
+    lastDatePrecision: 'day' as const,
+    lastDateSource: 'apple' as const,
+    previousReleaseDate: '2026-10-06',
+    previousDatePrecision: 'day' as const,
+    dateChangedAt: new Date('2026-09-20T01:02:03.000Z'),
+    autoReleaseDate: null as ReleaseRow['autoReleaseDate'],
+    autoDatePrecision: null as ReleaseRow['autoDatePrecision'],
+    autoSource: null as ReleaseRow['autoSource'],
+    autoChangedAt: null as ReleaseRow['autoChangedAt'],
+    source: 'apple' as const,
+    asin: null,
+    checkedAt: new Date('2026-09-18T01:02:03.000Z'),
+    nextCheckAt: new Date('2026-09-25T00:00:00.000Z'),
+    attempts: 0,
+    lastErrorClass: null,
+    ...patch,
+  };
+}
+
 describe('MonitoredStoreService work composition', () => {
   const store = new MonitoredStoreService({} as never, {} as never);
+  const composed = (releases: Array<ReturnType<typeof releaseRow>>) =>
+    Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [
+      workRow(),
+      [],
+      undefined,
+      null,
+      true,
+      new Map(),
+      releases,
+    ]) as Record<string, unknown>;
 
   it('supplies default user state when no overlay exists', () => {
     const result = Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [
@@ -91,6 +136,120 @@ describe('MonitoredStoreService work composition', () => {
       requestIds: {},
       providerWorkIds: { hardcover: '1' },
     });
+    expect(result).not.toHaveProperty('formatReleases');
+  });
+
+  it('attaches release probe rows by format', () => {
+    const result = Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [
+      workRow(),
+      [],
+      undefined,
+      null,
+      true,
+      new Map(),
+      [releaseRow()],
+    ]) as Record<string, unknown>;
+
+    expect(result.formatReleases).toEqual({
+      ebook: {
+        status: 'dated',
+        releaseDate: '2026-10-01',
+        precision: 'day',
+        source: 'apple',
+        checkedAt: '2026-09-18T01:02:03.000Z',
+        dateChangedAt: '2026-09-20T01:02:03.000Z',
+        previousReleaseDate: '2026-10-06',
+        previousPrecision: 'day',
+        suggested: null,
+      },
+    });
+  });
+
+  it('hides release date history while the current date is null', () => {
+    const result = Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [
+      workRow(),
+      [],
+      undefined,
+      null,
+      true,
+      new Map(),
+      [releaseRow({ releaseDate: null, datePrecision: null, status: 'unlisted' })],
+    ]) as Record<string, unknown>;
+
+    expect(result.formatReleases).toMatchObject({
+      ebook: { dateChangedAt: null, previousReleaseDate: null, previousPrecision: null },
+    });
+  });
+
+  it('hides release date history for an owner-authored date', () => {
+    const result = Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [
+      workRow(),
+      [],
+      undefined,
+      null,
+      true,
+      new Map(),
+      [releaseRow({ source: 'user' })],
+    ]) as Record<string, unknown>;
+
+    expect(result.formatReleases).toMatchObject({
+      ebook: { dateChangedAt: null, previousReleaseDate: null, previousPrecision: null },
+    });
+  });
+
+  it('shows the first-seen timestamp without a previous date', () => {
+    const result = Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [
+      workRow(),
+      [],
+      undefined,
+      null,
+      true,
+      new Map(),
+      [releaseRow({ previousReleaseDate: null, previousDatePrecision: null })],
+    ]) as Record<string, unknown>;
+
+    expect(result.formatReleases).toMatchObject({
+      ebook: {
+        dateChangedAt: '2026-09-20T01:02:03.000Z',
+        previousReleaseDate: null,
+        previousPrecision: null,
+      },
+    });
+  });
+
+  it('surfaces an automatic date that disagrees with the one the owner chose', () => {
+    const result = composed([
+      releaseRow({
+        source: 'user',
+        releaseDate: '2026-10-01',
+        autoReleaseDate: '2026-11-12',
+        autoDatePrecision: 'day',
+        autoSource: 'amazon',
+        autoChangedAt: new Date('2026-09-21T04:05:06.000Z'),
+      }),
+    ]);
+
+    expect(result.formatReleases).toMatchObject({
+      ebook: { suggested: { releaseDate: '2026-11-12', precision: 'day', source: 'amazon', changedAt: '2026-09-21T04:05:06.000Z' } },
+    });
+  });
+
+  it('withholds every suggestion the owner has no open question about', () => {
+    const acknowledged = releaseRow({
+      source: 'user',
+      releaseDate: '2026-10-01',
+      autoReleaseDate: '2026-11-12',
+      autoDatePrecision: 'day',
+      autoSource: 'amazon',
+      autoChangedAt: null,
+    });
+    const agreeing = releaseRow({ ...acknowledged, autoReleaseDate: '2026-10-01', autoChangedAt: new Date('2026-09-21T04:05:06.000Z') });
+    const unseen = releaseRow({ ...agreeing, autoReleaseDate: null, autoDatePrecision: null, autoSource: null });
+    const probeOwned = releaseRow({ ...agreeing, source: 'apple', autoReleaseDate: '2026-11-12' });
+
+    for (const row of [acknowledged, agreeing, unseen, probeOwned]) {
+      expect(composed([row]).formatReleases).toMatchObject({ ebook: { suggested: null } });
+    }
   });
 
   it('masks inaccessible per-format matches and owned formats', () => {
@@ -191,7 +350,7 @@ describe('MonitoredStoreService viewer-aware composition', () => {
   const libraries = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([]) };
 
   it('withholds the owner overlay and the owner-hidden work from a non-owner', async () => {
-    const db = queuedSelectDb([[], overlays, requests, []]);
+    const db = queuedSelectDb([[], overlays, [], requests, []]);
     const store = new MonitoredStoreService(db as never, libraries as never);
 
     const composed = await composeWorks(store, [shown, hidden], { id: 2, isSuperuser: false } as RequestUser);
@@ -203,7 +362,7 @@ describe('MonitoredStoreService viewer-aware composition', () => {
   });
 
   it('keeps the whole overlay for the monitor owner', async () => {
-    const db = queuedSelectDb([[], overlays, requests, [{ id: 'monitor-1' }]]);
+    const db = queuedSelectDb([[], overlays, [], requests, [{ id: 'monitor-1' }]]);
     const store = new MonitoredStoreService(db as never, libraries as never);
 
     const composed = await composeWorks(store, [shown, hidden], { id: 1, isSuperuser: false } as RequestUser);
@@ -215,7 +374,7 @@ describe('MonitoredStoreService viewer-aware composition', () => {
   });
 
   it('keeps the whole overlay for an internal caller that passes no viewer', async () => {
-    const db = queuedSelectDb([[], overlays, requests]);
+    const db = queuedSelectDb([[], overlays, [], requests]);
     const store = new MonitoredStoreService(db as never, libraries as never);
 
     const composed = await composeWorks(store, [shown, hidden]);
@@ -226,7 +385,7 @@ describe('MonitoredStoreService viewer-aware composition', () => {
   });
 
   it('projects an available request match into the library-owned work state', async () => {
-    const db = queuedSelectDb([[], overlays, [{ id: 17, status: 'available', matchedBookId: 30 }]]);
+    const db = queuedSelectDb([[], overlays, [], [{ id: 17, status: 'available', matchedBookId: 30 }]]);
     const store = new MonitoredStoreService(db as never, libraries as never);
 
     const composed = await composeWorks(store, [shown, hidden]);
@@ -237,6 +396,100 @@ describe('MonitoredStoreService viewer-aware composition', () => {
       ownedFormats: ['ebook'],
       requestStatuses: { ebook: 'available' },
     });
+  });
+});
+
+describe('MonitoredStoreService catalog overlay', () => {
+  function catalogDb() {
+    const operations: string[] = [];
+    const tx = {
+      delete: vi.fn(() => ({
+        where: vi.fn().mockImplementation(() => {
+          operations.push('delete');
+          return Promise.resolve({ rowCount: 0 });
+        }),
+      })),
+      insert: vi.fn(() => {
+        const builder: Record<string, ReturnType<typeof vi.fn>> = {};
+        builder.values = vi.fn(() => {
+          operations.push('insert');
+          return builder;
+        });
+        builder.onConflictDoUpdate = vi.fn().mockResolvedValue({ rowCount: 1 });
+        return builder;
+      }),
+      execute: vi.fn().mockImplementation(() => {
+        operations.push('overlay');
+        return Promise.resolve({ rowCount: 0 });
+      }),
+    };
+    return { db: { transaction: vi.fn((callback: (value: typeof tx) => unknown) => callback(tx)) }, tx, operations };
+  }
+
+  it('reapplies the release overlay after the source-work rewrite', async () => {
+    const tracked = catalogDb();
+    const store = new MonitoredStoreService(tracked.db as never, {} as never);
+    const row = workRow({ matchedBookId: null, matchedEbookBookId: null, matchedAudioBookId: null, ownedFormats: [] });
+
+    await store.saveCatalog('monitor-1', {
+      fetchedAt: '2026-09-18T00:00:00.000Z',
+      works: [
+        {
+          ...row,
+          providerWorkIds: { hardcover: 'the-work' },
+          monitorState: 'monitoring',
+          matchedBookIds: {},
+          monitorFormats: {},
+          requestIds: {},
+        },
+      ],
+    });
+
+    expect(tracked.tx.execute).toHaveBeenCalledTimes(7);
+    expect(tracked.operations.slice(-7)).toEqual(['overlay', 'overlay', 'overlay', 'overlay', 'overlay', 'overlay', 'overlay']);
+    expect(tracked.operations.indexOf('overlay')).toBeGreaterThan(tracked.operations.lastIndexOf('insert'));
+  });
+
+  it('enrols release probes after reapplying the overlay in the catalog transaction', async () => {
+    const tracked = catalogDb();
+    const store = new MonitoredStoreService(tracked.db as never, {} as never);
+    const row = workRow({ matchedBookId: null, matchedEbookBookId: null, matchedAudioBookId: null, ownedFormats: [] });
+
+    await store.saveCatalog(
+      'monitor-1',
+      {
+        fetchedAt: '2026-09-18T00:00:00.000Z',
+        works: [
+          {
+            ...row,
+            providerWorkIds: { hardcover: 'the-work' },
+            monitorState: 'monitoring',
+            matchedBookIds: {},
+            monitorFormats: {},
+            requestIds: {},
+          },
+        ],
+      },
+      { enrolReleaseProbes: true },
+    );
+
+    expect(tracked.tx.execute).toHaveBeenCalledTimes(11);
+    const statements = tracked.tx.execute.mock.calls.map(([statement]) => rendered(statement as SQL));
+    expect(statements[5]).toContain('set auto_release_date = work.audio_release_date');
+    expect(statements[6]).toContain("probe.status = 'dated'");
+    expect(statements[7]).toContain('insert into "author_catalog_work_releases"');
+    expect(statements[8]).toContain('insert into "author_catalog_work_releases"');
+    expect(statements[9]).toContain('set ebook_release_date = null');
+    expect(statements[10]).toContain('set audio_release_date = null');
+  });
+
+  it('does not reapply the release overlay when clearing a null catalog', async () => {
+    const tracked = catalogDb();
+    const store = new MonitoredStoreService(tracked.db as never, {} as never);
+
+    await store.saveCatalog('monitor-1', null);
+
+    expect(tracked.tx.execute).not.toHaveBeenCalled();
   });
 });
 

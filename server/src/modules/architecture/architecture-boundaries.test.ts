@@ -75,6 +75,7 @@ describe('Architecture boundaries', () => {
       'src/modules/auth/oidc/oidc-cleanup.service.ts',
       'src/modules/monitored/monitored-author-store.service.ts',
       'src/modules/monitored/monitored-catalog.service.ts',
+      'src/modules/monitored/monitored-release-probe-store.service.ts',
       'src/modules/monitored/monitored-settings.service.ts',
       'src/modules/monitored/monitored-store.service.ts',
     ].sort();

@@ -139,6 +139,44 @@ describe('HardcoverClient', () => {
 
     await expect(client.searchByIsbn('123', 'key')).rejects.toThrow(ProviderThrottleError);
   });
+
+  it('fetches one edition window per format for a bounded slug batch', async () => {
+    const ebook = { reading_format_id: 4, release_date: '2026-09-10', asin: null, isbn_13: null, isbn_10: null, users_count: 0, language: null };
+    const audio = { ...ebook, reading_format_id: 2, asin: 'B012345678', users_count: 120 };
+    const print = { ...ebook, reading_format_id: 1, isbn_10: '123456789X' };
+    const books = [{ slug: 'book-one', release_date: null, ebook_editions: [ebook], audio_editions: [audio], print_editions: [print] }];
+    const mockFetch = vi.mocked(fetchWithThrottleModule.fetchWithThrottle);
+    mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve({ data: { books } }) } as Response);
+
+    await expect(client.fetchEditionsBySlugs(['book-one'], apiKey)).resolves.toEqual([
+      { slug: 'book-one', release_date: null, editions: [ebook, audio, print] },
+    ]);
+    const request = JSON.parse(mockFetch.mock.calls[0][1]?.body as string) as { query: string; variables: unknown };
+    expect(request.variables).toEqual({ slugs: ['book-one'] });
+    expect(request.query).toContain('slug: { _in: $slugs }');
+    expect(request.query).toContain('ebook_editions: editions(where: { reading_format_id: { _eq: 4 } }, order_by: { users_count: desc }, limit: 15)');
+    expect(request.query).toContain('audio_editions: editions(where: { reading_format_id: { _eq: 2 } }, order_by: { users_count: desc }, limit: 15)');
+    expect(request.query).toContain('print_editions: editions(where: { reading_format_id: { _eq: 1 } }, order_by: { users_count: desc }, limit: 15)');
+    expect(request.query).not.toContain('limit: 40');
+  });
+
+  it('keeps a book whose format windows are absent', async () => {
+    const mockFetch = vi.mocked(fetchWithThrottleModule.fetchWithThrottle);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ data: { books: [{ slug: 'book-one', release_date: '2026-09-10' }] } }),
+    } as Response);
+
+    await expect(client.fetchEditionsBySlugs(['book-one'], apiKey)).resolves.toEqual([
+      { slug: 'book-one', release_date: '2026-09-10', editions: [] },
+    ]);
+  });
+
+  it('returns immediately for an empty slug batch', async () => {
+    await expect(client.fetchEditionsBySlugs([], apiKey)).resolves.toEqual([]);
+    expect(fetchWithThrottleModule.fetchWithThrottle).not.toHaveBeenCalled();
+  });
 });
 
 // A failed request used to be indistinguishable from an empty answer. The metadata providers still
@@ -195,6 +233,15 @@ describe('HardcoverClient failure surfacing', () => {
     } as Response);
 
     await expect(client.fetchAuthorContributions(1, 100, apiKey, undefined, { surfaceFailures: true })).rejects.toBeInstanceOf(HardcoverRequestError);
+  });
+
+  it('surfaces failures from an editions batch when requested', async () => {
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockResolvedValue({ ok: false, status: 503 } as Response);
+
+    await expect(client.fetchEditionsBySlugs(['book'], apiKey, undefined, { surfaceFailures: true })).rejects.toMatchObject({
+      name: 'HardcoverRequestError',
+      status: 503,
+    });
   });
 
   it('leaves GraphQL errors alone for a caller that did not opt in', async () => {

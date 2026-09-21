@@ -83,6 +83,35 @@ export interface HardcoverAuthorContribution {
   book?: HardcoverContributionBook | null;
 }
 
+export interface HardcoverProbeEditionRow {
+  reading_format_id: number | null;
+  release_date: string | null;
+  asin: string | null;
+  isbn_13: string | null;
+  isbn_10: string | null;
+  users_count: number | null;
+  language: { code2: string | null } | null;
+}
+
+export interface HardcoverEditionsProbeBook {
+  slug: string;
+  release_date: string | null;
+  editions: HardcoverProbeEditionRow[];
+}
+
+/** One window per format, because a single users_count window drops brand-new editions of a heavily editioned book. */
+export interface HardcoverEditionsProbeBookSlices {
+  slug: string;
+  release_date: string | null;
+  ebook_editions?: HardcoverProbeEditionRow[] | null;
+  audio_editions?: HardcoverProbeEditionRow[] | null;
+  print_editions?: HardcoverProbeEditionRow[] | null;
+}
+
+export interface HardcoverEditionsBySlugsResponse {
+  data?: { books?: HardcoverEditionsProbeBookSlices[] };
+}
+
 export interface HardcoverContributionBook {
   id: number;
   slug: string;

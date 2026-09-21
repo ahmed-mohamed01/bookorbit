@@ -33,7 +33,11 @@ export function monitoredDateTime(value: string | null | undefined): number | nu
   return parseMonitoredDate(value)?.date.getTime() ?? null
 }
 
-export function monitoredReleaseWindowStarted(value: string | null | undefined, precision: MonitoredDatePrecision | null | undefined): boolean {
+export function monitoredReleaseWindowStarted(
+  value: string | null | undefined,
+  precision: MonitoredDatePrecision | null | undefined,
+  todayUtc: string = new Date().toISOString().slice(0, 10),
+): boolean {
   const parsed = parseMonitoredDate(value)
   if (!parsed) return false
 
@@ -46,6 +50,5 @@ export function monitoredReleaseWindowStarted(value: string | null | undefined, 
   // comparing the ISO strings keeps both sides flipping on the same date everywhere.
   const start =
     effectivePrecision === 'year' ? `${trimmed.slice(0, 4)}-01-01` : effectivePrecision === 'month' ? `${trimmed.slice(0, 7)}-01` : trimmed
-  const todayUtc = new Date().toISOString().slice(0, 10)
   return start <= todayUtc
 }

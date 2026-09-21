@@ -339,6 +339,16 @@ export function useMonitoredAuthorDetail() {
     }
   }
 
+  /**
+   * One work, one object. A work the server has already answered with replaces the one every list
+   * renders from, so the cards and the open panel cannot drift apart before the next refetch.
+   */
+  function applyWorkUpdate(updated: MonitoredWork): void {
+    const works = detail.value?.works
+    const index = works?.findIndex((candidate) => candidate.id === updated.id) ?? -1
+    if (works && index >= 0) works.splice(index, 1, updated)
+  }
+
   /** Persist per-work monitor/hide toggles and reflect them in the loaded detail. */
   async function updateWork(workId: string, patch: MonitoredWorkPatch): Promise<void> {
     const works = detail.value?.works
@@ -382,6 +392,7 @@ export function useMonitoredAuthorDetail() {
     queueWork,
     markQueued,
     isQueued,
+    applyWorkUpdate,
     updateWork,
     loadMonitoredBooks,
     isBookMonitored,

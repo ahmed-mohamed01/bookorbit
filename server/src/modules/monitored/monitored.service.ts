@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
   HttpStatus,
@@ -21,6 +22,7 @@ import type {
   MonitoredBookItem,
   MonitoredFormat,
   MonitoredPage,
+  MonitoredReleaseDateLookup,
   MonitoredReleaseItem,
   MonitoredReleaseStatus,
   MonitoredSummary,
@@ -53,6 +55,8 @@ import { MonitoredReleaseWatcher } from './monitored-release-watcher.service';
 import { MonitoredStoreService } from './monitored-store.service';
 import { MonitoredAuthorStoreService } from './monitored-author-store.service';
 import { MonitoredSettingsService } from './monitored-settings.service';
+import { MonitoredReleaseDateLookupService } from './monitored-release-date-lookup.service';
+import { MonitoredReleaseProbeService } from './monitored-release-probe.service';
 import { isAudibleConfigured } from './providers/audible-bibliography.provider';
 import { isHardcoverConfigured } from './providers/hardcover-bibliography.provider';
 import type { MonitoredAuthorAggregate, MonitoredReleasePageEntry } from './monitored-store.service';
@@ -137,6 +141,8 @@ export class MonitoredService {
     private readonly authorImageStorage: AuthorImageStorageService,
     private readonly settings: MonitoredSettingsService,
     private readonly releaseWatcher: MonitoredReleaseWatcher,
+    private readonly releaseProbe: MonitoredReleaseProbeService,
+    private readonly releaseDateLookup: MonitoredReleaseDateLookupService,
   ) {}
 
   async getSummary(user: RequestUser): Promise<MonitoredSummary> {
@@ -347,6 +353,16 @@ export class MonitoredService {
     fanOut = true,
   ): Promise<{ refreshed: MonitoredAuthorConfig; works: MonitoredWork[] }> {
     const result = await this.catalog.fetchCatalog(monitor, config);
+    const probeStartedAt = Date.now();
+    try {
+      await this.releaseProbe.enrolAndProbe(monitor, config);
+    } catch (error) {
+      const errorClass = error instanceof Error ? error.constructor.name : 'UnknownError';
+      const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
+      this.logger.warn(
+        `[monitored.release_probe.refresh] [fail] monitorId="${sanitizeLogValue(monitor.id)}" userId=${monitor.ownerUserId} durationMs=${Date.now() - probeStartedAt} errorClass=${errorClass} error="${message}" - refresh release probe failed`,
+      );
+    }
     const { id: localAuthorId, created: localAuthorCreated } = await this.resolveLocalAuthorId(monitor);
     if (localAuthorId != null && !localAuthorCreated) {
       const profile = await this.authorsRepository.findByIdForEnrichment(localAuthorId);
@@ -607,11 +623,80 @@ export class MonitoredService {
     return requestId;
   }
 
-  /** Per-work monitor/hide toggles, persisted on the catalog work and preserved across refreshes. */
-  async updateWork(user: RequestUser, workId: string, patch: MonitoredWorkPatch): Promise<MonitoredWork> {
+  /** The providers that can date one format of a work, asked on demand when the owner opens a date. */
+  async listReleaseDateCandidates(user: RequestUser, workId: string, format: MonitoredFormat): Promise<MonitoredReleaseDateLookup> {
+    const entry = await this.getWritableWork(workId, user);
+    // Whichever date the owner picked from these candidates would be refused while the probe is off,
+    // so the providers are not asked for a list nobody can act on.
+    const { releaseProbeEnabled } = await this.settings.getMonitoredSettings();
+    if (!releaseProbeEnabled) throw new ConflictException('The release date probe is turned off');
+    return this.releaseDateLookup.lookup({
+      workId,
+      title: entry.work.title,
+      authorName: entry.monitor.authorName,
+      hardcoverSlug: entry.work.providerWorkIds.hardcover ?? null,
+      audibleAsin: entry.work.providerWorkIds.audible ?? null,
+      format,
+      userId: user.id,
+    });
+  }
+
+  /**
+   * The owner's own date for one format, or its removal. A date outranks every provider until it is
+   * cleared; clearing hands the format back to the probe and asks for a fresh decision.
+   */
+  async setWorkReleaseDate(user: RequestUser, workId: string, format: MonitoredFormat, releaseDate: string | null): Promise<MonitoredWork> {
+    const entry = await this.getWritableWork(workId, user);
+    const startedAt = Date.now();
+    this.logger.log(
+      `[monitored.release_dates.set] [start] workId="${sanitizeLogValue(workId)}" userId=${user.id} format=${format} cleared=${releaseDate === null} - release date write started`,
+    );
+    try {
+      const outcome =
+        releaseDate === null
+          ? { cleared: await this.releaseProbe.clearUserReleaseDate(workId, format), ledgerResets: 0 }
+          : {
+              cleared: false,
+              ledgerResets: await this.releaseProbe.setUserReleaseDate(
+                { id: entry.work.id, monitorAuthorId: entry.monitor.id, ownerUserId: entry.monitor.ownerUserId },
+                format,
+                releaseDate,
+              ),
+            };
+      const work = await this.readWork(workId, user);
+      this.logger.log(
+        `[monitored.release_dates.set] [end] workId="${sanitizeLogValue(workId)}" userId=${user.id} format=${format} durationMs=${Date.now() - startedAt} cleared=${outcome.cleared} ledgerResets=${outcome.ledgerResets} - release date write completed`,
+      );
+      return work;
+    } catch (error) {
+      this.logOperationFailure('monitored.release_dates.set', workId, user.id, startedAt, error, 'workId', `format=${format}`);
+      throw error;
+    }
+  }
+
+  /** Runs every probe tier against one work now, for an owner who does not want to wait for the sweep. */
+  async refreshWorkReleaseDates(user: RequestUser, workId: string): Promise<MonitoredWork> {
+    const entry = await this.getWritableWork(workId, user);
+    await this.releaseProbe.refreshWork({ id: entry.monitor.id, ownerUserId: entry.monitor.ownerUserId }, workId);
+    return this.readWork(workId, user);
+  }
+
+  private async readWork(workId: string, user: RequestUser): Promise<MonitoredWork> {
+    const refreshed = await this.store.getWorkWithMonitor(workId, user);
+    if (!refreshed) throw new NotFoundException('Monitored work not found');
+    return refreshed.work;
+  }
+
+  private async getWritableWork(workId: string, user: RequestUser): Promise<{ monitor: MonitoredAuthorConfig; work: MonitoredWork }> {
     const entry = await this.store.getWorkWithMonitor(workId);
     if (!entry) throw new NotFoundException('Monitored work not found');
     if (entry.monitor.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored work');
+    return entry;
+  }
+
+  /** Per-work monitor/hide toggles, persisted on the catalog work and preserved across refreshes. */
+  async updateWork(user: RequestUser, workId: string, patch: MonitoredWorkPatch): Promise<MonitoredWork> {
+    const entry = await this.getWritableWork(workId, user);
     await this.healWorkAvailability([{ monitor: entry.monitor, works: [entry.work] }], user);
     const changes = Object.values(patch).filter((value) => value !== undefined);
     if (changes.length === 0) return entry.work;

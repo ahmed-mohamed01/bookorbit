@@ -48,7 +48,7 @@ import { monitoredErrorText } from '../lib/api-error'
 import { onMonitoredBookCreated } from '../lib/monitored-book-state'
 import { isMonitoredAcquisitionState } from '../lib/monitored-format-state'
 import { refreshAllAuthorsSequentially, type MonitoredRefreshSummary } from '../lib/refresh-summary'
-import { collapseReleaseItems, type MonitoredReleaseEntry } from '../lib/grouping'
+import { collapseReleaseItems, releaseDateMoved, type MonitoredReleaseEntry } from '../lib/grouping'
 import { monitoredDateTime } from '../lib/release-date'
 import AddMonitoredPanel from '../components/AddMonitoredPanel.vue'
 import MonitoredAuthorCard from '../components/MonitoredAuthorCard.vue'
@@ -185,6 +185,17 @@ function applyWorkUpdate(updated: MonitoredWork): void {
   for (const item of releases.value) if (item.workId === updated.id) item.work = updated
   for (const item of books.value) if (item.work.id === updated.id) item.work = updated
   if (panelWork.value?.id === updated.id) panelWork.value = updated
+}
+
+// A release row is listed, grouped and counted by its date, so only a date that actually moved is
+// worth a reload: the refresh button usually changes nothing, and a reload drops the scrolled pages.
+function handleWorkUpdated(updated: MonitoredWork): void {
+  const before = panelWork.value?.id === updated.id ? panelWork.value : null
+  const moved = releaseDateMoved(before, updated)
+  applyWorkUpdate(updated)
+  if (!moved) return
+  void loadSummary()
+  void reloadActive(true)
 }
 
 async function requestWorkFormat(work: MonitoredWork, format: MonitoredFormat, autoDownload?: boolean) {
@@ -1206,6 +1217,7 @@ defineOptions({ name: 'MonitoredView' })
       @filed="handlePanelFiled"
       @toggle-monitor="handleToggleMonitor"
       @toggle-hidden="handleToggleHidden"
+      @work-updated="handleWorkUpdated"
     />
   </main>
 </template>

@@ -24,6 +24,9 @@ import { accentInsensitiveIlike, buildSearchPattern } from '../../common/utils/a
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { normalizeMonitoredName } from './monitored-text.utils';
+import { enrolReleaseProbes, reapplyReleaseOverlay } from './monitored-release-probe-store.service';
+import { activeWorkCondition, releaseRangeOverlapsSql, visibleWorkCondition } from './monitored-work-conditions';
+export { releaseRangeOverlapsSql } from './monitored-work-conditions';
 import { DB } from '../../db';
 import * as dbSchema from '../../db/schema';
 import { books as upstreamBooks } from '../../db/schema';
@@ -129,16 +132,6 @@ export function releaseEventKey(workId: string, format: MonitoredFormat): string
   return `${workId}:${format}`;
 }
 
-export function releaseRangeOverlapsSql(date: AnyPgColumn, precision: AnyPgColumn, earliest: string, latest: string) {
-  // A stored precision of NULL is not day precision: release-window.ts reads the precision off the
-  // value's shape, so the SQL prefilter has to infer it the same way. Treating a null-precision
-  // '2026' as 2026-01-01 dropped the row from every window the JS path still matched.
-  const effective = sql`case when ${precision} is not null then ${precision} when length(${date}) = 4 then 'year' when length(${date}) = 7 then 'month' else 'day' end`;
-  const rangeStart = sql<string>`case ${effective} when 'year' then ${date} || '-01-01' when 'month' then ${date} || '-01' else ${date} end`;
-  const rangeEnd = sql<string>`case ${effective} when 'year' then ${date} || '-12-31' when 'month' then ${date} || '-31' else ${date} end`;
-  return sql<boolean>`${rangeStart} <= ${latest} and ${rangeEnd} >= ${earliest}`;
-}
-
 function releaseRangeStartSql(date: AnyPgColumn, precision: AnyPgColumn) {
   const effective = sql`case when ${precision} is not null then ${precision} when length(${date}) = 4 then 'year' when length(${date}) = 7 then 'month' else 'day' end`;
   return sql<string>`case ${effective} when 'year' then ${date} || '-01-01' when 'month' then ${date} || '-01' else ${date} end`;
@@ -181,8 +174,8 @@ export class MonitoredStoreService {
     const { viewer } = params;
     const scope = this.readScope(viewer, schema.monitoredAuthors.ownerUserId);
     const where = and(scope, params.q ? accentInsensitiveIlike(schema.monitoredAuthors.authorName, buildSearchPattern(params.q)) : undefined)!;
-    const visible = this.visibleWorkCondition();
-    const active = this.activeWorkCondition(visible);
+    const visible = visibleWorkCondition();
+    const active = activeWorkCondition(visible);
     const ebookRelease = and(
       active,
       ne(schema.monitoredAuthors.ebookMode, 'off'),
@@ -645,8 +638,8 @@ export class MonitoredStoreService {
       monitorIds.map((id) => [id, { counts: { total: 0, ebookOwned: 0, audioOwned: 0, hidden: 0 }, nextReleaseAt: null }]),
     );
     if (!monitorIds.length) return result;
-    const visible = this.visibleWorkCondition();
-    const active = this.activeWorkCondition(visible);
+    const visible = visibleWorkCondition();
+    const active = activeWorkCondition(visible);
     const ebookRelease = and(
       active,
       ne(schema.monitoredAuthors.ebookMode, 'off'),
@@ -692,8 +685,8 @@ export class MonitoredStoreService {
   async getReleaseWorks(monitorIds: string[], viewer: RequestUser, earliest: string, latest: string): Promise<Map<string, MonitoredWork[]>> {
     const result = new Map<string, MonitoredWork[]>(monitorIds.map((id) => [id, []]));
     if (!monitorIds.length) return result;
-    const visible = this.visibleWorkCondition();
-    const active = this.activeWorkCondition(visible);
+    const visible = visibleWorkCondition();
+    const active = activeWorkCondition(visible);
     const ebook = and(
       ne(schema.monitoredAuthors.ebookMode, 'off'),
       or(ne(schema.monitoredAuthorWorks.monitorEbook, false), sql`${schema.monitoredAuthorWorks.monitorEbook} is null`),
@@ -787,7 +780,7 @@ export class MonitoredStoreService {
     await this.db.update(schema.authorCatalogWorks).set(this.matchValues(match)).where(eq(schema.authorCatalogWorks.id, workId));
   }
 
-  async saveCatalog(monitorId: string, catalog: MonitoredCatalog | null): Promise<void> {
+  async saveCatalog(monitorId: string, catalog: MonitoredCatalog | null, options: { enrolReleaseProbes?: boolean } = {}): Promise<void> {
     await this.db.transaction(async (tx) => {
       if (catalog === null) {
         await tx.delete(schema.authorCatalogState).where(eq(schema.authorCatalogState.monitorAuthorId, monitorId));
@@ -806,7 +799,11 @@ export class MonitoredStoreService {
             ? and(eq(schema.authorCatalogWorks.monitorAuthorId, monitorId), notInArray(schema.authorCatalogWorks.id, ids))
             : eq(schema.authorCatalogWorks.monitorAuthorId, monitorId),
         );
-      if (!catalog.works.length) return;
+      if (!catalog.works.length) {
+        await reapplyReleaseOverlay(tx, monitorId);
+        if (options.enrolReleaseProbes) await enrolReleaseProbes(tx, monitorId, catalog.fetchedAt.slice(0, 10));
+        return;
+      }
       for (const values of batches(catalog.works.map((work) => this.workValues(monitorId, work)))) {
         await tx
           .insert(schema.authorCatalogWorks)
@@ -841,6 +838,8 @@ export class MonitoredStoreService {
       await tx.delete(schema.authorCatalogSourceWorks).where(inArray(schema.authorCatalogSourceWorks.workId, ids));
       const sources = catalog.works.flatMap((work) => this.sourceValues(work));
       for (const batch of batches(sources)) await tx.insert(schema.authorCatalogSourceWorks).values(batch);
+      await reapplyReleaseOverlay(tx, monitorId);
+      if (options.enrolReleaseProbes) await enrolReleaseProbes(tx, monitorId, catalog.fetchedAt.slice(0, 10));
     });
   }
 
@@ -932,8 +931,8 @@ export class MonitoredStoreService {
     const addedDay = monitor.addedAt.slice(0, 10);
     if (addedDay > today) return [];
     const libraryIds = params.owner.isSuperuser ? null : await this.libraries.findAccessibleLibraryIds(params.owner);
-    const visible = this.visibleWorkCondition();
-    const active = this.activeWorkCondition(visible);
+    const visible = visibleWorkCondition();
+    const active = activeWorkCondition(visible);
 
     const leg = (format: MonitoredFormat): SQL => {
       const isEbook = format === 'ebook';
@@ -1066,8 +1065,8 @@ export class MonitoredStoreService {
     currentYear: string;
   }): SQL {
     const authorScope = this.readScope(params.viewer, schema.monitoredAuthors.ownerUserId);
-    const visible = this.visibleWorkCondition();
-    const active = this.activeWorkCondition(visible);
+    const visible = visibleWorkCondition();
+    const active = activeWorkCondition(visible);
     const qPattern = params.q ? buildSearchPattern(params.q) : null;
     const search = qPattern
       ? or(accentInsensitiveIlike(schema.authorCatalogWorks.title, qPattern), accentInsensitiveIlike(schema.monitoredAuthors.authorName, qPattern))
@@ -1140,8 +1139,8 @@ export class MonitoredStoreService {
 
   async countSummary(viewer: RequestUser, earliest: string, latest: string): Promise<MonitoredCounts> {
     const authorScope = this.readScope(viewer, schema.monitoredAuthors.ownerUserId);
-    const visible = this.visibleWorkCondition();
-    const active = this.activeWorkCondition(visible);
+    const visible = visibleWorkCondition();
+    const active = activeWorkCondition(visible);
     const ebook = and(
       ne(schema.monitoredAuthors.ebookMode, 'off'),
       or(ne(schema.monitoredAuthorWorks.monitorEbook, false), sql`${schema.monitoredAuthorWorks.monitorEbook} is null`),
@@ -1182,34 +1181,6 @@ export class MonitoredStoreService {
         ),
       )
       .where(and(bookScope, authorScope));
-  }
-
-  /**
-   * Effective visibility as the detail endpoint computes it, in SQL. Two things make it subtle.
-   * The overlay is LEFT JOINed, so an unreviewed work has a NULL user_visibility and
-   * `user_visibility = 'visible'` yields NULL, not false: `NULL or false` stayed NULL, and a row
-   * whose visibility was NULL counted in NEITHER the visible bucket nor its negation - the author
-   * list reported 7 hidden works where the detail page showed 156. coalesce puts every row in
-   * exactly one bucket.
-   */
-  private visibleWorkCondition() {
-    const overlayVisibility = schema.monitoredAuthorWorks.userVisibility;
-    return sql<boolean>`coalesce(${or(
-      sql`${overlayVisibility} = 'visible'`,
-      and(
-        sql`${overlayVisibility} is null`,
-        eq(schema.authorCatalogWorks.verdict, 'verified'),
-        sql`jsonb_array_length(${schema.authorCatalogWorks.flags}) = 0`,
-      ),
-    )}, false)`;
-  }
-
-  private activeWorkCondition(visible: ReturnType<typeof this.visibleWorkCondition>) {
-    return and(
-      ne(schema.monitoredAuthors.paused, true),
-      or(eq(schema.monitoredAuthorWorks.monitorState, 'monitoring'), sql`${schema.monitoredAuthorWorks.monitorState} is null`),
-      visible,
-    )!;
   }
 
   private ownedFormatCondition(format: 'ebook' | 'audiobook', libraryIds: number[] | null) {
@@ -1279,13 +1250,16 @@ export class MonitoredStoreService {
   private async composeWorks(rows: AuthorCatalogWorkRow[], viewer?: RequestUser): Promise<Array<{ monitorAuthorId: string; work: MonitoredWork }>> {
     if (!rows.length) return [];
     const ids = rows.map((row) => row.id);
-    const [sources, overlays] = await Promise.all([
+    const [sources, overlays, releases] = await Promise.all([
       this.db.select().from(schema.authorCatalogSourceWorks).where(inArray(schema.authorCatalogSourceWorks.workId, ids)),
       this.db.select().from(schema.monitoredAuthorWorks).where(inArray(schema.monitoredAuthorWorks.workId, ids)),
+      this.db.select().from(schema.authorCatalogWorkReleases).where(inArray(schema.authorCatalogWorkReleases.workId, ids)),
     ]);
     const overlayMap = new Map(overlays.map((overlay) => [overlay.workId, overlay]));
     const sourceMap = new Map<string, Array<typeof schema.authorCatalogSourceWorks.$inferSelect>>();
     for (const source of sources) sourceMap.set(source.workId, [...(sourceMap.get(source.workId) ?? []), source]);
+    const releaseMap = new Map<string, Array<typeof schema.authorCatalogWorkReleases.$inferSelect>>();
+    for (const release of releases) releaseMap.set(release.workId, [...(releaseMap.get(release.workId) ?? []), release]);
     const requestIds = [
       ...new Set(overlays.flatMap((overlay) => [overlay.ebookRequestId, overlay.audiobookRequestId]).filter((id): id is number => id != null)),
     ];
@@ -1302,7 +1276,7 @@ export class MonitoredStoreService {
       return [
         {
           monitorAuthorId: row.monitorAuthorId,
-          work: this.composeWork(row, sourceMap.get(row.id) ?? [], overlay, accessibleBooks, isOwner, requestMap),
+          work: this.composeWork(row, sourceMap.get(row.id) ?? [], overlay, accessibleBooks, isOwner, requestMap, releaseMap.get(row.id) ?? []),
         },
       ];
     });
@@ -1326,6 +1300,7 @@ export class MonitoredStoreService {
     accessibleBooks: Set<number> | null,
     isOwner = true,
     requests = new Map<number, RequestProjection>(),
+    releases: Array<typeof schema.authorCatalogWorkReleases.$inferSelect> = [],
   ): MonitoredWork {
     const ebookRequest = overlay?.ebookRequestId == null ? undefined : requests.get(overlay.ebookRequestId);
     const audiobookRequest = overlay?.audiobookRequestId == null ? undefined : requests.get(overlay.audiobookRequestId);
@@ -1355,6 +1330,43 @@ export class MonitoredStoreService {
       ebookDatePrecision: row.ebookDatePrecision,
       audioReleaseDate: row.audioReleaseDate,
       audioDatePrecision: row.audioDatePrecision,
+      ...(releases.length
+        ? {
+            formatReleases: Object.fromEntries(
+              releases.map((release) => {
+                const showDateHistory = release.source !== 'user' && release.releaseDate !== null && release.releaseDate === release.lastReleaseDate;
+                // Only a date the owner chose can disagree with the automatic check, and only an
+                // automatic value they have not acknowledged is worth an alert.
+                const suggested =
+                  release.source === 'user' &&
+                  release.autoChangedAt !== null &&
+                  release.autoReleaseDate !== null &&
+                  release.autoReleaseDate !== release.releaseDate
+                    ? {
+                        releaseDate: release.autoReleaseDate,
+                        precision: release.autoDatePrecision,
+                        source: release.autoSource,
+                        changedAt: release.autoChangedAt.toISOString(),
+                      }
+                    : null;
+                return [
+                  release.format,
+                  {
+                    status: release.status,
+                    releaseDate: release.releaseDate,
+                    precision: release.datePrecision,
+                    source: release.source,
+                    checkedAt: release.checkedAt?.toISOString() ?? null,
+                    dateChangedAt: showDateHistory ? (release.dateChangedAt?.toISOString() ?? null) : null,
+                    previousReleaseDate: showDateHistory ? release.previousReleaseDate : null,
+                    previousPrecision: showDateHistory ? release.previousDatePrecision : null,
+                    suggested,
+                  },
+                ];
+              }),
+            ),
+          }
+        : {}),
       coverUrl: row.coverUrl,
       description: row.description,
       verdict: row.verdict,

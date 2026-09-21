@@ -98,7 +98,7 @@ describe('monitored catalog helpers', () => {
   });
 
   it('uses previous work only for stable identity, not mutable user state', () => {
-    const service = new MonitoredCatalogService({} as never, {} as never, {} as never, {} as never, {} as never);
+    const service = new MonitoredCatalogService({} as never, {} as never, {} as never, {} as never, {} as never, {} as never);
     const previousWork = {
       id: 'stable-id',
       providerWorkIds: { hardcover: '1' },
@@ -283,6 +283,7 @@ function catalogService(providers: { hardcover: unknown; goodreads: unknown; aud
     providers.audible as never,
     store as never,
     {} as never,
+    { getMonitoredSettings: vi.fn().mockResolvedValue({ releaseProbeEnabled: true }) } as never,
   );
 }
 
@@ -332,6 +333,7 @@ describe('fetchCatalog provider failure guards', () => {
 
     await expect(service.fetchCatalog(monitorConfig(), providerConfig())).resolves.toMatchObject({ catalog: { works: [] } });
     expect(store.saveCatalog).toHaveBeenCalledOnce();
+    expect(store.saveCatalog).toHaveBeenCalledWith('monitor-1', expect.any(Object), { enrolReleaseProbes: true });
   });
 
   // Driven through the real client and a 503 on the wire, because the whole defect was the client
@@ -446,7 +448,7 @@ describe('targeted availability recompute', () => {
   function harness(rows: unknown[][]) {
     const store = { updateWorkMatch: vi.fn().mockResolvedValue(undefined), saveCatalog: vi.fn(), updateWorkUserState: vi.fn() };
     const db = queuedSelectDb(rows);
-    const service = new MonitoredCatalogService({} as never, {} as never, {} as never, store as never, db as never);
+    const service = new MonitoredCatalogService({} as never, {} as never, {} as never, store as never, db as never, {} as never);
     return { service, store, db };
   }
 
@@ -592,6 +594,7 @@ describe('fetchCatalog review kinds', () => {
       fakeProvider('audible', { enabled: false }) as never,
       store as never,
       emptySelectDb() as never,
+      { getMonitoredSettings: vi.fn().mockResolvedValue({ releaseProbeEnabled: true }) } as never,
     );
 
     await service.fetchCatalog(monitorConfig(), providerConfig());

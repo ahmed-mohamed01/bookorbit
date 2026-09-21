@@ -26,6 +26,12 @@ import { MonitoredService } from './monitored.service';
 import { MonitoredSchemaBootstrapService } from './monitored-schema-bootstrap.service';
 import { MonitoredStoreService } from './monitored-store.service';
 import { MonitoredSettingsService } from './monitored-settings.service';
+import { MonitoredReleaseDateLookupService } from './monitored-release-date-lookup.service';
+import { MonitoredReleaseProbeStore } from './monitored-release-probe-store.service';
+import { MonitoredReleaseProbeService } from './monitored-release-probe.service';
+import { AppleBooksClient } from './release-probe/apple-books.client';
+import { AudibleCatalogClient } from './release-probe/audible-catalog.client';
+import { AmazonProductPageClient } from './release-probe/amazon-product-page.client';
 
 @Module({
   imports: [
@@ -57,6 +63,12 @@ import { MonitoredSettingsService } from './monitored-settings.service';
     MonitoredReleaseNotifier,
     MonitoredReleaseWatcher,
     MonitoredSyncSchedulerService,
+    MonitoredReleaseProbeStore,
+    MonitoredReleaseProbeService,
+    MonitoredReleaseDateLookupService,
+    AppleBooksClient,
+    AudibleCatalogClient,
+    AmazonProductPageClient,
   ],
   exports: [MonitoredService],
 })

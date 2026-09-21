@@ -14,8 +14,10 @@ import {
   type MonitoredAcquisitionState,
   type MonitoredFormatState,
 } from '../lib/monitored-format-state'
+import { formatReleaseState } from '../lib/format-release'
 import { releaseDateForWork } from '../lib/grouping'
 import { reviewKindOf, workDisplayClass } from '../lib/work-visibility'
+import { useMonitoredDateLabel } from '../composables/useMonitoredDateLabel'
 import { parseMonitoredDate } from '../lib/release-date'
 
 const props = defineProps<{
@@ -41,6 +43,7 @@ const emit = defineEmits<{
   monitor: [work: MonitoredWork]
 }>()
 const { t, d } = useI18n()
+const tooltipDate = useMonitoredDateLabel('short')
 const { cardInfoMode } = useDisplaySettings()
 const imageFailed = ref(false)
 
@@ -114,6 +117,26 @@ function availabilityIconClass(state: MonitoredFormatState): string {
   return state === 'available' ? 'text-success' : 'text-warning'
 }
 
+/**
+ * The lights say whether a format is in the library; the tooltip says what is known about the one
+ * that is not, so "no ebook light" reads as "no ebook announced" rather than as a missed download.
+ */
+function availabilityTooltip(format: MonitoredFormat, state: MonitoredFormatState): string {
+  if (state === 'available') return t(`monitored.detail.${format}Owned`)
+  const name = t(`monitored.formats.${format}`)
+  const release = formatReleaseState(props.work, format)
+  if (release.kind === 'unlisted') return t('monitored.card.formatNotAnnounced', { format: name })
+  const date = tooltipDate(release.date, release.precision)
+  if (!date) return name
+  if (release.kind === 'expected') return t('monitored.card.formatExpected', { format: name, date })
+  if (release.kind === 'upcoming') return t('monitored.card.formatUpcoming', { format: name, date })
+  if (release.kind === 'released') return t('monitored.card.formatReleased', { format: name, date })
+  return name
+}
+
+const ebookTooltip = computed(() => availabilityTooltip('ebook', ebookState.value))
+const audiobookTooltip = computed(() => availabilityTooltip('audiobook', audiobookState.value))
+
 function pendingLabel(format: MonitoredFormat): string {
   return t(monitoredPendingLabelKey(format === 'ebook' ? ebookState.value : audiobookState.value, format))
 }
@@ -180,23 +203,17 @@ function handleMonitorBook() {
       <!-- Top-left: persistent availability lights (matches the library read-state indicators) + status -->
       <div class="absolute left-1.5 top-1.5 z-10 flex flex-col items-start gap-1">
         <div class="flex items-center gap-1">
-          <span
-            v-if="ebookState !== 'off'"
-            class="flex items-center justify-center rounded-full bg-black/60 p-1"
-            :title="ebookState === 'available' ? t('monitored.detail.ebookOwned') : t('monitored.formats.ebook')"
-          >
+          <span v-if="ebookState !== 'off'" class="flex items-center justify-center rounded-full bg-black/60 p-1" :title="ebookTooltip">
             <BookOpen :size="12" :class="availabilityIconClass(ebookState)" aria-hidden="true" />
             <span class="sr-only">{{ ebookState === 'available' ? t('monitored.detail.ebookOwned') : t('monitored.detail.ebookWanted') }}</span>
+            <span v-if="ebookState !== 'available'" class="sr-only">{{ ebookTooltip }}</span>
           </span>
-          <span
-            v-if="audiobookState !== 'off'"
-            class="flex items-center justify-center rounded-full bg-black/60 p-1"
-            :title="audiobookState === 'available' ? t('monitored.detail.audiobookOwned') : t('monitored.formats.audiobook')"
-          >
+          <span v-if="audiobookState !== 'off'" class="flex items-center justify-center rounded-full bg-black/60 p-1" :title="audiobookTooltip">
             <Headphones :size="12" :class="availabilityIconClass(audiobookState)" aria-hidden="true" />
             <span class="sr-only">{{
               audiobookState === 'available' ? t('monitored.detail.audiobookOwned') : t('monitored.detail.audiobookWanted')
             }}</span>
+            <span v-if="audiobookState !== 'available'" class="sr-only">{{ audiobookTooltip }}</span>
           </span>
         </div>
         <span v-if="badge" class="rounded px-2 py-0.5 text-[10px] font-bold shadow-sm" :class="badge.class">{{ badge.label }}</span>
