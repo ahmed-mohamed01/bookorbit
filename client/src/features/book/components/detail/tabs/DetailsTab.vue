@@ -32,7 +32,7 @@ import { getProviderColor, PROVIDER_SHORT_LABELS } from '@/lib/provider-colors'
 import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import { COVER_ASPECT_RATIO_KEY, DEFAULT_COVER_ASPECT_RATIO } from '@/features/book/lib/cover-aspect-ratio'
 import { FORMAT_TO_GROUP, READER_OPENABLE_FORMATS } from '@bookorbit/types'
-import type { BookDetail, BookKoboState, CustomMetadataBookValue, ReadStatus, UserBookStatus } from '@bookorbit/types'
+import type { BookDetail, BookKoboState, CustomMetadataBookValue, ReadAloudProgressSync, ReadStatus, UserBookStatus } from '@bookorbit/types'
 import { STATUS_OPTIONS, STATUS_ICONS, STATUS_COLORS, useBookStatus } from '@/features/book/composables/useBookStatus'
 import BookDownloadButton from '@/features/book/components/BookDownloadButton.vue'
 import DiscoverRow from '@/features/book/components/detail/DiscoverRow.vue'
@@ -68,11 +68,16 @@ import StorygraphBookSyncGridItem from '@/features/storygraph/components/Storygr
 import BookEditionsCard from '@/features/book/components/detail/details/BookEditionsCard.vue'
 import BookReadingActivityCard from '@/features/book/components/detail/details/BookReadingActivityCard.vue'
 import { useBookReadingLog } from '@/features/book/composables/useBookReadingLog'
+import { useProviderLinkSettings } from '@/features/book/composables/useProviderLinkSettings'
+import { hasReadAlong, isReadAlongFormat, READ_ALONG_FORMAT_COLOR, READ_ALONG_FORMAT_TITLE } from '@/features/book/lib/file-capabilities'
 
 type FileProgress = {
   percentage: number
   cfi: string | null
   pageNumber: number | null
+  positionSeconds: number | null
+  mediaOverlayFragment: string | null
+  mediaOverlaySectionIndex: number | null
   updatedAt: string | null
 }
 
@@ -115,6 +120,7 @@ function togglePersonalReview() {
 }
 
 const { weights: scoreWeights, fetchWeights } = useMetadataScoreWeights()
+const { settings: providerLinkSettings, loadSettings: loadProviderLinkSettings } = useProviderLinkSettings()
 const {
   bookProgress: koreaderBookProgress,
   fetchBookProgress: fetchKoreaderProgress,
@@ -124,6 +130,7 @@ const {
 onMounted(() => {
   void fetchWeights()
   void reloadReadingLog()
+  void loadProviderLinkSettings()
 })
 
 const {
@@ -344,6 +351,8 @@ const detailCoverAspectRatio = computed(() => {
   return `${coverImageRatio.value} / 1`
 })
 const primaryFile = computed(() => props.book.files.find((f) => f.role === 'primary') ?? props.book.files[0] ?? null)
+const readAlongFile = computed(() => props.book.files.find((file) => hasReadAlong(file)) ?? null)
+const hasAudioFile = computed(() => props.book.files.some((file) => file.format != null && FORMAT_TO_GROUP[file.format] === 'audio'))
 const isPrimaryAudio = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'audio')
 const isPrimaryComic = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'cbx')
 const readableFiles = computed(() => props.book.files.filter((f) => f.format && READER_OPENABLE_FORMATS.has(f.format)))
@@ -362,6 +371,53 @@ const openableFiles = computed(() => {
   return readableFiles.value
 })
 const hasMultipleFiles = computed(() => openableFiles.value.length > 1)
+const readAloudSync = ref<ReadAloudProgressSync>(props.book.readAloudSync)
+const readAloudSyncSaving = ref(false)
+const readAloudSyncError = ref<string | null>(null)
+const showReadAloudSync = computed(() => readAlongFile.value != null || hasAudioFile.value)
+const readAloudSyncStatus = computed(() => t(`book.detail.details.readAloudSync.state.${readAloudSync.value.state}`))
+const readAloudSyncDescription = computed(() => {
+  if (readAloudSync.value.state === 'enabled') return t('book.detail.details.readAloudSync.enabledDescription')
+  if (readAloudSync.value.state === 'disabled') return t('book.detail.details.readAloudSync.disabledDescription')
+  const reason = readAloudSync.value.unavailableReason ?? 'missing_duration'
+  if (reason === 'duration_mismatch') {
+    return t('book.detail.details.readAloudSync.reason.durationMismatch', {
+      audio: formatDuration(readAloudSync.value.audioDurationSeconds),
+      overlay: formatDuration(readAloudSync.value.overlayDurationSeconds),
+    })
+  }
+  return t(`book.detail.details.readAloudSync.reason.${reason}`)
+})
+
+watch(
+  () => props.book.readAloudSync,
+  (value) => {
+    readAloudSync.value = value
+    readAloudSyncError.value = null
+  },
+)
+
+async function handleToggleReadAloudSync() {
+  if (readAloudSyncSaving.value) return
+  const mode = readAloudSync.value.mode === 'disabled' ? 'auto' : 'disabled'
+  readAloudSyncSaving.value = true
+  readAloudSyncError.value = null
+  try {
+    const res = await api(`/api/v1/books/${props.book.id}/read-aloud-sync`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode }),
+    })
+    if (!res.ok) throw new Error('Failed to update read-aloud sync')
+    const updated = (await res.json()) as BookDetail
+    readAloudSync.value = updated.readAloudSync
+    emit('saved', updated)
+  } catch {
+    readAloudSyncError.value = t('book.detail.details.readAloudSync.saveFailed')
+  } finally {
+    readAloudSyncSaving.value = false
+  }
+}
 const authorLinks = computed(() => props.book.authors.filter((author) => author.name.trim().length > 0))
 const narratorLine = computed(() => props.book.audioMetadata?.narrators?.map((n) => n.name).join(', ') || null)
 const formats = computed(() => {
@@ -717,7 +773,7 @@ const supplementalLoading = ref(false)
 const resettingFileIds = ref<number[]>([])
 const providerIconErrors = ref<Record<string, boolean>>({})
 
-const providerLinks = computed(() => createBookProviderLinks(props.book.providerIds))
+const providerLinks = computed(() => createBookProviderLinks(props.book.providerIds, providerLinkSettings.value))
 
 const communityRatingBadges = computed(() => {
   const linkByKey = new Map(providerLinks.value.map((link) => [link.key, link]))
@@ -749,11 +805,38 @@ const fileProgressRows = computed(() =>
       percentage: 0,
       cfi: null,
       pageNumber: null,
+      positionSeconds: null,
+      mediaOverlayFragment: null,
+      mediaOverlaySectionIndex: null,
       updatedAt: null,
     },
   })),
 )
-const detailProgressRows = computed(() => fileProgressRows.value.filter(({ progress }) => progress.percentage > 0))
+
+function hasMediaOverlayProgress(progress: FileProgress): boolean {
+  return (
+    (progress.positionSeconds != null && progress.positionSeconds > 0) || !!progress.mediaOverlayFragment || progress.mediaOverlaySectionIndex != null
+  )
+}
+
+function effectiveFileProgressPercentage(file: BookDetail['files'][number], progress: FileProgress): number {
+  if (progress.percentage > 0) return progress.percentage
+  const duration = file.mediaOverlay?.durationSeconds
+  if (duration != null && duration > 0 && progress.positionSeconds != null && progress.positionSeconds > 0) {
+    return (progress.positionSeconds / duration) * 100
+  }
+  return progress.percentage
+}
+
+const detailProgressRows = computed(() =>
+  fileProgressRows.value
+    .map(({ file, progress }) => ({
+      file,
+      progress,
+      percentage: effectiveFileProgressPercentage(file, progress),
+    }))
+    .filter(({ progress, percentage }) => percentage > 0 || hasMediaOverlayProgress(progress)),
+)
 
 type ProgressRow = {
   label: string
@@ -769,14 +852,14 @@ const KOBO_COLOR = '#f59e0b'
 const leftColumnProgressRows = computed<ProgressRow[]>(() => {
   const rows: ProgressRow[] = []
 
-  for (const { file, progress } of detailProgressRows.value) {
+  for (const { file, percentage } of detailProgressRows.value) {
     const color = getFormatColor(file.format ?? '?')
     rows.push({
       label: (file.format ?? '?').toUpperCase(),
-      percentage: progress.percentage,
+      percentage,
       color,
       badgeStyle: { color, borderColor: `${color}66`, backgroundColor: `${color}1a` },
-      finished: progress.percentage >= 100,
+      finished: percentage >= 100,
       resetFileId: file.id,
     })
   }
@@ -943,12 +1026,16 @@ function formatDate(iso: string): string {
 }
 
 function formatBadgeStyle(fmt: string) {
-  const color = getFormatColor(fmt)
+  const color = formatHasReadAlong(fmt) ? READ_ALONG_FORMAT_COLOR : getFormatColor(fmt)
   return {
     color,
     borderColor: `${color}66`,
     backgroundColor: `${color}1a`,
   }
+}
+
+function formatHasReadAlong(fmt: string): boolean {
+  return isReadAlongFormat(fmt, readAlongFile.value != null)
 }
 
 function providerLinkStyle(provider: string) {
@@ -1122,9 +1209,13 @@ async function loadSupplemental() {
     for (const row of progressRows) {
       if (!Number.isFinite(row.fileId)) continue
       progressMap[row.fileId] = {
-        percentage: row.percentage,
+        percentage: typeof row.percentage === 'number' && Number.isFinite(row.percentage) ? row.percentage : 0,
         cfi: row.cfi,
         pageNumber: row.pageNumber,
+        positionSeconds: typeof row.positionSeconds === 'number' && Number.isFinite(row.positionSeconds) ? row.positionSeconds : null,
+        mediaOverlayFragment: typeof row.mediaOverlayFragment === 'string' ? row.mediaOverlayFragment : null,
+        mediaOverlaySectionIndex:
+          typeof row.mediaOverlaySectionIndex === 'number' && Number.isFinite(row.mediaOverlaySectionIndex) ? row.mediaOverlaySectionIndex : null,
         updatedAt: row.updatedAt,
       }
     }
@@ -1624,6 +1715,7 @@ watch(
           :key="fmt"
           class="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border"
           :style="formatBadgeStyle(fmt)"
+          :title="formatHasReadAlong(fmt) ? READ_ALONG_FORMAT_TITLE : undefined"
         >
           <Tooltip v-if="fmt === primaryFile?.format">
             <TooltipTrigger as-child>
@@ -1632,6 +1724,7 @@ watch(
             <TooltipContent>{{ t('book.detail.details.primaryFormat') }}</TooltipContent>
           </Tooltip>
           {{ fmt }}
+          <Headphones v-if="formatHasReadAlong(fmt)" class="size-3 shrink-0" :stroke-width="2.5" aria-hidden="true" />
         </span>
         <div v-if="providerLinks.length || unlinkedCommunityBadges.length" class="flex items-center flex-wrap gap-2 w-full sm:w-auto sm:shrink-0">
           <div class="hidden sm:block w-px h-3.5 bg-border" />
@@ -1689,6 +1782,37 @@ watch(
           </span>
         </div>
       </div>
+
+      <section v-if="showReadAloudSync" data-test="read-aloud-sync" class="rounded-lg border border-border bg-card px-3 py-2.5">
+        <div class="flex items-start gap-3">
+          <Headphones class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <p class="text-xs font-semibold text-foreground">{{ t('book.detail.details.readAloudSync.title') }}</p>
+              <span class="text-[11px] text-muted-foreground">{{ readAloudSyncStatus }}</span>
+            </div>
+            <p class="mt-0.5 text-xs text-muted-foreground">{{ readAloudSyncDescription }}</p>
+            <p v-if="readAloudSyncError" class="mt-1 text-xs text-destructive" role="status" aria-live="polite">
+              {{ readAloudSyncError }}
+            </p>
+          </div>
+          <button
+            type="button"
+            data-test="read-aloud-sync-toggle"
+            class="shrink-0 rounded-md border border-input px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="readAloudSyncSaving"
+            @click="handleToggleReadAloudSync"
+          >
+            {{
+              readAloudSyncSaving
+                ? t('book.detail.details.readAloudSync.saving')
+                : readAloudSync.mode === 'disabled'
+                  ? t('book.detail.details.readAloudSync.enable')
+                  : t('book.detail.details.readAloudSync.disable')
+            }}
+          </button>
+        </div>
+      </section>
 
       <!-- Genres + Tags -->
       <div v-if="book.genres.length || book.tags.length" class="space-y-1">

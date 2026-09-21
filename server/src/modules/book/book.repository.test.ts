@@ -73,6 +73,23 @@ function makeInsertChain() {
   return { values, onConflictDoUpdate };
 }
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+function makeTrackedSelectChain<T>(terminalMethod: string, terminalResult: T, gate: Promise<void>, onStart: () => void) {
+  const chain = makeSelectChain(terminalMethod, terminalResult);
+  chain[terminalMethod].mockImplementation(() => {
+    onStart();
+    return gate.then(() => terminalResult);
+  });
+  return chain;
+}
+
 describe('BookRepository', () => {
   it('updates absolute and relative book file paths together', async () => {
     const where = vi.fn().mockResolvedValue(undefined);
@@ -348,6 +365,42 @@ describe('BookRepository', () => {
 
     expect(result.progressRows).toEqual([{ bookFileId: 1001, percentage: 30 }]);
     expect(db.execute).not.toHaveBeenCalled();
+  });
+
+  it('findCards hydrates related collections in batches of three', async () => {
+    const rows = [{ id: 10, primaryFileId: 1001, _total: 1 }];
+    const gates = [deferred(), deferred(), deferred()];
+    let started = 0;
+    const tracked = (terminalMethod: string, gateIndex: number) =>
+      makeTrackedSelectChain(terminalMethod, [], gates[gateIndex].promise, () => {
+        started += 1;
+      });
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(makeSelectChain('offset', rows))
+        .mockReturnValueOnce(tracked('orderBy', 0))
+        .mockReturnValueOnce(tracked('where', 0))
+        .mockReturnValueOnce(tracked('where', 0))
+        .mockReturnValueOnce(tracked('where', 1))
+        .mockReturnValueOnce(tracked('orderBy', 1))
+        .mockReturnValueOnce(tracked('orderBy', 1))
+        .mockReturnValueOnce(tracked('where', 2))
+        .mockReturnValueOnce(tracked('where', 2))
+        .mockReturnValueOnce(tracked('where', 2)),
+    };
+    const repo = new BookRepository(db as never);
+
+    const result = repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
+
+    await vi.waitFor(() => expect(started).toBe(3));
+    gates[0].resolve();
+    await vi.waitFor(() => expect(started).toBe(6));
+    gates[1].resolve();
+    await vi.waitFor(() => expect(started).toBe(9));
+    gates[2].resolve();
+
+    await expect(result).resolves.toMatchObject({ rows, total: 1 });
   });
 
   it('findCardsByBookIds returns empty payload when no ids are requested', async () => {
@@ -677,6 +730,127 @@ describe('BookRepository', () => {
     await expect(repo.findPrimaryFilesByBookIds([])).resolves.toEqual([]);
     await expect(repo.findAllFilesByBookIds([])).resolves.toEqual([]);
     expect(db.select).not.toHaveBeenCalled();
+  });
+
+  it('reads and upserts audiobook progress', async () => {
+    const returning = vi.fn().mockResolvedValue([{ bookId: 10, percentage: 33 }]);
+    const onConflictDoUpdate = vi.fn().mockReturnValue({ returning });
+    const audioInsert = {
+      values: vi.fn().mockReturnValue({ onConflictDoUpdate }),
+    };
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(makeSelectChain('limit', [{ percentage: 22 }]))
+        .mockReturnValueOnce(makeSelectChain('limit', [])),
+      insert: vi.fn().mockReturnValue(audioInsert),
+    };
+    const repo = new BookRepository(db as never);
+
+    await expect(repo.findAudioProgress(1, 10)).resolves.toEqual({ percentage: 22 });
+    await expect(repo.findAudioProgress(1, 11)).resolves.toBeNull();
+    await expect(repo.upsertAudioProgress(1, 10, 4, 120, 33)).resolves.toEqual({ bookId: 10, percentage: 33 });
+    expect(db.insert).toHaveBeenCalledTimes(1);
+    expect(audioInsert.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 1,
+        bookId: 10,
+        currentFileId: 4,
+        positionSeconds: 120,
+        percentage: 33,
+        capturedAt: expect.any(Date),
+        operationId: null,
+        manifestRevision: null,
+        updatedAt: expect.any(Date),
+      }),
+    );
+    expect(onConflictDoUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        set: expect.objectContaining({
+          currentFileId: 4,
+          positionSeconds: 120,
+          percentage: 33,
+          revision: expect.anything(),
+          capturedAt: expect.any(Date),
+          operationId: null,
+          manifestRevision: null,
+          updatedAt: expect.any(Date),
+        }),
+        setWhere: expect.anything(),
+      }),
+    );
+  });
+
+  it('writes bridged EPUB progress only when the source is not older', async () => {
+    const returning = vi.fn().mockResolvedValue([{ fileId: 20 }]);
+    const onConflictDoUpdate = vi.fn().mockReturnValue({ returning });
+    const values = vi.fn().mockReturnValue({ onConflictDoUpdate });
+    const resetWhere = vi.fn().mockResolvedValue(undefined);
+    const db = {
+      insert: vi.fn().mockReturnValue({ values }),
+      delete: vi.fn().mockReturnValue({ where: resetWhere }),
+    };
+    const repo = new BookRepository(db as never);
+    const sourceUpdatedAt = new Date('2026-09-19T12:00:00.000Z');
+
+    await expect(
+      repo.upsertSyncedEpubProgressIfNewer({
+        userId: 7,
+        fileId: 20,
+        cfi: 'epubcfi(/6/4)',
+        percentage: 42,
+        positionSeconds: 120,
+        mediaOverlayFragment: 'OPS/chapter.xhtml#p2',
+        mediaOverlaySectionIndex: 1,
+        koreaderProgress: '/body/p[2]',
+        sourceUpdatedAt,
+      }),
+    ).resolves.toBe(true);
+
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: 7,
+        bookFileId: 20,
+        percentage: 42,
+        updatedAt: sourceUpdatedAt,
+        lastReadAt: sourceUpdatedAt,
+        textUpdatedAt: sourceUpdatedAt,
+      }),
+    );
+    expect(onConflictDoUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        set: expect.objectContaining({ percentage: 42, updatedAt: sourceUpdatedAt }),
+        setWhere: expect.anything(),
+      }),
+    );
+    expect(resetWhere).toHaveBeenCalledOnce();
+  });
+
+  it('does not clear reset protection when a newer EPUB row rejects the bridge', async () => {
+    const returning = vi.fn().mockResolvedValue([]);
+    const db = {
+      insert: vi.fn().mockReturnValue({
+        values: vi.fn().mockReturnValue({ onConflictDoUpdate: vi.fn().mockReturnValue({ returning }) }),
+      }),
+      delete: vi.fn(),
+    };
+    const repo = new BookRepository(db as never);
+
+    await expect(
+      repo.upsertSyncedEpubProgressIfNewer({
+        userId: 7,
+        fileId: 20,
+        cfi: 'epubcfi(/6/4)',
+        percentage: 42,
+        positionSeconds: 120,
+        mediaOverlayFragment: 'OPS/chapter.xhtml#p2',
+        mediaOverlaySectionIndex: 1,
+        koreaderProgress: null,
+        sourceUpdatedAt: new Date('2026-09-19T12:00:00.000Z'),
+      }),
+    ).resolves.toBe(false);
+
+    expect(db.delete).not.toHaveBeenCalled();
   });
 
   it('maps hasCover from coverSource and aggregates authors per book in recommendation rows', async () => {
@@ -1062,6 +1236,8 @@ describe('BookRepository', () => {
       7,
       80,
       null,
+      'OPS/ch1.xhtml#s1',
+      3,
       'OEBPS/ch1.xhtml',
       'KoboSpan',
       'kobo.25.1',
@@ -1077,6 +1253,8 @@ describe('BookRepository', () => {
         cfi: 'epubcfi(/6/2)',
         pageNumber: 7,
         percentage: 80,
+        mediaOverlayFragment: 'OPS/ch1.xhtml#s1',
+        mediaOverlaySectionIndex: 3,
         koboLocationSource: 'OEBPS/ch1.xhtml',
         koboLocationType: 'KoboSpan',
         koboLocationValue: 'kobo.25.1',

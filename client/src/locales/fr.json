@@ -1357,6 +1357,71 @@
         "oidc": "OIDC / SSO",
         "server-fonts": "Polices du serveur"
       },
+      "tts": {
+        "title": "Providers",
+        "subtitle": "Speech engines available to readers. Voices are curated per provider.",
+        "summary": "{providers, plural, one {# provider} many {# providers} other {# providers}} · {enabled} enabled · {voices, plural, one {# voice curated} many {# voices curated} other {# voices curated}}",
+        "addProvider": "Add provider",
+        "loadFailed": "Failed to load text-to-speech configuration",
+        "empty": "No speech providers configured.",
+        "reorderHint": "Drag to reorder. Readers see providers in this order.",
+        "dragHandle": "Reorder {name}",
+        "moveUp": "Move {name} up",
+        "moveDown": "Move {name} down",
+        "reorderFailed": "Failed to save the provider order",
+        "expand": "Show details for {name}",
+        "collapse": "Hide details for {name}",
+        "toggleEnabled": "Enable {name}",
+        "enableFailed": "Failed to update {name}",
+        "statusConnected": "Connected",
+        "statusUnreachable": "Unreachable",
+        "statusUnchecked": "Not checked",
+        "voiceCount": "{count, plural, one {# voice} many {# voices} other {# voices}}",
+        "configuration": "Configuration",
+        "fieldType": "Type",
+        "fieldTypeOpenAi": "OpenAI-compatible",
+        "fieldApiKey": "API key",
+        "apiKeySet": "Set",
+        "apiKeyNotSet": "Not set",
+        "fieldModel": "Default model",
+        "fieldModelNone": "Provider default",
+        "fieldDiscovery": "Voice discovery",
+        "discoverySupported": "Supported",
+        "discoveryUnsupported": "Not supported",
+        "voices": "Voices",
+        "voicesCurated": "{count} curated",
+        "voicesTapToPreview": "Tap a voice to preview it",
+        "voicesNone": "No voices configured yet",
+        "manageVoices": "Manage voices",
+        "previewVoice": "Preview {name}",
+        "previewStop": "Stop preview",
+        "previewFailed": "Could not play a preview for {name}",
+        "previewNeedsEnabled": "Enable this provider to preview its voices",
+        "editConfiguration": "Edit configuration",
+        "testConnection": "Test connection",
+        "testPassed": "Connected · {count, plural, one {# voice found} many {# voices found} other {# voices found}}",
+        "testFailed": "Connection failed",
+        "delete": "Delete",
+        "deleteConfirm": "Delete the provider \"{name}\"? Readers using its voices fall back to another provider.",
+        "deleteFailed": "Failed to delete {name}",
+        "deleted": "Provider deleted",
+        "saveFailed": "Failed to save {name}",
+        "saved": "Provider saved",
+        "formAddTitle": "New provider",
+        "formEditTitle": "Edit provider",
+        "formName": "Name",
+        "formNamePlaceholder": "Kokoro",
+        "formBaseUrl": "Base URL",
+        "formBaseUrlPlaceholder": "http://localhost:8880/v1",
+        "formApiKey": "API key",
+        "formApiKeyOptional": "Optional",
+        "formApiKeyPlaceholder": "sk-...",
+        "formApiKeyKeep": "Leave blank to keep the current key",
+        "formModel": "Default model",
+        "formModelPlaceholder": "tts-1",
+        "formDiscovery": "This provider can list its own voices",
+        "formRequired": "Name and base URL are required"
+      },
       "serverFonts": {
         "title": "Polices du serveur",
         "subtitle": "Envoyez des polices directement disponibles pour tous les utilisateurs dans le lecteur Ebook.",
@@ -1981,7 +2046,7 @@
         "infiniteNoGaps": "Infini (pas de trous)",
         "pageView": "Affichage des pages",
         "pageViewHint": "Afficher une ou deux pages côte à côte",
-        "single": "Célibataire",
+        "single": "Une page",
         "twoPage": "Deux pages",
         "fitMode": "Mode d'ajustement",
         "fitModeHint": "Comment les pages sont mises à l'échelle pour s'adapter à l'écran",
@@ -3241,7 +3306,6 @@
       "searchPlaceholder": "Rechercher des paramètres",
       "clearSearch": "Effacer la recherche",
       "noResults": "Aucun paramètre ne correspond à « {query} ».",
-      "shortcutHint": "Appuyez sur Cmd K pour accéder directement à un paramètre",
       "status": {
         "scanning": "Analyse en cours"
       },
@@ -7159,6 +7223,8 @@
       "columnVisibilityHint": "Utilisez le panneau de visibilité des colonnes dans l'en-tête du tableau pour afficher ou masquer les colonnes.",
       "columnVisibilityMobileHint": "La visibilité des colonnes peut être gérée depuis l'en-tête du tableau.",
       "searchPlaceholder": "Rechercher un titre, un auteur, une série, un narrateur...",
+      "clearSearch": "Clear search",
+      "closeSearch": "Close search",
       "mobileSearch": {
         "description": "Recherchez des éléments par titre, auteur, série ou narrateur.",
         "done": "Terminé"
@@ -7173,6 +7239,7 @@
         "display": "Affichage",
         "coverSize": "Taille de la couverture",
         "gridGap": "Écart de grille",
+        "pixelValue": "{value} pixels",
         "showJumpRails": "Afficher les rails de saut",
         "columnsHint": "Utilisez le panneau de visibilité des colonnes dans l'en-tête du tableau pour afficher ou masquer les colonnes.",
         "coverShape": "Forme de la couverture",
@@ -7207,6 +7274,11 @@
       "title": "{entity} introuvable",
       "description": "{entity} : cet élément n'existe pas ou a été supprimé.",
       "goBack": "Retourner"
+    },
+    "media": {
+      "volume": "Volume",
+      "mute": "Mute",
+      "unmute": "Unmute"
     },
     "themePicker": {
       "light": "Clair",
@@ -7669,6 +7741,17 @@
       "sending": "Envoi...",
       "queued": "{count, plural, =0 {aucun e-mail en file d'attente} one {un e-mail en file d'attente} other {# emails en file d'attente} many {# emails en file d'attente}}",
       "failed": "Échec de l'envoi"
+    }
+  },
+  "errors": {
+    "network": "Could not reach BookOrbit. Check your connection, then try again.",
+    "codes": {
+      "PODCAST_LOCAL_NO_REFRESH": "This show has no feed, so there is nothing to refresh.",
+      "PODCAST_LOCAL_NO_DOWNLOAD": "This episode is one of your own files, so there is nothing to download. Your copy is already the only one.",
+      "PODCAST_LOCAL_FILE_NOT_REMOVABLE": "This episode is one of your own files, so BookOrbit will not delete it. Remove it from the folder yourself.",
+      "PODCAST_LOCAL_MEDIA_MISSING": "The only copy of this episode is no longer on disk, so it cannot be played.",
+      "PODCAST_LOCAL_FOLDER_EMPTY": "This folder holds no audio BookOrbit can import, so it cannot become a show.",
+      "PODCAST_STORAGE_FULL": "This podcast library is out of storage. Free some space or raise its quota, then try again. Files that belong to local shows are never removed to make room."
     }
   },
   "hardcover": {
@@ -8910,7 +8993,7 @@
         "actual": "Taille réelle"
       },
       "view": {
-        "single": "Célibataire",
+        "single": "Une page",
         "twoPage": "Deux pages"
       },
       "scroll": {
@@ -9502,9 +9585,7 @@
       }
     },
     "bookDuplicates": {
-      "scanSettings": "Paramètres d'analyse",
       "title": "Livres en double",
-      "description": "Analysez les fichiers et les métadonnées à la recherche d'enregistrements en double potentiels. Rien n'est supprimé lors d'une analyse.",
       "scope": "Portée de la bibliothèque",
       "allLibraries": "Toutes les bibliothèques accessibles",
       "similarity": "Seuil de titre similaire",
@@ -9516,7 +9597,6 @@
         "queued": "Analyse en file d'attente",
         "running": "Analyse des livres"
       },
-      "groupsFound": "{count, plural, =0 {Pas de groupes en double} one {Un groupe en double} other {# groupes en double} many {# groupes en double}}",
       "filter": "Type de correspondance",
       "allReasons": "Tous les types de correspondance",
       "reasons": {
@@ -9525,17 +9605,7 @@
         "exact_metadata": "Titre exact et auteurs",
         "fuzzy_metadata": "Titre et auteur similaires"
       },
-      "similarityValue": "{percent} % de similarité du titre",
       "notDuplicates": "Pas de doublons",
-      "keepThis": "Gardez ce livre",
-      "discardThis": "Jeter ce livre",
-      "selectKeeperFirst": "Sélectionnez d'abord le livre à conserver",
-      "noDirectMatch": "Aucune correspondance directe avec le livre à conserver",
-      "moreFiles": "+{count} plus",
-      "showDetails": "Afficher les détails",
-      "hideDetails": "Masquer les détails",
-      "deleteSelected": "Supprimer {count} sélectionné",
-      "openBook": "Ouvrir les détails de {title}",
       "unknownAuthor": "Auteur inconnu",
       "unknown": "Inconnu",
       "none": "Aucun",
@@ -9546,14 +9616,8 @@
         "library": "Bibliothèque",
         "isbn": "ISBN",
         "formats": "Formats",
-        "fileLocation": "Fichier",
-        "files": "Fichiers",
-        "readingStatus": "Statut de lecture",
-        "progress": "Progrès",
-        "path": "Chemin de la bibliothèque",
         "collections": "Collections",
-        "added": "Ajouté",
-        "updated": "Mis à jour"
+        "added": "Ajouté"
       },
       "initial": {
         "title": "Trouver des livres en double",
@@ -9564,8 +9628,6 @@
         "description": "Aucun livre ne correspond à la portée, au niveau de similarité et au filtre de correspondance actuels."
       },
       "deleteDialog": {
-        "title": "Supprimer définitivement les livres en double ?",
-        "description": "{count, plural, =0 {Cela supprimera définitivement # livre sélectionné et ses fichiers.} one {Cela supprimera définitivement # livre sélectionné et ses fichiers.} other {Cela supprimera définitivement # livres sélectionnés et leurs fichiers.} many {Cela supprimera définitivement # livres sélectionnés et leurs fichiers.}}",
         "warning": "Les métadonnées, les collections, les données de lecture et l'état de l'appareil ne sont pas transférés dans le livre tenu. Les données associées aux autres utilisateurs sont également supprimées.",
         "confirm": "{count, plural, =0 {Supprimer # livre} one {Supprimer # livre} other {Supprimer # livres} many {Supprimer # livres}}",
         "success": "{count, plural, =0 {Aucun livre supprimé} one {Un livre en double supprimé} other {# livres en double supprimés} many {# livres en double supprimés}}"

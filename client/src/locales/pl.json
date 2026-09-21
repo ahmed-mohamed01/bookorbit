@@ -924,6 +924,7 @@
         "reasonNoFilePathMatch": "Ścieżka pliku nie pasuje do żadnej książki w tej bibliotece",
         "reasonNoFileHashMatch": "Skrót pliku nie pasuje do żadnej książki w tej bibliotece",
         "reasonNoIsbnMatch": "ISBN nie pasuje do żadnej książki w tej bibliotece",
+        "reasonNoAsinMatch": "ASIN nie odpowiada żadnej książce w tej bibliotece",
         "reasonInsufficientSourceData": "Za mało metadanych, aby podjąć próbę dopasowania",
         "reasonAmbiguousIsbnMatch": "Wiele książek pasuje do tego samego ISBN",
         "reasonAmbiguousAsinMatch": "Wiele książek pasuje do tego samego ASIN",
@@ -2093,7 +2094,9 @@
         "tokenOriginalFilename": "Oryginalna nazwa pliku (bez rozszerzenia)",
         "tokenExtension": "Rozszerzenie pliku (bez kropki)",
         "patternHelpIntro": "Wzorce używają tokenów takich jak {titleToken} i {authorsToken}, a także modyfikatorów i segmentów opcjonalnych.",
-        "browseTokensAndExamples": "Przeglądaj tokeny i przykłady"
+        "browseTokensAndExamples": "Przeglądaj tokeny i przykłady",
+        "patternLabel": "Wzorzec",
+        "useGlobalDefault": "Użyj globalnych ustawień globalnych"
       },
       "kobo": {
         "title": "Kobo Synchronizacja",
@@ -4740,6 +4743,18 @@
       "seeAllLibraries": "Zobacz wszystkie biblioteki ({count})",
       "seeAllSmartScopes": "Zobacz wszystkie inteligentne zakresy ({count})",
       "seeAllCollections": "Zobacz wszystkie kolekcje ({count})",
+      "podcasts": "Podcasts",
+      "newPodcastLibrary": "New Podcast Library",
+      "noPodcastLibraries": "No podcast libraries yet",
+      "filterPodcastLibraries": "Filter podcast libraries",
+      "filterPodcastLibrariesPlaceholder": "Filter podcast libraries...",
+      "seeAllPodcastLibraries": "See all podcast libraries ({count})",
+      "queue": "Queue",
+      "mode": {
+        "books": "Books",
+        "podcasts": "Podcasts",
+        "switcherAria": "Switch between books and podcasts"
+      },
       "updateAvailable": "Aktualizuj {version}",
       "zones": {
         "browse": "Przeglądaj"
@@ -4792,6 +4807,8 @@
       "columnVisibilityHint": "Użyj panelu widoczności kolumn w nagłówku tabeli, aby pokazać lub ukryć kolumny.",
       "columnVisibilityMobileHint": "Widocznością kolumn można zarządzać z poziomu nagłówka tabeli.",
       "searchPlaceholder": "Wyszukaj tytuł, autora, serię, narratora...",
+      "clearSearch": "Clear search",
+      "closeSearch": "Close search",
       "mobileSearch": {
         "description": "Szukaj elementów według tytułu, autora, serii lub narratora.",
         "done": "Gotowe"
@@ -4806,6 +4823,7 @@
         "display": "Wyświetlanie",
         "coverSize": "Rozmiar okładki",
         "gridGap": "Szczelina siatki",
+        "pixelValue": "{value} pixels",
         "showJumpRails": "Pokaż szyny skokowe",
         "columnsHint": "Użyj panelu widoczności kolumn w nagłówku tabeli, aby pokazać lub ukryć kolumny.",
         "coverShape": "Kształt okładki",
@@ -4830,6 +4848,11 @@
       "title": "{entity} nie znaleziono",
       "description": "Ten {entity} nie istnieje lub został usunięty.",
       "goBack": "Wróć"
+    },
+    "media": {
+      "volume": "Volume",
+      "mute": "Mute",
+      "unmute": "Unmute"
     },
     "themePicker": {
       "light": "Światło",
@@ -4856,7 +4879,8 @@
       "sort": {
         "custom": "Kolejność niestandardowa",
         "name": "Nazwa",
-        "bookCount": "Liczba książek"
+        "bookCount": "Liczba książek",
+        "showCount": "Show count"
       },
       "ascending": "Rosnąco",
       "descending": "Malejąco",
@@ -4865,7 +4889,9 @@
       "noMatches": "Brak dopasowań",
       "noMatchesHint": "Spróbuj innego wyszukiwanego hasła.",
       "bookCount": "Książki: {count}",
+      "showCount": "Shows: {count}",
       "librariesEmptyHint": "Utwórz bibliotekę, aby zacząć dodawać książki.",
+      "podcastLibrariesEmptyHint": "Create a podcast library to start following shows.",
       "smartScopesEmptyHint": "Inteligentne zakresy zapisują zestaw często używanych filtrów.",
       "collectionsEmptyHint": "Kolekcje grupują książki wybrane ręcznie."
     }
@@ -5225,6 +5251,17 @@
       "sending": "Wysyłanie...",
       "queued": "{count, plural, =0 {żadnych e-maili w kolejce} one {jeden e-mail w kolejce} other {# e-maile w kolejce} few {# e-maile w kolejce} many {# e-maili w kolejce}}",
       "failed": "Nie udało się wysłać"
+    }
+  },
+  "errors": {
+    "network": "Could not reach BookOrbit. Check your connection, then try again.",
+    "codes": {
+      "PODCAST_LOCAL_NO_REFRESH": "This show has no feed, so there is nothing to refresh.",
+      "PODCAST_LOCAL_NO_DOWNLOAD": "This episode is one of your own files, so there is nothing to download. Your copy is already the only one.",
+      "PODCAST_LOCAL_FILE_NOT_REMOVABLE": "This episode is one of your own files, so BookOrbit will not delete it. Remove it from the folder yourself.",
+      "PODCAST_LOCAL_MEDIA_MISSING": "The only copy of this episode is no longer on disk, so it cannot be played.",
+      "PODCAST_LOCAL_FOLDER_EMPTY": "This folder holds no audio BookOrbit can import, so it cannot become a show.",
+      "PODCAST_STORAGE_FULL": "This podcast library is out of storage. Free some space or raise its quota, then try again. Files that belong to local shows are never removed to make room."
     }
   },
   "hardcover": {
@@ -6620,9 +6657,7 @@
       }
     },
     "bookDuplicates": {
-      "scanSettings": "Ustawienia skanowania",
       "title": "Duplikaty książek",
-      "description": "Skanuj pliki i metadane w poszukiwaniu potencjalnych duplikatów rekordów. Podczas skanowania nic nie jest usuwane.",
       "scope": "Zakres biblioteki",
       "allLibraries": "Wszystkie dostępne biblioteki",
       "similarity": "Próg podobnego tytułu",
@@ -6634,7 +6669,6 @@
         "queued": "Skanowanie w kolejce",
         "running": "Skanowanie książek"
       },
-      "groupsFound": "{count, plural, =0 {Brak zduplikowanych grup} one {Jedna zduplikowana grupa} other {# zduplikowanej grupy} few {# zduplikowane grupy} many {# zduplikowanych grup}}",
       "filter": "Typ dopasowania",
       "allReasons": "Wszystkie typy dopasowań",
       "reasons": {
@@ -6643,17 +6677,7 @@
         "exact_metadata": "Dokładny tytuł i autorzy",
         "fuzzy_metadata": "Podobny tytuł i autor"
       },
-      "similarityValue": "{percent}% podobieństwa tytułów",
       "notDuplicates": "Nie duplikaty",
-      "keepThis": "Zachowaj tę książkę",
-      "discardThis": "Wyrzuć tę książkę",
-      "selectKeeperFirst": "Najpierw wybierz książkę do zachowania",
-      "noDirectMatch": "Brak bezpośredniego dopasowania do książki wybranej do zachowania",
-      "moreFiles": "+{count} więcej",
-      "showDetails": "Pokaż szczegóły",
-      "hideDetails": "Ukryj szczegóły",
-      "deleteSelected": "Usuń wybrane {count}",
-      "openBook": "Otwórz szczegóły {title}",
       "unknownAuthor": "Nieznany autor",
       "unknown": "Nieznany",
       "none": "Żadne",
@@ -6664,14 +6688,8 @@
         "library": "Biblioteka",
         "isbn": "ISBN",
         "formats": "Formaty",
-        "fileLocation": "Plik",
-        "files": "Pliki",
-        "readingStatus": "Stan odczytu",
-        "progress": "Postęp",
-        "path": "Ścieżka biblioteczna",
         "collections": "Kolekcje",
-        "added": "Dodano",
-        "updated": "Zaktualizowano"
+        "added": "Dodano"
       },
       "initial": {
         "title": "Znajdź duplikaty książek",
@@ -6682,8 +6700,6 @@
         "description": "Żadne książki nie odpowiadały bieżącemu zakresowi, poziomowi podobieństwa i filtrowi dopasowania."
       },
       "deleteDialog": {
-        "title": "Trwale usunąć zduplikowane książki?",
-        "description": "{count, plural, =0 {Spowoduje to trwałe usunięcie # wybranych książek i ich plików.} one {Spowoduje to trwałe usunięcie # wybranej książki i jej plików.} other {Spowoduje to trwałe usunięcie # wybranej książki i jej plików.} few {Spowoduje to trwałe usunięcie # wybranych książek i ich plików.} many {Spowoduje to trwałe usunięcie # wybranych książek i ich plików.}}",
         "warning": "Metadane, zbiory, dane odczytowe i stan urządzenia nie są przenoszone do prowadzonej księgi. Powiązane dane innych użytkowników są również usuwane.",
         "confirm": "{count, plural, =0 {Usuń # książka} one {Usuń # książka} other {Usuń # książki} few {Usuń # książki} many {Usuń # książek}}",
         "success": "{count, plural, =0 {Żadne książki nie zostały usunięte} one {Usunięto jedną zduplikowaną książkę} other {# usunięte zdublowane książki} few {Usunięto # zduplikowane książki} many {Usunięto # zduplikowanych książek}}"
@@ -7010,6 +7026,7 @@
   "titles": {
     "dashboard": "Pulpit nawigacyjny",
     "libraries": "Biblioteki",
+    "podcastLibraries": "Podcast Libraries",
     "opds": "OPDS",
     "koboSync": "Kobo Synchronizacja",
     "koreaderSync": "KOReader Synchronizacja",

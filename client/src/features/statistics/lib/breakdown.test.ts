@@ -13,10 +13,10 @@ describe('breakdown', () => {
     expect(BREAKDOWN_OPTIONS[0]).toEqual({ value: 'format', label: 'Format' })
   })
 
-  it('returns the four source buckets for the source dimension', () => {
+  it('returns all source buckets for the source dimension', () => {
     const series = getBreakdownSeries('source', 'theme:violet', [])
-    expect(series.map((s) => s.key)).toEqual(['bookorbit', 'koreader', 'kobo', 'audiobookshelf'])
-    expect(series.map((s) => s.label)).toEqual(['BookOrbit', 'KOReader', 'Kobo', 'Audiobookshelf'])
+    expect(series.map((s) => s.key)).toEqual(['bookorbit', 'ios', 'watchos', 'koreader', 'kobo', 'audiobookshelf'])
+    expect(series.map((s) => s.label)).toEqual(['BookOrbit', 'iOS app', 'Apple Watch', 'KOReader', 'Kobo', 'Audiobookshelf'])
   })
 
   it('returns one series per format key for the format dimension', () => {

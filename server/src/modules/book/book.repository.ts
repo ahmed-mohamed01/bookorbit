@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
-import { SQL, and, asc, count, eq, inArray, isNotNull, isNull, ne, or, sql } from 'drizzle-orm';
+import { SQL, and, asc, count, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import { SUPPORTED_BOOK_FORMATS } from '../upload/upload-validator.service';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
@@ -54,7 +54,9 @@ import {
   libraryFolders,
   narrators,
   audiobookProgress,
+  koreaderBookHashLinks,
   readingProgress,
+  userBookReadAloudSyncSettings,
   userBookRatings,
   tags,
   userBookStatus,
@@ -615,7 +617,16 @@ export class BookRepository {
     if (bookIds.length === 0) {
       return {
         authorRows: [] as { bookId: number; name: string }[],
-        fileRows: [] as { bookId: number; id: number; format: string | null; role: string; sizeBytes: number | null }[],
+        fileRows: [] as {
+          bookId: number;
+          id: number;
+          format: string | null;
+          role: string;
+          sizeBytes: number | null;
+          mediaOverlayAvailable: boolean;
+          mediaOverlayDurationSeconds: number | null;
+          mediaOverlayCheckedAt: Date | null;
+        }[],
         genreRows: [] as { bookId: number; name: string }[],
         tagRows: [] as { bookId: number; name: string }[],
         progressRows: [] as { bookFileId: number; percentage: number }[],
@@ -639,78 +650,94 @@ export class BookRepository {
       };
     }
 
-    const [authorRows, fileRows, genreRows, tagRows, narratorRows, seriesMembershipRows, statusRows, fileProgressRows, audiobookProgressRows, extra] =
-      await Promise.all([
-        this.db
-          .select({ bookId: bookAuthors.bookId, name: authors.name })
-          .from(bookAuthors)
-          .innerJoin(authors, eq(authors.id, bookAuthors.authorId))
-          .where(inArray(bookAuthors.bookId, bookIds))
-          .orderBy(bookAuthors.displayOrder),
-        this.db
-          .select({ bookId: bookFiles.bookId, id: bookFiles.id, format: bookFiles.format, role: bookFiles.role, sizeBytes: bookFiles.sizeBytes })
-          .from(bookFiles)
-          .where(inArray(bookFiles.bookId, bookIds)),
-        this.db
-          .select({ bookId: bookGenres.bookId, name: genres.name })
-          .from(bookGenres)
-          .innerJoin(genres, eq(genres.id, bookGenres.genreId))
-          .where(inArray(bookGenres.bookId, bookIds)),
-        this.db
-          .select({ bookId: bookTags.bookId, name: tags.name })
-          .from(bookTags)
-          .innerJoin(tags, eq(tags.id, bookTags.tagId))
-          .where(inArray(bookTags.bookId, bookIds)),
-        this.db
-          .select({ bookId: bookNarrators.bookId, name: narrators.name })
-          .from(bookNarrators)
-          .innerJoin(narrators, eq(narrators.id, bookNarrators.narratorId))
-          .where(inArray(bookNarrators.bookId, bookIds))
-          .orderBy(bookNarrators.displayOrder),
-        this.db
-          .select({
-            bookId: bookSeriesMemberships.bookId,
-            seriesId: bookSeriesMemberships.seriesId,
-            seriesName: bookSeries.name,
-            seriesIndex: bookSeriesMemberships.seriesIndex,
-            displayOrder: bookSeriesMemberships.displayOrder,
-            expectedBookCount: bookSeries.expectedBookCount,
-          })
-          .from(bookSeriesMemberships)
-          .innerJoin(bookSeries, eq(bookSeries.id, bookSeriesMemberships.seriesId))
-          .where(inArray(bookSeriesMemberships.bookId, bookIds))
-          .orderBy(asc(bookSeriesMemberships.bookId), asc(bookSeriesMemberships.displayOrder), asc(bookSeriesMemberships.seriesId)),
-        this.db
-          .select({
-            bookId: userBookStatus.bookId,
-            status: userBookStatus.status,
-            source: userBookStatus.source,
-            startedAt: userBookStatus.startedAt,
-            finishedAt: userBookStatus.finishedAt,
-            updatedAt: userBookStatus.updatedAt,
-          })
-          .from(userBookStatus)
-          .where(and(eq(userBookStatus.userId, userId), inArray(userBookStatus.bookId, bookIds))),
-        primaryFileIds.length > 0
-          ? this.db
-              .select({
-                bookFileId: readingProgress.bookFileId,
-                percentage: readingProgress.percentage,
-                lastReadAt: readingProgress.lastReadAt,
-              })
-              .from(readingProgress)
-              .where(and(eq(readingProgress.userId, userId), inArray(readingProgress.bookFileId, primaryFileIds)))
-          : Promise.resolve([] as { bookFileId: number; percentage: number; lastReadAt: Date }[]),
-        this.db
-          .select({
-            bookId: audiobookProgress.bookId,
-            percentage: audiobookProgress.percentage,
-            updatedAt: audiobookProgress.updatedAt,
-          })
-          .from(audiobookProgress)
-          .where(and(eq(audiobookProgress.userId, userId), inArray(audiobookProgress.bookId, bookIds))),
-        this.extraProgress?.findProgressForBooks(userId, bookIds) ?? new Map<number, ExtraProgress>(),
-      ]);
+    // Keep book-card hydration below the database pool's capacity when list requests overlap.
+    // Three small batches retain useful parallelism without allowing one request to claim nine connections.
+    const [authorRows, fileRows, genreRows] = await Promise.all([
+      this.db
+        .select({ bookId: bookAuthors.bookId, name: authors.name })
+        .from(bookAuthors)
+        .innerJoin(authors, eq(authors.id, bookAuthors.authorId))
+        .where(inArray(bookAuthors.bookId, bookIds))
+        .orderBy(bookAuthors.displayOrder),
+      this.db
+        .select({
+          bookId: bookFiles.bookId,
+          id: bookFiles.id,
+          format: bookFiles.format,
+          role: bookFiles.role,
+          sizeBytes: bookFiles.sizeBytes,
+          mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
+          mediaOverlayDurationSeconds: bookFiles.mediaOverlayDurationSeconds,
+          mediaOverlayCheckedAt: bookFiles.mediaOverlayCheckedAt,
+        })
+        .from(bookFiles)
+        .where(inArray(bookFiles.bookId, bookIds)),
+      this.db
+        .select({ bookId: bookGenres.bookId, name: genres.name })
+        .from(bookGenres)
+        .innerJoin(genres, eq(genres.id, bookGenres.genreId))
+        .where(inArray(bookGenres.bookId, bookIds)),
+    ]);
+
+    const [tagRows, narratorRows, seriesMembershipRows] = await Promise.all([
+      this.db
+        .select({ bookId: bookTags.bookId, name: tags.name })
+        .from(bookTags)
+        .innerJoin(tags, eq(tags.id, bookTags.tagId))
+        .where(inArray(bookTags.bookId, bookIds)),
+      this.db
+        .select({ bookId: bookNarrators.bookId, name: narrators.name })
+        .from(bookNarrators)
+        .innerJoin(narrators, eq(narrators.id, bookNarrators.narratorId))
+        .where(inArray(bookNarrators.bookId, bookIds))
+        .orderBy(bookNarrators.displayOrder),
+      this.db
+        .select({
+          bookId: bookSeriesMemberships.bookId,
+          seriesId: bookSeriesMemberships.seriesId,
+          seriesName: bookSeries.name,
+          seriesIndex: bookSeriesMemberships.seriesIndex,
+          displayOrder: bookSeriesMemberships.displayOrder,
+          expectedBookCount: bookSeries.expectedBookCount,
+        })
+        .from(bookSeriesMemberships)
+        .innerJoin(bookSeries, eq(bookSeries.id, bookSeriesMemberships.seriesId))
+        .where(inArray(bookSeriesMemberships.bookId, bookIds))
+        .orderBy(asc(bookSeriesMemberships.bookId), asc(bookSeriesMemberships.displayOrder), asc(bookSeriesMemberships.seriesId)),
+    ]);
+
+    const [statusRows, fileProgressRows, audiobookProgressRows] = await Promise.all([
+      this.db
+        .select({
+          bookId: userBookStatus.bookId,
+          status: userBookStatus.status,
+          source: userBookStatus.source,
+          startedAt: userBookStatus.startedAt,
+          finishedAt: userBookStatus.finishedAt,
+          updatedAt: userBookStatus.updatedAt,
+        })
+        .from(userBookStatus)
+        .where(and(eq(userBookStatus.userId, userId), inArray(userBookStatus.bookId, bookIds))),
+      primaryFileIds.length > 0
+        ? this.db
+            .select({
+              bookFileId: readingProgress.bookFileId,
+              percentage: readingProgress.percentage,
+              lastReadAt: readingProgress.lastReadAt,
+            })
+            .from(readingProgress)
+            .where(and(eq(readingProgress.userId, userId), inArray(readingProgress.bookFileId, primaryFileIds)))
+        : Promise.resolve([] as { bookFileId: number; percentage: number; lastReadAt: Date }[]),
+      this.db
+        .select({
+          bookId: audiobookProgress.bookId,
+          percentage: audiobookProgress.percentage,
+          updatedAt: audiobookProgress.updatedAt,
+        })
+        .from(audiobookProgress)
+        .where(and(eq(audiobookProgress.userId, userId), inArray(audiobookProgress.bookId, bookIds))),
+    ]);
+    const extra = (await this.extraProgress?.findProgressForBooks(userId, bookIds)) ?? new Map<number, ExtraProgress>();
 
     const fileProgressById = new Map(fileProgressRows.map((row) => [row.bookFileId, row]));
     const audiobookProgressByBookId = new Map(audiobookProgressRows.map((row) => [row.bookId, row]));
@@ -812,7 +839,16 @@ export class BookRepository {
       firstUnreadBookId: number | null;
     }>;
     authorRows: { bookId: number; name: string }[];
-    fileRows: { bookId: number; id: number; format: string | null; role: string; sizeBytes: number | null }[];
+    fileRows: {
+      bookId: number;
+      id: number;
+      format: string | null;
+      role: string;
+      sizeBytes: number | null;
+      mediaOverlayAvailable: boolean;
+      mediaOverlayDurationSeconds: number | null;
+      mediaOverlayCheckedAt: Date | null;
+    }[];
     genreRows: { bookId: number; name: string }[];
     tagRows: { bookId: number; name: string }[];
     progressRows: { bookFileId: number; percentage: number | null }[];
@@ -1407,6 +1443,9 @@ export class BookRepository {
           absolutePath: bookFiles.absolutePath,
           createdAt: bookFiles.createdAt,
           durationSeconds: bookFiles.durationSeconds,
+          mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
+          mediaOverlayDurationSeconds: bookFiles.mediaOverlayDurationSeconds,
+          mediaOverlayCheckedAt: bookFiles.mediaOverlayCheckedAt,
         })
         .from(bookFiles)
         .where(eq(bookFiles.bookId, id))
@@ -1462,6 +1501,36 @@ export class BookRepository {
       .orderBy(collections.name);
   }
 
+  async findReadAloudSyncMode(userId: number, bookId: number): Promise<'auto' | 'disabled'> {
+    const [row] = await this.db
+      .select({ mode: userBookReadAloudSyncSettings.mode })
+      .from(userBookReadAloudSyncSettings)
+      .where(and(eq(userBookReadAloudSyncSettings.userId, userId), eq(userBookReadAloudSyncSettings.bookId, bookId)))
+      .limit(1);
+    return row?.mode ?? 'auto';
+  }
+
+  async upsertReadAloudSyncMode(userId: number, bookId: number, mode: 'auto' | 'disabled'): Promise<void> {
+    await this.db
+      .insert(userBookReadAloudSyncSettings)
+      .values({ userId, bookId, mode, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: [userBookReadAloudSyncSettings.userId, userBookReadAloudSyncSettings.bookId],
+        set: { mode, updatedAt: new Date() },
+      });
+  }
+
+  async upsertKoreaderBookHashLink(userId: number, hash: string, bookFileId: number): Promise<void> {
+    const now = new Date();
+    await this.db
+      .insert(koreaderBookHashLinks)
+      .values({ userId, hash, bookFileId, updatedAt: now })
+      .onConflictDoUpdate({
+        target: [koreaderBookHashLinks.userId, koreaderBookHashLinks.hash],
+        set: { bookFileId, updatedAt: now },
+      });
+  }
+
   async findLibraryIdByBookId(bookId: number): Promise<number | null> {
     const [row] = await this.db.select({ libraryId: books.libraryId }).from(books).where(eq(books.id, bookId)).limit(1);
     return row?.libraryId ?? null;
@@ -1493,6 +1562,7 @@ export class BookRepository {
         fileHash: bookFiles.fileHash,
         sizeBytes: bookFiles.sizeBytes,
         durationSeconds: bookFiles.durationSeconds,
+        mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
       })
       .from(bookFiles)
       .innerJoin(books, eq(books.id, bookFiles.bookId))
@@ -1508,7 +1578,16 @@ export class BookRepository {
 
   async updateBookFile(
     fileId: number,
-    data: { format?: string | null; role?: string; absolutePath?: string; relPath?: string | null; sizeBytes?: number },
+    data: {
+      format?: string | null;
+      role?: string;
+      absolutePath?: string;
+      relPath?: string | null;
+      sizeBytes?: number;
+      mediaOverlayAvailable?: boolean | null;
+      mediaOverlayDurationSeconds?: number | null;
+      mediaOverlayCheckedAt?: Date | null;
+    },
   ): Promise<void> {
     await this.db
       .update(bookFiles)
@@ -1525,9 +1604,34 @@ export class BookRepository {
       .select({
         id: bookFiles.id,
         role: bookFiles.role,
+        format: bookFiles.format,
+        sizeBytes: bookFiles.sizeBytes,
+        mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
       })
       .from(bookFiles)
       .where(eq(bookFiles.bookId, bookId));
+  }
+
+  async findAudioEbookProgressSyncFiles(bookId: number) {
+    const [book] = await this.db.select({ primaryFileId: books.primaryFileId }).from(books).where(eq(books.id, bookId)).limit(1);
+    if (!book) return null;
+
+    const files = await this.db
+      .select({
+        id: bookFiles.id,
+        absolutePath: bookFiles.absolutePath,
+        format: bookFiles.format,
+        role: bookFiles.role,
+        sortOrder: bookFiles.sortOrder,
+        durationSeconds: bookFiles.durationSeconds,
+        mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
+        mediaOverlayDurationSeconds: bookFiles.mediaOverlayDurationSeconds,
+      })
+      .from(bookFiles)
+      .where(eq(bookFiles.bookId, bookId))
+      .orderBy(asc(bookFiles.sortOrder), asc(bookFiles.id));
+
+    return { primaryFileId: book.primaryFileId, files };
   }
 
   async findBookBase(bookId: number) {
@@ -1550,6 +1654,9 @@ export class BookRepository {
         fileId: bookFiles.id,
         cfi: readingProgress.cfi,
         pageNumber: readingProgress.pageNumber,
+        positionSeconds: readingProgress.positionSeconds,
+        mediaOverlayFragment: readingProgress.mediaOverlayFragment,
+        mediaOverlaySectionIndex: readingProgress.mediaOverlaySectionIndex,
         percentage: readingProgress.percentage,
         koboLocationSource: readingProgress.koboLocationSource,
         koboLocationType: readingProgress.koboLocationType,
@@ -1577,6 +1684,55 @@ export class BookRepository {
       .from(bookFiles)
       .innerJoin(readingProgress, and(eq(readingProgress.bookFileId, bookFiles.id), eq(readingProgress.userId, userId)))
       .where(inArray(bookFiles.bookId, bookIds));
+  }
+
+  async findAudioProgress(userId: number, bookId: number) {
+    const [row] = await this.db
+      .select()
+      .from(audiobookProgress)
+      .where(and(eq(audiobookProgress.userId, userId), eq(audiobookProgress.bookId, bookId)))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async upsertAudioProgress(
+    userId: number,
+    bookId: number,
+    currentFileId: number,
+    positionSeconds: number,
+    percentage: number,
+    sourceUpdatedAt = new Date(),
+  ) {
+    const now = new Date();
+    const [row] = await this.db
+      .insert(audiobookProgress)
+      .values({
+        userId,
+        bookId,
+        currentFileId,
+        positionSeconds,
+        percentage,
+        capturedAt: sourceUpdatedAt,
+        operationId: null,
+        manifestRevision: null,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [audiobookProgress.userId, audiobookProgress.bookId],
+        set: {
+          currentFileId,
+          positionSeconds,
+          percentage,
+          revision: sql`${audiobookProgress.revision} + 1`,
+          capturedAt: sourceUpdatedAt,
+          operationId: null,
+          manifestRevision: null,
+          updatedAt: now,
+        },
+        setWhere: lte(audiobookProgress.capturedAt, sourceUpdatedAt),
+      })
+      .returning();
+    return row;
   }
 
   async findKoboReadingState(userId: number, bookId: number) {
@@ -1700,30 +1856,36 @@ export class BookRepository {
     const formatRows =
       bookIds.length > 0
         ? await this.db
-            .select({ bookId: bookFiles.bookId, format: bookFiles.format })
+            .select({ bookId: bookFiles.bookId, format: bookFiles.format, mediaOverlayAvailable: bookFiles.mediaOverlayAvailable })
             .from(bookFiles)
             .where(and(inArray(bookFiles.bookId, bookIds), inArray(bookFiles.format, [...SUPPORTED_BOOK_FORMATS])))
         : [];
 
     const formatsByBook = new Map<number, string[]>();
+    const hasReadAlongByBook = new Map<number, boolean>();
     for (const row of formatRows) {
       if (row.format) {
         const list = formatsByBook.get(row.bookId) ?? [];
         if (!list.includes(row.format)) list.push(row.format);
         formatsByBook.set(row.bookId, list);
       }
+      if (row.mediaOverlayAvailable) hasReadAlongByBook.set(row.bookId, true);
     }
 
-    return rows.map((r) => ({
-      id: r.id,
-      title: r.title,
-      seriesName: r.seriesName,
-      authors: authorsByBook.get(r.id) ?? [],
-      libraryId: r.libraryId,
-      libraryName: r.libraryName,
-      updatedAt: r.updatedAt?.toISOString() ?? null,
-      formats: formatsByBook.get(r.id) ?? [],
-    }));
+    return rows.map((r) => {
+      const hasReadAlong = hasReadAlongByBook.get(r.id) === true;
+      return {
+        id: r.id,
+        title: r.title,
+        seriesName: r.seriesName,
+        authors: authorsByBook.get(r.id) ?? [],
+        libraryId: r.libraryId,
+        libraryName: r.libraryName,
+        updatedAt: r.updatedAt?.toISOString() ?? null,
+        formats: formatsByBook.get(r.id) ?? [],
+        ...(hasReadAlong ? { hasReadAlong } : {}),
+      };
+    });
   }
 
   async countWhere(where: SQL | undefined): Promise<number> {
@@ -2138,11 +2300,21 @@ export class BookRepository {
     pageNumber: number | null,
     percentage: number,
     positionSeconds?: number | null,
+    mediaOverlayFragment?: string | null,
+    mediaOverlaySectionIndex?: number | null,
     koboLocationSource?: string | null,
     koboLocationType?: string | null,
     koboLocationValue?: string | null,
     koboContentSourceProgressPercent?: number | null,
     koreaderProgress?: string | null,
+    /**
+     * The narration position, when this write moved it. Kept apart from `percentage` and `cfi`,
+     * which describe where the reader's eyes were: the two positions drift, and folding them
+     * together let a read-along resume erase a page the reader had reached.
+     */
+    narration?: { percentage: number; updatedAt: Date } | null,
+    /** Set when this write moved the text position, so clients can tell which one is fresher. */
+    textUpdatedAt?: Date | null,
   ) {
     const now = new Date();
     const normalizedKoboLocationSource = this.normalizeKoboLocationPart(koboLocationSource);
@@ -2150,6 +2322,10 @@ export class BookRepository {
     const normalizedKoboLocationValue = this.normalizeKoboLocationPart(koboLocationValue);
     const normalizedKoboContentSourceProgressPercent = this.clampNullableProgressPercentage(koboContentSourceProgressPercent);
     const normalizedKoreaderProgress = this.normalizeKoreaderProgress(koreaderProgress);
+    const narrationColumns = narration
+      ? { narrationPercentage: this.clampProgressPercentage(narration.percentage), narrationUpdatedAt: narration.updatedAt }
+      : {};
+    const textColumns = textUpdatedAt ? { textUpdatedAt } : {};
     await this.db
       .insert(readingProgress)
       .values({
@@ -2159,12 +2335,16 @@ export class BookRepository {
         pageNumber,
         percentage,
         positionSeconds: positionSeconds ?? null,
+        mediaOverlayFragment: mediaOverlayFragment ?? null,
+        mediaOverlaySectionIndex: mediaOverlaySectionIndex ?? null,
         koboLocationSource: normalizedKoboLocationSource,
         koboLocationType: normalizedKoboLocationType,
         koboLocationValue: normalizedKoboLocationValue,
         koboContentSourceProgressPercent: normalizedKoboContentSourceProgressPercent,
         koreaderProgress: normalizedKoreaderProgress,
         updatedAt: now,
+        ...narrationColumns,
+        ...textColumns,
       })
       .onConflictDoUpdate({
         target: [readingProgress.bookFileId, readingProgress.userId],
@@ -2173,12 +2353,18 @@ export class BookRepository {
           pageNumber,
           percentage,
           positionSeconds: positionSeconds ?? null,
+          mediaOverlayFragment: mediaOverlayFragment ?? null,
+          mediaOverlaySectionIndex: mediaOverlaySectionIndex ?? null,
           koboLocationSource: normalizedKoboLocationSource,
           koboLocationType: normalizedKoboLocationType,
           koboLocationValue: normalizedKoboLocationValue,
           koboContentSourceProgressPercent: normalizedKoboContentSourceProgressPercent,
           koreaderProgress: normalizedKoreaderProgress,
           updatedAt: now,
+          // Absent halves keep whatever is stored: a text write must not blank the narration
+          // position, and a narration write must not blank the text one.
+          ...narrationColumns,
+          ...textColumns,
         },
       });
 
@@ -2186,6 +2372,58 @@ export class BookRepository {
     // the way out for a device that never pulls and would otherwise have every push held
     // back indefinitely.
     await this.db.delete(koreaderProgressResets).where(and(eq(koreaderProgressResets.userId, userId), eq(koreaderProgressResets.bookFileId, fileId)));
+  }
+
+  async upsertSyncedEpubProgressIfNewer(params: {
+    userId: number;
+    fileId: number;
+    cfi: string;
+    percentage: number;
+    positionSeconds: number;
+    mediaOverlayFragment: string;
+    mediaOverlaySectionIndex: number;
+    koreaderProgress: string | null;
+    sourceUpdatedAt: Date;
+  }): Promise<boolean> {
+    const rows = await this.db
+      .insert(readingProgress)
+      .values({
+        userId: params.userId,
+        bookFileId: params.fileId,
+        cfi: params.cfi,
+        pageNumber: null,
+        percentage: params.percentage,
+        positionSeconds: params.positionSeconds,
+        mediaOverlayFragment: params.mediaOverlayFragment,
+        mediaOverlaySectionIndex: params.mediaOverlaySectionIndex,
+        koreaderProgress: this.normalizeKoreaderProgress(params.koreaderProgress),
+        updatedAt: params.sourceUpdatedAt,
+        lastReadAt: params.sourceUpdatedAt,
+        textUpdatedAt: params.sourceUpdatedAt,
+      })
+      .onConflictDoUpdate({
+        target: [readingProgress.bookFileId, readingProgress.userId],
+        set: {
+          cfi: params.cfi,
+          pageNumber: null,
+          percentage: params.percentage,
+          positionSeconds: params.positionSeconds,
+          mediaOverlayFragment: params.mediaOverlayFragment,
+          mediaOverlaySectionIndex: params.mediaOverlaySectionIndex,
+          koreaderProgress: this.normalizeKoreaderProgress(params.koreaderProgress),
+          updatedAt: params.sourceUpdatedAt,
+          lastReadAt: params.sourceUpdatedAt,
+          textUpdatedAt: params.sourceUpdatedAt,
+        },
+        setWhere: lte(readingProgress.updatedAt, params.sourceUpdatedAt),
+      })
+      .returning({ fileId: readingProgress.bookFileId });
+
+    if (rows.length === 0) return false;
+    await this.db
+      .delete(koreaderProgressResets)
+      .where(and(eq(koreaderProgressResets.userId, params.userId), eq(koreaderProgressResets.bookFileId, params.fileId)));
+    return true;
   }
 
   async syncKoboReadingStateFromProgress(

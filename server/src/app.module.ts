@@ -7,6 +7,7 @@ import { LoggerModule } from 'nestjs-pino';
 
 import {
   appConfig,
+  audiolessEpubConfig,
   authConfig,
   bookRequestConfig,
   dbConfig,
@@ -14,6 +15,7 @@ import {
   fileWriteConfig,
   migrationConfig,
   oidcRuntimeConfig,
+  podcastConfig,
   storageConfig,
 } from './config/config';
 import { validateEnv } from './config/env.validation';
@@ -92,6 +94,10 @@ import { MonitoredModule } from './modules/monitored/monitored.module';
 import { EditionLinkModule } from './modules/edition-link/edition-link.module';
 import { ReadingAlignmentModule } from './modules/reading-alignment/reading-alignment.module';
 import { AudiobookModule } from './modules/audiobook/audiobook.module';
+import { TtsModule } from './modules/tts/tts.module';
+import { SearchModule } from './modules/search/search.module';
+import { WatchDownloadModule } from './modules/watch-download/watch-download.module';
+import { PodcastModule } from './modules/podcast/podcast.module';
 
 @Module({
   imports: [
@@ -99,7 +105,19 @@ import { AudiobookModule } from './modules/audiobook/audiobook.module';
     ConfigModule.forRoot({
       isGlobal: true,
       validate: validateEnv,
-      load: [appConfig, dbConfig, authConfig, storageConfig, fileWriteConfig, emailConfig, migrationConfig, bookRequestConfig, oidcRuntimeConfig],
+      load: [
+        appConfig,
+        dbConfig,
+        authConfig,
+        storageConfig,
+        fileWriteConfig,
+        emailConfig,
+        migrationConfig,
+        bookRequestConfig,
+        oidcRuntimeConfig,
+        podcastConfig,
+        audiolessEpubConfig,
+      ],
     }),
     ScheduleModule.forRoot(),
     ThrottlerModule.forRoot({
@@ -178,6 +196,10 @@ import { AudiobookModule } from './modules/audiobook/audiobook.module';
     MaintenanceModule,
     BookMoveModule,
     BrowseCountsModule,
+    TtsModule,
+    SearchModule,
+    WatchDownloadModule,
+    PodcastModule,
     MonitoredModule,
     EditionLinkModule,
     ReadingAlignmentModule,

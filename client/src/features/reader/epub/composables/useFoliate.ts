@@ -74,11 +74,33 @@ function makeFoliateFetchFile(): FoliateFetchFile {
   return fetchFile
 }
 
+export interface FoliateMediaOverlay extends EventTarget {
+  start: (index?: number, filter?: (item: { text: string }, i: number, items: { text: string }[]) => boolean) => unknown
+  pause: () => void
+  resume: () => void
+  stop: () => void
+  next: () => void
+  prev: () => void
+  setRate: (rate: number) => void
+  setVolume: (volume: number) => void
+}
+
+export interface FoliateOpenOptions extends EpubOpenOptions {
+  cfi?: string | null
+  fallbackFraction?: number
+  mediaOverlayFragment?: string | null
+  mediaOverlaySectionIndex?: number | null
+  preferMediaOverlay?: boolean
+  crossFormatResume?: CrossFormatEbookResume | null
+}
+
 export function useFoliate(
   container: () => HTMLElement | null,
   onRelocate?: (detail: RelocateDetail) => void,
   onApplyStyles?: (renderer: FoliateRenderer) => void,
   onMiddleTap?: () => void,
+  onChapterLoad?: (doc: Document, viewEl: HTMLElement) => void,
+  canNavigate?: () => boolean,
 ) {
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -86,6 +108,7 @@ export function useFoliate(
   const viewRef = ref<unknown>(null)
   const bookLanguage = ref<string>('en')
   const isFixedLayout = ref(false)
+  const hasMediaOverlay = ref(false)
 
   let onAnnotationClick: ((cfi: string, popupPosition: { x: number; y: number; showBelow: boolean }) => void) | null = null
 
@@ -95,7 +118,7 @@ export function useFoliate(
 
   const annotations = useFoliateAnnotations()
   const selection = useFoliateSelection(() => viewRef.value)
-  const input = useFoliateInput(() => viewRef.value, onMiddleTap, selection.handleSelectionEnd, selection.handleSelectionChange)
+  const input = useFoliateInput(() => viewRef.value, onMiddleTap, selection.handleSelectionEnd, selection.handleSelectionChange, canNavigate)
 
   async function loadScript() {
     if (customElements.get('foliate-view')) return
@@ -115,17 +138,19 @@ export function useFoliate(
     bookId: number,
     fileId: number,
     format: string,
-    cfi?: string | null,
+    optionsOrCfi: FoliateOpenOptions | string | null = {},
     fallbackFraction?: number,
-    options?: EpubOpenOptions,
-    resume?: CrossFormatEbookResume | null,
-  ): Promise<{ crossFormatResumed: boolean }> {
+    epubOptions?: EpubOpenOptions,
+  ) {
+    const options: FoliateOpenOptions =
+      typeof optionsOrCfi === 'object' && optionsOrCfi !== null ? optionsOrCfi : { ...epubOptions, cfi: optionsOrCfi, fallbackFraction }
     const el = container()
     if (!el) return { crossFormatResumed: false }
 
     loading.value = true
     error.value = null
     isFixedLayout.value = false
+    hasMediaOverlay.value = false
 
     let loadTimeoutId: ReturnType<typeof setTimeout> | undefined
     let initialNavigationPending = true
@@ -138,7 +163,7 @@ export function useFoliate(
         open: (file: File) => Promise<void>
         goTo: (target: string | number) => Promise<unknown>
         goToFraction?: (f: number) => void | Promise<void>
-        book?: { toc?: unknown[] }
+        book?: { toc?: unknown[]; media?: { activeClass?: string } }
         getSectionFractions?: () => number[]
         prev?: () => void
         next?: () => void
@@ -148,6 +173,8 @@ export function useFoliate(
         deleteAnnotation?: (ann: { value: string }) => void
         search?: (opts: { query: string }) => AsyncIterable<unknown>
         clearSearch?: () => void
+        mediaOverlay?: FoliateMediaOverlay | null
+        startMediaOverlay?: () => unknown
       }
       view.style.cssText = 'width:100%;height:100%;display:block;'
       getViewEl()?.destroy?.()
@@ -172,7 +199,10 @@ export function useFoliate(
           if (onApplyStyles) onApplyStyles(view.renderer)
         }, 0)
         annotations.reAddAll(view)
-        if (detail?.doc) input.attachIframeClicks(detail.doc)
+        if (detail?.doc) {
+          input.attachIframeClicks(detail.doc)
+          onChapterLoad?.(detail.doc as Document, view as HTMLElement)
+        }
       })
 
       view.addEventListener('draw-annotation', (e: Event) => {
@@ -280,33 +310,44 @@ export function useFoliate(
         const file = new File([blob], `book-file-${fileId}.${ext}`, { type: mimeType })
         await view.open(file)
       }
+      hasMediaOverlay.value = !!view.mediaOverlay
       if (onApplyStyles) onApplyStyles(view.renderer)
-      let didNavigate = false
-      let crossFormatResumed = false
+      const navigateTo = async (target: string | number | null | undefined) => {
+        if (target === null || target === undefined) return false
+        try {
+          const result = await view.goTo(target)
+          return isResolvedNavigation(result)
+        } catch {
+          return false
+        }
+      }
 
-      // Cross-format resume wins over the saved position: when the audiobook is ahead, jump to the exact
+      // Cross-format resume wins over every saved position: when the audiobook is ahead, jump to the exact
       // passage the narration reached (a precise text search), not the reader's own last spot.
-      if (resume && !shouldRestoreByFraction) {
-        crossFormatResumed = await resumeCrossFormat(view, resume)
-        didNavigate = crossFormatResumed
+      const crossFormatResumed =
+        options.crossFormatResume && !shouldRestoreByFraction ? await resumeCrossFormat(view, options.crossFormatResume) : false
+      let didNavigate = crossFormatResumed
+      if (!didNavigate && options.preferMediaOverlay && options.mediaOverlayFragment) {
+        didNavigate = await navigateTo(options.mediaOverlayFragment)
       }
-      if (!didNavigate && cfi && !shouldRestoreByFraction) {
-        await view
-          .goTo(cfi)
-          .then((result) => {
-            didNavigate = isResolvedNavigation(result)
-          })
-          .catch(() => {})
+      if (!didNavigate && options.cfi && !shouldRestoreByFraction) {
+        didNavigate = await navigateTo(options.cfi)
       }
-      if (!didNavigate && fallbackFraction !== undefined && fallbackFraction > 0) {
+      if (!didNavigate && options.fallbackFraction !== undefined && options.fallbackFraction > 0) {
         if (typeof view.goToFraction === 'function') {
           try {
-            await view.goToFraction(fallbackFraction)
+            await view.goToFraction(options.fallbackFraction)
             didNavigate = true
           } catch {
             didNavigate = false
           }
         }
+      }
+      if (!didNavigate && options.mediaOverlayFragment) {
+        didNavigate = await navigateTo(options.mediaOverlayFragment)
+      }
+      if (!didNavigate && options.mediaOverlaySectionIndex !== null && options.mediaOverlaySectionIndex !== undefined) {
+        didNavigate = await navigateTo(options.mediaOverlaySectionIndex)
       }
       if (!didNavigate) {
         await view.goTo(0).catch(() => {})
@@ -333,9 +374,11 @@ export function useFoliate(
           getSectionFractions?: () => number[]
           resolveNavigation?: (target: string | number) => { index?: number } | Promise<{ index?: number }>
           getTOCItemOf?: (target: string | number) => Promise<{ label?: string } | null>
-          book?: { toc?: unknown[] }
+          book?: { toc?: unknown[]; media?: { activeClass?: string } }
           renderer?: FoliateRenderer
           destroy?: () => void
+          mediaOverlay?: FoliateMediaOverlay | null
+          startMediaOverlay?: () => unknown
         })
       | null
   }
@@ -384,16 +427,12 @@ export function useFoliate(
     fraction,
     bookLanguage,
     isFixedLayout,
+    hasMediaOverlay,
+    getMediaOverlay: (): FoliateMediaOverlay | null => getViewEl()?.mediaOverlay ?? null,
+    startMediaOverlay: (): unknown => getViewEl()?.startMediaOverlay?.(),
+    getMediaActiveClass: (): string | null => getViewEl()?.book?.media?.activeClass ?? null,
     view: viewRef,
-    open: (
-      bookId: number,
-      fileId: number,
-      format: string,
-      cfi?: string | null,
-      fallbackFraction?: number,
-      options?: EpubOpenOptions,
-      resume?: CrossFormatEbookResume | null,
-    ) => open(bookId, fileId, format, cfi, fallbackFraction, options, resume),
+    open,
     prev: () => getViewEl()?.prev?.(),
     next: () => getViewEl()?.next?.(),
     goTo: (t: string | number) => getViewEl()?.goTo?.(t),

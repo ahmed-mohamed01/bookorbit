@@ -27,6 +27,9 @@ export const NotificationType = {
   BulkRenameCompleted: "bulk_rename_completed",
   BulkRenameFailed: "bulk_rename_failed",
   AchievementUnlocked: "achievement_unlocked",
+  PodcastEpisodePublished: "podcast_episode_published",
+  PodcastFeedUnhealthy: "podcast_feed_unhealthy",
+  PodcastDownloadFailed: "podcast_download_failed",
   MonitoredReleaseAvailable: "monitored_release_available",
 } as const;
 
@@ -57,6 +60,7 @@ export const NOTIFICATION_CATEGORY_IDS = [
   "fileRename",
   "bulkRename",
   "achievements",
+  "podcasts",
   "monitored",
 ] as const;
 
@@ -101,6 +105,9 @@ export const NOTIFICATION_TYPE_META: Record<NotificationType, NotificationTypeMe
   [NotificationType.BulkRenameCompleted]: { category: "bulkRename", severity: "success" },
   [NotificationType.BulkRenameFailed]: { category: "bulkRename", severity: "warning" },
   [NotificationType.AchievementUnlocked]: { category: "achievements", severity: "success" },
+  [NotificationType.PodcastEpisodePublished]: { category: "podcasts", severity: "success" },
+  [NotificationType.PodcastFeedUnhealthy]: { category: "podcasts", severity: "warning" },
+  [NotificationType.PodcastDownloadFailed]: { category: "podcasts", severity: "error" },
   [NotificationType.MonitoredReleaseAvailable]: { category: "monitored", severity: "success" },
 };
 

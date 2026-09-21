@@ -173,6 +173,23 @@ breaks it). Each is a one-line catch-up; make it rather than carry a red test.
 
 ### Merge log
 
+- **2026-09-22, upstream v3.0.0 + 5 (`970b1525`), 29 commits.** 29 conflicted files, all additive
+  unions except the reader open path. Upstream added read-aloud / media-overlay playback,
+  podcasts, a books/podcasts media mode, iOS and watchOS session sources, Prowlarr and SABnzbd,
+  and a duplicates ledger. The merge shrank four hooks: upstream's single-query
+  `countDistinctSources` reduced `achievement.repository.ts` to `'audiobookshelf'` in two `IN`
+  lists (22 -> 4) and deleted `hasAudiobookshelfSession`; upstream shipped
+  `StatsCache.clearForScopePrefix` (an item from the propose-upstream queue), so
+  `dashboard-widget.service.ts` dropped its per-user scope tracking (36 -> 19); upstream's
+  options-object `open()` let cross-format resume become one `crossFormatResume` field
+  (`useFoliate.ts` 37 -> 15, `ReaderView.vue` 38 -> 29). `book.repository.ts` kept upstream's
+  three-batch card hydration and fetches the extra progress source after it, so the pool bound
+  upstream introduced still holds. The Monitored sidebar entry gained `modes: ['books']`.
+  Fork spec drift caught up: `readAloudSync` in the `LinkBookControl` and
+  `ReadingAlignmentControl` fixtures. **Migration 0091 recreated `reading_sessions_source_chk`**,
+  the hazard "Schema decoupling" predicted; see the row-parking rule there. Migrations 0091 to
+  0095 flowed in untouched. Verified: `verify:fast` green, server 15,896 and client 7,327 tests
+  green, dev DB migrated with 223 ABS sessions parked and restored byte-identical.
 - **2026-09-16, upstream v2.10.0 (`b10bb58a`), 14 commits.** Four conflicts. Upstream moved
   audio progress out of `book.service.ts` into a new `audiobook` module whose
   `putPlaybackState` does not emit `book:progress-changed`, so the fork's emit (needed by the
@@ -242,9 +259,20 @@ migration SQL", which exists for upstream contributions - fork schema never goes
 '550a44aa480d', '8b83e5f0ee7b', '20c8ec37ddf6', 'c5c3e317e464');`
 - Do not modify upstream CHECK constraints. The `audiobookshelf` value in
   `reading_sessions_source_chk` and `reading_attempts_origin_chk` is the one accepted
-  exception. If an upstream migration ever recreates either constraint it will fail on
-  those rows: relabel or remove the `audiobookshelf` rows first, then migrate; the
-  bootstrap re-extends the constraint on the next fork boot.
+  exception. An upstream migration that recreates either constraint validates every row and
+  would fail on those values, rolling the whole migration run back.
+  - `reading_sessions.source` is handled automatically (it happened in v3.0.0, migration 0091).
+    `scripts/check-constraint-row-parking.ts` runs from `migrate.ts` beside upstream's own
+    pre-migrate compatibility steps: when a **pending** migration names the constraint, it records
+    the affected row ids in `fork_parked_check_rows` and nulls the value (the column is nullable,
+    NULL passes a CHECK, and NULL buckets as BookOrbit). The ABS bootstrap re-extends the
+    constraint and then restores the labels and drains the table. If the database moves to the
+    upstream image instead, the rows simply stay NULL until the fork returns.
+  - When upstream adds a session source, add it to the bootstrap's constraint list **and** to its
+    `LIKE` guard in `audiobookshelf-schema.ts`, or the bootstrap would re-extend with a stale list.
+  - `reading_attempts.origin` is `NOT NULL`, so it cannot be parked this way. If upstream ever
+    recreates `reading_attempts_origin_chk`, relabel those rows to a placeholder by hand, migrate,
+    boot the fork, then restore them; extend the parking script only if it recurs.
 - Bootstrap services log only when they create something or fail. A no-op boot is silent.
 
 **Switching images on prod (fork to upstream and back)**
@@ -277,29 +305,30 @@ below.
 
 ## Current conflict surface (semantic, `-w`)
 
-Measured 2026-09-16, after the upstream v2.10.0 merge (`b10bb58a`) and the review pass that
-followed it. Source files only (locales, tests and docs excluded); per-file numbers are
-added+removed with `-w`. **80 modified upstream source files, 1607 semantic lines**, down from
-83 files / 1852 lines before the review pass. Fork-authored new files (287) never conflict and
+Measured 2026-09-22, after the upstream v3.0.0 merge (`970b1525`). Source files only (locales,
+tests and docs excluded); per-file numbers are added+removed with `-w`. **80 modified upstream
+source files, 1614 semantic lines.** The v3.0.0 merge removed about 68 lines of hooks; the total
+is level with 2026-09-16 (1607) only because the per-format release-date work that landed in
+between added about 75 lines to the Hardcover client. Fork-authored new files never conflict and
 are excluded.
 
 | File                                                                                                     | Semantic          | Owner         | Status                                                                      |
 | -------------------------------------------------------------------------------------------------------- | ----------------- | ------------- | --------------------------------------------------------------------------- |
 | `scanner/scanner.service.ts`                                                                             | 287               | ABS           | Phase B (fork-internal shrink only; see rejected list)                      |
 | `metadata/metadata.service.ts`                                                                           | 134               | ABS           | cover/sidecar precedence, no ABS identifiers                                |
-| `metadata-fetch/providers/hardcover/hardcover.client.ts` + `.types.ts`                                   | 123 / 85          | monitored     | author search + contributions queries, reuse `BOOK_FIELDS`                  |
+| `metadata-fetch/providers/hardcover/hardcover.client.ts` + `.types.ts`                                   | 168 / 114         | monitored     | author search, contributions, per-format editions; reuse `BOOK_FIELDS`      |
 | `user-book-status/reading-attempt.service.ts` / `.repository.ts`                                         | 61 / 37           | ABS           | irreducible core (origin-based dedupe, soft-delete aware)                   |
 | `book-request/book-request.repository.ts` / `.service.ts` / dto                                          | 47 / 18 / 8       | monitored     | `auto_grab` column, research filter, create passthrough                     |
 | `reader/epub/epub.service.ts`                                                                            | 43                | alignment     | `extractSpineText` seam                                                     |
 | client `settings/LibrariesSettings.vue` / `LibraryRowActions.vue`                                        | 39 / 10           | ABS           | re-extract metadata library action                                          |
 | `authors/authors.repository.ts`                                                                          | 38                | monitored     | name lookup/create + portrait candidates (was 73)                           |
-| client `reader/ReaderView.vue` / `epub/composables/useFoliate.ts`                                        | 38 / 37           | alignment     | open-path resume ladder                                                     |
-| `dashboard/dashboard-widget.service.ts`                                                                  | 36                | ABS           | **generic, propose upstream** (live-cache invalidation)                     |
+| client `reader/ReaderView.vue` / `epub/composables/useFoliate.ts`                                        | 29 / 15           | alignment     | resume ladder via the `crossFormatResume` open option (was 38 / 37)         |
+| `dashboard/dashboard-widget.service.ts`                                                                  | 19                | ABS           | **generic, propose upstream** (status-change listener; was 36)              |
 | client `author/views/AuthorsView.vue` / `AuthorTile.vue` / `AuthorIndexRow.vue`                          | 35 / 25 / 25      | monitored     | monitor action via `useMonitorAuthorAction()`                               |
 | `.github/workflows/container-image.yml`                                                                  | 32                | fork          | deliberate: any-branch manual builds + stable branch-name image tag         |
-| `book/book.repository.ts`                                                                                | 29                | alignment     | `EXTRA_PROGRESS_SOURCE` seam + N-way newest-wins merge (was 61)             |
-| client `router/index.ts` / `useSidebarNav.ts` / `settings-nav.ts` / `AppSidebar.vue`                     | 28 / 20 / 19 / 12 | mixed         | route, nav and badge registration (ABS + monitored)                         |
-| `achievement/achievement.repository.ts`                                                                  | 22                | ABS           | source-bucket exhaustiveness                                                |
+| `book/book.repository.ts`                                                                                | 27                | alignment     | `EXTRA_PROGRESS_SOURCE` seam + N-way newest-wins merge (was 61)             |
+| client `router/index.ts` / `useSidebarNav.ts` / `settings-nav.ts` / `AppSidebar.vue`                     | 28 / 21 / 19 / 12 | mixed         | route, nav and badge registration (ABS + monitored)                         |
+| `achievement/achievement.repository.ts`                                                                  | 4                 | ABS           | `'audiobookshelf'` in upstream's two source `IN` lists (was 22)             |
 | `common/utils/ssrf.utils.ts`                                                                             | 21                | ABS           | generic `blockLinkLocal` option (exported helper) - **propose upstream**    |
 | client `book-requests/components/RequestSearchPanel.vue`                                                 | 20                | monitored     | quick-monitor bell via `useMonitorGroupAction()` (was 75)                   |
 | `.env.example` / `Dockerfile` / `config/config.ts`                                                       | 17 / 15 / 6       | alignment     | whisper stage + alignment config, additive                                  |
@@ -312,6 +341,7 @@ are excluded.
 | `book/book.service.ts` / `book.controller.ts`                                                            | 10 / 8            | ABS           | progress emit for file progress; `BULK_COVER_REFRESHER` seam (was 19)       |
 | `authors/authors.module.ts` / `author-enrichment-executor.service.ts`                                    | 9 / 8             | monitored     | export + `allowOrphan` flag                                                 |
 | `app.module.ts`                                                                                          | 8                 | all           | module registration                                                         |
+| `scripts/migrate.ts`                                                                                     | 2                 | ABS           | pre-migrate row parking call (generic name, no ABS identifiers)             |
 | `scanner/scanner.controller.ts` / `scanner.repository.ts`                                                | 7 / 2             | ABS           | re-extract endpoint                                                         |
 | `achievement-events.service.ts` / `koreader.service.ts`                                                  | 6 / 3             | ABS+alignment | `occurredAt` widening - **propose upstream**                                |
 | `metadata-fetch.module.ts` / `providers/goodreads/goodreads.provider.ts`                                 | 2 / 2             | monitored     | `GoodreadsProvider` exported, `fetchHtml` made public (was a copy)          |
@@ -367,8 +397,9 @@ decides on "finished" instead) and has no freshness guard (the projection needs 
 (`dashboard.service.ts`, e.g. Continue Listening) are uncached. So a status change - from **any**
 source - surfaced on the scrollers up to two minutes before the header. The fix subscribes
 `DashboardWidgetService` to the _existing_ `book.status-changed` event (Node `EventEmitter`, same
-`.on()` pattern as `StorygraphEventListener`) and calls `liveCache.clearForScope(userId)`, so the
-header refetches the moment status flips. `dashboard.module.ts` imports `AchievementModule` (already
+`.on()` pattern as `StorygraphEventListener`) and calls upstream's `liveCache.clearForScopePrefix`
+(shipped in v3.0.0, which let the fork drop its own per-user scope tracking), so the header
+refetches the moment status flips. `dashboard.module.ts` imports `AchievementModule` (already
 exported) to inject the emitter. Nothing here is Audiobookshelf-specific - it fixes the lag for Kobo,
 KOReader and manual edits too - so it is a **generic upstream improvement and should be proposed
 upstream**. It survives plugin removal untouched. Carried because the ABS reread flip is what made the
@@ -409,7 +440,7 @@ interrupted `building` rows on boot.
 | `achievement-events.service.ts` + `koreader.service.ts` | `occurredAt` (effective activity time) on the progress event                                                                                                   | **generic, shared with ABS**, additive/removable - propose upstream |
 | client `DetailsTab.vue`                                 | `<LinkBookControl>` in the action bar                                                                                                                          | keep additive (do not relocate upstream buttons)                    |
 | client `ReadingLogTab.vue` / `ReadingAttemptHistory`    | `<ReadingAlignmentControl>` via the generic `#actions` slot                                                                                                    | clean slot pattern                                                  |
-| client `ReaderView.vue`                                 | open-time `fetchEbookCrossFormatResume` + resume ladder                                                                                                        | fork-owned logic invoked from the reader open path                  |
+| client `ReaderView.vue`                                 | open-time `fetchEbookCrossFormatResume`, passed to `useFoliate` as the `crossFormatResume` open option; wins over saved CFI and media-overlay positions        | one option field, one branch, a `{ crossFormatResumed }` return     |
 | `book/book.repository.ts`                               | `EXTRA_PROGRESS_SOURCE` token (optional) feeds an N-way newest-wins merge in `enrichBookIds`; the SQL lives in `edition-link/edition-link-progress.service.ts` | one constructor param, one `Promise.all` entry, the merge branch    |
 | `Dockerfile`                                            | `whisper-builder` stage compiles whisper.cpp `v1.9.1` (CPU-only, static) -> `whisper-cli`; runtime adds `libstdc++`/`libgomp`                                  | isolated stage + one COPY                                           |
 
@@ -558,6 +589,19 @@ Each of these was analysed and deliberately left alone. Re-attempting them waste
   unwrap in upstream `common/utils/db-error.utils.ts`, but hoisting a shared
   `findPgErrorCode()` into that upstream file would add ~10 upstream lines to delete 25
   fork-only lines. Net loss on the surface that matters; rejected.
+- **Upstream `AudiobookEbookProgressSyncService` vs the alignment overlay** (checked at the v3.0.0
+  merge). Upstream's sync maps positions through an EPUB3 media-overlay (SMIL) playlist between
+  the audio file and a Storyteller-style read-aloud EPUB of the **same book**, and refuses pairs
+  whose durations differ by more than 5%. The fork's alignment projects across an **edition link
+  between two separate books** using Whisper anchors against ordinary EPUBs with no overlay.
+  Different inputs, different scope: **not substitutable, both stay.** They write disjoint rows
+  (same-book files vs the linked counterpart), so they do not fight; re-check if upstream ever
+  extends its sync across books.
+- **Upstream `TtsTextExtractorService` vs `EpubService.extractSpineText`** (checked at the v3.0.0
+  merge). Upstream's extractor serves one chapter per call (it reopens the zip each time), is not
+  exported from `TtsModule`, and splits text with `htmlToBlocks`, whereas alignment matching reads
+  the whole spine in one pass through `extractVisibleText`. Swapping normalizers would shift every
+  stored anchor. **Not substitutable; the seam stays.**
 - **`book.repository.ts` edition-link progress merge** - moved behind the generic
   `EXTRA_PROGRESS_SOURCE` token on 2026-09-16 (fork-owned provider in `edition-link/`),
   which restores plugin isolation; the merge branch itself is the irreducible part.
@@ -583,8 +627,8 @@ shrinks the footprint.
 - `metadata.service.ts`: `!= null` instead of `!== undefined` for `audibleId` /
   `librofmId` so an automated `null` cannot clobber a higher-precedence ID, and
   `tags` / `isbn10` / `isbn13` parity in `persistAudioMetadata` via upstream's `replaceTags`.
-- `dashboard-widget.service.ts`: a `clearForScopePrefix` on `StatsCache` would remove most
-  of the fork's live-cache invalidation.
+- `dashboard-widget.service.ts`: subscribe to `book.status-changed` and bust the user's live
+  scopes. (`clearForScopePrefix` itself shipped upstream in v3.0.0 and the fork now calls it.)
 - `client useBookProgressRefresh`: pass the event to the callback; the fork's detail tabs
   would then filter by `bookId` again instead of relying on the debounce.
 - `achievement-events.service.ts` / `koreader.service.ts`: the `occurredAt` widening, and

@@ -39,6 +39,12 @@
 
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.52 0.16 150);
+  --success-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.57 0.15 75);
+  --warning-foreground: oklch(0.145 0 0);
+  --info: oklch(0.52 0.17 245);
+  --info-foreground: oklch(0.985 0 0);
 
   --success: oklch(0.52 0.14 148);
   --success-foreground: oklch(0.985 0 0);
@@ -52,6 +58,9 @@
   --info: oklch(0.55 0.12 255);
 
   --star-highlight: oklch(0.76 0.18 90);
+
+  /* Android brand green, darkened in light mode so the mark still separates from the sidebar. */
+  --android-highlight: oklch(0.72 0.16 154);
 
   /* Series volume track. Kept apart from --success / --warning / --destructive because those are
      tuned to clear AA as text: as fills these only have to separate from each other and from the
@@ -133,6 +142,8 @@
   /* Annotation pill hues — fixed, accent-independent. Sources get distinct
      hues; status uses semantic tiers (Exact stays neutral via --muted). */
   --pill-web: oklch(0.55 0.16 245);
+  --pill-ios: oklch(0.58 0.16 150);
+  --pill-watchos: oklch(0.58 0.18 35);
   --pill-koreader: oklch(0.52 0.2 295);
   --pill-kobo: oklch(0.55 0.1 195);
   --pill-audiobookshelf: oklch(0.58 0.15 55);
@@ -298,6 +309,12 @@
 
   --destructive: oklch(0.704 0.191 22.216);
   --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.74 0.15 150);
+  --success-foreground: oklch(0.145 0 0);
+  --warning: oklch(0.78 0.14 75);
+  --warning-foreground: oklch(0.145 0 0);
+  --info: oklch(0.75 0.14 245);
+  --info-foreground: oklch(0.145 0 0);
 
   --success: oklch(0.72 0.15 148);
   --success-foreground: oklch(0.145 0 0);
@@ -308,6 +325,8 @@
   --info: oklch(0.72 0.12 255);
 
   --star-highlight: oklch(0.84 0.17 95);
+
+  --android-highlight: oklch(0.82 0.17 154);
 
   --volume-read: oklch(0.7 0.16 148);
   --volume-reading: oklch(0.78 0.14 75);
@@ -361,6 +380,8 @@
 
   /* Lifted lightness so pills read on dark surfaces */
   --pill-web: oklch(0.72 0.14 245);
+  --pill-ios: oklch(0.75 0.14 150);
+  --pill-watchos: oklch(0.76 0.15 35);
   --pill-koreader: oklch(0.72 0.17 295);
   --pill-kobo: oklch(0.74 0.1 195);
   --pill-audiobookshelf: oklch(0.7 0.15 55);

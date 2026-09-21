@@ -1,11 +1,13 @@
 import { computed, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, type RouteLocationNormalizedLoaded, type RouteLocationRaw } from 'vue-router'
-import { Bell, BookPlus, Highlighter, LayoutDashboard, Library, PackageOpen, Users, Wrench } from '@lucide/vue'
-import { Permission, type BrowseCounts, type SidebarSectionId } from '@bookorbit/types'
+import { Bell, BookPlus, Highlighter, LayoutDashboard, Library, ListMusic, PackageOpen, Users, Wrench } from '@lucide/vue'
+import { Permission, type BrowseCounts, type LibraryType, type SidebarSectionId } from '@bookorbit/types'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useBookDockSummary } from '@/features/book-dock/composables/useBookDockSummary'
+import { useLibraries } from '@/features/library/composables/useLibraries'
 import { useBrowseCounts } from '@/composables/useBrowseCounts'
+import { useMediaMode } from '@/composables/useMediaMode'
 
 export const SIDEBAR_ZONE_IDS = ['primary', 'browse'] as const
 export type SidebarZoneId = (typeof SIDEBAR_ZONE_IDS)[number]
@@ -18,6 +20,7 @@ interface NavContext {
   monitoredReleaseTotal: number
   monitoredReleaseLabel: string
   browseCounts: BrowseCounts | null
+  firstPodcastLibraryId: number | null
 }
 
 export interface SidebarNavBadge {
@@ -32,6 +35,8 @@ export interface SidebarNavEntry {
   labelKey: string
   icon: Component
   zone: SidebarZoneId
+  /** Absent = shown in every media mode. */
+  modes?: readonly LibraryType[]
   to: RouteLocationRaw | ((context: NavContext) => RouteLocationRaw)
   isActive: (route: RouteLocationNormalizedLoaded) => boolean
   /** Any-of: the entry is shown when the user holds at least one of these permissions. */
@@ -95,6 +100,7 @@ export const SIDEBAR_NAV_REGISTRY: readonly SidebarNavEntry[] = [
     labelKey: 'components.appHeader.bookDock',
     icon: PackageOpen,
     zone: 'primary',
+    modes: ['books'],
     to: { name: 'book-dock' },
     isActive: (route) => route.name === 'book-dock',
     permission: 'book_dock_access',
@@ -106,6 +112,7 @@ export const SIDEBAR_NAV_REGISTRY: readonly SidebarNavEntry[] = [
     labelKey: 'bookRequests.title',
     icon: BookPlus,
     zone: 'primary',
+    modes: ['books'],
     to: { name: 'book-requests' },
     // The drawer routes are children of this one, so the row has to stay lit while one is open.
     isActive: (route) => routeNameStartsWith(route, 'book-request'),
@@ -121,6 +128,7 @@ export const SIDEBAR_NAV_REGISTRY: readonly SidebarNavEntry[] = [
     to: { name: 'monitored' },
     isActive: (route) => routeNameStartsWith(route, 'monitored'),
     permission: 'book_request_access',
+    modes: ['books'],
     badge: (context) =>
       context.monitoredReleaseTotal > 0 ? { value: context.monitoredReleaseTotal, label: context.monitoredReleaseLabel, tone: 'accent' } : null,
   },
@@ -129,15 +137,28 @@ export const SIDEBAR_NAV_REGISTRY: readonly SidebarNavEntry[] = [
     labelKey: 'components.sidebar.tools',
     icon: Wrench,
     zone: 'primary',
+    modes: ['books'],
     to: (context) => ({ name: context.hasPermission('manage_libraries') ? 'tools-entity-manager' : 'tools-duplicate-books' }),
     isActive: (route) => routeNameStartsWith(route, 'tools-'),
     permission: ['manage_libraries', 'library_delete_books'],
+  },
+  {
+    id: 'podcast-queue',
+    labelKey: 'components.sidebar.queue',
+    icon: ListMusic,
+    zone: 'primary',
+    modes: ['podcasts'],
+    /** The queue spans libraries, so any podcast library's queue tab shows all of it. */
+    to: (context) => ({ name: 'podcast-library', params: { id: context.firstPodcastLibraryId ?? 0 }, query: { view: 'queue' } }),
+    isActive: (route) => route.name === 'podcast-library' && route.query.view === 'queue',
+    visible: (context) => context.firstPodcastLibraryId !== null,
   },
   {
     id: 'authors',
     labelKey: 'components.sidebar.authors',
     icon: Users,
     zone: 'browse',
+    modes: ['books'],
     to: { name: 'authors' },
     isActive: (route) => route.name === 'authors' || route.name === 'author-detail',
     badge: browseBadge('authors'),
@@ -147,6 +168,7 @@ export const SIDEBAR_NAV_REGISTRY: readonly SidebarNavEntry[] = [
     labelKey: 'components.sidebar.series',
     icon: Library,
     zone: 'browse',
+    modes: ['books'],
     to: { name: 'series' },
     isActive: (route) => route.name === 'series' || route.name === 'series-detail',
     badge: browseBadge('series'),
@@ -156,11 +178,16 @@ export const SIDEBAR_NAV_REGISTRY: readonly SidebarNavEntry[] = [
     labelKey: 'components.appHeader.annotations',
     icon: Highlighter,
     zone: 'browse',
+    modes: ['books'],
     to: { name: 'annotations' },
     isActive: (route) => route.name === 'annotations',
     badge: browseBadge('annotations'),
   },
 ]
+
+export function entryVisibleInMode(entry: SidebarNavEntry, mode: LibraryType): boolean {
+  return !entry.modes || entry.modes.includes(mode)
+}
 
 export function isNavEntryAllowed(entry: SidebarNavEntry, context: NavContext): boolean {
   if (entry.permission !== undefined) {
@@ -188,6 +215,8 @@ export function useSidebarNav(getOutstandingRequestTotal: () => number = () => 0
   const { hasPermission } = usePermissions()
   const { summary: bookDockSummary } = useBookDockSummary()
   const { counts: browseCounts } = useBrowseCounts()
+  const { libraries } = useLibraries()
+  const { mode } = useMediaMode()
 
   const context = computed<NavContext>(() => {
     const outstandingRequestTotal = getOutstandingRequestTotal()
@@ -204,6 +233,7 @@ export function useSidebarNav(getOutstandingRequestTotal: () => number = () => 0
       monitoredReleaseTotal,
       monitoredReleaseLabel: t('components.sidebar.monitoredBadge', { count: monitoredReleaseTotal }),
       browseCounts: browseCounts.value,
+      firstPodcastLibraryId: libraries.value.find((library) => library.type === 'podcasts')?.id ?? null,
     }
   })
 
@@ -212,9 +242,9 @@ export function useSidebarNav(getOutstandingRequestTotal: () => number = () => 0
       id: zoneId,
       labelKey: ZONE_LABEL_KEYS[zoneId],
       sectionId: ZONE_SECTION_IDS[zoneId],
-      entries: SIDEBAR_NAV_REGISTRY.filter((entry) => entry.zone === zoneId && isNavEntryAllowed(entry, context.value)).map((entry) =>
-        resolveNavEntry(entry, context.value, route, t(entry.labelKey)),
-      ),
+      entries: SIDEBAR_NAV_REGISTRY.filter(
+        (entry) => entry.zone === zoneId && entryVisibleInMode(entry, mode.value) && isNavEntryAllowed(entry, context.value),
+      ).map((entry) => resolveNavEntry(entry, context.value, route, t(entry.labelKey))),
     })).filter((zone) => zone.entries.length > 0),
   )
 

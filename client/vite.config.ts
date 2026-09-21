@@ -8,6 +8,8 @@ import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 const apiAgent = new Agent({ keepAlive: true })
+/** Lets a second dev client point at a throwaway API instance, so restart testing leaves the main stack alone. */
+const apiTarget = process.env.BOOKORBIT_API_TARGET ?? 'http://localhost:3000'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -147,7 +149,7 @@ export default defineConfig({
     ...(process.env.VITE_WATCH_POLLING === 'true' ? { watch: { usePolling: true, interval: 300 } } : {}),
     proxy: {
       '/api': {
-        target: 'http://localhost:3000',
+        target: apiTarget,
         agent: apiAgent,
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq, req) => {
@@ -159,7 +161,7 @@ export default defineConfig({
         },
       },
       '/socket.io': {
-        target: 'http://localhost:3000',
+        target: apiTarget,
         ws: true,
         changeOrigin: true,
       },

@@ -90,6 +90,7 @@ describe('UploadService', () => {
   const validator = {
     sanitizeFilename: vi.fn(),
     validateFormat: vi.fn(),
+    validateContent: vi.fn(),
   };
   const storage = {
     streamToTemp: vi.fn(),
@@ -106,6 +107,7 @@ describe('UploadService', () => {
   const user = { id: 7, isSuperuser: false, permissions: [] } as any;
 
   const moduleRef = { get: vi.fn().mockReturnValue(null) };
+  const pathPolicy = { assertWithinRoot: vi.fn() };
 
   let service: UploadService;
 
@@ -123,10 +125,13 @@ describe('UploadService', () => {
       storage as any,
       processor as any,
       moduleRef as any,
+      pathPolicy as any,
     );
 
     validator.sanitizeFilename.mockReturnValue('book.epub');
     validator.validateFormat.mockReturnValue('epub');
+    validator.validateContent.mockResolvedValue(undefined);
+    pathPolicy.assertWithinRoot.mockResolvedValue('/library/book.epub');
     storage.streamToTemp.mockResolvedValue({ tempPath: '/tmp/upload.bin', sizeBytes: 456 });
     storage.moveToPath.mockResolvedValue(undefined);
     storage.cleanup.mockResolvedValue(undefined);
@@ -896,7 +901,7 @@ describe('UploadService', () => {
 
     function mockElection(
       lockedBook: { primaryFileId: number | null; status: string; formatPriority: string[] },
-      files: Array<{ id: number; format: string | null; sizeBytes: number | null }>,
+      files: Array<{ id: number; format: string | null; sizeBytes: number | null; mediaOverlayAvailable?: boolean }>,
     ) {
       tx.select
         .mockReset()
@@ -1018,6 +1023,19 @@ describe('UploadService', () => {
 
       expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ primaryFileId: 10 }));
       expect(result.role).toBe('content');
+    });
+
+    it('promotes an uploaded read-aloud EPUB over an automatically selected plain EPUB', async () => {
+      db.select.mockReturnValueOnce(selectJoinChain([makeBookRow()])).mockReturnValueOnce(noHashConflict());
+      mockElection({ primaryFileId: 99, status: 'present', formatPriority: ['epub'] }, [
+        { id: 55, format: 'epub', sizeBytes: 456, mediaOverlayAvailable: true },
+        { id: 99, format: 'epub', sizeBytes: 1000, mediaOverlayAvailable: false },
+      ]);
+
+      const result = await service.addFileToBook(10, 'book.epub', {} as any, user);
+
+      expect(updateSet).toHaveBeenCalledWith(expect.objectContaining({ primaryFileId: 55 }));
+      expect(result.role).toBe('primary');
     });
 
     it('repairs a stale primary reference using the highest-priority eligible file', async () => {

@@ -139,9 +139,19 @@ DO $$ BEGIN
 		SELECT 1 FROM pg_constraint
 		WHERE conname = 'reading_sessions_source_chk'
 			AND pg_get_constraintdef(oid) LIKE '%audiobookshelf%'
+			AND pg_get_constraintdef(oid) LIKE '%watchos%'
 	) THEN
 		ALTER TABLE "reading_sessions" DROP CONSTRAINT IF EXISTS "reading_sessions_source_chk";
-		ALTER TABLE "reading_sessions" ADD CONSTRAINT "reading_sessions_source_chk" CHECK ("reading_sessions"."source" in ('web', 'koreader', 'manual', 'kobo', 'audiobookshelf'));
+		ALTER TABLE "reading_sessions" ADD CONSTRAINT "reading_sessions_source_chk" CHECK ("reading_sessions"."source" in ('web', 'ios', 'watchos', 'koreader', 'manual', 'kobo', 'audiobookshelf'));
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF to_regclass('public.fork_parked_check_rows') IS NOT NULL THEN
+		UPDATE "reading_sessions" rs SET "source" = p."original_value"
+		FROM "fork_parked_check_rows" p
+		WHERE p."table_name" = 'reading_sessions' AND p."column_name" = 'source' AND p."row_id" = rs."id" AND rs."source" IS NULL;
+		DELETE FROM "fork_parked_check_rows" WHERE "table_name" = 'reading_sessions' AND "column_name" = 'source';
 	END IF;
 END $$;
 `;

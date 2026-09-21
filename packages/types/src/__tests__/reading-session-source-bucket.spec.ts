@@ -16,6 +16,11 @@ describe("toReadingSessionSourceBucket", () => {
     expect(toReadingSessionSourceBucket("manual")).toBe("bookorbit");
   });
 
+  it("keeps iOS and Apple Watch in distinct buckets", () => {
+    expect(toReadingSessionSourceBucket("ios")).toBe("ios");
+    expect(toReadingSessionSourceBucket("watchos")).toBe("watchos");
+  });
+
   it("maps koreader to koreader", () => {
     expect(toReadingSessionSourceBucket("koreader")).toBe("koreader");
   });
@@ -35,19 +40,22 @@ describe("toReadingSessionSourceBucket", () => {
 });
 
 describe("reading session source bucket constants", () => {
-  it("exposes exactly four buckets", () => {
-    expect(READING_SESSION_SOURCE_BUCKETS).toEqual(["bookorbit", "koreader", "kobo", "audiobookshelf"]);
+  it("exposes all five display buckets", () => {
+    expect(READING_SESSION_SOURCE_BUCKETS).toEqual(["bookorbit", "ios", "watchos", "koreader", "kobo", "audiobookshelf"]);
   });
 
   it("labels every bucket", () => {
     expect(READING_SESSION_SOURCE_BUCKET_LABELS).toEqual({
       bookorbit: "BookOrbit",
+      ios: "iOS app",
+      watchos: "Apple Watch",
       koreader: "KOReader",
       kobo: "Kobo",
+      audiobookshelf: "Audiobookshelf",
     });
   });
 
   it("builds a zero-filled record", () => {
-    expect(emptySourceBucketRecord()).toEqual({ bookorbit: 0, koreader: 0, kobo: 0, audiobookshelf: 0 });
+    expect(emptySourceBucketRecord()).toEqual({ bookorbit: 0, ios: 0, watchos: 0, koreader: 0, kobo: 0, audiobookshelf: 0 });
   });
 });

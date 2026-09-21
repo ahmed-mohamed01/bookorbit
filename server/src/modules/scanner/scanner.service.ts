@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { naturalCompare } from '../../common/utils/natural-sort.utils';
 import { pathsReferToSameEntry } from '../../common/utils/path-identity.utils';
+import { selectPrimaryFile } from '../../common/utils/primary-file-selection.utils';
 import { SelfWriteRegistry } from '../../common/services/self-write-registry.service';
 
 import type {
@@ -31,7 +32,7 @@ import { readdir, stat } from 'fs/promises';
 import { classifyFile, DEFAULT_FORMAT_PRIORITY, FileRole, isAudioFormat } from './lib/classify';
 import { computeFileHash } from './lib/hash';
 import { buildSidecarCoverPathByBookId, resolveCoverReadOrder } from '../metadata/lib/cover-source-resolution';
-import { waitForStability } from './lib/stability';
+import { waitForStability } from '../../common/utils/fs-stability.utils';
 import {
   BookCandidate,
   FileStat,
@@ -45,6 +46,7 @@ import { ScannerRepository } from './scanner.repository';
 import { EXTRA_METADATA_SOURCES, type MetadataSourceProvider } from './metadata-source-provider';
 import { assembleBookCards } from '../book/utils/assemble-book-cards';
 import { LIBRARY_METADATA_PRECEDENCE_DEFAULT } from '../library/library.constants';
+import { inspectEpubMediaOverlayFields, type EpubMediaOverlayColumnFields } from '../reader/epub/epub-media-overlay-capability';
 
 interface BookEntry {
   id: number;
@@ -64,6 +66,8 @@ interface FileByPathEntry {
   format: string | null;
   role: string;
   sortOrder: number | null;
+  mediaOverlayAvailable: boolean;
+  mediaOverlayCheckedAt: Date | null;
 }
 
 interface FileByInoEntry {
@@ -136,10 +140,12 @@ interface RegisteredFile {
   format: string | null;
   role: FileRole;
   absolutePath: string;
+  sizeBytes: number;
   isNew: boolean;
   wasReassigned: boolean;
   wasChanged: boolean;
   storedFileHash: string | null;
+  mediaOverlayAvailable: boolean;
 }
 
 interface MetadataExtractionSource {
@@ -324,7 +330,12 @@ export class ScannerService implements OnApplicationBootstrap {
   }
 
   private static buildLookupMaps(
-    knownBooks: Array<{ id: number; status: string; folderPath: string; primaryFileId?: number | null }>,
+    knownBooks: Array<{
+      id: number;
+      status: string;
+      folderPath: string;
+      primaryFileId?: number | null;
+    }>,
     knownFiles: Array<{
       id: number;
       bookId: number;
@@ -337,10 +348,20 @@ export class ScannerService implements OnApplicationBootstrap {
       format: string | null;
       role: string;
       sortOrder?: number | null;
+      mediaOverlayAvailable?: boolean | null;
+      mediaOverlayCheckedAt?: Date | null;
     }>,
   ): ScanLookupMaps {
     const bookByFolderPath = new Map<string, BookEntry>(
-      knownBooks.map((b) => [b.folderPath, { id: b.id, status: b.status, folderPath: b.folderPath, primaryFileId: b.primaryFileId }]),
+      knownBooks.map((b) => [
+        b.folderPath,
+        {
+          id: b.id,
+          status: b.status,
+          folderPath: b.folderPath,
+          primaryFileId: b.primaryFileId,
+        },
+      ]),
     );
 
     const booksByParentDir = new Map<string, BookEntry[]>();
@@ -351,7 +372,12 @@ export class ScannerService implements OnApplicationBootstrap {
         arr = [];
         booksByParentDir.set(parentDir, arr);
       }
-      arr.push({ id: b.id, status: b.status, folderPath: b.folderPath, primaryFileId: b.primaryFileId });
+      arr.push({
+        id: b.id,
+        status: b.status,
+        folderPath: b.folderPath,
+        primaryFileId: b.primaryFileId,
+      });
     }
 
     const fileByPath = new Map<string, FileByPathEntry>(
@@ -368,6 +394,8 @@ export class ScannerService implements OnApplicationBootstrap {
           format: f.format,
           role: f.role,
           sortOrder: f.sortOrder ?? null,
+          mediaOverlayAvailable: f.mediaOverlayAvailable === true,
+          mediaOverlayCheckedAt: f.mediaOverlayCheckedAt ?? null,
         },
       ]),
     );
@@ -389,6 +417,15 @@ export class ScannerService implements OnApplicationBootstrap {
     }
 
     return { bookByFolderPath, booksByParentDir, fileByPath, fileByIno, fileIdsByBookId };
+  }
+
+  private async inspectMediaOverlayFields(absolutePath: string, format: string | null) {
+    return inspectEpubMediaOverlayFields(absolutePath, format, (err) => {
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.logger.warn(
+        `[scanner.media_overlay_capability] [fail] path="${sanitizeLogValue(absolutePath)}" errorClass=${error.constructor.name} error="${sanitizeLogValue(error.message)}" - EPUB media-overlay inspection failed`,
+      );
+    });
   }
 
   private bufferBookForEmit(libraryId: number, bookId: number): void {
@@ -1042,7 +1079,12 @@ export class ScannerService implements OnApplicationBootstrap {
     const knownBooks = await this.scannerRepo.findBooksByFolderPath(folderPath, libraryId);
     const knownFiles = await this.scannerRepo.findBookFilesByBookIds(knownBooks.map((b) => b.id));
     return ScannerService.buildLookupMaps(
-      knownBooks.map((b) => ({ id: b.id, status: b.status, folderPath: b.folderPath, primaryFileId: b.primaryFileId })),
+      knownBooks.map((b) => ({
+        id: b.id,
+        status: b.status,
+        folderPath: b.folderPath,
+        primaryFileId: b.primaryFileId,
+      })),
       knownFiles.map((f) => ({
         id: f.id,
         bookId: f.bookId,
@@ -1055,6 +1097,8 @@ export class ScannerService implements OnApplicationBootstrap {
         format: f.format,
         role: f.role,
         sortOrder: f.sortOrder,
+        mediaOverlayAvailable: f.mediaOverlayAvailable,
+        mediaOverlayCheckedAt: f.mediaOverlayCheckedAt,
       })),
     );
   }
@@ -1681,10 +1725,12 @@ export class ScannerService implements OnApplicationBootstrap {
           format,
           role,
           absolutePath: fileStat.absolutePath,
+          sizeBytes: fileStat.sizeBytes,
           isNew: processResult.isNew,
           wasReassigned: processResult.reassigned,
           wasChanged: forcedChanged || processResult.changed,
           storedFileHash: fileByPath.get(fileStat.absolutePath)?.fileHash ?? null,
+          mediaOverlayAvailable: fileByPath.get(fileStat.absolutePath)?.mediaOverlayAvailable === true,
         });
         retainedFileIds.add(processResult.fileId);
       }
@@ -1693,10 +1739,10 @@ export class ScannerService implements OnApplicationBootstrap {
     // Phase 2: Pick winner (primary file) from all registered content files.
     const contentFiles = registeredFiles.filter((f) => f.role === 'content');
 
-    const winner =
-      formatPriority.reduce<RegisteredFile | null>((found, fmt) => found ?? contentFiles.find((f) => f.format === fmt) ?? null, null) ??
-      contentFiles[0] ??
-      null;
+    const winner = selectPrimaryFile(
+      contentFiles.map((file) => ({ ...file, id: file.fileId })),
+      formatPriority,
+    );
 
     await this.scannerRepo.updateBookPrimaryFile(book.id, winner?.fileId ?? null);
 
@@ -2060,7 +2106,12 @@ export class ScannerService implements OnApplicationBootstrap {
         addedAt,
       });
       counts.addedCount++;
-      const entry = { id: book.id, status: book.status, folderPath: book.folderPath, primaryFileId: book.primaryFileId ?? null };
+      const entry = {
+        id: book.id,
+        status: book.status,
+        folderPath: book.folderPath,
+        primaryFileId: book.primaryFileId ?? null,
+      };
       bookByFolderPath.set(candidate.folderPath, entry);
       return { ...entry, created: true };
     }
@@ -2331,7 +2382,12 @@ export class ScannerService implements OnApplicationBootstrap {
         bookIds: [moved.id],
       } satisfies BookTransferredEvent);
     }
-    const transferred = { id: moved.id, status: moved.status, folderPath: moved.folderPath };
+    const transferred = {
+      id: moved.id,
+      status: moved.status,
+      folderPath: moved.folderPath,
+      primaryFileId: moved.primaryFileId,
+    };
     bookByFolderPath.set(candidate.folderPath, transferred);
     this.logger.log(
       `[scanner.upsert_book] [end] libraryId=${libraryId} bookId=${moved.id} folder="${sanitizeLogValue(candidate.folderPath)}" action=transfer_missing_book - missing book transferred into destination library`,
@@ -2400,12 +2456,28 @@ export class ScannerService implements OnApplicationBootstrap {
     const reassigned = byPath.bookId !== bookId;
     const sortOrderUnchanged = sortOrder === byPath.sortOrder;
     const classificationChanged = roleReclassified(byPath, role);
+    let mediaOverlayAvailable = byPath.mediaOverlayAvailable;
+    let mediaOverlayCheckedAt = byPath.mediaOverlayCheckedAt;
 
     if (sizeUnchanged && mtimeUnchanged && inoUnchanged && relPathUnchanged && !reassigned && sortOrderUnchanged && !classificationChanged) {
+      if (format?.toLowerCase() === 'epub' && byPath.mediaOverlayCheckedAt == null) {
+        const mediaOverlayFields = await this.inspectMediaOverlayFields(fileStat.absolutePath, format);
+        await this.scannerRepo.updateBookFile(byPath.id, mediaOverlayFields);
+        byPath.mediaOverlayAvailable = mediaOverlayFields.mediaOverlayAvailable;
+        byPath.mediaOverlayCheckedAt = mediaOverlayFields.mediaOverlayCheckedAt;
+        counts.updatedCount++;
+      }
       return { isNew: false, reassigned: false, changed: false, fileId: byPath.id };
     }
 
     await waitForStability(fileStat.absolutePath, fileStat.mtime.getTime());
+
+    const mediaOverlayFields: Partial<EpubMediaOverlayColumnFields> =
+      !sizeUnchanged || !mtimeUnchanged || reassigned ? await this.inspectMediaOverlayFields(fileStat.absolutePath, format) : {};
+    if ('mediaOverlayCheckedAt' in mediaOverlayFields) {
+      mediaOverlayAvailable = mediaOverlayFields.mediaOverlayAvailable === true;
+      mediaOverlayCheckedAt = mediaOverlayFields.mediaOverlayCheckedAt ?? null;
+    }
 
     if (!sizeUnchanged || !mtimeUnchanged || !inoUnchanged || !relPathUnchanged || reassigned || classificationChanged) {
       await this.scannerRepo.updateBookFile(byPath.id, {
@@ -2418,6 +2490,7 @@ export class ScannerService implements OnApplicationBootstrap {
         format,
         role,
         sortOrder,
+        ...mediaOverlayFields,
       });
       counts.updatedCount++;
     } else {
@@ -2440,6 +2513,8 @@ export class ScannerService implements OnApplicationBootstrap {
       format,
       role,
       sortOrder,
+      mediaOverlayAvailable,
+      mediaOverlayCheckedAt,
     });
     if (fileStat.ino !== 0n) {
       fileByIno.set(fileStat.ino, {
@@ -2473,6 +2548,7 @@ export class ScannerService implements OnApplicationBootstrap {
     const mtimeUnchanged = fileStat.mtime.getTime() === byIno.mtime?.getTime();
     const oldPathEntry = fileByPath.get(oldAbsolutePath);
     const classificationChanged = oldPathEntry !== undefined && roleReclassified(oldPathEntry, role);
+    const mediaOverlayFields = await this.inspectMediaOverlayFields(fileStat.absolutePath, format);
     await this.scannerRepo.updateBookFile(byIno.id, {
       bookId,
       libraryFolderId,
@@ -2483,6 +2559,7 @@ export class ScannerService implements OnApplicationBootstrap {
       format,
       role,
       sortOrder,
+      ...mediaOverlayFields,
     });
     counts.updatedCount++;
     if (oldPathEntry?.id === byIno.id) {
@@ -2499,6 +2576,8 @@ export class ScannerService implements OnApplicationBootstrap {
       format,
       role,
       sortOrder,
+      mediaOverlayAvailable: mediaOverlayFields.mediaOverlayAvailable,
+      mediaOverlayCheckedAt: mediaOverlayFields.mediaOverlayCheckedAt,
     });
     fileByIno.set(fileStat.ino, { id: byIno.id, bookId, absolutePath: fileStat.absolutePath, sizeBytes: fileStat.sizeBytes, mtime: fileStat.mtime });
     return {
@@ -2542,6 +2621,7 @@ export class ScannerService implements OnApplicationBootstrap {
     const sizeUnchanged = fileStat.sizeBytes === globalByIno.file.sizeBytes;
     const mtimeUnchanged = fileStat.mtime.getTime() === globalByIno.file.mtime?.getTime();
     const classificationChanged = roleReclassified(globalByIno.file, role);
+    const mediaOverlayFields = await this.inspectMediaOverlayFields(fileStat.absolutePath, format);
     await this.scannerRepo.updateBookFile(globalByIno.file.id, {
       bookId,
       libraryFolderId,
@@ -2553,6 +2633,7 @@ export class ScannerService implements OnApplicationBootstrap {
       format,
       role,
       sortOrder,
+      ...mediaOverlayFields,
     });
     counts.updatedCount++;
     const oldPathEntry = fileByPath.get(oldAbsolutePath);
@@ -2574,6 +2655,8 @@ export class ScannerService implements OnApplicationBootstrap {
       format,
       role,
       sortOrder,
+      mediaOverlayAvailable: mediaOverlayFields.mediaOverlayAvailable,
+      mediaOverlayCheckedAt: mediaOverlayFields.mediaOverlayCheckedAt,
     });
     fileByIno.set(fileStat.ino, {
       id: globalByIno.file.id,
@@ -2621,6 +2704,7 @@ export class ScannerService implements OnApplicationBootstrap {
       if (byHash && byHash.sizeBytes === fileStat.sizeBytes && !(await this.pathExistsAsDistinctEntry(byHash.absolutePath, fileStat.absolutePath))) {
         const oldAbsolutePath = byHash.absolutePath;
         const classificationChanged = roleReclassified(byHash, role);
+        const mediaOverlayFields = await this.inspectMediaOverlayFields(fileStat.absolutePath, format);
         await this.scannerRepo.updateBookFile(byHash.id, {
           bookId,
           libraryFolderId,
@@ -2632,6 +2716,7 @@ export class ScannerService implements OnApplicationBootstrap {
           format,
           role,
           sortOrder,
+          ...mediaOverlayFields,
         });
         counts.updatedCount++;
         const oldPathEntry = fileByPath.get(oldAbsolutePath);
@@ -2653,6 +2738,8 @@ export class ScannerService implements OnApplicationBootstrap {
           format,
           role,
           sortOrder,
+          mediaOverlayAvailable: mediaOverlayFields.mediaOverlayAvailable,
+          mediaOverlayCheckedAt: mediaOverlayFields.mediaOverlayCheckedAt,
         });
         if (fileStat.ino !== 0n) {
           fileByIno.set(fileStat.ino, {
@@ -2684,6 +2771,7 @@ export class ScannerService implements OnApplicationBootstrap {
       ) {
         const oldAbsolutePath = globalByHash.file.absolutePath;
         const classificationChanged = roleReclassified(globalByHash.file, role);
+        const mediaOverlayFields = await this.inspectMediaOverlayFields(fileStat.absolutePath, format);
         await this.scannerRepo.updateBookFile(globalByHash.file.id, {
           bookId,
           libraryFolderId,
@@ -2696,6 +2784,7 @@ export class ScannerService implements OnApplicationBootstrap {
           format,
           role,
           sortOrder,
+          ...mediaOverlayFields,
         });
         counts.updatedCount++;
         const oldPathEntry = fileByPath.get(oldAbsolutePath);
@@ -2717,6 +2806,8 @@ export class ScannerService implements OnApplicationBootstrap {
           format,
           role,
           sortOrder,
+          mediaOverlayAvailable: mediaOverlayFields.mediaOverlayAvailable,
+          mediaOverlayCheckedAt: mediaOverlayFields.mediaOverlayCheckedAt,
         });
         if (fileStat.ino !== 0n) {
           fileByIno.set(fileStat.ino, {
@@ -2736,6 +2827,7 @@ export class ScannerService implements OnApplicationBootstrap {
       }
     }
 
+    const mediaOverlayFields = await this.inspectMediaOverlayFields(fileStat.absolutePath, format);
     const fileData = {
       bookId,
       libraryFolderId,
@@ -2748,6 +2840,7 @@ export class ScannerService implements OnApplicationBootstrap {
       format,
       role,
       sortOrder,
+      ...mediaOverlayFields,
     };
     let created: Awaited<ReturnType<ScannerRepository['createBookFile']>>;
     try {
@@ -2767,6 +2860,8 @@ export class ScannerService implements OnApplicationBootstrap {
           format: concurrent.file.format,
           role: concurrent.file.role,
           sortOrder: concurrent.file.sortOrder,
+          mediaOverlayAvailable: concurrent.file.mediaOverlayAvailable,
+          mediaOverlayCheckedAt: concurrent.file.mediaOverlayCheckedAt ?? null,
         },
         fileStat,
         format,
@@ -2791,6 +2886,8 @@ export class ScannerService implements OnApplicationBootstrap {
       format,
       role,
       sortOrder,
+      mediaOverlayAvailable: mediaOverlayFields.mediaOverlayAvailable,
+      mediaOverlayCheckedAt: mediaOverlayFields.mediaOverlayCheckedAt,
     });
     if (fileStat.ino !== 0n) {
       fileByIno.set(fileStat.ino, {

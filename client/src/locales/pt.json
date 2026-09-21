@@ -3241,7 +3241,6 @@
       "searchPlaceholder": "Procurar nas configurações",
       "clearSearch": "Limpar busca",
       "noResults": "Nenhuma configuração corresponde a {query}.",
-      "shortcutHint": "Pressione Cmd K para pular para qualquer configuração",
       "status": {
         "scanning": "Analisando"
       },
@@ -3404,8 +3403,11 @@
       "trend": "Tendência de leitura diária",
       "emptyTitle": "Nenhuma atividade de leitura neste período",
       "noData": "Nenhum dado de leitura registrado para este período.",
+      "sessionCount": "{count, plural, one {# sessão} many {# sessões} other {# sessões}}",
       "sourceNames": {
         "web": "Leitor web",
+        "ios": "iOS app",
+        "watchos": "Apple Watch",
         "koreader": "KOReader",
         "manual": "Manual",
         "kobo": "Kobo",
@@ -5783,6 +5785,8 @@
         "table": {
           "title": "Sessões",
           "sourceWeb": "Web",
+          "sourceIos": "iOS app",
+          "sourceWatchos": "Apple Watch",
           "sourceManual": "Manual",
           "colDate": "Data",
           "colDateMobile": "Data",
@@ -7155,6 +7159,18 @@
       "seeAllLibraries": "Ver todas as bibliotecas ({count})",
       "seeAllSmartScopes": "Ver todos os escopos inteligentes ({count})",
       "seeAllCollections": "Ver todas as coleções ({count})",
+      "podcasts": "Podcasts",
+      "newPodcastLibrary": "New Podcast Library",
+      "noPodcastLibraries": "No podcast libraries yet",
+      "filterPodcastLibraries": "Filter podcast libraries",
+      "filterPodcastLibrariesPlaceholder": "Filter podcast libraries...",
+      "seeAllPodcastLibraries": "See all podcast libraries ({count})",
+      "queue": "Queue",
+      "mode": {
+        "books": "Books",
+        "podcasts": "Podcasts",
+        "switcherAria": "Switch between books and podcasts"
+      },
       "updateAvailable": "Atualizar {version}",
       "updateTooltip": "Atualização para {version} disponível",
       "openUpdateRelease": "Abra o lançamento do {version} no GitHub",
@@ -7209,6 +7225,8 @@
       "columnVisibilityHint": "Use o painel de visibilidade de colunas no cabeçalho da tabela para mostrar ou ocultar colunas.",
       "columnVisibilityMobileHint": "A visibilidade das colunas pode ser gerenciada no cabeçalho da tabela.",
       "searchPlaceholder": "Buscar título, autor, série, narrador...",
+      "clearSearch": "Clear search",
+      "closeSearch": "Close search",
       "mobileSearch": {
         "description": "Buscar itens por título, autor, série ou narrador.",
         "done": "Concluído"
@@ -7223,6 +7241,7 @@
         "display": "Exibição",
         "coverSize": "Tamanho da capa",
         "gridGap": "Espaçamento da grade",
+        "pixelValue": "{value} pixels",
         "showJumpRails": "Mostrar trilhos de salto",
         "columnsHint": "Use o painel de visibilidade de colunas no cabeçalho da tabela para mostrar ou ocultar colunas.",
         "coverShape": "Formato da capa",
@@ -7257,6 +7276,11 @@
       "title": "{entity} não encontrado(a)",
       "description": "Este(a) {entity} não existe ou foi excluído(a).",
       "goBack": "Voltar"
+    },
+    "media": {
+      "volume": "Volume",
+      "mute": "Mute",
+      "unmute": "Unmute"
     },
     "themePicker": {
       "light": "Claro",
@@ -7302,7 +7326,8 @@
       "sort": {
         "custom": "Ordem personalizada",
         "name": "Nome",
-        "bookCount": "Contagem de livros"
+        "bookCount": "Contagem de livros",
+        "showCount": "Show count"
       },
       "ascending": "Crescente",
       "descending": "Decrescente",
@@ -7311,7 +7336,9 @@
       "noMatches": "Sem resultados",
       "noMatchesHint": "Tente um termo de pesquisa diferente.",
       "bookCount": "Livros: {count}",
+      "showCount": "Shows: {count}",
       "librariesEmptyHint": "Criar uma biblioteca para começar a adicionar livros.",
+      "podcastLibrariesEmptyHint": "Create a podcast library to start following shows.",
       "smartScopesEmptyHint": "Escopos inteligentes salvam um conjunto de filtros que você usa com frequência.",
       "collectionsEmptyHint": "Coleções agrupam livros que você escolhe à mão."
     }
@@ -7361,6 +7388,7 @@
       "empty": {
         "continueReading": "Nenhum livro em andamento ainda. Comece a ler um para vê-lo aqui.",
         "continueListening": "Nenhum audiolivro em andamento ainda. Comece a ouvir um para vê-lo aqui.",
+        "continuePodcasts": "No podcast episodes in progress yet. Start one to see it here.",
         "wantToRead": "Nenhum livro marcado como quero ler ainda.",
         "upNextInSeries": "Nenhuma escolha para a próxima série ainda. Termine um volume para sugerir o próximo.",
         "recentlyAdded": "Nenhum livro em sua biblioteca ainda.",
@@ -7392,6 +7420,7 @@
         "recentlyAdded": "Adicionados Recentemente",
         "continueReading": "Continuar lendo",
         "continueListening": "Continuar ouvindo",
+        "continuePodcasts": "Continue Podcasts",
         "wantToRead": "Quero Ler",
         "upNextInSeries": "A Seguir na série",
         "random": "Descubra algo novo",
@@ -7719,6 +7748,17 @@
       "sending": "Enviando...",
       "queued": "{count, plural, =0 {nenhum e-mail na fila} one {um e-mail na fila} many {# e-mails na fila} other {# e-mails na fila}}",
       "failed": "Falha ao enviar"
+    }
+  },
+  "errors": {
+    "network": "Could not reach BookOrbit. Check your connection, then try again.",
+    "codes": {
+      "PODCAST_LOCAL_NO_REFRESH": "This show has no feed, so there is nothing to refresh.",
+      "PODCAST_LOCAL_NO_DOWNLOAD": "This episode is one of your own files, so there is nothing to download. Your copy is already the only one.",
+      "PODCAST_LOCAL_FILE_NOT_REMOVABLE": "This episode is one of your own files, so BookOrbit will not delete it. Remove it from the folder yourself.",
+      "PODCAST_LOCAL_MEDIA_MISSING": "The only copy of this episode is no longer on disk, so it cannot be played.",
+      "PODCAST_LOCAL_FOLDER_EMPTY": "This folder holds no audio BookOrbit can import, so it cannot become a show.",
+      "PODCAST_STORAGE_FULL": "This podcast library is out of storage. Free some space or raise its quota, then try again. Files that belong to local shows are never removed to make room."
     }
   },
   "hardcover": {
@@ -9402,7 +9442,8 @@
       "sourceDistribution": {
         "title": "Onde Você Lê",
         "emptyTitle": "Nenhuma atividade de leitura ainda",
-        "emptyDescription": "Leia na web, KOReader ou Kobo para ver sua distribuição de fontes."
+        "emptyDescription": "Leia na web, KOReader ou Kobo para ver sua distribuição de fontes.",
+        "emptyDescriptionWithAppleClients": "Read on the web, iOS app, Apple Watch, KOReader, or Kobo to see your source split."
       }
     }
   },
@@ -9552,9 +9593,7 @@
       }
     },
     "bookDuplicates": {
-      "scanSettings": "Configuração das Análises",
       "title": "Livros duplicados",
-      "description": "Verificar arquivos e metadados para potenciais registros duplicados. Nada é excluído durante uma verificação.",
       "scope": "Escopo de Biblioteca",
       "allLibraries": "Todas as bibliotecas acessíveis",
       "similarity": "Limite de título semelhante",
@@ -9566,7 +9605,6 @@
         "queued": "Escaneamento na fila",
         "running": "Analisando livros"
       },
-      "groupsFound": "{count, plural, =0 {Sem grupos duplicados} one {Um grupo duplicado} many {# grupos duplicados} other {# grupos duplicados}}",
       "filter": "Tipo de correspondência",
       "allReasons": "Todos os tipos de correspondência",
       "reasons": {
@@ -9575,17 +9613,7 @@
         "exact_metadata": "Título exato e autores",
         "fuzzy_metadata": "Título semelhante e autor"
       },
-      "similarityValue": "{percent}% de similaridade do título",
       "notDuplicates": "Não duplicados",
-      "keepThis": "Mantenha este livro",
-      "discardThis": "Descartar este livro",
-      "selectKeeperFirst": "Selecione um keeper primeiro",
-      "noDirectMatch": "Nenhum resultado direto com o keeper",
-      "moreFiles": "+{count} mais",
-      "showDetails": "Mostrar detalhes",
-      "hideDetails": "Ocultar detalhes",
-      "deleteSelected": "Deletar {count} selecionado",
-      "openBook": "Abrir detalhes do {title}",
       "unknownAuthor": "Autor desconhecido",
       "unknown": "Desconhecido",
       "none": "Nenhum",
@@ -9596,14 +9624,8 @@
         "library": "Biblioteca",
         "isbn": "ISBN",
         "formats": "Formatos",
-        "fileLocation": "Arquivo",
-        "files": "Arquivos",
-        "readingStatus": "Status de Leitura",
-        "progress": "Progresso",
-        "path": "Local da biblioteca",
         "collections": "Coleções",
-        "added": "Adicionado",
-        "updated": "Atualizado"
+        "added": "Adicionado"
       },
       "initial": {
         "title": "Localizar livros duplicados",
@@ -9614,8 +9636,6 @@
         "description": "Nenhum livro corresponde ao escopo atual, nível de similaridade e filtro correspondente."
       },
       "deleteDialog": {
-        "title": "Excluir livros duplicados permanentemente?",
-        "description": "{count, plural, =0 {This will permanently delete # selected book and its files.} one {This will permanently delete # selected book and its files.} many {This will permanently delete # selected books and their files.} other {This will permanently delete # selected books and their files.}}",
         "warning": "Metadados, coleções, leitura de dados e estado do dispositivo não são transferidos para o livro mantido. Dados associados para outros usuários também são removidos.",
         "confirm": "{count, plural, =0 {Excluir # livro?} one {Excluir # livro?} many {Excluir # livros} other {Excluir # livros}}",
         "success": "{count, plural, =0 {No books deleted} one {One duplicate book deleted} many {# duplicate books deleted} other {# duplicate books deleted}}"
@@ -10045,6 +10065,7 @@
   "titles": {
     "dashboard": "Painel",
     "libraries": "Bibliotecas",
+    "podcastLibraries": "Podcast Libraries",
     "opds": "OPDS",
     "koboSync": "Sincronização Kobo",
     "koreaderSync": "Sincronização KOReader",

@@ -6,6 +6,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Pool } from 'pg';
 
 import { createPostgresClientConfig } from '../db/postgres-connection-config';
+import { parkRowsBlockingPendingCheckConstraints } from './check-constraint-row-parking';
 import { reconcileMigrationLedgerTimestamps } from './migration-ledger-compatibility';
 import { installPostgresExtensions } from './postgres-extensions';
 import { prepareLegacySeriesIndexColumns } from './series-index-migration-compatibility';
@@ -44,6 +45,7 @@ async function runMigrations() {
     const migrationsFolder = resolveMigrationsFolder();
     await reconcileMigrationLedgerTimestamps(pool, readMigrationFiles({ migrationsFolder }));
     await prepareLegacySeriesIndexColumns(pool);
+    await parkRowsBlockingPendingCheckConstraints(pool, readMigrationFiles({ migrationsFolder }));
 
     await migrate(drizzle(pool), { migrationsFolder });
 

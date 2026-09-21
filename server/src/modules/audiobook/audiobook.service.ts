@@ -82,7 +82,16 @@ export class AudiobookService {
 
     const previous = await this.repo.findPlaybackState(user.id, bookId);
     if (previous?.operationId === dto.operationId) {
-      return (await this.getPlaybackState(bookId, user))!;
+      const existing = (await this.getPlaybackState(bookId, user))!;
+      await this.bookService.syncEbookProgressForAudiobookPlayback(
+        user,
+        bookId,
+        previous.currentFileId,
+        previous.positionSeconds,
+        previous.percentage,
+        previous.capturedAt,
+      );
+      return existing;
     }
 
     const asset = context.manifest.assets[fileIndex]!;
@@ -113,6 +122,14 @@ export class AudiobookService {
       { bookId, libraryId: context.libraryId },
       percentage,
       strongRereadEvidence ? { origin: 'bookorbit', strongRereadEvidence: true } : {},
+    );
+    await this.bookService.syncEbookProgressForAudiobookPlayback(
+      user,
+      bookId,
+      values.currentFileId,
+      values.positionSeconds,
+      percentage,
+      saved.capturedAt,
     );
     // No occurredAt from dto.capturedAt: the server-stamped updatedAt is the honest recency signal, and a backwards client clock would stall cross-format projection.
     if (previous === null || previous.percentage !== percentage) {
