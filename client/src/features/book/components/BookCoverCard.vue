@@ -53,6 +53,7 @@ import BookCoverArtwork from './BookCoverArtwork.vue'
 import BookCoverSurface from './BookCoverSurface.vue'
 import { fetchAuthors } from '@/features/author/api/author'
 import { useI18n } from 'vue-i18n'
+import { toast } from 'vue-sonner'
 import { hasReadAlong, READ_ALONG_FORMAT_COLOR, READ_ALONG_FORMAT_TITLE } from '@/features/book/lib/file-capabilities'
 
 const { t } = useI18n()
@@ -104,7 +105,7 @@ const openableFiles = computed(() => {
 })
 
 const { coverUrl, bumpVersion } = useCoverVersions()
-const coverSrc = computed(() => coverUrl(props.book.id, 'thumbnail', props.book.updatedAt ?? props.book.addedAt))
+const coverSrc = computed(() => coverUrl(props.book.id, 'thumbnail', props.book.coverVersion))
 
 const { refreshing, refreshWithFeedback } = useRefreshMetadata()
 const { isRefreshing } = useRefreshingBooks()
@@ -115,8 +116,14 @@ async function reExtractCover() {
   if (reExtractingCover.value) return
   reExtractingCover.value = true
   try {
-    await fetch(`/api/v1/books/${props.book.id}/re-extract-cover`, { method: 'POST' })
+    const res = await fetch(`/api/v1/books/${props.book.id}/re-extract-cover`, { method: 'POST' })
+    if (!res.ok) {
+      toast.error(t('book.coverRegeneration.failed'))
+      return
+    }
     bumpVersion(props.book.id)
+  } catch {
+    toast.error(t('book.coverRegeneration.failed'))
   } finally {
     reExtractingCover.value = false
   }
@@ -703,7 +710,7 @@ const secondaryLabelText = computed(() => resolveBookLabel(gridCardSecondaryLabe
                         <RefreshCw v-else class="size-4 mr-2" />
                         {{ t('book.actions.refreshMetadata') }}
                       </DropdownMenuItem>
-                      <DropdownMenuItem :disabled="reExtractingCover" @click="reExtractCover()">
+                      <DropdownMenuItem :disabled="reExtractingCover" @click="reExtractCover">
                         <Loader2 v-if="reExtractingCover" class="size-4 mr-2 animate-spin" />
                         <Image v-else class="size-4 mr-2" />
                         {{ t('book.actions.regenerateCover') }}
@@ -845,7 +852,7 @@ const secondaryLabelText = computed(() => resolveBookLabel(gridCardSecondaryLabe
                   <RefreshCw v-else class="size-4 mr-2" />
                   {{ t('book.actions.refreshMetadata') }}
                 </DropdownMenuItem>
-                <DropdownMenuItem :disabled="reExtractingCover" @click="reExtractCover()">
+                <DropdownMenuItem :disabled="reExtractingCover" @click="reExtractCover">
                   <Loader2 v-if="reExtractingCover" class="size-4 mr-2 animate-spin" />
                   <Image v-else class="size-4 mr-2" />
                   {{ t('book.actions.regenerateCover') }}

@@ -430,7 +430,7 @@ function formatBadgeStyle(fmt: string, result?: GlobalSearchResult) {
                 <BookCoverImage
                   :book-id="row.result.id"
                   type="thumbnail"
-                  :version="row.result.updatedAt"
+                  :version="row.result.coverVersion"
                   class="h-16 w-12 object-cover rounded shrink-0 bg-muted"
                   :alt="row.result.title ?? ''"
                 />
@@ -559,7 +559,7 @@ function formatBadgeStyle(fmt: string, result?: GlobalSearchResult) {
                 <BookCoverImage
                   :book-id="row.result.id"
                   type="thumbnail"
-                  :version="row.result.updatedAt"
+                  :version="row.result.coverVersion"
                   class="h-16 w-12 object-cover rounded shrink-0 bg-muted"
                   :alt="row.result.title ?? ''"
                 />

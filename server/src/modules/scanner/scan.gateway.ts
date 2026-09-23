@@ -1,4 +1,4 @@
-import { Inject, Logger, OnModuleDestroy, OnModuleInit, UnauthorizedException } from '@nestjs/common';
+import { Inject, Logger, OnModuleDestroy, OnModuleInit, Optional, UnauthorizedException } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, SubscribeMessage, WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
@@ -26,6 +26,7 @@ import {
 import { ScanJobStore } from './scan-job-store.service';
 import { rejectSocketConnection } from '../../common/utils/ws-auth.utils';
 import { appConfig } from '../../config/config';
+import { BOOK_COVER_CHANGED, BookCoverEventsService } from '../book-cover-store/book-cover-events.service';
 
 @WebSocketGateway({ namespace: '/scan', cors: { credentials: true } })
 export class ScanGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy {
@@ -35,6 +36,9 @@ export class ScanGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   private readonly handleBookProgressChanged = (payload: BookProgressChangedPayload): void => {
     this.emitBookProgressChanged(payload);
   };
+  private readonly handleCoverChanged = (event: CoverRefreshedEvent): void => {
+    this.emitCoverRefreshed(event);
+  };
 
   constructor(
     private readonly jwtService: JwtService,
@@ -42,16 +46,19 @@ export class ScanGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
     private readonly scanJobStore: ScanJobStore,
     private readonly achievementEvents: AchievementEventsService,
     @Inject(appConfig.KEY) app: ConfigType<typeof appConfig>,
+    @Optional() private readonly coverEvents?: BookCoverEventsService,
   ) {
     this.clientOrigin = app.appUrl;
   }
 
   onModuleInit(): void {
     this.achievementEvents.on(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, this.handleBookProgressChanged);
+    this.coverEvents?.on(BOOK_COVER_CHANGED, this.handleCoverChanged);
   }
 
   onModuleDestroy(): void {
     this.achievementEvents.removeListener(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, this.handleBookProgressChanged);
+    this.coverEvents?.removeListener(BOOK_COVER_CHANGED, this.handleCoverChanged);
   }
 
   afterInit(server: Server): void {
@@ -118,6 +125,7 @@ export class ScanGateway implements OnGatewayInit, OnGatewayConnection, OnGatewa
   }
 
   emitCoverRefreshed(event: CoverRefreshedEvent): void {
+    if (event.libraryId === undefined) return;
     this.server?.to(`library:${event.libraryId}`).emit('cover:refreshed', event);
   }
 

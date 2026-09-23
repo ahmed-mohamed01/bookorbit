@@ -237,6 +237,7 @@ export function assembleBookCards(
       readStatus: statusByBookId.get(row.id) ?? null,
       addedAt: row.addedAt.toISOString(),
       updatedAt: row.updatedAt?.toISOString() ?? null,
+      coverVersion: `legacy:${(row.updatedAt ?? row.addedAt).toISOString()}`,
       metadataScore: row.metadataScore ?? null,
       hasCover: row.coverSource != null,
       hasMetadataLocks: (row.lockedFields?.length ?? 0) > 0,

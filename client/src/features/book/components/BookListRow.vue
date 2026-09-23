@@ -146,7 +146,7 @@ async function setRating(star: number) {
 }
 
 const { coverUrl } = useCoverVersions()
-const coverSrc = computed(() => coverUrl(props.book.id, 'thumbnail', props.book.updatedAt ?? props.book.addedAt))
+const coverSrc = computed(() => coverUrl(props.book.id, 'thumbnail', props.book.coverVersion))
 
 const { refreshing, refreshWithFeedback } = useRefreshMetadata()
 const injectedCoverAspectRatio = inject(COVER_ASPECT_RATIO_KEY, ref(DEFAULT_COVER_ASPECT_RATIO))
@@ -197,7 +197,7 @@ function openSeriesDetails() {
 }
 
 function collapsedCoverVersion(bookId: number): string | null | undefined {
-  if (bookId === props.book.id) return props.book.updatedAt ?? props.book.addedAt
+  if (bookId === props.book.id) return props.book.coverVersion
   return collapsedSeries.value?.coverUpdatedAtByBookId?.[bookId]
 }
 

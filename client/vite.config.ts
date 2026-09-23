@@ -94,7 +94,7 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
           {
-            urlPattern: /^.*\/api\/v1\/books\/\d+\/cover(\?.*)?$/,
+            urlPattern: /^.*\/api\/v1\/books\/\d+\/cover\?(?:[^#]*&)?t=[^#]*$/,
             handler: 'CacheFirst',
             options: {
               cacheName: 'book-covers',
@@ -108,8 +108,36 @@ export default defineConfig({
             },
           },
           {
-            urlPattern: /^.*\/api\/v1\/books\/\d+\/thumbnail(\?.*)?$/,
+            urlPattern: /^.*\/api\/v1\/books\/\d+\/thumbnail\?(?:[^#]*&)?t=[^#]*$/,
             handler: 'CacheFirst',
+            options: {
+              cacheName: 'book-thumbnails',
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 60 * 60 * 24 * 30,
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
+          {
+            urlPattern: /^.*\/api\/v1\/books\/\d+\/cover(\?.*)?$/,
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'book-covers',
+              expiration: {
+                maxEntries: 200,
+                maxAgeSeconds: 60 * 60 * 24 * 30,
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
+          {
+            urlPattern: /^.*\/api\/v1\/books\/\d+\/thumbnail(\?.*)?$/,
+            handler: 'StaleWhileRevalidate',
             options: {
               cacheName: 'book-thumbnails',
               expiration: {

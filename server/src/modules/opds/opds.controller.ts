@@ -12,12 +12,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { createReadStream } from 'fs';
-import { readdir, stat } from 'fs/promises';
-import { join } from 'path';
-import { ConfigService } from '@nestjs/config';
+import { stat } from 'fs/promises';
 import type { FastifyReply } from 'fastify';
 
-import { bookCoverDirPath, bookThumbnailPath, findPreferredBookCoverFileName } from '../../common/book-cover-storage';
 import { MAX_OFFSET_ROWS, isOffsetWithinLimit } from '../../common/constants/pagination.constants';
 import { Public } from '../../common/decorators/public.decorator';
 import { imageContentTypeFromPath } from '../../common/image-content-type';
@@ -30,23 +27,18 @@ import { OpdsUser } from './opds-user.decorator';
 import { OpdsBookService } from './opds-book.service';
 import { OpdsService } from './opds.service';
 import { BookService } from '../book/book.service';
-import { MetadataService } from '../metadata/metadata.service';
+import { BookCoverStore } from '../book-cover-store/book-cover-store.service';
 
 @Controller('opds')
 @Public()
 @UseGuards(OpdsEnabledGuard, OpdsAuthGuard)
 export class OpdsController {
-  private readonly appDataPath: string;
-
   constructor(
     private readonly opdsService: OpdsService,
     private readonly opdsBookService: OpdsBookService,
-    private readonly config: ConfigService,
     private readonly bookService: BookService,
-    private readonly metadataService: MetadataService,
-  ) {
-    this.appDataPath = this.config.get<string>('storage.appDataPath')!;
-  }
+    private readonly coverStore: BookCoverStore,
+  ) {}
 
   private assertPaginationWindow(page: number, size: number): void {
     if (!isOffsetWithinLimit((page - 1) * size)) {
@@ -217,12 +209,9 @@ export class OpdsController {
   ) {
     await this.opdsBookService.validateBookAccess(bookId, user.userId, user.isSuperuser, user.contentFilters);
     reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
-    const dir = bookCoverDirPath(this.appDataPath, bookId);
     try {
-      const files = await readdir(dir);
-      const cover = findPreferredBookCoverFileName(files);
-      if (!cover) throw new NotFoundException('No cover');
-      const coverPath = join(dir, cover);
+      const coverPath = await this.coverStore.resolve(bookId, { medium: 'ebook', variant: 'cover' });
+      if (!coverPath) throw new NotFoundException('No cover');
       const { mtimeMs } = await stat(coverPath);
       const etag = `"${Math.floor(mtimeMs)}"`;
       if (ifNoneMatch === etag) {
@@ -247,7 +236,8 @@ export class OpdsController {
   ) {
     await this.opdsBookService.validateBookAccess(bookId, user.userId, user.isSuperuser, user.contentFilters);
     reply.header('Cross-Origin-Resource-Policy', 'cross-origin');
-    const thumbnailPath = bookThumbnailPath(this.appDataPath, bookId);
+    let thumbnailPath = await this.coverStore.resolve(bookId, { medium: 'ebook', variant: 'thumbnail' });
+    if (!thumbnailPath) throw new NotFoundException('No thumbnail');
     let mtimeMs: number;
     try {
       ({ mtimeMs } = await stat(thumbnailPath));
@@ -258,13 +248,14 @@ export class OpdsController {
       if (code !== 'ENOENT' && code !== 'ENOTDIR') throw new NotFoundException('No thumbnail');
 
       // A thumbnail can be missing beside an intact cover (issue #1475); rebuild it once on demand.
-      const repaired = await this.metadataService.ensureThumbnailForBook(bookId);
+      const repaired = await this.coverStore.resolve(bookId, { medium: 'ebook', variant: 'thumbnail' });
       if (!repaired) throw new NotFoundException('No thumbnail');
       try {
         ({ mtimeMs } = await stat(repaired));
       } catch {
         throw new NotFoundException('No thumbnail');
       }
+      thumbnailPath = repaired;
     }
 
     const etag = `"${Math.floor(mtimeMs)}"`;

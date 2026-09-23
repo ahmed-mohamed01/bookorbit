@@ -28,7 +28,7 @@ const { t } = useI18n()
 const { coverUrl } = useCoverVersions()
 
 const hasCover = computed(() => props.book.coverSource !== null)
-const coverSrc = computed(() => coverUrl(props.book.id, 'thumbnail', props.book.updatedAt ?? props.book.addedAt))
+const coverSrc = computed(() => coverUrl(props.book.id, 'thumbnail', props.book.coverVersion))
 const isMissing = computed(() => props.book.status === 'missing')
 
 /**

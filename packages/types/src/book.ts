@@ -103,6 +103,35 @@ export type BookMediaProfile = {
 
 type BookMediaFile = Pick<BookFileRef, "format" | "role">;
 
+export const COVER_MEDIA = ["ebook", "audio"] as const;
+export type CoverMedium = (typeof COVER_MEDIA)[number];
+
+type CoverMediaFile = BookMediaFile & {
+  mediaOverlay?: Pick<EpubMediaOverlayCapability, "available"> | null;
+  mediaOverlayAvailable?: boolean | null;
+};
+
+export type CoverMedia = {
+  hasEbook: boolean;
+  hasAudio: boolean;
+};
+
+export function getCoverMedia(files: readonly CoverMediaFile[]): CoverMedia {
+  let hasEbook = false;
+  let hasAudio = false;
+
+  for (const file of files) {
+    if (file.role !== "content" && file.role !== "primary") continue;
+    const format = file.format?.trim().toLowerCase();
+    if (!format) continue;
+    if (isAudioFormat(format)) hasAudio = true;
+    else hasEbook = true;
+    if (format === "epub" && (file.mediaOverlay?.available === true || file.mediaOverlayAvailable === true)) hasAudio = true;
+  }
+
+  return { hasEbook, hasAudio };
+}
+
 export function getPrimaryBookFile<T extends BookMediaFile>(files: readonly T[]): T | null {
   return files.find((file) => file.role === "primary") ?? files.find((file) => file.format != null) ?? files[0] ?? null;
 }
@@ -154,6 +183,7 @@ export type BookCard = {
   readStatus: UserBookStatus | null;
   addedAt: string;
   updatedAt: string | null;
+  coverVersion: string;
   metadataScore: number | null;
   hasCover: boolean;
   hasMetadataLocks: boolean;
@@ -195,11 +225,7 @@ export type ReadAloudProgressSyncMode = "auto" | "disabled";
 
 export type ReadAloudProgressSyncState = "enabled" | "disabled" | "unavailable";
 
-export type ReadAloudProgressSyncUnavailableReason =
-  | "no_media_overlay_epub"
-  | "no_audio_files"
-  | "missing_duration"
-  | "duration_mismatch";
+export type ReadAloudProgressSyncUnavailableReason = "no_media_overlay_epub" | "no_audio_files" | "missing_duration" | "duration_mismatch";
 
 export type ReadAloudProgressSync = {
   mode: ReadAloudProgressSyncMode;
@@ -250,6 +276,9 @@ export type BookDetail = {
   personalNoteUpdatedAt: string | null;
   communityRatings: BookCommunityRating[];
   coverSource: "extracted" | "custom" | null;
+  coverMedia: CoverMedium[];
+  covers: Record<CoverMedium, BookCoverSlot | null>;
+  coverVersion: string;
   hardcoverEditionId: string | null;
   providerIds: ProviderIds;
   authors: { id: number; name: string; sortName: string | null }[];
@@ -267,6 +296,13 @@ export type BookDetail = {
   lockedFields: BookMetadataLockField[];
   collections: { id: number; name: string }[];
   fileWriteStatus?: BookFileWriteStatus;
+};
+
+export type BookCoverSlot = {
+  source: "extracted" | "custom";
+  updatedAt: string;
+  width: number | null;
+  height: number | null;
 };
 
 export type BookMetadataSaveResult = {
@@ -291,6 +327,7 @@ export type BookMetadataRefreshPreviewFields = {
   seriesMemberships?: MetadataSeriesMembership[] | null;
   communityRatings?: BookCommunityRating[];
   coverUrl?: string;
+  audioCoverUrl?: string;
   googleBooksId?: string | null;
   goodreadsId?: string | null;
   amazonId?: string | null;

@@ -54,12 +54,14 @@ import { findMatchingCfiRange } from './epub/utils'
 import { getFormatGroup } from '@bookorbit/types'
 import { resolveReaderResumeTarget } from '@/lib/reading-checkpoint'
 import { api } from '@/lib/api'
+import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 
 const PdfV4ReaderView = defineAsyncComponent(() => import('./pdf-v4/PdfV4ReaderView.vue'))
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const { coverUrl } = useCoverVersions()
 const bookId = Number(route.params.bookId)
 const fileId = Number(route.params.fileId)
 const fileFormat = (route.query.format as string) || 'epub'
@@ -457,7 +459,7 @@ async function buildTtsBook(): Promise<{
     bookFileId: fileId,
     title: bookMeta.value.title ?? chapterTitle.value ?? 'Book',
     author: bookMeta.value.authors?.[0]?.name ?? null,
-    coverUrl: bookMeta.value.coverSource ? `/api/v1/books/${bookId}/cover` : null,
+    coverUrl: bookMeta.value.coverSource ? coverUrl(bookId, 'cover', bookMeta.value.coverVersion, 'audio') : null,
     totalChapters: totalSections.value,
   }
 }

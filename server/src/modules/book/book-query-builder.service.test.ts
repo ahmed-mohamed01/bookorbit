@@ -3,6 +3,8 @@ vi.mock('drizzle-orm', () => {
     vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => ({ type: 'sql', text: strings.join(''), values })),
     {
       raw: vi.fn((value: string) => ({ type: 'raw', value })),
+      join: vi.fn((chunks: unknown[]) => ({ type: 'join', chunks })),
+      identifier: vi.fn((value: string) => ({ type: 'identifier', value })),
     },
   );
 
@@ -22,6 +24,7 @@ vi.mock('drizzle-orm', () => {
     isNull: vi.fn((value: unknown) => ({ type: 'isNull', value })),
     isNotNull: vi.fn((value: unknown) => ({ type: 'isNotNull', value })),
     not: vi.fn((value: unknown) => ({ type: 'not', value })),
+    getTableName: vi.fn(() => 'table'),
     sql: sqlTag,
   };
 });
@@ -1718,6 +1721,38 @@ describe('coverRuleToSql', () => {
     const { builder } = makeBuilder();
     const where = builder.buildWhere(wrapRule({ type: 'rule', field: 'cover', operator: 'isPresent' }) as never, BASE_CTX) as any;
     expect(getRuleSql(where)).toMatchObject({ type: 'isNotNull' });
+  });
+});
+
+describe('audioCoverRuleToSql', () => {
+  it('isMissing keeps books with audio cover media and no active audio slot', () => {
+    const { builder } = makeBuilder();
+    const where = builder.buildWhere(wrapRule({ type: 'rule', field: 'audioCover', operator: 'isMissing' }) as never, BASE_CTX) as any;
+    const clause = getRuleSql(where);
+    expect(clause.type).toBe('and');
+    const [hasAudio, missingSlot] = clause.clauses;
+    expect(hasAudio.text).toContain("= 'epub'");
+    expect(missingSlot.type).toBe('not');
+    expect(missingSlot.value.values).toContain('audio');
+    expect(missingSlot.value.text).toContain('is null');
+  });
+
+  it('isPresent keeps books with audio cover media and an active audio slot', () => {
+    const { builder } = makeBuilder();
+    const where = builder.buildWhere(wrapRule({ type: 'rule', field: 'audioCover', operator: 'isPresent' }) as never, BASE_CTX) as any;
+    const clause = getRuleSql(where);
+    expect(clause.type).toBe('and');
+    const [hasAudio, activeSlot] = clause.clauses;
+    expect(hasAudio.type).toBe('sql');
+    expect(activeSlot.type).toBe('sql');
+    expect(activeSlot.values).toContain('audio');
+  });
+
+  it('rejects operators the field does not offer', () => {
+    const { builder } = makeBuilder();
+    expect(() => builder.buildWhere(wrapRule({ type: 'rule', field: 'audioCover', operator: 'isEmpty' }) as never, BASE_CTX)).toThrow(
+      BadRequestException,
+    );
   });
 });
 

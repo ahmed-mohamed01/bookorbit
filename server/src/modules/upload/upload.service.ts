@@ -339,6 +339,7 @@ export class UploadService {
       });
 
       this.processor.extractAudioDurationAsync(bookId, destination, format);
+      this.processor.reconcileCoversAsync([bookId]);
 
       this.logger.log(
         `[${event}] [end] bookId=${bookId} userId=${user.id} fileId=${inserted.id} format=${format} sizeBytes=${sizeBytes} durationMs=${Date.now() - startedAt} - add file to book completed`,

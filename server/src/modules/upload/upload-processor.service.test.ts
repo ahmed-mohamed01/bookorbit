@@ -18,6 +18,9 @@ describe('UploadProcessorService', () => {
   const orchestrator = {
     scheduleImportedBooksIfEligible: vi.fn(),
   };
+  const coverStore = {
+    removeCoverDirectory: vi.fn(),
+  };
 
   const insertBooksReturning = vi.fn();
   const insertBooksValues = vi.fn();
@@ -86,11 +89,12 @@ describe('UploadProcessorService', () => {
     updateSessionWhere.mockResolvedValue(undefined);
 
     orchestrator.scheduleImportedBooksIfEligible.mockResolvedValue(0);
+    coverStore.removeCoverDirectory.mockResolvedValue(undefined);
 
     mockStat.mockResolvedValue({ ino: 111n, mtime: new Date('2024-01-01') } as Awaited<ReturnType<typeof stat>>);
     mockComputeFileHash.mockResolvedValue('hash-abc');
 
-    service = new UploadProcessorService(db as any, metadataService as any, orchestrator as any);
+    service = new UploadProcessorService(db as any, metadataService as any, coverStore as any, orchestrator as any);
   });
 
   it('creates book, metadata, and content file rows with fingerprint/stat data in a transaction', async () => {
@@ -329,7 +333,7 @@ describe('UploadProcessorService', () => {
 
     beforeEach(() => {
       metadataService.extractAndSave.mockResolvedValue(undefined);
-      serviceNoOrch = new UploadProcessorService(db as any, metadataService as any, undefined);
+      serviceNoOrch = new UploadProcessorService(db as any, metadataService as any, coverStore as any, undefined);
     });
 
     it('createBookRecord completes without scheduling when orchestrator is undefined', async () => {
@@ -416,5 +420,34 @@ describe('UploadProcessorService', () => {
 
       expect(db.transaction).not.toHaveBeenCalled();
     });
+
+    it('removes covers of the books it created and reconciles the books it only attached to', async () => {
+      const coverReconciler = { enqueue: vi.fn().mockResolvedValue(undefined) };
+      const withCovers = new UploadProcessorService(
+        db as any,
+        metadataService as any,
+        coverStore as any,
+        orchestrator as any,
+        coverReconciler as any,
+      );
+
+      await withCovers.deleteUnitBookRecords({ bookIds: [42, 7], createdBookIds: [42], attachedFileIds: [777] });
+
+      expect(coverStore.removeCoverDirectory).toHaveBeenCalledWith(42);
+      expect(coverStore.removeCoverDirectory).not.toHaveBeenCalledWith(7);
+      expect(coverReconciler.enqueue).toHaveBeenCalledWith([7], { filesChanged: true });
+    });
+  });
+
+  it('reconciles cover slots once metadata extraction has written the file’s own cover', async () => {
+    const coverReconciler = { enqueue: vi.fn().mockResolvedValue(undefined) };
+    const withCovers = new UploadProcessorService(db as any, metadataService as any, coverStore as any, orchestrator as any, coverReconciler as any);
+    metadataService.extractAndSave.mockResolvedValue(undefined);
+    metadataService.extractAndAggregateAudioDuration.mockResolvedValue(undefined);
+
+    await withCovers.extractMetadata(7, '/tmp/book.m4b', 'm4b');
+
+    expect(coverReconciler.enqueue).toHaveBeenCalledWith([7], { filesChanged: true });
+    expect(coverReconciler.enqueue.mock.invocationCallOrder[0]).toBeGreaterThan(metadataService.extractAndSave.mock.invocationCallOrder[0]!);
   });
 });

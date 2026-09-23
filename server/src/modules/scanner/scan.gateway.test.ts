@@ -82,7 +82,7 @@ describe('emitCoverRefreshed', () => {
     const { server, to, emit } = mockServer();
     gateway['server'] = server as any;
 
-    const event: CoverRefreshedEvent = { bookId: 9, libraryId: 2 };
+    const event: CoverRefreshedEvent = { bookIds: [9], libraryId: 2 };
     gateway.emitCoverRefreshed(event);
 
     expect(to).toHaveBeenCalledWith('library:2');

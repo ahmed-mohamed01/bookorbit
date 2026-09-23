@@ -11,6 +11,8 @@ import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { bookFiles, bookMetadata, books, uploadSessions } from '../../db/schema';
 import { BookMetadataFetchOrchestratorService } from '../book-metadata-fetch/book-metadata-fetch-orchestrator.service';
+import { BookCoverStore } from '../book-cover-store/book-cover-store.service';
+import { CoverSlotReconciler } from '../metadata/cover-slot-reconciler.service';
 import { MetadataService } from '../metadata/metadata.service';
 import { computeFileHash } from '../scanner/lib/hash';
 import { inspectEpubMediaOverlayFields } from '../reader/epub/epub-media-overlay-capability';
@@ -76,8 +78,16 @@ export class UploadProcessorService {
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly metadataService: MetadataService,
+    private readonly coverStore: BookCoverStore,
     @Optional() private readonly autoFetchOrchestrator?: BookMetadataFetchOrchestratorService,
+    @Optional() private readonly coverReconciler?: CoverSlotReconciler,
   ) {}
+
+  /** A file joined or left these books, so their cover slots are brought back in line with it. */
+  reconcileCoversAsync(bookIds: readonly number[]): void {
+    if (!this.coverReconciler || bookIds.length === 0) return;
+    void this.coverReconciler.enqueue(bookIds, { filesChanged: true });
+  }
 
   private async inspectMediaOverlayFields(absolutePath: string, format: string | null) {
     return inspectEpubMediaOverlayFields(absolutePath, format, (err) => {
@@ -175,6 +185,9 @@ export class UploadProcessorService {
         await tx.delete(books).where(inArray(books.id, records.createdBookIds));
       }
     });
+    // Metadata may already have written covers for the books this unit created.
+    await Promise.allSettled(records.createdBookIds.map((bookId) => this.coverStore.removeCoverDirectory(bookId)));
+    this.reconcileCoversAsync(records.bookIds.filter((bookId) => !records.createdBookIds.includes(bookId)));
   }
 
   private async measureFile(absolutePath: string, format: string): Promise<MeasuredFile> {
@@ -289,6 +302,7 @@ export class UploadProcessorService {
       if (isAudioFormat(format)) {
         await this.metadataService.extractAndAggregateAudioDuration(bookId, absolutePath);
       }
+      this.reconcileCoversAsync([bookId]);
       this.logger.debug(`[${event}] [end] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} - metadata extraction completed`);
     } catch (err) {
       const error = err as Error;

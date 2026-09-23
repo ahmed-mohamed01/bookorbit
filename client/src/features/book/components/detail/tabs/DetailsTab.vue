@@ -23,10 +23,10 @@ import {
   TriangleAlert,
   X,
 } from '@lucide/vue'
-import { DialogClose, DialogContent, DialogOverlay, DialogPortal, DialogRoot } from 'reka-ui'
 import { getFormatColor } from '@/features/book/lib/format-colors'
 import { providerIconPathSafe } from '@/features/book/lib/provider-icons'
 import { createBookProviderLinks } from '@/features/book/lib/provider-links'
+import { faceMedium } from '@/features/book/lib/cover-slots'
 import { readingDateToDateKey } from '@/features/book/lib/reading-date'
 import { getProviderColor, PROVIDER_SHORT_LABELS } from '@/lib/provider-colors'
 import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
@@ -37,6 +37,7 @@ import { STATUS_OPTIONS, STATUS_ICONS, STATUS_COLORS, useBookStatus } from '@/fe
 import BookDownloadButton from '@/features/book/components/BookDownloadButton.vue'
 import DiscoverRow from '@/features/book/components/detail/DiscoverRow.vue'
 import BookCoverArtwork from '@/features/book/components/BookCoverArtwork.vue'
+import BookCoverLightbox from '@/features/book/components/BookCoverLightbox.vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -276,7 +277,7 @@ const coverSeed = computed(() => props.book.title ?? props.book.folderPath.split
 const coverPlaceholderTitle = computed(() => props.book.title ?? props.book.folderPath.split('/').pop() ?? null)
 const hasCover = computed(() => props.book.coverSource !== null)
 const { coverUrl } = useCoverVersions()
-const coverSrc = computed(() => coverUrl(props.book.id, 'cover', props.book.updatedAt ?? props.book.addedAt))
+const coverSrc = computed(() => coverUrl(props.book.id, 'cover', props.book.coverVersion))
 
 watch(coverSrc, () => {
   coverLoaded.value = false
@@ -352,6 +353,11 @@ const primaryFile = computed(() => props.book.files.find((f) => f.role === 'prim
 const readAlongFile = computed(() => props.book.files.find((file) => hasReadAlong(file)) ?? null)
 const hasAudioFile = computed(() => props.book.files.some((file) => file.format != null && FORMAT_TO_GROUP[file.format] === 'audio'))
 const isPrimaryAudio = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'audio')
+// The hero shows the face, whose shape follows the library rather than the primary file once slots exist.
+const isFaceAudio = computed(() => {
+  if (!props.book.covers.ebook && !props.book.covers.audio) return isPrimaryAudio.value
+  return faceMedium(props.book, coverAspectRatio.value) === 'audio'
+})
 const isPrimaryComic = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'cbx')
 const readableFiles = computed(() => props.book.files.filter((f) => f.format && READER_OPENABLE_FORMATS.has(f.format)))
 
@@ -1124,10 +1130,14 @@ function handleCoverError() {
   coverImageRatio.value = null
 }
 
+const canOpenCoverLightbox = computed(() => hasCover.value && coverLoaded.value && !coverFailed.value)
+
 function handleCoverClick() {
-  if (hasCover.value && coverLoaded.value && !coverFailed.value) {
-    coverLightboxOpen.value = true
-  }
+  if (canOpenCoverLightbox.value) coverLightboxOpen.value = true
+}
+
+function handleCoverLightboxOpenChange(open: boolean) {
+  coverLightboxOpen.value = open
 }
 
 function openEditCover() {
@@ -1335,19 +1345,26 @@ watch(
           >
             <BookCoverSurface
               class="book-cover-surface--spine-fitted group relative w-full overflow-hidden rounded-lg shadow-lg shadow-black/40"
-              :disable-spine="isPrimaryAudio"
+              :disable-spine="isFaceAudio"
               :is-comic="isPrimaryComic"
               :class="hasCover && coverLoaded && !coverFailed ? 'cursor-zoom-in' : ''"
               :style="{ aspectRatio: detailCoverAspectRatio }"
-              @click="handleCoverClick"
             >
+              <button
+                v-if="canOpenCoverLightbox"
+                type="button"
+                class="absolute inset-0 z-[4] cursor-zoom-in rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                :aria-label="t('book.detail.details.viewCover')"
+                @click="handleCoverClick"
+              />
               <Tooltip>
                 <TooltipTrigger as-child>
                   <button
-                    class="absolute top-1.5 right-1.5 z-10 p-1 rounded bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                    class="absolute top-1.5 right-1.5 z-10 p-1 rounded bg-black/50 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+                    :aria-label="t('book.detail.details.editCover')"
                     @click.stop="openEditCover"
                   >
-                    <Pencil class="size-3" />
+                    <Pencil class="size-3" aria-hidden="true" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>{{ t('book.detail.details.editCover') }}</TooltipContent>
@@ -1357,13 +1374,13 @@ watch(
                 :has-cover="hasCover"
                 :title="coverPlaceholderTitle"
                 :author-line="book.authors.map((a) => a.name).join(', ') || null"
-                :is-audio="isPrimaryAudio"
+                :is-audio="isFaceAudio"
                 :seed="coverSeed"
                 :alt="book.title ?? ''"
                 :frame-aspect-ratio="detailCoverAspectRatio"
                 loading="eager"
                 backdrop-class="blur-lg brightness-50"
-                :spine="!isPrimaryAudio"
+                :spine="!isFaceAudio"
                 :is-comic="isPrimaryComic"
                 @load="handleCoverLoad"
                 @error="handleCoverError"
@@ -2328,24 +2345,7 @@ watch(
     @confirm="handleResetReadingState"
   />
 
-  <!-- Cover lightbox -->
-  <DialogRoot :open="coverLightboxOpen" @update:open="coverLightboxOpen = $event">
-    <DialogPortal>
-      <DialogOverlay
-        class="fixed inset-0 z-50 bg-black/80 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
-      />
-      <DialogContent
-        class="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 max-w-[90vw] max-h-[90vh] outline-none data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
-      >
-        <img :src="coverSrc" :alt="book.title ?? ''" class="max-w-[90vw] max-h-[90vh] rounded-md shadow-2xl object-contain" />
-        <DialogClose
-          class="absolute -top-3 -right-3 p-1 rounded-full bg-background border border-border text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <X class="size-4" />
-        </DialogClose>
-      </DialogContent>
-    </DialogPortal>
-  </DialogRoot>
+  <BookCoverLightbox :open="coverLightboxOpen" :book="book" @update:open="handleCoverLightboxOpenChange" />
 </template>
 
 <style scoped>
