@@ -8,8 +8,8 @@ function makeGateway() {
   const authService = { validateSessionUser: vi.fn() };
   const scanJobStore = { get: vi.fn(), isRunning: vi.fn() };
   const achievementEvents = new AchievementEventsService();
-  const configService = { get: vi.fn().mockReturnValue('http://localhost:5173') };
-  const gateway = new ScanGateway(jwtService as any, authService as any, scanJobStore as any, achievementEvents, configService as any);
+  const appConfiguration = { appUrl: 'http://localhost:6263' };
+  const gateway = new ScanGateway(jwtService as any, authService as any, scanJobStore as any, achievementEvents, appConfiguration as any);
   return { gateway, jwtService, authService, scanJobStore, achievementEvents };
 }
 
@@ -180,7 +180,7 @@ describe('subscription lifecycle', () => {
 
     expect(server.engine.opts.cors).toEqual({
       methods: ['GET'],
-      origin: 'http://localhost:5173',
+      origin: 'http://localhost:6263',
       credentials: true,
     });
   });

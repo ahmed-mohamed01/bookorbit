@@ -9,7 +9,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 const apiAgent = new Agent({ keepAlive: true })
 /** Lets a second dev client point at a throwaway API instance, so restart testing leaves the main stack alone. */
-const apiTarget = process.env.BOOKORBIT_API_TARGET ?? 'http://localhost:3000'
+const apiTarget = process.env.BOOKORBIT_API_TARGET ?? 'http://localhost:6262'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -141,6 +141,8 @@ export default defineConfig({
     exclude: ['@embedpdf/core', '@embedpdf/core/vue'],
   },
   server: {
+    port: 6263,
+    strictPort: true,
     host: true,
     allowedHosts: true,
     proxy: {
