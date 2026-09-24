@@ -42,6 +42,22 @@ export function selectPrimaryFile<T extends PrimaryFileCandidate>(
 }
 
 /**
+ * {@link selectPrimaryFile} for a book that already has a primary: a file that only ties with it,
+ * such as a second EPUB beside the first, does not take its place. Only a better-ranked file does.
+ */
+export function selectPrimaryFileKeepingCurrent<T extends PrimaryFileCandidate>(
+  files: readonly T[],
+  currentPrimaryFileId: number | null,
+  formatPriority: readonly string[],
+): T | null {
+  const ordered =
+    currentPrimaryFileId == null
+      ? files
+      : [...files.filter((file) => file.id === currentPrimaryFileId), ...files.filter((file) => file.id !== currentPrimaryFileId)];
+  return selectPrimaryFile(ordered, formatPriority);
+}
+
+/**
  * A book's files in edition order: the primary first, then content files by the library's format
  * priority (a read-along EPUB ranked apart from a plain one), then covers and sidecars. The sort is
  * stable, so files of one format, an audiobook's tracks, keep the order they came in.

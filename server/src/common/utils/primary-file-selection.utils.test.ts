@@ -1,6 +1,6 @@
 import { READ_ALONG_FORMAT_PRIORITY, withoutImplicitReadAlongFormatPriority, withReadAlongFormatPriority } from '@bookorbit/types';
 
-import { rankFileRowsByBook, rankFilesByFormatPriority, selectPrimaryFile } from './primary-file-selection.utils';
+import { rankFileRowsByBook, rankFilesByFormatPriority, selectPrimaryFile, selectPrimaryFileKeepingCurrent } from './primary-file-selection.utils';
 
 describe('selectPrimaryFile', () => {
   const plainEpub = { id: 1, format: 'epub', sizeBytes: 100, mediaOverlayAvailable: false };
@@ -52,6 +52,36 @@ describe('selectPrimaryFile', () => {
     const empty = { ...readAlongEpub, sizeBytes: 0 };
     expect(selectPrimaryFile([empty], ['epub'])).toBeNull();
     expect(selectPrimaryFile([empty], ['epub'], { allowZeroByteFallback: true })).toBe(empty);
+  });
+});
+
+describe('selectPrimaryFileKeepingCurrent', () => {
+  const firstEpub = { id: 1, format: 'epub', sizeBytes: 100, mediaOverlayAvailable: false };
+  const secondEpub = { id: 2, format: 'epub', sizeBytes: 100, mediaOverlayAvailable: false };
+  const audiobook = { id: 3, format: 'm4b', sizeBytes: 300, mediaOverlayAvailable: false };
+
+  it('keeps the current primary over a file that only ties with it', () => {
+    expect(selectPrimaryFile([firstEpub, secondEpub], ['epub'])).toBe(firstEpub);
+    expect(selectPrimaryFileKeepingCurrent([firstEpub, secondEpub], secondEpub.id, ['epub'])).toBe(secondEpub);
+  });
+
+  it('replaces the current primary with a better-ranked format', () => {
+    expect(selectPrimaryFileKeepingCurrent([firstEpub, audiobook], firstEpub.id, ['m4b', 'epub'])).toBe(audiobook);
+  });
+
+  it('still lets a read-along EPUB outrank a plain current one of the same format', () => {
+    const readAlong = { ...secondEpub, mediaOverlayAvailable: true };
+    expect(selectPrimaryFileKeepingCurrent([firstEpub, readAlong], firstEpub.id, ['epub'])).toBe(readAlong);
+  });
+
+  it('ranks normally when there is no current primary, or it is not among the files', () => {
+    expect(selectPrimaryFileKeepingCurrent([firstEpub, secondEpub], null, ['epub'])).toBe(firstEpub);
+    expect(selectPrimaryFileKeepingCurrent([firstEpub, secondEpub], 99, ['epub'])).toBe(firstEpub);
+  });
+
+  it('does not keep an empty current primary', () => {
+    const emptyCurrent = { ...secondEpub, sizeBytes: 0 };
+    expect(selectPrimaryFileKeepingCurrent([firstEpub, emptyCurrent], emptyCurrent.id, ['epub'])).toBe(firstEpub);
   });
 });
 
