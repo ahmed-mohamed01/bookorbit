@@ -25,7 +25,7 @@ import type {
   MetadataProviderInfo,
   WriteResult,
 } from '@bookorbit/types'
-import { BOOK_FILE_WRITE_FIELD_LABELS, FORMAT_TO_GROUP, isValidSeriesIndex, parseSeriesIndex } from '@bookorbit/types'
+import { BOOK_FILE_WRITE_FIELD_LABELS, FORMAT_TO_GROUP, getPrimaryBookFile, isValidSeriesIndex, parseSeriesIndex } from '@bookorbit/types'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { api } from '@/lib/api'
 import { metadataScoreColor } from '@/lib/metadata-score-color'
@@ -111,7 +111,7 @@ const COMIC_FIELD_MAP = {
   locations: 'comicLocations',
 } as const
 
-const primaryFile = computed(() => props.book.files.find((f) => f.role === 'primary') ?? props.book.files[0] ?? null)
+const primaryFile = computed(() => getPrimaryBookFile(props.book.files))
 const isPrimaryAudio = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'audio')
 const isPrimaryComic = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'cbx')
 const fileWriteStatus = computed(() => props.book.fileWriteStatus ?? null)
@@ -410,10 +410,7 @@ function clearHoverRating() {
 }
 
 function formatWritableFormatList(formats: string[]): string {
-  const labels = formats.map((format) => format.toUpperCase())
-  if (labels.length <= 1) return labels[0] ?? ''
-  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`
-  return `${labels.slice(0, -1).join(', ')}, and ${labels[labels.length - 1]}`
+  return formatList(formats.map((format) => format.toUpperCase()))
 }
 
 function toggleComicSection() {

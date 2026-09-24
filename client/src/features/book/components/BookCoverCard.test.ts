@@ -602,7 +602,7 @@ describe('BookCoverCard', () => {
     it('downloads a pure multi-track audiobook as an audio ZIP', async () => {
       const book = makeBook({
         id: 42,
-        files: [makeFile({ id: 10, format: 'mp3', role: 'primary' }), makeFile({ id: 11, format: 'mp3', role: 'secondary' })],
+        files: [makeFile({ id: 10, format: 'mp3', role: 'primary' }), makeFile({ id: 11, format: 'mp3', role: 'content' })],
       })
       const wrapper = mountCard({ book })
       const downloadItem = wrapper.findAll('[data-testid="dropdown-item"]').find((item) => item.text().trim() === 'Download')
@@ -619,8 +619,8 @@ describe('BookCoverCard', () => {
         id: 77,
         files: [
           makeFile({ id: 20, format: 'mp3', role: 'primary' }),
-          makeFile({ id: 21, format: 'mp3', role: 'secondary' }),
-          makeFile({ id: 22, format: 'epub', role: 'secondary' }),
+          makeFile({ id: 21, format: 'mp3', role: 'content' }),
+          makeFile({ id: 22, format: 'epub', role: 'content' }),
         ],
       })
       const wrapper = mountCard({ book })
@@ -634,7 +634,7 @@ describe('BookCoverCard', () => {
       mockExportBooks.mockClear()
       mockDownloadFile.mockClear()
 
-      const epubItems = wrapper.findAll('[data-testid="dropdown-item"]').filter((item) => item.text().trim() === 'EPUB')
+      const epubItems = wrapper.findAll('[data-testid="dropdown-item"]').filter((item) => item.text().trim() === 'EPUB e-book')
       expect(epubItems).toHaveLength(2)
       await epubItems[1]!.trigger('click')
 

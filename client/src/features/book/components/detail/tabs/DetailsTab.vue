@@ -23,7 +23,8 @@ import {
   TriangleAlert,
   X,
 } from '@lucide/vue'
-import { getFormatColor } from '@/features/book/lib/format-colors'
+import BookFormatChip from '@/features/book/components/BookFormatChip.vue'
+import { bookFormatEntries, fileFormatKey, formatKeyName } from '@/features/book/lib/book-formats'
 import { providerIconPathSafe } from '@/features/book/lib/provider-icons'
 import { createBookProviderLinks } from '@/features/book/lib/provider-links'
 import { faceMedium } from '@/features/book/lib/cover-slots'
@@ -31,7 +32,7 @@ import { readingDateToDateKey } from '@/features/book/lib/reading-date'
 import { getProviderColor, PROVIDER_SHORT_LABELS } from '@/lib/provider-colors'
 import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import { COVER_ASPECT_RATIO_KEY, DEFAULT_COVER_ASPECT_RATIO } from '@/features/book/lib/cover-aspect-ratio'
-import { FORMAT_TO_GROUP, READER_OPENABLE_FORMATS } from '@bookorbit/types'
+import { FORMAT_TO_GROUP, getPrimaryBookFile, READER_OPENABLE_FORMATS } from '@bookorbit/types'
 import type { BookDetail, BookKoboState, CustomMetadataBookValue, ReadAloudProgressSync, ReadStatus, UserBookStatus } from '@bookorbit/types'
 import { STATUS_OPTIONS, STATUS_ICONS, STATUS_COLORS, useBookStatus } from '@/features/book/composables/useBookStatus'
 import BookDownloadButton from '@/features/book/components/BookDownloadButton.vue'
@@ -64,11 +65,11 @@ import BookCoverSurface from '@/features/book/components/BookCoverSurface.vue'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import HardcoverBookSyncGridItem from '@/features/hardcover/components/HardcoverBookSyncGridItem.vue'
 import StorygraphBookSyncGridItem from '@/features/storygraph/components/StorygraphBookSyncGridItem.vue'
-import BookEditionsCard from '@/features/book/components/detail/details/BookEditionsCard.vue'
+import BookEditionsCard, { type EditionProgress } from '@/features/book/components/detail/details/BookEditionsCard.vue'
 import BookReadingActivityCard from '@/features/book/components/detail/details/BookReadingActivityCard.vue'
 import { useBookReadingLog } from '@/features/book/composables/useBookReadingLog'
 import { useProviderLinkSettings } from '@/features/book/composables/useProviderLinkSettings'
-import { hasReadAlong, isReadAlongFormat, READ_ALONG_FORMAT_COLOR, READ_ALONG_FORMAT_TITLE } from '@/features/book/lib/file-capabilities'
+import { hasReadAlong } from '@/features/book/lib/file-capabilities'
 
 type FileProgress = {
   percentage: number
@@ -349,7 +350,7 @@ const detailCoverAspectRatio = computed(() => {
 
   return `${coverImageRatio.value} / 1`
 })
-const primaryFile = computed(() => props.book.files.find((f) => f.role === 'primary') ?? props.book.files[0] ?? null)
+const primaryFile = computed(() => getPrimaryBookFile(props.book.files))
 const readAlongFile = computed(() => props.book.files.find((file) => hasReadAlong(file)) ?? null)
 const hasAudioFile = computed(() => props.book.files.some((file) => file.format != null && FORMAT_TO_GROUP[file.format] === 'audio'))
 const isPrimaryAudio = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'audio')
@@ -359,21 +360,14 @@ const isFaceAudio = computed(() => {
   return faceMedium(props.book, coverAspectRatio.value) === 'audio'
 })
 const isPrimaryComic = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'cbx')
-const readableFiles = computed(() => props.book.files.filter((f) => f.format && READER_OPENABLE_FORMATS.has(f.format)))
-
-// For multi-file audiobooks, collapse all tracks into one representative entry.
-const isMultiTrackAudio = computed(() => {
-  const audioFiles = readableFiles.value.filter((f) => FORMAT_TO_GROUP[f.format!] === 'audio')
-  return audioFiles.length > 1
-})
-const openableFiles = computed(() => {
-  if (isMultiTrackAudio.value) {
-    const first = readableFiles.value.find((f) => FORMAT_TO_GROUP[f.format!] === 'audio')
-    const nonAudio = readableFiles.value.filter((f) => FORMAT_TO_GROUP[f.format!] !== 'audio')
-    return first ? [first, ...nonAudio] : nonAudio
-  }
-  return readableFiles.value
-})
+const formatEntries = computed(() => bookFormatEntries(props.book.files, props.book.formatPriority))
+const isMultiTrackAudio = computed(() => formatEntries.value.some((entry) => entry.audio && entry.files.length > 1))
+// A multi-file audiobook opens from its first track, so it is one entry in the menu.
+const openableFiles = computed(() =>
+  formatEntries.value
+    .flatMap((entry) => (entry.audio ? entry.files.slice(0, 1) : entry.files))
+    .filter((file) => READER_OPENABLE_FORMATS.has(file.format!.toLowerCase())),
+)
 const hasMultipleFiles = computed(() => openableFiles.value.length > 1)
 const readAloudSync = ref<ReadAloudProgressSync>(props.book.readAloudSync)
 const readAloudSyncSaving = ref(false)
@@ -445,27 +439,11 @@ async function handleToggleReadAloudSync() {
 }
 const authorLinks = computed(() => props.book.authors.filter((author) => author.name.trim().length > 0))
 const narratorLine = computed(() => props.book.audioMetadata?.narrators?.map((n) => n.name).join(', ') || null)
-const formats = computed(() => {
-  const all = [...new Set(props.book.files.filter((f) => f.format && FORMAT_TO_GROUP[f.format]).map((f) => f.format!))]
-  const priority = props.book.formatPriority
-  const sorted = priority.length
-    ? all.sort((a, b) => {
-        const ai = priority.indexOf(a)
-        const bi = priority.indexOf(b)
-        return (ai === -1 ? Infinity : ai) - (bi === -1 ? Infinity : bi)
-      })
-    : all
-  const primary = primaryFile.value?.format
-  if (!primary) return sorted
-  return [primary, ...sorted.filter((f) => f !== primary)]
-})
-
 function formatDuration(seconds: number | null | undefined): string {
   if (seconds == null) return '-'
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  if (h > 0) return `${h}h ${m}m`
-  return `${m}m`
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  return hours > 0 ? t('book.detail.details.durationHm', { hours, minutes }) : t('book.detail.details.durationM', { minutes })
 }
 
 const localRating = ref<number | null>(null)
@@ -863,85 +841,33 @@ const detailProgressRows = computed(() =>
     .filter(({ progress, percentage }) => percentage > 0 || hasMediaOverlayProgress(progress)),
 )
 
-type ProgressRow = {
-  label: string
-  percentage: number
-  color: string
-  badgeStyle: Record<string, string>
-  finished: boolean
-  resetFileId: number | null
-}
-
-const KOBO_COLOR = '#f59e0b'
-
-const leftColumnProgressRows = computed<ProgressRow[]>(() => {
-  const rows: ProgressRow[] = []
-
+/**
+ * One bar per edition: each read file's own progress, and the audiobook's playback position on the
+ * audio edition. Two files of one edition keep the further of the two.
+ */
+const editionProgress = computed<EditionProgress[]>(() => {
+  const byKey = new Map<string, EditionProgress>()
   for (const { file, percentage } of detailProgressRows.value) {
-    const color = getFormatColor(file.format ?? '?')
-    rows.push({
-      label: (file.format ?? '?').toUpperCase(),
-      percentage,
-      color,
-      badgeStyle: { color, borderColor: `${color}66`, backgroundColor: `${color}1a` },
-      finished: percentage >= 100,
-      resetFileId: file.id,
-    })
+    const key = fileFormatKey(file)
+    if (!key) continue
+    const current = byKey.get(key)
+    if (current && current.percentage >= percentage) continue
+    byKey.set(key, { key, percentage, finished: percentage >= 100, resetFileId: file.id })
   }
-
-  if (audiobookProgress.value && audiobookProgress.value.percentage > 0) {
-    const format = 'audio'
-    const color = getFormatColor(format)
-    rows.push({
-      label: format.toUpperCase(),
-      percentage: audiobookProgress.value.percentage,
-      color,
-      badgeStyle: { color, borderColor: `${color}66`, backgroundColor: `${color}1a` },
-      finished: audiobookProgress.value.percentage >= 100,
-      resetFileId: -props.book.id,
-    })
+  const audioEntry = formatEntries.value.find((entry) => entry.audio)
+  const audioPercentage = audiobookProgress.value?.percentage ?? 0
+  if (audioEntry && audioPercentage > 0) {
+    byKey.set(audioEntry.key, { key: audioEntry.key, percentage: audioPercentage, finished: audioPercentage >= 100, resetFileId: -props.book.id })
   }
-  const koboPercent = koboState.value?.readingState?.progressPercent
-  if (canViewKobo.value && koboPercent != null && koboPercent > 0) {
-    rows.push({
-      label: 'Kobo',
-      percentage: koboPercent,
-      color: KOBO_COLOR,
-      badgeStyle: { color: KOBO_COLOR, borderColor: `${KOBO_COLOR}66`, backgroundColor: `${KOBO_COLOR}1a` },
-      finished: koboPercent >= 100,
-      resetFileId: null,
-    })
-  }
-  if (canViewKoreader.value && koreaderBookProgress.value != null && koreaderBookProgress.value.canonicalPercentage > 0) {
-    const koreaderColor = '#b3b910'
-    rows.push({
-      label: 'KO-R',
-      percentage: koreaderBookProgress.value.canonicalPercentage,
-      color: koreaderColor,
-      badgeStyle: { color: koreaderColor, borderColor: `${koreaderColor}66`, backgroundColor: `${koreaderColor}1a` },
-      finished: koreaderBookProgress.value.canonicalPercentage >= 100,
-      resetFileId: null,
-    })
-  }
-  return rows
+  return [...byKey.values()]
 })
 
-/** Editions renders one bar per format, so device rows collapse onto their format's row. */
 watch(bookIdRef, () => {
   void reloadReadingLog()
 })
 
-const editionProgress = computed(() =>
-  leftColumnProgressRows.value.map((row) => ({
-    format: row.label.toLowerCase(),
-    percentage: row.percentage,
-    finished: row.finished,
-    resetFileId: row.resetFileId,
-  })),
-)
-
-function handleEditionReset(format: string) {
-  const row = leftColumnProgressRows.value.find((entry) => entry.label.toLowerCase() === format.toLowerCase())
+function handleEditionReset(key: string) {
+  const row = editionProgress.value.find((entry) => entry.key === key)
   if (row) void handleResetFileProgress(row)
 }
 
@@ -1048,19 +974,6 @@ function formatPercent(value: number): string {
 
 function formatDate(iso: string): string {
   return formatLocaleDate(new Date(iso), { year: 'numeric', month: 'short', day: 'numeric', timeZone: userTimeZone.value })
-}
-
-function formatBadgeStyle(fmt: string) {
-  const color = formatHasReadAlong(fmt) ? READ_ALONG_FORMAT_COLOR : getFormatColor(fmt)
-  return {
-    color,
-    borderColor: `${color}66`,
-    backgroundColor: `${color}1a`,
-  }
-}
-
-function formatHasReadAlong(fmt: string): boolean {
-  return isReadAlongFormat(fmt, readAlongFile.value != null)
 }
 
 function providerLinkStyle(provider: string) {
@@ -1184,10 +1097,10 @@ function setFileResetting(fileId: number, resetting: boolean): void {
   resettingFileIds.value = resettingFileIds.value.filter((id) => id !== fileId)
 }
 
-async function handleResetFileProgress(row: ProgressRow) {
+async function handleResetFileProgress(row: EditionProgress) {
   const fileId = row.resetFileId
   if (fileId == null || isResettingFile(fileId)) return
-  if (!window.confirm(t('book.detail.details.resetProgressConfirm', { label: row.label }))) return
+  if (!window.confirm(t('book.detail.details.resetProgressConfirm', { label: formatKeyName(row.key) }))) return
 
   setFileResetting(fileId, true)
   try {
@@ -1460,7 +1373,7 @@ watch(
                 :disabled="!primaryFile"
                 @click="openBook"
               >
-                <BookOpen v-if="isPrimaryAudio" class="size-4" />
+                <Headphones v-if="isPrimaryAudio" class="size-4" />
                 <BookOpen v-else class="size-4" />
                 {{ isPrimaryAudio ? t('book.detail.details.listen') : t('book.detail.details.read') }}
               </button>
@@ -1481,11 +1394,7 @@ watch(
                     class="flex w-full items-center gap-2.5 px-2 py-1.5 rounded text-sm hover:bg-muted transition-colors"
                     @click="openBookFile(file)"
                   >
-                    <span
-                      class="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border shrink-0"
-                      :style="formatBadgeStyle(file.format ?? '?')"
-                      >{{ file.format ?? '?' }}</span
-                    >
+                    <BookFormatChip :format-key="fileFormatKey(file) ?? '?'" class="shrink-0 rounded px-1.5 py-0.5 text-[10px] tracking-wider" />
                     <span class="flex-1 text-left text-muted-foreground text-xs truncate">
                       <template v-if="isMultiTrackAudio && FORMAT_TO_GROUP[file.format!] === 'audio'">{{
                         t('book.detail.details.audiobook')
@@ -1527,7 +1436,7 @@ watch(
 
           <div class="flex gap-2">
             <div v-if="hasPermission('library_download')" class="flex-1">
-              <BookDownloadButton :files="book.files" :book-id="book.id" />
+              <BookDownloadButton :files="book.files" :book-id="book.id" :format-priority="book.formatPriority" />
             </div>
             <button
               class="flex flex-1 items-center justify-center h-9 rounded-md border border-input bg-background text-sm hover:bg-muted transition-colors"
@@ -1737,23 +1646,14 @@ watch(
       </div>
 
       <!-- Format badges + provider links -->
-      <div v-if="formats.length || providerLinks.length || unlinkedCommunityBadges.length" class="flex flex-wrap items-center gap-2">
-        <span
-          v-for="fmt in formats"
-          :key="fmt"
-          class="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border"
-          :style="formatBadgeStyle(fmt)"
-          :title="formatHasReadAlong(fmt) ? READ_ALONG_FORMAT_TITLE : undefined"
-        >
-          <Tooltip v-if="fmt === primaryFile?.format">
-            <TooltipTrigger as-child>
-              <span class="size-1.5 rounded-full shrink-0" :style="{ backgroundColor: 'currentColor' }" />
-            </TooltipTrigger>
-            <TooltipContent>{{ t('book.detail.details.primaryFormat') }}</TooltipContent>
-          </Tooltip>
-          {{ fmt }}
-          <Headphones v-if="formatHasReadAlong(fmt)" class="size-3 shrink-0" :stroke-width="2.5" aria-hidden="true" />
-        </span>
+      <div v-if="formatEntries.length || providerLinks.length || unlinkedCommunityBadges.length" class="flex flex-wrap items-center gap-2">
+        <BookFormatChip
+          v-for="entry in formatEntries"
+          :key="entry.key"
+          :format-key="entry.key"
+          :primary="entry.primary"
+          class="rounded px-2 py-0.5 text-[10px] tracking-wider"
+        />
         <div v-if="providerLinks.length || unlinkedCommunityBadges.length" class="flex items-center flex-wrap gap-2 w-full sm:w-auto sm:shrink-0">
           <div class="hidden sm:block w-px h-3.5 bg-border" />
           <a

@@ -204,7 +204,7 @@ describe('BookListRow - present state', () => {
     thumbnailClickAction.value = 'details'
     const wrapper = mount(BookListRow, { props: { book: presentBook }, global: globalStubs })
 
-    const formatButton = wrapper.findAll('button').find((button) => button.text() === 'epub')
+    const formatButton = wrapper.findAll('button').find((button) => button.text() === 'EPUB')
     expect(formatButton).toBeDefined()
     await formatButton!.trigger('click')
 
@@ -234,7 +234,7 @@ describe('BookListRow - present state', () => {
       global: globalStubs,
     })
 
-    expect(wrapper.text()).toContain('epub')
+    expect(wrapper.text()).toContain('EPUB')
     expect(wrapper.text()).not.toContain('NARR')
     expect(wrapper.text()).toContain('Open read-along EPUB')
     expect(wrapper.find('.lucide-headphones').exists()).toBe(true)

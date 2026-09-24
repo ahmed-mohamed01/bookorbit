@@ -27,6 +27,21 @@ export function isComicFormat(format: string): boolean {
   return COMIC_FORMATS.has(format.toLowerCase());
 }
 
+const BOOK_FORMAT_SET = new Set<string>(BOOK_FORMATS);
+
+/** A format BookOrbit reads or plays. Covers, sidecars and anything else a book folder holds are not. */
+export function isBookFormat(format: string | null | undefined): boolean {
+  return format != null && BOOK_FORMAT_SET.has(format.toLowerCase());
+}
+
+/**
+ * A readable or listenable edition of the book, as opposed to its cover or a sidecar such as an
+ * OPF or a text file. `primary` is the role the API reports for the book's primary file.
+ */
+export function isContentBookFile(file: { format: string | null; role: string }): boolean {
+  return (file.role === "content" || file.role === "primary") && isBookFormat(file.format);
+}
+
 /** What BookOrbit accepts as an ebook, and what an ebook tier may therefore ask for. */
 export const EBOOK_FORMAT_LIST = ["epub", "kepub", "mobi", "azw3", "azw", "fb2", "pdf", "djvu"] as const;
 
@@ -133,7 +148,13 @@ export function getCoverMedia(files: readonly CoverMediaFile[]): CoverMedia {
 }
 
 export function getPrimaryBookFile<T extends BookMediaFile>(files: readonly T[]): T | null {
-  return files.find((file) => file.role === "primary") ?? files.find((file) => file.format != null) ?? files[0] ?? null;
+  return (
+    files.find((file) => file.role === "primary") ??
+    files.find((file) => isContentBookFile(file)) ??
+    files.find((file) => file.format != null) ??
+    files[0] ??
+    null
+  );
 }
 
 export function getBookMediaKind(format: string | null | undefined): BookMediaKind {

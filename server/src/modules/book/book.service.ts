@@ -1573,8 +1573,7 @@ export class BookService {
       } else if (wasPrimary) {
         const contentFiles = remaining.filter((candidate) => candidate.role === 'content');
         const library = await this.libraryService.findOne(file.libraryId);
-        const newPrimary =
-          selectPrimaryFile(contentFiles, library.formatPriority ?? DEFAULT_FORMAT_PRIORITY, { allowZeroByteFallback: true }) ?? remaining[0];
+        const newPrimary = selectPrimaryFile(contentFiles, library.formatPriority ?? DEFAULT_FORMAT_PRIORITY, { allowZeroByteFallback: true });
         await this.bookRepo.updateBookPrimaryFile(file.bookId, newPrimary?.id ?? null);
       }
       void this.coverReconciler?.enqueue([file.bookId], { filesChanged: true });

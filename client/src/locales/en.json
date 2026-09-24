@@ -4785,6 +4785,26 @@
       "primary": "Primary",
       "audiobook": "Audiobook"
     },
+    "formats": {
+      "epub": "EPUB e-book",
+      "kepub": "KEPUB e-book",
+      "pdf": "PDF document",
+      "cbz": "CBZ comic",
+      "cbr": "CBR comic",
+      "cb7": "CB7 comic",
+      "mobi": "MOBI e-book",
+      "azw3": "AZW3 e-book",
+      "azw": "AZW e-book",
+      "fb2": "FictionBook",
+      "m4b": "M4B audiobook",
+      "mp3": "MP3 audio",
+      "m4a": "M4A audio",
+      "opus": "Opus audio",
+      "ogg": "OGG audio",
+      "flac": "FLAC audio",
+      "readAlong": "Read-along EPUB",
+      "primary": "Primary format"
+    },
     "actions": {
       "read": "Read",
       "listen": "Listen",
@@ -4834,7 +4854,10 @@
       "progressPercent": "Downloading {percent} of {total}",
       "progressBytes": "Downloading {transferred}",
       "failed": "Download failed",
-      "exportFailed": "Export failed"
+      "exportFailed": "Export failed",
+      "audiolessEpub": "KOReader EPUB",
+      "audiolessEpubHint": "Download EPUB for KOReader with audio files removed",
+      "noAudio": "no audio"
     },
     "sort": {
       "moveUp": "Move up",
@@ -5279,6 +5302,7 @@
         "viewCover": "View larger cover",
         "finished": "Finished",
         "resetFileProgress": "Reset file progress",
+        "resetEditionProgress": "Reset progress for {format}",
         "resetting": "Resetting...",
         "resetProgressConfirm": "Reset stored reading progress for {label}?",
         "moreCount": "+{count} more",
@@ -6305,6 +6329,8 @@
       "read": {
         "play": "Play",
         "read": "Read",
+        "readFormat": "Read {format}",
+        "playFormat": "Play {format}",
         "primary": "Primary",
         "peekFormat": "Peek {format}",
         "chooseFormat": "Choose format to read or play",
@@ -8560,7 +8586,9 @@
         "formatPriority": {
           "title": "Format priority",
           "hint": "When a book has multiple formats, the format highest in the list is preferred."
-        }
+        },
+        "moveUp": "Move {item} up",
+        "moveDown": "Move {item} down"
       },
       "fileWrite": {
         "maxFileSizeMb": "Max file size (MB)",

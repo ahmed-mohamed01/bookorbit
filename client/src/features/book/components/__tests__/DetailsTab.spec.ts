@@ -596,7 +596,7 @@ describe('DetailsTab - present state', () => {
 
     await flushPromises()
 
-    expect(wrapper.text()).toContain('epub')
+    expect(wrapper.text()).toContain('Read-along EPUB')
     expect(wrapper.text()).toContain('25%')
   })
 
@@ -641,7 +641,7 @@ describe('DetailsTab - present state', () => {
 
     await flushPromises()
 
-    const fileResetButton = wrapper.find('button[aria-label="Reset file progress"]')
+    const fileResetButton = wrapper.find('button[aria-label="Reset progress for EPUB e-book"]')
     expect(fileResetButton.exists()).toBe(true)
 
     await fileResetButton.trigger('click')

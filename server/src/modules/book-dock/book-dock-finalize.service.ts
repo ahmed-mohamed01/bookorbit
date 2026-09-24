@@ -30,9 +30,10 @@ import type {
   MetadataSeriesMembership,
 } from '@bookorbit/types';
 import {
-  DEFAULT_FORMAT_PRIORITY,
+  formatKeyRank,
   isAudioFormat,
   MetadataProviderKey,
+  normalizeFormatPriority,
   NotificationType,
   parseSeriesIndex,
   Permission,
@@ -190,16 +191,15 @@ function reduceUnitForLibrary(
 
   if (importFormats === 'all') return { files: kept };
 
-  const priority = library.formatPriority?.length ? library.formatPriority : [...DEFAULT_FORMAT_PRIORITY];
+  const priority = normalizeFormatPriority(library.formatPriority);
   const best = [...content].sort((a, b) => formatRank(a.format, priority) - formatRank(b.format, priority))[0]!;
   // The chosen format keeps the artwork and sidecars that came with the unit; the other formats go.
   return { files: looseFileLibrary ? [best] : [best, ...unitFiles.filter((file) => file.role !== 'content')] };
 }
 
-function formatRank(format: string | null, priority: string[]): number {
-  if (!format) return Number.MAX_SAFE_INTEGER;
-  const index = priority.indexOf(format.toLowerCase());
-  return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+/** Dock files are not inspected for media overlays yet, so an EPUB ranks by the plain `epub` entry. */
+function formatRank(format: string | null, priority: readonly string[]): number {
+  return format ? formatKeyRank(format.toLowerCase(), priority) : Number.MAX_SAFE_INTEGER;
 }
 
 /**
