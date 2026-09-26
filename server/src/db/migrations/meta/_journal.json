@@ -687,6 +687,13 @@
       "when": 1790137565077,
       "tag": "0097_add_book_covers",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1790398181669,
+      "tag": "0098_add_subtitle_search_index",
+      "breakpoints": true
     }
   ]
 }

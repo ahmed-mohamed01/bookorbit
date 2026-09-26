@@ -124,6 +124,7 @@ export class BookQueryBuilder {
 
     return or(
       accentInsensitiveIlike(bookMetadata.title, pattern),
+      accentInsensitiveIlike(bookMetadata.subtitle, pattern),
       existsAuthor,
       accentInsensitiveIlike(bookMetadata.seriesName, pattern),
       existsSeries,

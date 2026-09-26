@@ -301,6 +301,50 @@ describe('Book API contract (e2e)', { timeout: SCENARIO_TIMEOUT_MS }, () => {
       expectError(invalidLimit, 400, 'limit must not be greater than 20');
     });
 
+    it('finds subtitle-only matches without exposing books in inaccessible libraries', async () => {
+      const [visibleMetadata] = await ctx.db
+        .select({ subtitle: bookMetadata.subtitle })
+        .from(bookMetadata)
+        .where(eq(bookMetadata.bookId, visibleEpub.bookId));
+      const [hiddenMetadata] = await ctx.db
+        .select({ subtitle: bookMetadata.subtitle })
+        .from(bookMetadata)
+        .where(eq(bookMetadata.bookId, hiddenEpub.bookId));
+      await ctx.db.update(bookMetadata).set({ subtitle: 'The Singapôre Story' }).where(eq(bookMetadata.bookId, visibleEpub.bookId));
+      await ctx.db.update(bookMetadata).set({ subtitle: 'A Singapôre Chronicle' }).where(eq(bookMetadata.bookId, hiddenEpub.bookId));
+
+      try {
+        const query = await ctx.app.inject({
+          method: 'POST',
+          url: '/api/v1/books/query',
+          headers: authHeader(limitedUser.accessToken),
+          payload: { q: 'Singapore', pagination: { page: 0, size: 10 } },
+        });
+        expect(query.statusCode).toBe(201);
+        expect(query.json()).toMatchObject({ total: 1, items: [{ id: visibleEpub.bookId }] });
+
+        const libraryQuery = await ctx.app.inject({
+          method: 'POST',
+          url: `/api/v1/libraries/${visibleLibrary.libraryId}/books`,
+          headers: authHeader(crossLibraryUser.accessToken),
+          payload: { q: 'Singapore', pagination: { page: 0, size: 10 } },
+        });
+        expect(libraryQuery.statusCode).toBe(201);
+        expect(libraryQuery.json()).toMatchObject({ total: 1, items: [{ id: visibleEpub.bookId }] });
+
+        const search = await ctx.app.inject({
+          method: 'GET',
+          url: '/api/v1/books/search?q=Singapore&limit=10',
+          headers: authHeader(limitedUser.accessToken),
+        });
+        expect(search.statusCode).toBe(200);
+        expect(search.json()).toEqual([expect.objectContaining({ id: visibleEpub.bookId })]);
+      } finally {
+        await ctx.db.update(bookMetadata).set({ subtitle: visibleMetadata!.subtitle }).where(eq(bookMetadata.bookId, visibleEpub.bookId));
+        await ctx.db.update(bookMetadata).set({ subtitle: hiddenMetadata!.subtitle }).where(eq(bookMetadata.bookId, hiddenEpub.bookId));
+      }
+    });
+
     it('filters books by the selected primary file size', async () => {
       const primaryFileSize = (await stat(visibleEpub.absolutePath)).size;
       const response = await ctx.app.inject({

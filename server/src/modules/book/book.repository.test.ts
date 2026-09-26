@@ -1088,6 +1088,34 @@ describe('BookRepository', () => {
     expect(db.select).not.toHaveBeenCalled();
   });
 
+  it('includes accent-insensitive subtitle matches in library-scoped global search', async () => {
+    const distinctChain = {
+      from: vi.fn(),
+      innerJoin: vi.fn(),
+      where: vi.fn(),
+      as: vi.fn().mockReturnValue({ bookId: sql`1` }),
+    };
+    distinctChain.from.mockReturnValue(distinctChain);
+    distinctChain.innerJoin.mockReturnValue(distinctChain);
+    distinctChain.where.mockReturnValue(distinctChain);
+
+    const mainChain = makeSelectChain('limit', []);
+    const db = {
+      selectDistinct: vi.fn().mockReturnValue(distinctChain),
+      select: vi.fn().mockReturnValue(mainChain),
+    };
+    const repo = new BookRepository(db as never);
+
+    await expect(repo.searchAcrossLibraries([7], 'Singapore', 10)).resolves.toEqual([]);
+
+    const query = new PgDialect().sqlToQuery(mainChain.where.mock.calls[0]![0]);
+    expect(query.sql).toContain('public.bookorbit_unaccent("book_metadata"."subtitle") ILIKE');
+    expect(query.sql).toContain('"books"."library_id" in');
+    expect(query.params).toContain('%Singapore%');
+    expect(query.params).toContain(7);
+    expect(mainChain.limit).toHaveBeenCalledWith(10);
+  });
+
   it('combines title results with author names and unique formats', async () => {
     const rows = [
       { id: 10, title: 'Dune', seriesName: 'Dune', libraryId: 7, libraryName: 'Main' },

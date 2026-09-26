@@ -1838,6 +1838,7 @@ export class BookRepository {
           ne(books.status, 'processing'),
           or(
             accentInsensitiveIlike(bookMetadata.title, pattern),
+            accentInsensitiveIlike(bookMetadata.subtitle, pattern),
             accentInsensitiveIlike(bookMetadata.seriesName, pattern),
             isNotNull(matchedAuthors.bookId),
             isNotNull(matchedSeries.bookId),
