@@ -21,10 +21,13 @@ export interface EditionLinkMemberProgress {
 
 // `narrationPercentage` only ever applies to the read-along member: EPUB3 narration keeps its own
 // progress beside the text position, so both are surfaced for that row.
+// `coverVersion` is the member's cover timestamp as an ISO string, the cache-busting token the cover
+// URL takes; null when the book has never had one recorded.
 export interface EditionLinkMember {
   id: number;
   title: string | null;
   authorName: string | null;
+  coverVersion: string | null;
   progress: EditionLinkMemberProgress | null;
   narrationPercentage: number | null;
 }
@@ -39,6 +42,7 @@ export interface EditionLinkCandidate {
   bookId: number;
   title: string | null;
   authorName: string | null;
+  coverVersion: string | null;
   score: number;
 }
 
@@ -49,6 +53,7 @@ export interface EditionLinkCounterpartSummary {
   id: number;
   title: string | null;
   authorName: string | null;
+  coverVersion: string | null;
 }
 
 export interface EditionLinkForBook {

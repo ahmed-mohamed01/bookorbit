@@ -643,6 +643,29 @@ describe('StorytellerClientService', () => {
       expect(progress.at(-1)).toEqual([6 * 1024 * 1024 + 1024, 6 * 1024 * 1024 + 1024]);
     });
 
+    it('stops between chunks once the signal aborts, reclaims the upload and never finalizes', async () => {
+      const epubPath = await writeFixture('Cancelled.epub', 1024, 3);
+      const controller = new AbortController();
+      controller.abort();
+
+      record(
+        tokenResponse(),
+        new Response(null, { status: 201, headers: { location: '/api/v2/books/upload/upload-1' } }),
+        noContent({ 'upload-offset': '1024' }),
+        noContent(),
+      );
+
+      await expect(session.uploadBook({ epubPath, audioPaths: [], signal: controller.signal })).rejects.toMatchObject({
+        name: 'StorytellerClientError',
+        message: 'The upload was cancelled',
+      });
+      expect(call(3).init.method).toBe('DELETE');
+      expect(call(3).url.pathname).toBe('/api/v2/books/upload/upload-1');
+      expect(fetchMock.mock.calls.some(([target]) => String(target).includes('/upload/finalize'))).toBe(false);
+      expect(logs.some((line) => line.startsWith('[storyteller.client.upload] [fail]'))).toBe(false);
+      expect(logs.some((line) => line.startsWith('[storyteller.client.upload] [end]') && line.includes('outcome=cancelled'))).toBe(true);
+    });
+
     it('resumes from the offset the server reports after a failed chunk', async () => {
       const epubPath = await writeFixture('Small.epub', 1024, 3);
 
@@ -898,6 +921,30 @@ describe('StorytellerClientService', () => {
       record(tokenResponse(), text('media still missing', 409));
 
       await expect(session.process('book-1')).rejects.toMatchObject({ name: 'StorytellerClientError', status: 409 });
+    });
+  });
+
+  describe('cancelProcessing', () => {
+    it('sends a DELETE to the process route', async () => {
+      record(tokenResponse(), noContent());
+
+      await expect(session.cancelProcessing('book-1')).resolves.toBeUndefined();
+
+      expect(call(1).init.method).toBe('DELETE');
+      expect(call(1).url.pathname).toBe('/api/v2/books/book-1/process');
+    });
+
+    it.each([404, 409])('treats %i as nothing left to cancel', async (status) => {
+      record(tokenResponse(), text('nothing running', status));
+
+      await expect(session.cancelProcessing('book-1')).resolves.toBeUndefined();
+    });
+
+    it('throws on any other refusal', async () => {
+      record(tokenResponse(), text('boom', 500));
+
+      await expect(session.cancelProcessing('book-1')).rejects.toMatchObject({ name: 'StorytellerClientError', status: 500 });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     });
   });
 

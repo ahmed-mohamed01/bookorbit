@@ -14,7 +14,7 @@ import type {
   StorytellerExistingMatch,
 } from '@bookorbit/types'
 import type { EditionLink, EditionLinkCandidate } from '@/features/book/composables/useEditionLink'
-import type { ReadAlongBuildOutcome } from '@/features/book/composables/useReadAlong'
+import type { ReadAlongBuildOutcome, ReadAlongCancelOutcome } from '@/features/book/composables/useReadAlong'
 import type { AlignmentStatus } from '@/features/book/composables/useReadingAlignment'
 import { useLinkEditionPanel } from '@/features/book/composables/useLinkEditionPanel'
 import LinkEditionPanel from '../LinkEditionPanel.vue'
@@ -35,11 +35,19 @@ const linkRecord: EditionLink = { id: 1, textBookId: 10, audioBookId: 20, readAl
 
 function makeMembers(overrides: Partial<EditionLinkMembers> = {}): EditionLinkMembers {
   return {
-    text: { id: 10, title: 'Dune', authorName: 'Frank Herbert', progress: { percentage: 26, updatedAt: '2026-09-01' }, narrationPercentage: null },
+    text: {
+      id: 10,
+      title: 'Dune',
+      authorName: 'Frank Herbert',
+      coverVersion: null,
+      progress: { percentage: 26, updatedAt: '2026-09-01' },
+      narrationPercentage: null,
+    },
     audio: {
       id: 20,
       title: 'Dune (audio)',
       authorName: 'Frank Herbert',
+      coverVersion: null,
       progress: { percentage: 27, updatedAt: '2026-09-01' },
       narrationPercentage: null,
     },
@@ -81,6 +89,7 @@ function createAlignmentState() {
     buildBlocked: ref<'disabled' | 'unavailable' | 'busy' | null>(null),
     fetchStatus: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     build: vi.fn<(id: number, force?: boolean) => Promise<void>>().mockResolvedValue(undefined),
+    cancel: vi.fn<(id: number) => Promise<boolean>>().mockResolvedValue(true),
   }
 }
 
@@ -105,7 +114,7 @@ function createReadAlongState() {
     existingMatches: ref<StorytellerExistingMatch[]>([]),
     fetchStatus: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     build: vi.fn<() => Promise<ReadAlongBuildOutcome>>().mockResolvedValue('started'),
-    cancel: vi.fn<(id: number) => Promise<boolean>>().mockResolvedValue(true),
+    cancel: vi.fn<(id: number) => Promise<ReadAlongCancelOutcome>>().mockResolvedValue('cancelled'),
     fetchExisting: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     onReady: vi.fn<(handler: () => void) => void>(),
     reset: vi.fn<() => void>(),
@@ -141,7 +150,7 @@ function makeBook(format: 'epub' | 'm4b' = 'epub', id = 10): BookDetail {
   } as unknown as BookDetail
 }
 
-const proposal: EditionLinkCandidate = { bookId: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', score: 96 }
+const proposal: EditionLinkCandidate = { bookId: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', coverVersion: null, score: 96 }
 
 function mountPanelWithState(book = makeBook(), attachTo?: HTMLElement) {
   let state!: ReturnType<typeof useLinkEditionPanel>
@@ -172,7 +181,7 @@ function linkPair(members = makeMembers()) {
   editionLinkState.link.value = linkRecord
   editionLinkState.role.value = 'text'
   editionLinkState.members.value = members
-  editionLinkState.linkedCounterpart.value = { id: 20, title: 'Dune (audio)', authorName: 'Frank Herbert' }
+  editionLinkState.linkedCounterpart.value = { id: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', coverVersion: null }
 }
 
 function text(wrapper: ReturnType<typeof mountPanel>, testId: string) {
@@ -226,7 +235,7 @@ describe('LinkEditionPanel', () => {
     })
 
     it('turns the counterpart into the search slot on Change, and back on a pick', async () => {
-      editionLinkState.candidates.value = [proposal, { bookId: 21, title: 'Dune Messiah (audio)', authorName: null, score: 40 }]
+      editionLinkState.candidates.value = [proposal, { bookId: 21, title: 'Dune Messiah (audio)', authorName: null, coverVersion: null, score: 40 }]
       const { wrapper } = mountPanelWithState(makeBook(), document.body)
 
       await wrapper.get('[data-testid="edition-slot-change"]').trigger('click')
@@ -334,7 +343,7 @@ describe('LinkEditionPanel', () => {
     it('reloads the link once the status names the read-along, and shows it', async () => {
       editionLinkState.proposed.value = proposal
       linkOnClick()
-      const readAlongMember = { id: 30, title: 'Dune (read-along)', authorName: null, progress: null, narrationPercentage: null }
+      const readAlongMember = { id: 30, title: 'Dune (read-along)', authorName: null, coverVersion: null, progress: null, narrationPercentage: null }
       editionLinkState.loadForBook.mockImplementation(async () => {
         linkPair(makeMembers({ readAlong: readAlongMember }))
       })
@@ -378,6 +387,7 @@ describe('LinkEditionPanel', () => {
             id: 9,
             title: 'Dune (read-along)',
             authorName: null,
+            coverVersion: null,
             progress: { percentage: 42, updatedAt: '2026-09-01' },
             narrationPercentage: 37,
           },
@@ -393,13 +403,29 @@ describe('LinkEditionPanel', () => {
     it('stays linked and narrates the rebuild in the sync section', () => {
       linkPair()
       alignmentState.status.value = 'building'
+      alignmentState.builtAt.value = '2026-02-02T00:00:00.000Z'
       const wrapper = mountPanel()
 
       expect(text(wrapper, 'link-edition-chip')).toBe('Linked')
       expect(wrapper.get('[data-testid="edition-pair"]').classes()).toContain('gap-0')
       expect(wrapper.find('[data-testid="link-edition-unlink"]').exists()).toBe(true)
       expect(wrapper.find('[data-testid="link-edition-linking-footer"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="link-edition-cancel"]').exists()).toBe(false)
       expect(text(wrapper, 'position-sync-tag')).toBe('Aligning')
+    })
+  })
+
+  // Opened on the other edition's page, or reopened: the panel never saw the link being made.
+  describe('a first alignment the panel did not start', () => {
+    it('narrates it as linking and offers Cancel', () => {
+      linkPair()
+      alignmentState.status.value = 'building'
+      const wrapper = mountPanel()
+
+      expect(wrapper.get('[data-testid="link-edition-panel"]').attributes('data-phase')).toBe('linking')
+      expect(wrapper.find('[data-testid="link-edition-linking-footer"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="link-edition-cancel"]').exists()).toBe(true)
+      expect(text(wrapper, 'link-edition-intro')).not.toBe('Progress syncs both ways between these editions.')
     })
   })
 
@@ -432,7 +458,11 @@ describe('LinkEditionPanel', () => {
     })
 
     it('notes that the read-along stays when one exists, and unlinks', async () => {
-      linkPair(makeMembers({ readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, progress: null, narrationPercentage: null } }))
+      linkPair(
+        makeMembers({
+          readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
+        }),
+      )
       readAlongState.status.value = 'ready'
       const wrapper = mountPanel()
 
@@ -477,7 +507,7 @@ describe('LinkEditionPanel', () => {
       editionLinkState.link.value = { ...linkRecord, readAlongBookId: 30 }
       editionLinkState.role.value = 'readAlong'
       editionLinkState.members.value = makeMembers({
-        readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, progress: null, narrationPercentage: null },
+        readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
       })
       alignmentState.status.value = 'building'
       const wrapper = mountPanel(makeBook('epub', 30))
@@ -521,11 +551,11 @@ describe('LinkEditionPanel', () => {
       expect(wrapper.find('[data-testid="edition-search-input"]').exists()).toBe(false)
     })
 
-    it('hides Cancel and Unlink, and never shows a link it did not make as linking', () => {
+    it('hides Cancel and Unlink, even during a first alignment', () => {
       linkPair()
       alignmentState.status.value = 'building'
       const building = mountPanel()
-      expect(building.get('[data-testid="link-edition-panel"]').attributes('data-phase')).toBe('linked')
+      expect(building.get('[data-testid="link-edition-panel"]').attributes('data-phase')).toBe('linking')
       expect(building.find('[data-testid="link-edition-cancel"]').exists()).toBe(false)
       expect(building.find('[data-testid="link-edition-unlink"]').exists()).toBe(false)
 

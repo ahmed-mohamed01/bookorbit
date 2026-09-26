@@ -23,6 +23,7 @@ async function setup() {
     requestBuild: vi.fn().mockResolvedValue({ status: 'building', blocked: null }),
     getStatus: vi.fn().mockResolvedValue({ status: 'none', blocked: null }),
     findExisting: vi.fn().mockResolvedValue({ matches: [] }),
+    cancelBuild: vi.fn().mockResolvedValue(undefined),
   };
   const module = await Test.createTestingModule({
     controllers: [StorytellerController],
@@ -56,10 +57,12 @@ describe('StorytellerController', () => {
     await controller.requestBuild(10, dto, USER);
     await controller.getStatus(10, USER);
     await controller.findExisting(10, USER);
+    await expect(controller.cancelBuild(10, USER)).resolves.toBeUndefined();
 
     expect(statusService.requestBuild).toHaveBeenCalledWith(10, USER, dto);
     expect(statusService.getStatus).toHaveBeenCalledWith(10, USER);
     expect(statusService.findExisting).toHaveBeenCalledWith(10, USER);
+    expect(statusService.cancelBuild).toHaveBeenCalledWith(10, USER);
   });
 
   it('declares the expected route paths and methods', () => {
@@ -70,6 +73,8 @@ describe('StorytellerController', () => {
     expect(Reflect.getMetadata(METHOD_METADATA, StorytellerController.prototype.requestBuild)).toBe(RequestMethod.POST);
     expect(Reflect.getMetadata(PATH_METADATA, StorytellerController.prototype.getStatus)).toBe('read-along/books/:bookId/status');
     expect(Reflect.getMetadata(PATH_METADATA, StorytellerController.prototype.findExisting)).toBe('read-along/books/:bookId/existing');
+    expect(Reflect.getMetadata(PATH_METADATA, StorytellerController.prototype.cancelBuild)).toBe('read-along/books/:bookId/build');
+    expect(Reflect.getMetadata(METHOD_METADATA, StorytellerController.prototype.cancelBuild)).toBe(RequestMethod.DELETE);
   });
 
   it('applies permissions to the sensitive routes only', () => {
@@ -78,6 +83,7 @@ describe('StorytellerController', () => {
     }
     expect(Reflect.getMetadata(PERMISSION_KEY, StorytellerController.prototype.requestBuild)).toBe(Permission.LibraryUpload);
     expect(Reflect.getMetadata(PERMISSION_KEY, StorytellerController.prototype.findExisting)).toBe(Permission.LibraryUpload);
+    expect(Reflect.getMetadata(PERMISSION_KEY, StorytellerController.prototype.cancelBuild)).toBe(Permission.LibraryUpload);
   });
 
   // The read-along row renders for every reader who can open the book, so any permission here
@@ -85,7 +91,7 @@ describe('StorytellerController', () => {
   // gate, and what a reader may not see is masked inside the response instead - status is the one
   // route in this controller allowed to carry no permission, and only that one.
   it('leaves the status poll open to any reader of the book, and nothing else', () => {
-    const routeMethods = ['getSettings', 'updateSettings', 'testConnection', 'requestBuild', 'getStatus', 'findExisting'] as const;
+    const routeMethods = ['getSettings', 'updateSettings', 'testConnection', 'requestBuild', 'getStatus', 'findExisting', 'cancelBuild'] as const;
     const ungated = routeMethods.filter((method) => Reflect.getMetadata(PERMISSION_KEY, StorytellerController.prototype[method]) === undefined);
 
     expect(ungated).toEqual(['getStatus']);
@@ -93,5 +99,9 @@ describe('StorytellerController', () => {
 
   it('returns HTTP 202 for build requests', () => {
     expect(Reflect.getMetadata(HTTP_CODE_METADATA, StorytellerController.prototype.requestBuild)).toBe(202);
+  });
+
+  it('returns HTTP 204 for build cancellations', () => {
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, StorytellerController.prototype.cancelBuild)).toBe(204);
   });
 });

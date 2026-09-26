@@ -41,6 +41,8 @@ describe('normalizeBook', () => {
       hasEbook: true,
       hasAudiobook: true,
       readaloudPath: '/library/Foundation.epub',
+      ebookPath: '/library/Foundation.epub',
+      audiobookPath: '/library/Foundation/01.mp3',
       processing: { state: 'running', task: 'TRANSCRIBE_CHAPTERS', progress: 0.42, error: null },
     });
   });

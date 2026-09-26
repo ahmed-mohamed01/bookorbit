@@ -20,7 +20,7 @@ function response(data: unknown, options: { ok?: boolean; status?: number } = {}
   } as Response
 }
 
-const counterpartSummary = { id: 20, title: 'Counterpart Title', authorName: 'Jane Author' }
+const counterpartSummary = { id: 20, title: 'Counterpart Title', authorName: 'Jane Author', coverVersion: null }
 
 describe('getBookLinkModality', () => {
   it('returns text when only text-format content files are present', () => {
@@ -94,7 +94,7 @@ describe('useEditionLink', () => {
           progress: { percentage: 40, updatedAt: '2026-09-01' },
           narrationPercentage: null,
         },
-        audio: { id: 20, title: 'Dune (audio)', authorName: 'Simon Vance', progress: null, narrationPercentage: null },
+        audio: { id: 20, title: 'Dune (audio)', authorName: 'Simon Vance', coverVersion: null, progress: null, narrationPercentage: null },
         readAlong: {
           id: 30,
           title: 'Dune (read-along)',
@@ -125,8 +125,8 @@ describe('useEditionLink', () => {
 
       role.value = 'audio'
       members.value = {
-        text: { id: 10, title: 'Dune', authorName: null, progress: null, narrationPercentage: null },
-        audio: { id: 20, title: 'Dune (audio)', authorName: null, progress: null, narrationPercentage: null },
+        text: { id: 10, title: 'Dune', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
+        audio: { id: 20, title: 'Dune (audio)', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
         readAlong: null,
       }
       await loadForBook()
@@ -136,7 +136,7 @@ describe('useEditionLink', () => {
     })
 
     it('loads a proposed candidate without a counterpart summary', async () => {
-      const proposedCandidate = { bookId: 30, title: 'Maybe This One', authorName: 'Some Author', score: 82 }
+      const proposedCandidate = { bookId: 30, title: 'Maybe This One', authorName: 'Some Author', coverVersion: null, score: 82 }
       mocks.api.mockResolvedValueOnce(response({ link: null, proposed: proposedCandidate, counterpart: null }))
 
       const { link, proposed, linkedCounterpart, loadForBook } = await load(10)
@@ -204,7 +204,7 @@ describe('useEditionLink', () => {
 
   describe('searchCandidates', () => {
     it('debounces the request by 250ms and coalesces rapid calls into one fetch', async () => {
-      mocks.api.mockResolvedValue(response([{ bookId: 1, title: 'Found', authorName: 'Author', score: 90 }]))
+      mocks.api.mockResolvedValue(response([{ bookId: 1, title: 'Found', authorName: 'Author', coverVersion: null, score: 90 }]))
 
       const { candidates, searching, searchCandidates } = await load(10)
       const first = searchCandidates('ha')
@@ -216,7 +216,7 @@ describe('useEditionLink', () => {
       await Promise.all([first, second])
 
       expect(mocks.api).toHaveBeenCalledExactlyOnceWith('/api/v1/edition-links/candidates/10?q=harry')
-      expect(candidates.value).toEqual([{ bookId: 1, title: 'Found', authorName: 'Author', score: 90 }])
+      expect(candidates.value).toEqual([{ bookId: 1, title: 'Found', authorName: 'Author', coverVersion: null, score: 90 }])
       expect(searching.value).toBe(false)
     })
 
@@ -255,7 +255,7 @@ describe('useEditionLink', () => {
 
     it('clears a previous searchError once a later search succeeds', async () => {
       mocks.api.mockResolvedValueOnce(response(null, { ok: false, status: 500 }))
-      mocks.api.mockResolvedValueOnce(response([{ bookId: 1, title: 'Found', authorName: null, score: 90 }]))
+      mocks.api.mockResolvedValueOnce(response([{ bookId: 1, title: 'Found', authorName: null, coverVersion: null, score: 90 }]))
       const { searchError, searchCandidates } = await load(10)
 
       const first = searchCandidates('x')
@@ -290,8 +290,8 @@ describe('useEditionLink', () => {
       mocks.api.mockResolvedValueOnce(response({ link: created, proposed: null, counterpart: counterpartSummary }))
 
       const { link, proposed, candidates, linkedCounterpart, mutating, linkBook } = await load(10)
-      proposed.value = { bookId: 20, title: 'x', authorName: null, score: 50 }
-      candidates.value = [{ bookId: 20, title: 'x', authorName: null, score: 50 }]
+      proposed.value = { bookId: 20, title: 'x', authorName: null, coverVersion: null, score: 50 }
+      candidates.value = [{ bookId: 20, title: 'x', authorName: null, coverVersion: null, score: 50 }]
 
       const result = await linkBook(20)
 
@@ -336,12 +336,12 @@ describe('useEditionLink', () => {
 
       const { link, linkedCounterpart, role, members, unlink } = await load(10)
       link.value = { id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: 30, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
-      linkedCounterpart.value = { id: 20, title: 'x', authorName: null }
+      linkedCounterpart.value = { id: 20, title: 'x', authorName: null, coverVersion: null }
       role.value = 'text'
       members.value = {
-        text: { id: 10, title: 'x', authorName: null, progress: null, narrationPercentage: null },
-        audio: { id: 20, title: 'y', authorName: null, progress: null, narrationPercentage: null },
-        readAlong: { id: 30, title: 'z', authorName: null, progress: null, narrationPercentage: null },
+        text: { id: 10, title: 'x', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
+        audio: { id: 20, title: 'y', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
+        readAlong: { id: 30, title: 'z', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
       }
 
       const result = await unlink()
@@ -399,7 +399,7 @@ describe('useEditionLink', () => {
       const controlA = mod.useEditionLink(10)
       const controlB = mod.useEditionLink(10)
       controlA.link.value = { id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
-      controlA.linkedCounterpart.value = { id: 20, title: 'x', authorName: null }
+      controlA.linkedCounterpart.value = { id: 20, title: 'x', authorName: null, coverVersion: null }
 
       await controlB.unlink()
 

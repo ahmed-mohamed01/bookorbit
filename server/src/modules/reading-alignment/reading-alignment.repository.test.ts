@@ -68,3 +68,29 @@ describe('ReadingAlignmentRepository.projectAudiobookProgress', () => {
     await expect(repo.projectAudiobookProgress(7, 42, 900, 12.5, 30, updatedAt)).resolves.toBe(false);
   });
 });
+
+describe('ReadingAlignmentRepository.deleteAlignment', () => {
+  function makeDeleteDb(returned: unknown[]) {
+    const returning = vi.fn().mockResolvedValue(returned);
+    const where = vi.fn().mockReturnValue({ returning });
+    return { db: { delete: vi.fn().mockReturnValue({ where }) }, where };
+  }
+
+  it('deletes only an unfinished alignment by id and reports that it was there', async () => {
+    const { db, where } = makeDeleteDb([{ id: 4 }]);
+    const repo = new ReadingAlignmentRepository(db as never);
+
+    await expect(repo.deleteAlignment(4)).resolves.toBe(true);
+
+    const predicate = new PgDialect().sqlToQuery(where.mock.calls[0]![0]);
+    expect(predicate.sql).toBe('("audiobook_alignment"."id" = $1 and "audiobook_alignment"."status" in ($2, $3))');
+    expect(predicate.params).toEqual([4, 'pending', 'building']);
+  });
+
+  it('reports false when no unfinished alignment had that id (a ready one is kept)', async () => {
+    const { db } = makeDeleteDb([]);
+    const repo = new ReadingAlignmentRepository(db as never);
+
+    await expect(repo.deleteAlignment(99)).resolves.toBe(false);
+  });
+});

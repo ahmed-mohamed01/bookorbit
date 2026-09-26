@@ -37,10 +37,12 @@ function build(overrides?: {
   const config = { readingAlignmentEnabled: overrides?.enabled ?? true };
   const repo = {
     getAlignmentByPair: vi.fn().mockResolvedValue(overrides?.existing ?? undefined),
+    deleteAlignment: vi.fn().mockResolvedValue(true),
   };
   const buildService = {
     buildAlignment: vi.fn().mockReturnValue(overrides?.buildResult ?? Promise.resolve()),
     isAtCapacity: vi.fn().mockReturnValue(overrides?.atCapacity ?? false),
+    cancel: vi.fn().mockReturnValue(false),
   };
   const whisper = {
     isAvailable: vi.fn().mockReturnValue(overrides?.whisperAvailable ?? true),
@@ -213,5 +215,79 @@ describe('ReadingAlignmentStatusService.getStatus', () => {
   it('throws NotFound when the book does not exist', async () => {
     const { service } = build({ libraryId: null });
     await expect(service.getStatus(BOOK_ID, USER)).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('ReadingAlignmentStatusService.cancelBuild', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('aborts a build in flight before its first row write and deletes nothing', async () => {
+    const { service, buildService, repo } = build({ existing: undefined });
+    buildService.cancel.mockReturnValue(true);
+
+    await expect(service.cancelBuild(BOOK_ID, USER)).resolves.toBeUndefined();
+    expect(buildService.cancel).toHaveBeenCalledWith({ textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID });
+    expect(repo.deleteAlignment).not.toHaveBeenCalled();
+  });
+
+  it('aborts a resumed build whose row still reads failed and keeps the row', async () => {
+    const { service, buildService, repo } = build({ existing: alignmentRow({ status: 'failed' }) });
+    buildService.cancel.mockReturnValue(true);
+
+    await service.cancelBuild(BOOK_ID, USER);
+
+    expect(buildService.cancel).toHaveBeenCalledWith({ textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID });
+    expect(repo.deleteAlignment).not.toHaveBeenCalled();
+  });
+
+  it.each(['ready', 'unalignable'])('calls cancel and leaves a %s alignment in place', async (status) => {
+    const { service, buildService, repo } = build({ existing: alignmentRow({ status }) });
+
+    await service.cancelBuild(BOOK_ID, USER);
+
+    expect(buildService.cancel).toHaveBeenCalledWith({ textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID });
+    expect(buildService.cancel).toHaveReturnedWith(false);
+    expect(repo.deleteAlignment).not.toHaveBeenCalled();
+  });
+
+  it('aborts before reading the row', async () => {
+    const { service, buildService, repo } = build({ existing: alignmentRow({ status: 'building' }) });
+
+    await service.cancelBuild(BOOK_ID, USER);
+
+    expect(buildService.cancel.mock.invocationCallOrder[0]).toBeLessThan(repo.getAlignmentByPair.mock.invocationCallOrder[0]!);
+  });
+
+  it.each(['pending', 'building'])('aborts a %s build and deletes its row', async (status) => {
+    const { service, buildService, repo } = build({ existing: alignmentRow({ status }) });
+    buildService.cancel.mockReturnValue(true);
+
+    await service.cancelBuild(BOOK_ID, USER);
+
+    expect(buildService.cancel).toHaveBeenCalledWith({ textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID });
+    expect(repo.deleteAlignment).toHaveBeenCalledWith(3);
+  });
+
+  it('deletes a building row with nothing in flight', async () => {
+    const { service, buildService, repo } = build({ existing: alignmentRow({ status: 'building' }) });
+
+    await service.cancelBuild(BOOK_ID, USER);
+
+    expect(buildService.cancel).toHaveReturnedWith(false);
+    expect(repo.deleteAlignment).toHaveBeenCalledWith(3);
+  });
+
+  it('answers 404 when the book has no pair', async () => {
+    const { service, repo } = build({ pair: null });
+
+    await expect(service.cancelBuild(BOOK_ID, USER)).rejects.toBeInstanceOf(NotFoundException);
+    expect(repo.getAlignmentByPair).not.toHaveBeenCalled();
+  });
+
+  it('refuses a caller who cannot open the book', async () => {
+    const { service, repo } = build({ verifyThrows: true, existing: alignmentRow({ status: 'building' }) });
+
+    await expect(service.cancelBuild(BOOK_ID, USER)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(repo.deleteAlignment).not.toHaveBeenCalled();
   });
 });

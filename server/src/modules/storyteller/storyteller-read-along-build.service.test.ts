@@ -10,6 +10,7 @@ import { BookService } from '../book/book.service';
 import { EditionLinkRepository } from '../edition-link/edition-link.repository';
 import { LibraryService } from '../library/library.service';
 import { ScannerService } from '../scanner/scanner.service';
+import * as buildServiceModule from './storyteller-read-along-build.service';
 import { STORYTELLER_SLEEP, StorytellerReadAlongBuildService, type StorytellerRunBuildOptions } from './storyteller-read-along-build.service';
 import type { StorytellerReadAlongPair } from './storyteller-read-along-status.service';
 import { StorytellerClientError, StorytellerClientService } from './storyteller-client.service';
@@ -107,6 +108,8 @@ function remoteBook(overrides: Record<string, unknown> = {}) {
     hasEbook: true,
     hasAudiobook: true,
     readaloudPath: null,
+    ebookPath: null,
+    audiobookPath: null,
     processing: { state: 'running', task: 'align', progress: 0.5, error: null },
     ...overrides,
   };
@@ -162,6 +165,7 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
     getSettings: vi.fn().mockResolvedValue(remoteSettings),
     getBook: vi.fn().mockResolvedValue(remoteBook()),
     importByReference: vi.fn().mockResolvedValue({ kind: 'created', uuid: 'story-uuid' }),
+    listBooks: vi.fn().mockResolvedValue([]),
     uploadBook: vi.fn().mockResolvedValue({ uuid: 'story-uuid' }),
     process: vi.fn().mockResolvedValue(undefined),
     readaloudAvailable: vi.fn().mockResolvedValue(true),
@@ -175,6 +179,7 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
     mergeBooks: vi.fn().mockResolvedValue({ uuid: 'story-uuid' }),
     deleteBook: vi.fn().mockResolvedValue(undefined),
     deleteCache: vi.fn().mockResolvedValue(undefined),
+    cancelProcessing: vi.fn().mockResolvedValue(undefined),
     ensureCollection: vi.fn().mockResolvedValue(null),
   };
   const settingsService = {
@@ -194,7 +199,7 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
     findOne: vi.fn().mockResolvedValue({ id: TARGET_LIBRARY_ID, type: 'books', allowedFormats: ['epub'], organizationMode: 'book_per_file' }),
   };
   const scannerService = { startScan: vi.fn().mockResolvedValue({ jobId: 1 }) };
-  const sleep = vi.fn<(milliseconds: number) => Promise<void>>().mockResolvedValue(undefined);
+  const sleep = vi.fn<(milliseconds: number, signal?: AbortSignal) => Promise<void>>().mockResolvedValue(undefined);
 
   const module = await Test.createTestingModule({
     providers: [
@@ -215,6 +220,7 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
     repo,
     session,
     settings,
+    settingsService,
     editionLinks,
     bookService,
     libraryService,
@@ -223,7 +229,7 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
   };
 }
 
-function captureLogs(level: 'log' | 'warn'): string[] {
+function captureLogs(level: 'log' | 'warn' | 'error'): string[] {
   const lines: string[] = [];
   vi.spyOn(Logger.prototype, level).mockImplementation((message: unknown) => {
     lines.push(String(message));
@@ -235,7 +241,7 @@ function countPhase(lines: string[], event: string, phase: string): number {
   return lines.filter((line) => line.startsWith(`[${event}] [${phase}]`)).length;
 }
 
-function advanceClock(sleep: ReturnType<typeof vi.fn<(milliseconds: number) => Promise<void>>>): void {
+function advanceClock(sleep: ReturnType<typeof vi.fn<(milliseconds: number, signal?: AbortSignal) => Promise<void>>>): void {
   sleep.mockImplementation((milliseconds: number) => {
     vi.setSystemTime(Date.now() + milliseconds);
     return Promise.resolve();
@@ -591,6 +597,97 @@ describe('StorytellerReadAlongBuildService', () => {
     expect(session.downloadReadaloud).toHaveBeenCalled();
   });
 
+  describe('when Storyteller already holds the paths', () => {
+    const SHARED = {
+      settings: {
+        transport: 'shared-paths',
+        pathMappings: [
+          { localPrefix: '/books', remotePrefix: '/remote/books' },
+          { localPrefix: '@library', remotePrefix: '/remote/output' },
+        ],
+      },
+      remoteSettings: { readaloudLocationType: 'CUSTOM_FOLDER', readaloudLocation: '/remote/output' },
+    };
+    const REFUSED = new StorytellerClientError('Storyteller answered 405: {"message":"Unable to create book from provided paths"}', 405);
+
+    async function refusedSetup() {
+      const context = await setup({ ...SHARED, settings: { ...SHARED.settings, pathMappings: resolveMappings(SHARED.settings.pathMappings) } });
+      context.session.importByReference.mockRejectedValueOnce(REFUSED);
+      return context;
+    }
+
+    it('takes over the one book whose ebook sits at the offered path and processes it', async () => {
+      const { service, session, repo } = await refusedSetup();
+      const logs = captureLogs('log');
+      session.listBooks.mockResolvedValue([
+        remoteBook({ uuid: 'other-uuid', ebookPath: '/remote/books/other.epub' }),
+        remoteBook({ uuid: 'existing-uuid', ebookPath: '/remote/books/text.epub' }),
+      ]);
+      session.getBook
+        .mockResolvedValueOnce(remoteBook({ uuid: 'existing-uuid', processing: IDLE }))
+        .mockResolvedValue(remoteBook({ uuid: 'existing-uuid' }));
+
+      await runBuild(service, 1, PAIR, USER);
+
+      expect(repo.updateBuild).toHaveBeenCalledWith(1, { transport: 'shared-paths', storytellerBookUuid: 'existing-uuid' });
+      expect(session.process).toHaveBeenCalledWith('existing-uuid');
+      expect(session.importByReference).toHaveBeenCalledOnce();
+      expect(session.mergeBooks).not.toHaveBeenCalled();
+      expect(session.uploadBook).not.toHaveBeenCalled();
+      expect(
+        logs.some(
+          (line) =>
+            line.startsWith('[storyteller.read_along.register] [end]') &&
+            line.includes('outcome=reused_existing') &&
+            line.includes('storytellerBookUuid=existing-uuid'),
+        ),
+      ).toBe(true);
+    });
+
+    it.each([
+      ['no book matches', [remoteBook({ uuid: 'other-uuid', ebookPath: '/remote/books/other.epub' })]],
+      [
+        'two books match',
+        [remoteBook({ uuid: 'a-uuid', ebookPath: '/remote/books/text.epub' }), remoteBook({ uuid: 'b-uuid', ebookPath: '/remote/books/text.epub' })],
+      ],
+      ['the path differs only in case', [remoteBook({ uuid: 'cased-uuid', ebookPath: '/remote/books/Text.epub' })]],
+    ])('fails with a clear error when %s', async (_case, books) => {
+      const { service, session, repo } = await refusedSetup();
+      session.listBooks.mockResolvedValue(books);
+
+      await expect(runBuild(service, 1, PAIR, USER)).rejects.toThrow(
+        'Storyteller already has a book for these files and it could not be matched; remove or import it in Storyteller',
+      );
+
+      expect(session.process).not.toHaveBeenCalled();
+      expect(session.uploadBook).not.toHaveBeenCalled();
+      expect(repo.updateBuild).not.toHaveBeenCalledWith(1, expect.objectContaining({ storytellerBookUuid: expect.any(String) }));
+    });
+  });
+
+  // A Generate after a cancel claims the kept row with its uuid: importing the same paths again is
+  // what Storyteller refuses with a 405 while it still holds the referenced book.
+  it('resumes the reference-imported book a cancelled build kept instead of importing its paths again', async () => {
+    const { service, session, repo } = await setup({
+      settings: {
+        transport: 'shared-paths',
+        pathMappings: [
+          { localPrefix: '/books', remotePrefix: '/remote/books' },
+          { localPrefix: libraryDir, remotePrefix: '/remote/output' },
+        ],
+      },
+      remoteSettings: { readaloudLocationType: 'CUSTOM_FOLDER', readaloudLocation: '/remote/output' },
+    });
+    repo.findBuildByPair.mockResolvedValue({ storytellerBookUuid: 'story-uuid', transport: 'shared-paths' });
+
+    await runBuild(service, 1, PAIR, USER);
+
+    expect(session.importByReference).not.toHaveBeenCalled();
+    expect(session.uploadBook).not.toHaveBeenCalled();
+    expect(repo.updateBuild).not.toHaveBeenCalledWith(1, { storytellerBookUuid: null });
+    expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ready' }));
+  });
+
   it('keeps the remembered uuid when the book read fails rather than importing a second copy', async () => {
     const { service, session, repo } = await setup();
     repo.findBuildByPair.mockResolvedValue({ storytellerBookUuid: 'story-uuid', transport: 'api-transfer' });
@@ -733,7 +830,7 @@ describe('StorytellerReadAlongBuildService', () => {
 
     await runBuild(service, 1, PAIR, USER);
 
-    expect(sleep).toHaveBeenCalledWith(10_000);
+    expect(sleep).toHaveBeenCalledWith(10_000, expect.any(AbortSignal));
     expect(session.readaloudAvailable).toHaveBeenCalledTimes(2);
   });
 
@@ -1367,7 +1464,7 @@ describe('StorytellerReadAlongBuildService', () => {
     // finalised has not attached its tracks yet: processing straight after the upload is the same
     // mistake the first attempt was told to wait out.
     expect(session.process).toHaveBeenCalledTimes(2);
-    expect(sleep).toHaveBeenCalledWith(2_000);
+    expect(sleep).toHaveBeenCalledWith(2_000, expect.any(AbortSignal));
     expect(session.getBook.mock.invocationCallOrder[2]).toBeLessThan(session.process.mock.invocationCallOrder[1]);
   });
 
@@ -1925,5 +2022,287 @@ describe('StorytellerReadAlongBuildService', () => {
 
     expect(session.deleteBook).not.toHaveBeenCalled();
     expect(session.deleteCache).toHaveBeenCalledWith('story-uuid');
+  });
+});
+
+describe('StorytellerReadAlongBuildService cancellation', () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  /** A sleep that never wakes on its own, only when the build it belongs to is cancelled. */
+  function sleepUntilAborted(sleep: ReturnType<typeof vi.fn<(milliseconds: number, signal?: AbortSignal) => Promise<void>>>) {
+    const asleep = deferred<void>();
+    sleep.mockImplementation((_milliseconds: number, signal?: AbortSignal) => {
+      asleep.resolve();
+      return new Promise<void>((resolve) => signal?.addEventListener('abort', () => resolve(), { once: true }));
+    });
+    return asleep.promise;
+  }
+
+  function failedWrites(repo: { updateBuild: ReturnType<typeof vi.fn> }): unknown[] {
+    return repo.updateBuild.mock.calls.filter(([, values]) => (values as { status?: string }).status === 'failed');
+  }
+
+  it('answers false when the pair has no build in flight', async () => {
+    const { service } = await setup();
+
+    expect(service.cancel(PAIR)).toBe(false);
+  });
+
+  it('stops a build sleeping in the wait loop, writes no failure and frees the slot', async () => {
+    const { service, session, repo, sleep } = await setup();
+    const logs = captureLogs('log');
+    session.readaloudAvailable.mockResolvedValue(false);
+    const asleep = sleepUntilAborted(sleep);
+
+    const run = runBuild(service, 1, PAIR, USER);
+    await asleep;
+    expect(service.cancel(PAIR)).toBe(true);
+
+    await expect(run).resolves.toBeUndefined();
+    expect(failedWrites(repo)).toEqual([]);
+    expect(session.downloadReadaloud).not.toHaveBeenCalled();
+    expect(logs.some((line) => line.startsWith('[storyteller.read_along.build] [end]') && line.includes('outcome=cancelled'))).toBe(true);
+    expect(logs.some((line) => line.startsWith('[storyteller.read_along.wait] [end]') && line.includes('outcome=cancelled'))).toBe(true);
+    const next = service.tryReserve(OTHER_PAIR);
+    expect(next).not.toBeNull();
+    next?.release();
+  });
+
+  it('writes nothing further once cancelled during prepare', async () => {
+    const { service, repo, settingsService } = await setup();
+    const connection = deferred<{ serverUrl: string; username: string; password: string }>();
+    settingsService.getConnection.mockReturnValue(connection.promise);
+
+    const run = runBuild(service, 1, PAIR, USER);
+    await vi.waitFor(() => expect(settingsService.getConnection).toHaveBeenCalled());
+    service.cancel(PAIR);
+    connection.resolve({ serverUrl: 'http://storyteller', username: 'u', password: 'p' });
+
+    await expect(run).resolves.toBeUndefined();
+    expect(repo.updateBuild.mock.calls).toEqual([[1, { phase: 'prepare' }]]);
+  });
+
+  it('still records an ordinary failure as failed', async () => {
+    const { service, repo, settingsService } = await setup();
+    settingsService.getConnection.mockResolvedValue(null);
+
+    await expect(runBuild(service, 1, PAIR, USER)).rejects.toThrow('Storyteller is not configured');
+    expect(failedWrites(repo)).toHaveLength(1);
+  });
+
+  it('records where the build landed, folder included', async () => {
+    const { service, repo } = await setup();
+
+    await runBuild(service, 1, PAIR, USER);
+
+    expect(repo.updateBuild).toHaveBeenCalledWith(1, { phase: 'prepare', targetLibraryId: TARGET_LIBRARY_ID, targetFolderId: 30 });
+  });
+
+  it('stamps the link the read-along was attached to after the ready write', async () => {
+    const { service, repo } = await setup();
+
+    await runBuild(service, 1, PAIR, USER);
+
+    const readyCall = repo.updateBuild.mock.calls.findIndex(([, values]) => (values as { status?: string }).status === 'ready');
+    const stampCall = repo.updateBuild.mock.calls.findIndex(([, values]) => 'attachedLinkId' in (values as object));
+    expect(readyCall).toBeGreaterThanOrEqual(0);
+    expect(stampCall).toBeGreaterThan(readyCall);
+    expect(repo.updateBuild.mock.calls[stampCall]).toEqual([1, { attachedLinkId: PAIR.linkId }]);
+    expect(repo.updateBuild.mock.calls[readyCall]![1]).not.toHaveProperty('attachedLinkId');
+  });
+
+  it('keeps an imported build ready when the link vanished before its stamp could be written', async () => {
+    const { service, repo } = await setup();
+    const warnings = captureLogs('warn');
+    repo.updateBuild.mockImplementation((_id: number, values: Record<string, unknown>) =>
+      'attachedLinkId' in values
+        ? Promise.reject(Object.assign(new Error('insert or update violates foreign key constraint'), { code: '23503' }))
+        : Promise.resolve({}),
+    );
+
+    await expect(runBuild(service, 1, PAIR, USER)).resolves.toBeUndefined();
+
+    expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ready' }));
+    expect(failedWrites(repo)).toEqual([]);
+    expect(warnings.some((line) => line.startsWith('[storyteller.read_along.stamp_link] [fail] buildId=1 linkId=5 durationMs='))).toBe(true);
+  });
+
+  it('keeps its cancellation error to itself', () => {
+    expect(buildServiceModule).not.toHaveProperty('ReadAlongCancelledError');
+  });
+
+  it('refuses a cancel once the collect has begun and finishes the import', async () => {
+    const { service, repo, session } = await setup();
+    const download = deferred<void>();
+    const downloadStarted = deferred<void>();
+    session.downloadReadaloud.mockImplementation(async (_uuid: string, destination: string) => {
+      downloadStarted.resolve();
+      await download.promise;
+      await writeFile(destination, Buffer.from('PK\u0003\u0004'));
+      return { bytes: 4, filename: null };
+    });
+
+    const run = runBuild(service, 1, PAIR, USER);
+    await downloadStarted.promise;
+    expect(() => service.cancel(PAIR)).toThrow(ConflictException);
+    download.resolve();
+
+    await expect(run).resolves.toBeUndefined();
+    expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ready' }));
+  });
+
+  it('stops the Storyteller job its process request started when the cancel landed during that request', async () => {
+    const { service, repo, session } = await setup();
+    session.getBook.mockResolvedValue(remoteBook({ processing: IDLE }));
+    session.process.mockImplementation(() => {
+      service.cancel(PAIR);
+      return Promise.resolve();
+    });
+
+    await expect(runBuild(service, 1, PAIR, USER)).resolves.toBeUndefined();
+
+    expect(session.cancelProcessing).toHaveBeenCalledWith('story-uuid');
+    expect(failedWrites(repo)).toEqual([]);
+    expect(session.readaloudAvailable).not.toHaveBeenCalled();
+  });
+
+  it('still ends as cancelled when stopping the Storyteller job fails', async () => {
+    const { service, repo, session } = await setup();
+    session.getBook.mockResolvedValue(remoteBook({ processing: IDLE }));
+    session.process.mockImplementation(() => {
+      service.cancel(PAIR);
+      return Promise.resolve();
+    });
+    session.cancelProcessing.mockRejectedValue(new StorytellerClientError('Storyteller answered 500', 500));
+
+    await expect(runBuild(service, 1, PAIR, USER)).resolves.toBeUndefined();
+    expect(failedWrites(repo)).toEqual([]);
+  });
+
+  it('logs a cancelled upload as cancelled, never as a failed registration', async () => {
+    const { service, session } = await setup();
+    const errors = captureLogs('error');
+    const logs = captureLogs('log');
+    session.uploadBook.mockImplementation(() => {
+      service.cancel(PAIR);
+      return Promise.reject(new StorytellerClientError('The upload was cancelled', null));
+    });
+
+    await expect(runBuild(service, 1, PAIR, USER)).resolves.toBeUndefined();
+
+    expect(errors).toEqual([]);
+    expect(logs.some((line) => line.startsWith('[storyteller.read_along.register] [end]') && line.includes('outcome=cancelled'))).toBe(true);
+    expect(logs.some((line) => line.startsWith('[storyteller.read_along.upload] [end]') && line.includes('outcome=cancelled'))).toBe(true);
+  });
+
+  it('holds whenReleased until a cancelled build lets go of its slot', async () => {
+    const { service } = await setup();
+    const slot = service.tryReserve(PAIR)!;
+    service.cancel(PAIR);
+    let released = false;
+    const waiting = service.whenReleased(PAIR).then(() => {
+      released = true;
+    });
+
+    await Promise.resolve();
+    expect(released).toBe(false);
+    slot.release();
+    await waiting;
+    expect(released).toBe(true);
+  });
+
+  it('holds whenReleased for another pair while a cancelled build takes the only slot', async () => {
+    const { service } = await setup();
+    const slot = service.tryReserve(PAIR)!;
+    service.cancel(PAIR);
+    let released = false;
+    const waiting = service.whenReleased(OTHER_PAIR).then(() => {
+      released = true;
+    });
+
+    await Promise.resolve();
+    expect(released).toBe(false);
+    slot.release();
+    await waiting;
+    expect(service.tryReserve(OTHER_PAIR)).not.toBeNull();
+  });
+
+  it('does not hold another pair behind a slot whose build is still running', async () => {
+    const { service } = await setup();
+    const slot = service.tryReserve(PAIR)!;
+
+    await expect(service.whenReleased(OTHER_PAIR)).resolves.toBeUndefined();
+    slot.release();
+  });
+
+  it('answers whenReleased at once when no cancelled build holds the pair', async () => {
+    const { service } = await setup();
+
+    await expect(service.whenReleased(PAIR)).resolves.toBeUndefined();
+    const slot = service.tryReserve(PAIR)!;
+    await expect(service.whenReleased(PAIR)).resolves.toBeUndefined();
+    slot.release();
+  });
+});
+
+describe('StorytellerReadAlongBuildService default sleep', () => {
+  afterEach(() => vi.useRealTimers());
+
+  function defaultSleep() {
+    const service = new StorytellerReadAlongBuildService(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    return service['sleep'];
+  }
+
+  it('waits the full delay without a signal', async () => {
+    vi.useFakeTimers();
+    let done = false;
+    const sleeping = defaultSleep()(10_000).then(() => {
+      done = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await sleeping;
+    expect(done).toBe(true);
+  });
+
+  it('wakes early when the signal aborts and leaves no timer behind', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let done = false;
+    const sleeping = defaultSleep()(10_000, controller.signal).then(() => {
+      done = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(done).toBe(false);
+    controller.abort();
+    await sleeping;
+    expect(done).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('resolves at once when the signal has already aborted', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    controller.abort();
+
+    await defaultSleep()(10_000, controller.signal);
+
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

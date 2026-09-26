@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Post, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Post, Put } from '@nestjs/common';
 
 import type {
   ReadAlongBuildResponse,
@@ -50,6 +50,13 @@ export class StorytellerController {
     @CurrentUser() user: RequestUser,
   ): Promise<ReadAlongBuildResponse> {
     return this.readAlongStatusService.requestBuild(bookId, user, dto);
+  }
+
+  @Delete('read-along/books/:bookId/build')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission(Permission.LibraryUpload)
+  cancelBuild(@Param('bookId', ParseIntPipe) bookId: number, @CurrentUser() user: RequestUser): Promise<void> {
+    return this.readAlongStatusService.cancelBuild(bookId, user);
   }
 
   /**

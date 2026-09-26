@@ -42,6 +42,7 @@ function makeMember(overrides: Partial<EditionLinkMember> = {}): EditionLinkMemb
     id: 30,
     title: 'Dune (read-along)',
     authorName: 'Frank Herbert',
+    coverVersion: null,
     progress: { percentage: 42, updatedAt: '2026-09-01T00:00:00.000Z' },
     narrationPercentage: 37,
     ...overrides,
@@ -161,6 +162,13 @@ describe('ReadAlongSection', () => {
       ).toBe(false)
     })
 
+    it.each(['collect', 'link'] as ReadAlongPhase[])('hides Cancel once the build is importing (%s)', (phase) => {
+      const wrapper = mountSection({ state: makeState({ status: 'building', phase }) })
+
+      expect(wrapper.find('[data-testid="read-along-cancel"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="read-along-tag"]').exists()).toBe(true)
+    })
+
     it('offers no keep-copy choice once the build has started, since it would change nothing', () => {
       const wrapper = mountSection({ state: makeState({ status: 'building', phase: 'wait' }) })
 
@@ -179,7 +187,9 @@ describe('ReadAlongSection', () => {
       expect(wrapper.emitted('generate')).toHaveLength(1)
 
       const importButton = wrapper.get('[data-testid="read-along-import"]')
-      expect(importButton.text()).toBe('Import from Storyteller: Forward the Foundation')
+      expect(importButton.text()).toBe('Import "Forward the Foundation" from Storyteller')
+      expect(importButton.classes()).toEqual(expect.arrayContaining(['mt-2', 'text-pretty', 'text-start']))
+      expect(importButton.classes()).not.toContain('truncate')
       await importButton.trigger('click')
       expect(wrapper.emitted('importExisting')?.[0]).toEqual(['uuid-1'])
     })

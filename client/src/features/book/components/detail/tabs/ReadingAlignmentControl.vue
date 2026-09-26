@@ -37,7 +37,7 @@ const showReadAlongSection = computed(() => modality.value === 'both' && edition
 // stands in for the section's ready state.
 const readAlongMember = computed<EditionLinkMember | null>(() => {
   const output = readAlong.outputBook.value
-  return output ? { id: output.id, title: output.title, authorName: null, progress: null, narrationPercentage: null } : null
+  return output ? { id: output.id, title: output.title, authorName: null, coverVersion: null, progress: null, narrationPercentage: null } : null
 })
 
 const checked = ref(false)

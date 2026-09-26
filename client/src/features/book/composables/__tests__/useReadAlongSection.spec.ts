@@ -10,7 +10,7 @@ import type {
   StorytellerEffectiveTransport,
   StorytellerExistingMatch,
 } from '@bookorbit/types'
-import type { ReadAlongBuildOutcome } from '../useReadAlong'
+import type { ReadAlongBuildOutcome, ReadAlongCancelOutcome } from '../useReadAlong'
 import { useReadAlongSection } from '../useReadAlongSection'
 
 const toastMocks = vi.hoisted(() => ({
@@ -46,7 +46,7 @@ function createReadAlongState() {
     existingMatches: ref<StorytellerExistingMatch[]>([]),
     fetchStatus: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     build: vi.fn<() => Promise<ReadAlongBuildOutcome>>().mockResolvedValue('started'),
-    cancel: vi.fn<(id: number) => Promise<boolean>>().mockResolvedValue(true),
+    cancel: vi.fn<(id: number) => Promise<ReadAlongCancelOutcome>>().mockResolvedValue('cancelled'),
     fetchExisting: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     onReady: vi.fn<(handler: () => void) => void>(),
   }
@@ -220,9 +220,19 @@ describe('useReadAlongSection', () => {
     expect(readAlongState.cancel).toHaveBeenCalledWith(10)
     expect(toastMocks.error).not.toHaveBeenCalled()
 
-    readAlongState.cancel.mockResolvedValue(false)
+    readAlongState.cancel.mockResolvedValue('failed')
     await section.handleCancel()
-    expect(toastMocks.error).toHaveBeenCalledWith("Cancelling isn't available on this server yet.")
+    expect(toastMocks.error).toHaveBeenCalledWith("The read-along build couldn't be cancelled.")
+  })
+
+  it('says the read-along is importing when the server refuses the cancel as too late', async () => {
+    const { section } = mountSection()
+    readAlongState.cancel.mockResolvedValue('too_late')
+
+    await section.handleCancel()
+
+    expect(toastMocks.error).toHaveBeenCalledWith("The read-along is being imported and can't be cancelled now.")
+    expect(toastMocks.error).toHaveBeenCalledTimes(1)
   })
 
   describe('destination choice', () => {

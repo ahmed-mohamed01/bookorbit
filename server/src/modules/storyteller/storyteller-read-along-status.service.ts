@@ -1,6 +1,7 @@
 import {
   BadGatewayException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   HttpException,
   Injectable,
@@ -39,6 +40,12 @@ import { StorytellerSettingsService } from './storyteller-settings.service';
 const REQUEST_EVENT = 'storyteller.read_along.request';
 const EXISTING_EVENT = 'storyteller.read_along.find_existing';
 const ATTACH_EVENT = 'storyteller.read_along.attach_existing';
+const CANCEL_EVENT = 'storyteller.read_along.cancel';
+const CANCEL_REMOTE_EVENT = 'storyteller.read_along.cancel_remote';
+const CANCEL_TOO_LATE_MESSAGE = 'The read-along is being imported and can no longer be cancelled';
+// A cancelled build lets go of its slot once its current await returns; a Generate pressed right after
+// the cancel waits this long for that before answering busy.
+const CANCELLED_RELEASE_WAIT_MS = 30_000;
 const FAILED_CHECK_TTL_MS = 10 * 60_000;
 // The matcher surfaces the best few and the UI reads the first aligned one, so a wider page buys nothing.
 const STORYTELLER_MATCH_PAGE_SIZE = 50;
@@ -123,7 +130,19 @@ export class StorytellerReadAlongStatusService {
       return this.blocked(existing?.status, 'source_epub_unreadable', bookId, user.id, startedAt);
     }
 
-    const targetLibraryId = dto.targetLibraryId ?? settings.targetLibraryId;
+    // A retry or a rebuild with no destination in the request lands where the previous attempt did,
+    // folder included, rather than wherever the settings point today.
+    // Only a destination recorded in full is reused: an attempt that died in prepare has a library and
+    // no folder, and the library alone sends the build to that library's lowest-id folder.
+    const reusesDestination =
+      dto.targetLibraryId === undefined &&
+      dto.targetFolderId === undefined &&
+      existing?.targetLibraryId != null &&
+      existing.targetFolderId != null &&
+      (existing.status === 'failed' || existing.status === 'cancelled' || dto.force === true);
+    const runTargetLibraryId = reusesDestination ? (existing?.targetLibraryId ?? undefined) : dto.targetLibraryId;
+    const runTargetFolderId = reusesDestination ? (existing?.targetFolderId ?? undefined) : dto.targetFolderId;
+    const targetLibraryId = runTargetLibraryId ?? settings.targetLibraryId;
     if (targetLibraryId == null) return this.blocked(existing?.status, 'no_target_library', bookId, user.id, startedAt);
 
     let library: Awaited<ReturnType<LibraryService['findOne']>>;
@@ -165,9 +184,10 @@ export class StorytellerReadAlongStatusService {
     if (existing?.status === 'ready' && existingOutput && !dto.force) {
       // Unlinking and relinking inserts a fresh link row with no read-along member, and nothing else
       // goes looking for the build that already produced one.
-      await this.attachExistingOutput(pair, existingOutput.id, user);
+      await this.attachExistingOutput(pair, existing, existingOutput.id, user);
       return this.blocked('ready', null, bookId, user.id, startedAt);
     }
+    await this.awaitCancelledBuildRelease(pair);
     // Held from here, not merely checked: the uuid round trip below and the claim itself are both
     // awaits, and a second request crossing them claims the same slot and strips a row whose uuid is
     // the only handle on a Storyteller job the first one may already have started.
@@ -180,7 +200,10 @@ export class StorytellerReadAlongStatusService {
         await this.assertOfferedUuid(pair, dto.useExistingUuid, connection, bookId, user.id, startedAt);
       }
 
-      const resumeUuid = dto.useExistingUuid ?? (!dto.force && existing?.status === 'failed' ? existing.storytellerBookUuid : null);
+      // A cancelled build kept its Storyteller book for exactly this: resuming it rather than importing
+      // the same paths again, which Storyteller refuses while it still holds them.
+      const resumable = existing?.status === 'failed' || existing?.status === 'cancelled';
+      const resumeUuid = dto.useExistingUuid ?? (!dto.force && resumable ? existing.storytellerBookUuid : null);
       // A resumed book keeps the transport that registered it: otherwise the claim clears the column
       // and an uploaded book would be collected from a shared folder it never writes to.
       const resumeTransport = resumeUuid !== null && resumeUuid === existing?.storytellerBookUuid ? existing.transport : null;
@@ -190,8 +213,17 @@ export class StorytellerReadAlongStatusService {
         storytellerBookUuid: resumeUuid,
         transport: resumeTransport,
         targetLibraryId,
+        // Always passed, null included: an omitted folder keeps the row's, which may belong to
+        // another library than the one this claim targets.
+        targetFolderId: runTargetFolderId ?? null,
       });
       if (!claimed) return this.blocked(existing?.status, 'busy', bookId, user.id, startedAt);
+      // Cancelled between the reservation and the claim: the aborted build would never touch this
+      // row, which would then read building until a restart and answer busy to every Generate.
+      if (slot.signal.aborted) {
+        await this.repo.retireCancelledBuild(claimed.id);
+        return this.blocked('none', 'busy', bookId, user.id, startedAt);
+      }
 
       const running = this.buildService.runBuild(
         claimed.id,
@@ -199,8 +231,8 @@ export class StorytellerReadAlongStatusService {
         user,
         {
           force: dto.force,
-          targetLibraryId: dto.targetLibraryId,
-          targetFolderId: dto.targetFolderId,
+          targetLibraryId: runTargetLibraryId,
+          targetFolderId: runTargetFolderId,
           oldOutputBookId: dto.force ? previousOutputBookId : null,
           cleanUpRemote: dto.cleanUpRemote,
         },
@@ -225,7 +257,89 @@ export class StorytellerReadAlongStatusService {
     return { status: 'building', blocked: null };
   }
 
-  /** Read-only: the client polls this every few seconds, so it must never write. */
+  /**
+   * Stops a running build. It is not recorded as a failure to retry: a row that already holds a
+   * Storyteller book is kept as cancelled, which status reads report as no build, and one that does
+   * not is deleted.
+   */
+  async cancelBuild(bookId: number, user: RequestUser): Promise<void> {
+    await this.bookService.verifyBookAccess(bookId, user);
+    const pair = await this.resolvePair(bookId);
+    if (!pair || !(await this.canAccessPair(pair, bookId, user))) throw new NotFoundException('This book has no read-along pair');
+
+    const startedAt = Date.now();
+    this.logger.log(
+      `[${CANCEL_EVENT}] [start] bookId=${bookId} userId=${user.id} textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} - read-along build cancel started`,
+    );
+    try {
+      const build = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
+      // Collecting writes the read-along into a library and links it; stopping part way would strand
+      // a book nothing points at.
+      if (build?.status === 'building' && (build.phase === 'collect' || build.phase === 'link')) {
+        throw new ConflictException(CANCEL_TOO_LATE_MESSAGE);
+      }
+      // Aborted whatever the row says: a build between its slot and its claim has no building row yet,
+      // and a resumed build runs while the row still reads failed.
+      const inFlight = this.buildService.cancel(pair);
+      const building = build?.status === 'building';
+      if (build && building && build.storytellerBookUuid && (build.phase === 'process' || build.phase === 'wait')) {
+        await this.cancelRemoteProcessingBestEffort(build.id, build.storytellerBookUuid);
+      }
+      // A row holding a Storyteller book is kept as cancelled rather than deleted, with the book left in
+      // Storyteller: deleting a Storyteller book removes the source files a referenced book points at,
+      // and the next Generate resumes that book instead of importing the same paths again.
+      const row = build && building ? await this.repo.retireCancelledBuild(build.id) : 'unchanged';
+      this.logger.log(
+        `[${CANCEL_EVENT}] [end] bookId=${bookId} userId=${user.id} buildId=${build?.id ?? 'none'} durationMs=${Date.now() - startedAt} inFlight=${inFlight} row=${row} - read-along build cancel completed`,
+      );
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        this.logger.log(
+          `[${CANCEL_EVENT}] [end] bookId=${bookId} userId=${user.id} durationMs=${Date.now() - startedAt} outcome=too_late - read-along build is past the point of cancelling`,
+        );
+        throw error;
+      }
+      const { errorClass, message } = describeError(error);
+      this.logger.error(
+        `[${CANCEL_EVENT}] [fail] bookId=${bookId} userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - read-along build cancel failed`,
+      );
+      throw error;
+    }
+  }
+
+  private async cancelRemoteProcessingBestEffort(buildId: number, uuid: string): Promise<void> {
+    const startedAt = Date.now();
+    this.logger.log(`[${CANCEL_REMOTE_EVENT}] [start] buildId=${buildId} storytellerBookUuid=${uuid} - Storyteller processing stop started`);
+    try {
+      const connection = await this.settingsService.getConnection();
+      if (connection) await this.client.createSession(connection).cancelProcessing(uuid);
+      this.logger.log(
+        `[${CANCEL_REMOTE_EVENT}] [end] buildId=${buildId} storytellerBookUuid=${uuid} durationMs=${Date.now() - startedAt} stopped=${connection !== null} - Storyteller processing stop completed`,
+      );
+    } catch (error) {
+      const { errorClass, message } = describeError(error);
+      this.logger.warn(
+        `[${CANCEL_REMOTE_EVENT}] [fail] buildId=${buildId} storytellerBookUuid=${uuid} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - Storyteller processing could not be stopped and may run to completion`,
+      );
+    }
+  }
+
+  private async awaitCancelledBuildRelease(pair: StorytellerReadAlongPair): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const cap = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, CANCELLED_RELEASE_WAIT_MS);
+    });
+    try {
+      await Promise.race([this.buildService.whenReleased(pair), cap]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Read-only but for one repair: a ready read-along whose link was dropped and made again is put
+   * back on the new link, since nothing else goes looking for it until someone presses Generate.
+   */
   async getStatus(bookId: number, user: RequestUser): Promise<ReadAlongStatusResponse> {
     await this.bookService.verifyBookAccess(bookId, user);
     // Read once and threaded down: this route is polled against a twelve-hour build ceiling.
@@ -261,35 +375,56 @@ export class StorytellerReadAlongStatusService {
       this.resolveTargetLibrary(build.targetLibraryId, user),
       canBuild ? this.getCheapBlockReason(pair, settings, !building) : Promise.resolve(null),
     ]);
-    const blocked = canBuild ? (contentBlock ?? this.targetBlockReason(build.targetLibraryId, targetLibrary)) : null;
     // A ready build whose output was deleted is offered again; one the reader merely cannot open
     // stays ready with the book masked, or an admin-only library would invite duplicate builds.
     const outputHidden = outputBookId != null && !outputVisible;
-    const status: ReadAlongStatus = build.status === 'ready' && !summary && !outputHidden ? 'none' : (build.status as ReadAlongStatus);
+    // A cancelled build is offered again like one whose output is gone; its row only keeps the
+    // Storyteller book for the next Generate to resume.
+    const status: ReadAlongStatus =
+      build.status === 'cancelled' || (build.status === 'ready' && !summary && !outputHidden) ? 'none' : (build.status as ReadAlongStatus);
     const outputBook = status === 'none' ? null : summary;
+    // The next Generate after a vanished output is a fresh build, which goes where the settings say.
+    const destinationLibraryId = status === 'none' ? settings.targetLibraryId : build.targetLibraryId;
+    const destination = status === 'none' ? await this.resolveTargetLibrary(destinationLibraryId, user) : targetLibrary;
+    const blocked = canBuild ? (contentBlock ?? this.targetBlockReason(destinationLibraryId, destination)) : null;
+    // Only a caller who could build writes on a poll: an ordinary reader's status read stays a read.
+    if (canBuild && status === 'ready' && summary && this.lostReadAlongMember(pair, build.attachedLinkId)) {
+      await this.attachExistingOutput(pair, build, summary.id, user);
+    }
 
     return {
       status,
       blocked,
-      phase: build.phase as ReadAlongStatusResponse['phase'],
+      phase: status === 'none' ? null : (build.phase as ReadAlongStatusResponse['phase']),
       transport: build.transport as ReadAlongStatusResponse['transport'],
-      remoteTask: build.remoteTask,
-      remoteProgress: build.remoteProgress,
+      remoteTask: status === 'none' ? null : build.remoteTask,
+      remoteProgress: status === 'none' ? null : build.remoteProgress,
       outputBook: outputBook ? { id: outputBook.id, title: outputBook.title } : null,
-      targetLibraryId: targetLibrary.id,
-      targetLibraryName: targetLibrary.name,
+      targetLibraryId: destination.id,
+      targetLibraryName: destination.name,
       remoteCopyBytes,
       // An instance setting behind ManageAppSettings: for anyone else it is configuration they cannot read.
       keepRemoteCopyByDefault: canBuild && !settings.deleteRemoteAfterImport,
-      remoteCopyReclaimable: canBuild && this.remoteCopyReclaimable(settings, build.transport),
+      remoteCopyReclaimable: canBuild && this.remoteCopyReclaimable(settings, status === 'none' ? null : build.transport),
       // The stored error is the provider's own message: a library path, a host and port. This route
       // is ungated by design while the connection sits behind ManageAppSettings, so it is bounded by
       // the same build permission as its siblings above and by the library the build targets.
       // `status` still tells a reader without it that the build failed.
-      error: canBuild && targetLibrary.allowed ? build.error : null,
+      error: status !== 'none' && canBuild && targetLibrary.allowed ? build.error : null,
       startedAt: build.startedAt?.toISOString() ?? null,
       builtAt: build.builtAt?.toISOString() ?? null,
     };
+  }
+
+  /**
+   * A link this row was never attached to is a relink that lost the read-along. The link it was
+   * attached to and that names no read-along was detached on purpose, from the read-along's own page,
+   * and stays so.
+   */
+  private lostReadAlongMember(pair: StorytellerReadAlongPair, attachedLinkId: number | null): boolean {
+    // Another read-along already on the link is the user's choice, not a gap to fill.
+    if (pair.linkId === null || !pair.link || pair.link.readAlongBookId !== null) return false;
+    return pair.linkId !== attachedLinkId;
   }
 
   /**
@@ -423,23 +558,49 @@ export class StorytellerReadAlongStatusService {
    * Re-attaches a read-along to a link that lost it, which is what an unlink and relink leaves
    * behind. One-sided: the link only ever gains the member it is missing.
    */
-  private async attachExistingOutput(pair: StorytellerReadAlongPair, outputBookId: number, user: RequestUser): Promise<void> {
-    if (pair.linkId === null || pair.link?.readAlongBookId === outputBookId) return;
+  private async attachExistingOutput(
+    pair: StorytellerReadAlongPair,
+    build: { id: number; attachedLinkId: number | null },
+    outputBookId: number,
+    user: RequestUser,
+  ): Promise<void> {
+    const buildId = build.id;
+    if (pair.linkId === null) return;
+    if (pair.link?.readAlongBookId === outputBookId) {
+      // Already on the link but never recorded there (a row built before the stamp existed): without
+      // the stamp a later detach on this link would be undone by the next status read.
+      if (build.attachedLinkId !== pair.linkId) await this.stampAttachedLinkBestEffort(buildId, pair.linkId);
+      return;
+    }
     if (!(await this.canAccessBook(outputBookId, user))) return;
 
     const startedAt = Date.now();
     this.logger.log(
-      `[${ATTACH_EVENT}] [start] linkId=${pair.linkId} outputBookId=${outputBookId} userId=${user.id} - existing read-along re-attach started`,
+      `[${ATTACH_EVENT}] [start] linkId=${pair.linkId} buildId=${buildId} outputBookId=${outputBookId} userId=${user.id} - existing read-along re-attach started`,
     );
     try {
       const linked = await this.editionLinks.setReadAlongBook(pair.linkId, outputBookId);
+      // Stamped so a later detach on this same link reads as deliberate and is left alone.
+      if (linked !== undefined) await this.repo.updateBuild(buildId, { attachedLinkId: pair.linkId });
       this.logger.log(
-        `[${ATTACH_EVENT}] [end] linkId=${pair.linkId} outputBookId=${outputBookId} durationMs=${Date.now() - startedAt} attached=${linked !== undefined} - existing read-along re-attach completed`,
+        `[${ATTACH_EVENT}] [end] linkId=${pair.linkId} buildId=${buildId} outputBookId=${outputBookId} durationMs=${Date.now() - startedAt} attached=${linked !== undefined} - existing read-along re-attach completed`,
       );
     } catch (error) {
       const { errorClass, message } = describeError(error);
       this.logger.warn(
-        `[${ATTACH_EVENT}] [fail] linkId=${pair.linkId} outputBookId=${outputBookId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - existing read-along re-attach failed`,
+        `[${ATTACH_EVENT}] [fail] linkId=${pair.linkId} buildId=${buildId} outputBookId=${outputBookId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - existing read-along re-attach failed`,
+      );
+    }
+  }
+
+  private async stampAttachedLinkBestEffort(buildId: number, linkId: number): Promise<void> {
+    const startedAt = Date.now();
+    try {
+      await this.repo.updateBuild(buildId, { attachedLinkId: linkId });
+    } catch (error) {
+      const { errorClass, message } = describeError(error);
+      this.logger.warn(
+        `[${ATTACH_EVENT}] [fail] linkId=${linkId} buildId=${buildId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - attached link could not be recorded`,
       );
     }
   }

@@ -1,14 +1,15 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import type { EditionLinkCandidate } from '@bookorbit/types'
+import EditionCover from '../EditionCover.vue'
 import EditionSlotSearch from '../EditionSlotSearch.vue'
 import { withMessages } from './with-messages'
 
 type SearchProps = InstanceType<typeof EditionSlotSearch>['$props']
 
 const candidates: EditionLinkCandidate[] = [
-  { bookId: 20, title: 'Dune', authorName: 'Frank Herbert', score: 96 },
-  { bookId: 21, title: 'Dune Messiah', authorName: null, score: 80 },
+  { bookId: 20, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null, score: 96 },
+  { bookId: 21, title: 'Dune Messiah', authorName: null, coverVersion: null, score: 80 },
 ]
 
 function mountSearch(props: Partial<SearchProps> = {}, attachTo?: HTMLElement) {
@@ -55,6 +56,15 @@ describe('EditionSlotSearch', () => {
     expect(scores.map((score) => score.text())).toEqual(['96%', '80%'])
     expect(scores[0]?.classes()).toContain('text-success')
     expect(scores[1]?.classes()).toContain('text-muted-foreground')
+  })
+
+  it('hands each result cover its own cover version', () => {
+    const wrapper = mountSearch({
+      candidates: [{ ...candidates[0]!, coverVersion: '2026-03-01T00:00:00.000Z' }, candidates[1]!],
+    })
+
+    const covers = wrapper.findAllComponents(EditionCover)
+    expect(covers.map((cover) => cover.props('version'))).toEqual(['2026-03-01T00:00:00.000Z', null])
   })
 
   it('reads the score pill from the catalog', async () => {

@@ -102,7 +102,9 @@ export function useReadAlongSection(bookId: () => number) {
   }
 
   async function handleCancel(): Promise<void> {
-    if (!(await readAlong.cancel(bookId()))) toast.error(t('book.detail.editionLink.readAlong.cancelUnavailable'))
+    const outcome = await readAlong.cancel(bookId())
+    if (outcome === 'too_late') toast.error(t('book.detail.editionLink.readAlong.cancelTooLate'))
+    else if (outcome === 'failed') toast.error(t('book.detail.editionLink.readAlong.cancelUnavailable'))
   }
 
   function handleImportExisting(uuid: string): void {

@@ -45,6 +45,9 @@ export interface StorytellerBookSummary {
   hasAudiobook: boolean;
   /** In Storyteller's own path space, so callers map it back with `toLocalPath`. */
   readaloudPath: string | null;
+  /** The file behind the ebook and audiobook links, in Storyteller's own path space. */
+  ebookPath: string | null;
+  audiobookPath: string | null;
   processing: StorytellerProcessingStatus;
 }
 
@@ -65,6 +68,8 @@ export interface StorytellerUploadInput {
   audioPaths: string[];
   collectionUuid?: string;
   onProgress?: (uploadedBytes: number, totalBytes: number) => void;
+  /** Checked between chunks: an aborted upload reclaims the chunks it sent, then throws StorytellerClientError. */
+  signal?: AbortSignal;
 }
 
 export interface StorytellerBookListOptions {
@@ -93,6 +98,8 @@ export interface StorytellerSession {
   deleteBook(uuid: string, options?: { preventReImport?: boolean }): Promise<void>;
   /** Drops Storyteller's processing cache (transcoded audio, transcriptions). Never the originals. */
   deleteCache(uuid: string): Promise<void>;
+  /** Stops a running alignment. Nothing to stop (404 or 409) is not an error. */
+  cancelProcessing(uuid: string): Promise<void>;
   ensureCollection(name: string): Promise<string | null>;
 }
 

@@ -72,6 +72,7 @@ const UPLOAD_PATH = '/api/v2/books/upload';
 const UPLOAD_LOCATION_MESSAGE = 'Storyteller returned an upload location outside its own server URL';
 const UPLOAD_OFFSET_MESSAGE = 'Storyteller acknowledged an unexpected upload offset';
 const UPLOAD_INCOMPLETE_MESSAGE = 'The upload ended before the whole file was accepted';
+const UPLOAD_CANCELLED_MESSAGE = 'The upload was cancelled';
 const UPLOAD_STALLED_MESSAGE = 'The upload stalled';
 const UPLOAD_CEILING_MESSAGE = 'The upload exceeded the transfer ceiling';
 const LOCAL_FILE_MESSAGE = 'A file for the Storyteller upload could not be read';
@@ -358,8 +359,14 @@ class StorytellerHttpSession implements StorytellerSession {
 
       let completedBytes = 0;
       for (const [index, file] of files.entries()) {
-        await this.uploadFile(file, sizes[index], bookUuid, ceilingAt, createdUploads, (offset) =>
-          input.onProgress?.(completedBytes + offset, totalBytes),
+        await this.uploadFile(
+          file,
+          sizes[index],
+          bookUuid,
+          ceilingAt,
+          createdUploads,
+          (offset) => input.onProgress?.(completedBytes + offset, totalBytes),
+          input.signal,
         );
         completedBytes += sizes[index];
       }
@@ -370,10 +377,14 @@ class StorytellerHttpSession implements StorytellerSession {
       );
       return { uuid: bookUuid };
     } catch (error) {
-      const { errorClass, message } = this.describe(error);
-      this.logger.error(
-        `[${UPLOAD_EVENT}] [fail] bookUuid=${bookUuid} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - upload failed`,
-      );
+      if (input.signal?.aborted) {
+        this.logger.log(`[${UPLOAD_EVENT}] [end] bookUuid=${bookUuid} durationMs=${Date.now() - startedAt} outcome=cancelled - upload cancelled`);
+      } else {
+        const { errorClass, message } = this.describe(error);
+        this.logger.error(
+          `[${UPLOAD_EVENT}] [fail] bookUuid=${bookUuid} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - upload failed`,
+        );
+      }
       await this.reclaimUploads(bookUuid, createdUploads);
       throw error;
     }
@@ -564,6 +575,16 @@ class StorytellerHttpSession implements StorytellerSession {
     await this.discard(sent.response);
   }
 
+  async cancelProcessing(uuid: string): Promise<void> {
+    const sent = await this.send({ method: 'DELETE', path: `${this.bookPath(uuid)}/process` });
+    if (sent.response.status === 404 || sent.response.status === 409) {
+      await this.discard(sent.response);
+      return;
+    }
+    await this.expectSuccess(sent);
+    await this.discard(sent.response);
+  }
+
   /** Housekeeping: a Storyteller that refuses collections must not fail a build, so the caller gets null. */
   async ensureCollection(name: string): Promise<string | null> {
     const wanted = name.trim();
@@ -613,6 +634,7 @@ class StorytellerHttpSession implements StorytellerSession {
     ceilingAt: number,
     createdUploads: string[],
     onOffset: (offset: number) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
     const metadata = encodeTusMetadata({ bookUuid, filename: basename(filePath), filetype: guessFiletype(filePath) });
     const create = await this.send({
@@ -653,6 +675,7 @@ class StorytellerHttpSession implements StorytellerSession {
           if (failures > 0) await delay(RETRY_BASE_DELAY_MS * failures);
         }
         onOffset(offset);
+        if (signal?.aborted) throw new StorytellerClientError(UPLOAD_CANCELLED_MESSAGE, null);
       }
 
       if (offset !== size) throw new StorytellerClientError(UPLOAD_INCOMPLETE_MESSAGE, null);

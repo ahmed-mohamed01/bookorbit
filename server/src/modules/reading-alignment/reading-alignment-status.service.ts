@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 
 import { appConfig } from '../../config/config';
@@ -13,6 +13,7 @@ import { ReadingAlignmentRepository } from './reading-alignment.repository';
 import { WhisperService } from './whisper.service';
 
 const REQUEST_EVENT = 'reading_alignment.request_build';
+const CANCEL_EVENT = 'reading_alignment.cancel_build';
 
 export type AlignmentBuildRequestResult = { status: string };
 export type AlignmentStatusResult =
@@ -65,6 +66,40 @@ export class ReadingAlignmentStatusService {
       `[${REQUEST_EVENT}] [end] bookId=${bookId} textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} userId=${user.id} status=${status} force=${force} - build requested`,
     );
     return { status };
+  }
+
+  /**
+   * Stops a running build and deletes its row rather than failing it. The panel offers Cancel only
+   * for a link it just started, and a cancelled first build left behind would resume as a stale
+   * half-alignment the next time the pair is linked.
+   */
+  async cancelBuild(bookId: number, user: RequestUser): Promise<void> {
+    await this.assertAccess(bookId, user);
+    const pair = await this.pairService.resolveAlignmentPair(bookId);
+    if (!pair) throw new NotFoundException('This book has no alignment pair');
+    await this.assertPairAccess(pair, bookId, user);
+
+    const startedAt = Date.now();
+    this.logger.log(
+      `[${CANCEL_EVENT}] [start] bookId=${bookId} userId=${user.id} textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} - alignment build cancel started`,
+    );
+    try {
+      // Aborted before the row is read: a build still hashing content has not written its row yet, and a
+      // resumed or forced build runs while the row still reads failed or ready.
+      const inFlight = this.buildService.cancel(pair);
+      const alignment = await this.repo.getAlignmentByPair(pair.textBookId, pair.audioBookId);
+      const cancellable = alignment?.status === 'pending' || alignment?.status === 'building';
+      const deleted = alignment && cancellable ? await this.repo.deleteAlignment(alignment.id) : false;
+      this.logger.log(
+        `[${CANCEL_EVENT}] [end] bookId=${bookId} userId=${user.id} alignmentId=${alignment?.id ?? 'none'} durationMs=${Date.now() - startedAt} inFlight=${inFlight} deleted=${deleted} - alignment build cancel completed`,
+      );
+    } catch (error) {
+      const { errorClass, message } = describeError(error);
+      this.logger.error(
+        `[${CANCEL_EVENT}] [fail] bookId=${bookId} userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - alignment build cancel failed`,
+      );
+      throw error;
+    }
   }
 
   async getStatus(bookId: number, user: RequestUser): Promise<AlignmentStatusResult> {

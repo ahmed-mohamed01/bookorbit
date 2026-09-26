@@ -69,8 +69,8 @@ describe('EditionLinkRepository', () => {
     const sourceChain = makeChain([{ title: 'Dune' }]);
     const sourceAuthorsChain = makeChain([{ name: 'Frank Herbert' }]);
     const candidatesChain = makeChain([
-      { bookId: 2, title: 'Dune', authorNames: ['Frank Herbert'] },
-      { bookId: 3, title: 'Cooking for Beginners', authorNames: ['Ada Baker'] },
+      { bookId: 2, title: 'Dune', authorNames: ['Frank Herbert'], coverUpdatedAt: new Date('2026-03-01T00:00:00.000Z') },
+      { bookId: 3, title: 'Cooking for Beginners', authorNames: ['Ada Baker'], coverUpdatedAt: null },
     ]);
     const db = {
       select: vi.fn().mockReturnValueOnce(sourceChain).mockReturnValueOnce(sourceAuthorsChain).mockReturnValueOnce(candidatesChain),
@@ -83,7 +83,7 @@ describe('EditionLinkRepository', () => {
         modality: 'text',
         accessibleLibraryIds: [10, 11],
       }),
-    ).resolves.toEqual([{ bookId: 2, title: 'Dune', authorName: 'Frank Herbert', score: 100 }]);
+    ).resolves.toEqual([{ bookId: 2, title: 'Dune', authorName: 'Frank Herbert', coverVersion: '2026-03-01T00:00:00.000Z', score: 100 }]);
     expect(candidatesChain.where).toHaveBeenCalledOnce();
     expect(candidatesChain.limit).toHaveBeenCalledWith(100);
   });
@@ -117,11 +117,18 @@ describe('EditionLinkRepository', () => {
 
   describe('findBookSummary', () => {
     it('resolves the counterpart title and first author in one joined query', async () => {
-      const chain = makeChain([{ id: 20, title: 'Dune', authorNames: ['Frank Herbert', 'Co-Author'] }]);
+      const chain = makeChain([
+        { id: 20, title: 'Dune', authorNames: ['Frank Herbert', 'Co-Author'], coverUpdatedAt: new Date('2026-03-01T00:00:00.000Z') },
+      ]);
       const db = { select: vi.fn(() => chain) };
       const repo = new EditionLinkRepository(db as never);
 
-      await expect(repo.findBookSummary(20)).resolves.toEqual({ id: 20, title: 'Dune', authorName: 'Frank Herbert' });
+      await expect(repo.findBookSummary(20)).resolves.toEqual({
+        id: 20,
+        title: 'Dune',
+        authorName: 'Frank Herbert',
+        coverVersion: '2026-03-01T00:00:00.000Z',
+      });
       expect(db.select).toHaveBeenCalledOnce();
       expect(chain.where).toHaveBeenCalledOnce();
     });
@@ -135,19 +142,19 @@ describe('EditionLinkRepository', () => {
     });
 
     it('falls back to a null author when the book has no authors', async () => {
-      const chain = makeChain([{ id: 20, title: 'Dune', authorNames: [] }]);
+      const chain = makeChain([{ id: 20, title: 'Dune', authorNames: [], coverUpdatedAt: null }]);
       const db = { select: vi.fn(() => chain) };
       const repo = new EditionLinkRepository(db as never);
 
-      await expect(repo.findBookSummary(20)).resolves.toEqual({ id: 20, title: 'Dune', authorName: null });
+      await expect(repo.findBookSummary(20)).resolves.toEqual({ id: 20, title: 'Dune', authorName: null, coverVersion: null });
     });
   });
 
   describe('findBookSummaries', () => {
     it('resolves every member in one query, keyed by book id', async () => {
       const chain = makeChain([
-        { id: 10, title: 'Dune', authorNames: ['Frank Herbert'] },
-        { id: 30, title: 'Dune (read-along)', authorNames: [] },
+        { id: 10, title: 'Dune', authorNames: ['Frank Herbert'], coverUpdatedAt: new Date('2026-03-01T00:00:00.000Z') },
+        { id: 30, title: 'Dune (read-along)', authorNames: [], coverUpdatedAt: null },
       ]);
       const db = { select: vi.fn(() => chain) };
       const repo = new EditionLinkRepository(db as never);
@@ -155,8 +162,8 @@ describe('EditionLinkRepository', () => {
       const summaries = await repo.findBookSummaries([10, 20, 30]);
 
       expect(db.select).toHaveBeenCalledOnce();
-      expect(summaries.get(10)).toEqual({ id: 10, title: 'Dune', authorName: 'Frank Herbert' });
-      expect(summaries.get(30)).toEqual({ id: 30, title: 'Dune (read-along)', authorName: null });
+      expect(summaries.get(10)).toEqual({ id: 10, title: 'Dune', authorName: 'Frank Herbert', coverVersion: '2026-03-01T00:00:00.000Z' });
+      expect(summaries.get(30)).toEqual({ id: 30, title: 'Dune (read-along)', authorName: null, coverVersion: null });
       expect(summaries.has(20)).toBe(false);
       expect(boundValues(chain.where.mock.calls[0]![0]).flat()).toEqual([10, 20, 30]);
     });

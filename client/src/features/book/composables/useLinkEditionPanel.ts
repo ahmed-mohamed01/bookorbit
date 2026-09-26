@@ -38,7 +38,7 @@ const ALIGNMENT_RUNNING = new Set<AlignmentStatus>(['pending', 'building'])
 const ALIGNMENT_UNSYNCED = new Set<AlignmentStatus>(['failed', 'unalignable'])
 
 function toCandidate(member: EditionLinkMember, score: number): EditionLinkCandidate {
-  return { bookId: member.id, title: member.title, authorName: member.authorName, score }
+  return { bookId: member.id, title: member.title, authorName: member.authorName, coverVersion: member.coverVersion, score }
 }
 
 export function useLinkEditionPanel(book: () => BookDetail) {
@@ -101,35 +101,29 @@ export function useLinkEditionPanel(book: () => BookDetail) {
 
   const alignmentRunning = computed(() => ALIGNMENT_RUNNING.has(alignment.status.value) || alignment.mutating.value)
 
-  // Linking narrates the first alignment of a link made from this panel. A rebuild on an established
-  // pair is still a linked pair, whose position sync section says it is aligning.
-  const freshLink = ref(false)
-  // Synchronous, so an alignment that finishes and is rebuilt before the next flush still ends it.
-  watch(
-    alignmentRunning,
-    (running) => {
-      if (!running) freshLink.value = false
-    },
-    { flush: 'sync' },
-  )
+  // Linking narrates a pair's first alignment, wherever it was started and however often the panel
+  // reopens. A rebuild keeps the previous built date, so an established pair stays linked and its
+  // position sync section says it is aligning.
+  const firstAlignment = computed(() => alignmentRunning.value && alignment.builtAt.value === null)
 
   const phase = computed<LinkEditionPhase>(() => {
     if (isReadAlongPage.value) return 'linked'
-    if (link.value) return alignmentRunning.value && freshLink.value ? 'linking' : 'linked'
+    if (link.value) return firstAlignment.value ? 'linking' : 'linked'
     return selected.value ? 'matched' : 'nomatch'
   })
 
   // Set only when the search slot appears through Change, where the user is about to type.
   const searchAutofocus = ref(false)
 
-  // The server re-attaches an existing read-along to a relinked pair only when a build is requested, so
-  // until then the status read is the only place that names it. The link's own member wins once present.
+  // The server re-attaches an existing read-along to a relinked pair on a status read, and the link is
+  // not refetched for it, so until then the status read is the only place that names it. The link's own
+  // member wins once present.
   const readAlongMember = computed<EditionLinkMember | null>(() => {
     const linked = members.value?.readAlong
     if (linked) return linked
     const output = readAlong.outputBook.value
     if (!link.value || readAlong.status.value !== 'ready' || !output) return null
-    return { id: output.id, title: output.title, authorName: null, progress: null, narrationPercentage: null }
+    return { id: output.id, title: output.title, authorName: null, coverVersion: null, progress: null, narrationPercentage: null }
   })
   const readAlongIsCurrentBook = computed(() => readAlongMember.value?.id === bookId)
 
@@ -192,7 +186,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
       kind: 'filled',
       format,
       bookId: member.id,
-      coverVersion: isThisBook ? book().coverVersion : null,
+      coverVersion: isThisBook ? book().coverVersion : member.coverVersion,
       title: member.title,
       authorName: member.authorName,
       progress: member.progress?.percentage ?? null,
@@ -225,7 +219,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
       kind: 'filled',
       format: counterpartFormat.value,
       bookId: candidate.bookId,
-      coverVersion: null,
+      coverVersion: candidate.coverVersion,
       title: candidate.title,
       authorName: candidate.authorName,
       progress: null,
@@ -318,7 +312,6 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     resetSearch()
     picked.value = null
     proposalDismissed.value = false
-    freshLink.value = false
     searchAutofocus.value = false
     // Toggling, closing without linking and reopening on a different candidate would otherwise start
     // an hours-long build nobody re-confirmed. The destination and keep-copy choices go with it.
@@ -375,7 +368,6 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     }
     toast.success(t('book.detail.editionLink.linkedSuccess'))
     query.value = ''
-    freshLink.value = true
     void alignment.build(bookId)
     if (shouldGenerate && !toggleDisabled.value) {
       void readAlongSection.runBuild(readAlongSection.withDestination({}))
@@ -392,7 +384,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     const counterpart = resolved ? (role.value === 'audio' ? resolved.text : resolved.audio) : null
     if (counterpart) return toCandidate(counterpart, 0)
     const summary = linkedCounterpart.value
-    return summary ? { bookId: summary.id, title: summary.title, authorName: summary.authorName, score: 0 } : null
+    return summary ? { bookId: summary.id, title: summary.title, authorName: summary.authorName, coverVersion: summary.coverVersion, score: 0 } : null
   }
 
   function restoreSelection(candidate: EditionLinkCandidate | null): void {
@@ -409,19 +401,27 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   // Nothing read for the old pair may narrate the next one: a relink with another counterpart would
   // otherwise show the previous pair's Synced, Built or Ready until the new reads land.
   function forgetPair(): void {
-    freshLink.value = false
     readAlong.reset()
     void alignment.fetchStatus(bookId)
     void readAlong.fetchStatus(bookId)
   }
 
-  // Unlinks because the server has no route to cancel a position sync build. The read-along cancel is
-  // attempted first so that both stop once that route exists; until then the unlink still has to happen.
+  // Stops whatever this link started, then unlinks. A cancel the server refuses is reported and the
+  // unlink still happens, except for a read-along already being imported onto this link: unlinking
+  // then would strand the imported book or fail the build's own link write, so the link stays.
   async function cancelLinking(): Promise<void> {
     const candidate = linkedCounterpartCandidate()
     if (readAlong.status.value === 'building' || readAlong.mutating.value) {
-      const cancelled = await readAlong.cancel(bookId)
-      if (!cancelled) toast.error(t('book.detail.editionLink.readAlong.cancelKeptRunning'))
+      const outcome = await readAlong.cancel(bookId)
+      if (outcome === 'too_late') {
+        toast.error(t('book.detail.editionLink.readAlong.cancelTooLate'))
+        return
+      }
+      if (outcome === 'failed') toast.error(t('book.detail.editionLink.readAlong.cancelKeptRunning'))
+    }
+    if (alignmentRunning.value) {
+      const cancelled = await alignment.cancel(bookId)
+      if (!cancelled) toast.error(t('book.detail.editionLink.syncCancelKeptRunning'))
     }
     const success = await unlinkBook()
     if (!success) {

@@ -13,6 +13,8 @@ function remoteBook(overrides: Partial<StorytellerBookSummary> = {}): Storytelle
     hasEbook: true,
     hasAudiobook: true,
     readaloudPath: null,
+    ebookPath: null,
+    audiobookPath: null,
     processing: { state: 'completed', task: null, progress: null, error: null },
     ...overrides,
   };
@@ -88,7 +90,7 @@ describe('matchExistingBooks', () => {
 
   it('sorts by score and keeps unaligned candidates visible', () => {
     const matches = matchExistingBooks({ title: 'Foundation', authors: ['Isaac Asimov'], identifiers: ['b00x57b4kg'] }, [
-      remoteBook({ uuid: 'uuid-weak', title: 'Foundation', authors: ['I. Asimov'], aligned: false }),
+      remoteBook({ uuid: 'uuid-weak', title: 'Foundation', authors: ['Asimov, Isaac'], aligned: false }),
       remoteBook({ uuid: 'uuid-exact', identifiers: ['B00X57B4KG'] }),
     ]);
 
@@ -107,6 +109,37 @@ describe('matchExistingBooks', () => {
   it('returns nothing without a usable title and no identifiers', () => {
     expect(matchExistingBooks({ title: '', authors: ['Isaac Asimov'], identifiers: [] }, [remoteBook()])).toEqual([]);
     expect(matchExistingBooks({ title: 'Foundation', authors: [], identifiers: [] }, [remoteBook({ title: '' })])).toEqual([]);
+  });
+
+  it('does not offer another book of the same series by the same author', () => {
+    const matches = matchExistingBooks({ title: 'Bastille vs. the Evil Librarians', authors: ['Brandon Sanderson'], identifiers: [] }, [
+      remoteBook({ uuid: 'uuid-alcatraz', title: 'Alcatraz vs The Evil Librarians', authors: ['Brandon Sanderson'] }),
+    ]);
+
+    expect(matches).toEqual([]);
+  });
+
+  it('reads vs, vs. and versus as one word, and ignores articles, case and a subtitle', () => {
+    const matches = matchExistingBooks({ title: 'Alcatraz Versus the Evil Librarians', authors: ['Brandon Sanderson'], identifiers: [] }, [
+      remoteBook({ uuid: 'uuid-vs', title: 'Alcatraz vs. The Evil Librarians: Alcatraz, Book 1', authors: ['Brandon Sanderson'] }),
+    ]);
+
+    expect(matches.map((match) => match.uuid)).toEqual(['uuid-vs']);
+    expect(matches[0].score).toBe(100);
+  });
+
+  it('refuses the same title by a different author', () => {
+    const matches = matchExistingBooks({ title: 'Foundation', authors: ['Isaac Asimov'], identifiers: [] }, [
+      remoteBook({ uuid: 'uuid-other', authors: ['Someone Else'] }),
+    ]);
+
+    expect(matches).toEqual([]);
+  });
+
+  it('does not accept a title that is only similar', () => {
+    const matches = matchExistingBooks({ title: 'Foundation and Empire', authors: ['Isaac Asimov'], identifiers: [] }, [remoteBook()]);
+
+    expect(matches).toEqual([]);
   });
 
   it('lets an unrelated identifier fall through to title scoring', () => {

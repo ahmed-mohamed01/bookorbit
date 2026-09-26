@@ -373,4 +373,81 @@ describe('useReadingAlignment', () => {
       expect(buildBlocked.value).toBeNull()
     })
   })
+
+  describe('cancel', () => {
+    it('deletes the build, refetches the status and stops polling once it reads none', async () => {
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 4, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response(null, { status: 204 }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'none' }))
+
+      const { status, mutating, fetchStatus, cancel } = useReadingAlignment()
+      await fetchStatus(10)
+      expect(status.value).toBe('building')
+
+      await expect(cancel(10)).resolves.toBe(true)
+
+      expect(mocks.api).toHaveBeenNthCalledWith(2, BUILD_URL, { method: 'DELETE' })
+      expect(mocks.api).toHaveBeenNthCalledWith(3, STATUS_URL)
+      expect(status.value).toBe('none')
+      expect(mutating.value).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(9000)
+      expect(mocks.api).toHaveBeenCalledTimes(3)
+    })
+
+    it('answers false on a refused cancel and leaves the status alone', async () => {
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 4, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response(null, { ok: false, status: 404 }))
+
+      const { status, fetchStatus, cancel } = useReadingAlignment()
+      await fetchStatus(10)
+
+      await expect(cancel(10)).resolves.toBe(false)
+      expect(status.value).toBe('building')
+      expect(mocks.api).toHaveBeenCalledTimes(2)
+    })
+
+    it('sends the DELETE only after an in-flight build POST resolves, and stays stopped afterwards', async () => {
+      let resolveBuild!: (value: Response) => void
+      mocks.api.mockReturnValueOnce(
+        new Promise<Response>((resolve) => {
+          resolveBuild = resolve
+        }),
+      )
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 4, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response(null, { status: 204 }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'none' }))
+
+      const { status, mutating, build, cancel } = useReadingAlignment()
+      const building = build(10)
+      const cancelling = cancel(10)
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(mocks.api).toHaveBeenCalledTimes(1)
+      expect(mocks.api).toHaveBeenNthCalledWith(1, BUILD_URL, { method: 'POST' })
+
+      resolveBuild(response({ status: 'building' }))
+      await building
+      await expect(cancelling).resolves.toBe(true)
+
+      expect(mocks.api).toHaveBeenNthCalledWith(2, STATUS_URL)
+      expect(mocks.api).toHaveBeenNthCalledWith(3, BUILD_URL, { method: 'DELETE' })
+      expect(mocks.api).toHaveBeenNthCalledWith(4, STATUS_URL)
+      expect(status.value).toBe('none')
+      expect(mutating.value).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(9000)
+      expect(mocks.api).toHaveBeenCalledTimes(4)
+      expect(status.value).toBe('none')
+    })
+
+    it('answers false when the request throws', async () => {
+      mocks.api.mockRejectedValueOnce(new Error('offline'))
+
+      const { mutating, cancel } = useReadingAlignment()
+
+      await expect(cancel(10)).resolves.toBe(false)
+      expect(mutating.value).toBe(false)
+    })
+  })
 })

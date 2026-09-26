@@ -157,6 +157,15 @@ function readMediaLinked(book: Record<string, unknown>, ...keys: string[]): bool
   return false;
 }
 
+function readMediaPath(book: Record<string, unknown>, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const link = asRecord(book[key]);
+    const filepath = link ? readString(link, 'filepath', 'file_path', 'path') : null;
+    if (filepath) return filepath;
+  }
+  return null;
+}
+
 /**
  * Where Storyteller says the finished read-along lives, as Storyteller sees the path. Only a
  * completed read-along has a trustworthy path - a `PROCESSING` row's filepath is a half-written
@@ -187,6 +196,8 @@ export function normalizeBook(raw: unknown): StorytellerBookSummary | null {
     hasEbook: readMediaLinked(book, 'ebook'),
     hasAudiobook: readMediaLinked(book, 'audiobook', 'audio'),
     readaloudPath: readReadaloudPath(book),
+    ebookPath: readMediaPath(book, 'ebook'),
+    audiobookPath: readMediaPath(book, 'audiobook', 'audio'),
     processing: normalizeProcessing(book),
   };
 }

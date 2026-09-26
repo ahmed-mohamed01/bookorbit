@@ -12,7 +12,7 @@ import type {
 } from '@bookorbit/types'
 import type { AlignmentStatus } from '../../../../composables/useReadingAlignment'
 import type { EditionLink, EditionLinkCandidate } from '../../../../composables/useEditionLink'
-import type { ReadAlongBuildOutcome } from '../../../../composables/useReadAlong'
+import type { ReadAlongBuildOutcome, ReadAlongCancelOutcome } from '../../../../composables/useReadAlong'
 import ReadingAlignmentControl from '../ReadingAlignmentControl.vue'
 
 // The rebuild is the one action here that deletes a library book, so it asks first. The dialog is
@@ -96,7 +96,7 @@ function createReadAlongState() {
     existingMatches: ref<StorytellerExistingMatch[]>([]),
     fetchStatus: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     build: vi.fn<() => Promise<ReadAlongBuildOutcome>>().mockResolvedValue('started'),
-    cancel: vi.fn<(id: number) => Promise<boolean>>().mockResolvedValue(true),
+    cancel: vi.fn<(id: number) => Promise<ReadAlongCancelOutcome>>().mockResolvedValue('cancelled'),
     fetchExisting: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     onReady: vi.fn<(handler: () => void) => void>(),
   }
@@ -328,7 +328,7 @@ describe('ReadingAlignmentControl', () => {
       createdBy: 1,
       createdAt: '2026-01-01T00:00:00.000Z',
     }
-    editionLinkState.linkedCounterpart.value = { id: 20, title: 'Dune', authorName: null }
+    editionLinkState.linkedCounterpart.value = { id: 20, title: 'Dune', authorName: null, coverVersion: null }
     alignmentState.status.value = 'ready'
     const wrapper = mountControl({ files: [makeFile({ format: 'epub' })] })
     await flushPromises()

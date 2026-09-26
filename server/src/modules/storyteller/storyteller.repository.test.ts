@@ -34,15 +34,17 @@ function queryBuilder<T>(result: T) {
   return builder;
 }
 
-function mockDb(options: { selectResults?: unknown[]; insertResults?: unknown[]; updateResults?: unknown[] } = {}) {
+function mockDb(options: { selectResults?: unknown[]; insertResults?: unknown[]; updateResults?: unknown[]; deleteResults?: unknown[] } = {}) {
   const selectResults = [...(options.selectResults ?? [])];
   const insertResults = [...(options.insertResults ?? [])];
   const updateResults = [...(options.updateResults ?? [])];
+  const deleteResults = [...(options.deleteResults ?? [])];
 
   return {
     select: vi.fn(() => queryBuilder(selectResults.shift() ?? [])),
     insert: vi.fn(() => queryBuilder(insertResults.shift() ?? [])),
     update: vi.fn(() => queryBuilder(updateResults.shift() ?? [])),
+    delete: vi.fn(() => queryBuilder(deleteResults.shift() ?? [])),
   };
 }
 
@@ -218,7 +220,7 @@ describe('StorytellerRepository.startBuild', () => {
     expect(conflict.set.outputBookId).toBe(55);
   });
 
-  it('does not touch fields outside the reset list when the caller omits them', async () => {
+  it('keeps the destination columns on conflict only when the caller omits them', async () => {
     const db = mockDb({ insertResults: [[{}]] });
     const repo = new StorytellerRepository(db as never);
 
@@ -227,6 +229,29 @@ describe('StorytellerRepository.startBuild', () => {
     const builder = builderFrom(db.insert);
     const conflict = builder.onConflictDoUpdate.mock.calls[0]![0];
     expect(conflict.set).not.toHaveProperty('targetLibraryId');
+    expect(conflict.set).not.toHaveProperty('targetFolderId');
+  });
+
+  it('overwrites the folder with an explicit null so a claim for another library drops the old folder', async () => {
+    const db = mockDb({ insertResults: [[{}]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await repo.startBuild({ textBookId: 1, audioBookId: 2, targetLibraryId: 4, targetFolderId: null });
+
+    const conflict = builderFrom(db.insert).onConflictDoUpdate.mock.calls[0]![0];
+    expect(conflict.set).toMatchObject({ targetLibraryId: 4, targetFolderId: null });
+  });
+
+  it('writes a caller-supplied destination library and folder', async () => {
+    const db = mockDb({ insertResults: [[{}]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await repo.startBuild({ textBookId: 1, audioBookId: 2, targetLibraryId: 3, targetFolderId: 30 });
+
+    const builder = builderFrom(db.insert);
+    expect(builder.values.mock.calls[0]![0]).toMatchObject({ targetLibraryId: 3, targetFolderId: 30 });
+    const conflict = builder.onConflictDoUpdate.mock.calls[0]![0];
+    expect(conflict.set).toMatchObject({ targetLibraryId: 3, targetFolderId: 30 });
   });
 
   it('returns undefined when the row was skipped because another build already holds the pair', async () => {
@@ -286,6 +311,54 @@ describe('StorytellerRepository provider-authored column bounds', () => {
 
     const values = builderFrom(db.insert).values.mock.calls[0]![0] as { remoteTask: string };
     expect(values.remoteTask).toHaveLength(255);
+  });
+});
+
+describe('StorytellerRepository.retireCancelledBuild', () => {
+  it('keeps a building row that holds a Storyteller book as cancelled, clearing only the run state', async () => {
+    const db = mockDb({ updateResults: [[{ id: 3 }]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.retireCancelledBuild(3)).resolves.toBe('kept');
+
+    const builder = builderFrom(db.update);
+    expect(builder.set.mock.calls[0]![0]).toMatchObject({ status: 'cancelled', phase: null, remoteTask: null, remoteProgress: null, error: null });
+    const setColumns = Object.keys(builder.set.mock.calls[0]![0] as object);
+    for (const kept of ['storytellerBookUuid', 'transport', 'targetLibraryId', 'targetFolderId']) expect(setColumns).not.toContain(kept);
+    const where = renderSql(builder.where.mock.calls[0]![0]);
+    expect(where.sql).toBe(
+      '("storyteller_read_along_builds"."id" = $1 and "storyteller_read_along_builds"."status" = $2 and "storyteller_read_along_builds"."storyteller_book_uuid" is not null)',
+    );
+    expect(where.params).toEqual([3, 'building']);
+    expect(db.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes a building row with no Storyteller book', async () => {
+    const db = mockDb({ updateResults: [[]], deleteResults: [[{ id: 3 }]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.retireCancelledBuild(3)).resolves.toBe('deleted');
+
+    const where = renderSql(builderFrom(db.delete).where.mock.calls[0]![0]);
+    expect(where.sql).toBe(
+      '("storyteller_read_along_builds"."id" = $1 and "storyteller_read_along_builds"."status" = $2 and "storyteller_read_along_builds"."storyteller_book_uuid" is null)',
+    );
+    expect(where.params).toEqual([3, 'building']);
+  });
+
+  it('keeps the row when the build recorded its book between the update and the delete', async () => {
+    const db = mockDb({ updateResults: [[], [{ id: 3 }]], deleteResults: [[]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.retireCancelledBuild(3)).resolves.toBe('kept');
+    expect(db.update).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves a row that is no longer building alone', async () => {
+    const db = mockDb({ updateResults: [[], []], deleteResults: [[]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.retireCancelledBuild(3)).resolves.toBe('unchanged');
   });
 });
 

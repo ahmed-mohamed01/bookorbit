@@ -46,7 +46,13 @@ export const storytellerReadAlongBuilds = pgTable(
       .notNull()
       .references(() => books.id, { onDelete: 'cascade' }),
     targetLibraryId: integer('target_library_id').references(() => libraries.id, { onDelete: 'set null' }),
+    targetFolderId: integer('target_folder_id').references(() => libraryFolders.id, { onDelete: 'set null' }),
     outputBookId: integer('output_book_id').references(() => books.id, { onDelete: 'set null' }),
+    // The link this row's read-along was last attached to. Unlinking deletes that link and nulls this,
+    // which is how a status read tells a relink that lost the read-along from a deliberate detach. The
+    // foreign key to book_edition_links lives in the bootstrap SQL only: that table belongs to the
+    // edition-link module, whose schema this module does not import.
+    attachedLinkId: integer('attached_link_id'),
     storytellerBookUuid: varchar('storyteller_book_uuid', { length: 64 }),
     transport: varchar('transport', { length: 20 }),
     status: varchar('status', { length: 20 }).notNull().default('building'),
@@ -66,7 +72,7 @@ export const storytellerReadAlongBuilds = pgTable(
     unique('storyteller_read_along_builds_pair_unique').on(t.textBookId, t.audioBookId),
     index('storyteller_read_along_builds_output_book_id_idx').on(t.outputBookId),
     index('storyteller_read_along_builds_uuid_idx').on(t.storytellerBookUuid),
-    check('storyteller_read_along_builds_status_chk', sql`${t.status} in ('building', 'ready', 'failed')`),
+    check('storyteller_read_along_builds_status_chk', sql`${t.status} in ('building', 'ready', 'failed', 'cancelled')`),
     check(
       'storyteller_read_along_builds_phase_chk',
       sql`${t.phase} is null or ${t.phase} in ('prepare', 'register', 'process', 'wait', 'collect', 'link')`,

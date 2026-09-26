@@ -95,7 +95,7 @@ function handlePick(candidate: EditionLinkCandidate) {
               data-testid="edition-search-result"
               @click="handlePick(candidate)"
             >
-              <EditionCover :book-id="candidate.bookId" :medium="coverMedium" size="result" />
+              <EditionCover :book-id="candidate.bookId" :medium="coverMedium" :version="candidate.coverVersion" size="result" />
               <span class="min-w-0 flex-1">
                 <span class="block truncate text-sm font-medium text-foreground">{{
                   candidate.title ?? t('book.detail.editionLink.unknownTitle')

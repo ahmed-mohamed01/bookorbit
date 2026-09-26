@@ -62,6 +62,9 @@ export function useReadingAlignment() {
   // Set when the owning scope disposes, so an in-flight status response can't recreate polling after
   // the control has unmounted.
   let disposed = false
+  // A cancel sent while the build POST is still in flight reaches the server before the build does,
+  // finds nothing to stop, and the build then starts anyway.
+  let pendingBuild: Promise<void> | null = null
 
   function stopPolling(): void {
     if (pollTimer) {
@@ -172,7 +175,16 @@ export function useReadingAlignment() {
     }
   }
 
-  async function build(bookId: number, force = false): Promise<void> {
+  function build(bookId: number, force = false): Promise<void> {
+    const request = requestBuild(bookId, force)
+    pendingBuild = request
+    void request.finally(() => {
+      if (pendingBuild === request) pendingBuild = null
+    })
+    return request
+  }
+
+  async function requestBuild(bookId: number, force: boolean): Promise<void> {
     mutating.value = true
     error.value = null
     buildBlocked.value = null
@@ -212,6 +224,28 @@ export function useReadingAlignment() {
     }
   }
 
+  async function cancel(bookId: number): Promise<boolean> {
+    mutating.value = true
+    try {
+      if (pendingBuild) {
+        await pendingBuild
+        // The build's own settle cleared it, and this cancel is still running.
+        mutating.value = true
+      }
+      const res = await api(`/api/v1/reading-alignment/books/${bookId}/build`, { method: 'DELETE' })
+      if (!res.ok) return false
+      // A cancelled build never gets its row, so waiting for one would hold Aligning for several polls.
+      awaitingBuildRow = false
+      awaitBuildRowPolls = 0
+      await fetchStatus(bookId)
+      return true
+    } catch {
+      return false
+    } finally {
+      mutating.value = false
+    }
+  }
+
   if (getCurrentScope()) {
     onScopeDispose(() => {
       disposed = true
@@ -230,5 +264,6 @@ export function useReadingAlignment() {
     buildBlocked,
     fetchStatus,
     build,
+    cancel,
   }
 }

@@ -43,6 +43,7 @@ function toMember(
     id,
     title: summary?.title ?? null,
     authorName: summary?.authorName ?? null,
+    coverVersion: summary?.coverVersion ?? null,
     progress: toMemberProgress(progress),
     narrationPercentage,
   };

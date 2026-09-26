@@ -1,5 +1,5 @@
 import { BadGatewayException, Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import type { StorytellerConnectionTestResult } from '@bookorbit/types';
@@ -126,7 +126,9 @@ export class StorytellerRepository {
    *
    * Every per-run column is reset for the winner unless the caller supplies a value for this call
    * (`useExistingUuid` flows straight into storytellerBookUuid to skip registration). `targetLibraryId`
-   * is outside that list and keeps whatever the previous attempt wrote when the caller omits it.
+   * and `targetFolderId` are outside that list and keep whatever the previous attempt wrote only when
+   * the caller omits them; `requestBuild` always passes both, so a claim that changes the library
+   * never keeps a folder from another one.
    */
   async startBuild(
     rawValues: Pick<NewStorytellerReadAlongBuild, 'textBookId' | 'audioBookId'> & Partial<NewStorytellerReadAlongBuild>,
@@ -202,6 +204,43 @@ export class StorytellerRepository {
     if (uuid.length > BOOK_UUID_MAX_LENGTH || /\s/.test(uuid)) {
       throw new BadGatewayException('Storyteller returned a book id that cannot be stored');
     }
+  }
+
+  /**
+   * Retires a cancelled build's row. A row holding a Storyteller book is kept as `cancelled` so the next
+   * Generate resumes that book; one without is deleted. Decided on the row as it is now, not as the
+   * caller last read it: the build may record its book between that read and this write. The final
+   * update catches a book recorded between the first two statements.
+   */
+  async retireCancelledBuild(id: number): Promise<'kept' | 'deleted' | 'unchanged'> {
+    if (await this.markBuildCancelled(id)) return 'kept';
+    const deleted = await this.db
+      .delete(storytellerReadAlongBuilds)
+      .where(
+        and(
+          eq(storytellerReadAlongBuilds.id, id),
+          eq(storytellerReadAlongBuilds.status, 'building'),
+          isNull(storytellerReadAlongBuilds.storytellerBookUuid),
+        ),
+      )
+      .returning({ id: storytellerReadAlongBuilds.id });
+    if (deleted.length > 0) return 'deleted';
+    return (await this.markBuildCancelled(id)) ? 'kept' : 'unchanged';
+  }
+
+  private async markBuildCancelled(id: number): Promise<boolean> {
+    const rows = await this.db
+      .update(storytellerReadAlongBuilds)
+      .set({ status: 'cancelled', phase: null, remoteTask: null, remoteProgress: null, error: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(storytellerReadAlongBuilds.id, id),
+          eq(storytellerReadAlongBuilds.status, 'building'),
+          isNotNull(storytellerReadAlongBuilds.storytellerBookUuid),
+        ),
+      )
+      .returning({ id: storytellerReadAlongBuilds.id });
+    return rows.length > 0;
   }
 
   // A build runs in-process, so one still marked 'building' at boot was interrupted: reset it to

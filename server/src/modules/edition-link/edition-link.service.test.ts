@@ -72,7 +72,7 @@ describe('EditionLinkService', () => {
   });
 
   it('proposes the top plausible counterpart for an unlinked book', async () => {
-    const candidate = { bookId: 20, title: 'Dune', authorName: 'Frank Herbert', score: 100 };
+    const candidate = { bookId: 20, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null, score: 100 };
     repo.getBookModality.mockResolvedValue('text');
     repo.findCounterpartCandidates.mockResolvedValue([candidate]);
 
@@ -98,19 +98,26 @@ describe('EditionLinkService', () => {
     repo.findLinkForBook.mockResolvedValue(linkRow);
     repo.findBookSummaries.mockResolvedValue(
       new Map([
-        [10, { id: 10, title: 'Dune', authorName: 'Frank Herbert' }],
-        [20, { id: 20, title: 'Dune (audiobook)', authorName: 'Frank Herbert' }],
+        [10, { id: 10, title: 'Dune', authorName: 'Frank Herbert', coverVersion: '2026-03-01T00:00:00.000Z' }],
+        [20, { id: 20, title: 'Dune (audiobook)', authorName: 'Frank Herbert', coverVersion: null }],
       ]),
     );
 
     await expect(service.getForBook(user, 10)).resolves.toEqual({
       link: linkRow,
       proposed: null,
-      counterpart: { id: 20, title: 'Dune (audiobook)', authorName: 'Frank Herbert' },
+      counterpart: { id: 20, title: 'Dune (audiobook)', authorName: 'Frank Herbert', coverVersion: null },
       role: 'text',
       members: {
-        text: { id: 10, title: 'Dune', authorName: 'Frank Herbert', progress: null, narrationPercentage: null },
-        audio: { id: 20, title: 'Dune (audiobook)', authorName: 'Frank Herbert', progress: null, narrationPercentage: null },
+        text: {
+          id: 10,
+          title: 'Dune',
+          authorName: 'Frank Herbert',
+          coverVersion: '2026-03-01T00:00:00.000Z',
+          progress: null,
+          narrationPercentage: null,
+        },
+        audio: { id: 20, title: 'Dune (audiobook)', authorName: 'Frank Herbert', coverVersion: null, progress: null, narrationPercentage: null },
         readAlong: null,
       },
     });
@@ -136,10 +143,10 @@ describe('EditionLinkService', () => {
 
   describe('three-way links', () => {
     const threeWayRow = { ...linkRow, readAlongBookId: 30 };
-    const summaries: Record<number, { id: number; title: string; authorName: string }> = {
-      10: { id: 10, title: 'Dune', authorName: 'Frank Herbert' },
-      20: { id: 20, title: 'Dune (audiobook)', authorName: 'Frank Herbert' },
-      30: { id: 30, title: 'Dune (read-along)', authorName: 'Frank Herbert' },
+    const summaries: Record<number, { id: number; title: string; authorName: string; coverVersion: string | null }> = {
+      10: { id: 10, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null },
+      20: { id: 20, title: 'Dune (audiobook)', authorName: 'Frank Herbert', coverVersion: null },
+      30: { id: 30, title: 'Dune (read-along)', authorName: 'Frank Herbert', coverVersion: '2026-03-02T00:00:00.000Z' },
     };
 
     beforeEach(() => {

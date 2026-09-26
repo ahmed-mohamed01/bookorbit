@@ -14,7 +14,7 @@ import type {
   StorytellerExistingMatch,
 } from '@bookorbit/types'
 import type { EditionLink, EditionLinkCandidate } from '../../../../composables/useEditionLink'
-import type { ReadAlongBuildOutcome } from '../../../../composables/useReadAlong'
+import type { ReadAlongBuildOutcome, ReadAlongCancelOutcome } from '../../../../composables/useReadAlong'
 import LinkBookControl from '../LinkBookControl.vue'
 
 const toastMocks = vi.hoisted(() => ({
@@ -44,6 +44,7 @@ function makeMembers(overrides: Partial<EditionLinkMembers> = {}): EditionLinkMe
       id: 10,
       title: 'Test Book',
       authorName: 'Frank Herbert',
+      coverVersion: null,
       progress: { percentage: 40, updatedAt: '2026-09-01' },
       narrationPercentage: null,
     },
@@ -51,6 +52,7 @@ function makeMembers(overrides: Partial<EditionLinkMembers> = {}): EditionLinkMe
       id: 20,
       title: 'Linked Audiobook',
       authorName: 'Narrator Name',
+      coverVersion: null,
       progress: { percentage: 12, updatedAt: '2026-09-02' },
       narrationPercentage: null,
     },
@@ -129,7 +131,7 @@ function createReadAlongState() {
     existingMatches: ref<StorytellerExistingMatch[]>([]),
     fetchStatus: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     build: vi.fn<() => Promise<ReadAlongBuildOutcome>>().mockResolvedValue('started'),
-    cancel: vi.fn<(id: number) => Promise<boolean>>().mockResolvedValue(true),
+    cancel: vi.fn<(id: number) => Promise<ReadAlongCancelOutcome>>().mockResolvedValue('cancelled'),
     fetchExisting: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     onReady: vi.fn<(handler: () => void) => void>(),
     reset: vi.fn<() => void>(),
@@ -341,7 +343,11 @@ describe('LinkBookControl', () => {
   })
 
   it('does not look up Storyteller books once the read-along exists', async () => {
-    linkWithMembers(makeMembers({ readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, progress: null, narrationPercentage: null } }))
+    linkWithMembers(
+      makeMembers({
+        readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
+      }),
+    )
     const wrapper = mountControl()
     await openPopover(wrapper)
 

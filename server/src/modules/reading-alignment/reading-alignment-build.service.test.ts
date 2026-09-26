@@ -460,3 +460,216 @@ describe('ReadingAlignmentBuildService', () => {
     expect(repo.setAlignmentStatus).toHaveBeenCalledWith(1, 'failed', expect.objectContaining({ anchorCount: 1 }));
   });
 });
+
+describe('ReadingAlignmentBuildService cancellation', () => {
+  beforeEach(() => {
+    vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const PAIR = { textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID };
+
+  it('answers false when the pair has no build in flight', () => {
+    const { service } = createService();
+
+    expect(service.cancel(PAIR)).toBe(false);
+  });
+
+  it('stops after the clip in progress and writes nothing further to the row', async () => {
+    let releaseClip!: () => void;
+    const clipStarted = new Promise<void>((started) => {
+      releaseClip = started;
+    });
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    const { service, repo, whisper } = createService({
+      transcribeImpl: async (_path: string, offset: number) => {
+        if (offset === 10) {
+          releaseClip();
+          await gate;
+        }
+        return offset === 0 ? PHRASE_SPINE_0 : PHRASE_SPINE_1;
+      },
+    });
+    const logs: string[] = [];
+    vi.mocked(Logger.prototype.log).mockImplementation((message: unknown) => {
+      logs.push(String(message));
+    });
+
+    const run = service.buildAlignment(TEXT_BOOK_ID, USER);
+    await clipStarted;
+    expect(service.cancel(PAIR)).toBe(true);
+    releaseGate();
+    await run;
+
+    expect(whisper.transcribeWindow).toHaveBeenCalledTimes(2);
+    expect(repo.updateAlignmentProgress).toHaveBeenCalledTimes(1);
+    expect(repo.setAlignmentStatus).not.toHaveBeenCalled();
+    expect(logs.some((line) => line.startsWith('[reading_alignment.build] [end]') && line.includes('outcome=cancelled'))).toBe(true);
+    expect(service.cancel(PAIR)).toBe(false);
+  });
+
+  function hangingFirstClip() {
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const transcribeImpl = async (_path: string, offset: number) => {
+      calls++;
+      if (calls === 1) {
+        markStarted();
+        await gate;
+      }
+      const map: Record<number, string> = { 0: PHRASE_SPINE_0, 10: PHRASE_SPINE_1, 20: PHRASE_SPINE_2 };
+      return map[offset] ?? GIBBERISH;
+    };
+    return { started, release, transcribeImpl };
+  }
+
+  function captureLogs(): string[] {
+    const logs: string[] = [];
+    vi.mocked(Logger.prototype.log).mockImplementation((message: unknown) => {
+      logs.push(String(message));
+    });
+    return logs;
+  }
+
+  it('writes no terminal status when the cancel lands after the last sample', async () => {
+    const { service, repo, syncService } = createService();
+    repo.updateAlignmentProgress.mockImplementation((_id: number, progress: { samplesDone: number }) => {
+      if (progress.samplesDone === 5) service.cancel(PAIR);
+    });
+    const logs = captureLogs();
+
+    await service.buildAlignment(TEXT_BOOK_ID, USER);
+
+    expect(repo.setAlignmentStatus).not.toHaveBeenCalled();
+    expect(syncService.reconcilePairOnReady).not.toHaveBeenCalled();
+    expect(logs.some((line) => line.startsWith('[reading_alignment.build] [end]') && line.includes('outcome=cancelled'))).toBe(true);
+  });
+
+  it('treats a write failing after the cancel as cancelled, not failed', async () => {
+    const clip = hangingFirstClip();
+    const { service, repo } = createService({ transcribeImpl: clip.transcribeImpl });
+    repo.insertAnchor.mockRejectedValue(new Error('insert violates foreign key constraint "audiobook_alignment_anchor_alignment_id_fkey"'));
+    const logs = captureLogs();
+    const errorSpy = vi.mocked(Logger.prototype.error);
+
+    const run = service.buildAlignment(TEXT_BOOK_ID, USER);
+    await clip.started;
+    service.cancel(PAIR);
+    clip.release();
+
+    await expect(run).resolves.toBeUndefined();
+    expect(repo.setAlignmentStatus).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(logs.some((line) => line.startsWith('[reading_alignment.build] [end]') && line.includes('outcome=cancelled'))).toBe(true);
+  });
+
+  it('starts a rebuild of a cancelled pair once the cancelled build finishes its clip', async () => {
+    const clip = hangingFirstClip();
+    const { service, repo } = createService({ transcribeImpl: clip.transcribeImpl });
+
+    const first = service.buildAlignment(TEXT_BOOK_ID, USER);
+    await clip.started;
+    service.cancel(PAIR);
+    const second = service.buildAlignment(TEXT_BOOK_ID, USER);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(repo.upsertAlignment).toHaveBeenCalledTimes(1);
+
+    clip.release();
+    await Promise.all([first, second]);
+
+    expect(repo.upsertAlignment).toHaveBeenCalledTimes(2);
+    expect(repo.setAlignmentStatus).toHaveBeenCalledWith(1, 'ready', expect.anything());
+  });
+
+  it('never starts a rebuild that was itself cancelled while it waited on the cancelled build', async () => {
+    const clip = hangingFirstClip();
+    const { service, repo } = createService({ transcribeImpl: clip.transcribeImpl });
+
+    const first = service.buildAlignment(TEXT_BOOK_ID, USER);
+    await clip.started;
+    service.cancel(PAIR);
+    const second = service.buildAlignment(TEXT_BOOK_ID, USER);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(service.cancel(PAIR)).toBe(true);
+
+    clip.release();
+    await Promise.all([first, second]);
+
+    expect(repo.upsertAlignment).toHaveBeenCalledTimes(1);
+    expect(repo.setAlignmentStatus).not.toHaveBeenCalled();
+  });
+
+  it('does not count a cancelled build against the concurrency cap', async () => {
+    const clip = hangingFirstClip();
+    let markSecondStarted!: () => void;
+    const secondStarted = new Promise<void>((resolve) => {
+      markSecondStarted = resolve;
+    });
+    let releaseSecond!: () => void;
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    let firstStarted = false;
+    const { service, pairService } = createService({
+      transcribeImpl: async (path: string, offset: number) => {
+        if (!firstStarted) {
+          firstStarted = true;
+          return clip.transcribeImpl(path, offset);
+        }
+        markSecondStarted();
+        await secondGate;
+        return GIBBERISH;
+      },
+    });
+    pairService.resolveAlignmentPair.mockResolvedValueOnce(PAIR).mockResolvedValueOnce({ textBookId: 301, audioBookId: 302 });
+
+    const first = service.buildAlignment(TEXT_BOOK_ID, USER);
+    await clip.started;
+    const second = service.buildAlignment(301, USER);
+    await secondStarted;
+
+    expect(service.isAtCapacity()).toBe(true);
+    service.cancel(PAIR);
+    expect(service.isAtCapacity()).toBe(false);
+
+    service.cancel({ textBookId: 301, audioBookId: 302 });
+    clip.release();
+    releaseSecond();
+    await Promise.all([first, second]);
+  });
+
+  it('logs nothing for a build cancelled before it started', async () => {
+    let releaseLookup!: () => void;
+    const lookupGate = new Promise<void>((resolve) => {
+      releaseLookup = resolve;
+    });
+    const { service, repo } = createService();
+    repo.findEbookFile.mockReturnValue(lookupGate.then(() => EBOOK));
+    const logs = captureLogs();
+
+    const run = service.buildAlignment(TEXT_BOOK_ID, USER);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(service.cancel(PAIR)).toBe(true);
+    releaseLookup();
+    await run;
+
+    expect(repo.upsertAlignment).not.toHaveBeenCalled();
+    expect(logs.filter((line) => line.startsWith('[reading_alignment.build]'))).toEqual([]);
+  });
+});

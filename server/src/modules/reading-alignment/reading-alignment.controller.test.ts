@@ -1,6 +1,10 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, RequestMethod } from '@nestjs/common';
+import { HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Permission } from '@bookorbit/types';
+
+import { PERMISSION_KEY } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
 import { ReadingAlignmentController } from './reading-alignment.controller';
 
@@ -9,7 +13,7 @@ const BOOK_ID = 7;
 
 function build() {
   const resolveService = { resolveResume: vi.fn() };
-  const statusService = { requestBuild: vi.fn(), getStatus: vi.fn() };
+  const statusService = { requestBuild: vi.fn(), getStatus: vi.fn(), cancelBuild: vi.fn() };
   const controller = new ReadingAlignmentController(resolveService as never, statusService as never);
   return { controller, resolveService, statusService };
 }
@@ -60,6 +64,24 @@ describe('ReadingAlignmentController', () => {
 
     expect(statusService.getStatus).toHaveBeenCalledWith(BOOK_ID, USER);
     expect(result).toEqual({ status: 'none' });
+  });
+
+  it('DELETE build delegates the cancel to the status service', async () => {
+    const { controller, statusService } = build();
+    statusService.cancelBuild.mockResolvedValue(undefined);
+
+    await expect(controller.cancelBuild(BOOK_ID, USER)).resolves.toBeUndefined();
+
+    expect(statusService.cancelBuild).toHaveBeenCalledWith(BOOK_ID, USER);
+  });
+
+  it('DELETE build is gated like the build request and answers 204', () => {
+    const handler = ReadingAlignmentController.prototype.cancelBuild;
+
+    expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe('books/:bookId/build');
+    expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.DELETE);
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, handler)).toBe(204);
+    expect(Reflect.getMetadata(PERMISSION_KEY, handler)).toBe(Permission.LibraryEditMetadata);
   });
 
   it('GET alignment propagates a Forbidden from the service', async () => {

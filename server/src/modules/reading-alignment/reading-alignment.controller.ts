@@ -1,4 +1,4 @@
-import { Controller, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
+import { Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { Permission } from '@bookorbit/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -31,6 +31,13 @@ export class ReadingAlignmentController {
     @CurrentUser() user: RequestUser,
   ): Promise<AlignmentBuildRequestResult> {
     return this.statusService.requestBuild(bookId, user, query.force ?? false);
+  }
+
+  @Delete('books/:bookId/build')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission(Permission.LibraryEditMetadata)
+  cancelBuild(@Param('bookId', ParseIntPipe) bookId: number, @CurrentUser() user: RequestUser): Promise<void> {
+    return this.statusService.cancelBuild(bookId, user);
   }
 
   @Get('books/:bookId/alignment')

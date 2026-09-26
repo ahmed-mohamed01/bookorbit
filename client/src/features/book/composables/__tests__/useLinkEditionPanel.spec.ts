@@ -14,7 +14,7 @@ import type {
   StorytellerExistingMatch,
 } from '@bookorbit/types'
 import type { EditionLink, EditionLinkCandidate } from '../useEditionLink'
-import type { ReadAlongBuildOutcome } from '../useReadAlong'
+import type { ReadAlongBuildOutcome, ReadAlongCancelOutcome } from '../useReadAlong'
 import type { AlignmentStatus } from '../useReadingAlignment'
 import { useLinkEditionPanel } from '../useLinkEditionPanel'
 
@@ -36,8 +36,15 @@ const linkRecord: EditionLink = { id: 1, textBookId: 10, audioBookId: 20, readAl
 
 function makeMembers(): EditionLinkMembers {
   return {
-    text: { id: 10, title: 'Dune', authorName: 'Frank Herbert', progress: { percentage: 26, updatedAt: '2026-09-01' }, narrationPercentage: null },
-    audio: { id: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', progress: null, narrationPercentage: null },
+    text: {
+      id: 10,
+      title: 'Dune',
+      authorName: 'Frank Herbert',
+      coverVersion: null,
+      progress: { percentage: 26, updatedAt: '2026-09-01' },
+      narrationPercentage: null,
+    },
+    audio: { id: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', coverVersion: null, progress: null, narrationPercentage: null },
     readAlong: null,
   }
 }
@@ -94,6 +101,10 @@ function createAlignmentState() {
     build: vi.fn<(id: number, force?: boolean) => Promise<void>>().mockImplementation(async () => {
       calls.push('alignment')
     }),
+    cancel: vi.fn<(id: number) => Promise<boolean>>().mockImplementation(async () => {
+      calls.push('cancelAlignment')
+      return true
+    }),
   }
 }
 
@@ -123,7 +134,7 @@ function createReadAlongState() {
       calls.push('readAlong')
       return 'started'
     }),
-    cancel: vi.fn<(id: number) => Promise<boolean>>().mockResolvedValue(true),
+    cancel: vi.fn<(id: number) => Promise<ReadAlongCancelOutcome>>().mockResolvedValue('cancelled'),
     fetchExisting: vi.fn<(id: number) => Promise<void>>().mockResolvedValue(undefined),
     onReady: vi.fn<(handler: () => void) => void>(),
     reset: vi.fn<() => void>().mockImplementation(() => {
@@ -156,8 +167,8 @@ function makeBook(format: 'epub' | 'm4b' = 'epub'): BookDetail {
   } as unknown as BookDetail
 }
 
-const proposal: EditionLinkCandidate = { bookId: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', score: 96 }
-const other: EditionLinkCandidate = { bookId: 21, title: 'Dune Messiah (audio)', authorName: 'Frank Herbert', score: 41 }
+const proposal: EditionLinkCandidate = { bookId: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', coverVersion: null, score: 96 }
+const other: EditionLinkCandidate = { bookId: 21, title: 'Dune Messiah (audio)', authorName: 'Frank Herbert', coverVersion: null, score: 41 }
 
 function mountPanel(book = makeBook()) {
   let panel!: ReturnType<typeof useLinkEditionPanel>
@@ -232,13 +243,22 @@ describe('useLinkEditionPanel', () => {
       expect(panel.phase.value).toBe('linking')
     })
 
-    it.each(['pending', 'building'] as AlignmentStatus[])('keeps an established pair linked while its alignment is %s', (status) => {
+    it.each(['pending', 'building'] as AlignmentStatus[])('keeps a pair that has aligned before linked while it is %s again', (status) => {
       editionLinkState.link.value = linkRecord
       alignmentState.status.value = status
+      alignmentState.builtAt.value = '2026-02-02T00:00:00.000Z'
       alignmentState.mutating.value = true
       const panel = mountPanel()
 
       expect(panel.phase.value).toBe('linked')
+    })
+
+    it('is linking for a first build started from the other edition page', () => {
+      editionLinkState.link.value = linkRecord
+      alignmentState.status.value = 'building'
+      const panel = mountPanel()
+
+      expect(panel.phase.value).toBe('linking')
     })
 
     it('stays linked when position sync is rebuilt after the first alignment finished', async () => {
@@ -249,18 +269,33 @@ describe('useLinkEditionPanel', () => {
       expect(panel.phase.value).toBe('linking')
 
       alignmentState.status.value = 'ready'
+      alignmentState.builtAt.value = '2026-02-02T00:00:00.000Z'
       alignmentState.status.value = 'building'
 
       expect(panel.phase.value).toBe('linked')
     })
 
-    it('forgets that the link was made here once the panel is reopened', async () => {
+    it('is still linking when the panel is reopened during a first build', async () => {
       editionLinkState.proposed.value = proposal
       const panel = mountPanel()
       await panel.startLink()
       alignmentState.status.value = 'building'
 
       await panel.handleOpen()
+
+      expect(panel.phase.value).toBe('linking')
+    })
+
+    it('settles on linked once a relinked pair reads its existing alignment as ready', async () => {
+      editionLinkState.proposed.value = proposal
+      const panel = mountPanel()
+      await panel.startLink()
+      alignmentState.mutating.value = true
+      expect(panel.phase.value).toBe('linking')
+
+      alignmentState.status.value = 'ready'
+      alignmentState.builtAt.value = '2026-01-01T00:00:00.000Z'
+      alignmentState.mutating.value = false
 
       expect(panel.phase.value).toBe('linked')
     })
@@ -376,6 +411,27 @@ describe('useLinkEditionPanel', () => {
 
       expect(panel.slots.value[0]).toMatchObject({ bookId: 10, isThisBook: true, progress: 26, canChange: false })
       expect(panel.slots.value[1]).toMatchObject({ bookId: 20, isThisBook: false, progress: null, match: null })
+    })
+
+    it('versions each cover: the current book from its detail, the others from their member or candidate', () => {
+      editionLinkState.link.value = linkRecord
+      editionLinkState.role.value = 'text'
+      editionLinkState.members.value = {
+        ...makeMembers(),
+        text: { ...makeMembers().text, coverVersion: 'member-text' },
+        audio: { ...makeMembers().audio, coverVersion: '2026-03-01T00:00:00.000Z' },
+      }
+      const linked = mountPanel()
+
+      expect(linked.slots.value[0]).toMatchObject({ bookId: 10, coverVersion: 'v1' })
+      expect(linked.slots.value[1]).toMatchObject({ bookId: 20, coverVersion: '2026-03-01T00:00:00.000Z' })
+    })
+
+    it('versions a picked candidate cover from the candidate', () => {
+      const panel = mountPanel()
+      panel.selectCandidate({ ...other, coverVersion: '2026-04-01T00:00:00.000Z' })
+
+      expect(panel.slots.value[1]).toMatchObject({ bookId: 21, coverVersion: '2026-04-01T00:00:00.000Z' })
     })
 
     it('never offers Change without the edit permission', () => {
@@ -548,15 +604,80 @@ describe('useLinkEditionPanel', () => {
       readAlongState.status.value = 'building'
       readAlongState.cancel.mockImplementation(async () => {
         calls.push('cancelReadAlong')
-        return false
+        return 'failed'
       })
       const panel = mountPanel()
 
       await panel.cancelLinking()
 
       expect(readAlongState.cancel).toHaveBeenCalledWith(10)
-      expect(calls.slice(0, 2)).toEqual(['cancelReadAlong', 'unlink'])
+      expect(calls.slice(0, 3)).toEqual(['cancelReadAlong', 'cancelAlignment', 'unlink'])
       expect(toastMocks.error).toHaveBeenCalledWith("The read-along build couldn't be cancelled and keeps running on Storyteller.")
+    })
+
+    it('cancels the read-along first, then the position sync, then unlinks', async () => {
+      editionLinkState.link.value = linkRecord
+      editionLinkState.members.value = makeMembers()
+      alignmentState.status.value = 'building'
+      readAlongState.status.value = 'building'
+      readAlongState.cancel.mockImplementation(async () => {
+        calls.push('cancelReadAlong')
+        return 'cancelled'
+      })
+      const panel = mountPanel()
+
+      await panel.cancelLinking()
+
+      expect(alignmentState.cancel).toHaveBeenCalledWith(10)
+      expect(calls.slice(0, 3)).toEqual(['cancelReadAlong', 'cancelAlignment', 'unlink'])
+      expect(toastMocks.error).not.toHaveBeenCalled()
+    })
+
+    it('keeps the link when the read-along is already being imported, and says why', async () => {
+      editionLinkState.link.value = linkRecord
+      editionLinkState.members.value = makeMembers()
+      alignmentState.status.value = 'building'
+      readAlongState.status.value = 'building'
+      readAlongState.cancel.mockImplementation(async () => {
+        calls.push('cancelReadAlong')
+        return 'too_late'
+      })
+      const panel = mountPanel()
+
+      await panel.cancelLinking()
+
+      expect(calls).toEqual(['cancelReadAlong'])
+      expect(alignmentState.cancel).not.toHaveBeenCalled()
+      expect(editionLinkState.unlink).not.toHaveBeenCalled()
+      expect(toastMocks.error).toHaveBeenCalledExactlyOnceWith("The read-along is being imported and can't be cancelled now.")
+    })
+
+    it('cancels neither build when nothing is running', async () => {
+      editionLinkState.link.value = linkRecord
+      editionLinkState.members.value = makeMembers()
+      const panel = mountPanel()
+
+      await panel.cancelLinking()
+
+      expect(readAlongState.cancel).not.toHaveBeenCalled()
+      expect(alignmentState.cancel).not.toHaveBeenCalled()
+      expect(editionLinkState.unlink).toHaveBeenCalled()
+    })
+
+    it('says the position sync keeps running when its cancel is refused, and still unlinks', async () => {
+      editionLinkState.link.value = linkRecord
+      editionLinkState.members.value = makeMembers()
+      alignmentState.status.value = 'building'
+      alignmentState.cancel.mockImplementation(async () => {
+        calls.push('cancelAlignment')
+        return false
+      })
+      const panel = mountPanel()
+
+      await panel.cancelLinking()
+
+      expect(calls.slice(0, 2)).toEqual(['cancelAlignment', 'unlink'])
+      expect(toastMocks.error).toHaveBeenCalledWith("The position sync build couldn't be cancelled and keeps running.")
     })
 
     it('also tries to stop a read-along build request that is still in flight', async () => {
@@ -632,7 +753,7 @@ describe('useLinkEditionPanel', () => {
       editionLinkState.link.value = linkRecord
       editionLinkState.members.value = {
         ...makeMembers(),
-        readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, progress: null, narrationPercentage: null },
+        readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
       }
       mountPanel()
 

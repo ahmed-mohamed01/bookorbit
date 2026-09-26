@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { isAudioFormat } from '@bookorbit/types';
@@ -151,6 +151,16 @@ export class ReadingAlignmentRepository {
 
   async clearAnchors(alignmentId: number): Promise<void> {
     await this.db.delete(audiobookAlignmentAnchor).where(eq(audiobookAlignmentAnchor.alignmentId, alignmentId));
+  }
+
+  // Only an unfinished alignment is removed, so a cancel that lands after the build's terminal write
+  // cannot delete a ready one. The anchors go with it through the alignment_id cascade.
+  async deleteAlignment(id: number): Promise<boolean> {
+    const rows = await this.db
+      .delete(audiobookAlignment)
+      .where(and(eq(audiobookAlignment.id, id), inArray(audiobookAlignment.status, ['pending', 'building'])))
+      .returning({ id: audiobookAlignment.id });
+    return rows.length > 0;
   }
 
   // On boot, any alignment still marked 'building' was interrupted by a restart or crash (a build runs

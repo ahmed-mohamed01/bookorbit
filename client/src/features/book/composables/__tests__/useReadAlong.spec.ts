@@ -462,7 +462,7 @@ describe('useReadAlong', () => {
 
       const cancelled = await readAlong.cancel(10)
 
-      expect(cancelled).toBe(true)
+      expect(cancelled).toBe('cancelled')
       expect(mocks.api).toHaveBeenNthCalledWith(1, '/api/v1/storyteller/read-along/books/10/build', { method: 'DELETE' })
       expect(mocks.api).toHaveBeenNthCalledWith(2, '/api/v1/storyteller/read-along/books/10/status')
       expect(readAlong.mutating.value).toBe(false)
@@ -474,8 +474,45 @@ describe('useReadAlong', () => {
 
       const cancelled = await readAlong.cancel(10)
 
-      expect(cancelled).toBe(false)
+      expect(cancelled).toBe('failed')
       expect(mocks.api).toHaveBeenCalledTimes(1)
+      expect(readAlong.mutating.value).toBe(false)
+    })
+
+    it('reports a build the server refuses to stop because it is importing as too late', async () => {
+      mocks.api.mockResolvedValueOnce(response({}, { ok: false, status: 409 }))
+      const readAlong = useReadAlong()
+
+      expect(await readAlong.cancel(10)).toBe('too_late')
+      expect(mocks.api).toHaveBeenCalledTimes(1)
+      expect(readAlong.mutating.value).toBe(false)
+    })
+
+    it('sends the DELETE only after an in-flight build POST has resolved', async () => {
+      let resolveBuild!: (value: Response) => void
+      mocks.api.mockReturnValueOnce(
+        new Promise<Response>((resolve) => {
+          resolveBuild = resolve
+        }),
+      )
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'building' })))
+      mocks.api.mockResolvedValueOnce(response({}))
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'none' })))
+      const readAlong = useReadAlong()
+
+      const building = readAlong.build(10)
+      const cancelling = readAlong.cancel(10)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(mocks.api).toHaveBeenCalledTimes(1)
+
+      resolveBuild(response({ status: 'building', blocked: null }))
+      await building
+      await expect(cancelling).resolves.toBe('cancelled')
+
+      expect(mocks.api).toHaveBeenNthCalledWith(1, '/api/v1/storyteller/read-along/books/10/build', expect.objectContaining({ method: 'POST' }))
+      expect(mocks.api).toHaveBeenNthCalledWith(2, '/api/v1/storyteller/read-along/books/10/status')
+      expect(mocks.api).toHaveBeenNthCalledWith(3, '/api/v1/storyteller/read-along/books/10/build', { method: 'DELETE' })
+      expect(readAlong.status.value).toBe('none')
       expect(readAlong.mutating.value).toBe(false)
     })
 
@@ -488,7 +525,7 @@ describe('useReadAlong', () => {
 
       mocks.api.mockResolvedValueOnce(response({}))
       mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'none' })))
-      expect(await readAlong.cancel(10)).toBe(true)
+      expect(await readAlong.cancel(10)).toBe('cancelled')
 
       expect(readAlong.status.value).toBe('none')
       await vi.advanceTimersByTimeAsync(20000)
@@ -499,7 +536,7 @@ describe('useReadAlong', () => {
       mocks.api.mockRejectedValueOnce(new Error('offline'))
       const readAlong = useReadAlong()
 
-      expect(await readAlong.cancel(10)).toBe(false)
+      expect(await readAlong.cancel(10)).toBe('failed')
     })
   })
 

@@ -121,7 +121,9 @@ const actionDisabled = computed(() => props.state.mutating || isActionBlocked(pr
 const showToggle = computed(() => props.mode === 'offer' && props.canToggle)
 const showGenerate = computed(() => sectionState.value === 'none' && props.canGenerate)
 const showRetry = computed(() => sectionState.value === 'failed' && props.canGenerate)
-const showCancel = computed(() => sectionState.value === 'building' && props.canGenerate)
+// Once the read-along is being imported the server refuses to stop it.
+const pastCancel = computed(() => props.state.phase === 'collect' || props.state.phase === 'link')
+const showCancel = computed(() => sectionState.value === 'building' && props.canGenerate && !pastCancel.value)
 const showRebuild = computed(() => props.mode === 'manage' && sectionState.value === 'ready' && props.canGenerate && props.canRebuild)
 
 // Only an aligned Storyteller book can be imported: an unaligned one still has to be processed.
@@ -307,7 +309,7 @@ watch(sectionState, (next) => {
     <button
       v-if="importMatch"
       type="button"
-      class="mt-1.5 block max-w-full truncate text-start text-xs text-info hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+      class="mt-2 block max-w-full text-start text-xs text-pretty text-info hover:underline disabled:cursor-not-allowed disabled:opacity-50"
       :disabled="state.mutating"
       data-testid="read-along-import"
       @click="handleImportExisting"
@@ -416,7 +418,7 @@ watch(sectionState, (next) => {
       />
     </div>
 
-    <div v-if="showDestination" class="mt-2.5 text-xs text-muted-foreground" data-testid="read-along-destination">
+    <div v-if="showDestination" class="mt-2 text-xs text-muted-foreground" data-testid="read-along-destination">
       <p class="flex flex-wrap items-center gap-x-1.5">
         <span>{{ destinationText }}</span>
         <button

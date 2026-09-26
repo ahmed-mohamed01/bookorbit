@@ -36,6 +36,12 @@ const MAX_CONSECUTIVE_FAILURES = 10;
 // How far a stored error message is allowed to grow before truncation.
 const MAX_ERROR_CHARS = 500;
 
+type InFlightBuild = { controller: AbortController; done: Promise<void>; cancels: number };
+
+function pairKey(pair: { textBookId: number; audioBookId: number }): string {
+  return `${pair.textBookId}:${pair.audioBookId}`;
+}
+
 type SampleOutcome =
   | { kind: 'anchored'; spineIndex: number; fraction: number | null; inserted: boolean }
   | { kind: 'transcribe_failed'; message: string }
@@ -44,9 +50,9 @@ type SampleOutcome =
 @Injectable()
 export class ReadingAlignmentBuildService {
   private readonly logger = new Logger(ReadingAlignmentBuildService.name);
-  // Overlap guard: one build per pair at a time. A second call for either book already building is skipped
+  // Overlap guard: one build per pair at a time. A second call for a pair already building is skipped
   // rather than queued, mirroring the boolean in-flight guard in AudiobookshelfSyncSchedulerService.
-  private readonly building = new Set<string>();
+  private readonly inFlight = new Map<string, InFlightBuild>();
 
   constructor(
     @Inject(appConfig.KEY) private readonly config: ConfigType<typeof appConfig>,
@@ -64,36 +70,70 @@ export class ReadingAlignmentBuildService {
       return;
     }
 
-    const pairKey = `${pair.textBookId}:${pair.audioBookId}`;
-    if (this.building.has(pairKey)) {
-      this.logger.log(
-        `[${BUILD_EVENT}] [end] bookId=${bookId} textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} status=skipped reason=in_flight - build already in flight`,
-      );
-      return;
+    const key = pairKey(pair);
+    // A cancelled build keeps running until its current clip ends; a rebuild requested in that window
+    // waits for it instead of being skipped as in flight. The loop re-checks because another waiter may
+    // have claimed the pair first.
+    for (let entry = this.inFlight.get(key); entry; entry = this.inFlight.get(key)) {
+      if (!entry.controller.signal.aborted) {
+        this.logger.log(
+          `[${BUILD_EVENT}] [end] bookId=${bookId} textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} status=skipped reason=in_flight - build already in flight`,
+        );
+        return;
+      }
+      // A cancel landing while this call waits is meant for it too: it cannot reach a controller this
+      // call has not created yet, so it shows up only as another cancel on the build being waited on.
+      const cancelsBefore = entry.cancels;
+      await entry.done;
+      if (entry.cancels !== cancelsBefore) return;
     }
-    // Reject rather than queue when the global cap is reached; the check and the add below run without an
+    // Reject rather than queue when the global cap is reached; the check and the set below run without an
     // intervening await, so concurrent callers cannot both pass it.
-    if (this.building.size >= MAX_CONCURRENT_BUILDS) {
+    const active = this.activeBuildCount();
+    if (active >= MAX_CONCURRENT_BUILDS) {
       this.logger.log(
-        `[${BUILD_EVENT}] [end] bookId=${bookId} textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} status=skipped reason=at_capacity inFlight=${this.building.size} - build capacity reached`,
+        `[${BUILD_EVENT}] [end] bookId=${bookId} textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} status=skipped reason=at_capacity inFlight=${active} - build capacity reached`,
       );
       return;
     }
-    this.building.add(pairKey);
+    const controller = new AbortController();
+    let settle!: () => void;
+    const done = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    this.inFlight.set(key, { controller, done, cancels: 0 });
     try {
-      await this.runBuild(pair, user, force);
+      await this.runBuild(pair, user, force, controller.signal);
     } finally {
-      this.building.delete(pairKey);
+      this.inFlight.delete(key);
+      settle();
     }
+  }
+
+  cancel(pair: { textBookId: number; audioBookId: number }): boolean {
+    const entry = this.inFlight.get(pairKey(pair));
+    if (!entry) return false;
+    entry.cancels++;
+    entry.controller.abort();
+    return true;
   }
 
   // Whether a new build would be rejected by the global concurrency cap right now, so the status service
   // can report an honest "busy" instead of a spinner that resolves to nothing.
   isAtCapacity(): boolean {
-    return this.building.size >= MAX_CONCURRENT_BUILDS;
+    return this.activeBuildCount() >= MAX_CONCURRENT_BUILDS;
   }
 
-  private async runBuild(pair: ReadingAlignmentPair, user: RequestUser, force = false): Promise<void> {
+  // A cancelled build finishing its last clip does not hold a slot.
+  private activeBuildCount(): number {
+    let count = 0;
+    for (const entry of this.inFlight.values()) {
+      if (!entry.controller.signal.aborted) count++;
+    }
+    return count;
+  }
+
+  private async runBuild(pair: ReadingAlignmentPair, user: RequestUser, force: boolean, signal: AbortSignal): Promise<void> {
     const { textBookId, audioBookId } = pair;
     if (!this.config.readingAlignmentEnabled) {
       this.logger.log(
@@ -109,6 +149,9 @@ export class ReadingAlignmentBuildService {
     }
 
     const [ebook, audioFiles] = await Promise.all([this.repo.findEbookFile(textBookId), this.repo.resolveAudioFilesWithPaths(audioBookId)]);
+    // Every write below is an upsert, so a build cancelled before its first one would recreate the row
+    // the cancel just deleted. Nothing is logged: a build that never logged its start has nothing to end.
+    if (signal.aborted) return;
 
     if (!ebook || audioFiles.length === 0) {
       const alignment = await this.repo.upsertAlignment(textBookId, audioBookId, {
@@ -179,6 +222,7 @@ export class ReadingAlignmentBuildService {
     // its progress checkpoint can leave a persisted anchor the counter never recorded. countAnchors is
     // the ground truth, and per-sample inserts below only increment on a real (non-conflicting) write.
     let anchorCount = resuming ? await this.repo.countAnchors(existing!.id) : 0;
+    if (signal.aborted) return;
 
     const startedAt = Date.now();
     this.logger.log(
@@ -215,6 +259,10 @@ export class ReadingAlignmentBuildService {
       let lastTranscribeError = '';
 
       for (let i = resumeFrom; i < samplesTotal; i++) {
+        if (signal.aborted) {
+          this.logCancelled(textBookId, audioBookId, alignmentId, startedAt, i);
+          return;
+        }
         const offset = i * sampleIntervalSec;
         if (offset < totalSeconds) {
           attempted++;
@@ -229,6 +277,12 @@ export class ReadingAlignmentBuildService {
             lastFraction,
             maxSpineIndex,
           );
+          // Whisper runs as a child process that is not interrupted, so a cancel lands after the
+          // clip in progress finishes: one clip is the granularity.
+          if (signal.aborted) {
+            this.logCancelled(textBookId, audioBookId, alignmentId, startedAt, i);
+            return;
+          }
           if (outcome.kind === 'anchored') {
             lastSpineIndex = outcome.spineIndex;
             if (outcome.fraction != null) lastFraction = outcome.fraction;
@@ -254,6 +308,11 @@ export class ReadingAlignmentBuildService {
         }
         await this.repo.updateAlignmentProgress(alignmentId, { samplesDone: i + 1, anchorCount });
       }
+      // A cancel after the last clip must not turn the row the cancel is deleting into a terminal one.
+      if (signal.aborted) {
+        this.logCancelled(textBookId, audioBookId, alignmentId, startedAt, samplesTotal);
+        return;
+      }
 
       const durationMs = Date.now() - startedAt;
       if (anchorCount < MIN_ANCHORS) {
@@ -277,6 +336,12 @@ export class ReadingAlignmentBuildService {
       );
       await this.syncService.reconcilePairOnReady({ textBookId, audioBookId }, user.id);
     } catch (error) {
+      // A write that races the cancel's delete (an anchor insert hitting the removed row's foreign key)
+      // is a consequence of the cancel, not a build failure.
+      if (signal.aborted) {
+        this.logCancelled(textBookId, audioBookId, alignmentId, startedAt, null);
+        return;
+      }
       const durationMs = Date.now() - startedAt;
       const { errorClass, message } = describeError(error);
       if (alignmentId != null) {
@@ -287,6 +352,14 @@ export class ReadingAlignmentBuildService {
       );
       throw error instanceof Error ? error : new Error(message);
     }
+  }
+
+  // Nothing is written back: the cancel path owns the row and deletes it.
+  private logCancelled(textBookId: number, audioBookId: number, alignmentId: number | null, startedAt: number, samplesDone: number | null): void {
+    const progress = samplesDone === null ? '' : ` samplesDone=${samplesDone}`;
+    this.logger.log(
+      `[${BUILD_EVENT}] [end] textBookId=${textBookId} audioBookId=${audioBookId} alignmentId=${alignmentId ?? 'none'} durationMs=${Date.now() - startedAt}${progress} outcome=cancelled - build cancelled`,
+    );
   }
 
   // Transcribes one sample window and, if it matches monotonically, persists an anchor carrying its

@@ -51,7 +51,7 @@ function statusResponse(overrides: Partial<ReadAlongStatusResponse>): Response {
 const failedRead = { ok: false, status: 502, json: async () => ({}) } as Response
 
 function member(id: number, title: string) {
-  return { id, title, authorName: null, progress: null, narrationPercentage: null }
+  return { id, title, authorName: null, coverVersion: null, progress: null, narrationPercentage: null }
 }
 
 const editionLink = {
@@ -89,6 +89,7 @@ vi.mock('@/features/book/composables/useReadingAlignment', () => ({
     buildBlocked: ref(null),
     fetchStatus: vi.fn<(id: number) => Promise<void>>().mockResolvedValue(undefined),
     build: vi.fn<(id: number, force?: boolean) => Promise<void>>().mockResolvedValue(undefined),
+    cancel: vi.fn<(id: number) => Promise<boolean>>().mockResolvedValue(true),
   }),
 }))
 
@@ -100,7 +101,7 @@ const book = {
   files: [{ id: 1, format: 'epub', role: 'content' }],
 } as unknown as BookDetail
 
-const counterpartB: EditionLinkCandidate = { bookId: 21, title: 'Dune (second narration)', authorName: null, score: 90 }
+const counterpartB: EditionLinkCandidate = { bookId: 21, title: 'Dune (second narration)', authorName: null, coverVersion: null, score: 90 }
 
 function linkTo(audio: { id: number; title: string }, readAlong: { id: number; title: string } | null) {
   editionLink.link.value = {

@@ -88,6 +88,7 @@ export class EditionLinkRepository {
       .select({
         id: books.id,
         title: bookMetadata.title,
+        coverUpdatedAt: bookMetadata.coverUpdatedAt,
         authorNames: sql<string[]>`coalesce(
           array_agg(${authors.name} ORDER BY ${bookAuthors.displayOrder}, ${authors.id})
             FILTER (WHERE ${authors.id} IS NOT NULL),
@@ -99,9 +100,14 @@ export class EditionLinkRepository {
       .leftJoin(bookAuthors, eq(bookAuthors.bookId, books.id))
       .leftJoin(authors, eq(authors.id, bookAuthors.authorId))
       .where(inArray(books.id, bookIds))
-      .groupBy(books.id, bookMetadata.title);
+      .groupBy(books.id, bookMetadata.title, bookMetadata.coverUpdatedAt);
 
-    return new Map(rows.map((row) => [row.id, { id: row.id, title: row.title, authorName: row.authorNames[0] ?? null }]));
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        { id: row.id, title: row.title, authorName: row.authorNames[0] ?? null, coverVersion: row.coverUpdatedAt?.toISOString() ?? null },
+      ]),
+    );
   }
 
   async findBookSummary(bookId: number): Promise<EditionLinkCounterpartSummary | null> {
@@ -260,6 +266,7 @@ export class EditionLinkRepository {
       .select({
         bookId: books.id,
         title: bookMetadata.title,
+        coverUpdatedAt: bookMetadata.coverUpdatedAt,
         authorNames: sql<string[]>`coalesce(
           array_agg(${authors.name} ORDER BY ${bookAuthors.displayOrder}, ${authors.id})
             FILTER (WHERE ${authors.id} IS NOT NULL),
@@ -281,7 +288,7 @@ export class EditionLinkRepository {
           ...contentFilters,
         ),
       )
-      .groupBy(books.id, bookMetadata.title)
+      .groupBy(books.id, bookMetadata.title, bookMetadata.coverUpdatedAt)
       .orderBy(
         desc(
           sql`similarity(
@@ -314,6 +321,7 @@ export class EditionLinkRepository {
           bookId: row.bookId,
           title: row.title,
           authorName: row.authorNames[0] ?? null,
+          coverVersion: row.coverUpdatedAt?.toISOString() ?? null,
           score: Math.round(score * 100),
         };
       })

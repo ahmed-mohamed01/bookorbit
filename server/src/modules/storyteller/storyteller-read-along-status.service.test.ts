@@ -1,4 +1,12 @@
-import { BadGatewayException, BadRequestException, ForbiddenException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -30,7 +38,9 @@ function buildRow(overrides: Record<string, unknown> = {}) {
     textBookId: 10,
     audioBookId: 11,
     targetLibraryId: 3,
+    targetFolderId: 30,
     outputBookId: null,
+    attachedLinkId: null,
     storytellerBookUuid: null,
     transport: null,
     status: 'failed',
@@ -60,24 +70,46 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
  */
 function createBuildServiceStub() {
   const held = new Set<string>();
+  const aborted = new Set<string>();
+  const controllers = new Map<string, AbortController>();
+  const releaseWaiters = new Map<string, Array<() => void>>();
+  const keyOf = (pair: StorytellerReadAlongPair) => `${pair.textBookId}:${pair.audioBookId}`;
   return {
     held,
     tryReserve: vi.fn((pair: StorytellerReadAlongPair) => {
-      const pairKey = `${pair.textBookId}:${pair.audioBookId}`;
+      const pairKey = keyOf(pair);
       if (held.size > 0) return null;
       held.add(pairKey);
+      const controller = new AbortController();
+      controllers.set(pairKey, controller);
       let open = true;
       return {
+        signal: controller.signal,
         release: () => {
           if (!open) return;
           open = false;
           held.delete(pairKey);
+          aborted.delete(pairKey);
+          for (const wake of releaseWaiters.get(pairKey) ?? []) wake();
+          releaseWaiters.delete(pairKey);
         },
       };
     }),
     runBuild: vi.fn((_buildId: number, _pair, _user, _options, slot?: { release: () => void } | null) => {
       slot?.release();
       return Promise.resolve();
+    }),
+    cancel: vi.fn((pair: StorytellerReadAlongPair) => {
+      if (!held.has(keyOf(pair))) return false;
+      aborted.add(keyOf(pair));
+      controllers.get(keyOf(pair))?.abort();
+      return true;
+    }),
+    // Mirrors the one-slot service: a cancelled build holding the slot stands in every pair's way.
+    whenReleased: vi.fn((pair: StorytellerReadAlongPair) => {
+      const blocking = held.has(keyOf(pair)) ? keyOf(pair) : [...held][0];
+      if (blocking === undefined || !aborted.has(blocking)) return Promise.resolve();
+      return new Promise<void>((resolve) => releaseWaiters.set(blocking, [...(releaseWaiters.get(blocking) ?? []), resolve]));
     }),
   };
 }
@@ -112,6 +144,8 @@ async function setup() {
     sumContentBytes: vi.fn().mockResolvedValue(null),
     findBuildByOutputBook: vi.fn().mockResolvedValue(undefined),
     startBuild: vi.fn().mockResolvedValue(buildRow({ status: 'building' })),
+    updateBuild: vi.fn().mockResolvedValue({}),
+    retireCancelledBuild: vi.fn().mockResolvedValue('deleted'),
     findBookTitleAndAuthors: vi.fn().mockResolvedValue({ title: 'Book', authorNames: ['Author'], isbn10: null, isbn13: null, asin: null }),
   };
   const settings = {
@@ -131,7 +165,7 @@ async function setup() {
     getSettings: vi.fn().mockResolvedValue(settings),
     getConnection: vi.fn().mockResolvedValue({ serverUrl: 'http://storyteller', username: 'u', password: 'p' }),
   };
-  const session = { listBooks: vi.fn().mockResolvedValue([]) };
+  const session = { listBooks: vi.fn().mockResolvedValue([]), cancelProcessing: vi.fn().mockResolvedValue(undefined) };
   const client = { createSession: vi.fn().mockReturnValue(session) };
   const buildService = createBuildServiceStub();
   const bookService = { verifyBookAccess: vi.fn().mockResolvedValue(undefined) };
@@ -499,17 +533,6 @@ describe('StorytellerReadAlongStatusService', () => {
     expect(result.outputBook).toBeNull();
   });
 
-  // A GET must not write. The build service already links the output on completion, so the old
-  // backfill-on-read only served to undo a deliberate detach within one poll interval.
-  it('never writes to the edition link while reading status', async () => {
-    const { service, repo, editionLinks } = await setup();
-    repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'ready', outputBookId: 99, builtAt: new Date() }));
-    editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Read-along', authorName: null });
-
-    await expect(service.getStatus(10, USER)).resolves.toMatchObject({ status: 'ready', outputBook: { id: 99, title: 'Read-along' } });
-    expect(editionLinks.setReadAlongBook).not.toHaveBeenCalled();
-  });
-
   // The read-along lands in an admin-designated library by design, so "reader sees the pair but not
   // the read-along" is the normal deployment: it is masked, never demanded.
   it('reads status without requiring access to the read-along member', async () => {
@@ -801,8 +824,9 @@ describe('StorytellerReadAlongStatusService', () => {
   // audio in place and writes the read-along into the library folder, so cleanup can only ever drop
   // a cache. Telling the client otherwise puts a control on screen that governs nothing.
   it('reports no reclaimable remote copy for a shared-paths build', async () => {
-    const { service, repo } = await setup();
+    const { service, repo, editionLinks } = await setup();
     repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'ready', transport: 'shared-paths', outputBookId: 77 }));
+    editionLinks.findBookSummary.mockResolvedValue({ id: 77, title: 'Read-along', authorName: null });
 
     await expect(service.getStatus(10, USER)).resolves.toMatchObject({ remoteCopyReclaimable: false });
   });
@@ -836,6 +860,522 @@ describe('StorytellerReadAlongStatusService', () => {
     libraryService.verifyUserAccess.mockRejectedValue(new ForbiddenException('no access'));
 
     await expect(service.getStatus(10, USER)).resolves.toMatchObject({ blocked: 'target_not_allowed' });
+  });
+
+  describe('re-attaching a ready read-along on status reads', () => {
+    const RELINKED = { ...LINK, id: 8 };
+    const READER = { ...USER, permissions: [] } as unknown as RequestUser;
+
+    function readyRow(attachedLinkId: number | null) {
+      return buildRow({ status: 'ready', outputBookId: 99, builtAt: new Date('2026-01-01T00:00:00Z'), attachedLinkId });
+    }
+
+    it('attaches the output once to a link the row was never attached to, and stamps that link', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue(RELINKED);
+      repo.findBuildByPair.mockResolvedValue(readyRow(5));
+      editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Read-along', authorName: null });
+
+      await expect(service.getStatus(10, USER)).resolves.toMatchObject({ status: 'ready', outputBook: { id: 99 } });
+      expect(editionLinks.setReadAlongBook).toHaveBeenCalledOnce();
+      expect(editionLinks.setReadAlongBook).toHaveBeenCalledWith(8, 99);
+      expect(repo.updateBuild).toHaveBeenCalledWith(7, { attachedLinkId: 8 });
+    });
+
+    // A detach from the read-along's own page empties the link the row was attached to.
+    it('leaves a detached read-along detached on the link it was attached to', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue(RELINKED);
+      repo.findBuildByPair.mockResolvedValue(readyRow(8));
+      editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Read-along', authorName: null });
+
+      await service.getStatus(10, USER);
+
+      expect(editionLinks.setReadAlongBook).not.toHaveBeenCalled();
+      expect(repo.updateBuild).not.toHaveBeenCalled();
+    });
+
+    // Unlinking deletes the link, and the foreign key nulls the stamp with it.
+    it('attaches again after an unlink and relink', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue({ ...LINK, id: 9 });
+      repo.findBuildByPair.mockResolvedValue(readyRow(null));
+      editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Read-along', authorName: null });
+
+      await service.getStatus(10, USER);
+
+      expect(editionLinks.setReadAlongBook).toHaveBeenCalledWith(9, 99);
+      expect(repo.updateBuild).toHaveBeenCalledWith(7, { attachedLinkId: 9 });
+    });
+
+    it('records the link when a Generate finds the output already on it but never stamped there', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue({ ...RELINKED, readAlongBookId: 99 });
+      repo.findBuildByPair.mockResolvedValue(readyRow(null));
+      editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Read-along', authorName: null });
+
+      await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'ready', blocked: null });
+
+      expect(editionLinks.setReadAlongBook).not.toHaveBeenCalled();
+      expect(repo.updateBuild).toHaveBeenCalledWith(7, { attachedLinkId: 8 });
+    });
+
+    it('does not rewrite a stamp that already names the link', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue({ ...RELINKED, readAlongBookId: 99 });
+      repo.findBuildByPair.mockResolvedValue(readyRow(8));
+      editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Read-along', authorName: null });
+
+      await service.requestBuild(10, USER, {});
+
+      expect(repo.updateBuild).not.toHaveBeenCalled();
+    });
+
+    it('leaves a link that already carries the output alone', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue({ ...RELINKED, readAlongBookId: 99 });
+      repo.findBuildByPair.mockResolvedValue(readyRow(5));
+      editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Read-along', authorName: null });
+
+      await service.getStatus(10, USER);
+
+      expect(editionLinks.setReadAlongBook).not.toHaveBeenCalled();
+    });
+
+    it('does not attach an output the caller cannot open', async () => {
+      const { service, repo, editionLinks, bookService } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue(RELINKED);
+      repo.findBuildByPair.mockResolvedValue(readyRow(5));
+      bookService.verifyBookAccess.mockImplementation((bookId: number) =>
+        bookId === 99 ? Promise.reject(new ForbiddenException('hidden')) : Promise.resolve(undefined),
+      );
+
+      await expect(service.getStatus(10, USER)).resolves.toMatchObject({ status: 'ready', outputBook: null });
+      expect(editionLinks.setReadAlongBook).not.toHaveBeenCalled();
+    });
+
+    it('never writes the link on a poll from a reader who cannot build', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue(RELINKED);
+      repo.findBuildByPair.mockResolvedValue(readyRow(5));
+      editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Read-along', authorName: null });
+
+      await expect(service.getStatus(10, READER)).resolves.toMatchObject({ status: 'ready' });
+      expect(editionLinks.setReadAlongBook).not.toHaveBeenCalled();
+      expect(repo.updateBuild).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('destination reported for a ready build whose output is gone', () => {
+    it('reports the settings destination and transport, not the stale row', async () => {
+      const { service, repo, editionLinks, settings, libraryService } = await setup();
+      settings.targetLibraryId = 4;
+      libraryService.findOne.mockImplementation((id: number) => Promise.resolve({ id, name: id === 4 ? 'New home' : 'Old home' }));
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'ready', outputBookId: 99, targetLibraryId: 3, transport: 'shared-paths' }));
+      editionLinks.findBookSummary.mockResolvedValue(null);
+
+      await expect(service.getStatus(10, USER)).resolves.toMatchObject({
+        status: 'none',
+        targetLibraryId: 4,
+        targetLibraryName: 'New home',
+        remoteCopyReclaimable: true,
+      });
+    });
+
+    it('keeps reporting the row destination while the build is failed', async () => {
+      const { service, repo, settings, libraryService } = await setup();
+      settings.targetLibraryId = 4;
+      libraryService.findOne.mockImplementation((id: number) => Promise.resolve({ id, name: id === 4 ? 'New home' : 'Old home' }));
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed', targetLibraryId: 3, transport: 'shared-paths' }));
+
+      await expect(service.getStatus(10, USER)).resolves.toMatchObject({
+        status: 'failed',
+        targetLibraryId: 3,
+        targetLibraryName: 'Old home',
+        remoteCopyReclaimable: false,
+      });
+    });
+  });
+
+  describe('keeping the destination across retry and rebuild', () => {
+    const deletingUser = { ...USER, permissions: [...USER.permissions, Permission.LibraryDeleteBooks] } as unknown as RequestUser;
+
+    function runOptions(buildService: ReturnType<typeof createBuildServiceStub>) {
+      return buildService.runBuild.mock.calls[0]![3] as { targetLibraryId?: number; targetFolderId?: number };
+    }
+
+    it('retries a failed build into the library and folder it used', async () => {
+      const { service, repo, buildService, libraryService } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed', targetLibraryId: 4, targetFolderId: 40 }));
+
+      await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'building', blocked: null });
+
+      expect(runOptions(buildService)).toMatchObject({ targetLibraryId: 4, targetFolderId: 40 });
+      expect(libraryService.verifyUserAccess).toHaveBeenCalledWith(USER.id, 4, false);
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ targetLibraryId: 4 }));
+    });
+
+    it('rebuilds into the library and folder the previous build used', async () => {
+      const { service, repo, buildService, editionLinks } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'ready', outputBookId: 99, targetLibraryId: 4, targetFolderId: 40 }));
+      editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Read-along', authorName: null });
+
+      await expect(service.requestBuild(10, deletingUser, { force: true })).resolves.toEqual({ status: 'building', blocked: null });
+
+      expect(runOptions(buildService)).toMatchObject({ targetLibraryId: 4, targetFolderId: 40 });
+    });
+
+    it('lets an explicit library in the request win over the previous destination', async () => {
+      const { service, repo, buildService } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed', targetLibraryId: 4, targetFolderId: 40 }));
+
+      await service.requestBuild(10, USER, { targetLibraryId: 5 });
+
+      expect(runOptions(buildService)).toEqual(expect.objectContaining({ targetLibraryId: 5, targetFolderId: undefined }));
+    });
+
+    it('falls through to the settings default when the row recorded a library but no folder', async () => {
+      const { service, repo, buildService } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed', targetLibraryId: 4, targetFolderId: null }));
+
+      await service.requestBuild(10, USER, {});
+
+      expect(runOptions(buildService)).toEqual(expect.objectContaining({ targetLibraryId: undefined, targetFolderId: undefined }));
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ targetLibraryId: 3, targetFolderId: null }));
+    });
+
+    it('resets the folder when an explicit library comes without one', async () => {
+      const { service, repo } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed', targetLibraryId: 4, targetFolderId: 40 }));
+
+      await service.requestBuild(10, USER, { targetLibraryId: 5 });
+
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ targetLibraryId: 5, targetFolderId: null }));
+    });
+
+    it('claims the row with the folder it reuses', async () => {
+      const { service, repo } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed', targetLibraryId: 4, targetFolderId: 40 }));
+
+      await service.requestBuild(10, USER, {});
+
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ targetLibraryId: 4, targetFolderId: 40 }));
+    });
+
+    it('falls through to the settings default when the row never recorded a destination', async () => {
+      const { service, repo, buildService } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed', targetLibraryId: null, targetFolderId: null }));
+
+      await service.requestBuild(10, USER, {});
+
+      expect(runOptions(buildService)).toEqual(expect.objectContaining({ targetLibraryId: undefined, targetFolderId: undefined }));
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ targetLibraryId: 3 }));
+    });
+  });
+
+  describe('generating right after a cancel', () => {
+    it('waits for the cancelled build to let go of the slot instead of answering busy', async () => {
+      const { service, buildService, repo } = await setup();
+      const cancelled = buildService.tryReserve({ textBookId: 10, audioBookId: 11 } as StorytellerReadAlongPair)!;
+      buildService.cancel({ textBookId: 10, audioBookId: 11 } as StorytellerReadAlongPair);
+
+      const request = service.requestBuild(10, USER, {});
+      await vi.waitFor(() => expect(buildService.whenReleased).toHaveBeenCalled());
+      expect(repo.startBuild).not.toHaveBeenCalled();
+      cancelled.release();
+
+      await expect(request).resolves.toEqual({ status: 'building', blocked: null });
+    });
+
+    it('waits for a cancelled build of another pair holding the only slot, then proceeds', async () => {
+      const { service, buildService, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockImplementation((bookId: number) => Promise.resolve(bookId === 12 ? OTHER_LINK : LINK));
+      const cancelled = buildService.tryReserve({ textBookId: 10, audioBookId: 11 } as StorytellerReadAlongPair)!;
+      buildService.cancel({ textBookId: 10, audioBookId: 11 } as StorytellerReadAlongPair);
+
+      const request = service.requestBuild(12, USER, {});
+      await vi.waitFor(() => expect(buildService.whenReleased).toHaveBeenCalled());
+      expect(repo.startBuild).not.toHaveBeenCalled();
+      cancelled.release();
+
+      await expect(request).resolves.toEqual({ status: 'building', blocked: null });
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ textBookId: 12, audioBookId: 13 }));
+    });
+
+    it('drops the row it just claimed when a cancel aborted the slot before the claim', async () => {
+      const { service, buildService, repo } = await setup();
+      const claim = deferred<ReturnType<typeof buildRow>>();
+      repo.startBuild.mockReturnValueOnce(claim.promise);
+
+      const request = service.requestBuild(10, USER, {});
+      await vi.waitFor(() => expect(repo.startBuild).toHaveBeenCalled());
+      await service.cancelBuild(10, USER);
+      claim.resolve(buildRow({ status: 'building' }));
+
+      await expect(request).resolves.toEqual({ status: 'none', blocked: 'busy' });
+      expect(repo.retireCancelledBuild).toHaveBeenCalledWith(7);
+      expect(buildService.runBuild).not.toHaveBeenCalled();
+      expect(buildService.held.size).toBe(0);
+    });
+
+    it('answers busy once the wait for a cancelled build runs past its cap', async () => {
+      vi.useFakeTimers();
+      try {
+        const { service, buildService, repo } = await setup();
+        buildService.tryReserve({ textBookId: 10, audioBookId: 11 } as StorytellerReadAlongPair);
+        buildService.cancel({ textBookId: 10, audioBookId: 11 } as StorytellerReadAlongPair);
+
+        const request = service.requestBuild(10, USER, {});
+        await vi.waitFor(() => expect(buildService.whenReleased).toHaveBeenCalled());
+        await vi.advanceTimersByTimeAsync(30_000);
+
+        await expect(request).resolves.toEqual({ status: 'none', blocked: 'busy' });
+        expect(repo.startBuild).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('a cancelled build', () => {
+    it('keeps a row holding a Storyteller book and deletes nothing in Storyteller', async () => {
+      const { service, repo, session } = await setup();
+      const deleteBook = vi.fn();
+      Object.assign(session, { deleteBook });
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building', phase: 'wait', storytellerBookUuid: 'story-uuid' }));
+      repo.retireCancelledBuild.mockResolvedValue('kept');
+
+      await service.cancelBuild(10, USER);
+
+      expect(session.cancelProcessing).toHaveBeenCalledWith('story-uuid');
+      expect(repo.retireCancelledBuild).toHaveBeenCalledWith(7);
+      expect(deleteBook).not.toHaveBeenCalled();
+    });
+
+    it('reads as no build, with the settings destination', async () => {
+      const { service, repo, settings, libraryService } = await setup();
+      settings.targetLibraryId = 4;
+      libraryService.findOne.mockImplementation((id: number) => Promise.resolve({ id, name: id === 4 ? 'New home' : 'Old home' }));
+      repo.findBuildByPair.mockResolvedValue(
+        buildRow({
+          status: 'cancelled',
+          phase: 'wait',
+          storytellerBookUuid: 'story-uuid',
+          transport: 'shared-paths',
+          targetLibraryId: 3,
+          error: 'stale',
+        }),
+      );
+
+      await expect(service.getStatus(10, USER)).resolves.toMatchObject({
+        status: 'none',
+        phase: null,
+        remoteTask: null,
+        remoteProgress: null,
+        error: null,
+        outputBook: null,
+        targetLibraryId: 4,
+        targetLibraryName: 'New home',
+        remoteCopyReclaimable: true,
+      });
+    });
+
+    it('answers a Generate by resuming the kept Storyteller book in the same destination', async () => {
+      const { service, repo, buildService } = await setup();
+      repo.findBuildByPair.mockResolvedValue(
+        buildRow({
+          status: 'cancelled',
+          phase: null,
+          storytellerBookUuid: 'story-uuid',
+          transport: 'shared-paths',
+          targetLibraryId: 4,
+          targetFolderId: 40,
+        }),
+      );
+
+      await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'building', blocked: null });
+
+      expect(repo.startBuild).toHaveBeenCalledWith(
+        expect.objectContaining({ storytellerBookUuid: 'story-uuid', transport: 'shared-paths', targetLibraryId: 4, targetFolderId: 40 }),
+      );
+      expect(buildService.runBuild.mock.calls[0]![3]).toMatchObject({ targetLibraryId: 4, targetFolderId: 40 });
+    });
+
+    it('does not resume the kept book on a forced rebuild', async () => {
+      const { service, repo } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'cancelled', storytellerBookUuid: 'story-uuid', transport: 'shared-paths' }));
+      const deletingUser = { ...USER, permissions: [...USER.permissions, Permission.LibraryDeleteBooks] } as unknown as RequestUser;
+
+      await service.requestBuild(10, deletingUser, { force: true });
+
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ storytellerBookUuid: null, transport: null }));
+    });
+  });
+
+  describe('cancelBuild', () => {
+    it('aborts a build still between its slot and its claim, and deletes nothing', async () => {
+      const { service, repo, buildService } = await setup();
+      buildService.held.add('10:11');
+
+      await expect(service.cancelBuild(10, USER)).resolves.toBeUndefined();
+      expect(buildService.cancel).toHaveReturnedWith(true);
+      expect(repo.retireCancelledBuild).not.toHaveBeenCalled();
+    });
+
+    it('aborts a resumed build whose row still reads failed, and keeps the row', async () => {
+      const { service, repo, buildService } = await setup();
+      buildService.held.add('10:11');
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed' }));
+
+      await service.cancelBuild(10, USER);
+
+      expect(buildService.cancel).toHaveReturnedWith(true);
+      expect(repo.retireCancelledBuild).not.toHaveBeenCalled();
+    });
+
+    it.each(['ready', 'failed'])('asks the build service to cancel and leaves a %s row in place', async (status) => {
+      const { service, repo, buildService } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status }));
+
+      await service.cancelBuild(10, USER);
+
+      expect(buildService.cancel).toHaveBeenCalledOnce();
+      expect(buildService.cancel).toHaveReturnedWith(false);
+      expect(repo.retireCancelledBuild).not.toHaveBeenCalled();
+    });
+
+    it.each(['collect', 'link'])('refuses to cancel a build in its %s phase', async (phase) => {
+      const { service, repo, buildService } = await setup();
+      buildService.held.add('10:11');
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building', phase }));
+
+      await expect(service.cancelBuild(10, USER)).rejects.toBeInstanceOf(ConflictException);
+      expect(buildService.cancel).not.toHaveBeenCalled();
+      expect(repo.retireCancelledBuild).not.toHaveBeenCalled();
+    });
+
+    it('logs a too-late cancel as an end line, never as an error', async () => {
+      const { service, repo } = await setup();
+      const logs: string[] = [];
+      const errors: string[] = [];
+      const logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation((message: unknown) => {
+        logs.push(String(message));
+      });
+      const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation((message: unknown) => {
+        errors.push(String(message));
+      });
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building', phase: 'collect' }));
+
+      try {
+        await expect(service.cancelBuild(10, USER)).rejects.toBeInstanceOf(ConflictException);
+
+        expect(logs.some((line) => line.startsWith('[storyteller.read_along.cancel] [end]') && line.includes('outcome=too_late'))).toBe(true);
+        expect(errors).toEqual([]);
+      } finally {
+        logSpy.mockRestore();
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('refuses when the build moved into the collect after the row was read', async () => {
+      const { service, repo, buildService } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building', phase: 'wait' }));
+      buildService.cancel.mockImplementation(() => {
+        throw new ConflictException('The read-along is being imported and can no longer be cancelled');
+      });
+
+      await expect(service.cancelBuild(10, USER)).rejects.toBeInstanceOf(ConflictException);
+      expect(repo.retireCancelledBuild).not.toHaveBeenCalled();
+    });
+
+    it('aborts an in-flight build and deletes its row', async () => {
+      const { service, repo, buildService } = await setup();
+      buildService.held.add('10:11');
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building', phase: 'prepare' }));
+
+      await service.cancelBuild(10, USER);
+
+      expect(buildService.cancel).toHaveReturnedWith(true);
+      expect(repo.retireCancelledBuild).toHaveBeenCalledWith(7);
+    });
+
+    it('deletes a building row with nothing in flight', async () => {
+      const { service, repo, buildService, session } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building', phase: 'register' }));
+
+      await service.cancelBuild(11, USER);
+
+      expect(buildService.cancel).toHaveReturnedWith(false);
+      expect(session.cancelProcessing).not.toHaveBeenCalled();
+      expect(repo.retireCancelledBuild).toHaveBeenCalledWith(7);
+    });
+
+    it('stops Storyteller processing when the build is waiting on it', async () => {
+      const { service, repo, session } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building', phase: 'wait', storytellerBookUuid: 'story-uuid' }));
+
+      await service.cancelBuild(10, USER);
+
+      expect(session.cancelProcessing).toHaveBeenCalledWith('story-uuid');
+      expect(repo.retireCancelledBuild).toHaveBeenCalledWith(7);
+    });
+
+    it('still cancels when Storyteller refuses to stop processing', async () => {
+      const { service, repo, session } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building', phase: 'process', storytellerBookUuid: 'story-uuid' }));
+      session.cancelProcessing.mockRejectedValue(new StorytellerClientError('Storyteller answered 500', 500));
+
+      await expect(service.cancelBuild(10, USER)).resolves.toBeUndefined();
+      expect(repo.retireCancelledBuild).toHaveBeenCalledWith(7);
+    });
+
+    it('logs the remote stop under its own event, never the cancel event', async () => {
+      const { service, repo, session } = await setup();
+      const lines: string[] = [];
+      for (const level of ['log', 'warn', 'error'] as const) {
+        vi.spyOn(Logger.prototype, level).mockImplementation((message: unknown) => {
+          lines.push(String(message));
+        });
+      }
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building', phase: 'wait', storytellerBookUuid: 'story-uuid' }));
+      session.cancelProcessing.mockRejectedValue(new StorytellerClientError('Storyteller answered 500', 500));
+
+      await service.cancelBuild(10, USER);
+
+      const remote = lines.filter((line) => line.startsWith('[storyteller.read_along.cancel_remote]'));
+      expect(remote[0]).toMatch(/^\[storyteller\.read_along\.cancel_remote\] \[start\] buildId=7 storytellerBookUuid=story-uuid /);
+      expect(remote[1]).toMatch(
+        /^\[storyteller\.read_along\.cancel_remote\] \[fail\] buildId=7 storytellerBookUuid=story-uuid durationMs=\d+ errorClass=StorytellerClientError error="Storyteller answered 500"/,
+      );
+      expect(lines.filter((line) => line.startsWith('[storyteller.read_along.cancel] [fail]'))).toEqual([]);
+      vi.restoreAllMocks();
+    });
+
+    it('refuses a caller who cannot open the book', async () => {
+      const { service, repo, bookService } = await setup();
+      bookService.verifyBookAccess.mockRejectedValue(new NotFoundException('Book 10 not found'));
+
+      await expect(service.cancelBuild(10, USER)).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.findBuildByPair).not.toHaveBeenCalled();
+    });
+
+    it('answers 404 when the counterpart is hidden from the caller', async () => {
+      const { service, repo, bookService } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building' }));
+      bookService.verifyBookAccess.mockImplementation((bookId: number) =>
+        bookId === 11 ? Promise.reject(new ForbiddenException('hidden')) : Promise.resolve(undefined),
+      );
+
+      await expect(service.cancelBuild(10, USER)).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.retireCancelledBuild).not.toHaveBeenCalled();
+    });
+
+    it('answers 404 when the book has no pair', async () => {
+      const { service, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue(undefined);
+
+      await expect(service.cancelBuild(10, USER)).rejects.toBeInstanceOf(NotFoundException);
+    });
   });
 
   // A file Storyteller cannot parse fails every import mode, so the build is refused on the click
