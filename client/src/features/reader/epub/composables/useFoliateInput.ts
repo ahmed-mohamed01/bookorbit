@@ -3,6 +3,7 @@ const RIGHT_ZONE = 0.7
 const DOUBLE_CLICK_MS = 300
 const ANNOTATION_CLICK_SUPPRESSION_MS = DOUBLE_CLICK_MS + 100
 const SWIPE_THRESHOLD = 50
+const SCROLLED_SWIPE_DOMINANCE = 2
 const TAP_MOVEMENT_THRESHOLD = 10
 
 interface FoliateInputView {
@@ -82,6 +83,23 @@ export function useFoliateInput(
     return canNavigate ? canNavigate() : true
   }
 
+  // Signed horizontal distance of a page swipe, or null when the gesture is not one.
+  function resolveSwipeDeltaX(touch: Touch): number | null {
+    if (!isScrolledFlow()) {
+      const deltaX = touch.clientX - touchStartX
+      const deltaY = Math.abs(touch.clientY - touchStartY)
+      return Math.abs(deltaX) >= SWIPE_THRESHOLD && Math.abs(deltaX) > deltaY ? deltaX : null
+    }
+
+    // Scrolled flow scrolls the iframe along with its container, so the content stays under
+    // the finger and client deltas collapse during a scroll. Judge the gesture in screen space
+    // and demand a clearly horizontal motion, so sideways drift while scrolling never turns
+    // the page but a deliberate swipe still leaves a section that has nothing to scroll.
+    const screenDeltaX = touch.screenX - touchStartScreenX
+    const screenDeltaY = Math.abs(touch.screenY - touchStartScreenY)
+    return Math.abs(screenDeltaX) >= SWIPE_THRESHOLD && Math.abs(screenDeltaX) > screenDeltaY * SCROLLED_SWIPE_DOMINANCE ? screenDeltaX : null
+  }
+
   function handleTouchStart(e: TouchEvent, doc: Document) {
     if (e.touches.length !== 1) return
     handleSelectionInteractionStart?.(doc)
@@ -128,18 +146,13 @@ export function useFoliateInput(
 
     if (!cancelled && !isTextSelectionInProgress && e.changedTouches.length === 1) {
       const touch = e.changedTouches[0]!
-      const deltaX = touch.clientX - touchStartX
-      const deltaY = Math.abs(touch.clientY - touchStartY)
+      const swipeDeltaX = resolveSwipeDeltaX(touch)
 
-      if (Math.abs(deltaX) >= SWIPE_THRESHOLD && Math.abs(deltaX) > deltaY) {
-        // Scrolled flow scrolls the iframe along with its container, so the content stays
-        // under the finger and deltaY collapses to roughly zero. Any sideways drift while
-        // scrolling would then read as a swipe and turn the page.
-        if (isScrolledFlow()) return
+      if (swipeDeltaX !== null) {
         if (isNavigating) return
         if (!canProceedNavigation()) return
         isNavigating = true
-        if (deltaX < 0) navigateRight()
+        if (swipeDeltaX < 0) navigateRight()
         else navigateLeft()
         setTimeout(() => (isNavigating = false), 300)
         return
