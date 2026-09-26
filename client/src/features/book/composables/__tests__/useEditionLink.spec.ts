@@ -70,7 +70,7 @@ describe('useEditionLink', () => {
 
   describe('loadForBook', () => {
     it('loads an existing link with its counterpart summary from a single response', async () => {
-      const editionLink = { id: 1, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+      const editionLink = { id: 1, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
       mocks.api.mockResolvedValueOnce(response({ link: editionLink, proposed: null, counterpart: counterpartSummary }))
 
       const { link, proposed, linkedCounterpart, loading, error, loadForBook } = await load(10)
@@ -82,6 +82,57 @@ describe('useEditionLink', () => {
       expect(linkedCounterpart.value).toEqual(counterpartSummary)
       expect(loading.value).toBe(false)
       expect(error.value).toBeNull()
+    })
+
+    it('exposes the role and every member of a three-way link from the same response', async () => {
+      const editionLink = { id: 1, textBookId: 10, audioBookId: 20, readAlongBookId: 30, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+      const linkMembers = {
+        text: {
+          id: 10,
+          title: 'Dune',
+          authorName: 'Frank Herbert',
+          progress: { percentage: 40, updatedAt: '2026-09-01' },
+          narrationPercentage: null,
+        },
+        audio: { id: 20, title: 'Dune (audio)', authorName: 'Simon Vance', progress: null, narrationPercentage: null },
+        readAlong: {
+          id: 30,
+          title: 'Dune (read-along)',
+          authorName: 'Frank Herbert',
+          progress: { percentage: 55, updatedAt: '2026-09-03' },
+          narrationPercentage: 61,
+        },
+      }
+      mocks.api.mockResolvedValueOnce(
+        response({ link: editionLink, proposed: null, counterpart: counterpartSummary, role: 'text', members: linkMembers }),
+      )
+
+      const { role, members, loadForBook } = await load(10)
+      await loadForBook()
+
+      expect(role.value).toBe('text')
+      expect(members.value).toEqual(linkMembers)
+    })
+
+    it('leaves role and members null for a response that carries neither, and clears them on failure', async () => {
+      mocks.api.mockResolvedValueOnce(response({ link: null, proposed: null, counterpart: null }))
+      mocks.api.mockResolvedValueOnce(response(null, { ok: false, status: 500 }))
+
+      const { role, members, loadForBook } = await load(10)
+      await loadForBook()
+      expect(role.value).toBeNull()
+      expect(members.value).toBeNull()
+
+      role.value = 'audio'
+      members.value = {
+        text: { id: 10, title: 'Dune', authorName: null, progress: null, narrationPercentage: null },
+        audio: { id: 20, title: 'Dune (audio)', authorName: null, progress: null, narrationPercentage: null },
+        readAlong: null,
+      }
+      await loadForBook()
+
+      expect(role.value).toBeNull()
+      expect(members.value).toBeNull()
     })
 
     it('loads a proposed candidate without a counterpart summary', async () => {
@@ -234,7 +285,7 @@ describe('useEditionLink', () => {
 
   describe('linkBook', () => {
     it('links the book, then refreshes link/proposed/counterpart from a single for-book re-fetch', async () => {
-      const created = { id: 5, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+      const created = { id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
       mocks.api.mockResolvedValueOnce(response(created))
       mocks.api.mockResolvedValueOnce(response({ link: created, proposed: null, counterpart: counterpartSummary }))
 
@@ -279,11 +330,19 @@ describe('useEditionLink', () => {
 
   describe('unlink', () => {
     it('clears link state on success', async () => {
-      mocks.api.mockResolvedValueOnce(response({ id: 5, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }))
+      mocks.api.mockResolvedValueOnce(
+        response({ id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }),
+      )
 
-      const { link, linkedCounterpart, unlink } = await load(10)
-      link.value = { id: 5, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+      const { link, linkedCounterpart, role, members, unlink } = await load(10)
+      link.value = { id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: 30, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
       linkedCounterpart.value = { id: 20, title: 'x', authorName: null }
+      role.value = 'text'
+      members.value = {
+        text: { id: 10, title: 'x', authorName: null, progress: null, narrationPercentage: null },
+        audio: { id: 20, title: 'y', authorName: null, progress: null, narrationPercentage: null },
+        readAlong: { id: 30, title: 'z', authorName: null, progress: null, narrationPercentage: null },
+      }
 
       const result = await unlink()
 
@@ -291,6 +350,8 @@ describe('useEditionLink', () => {
       expect(result).toBe(true)
       expect(link.value).toBeNull()
       expect(linkedCounterpart.value).toBeNull()
+      expect(role.value).toBeNull()
+      expect(members.value).toBeNull()
     })
 
     it('returns false and sets an error when unlinking fails, without throwing', async () => {
@@ -312,7 +373,7 @@ describe('useEditionLink', () => {
 
   describe('shared state across sibling controls (same bookId)', () => {
     it('reflects a link made through one instance in another instance for the same bookId', async () => {
-      const created = { id: 5, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+      const created = { id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
       mocks.api.mockResolvedValueOnce(response(created))
       mocks.api.mockResolvedValueOnce(response({ link: created, proposed: null, counterpart: counterpartSummary }))
 
@@ -330,12 +391,14 @@ describe('useEditionLink', () => {
     })
 
     it('reflects an unlink made through one instance in another instance for the same bookId', async () => {
-      mocks.api.mockResolvedValueOnce(response({ id: 5, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }))
+      mocks.api.mockResolvedValueOnce(
+        response({ id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }),
+      )
 
       const mod = await import('../useEditionLink')
       const controlA = mod.useEditionLink(10)
       const controlB = mod.useEditionLink(10)
-      controlA.link.value = { id: 5, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+      controlA.link.value = { id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
       controlA.linkedCounterpart.value = { id: 20, title: 'x', authorName: null }
 
       await controlB.unlink()
@@ -370,7 +433,7 @@ describe('useEditionLink', () => {
       const bookTen = mod.useEditionLink(10)
       const bookEleven = mod.useEditionLink(11)
 
-      bookTen.link.value = { id: 1, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+      bookTen.link.value = { id: 1, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
 
       expect(bookEleven.link.value).toBeNull()
     })
@@ -381,7 +444,7 @@ describe('useEditionLink', () => {
       const scope = effectScope()
       scope.run(() => {
         const control = mod.useEditionLink(10)
-        control.link.value = { id: 1, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+        control.link.value = { id: 1, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
       })
       scope.stop()
 
@@ -400,7 +463,7 @@ describe('useEditionLink', () => {
       const scope = effectScope()
       scope.run(() => {
         const control = mod.useEditionLink(10)
-        control.link.value = { id: 1, textBookId: 10, audioBookId: 20, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+        control.link.value = { id: 1, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
       })
       scope.stop()
 

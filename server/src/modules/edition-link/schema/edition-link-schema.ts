@@ -56,4 +56,17 @@ END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS "book_edition_links_text_book_id_unique" ON "book_edition_links" USING btree ("text_book_id");
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "book_edition_links_audio_book_id_unique" ON "book_edition_links" USING btree ("audio_book_id");
+--> statement-breakpoint
+ALTER TABLE "book_edition_links" ADD COLUMN IF NOT EXISTS "read_along_book_id" integer;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'book_edition_links_read_along_book_id_books_id_fk' AND conrelid = 'book_edition_links'::regclass
+	) THEN
+		ALTER TABLE "book_edition_links" ADD CONSTRAINT "book_edition_links_read_along_book_id_books_id_fk" FOREIGN KEY ("read_along_book_id") REFERENCES "public"."books"("id") ON DELETE set null ON UPDATE no action;
+	END IF;
+END $$;
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "book_edition_links_read_along_book_id_unique" ON "book_edition_links" USING btree ("read_along_book_id") WHERE "read_along_book_id" IS NOT NULL;
 `;

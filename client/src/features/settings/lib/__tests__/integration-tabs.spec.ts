@@ -3,14 +3,16 @@ import { Permission } from '@bookorbit/types'
 import { INTEGRATION_TAB_INFO, INTEGRATION_TABS, normalizeIntegrationTab } from '../integration-tabs'
 
 describe('integration-tabs', () => {
-  it('contains Hardcover, Readwise, StoryGraph, and Audiobookshelf', () => {
-    expect(INTEGRATION_TABS).toEqual(['hardcover', 'readwise', 'storygraph', 'audiobookshelf'])
+  it('contains Hardcover, Readwise, StoryGraph, Audiobookshelf, and Storyteller', () => {
+    expect(INTEGRATION_TABS).toEqual(['hardcover', 'readwise', 'storygraph', 'audiobookshelf', 'storyteller'])
   })
 
   it('associates each tab with its sync permission', () => {
     expect(INTEGRATION_TAB_INFO.hardcover.permission).toBe(Permission.HardcoverSync)
     expect(INTEGRATION_TAB_INFO.readwise.permission).toBe(Permission.ReadwiseSync)
     expect(INTEGRATION_TAB_INFO.storygraph.permission).toBe(Permission.StorygraphSync)
+    expect(INTEGRATION_TAB_INFO.audiobookshelf.permission).toBe(Permission.AudiobookshelfSync)
+    expect(INTEGRATION_TAB_INFO.storyteller.permission).toBe(Permission.ManageAppSettings)
   })
 
   it('defaults to Hardcover for an invalid tab', () => {
@@ -22,5 +24,7 @@ describe('integration-tabs', () => {
     expect(normalizeIntegrationTab('hardcover')).toBe('hardcover')
     expect(normalizeIntegrationTab('readwise')).toBe('readwise')
     expect(normalizeIntegrationTab('storygraph')).toBe('storygraph')
+    expect(normalizeIntegrationTab('audiobookshelf')).toBe('audiobookshelf')
+    expect(normalizeIntegrationTab('storyteller')).toBe('storyteller')
   })
 })

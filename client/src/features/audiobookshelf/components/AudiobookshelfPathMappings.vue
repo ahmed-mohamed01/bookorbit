@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ArrowRight, FolderTree, Plus, Trash2 } from '@lucide/vue'
-import PathPrefixCombobox from './PathPrefixCombobox.vue'
+import PathPrefixCombobox from '@/components/ui/PathPrefixCombobox.vue'
 import type { AudiobookshelfPathMapping } from '@bookorbit/types'
 import { PATH_MAPPING_MAX_ROWS } from '../audiobookshelf.constants'
 

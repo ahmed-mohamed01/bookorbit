@@ -48,6 +48,17 @@ describe('EditionLinkSchemaBootstrapService', () => {
     expect(repo.findMissingTables.mock.invocationCallOrder[0]).toBeLessThan(repo.applySchemaStatements.mock.invocationCallOrder[0]!);
   });
 
+  // A constraint name is unique per relation, not per database. Without the conrelid filter a
+  // same-named constraint on any other table satisfies the guard and the FK is never created.
+  it('scopes the read-along FK guard to book_edition_links', () => {
+    const guard = EDITION_LINK_SCHEMA_SQL.split('--> statement-breakpoint')
+      .map((statement) => statement.trim())
+      .find((statement) => statement.includes('ADD CONSTRAINT "book_edition_links_read_along_book_id_books_id_fk"'))!;
+
+    expect(guard).toContain('pg_constraint');
+    expect(guard).toMatch(/conname = 'book_edition_links_read_along_book_id_books_id_fk' AND conrelid = 'book_edition_links'::regclass/);
+  });
+
   it('is silent when no tables are missing', async () => {
     const { service } = createService();
 

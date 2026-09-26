@@ -305,6 +305,18 @@ below.
 
 ## Current conflict surface (semantic, `-w`)
 
+> **2026-09-24: the table below predates the Storyteller read-along overlay.** That overlay adds
+> **38 semantic lines across 6 upstream files**, added up file by file: `router/index.ts` (+8),
+> `settings-nav.ts` (+10), `integration-tabs.ts` (+6/-1), `app.module.ts` (+2),
+> `packages/types/src/index.ts` (+1) and `server/.env.example` (+10, the Storyteller env-var block).
+> Everything else it adds is fork-only, including the whole
+> `modules/storyteller/` tree, `features/storyteller/`, the three new `common/utils/` helpers, and
+> `AudiobookshelfPathMappings.vue` (+1/-1, an import path fix after `PathPrefixCombobox.vue` moved to
+> `components/ui/` to be shared by both integrations) - it lives in the fork-only `audiobookshelf`
+> feature directory, so it never touches the upstream conflict surface even though it changed.
+> `modules/audiobookshelf/` is itself fork-only, so moving its URL and SSRF guard into
+> `common/utils/self-hosted-service-url.utils.ts` costs no upstream conflict surface at all.
+
 Measured 2026-09-22, after the upstream v3.0.0 merge (`970b1525`). Source files only (locales,
 tests and docs excluded); per-file numbers are added+removed with `-w`. **80 modified upstream
 source files, 1614 semantic lines.** The v3.0.0 merge removed about 68 lines of hooks; the total
@@ -456,16 +468,19 @@ listener simply isn't registered; the link/alignment controls hide when no pair 
 component files must remain for the client to compile (expected UI-registration coupling). The three
 tables are left in place, unused.
 
-**Watched cross-module import:** `audiobookshelf-match.utils.ts` imports the pure helpers
-`applyPathMappings`/`pathMatchesPrefix` (and the `PathMapping` type) from upstream's
-`migration/planner/` for the path-mapping match tier - deliberate reuse over reinvention. Signature
-drift (a rename, a moved file, a changed parameter) breaks this at typecheck; behaviour drift that
-keeps the signature is caught by the upstream-contract tests in
-`audiobookshelf-upstream-contract.test.ts`, which pin the no-match passthrough, longest-source-prefix
-ordering, the skipping of a prefix that normalizes to empty, and `pathMatchesPrefix`'s trailing-slash
-handling. Re-point or inline the two functions if they move. Audio-format predicates in ABS,
-`reading-alignment` and `edition-link` come from `@bookorbit/types` (`AUDIO_FORMAT_LIST` /
-`isAudioFormat`), not from `scanner/lib/classify.ts`.
+**Watched cross-module import:** two fork files import the pure helpers `applyPathMappings`/
+`pathMatchesPrefix` (and the `PathMapping` type) from upstream's `migration/planner/` for the
+path-mapping match tier, rather than reimplementing it: `audiobookshelf-match.utils.ts` (ABS) and
+`storyteller-path.utils.ts` (Storyteller) - deliberate reuse over reinvention in both. Signature drift
+(a rename, a moved file, a changed parameter) breaks both at typecheck; behaviour drift that keeps the
+signature is caught by the upstream-contract tests in `audiobookshelf-upstream-contract.test.ts`, which
+pin the no-match passthrough, longest-source-prefix ordering, the skipping of a prefix that normalizes
+to empty, and `pathMatchesPrefix`'s trailing-slash handling. `storyteller-path.utils.test.ts` adds a
+module-boundary test pinning the exact import list; it has no test of the upstream helpers' contract
+in isolation, but its own `toRemotePath`/`toLocalPath` tests drive them through `translate` and would
+catch the same behaviour drift. Re-point or inline the two functions in both files if they move.
+Audio-format predicates in ABS, `reading-alignment`, `edition-link` and `storyteller` come from
+`@bookorbit/types` (`AUDIO_FORMAT_LIST` / `isAudioFormat`), not from `scanner/lib/classify.ts`.
 
 **Audio play order must match upstream's manifest.** `reading-alignment.repository.ts`
 `compareAudioPlayOrder` replicates `AudiobookService.loadManifestContext` (sortOrder with null last,
@@ -544,6 +559,86 @@ as expected UI-registration coupling.
 - `leaseReleaseEvent` in `monitored-store.service.ts` is not transactional with `notify()`; a crash
   between lease and dispatch leaves `notifiedAt` set and the notification is never retried.
   A stale-lease reaper would close it.
+
+## Storyteller read-along overlay (fourth permanent feature)
+
+The fork carries a **fourth** overlay: an instance-level connection to a
+[Storyteller](https://storyteller-platform.gitlab.io/storyteller/) server that generates read-along
+EPUB3s (word-level narrated ebooks) from an ebook <-> audiobook pair already linked by the
+reading-alignment overlay's edition-link. One admin-configured server and service account serves every
+BookOrbit user; BookOrbit registers the pair with Storyteller (by shared path or by uploading it),
+starts alignment, waits for the result, and imports the finished EPUB as a new book that becomes the
+third member of the link. Upstream has no analogue, so this is maintained here indefinitely under the
+same rules as ABS. See [`docs/STORYTELLER_READ_ALONG.md`](docs/STORYTELLER_READ_ALONG.md) for the
+operator-facing setup guide (service account, transports, shared-storage mounts, env vars).
+
+**Owned (fork-only) code - never conflicts:** `server/src/modules/storyteller/` (controller, settings
+service, encryption, the typed Storyteller API client, path-mapping and existing-book matching utils,
+the build orchestrator and status service, schema), `client/src/features/storyteller/`
+(`useStorytellerSettings.ts` + `StorytellerSettings.vue`), and the read-along pieces of the
+reading-alignment overlay's own fork-owned files (`client/src/features/book/composables/useReadAlong.ts`,
+`client/src/features/book/components/detail/tabs/ReadAlongMemberRow.vue`, and the `readAlongBookId` /
+`role` / `members` additions in `edition-link/*` and `useEditionLink.ts`). Three common utils, each shared by this
+module without an inter-module import: one moved out of `reading-alignment`, one out of
+`audiobookshelf`, and one new:
+`server/src/common/utils/audio-play-order.utils.ts` (upstream's audio manifest ordering, needed by
+both integrations to derive absolute positions), `path-prefix-mapping.utils.ts` (prefix rewriting
+between two servers sharing storage, modelled on the ABS path-mapping matcher and deliberately a
+separate copy: ABS keeps its own in `audiobookshelf-match.utils.ts`, and importing it here would
+couple two integrations that must stay independently removable), and
+`self-hosted-service-url.utils.ts` (SSRF-safe parsing for a user-supplied self-hosted server URL,
+shared by every fork integration that polls one on a schedule).
+
+**Schema decoupling (same pattern as ABS):** `storyteller_settings` (single row: connection, path
+mappings, target library/folder, transport, encrypted password) and
+`storyteller_read_along_builds` (one row per build: source/output book ids, Storyteller book uuid,
+transport, phase, status, progress) are applied at runtime by `StorytellerSchemaBootstrapService` from
+SQL embedded in `modules/storyteller/schema/storyteller-schema.ts`, never reachable from
+`db/schema/index.ts`, read through `db.select()` on module-local `pgTable` declarations in
+`storyteller.schema.ts`. `book_edition_links.read_along_book_id` (nullable FK to `books`, `ON DELETE
+SET NULL`, partial unique index) is a column added to the reading-alignment overlay's own
+`edition-link-schema.ts` bootstrap, not a new table - it stays fork-owned because the table it extends
+already is.
+
+**Seams / hooks in shared files (keep minimal + generic):**
+
+| Shared file                                                  | Hook                                                                                                 | Conflict cost                                        |
+| ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `app.module.ts`                                              | register `StorytellerModule`                                                                         | 2 lines, trivial                                     |
+| `packages/types/src/index.ts`                                | `export * from "./storyteller"`                                                                      | 1 line, trivial                                      |
+| `integration-tabs.ts`                                        | `storyteller` tab entry, gated on `Permission.ManageAppSettings`                                     | additive                                             |
+| `router/index.ts`                                            | `settings-storyteller` route + `INTEGRATION_ROUTES` entry, same shape as every other integration tab | additive                                             |
+| `en.json`                                                    | `settings.integrations.storyteller.*` + `book.detail.editionLink.readAlong.*` keys                   | additive, en-only                                    |
+| client `LinkBookControl.vue` / `ReadingAlignmentControl.vue` | "Generate read-along" tick box / button and the read-along member row via `ReadAlongMemberRow.vue`   | additive, same slot pattern as the alignment overlay |
+| `settings-nav.ts`                                            | `storyteller` entry under ACCOUNTS, same shape as every other integration                            | additive                                             |
+
+**Access control is entirely BookOrbit's, not Storyteller's.** `GET/PUT settings` and `POST
+settings/test` require `Permission.ManageAppSettings`; `POST read-along/books/:bookId/build` and `GET
+.../existing` require `Permission.LibraryUpload` plus the requester's normal library access to every
+member book; replacing an existing read-along additionally requires `Permission.LibraryDeleteBooks`,
+since the build deletes the output it supersedes. Storyteller's own per-user accounts and reading state are never read; the service account
+configured in Settings is the only identity BookOrbit authenticates as.
+
+**Runtime deps (feature is inert until configured):** no new packages and no Dockerfile change - the
+client is native `fetch` and the server calls out over HTTP. `STORYTELLER_ENCRYPTION_KEY` /
+`STORYTELLER_REQUEST_TIMEOUT_MS` / `STORYTELLER_TRANSFER_TIMEOUT_MINUTES` /
+`STORYTELLER_WAIT_CEILING_MINUTES` are all optional with documented defaults (see
+`server/.env.example`); with no Storyteller server configured under Settings, the connection is simply
+unset and the read-along tick box stays disabled with the reason why.
+
+**Plugin removal:** unregister `StorytellerModule` in `app.module.ts`, then remove `storyteller` from
+`INTEGRATION_TABS` (and its `INTEGRATION_TAB_INFO` entry) in `integration-tabs.ts` together with the
+`storyteller` entry in `INTEGRATION_ROUTES` and the `settings-storyteller` route in `router/index.ts`.
+`INTEGRATION_ROUTES` is typed `Record<IntegrationTab, string>`, so the two sides must move together:
+drop `storyteller` from `INTEGRATION_TABS` while its `INTEGRATION_ROUTES` entry survives and the client
+fails to typecheck on an excess property; drop the `INTEGRATION_ROUTES` entry first and it fails on a
+missing property instead. Also drop the `storyteller` item from the `accounts` group in
+`settings-nav.ts`, or it is left pointing at a route that no longer exists. The app still builds and
+runs otherwise: the settings panel and the read-along tick box/row disappear from the UI,
+`book_edition_links.read_along_book_id` and the two storyteller tables are left in place unused, and
+any book Storyteller had already produced stays exactly where it landed as an ordinary book. The fork
+Vue component files must remain for the client to compile (expected UI-registration coupling, same as
+the other three overlays).
 
 ## Investigated and rejected - do not re-chase
 

@@ -85,3 +85,4 @@ export * from "./watch-download";
 export * from "./podcast";
 export * from "./monitored";
 export * from "./monitored-settings";
+export * from "./storyteller";

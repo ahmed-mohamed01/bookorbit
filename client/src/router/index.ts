@@ -107,6 +107,7 @@ const INTEGRATION_ROUTES: Record<IntegrationTab, string> = {
   readwise: 'settings-readwise',
   storygraph: 'settings-storygraph',
   audiobookshelf: 'settings-audiobookshelf',
+  storyteller: 'settings-storyteller',
 }
 
 /** Settings pages are their own routes now, so the legacy `?tab=` value is consumed by the redirect. */
@@ -461,6 +462,13 @@ export const routes: RouteRecordRaw[] = [
             component: () => import('@/features/audiobookshelf/components/AudiobookshelfSettings.vue'),
             props: { embedded: true },
             meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.audiobookshelf') },
+          },
+          {
+            path: 'storyteller',
+            name: 'settings-storyteller',
+            component: () => import('@/features/storyteller/components/StorytellerSettings.vue'),
+            props: { embedded: true },
+            meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.storyteller') },
           },
           {
             path: 'tts',

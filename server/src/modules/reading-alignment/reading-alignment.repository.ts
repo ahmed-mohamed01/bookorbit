@@ -1,5 +1,3 @@
-import { basename } from 'node:path';
-
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, lt, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -7,7 +5,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { isAudioFormat } from '@bookorbit/types';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
-import { naturalCompare } from '../../common/utils/natural-sort.utils';
+import { compareAudioPlayOrder } from '../../common/utils/audio-play-order.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import type { AudioTimelineFile } from './reading-alignment-audio-timeline.util';
 import { audiobookAlignment, audiobookAlignmentAnchor } from './schema/reading-alignment.schema';
@@ -40,19 +38,6 @@ type AudioFileWithPath = { fileId: number; absolutePath: string; durationSeconds
 type EbookFileRef = { id: number; absolutePath: string; sizeBytes: number | null };
 
 type AlignmentProgress = { samplesDone: number; anchorCount: number };
-
-type AudioPlayOrderRow = { sortOrder: number | null; absolutePath: string };
-
-// Mirrors upstream's audiobook manifest ordering (audiobook.service.ts loadManifestContext). Absolute
-// audio positions are derived from the file order on both sides, so a divergence here would silently
-// map every alignment anchor onto the wrong point of the player's timeline.
-export function compareAudioPlayOrder(left: AudioPlayOrderRow, right: AudioPlayOrderRow): number {
-  if (left.sortOrder !== null || right.sortOrder !== null) {
-    const byOrder = (left.sortOrder ?? Number.MAX_SAFE_INTEGER) - (right.sortOrder ?? Number.MAX_SAFE_INTEGER);
-    if (byOrder !== 0) return byOrder;
-  }
-  return naturalCompare(basename(left.absolutePath), basename(right.absolutePath));
-}
 
 @Injectable()
 export class ReadingAlignmentRepository {

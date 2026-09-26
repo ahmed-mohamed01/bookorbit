@@ -7,7 +7,7 @@ import { AUDIO_FORMAT_LIST, isAudioFormat } from '@bookorbit/types';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
-import { authors, bookAuthors, bookFiles, bookMetadata, books } from '../../db/schema';
+import { audiobookProgress, authors, bookAuthors, bookFiles, bookMetadata, books, readingProgress } from '../../db/schema';
 import { normalizeName, scoreAuthors, scoreTitle } from '../../common/utils/fuzzy-match.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { bookEditionLinks, type BookEditionLink } from './schema/edition-link.schema';
@@ -26,6 +26,24 @@ export interface FindCounterpartCandidatesOptions {
   accessibleLibraryIds: number[];
   contentFilters?: ContentFilterRules;
   query?: string;
+}
+
+export interface EditionLinkMemberIds {
+  textBookId: number;
+  audioBookId: number;
+  readAlongBookId: number | null;
+}
+
+export interface EditionLinkMemberProgressRow {
+  percentage: number;
+  updatedAt: Date;
+}
+
+export interface EditionLinkMemberProgressRows {
+  text: EditionLinkMemberProgressRow | null;
+  audio: EditionLinkMemberProgressRow | null;
+  readAlong: EditionLinkMemberProgressRow | null;
+  readAlongNarrationPercentage: number | null;
 }
 
 @Injectable()
@@ -60,11 +78,13 @@ export class EditionLinkRepository {
     return 'none';
   }
 
-  // Single joined query for the display-only counterpart summary (title + first author), so the client
-  // never has to fetch the counterpart's full book detail just to render this. Returns null when the
-  // book has no metadata row (should not happen for a present book, but keeps this defensive).
-  async findBookSummary(bookId: number): Promise<EditionLinkCounterpartSummary | null> {
-    const [row] = await this.db
+  // Single joined query for the display-only member summaries (title + first author), so the client
+  // never has to fetch each member's full book detail just to render them. A book with no metadata row
+  // is simply absent from the map (should not happen for a present book, but keeps this defensive).
+  async findBookSummaries(bookIds: number[]): Promise<Map<number, EditionLinkCounterpartSummary>> {
+    if (bookIds.length === 0) return new Map();
+
+    const rows = await this.db
       .select({
         id: books.id,
         title: bookMetadata.title,
@@ -78,20 +98,60 @@ export class EditionLinkRepository {
       .leftJoin(bookMetadata, eq(bookMetadata.bookId, books.id))
       .leftJoin(bookAuthors, eq(bookAuthors.bookId, books.id))
       .leftJoin(authors, eq(authors.id, bookAuthors.authorId))
-      .where(eq(books.id, bookId))
-      .groupBy(books.id, bookMetadata.title)
-      .limit(1);
-    if (!row) return null;
-    return { id: row.id, title: row.title, authorName: row.authorNames[0] ?? null };
+      .where(inArray(books.id, bookIds))
+      .groupBy(books.id, bookMetadata.title);
+
+    return new Map(rows.map((row) => [row.id, { id: row.id, title: row.title, authorName: row.authorNames[0] ?? null }]));
+  }
+
+  async findBookSummary(bookId: number): Promise<EditionLinkCounterpartSummary | null> {
+    const summaries = await this.findBookSummaries([bookId]);
+    return summaries.get(bookId) ?? null;
   }
 
   async findLinkForBook(bookId: number): Promise<BookEditionLink | undefined> {
     const [row] = await this.db
       .select()
       .from(bookEditionLinks)
-      .where(or(eq(bookEditionLinks.textBookId, bookId), eq(bookEditionLinks.audioBookId, bookId)))
+      .where(or(eq(bookEditionLinks.textBookId, bookId), eq(bookEditionLinks.audioBookId, bookId), eq(bookEditionLinks.readAlongBookId, bookId)))
       .limit(1);
     return row;
+  }
+
+  // Per-member reading progress for the link popover. Text and read-along read the book's primary
+  // file row in `reading_progress`; the audiobook keeps its own book-level `audiobook_progress` row.
+  async findMemberProgress(userId: number, ids: EditionLinkMemberIds): Promise<EditionLinkMemberProgressRows> {
+    const fileBookIds = ids.readAlongBookId === null ? [ids.textBookId] : [ids.textBookId, ids.readAlongBookId];
+
+    const [fileRows, audioRows] = await Promise.all([
+      this.db
+        .select({
+          bookId: books.id,
+          percentage: readingProgress.percentage,
+          lastReadAt: readingProgress.lastReadAt,
+          narrationPercentage: readingProgress.narrationPercentage,
+        })
+        .from(books)
+        .innerJoin(readingProgress, and(eq(readingProgress.bookFileId, books.primaryFileId), eq(readingProgress.userId, userId)))
+        .where(inArray(books.id, fileBookIds)),
+      this.db
+        .select({ percentage: audiobookProgress.percentage, updatedAt: audiobookProgress.updatedAt })
+        .from(audiobookProgress)
+        .where(and(eq(audiobookProgress.bookId, ids.audioBookId), eq(audiobookProgress.userId, userId)))
+        .limit(1),
+    ]);
+
+    const byBookId = new Map(fileRows.map((row) => [row.bookId, row]));
+    const textRow = byBookId.get(ids.textBookId);
+    const readAlongRow = ids.readAlongBookId === null ? undefined : byBookId.get(ids.readAlongBookId);
+    const audioRow = audioRows[0];
+
+    return {
+      text: textRow ? { percentage: textRow.percentage, updatedAt: textRow.lastReadAt } : null,
+      audio: audioRow ? { percentage: audioRow.percentage, updatedAt: audioRow.updatedAt } : null,
+      readAlong: readAlongRow ? { percentage: readAlongRow.percentage, updatedAt: readAlongRow.lastReadAt } : null,
+      readAlongNarrationPercentage: readAlongRow?.narrationPercentage ?? null,
+    };
   }
 
   async insertLink(textBookId: number, audioBookId: number, createdBy: number): Promise<BookEditionLink | undefined> {
@@ -99,11 +159,32 @@ export class EditionLinkRepository {
     return row;
   }
 
-  async deleteLinkForBook(bookId: number): Promise<BookEditionLink | undefined> {
+  // Returns undefined when nothing was updated: either the link is gone, or the book is already the
+  // text or audio member of SOME link - this one or another. A row-scoped predicate would only catch
+  // the first case, so the exclusion is a subquery over the whole table. A book that is already
+  // another link's read-along member is rejected by the partial unique index as a 23505 instead,
+  // which the caller maps to its own error.
+  async setReadAlongBook(linkId: number, bookId: number | null): Promise<BookEditionLink | undefined> {
+    const notAlreadyAPairMember =
+      bookId === null
+        ? undefined
+        : sql`NOT EXISTS (
+            SELECT 1 FROM book_edition_links member_link
+            WHERE member_link.text_book_id = ${bookId}
+               OR member_link.audio_book_id = ${bookId}
+          )`;
     const [row] = await this.db
-      .delete(bookEditionLinks)
-      .where(or(eq(bookEditionLinks.textBookId, bookId), eq(bookEditionLinks.audioBookId, bookId)))
+      .update(bookEditionLinks)
+      .set({ readAlongBookId: bookId })
+      .where(and(eq(bookEditionLinks.id, linkId), notAlreadyAPairMember))
       .returning();
+    return row;
+  }
+
+  // Keyed by the resolved link id, never by a member book: an OR across the three member columns
+  // would delete every link a book belongs to while reporting only the first row back.
+  async deleteLink(linkId: number): Promise<BookEditionLink | undefined> {
+    const [row] = await this.db.delete(bookEditionLinks).where(eq(bookEditionLinks.id, linkId)).returning();
     return row;
   }
 
@@ -156,6 +237,7 @@ export class EditionLinkRepository {
       SELECT 1 FROM book_edition_links existing_link
       WHERE existing_link.text_book_id = ${books.id}
          OR existing_link.audio_book_id = ${books.id}
+         OR existing_link.read_along_book_id = ${books.id}
     )`;
     const matchFilter = query
       ? or(

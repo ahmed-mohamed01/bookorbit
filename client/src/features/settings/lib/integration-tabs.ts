@@ -1,6 +1,6 @@
 import { Permission } from '@bookorbit/types'
 
-export const INTEGRATION_TABS = ['hardcover', 'readwise', 'storygraph', 'audiobookshelf'] as const
+export const INTEGRATION_TABS = ['hardcover', 'readwise', 'storygraph', 'audiobookshelf', 'storyteller'] as const
 
 export type IntegrationTab = (typeof INTEGRATION_TABS)[number]
 
@@ -30,6 +30,11 @@ export const INTEGRATION_TAB_INFO: Record<IntegrationTab, IntegrationTabInfo> = 
     labelKey: 'settings.integrations.tabs.audiobookshelf',
     titleKey: 'settings.integrations.tabs.audiobookshelf',
     permission: Permission.AudiobookshelfSync,
+  },
+  storyteller: {
+    labelKey: 'settings.integrations.tabs.storyteller',
+    titleKey: 'settings.integrations.tabs.storyteller',
+    permission: Permission.ManageAppSettings,
   },
 }
 

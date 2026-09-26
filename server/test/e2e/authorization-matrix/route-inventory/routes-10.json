@@ -766,5 +766,77 @@
     "isPublic": false,
     "allowDefault": false,
     "useGuards": []
+  },
+  {
+    "file": "server/src/modules/storyteller/storyteller.controller.ts",
+    "className": "StorytellerController",
+    "methodName": "getSettings",
+    "httpMethod": "GET",
+    "path": "/storyteller/settings",
+    "permissions": ["Permission.ManageAppSettings"],
+    "libraryAccess": [],
+    "isPublic": false,
+    "allowDefault": false,
+    "useGuards": []
+  },
+  {
+    "file": "server/src/modules/storyteller/storyteller.controller.ts",
+    "className": "StorytellerController",
+    "methodName": "updateSettings",
+    "httpMethod": "PUT",
+    "path": "/storyteller/settings",
+    "permissions": ["Permission.ManageAppSettings"],
+    "libraryAccess": [],
+    "isPublic": false,
+    "allowDefault": false,
+    "useGuards": []
+  },
+  {
+    "file": "server/src/modules/storyteller/storyteller.controller.ts",
+    "className": "StorytellerController",
+    "methodName": "testConnection",
+    "httpMethod": "POST",
+    "path": "/storyteller/settings/test",
+    "permissions": ["Permission.ManageAppSettings"],
+    "libraryAccess": [],
+    "isPublic": false,
+    "allowDefault": false,
+    "useGuards": []
+  },
+  {
+    "file": "server/src/modules/storyteller/storyteller.controller.ts",
+    "className": "StorytellerController",
+    "methodName": "requestBuild",
+    "httpMethod": "POST",
+    "path": "/storyteller/read-along/books/:bookId/build",
+    "permissions": ["Permission.LibraryUpload"],
+    "libraryAccess": [],
+    "isPublic": false,
+    "allowDefault": false,
+    "useGuards": []
+  },
+  {
+    "file": "server/src/modules/storyteller/storyteller.controller.ts",
+    "className": "StorytellerController",
+    "methodName": "getStatus",
+    "httpMethod": "GET",
+    "path": "/storyteller/read-along/books/:bookId/status",
+    "permissions": [],
+    "libraryAccess": [],
+    "isPublic": false,
+    "allowDefault": false,
+    "useGuards": []
+  },
+  {
+    "file": "server/src/modules/storyteller/storyteller.controller.ts",
+    "className": "StorytellerController",
+    "methodName": "findExisting",
+    "httpMethod": "GET",
+    "path": "/storyteller/read-along/books/:bookId/existing",
+    "permissions": ["Permission.LibraryUpload"],
+    "libraryAccess": [],
+    "isPublic": false,
+    "allowDefault": false,
+    "useGuards": []
   }
 ]

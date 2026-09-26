@@ -3,12 +3,14 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, AudioLines, Ban, CheckCircle2, Loader2, RefreshCw } from '@lucide/vue'
 import { toast } from 'vue-sonner'
-import { Permission, type BookDetail } from '@bookorbit/types'
+import { Permission, type BookDetail, type EditionLinkMember } from '@bookorbit/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { formatDate } from '@/i18n/formatters'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { getBookLinkModality, useEditionLink } from '@/features/book/composables/useEditionLink'
 import { useReadingAlignment } from '@/features/book/composables/useReadingAlignment'
+import { useReadAlongRow } from '@/features/book/composables/useReadAlongRow'
+import ReadAlongMemberRow from './ReadAlongMemberRow.vue'
 
 const props = defineProps<{ book: BookDetail }>()
 
@@ -19,9 +21,24 @@ const needsLink = computed(() => modality.value === 'text' || modality.value ===
 
 const editionLink = useEditionLink(props.book.id)
 const alignment = useReadingAlignment()
+const { readAlong, canGenerate, canRebuild, rowState, existingMatch, handleGenerate, handleRetry, handleRebuild, handleImportExisting } =
+  useReadAlongRow(() => props.book.id)
 
 const { hasPermission } = usePermissions()
 const canEditMetadata = computed(() => hasPermission(Permission.LibraryEditMetadata))
+
+// One record holding both formats is its own pair, so it never reaches the Link popover and the
+// read-along row lives here instead. Visible to anyone who can open the book: the row gates its own
+// actions on `canGenerate`, so hiding it outright would mean a reader on a dual-format book never
+// learns a read-along exists or gets a link to it.
+const showReadAlongRow = computed(() => modality.value === 'both' && editionLink.link.value === null)
+
+// A self-pair has no edition-link members to read a title from, so the build's own output book
+// stands in for the row's ready state.
+const readAlongMember = computed<EditionLinkMember | null>(() => {
+  const output = readAlong.outputBook.value
+  return output ? { id: output.id, title: output.title, authorName: null, progress: null, narrationPercentage: null } : null
+})
 
 const checked = ref(false)
 const open = ref(false)
@@ -127,6 +144,7 @@ async function loadInitialState() {
   const loads: Promise<unknown>[] = [alignment.fetchStatus(props.book.id)]
   if (needsLink.value) loads.push(editionLink.loadForBook())
   await Promise.all(loads)
+  if (showReadAlongRow.value) void readAlong.fetchStatus(props.book.id)
   checked.value = true
 }
 
@@ -139,6 +157,9 @@ async function handleBuildClick() {
 
 function handleOpenChange(next: boolean) {
   open.value = next
+  if (!next || !showReadAlongRow.value) return
+  void readAlong.fetchStatus(props.book.id)
+  if (!readAlong.outputBook.value) void readAlong.fetchExisting(props.book.id)
 }
 </script>
 
@@ -154,7 +175,7 @@ function handleOpenChange(next: boolean) {
         {{ statusLabel }}
       </button>
     </PopoverTrigger>
-    <PopoverContent align="end" class="w-72 p-3">
+    <PopoverContent align="end" class="w-72 max-w-[calc(100vw-2rem)] p-3">
       <p class="text-sm font-semibold text-foreground">{{ t('book.detail.readingAlignment.title') }}</p>
 
       <div class="mt-3 rounded-lg border border-border bg-background p-2.5">
@@ -201,6 +222,22 @@ function handleOpenChange(next: boolean) {
           {{ isRebuild ? t('book.detail.readingAlignment.rebuildButton') : t('book.detail.readingAlignment.buildButton') }}
         </button>
       </div>
+
+      <ReadAlongMemberRow
+        v-if="showReadAlongRow"
+        class="mt-2"
+        :state="rowState"
+        :member="readAlongMember"
+        :can-generate="canGenerate"
+        :can-rebuild="canRebuild"
+        :existing-match="existingMatch"
+        :is-current-book="false"
+        @update:keep-remote-copy="readAlong.setKeepRemoteCopy"
+        @generate="handleGenerate"
+        @import-existing="handleImportExisting"
+        @retry="handleRetry"
+        @rebuild="handleRebuild"
+      />
     </PopoverContent>
   </Popover>
 </template>

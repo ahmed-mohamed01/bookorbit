@@ -1494,12 +1494,134 @@
         "hardcover": "Hardcover",
         "readwise": "Readwise",
         "storygraph": "StoryGraph",
-        "audiobookshelf": "Audiobookshelf"
+        "audiobookshelf": "Audiobookshelf",
+        "storyteller": "Storyteller"
       },
       "providerSubtitles": {
         "readwise": "Send your highlights to Readwise automatically.",
         "storygraph": "Sync your reading progress and status to The StoryGraph.",
-        "audiobookshelf": "Sync listening progress and sessions from Audiobookshelf."
+        "audiobookshelf": "Sync listening progress and sessions from Audiobookshelf.",
+        "storyteller": "Generate read-along EPUBs by pairing an ebook with an audiobook through Storyteller."
+      },
+      "storyteller": {
+        "title": "Storyteller",
+        "subtitle": "Connect an instance-level Storyteller server to generate read-along EPUBs for every user's library.",
+        "loading": "Loading Storyteller settings",
+        "connection": {
+          "title": "Connection",
+          "subtitle": "One Storyteller server drives read-along generation for every BookOrbit user.",
+          "serverUrl": {
+            "label": "Server URL",
+            "placeholder": "https://storyteller.example.com"
+          },
+          "username": {
+            "label": "Username",
+            "placeholder": "Service account username"
+          },
+          "password": {
+            "label": "Password",
+            "placeholderConfigured": "Leave blank to keep the saved password",
+            "placeholderUnset": "Enter the service account password",
+            "placeholderNewServer": "Enter the password for this Storyteller server",
+            "configured": "Password configured",
+            "clearedOnServerChange": "The saved password belongs to the server URL that is stored, not to the one above. Enter the password for this server, or restore the saved URL, to keep a working connection.",
+            "show": "Show password",
+            "hide": "Hide password"
+          }
+        },
+        "status": {
+          "connected": "Connected",
+          "failed": "Connection failed",
+          "unchecked": "Not checked yet",
+          "unconfigured": "Not configured",
+          "checkedAt": "Checked {date}"
+        },
+        "testConnection": {
+          "button": "Test connection",
+          "testing": "Testing",
+          "disabledHint": "Enter the server URL, username and password before testing",
+          "transportUnavailable": "None: shared paths are not ready",
+          "error": "Failed to test the Storyteller connection",
+          "ok": "Connected",
+          "failed": "Connection failed",
+          "serverVersion": "Server version",
+          "readaloudLocationType": "Read-aloud location type",
+          "readaloudLocation": "Read-aloud location",
+          "effectiveTransport": "Effective transport",
+          "sharedPathsReady": "Shared paths",
+          "sharedPathsReadyYes": "Ready",
+          "sharedPathsReadyNo": "Not ready",
+          "unknown": "Unknown"
+        },
+        "readaloudLocationTypes": {
+          "SUFFIX": "Suffixed next to the ebook",
+          "SIBLING_FOLDER": "Sibling folder next to the ebook",
+          "INTERNAL": "Internal to Storyteller",
+          "CUSTOM_FOLDER": "Custom folder"
+        },
+        "problems": {
+          "serverUnreachable": "Check that the Storyteller server URL is correct and reachable from BookOrbit",
+          "authFailed": "Check the Storyteller username and password",
+          "noPathMappings": "Add a path mapping so Storyteller can read BookOrbit's library folders",
+          "readaloudLocationNotCustomFolder": "Set Storyteller's read-aloud location to a custom folder pointing at the read-along library",
+          "readaloudFolderNotMapped": "Add a path mapping that covers Storyteller's read-aloud folder",
+          "targetLibraryMissing": "Choose a read-along library below",
+          "targetLibraryNotBookPerFile": "Storyteller writes read-alongs into a subfolder of the read-along library, where a one-book-per-folder scan would fold them into a single book. Point the read-along location at the library folder itself, or set the library to one book per file",
+          "targetLibraryDisallowsEpub": "Allow the EPUB format in the read-along library's settings"
+        },
+        "pathMappings": {
+          "title": "Path mappings",
+          "subtitle": "When BookOrbit and Storyteller see the same storage under different paths, map the BookOrbit prefix to the Storyteller prefix so read-alongs can be generated without uploading files.",
+          "empty": "No path mappings. Files are transferred through the Storyteller API instead.",
+          "localPrefixLabel": "BookOrbit path prefix",
+          "localPrefixPlaceholder": "/books",
+          "remotePrefixLabel": "Storyteller path prefix",
+          "remotePrefixPlaceholder": "/data/books",
+          "addRow": "Add mapping",
+          "removeRow": "Remove path mapping"
+        },
+        "transport": {
+          "label": "Transport",
+          "options": {
+            "auto": {
+              "label": "Automatic",
+              "description": "Use shared paths when they are ready, otherwise transfer files through the Storyteller API."
+            },
+            "sharedPaths": {
+              "label": "Shared paths",
+              "description": "Storyteller reads and writes directly through shared storage. Fastest, and avoids duplicate uploads."
+            },
+            "apiTransfer": {
+              "label": "API transfer",
+              "description": "Upload the source files and download the result through the Storyteller API. Works without shared storage."
+            }
+          }
+        },
+        "targetLibrary": {
+          "label": "Read-along library",
+          "placeholder": "Choose a library",
+          "hint": "The library new read-along books are added to."
+        },
+        "targetFolder": {
+          "label": "Folder",
+          "placeholder": "Library root",
+          "hint": "Optional. Leave unset to use the library's default folder."
+        },
+        "deleteRemoteAfterImport": {
+          "label": "Delete the Storyteller copy after import",
+          "description": "Remove the read-along from Storyteller once BookOrbit has imported it."
+        },
+        "collectionName": {
+          "label": "Collection name",
+          "placeholder": "BookOrbit",
+          "hint": "Optional. Groups the read-alongs BookOrbit creates into a Storyteller collection."
+        },
+        "save": {
+          "button": "Save settings",
+          "success": "Storyteller settings saved",
+          "failure": "Failed to save Storyteller settings",
+          "blockedByPassword": "Enter the password for this Storyteller server, or restore the saved URL, before saving."
+        }
       }
     },
     "metadata": {
@@ -6186,7 +6308,79 @@
         "searchFailed": "Couldn't search for a match. Try again.",
         "tooltipAligning": "Linked - aligning positions...",
         "tooltipAligned": "Linked - positions aligned.",
-        "tooltipAlignFailed": "Linked - alignment failed. Retry from the Reading Log tab."
+        "tooltipAlignFailed": "Linked - alignment failed. Retry from the Reading Log tab.",
+        "tooltipReadAlongBuilding": "Linked - building the read-along...",
+        "tooltipReadAlongFailed": "Linked - read-along build failed.",
+        "readAlong": {
+          "label": "Read-along",
+          "membersTitle": "Linked editions",
+          "readOnlyTitle": "Generated read-along of",
+          "thisBook": "This book",
+          "noneTitle": "No read-along yet",
+          "readyPending": "Read-along ready",
+          "outOfReachTitle": "Read-along already generated",
+          "outOfReachHint": "It was added to a library you don't have access to. Ask an administrator to share it with you.",
+          "generate": "Generate read-along",
+          "generateOnLinkHint": "Storyteller aligns the pair into a read-along EPUB and adds it to the library below.",
+          "targetLibrary": "Read-along library",
+          "targetLibraryPlaceholder": "Use the configured library",
+          "rebuild": "Rebuild read-along",
+          "retry": "Retry read-along",
+          "importExisting": "Import existing read-along from Storyteller: {title}",
+          "building": "Building the read-along...",
+          "transport": {
+            "sharedPaths": "Storyteller is reading the files where they are, so nothing is copied.",
+            "apiTransfer": "The files are being uploaded to Storyteller."
+          },
+          "remoteTasks": {
+            "splitTracks": "Pre-processing audio",
+            "transcribeChapters": "Transcribing tracks",
+            "syncChapters": "Synchronizing chapters",
+            "step": "Step {step} of {total}: {label}"
+          },
+          "needsCounterpart": "To create a read-along, link this book to a matching {counterpart} first. Search for one below.",
+          "keepCopy": {
+            "label": "Keep Storyteller copy",
+            "hintBeforeBuild": "Storyteller keeps its copies of the EPUB ({epub}) and audiobook ({audio}), plus the read-along. Your library files are never deleted.",
+            "hintUnknownSize": "Storyteller keeps the read-along, plus copies of your files if it cannot read them in place. Your library files are never deleted.",
+            "hintBeforeTransport": "Storyteller keeps the read-along, plus copies of the EPUB ({epub}) and audiobook ({audio}) if it cannot read them in place. Your library files are never deleted.",
+            "notApplicable": "Storyteller reads your files where they are, so it keeps no copy to remove."
+          },
+          "destinationHint": "The finished read-along will appear in {library}.",
+          "destinationHintUnknown": "The finished read-along will appear in the read-along library.",
+          "failedTitle": "Read-along build failed",
+          "failedFallback": "Storyteller couldn't finish this read-along.",
+          "buildFailed": "Failed to start the read-along build.",
+          "buildAlreadyReady": "This pair already has a read-along, so nothing was rebuilt.",
+          "unlinkNote": "Unlinking keeps the read-along book in its library.",
+          "progressRead": "{percentage}% read",
+          "progressListened": "{percentage}% listened",
+          "phase": {
+            "prepare": "Preparing the pair...",
+            "register": "Sending the pair to Storyteller...",
+            "process": "Starting the alignment...",
+            "wait": "Storyteller is aligning...",
+            "collect": "Collecting the read-along..."
+          },
+          "blocked": {
+            "notConfigured": "Storyteller isn't configured on this server yet.",
+            "unreachable": "The Storyteller server can't be reached.",
+            "busy": "Storyteller is busy with another read-along. Try again shortly.",
+            "noPair": "Link an ebook and an audiobook first.",
+            "noEpub": "This pair has no EPUB to align.",
+            "noAudio": "This pair has no audio to align.",
+            "noTargetLibrary": "Pick a read-along library in the Storyteller settings.",
+            "targetNotAllowed": "You don't have access to the read-along library.",
+            "formatNotAllowed": "The read-along library doesn't allow EPUB files.",
+            "previousOutputNotDeletable": "A read-along already exists for this pair. Replacing it needs permission to delete books.",
+            "sourceEpubUnreadable": "This book’s EPUB file cannot be read, so Storyteller cannot align it. Replacing the file with a valid EPUB will fix it."
+          },
+          "rebuildDialog": {
+            "title": "Replace this read-along?",
+            "description": "Rebuilding aligns the pair again and replaces \"{title}\". The existing read-along book and its file are deleted from your library once the new one has been imported and linked. Your ebook and audiobook are not touched.",
+            "confirm": "Rebuild and replace"
+          }
+        }
       },
       "readingAlignment": {
         "title": "Position alignment",

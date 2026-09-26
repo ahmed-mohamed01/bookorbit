@@ -93,6 +93,7 @@ import { BookMoveModule } from './modules/book-move/book-move.module';
 import { MonitoredModule } from './modules/monitored/monitored.module';
 import { EditionLinkModule } from './modules/edition-link/edition-link.module';
 import { ReadingAlignmentModule } from './modules/reading-alignment/reading-alignment.module';
+import { StorytellerModule } from './modules/storyteller/storyteller.module';
 import { AudiobookModule } from './modules/audiobook/audiobook.module';
 import { TtsModule } from './modules/tts/tts.module';
 import { SearchModule } from './modules/search/search.module';
@@ -203,6 +204,7 @@ import { PodcastModule } from './modules/podcast/podcast.module';
     MonitoredModule,
     EditionLinkModule,
     ReadingAlignmentModule,
+    StorytellerModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },

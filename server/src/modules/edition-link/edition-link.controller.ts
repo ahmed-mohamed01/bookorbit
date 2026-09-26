@@ -16,6 +16,7 @@ function toEditionLinkDto(row: BookEditionLink): EditionLink {
     id: row.id,
     textBookId: row.textBookId,
     audioBookId: row.audioBookId,
+    readAlongBookId: row.readAlongBookId,
     createdBy: row.createdBy,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   };
@@ -27,8 +28,8 @@ export class EditionLinkController {
 
   @Get('for-book/:bookId')
   async getForBook(@CurrentUser() user: RequestUser, @Param('bookId', ParseIntPipe) bookId: number): Promise<EditionLinkForBook> {
-    const { link, proposed, counterpart } = await this.service.getForBook(user, bookId);
-    return { link: link ? toEditionLinkDto(link) : null, proposed, counterpart };
+    const { link, proposed, counterpart, role, members } = await this.service.getForBook(user, bookId);
+    return { link: link ? toEditionLinkDto(link) : null, proposed, counterpart, role, members };
   }
 
   @Get('candidates/:bookId')

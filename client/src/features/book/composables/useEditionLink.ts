@@ -5,6 +5,8 @@ import {
   type EditionLinkCandidate,
   type EditionLinkCounterpartSummary,
   type EditionLinkForBook,
+  type EditionLinkMembers,
+  type EditionLinkRole,
 } from '@bookorbit/types'
 import { api } from '@/lib/api'
 
@@ -46,6 +48,10 @@ interface EditionLinkEntry {
   link: Ref<EditionLink | null>
   proposed: Ref<EditionLinkCandidate | null>
   linkedCounterpart: Ref<EditionLinkCounterpartSummary | null>
+  // Which member of the link this book is, and every member with its reading progress. Both come
+  // from the same `for-book` response, so the popover can render all three rows without extra fetches.
+  role: Ref<EditionLinkRole | null>
+  members: Ref<EditionLinkMembers | null>
   candidates: Ref<EditionLinkCandidate[]>
   loading: Ref<boolean>
   searching: Ref<boolean>
@@ -75,6 +81,8 @@ function createEntry(): EditionLinkEntry {
     link: ref(null),
     proposed: ref(null),
     linkedCounterpart: ref(null),
+    role: ref(null),
+    members: ref(null),
     candidates: ref([]),
     loading: ref(false),
     searching: ref(false),
@@ -130,14 +138,20 @@ export function useEditionLink(bookId: number) {
     entry.loadPromise = null
   }
 
+  function clearLinkState(): void {
+    entry.link.value = null
+    entry.proposed.value = null
+    entry.linkedCounterpart.value = null
+    entry.role.value = null
+    entry.members.value = null
+  }
+
   async function performLoad(requestId: number): Promise<void> {
     try {
       const res = await api(`/api/v1/edition-links/for-book/${bookId}`)
       if (requestId !== entry.loadRequestId) return
       if (!res.ok) {
-        entry.link.value = null
-        entry.proposed.value = null
-        entry.linkedCounterpart.value = null
+        clearLinkState()
         entry.error.value = 'Failed to load edition link'
         return
       }
@@ -146,11 +160,11 @@ export function useEditionLink(bookId: number) {
       entry.link.value = data.link
       entry.proposed.value = data.proposed
       entry.linkedCounterpart.value = data.counterpart
+      entry.role.value = data.role ?? null
+      entry.members.value = data.members ?? null
     } catch {
       if (requestId !== entry.loadRequestId) return
-      entry.link.value = null
-      entry.proposed.value = null
-      entry.linkedCounterpart.value = null
+      clearLinkState()
       entry.error.value = 'Failed to load edition link'
     } finally {
       if (requestId === entry.loadRequestId) entry.loading.value = false
@@ -268,6 +282,8 @@ export function useEditionLink(bookId: number) {
     link: entry.link,
     proposed: entry.proposed,
     linkedCounterpart: entry.linkedCounterpart,
+    role: entry.role,
+    members: entry.members,
     candidates: entry.candidates,
     loading: entry.loading,
     searching: entry.searching,
