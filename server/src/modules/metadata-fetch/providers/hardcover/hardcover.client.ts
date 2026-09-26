@@ -38,13 +38,14 @@ const BOOK_FIELDS = `
   subtitle
   description
   cached_contributors
+  cached_tags
   featured_book_series { series { name books_count } position }
   rating
   ratings_count
   pages
   release_date
   release_year
-  image { url }
+  image { url width height }
 `;
 
 const EDITION_FIELDS = `
@@ -55,7 +56,7 @@ const EDITION_FIELDS = `
   pages
   release_date
   release_year
-  image { url }
+  image { url width height }
   publisher { name }
   isbn_10
   isbn_13

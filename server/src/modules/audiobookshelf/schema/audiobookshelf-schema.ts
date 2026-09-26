@@ -139,10 +139,10 @@ DO $$ BEGIN
 		SELECT 1 FROM pg_constraint
 		WHERE conname = 'reading_sessions_source_chk'
 			AND pg_get_constraintdef(oid) LIKE '%audiobookshelf%'
-			AND pg_get_constraintdef(oid) LIKE '%watchos%'
+			AND pg_get_constraintdef(oid) LIKE '%android%'
 	) THEN
 		ALTER TABLE "reading_sessions" DROP CONSTRAINT IF EXISTS "reading_sessions_source_chk";
-		ALTER TABLE "reading_sessions" ADD CONSTRAINT "reading_sessions_source_chk" CHECK ("reading_sessions"."source" in ('web', 'ios', 'watchos', 'koreader', 'manual', 'kobo', 'audiobookshelf'));
+		ALTER TABLE "reading_sessions" ADD CONSTRAINT "reading_sessions_source_chk" CHECK ("reading_sessions"."source" in ('web', 'ios', 'watchos', 'android', 'koreader', 'manual', 'kobo', 'audiobookshelf'));
 	END IF;
 END $$;
 --> statement-breakpoint

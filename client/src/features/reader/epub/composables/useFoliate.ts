@@ -3,6 +3,7 @@ import { api, getAccessToken } from '@/lib/api'
 import { useFoliateAnnotations } from './useFoliateAnnotations'
 import { useFoliateSelection } from './useFoliateSelection'
 import { useFoliateInput } from './useFoliateInput'
+import { ensureMediaOverlayActiveClass } from '../../media-overlay/lib/media-overlay-highlight'
 import type { EpubBookInfo, EpubReaderSettings } from '@bookorbit/types'
 import type { CrossFormatEbookResume } from '../../shared/composables/useCrossFormatResume'
 import { resumeCrossFormat } from './crossFormatResumeNav'
@@ -75,7 +76,7 @@ function makeFoliateFetchFile(): FoliateFetchFile {
 }
 
 export interface FoliateMediaOverlay extends EventTarget {
-  start: (index?: number, filter?: (item: { text: string }, i: number, items: { text: string }[]) => boolean) => unknown
+  start: (index?: number, filter?: (item: { text: string }, i: number, items: { text: string }[]) => boolean) => Promise<boolean>
   pause: () => void
   resume: () => void
   stop: () => void
@@ -118,7 +119,15 @@ export function useFoliate(
 
   const annotations = useFoliateAnnotations()
   const selection = useFoliateSelection(() => viewRef.value)
-  const input = useFoliateInput(() => viewRef.value, onMiddleTap, selection.handleSelectionEnd, selection.handleSelectionChange, canNavigate)
+  const input = useFoliateInput(
+    () => viewRef.value,
+    onMiddleTap,
+    selection.handleSelectionEnd,
+    selection.handleSelectionChange,
+    canNavigate,
+    selection.handleInteractionStart,
+    selection.handleInteractionEnd,
+  )
 
   async function loadScript() {
     if (customElements.get('foliate-view')) return
@@ -297,6 +306,7 @@ export function useFoliate(
           | undefined
         if (!makeStreamingBook) throw new Error('makeStreamingBook not available')
         const book = await makeStreamingBook(bookId, '/api/v1/epub', bookInfo, makeFoliateFetchFile(), null, fileId)
+        ensureMediaOverlayActiveClass(book)
         applyEpubOpenOptions(book, options)
         shouldRestoreByFraction = isFixedLayoutBook(book)
         isFixedLayout.value = shouldRestoreByFraction
@@ -447,6 +457,7 @@ export function useFoliate(
     deleteAnnotation: (cfi: string) => annotations.deleteAnnotation(viewRef.value, cfi),
     redrawAnnotation: (cfi: string, color: string, style: string) => annotations.redrawAnnotation(viewRef.value, cfi, color, style),
     setTextSelectedHandler: selection.setHandler,
+    setSelectionInteractionStartHandler: selection.setInteractionStartHandler,
     setAnnotationClickHandler,
   }
 }

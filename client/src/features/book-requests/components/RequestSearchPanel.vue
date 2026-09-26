@@ -64,8 +64,18 @@ import RequestCover from './RequestCover.vue'
 const emit = defineEmits<{ submitted: [] }>()
 
 const { t, locale } = useI18n()
-const { filteredResults, coverProviderOrder, resultProviderOrder, interruptedProviders, isStreaming, hasSearched, providers, loadProviders, search } =
-  useMetadataSearch()
+const {
+  filteredResults,
+  coverProviderOrder,
+  audioCoverProviderOrder,
+  resultProviderOrder,
+  interruptedProviders,
+  isStreaming,
+  hasSearched,
+  providers,
+  loadProviders,
+  search,
+} = useMetadataSearch()
 const { libraries, fetchLibraries } = useLibraries()
 const { hasPermission } = usePermissions()
 const { user } = useAuth()
@@ -110,7 +120,9 @@ const activeCoverUrls = ref<Record<string, string | null>>({})
 const failedProviderIcons = ref(new Set<MetadataProviderKey>())
 const expandedMetadataGroups = ref(new Set<string>())
 const { isGroupMonitored, isGroupMonitoring, monitorAuthorLabel, monitorGroupAuthor } = useMonitorGroupAction()
-const { groups } = useCandidateGroups(filteredResults, mediaKind, getAvailability, coverProviderOrder, language, resultProviderOrder)
+// An audiobook request shows audiobook art, so its covers follow the Audiobook cover rule.
+const requestCoverProviderOrder = computed(() => (mediaKind.value === 'audiobook' ? audioCoverProviderOrder.value : coverProviderOrder.value))
+const { groups } = useCandidateGroups(filteredResults, mediaKind, getAvailability, requestCoverProviderOrder, language, resultProviderOrder)
 
 // Nobody approves these requests afterwards, so this is the only chance to say where the book goes.
 const autoApproves = computed(() => hasPermission(Permission.BookRequestAutoApprove))

@@ -1,10 +1,15 @@
 import { computed, reactive, ref } from 'vue'
 import { api } from '@/lib/api'
-import { DEFAULT_FORMAT_PRIORITY, FORMAT_LABELS, isFiveFieldCronExpression } from '@bookorbit/types'
+import {
+  DEFAULT_FORMAT_PRIORITY,
+  isFiveFieldCronExpression,
+  withoutImplicitReadAlongFormatPriority,
+  withReadAlongFormatPriority,
+} from '@bookorbit/types'
 import type { AddedAtSource, CoverAspectRatio, Library, LibraryType, OrganizationMode, PrescanResult } from '@bookorbit/types'
 import { coveringFolderPath, normalizeFolderPath } from './folder-paths'
 
-export { DEFAULT_FORMAT_PRIORITY, FORMAT_LABELS }
+export { DEFAULT_FORMAT_PRIORITY }
 
 // Mirrors the server's precedence order (embedded < opfFile < sidecar). `sidecar` is the Audiobookshelf
 // metadata.json source; it is included so the option and its import stay available, at lowest precedence
@@ -35,7 +40,7 @@ function blankForm() {
     watchLocalFolders: true,
     autoScanCronExpression: null as string | null,
     metadataPrecedence: [...DEFAULT_METADATA_PRECEDENCE],
-    formatPriority: [...DEFAULT_FORMAT_PRIORITY] as string[],
+    formatPriority: withReadAlongFormatPriority(DEFAULT_FORMAT_PRIORITY),
     allowedFormats: [] as string[],
     organizationMode: 'book_per_folder' as OrganizationMode,
     addedAtSource: 'imported' as AddedAtSource,
@@ -130,7 +135,7 @@ export function useLibraryCreator() {
     const missingMetadataSources = DEFAULT_METADATA_PRECEDENCE.filter((source) => !library.metadataPrecedence.includes(source))
     form.metadataPrecedence = [...library.metadataPrecedence, ...missingMetadataSources]
     const missing = DEFAULT_FORMAT_PRIORITY.filter((f) => !library.formatPriority.includes(f))
-    form.formatPriority = [...library.formatPriority, ...missing]
+    form.formatPriority = withReadAlongFormatPriority([...library.formatPriority, ...missing])
     form.allowedFormats = [...library.allowedFormats]
     form.organizationMode = library.organizationMode
     form.addedAtSource = library.addedAtSource
@@ -210,7 +215,13 @@ export function useLibraryCreator() {
               localFolders: [...new Set(form.localFolders.map((path) => path.trim()))],
               watchLocalFolders: form.watchLocalFolders,
             }
-          : { ...form, ...sharedPayload, localFolders: undefined, watchLocalFolders: undefined }
+          : {
+              ...form,
+              ...sharedPayload,
+              formatPriority: withoutImplicitReadAlongFormatPriority(form.formatPriority),
+              localFolders: undefined,
+              watchLocalFolders: undefined,
+            }
       let res: Response
       if (mode.value === 'create') {
         res = await api('/api/v1/libraries', {

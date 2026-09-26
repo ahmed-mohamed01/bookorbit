@@ -19,6 +19,7 @@ import { buildContentFilterClauses } from '../../common/utils/content-filter-sql
 import { accentInsensitiveIlike, buildSearchPattern, escapeLikePattern } from '../../common/utils/accent-insensitive-search.utils';
 import { compareSeriesIndexSql, seriesIndexSortKey, seriesIndexSortKeySql } from '../../common/utils/series-index-sql.utils';
 import * as schema from '../../db/schema';
+import { activeCoverSlotSql, coverMediaSql } from '../book-cover-store/book-cover-store.repository';
 import { BookSortBuilder, customMetadataValueColumn, resolveRandomSortSeed, type BookSortContext } from './book-sort-builder.service';
 import {
   audiobookProgress,
@@ -99,7 +100,7 @@ export class BookQueryBuilder {
         .select({ one: sql`1` })
         .from(bookAuthors)
         .innerJoin(authors, eq(bookAuthors.authorId, authors.id))
-        .where(and(eq(bookAuthors.bookId, books.id), this.buildSearchTextMatch(authors.name, pattern, q))!);
+        .where(and(eq(bookAuthors.bookId, books.id), accentInsensitiveIlike(authors.name, pattern))!);
       return sql`exists (${sq})`;
     })();
 
@@ -108,7 +109,7 @@ export class BookQueryBuilder {
         .select({ one: sql`1` })
         .from(bookNarrators)
         .innerJoin(narrators, eq(bookNarrators.narratorId, narrators.id))
-        .where(and(eq(bookNarrators.bookId, books.id), this.buildSearchTextMatch(narrators.name, pattern, q))!);
+        .where(and(eq(bookNarrators.bookId, books.id), accentInsensitiveIlike(narrators.name, pattern))!);
       return sql`exists (${sq})`;
     })();
 
@@ -117,14 +118,15 @@ export class BookQueryBuilder {
         .select({ one: sql`1` })
         .from(bookSeriesMemberships)
         .innerJoin(bookSeries, eq(bookSeries.id, bookSeriesMemberships.seriesId))
-        .where(and(eq(bookSeriesMemberships.bookId, books.id), this.buildSearchTextMatch(bookSeries.name, pattern, q))!);
+        .where(and(eq(bookSeriesMemberships.bookId, books.id), accentInsensitiveIlike(bookSeries.name, pattern))!);
       return sql`exists (${sq})`;
     })();
 
     return or(
-      this.buildSearchTextMatch(bookMetadata.title, pattern, q),
+      accentInsensitiveIlike(bookMetadata.title, pattern),
+      accentInsensitiveIlike(bookMetadata.subtitle, pattern),
       existsAuthor,
-      this.buildSearchTextMatch(bookMetadata.seriesName, pattern, q),
+      accentInsensitiveIlike(bookMetadata.seriesName, pattern),
       existsSeries,
       existsNarrator,
     )!;
@@ -132,12 +134,6 @@ export class BookQueryBuilder {
 
   buildOrderBy(sort: SortSpec[], userId?: number, customFieldTypes?: CustomMetadataFieldTypeMap, context?: BookSortContext): SQL[] {
     return this.sortBuilder.build(sort, userId, customFieldTypes, context);
-  }
-
-  private buildSearchTextMatch(column: AnyColumn, pattern: string, query: string): SQL {
-    const contains = accentInsensitiveIlike(column, pattern);
-    if (query.trim().length < 3) return contains;
-    return or(contains, sql`public.bookorbit_unaccent(${column}) % public.bookorbit_unaccent(${query})`)!;
   }
 
   private groupToSql(node: GroupRule, depth: number, userId?: number, timeZone = 'UTC'): SQL {
@@ -234,6 +230,8 @@ export class BookQueryBuilder {
         return this.numericRuleToSql(bookMetadata.metadataScore, operator, value as number, valueTo as number | undefined);
       case 'cover':
         return this.coverRuleToSql(operator);
+      case 'audioCover':
+        return this.audioCoverRuleToSql(operator);
       case 'lockStatus':
         return this.lockStatusRuleToSql(operator);
       case 'seriesStatus':
@@ -837,6 +835,21 @@ export class BookQueryBuilder {
         return isNotNull(bookMetadata.coverSource);
       default:
         throw new BadRequestException(`Invalid operator '${operator}' for cover field`);
+    }
+  }
+
+  // Only books whose cover media include audio have an audio slot to fill, so both operators
+  // leave ebook-only books out rather than reporting them as missing one.
+  private audioCoverRuleToSql(operator: string): SQL {
+    const activeAudioSlot = activeCoverSlotSql(books.id, 'audio');
+    const { hasAudio } = coverMediaSql(books.id);
+    switch (operator) {
+      case 'isMissing':
+        return and(hasAudio, not(activeAudioSlot))!;
+      case 'isPresent':
+        return and(hasAudio, activeAudioSlot)!;
+      default:
+        throw new BadRequestException(`Invalid operator '${operator}' for audio cover field`);
     }
   }
 

@@ -7,6 +7,7 @@ import { useTtsMiniPlayerUi } from '../composables/useTtsMiniPlayerUi'
 import { useTtsVoices } from '../composables/useTtsVoices'
 import TtsMiniPlayerExpanded from './TtsMiniPlayerExpanded.vue'
 import { formatVoiceDisplayName } from '../lib/voice-display'
+import CoverFill from '@/features/book/components/CoverFill.vue'
 
 const { playbackState, currentBook, currentBlockIndex, currentChapterIndex, speed, currentProviderId, currentVoiceId, togglePlayPause } =
   useTtsPlayer()
@@ -133,6 +134,10 @@ watch(
       return
     }
 
+    // Not on mount: this player is mounted on signed-out pages too, where a 401 would send a reset or
+    // magic link to sign-in. Playback implies a session.
+    if (allVoices.value.length === 0) void loadVoices()
+
     if (mode.value !== 'expanded' && !compactModeCustomized.value) {
       setMode(defaultCompactMode.value)
     }
@@ -150,8 +155,6 @@ watch(
 )
 
 onMounted(() => {
-  if (allVoices.value.length === 0) void loadVoices()
-
   updateIsMobileViewport()
 
   if (typeof window !== 'undefined') {
@@ -207,12 +210,7 @@ onUnmounted(() => {
           :aria-label="playbackState === 'playing' ? t('tts.player.pause') : t('tts.player.play')"
           @click="togglePlayPause"
         >
-          <img
-            v-if="currentBook?.coverUrl"
-            :src="currentBook.coverUrl"
-            alt=""
-            class="absolute inset-0 w-full h-full object-cover rounded-full opacity-20"
-          />
+          <CoverFill v-if="currentBook?.coverUrl" :src="currentBook.coverUrl" class="absolute inset-0 rounded-full opacity-20" />
           <Pause v-if="playbackState === 'playing'" class="relative w-6 h-6" />
           <Play v-else class="relative w-6 h-6" />
         </button>
@@ -235,7 +233,7 @@ onUnmounted(() => {
             :aria-label="t('tts.player.openDetails')"
             @click="openExpanded"
           >
-            <img v-if="currentBook?.coverUrl" :src="currentBook.coverUrl" alt="" class="w-full h-full object-cover" />
+            <CoverFill v-if="currentBook?.coverUrl" :src="currentBook.coverUrl" />
             <Headphones v-else class="w-4 h-4 text-muted-foreground" />
           </button>
 

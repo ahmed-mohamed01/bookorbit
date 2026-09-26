@@ -53,7 +53,7 @@ function makeEnrichSelect(cardRows: unknown[], fileProgressRows: unknown[]) {
     .fn()
     .mockReturnValueOnce(makeSelectChain('offset', cardRows))
     .mockReturnValueOnce(makeSelectChain('orderBy', []))
-    .mockReturnValueOnce(makeSelectChain('where', []))
+    .mockReturnValueOnce(makeSelectChain('orderBy', []))
     .mockReturnValueOnce(makeSelectChain('where', []))
     .mockReturnValueOnce(makeSelectChain('where', []))
     .mockReturnValueOnce(makeSelectChain('orderBy', []))
@@ -259,8 +259,9 @@ describe('BookRepository', () => {
         .fn()
         .mockReturnValueOnce(makeSelectChain('offset', rows))
         .mockReturnValueOnce(makeSelectChain('orderBy', authorRows))
-        .mockReturnValueOnce(makeSelectChain('where', fileRows))
+        .mockReturnValueOnce(makeSelectChain('orderBy', fileRows))
         .mockReturnValueOnce(makeSelectChain('where', genreRows))
+        .mockReturnValueOnce(makeSelectChain('where', [{ bookId: 10, formatPriority: null }]))
         .mockReturnValueOnce(makeSelectChain('where', tagRows))
         .mockReturnValueOnce(makeSelectChain('orderBy', narratorRows))
         .mockReturnValueOnce(makeSelectChain('orderBy', seriesMembershipRows))
@@ -298,7 +299,7 @@ describe('BookRepository', () => {
         .fn()
         .mockReturnValueOnce(makeSelectChain('offset', rows))
         .mockReturnValueOnce(makeSelectChain('orderBy', []))
-        .mockReturnValueOnce(makeSelectChain('where', []))
+        .mockReturnValueOnce(makeSelectChain('orderBy', []))
         .mockReturnValueOnce(makeSelectChain('where', []))
         .mockReturnValueOnce(makeSelectChain('where', []))
         .mockReturnValueOnce(makeSelectChain('orderBy', []))
@@ -380,7 +381,7 @@ describe('BookRepository', () => {
         .fn()
         .mockReturnValueOnce(makeSelectChain('offset', rows))
         .mockReturnValueOnce(tracked('orderBy', 0))
-        .mockReturnValueOnce(tracked('where', 0))
+        .mockReturnValueOnce(tracked('orderBy', 0))
         .mockReturnValueOnce(tracked('where', 0))
         .mockReturnValueOnce(tracked('where', 1))
         .mockReturnValueOnce(tracked('orderBy', 1))
@@ -826,6 +827,35 @@ describe('BookRepository', () => {
     expect(resetWhere).toHaveBeenCalledOnce();
   });
 
+  it('clears a stale narration marker when bridging to a copy without media overlays', async () => {
+    const returning = vi.fn().mockResolvedValue([{ fileId: 20 }]);
+    const onConflictDoUpdate = vi.fn().mockReturnValue({ returning });
+    const values = vi.fn().mockReturnValue({ onConflictDoUpdate });
+    const db = {
+      insert: vi.fn().mockReturnValue({ values }),
+      delete: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }),
+    };
+    const repo = new BookRepository(db as never);
+
+    await expect(
+      repo.upsertSyncedEpubProgressIfNewer({
+        userId: 7,
+        fileId: 20,
+        cfi: 'epubcfi(/6/4)',
+        percentage: 42,
+        positionSeconds: null,
+        mediaOverlayFragment: null,
+        mediaOverlaySectionIndex: null,
+        koreaderProgress: '/body/DocFragment[2]/body/p[2]/text().0',
+        sourceUpdatedAt: new Date('2026-09-19T12:00:00.000Z'),
+      }),
+    ).resolves.toBe(true);
+
+    const cleared = { positionSeconds: null, mediaOverlayFragment: null, mediaOverlaySectionIndex: null };
+    expect(values).toHaveBeenCalledWith(expect.objectContaining(cleared));
+    expect(onConflictDoUpdate).toHaveBeenCalledWith(expect.objectContaining({ set: expect.objectContaining(cleared) }));
+  });
+
   it('does not clear reset protection when a newer EPUB row rejects the bridge', async () => {
     const returning = vi.fn().mockResolvedValue([]);
     const db = {
@@ -1131,6 +1161,34 @@ describe('BookRepository', () => {
 
     expect(result).toEqual([]);
     expect(db.select).not.toHaveBeenCalled();
+  });
+
+  it('includes accent-insensitive subtitle matches in library-scoped global search', async () => {
+    const distinctChain = {
+      from: vi.fn(),
+      innerJoin: vi.fn(),
+      where: vi.fn(),
+      as: vi.fn().mockReturnValue({ bookId: sql`1` }),
+    };
+    distinctChain.from.mockReturnValue(distinctChain);
+    distinctChain.innerJoin.mockReturnValue(distinctChain);
+    distinctChain.where.mockReturnValue(distinctChain);
+
+    const mainChain = makeSelectChain('limit', []);
+    const db = {
+      selectDistinct: vi.fn().mockReturnValue(distinctChain),
+      select: vi.fn().mockReturnValue(mainChain),
+    };
+    const repo = new BookRepository(db as never);
+
+    await expect(repo.searchAcrossLibraries([7], 'Singapore', 10)).resolves.toEqual([]);
+
+    const query = new PgDialect().sqlToQuery(mainChain.where.mock.calls[0]![0]);
+    expect(query.sql).toContain('public.bookorbit_unaccent("book_metadata"."subtitle") ILIKE');
+    expect(query.sql).toContain('"books"."library_id" in');
+    expect(query.params).toContain('%Singapore%');
+    expect(query.params).toContain(7);
+    expect(mainChain.limit).toHaveBeenCalledWith(10);
   });
 
   it('combines title results with author names and unique formats', async () => {

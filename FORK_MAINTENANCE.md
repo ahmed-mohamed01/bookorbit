@@ -173,6 +173,26 @@ breaks it). Each is a one-line catch-up; make it rather than carry a red test.
 
 ### Merge log
 
+- **2026-09-26, upstream v3.1.0 + 12 (`0b2df6e3`), 27 commits.** 18 conflicted files. Upstream added
+  an `android` reading-session source (unioned beside `audiobookshelf` in every enum, bucket and `IN`
+  list; the ABS bootstrap's constraint list and `LIKE` guard now name `android`) and **separate ebook
+  and audiobook cover slots** (`book_covers`, `BookCoverStore`, `CoverSlotReconciler`). The fork's
+  sidecar cover now saves through upstream's store: `applyCoverSource` picks the slot with upstream's
+  `chooseSidecarMedium`, checks that medium's lock (`cover` / `audioCover`) and saves with origin
+  `opf`, **not** `folder_image`, because the reconciler re-resolves folder-image slots from embedded
+  art on every file change and would undo sidecar precedence. `ensureThumbnailForBook` left
+  `metadata.service.ts` with upstream (moved into the cover store). The ABS bulk cover refresher went
+  from a stale copy to a wrapper around upstream (see "Investigated and rejected"). The library cover
+  refresh keeps upstream's `refreshBookCovers` and only takes the sidecar read order for books with a
+  sidecar. **Migration 0096 recreated `reading_sessions_source_chk` again**; row parking handled it
+  (223 rows parked, restored byte-identical on the next boot - note a dev server already running
+  boots before `db:migrate` finishes, so it needs one more restart to restore). Fork spec drift:
+  `coverMedia` / `covers` / `coverVersion` in the `LinkBookControl` and `ReadingAlignmentControl`
+  fixtures, the `EXTRA_PROGRESS_SOURCE` card mock (file query now ends in `orderBy`), and the
+  provider-seam scanner test, whose positional constructor args had shifted onto upstream's new
+  `coverStore` / `coverReconciler` slots and was passing vacuously. Semantic surface:
+  `metadata.service.ts` 134 -> 140, `scanner.service.ts` 287 -> 288. Verified: `verify:fast` green,
+  server 16,676 and client 7,712 tests green, dev DB migrated through 0098.
 - **2026-09-22, upstream v3.0.0 + 5 (`970b1525`), 29 commits.** 29 conflicted files, all additive
   unions except the reader open path. Upstream added read-aloud / media-overlay playback,
   podcasts, a books/podcasts media mode, iOS and watchOS session sources, Prowlarr and SABnzbd,
@@ -674,12 +694,12 @@ Each of these was analysed and deliberately left alone. Re-attempting them waste
   while the three fork call sites score pre-narrowed candidate batches (one scores series
   names). **Not substitutable; the copy stays.** It now carries upstream's
   `MAX_MATCH_TEXT_LENGTH` input cap, which the copy had missed. Re-check on each merge.
-- **`audiobookshelf/audiobookshelf-cover-refresh.service.ts`** - a copy of upstream
-  `BookService.bulkReExtractCover` plus the sidecar candidate lookup and a batched,
-  bounded-concurrency application for large libraries. Upstream's loop is sequential and
-  exposes no per-book cover-source hook, so a wrapper would need a new seam in
-  `book.service.ts`. Kept as a fork-only file (zero conflict cost); delete it the day
-  upstream gains such a hook.
+- **`audiobookshelf/audiobookshelf-cover-refresh.service.ts`** - was a copy of upstream
+  `BookService.bulkReExtractCover`; since the v3.1.0 merge it is a **wrapper**. Upstream's per-medium
+  re-extract plus its slot reconciler (which fills empty slots from folder images) already covers a
+  sidecar ranked below embedded, so only books whose library ranks the sidecar **above** embedded are
+  taken out of upstream's run and applied here, in bounded-concurrency batches. Delete it the day
+  upstream lets a folder image outrank embedded art.
 - **`monitored/monitored-exception.filter.ts` cause-chain walk** - duplicates the one-hop
   unwrap in upstream `common/utils/db-error.utils.ts`, but hoisting a shared
   `findPgErrorCode()` into that upstream file would add ~10 upstream lines to delete 25

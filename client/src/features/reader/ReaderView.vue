@@ -32,6 +32,9 @@ import { useTtsKeyboard } from '@/features/tts/composables/useTtsKeyboard'
 import { getProviders, getVoices } from '@/features/tts/api/tts.api'
 import { useMediaOverlay } from './media-overlay/composables/useMediaOverlay'
 import { resolveMediaOverlayResume, type MediaOverlayResumePosition } from './media-overlay/lib/media-overlay-resume'
+import { injectMediaOverlayHighlightCss, MEDIA_OVERLAY_DEFAULT_ACTIVE_CLASS } from './media-overlay/lib/media-overlay-highlight'
+import { startMediaOverlayWithFallback } from './media-overlay/lib/media-overlay-start'
+import { mediaOverlayEntriesOverlapping } from './media-overlay/lib/media-overlay-range'
 import TtsResumePrompt from '@/features/tts/components/TtsResumePrompt.vue'
 import ReaderHeader from './epub/components/ReaderHeader.vue'
 import ReaderFooter from './epub/components/ReaderFooter.vue'
@@ -53,12 +56,14 @@ import { findMatchingCfiRange } from './epub/utils'
 import { getFormatGroup } from '@bookorbit/types'
 import { resolveReaderResumeTarget } from '@/lib/reading-checkpoint'
 import { api } from '@/lib/api'
+import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 
 const PdfV4ReaderView = defineAsyncComponent(() => import('./pdf-v4/PdfV4ReaderView.vue'))
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const { coverUrl } = useCoverVersions()
 const bookId = Number(route.params.bookId)
 const fileId = Number(route.params.fileId)
 const fileFormat = (route.query.format as string) || 'epub'
@@ -258,6 +263,7 @@ const { setExpanded: setMiniPlayerExpanded, setReaderFooterVisible } = useTtsMin
 const { loadBookPreferences, loadUserPreferences, defaultProviderId, defaultVoiceId, defaultSpeed } = useTtsPreferences()
 const ttsPosition = useTtsPosition()
 const mediaOverlay = useMediaOverlay()
+let mediaOverlayStartId = 0
 
 const isMediaOverlayAvailable = computed(() => isTtsAvailable && hasMediaOverlay.value)
 const isTtsActive = computed(() => isActive.value && currentBook.value?.bookFileId === fileId)
@@ -323,21 +329,6 @@ function applySavedTtsResumeHighlight() {
   void showResumeHighlightFromBlock(savedChapterIdx, savedBlockIdx, sectionIndex.value)
 }
 
-const MEDIA_OVERLAY_STYLE_ID = 'bo-media-overlay-highlight'
-
-// Foliate's media-overlay engine only toggles the book's active class on the
-// current element; styling that class is the host app's job. Inject a themed
-// highlight rule (matching the TTS highlight colour) into each chapter document
-// so narration highlighting is visible even when the EPUB ships no CSS for it.
-function injectMediaOverlayHighlightCss(doc: Document) {
-  if (!doc?.head || doc.getElementById(MEDIA_OVERLAY_STYLE_ID)) return
-  const activeClass = getMediaActiveClass() ?? '-epub-media-overlay-active'
-  const style = doc.createElement('style')
-  style.id = MEDIA_OVERLAY_STYLE_ID
-  style.textContent = `.${CSS.escape(activeClass)} { background-color: rgba(79, 195, 247, 0.3); border-radius: 0.15em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }`
-  doc.head.appendChild(style)
-}
-
 // The most recently loaded chapter document, used to re-mark the resume sentence
 // after narration stops (foliate clears its own highlight on stop).
 let currentChapterDoc: Document | null = null
@@ -364,7 +355,7 @@ function showResumeNarrationHighlight(doc: Document) {
   if (!id) return
   const el = doc.getElementById(id)
   if (!el) return
-  const cls = getMediaActiveClass() ?? '-epub-media-overlay-active'
+  const cls = getMediaActiveClass() ?? MEDIA_OVERLAY_DEFAULT_ACTIVE_CLASS
   el.classList.add(cls)
   resumeNarrationHighlight = { el, cls }
 }
@@ -373,7 +364,7 @@ function onChapterLoadHandler(doc: Document, viewEl: HTMLElement) {
   currentChapterDoc = doc
   setFoliateSource(doc, viewEl)
   if (getMediaOverlay()) {
-    injectMediaOverlayHighlightCss(doc)
+    injectMediaOverlayHighlightCss(doc, getMediaActiveClass())
     showResumeNarrationHighlight(doc)
   }
 }
@@ -470,7 +461,7 @@ async function buildTtsBook(): Promise<{
     bookFileId: fileId,
     title: bookMeta.value.title ?? chapterTitle.value ?? 'Book',
     author: bookMeta.value.authors?.[0]?.name ?? null,
-    coverUrl: bookMeta.value.coverSource ? `/api/v1/books/${bookId}/cover` : null,
+    coverUrl: bookMeta.value.coverSource ? coverUrl(bookId, 'cover', bookMeta.value.coverVersion, 'audio') : null,
     totalChapters: totalSections.value,
   }
 }
@@ -588,14 +579,6 @@ async function resolveSavedNarrationPos(): Promise<MediaOverlayResumePosition | 
   return null
 }
 
-// Walk up to the nearest ancestor with an id - the sentence <span id="..."> that
-// SMIL media-overlay fragments point at.
-function nearestSentenceId(node: Node | null): string | null {
-  let el: Element | null = node instanceof Element ? node : (node?.parentElement ?? null)
-  while (el && !el.id) el = el.parentElement
-  return el?.id || null
-}
-
 // Persist the exact narrated sentence so playback can resume there after reload.
 watch(
   () => mediaOverlay.currentFragment.value,
@@ -615,11 +598,11 @@ watch(
   },
 )
 
-// Starts media-overlay narration in `sectionIdx`. When `target` is given it
-// begins at that sentence (matched by full SMIL fragment when byId=false, or by
-// element id when byId=true); if no matching <par> plays, it falls back to the
-// start of the section instead of staying silent.
-async function beginNarration(sectionIdx: number, target: string | null, byId: boolean) {
+// Starts media-overlay narration in `sectionIdx` at the first <par> that
+// `matches` accepts; if none plays, it falls back to the start of the section
+// instead of staying silent.
+async function beginNarration(sectionIdx: number, matches: ((item: { text: string }) => boolean) | null) {
+  const startId = ++mediaOverlayStartId
   const mo = getMediaOverlay()
   if (!mo) {
     toast.error('This book has no embedded narration')
@@ -630,22 +613,9 @@ async function beginNarration(sectionIdx: number, target: string | null, byId: b
 
   clearResumeNarrationHighlight()
 
-  const matches = target
-    ? byId
-      ? (item: { text: string }) => item.text.split('#')[1] === target
-      : (item: { text: string }) => item.text === target
-    : null
-
-  mediaOverlay.start(
+  await mediaOverlay.start(
     mo,
-    () => {
-      mo.start(sectionIdx, matches ?? undefined)
-      if (matches) {
-        window.setTimeout(() => {
-          if (mediaOverlay.isActive.value && !mediaOverlay.currentFragment.value) mo.start(sectionIdx)
-        }, 700)
-      }
-    },
+    () => startMediaOverlayWithFallback(mo, sectionIdx, matches, () => startId === mediaOverlayStartId && mediaOverlay.isActive.value),
     book,
   )
 }
@@ -662,13 +632,13 @@ async function handleStartMediaOverlay() {
 
   const saved = await resolveSavedNarrationPos()
   if (saved) {
-    await beginNarration(saved.section, saved.fragment, false)
+    await beginNarration(saved.section, (item) => item.text === saved.fragment)
     return
   }
 
   // No saved sentence: start from the first narrated sentence on the current page.
-  const visibleId = nearestSentenceId(getVisibleRange()?.startContainer ?? null)
-  await beginNarration(sectionIndex.value, visibleId, true)
+  const visible = getVisibleRange()
+  await beginNarration(sectionIndex.value, visible ? mediaOverlayEntriesOverlapping(visible) : null)
 }
 
 async function handleReadFromHere() {
@@ -682,8 +652,7 @@ async function handleReadFromHere() {
     showSettings.value = false
     showTapZones.value = false
     hideOverlays(true)
-    const id = nearestSentenceId(range?.startContainer ?? null)
-    await beginNarration(sectionIndex.value, id, true)
+    await beginNarration(sectionIndex.value, range ? mediaOverlayEntriesOverlapping(range) : null)
     return
   }
 
@@ -850,6 +819,7 @@ const {
   deleteAnnotation,
   redrawAnnotation,
   setTextSelectedHandler,
+  setSelectionInteractionStartHandler,
   setAnnotationClickHandler,
   view: foliateView,
   bookLanguage,
@@ -881,6 +851,7 @@ function handleAnnotationClick(cfi: string, popupPosition: { x: number; y: numbe
 }
 
 setTextSelectedHandler(handleTextSelected)
+setSelectionInteractionStartHandler(selection.dismiss)
 setAnnotationClickHandler(handleAnnotationClick)
 
 onUnmounted(clearFoliateSource)
@@ -1280,6 +1251,7 @@ watch(
 )
 
 onUnmounted(() => {
+  mediaOverlayStartId++
   if (pendingManualNavigationClearTimer) clearTimeout(pendingManualNavigationClearTimer)
   setReaderFooterVisible(false)
   mediaOverlay.stop()

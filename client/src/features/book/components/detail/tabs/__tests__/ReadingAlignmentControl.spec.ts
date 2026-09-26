@@ -193,6 +193,9 @@ function makeBook(overrides = {}) {
     comicMetadata: null,
     customMetadata: [],
     lockedFields: [],
+    coverMedia: [],
+    covers: { ebook: null, audio: null },
+    coverVersion: 'legacy:2024-01-01T00:00:00.000Z',
     collections: [],
     ...overrides,
   }

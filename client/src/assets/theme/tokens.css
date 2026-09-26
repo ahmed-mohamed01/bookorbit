@@ -144,6 +144,7 @@
   --pill-web: oklch(0.55 0.16 245);
   --pill-ios: oklch(0.58 0.16 150);
   --pill-watchos: oklch(0.58 0.18 35);
+  --pill-android: oklch(0.58 0.11 95);
   --pill-koreader: oklch(0.52 0.2 295);
   --pill-kobo: oklch(0.55 0.1 195);
   --pill-audiobookshelf: oklch(0.58 0.15 55);
@@ -221,6 +222,7 @@
   --pill-format-opus: oklch(0.55 0.11 205);
   --pill-format-ogg: oklch(0.56 0.15 130);
   --pill-format-flac: oklch(0.55 0.13 165);
+  --pill-format-readalong: oklch(0.52 0.1 186);
 
   /* Rename diff. A bulk rename is a small edit inside a long path, so the ink that marks
      removed and added characters carries the whole feature. Tuned per theme like every other
@@ -266,6 +268,7 @@
   --pill-format-opus: oklch(0.55 0.11 205);
   --pill-format-ogg: oklch(0.56 0.15 130);
   --pill-format-flac: oklch(0.55 0.13 165);
+  --pill-format-readalong: oklch(0.52 0.1 186);
 }
 
 @media (min-width: 40rem) {
@@ -382,6 +385,7 @@
   --pill-web: oklch(0.72 0.14 245);
   --pill-ios: oklch(0.75 0.14 150);
   --pill-watchos: oklch(0.76 0.15 35);
+  --pill-android: oklch(0.75 0.14 95);
   --pill-koreader: oklch(0.72 0.17 295);
   --pill-kobo: oklch(0.74 0.1 195);
   --pill-audiobookshelf: oklch(0.7 0.15 55);
@@ -444,6 +448,7 @@
   --pill-format-opus: oklch(0.76 0.11 205);
   --pill-format-ogg: oklch(0.78 0.15 130);
   --pill-format-flac: oklch(0.75 0.13 165);
+  --pill-format-readalong: oklch(0.78 0.11 186);
 
   --diff-del: oklch(0.79 0.16 25);
   --diff-del-bg: oklch(0.79 0.16 25 / 0.16);
@@ -486,4 +491,5 @@
   --pill-format-opus: oklch(0.76 0.11 205);
   --pill-format-ogg: oklch(0.78 0.15 130);
   --pill-format-flac: oklch(0.75 0.13 165);
+  --pill-format-readalong: oklch(0.78 0.11 186);
 }
