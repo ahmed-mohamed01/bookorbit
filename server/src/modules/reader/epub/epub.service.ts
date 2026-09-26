@@ -368,6 +368,27 @@ export class EpubService {
     return result;
   }
 
+  /**
+   * Parses each spine document the way `extractSpineText` does and reports the first one that fails,
+   * so a build can refuse a book the alignment would choke on. The path must already be access checked.
+   */
+  async findMalformedSpineItem(epubPath: string): Promise<{ href: string; message: string } | null> {
+    const cached = await this.getCachedEntry(epubPath);
+    const zip = await unzipper.Open.file(epubPath);
+
+    for (const item of cached.info.spine) {
+      const entry = findInZip(zip.files, item.href);
+      if (!entry) continue;
+      try {
+        xmlParser.parse(await entry.buffer());
+      } catch (error) {
+        return { href: item.href, message: error instanceof Error ? error.message : String(error) };
+      }
+    }
+
+    return null;
+  }
+
   async getMediaOverlayPlaylist(bookId: number, fileId: number | undefined, user: RequestUser): Promise<EpubMediaOverlayPlaylist> {
     const resolved = await this.resolveEpubFile(bookId, fileId, user);
     const cached = await this.getCachedEntry(resolved.absolutePath);

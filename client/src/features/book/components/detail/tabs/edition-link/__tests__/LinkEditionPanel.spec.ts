@@ -86,6 +86,7 @@ function createAlignmentState() {
     builtAt: ref<string | null>(null),
     mutating: ref(false),
     error: ref<string | null>(null),
+    buildError: ref<string | null>(null),
     buildBlocked: ref<'disabled' | 'unavailable' | 'busy' | null>(null),
     fetchStatus: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     build: vi.fn<(id: number, force?: boolean) => Promise<void>>().mockResolvedValue(undefined),
@@ -490,6 +491,14 @@ describe('LinkEditionPanel', () => {
       const wrapper = mountPanel()
 
       expect(text(wrapper, 'link-edition-intro')).toBe('Both editions keep their own progress.')
+    })
+
+    it('shows why position sync failed', () => {
+      alignmentState.status.value = 'failed'
+      alignmentState.buildError.value = 'whisper was killed by SIGILL'
+      const wrapper = mountPanel()
+
+      expect(text(wrapper, 'position-sync-build-error')).toBe('whisper was killed by SIGILL')
     })
 
     it('rebuilds the position sync with force from the section', async () => {

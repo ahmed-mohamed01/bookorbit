@@ -94,6 +94,7 @@ function createAlignmentState() {
     builtAt: ref<string | null>(null),
     mutating: ref(false),
     error: ref<string | null>(null),
+    buildError: ref<string | null>(null),
     buildBlocked: ref<'disabled' | 'unavailable' | 'busy' | null>(null),
     fetchStatus: vi.fn<(id: number) => Promise<void>>().mockImplementation(async () => {
       calls.push('alignmentStatus')
@@ -192,6 +193,15 @@ describe('useLinkEditionPanel', () => {
     toastMocks.error.mockReset()
     permissionMocks.hasPermission.mockReset()
     permissionMocks.hasPermission.mockReturnValue(true)
+  })
+
+  it('exposes the alignment build error for the position sync section', () => {
+    const panel = mountPanel()
+    expect(panel.alignment.buildError.value).toBeNull()
+
+    alignmentState.buildError.value = 'whisper was killed by SIGILL'
+
+    expect(panel.alignment.buildError.value).toBe('whisper was killed by SIGILL')
   })
 
   describe('phase', () => {

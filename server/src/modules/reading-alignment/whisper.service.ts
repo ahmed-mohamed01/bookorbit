@@ -115,14 +115,26 @@ export class WhisperService {
         }
         stdout.push(chunk);
       });
-      child.on('close', (code: number | null) => {
+      child.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
         if (code === 0) {
           finish(() => resolve(Buffer.concat(stdout).toString('utf8')));
           return;
         }
         const detail = Buffer.concat(stderr).toString('utf8').trim();
-        finish(() => reject(new Error(`${label} exited with code ${code}${detail ? `: ${detail.slice(0, 500)}` : ''}`)));
+        const suffix = detail ? `: ${detail.slice(0, 500)}` : '';
+        const reason = code === null && signal ? describeSignal(label, signal) : `${label} exited with code ${code}`;
+        finish(() => reject(new Error(`${reason}${suffix}`)));
       });
     });
   }
+}
+
+const SIGNAL_HINTS: Partial<Record<NodeJS.Signals, string>> = {
+  SIGILL: 'the whisper binary was built for a different CPU; rebuild the image with GGML_NATIVE=OFF',
+  SIGKILL: 'likely out of memory or a timeout',
+};
+
+function describeSignal(label: string, signal: NodeJS.Signals): string {
+  const hint = SIGNAL_HINTS[signal];
+  return `${label} was killed by ${signal}${hint ? ` (${hint})` : ''}`;
 }

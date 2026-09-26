@@ -64,6 +64,41 @@ describe('useReadingAlignment', () => {
       expect(builtAt.value).toBeNull()
     })
 
+    it('keeps the build failure reason apart from request errors', async () => {
+      mocks.api.mockResolvedValueOnce(
+        response({ status: 'failed', samplesDone: 3, samplesTotal: 40, anchorCount: 0, builtAt: null, error: 'whisper was killed by SIGILL' }),
+      )
+
+      const { status, buildError, error, fetchStatus } = useReadingAlignment()
+      await fetchStatus(10)
+
+      expect(status.value).toBe('failed')
+      expect(buildError.value).toBe('whisper was killed by SIGILL')
+      expect(error.value).toBeNull()
+    })
+
+    it('reads a missing build error as null', async () => {
+      mocks.api.mockResolvedValueOnce(response({ status: 'failed', samplesDone: 3, samplesTotal: 40, anchorCount: 0, builtAt: null }))
+
+      const { buildError, fetchStatus } = useReadingAlignment()
+      await fetchStatus(10)
+
+      expect(buildError.value).toBeNull()
+    })
+
+    it('clears a previous build error once the status reads none', async () => {
+      mocks.api
+        .mockResolvedValueOnce(response({ status: 'failed', samplesDone: 3, samplesTotal: 40, anchorCount: 0, builtAt: null, error: 'boom' }))
+        .mockResolvedValueOnce(response({ status: 'none' }))
+
+      const { buildError, fetchStatus } = useReadingAlignment()
+      await fetchStatus(10)
+      expect(buildError.value).toBe('boom')
+      await fetchStatus(10)
+
+      expect(buildError.value).toBeNull()
+    })
+
     it('falls back to none for a status value the client does not recognize', async () => {
       mocks.api.mockResolvedValueOnce(response({ status: 'some_future_status', samplesDone: 1, samplesTotal: 2, anchorCount: 0, builtAt: null }))
 

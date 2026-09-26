@@ -147,11 +147,31 @@ describe('WhisperService', () => {
       whisper.stderr.emit('data', Buffer.from('model load failed'));
       whisper.emit('close', 1);
 
-      await expect(promise).rejects.toThrow(/exited with code 1/);
+      await expect(promise).rejects.toThrow('whisper exited with code 1: model load failed');
       const ffmpegArgs = spawnMock.mock.calls[0][1];
       expect(unlinkMock).toHaveBeenCalledWith(ffmpegArgs[ffmpegArgs.length - 1]);
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('[reading_alignment.transcribe] [fail]'));
       expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('errorClass=Error'));
+    });
+
+    it.each([
+      ['SIGILL', 'the whisper binary was built for a different CPU; rebuild the image with GGML_NATIVE=OFF'],
+      ['SIGKILL', 'likely out of memory or a timeout'],
+    ])('names the signal and a hint when whisper is killed by %s', async (signal, hint) => {
+      const service = new WhisperService(makeConfig(), makeModels());
+      const ffmpeg = makeChild();
+      const whisper = makeChild();
+      queueChildren(ffmpeg, whisper);
+
+      const promise = service.transcribeWindow('/audio/book.m4b', 300, 15);
+      await Promise.resolve();
+
+      ffmpeg.emit('close', 0);
+      await Promise.resolve();
+      whisper.stderr.emit('data', Buffer.from('whisper_init_from_file: loading model'));
+      whisper.emit('close', null, signal);
+
+      await expect(promise).rejects.toThrow(`whisper was killed by ${signal} (${hint}): whisper_init_from_file: loading model`);
     });
 
     it('throws when ffmpeg fails to spawn', async () => {

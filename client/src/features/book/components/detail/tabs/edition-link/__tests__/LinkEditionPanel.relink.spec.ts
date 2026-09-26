@@ -86,6 +86,7 @@ vi.mock('@/features/book/composables/useReadingAlignment', () => ({
     builtAt: ref(null),
     mutating: ref(false),
     error: ref(null),
+    buildError: ref(null),
     buildBlocked: ref(null),
     fetchStatus: vi.fn<(id: number) => Promise<void>>().mockResolvedValue(undefined),
     build: vi.fn<(id: number, force?: boolean) => Promise<void>>().mockResolvedValue(undefined),

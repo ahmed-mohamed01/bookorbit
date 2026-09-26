@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Permission } from '@bookorbit/types';
 import type { ConfigType } from '@nestjs/config';
 
 import { appConfig } from '../../config/config';
@@ -14,10 +15,19 @@ import { WhisperService } from './whisper.service';
 
 const REQUEST_EVENT = 'reading_alignment.request_build';
 const CANCEL_EVENT = 'reading_alignment.cancel_build';
+const MAX_STATUS_ERROR_LENGTH = 500;
 
 export type AlignmentBuildRequestResult = { status: string };
 export type AlignmentStatusResult =
-  { status: 'none' } | { status: string; samplesDone: number; samplesTotal: number | null; anchorCount: number; builtAt: Date | null };
+  | { status: 'none' }
+  | {
+      status: string;
+      samplesDone: number;
+      samplesTotal: number | null;
+      anchorCount: number;
+      builtAt: Date | null;
+      error: string | null;
+    };
 
 @Injectable()
 export class ReadingAlignmentStatusService {
@@ -117,7 +127,13 @@ export class ReadingAlignmentStatusService {
       samplesTotal: alignment.samplesTotal,
       anchorCount: alignment.anchorCount,
       builtAt: alignment.builtAt,
+      // The stored error can carry file paths and tool output, so only someone who may rebuild sees it.
+      error: this.canBuild(user) && alignment.error ? alignment.error.slice(0, MAX_STATUS_ERROR_LENGTH) : null,
     };
+  }
+
+  private canBuild(user: RequestUser): boolean {
+    return user.isSuperuser || user.permissions.includes(Permission.LibraryEditMetadata);
   }
 
   private async assertAccess(bookId: number, user: RequestUser): Promise<void> {

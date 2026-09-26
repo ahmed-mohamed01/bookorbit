@@ -9,6 +9,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
 import { EditionLinkRepository } from '../edition-link/edition-link.repository';
 import { LibraryService } from '../library/library.service';
+import { EpubService } from '../reader/epub/epub.service';
 import { ScannerService } from '../scanner/scanner.service';
 import * as buildServiceModule from './storyteller-read-along-build.service';
 import { STORYTELLER_SLEEP, StorytellerReadAlongBuildService, type StorytellerRunBuildOptions } from './storyteller-read-along-build.service';
@@ -199,6 +200,7 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
     findOne: vi.fn().mockResolvedValue({ id: TARGET_LIBRARY_ID, type: 'books', allowedFormats: ['epub'], organizationMode: 'book_per_file' }),
   };
   const scannerService = { startScan: vi.fn().mockResolvedValue({ jobId: 1 }) };
+  const epubService = { findMalformedSpineItem: vi.fn().mockResolvedValue(null) };
   const sleep = vi.fn<(milliseconds: number, signal?: AbortSignal) => Promise<void>>().mockResolvedValue(undefined);
 
   const module = await Test.createTestingModule({
@@ -212,6 +214,7 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
       { provide: BookService, useValue: bookService },
       { provide: LibraryService, useValue: libraryService },
       { provide: ScannerService, useValue: scannerService },
+      { provide: EpubService, useValue: epubService },
       { provide: STORYTELLER_SLEEP, useValue: sleep },
     ],
   }).compile();
@@ -225,6 +228,7 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
     bookService,
     libraryService,
     scannerService,
+    epubService,
     sleep,
   };
 }
@@ -514,6 +518,30 @@ describe('StorytellerReadAlongBuildService', () => {
     expect(session.importByReference).not.toHaveBeenCalled();
   });
 
+  it('refuses a source epub whose spine content does not parse before contacting Storyteller', async () => {
+    const { service, session, epubService, repo } = await setup();
+    epubService.findMalformedSpineItem.mockResolvedValueOnce({ href: 'OEBPS/ch1.xhtml', message: 'Pi Tag is not closed.' });
+
+    await expect(runBuild(service, 1, PAIR, USER)).rejects.toMatchObject({
+      name: 'BadRequestException',
+      message: 'text.epub has malformed content (OEBPS/ch1.xhtml: Pi Tag is not closed.), so it cannot be aligned; repair the file',
+    });
+    expect(epubService.findMalformedSpineItem).toHaveBeenCalledWith(expect.stringMatching(/text\.epub$/));
+    expect(session.getServerInfo).not.toHaveBeenCalled();
+    expect(session.importByReference).not.toHaveBeenCalled();
+    expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'failed' }));
+  });
+
+  it('names an epub whose package the reader cannot parse at all', async () => {
+    const { service, session, epubService } = await setup();
+    epubService.findMalformedSpineItem.mockRejectedValueOnce(new Error('OPF not found: OEBPS/content.opf'));
+
+    await expect(runBuild(service, 1, PAIR, USER)).rejects.toThrow(
+      'text.epub cannot be read as an EPUB (OPF not found: OEBPS/content.opf), so Storyteller cannot align it',
+    );
+    expect(session.importByReference).not.toHaveBeenCalled();
+  });
+
   it('refuses a collected book that owns files this build did not produce', async () => {
     const { service, session, repo } = await setup({
       settings: { transport: 'api-transfer', pathMappings: [] },
@@ -644,20 +672,34 @@ describe('StorytellerReadAlongBuildService', () => {
       ).toBe(true);
     });
 
-    it.each([
-      ['no book matches', [remoteBook({ uuid: 'other-uuid', ebookPath: '/remote/books/other.epub' })]],
-      [
-        'two books match',
-        [remoteBook({ uuid: 'a-uuid', ebookPath: '/remote/books/text.epub' }), remoteBook({ uuid: 'b-uuid', ebookPath: '/remote/books/text.epub' })],
-      ],
-      ['the path differs only in case', [remoteBook({ uuid: 'cased-uuid', ebookPath: '/remote/books/Text.epub' })]],
-    ])('fails with a clear error when %s', async (_case, books) => {
+    it('names a duplicate only when more than one book matches the path', async () => {
       const { service, session, repo } = await refusedSetup();
-      session.listBooks.mockResolvedValue(books);
+      session.listBooks.mockResolvedValue([
+        remoteBook({ uuid: 'a-uuid', ebookPath: '/remote/books/text.epub' }),
+        remoteBook({ uuid: 'b-uuid', ebookPath: '/remote/books/text.epub' }),
+      ]);
 
       await expect(runBuild(service, 1, PAIR, USER)).rejects.toThrow(
         'Storyteller already has a book for these files and it could not be matched; remove or import it in Storyteller',
       );
+
+      expect(session.process).not.toHaveBeenCalled();
+      expect(repo.updateBuild).not.toHaveBeenCalledWith(1, expect.objectContaining({ storytellerBookUuid: expect.any(String) }));
+    });
+
+    // Storyteller answers the same 405 for a file it cannot parse, so no match is not proof of a duplicate.
+    it.each([
+      ['no book matches', [remoteBook({ uuid: 'other-uuid', ebookPath: '/remote/books/other.epub' })]],
+      ['the path differs only in case', [remoteBook({ uuid: 'cased-uuid', ebookPath: '/remote/books/Text.epub' })]],
+    ])("relays Storyteller's own refusal as a bad gateway when %s", async (_case, books) => {
+      const { service, session, repo } = await refusedSetup();
+      session.listBooks.mockResolvedValue(books);
+
+      await expect(runBuild(service, 1, PAIR, USER)).rejects.toMatchObject({
+        name: 'BadGatewayException',
+        message:
+          'Storyteller could not create a book from these files (Unable to create book from provided paths). If the book already exists there, remove or import it in Storyteller; otherwise the EPUB may be unreadable by Storyteller, check its log',
+      });
 
       expect(session.process).not.toHaveBeenCalled();
       expect(session.uploadBook).not.toHaveBeenCalled();
@@ -2254,6 +2296,7 @@ describe('StorytellerReadAlongBuildService default sleep', () => {
 
   function defaultSleep() {
     const service = new StorytellerReadAlongBuildService(
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

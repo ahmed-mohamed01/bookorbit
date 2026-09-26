@@ -149,6 +149,7 @@ function handleKeepRemoteCopy(value: boolean) {
         :samples-total="alignment.samplesTotal.value"
         :built-at="alignment.builtAt.value"
         :build-blocked="alignment.buildBlocked.value"
+        :build-error="alignment.buildError.value"
         :mutating="alignment.mutating.value"
         :can-build="canEditMetadata"
         :counterpart-modality="counterpartModality"

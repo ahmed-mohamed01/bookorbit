@@ -21,8 +21,9 @@ const props = withDefaults(
     canBuild: boolean
     counterpartModality: EditionFormat | null
     counterpartTitle?: string | null
+    buildError?: string | null
   }>(),
-  { counterpartTitle: null },
+  { counterpartTitle: null, buildError: null },
 )
 
 const emit = defineEmits<{ build: [force: boolean] }>()
@@ -167,9 +168,10 @@ function handleBuild() {
         <span class="min-w-0 truncate">{{ inSyncLabel }}</span>
       </p>
     </div>
-    <p v-else-if="status === 'failed'" class="mt-1.5 text-xs text-muted-foreground" data-testid="position-sync-failed">
-      {{ t('book.detail.readingAlignment.failedHint') }}
-    </p>
+    <div v-else-if="status === 'failed'" class="mt-1.5 space-y-0.5" data-testid="position-sync-failed">
+      <p class="text-xs text-muted-foreground">{{ t('book.detail.readingAlignment.failedHint') }}</p>
+      <p v-if="buildError" class="text-xs break-words text-muted-foreground" data-testid="position-sync-build-error">{{ buildError }}</p>
+    </div>
     <p v-else-if="status === 'unalignable'" class="mt-1.5 text-xs text-muted-foreground" data-testid="position-sync-unalignable">
       {{ t('book.detail.readingAlignment.unalignableHint') }}
     </p>

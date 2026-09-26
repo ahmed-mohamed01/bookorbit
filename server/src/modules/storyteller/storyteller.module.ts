@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { BookModule } from '../book/book.module';
 import { EditionLinkModule } from '../edition-link/edition-link.module';
 import { LibraryModule } from '../library/library.module';
+import { EpubModule } from '../reader/epub/epub.module';
 import { ScannerModule } from '../scanner/scanner.module';
 import { StorytellerReadAlongBuildService } from './storyteller-read-along-build.service';
 import { StorytellerReadAlongStatusService } from './storyteller-read-along-status.service';
@@ -16,7 +17,7 @@ import { StorytellerSecretService } from './storyteller-secret.service';
 import { StorytellerSettingsService } from './storyteller-settings.service';
 
 @Module({
-  imports: [ConfigModule.forFeature(storytellerConfig), EditionLinkModule, BookModule, LibraryModule, ScannerModule],
+  imports: [ConfigModule.forFeature(storytellerConfig), EditionLinkModule, BookModule, LibraryModule, ScannerModule, EpubModule],
   controllers: [StorytellerController],
   providers: [
     StorytellerRepository,

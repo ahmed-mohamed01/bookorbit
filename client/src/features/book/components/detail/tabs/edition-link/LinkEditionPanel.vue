@@ -139,6 +139,7 @@ function handleUnlink() {
           :samples-total="panel.alignment.samplesTotal"
           :built-at="panel.alignment.builtAt"
           :build-blocked="panel.alignment.buildBlocked"
+          :build-error="panel.alignment.buildError"
           :mutating="panel.alignment.mutating"
           :can-build="panel.canBuildSync"
           :counterpart-modality="panel.link ? panel.counterpartFormat : null"

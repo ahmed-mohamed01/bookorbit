@@ -1,10 +1,14 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Permission } from '@bookorbit/types';
+
 import type { RequestUser } from '../../common/types/request-user';
 import { ReadingAlignmentStatusService } from './reading-alignment-status.service';
 
-const USER = { id: 42, isSuperuser: false } as RequestUser;
+const USER = { id: 42, isSuperuser: false, permissions: [] } as unknown as RequestUser;
+const EDITOR = { id: 43, isSuperuser: false, permissions: [Permission.LibraryEditMetadata] } as unknown as RequestUser;
+const SUPERUSER = { id: 1, isSuperuser: true, permissions: [] } as unknown as RequestUser;
 const BOOK_ID = 7;
 const TEXT_BOOK_ID = 8;
 const AUDIO_BOOK_ID = BOOK_ID;
@@ -192,7 +196,28 @@ describe('ReadingAlignmentStatusService.getStatus', () => {
       samplesTotal: 10,
       anchorCount: 4,
       builtAt: new Date('2026-02-02T00:00:00Z'),
+      error: null,
     });
+  });
+
+  it.each([
+    ['an editor', EDITOR],
+    ['a superuser', SUPERUSER],
+  ])('returns the stored build error, clipped to 500 characters, to %s', async (_label, user) => {
+    const { service } = build({ existing: alignmentRow({ status: 'failed', error: `whisper was killed by SIGILL ${'x'.repeat(600)}` }) });
+
+    const result = await service.getStatus(BOOK_ID, user);
+
+    expect(result).toMatchObject({ status: 'failed' });
+    const error = (result as { error: string | null }).error;
+    expect(error).toHaveLength(500);
+    expect(error?.startsWith('whisper was killed by SIGILL')).toBe(true);
+  });
+
+  it('hides the stored build error from a reader who cannot rebuild', async () => {
+    const { service } = build({ existing: alignmentRow({ status: 'failed', error: 'whisper was killed by SIGILL' }) });
+
+    await expect(service.getStatus(BOOK_ID, USER)).resolves.toMatchObject({ status: 'failed', error: null });
   });
 
   it("returns { status: 'none' } when no alignment row exists", async () => {

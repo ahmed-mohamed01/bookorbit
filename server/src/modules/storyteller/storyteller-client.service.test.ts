@@ -418,6 +418,28 @@ describe('StorytellerClientService', () => {
       await expect(session.getServerInfo()).resolves.toEqual({ version: null, capabilities: [] });
     });
 
+    it('logs an absent probe route once at log level as unsupported, never as a failure', async () => {
+      record(tokenResponse(), text('<!DOCTYPE html>not found', 404), text('not found', 404));
+      const warn = vi.mocked(Logger.prototype.warn);
+
+      await expect(session.getServerInfo()).resolves.toEqual({ version: null, capabilities: [] });
+
+      expect(logs.filter((line) => line.includes('[fail]'))).toEqual([]);
+      expect(warn).not.toHaveBeenCalled();
+      const unsupported = logs.filter((line) => line.startsWith('[storyteller.client] [end]') && line.includes('outcome=unsupported'));
+      expect(unsupported).toHaveLength(2);
+      expect(unsupported[0]).toContain('path="/api/v2/server/details" status=404');
+      expect(unsupported[1]).toContain('path="/api/v2/server/capabilities" status=404');
+      expect(vi.mocked(Logger.prototype.log)).toHaveBeenCalledWith(expect.stringContaining('outcome=unsupported'));
+    });
+
+    it('still reports a 404 on a route the caller relies on as a failure', async () => {
+      record(tokenResponse(), text('not found', 404));
+
+      await expect(session.getSettings()).rejects.toMatchObject({ status: 404 });
+      expect(logs.some((line) => line.startsWith('[storyteller.client] [fail]') && line.includes('status=404'))).toBe(true);
+    });
+
     it('still fails when the details route answers with a server error', async () => {
       record(tokenResponse(), text('boom', 500), text('boom', 500), text('boom', 500));
 

@@ -226,6 +226,28 @@ describe('PositionSyncSection', () => {
       expect(wrapper.get('[data-testid="position-sync-failed"]').text()).toBe('Position sync failed. Rebuild to try again.')
     })
 
+    it('shows the build failure reason under the failed hint', () => {
+      const wrapper = mountSection({ status: 'failed', buildError: 'whisper was killed by SIGILL' })
+
+      const failed = wrapper.get('[data-testid="position-sync-failed"]')
+      expect(failed.text()).toContain('Position sync failed. Rebuild to try again.')
+      const reason = wrapper.get('[data-testid="position-sync-build-error"]')
+      expect(reason.text()).toBe('whisper was killed by SIGILL')
+      expect(reason.classes()).toEqual(expect.arrayContaining(['text-xs', 'break-words', 'text-muted-foreground']))
+    })
+
+    it('shows no reason line when the failure carries none', () => {
+      const wrapper = mountSection({ status: 'failed', buildError: null })
+
+      expect(wrapper.find('[data-testid="position-sync-build-error"]').exists()).toBe(false)
+    })
+
+    it('keeps a build error out of any state but failed', () => {
+      const wrapper = mountSection({ status: 'ready', builtAt: '2026-02-02T12:00:00.000Z', buildError: 'stale reason' })
+
+      expect(wrapper.find('[data-testid="position-sync-build-error"]').exists()).toBe(false)
+    })
+
     it('explains an unalignable pair', () => {
       const wrapper = mountSection({ status: 'unalignable' })
 

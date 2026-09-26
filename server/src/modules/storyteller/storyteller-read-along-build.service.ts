@@ -23,6 +23,7 @@ import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { BookService } from '../book/book.service';
 import { EditionLinkRepository } from '../edition-link/edition-link.repository';
 import { LibraryService } from '../library/library.service';
+import { EpubService } from '../reader/epub/epub.service';
 import { ScannerService } from '../scanner/scanner.service';
 import type { StorytellerReadAlongPair } from './storyteller-read-along-status.service';
 import type { StorytellerBookSummary, StorytellerRemoteSettings, StorytellerSession } from './storyteller-client.types';
@@ -67,6 +68,20 @@ const OVERWRITE_EVENT = 'storyteller.read_along.overwrite';
 const STAMP_EVENT = 'storyteller.read_along.stamp_link';
 const MATCH_EXISTING_EVENT = 'storyteller.read_along.match_existing';
 const UNMATCHED_EXISTING_MESSAGE = 'Storyteller already has a book for these files and it could not be matched; remove or import it in Storyteller';
+const REFUSAL_PREFIX = /^Storyteller answered \d+: /;
+
+/** The provider's own words from a refused request, without the status wrapper the client adds. */
+function storytellerRefusalText(refusal: StorytellerClientError): string {
+  const body = refusal.message.replace(REFUSAL_PREFIX, '').trim();
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    const message = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>).message : null;
+    if (typeof message === 'string' && message.trim()) return message.trim();
+  } catch {
+    // Not JSON: the body is already plain text.
+  }
+  return body || refusal.message;
+}
 
 /**
  * Why a pinned shared-paths build cannot run, in the words of the guard that refused it. The pin
@@ -227,6 +242,7 @@ export class StorytellerReadAlongBuildService {
     private readonly bookService: BookService,
     private readonly libraryService: LibraryService,
     private readonly scannerService: ScannerService,
+    private readonly epubService: EpubService,
     @Optional() @Inject(STORYTELLER_SLEEP) sleep?: StorytellerSleep,
   ) {
     this.sleep = sleep ?? defaultSleep;
@@ -475,6 +491,12 @@ export class StorytellerReadAlongBuildService {
         `${basename(sourceEpub.absolutePath)} cannot be read as an EPUB (${epubProblem === 'missing_container' ? 'no META-INF/container.xml' : 'not a readable archive'}), so Storyteller cannot align it`,
       );
     }
+    const malformed = await this.findMalformedContent(sourceEpub.absolutePath);
+    if (malformed) {
+      throw new BadRequestException(
+        `${basename(sourceEpub.absolutePath)} has malformed content (${malformed.href}: ${malformed.message}), so it cannot be aligned; repair the file`,
+      );
+    }
     if (audioFiles.length === 0) throw new BadRequestException('The audio edition has no audio files');
 
     const session = this.client.createSession(connection);
@@ -611,6 +633,16 @@ export class StorytellerReadAlongBuildService {
     return reason === null ? null : { path: predictedPath, bookId: located.bookId, reason };
   }
 
+  private async findMalformedContent(epubPath: string): Promise<{ href: string; message: string } | null> {
+    try {
+      return await this.epubService.findMalformedSpineItem(epubPath);
+    } catch (error) {
+      // The container check above passed, so this is a package (OPF) the reader cannot parse either.
+      const { message } = describeError(error);
+      throw new BadRequestException(`${basename(epubPath)} cannot be read as an EPUB (${message}), so Storyteller cannot align it`);
+    }
+  }
+
   private async register(buildId: number, prepared: PreparedBuild): Promise<RegisteredBuild> {
     const startedAt = Date.now();
     this.logger.log(
@@ -720,9 +752,9 @@ export class StorytellerReadAlongBuildService {
 
   /**
    * Storyteller answers 405 to an import of paths it already holds, which is what a cancelled or
-   * forgotten build leaves behind. The book whose ebook sits at exactly the path just offered is this
-   * pair's, so it is taken over as if this import had created it; anything less certain is refused
-   * rather than guessed. The whole catalogue is read because Storyteller offers no lookup by path,
+   * forgotten build leaves behind, but also to any file it cannot make a book from. The book whose
+   * ebook sits at exactly the path just offered is this pair's, so it is taken over as if this import
+   * had created it; anything less certain is refused rather than guessed. The whole catalogue is read because Storyteller offers no lookup by path,
    * and this runs only on that refusal.
    */
   private async adoptExistingReference(
@@ -737,7 +769,12 @@ export class StorytellerReadAlongBuildService {
     );
     try {
       const matches = (await prepared.session.listBooks()).filter((book) => book.ebookPath === epubPath);
-      if (matches.length !== 1) throw new ConflictException(UNMATCHED_EXISTING_MESSAGE);
+      if (matches.length > 1) throw new ConflictException(UNMATCHED_EXISTING_MESSAGE);
+      if (matches.length === 0) {
+        throw new BadGatewayException(
+          `Storyteller could not create a book from these files (${storytellerRefusalText(refusal)}). If the book already exists there, remove or import it in Storyteller; otherwise the EPUB may be unreadable by Storyteller, check its log`,
+        );
+      }
       const storytellerBookUuid = matches[0]!.uuid;
       await this.repo.updateBuild(buildId, { transport: 'shared-paths', storytellerBookUuid });
       this.logger.log(

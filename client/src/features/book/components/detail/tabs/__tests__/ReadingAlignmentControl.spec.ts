@@ -51,6 +51,7 @@ function createAlignmentState() {
     loading: ref(false),
     mutating: ref(false),
     error: ref<string | null>(null),
+    buildError: ref<string | null>(null),
     buildBlocked: ref<'disabled' | 'unavailable' | 'busy' | null>(null),
     fetchStatus: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     build: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -317,6 +318,18 @@ describe('ReadingAlignmentControl', () => {
     await flushPromises()
 
     expect(alignmentState.build).toHaveBeenCalledWith(10, true)
+  })
+
+  it('shows why a failed build failed', async () => {
+    alignmentState.status.value = 'failed'
+    alignmentState.buildError.value = 'whisper was killed by SIGILL'
+    const wrapper = mountControl({
+      files: [makeFile({ format: 'epub' }), makeFile({ id: 2, format: 'm4b', role: 'content' })],
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="position-sync-failed"]').text()).toContain('Position sync failed. Rebuild to try again.')
+    expect(wrapper.get('[data-testid="position-sync-build-error"]').text()).toBe('whisper was killed by SIGILL')
   })
 
   it('names the linked counterpart by format and title once ready', async () => {

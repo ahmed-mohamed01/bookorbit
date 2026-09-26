@@ -7,11 +7,27 @@ RUN npm install -g pnpm@11.22.0
 # Statically links ggml/whisper (BUILD_SHARED_LIBS=OFF); only libgomp + libstdc++ are
 # needed in the runtime image. The GGML model is NOT bundled - provide it via WHISPER_MODEL.
 # Pinned to a release tag so the shipped binary is reproducible across rebuilds.
+# GGML_NATIVE is OFF because ggml otherwise compiles for the CPU of whichever CI runner
+# builds the image, and the binary then dies with SIGILL on hosts lacking those
+# instructions. On amd64 WHISPER_CPU_BASELINE picks the instruction set instead: "avx2"
+# (default) targets x86-64-v3 (AVX, AVX2, FMA, F16C, plus BMI2 and SSE4.2 which ggml
+# enables by default once native is off); "generic" turns all of them off for older CPUs.
+# arm64 keeps ggml's portable NEON baseline and needs no flags.
 FROM ${NODE_IMAGE} AS whisper-builder
 ARG WHISPER_CPP_REF=v1.9.1
+ARG WHISPER_CPU_BASELINE=avx2
+ARG TARGETARCH
 RUN apk add --no-cache build-base cmake git && \
     git clone --depth 1 --branch ${WHISPER_CPP_REF} https://github.com/ggerganov/whisper.cpp /whisper && \
-    cmake -S /whisper -B /whisper/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON && \
+    CPU_FLAGS="" && \
+    if [ "${TARGETARCH}" = "amd64" ]; then \
+      case "${WHISPER_CPU_BASELINE}" in \
+        avx2) CPU_FLAGS="-DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON" ;; \
+        generic) CPU_FLAGS="-DGGML_SSE42=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_BMI2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF" ;; \
+        *) echo "Unsupported WHISPER_CPU_BASELINE: ${WHISPER_CPU_BASELINE} (use avx2 or generic)" >&2; exit 1 ;; \
+      esac; \
+    fi && \
+    cmake -S /whisper -B /whisper/build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DGGML_NATIVE=OFF ${CPU_FLAGS} && \
     cmake --build /whisper/build -j --target whisper-cli
 
 # Stage 1: Build client

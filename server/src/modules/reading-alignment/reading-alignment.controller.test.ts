@@ -66,6 +66,26 @@ describe('ReadingAlignmentController', () => {
     expect(result).toEqual({ status: 'none' });
   });
 
+  it('GET alignment returns the build error the status service decided to expose', async () => {
+    const { controller, statusService } = build();
+    const failed = { status: 'failed', samplesDone: 3, samplesTotal: 10, anchorCount: 0, builtAt: null, error: 'whisper was killed by SIGILL' };
+    statusService.getStatus.mockResolvedValue(failed);
+
+    await expect(controller.getAlignmentStatus(BOOK_ID, USER)).resolves.toEqual(failed);
+  });
+
+  it('GET alignment passes a hidden build error through as null', async () => {
+    const { controller, statusService } = build();
+    const failed = { status: 'failed', samplesDone: 3, samplesTotal: 10, anchorCount: 0, builtAt: null, error: null };
+    statusService.getStatus.mockResolvedValue(failed);
+
+    await expect(controller.getAlignmentStatus(BOOK_ID, USER)).resolves.toEqual(failed);
+  });
+
+  it('GET alignment is not permission gated so readers still see the status', () => {
+    expect(Reflect.getMetadata(PERMISSION_KEY, ReadingAlignmentController.prototype.getAlignmentStatus)).toBeUndefined();
+  });
+
   it('DELETE build delegates the cancel to the status service', async () => {
     const { controller, statusService } = build();
     statusService.cancelBuild.mockResolvedValue(undefined);

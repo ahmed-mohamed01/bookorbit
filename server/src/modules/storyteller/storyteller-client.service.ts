@@ -139,9 +139,12 @@ class RequestDeadlineExceededError extends Error {
 }
 
 /** A 404 from an optional route reads as "not reported"; anything else is a real failure. */
-function missingRouteToNull(err: unknown): null {
-  if (err instanceof StorytellerClientError && err.status === 404) return null;
-  throw err;
+/** What a probe of a route that only newer Storyteller builds offer returns when the route is absent. */
+const UNSUPPORTED = 'unsupported';
+type OptionalJson = { outcome: typeof UNSUPPORTED } | { outcome: 'ok'; payload: unknown };
+
+function payloadOrNull(result: OptionalJson): unknown {
+  return result.outcome === 'ok' ? result.payload : null;
 }
 
 interface RequestOptions {
@@ -158,6 +161,8 @@ interface RequestOptions {
   retry?: boolean;
   /** A caller-owned deadline, for a response whose body outlives the request timeout. */
   signal?: AbortSignal;
+  /** A 404 is an older server lacking the route, an expected answer rather than a failure. */
+  expectNotFound?: boolean;
 }
 
 interface SentRequest {
@@ -245,10 +250,10 @@ class StorytellerHttpSession implements StorytellerSession {
   async getServerInfo(): Promise<StorytellerServerInfo> {
     // Neither route exists on every Storyteller build, so this is best-effort reporting: the
     // connection is proved by the authenticated /api/v2/settings read that follows.
-    const details = await this.getJson({ method: 'GET', path: '/api/v2/server/details' }).catch(missingRouteToNull);
+    const details = payloadOrNull(await this.getOptionalJson({ method: 'GET', path: '/api/v2/server/details', expectNotFound: true }));
     const capabilities = new Set(readCapabilityList(details));
 
-    const features = await this.getJson({ method: 'GET', path: '/api/v2/server/capabilities' }).catch(missingRouteToNull);
+    const features = payloadOrNull(await this.getOptionalJson({ method: 'GET', path: '/api/v2/server/capabilities', expectNotFound: true }));
     const declared = readCapabilityList(features);
     for (const capability of declared.length > 0 ? declared : readCapabilityKeys(features)) capabilities.add(capability);
 
@@ -1045,6 +1050,18 @@ class StorytellerHttpSession implements StorytellerSession {
 
   private async getJson(options: RequestOptions): Promise<unknown> {
     return this.readJson(await this.send(options));
+  }
+
+  private async getOptionalJson(options: RequestOptions): Promise<OptionalJson> {
+    const sent = await this.send(options);
+    if (options.expectNotFound && sent.response.status === 404) {
+      await this.discard(sent.response);
+      this.logger.log(
+        `[${REQUEST_EVENT}] [end] method=${sent.method} path="${sanitizeLogValue(sent.path)}" status=404 durationMs=${sent.durationMs} outcome=${UNSUPPORTED} - route not offered by this Storyteller version`,
+      );
+      return { outcome: UNSUPPORTED };
+    }
+    return { outcome: 'ok', payload: await this.readJson(sent) };
   }
 
   private async readJson(sent: SentRequest): Promise<unknown> {

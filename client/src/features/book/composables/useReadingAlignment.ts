@@ -22,6 +22,7 @@ interface AlignmentStatusResponse {
   samplesTotal?: number | null
   anchorCount?: number
   builtAt?: string | null
+  error?: string | null
 }
 
 interface AlignmentBuildResponse {
@@ -44,6 +45,8 @@ export function useReadingAlignment() {
   const builtAt = ref<string | null>(null)
   const mutating = ref(false)
   const error = ref<string | null>(null)
+  // The build's own failure reason from the server, distinct from `error`, which is a failed request.
+  const buildError = ref<string | null>(null)
   const buildBlocked = ref<AlignmentBuildBlockReason | null>(null)
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null
@@ -98,12 +101,14 @@ export function useReadingAlignment() {
       samplesTotal.value = null
       anchorCount.value = null
       builtAt.value = null
+      buildError.value = null
       return
     }
     samplesDone.value = data.samplesDone ?? null
     samplesTotal.value = data.samplesTotal ?? null
     anchorCount.value = data.anchorCount ?? null
     builtAt.value = data.builtAt ?? null
+    buildError.value = data.error ?? null
   }
 
   function applyUnknown(): void {
@@ -112,6 +117,7 @@ export function useReadingAlignment() {
     samplesTotal.value = null
     anchorCount.value = null
     builtAt.value = null
+    buildError.value = null
   }
 
   function giveUpOnBuildRow(): void {
@@ -261,6 +267,7 @@ export function useReadingAlignment() {
     builtAt,
     mutating,
     error,
+    buildError,
     buildBlocked,
     fetchStatus,
     build,
