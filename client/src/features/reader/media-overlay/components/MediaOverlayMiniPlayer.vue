@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ChevronDown, ChevronUp, Headphones, Pause, Play, SkipBack, SkipForward, X } from '@lucide/vue'
+import { ChevronDown, ChevronUp, Headphones, LocateFixed, Pause, Play, SkipBack, SkipForward, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useMediaOverlay } from '../composables/useMediaOverlay'
 import { useTtsMiniPlayerUi } from '@/features/tts/composables/useTtsMiniPlayerUi'
@@ -9,7 +9,8 @@ import TtsSleepTimerPicker from '@/features/tts/components/TtsSleepTimerPicker.v
 import CoverFill from '@/features/book/components/CoverFill.vue'
 
 const { t } = useI18n()
-const { isActive, isPlaying, rate, currentBook, error, sleepTimer, toggle, nextSentence, prevSentence, setRate, stop } = useMediaOverlay()
+const { isActive, isPlaying, isDetached, rate, currentBook, error, sleepTimer, toggle, nextSentence, prevSentence, setRate, stop, narrateFromHere } =
+  useMediaOverlay()
 const { isReaderFooterVisible } = useTtsMiniPlayerUi()
 
 const showPanel = ref(false)
@@ -39,6 +40,18 @@ function handleStop() {
       class="fixed z-50 left-1/2 -translate-x-1/2 w-[min(480px,calc(100vw-16px))] transition-[bottom] duration-300"
       :class="containerPositionClass"
     >
+      <Transition name="fade">
+        <div v-if="isDetached" class="mb-2 flex justify-center">
+          <button
+            type="button"
+            class="flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-lg hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            @click="narrateFromHere"
+          >
+            <LocateFixed class="h-3.5 w-3.5" />
+            {{ t('reader.narration.narrateFromHere') }}
+          </button>
+        </div>
+      </Transition>
       <div class="bg-card border border-border rounded-xl shadow-2xl overflow-hidden">
         <div v-if="showPanel" class="px-3 pt-3 pb-1 space-y-3">
           <TtsSpeedControl :speed="rate" @update:speed="handleSetRate" />
@@ -104,6 +117,14 @@ function handleStop() {
 </template>
 
 <style scoped>
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
 .slide-up-enter-active,
 .slide-up-leave-active {
   transition:

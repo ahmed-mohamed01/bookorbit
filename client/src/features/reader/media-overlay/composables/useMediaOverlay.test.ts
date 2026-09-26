@@ -138,4 +138,53 @@ describe('useMediaOverlay', () => {
     player.stop()
     expect(player.currentFragment.value).toBeNull()
   })
+
+  it('detach only takes effect while narration is active and stop resets it', () => {
+    const mo = makeFakeMediaOverlay()
+    const player = useMediaOverlay()
+
+    player.detach()
+    expect(player.isDetached.value).toBe(false)
+
+    player.start(mo, () => undefined, book)
+    player.detach()
+    expect(player.isDetached.value).toBe(true)
+
+    player.attach()
+    expect(player.isDetached.value).toBe(false)
+
+    player.detach()
+    player.stop()
+    expect(player.isDetached.value).toBe(false)
+  })
+
+  it('narrateFromHere invokes the handler given to start while active', () => {
+    const mo = makeFakeMediaOverlay()
+    const player = useMediaOverlay()
+    const onNarrateFromHere = vi.fn<() => void>()
+
+    player.narrateFromHere()
+    expect(onNarrateFromHere).not.toHaveBeenCalled()
+
+    player.start(mo, () => undefined, book, onNarrateFromHere)
+    player.detach()
+    player.narrateFromHere()
+    expect(onNarrateFromHere).toHaveBeenCalledOnce()
+
+    player.stop()
+    player.narrateFromHere()
+    expect(onNarrateFromHere).toHaveBeenCalledOnce()
+  })
+
+  it('restarting narration clears the detached state', () => {
+    const mo = makeFakeMediaOverlay()
+    const player = useMediaOverlay()
+
+    player.start(mo, () => undefined, book)
+    player.detach()
+    player.start(mo, () => undefined, book)
+
+    expect(player.isDetached.value).toBe(false)
+    expect(player.isActive.value).toBe(true)
+  })
 })

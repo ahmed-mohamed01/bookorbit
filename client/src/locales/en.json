@@ -9934,6 +9934,7 @@
       "showControls": "Show controls",
       "hideControls": "Hide controls",
       "stop": "Stop narration",
+      "narrateFromHere": "Narrate from here",
       "error": "Narration playback error"
     }
   },
