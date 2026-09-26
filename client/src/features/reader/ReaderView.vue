@@ -35,6 +35,8 @@ import { resolveMediaOverlayResume, type MediaOverlayResumePosition } from './me
 import { injectMediaOverlayHighlightCss, MEDIA_OVERLAY_DEFAULT_ACTIVE_CLASS } from './media-overlay/lib/media-overlay-highlight'
 import { startMediaOverlayWithFallback } from './media-overlay/lib/media-overlay-start'
 import { mediaOverlayEntriesOverlapping } from './media-overlay/lib/media-overlay-range'
+import { shouldFollowNarration } from './media-overlay/lib/media-overlay-follow'
+import { useMediaOverlayFollow } from './media-overlay/composables/useMediaOverlayFollow'
 import TtsResumePrompt from '@/features/tts/components/TtsResumePrompt.vue'
 import ReaderHeader from './epub/components/ReaderHeader.vue'
 import ReaderFooter from './epub/components/ReaderFooter.vue'
@@ -267,9 +269,9 @@ let mediaOverlayStartId = 0
 
 const isMediaOverlayAvailable = computed(() => isTtsAvailable && hasMediaOverlay.value)
 const isTtsActive = computed(() => isActive.value && currentBook.value?.bookFileId === fileId)
-const isNavigationLocked = computed(
-  () => (isTtsActive.value && playbackState.value === 'playing') || (mediaOverlay.isActive.value && mediaOverlay.isPlaying.value),
-)
+// Embedded narration keeps playing while the reader scrolls or turns pages, so
+// only synthesized TTS locks navigation.
+const isNavigationLocked = computed(() => isTtsActive.value && playbackState.value === 'playing')
 
 useTtsKeyboard(() => mediaOverlay.isActive.value, {
   togglePlayPause: mediaOverlay.toggle,
@@ -366,6 +368,8 @@ function onChapterLoadHandler(doc: Document, viewEl: HTMLElement) {
   if (getMediaOverlay()) {
     injectMediaOverlayHighlightCss(doc, getMediaActiveClass())
     showResumeNarrationHighlight(doc)
+    narrationFollow.bindRenderer(getRenderer())
+    narrationFollow.bindChapterDocument(doc)
   }
 }
 
@@ -580,12 +584,15 @@ async function resolveSavedNarrationPos(): Promise<MediaOverlayResumePosition | 
 }
 
 // Persist the exact narrated sentence so playback can resume there after reload.
+// Narration can run ahead into another section while the reader stays put, so
+// the section comes from the fragment itself rather than the visible section.
 watch(
   () => mediaOverlay.currentFragment.value,
   (fragment) => {
     if (!mediaOverlay.isActive.value || !fragment) return
-    saveNarrationPos(sectionIndex.value, fragment)
-    progress.setMediaOverlayProgress(fragment, sectionIndex.value)
+    const section = resolveSectionIndex(fragment) ?? sectionIndex.value
+    saveNarrationPos(section, fragment)
+    progress.setMediaOverlayProgress(fragment, section)
   },
 )
 
@@ -617,7 +624,15 @@ async function beginNarration(sectionIdx: number, matches: ((item: { text: strin
     mo,
     () => startMediaOverlayWithFallback(mo, sectionIdx, matches, () => startId === mediaOverlayStartId && mediaOverlay.isActive.value),
     book,
+    handleNarrateFromHere,
   )
+}
+
+// Restarts narration at the first narrated sentence in view after the reader
+// scrolled or paged away from the sentence being read.
+async function handleNarrateFromHere() {
+  const visible = getVisibleRange()
+  await beginNarration(sectionIndex.value, visible ? mediaOverlayEntriesOverlapping(visible) : null)
 }
 
 async function handleStartMediaOverlay() {
@@ -776,6 +791,11 @@ function onMiddleTapHandler() {
 }
 
 function canRunManualNavigation(): boolean {
+  if (mediaOverlay.isActive.value) {
+    mediaOverlay.detach()
+    return true
+  }
+
   if (!isNavigationLocked.value) {
     markManualNavigation()
     return true
@@ -784,7 +804,7 @@ function canRunManualNavigation(): boolean {
   const now = Date.now()
   if (now - lastNavigationBlockedToastAt.value >= 1200) {
     lastNavigationBlockedToastAt.value = now
-    toast.info(mediaOverlay.isActive.value ? 'Pause narration to navigate pages.' : 'Pause TTS playback to navigate pages.')
+    toast.info('Pause TTS playback to navigate pages.')
   }
 
   return false
@@ -827,7 +847,17 @@ const {
   hasMediaOverlay,
   getMediaOverlay,
   getMediaActiveClass,
+  setMediaOverlayFollow,
+  resolveSectionIndex,
 } = useFoliate(() => containerRef.value, onRelocateHandler, onApplyStylesHandler, onMiddleTapHandler, onChapterLoadHandler, canRunManualNavigation)
+
+setMediaOverlayFollow((el) => shouldFollowNarration(el, getVisibleRange(), mediaOverlay.isDetached.value))
+
+const narrationFollow = useMediaOverlayFollow({
+  isNarrating: () => mediaOverlay.isActive.value,
+  isScrolledFlow: () => getRenderer()?.getAttribute?.('flow') === 'scrolled',
+  onScrollIntent: mediaOverlay.detach,
+})
 
 const { handleHighlight, handleOpenNoteDialog, handleSaveNote } = useReaderAnnotationActions({
   bookId,

@@ -19,8 +19,12 @@ const error = ref<string | null>(null)
 // The SMIL text fragment of the sentence currently being narrated, e.g.
 // ".../chap02.xhtml#sentence14". Used to persist + resume the exact sentence.
 const currentFragment = ref<string | null>(null)
+// True once the reader has scrolled or paged away from the narrated sentence.
+// While detached the view stays put and the mini player offers "Narrate from here".
+const isDetached = ref(false)
 
 let instance: FoliateMediaOverlay | null = null
+let narrateFromHereHandler: (() => void | Promise<void>) | null = null
 let highlightListener: ((e: Event) => void) | null = null
 let errorListener: ((e: Event) => void) | null = null
 
@@ -56,8 +60,10 @@ function stop() {
     detachListeners()
   }
   instance = null
+  narrateFromHereHandler = null
   isActive.value = false
   isPlaying.value = false
+  isDetached.value = false
   currentBook.value = null
   currentFragment.value = null
   error.value = null
@@ -83,10 +89,13 @@ export function useMediaOverlay() {
 
   // `mo` is the foliate MediaOverlay instance (view.mediaOverlay) and `startFn`
   // is view.startMediaOverlay - both obtained from useFoliate in the reader.
-  function start<T>(mo: FoliateMediaOverlay, startFn: () => T, book: TtsCurrentBook): T {
+  // `onNarrateFromHere` restarts narration at the reader's current position
+  // once the user has scrolled away from the narrated sentence.
+  function start<T>(mo: FoliateMediaOverlay, startFn: () => T, book: TtsCurrentBook, onNarrateFromHere?: () => void | Promise<void>): T {
     stop()
     requestAudioFocus('media-overlay')
     instance = mo
+    narrateFromHereHandler = onNarrateFromHere ?? null
     currentBook.value = book
     isActive.value = true
     isPlaying.value = true
@@ -138,6 +147,20 @@ export function useMediaOverlay() {
     instance?.setVolume(clamped)
   }
 
+  function detach() {
+    if (!isActive.value) return
+    isDetached.value = true
+  }
+
+  function attach() {
+    isDetached.value = false
+  }
+
+  function narrateFromHere() {
+    if (!isActive.value || !narrateFromHereHandler) return
+    void narrateFromHereHandler()
+  }
+
   function increaseRate() {
     setRate(Math.round((rate.value + RATE_STEP) * 100) / 100)
   }
@@ -153,9 +176,13 @@ export function useMediaOverlay() {
     volume,
     currentBook,
     currentFragment,
+    isDetached,
     error,
     sleepTimer,
     start,
+    detach,
+    attach,
+    narrateFromHere,
     toggle,
     pause,
     resume,

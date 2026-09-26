@@ -525,9 +525,18 @@ export class View extends HTMLElement {
       let lastActive
       this.mediaOverlay.addEventListener('highlight', (e) => {
         const resolved = this.resolveNavigation(e.detail.text)
-        this.renderer.goTo(resolved).then(() => {
-          const { doc } = this.renderer.getContents().find((x) => (x.index = resolved.index))
-          const el = resolved.anchor(doc)
+        if (!resolved) return
+        const findActive = () => {
+          const doc = this.renderer.getContents().find((x) => x.index === resolved.index)?.doc
+          return doc ? resolved.anchor(doc) : null
+        }
+        // BookOrbit fork: `mediaOverlayFollow` lets the host decide whether to
+        // navigate to the narrated element, so the view can stay where the
+        // reader scrolled it while narration continues. Upstream always navigates.
+        const follow = this.mediaOverlayFollow ? this.mediaOverlayFollow(findActive()) : true
+        Promise.resolve(follow ? this.renderer.goTo(resolved) : null).then(() => {
+          const el = findActive()
+          if (!el) return
           el.classList.add(activeClass)
           if (playbackActiveClass) el.ownerDocument.documentElement.classList.add(playbackActiveClass)
           lastActive = new WeakRef(el)

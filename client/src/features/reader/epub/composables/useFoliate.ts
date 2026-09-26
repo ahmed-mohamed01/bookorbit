@@ -30,6 +30,9 @@ export interface FoliateRenderer {
   setStyles?: (css: string) => void
   setAttribute: (name: string, value: string) => void
   removeAttribute: (name: string) => void
+  getAttribute?: (name: string) => string | null
+  addEventListener?: EventTarget['addEventListener']
+  removeEventListener?: EventTarget['removeEventListener']
   getContents?: () => { index: number }[]
 }
 
@@ -86,6 +89,16 @@ export interface FoliateMediaOverlay extends EventTarget {
   setVolume: (volume: number) => void
 }
 
+// Receives the narrated element (null while its section is not rendered) and
+// returns whether the view should navigate to it. See the BookOrbit fork note
+// on the media overlay highlight handler in public/assets/foliate/view.js.
+export type MediaOverlayFollowDecider = (el: Element | null) => boolean
+
+// Chapter documents live in an iframe, so `instanceof Element` from this realm fails.
+function isElementNode(value: unknown): value is Element {
+  return !!value && typeof value === 'object' && (value as Node).nodeType === 1
+}
+
 export interface FoliateOpenOptions extends EpubOpenOptions {
   cfi?: string | null
   fallbackFraction?: number
@@ -110,6 +123,7 @@ export function useFoliate(
   const bookLanguage = ref<string>('en')
   const isFixedLayout = ref(false)
   const hasMediaOverlay = ref(false)
+  let mediaOverlayFollow: MediaOverlayFollowDecider | null = null
 
   let onAnnotationClick: ((cfi: string, popupPosition: { x: number; y: number; showBelow: boolean }) => void) | null = null
 
@@ -184,8 +198,10 @@ export function useFoliate(
         clearSearch?: () => void
         mediaOverlay?: FoliateMediaOverlay | null
         startMediaOverlay?: () => unknown
+        mediaOverlayFollow?: (el: unknown) => boolean
       }
       view.style.cssText = 'width:100%;height:100%;display:block;'
+      view.mediaOverlayFollow = (el: unknown) => mediaOverlayFollow?.(isElementNode(el) ? el : null) ?? true
       getViewEl()?.destroy?.()
       el.innerHTML = ''
       el.appendChild(view)
@@ -441,6 +457,18 @@ export function useFoliate(
     getMediaOverlay: (): FoliateMediaOverlay | null => getViewEl()?.mediaOverlay ?? null,
     startMediaOverlay: (): unknown => getViewEl()?.startMediaOverlay?.(),
     getMediaActiveClass: (): string | null => getViewEl()?.book?.media?.activeClass ?? null,
+    setMediaOverlayFollow: (decider: MediaOverlayFollowDecider | null) => {
+      mediaOverlayFollow = decider
+    },
+    resolveSectionIndex: (target: string): number | null => {
+      try {
+        const resolved = getViewEl()?.resolveNavigation?.(target)
+        if (!resolved || resolved instanceof Promise) return null
+        return typeof resolved.index === 'number' ? resolved.index : null
+      } catch {
+        return null
+      }
+    },
     view: viewRef,
     open,
     prev: () => getViewEl()?.prev?.(),
