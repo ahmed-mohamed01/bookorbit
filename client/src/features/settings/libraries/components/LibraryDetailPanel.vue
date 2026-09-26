@@ -22,23 +22,41 @@ const emit = defineEmits<{ edit: [library: Library] }>()
 
 const { t } = useI18n()
 
+// GET /api/v1/libraries answers a superuser with every column and everyone else with a narrower
+// projection, so these four are simply absent for an admin who holds ManageLibraries without being
+// one. Their rows are left out rather than defaulted, which would read as "no exclusions", "every
+// format allowed" and "Folder mode" for a library that is none of those.
 const organizationLabel = computed(() =>
-  props.library.organizationMode === 'book_per_file' ? t('settings.admin.libraries.fileMode') : t('settings.admin.libraries.folderMode'),
+  !props.library.organizationMode
+    ? null
+    : props.library.organizationMode === 'book_per_file'
+      ? t('settings.admin.libraries.fileMode')
+      : t('settings.admin.libraries.folderMode'),
 )
 const excludeLabel = computed(() =>
-  props.library.excludePatterns.length === 0
-    ? t('settings.admin.libraries.detail.none')
-    : t('settings.admin.libraries.detail.patternCount', { count: props.library.excludePatterns.length }),
+  !props.library.excludePatterns
+    ? null
+    : props.library.excludePatterns.length === 0
+      ? t('settings.admin.libraries.detail.none')
+      : t('settings.admin.libraries.detail.patternCount', { count: props.library.excludePatterns.length }),
 )
 const precedenceLabel = computed(() =>
-  props.library.metadataPrecedence.length === 0
-    ? t('settings.admin.libraries.detail.none')
-    : formatList(props.library.metadataPrecedence.map((key) => METADATA_LABELS[key] ?? key)),
+  !props.library.metadataPrecedence
+    ? null
+    : props.library.metadataPrecedence.length === 0
+      ? t('settings.admin.libraries.detail.none')
+      : formatList(props.library.metadataPrecedence.map((key) => METADATA_LABELS[key] ?? key)),
+)
+const startedLabel = computed(() => (props.library.readingThreshold === undefined ? null : formatPercent(props.library.readingThreshold)))
+const finishedLabel = computed(() =>
+  props.library.markAsFinishedPercentComplete === undefined ? null : formatPercent(props.library.markAsFinishedPercentComplete / 100),
 )
 const formatsLabel = computed(() =>
-  props.library.allowedFormats.length === 0
-    ? t('settings.admin.libraries.detail.allSupported')
-    : formatList(props.library.allowedFormats.map((format) => FORMAT_LABELS[format] ?? format.toUpperCase())),
+  !props.library.allowedFormats
+    ? null
+    : props.library.allowedFormats.length === 0
+      ? t('settings.admin.libraries.detail.allSupported')
+      : formatList(props.library.allowedFormats.map((format) => FORMAT_LABELS[format] ?? format.toUpperCase())),
 )
 const accessLabel = computed(() => (props.accessCount === null ? '' : t('settings.admin.libraries.detail.peopleCount', { count: props.accessCount })))
 
@@ -78,11 +96,11 @@ function requestEdit() {
             <dt class="shrink-0 text-[12.5px] text-muted-foreground">{{ t('settings.admin.libraries.detail.path', { index: index + 1 }) }}</dt>
             <dd class="ms-auto min-w-0 truncate font-mono text-[11px] text-foreground" dir="ltr" :title="folder.path">{{ folder.path }}</dd>
           </div>
-          <div class="flex items-center gap-3 border-t border-border py-1.5">
+          <div v-if="organizationLabel !== null" class="flex items-center gap-3 border-t border-border py-1.5">
             <dt class="shrink-0 text-[12.5px] text-muted-foreground">{{ t('settings.admin.libraries.detail.organization') }}</dt>
             <dd class="ms-auto text-[12.5px] font-medium text-foreground">{{ organizationLabel }}</dd>
           </div>
-          <div class="flex items-center gap-3 border-t border-border py-1.5">
+          <div v-if="excludeLabel !== null" class="flex items-center gap-3 border-t border-border py-1.5">
             <dt class="shrink-0 text-[12.5px] text-muted-foreground">{{ t('settings.admin.libraries.detail.excludePatterns') }}</dt>
             <dd class="ms-auto text-[12.5px] font-medium text-foreground">{{ excludeLabel }}</dd>
           </div>
@@ -105,22 +123,22 @@ function requestEdit() {
           </Button>
         </h4>
         <dl>
-          <div class="flex items-center gap-3 py-1.5">
+          <div v-if="precedenceLabel !== null" class="flex items-center gap-3 py-1.5">
             <dt class="shrink-0 text-[12.5px] text-muted-foreground">{{ t('settings.admin.libraries.detail.precedence') }}</dt>
             <dd class="ms-auto min-w-0 truncate text-[12.5px] font-medium text-foreground" :title="precedenceLabel">{{ precedenceLabel }}</dd>
           </div>
-          <div class="flex items-center gap-3 border-t border-border py-1.5">
+          <div v-if="formatsLabel !== null" class="flex items-center gap-3 border-t border-border py-1.5 first:border-t-0">
             <dt class="shrink-0 text-[12.5px] text-muted-foreground">{{ t('settings.admin.libraries.detail.allowedFormats') }}</dt>
             <dd class="ms-auto min-w-0 truncate text-[12.5px] font-medium text-foreground" :title="formatsLabel">{{ formatsLabel }}</dd>
           </div>
-          <div class="flex items-center gap-3 border-t border-border py-1.5">
+          <div v-if="startedLabel !== null" class="flex items-center gap-3 border-t border-border py-1.5 first:border-t-0">
             <dt class="shrink-0 text-[12.5px] text-muted-foreground">{{ t('settings.admin.libraries.detail.countsAsStarted') }}</dt>
-            <dd class="ms-auto text-[12.5px] font-medium tabular-nums text-foreground">{{ formatPercent(library.readingThreshold) }}</dd>
+            <dd class="ms-auto text-[12.5px] font-medium tabular-nums text-foreground">{{ startedLabel }}</dd>
           </div>
-          <div class="flex items-center gap-3 border-t border-border py-1.5">
+          <div v-if="finishedLabel !== null" class="flex items-center gap-3 border-t border-border py-1.5 first:border-t-0">
             <dt class="shrink-0 text-[12.5px] text-muted-foreground">{{ t('settings.admin.libraries.detail.countsAsFinished') }}</dt>
             <dd class="ms-auto text-[12.5px] font-medium tabular-nums text-foreground">
-              {{ formatPercent(library.markAsFinishedPercentComplete / 100) }}
+              {{ finishedLabel }}
             </dd>
           </div>
         </dl>
