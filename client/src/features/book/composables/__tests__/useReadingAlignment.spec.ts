@@ -185,6 +185,29 @@ describe('useReadingAlignment', () => {
       expect(mocks.api).toHaveBeenCalledTimes(3)
     })
 
+    it('keeps polling through a pending read until the build is ready', async () => {
+      mocks.api.mockResolvedValueOnce(response({ status: 'pending', samplesDone: 0, samplesTotal: null, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 4, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(
+        response({ status: 'ready', samplesDone: 4, samplesTotal: 4, anchorCount: 3, builtAt: '2026-02-02T00:00:00.000Z' }),
+      )
+
+      const { status, fetchStatus } = useReadingAlignment()
+      await fetchStatus(10)
+      expect(status.value).toBe('pending')
+
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(mocks.api).toHaveBeenCalledTimes(2)
+      expect(status.value).toBe('building')
+
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(mocks.api).toHaveBeenCalledTimes(3)
+      expect(status.value).toBe('ready')
+
+      await vi.advanceTimersByTimeAsync(9000)
+      expect(mocks.api).toHaveBeenCalledTimes(3)
+    })
+
     it('does not poll when the fetched status is not building', async () => {
       mocks.api.mockResolvedValueOnce(response({ status: 'ready', samplesDone: 4, samplesTotal: 4, anchorCount: 3, builtAt: null }))
 

@@ -8,9 +8,12 @@ const POLL_INTERVAL_MS = 3000
 const MAX_AWAIT_BUILD_ROW_POLLS = 5
 
 export type AlignmentStatus = 'none' | 'pending' | 'building' | 'ready' | 'failed' | 'unalignable'
-type AlignmentBuildBlockReason = 'disabled' | 'unavailable' | 'busy'
+export type AlignmentBuildBlockReason = 'disabled' | 'unavailable' | 'busy'
 
 const KNOWN_STATUSES = new Set<AlignmentStatus>(['none', 'pending', 'building', 'ready', 'failed', 'unalignable'])
+// 'pending' is the row's schema default, so a read landing between the insert and the first update
+// returns it; stopping there would leave the panel on Aligning until it is reopened.
+const RUNNING_STATUSES = new Set<AlignmentStatus>(['pending', 'building'])
 const BUILD_BLOCK_REASONS = new Set<AlignmentBuildBlockReason>(['disabled', 'unavailable', 'busy'])
 
 interface AlignmentStatusResponse {
@@ -74,7 +77,7 @@ export function useReadingAlignment() {
   // 'building'. Waiting for the previous request to settle makes overlap from polling impossible;
   // genuine explicit overlaps (a build() or manual refresh during a poll) are still handled by the guard.
   function syncPolling(bookId: number): void {
-    if (status.value !== 'building') {
+    if (!RUNNING_STATUSES.has(status.value)) {
       stopPolling()
       return
     }

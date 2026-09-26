@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, AudioLines, Ban, CheckCircle2, Loader2, RefreshCw } from '@lucide/vue'
+import { AlertTriangle, AudioLines, Ban, CheckCircle2, Loader2 } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { Permission, type BookDetail, type EditionLinkMember } from '@bookorbit/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { formatDate } from '@/i18n/formatters'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { getBookLinkModality, useEditionLink } from '@/features/book/composables/useEditionLink'
 import { useReadingAlignment } from '@/features/book/composables/useReadingAlignment'
-import { useReadAlongRow } from '@/features/book/composables/useReadAlongRow'
-import ReadAlongMemberRow from './ReadAlongMemberRow.vue'
+import { useReadAlongSection } from '@/features/book/composables/useReadAlongSection'
+import type { EditionFormat } from '@/features/book/composables/useLinkEditionPanel'
+import PositionSyncSection from './edition-link/PositionSyncSection.vue'
+import ReadAlongSection from './edition-link/ReadAlongSection.vue'
 
 const props = defineProps<{ book: BookDetail }>()
 
@@ -21,20 +22,19 @@ const needsLink = computed(() => modality.value === 'text' || modality.value ===
 
 const editionLink = useEditionLink(props.book.id)
 const alignment = useReadingAlignment()
-const { readAlong, canGenerate, canRebuild, rowState, existingMatch, handleGenerate, handleRetry, handleRebuild, handleImportExisting } =
-  useReadAlongRow(() => props.book.id)
+const readAlongSection = useReadAlongSection(() => props.book.id)
+const { readAlong, canGenerate } = readAlongSection
 
 const { hasPermission } = usePermissions()
 const canEditMetadata = computed(() => hasPermission(Permission.LibraryEditMetadata))
 
 // One record holding both formats is its own pair, so it never reaches the Link popover and the
-// read-along row lives here instead. Visible to anyone who can open the book: the row gates its own
-// actions on `canGenerate`, so hiding it outright would mean a reader on a dual-format book never
-// learns a read-along exists or gets a link to it.
-const showReadAlongRow = computed(() => modality.value === 'both' && editionLink.link.value === null)
+// read-along section lives here instead. Visible to anyone who can open the book: the section gates
+// its own actions on `canGenerate`, so a reader on a dual-format book still learns a read-along exists.
+const showReadAlongSection = computed(() => modality.value === 'both' && editionLink.link.value === null)
 
 // A self-pair has no edition-link members to read a title from, so the build's own output book
-// stands in for the row's ready state.
+// stands in for the section's ready state.
 const readAlongMember = computed<EditionLinkMember | null>(() => {
   const output = readAlong.outputBook.value
   return output ? { id: output.id, title: output.title, authorName: null, progress: null, narrationPercentage: null } : null
@@ -49,14 +49,9 @@ const pairExists = computed(() => {
   return false
 })
 
-const displayMode = computed<'hidden' | 'control'>(() => {
-  if (modality.value === 'none') return 'hidden'
-  // A book that still needs a counterpart linked shows nothing here: the adjacent "Link book"
-  // control owns that action and explains the alignment benefit in its own hover tooltip. We only
-  // surface the alignment status once a pair actually exists (linked, or one record with both formats).
-  if (!pairExists.value) return 'hidden'
-  return 'control'
-})
+// A book that still needs a counterpart linked shows nothing here: the adjacent Link edition control
+// owns that action. The status only surfaces once a pair exists (linked, or one record with both formats).
+const visible = computed(() => modality.value !== 'none' && pairExists.value)
 
 const statusLabel = computed(() => t(`book.detail.readingAlignment.status.${alignment.status.value}`))
 
@@ -83,58 +78,17 @@ const statusIconClass = computed(() => {
       return 'text-foreground animate-spin'
     case 'failed':
       return 'text-destructive'
-    case 'unalignable':
-      return 'text-muted-foreground'
     default:
       return 'text-muted-foreground'
   }
 })
 
-const anchorLabel = computed(() => {
-  const count = alignment.anchorCount.value ?? 0
-  const key = count === 1 ? 'book.detail.readingAlignment.anchorFound' : 'book.detail.readingAlignment.anchorsFound'
-  return t(key, { count })
+const counterpartModality = computed<EditionFormat | null>(() => {
+  if (modality.value === 'text') return 'audiobook'
+  if (modality.value === 'audio') return 'ebook'
+  return null
 })
-
-const builtAtLabel = computed(() => {
-  if (!alignment.builtAt.value) return null
-  const parsed = new Date(alignment.builtAt.value)
-  if (Number.isNaN(parsed.getTime())) return null
-  return t('book.detail.readingAlignment.builtAt', { date: formatDate(parsed, { year: 'numeric', month: 'short', day: 'numeric' }) })
-})
-
-const showInSyncHint = computed(() => alignment.status.value === 'ready' && needsLink.value && editionLink.linkedCounterpart.value?.title)
-
-const buildBlockedMessage = computed(() => {
-  switch (alignment.buildBlocked.value) {
-    case 'disabled':
-      return t('book.detail.readingAlignment.buildBlocked.disabled')
-    case 'unavailable':
-      return t('book.detail.readingAlignment.buildBlocked.unavailable')
-    case 'busy':
-      return t('book.detail.readingAlignment.buildBlocked.busy')
-    default:
-      return null
-  }
-})
-
-// 'busy' is a transient block (server at capacity right now): the build button stays available so the
-// user can retry. 'disabled' and 'unavailable' only change with a server config update, so they stay
-// terminal until then.
-const isTerminalBuildBlock = computed(() => alignment.buildBlocked.value === 'disabled' || alignment.buildBlocked.value === 'unavailable')
-
-// 'unalignable' stays rebuildable: it can be a retryable cause (a since-fixed missing duration or a bad
-// model), so the user needs a retry path. A genuinely unalignable pair simply returns unalignable again.
-const showBuildButton = computed(() => canEditMetadata.value && alignment.status.value !== 'building' && !isTerminalBuildBlock.value)
-
-const isRebuild = computed(
-  () => alignment.status.value === 'ready' || alignment.status.value === 'unalignable' || alignment.status.value === 'failed',
-)
-
-// Force is only needed to rebuild a 'ready' alignment (an unforced build of unchanged content is skipped
-// as up-to-date). For a 'failed' row we must NOT force, so the build service can RESUME an interrupted
-// build from where it left off; 'unalignable'/'none' build fresh either way.
-const forceRebuild = computed(() => alignment.status.value === 'ready')
+const counterpartTitle = computed(() => (needsLink.value ? (editionLink.linkedCounterpart.value?.title ?? null) : null))
 
 async function loadInitialState() {
   if (modality.value === 'none') {
@@ -144,27 +98,35 @@ async function loadInitialState() {
   const loads: Promise<unknown>[] = [alignment.fetchStatus(props.book.id)]
   if (needsLink.value) loads.push(editionLink.loadForBook())
   await Promise.all(loads)
-  if (showReadAlongRow.value) void readAlong.fetchStatus(props.book.id)
+  if (showReadAlongSection.value) void readAlong.fetchStatus(props.book.id)
   checked.value = true
 }
 
 onMounted(loadInitialState)
 
-async function handleBuildClick() {
-  await alignment.build(props.book.id, forceRebuild.value)
+async function handleBuild(force: boolean) {
+  await alignment.build(props.book.id, force)
   if (alignment.error.value) toast.error(t('book.detail.readingAlignment.buildFailed'))
 }
 
 function handleOpenChange(next: boolean) {
   open.value = next
-  if (!next || !showReadAlongRow.value) return
+  if (!next || !showReadAlongSection.value) return
+  readAlongSection.resetChoices()
   void readAlong.fetchStatus(props.book.id)
-  if (!readAlong.outputBook.value) void readAlong.fetchExisting(props.book.id)
+  // The lookup is refused without the upload permission, and only offers anything to a pair with no
+  // read-along and no build running.
+  if (canGenerate.value && !readAlong.outputBook.value && readAlong.status.value !== 'building') void readAlong.fetchExisting(props.book.id)
+  if (canGenerate.value) readAlongSection.loadTargetLibraries()
+}
+
+function handleKeepRemoteCopy(value: boolean) {
+  readAlong.setKeepRemoteCopy(value)
 }
 </script>
 
 <template>
-  <Popover v-if="checked && displayMode === 'control'" :open="open" @update:open="handleOpenChange">
+  <Popover v-if="checked && visible" :open="open" @update:open="handleOpenChange">
     <PopoverTrigger as-child>
       <button
         type="button"
@@ -175,68 +137,44 @@ function handleOpenChange(next: boolean) {
         {{ statusLabel }}
       </button>
     </PopoverTrigger>
-    <PopoverContent align="end" class="w-72 max-w-[calc(100vw-2rem)] p-3">
-      <p class="text-sm font-semibold text-foreground">{{ t('book.detail.readingAlignment.title') }}</p>
+    <PopoverContent
+      align="end"
+      :collision-padding="16"
+      class="max-h-(--reka-popover-content-available-height) w-[26rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-4"
+    >
+      <PositionSyncSection
+        class="mt-0!"
+        :status="alignment.status.value"
+        :samples-done="alignment.samplesDone.value"
+        :samples-total="alignment.samplesTotal.value"
+        :built-at="alignment.builtAt.value"
+        :build-blocked="alignment.buildBlocked.value"
+        :mutating="alignment.mutating.value"
+        :can-build="canEditMetadata"
+        :counterpart-modality="counterpartModality"
+        :counterpart-title="counterpartTitle"
+        @build="handleBuild"
+      />
 
-      <div class="mt-3 rounded-lg border border-border bg-background p-2.5">
-        <div class="flex items-center gap-1.5 text-sm font-medium text-foreground">
-          <component :is="statusIcon" class="size-3.5 shrink-0" :class="statusIconClass" />
-          {{ statusLabel }}
-        </div>
-
-        <div v-if="alignment.status.value === 'building'" class="mt-1.5 space-y-0.5" data-testid="alignment-building">
-          <p class="text-xs text-muted-foreground">
-            {{ t('book.detail.readingAlignment.progress', { done: alignment.samplesDone.value ?? 0, total: alignment.samplesTotal.value ?? '?' }) }}
-          </p>
-          <p class="text-xs text-muted-foreground">{{ anchorLabel }}</p>
-        </div>
-
-        <div v-else-if="alignment.status.value === 'ready'" class="mt-1.5 space-y-0.5" data-testid="alignment-ready">
-          <p v-if="builtAtLabel" class="text-xs text-muted-foreground">{{ builtAtLabel }}</p>
-          <p class="text-xs text-muted-foreground">{{ anchorLabel }}</p>
-          <p v-if="showInSyncHint" class="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
-            <RefreshCw class="size-3 shrink-0" />
-            {{ t('book.detail.readingAlignment.inSyncWith', { title: editionLink.linkedCounterpart.value?.title }) }}
-          </p>
-        </div>
-
-        <p v-if="alignment.status.value === 'unalignable'" class="mt-1.5 text-xs text-muted-foreground" data-testid="alignment-unalignable">
-          {{ t('book.detail.readingAlignment.unalignableHint') }}
-        </p>
-
-        <p v-if="buildBlockedMessage" class="mt-1.5 text-xs text-muted-foreground" data-testid="alignment-build-blocked">
-          {{ buildBlockedMessage }}
-        </p>
-
-        <button
-          v-if="showBuildButton"
-          type="button"
-          class="mt-2 inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-          :disabled="alignment.mutating.value"
-          data-testid="alignment-build-button"
-          @click="handleBuildClick"
-        >
-          <Loader2 v-if="alignment.mutating.value" class="size-3.5 animate-spin" />
-          <RefreshCw v-else-if="isRebuild" class="size-3.5" />
-          <AudioLines v-else class="size-3.5" />
-          {{ isRebuild ? t('book.detail.readingAlignment.rebuildButton') : t('book.detail.readingAlignment.buildButton') }}
-        </button>
-      </div>
-
-      <ReadAlongMemberRow
-        v-if="showReadAlongRow"
-        class="mt-2"
-        :state="rowState"
+      <ReadAlongSection
+        v-if="showReadAlongSection"
+        mode="manage"
+        :state="readAlongSection.sectionState.value"
         :member="readAlongMember"
         :can-generate="canGenerate"
-        :can-rebuild="canRebuild"
-        :existing-match="existingMatch"
-        :is-current-book="false"
-        @update:keep-remote-copy="readAlong.setKeepRemoteCopy"
-        @generate="handleGenerate"
-        @import-existing="handleImportExisting"
-        @retry="handleRetry"
-        @rebuild="handleRebuild"
+        :can-rebuild="readAlongSection.canRebuild.value"
+        :existing-match="readAlongSection.existingMatch.value"
+        :keep-copy-offered="readAlongSection.keepCopyOffered.value"
+        :target-libraries="readAlongSection.targetLibraries.value"
+        :chosen-target-library-id="readAlongSection.chosenTargetLibraryId.value"
+        :target-library-name="readAlongSection.targetLibraryName.value"
+        @update:keep-remote-copy="handleKeepRemoteCopy"
+        @update:target-library-id="readAlongSection.setTargetLibrary"
+        @generate="readAlongSection.handleGenerate"
+        @import-existing="readAlongSection.handleImportExisting"
+        @retry="readAlongSection.handleRetry"
+        @cancel="readAlongSection.handleCancel"
+        @rebuild="readAlongSection.handleRebuild"
       />
     </PopoverContent>
   </Popover>

@@ -454,6 +454,104 @@ describe('useReadAlong', () => {
     })
   })
 
+  describe('cancel', () => {
+    it('sends DELETE to the build route and reads the status again once the server accepts', async () => {
+      mocks.api.mockResolvedValueOnce(response({}))
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'none' })))
+      const readAlong = useReadAlong()
+
+      const cancelled = await readAlong.cancel(10)
+
+      expect(cancelled).toBe(true)
+      expect(mocks.api).toHaveBeenNthCalledWith(1, '/api/v1/storyteller/read-along/books/10/build', { method: 'DELETE' })
+      expect(mocks.api).toHaveBeenNthCalledWith(2, '/api/v1/storyteller/read-along/books/10/status')
+      expect(readAlong.mutating.value).toBe(false)
+    })
+
+    it('reports a server without the cancel route as not cancelled, and leaves the status alone', async () => {
+      mocks.api.mockResolvedValueOnce(response({}, { ok: false, status: 404 }))
+      const readAlong = useReadAlong()
+
+      const cancelled = await readAlong.cancel(10)
+
+      expect(cancelled).toBe(false)
+      expect(mocks.api).toHaveBeenCalledTimes(1)
+      expect(readAlong.mutating.value).toBe(false)
+    })
+
+    it('applies the status after a cancel instead of holding a build that was still awaiting its row', async () => {
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', blocked: null }))
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'none' })))
+      const readAlong = useReadAlong()
+      await readAlong.build(10)
+      expect(readAlong.status.value).toBe('building')
+
+      mocks.api.mockResolvedValueOnce(response({}))
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'none' })))
+      expect(await readAlong.cancel(10)).toBe(true)
+
+      expect(readAlong.status.value).toBe('none')
+      await vi.advanceTimersByTimeAsync(20000)
+      expect(mocks.api).toHaveBeenCalledTimes(4)
+    })
+
+    it('reports a network failure as not cancelled', async () => {
+      mocks.api.mockRejectedValueOnce(new Error('offline'))
+      const readAlong = useReadAlong()
+
+      expect(await readAlong.cancel(10)).toBe(false)
+    })
+  })
+
+  describe('reset', () => {
+    it('forgets the previous pair, including its matches and target library', async () => {
+      mocks.api.mockResolvedValueOnce(
+        response(
+          statusResponse({
+            status: 'ready',
+            blocked: 'previous_output_not_deletable',
+            outputBook: { id: 30, title: 'Dune (read-along)' },
+            targetLibraryId: 4,
+            targetLibraryName: 'Readalouds',
+          }),
+        ),
+      )
+      mocks.api.mockResolvedValueOnce(response({ matches: [{ uuid: 'uuid-1', title: 'Dune', authors: [], aligned: true, score: 90 }] }))
+      const readAlong = useReadAlong()
+      await readAlong.fetchStatus(10)
+      await readAlong.fetchExisting(10)
+
+      readAlong.reset()
+
+      expect(readAlong.status.value).toBe('none')
+      expect(readAlong.blocked.value).toBeNull()
+      expect(readAlong.outputBook.value).toBeNull()
+      expect(readAlong.targetLibraryId.value).toBeNull()
+      expect(readAlong.targetLibraryName.value).toBeNull()
+      expect(readAlong.existingMatches.value).toEqual([])
+      expect(readAlong.error.value).toBeNull()
+    })
+
+    it('stops polling and drops a read that was in flight for the previous pair', async () => {
+      let resolveLate!: (value: Response) => void
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'building', phase: 'wait' })))
+      mocks.api.mockImplementationOnce(() => new Promise<Response>((resolve) => (resolveLate = resolve)))
+      const readAlong = useReadAlong()
+      await readAlong.fetchStatus(10)
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(mocks.api).toHaveBeenCalledTimes(2)
+
+      readAlong.reset()
+      resolveLate(response(statusResponse({ status: 'ready', outputBook: { id: 30, title: 'Dune (read-along)' } })))
+      await vi.advanceTimersByTimeAsync(20000)
+
+      expect(readAlong.status.value).toBe('none')
+      expect(readAlong.phase.value).toBeNull()
+      expect(readAlong.outputBook.value).toBeNull()
+      expect(mocks.api).toHaveBeenCalledTimes(2)
+    })
+  })
+
   describe('onReady', () => {
     it('does not fire for a read-along that was already ready when the page opened', async () => {
       mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'ready', outputBook: { id: 30, title: 'Read-along' } })))
@@ -506,6 +604,25 @@ describe('useReadAlong', () => {
       await vi.advanceTimersByTimeAsync(20000)
 
       expect(mocks.api).toHaveBeenCalledOnce()
+    })
+  })
+
+  it('shows the server default again once a choice is dropped, and sends no choice for the next build', async () => {
+    const readAlong = useReadAlong()
+    mocks.api.mockResolvedValueOnce(response(statusResponse({ keepRemoteCopyByDefault: false })))
+    await readAlong.fetchStatus(10)
+    readAlong.setKeepRemoteCopy(true)
+
+    readAlong.resetKeepRemoteCopy()
+    expect(readAlong.keepRemoteCopy.value).toBe(false)
+
+    mocks.api.mockResolvedValueOnce(response({ status: 'building', blocked: null }))
+    mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'building' })))
+    await readAlong.build(10)
+    expect(mocks.api).toHaveBeenNthCalledWith(2, '/api/v1/storyteller/read-along/books/10/build', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
     })
   })
 

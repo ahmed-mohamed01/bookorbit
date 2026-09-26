@@ -42,8 +42,8 @@ const TRANSPORTS = new Set(
   >) as StorytellerEffectiveTransport[],
 )
 
-/** The slice of read-along state a presentational row needs. */
-export interface ReadAlongRowState {
+/** The slice of read-along state the presentational section needs. */
+export interface ReadAlongSectionState {
   status: ReadAlongStatus
   blocked: ReadAlongBlockReason | null
   phase: ReadAlongPhase | null
@@ -105,6 +105,9 @@ export function useReadAlong() {
   // Adopted from the instance default on every status read, and overridden per build once the user
   // touches the toggle. Never defaulted to "keep" here: a wrong guess offers to hold hundreds of MB.
   const keepRemoteCopy = ref(false)
+  // The last instance default the server reported, so dropping a choice restores what the server
+  // would apply instead of leaving the discarded choice on the toggle.
+  const keepRemoteCopyDefault = ref(false)
   const remoteCopyReclaimable = ref(true)
   const keepRemoteCopyTouched = ref(false)
   let lastBookId: number | null = null
@@ -173,7 +176,8 @@ export function useReadAlong() {
     targetLibraryId.value = data.targetLibraryId ?? null
     targetLibraryName.value = data.targetLibraryName ?? null
     remoteCopyBytes.value = data.remoteCopyBytes ?? { epub: null, audio: null, readAlong: null }
-    if (!keepRemoteCopyTouched.value) keepRemoteCopy.value = data.keepRemoteCopyByDefault === true
+    keepRemoteCopyDefault.value = data.keepRemoteCopyByDefault === true
+    if (!keepRemoteCopyTouched.value) keepRemoteCopy.value = keepRemoteCopyDefault.value
     remoteCopyReclaimable.value = data.remoteCopyReclaimable !== false
     builtAt.value = data.builtAt ?? null
     error.value = data.status === 'failed' ? (data.error ?? null) : null
@@ -269,6 +273,25 @@ export function useReadAlong() {
   /** Drops a per-book choice so the instance default applies again, for a visit that starts over. */
   function resetKeepRemoteCopy(): void {
     keepRemoteCopyTouched.value = false
+    keepRemoteCopy.value = keepRemoteCopyDefault.value
+  }
+
+  /**
+   * Forgets everything read for the current pair, for a pair that no longer exists. In-flight reads
+   * are invalidated too, so a late answer about the old pair cannot land on the next one.
+   */
+  function reset(): void {
+    stopPolling()
+    statusRequestId += 1
+    existingRequestId += 1
+    awaitingBuildRow = false
+    awaitBuildRowPolls = 0
+    consecutiveStatusFailures = 0
+    applyUnknown()
+    error.value = null
+    targetLibraryId.value = null
+    targetLibraryName.value = null
+    existingMatches.value = []
   }
 
   function setKeepRemoteCopy(value: boolean): void {
@@ -334,6 +357,28 @@ export function useReadAlong() {
     }
   }
 
+  /**
+   * Asks the server to stop a running build. False covers every way it did not happen, including a
+   * server that has no cancel route yet, so the caller can say so instead of pretending it stopped.
+   */
+  async function cancel(bookId: number): Promise<boolean> {
+    mutating.value = true
+    try {
+      const res = await api(`/api/v1/storyteller/read-along/books/${bookId}/build`, { method: 'DELETE' })
+      if (!res.ok) return false
+      // A build started in this session may still be awaiting its row. A cancelled build never gets
+      // one, so waiting for it would hold Building for several more polls.
+      awaitingBuildRow = false
+      awaitBuildRowPolls = 0
+      await fetchStatus(bookId)
+      return true
+    } catch {
+      return false
+    } finally {
+      mutating.value = false
+    }
+  }
+
   // Match lookups only enrich the "import instead of generating" offer, so a failure empties the list
   // and stays out of `error`, which narrates the build itself.
   async function fetchExisting(bookId: number): Promise<void> {
@@ -380,7 +425,9 @@ export function useReadAlong() {
     existingMatches,
     fetchStatus,
     build,
+    cancel,
     fetchExisting,
     onReady,
+    reset,
   }
 }

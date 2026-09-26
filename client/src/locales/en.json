@@ -6421,84 +6421,115 @@
       },
       "editionLink": {
         "trigger": "Link book",
-        "tooltipNeedsAudio": "Link an audiobook to enable position alignment.",
-        "tooltipNeedsText": "Link an ebook to enable position alignment.",
+        "tooltipNeedsAudio": "Link an audiobook to enable position sync.",
+        "tooltipNeedsText": "Link an ebook to enable position sync.",
         "tooltipLinked": "Manage the linked edition.",
         "counterpartAudiobook": "Audiobook",
         "counterpartEbook": "Ebook",
         "title": "Link edition",
-        "linkedTo": "Linked to",
         "unknownTitle": "Untitled",
         "unlink": "Unlink",
-        "suggestedMatch": "Suggested match",
-        "confidence": "{score}% confidence",
-        "confirmLink": "Link",
-        "noMatch": "No automatic match found.",
-        "searchToggle": "Search for a match",
-        "searchPlaceholder": "Search by title or author",
         "searching": "Searching...",
         "noResults": "No matches found.",
         "linkedSuccess": "Books linked.",
         "linkFailed": "Failed to link book.",
         "unlinkedSuccess": "Books unlinked.",
         "unlinkFailed": "Failed to unlink book.",
+        "cancelFailed": "Couldn't cancel linking.",
         "searchFailed": "Couldn't search for a match. Try again.",
-        "tooltipAligning": "Linked - aligning positions...",
-        "tooltipAligned": "Linked - positions aligned.",
-        "tooltipAlignFailed": "Linked - alignment failed. Retry from the Reading Log tab.",
+        "tooltipAligning": "Linked - building position sync...",
+        "tooltipAligned": "Linked - position sync ready.",
+        "tooltipAlignFailed": "Linked - position sync failed. Rebuild it from this panel.",
         "tooltipReadAlongBuilding": "Linked - building the read-along...",
         "tooltipReadAlongFailed": "Linked - read-along build failed.",
+        "thisBook": "This book",
+        "progressRead": "{percentage}% read",
+        "progressListened": "{percentage}% listened",
+        "chip": {
+          "ready": "Ready to link",
+          "noMatch": "No match",
+          "linking": "Linking",
+          "linked": "Linked",
+          "suggested": "Suggested match"
+        },
+        "intro": {
+          "matched": "BookOrbit found a matching pair. Review and link.",
+          "noMatchAudiobook": "BookOrbit couldn't find a matching audiobook in your libraries.",
+          "noMatchEbook": "BookOrbit couldn't find a matching ebook in your libraries.",
+          "linking": "Mapping audio to text. Both editions keep their own progress until linking finishes.",
+          "linked": "Progress syncs both ways between these editions.",
+          "matchedReadOnly": "BookOrbit found a matching pair.",
+          "linkedUnsynced": "Both editions keep their own progress."
+        },
+        "slot": {
+          "autoMatched": "Auto-matched · {score}%",
+          "selected": "Selected",
+          "change": "Change"
+        },
+        "search": {
+          "titleEbook": "Select a matching ebook",
+          "titleAudiobook": "Select a matching audiobook",
+          "bodyEbook": "Pick the ebook edition of this book to link progress between them or generate a read-along.",
+          "bodyAudiobook": "Pick the audiobook edition of this book to link progress between them or generate a read-along.",
+          "placeholderEbook": "Search ebooks in your libraries...",
+          "placeholderAudiobook": "Search audiobooks in your libraries...",
+          "score": "{score}%"
+        },
+        "cta": {
+          "link": "Link editions",
+          "linkAndGenerate": "Link & generate read-along"
+        },
+        "footer": {
+          "linkingNote": "You can close this. Progress continues in the background.",
+          "unlinkNote": "Both editions keep their own progress.",
+          "unlinkNoteReadAlong": "Unlinking keeps the read-along book in its library."
+        },
         "readAlong": {
-          "label": "Read-along",
-          "membersTitle": "Linked editions",
-          "readOnlyTitle": "Generated read-along of",
-          "thisBook": "This book",
-          "noneTitle": "No read-along yet",
+          "title": "Read-along",
+          "via": "via Storyteller",
+          "generateToggle": "Generate read-along",
+          "tag": {
+            "building": "Building",
+            "failed": "Failed",
+            "ready": "Ready",
+            "unreachable": "Unreachable"
+          },
+          "body": {
+            "offerOn": "Generates an EPUB with synced narration that highlights the text as it's read.",
+            "offerOff": "Not generated. You can build a read-along later from this panel.",
+            "none": "Not generated yet.",
+            "outOfReach": "Added to a library you can't open."
+          },
+          "generate": "Generate",
+          "retry": "Retry",
+          "rebuild": "Rebuild",
+          "cancel": "Cancel",
+          "cancelUnavailable": "Cancelling isn't available on this server yet.",
+          "importExisting": "Import from Storyteller: {title}",
           "readyPending": "Read-along ready",
-          "outOfReachTitle": "Read-along already generated",
-          "outOfReachHint": "It was added to a library you don't have access to. Ask an administrator to share it with you.",
-          "generate": "Generate read-along",
-          "generateOnLinkHint": "Storyteller aligns the pair into a read-along EPUB and adds it to the library below.",
-          "targetLibrary": "Read-along library",
-          "targetLibraryPlaceholder": "Use the configured library",
-          "rebuild": "Rebuild read-along",
-          "retry": "Retry read-along",
-          "importExisting": "Import existing read-along from Storyteller: {title}",
-          "building": "Building the read-along...",
-          "transport": {
-            "sharedPaths": "Storyteller is reading the files where they are, so nothing is copied.",
-            "apiTransfer": "The files are being uploaded to Storyteller."
+          "addedTo": "Added to {library}",
+          "progressLabel": "Read-along build progress",
+          "stages": {
+            "sending": "Sending",
+            "transcribing": "Transcribing",
+            "aligning": "Aligning",
+            "importing": "Importing"
           },
-          "remoteTasks": {
-            "splitTracks": "Pre-processing audio",
-            "transcribeChapters": "Transcribing tracks",
-            "syncChapters": "Synchronizing chapters",
-            "step": "Step {step} of {total}: {label}"
-          },
-          "needsCounterpart": "To create a read-along, link this book to a matching {counterpart} first. Search for one below.",
           "keepCopy": {
-            "label": "Keep Storyteller copy",
-            "hintBeforeBuild": "Storyteller keeps its copies of the EPUB ({epub}) and audiobook ({audio}), plus the read-along. Your library files are never deleted.",
-            "hintUnknownSize": "Storyteller keeps the read-along, plus copies of your files if it cannot read them in place. Your library files are never deleted.",
-            "hintBeforeTransport": "Storyteller keeps the read-along, plus copies of the EPUB ({epub}) and audiobook ({audio}) if it cannot read them in place. Your library files are never deleted.",
-            "notApplicable": "Storyteller reads your files where they are, so it keeps no copy to remove."
+            "label": "Keep Storyteller copy when done",
+            "hintKeep": "Storyteller keeps its copy after BookOrbit imports the read-along.",
+            "hintRemove": "Removed from Storyteller after import. BookOrbit keeps the only copy."
           },
-          "destinationHint": "The finished read-along will appear in {library}.",
-          "destinationHintUnknown": "The finished read-along will appear in the read-along library.",
-          "failedTitle": "Read-along build failed",
+          "destination": {
+            "willBeAdded": "Will be added to {library}",
+            "willBeAddedDefault": "Will be added to the read-along library",
+            "change": "Change",
+            "label": "Read-along library",
+            "placeholder": "Use the configured library"
+          },
           "failedFallback": "Storyteller couldn't finish this read-along.",
           "buildFailed": "Failed to start the read-along build.",
           "buildAlreadyReady": "This pair already has a read-along, so nothing was rebuilt.",
-          "unlinkNote": "Unlinking keeps the read-along book in its library.",
-          "progressRead": "{percentage}% read",
-          "progressListened": "{percentage}% listened",
-          "phase": {
-            "prepare": "Preparing the pair...",
-            "register": "Sending the pair to Storyteller...",
-            "process": "Starting the alignment...",
-            "wait": "Storyteller is aligning...",
-            "collect": "Collecting the read-along..."
-          },
           "blocked": {
             "notConfigured": "Storyteller isn't configured on this server yet.",
             "unreachable": "The Storyteller server can't be reached.",
@@ -6516,11 +6547,15 @@
             "title": "Replace this read-along?",
             "description": "Rebuilding aligns the pair again and replaces \"{title}\". The existing read-along book and its file are deleted from your library once the new one has been imported and linked. Your ebook and audiobook are not touched.",
             "confirm": "Rebuild and replace"
-          }
+          },
+          "cancelLabel": "Cancel read-along build",
+          "cancelKeptRunning": "The read-along build couldn't be cancelled and keeps running on Storyteller.",
+          "percent": "{percent}%",
+          "progressBoth": "{read} · {listened}"
         }
       },
       "readingAlignment": {
-        "title": "Position alignment",
+        "title": "Position sync",
         "status": {
           "none": "Not built",
           "pending": "Not built",
@@ -6529,19 +6564,31 @@
           "failed": "Alignment failed",
           "unalignable": "Can't align"
         },
-        "progress": "{done} / {total} samples",
-        "anchorFound": "{count} anchor found",
-        "anchorsFound": "{count} anchors found",
         "builtAt": "Built {date}",
-        "buildButton": "Build alignment",
-        "rebuildButton": "Rebuild alignment",
-        "unalignableHint": "Position alignment isn't available for this book pair.",
-        "inSyncWith": "In sync with {title}",
+        "buildButton": "Build",
+        "rebuildButton": "Rebuild",
+        "unalignableHint": "Position sync isn't available for this book pair.",
+        "inSyncWithType": "In sync with the {type}",
+        "inSyncWithTypeTitled": "In sync with the {type}: {title}",
         "buildFailed": "Failed to start alignment build.",
         "buildBlocked": {
           "disabled": "Reading alignment is turned off for this server.",
           "unavailable": "Reading alignment isn't configured on this server yet.",
           "busy": "The server is busy aligning other books. Try again shortly."
+        },
+        "tag": {
+          "none": "Not built",
+          "building": "Aligning",
+          "ready": "Synced",
+          "failed": "Failed",
+          "unalignable": "Can't align"
+        },
+        "idleHint": "Maps audio to text so your position carries between editions.",
+        "failedHint": "Position sync failed. Rebuild to try again.",
+        "progressLabel": "Position sync progress",
+        "counterpartType": {
+          "audiobook": "audiobook",
+          "ebook": "ebook"
         }
       }
     },

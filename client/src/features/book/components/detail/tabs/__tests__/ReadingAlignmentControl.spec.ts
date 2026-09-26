@@ -96,6 +96,7 @@ function createReadAlongState() {
     existingMatches: ref<StorytellerExistingMatch[]>([]),
     fetchStatus: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     build: vi.fn<() => Promise<ReadAlongBuildOutcome>>().mockResolvedValue('started'),
+    cancel: vi.fn<(id: number) => Promise<boolean>>().mockResolvedValue(true),
     fetchExisting: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     onReady: vi.fn<(handler: () => void) => void>(),
   }
@@ -105,10 +106,15 @@ let alignmentState = createAlignmentState()
 let editionLinkState = createEditionLinkState()
 let readAlongState = createReadAlongState()
 
-// The state composable is the only faked half. useReadAlongRow, the shared row wiring both hosts
-// call, is the real one here and derives everything it hands the row from this mock.
+// The state composable is the only faked half. useReadAlongSection, the shared section wiring both
+// hosts call, is the real one here and derives everything it hands the section from this mock.
 vi.mock('@/features/book/composables/useReadAlong', () => ({
   useReadAlong: () => readAlongState,
+}))
+
+const fetchLibraries = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+vi.mock('@/features/library/composables/useLibraries', () => ({
+  useLibraries: () => ({ libraries: ref([]), fetchLibraries }),
 }))
 
 vi.mock('@/features/book/composables/useReadingAlignment', async (importOriginal) => {
@@ -267,12 +273,12 @@ describe('ReadingAlignmentControl', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="alignment-trigger"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="alignment-unalignable"]').text()).toContain("isn't available")
+    expect(wrapper.find('[data-testid="position-sync-unalignable"]').text()).toContain("isn't available")
     // 'unalignable' can be a retryable cause (since-fixed missing duration / bad model), so a rebuild path is offered.
-    expect(wrapper.find('[data-testid="alignment-build-button"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="position-sync-build"]').exists()).toBe(true)
   })
 
-  it('shows build progress and anchor count while building', async () => {
+  it('shows build progress as a tick strip, without sample or anchor counts, while building', async () => {
     alignmentState.status.value = 'building'
     alignmentState.samplesDone.value = 3
     alignmentState.samplesTotal.value = 12
@@ -282,10 +288,13 @@ describe('ReadingAlignmentControl', () => {
     })
     await flushPromises()
 
-    const building = wrapper.find('[data-testid="alignment-building"]')
-    expect(building.text()).toContain('3 / 12 samples')
-    expect(building.text()).toContain('2 anchors found')
-    expect(wrapper.find('[data-testid="alignment-build-button"]').exists()).toBe(false)
+    const ticks = wrapper.findAll('[data-testid="position-sync-tick"]')
+    expect(ticks).toHaveLength(12)
+    expect(ticks.filter((tick) => tick.classes('bg-info'))).toHaveLength(3)
+    expect(wrapper.find('[data-testid="position-sync"]').text()).not.toContain('samples')
+    expect(wrapper.find('[data-testid="position-sync"]').text()).not.toContain('anchor')
+    expect(wrapper.get('[data-testid="position-sync-tag"]').text()).toBe('Aligning')
+    expect(wrapper.find('[data-testid="position-sync-build"]').exists()).toBe(false)
   })
 
   it('shows a rebuild button and builtAt when ready, and calls build with force=true on click', async () => {
@@ -297,15 +306,34 @@ describe('ReadingAlignmentControl', () => {
     })
     await flushPromises()
 
-    const ready = wrapper.find('[data-testid="alignment-ready"]')
-    expect(ready.text()).toContain('5 anchors found')
-    const button = wrapper.find('[data-testid="alignment-build-button"]')
-    expect(button.text()).toContain('Rebuild alignment')
+    const ready = wrapper.find('[data-testid="position-sync-done"]')
+    expect(ready.text()).toContain('Built')
+    expect(ready.text()).not.toContain('anchor')
+    expect(wrapper.get('[data-testid="position-sync-tag"]').text()).toBe('Synced')
+    const button = wrapper.find('[data-testid="position-sync-build"]')
+    expect(button.text()).toBe('Rebuild')
 
     await button.trigger('click')
     await flushPromises()
 
     expect(alignmentState.build).toHaveBeenCalledWith(10, true)
+  })
+
+  it('names the linked counterpart by format and title once ready', async () => {
+    editionLinkState.link.value = {
+      id: 1,
+      textBookId: 10,
+      audioBookId: 20,
+      readAlongBookId: null,
+      createdBy: 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    }
+    editionLinkState.linkedCounterpart.value = { id: 20, title: 'Dune', authorName: null }
+    alignmentState.status.value = 'ready'
+    const wrapper = mountControl({ files: [makeFile({ format: 'epub' })] })
+    await flushPromises()
+
+    expect(wrapper.get('[data-testid="position-sync-in-sync"]').text()).toBe('In sync with the audiobook: Dune')
   })
 
   it('shows a build button for a linked pair that has never been built, and calls build with force=false', async () => {
@@ -321,8 +349,8 @@ describe('ReadingAlignmentControl', () => {
     const wrapper = mountControl({ files: [makeFile({ format: 'epub' })] })
     await flushPromises()
 
-    const button = wrapper.find('[data-testid="alignment-build-button"]')
-    expect(button.text()).toContain('Build alignment')
+    const button = wrapper.find('[data-testid="position-sync-build"]')
+    expect(button.text()).toBe('Build')
 
     await button.trigger('click')
     await flushPromises()
@@ -346,7 +374,7 @@ describe('ReadingAlignmentControl', () => {
     const wrapper = mountControl({ files: [makeFile({ format: 'epub' })] })
     await flushPromises()
 
-    await wrapper.find('[data-testid="alignment-build-button"]').trigger('click')
+    await wrapper.find('[data-testid="position-sync-build"]').trigger('click')
     await flushPromises()
 
     expect(toastMocks.error).toHaveBeenCalled()
@@ -371,7 +399,7 @@ describe('ReadingAlignmentControl', () => {
     const wrapper = mountControl({ files: [makeFile({ format: 'epub' })] })
     await flushPromises()
 
-    await wrapper.find('[data-testid="alignment-build-button"]').trigger('click')
+    await wrapper.find('[data-testid="position-sync-build"]').trigger('click')
     await flushPromises()
 
     expect(alignmentState.build).toHaveBeenCalledWith(expect.any(Number), expectedForce)
@@ -396,12 +424,12 @@ describe('ReadingAlignmentControl', () => {
     const wrapper = mountControl({ files: [makeFile({ format: 'epub' })] })
     await flushPromises()
 
-    await wrapper.find('[data-testid="alignment-build-button"]').trigger('click')
+    await wrapper.find('[data-testid="position-sync-build"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-testid="alignment-build-blocked"]').text()).toContain(expectedText)
-    expect(wrapper.find('[data-testid="alignment-build-button"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="alignment-building"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="position-sync-blocked"]').text()).toContain(expectedText)
+    expect(wrapper.find('[data-testid="position-sync-build"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="position-sync-ticks"]').exists()).toBe(false)
   })
 
   it('keeps the build button visible so a busy block can be retried', async () => {
@@ -420,11 +448,11 @@ describe('ReadingAlignmentControl', () => {
     const wrapper = mountControl({ files: [makeFile({ format: 'epub' })] })
     await flushPromises()
 
-    await wrapper.find('[data-testid="alignment-build-button"]').trigger('click')
+    await wrapper.find('[data-testid="position-sync-build"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-testid="alignment-build-blocked"]').text()).toContain('busy')
-    const retryButton = wrapper.find('[data-testid="alignment-build-button"]')
+    expect(wrapper.find('[data-testid="position-sync-blocked"]').text()).toContain('busy')
+    const retryButton = wrapper.find('[data-testid="position-sync-build"]')
     expect(retryButton.exists()).toBe(true)
 
     alignmentState.build.mockImplementationOnce(async () => {
@@ -434,7 +462,7 @@ describe('ReadingAlignmentControl', () => {
     await flushPromises()
 
     expect(alignmentState.build).toHaveBeenCalledTimes(2)
-    expect(wrapper.find('[data-testid="alignment-build-blocked"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="position-sync-blocked"]').exists()).toBe(false)
   })
 
   it('hides the build button without library_edit_metadata permission, even when ready to rebuild', async () => {
@@ -454,8 +482,8 @@ describe('ReadingAlignmentControl', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-testid="alignment-trigger"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="alignment-ready"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="alignment-build-button"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="position-sync-done"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="position-sync-build"]').exists()).toBe(false)
   })
 
   it('shows the build button once library_edit_metadata is granted', async () => {
@@ -472,7 +500,7 @@ describe('ReadingAlignmentControl', () => {
     const wrapper = mountControl({ files: [makeFile({ format: 'epub' })] })
     await flushPromises()
 
-    expect(wrapper.find('[data-testid="alignment-build-button"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="position-sync-build"]').exists()).toBe(true)
   })
 
   describe('read-along row for a self-pair', () => {
@@ -490,7 +518,7 @@ describe('ReadingAlignmentControl', () => {
       await flushPromises()
 
       expect(readAlongState.fetchStatus).toHaveBeenCalledWith(10)
-      expect(wrapper.find('[data-testid="read-along-row"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="read-along-section"]').exists()).toBe(true)
     })
 
     it('generates and rebuilds through the row', async () => {
@@ -505,23 +533,45 @@ describe('ReadingAlignmentControl', () => {
       readAlongState.outputBook.value = { id: 30, title: 'Dune (read-along)' }
       await flushPromises()
 
-      expect(wrapper.find('[data-testid="read-along-row"]').text()).toContain('Dune (read-along)')
+      expect(wrapper.find('[data-testid="read-along-section"]').text()).toContain('Dune (read-along)')
       await wrapper.find('[data-testid="read-along-rebuild"]').trigger('click')
       await confirmRebuild(wrapper)
       await flushPromises()
       expect(readAlongState.build).toHaveBeenCalledWith(10, { force: true })
     })
 
-    it('shows how the files reach Storyteller while the build runs', async () => {
+    it('shows the build stage while it runs', async () => {
       const wrapper = mountSelfPair()
       await flushPromises()
 
       readAlongState.status.value = 'building'
-      readAlongState.phase.value = 'process'
-      readAlongState.transport.value = 'api-transfer'
+      readAlongState.phase.value = 'wait'
+      readAlongState.remoteTask.value = 'SYNC_CHAPTERS'
       await flushPromises()
 
-      expect(wrapper.find('[data-testid="read-along-destination"]').attributes('aria-label')).toContain('uploaded to Storyteller')
+      const current = wrapper.findAll('[data-testid="read-along-stage"]').find((stage) => stage.attributes('data-stage-state') === 'current')
+      expect(current?.text()).toBe('Aligning')
+      expect(wrapper.get('[data-testid="read-along-tag"]').text()).toBe('Building')
+    })
+
+    it('cancels a running build through the section', async () => {
+      const wrapper = mountSelfPair()
+      await flushPromises()
+      readAlongState.status.value = 'building'
+      await flushPromises()
+
+      await wrapper.get('[data-testid="read-along-cancel"]').trigger('click')
+      await flushPromises()
+
+      expect(readAlongState.cancel).toHaveBeenCalledWith(10)
+    })
+
+    it('titles the popover with the position sync section alone', async () => {
+      const wrapper = mountSelfPair()
+      await flushPromises()
+
+      expect(wrapper.find('h2').exists()).toBe(false)
+      expect(wrapper.findAll('h3').map((heading) => heading.text())).toEqual(['Position sync', 'Read-along'])
     })
 
     it('says the read-along exists rather than offering to build it again when its book is masked', async () => {
@@ -534,7 +584,8 @@ describe('ReadingAlignmentControl', () => {
       readAlongState.outputBook.value = null
       await flushPromises()
 
-      expect(wrapper.find('[data-testid="read-along-out-of-reach"]').exists()).toBe(true)
+      expect(wrapper.get('[data-testid="read-along-section"]').attributes('data-state')).toBe('outOfReach')
+      expect(wrapper.get('[data-testid="read-along-body"]').text()).toContain("can't open")
       expect(wrapper.find('[data-testid="read-along-generate"]').exists()).toBe(false)
       expect(wrapper.find('[data-testid="read-along-rebuild"]').exists()).toBe(false)
     })
@@ -595,6 +646,27 @@ describe('ReadingAlignmentControl', () => {
       expect(readAlongState.fetchExisting).toHaveBeenCalledWith(10)
     })
 
+    it('does not look up Storyteller matches for a reader, who would be refused', async () => {
+      permissionMocks.hasPermission.mockImplementation((name) => name !== 'library_upload')
+      const wrapper = mountSelfPair()
+      await flushPromises()
+
+      await openPopover(wrapper)
+
+      expect(readAlongState.fetchStatus).toHaveBeenCalledWith(10)
+      expect(readAlongState.fetchExisting).not.toHaveBeenCalled()
+    })
+
+    it('does not look up Storyteller matches while a build is running', async () => {
+      readAlongState.status.value = 'building'
+      const wrapper = mountSelfPair()
+      await flushPromises()
+
+      await openPopover(wrapper)
+
+      expect(readAlongState.fetchExisting).not.toHaveBeenCalled()
+    })
+
     // The Link popover shows the read-along row to anyone who can open the book and lets the row gate
     // its own actions. A self-pair is the same book, so hiding it here would mean a reader on a
     // dual-format title never learns a read-along exists.
@@ -604,7 +676,7 @@ describe('ReadingAlignmentControl', () => {
       const wrapper = mountSelfPair()
       await flushPromises()
 
-      expect(wrapper.find('[data-testid="read-along-row"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="read-along-section"]').exists()).toBe(true)
       expect(wrapper.find('[data-testid="read-along-generate"]').exists()).toBe(false)
       expect(wrapper.find('[data-testid="read-along-rebuild"]').exists()).toBe(false)
     })
@@ -622,7 +694,7 @@ describe('ReadingAlignmentControl', () => {
       const wrapper = mountControl({ files: [makeFile({ format: 'epub' })] })
       await flushPromises()
 
-      expect(wrapper.find('[data-testid="read-along-row"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="read-along-section"]').exists()).toBe(false)
       expect(readAlongState.fetchStatus).not.toHaveBeenCalled()
     })
   })

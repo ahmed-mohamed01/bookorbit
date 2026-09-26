@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ref, defineComponent } from 'vue'
+import { ref } from 'vue'
 import type {
   EditionLinkCounterpartSummary,
   EditionLinkMembers,
@@ -16,20 +16,6 @@ import type {
 import type { EditionLink, EditionLinkCandidate } from '../../../../composables/useEditionLink'
 import type { ReadAlongBuildOutcome } from '../../../../composables/useReadAlong'
 import LinkBookControl from '../LinkBookControl.vue'
-
-// The rebuild is the one action here that deletes a library book, so it asks first. The dialog is
-// stubbed so a test can answer it without driving a portalled overlay.
-const ConfirmDialogStub = defineComponent({
-  name: 'ConfirmDialogStub',
-  props: { open: { type: Boolean, default: false } },
-  emits: ['confirm', 'cancel'],
-  template: '<div />',
-})
-
-async function confirmRebuild(wrapper: { findComponent: (c: unknown) => { vm: { $emit: (e: string) => void } } }) {
-  wrapper.findComponent(ConfirmDialogStub).vm.$emit('confirm')
-  await flushPromises()
-}
 
 const toastMocks = vi.hoisted(() => ({
   success: vi.fn<(...args: unknown[]) => void>(),
@@ -143,15 +129,17 @@ function createReadAlongState() {
     existingMatches: ref<StorytellerExistingMatch[]>([]),
     fetchStatus: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     build: vi.fn<() => Promise<ReadAlongBuildOutcome>>().mockResolvedValue('started'),
+    cancel: vi.fn<(id: number) => Promise<boolean>>().mockResolvedValue(true),
     fetchExisting: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     onReady: vi.fn<(handler: () => void) => void>(),
+    reset: vi.fn<() => void>(),
   }
 }
 
 let mockReadAlong = createReadAlongState()
 
-// The state composable is the only faked half. useReadAlongRow, the shared row wiring both hosts
-// call, is the real one here and derives everything it hands the row from this mock.
+// The state composable is the only faked half. useReadAlongSection, the shared section wiring both
+// hosts call, is the real one here and derives everything it hands the section from this mock.
 vi.mock('@/features/book/composables/useReadAlong', () => ({
   useReadAlong: () => mockReadAlong,
 }))
@@ -162,18 +150,6 @@ const fetchLibraries = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
 vi.mock('@/features/library/composables/useLibraries', () => ({
   useLibraries: () => ({ libraries: libraryList, fetchLibraries }),
 }))
-
-function makeLibrary(id: number, name: string, overrides: Partial<Library> = {}): Library {
-  return { id, name, type: 'books', allowedFormats: [], ...overrides } as Library
-}
-
-// What /api/v1/libraries actually returns for anyone who is not a superuser: findAllForUser has no
-// allowedFormats column, so the field never reaches the client.
-function makeLibraryWithoutAllowedFormats(id: number, name: string, overrides: Partial<Library> = {}): Library {
-  const library = makeLibrary(id, name, overrides)
-  delete (library as Partial<Library>).allowedFormats
-  return library
-}
 
 const stubs = {
   Popover: { name: 'Popover', props: ['open'], emits: ['update:open'], template: '<div><slot /></div>' },
@@ -253,7 +229,7 @@ function makeBook(overrides = {}) {
 }
 
 function mountControl(overrides = {}) {
-  return mount(LinkBookControl, { props: { book: makeBook(overrides) }, global: { stubs: { ...stubs, ConfirmDialog: ConfirmDialogStub } } })
+  return mount(LinkBookControl, { props: { book: makeBook(overrides) }, global: { stubs: { ...stubs, ConfirmDialog: { template: '<div />' } } } })
 }
 
 async function openPopover(wrapper: ReturnType<typeof mountControl>) {
@@ -265,6 +241,17 @@ function linkWithMembers(members: EditionLinkMembers = makeMembers()) {
   mockState.link.value = editionLinkRecord
   mockState.role.value = 'text'
   mockState.members.value = members
+}
+
+const audioFile = {
+  id: 1,
+  format: 'm4b',
+  role: 'content',
+  sizeBytes: 1,
+  absolutePath: '/a.m4b',
+  createdAt: '2026-01-01',
+  filename: 'a.m4b',
+  durationSeconds: null,
 }
 
 describe('LinkBookControl', () => {
@@ -282,819 +269,92 @@ describe('LinkBookControl', () => {
   })
 
   it('does not render when the book has both formats or neither', () => {
-    const both = mountControl({
-      files: [
-        {
-          id: 1,
-          format: 'epub',
-          role: 'content',
-          sizeBytes: 1,
-          absolutePath: '/a.epub',
-          createdAt: '2026-01-01',
-          filename: 'a.epub',
-          durationSeconds: null,
-        },
-        {
-          id: 2,
-          format: 'm4b',
-          role: 'content',
-          sizeBytes: 1,
-          absolutePath: '/a.m4b',
-          createdAt: '2026-01-01',
-          filename: 'a.m4b',
-          durationSeconds: null,
-        },
-      ],
-    })
+    const both = mountControl({ files: [makeBook().files[0], { ...audioFile, id: 2 }] })
     expect(both.find('button').exists()).toBe(false)
+    expect(mockState.loadForBook).not.toHaveBeenCalled()
 
     const none = mountControl({ files: [] })
     expect(none.find('button').exists()).toBe(false)
   })
 
-  it('renders the trigger for a single-format book and loads on open', async () => {
+  it('loads the link and its build statuses on mount, so the trigger is accurate before opening', async () => {
+    mockState.loadForBook.mockImplementation(async () => {
+      mockState.link.value = editionLinkRecord
+    })
     const wrapper = mountControl()
+    await flushPromises()
+
     expect(wrapper.find('button').attributes('aria-label')).toBe('Link book')
-
-    await openPopover(wrapper)
     expect(mockState.loadForBook).toHaveBeenCalledWith()
+    expect(mockAlignment.fetchStatus).toHaveBeenCalledWith(10)
+    expect(mockReadAlong.fetchStatus).toHaveBeenCalledWith(10)
   })
 
-  it('loads the link state on mount (for an eligible book) so the trigger title is accurate before opening', () => {
-    mountControl()
-    expect(mockState.loadForBook).toHaveBeenCalledWith()
+  it('names position sync in a modality-specific trigger title before a link exists', () => {
+    expect(mountControl().find('button').attributes('title')).toBe('Link an audiobook to enable position sync.')
+    expect(
+      mountControl({ files: [audioFile] })
+        .find('button')
+        .attributes('title'),
+    ).toBe('Link an ebook to enable position sync.')
   })
 
-  it('does not fetch on mount for a book that cannot be linked (both formats)', () => {
-    mountControl({
-      files: [
-        {
-          id: 1,
-          format: 'epub',
-          role: 'content',
-          sizeBytes: 1,
-          absolutePath: '/a.epub',
-          createdAt: '2026-01-01',
-          filename: 'a.epub',
-          durationSeconds: null,
-        },
-        {
-          id: 2,
-          format: 'm4b',
-          role: 'content',
-          sizeBytes: 1,
-          absolutePath: '/a.m4b',
-          createdAt: '2026-01-01',
-          filename: 'a.m4b',
-          durationSeconds: null,
-        },
-      ],
-    })
-    expect(mockState.loadForBook).not.toHaveBeenCalled()
-  })
-
-  it('carries a modality-specific alignment hint on the trigger title, before any popover open', () => {
-    const textOnly = mountControl()
-    expect(textOnly.find('button').attributes('title')).toContain('Link an audiobook')
-
-    const audioOnly = mountControl({
-      files: [
-        {
-          id: 1,
-          format: 'm4b',
-          role: 'content',
-          sizeBytes: 1,
-          absolutePath: '/a.m4b',
-          createdAt: '2026-01-01',
-          filename: 'a.m4b',
-          durationSeconds: null,
-        },
-      ],
-    })
-    expect(audioOnly.find('button').attributes('title')).toContain('Link an ebook')
-  })
-
-  it('switches the trigger title to a manage message once linked', () => {
+  it.each([
+    ['none', 'none', 'text-primary', 'Manage the linked edition.'],
+    ['building', 'none', 'text-info', 'Linked - building position sync...'],
+    ['ready', 'none', 'text-success', 'Linked - position sync ready.'],
+    ['failed', 'none', 'text-destructive', 'Linked - position sync failed. Rebuild it from this panel.'],
+    ['ready', 'building', 'text-info', 'Linked - building the read-along...'],
+    ['ready', 'failed', 'text-destructive', 'Linked - read-along build failed.'],
+  ] as const)('narrates alignment %s and read-along %s on the trigger', (alignment, readAlong, tint, title) => {
     mockState.link.value = editionLinkRecord
+    mockAlignment.status.value = alignment
+    mockReadAlong.status.value = readAlong
     const wrapper = mountControl()
-    expect(wrapper.find('button').attributes('title')).toContain('Manage the linked edition')
+
+    expect(wrapper.find('button').find('svg').classes()).toContain(tint)
+    expect(wrapper.find('button').attributes('title')).toBe(title)
   })
 
-  it('marks the suggested counterpart title with a format icon: audiobook for a text-only book, ebook for an audio-only book', async () => {
-    mockState.loadForBook.mockImplementation(async () => {
-      mockState.proposed.value = { bookId: 99, title: 'Proposed Audiobook', authorName: null, score: 82 }
-    })
+  it('leaves the trigger icon neutral without a link', () => {
+    const wrapper = mountControl()
 
-    const textOnly = mountControl()
-    await openPopover(textOnly)
-    expect(textOnly.find('[data-testid="edition-link-counterpart-format"]').attributes('aria-label')).toBe('Audiobook')
-
-    const audioOnly = mountControl({
-      files: [
-        {
-          id: 1,
-          format: 'm4b',
-          role: 'content',
-          sizeBytes: 1,
-          absolutePath: '/a.m4b',
-          createdAt: '2026-01-01',
-          filename: 'a.m4b',
-          durationSeconds: null,
-        },
-      ],
-    })
-    await openPopover(audioOnly)
-    expect(audioOnly.find('[data-testid="edition-link-counterpart-format"]').attributes('aria-label')).toBe('Ebook')
+    expect(wrapper.find('button').find('svg').classes()).not.toContain('text-primary')
   })
 
-  it('tints the trigger icon with the primary token once a link exists, and leaves it neutral otherwise', () => {
-    const unlinked = mountControl()
-    expect(unlinked.find('button').find('svg').classes()).not.toContain('text-primary')
-
-    mockState.link.value = editionLinkRecord
-    const linked = mountControl()
-    expect(linked.find('button').find('svg').classes()).toContain('text-primary')
-  })
-
-  it('shows the proposed match and links through on confirm, with search collapsed by default', async () => {
-    mockState.loadForBook.mockImplementation(async () => {
-      mockState.proposed.value = { bookId: 99, title: 'Proposed Audiobook', authorName: 'Some Narrator', score: 82 }
-    })
-
+  it('opens the panel, reloads the link and searches straight away when nothing was proposed', async () => {
     const wrapper = mountControl()
     await openPopover(wrapper)
 
-    expect(wrapper.text()).toContain('Proposed Audiobook')
-    expect(wrapper.text()).toContain('Some Narrator')
-    expect(wrapper.find('[data-testid="edition-link-search"]').exists()).toBe(false)
-
-    const linkButton = wrapper.find('[data-testid="edition-link-proposed"]').find('button')
-    await linkButton.trigger('click')
-    await flushPromises()
-
-    expect(mockState.linkBook).toHaveBeenCalledWith(99)
-    expect(toastMocks.success).toHaveBeenCalled()
-  })
-
-  it('expands the search section on toggle and links a selected candidate', async () => {
-    mockState.loadForBook.mockImplementation(async () => {
-      mockState.proposed.value = { bookId: 99, title: 'Proposed Audiobook', authorName: null, score: 60 }
-    })
-    mockState.searchCandidates.mockImplementation(async () => {
-      mockState.candidates.value = [{ bookId: 55, title: 'Manual Match', authorName: 'Author X', score: 70 }]
-      return mockState.candidates.value
-    })
-
-    const wrapper = mountControl()
-    await openPopover(wrapper)
-    expect(wrapper.find('[data-testid="edition-link-search"]').exists()).toBe(false)
-
-    const toggle = wrapper.findAll('button').find((b) => b.text().includes('Search for a match'))!
-    await toggle.trigger('click')
-    await flushPromises()
-
+    expect(wrapper.find('[data-testid="link-edition-panel"]').exists()).toBe(true)
+    expect(mockState.resetSearch).toHaveBeenCalled()
     expect(mockState.searchCandidates).toHaveBeenCalledWith('')
-    expect(wrapper.text()).toContain('Manual Match')
-
-    const candidateButton = wrapper.findAll('button').find((b) => b.text().includes('Manual Match'))!
-    await candidateButton.trigger('click')
-    await flushPromises()
-
-    expect(mockState.linkBook).toHaveBeenCalledWith(55)
+    expect(fetchLibraries).toHaveBeenCalled()
   })
 
-  it('shows a search error message instead of the empty-results state when the search fails', async () => {
-    mockState.loadForBook.mockImplementation(async () => {
-      mockState.proposed.value = null
-    })
-    mockState.searchCandidates.mockImplementation(async () => {
-      mockState.searchError.value = 'Failed to search for a matching book'
-      return []
-    })
-
+  it('looks up an importable Storyteller book when a linked pair has no read-along yet', async () => {
+    linkWithMembers()
     const wrapper = mountControl()
     await openPopover(wrapper)
 
-    expect(wrapper.find('[data-testid="edition-link-search-error"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="edition-link-search-error"]').text()).toContain("Couldn't search")
-    expect(wrapper.text()).not.toContain('No matches found.')
+    expect(mockReadAlong.fetchExisting).toHaveBeenCalledWith(10)
   })
 
-  it('kicks off the alignment build right after a successful link', async () => {
-    mockState.loadForBook.mockImplementation(async () => {
-      mockState.proposed.value = { bookId: 99, title: 'Proposed Audiobook', authorName: 'Some Narrator', score: 82 }
-    })
-
+  it('does not look up Storyteller books once the read-along exists', async () => {
+    linkWithMembers(makeMembers({ readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, progress: null, narrationPercentage: null } }))
     const wrapper = mountControl()
     await openPopover(wrapper)
 
-    const linkButton = wrapper.find('[data-testid="edition-link-proposed"]').find('button')
-    await linkButton.trigger('click')
-    await flushPromises()
-
-    expect(mockState.linkBook).toHaveBeenCalledWith(99)
-    expect(mockAlignment.build).toHaveBeenCalledWith(10)
+    expect(mockReadAlong.fetchExisting).not.toHaveBeenCalled()
   })
 
-  it('tints the icon blue while the alignment is processing and green once aligned', () => {
-    mockState.link.value = editionLinkRecord
+  it('reloads the link once a read-along build finishes, so the new member shows', () => {
+    mountControl()
+    const handler = mockReadAlong.onReady.mock.calls[0]?.[0]
+    mockState.loadForBook.mockClear()
 
-    mockAlignment.status.value = 'building'
-    const processing = mountControl()
-    expect(processing.find('button').find('svg').classes()).toContain('text-sky-500')
-    expect(processing.find('button').attributes('title')).toContain('aligning positions')
+    handler?.()
 
-    mockAlignment = createAlignmentState()
-    mockAlignment.status.value = 'ready'
-    mockState.link.value = editionLinkRecord
-    const aligned = mountControl()
-    expect(aligned.find('button').find('svg').classes()).toContain('text-emerald-500')
-    expect(aligned.find('button').attributes('title')).toContain('positions aligned')
-
-    mockAlignment = createAlignmentState()
-    mockAlignment.status.value = 'failed'
-    mockState.link.value = editionLinkRecord
-    const failed = mountControl()
-    expect(failed.find('button').find('svg').classes()).toContain('text-destructive')
-    expect(failed.find('button').attributes('title')).toContain('alignment failed')
-  })
-
-  it('counts a building read-along as busy and a failed one as a failure on the trigger', () => {
-    mockState.link.value = editionLinkRecord
-    mockAlignment.status.value = 'ready'
-    mockReadAlong.status.value = 'building'
-    const building = mountControl()
-    expect(building.find('button').find('svg').classes()).toContain('text-sky-500')
-    expect(building.find('button').attributes('title')).toContain('building the read-along')
-
-    mockReadAlong = createReadAlongState()
-    mockReadAlong.status.value = 'failed'
-    mockAlignment = createAlignmentState()
-    mockAlignment.status.value = 'ready'
-    mockState.link.value = editionLinkRecord
-    const failed = mountControl()
-    expect(failed.find('button').find('svg').classes()).toContain('text-destructive')
-    expect(failed.find('button').attributes('title')).toContain('read-along build failed')
-  })
-
-  describe('linked members', () => {
-    it('shows all three rows with their reading progress and marks the book being viewed', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers(
-          makeMembers({
-            readAlong: {
-              id: 30,
-              title: 'Dune (read-along)',
-              authorName: 'Frank Herbert',
-              progress: { percentage: 55, updatedAt: '2026-09-03' },
-              narrationPercentage: 61,
-            },
-          }),
-        )
-        mockReadAlong.status.value = 'ready'
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      const textRow = wrapper.find('[data-testid="edition-link-member-text"]')
-      expect(textRow.text()).toContain('Test Book')
-      expect(textRow.text()).toContain('40% read')
-      expect(textRow.find('[data-testid="edition-link-this-book"]').exists()).toBe(true)
-
-      const audioRow = wrapper.find('[data-testid="edition-link-member-audio"]')
-      expect(audioRow.text()).toContain('Linked Audiobook')
-      expect(audioRow.text()).toContain('12% listened')
-      expect(audioRow.find('[data-testid="edition-link-this-book"]').exists()).toBe(false)
-
-      const readAlongRow = wrapper.find('[data-testid="read-along-row"]')
-      expect(readAlongRow.text()).toContain('Dune (read-along)')
-      expect(readAlongRow.text()).toContain('55% read')
-      expect(readAlongRow.text()).toContain('61% listened')
-
-      expect(wrapper.find('[data-testid="edition-link-alignment-status"]').exists()).toBe(true)
-    })
-
-    it('unlinks through the unlink action and notes that the read-along book stays', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers(
-          makeMembers({
-            readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, progress: null, narrationPercentage: null },
-          }),
-        )
-        mockReadAlong.status.value = 'ready'
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(wrapper.text()).toContain('Unlinking keeps the read-along book in its library.')
-
-      await wrapper.find('[data-testid="edition-link-unlink"]').trigger('click')
-      await flushPromises()
-
-      expect(mockState.unlink).toHaveBeenCalledWith()
-      expect(toastMocks.success).toHaveBeenCalled()
-    })
-
-    it('generates, rebuilds and imports a read-along through the row', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers()
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      await wrapper.find('[data-testid="read-along-generate"]').trigger('click')
-      await flushPromises()
-      expect(mockReadAlong.build).toHaveBeenCalledWith(10, {})
-
-      mockReadAlong.existingMatches.value = [{ uuid: 'uuid-1', title: 'Forward the Foundation', authors: ['Isaac Asimov'], aligned: true, score: 94 }]
-      await flushPromises()
-      await wrapper.find('[data-testid="read-along-import"]').trigger('click')
-      await flushPromises()
-      expect(mockReadAlong.build).toHaveBeenCalledWith(10, { useExistingUuid: 'uuid-1' })
-
-      mockState.members.value = makeMembers({
-        readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, progress: null, narrationPercentage: null },
-      })
-      mockReadAlong.status.value = 'ready'
-      await flushPromises()
-      await wrapper.find('[data-testid="read-along-rebuild"]').trigger('click')
-      await confirmRebuild(wrapper)
-      await flushPromises()
-      expect(mockReadAlong.build).toHaveBeenCalledWith(10, { force: true })
-    })
-
-    it('hands the keep-copy choice to the composable so the build can override the instance setting', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers()
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      await wrapper.get('[data-testid="read-along-keep-copy"]').trigger('click')
-
-      expect(mockReadAlong.setKeepRemoteCopy).toHaveBeenCalledWith(false)
-    })
-
-    it('shows a refused rebuild on the ready row instead of leaving the click silent', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers(
-          makeMembers({
-            readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, progress: null, narrationPercentage: null },
-          }),
-        )
-        mockReadAlong.status.value = 'ready'
-      })
-
-      // What the server answers a rebuild with when the user cannot replace the previous output.
-      mockReadAlong.build.mockImplementation(async () => {
-        mockReadAlong.blocked.value = 'previous_output_not_deletable'
-        return 'blocked'
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      await wrapper.find('[data-testid="read-along-rebuild"]').trigger('click')
-      await confirmRebuild(wrapper)
-      await flushPromises()
-
-      expect(mockReadAlong.build).toHaveBeenCalledWith(10, { force: true })
-      expect(wrapper.find('[data-testid="read-along-blocked"]').text()).toContain('permission to delete books')
-      expect(wrapper.find('[data-testid="read-along-rebuild"]').attributes('disabled')).toBeDefined()
-      expect(toastMocks.error).not.toHaveBeenCalled()
-    })
-
-    it('shows how the files reach Storyteller while the build runs', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers()
-        mockReadAlong.status.value = 'building'
-        mockReadAlong.phase.value = 'process'
-        mockReadAlong.transport.value = 'shared-paths'
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(wrapper.find('[data-testid="read-along-destination"]').attributes('aria-label')).toContain('reading the files where they are')
-    })
-
-    it('says the read-along exists rather than offering to build it again when its book is masked', async () => {
-      // The server keeps a ready build whose output the caller cannot open, and sends no output book
-      // with it. Pressing Generate there is rejected with a Forbidden the user cannot act on.
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers(makeMembers({ readAlong: null }))
-        mockReadAlong.status.value = 'ready'
-        mockReadAlong.outputBook.value = null
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(wrapper.find('[data-testid="read-along-out-of-reach"]').exists()).toBe(true)
-      expect(wrapper.find('[data-testid="read-along-generate"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="read-along-rebuild"]').exists()).toBe(false)
-    })
-
-    it('keeps the ready row while the finished build waits for the link to list its book', async () => {
-      // The status read lands before the reloaded members do, so the row has an output book but no
-      // member yet. That window must not read as "no read-along", nor as one out of reach.
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers(makeMembers({ readAlong: null }))
-        mockReadAlong.status.value = 'ready'
-        mockReadAlong.outputBook.value = { id: 30, title: 'Dune (read-along)' }
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(wrapper.find('[data-testid="read-along-ready-pending"]').exists()).toBe(true)
-      expect(wrapper.find('[data-testid="read-along-out-of-reach"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="read-along-generate"]').exists()).toBe(false)
-    })
-
-    it('narrates a build that was accepted without starting anything', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers()
-      })
-      // An unforced build of a pair that already has a read-along answers 'ready' and starts no job.
-      mockReadAlong.build.mockResolvedValue('ready')
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      await wrapper.find('[data-testid="read-along-generate"]').trigger('click')
-      await flushPromises()
-
-      expect(toastMocks.info).toHaveBeenCalledWith('This pair already has a read-along, so nothing was rebuilt.')
-      expect(toastMocks.error).not.toHaveBeenCalled()
-    })
-
-    it('reports a build request that the server refused', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers()
-      })
-      mockReadAlong.build.mockResolvedValue('failed')
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      await wrapper.find('[data-testid="read-along-generate"]').trigger('click')
-      await flushPromises()
-
-      expect(toastMocks.error).toHaveBeenCalledWith('Failed to start the read-along build.')
-    })
-
-    it('looks up existing Storyteller matches when a linked pair has no read-along yet', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers()
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(mockReadAlong.fetchStatus).toHaveBeenCalledWith(10)
-      expect(mockReadAlong.fetchExisting).toHaveBeenCalledWith(10)
-    })
-
-    it('does not look up existing matches once the read-along member exists', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers(
-          makeMembers({
-            readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, progress: null, narrationPercentage: null },
-          }),
-        )
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(mockReadAlong.fetchExisting).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('on the read-along book page', () => {
-    it('shows a read-only membership view with no link, unlink or search actions', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        mockState.link.value = { ...editionLinkRecord, readAlongBookId: 30 }
-        mockState.role.value = 'readAlong'
-        mockState.members.value = makeMembers({
-          readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, progress: null, narrationPercentage: null },
-        })
-      })
-
-      const wrapper = mountControl({ id: 30 })
-      await openPopover(wrapper)
-
-      expect(wrapper.text()).toContain('Generated read-along of')
-      expect(wrapper.find('[data-testid="edition-link-member-text"]').exists()).toBe(true)
-      expect(wrapper.find('[data-testid="edition-link-member-audio"]').exists()).toBe(true)
-      expect(wrapper.find('[data-testid="read-along-row"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="edition-link-unlink"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="edition-link-search"]').exists()).toBe(false)
-    })
-  })
-
-  describe('generate-on-link tick box', () => {
-    beforeEach(() => {
-      mockState.loadForBook.mockImplementation(async () => {
-        mockState.proposed.value = { bookId: 99, title: 'Proposed Audiobook', authorName: null, score: 82 }
-      })
-      mockReadAlong.targetLibraryId.value = 4
-      libraryList.value = [makeLibrary(4, 'Read-alongs'), makeLibrary(5, 'Audiobooks')]
-    })
-
-    // The server can only answer for the configured library. Once the user picks another, that
-    // answer is about a destination this build will not use, so the choice comes back.
-    it('offers the keep-copy choice again when the destination is overridden', async () => {
-      mockReadAlong.remoteCopyReclaimable.value = false
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-      await wrapper.get('[data-testid="read-along-on-link-checkbox"]').trigger('click')
-      expect(wrapper.find('[data-testid="read-along-on-link-keep-copy"]').exists()).toBe(false)
-
-      await wrapper.get('#read-along-target-library').setValue('5')
-
-      expect(wrapper.find('[data-testid="read-along-on-link-keep-copy-moot"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="read-along-on-link-keep-copy"]').exists()).toBe(true)
-    })
-
-    it('says why there is no keep-copy choice when Storyteller holds no copy of its own', async () => {
-      mockReadAlong.remoteCopyReclaimable.value = false
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-      await wrapper.get('[data-testid="read-along-on-link-checkbox"]').trigger('click')
-
-      expect(wrapper.find('[data-testid="read-along-on-link-keep-copy"]').exists()).toBe(false)
-      expect(wrapper.get('[data-testid="read-along-on-link-keep-copy-moot"]').text()).toContain('keeps no copy to remove')
-    })
-
-    // The tick box creates the first read-along for most pairs, so the per-book choice has to be on
-    // this path too: without it that build can only take the instance default, which is delete.
-    it('offers the per-book keep-copy choice beside the tick box', async () => {
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-      await wrapper.get('[data-testid="read-along-on-link-checkbox"]').trigger('click')
-
-      // The shared mock starts from an instance default of "keep", so the change under test is the
-      // user turning it off on this one book.
-      const keep = wrapper.get('[data-testid="read-along-on-link-keep-copy"]')
-      expect(keep.attributes('aria-checked')).toBe('true')
-
-      await keep.trigger('click')
-      expect(mockReadAlong.setKeepRemoteCopy).toHaveBeenCalledWith(false)
-
-      expect(wrapper.get('[data-testid="read-along-on-link-keep-copy-hint"]').attributes('aria-label')).toContain('never deleted')
-    })
-
-    it('stays unticked by default and builds only the alignment on link', async () => {
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      const checkbox = wrapper.find('[data-testid="read-along-on-link-checkbox"]')
-      expect(checkbox.attributes('aria-checked')).toBe('false')
-      expect(wrapper.find('[data-testid="read-along-on-link-options"]').exists()).toBe(false)
-
-      await wrapper.find('[data-testid="edition-link-proposed"]').find('button').trigger('click')
-      await flushPromises()
-
-      expect(mockAlignment.build).toHaveBeenCalledWith(10)
-      expect(mockReadAlong.build).not.toHaveBeenCalled()
-    })
-
-    // The select shows the configured library so the destination is visible, but an untouched select
-    // is not a choice. The server reads any present targetLibraryId as "the caller picked a
-    // destination" and discards the configured target folder, so the build would land in the
-    // library's lowest-id folder instead of the one the admin configured - the same place the
-    // Generate button on the row (which sends {}) would never send it.
-    it('names no library when the select was never touched, so the configured folder survives', async () => {
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-      expect(fetchLibraries).toHaveBeenCalled()
-
-      await wrapper.find('[data-testid="read-along-on-link-checkbox"]').trigger('click')
-      expect(wrapper.find('[data-testid="read-along-on-link-options"]').exists()).toBe(true)
-      expect(wrapper.find('[data-testid="read-along-on-link-options"]').text()).toContain('Read-alongs')
-
-      await wrapper.find('[data-testid="edition-link-proposed"]').find('button').trigger('click')
-      await flushPromises()
-
-      expect(mockState.linkBook).toHaveBeenCalledWith(99)
-      expect(mockAlignment.build).toHaveBeenCalledWith(10)
-      expect(mockReadAlong.build).toHaveBeenCalledWith(10, {})
-    })
-
-    it('still names the configured library when the user picks it deliberately', async () => {
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      await wrapper.find('[data-testid="read-along-on-link-checkbox"]').trigger('click')
-      await wrapper.find('select').setValue('5')
-      await wrapper.find('select').setValue('4')
-
-      await wrapper.find('[data-testid="edition-link-proposed"]').find('button').trigger('click')
-      await flushPromises()
-
-      expect(mockReadAlong.build).toHaveBeenCalledWith(10, { targetLibraryId: 4 })
-    })
-
-    it('sends the library the user picked instead of the default', async () => {
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      await wrapper.find('[data-testid="read-along-on-link-checkbox"]').trigger('click')
-      await wrapper.find('select').setValue('5')
-
-      await wrapper.find('[data-testid="edition-link-proposed"]').find('button').trigger('click')
-      await flushPromises()
-
-      expect(mockReadAlong.build).toHaveBeenCalledWith(10, { targetLibraryId: 5 })
-    })
-
-    it('starts unticked on the next book, so an expensive build is never carried over', async () => {
-      const first = mountControl()
-      await openPopover(first)
-      await first.find('[data-testid="read-along-on-link-checkbox"]').trigger('click')
-      expect(first.find('[data-testid="read-along-on-link-checkbox"]').attributes('aria-checked')).toBe('true')
-
-      const next = mountControl({ id: 11 })
-      await openPopover(next)
-
-      expect(next.find('[data-testid="read-along-on-link-checkbox"]').attributes('aria-checked')).toBe('false')
-    })
-
-    it('only offers destinations the build endpoint would accept', async () => {
-      libraryList.value = [
-        makeLibrary(4, 'Read-alongs', { allowedFormats: ['epub'] }),
-        makeLibrary(5, 'Audiobooks', { allowedFormats: ['m4b'] }),
-        makeLibrary(6, 'Podcasts', { type: 'podcasts' }),
-        makeLibrary(7, 'Anything'),
-      ]
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-      await wrapper.find('[data-testid="read-along-on-link-checkbox"]').trigger('click')
-
-      const options = wrapper.findAll('select option').map((option) => option.text())
-      expect(options).toContain('Read-alongs')
-      expect(options).toContain('Anything')
-      expect(options).not.toContain('Audiobooks')
-      expect(options).not.toContain('Podcasts')
-    })
-
-    it('offers a library the API described without a format list, instead of blanking the popover', async () => {
-      libraryList.value = [makeLibraryWithoutAllowedFormats(8, 'Everything'), makeLibrary(4, 'Read-alongs', { allowedFormats: ['epub'] })]
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-      await wrapper.find('[data-testid="read-along-on-link-checkbox"]').trigger('click')
-
-      const options = wrapper.findAll('select option').map((option) => option.text())
-      expect(options).toContain('Everything')
-      expect(options).toContain('Read-alongs')
-    })
-
-    it('stays tickable for the no_pair state an unlinked book actually reports', async () => {
-      // An unlinked book has no pair, which is exactly what ticking the box is about to create, so
-      // this is the one block reason that must not disable it.
-      mockReadAlong.blocked.value = 'no_pair'
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(wrapper.find('[data-testid="read-along-on-link-checkbox"]').attributes('disabled')).toBeUndefined()
-      expect(wrapper.find('[data-testid="read-along-on-link-hint"]').text()).toContain('Storyteller aligns the pair')
-    })
-
-    it.each([
-      ['not_configured', "isn't configured"],
-      ['unreachable', "can't be reached"],
-      ['no_target_library', 'Pick a read-along library'],
-      ['target_not_allowed', "don't have access"],
-      ['format_not_allowed', "doesn't allow EPUB"],
-    ] as const)('disables the box with the reason when Storyteller reports %s', async (blocked, expected) => {
-      mockReadAlong.blocked.value = blocked
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(wrapper.find('[data-testid="read-along-on-link-checkbox"]').attributes('disabled')).toBeDefined()
-      expect(wrapper.find('[data-testid="read-along-on-link-hint"]').text()).toContain(expected)
-    })
-
-    it('never builds a read-along on link once the box has been disabled behind the tick', async () => {
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-      await wrapper.find('[data-testid="read-along-on-link-checkbox"]').trigger('click')
-
-      mockReadAlong.blocked.value = 'not_configured'
-      await flushPromises()
-
-      await wrapper.find('[data-testid="edition-link-proposed"]').find('button').trigger('click')
-      await flushPromises()
-
-      expect(mockState.linkBook).toHaveBeenCalledWith(99)
-      expect(mockReadAlong.build).not.toHaveBeenCalled()
-    })
-
-    it('keeps the box tickable while Storyteller is merely busy', async () => {
-      mockReadAlong.blocked.value = 'busy'
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(wrapper.find('[data-testid="read-along-on-link-checkbox"]').attributes('disabled')).toBeUndefined()
-    })
-
-    it('replaces the tick box with guidance until there is something to link with', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        mockState.proposed.value = null
-        mockState.candidates.value = []
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      // Generating a read-along needs a pair, so the option cannot be taken yet.
-      expect(wrapper.find('[data-testid="read-along-on-link"]').exists()).toBe(false)
-      const hint = wrapper.find('[data-testid="read-along-needs-counterpart"]')
-      expect(hint.exists()).toBe(true)
-      expect(hint.text()).toContain('audiobook')
-    })
-
-    it('offers the tick box once a match is proposed', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        mockState.proposed.value = { bookId: 99, title: 'Proposed Audiobook', authorName: 'Some Narrator', score: 82 }
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(wrapper.find('[data-testid="read-along-on-link"]').exists()).toBe(true)
-      expect(wrapper.find('[data-testid="read-along-needs-counterpart"]').exists()).toBe(false)
-    })
-
-    it('hides the tick box entirely without the upload permission', async () => {
-      permissionMocks.hasPermission.mockImplementation((name) => name !== 'library_upload')
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(wrapper.find('[data-testid="read-along-on-link"]').exists()).toBe(false)
-      expect(mockReadAlong.fetchStatus).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('without library_edit_metadata permission', () => {
-    beforeEach(() => {
-      permissionMocks.hasPermission.mockReturnValue(false)
-    })
-
-    it('shows the linked members but hides the unlink button', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        linkWithMembers()
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(wrapper.find('[data-testid="edition-link-linked"]').exists()).toBe(true)
-      expect(wrapper.text()).toContain('Linked Audiobook')
-      expect(wrapper.find('[data-testid="edition-link-unlink"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="read-along-none"]').text()).toContain('No read-along yet')
-    })
-
-    it('shows the suggested match but hides the confirm-link button and search section', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        mockState.proposed.value = { bookId: 99, title: 'Proposed Audiobook', authorName: 'Some Narrator', score: 82 }
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(wrapper.find('[data-testid="edition-link-proposed"]').exists()).toBe(true)
-      expect(wrapper.text()).toContain('Proposed Audiobook')
-      expect(wrapper.find('[data-testid="edition-link-proposed"]').find('button').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="edition-link-search"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="read-along-on-link"]').exists()).toBe(false)
-      expect(mockState.searchCandidates).not.toHaveBeenCalled()
-    })
-
-    it('does not auto-open search for an unlinked, unmatched book', async () => {
-      mockState.loadForBook.mockImplementation(async () => {
-        mockState.link.value = null
-        mockState.proposed.value = null
-      })
-
-      const wrapper = mountControl()
-      await openPopover(wrapper)
-
-      expect(wrapper.find('[data-testid="edition-link-no-match"]').exists()).toBe(true)
-      expect(wrapper.text()).not.toContain('Search for a match')
-      expect(mockState.searchCandidates).not.toHaveBeenCalled()
-    })
+    expect(mockState.loadForBook).toHaveBeenCalled()
   })
 })
