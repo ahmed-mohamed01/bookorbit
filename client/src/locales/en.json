@@ -17,7 +17,14 @@
     "no": "No",
     "show": "Show",
     "hide": "Hide",
-    "undo": "Undo"
+    "undo": "Undo",
+    "pagination": {
+      "label": "Pagination",
+      "pageOf": "Page {page} of {totalPages}",
+      "previousPage": "Previous page",
+      "nextPage": "Next page",
+      "goToPage": "Go to page {page}"
+    }
   },
   "settings": {
     "privacySharing": {
