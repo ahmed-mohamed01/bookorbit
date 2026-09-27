@@ -8,6 +8,9 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  OnApplicationBootstrap,
+  OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 
 import type {
@@ -28,10 +31,14 @@ import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { BookService } from '../book/book.service';
 import { EditionLinkRepository } from '../edition-link/edition-link.repository';
 import { LibraryService } from '../library/library.service';
+import { UserService } from '../user/user.service';
 import type { BuildReadAlongDto } from './dto';
 import { describeError } from './storyteller-log.utils';
 import { matchExistingBooks } from './storyteller-match.utils';
-import { StorytellerReadAlongBuildService } from './storyteller-read-along-build.service';
+import { StorytellerReadAlongBuildService, type StorytellerBuildSlot, type StorytellerRunBuildOptions } from './storyteller-read-along-build.service';
+import { StorytellerReadAlongNotifierService, readAlongAttempt } from './storyteller-read-along-notifier.service';
+import { StorytellerSchemaBootstrapService } from './storyteller-schema-bootstrap.service';
+import type { StorytellerReadAlongBuild } from './schema/storyteller.schema';
 import { StorytellerClientService } from './storyteller-client.service';
 import type { StorytellerConnection } from './storyteller-client.types';
 import { StorytellerRepository, type StorytellerBookIdentity } from './storyteller.repository';
@@ -42,17 +49,51 @@ const EXISTING_EVENT = 'storyteller.read_along.find_existing';
 const ATTACH_EVENT = 'storyteller.read_along.attach_existing';
 const CANCEL_EVENT = 'storyteller.read_along.cancel';
 const CANCEL_REMOTE_EVENT = 'storyteller.read_along.cancel_remote';
+const QUEUE_EVENT = 'storyteller.read_along.queue';
+const REQUESTER_GONE_MESSAGE = 'the user who queued this build is no longer available';
+const MAX_QUEUED_ERROR_CHARS = 2000;
 const CANCEL_TOO_LATE_MESSAGE = 'The read-along is being imported and can no longer be cancelled';
 // A cancelled build lets go of its slot once its current await returns; a Generate pressed right after
-// the cancel waits this long for that before answering busy.
+// the cancel waits this long for that before it is queued.
 const CANCELLED_RELEASE_WAIT_MS = 30_000;
 const FAILED_CHECK_TTL_MS = 10 * 60_000;
 // The matcher surfaces the best few and the UI reads the first aligned one, so a wider page buys nothing.
 const STORYTELLER_MATCH_PAGE_SIZE = 50;
 type EditionLinkRow = NonNullable<Awaited<ReturnType<EditionLinkRepository['findLinkForBook']>>>;
 
+type QueueRefusal = ReadAlongBlockReason | 'not_permitted';
+
+// Storyteller being unusable says nothing about the rows waiting on it: they stay queued for a retry.
+const TRANSIENT_QUEUE_REFUSALS: ReadonlySet<QueueRefusal> = new Set<QueueRefusal>(['unreachable', 'not_configured']);
+const QUEUE_RETRY_MS = 5 * 60_000;
+
+/** What a queued build that can no longer start records as its error, in the words the panel uses. */
+const QUEUE_REFUSAL_MESSAGES: Record<QueueRefusal, string> = {
+  not_permitted: 'you no longer have permission to build read-alongs',
+  not_configured: "Storyteller isn't configured on this server.",
+  unreachable: "The Storyteller server can't be reached.",
+  busy: 'Storyteller is busy with another read-along.',
+  no_pair: 'This book is no longer linked to the edition it was queued with.',
+  no_epub: 'This pair has no EPUB to align.',
+  source_epub_unreadable: "This book's EPUB file cannot be read, so Storyteller cannot align it.",
+  no_audio: 'This pair has no audio to align.',
+  no_target_library: 'No read-along library is configured in the Storyteller settings.',
+  target_not_allowed: 'The user who queued this build has no access to the read-along library.',
+  format_not_allowed: "The read-along library doesn't allow EPUB files.",
+  previous_output_not_deletable: 'Replacing the existing read-along needs permission to delete books.',
+};
+
+type AdmissionRow = Pick<StorytellerReadAlongBuild, 'status' | 'targetLibraryId' | 'targetFolderId' | 'outputBookId'>;
+
+interface AdmittedBuild {
+  targetLibraryId: number;
+  runTargetLibraryId: number | undefined;
+  runTargetFolderId: number | undefined;
+  previousOutputBookId: number | null;
+}
+
 function normalizeReadAlongStatus(status: string | undefined): ReadAlongStatus {
-  return status === 'building' || status === 'ready' || status === 'failed' ? status : 'none';
+  return status === 'queued' || status === 'building' || status === 'ready' || status === 'failed' ? status : 'none';
 }
 
 /** Every member null: "not known here", never zero bytes. */
@@ -69,8 +110,11 @@ export interface StorytellerReadAlongPair {
 }
 
 @Injectable()
-export class StorytellerReadAlongStatusService {
+export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(StorytellerReadAlongStatusService.name);
+  private queueRunning = false;
+  private queueRerun = false;
+  private retryTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly repo: StorytellerRepository,
@@ -80,9 +124,17 @@ export class StorytellerReadAlongStatusService {
     private readonly bookService: BookService,
     private readonly libraryService: LibraryService,
     private readonly editionLinks: EditionLinkRepository,
+    private readonly userService: UserService,
+    private readonly schemaBootstrap: StorytellerSchemaBootstrapService,
+    private readonly notifier: StorytellerReadAlongNotifierService,
   ) {}
 
   async requestBuild(bookId: number, user: RequestUser, dto: BuildReadAlongDto): Promise<ReadAlongBuildResponse> {
+    return this.requestBuildOnce(bookId, user, dto, false);
+  }
+
+  /** `retried`: the row moved under a queue insert once already, and this is the one fresh look it gets. */
+  private async requestBuildOnce(bookId: number, user: RequestUser, dto: BuildReadAlongDto, retried: boolean): Promise<ReadAlongBuildResponse> {
     const startedAt = Date.now();
     this.logger.log(`[${REQUEST_EVENT}] [start] bookId=${bookId} userId=${user.id} force=${dto.force ?? false} - read-along build requested`);
     await this.bookService.verifyBookAccess(bookId, user);
@@ -106,17 +158,130 @@ export class StorytellerReadAlongStatusService {
     const pair = await this.resolvePair(bookId);
     if (!pair || !(await this.canAccessPair(pair, bookId, user))) return this.blocked('none', 'no_pair', bookId, user.id, startedAt);
 
-    const [sourceEpub, hasAudio, existing] = await Promise.all([
+    const existing = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
+    const admission = await this.admit(bookId, pair, user, dto, settings, existing, startedAt);
+    if ('blocked' in admission) return this.blocked(existing?.status, admission.blocked, bookId, user.id, startedAt);
+    const { targetLibraryId, runTargetLibraryId, runTargetFolderId, previousOutputBookId } = admission.admitted;
+
+    const existingOutput = existing?.outputBookId ? await this.editionLinks.findBookSummary(existing.outputBookId) : null;
+    if (existing?.status === 'ready' && existingOutput && !dto.force) {
+      // Unlinking and relinking inserts a fresh link row with no read-along member, and nothing else
+      // goes looking for the build that already produced one.
+      await this.attachExistingOutput(pair, existing, existingOutput.id, user);
+      return this.blocked('ready', null, bookId, user.id, startedAt);
+    }
+    // A second Generate keeps the pair's place in line rather than sending it to the back.
+    if (existing?.status === 'queued') {
+      this.kickQueue();
+      return this.blocked('queued', null, bookId, user.id, startedAt);
+    }
+    await this.awaitCancelledBuildRelease(pair);
+    // First come, first served: with anything already waiting, a free slot belongs to the oldest
+    // queued build, which the runner is about to start.
+    const waiting = await this.repo.findOldestQueuedBuild();
+    // Held from here, not merely checked: the uuid round trip below and the claim itself are both
+    // awaits, and a second request crossing them claims the same slot and strips a row whose uuid is
+    // the only handle on a Storyteller job the first one may already have started.
+    const slot = waiting ? null : this.buildService.tryReserve(pair);
+    if (!slot) {
+      if (dto.useExistingUuid !== undefined) {
+        await this.assertOfferedUuid(pair, dto.useExistingUuid, connection, bookId, user.id, startedAt);
+      }
+      const queued = await this.enqueue(pair, user, dto, admission.admitted, existing, bookId, startedAt);
+      if (queued !== 'moved') return queued;
+      // The row changed between the read and the insert (a build finished, or another request got
+      // there first): read it again and decide afresh, once.
+      const current = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
+      if (current?.status === 'queued') {
+        this.kickQueue();
+        return this.blocked('queued', null, bookId, user.id, startedAt);
+      }
+      if (!retried) return this.requestBuildOnce(bookId, user, dto, true);
+      return this.blocked(current?.status, null, bookId, user.id, startedAt);
+    }
+
+    let handedOff = false;
+    try {
+      if (dto.useExistingUuid !== undefined) {
+        await this.assertOfferedUuid(pair, dto.useExistingUuid, connection, bookId, user.id, startedAt);
+      }
+
+      const { storytellerBookUuid, transport } = this.resumeTarget(dto, existing?.status, existing);
+      const claimed = await this.repo.startBuild({
+        textBookId: pair.textBookId,
+        audioBookId: pair.audioBookId,
+        storytellerBookUuid,
+        transport,
+        targetLibraryId,
+        // Always passed, null included: an omitted folder keeps the row's, which may belong to
+        // another library than the one this claim targets.
+        targetFolderId: runTargetFolderId ?? null,
+        requestedBy: user.id,
+      });
+      if (!claimed) {
+        // A queued row belongs to the queue runner: the pair is answered as the queued build it is.
+        const current = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
+        if (current?.status === 'queued') {
+          this.kickQueue();
+          return this.blocked('queued', null, bookId, user.id, startedAt);
+        }
+        return this.blocked(current?.status ?? existing?.status, 'busy', bookId, user.id, startedAt);
+      }
+      // Cancelled between the reservation and the claim: the aborted build would never touch this
+      // row, which would then read building until a restart and answer busy to every Generate.
+      if (slot.signal.aborted) {
+        await this.repo.retireCancelledBuild(claimed.id);
+        return this.blocked('none', 'busy', bookId, user.id, startedAt);
+      }
+
+      this.launch(
+        claimed.id,
+        pair,
+        user,
+        {
+          force: dto.force,
+          targetLibraryId: runTargetLibraryId,
+          targetFolderId: runTargetFolderId,
+          oldOutputBookId: dto.force ? previousOutputBookId : null,
+          cleanUpRemote: dto.cleanUpRemote,
+          attempt: readAlongAttempt(claimed),
+        },
+        slot,
+      );
+      // The slot is that build's from here, and releasing it again would free whatever slot the next
+      // build has since taken.
+      handedOff = true;
+    } finally {
+      if (!handedOff) slot.release();
+    }
+
+    this.logger.log(
+      `[${REQUEST_EVENT}] [end] bookId=${bookId} userId=${user.id} durationMs=${Date.now() - startedAt} status=building blocked=none - read-along build accepted`,
+    );
+    return { status: 'building', blocked: null };
+  }
+
+  /**
+   * The checks a build has to pass before it may take the slot, shared by a Generate and by the queue
+   * runner that starts a queued one later. `existing.status` is the status the resume and reuse
+   * decisions read: for a queued row that is the status it had before it was queued.
+   */
+  private async admit(
+    bookId: number,
+    pair: StorytellerReadAlongPair,
+    user: RequestUser,
+    dto: BuildReadAlongDto,
+    settings: StorytellerSettings,
+    existing: AdmissionRow | undefined,
+    startedAt: number,
+  ): Promise<{ blocked: ReadAlongBlockReason } | { admitted: AdmittedBuild }> {
+    const [sourceEpub, hasAudio] = await Promise.all([
       this.repo.findSourceEpubFile(pair.textBookId),
       this.repo.hasAudioContentFile(pair.audioBookId),
-      this.repo.findBuildByPair(pair.textBookId, pair.audioBookId),
     ]);
-    // Only once the build row is in hand, or the UI swaps a running build for "none" when a check fails.
-    if (this.hasRecentFailedCheck(settings.lastCheckedAt, settings.lastCheck?.ok)) {
-      return this.blocked(existing?.status, 'unreachable', bookId, user.id, startedAt);
-    }
-    if (!sourceEpub) return this.blocked(existing?.status, 'no_epub', bookId, user.id, startedAt);
-    if (!hasAudio) return this.blocked(existing?.status, 'no_audio', bookId, user.id, startedAt);
+    if (this.hasRecentFailedCheck(settings.lastCheckedAt, settings.lastCheck?.ok)) return { blocked: 'unreachable' };
+    if (!sourceEpub) return { blocked: 'no_epub' };
+    if (!hasAudio) return { blocked: 'no_audio' };
 
     // Checked on the click rather than on the five-second poll: it reads the archive's central
     // directory, and the answer cannot change while the file does not. A file Storyteller cannot
@@ -127,7 +292,7 @@ export class StorytellerReadAlongStatusService {
       this.logger.warn(
         `[${REQUEST_EVENT}] [fail] bookId=${bookId} userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=UnreadableSourceEpub error="${sanitizeLogValue(epubProblem)}" path="${sanitizeLogValue(sourceEpub.absolutePath)}" - source epub cannot be read as an EPUB`,
       );
-      return this.blocked(existing?.status, 'source_epub_unreadable', bookId, user.id, startedAt);
+      return { blocked: 'source_epub_unreadable' };
     }
 
     // A retry or a rebuild with no destination in the request lands where the previous attempt did,
@@ -143,26 +308,22 @@ export class StorytellerReadAlongStatusService {
     const runTargetLibraryId = reusesDestination ? (existing?.targetLibraryId ?? undefined) : dto.targetLibraryId;
     const runTargetFolderId = reusesDestination ? (existing?.targetFolderId ?? undefined) : dto.targetFolderId;
     const targetLibraryId = runTargetLibraryId ?? settings.targetLibraryId;
-    if (targetLibraryId == null) return this.blocked(existing?.status, 'no_target_library', bookId, user.id, startedAt);
+    if (targetLibraryId == null) return { blocked: 'no_target_library' };
 
-    let library: Awaited<ReturnType<LibraryService['findOne']>>;
     try {
       await this.libraryService.verifyUserAccess(user.id, targetLibraryId, user.isSuperuser);
     } catch {
-      return this.blocked(existing?.status, 'target_not_allowed', bookId, user.id, startedAt);
+      return { blocked: 'target_not_allowed' };
     }
+    let library: Awaited<ReturnType<LibraryService['findOne']>>;
     try {
       library = await this.libraryService.findOne(targetLibraryId);
     } catch (error) {
-      if (error instanceof NotFoundException) {
-        return this.blocked(existing?.status, 'target_not_allowed', bookId, user.id, startedAt);
-      }
+      if (error instanceof NotFoundException) return { blocked: 'target_not_allowed' };
       throw error;
     }
-    if (library.type === 'podcasts') return this.blocked(existing?.status, 'target_not_allowed', bookId, user.id, startedAt);
-    if (library.allowedFormats.length > 0 && !library.allowedFormats.includes('epub')) {
-      return this.blocked(existing?.status, 'format_not_allowed', bookId, user.id, startedAt);
-    }
+    if (library.type === 'podcasts') return { blocked: 'target_not_allowed' };
+    if (library.allowedFormats.length > 0 && !library.allowedFormats.includes('epub')) return { blocked: 'format_not_allowed' };
 
     // `startBuild` clears the row's output column on every claim, so after a failed rebuild the
     // edition link is the only record of the book still on disk - and reading only the row orphans
@@ -178,83 +339,298 @@ export class StorytellerReadAlongStatusService {
     // open, and a POST about the text edition must not 404 over a book it only mentions.
     if (dto.force && previousOutputBookId != null) {
       const replaceable = this.canDeleteBooks(user) && (previousOutputBookId === bookId || (await this.canAccessBook(previousOutputBookId, user)));
-      if (!replaceable) return this.blocked(existing?.status, 'previous_output_not_deletable', bookId, user.id, startedAt);
+      if (!replaceable) return { blocked: 'previous_output_not_deletable' };
     }
-    const existingOutput = existing?.outputBookId ? await this.editionLinks.findBookSummary(existing.outputBookId) : null;
-    if (existing?.status === 'ready' && existingOutput && !dto.force) {
-      // Unlinking and relinking inserts a fresh link row with no read-along member, and nothing else
-      // goes looking for the build that already produced one.
-      await this.attachExistingOutput(pair, existing, existingOutput.id, user);
-      return this.blocked('ready', null, bookId, user.id, startedAt);
-    }
-    await this.awaitCancelledBuildRelease(pair);
-    // Held from here, not merely checked: the uuid round trip below and the claim itself are both
-    // awaits, and a second request crossing them claims the same slot and strips a row whose uuid is
-    // the only handle on a Storyteller job the first one may already have started.
-    const slot = this.buildService.tryReserve(pair);
-    if (!slot) return this.blocked(existing?.status, 'busy', bookId, user.id, startedAt);
+    return { admitted: { targetLibraryId, runTargetLibraryId, runTargetFolderId, previousOutputBookId } };
+  }
 
-    let handedOff = false;
-    try {
-      if (dto.useExistingUuid !== undefined) {
-        await this.assertOfferedUuid(pair, dto.useExistingUuid, connection, bookId, user.id, startedAt);
-      }
+  /**
+   * A cancelled or failed build kept its Storyteller book for exactly this: resuming it rather than
+   * importing the same paths again, which Storyteller refuses while it still holds them. A resumed
+   * book keeps the transport that registered it: otherwise the claim clears the column and an
+   * uploaded book would be collected from a shared folder it never writes to.
+   */
+  private resumeTarget(
+    dto: BuildReadAlongDto,
+    priorStatus: string | null | undefined,
+    existing: { storytellerBookUuid: string | null; transport: string | null } | undefined,
+  ): { storytellerBookUuid: string | null; transport: string | null } {
+    const resumable = priorStatus === 'failed' || priorStatus === 'cancelled';
+    const resumeUuid = dto.useExistingUuid ?? (!dto.force && resumable ? (existing?.storytellerBookUuid ?? null) : null);
+    const transport = resumeUuid !== null && resumeUuid === existing?.storytellerBookUuid ? existing.transport : null;
+    return { storytellerBookUuid: resumeUuid, transport };
+  }
 
-      // A cancelled build kept its Storyteller book for exactly this: resuming it rather than importing
-      // the same paths again, which Storyteller refuses while it still holds them.
-      const resumable = existing?.status === 'failed' || existing?.status === 'cancelled';
-      const resumeUuid = dto.useExistingUuid ?? (!dto.force && resumable ? existing.storytellerBookUuid : null);
-      // A resumed book keeps the transport that registered it: otherwise the claim clears the column
-      // and an uploaded book would be collected from a shared folder it never writes to.
-      const resumeTransport = resumeUuid !== null && resumeUuid === existing?.storytellerBookUuid ? existing.transport : null;
-      const claimed = await this.repo.startBuild({
+  /** 'moved' when the row is no longer in the state the request read, and nothing was queued. */
+  private async enqueue(
+    pair: StorytellerReadAlongPair,
+    user: RequestUser,
+    dto: BuildReadAlongDto,
+    admitted: AdmittedBuild,
+    existing: StorytellerReadAlongBuild | undefined,
+    bookId: number,
+    startedAt: number,
+  ): Promise<ReadAlongBuildResponse | 'moved'> {
+    const queued = await this.repo.queueBuild(
+      {
         textBookId: pair.textBookId,
         audioBookId: pair.audioBookId,
-        storytellerBookUuid: resumeUuid,
-        transport: resumeTransport,
-        targetLibraryId,
-        // Always passed, null included: an omitted folder keeps the row's, which may belong to
-        // another library than the one this claim targets.
-        targetFolderId: runTargetFolderId ?? null,
-      });
-      if (!claimed) return this.blocked(existing?.status, 'busy', bookId, user.id, startedAt);
-      // Cancelled between the reservation and the claim: the aborted build would never touch this
-      // row, which would then read building until a restart and answer busy to every Generate.
-      if (slot.signal.aborted) {
-        await this.repo.retireCancelledBuild(claimed.id);
-        return this.blocked('none', 'busy', bookId, user.id, startedAt);
+        requestedBy: user.id,
+        queuedRequest: {
+          force: dto.force,
+          targetLibraryId: admitted.runTargetLibraryId,
+          targetFolderId: admitted.runTargetFolderId,
+          cleanUpRemote: dto.cleanUpRemote,
+          useExistingUuid: dto.useExistingUuid,
+          previousStatus: existing?.status ?? null,
+        },
+      },
+      existing?.status ?? null,
+    );
+    if (!queued) return 'moved';
+    const position = queued.queuedAt ? (await this.repo.countQueuedBefore(queued.queuedAt, queued.id)) + 1 : 1;
+    void this.notifier.queued(user.id, readAlongAttempt(queued), position);
+    // The slot may have come free between the reservation that failed and this insert, with the
+    // release that would have started this row already past.
+    this.kickQueue();
+    return this.blocked('queued', null, bookId, user.id, startedAt);
+  }
+
+  private launch(
+    buildId: number,
+    pair: StorytellerReadAlongPair,
+    user: RequestUser,
+    options: StorytellerRunBuildOptions,
+    slot: StorytellerBuildSlot,
+  ): void {
+    const startedAt = Date.now();
+    const running = this.buildService.runBuild(buildId, pair, user, options, slot);
+    void running.catch((error: unknown) => {
+      const { errorClass, message } = describeError(error);
+      this.logger.error(
+        `[${REQUEST_EVENT}] [fail] buildId=${buildId} userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - background read-along build failed`,
+      );
+    });
+  }
+
+  onModuleInit(): void {
+    this.buildService.onSlotReleased(() => this.kickQueue());
+  }
+
+  onModuleDestroy(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+  }
+
+  /**
+   * One pending retry at most: a queue held up by an unreachable or unconfigured Storyteller has no
+   * slot release coming to wake it, so it looks again later, and only while rows are still waiting.
+   */
+  private armQueueRetry(): void {
+    if (this.retryTimer) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.kickQueue();
+    }, QUEUE_RETRY_MS);
+    this.retryTimer.unref();
+  }
+
+  /**
+   * Queued rows survive a restart. Waits for the schema bootstrap, which fails the builds a restart
+   * interrupted and so frees their pairs, and never holds up the boot itself.
+   */
+  onApplicationBootstrap(): void {
+    void this.schemaBootstrap.ready.then(
+      () => this.kickQueue(),
+      () => undefined,
+    );
+  }
+
+  private kickQueue(): void {
+    void this.startNextQueuedBuild();
+  }
+
+  /**
+   * Starts queued builds oldest first while a slot is free. One run at a time: a release that lands
+   * while a run is in progress asks that run to look again instead of starting a second one.
+   */
+  async startNextQueuedBuild(): Promise<void> {
+    if (this.queueRunning) {
+      this.queueRerun = true;
+      return;
+    }
+    this.queueRunning = true;
+    try {
+      do {
+        this.queueRerun = false;
+        await this.drainQueue();
+      } while (this.queueRerun);
+    } catch (error) {
+      const { errorClass, message } = describeError(error);
+      this.logger.error(`[${QUEUE_EVENT}] [fail] errorClass=${errorClass} error="${sanitizeLogValue(message)}" - read-along queue run failed`);
+    } finally {
+      this.queueRunning = false;
+    }
+  }
+
+  private async drainQueue(): Promise<void> {
+    for (;;) {
+      const row = await this.repo.findOldestQueuedBuild();
+      if (!row) return;
+      // Reserved before the checks: a Generate crossing them would otherwise take the slot out of turn.
+      const slot = this.buildService.tryReserve({ textBookId: row.textBookId, audioBookId: row.audioBookId, linkId: null, role: 'text', link: null });
+      if (!slot) return;
+      const outcome = await this.startQueuedBuild(row, slot);
+      if (outcome === 'started') return;
+      if (outcome === 'deferred') {
+        this.armQueueRetry();
+        return;
+      }
+    }
+  }
+
+  /**
+   * 'started' once the build runs on the slot; 'skipped' when the row was retired or had already left
+   * the queue, and the next row may go; 'deferred' when Storyteller itself is unusable right now, which
+   * no later row would get past either, so every row stays queued for the retry.
+   */
+  private async startQueuedBuild(row: StorytellerReadAlongBuild, slot: StorytellerBuildSlot): Promise<'started' | 'skipped' | 'deferred'> {
+    const startedAt = Date.now();
+    const request = row.queuedRequest ?? {};
+    const requestedBy = row.requestedBy ?? 'none';
+    let handedOff = false;
+    try {
+      const queueDepth = await this.repo.countQueuedBuilds();
+      this.logger.log(
+        `[${QUEUE_EVENT}] [start] buildId=${row.id} requestedBy=${requestedBy} queueDepth=${queueDepth} - queued read-along build starting`,
+      );
+      const user = row.requestedBy == null ? null : await this.userService.findByIdWithPermissions(row.requestedBy).catch(() => null);
+      if (!user || !user.active) return await this.failQueued(row, null, REQUESTER_GONE_MESSAGE, startedAt, 'requester_gone');
+
+      const dto: BuildReadAlongDto = {
+        force: request.force,
+        targetLibraryId: request.targetLibraryId,
+        targetFolderId: request.targetFolderId,
+        cleanUpRemote: request.cleanUpRemote,
+        useExistingUuid: request.useExistingUuid,
+      };
+      const checked = await this.checkQueuedBuild(row, user, dto, startedAt);
+      if ('refused' in checked) {
+        if (TRANSIENT_QUEUE_REFUSALS.has(checked.refused)) {
+          this.logger.log(
+            `[${QUEUE_EVENT}] [end] buildId=${row.id} requestedBy=${requestedBy} durationMs=${Date.now() - startedAt} outcome=deferred reason=${checked.refused} - queued read-along builds wait for Storyteller`,
+          );
+          return 'deferred';
+        }
+        return await this.failQueued(row, user.id, QUEUE_REFUSAL_MESSAGES[checked.refused], startedAt, checked.refused);
+      }
+      const { pair, connection, admitted } = checked;
+
+      if (dto.useExistingUuid !== undefined) {
+        try {
+          await this.assertOfferedUuid(pair, dto.useExistingUuid, connection, row.textBookId, user.id, startedAt);
+        } catch (error) {
+          if (!(error instanceof HttpException)) throw error;
+          return await this.failQueued(row, user.id, error.message, startedAt, 'uuid_not_offered');
+        }
       }
 
-      const running = this.buildService.runBuild(
+      const { storytellerBookUuid, transport } = this.resumeTarget(dto, request.previousStatus, row);
+      const claimed = await this.repo.claimQueuedBuild(row.id, {
+        storytellerBookUuid,
+        transport,
+        targetLibraryId: admitted.targetLibraryId,
+        targetFolderId: admitted.runTargetFolderId ?? null,
+      });
+      if (!claimed) {
+        this.logger.log(
+          `[${QUEUE_EVENT}] [end] buildId=${row.id} requestedBy=${requestedBy} durationMs=${Date.now() - startedAt} outcome=gone - queued read-along build left the queue before it started`,
+        );
+        return 'skipped';
+      }
+      if (slot.signal.aborted) {
+        await this.repo.retireCancelledBuild(claimed.id);
+        return 'skipped';
+      }
+
+      this.launch(
         claimed.id,
         pair,
         user,
         {
           force: dto.force,
-          targetLibraryId: runTargetLibraryId,
-          targetFolderId: runTargetFolderId,
-          oldOutputBookId: dto.force ? previousOutputBookId : null,
+          targetLibraryId: admitted.runTargetLibraryId,
+          targetFolderId: admitted.runTargetFolderId,
+          // Read at start, not at queue time: the link's read-along may have changed while the row waited.
+          oldOutputBookId: dto.force ? admitted.previousOutputBookId : null,
           cleanUpRemote: dto.cleanUpRemote,
+          attempt: readAlongAttempt(claimed),
         },
         slot,
       );
-      // The slot is that build's from here, and releasing it again would free whatever slot the next
-      // build has since taken.
       handedOff = true;
-      void running.catch((error: unknown) => {
-        const { errorClass, message } = describeError(error);
-        this.logger.error(
-          `[${REQUEST_EVENT}] [fail] bookId=${bookId} userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - background read-along build failed`,
-        );
-      });
+      this.logger.log(
+        `[${QUEUE_EVENT}] [end] buildId=${row.id} requestedBy=${requestedBy} durationMs=${Date.now() - startedAt} outcome=started - queued read-along build started`,
+      );
+      return 'started';
+    } catch (error) {
+      const { errorClass, message } = describeError(error);
+      this.logger.error(
+        `[${QUEUE_EVENT}] [fail] buildId=${row.id} requestedBy=${requestedBy} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - queued read-along build could not be started`,
+      );
+      // Retired rather than left queued: a row that throws every time would otherwise head the queue forever.
+      const clipped = message.slice(0, MAX_QUEUED_ERROR_CHARS);
+      const outcome = await this.repo.failQueuedBuild(row.id, clipped);
+      if (outcome !== 'gone' && row.requestedBy != null) void this.notifier.failed(row.requestedBy, readAlongAttempt(row), clipped);
+      return 'skipped';
     } finally {
       if (!handedOff) slot.release();
     }
+  }
 
+  /** The same gates as a Generate, answered for the user who queued the build. */
+  private async checkQueuedBuild(
+    row: StorytellerReadAlongBuild,
+    user: RequestUser,
+    dto: BuildReadAlongDto,
+    startedAt: number,
+  ): Promise<{ refused: QueueRefusal } | { pair: StorytellerReadAlongPair; connection: StorytellerConnection; admitted: AdmittedBuild }> {
+    const bookId = row.textBookId;
+    if (!this.canRequestBuild(user)) return { refused: 'not_permitted' };
+    if (!(await this.canAccessBook(bookId, user))) return { refused: 'no_pair' };
+    const settings = await this.settingsService.getSettings();
+    let connection: StorytellerConnection | null;
+    try {
+      connection = await this.settingsService.getConnection();
+    } catch (error) {
+      if (error instanceof InternalServerErrorException) return { refused: 'not_configured' };
+      throw error;
+    }
+    if (!connection) return { refused: 'not_configured' };
+    // The pair may have been relinked while the row waited: a different counterpart is a different read-along.
+    const pair = await this.resolvePair(bookId);
+    if (!pair || pair.textBookId !== row.textBookId || pair.audioBookId !== row.audioBookId || !(await this.canAccessPair(pair, bookId, user))) {
+      return { refused: 'no_pair' };
+    }
+    const priorStatus = row.queuedRequest?.previousStatus ?? undefined;
+    const admission = await this.admit(bookId, pair, user, dto, settings, { ...row, status: priorStatus ?? 'none' }, startedAt);
+    if ('blocked' in admission) return { refused: admission.blocked };
+    return { pair, connection, admitted: admission.admitted };
+  }
+
+  private async failQueued(
+    row: StorytellerReadAlongBuild,
+    userId: number | null,
+    error: string,
+    startedAt: number,
+    reason: string,
+  ): Promise<'skipped'> {
+    const outcome = await this.repo.failQueuedBuild(row.id, error);
     this.logger.log(
-      `[${REQUEST_EVENT}] [end] bookId=${bookId} userId=${user.id} durationMs=${Date.now() - startedAt} status=building blocked=none - read-along build accepted`,
+      `[${QUEUE_EVENT}] [end] buildId=${row.id} requestedBy=${row.requestedBy ?? 'none'} durationMs=${Date.now() - startedAt} outcome=${outcome} reason=${reason} - queued read-along build could not start`,
     );
-    return { status: 'building', blocked: null };
+    if (outcome !== 'gone' && userId !== null) void this.notifier.failed(userId, readAlongAttempt(row), error);
+    return 'skipped';
   }
 
   /**
@@ -281,17 +657,32 @@ export class StorytellerReadAlongStatusService {
       // Aborted whatever the row says: a build between its slot and its claim has no building row yet,
       // and a resumed build runs while the row still reads failed.
       const inFlight = this.buildService.cancel(pair);
-      const building = build?.status === 'building';
-      if (build && building && build.storytellerBookUuid && (build.phase === 'process' || build.phase === 'wait')) {
-        await this.cancelRemoteProcessingBestEffort(build.id, build.storytellerBookUuid);
+      let retired = build;
+      let row: 'kept' | 'deleted' | 'restored' | 'unchanged' = 'unchanged';
+      if (build?.status === 'queued') {
+        // A queued row has nothing running and nothing in Storyteller to stop, unless the runner claimed
+        // it after the read above: then every queued-only statement misses and it is a building row.
+        row = await this.repo.retireQueuedBuild(build.id);
+        if (row === 'unchanged') {
+          const current = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
+          if (current?.id === build.id && current.status === 'building') {
+            retired = current;
+            row = await this.retireBuildingRow(current, pair);
+          }
+        }
+      } else if (build?.status === 'building') {
+        row = await this.retireBuildingRow(build, pair);
       }
-      // A row holding a Storyteller book is kept as cancelled rather than deleted, with the book left in
-      // Storyteller: deleting a Storyteller book removes the source files a referenced book points at,
-      // and the next Generate resumes that book instead of importing the same paths again.
-      const row = build && building ? await this.repo.retireCancelledBuild(build.id) : 'unchanged';
       this.logger.log(
-        `[${CANCEL_EVENT}] [end] bookId=${bookId} userId=${user.id} buildId=${build?.id ?? 'none'} durationMs=${Date.now() - startedAt} inFlight=${inFlight} row=${row} - read-along build cancel completed`,
+        `[${CANCEL_EVENT}] [end] bookId=${bookId} userId=${user.id} buildId=${build?.id ?? 'none'} durationMs=${Date.now() - startedAt} status=${retired?.status ?? 'none'} inFlight=${inFlight} row=${row} - read-along build cancel completed`,
       );
+      if (retired && row !== 'unchanged') {
+        const attempt = readAlongAttempt(retired);
+        const requester = retired.requestedBy ?? user.id;
+        void this.notifier.cancelled(requester, attempt);
+        if (requester !== user.id) void this.notifier.cancelled(user.id, attempt);
+      }
+      this.kickQueue();
     } catch (error) {
       if (error instanceof ConflictException) {
         this.logger.log(
@@ -305,6 +696,22 @@ export class StorytellerReadAlongStatusService {
       );
       throw error;
     }
+  }
+
+  /**
+   * A row holding a Storyteller book is kept as cancelled rather than deleted, with the book left in
+   * Storyteller: deleting a Storyteller book removes the source files a referenced book points at, and
+   * the next Generate resumes that book instead of importing the same paths again.
+   */
+  private async retireBuildingRow(build: StorytellerReadAlongBuild, pair: StorytellerReadAlongPair): Promise<'kept' | 'deleted' | 'unchanged'> {
+    // Collecting writes the read-along into a library and links it; stopping part way would strand a
+    // book nothing points at.
+    if (build.phase === 'collect' || build.phase === 'link') throw new ConflictException(CANCEL_TOO_LATE_MESSAGE);
+    this.buildService.cancel(pair);
+    if (build.storytellerBookUuid && (build.phase === 'process' || build.phase === 'wait')) {
+      await this.cancelRemoteProcessingBestEffort(build.id, build.storytellerBookUuid);
+    }
+    return this.repo.retireCancelledBuild(build.id);
   }
 
   private async cancelRemoteProcessingBestEffort(buildId: number, uuid: string): Promise<void> {
@@ -368,12 +775,18 @@ export class StorytellerReadAlongStatusService {
     // A running build renders phase, stage, transport and progress and nothing else: the sizes price
     // a choice offered only before a build, and the content probes answer a control not on screen.
     const building = build.status === 'building';
+    // A queued row renders its place in line and a Cancel, and nothing about the build it replaces.
+    const queued = build.status === 'queued';
+    const active = building || queued;
+    // A queued request keeps its destination in the request until the claim writes it to the row.
+    const rowLibraryId = queued ? (build.queuedRequest?.targetLibraryId ?? settings.targetLibraryId) : build.targetLibraryId;
     // One round trip for the tail of the response, against a 5-second poll.
-    const [summary, remoteCopyBytes, targetLibrary, contentBlock] = await Promise.all([
-      visibleOutputBookId != null ? this.editionLinks.findBookSummary(visibleOutputBookId) : Promise.resolve(null),
-      building ? Promise.resolve(unknownCopySizes()) : this.resolveCopySizes(pair, visibleOutputBookId),
-      this.resolveTargetLibrary(build.targetLibraryId, user),
-      canBuild ? this.getCheapBlockReason(pair, settings, !building) : Promise.resolve(null),
+    const [summary, remoteCopyBytes, targetLibrary, contentBlock, queuedAhead] = await Promise.all([
+      visibleOutputBookId != null && !queued ? this.editionLinks.findBookSummary(visibleOutputBookId) : Promise.resolve(null),
+      active ? Promise.resolve(unknownCopySizes()) : this.resolveCopySizes(pair, visibleOutputBookId),
+      this.resolveTargetLibrary(rowLibraryId, user),
+      canBuild ? this.getCheapBlockReason(pair, settings, !active) : Promise.resolve(null),
+      queued && build.queuedAt ? this.repo.countQueuedBefore(build.queuedAt, build.id) : Promise.resolve(null),
     ]);
     // A ready build whose output was deleted is offered again; one the reader merely cannot open
     // stays ready with the book masked, or an admin-only library would invite duplicate builds.
@@ -384,7 +797,7 @@ export class StorytellerReadAlongStatusService {
       build.status === 'cancelled' || (build.status === 'ready' && !summary && !outputHidden) ? 'none' : (build.status as ReadAlongStatus);
     const outputBook = status === 'none' ? null : summary;
     // The next Generate after a vanished output is a fresh build, which goes where the settings say.
-    const destinationLibraryId = status === 'none' ? settings.targetLibraryId : build.targetLibraryId;
+    const destinationLibraryId = status === 'none' ? settings.targetLibraryId : rowLibraryId;
     const destination = status === 'none' ? await this.resolveTargetLibrary(destinationLibraryId, user) : targetLibrary;
     const blocked = canBuild ? (contentBlock ?? this.targetBlockReason(destinationLibraryId, destination)) : null;
     // Only a caller who could build writes on a poll: an ordinary reader's status read stays a read.
@@ -392,13 +805,15 @@ export class StorytellerReadAlongStatusService {
       await this.attachExistingOutput(pair, build, summary.id, user);
     }
 
+    const describesBuild = status !== 'none' && !queued;
+
     return {
       status,
       blocked,
-      phase: status === 'none' ? null : (build.phase as ReadAlongStatusResponse['phase']),
-      transport: build.transport as ReadAlongStatusResponse['transport'],
-      remoteTask: status === 'none' ? null : build.remoteTask,
-      remoteProgress: status === 'none' ? null : build.remoteProgress,
+      phase: describesBuild ? (build.phase as ReadAlongStatusResponse['phase']) : null,
+      transport: queued ? null : (build.transport as ReadAlongStatusResponse['transport']),
+      remoteTask: describesBuild ? build.remoteTask : null,
+      remoteProgress: describesBuild ? build.remoteProgress : null,
       outputBook: outputBook ? { id: outputBook.id, title: outputBook.title } : null,
       targetLibraryId: destination.id,
       targetLibraryName: destination.name,
@@ -410,9 +825,10 @@ export class StorytellerReadAlongStatusService {
       // is ungated by design while the connection sits behind ManageAppSettings, so it is bounded by
       // the same build permission as its siblings above and by the library the build targets.
       // `status` still tells a reader without it that the build failed.
-      error: status !== 'none' && canBuild && targetLibrary.allowed ? build.error : null,
-      startedAt: build.startedAt?.toISOString() ?? null,
-      builtAt: build.builtAt?.toISOString() ?? null,
+      error: describesBuild && canBuild && targetLibrary.allowed ? build.error : null,
+      startedAt: queued ? null : (build.startedAt?.toISOString() ?? null),
+      builtAt: queued ? null : (build.builtAt?.toISOString() ?? null),
+      queuePosition: queuedAhead === null ? null : queuedAhead + 1,
     };
   }
 
@@ -755,6 +1171,7 @@ export class StorytellerReadAlongStatusService {
       error: null,
       startedAt: null,
       builtAt: null,
+      queuePosition: null,
     };
   }
 }

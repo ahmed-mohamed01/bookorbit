@@ -7,6 +7,7 @@ import { isTickBlockReason } from '@/features/book/lib/read-along-blocks'
 import { isTerminalBlock } from '@/features/book/lib/position-sync'
 import { getBookLinkModality, useEditionLink, type EditionLinkCandidate } from './useEditionLink'
 import { useReadingAlignment, type AlignmentStatus } from './useReadingAlignment'
+import { isReadAlongInFlight } from '@/features/book/lib/read-along-section'
 import { useReadAlongSection } from './useReadAlongSection'
 
 export type LinkEditionPhase = 'nomatch' | 'matched' | 'linking' | 'linked'
@@ -247,7 +248,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   })
 
   const alignmentBusy = computed(() => alignmentRunning.value)
-  const readAlongBusy = computed(() => readAlong.mutating.value || readAlong.status.value === 'building')
+  const readAlongBusy = computed(() => readAlong.mutating.value || isReadAlongInFlight(readAlong.status.value))
 
   const triggerIconClass = computed(() => {
     if (!link.value) return ''
@@ -261,6 +262,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     if (!link.value) {
       return modality.value === 'audio' ? t('book.detail.editionLink.tooltipNeedsText') : t('book.detail.editionLink.tooltipNeedsAudio')
     }
+    if (readAlong.status.value === 'queued') return t('book.detail.editionLink.tooltipReadAlongQueued')
     if (readAlongBusy.value) return t('book.detail.editionLink.tooltipReadAlongBuilding')
     if (alignmentBusy.value) return t('book.detail.editionLink.tooltipAligning')
     if (readAlong.status.value === 'failed') return t('book.detail.editionLink.tooltipReadAlongFailed')
@@ -411,7 +413,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   // then would strand the imported book or fail the build's own link write, so the link stays.
   async function cancelLinking(): Promise<void> {
     const candidate = linkedCounterpartCandidate()
-    if (readAlong.status.value === 'building' || readAlong.mutating.value) {
+    if (isReadAlongInFlight(readAlong.status.value) || readAlong.mutating.value) {
       const outcome = await readAlong.cancel(bookId)
       if (outcome === 'too_late') {
         toast.error(t('book.detail.editionLink.readAlong.cancelTooLate'))

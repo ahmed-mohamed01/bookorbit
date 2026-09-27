@@ -89,4 +89,36 @@ describe('NotificationItem', () => {
     expect(wrapper.find('button[aria-label="Dismiss notification"]').exists()).toBe(true)
     expect(wrapper.findAll('button')[0].element.tagName).toBe('BUTTON')
   })
+
+  describe('progress', () => {
+    it('renders a bar for a notification that reports progress', async () => {
+      const { wrapper } = await mountItem(
+        notification({ type: NotificationType.ReadAlongBuild, title: 'Building read-along: Dune', meta: { buildId: 7, progress: 0.42 } }),
+      )
+
+      const bar = wrapper.get('[data-testid="notification-progress"]')
+      expect(bar.attributes('aria-hidden')).toBe('true')
+      expect(bar.attributes('role')).toBeUndefined()
+      expect(bar.attributes('aria-valuenow')).toBeUndefined()
+      expect(bar.get('div').attributes('style')).toContain('width: 42%')
+    })
+
+    it('drops the bar once the operation is done', async () => {
+      const { wrapper } = await mountItem(notification({ type: NotificationType.ReadAlongBuild, meta: { buildId: 7, progress: 1, done: true } }))
+
+      expect(wrapper.find('[data-testid="notification-progress"]').exists()).toBe(false)
+    })
+
+    it('renders no bar without a numeric progress', async () => {
+      const { wrapper } = await mountItem(notification({ meta: { requestId: 42 } }))
+
+      expect(wrapper.find('[data-testid="notification-progress"]').exists()).toBe(false)
+    })
+  })
+
+  // Read-along build notifications live in the bulk rename category, so its description has to say so
+  // or a user silencing it would not know what else goes quiet.
+  it('names read-along builds in the category that carries them', () => {
+    expect(en.notifications.preferences.categories.bulkRename.description).toContain('read-along build')
+  })
 })

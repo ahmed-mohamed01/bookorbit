@@ -38,6 +38,7 @@ function statusResponse(overrides: Partial<ReadAlongStatusResponse> = {}): ReadA
     error: null,
     startedAt: null,
     builtAt: null,
+    queuePosition: null,
     ...overrides,
   }
 }
@@ -586,6 +587,72 @@ describe('useReadAlong', () => {
       expect(readAlong.phase.value).toBeNull()
       expect(readAlong.outputBook.value).toBeNull()
       expect(mocks.api).toHaveBeenCalledTimes(2)
+    })
+  })
+
+  describe('queued builds', () => {
+    it('shows Queued at once after a 202 that answers queued, then polls it through to the build and its end', async () => {
+      mocks.api.mockResolvedValueOnce(response({ status: 'queued', blocked: null }))
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'queued', queuePosition: 2 })))
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'queued', queuePosition: 1 })))
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'building', phase: 'prepare' })))
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'ready', outputBook: { id: 30, title: 'Read-along' } })))
+
+      const readAlong = useReadAlong()
+      const ready = vi.fn<(book: ReadAlongOutputBook | null) => void>()
+      readAlong.onReady(ready)
+
+      await expect(readAlong.build(10)).resolves.toBe('started')
+      expect(readAlong.status.value).toBe('queued')
+      expect(readAlong.queuePosition.value).toBe(2)
+
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(readAlong.queuePosition.value).toBe(1)
+
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(readAlong.status.value).toBe('building')
+      expect(readAlong.queuePosition.value).toBeNull()
+
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(readAlong.status.value).toBe('ready')
+      expect(ready).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(20000)
+      expect(mocks.api).toHaveBeenCalledTimes(5)
+    })
+
+    it('holds the optimistic Queued through a stale read of the row that does not exist yet', async () => {
+      mocks.api.mockResolvedValueOnce(response({ status: 'queued', blocked: null }))
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'none' })))
+
+      const readAlong = useReadAlong()
+      await readAlong.build(10)
+
+      expect(readAlong.status.value).toBe('queued')
+    })
+
+    it('keeps polling a queued build it only read, and notifies when it becomes ready', async () => {
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'queued', queuePosition: 3 })))
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'ready', outputBook: { id: 30, title: 'Read-along' } })))
+
+      const readAlong = useReadAlong()
+      const ready = vi.fn<(book: ReadAlongOutputBook | null) => void>()
+      readAlong.onReady(ready)
+      await readAlong.fetchStatus(10)
+      expect(readAlong.queuePosition.value).toBe(3)
+
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(readAlong.status.value).toBe('ready')
+      expect(ready).toHaveBeenCalledExactlyOnceWith({ id: 30, title: 'Read-along' })
+    })
+
+    it('ignores a queue position the server reports for any other status', async () => {
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'building', queuePosition: 4 })))
+
+      const readAlong = useReadAlong()
+      await readAlong.fetchStatus(10)
+
+      expect(readAlong.queuePosition.value).toBeNull()
     })
   })
 

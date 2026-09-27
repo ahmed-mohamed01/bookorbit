@@ -92,6 +92,24 @@ export function toRemotePath(localPath: string | null | undefined, mappings: rea
   return translate(localPath, toPrefixMappings(mappings, 'toRemote'));
 }
 
+/**
+ * The folder Storyteller records as a reference-imported audiobook's path: the parent of a single
+ * file, or the deepest folder holding them all. Null when they share nothing below the root, which
+ * would match every book.
+ */
+export function sharedAudioDirectory(remoteAudioPaths: readonly string[]): string | null {
+  if (remoteAudioPaths.length === 0) return null;
+  const folders = remoteAudioPaths.map((path) => posix.dirname(path.replace(/\/+$/, '')).split('/'));
+  const shared: string[] = [];
+  for (let index = 0; index < folders[0]!.length; index += 1) {
+    const segment = folders[0]![index]!;
+    if (!folders.every((segments) => segments[index] === segment)) break;
+    shared.push(segment);
+  }
+  const directory = shared.join('/').replace(/\/+$/, '');
+  return directory === '' || directory === '.' ? null : directory;
+}
+
 /** The BookOrbit path for a path the Storyteller server reported, or null when no mapping covers it. */
 export function toLocalPath(remotePath: string | null | undefined, mappings: readonly StorytellerPathMapping[] | null | undefined): string | null {
   return translate(remotePath, toPrefixMappings(mappings, 'toLocal'));

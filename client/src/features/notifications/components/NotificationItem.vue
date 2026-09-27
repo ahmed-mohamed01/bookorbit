@@ -39,6 +39,12 @@ const isFailed = computed(() => meta.value?.severity === NotificationSeverity.Er
 const isWarning = computed(() => meta.value?.severity === NotificationSeverity.Warning)
 const relativeTime = computed(() => formatRelativeTime(props.notification.updatedAt))
 const occurrences = computed(() => props.notification.count)
+// A notification that tracks a long operation carries its progress (0..1) until it is done.
+const progressPercent = computed(() => {
+  const progress = props.notification.meta?.progress
+  if (typeof progress !== 'number' || Number.isNaN(progress) || props.notification.meta?.done === true) return null
+  return Math.round(Math.min(Math.max(progress, 0), 1) * 100)
+})
 
 function handleClick() {
   if (!props.notification.read) {
@@ -101,6 +107,15 @@ function handleDismiss(e: Event) {
         <p v-if="notification.message" class="mt-1 truncate text-xs text-muted-foreground">
           {{ notification.message }}
         </p>
+        <!-- Inside a button, where a progressbar role is ignored; the message carries the percentage. -->
+        <div
+          v-if="progressPercent !== null"
+          class="mt-1.5 h-1 overflow-hidden rounded-full bg-muted"
+          aria-hidden="true"
+          data-testid="notification-progress"
+        >
+          <div class="h-full rounded-full bg-info" :style="{ width: `${progressPercent}%` }" />
+        </div>
       </div>
     </button>
 

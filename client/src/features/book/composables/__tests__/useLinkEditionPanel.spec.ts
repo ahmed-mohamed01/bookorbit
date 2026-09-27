@@ -117,6 +117,7 @@ function createReadAlongState() {
     transport: ref<StorytellerEffectiveTransport | null>(null),
     remoteTask: ref<string | null>(null),
     remoteProgress: ref<number | null>(null),
+    queuePosition: ref<number | null>(null),
     targetLibraryName: ref<string | null>(null),
     remoteCopyBytes: ref({ epub: null, audio: null, readAlong: null }),
     keepRemoteCopy: ref(true),
@@ -854,6 +855,7 @@ describe('useLinkEditionPanel', () => {
     it.each([
       ['building', 'none', 'text-info'],
       ['ready', 'building', 'text-info'],
+      ['ready', 'queued', 'text-info'],
       ['failed', 'none', 'text-destructive'],
       ['ready', 'failed', 'text-destructive'],
       ['ready', 'none', 'text-success'],
@@ -869,6 +871,14 @@ describe('useLinkEditionPanel', () => {
         expect(panel.triggerIconClass.value).toBe(expected)
       },
     )
+
+    it('names a queued read-along as queued in the tooltip, not as building', () => {
+      editionLinkState.link.value = linkRecord
+      readAlongState.status.value = 'queued'
+      const panel = mountPanel()
+
+      expect(panel.triggerTooltip.value).toBe('Linked - read-along queued.')
+    })
 
     it('leaves the icon neutral and names position sync before a link exists', () => {
       const panel = mountPanel()

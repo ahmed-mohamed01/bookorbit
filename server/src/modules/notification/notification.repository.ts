@@ -31,6 +31,7 @@ export class NotificationRepository {
         target: [notifications.userId, notifications.groupKey],
         targetWhere: sql`${notifications.read} = false and ${notifications.groupKey} is not null`,
         set: {
+          type: sql`excluded.type`,
           title: sql`excluded.title`,
           message: sql`excluded.message`,
           actionUrl: sql`excluded.action_url`,
@@ -40,6 +41,25 @@ export class NotificationRepository {
         },
       })
       .returning();
+  }
+
+  async updateLatestByGroupKey(
+    userId: number,
+    groupKey: string,
+    patch: Pick<NewNotification, 'type' | 'title' | 'message' | 'actionUrl' | 'meta'> & Pick<Partial<NewNotification>, 'read'>,
+  ): Promise<Notification | undefined> {
+    const latest = this.db
+      .select({ id: notifications.id })
+      .from(notifications)
+      .where(and(eq(notifications.userId, userId), eq(notifications.groupKey, groupKey)))
+      .orderBy(desc(notifications.id))
+      .limit(1);
+    const [row] = await this.db
+      .update(notifications)
+      .set({ ...patch, updatedAt: new Date() })
+      .where(inArray(notifications.id, latest))
+      .returning();
+    return row;
   }
 
   async findByUser(userId: number, limit: number, offset: number): Promise<{ items: Notification[]; total: number }> {

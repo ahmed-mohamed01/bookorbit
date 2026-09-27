@@ -4,9 +4,12 @@ import { ConfigModule } from '@nestjs/config';
 import { BookModule } from '../book/book.module';
 import { EditionLinkModule } from '../edition-link/edition-link.module';
 import { LibraryModule } from '../library/library.module';
+import { NotificationModule } from '../notification/notification.module';
 import { EpubModule } from '../reader/epub/epub.module';
 import { ScannerModule } from '../scanner/scanner.module';
+import { UserModule } from '../user/user.module';
 import { StorytellerReadAlongBuildService } from './storyteller-read-along-build.service';
+import { StorytellerReadAlongNotifierService } from './storyteller-read-along-notifier.service';
 import { StorytellerReadAlongStatusService } from './storyteller-read-along-status.service';
 import { StorytellerClientService } from './storyteller-client.service';
 import { storytellerConfig } from './storyteller.config';
@@ -17,7 +20,16 @@ import { StorytellerSecretService } from './storyteller-secret.service';
 import { StorytellerSettingsService } from './storyteller-settings.service';
 
 @Module({
-  imports: [ConfigModule.forFeature(storytellerConfig), EditionLinkModule, BookModule, LibraryModule, ScannerModule, EpubModule],
+  imports: [
+    ConfigModule.forFeature(storytellerConfig),
+    EditionLinkModule,
+    BookModule,
+    LibraryModule,
+    ScannerModule,
+    EpubModule,
+    UserModule,
+    NotificationModule,
+  ],
   controllers: [StorytellerController],
   providers: [
     StorytellerRepository,
@@ -25,6 +37,7 @@ import { StorytellerSettingsService } from './storyteller-settings.service';
     StorytellerSchemaBootstrapService,
     StorytellerClientService,
     StorytellerSettingsService,
+    StorytellerReadAlongNotifierService,
     StorytellerReadAlongBuildService,
     StorytellerReadAlongStatusService,
   ],

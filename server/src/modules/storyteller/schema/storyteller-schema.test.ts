@@ -138,20 +138,55 @@ describe('attached_link_id on read-along builds', () => {
   });
 });
 
-describe('cancelled read-along builds', () => {
+describe('cancelled and queued read-along builds', () => {
   const addStatement = () => statements.find((statement) => statement.includes('ADD CONSTRAINT "storyteller_read_along_builds_status_chk"'))!;
   const dropStatement = () => statements.find((statement) => statement.includes('DROP CONSTRAINT "storyteller_read_along_builds_status_chk"'))!;
+  const statusCheck = `CHECK ("status" in ('queued', 'building', 'ready', 'failed', 'cancelled'))`;
 
-  it('accepts cancelled in the status check of a fresh database, the upgrade and the drizzle table', () => {
+  it('accepts queued and cancelled in the status check of a fresh database, the upgrade and the drizzle table', () => {
     const createTable = statements.find((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "storyteller_read_along_builds"'));
 
-    expect(createTable).toContain(`CHECK ("status" in ('building', 'ready', 'failed', 'cancelled'))`);
-    expect(addStatement()).toContain(`CHECK ("status" in ('building', 'ready', 'failed', 'cancelled'))`);
+    expect(createTable).toContain(statusCheck);
+    expect(addStatement()).toContain(statusCheck);
   });
 
-  // Dropped only while it still lacks the new value, so a boot that has nothing to change does no work.
+  // Dropped only while it still lacks the newest value, which also catches a check that predates
+  // cancelled, so a boot that has nothing to change does no work.
   it('replaces an older status check idempotently, before the guarded add', () => {
-    expect(dropStatement()).toContain("pg_get_constraintdef(oid) NOT LIKE '%cancelled%'");
+    expect(dropStatement()).toContain("pg_get_constraintdef(oid) NOT LIKE '%queued%'");
+    expect(dropStatement()).toContain("conrelid = to_regclass('storyteller_read_along_builds')");
     expect(statements.indexOf(dropStatement())).toBeLessThan(statements.indexOf(addStatement()));
+  });
+});
+
+describe('queue columns on read-along builds', () => {
+  const createTable = () => statements.find((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "storyteller_read_along_builds"'))!;
+
+  it.each([
+    ['requested_by', 'integer', 'requestedBy'],
+    ['queued_at', 'timestamp with time zone', 'queuedAt'],
+    ['queued_request', 'jsonb', 'queuedRequest'],
+  ])('declares %s for a fresh database, adds it to an existing one, and in drizzle', (column, type, property) => {
+    const addColumn = statements.find((statement) => statement.includes(`ADD COLUMN IF NOT EXISTS "${column}"`));
+
+    expect(createTable()).toContain(`"${column}" ${type}`);
+    expect(addColumn).toContain(`ALTER TABLE "storyteller_read_along_builds" ADD COLUMN IF NOT EXISTS "${column}" ${type}`);
+    expect(Object.keys(storytellerReadAlongBuilds)).toContain(property);
+  });
+
+  it('references users through a guarded foreign key that nulls on delete', () => {
+    const alter = statements.find((statement) => statement.includes('ADD CONSTRAINT "storyteller_read_along_builds_requested_by_fk"'))!;
+
+    expect(alter).toContain("to_regclass('users') IS NOT NULL");
+    expect(alter).toContain("conname = 'storyteller_read_along_builds_requested_by_fk'");
+    expect(alter).toContain("conrelid = to_regclass('storyteller_read_along_builds')");
+    expect(alter).toContain('REFERENCES "public"."users"("id") ON DELETE set null');
+  });
+
+  it('indexes the queued rows by the time they were queued', () => {
+    const index = statements.find((statement) => statement.includes('"storyteller_read_along_builds_queued_at_idx"'));
+
+    expect(index).toContain('CREATE INDEX IF NOT EXISTS');
+    expect(index).toContain(`("queued_at") WHERE "status" = 'queued'`);
   });
 });

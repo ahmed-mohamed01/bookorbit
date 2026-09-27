@@ -51,6 +51,15 @@ export interface NotifyPayload {
   actionUrl?: string;
   meta?: Record<string, unknown>;
   scope: NotificationScope;
+  /** Used verbatim instead of the type's own grouping, so one caller-owned row can be updated in place. */
+  groupKey?: string;
+}
+
+export type NotificationPatch = Pick<NotifyPayload, 'type' | 'title' | 'message' | 'actionUrl' | 'meta'>;
+
+export interface UpsertByGroupKeyOptions {
+  updateOnly?: boolean;
+  markUnread?: boolean;
 }
 
 @Injectable()
@@ -123,6 +132,38 @@ export class NotificationService {
       );
       throw error;
     }
+  }
+
+  /**
+   * Rewrites the user's newest notification with this group key, read or not, or creates it through
+   * notify() when there is none. For a notification that tracks one long operation to its end.
+   *
+   * `updateOnly` never creates a row, so a notification the user dismissed stays dismissed.
+   * `markUnread` puts an outcome back in front of a user who had read the progress row. A user who
+   * turned the category off still gets a terminal patch (`meta.done`) on an existing row, so no live
+   * progress bar is left behind, but never a new row.
+   */
+  async upsertByGroupKey(userId: number, groupKey: string, patch: NotificationPatch, options: UpsertByGroupKeyOptions = {}): Promise<void> {
+    const settingsMap = await this.repo.findUserSettings([userId]);
+    const enabled = this.isEnabled(settingsMap.get(userId), patch.type);
+    const terminal = patch.meta?.done === true;
+    if (!enabled && !terminal) return;
+    const markUnread = enabled && options.markUnread === true;
+    const updated = await this.repo.updateLatestByGroupKey(userId, groupKey, {
+      type: patch.type,
+      title: patch.title,
+      message: patch.message ?? null,
+      actionUrl: patch.actionUrl ?? null,
+      meta: patch.meta ?? null,
+      ...(markUnread ? { read: false } : {}),
+    });
+    if (updated) {
+      this.gateway.emitUpdated(userId, this.toItem(updated));
+      if (markUnread) this.gateway.emitCountUpdate(userId, await this.repo.countUnread(userId));
+      return;
+    }
+    if (!enabled || options.updateOnly === true) return;
+    await this.notify({ ...patch, groupKey, scope: { kind: 'user', userId } });
   }
 
   async list(userId: number, limit: number, offset: number) {
@@ -208,6 +249,7 @@ export class NotificationService {
   }
 
   private buildGroupKey(payload: NotifyPayload): string | null {
+    if (payload.groupKey) return payload.groupKey;
     if (!COALESCED_NOTIFICATION_TYPES.has(payload.type)) return null;
 
     switch (payload.scope.kind) {

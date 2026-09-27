@@ -47,7 +47,8 @@ export interface StorytellerBookSummary {
   readaloudPath: string | null;
   /** The file behind the ebook and audiobook links, in Storyteller's own path space. */
   ebookPath: string | null;
-  audiobookPath: string | null;
+  /** Every audio file of the audiobook, in Storyteller's own path space: one per file of a multi-file book. */
+  audiobookPaths: string[];
   processing: StorytellerProcessingStatus;
 }
 

@@ -16,6 +16,7 @@ import {
   type StorytellerExistingMatchesResponse,
 } from '@bookorbit/types'
 import { api } from '@/lib/api'
+import { isReadAlongInFlight } from '@/features/book/lib/read-along-section'
 
 // Storyteller alignment runs for minutes to hours, so this polls far slower than the in-app
 // alignment sampler (3 s): the popover only has to narrate phase changes, not progress ticks.
@@ -62,6 +63,8 @@ export interface ReadAlongSectionState {
   hasOutputBook: boolean
   error: string | null
   mutating: boolean
+  /** 1-based place in the read-along queue while queued, null otherwise. */
+  queuePosition: number | null
 }
 
 /** 'started' is the only outcome that leaves a job running; the caller has to narrate the other three. */
@@ -83,6 +86,10 @@ function normalizeTransport(value: unknown): StorytellerEffectiveTransport | nul
   return TRANSPORTS.has(value as StorytellerEffectiveTransport) ? (value as StorytellerEffectiveTransport) : null
 }
 
+function normalizeQueuePosition(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null
+}
+
 function normalizeProgress(value: unknown): number | null {
   if (typeof value !== 'number' || Number.isNaN(value)) return null
   return Math.min(1, Math.max(0, value))
@@ -101,6 +108,7 @@ export function useReadAlong() {
   const transport = ref<StorytellerEffectiveTransport | null>(null)
   const remoteTask = ref<string | null>(null)
   const remoteProgress = ref<number | null>(null)
+  const queuePosition = ref<number | null>(null)
   const outputBook = ref<ReadAlongOutputBook | null>(null)
   const targetLibraryId = ref<number | null>(null)
   const targetLibraryName = ref<string | null>(null)
@@ -145,7 +153,7 @@ export function useReadAlong() {
   // fetchStatus's finally), so a slow request can never be lapped and discarded by the request-id
   // guard, which would otherwise strand the row on 'building' forever.
   function syncPolling(bookId: number): void {
-    if (status.value !== 'building') {
+    if (!isReadAlongInFlight(status.value)) {
       stopPolling()
       return
     }
@@ -178,6 +186,7 @@ export function useReadAlong() {
     transport.value = normalizeTransport(data.transport)
     remoteTask.value = data.remoteTask ?? null
     remoteProgress.value = normalizeProgress(data.remoteProgress)
+    queuePosition.value = status.value === 'queued' ? normalizeQueuePosition(data.queuePosition) : null
     outputBook.value = data.outputBook ?? null
     targetLibraryId.value = data.targetLibraryId ?? null
     targetLibraryName.value = data.targetLibraryName ?? null
@@ -189,7 +198,7 @@ export function useReadAlong() {
     error.value = data.status === 'failed' ? (data.error ?? null) : null
     // Only a build that finished in this session notifies: a page opened on an already-ready
     // read-along has nothing new to refresh.
-    if (status.value === 'ready' && previous === 'building') notifyReady()
+    if (status.value === 'ready' && isReadAlongInFlight(previous)) notifyReady()
   }
 
   function applyUnknown(): void {
@@ -199,6 +208,7 @@ export function useReadAlong() {
     transport.value = null
     remoteTask.value = null
     remoteProgress.value = null
+    queuePosition.value = null
     outputBook.value = null
     builtAt.value = null
   }
@@ -238,7 +248,7 @@ export function useReadAlong() {
   // (the row does not exist yet) or the exact terminal state the rebuild started from.
   function isStaleBuildRead(next: ReadAlongStatus, nextBuiltAt: string | null): boolean {
     if (!awaitingBuildRow) return false
-    if (next === 'building') return false
+    if (isReadAlongInFlight(next)) return false
     if (next === 'none') return true
     return next === buildBaselineStatus && nextBuiltAt === buildBaselineBuiltAt
   }
@@ -350,13 +360,14 @@ export function useReadAlong() {
       // Not every accepted request starts a job: an unforced build of a pair that already has a
       // ready read-along answers 'ready' without building. Waiting for a build row that will never
       // appear would spin for five polls and then drop back to the Generate button.
-      if (acceptedStatus !== 'building') {
+      if (!isReadAlongInFlight(acceptedStatus)) {
         status.value = acceptedStatus
         await fetchStatus(bookId)
         if (status.value === 'ready') notifyReady()
         return status.value === 'ready' ? 'ready' : 'blocked'
       }
-      status.value = 'building'
+      // A queued build shows as Queued at once, like a started one shows as Building.
+      status.value = acceptedStatus
       awaitingBuildRow = true
       awaitBuildRowPolls = 0
       buildBaselineStatus = baselineStatus
@@ -429,6 +440,7 @@ export function useReadAlong() {
     transport,
     remoteTask,
     remoteProgress,
+    queuePosition,
     outputBook,
     targetLibraryId,
     targetLibraryName,

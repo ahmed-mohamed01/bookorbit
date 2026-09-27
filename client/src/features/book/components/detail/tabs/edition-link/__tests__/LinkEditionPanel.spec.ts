@@ -102,6 +102,7 @@ function createReadAlongState() {
     transport: ref<StorytellerEffectiveTransport | null>(null),
     remoteTask: ref<string | null>(null),
     remoteProgress: ref<number | null>(null),
+    queuePosition: ref<number | null>(null),
     targetLibraryName: ref<string | null>(null),
     remoteCopyBytes: ref({ epub: null, audio: null, readAlong: null }),
     keepRemoteCopy: ref(true),

@@ -18,6 +18,7 @@ import { StorytellerClientError, StorytellerClientService } from './storyteller-
 import { storytellerConfig } from './storyteller.config';
 import { StorytellerRepository } from './storyteller.repository';
 import { StorytellerSettingsService } from './storyteller-settings.service';
+import { StorytellerReadAlongNotifierService } from './storyteller-read-along-notifier.service';
 
 const USER = { id: 42, isSuperuser: false, permissions: [] } as unknown as RequestUser;
 const PAIR: StorytellerReadAlongPair = {
@@ -110,7 +111,7 @@ function remoteBook(overrides: Record<string, unknown> = {}) {
     hasAudiobook: true,
     readaloudPath: null,
     ebookPath: null,
-    audiobookPath: null,
+    audiobookPaths: [],
     processing: { state: 'running', task: 'align', progress: 0.5, error: null },
     ...overrides,
   };
@@ -202,6 +203,12 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
   const scannerService = { startScan: vi.fn().mockResolvedValue({ jobId: 1 }) };
   const epubService = { findMalformedSpineItem: vi.fn().mockResolvedValue(null) };
   const sleep = vi.fn<(milliseconds: number, signal?: AbortSignal) => Promise<void>>().mockResolvedValue(undefined);
+  const notifier = {
+    started: vi.fn().mockResolvedValue(undefined),
+    progress: vi.fn().mockResolvedValue(undefined),
+    ready: vi.fn().mockResolvedValue(undefined),
+    failed: vi.fn().mockResolvedValue(undefined),
+  };
 
   const module = await Test.createTestingModule({
     providers: [
@@ -215,6 +222,7 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
       { provide: LibraryService, useValue: libraryService },
       { provide: ScannerService, useValue: scannerService },
       { provide: EpubService, useValue: epubService },
+      { provide: StorytellerReadAlongNotifierService, useValue: notifier },
       { provide: STORYTELLER_SLEEP, useValue: sleep },
     ],
   }).compile();
@@ -230,6 +238,7 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
     scannerService,
     epubService,
     sleep,
+    notifier,
   };
 }
 
@@ -647,10 +656,13 @@ describe('StorytellerReadAlongBuildService', () => {
     it('takes over the one book whose ebook sits at the offered path and processes it', async () => {
       const { service, session, repo } = await refusedSetup();
       const logs = captureLogs('log');
-      session.listBooks.mockResolvedValue([
-        remoteBook({ uuid: 'other-uuid', ebookPath: '/remote/books/other.epub' }),
-        remoteBook({ uuid: 'existing-uuid', ebookPath: '/remote/books/text.epub' }),
-      ]);
+      // Nothing held the paths when checked before the import; the refusal is what reveals the book.
+      session.listBooks
+        .mockResolvedValueOnce([])
+        .mockResolvedValue([
+          remoteBook({ uuid: 'other-uuid', ebookPath: '/remote/books/other.epub' }),
+          remoteBook({ uuid: 'existing-uuid', ebookPath: '/remote/books/text.epub' }),
+        ]);
       session.getBook
         .mockResolvedValueOnce(remoteBook({ uuid: 'existing-uuid', processing: IDLE }))
         .mockResolvedValue(remoteBook({ uuid: 'existing-uuid' }));
@@ -670,6 +682,230 @@ describe('StorytellerReadAlongBuildService', () => {
             line.includes('storytellerBookUuid=existing-uuid'),
         ),
       ).toBe(true);
+    });
+
+    it('adopts the matching book when an EPUB2 copy retry is refused with a 405', async () => {
+      const { service, session, repo } = await setup({
+        ...SHARED,
+        settings: { ...SHARED.settings, pathMappings: resolveMappings(SHARED.settings.pathMappings) },
+      });
+      session.importByReference.mockResolvedValueOnce({ kind: 'epub2_detected', paths: ['/remote/books/text.epub'] }).mockRejectedValueOnce(REFUSED);
+      session.listBooks.mockResolvedValueOnce([]).mockResolvedValue([remoteBook({ uuid: 'existing-uuid', ebookPath: '/remote/books/text.epub' })]);
+      session.getBook
+        .mockResolvedValueOnce(remoteBook({ uuid: 'existing-uuid', processing: IDLE }))
+        .mockResolvedValue(remoteBook({ uuid: 'existing-uuid' }));
+
+      await runBuild(service, 1, PAIR, USER);
+
+      expect(session.importByReference).toHaveBeenNthCalledWith(2, expect.objectContaining({ importMode: 'copy' }));
+      expect(session.importByReference).toHaveBeenCalledTimes(2);
+      expect(repo.updateBuild).toHaveBeenCalledWith(1, { transport: 'shared-paths', storytellerBookUuid: 'existing-uuid' });
+      expect(session.process).toHaveBeenCalledWith('existing-uuid');
+      expect(session.mergeBooks).not.toHaveBeenCalled();
+    });
+
+    it('still registers an EPUB2 pair through a successful copy retry', async () => {
+      const { service, session, repo } = await setup({
+        ...SHARED,
+        settings: { ...SHARED.settings, pathMappings: resolveMappings(SHARED.settings.pathMappings) },
+      });
+      session.importByReference
+        .mockResolvedValueOnce({ kind: 'epub2_detected', paths: ['/remote/books/text.epub'] })
+        .mockResolvedValueOnce({ kind: 'created', uuid: 'copy-uuid' })
+        .mockResolvedValueOnce({ kind: 'created', uuid: 'audio-uuid' });
+
+      await runBuild(service, 1, PAIR, USER);
+
+      // Only the check before the import: nothing was refused, so nothing is looked up again.
+      expect(session.listBooks).toHaveBeenCalledOnce();
+      expect(session.mergeBooks).toHaveBeenCalledWith(['copy-uuid', 'audio-uuid']);
+      expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ transport: 'api-transfer', storytellerBookUuid: 'story-uuid' }));
+    });
+
+    describe('checked before any import', () => {
+      async function sharedSetup() {
+        return setup({ ...SHARED, settings: { ...SHARED.settings, pathMappings: resolveMappings(SHARED.settings.pathMappings) } });
+      }
+
+      it('adopts the book already holding one of the audio files, with no import at all', async () => {
+        const { service, session, repo } = await sharedSetup();
+        const logs = captureLogs('log');
+        session.listBooks.mockResolvedValue([
+          remoteBook({ uuid: 'other-uuid', audiobookPaths: ['/remote/books/other.mp3'] }),
+          remoteBook({ uuid: 'existing-uuid', ebookPath: '/data/assets/existing-uuid/text.epub', audiobookPaths: ['/remote/books/audio.mp3'] }),
+        ]);
+        session.getBook
+          .mockResolvedValueOnce(remoteBook({ uuid: 'existing-uuid', processing: IDLE }))
+          .mockResolvedValue(remoteBook({ uuid: 'existing-uuid' }));
+
+        await runBuild(service, 1, PAIR, USER);
+
+        expect(session.importByReference).not.toHaveBeenCalled();
+        expect(session.mergeBooks).not.toHaveBeenCalled();
+        expect(repo.updateBuild).toHaveBeenCalledWith(1, { transport: 'shared-paths', storytellerBookUuid: 'existing-uuid' });
+        expect(session.process).toHaveBeenCalledWith('existing-uuid');
+        expect(
+          logs.some(
+            (line) =>
+              line.startsWith('[storyteller.read_along.match_existing] [end]') &&
+              line.includes('matchedBy=audio') &&
+              line.includes('path="/remote/books/audio.mp3"') &&
+              line.includes('outcome=reused_existing'),
+          ),
+        ).toBe(true);
+      });
+
+      describe('by the audio folder Storyteller records for a reference import', () => {
+        const DAWNSHARD_MP3S = ['01.mp3', '02.mp3', '03.mp3'].map((name, index) => ({
+          fileId: 21 + index,
+          absolutePath: `/books/Dawnshard/${name}`,
+          durationSeconds: 60,
+          format: 'mp3',
+        }));
+        const DAWNSHARD_M4B = [{ fileId: 21, absolutePath: '/books/Dawnshard/Dawnshard.m4b', durationSeconds: 60, format: 'm4b' }];
+
+        async function heldSetup(audioFiles: typeof DAWNSHARD_M4B, audiobookPaths: string[]) {
+          const context = await sharedSetup();
+          context.repo.findAudioFiles.mockResolvedValue(audioFiles);
+          context.session.listBooks.mockResolvedValue([remoteBook({ uuid: 'existing-uuid', audiobookPaths })]);
+          context.session.getBook
+            .mockResolvedValueOnce(remoteBook({ uuid: 'existing-uuid', processing: IDLE }))
+            .mockResolvedValue(remoteBook({ uuid: 'existing-uuid' }));
+          return context;
+        }
+
+        it('adopts the book whose audiobook is the folder of the single M4B, with no import at all', async () => {
+          const { service, session, repo } = await heldSetup(DAWNSHARD_M4B, ['/remote/books/Dawnshard']);
+          const logs = captureLogs('log');
+
+          await runBuild(service, 1, PAIR, USER);
+
+          expect(session.importByReference).not.toHaveBeenCalled();
+          expect(session.mergeBooks).not.toHaveBeenCalled();
+          expect(repo.updateBuild).toHaveBeenCalledWith(1, { transport: 'shared-paths', storytellerBookUuid: 'existing-uuid' });
+          expect(
+            logs.some(
+              (line) =>
+                line.startsWith('[storyteller.read_along.match_existing] [end]') &&
+                line.includes('matchedBy=audio_directory') &&
+                line.includes('path="/remote/books/Dawnshard"'),
+            ),
+          ).toBe(true);
+        });
+
+        it('adopts the book whose audiobook is the folder shared by several MP3s', async () => {
+          const { service, session, repo } = await heldSetup(DAWNSHARD_MP3S, ['/remote/books/Dawnshard']);
+
+          await runBuild(service, 1, PAIR, USER);
+
+          expect(session.importByReference).not.toHaveBeenCalled();
+          expect(repo.updateBuild).toHaveBeenCalledWith(1, { transport: 'shared-paths', storytellerBookUuid: 'existing-uuid' });
+        });
+
+        it('still adopts a book that recorded the audio file itself', async () => {
+          const { service, session, repo } = await heldSetup(DAWNSHARD_M4B, ['/remote/books/Dawnshard/Dawnshard.m4b']);
+
+          await runBuild(service, 1, PAIR, USER);
+
+          expect(session.importByReference).not.toHaveBeenCalled();
+          expect(repo.updateBuild).toHaveBeenCalledWith(1, { transport: 'shared-paths', storytellerBookUuid: 'existing-uuid' });
+        });
+
+        it('does not adopt a book holding a sibling folder', async () => {
+          const { service, session, repo } = await heldSetup(DAWNSHARD_M4B, ['/remote/books/Dawnshard2']);
+
+          await runBuild(service, 1, PAIR, USER);
+
+          expect(session.importByReference).toHaveBeenCalledTimes(2);
+          expect(repo.updateBuild).not.toHaveBeenCalledWith(1, { transport: 'shared-paths', storytellerBookUuid: 'existing-uuid' });
+        });
+      });
+
+      it('adopts the book already holding the EPUB at its mapped path', async () => {
+        const { service, session, repo } = await sharedSetup();
+        session.listBooks.mockResolvedValue([remoteBook({ uuid: 'existing-uuid', ebookPath: '/remote/books/text.epub' })]);
+        session.getBook
+          .mockResolvedValueOnce(remoteBook({ uuid: 'existing-uuid', processing: IDLE }))
+          .mockResolvedValue(remoteBook({ uuid: 'existing-uuid' }));
+
+        await runBuild(service, 1, PAIR, USER);
+
+        expect(session.importByReference).not.toHaveBeenCalled();
+        expect(repo.updateBuild).toHaveBeenCalledWith(1, { transport: 'shared-paths', storytellerBookUuid: 'existing-uuid' });
+      });
+
+      it('refuses to guess when two books hold the files', async () => {
+        const { service, session } = await sharedSetup();
+        vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+        session.listBooks.mockResolvedValue([
+          remoteBook({ uuid: 'a-uuid', ebookPath: '/remote/books/text.epub' }),
+          remoteBook({ uuid: 'b-uuid', audiobookPaths: ['/remote/books/audio.mp3'] }),
+        ]);
+
+        await expect(runBuild(service, 1, PAIR, USER)).rejects.toThrow(
+          'Storyteller already has a book for these files and it could not be matched; remove or import it in Storyteller',
+        );
+        expect(session.importByReference).not.toHaveBeenCalled();
+      });
+
+      it('imports as before when no book holds the files', async () => {
+        const { service, session } = await sharedSetup();
+        session.listBooks.mockResolvedValue([
+          remoteBook({ uuid: 'other-uuid', ebookPath: '/remote/books/other.epub', audiobookPaths: ['/remote/books/other.mp3'] }),
+        ]);
+
+        await runBuild(service, 1, PAIR, USER);
+
+        expect(session.listBooks).toHaveBeenCalledOnce();
+        expect(session.importByReference).toHaveBeenCalledTimes(2);
+        expect(session.mergeBooks).toHaveBeenCalledOnce();
+      });
+    });
+
+    describe('when the audio import is refused', () => {
+      async function audioRefusedSetup() {
+        const context = await setup({ ...SHARED, settings: { ...SHARED.settings, pathMappings: resolveMappings(SHARED.settings.pathMappings) } });
+        context.session.importByReference
+          .mockResolvedValueOnce({ kind: 'epub2_detected', paths: ['/remote/books/text.epub'] })
+          .mockResolvedValueOnce({ kind: 'created', uuid: 'copy-uuid' })
+          .mockRejectedValueOnce(REFUSED);
+        // Held by a book the check before the import did not see.
+        context.session.listBooks
+          .mockResolvedValueOnce([])
+          .mockResolvedValue([
+            remoteBook({ uuid: 'copy-uuid', ebookPath: '/data/assets/copy-uuid/text.epub' }),
+            remoteBook({ uuid: 'existing-uuid', audiobookPaths: ['/remote/books/audio.mp3'] }),
+          ]);
+        context.session.getBook
+          .mockResolvedValueOnce(remoteBook({ uuid: 'existing-uuid', processing: IDLE }))
+          .mockResolvedValue(remoteBook({ uuid: 'existing-uuid' }));
+        return context;
+      }
+
+      it('adopts the book holding the audio and deletes the ebook copy this build just made', async () => {
+        const { service, session, repo } = await audioRefusedSetup();
+
+        await runBuild(service, 1, PAIR, USER);
+
+        expect(repo.updateBuild).toHaveBeenCalledWith(1, { transport: 'shared-paths', storytellerBookUuid: 'existing-uuid' });
+        expect(session.deleteBook).toHaveBeenCalledExactlyOnceWith('copy-uuid', { preventReImport: true });
+        expect(session.mergeBooks).not.toHaveBeenCalled();
+        expect(session.process).toHaveBeenCalledWith('existing-uuid');
+      });
+
+      it('only warns when the ebook copy cannot be deleted, and still builds', async () => {
+        const { service, session, repo } = await audioRefusedSetup();
+        const warnings = captureLogs('warn');
+        session.deleteBook.mockRejectedValue(new Error('delete refused'));
+
+        await runBuild(service, 1, PAIR, USER);
+
+        expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ready' }));
+        expect(warnings.some((line) => line.startsWith('[storyteller.read_along.cleanup] [fail]') && line.includes('target=copied_ebook'))).toBe(
+          true,
+        );
+      });
     });
 
     it('names a duplicate only when more than one book matches the path', async () => {
@@ -2305,6 +2541,7 @@ describe('StorytellerReadAlongBuildService default sleep', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     return service['sleep'];
   }
@@ -2347,5 +2584,99 @@ describe('StorytellerReadAlongBuildService default sleep', () => {
     await defaultSleep()(10_000, controller.signal);
 
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe('StorytellerReadAlongBuildService slot release listeners', () => {
+  it('calls a listener after the slot is free, once per release', async () => {
+    const { service } = await setup();
+    const freeAtCall: boolean[] = [];
+    service.onSlotReleased(() => {
+      freeAtCall.push(service['slots'].size === 0);
+    });
+    const slot = service.tryReserve(PAIR)!;
+
+    slot.release();
+    slot.release();
+
+    expect(freeAtCall).toEqual([true]);
+    service.tryReserve(OTHER_PAIR)!.release();
+    expect(freeAtCall).toEqual([true, true]);
+  });
+
+  it('keeps releasing when a listener throws', async () => {
+    const { service } = await setup();
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const after = vi.fn();
+    service.onSlotReleased(() => {
+      throw new Error('boom');
+    });
+    service.onSlotReleased(after);
+
+    service.tryReserve(PAIR)!.release();
+
+    expect(after).toHaveBeenCalledOnce();
+    expect(service.tryReserve(OTHER_PAIR)).not.toBeNull();
+  });
+});
+
+describe('StorytellerReadAlongBuildService notifications', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('notifies the start, each stage boundary, the wait progress and the finished read-along', async () => {
+    const { service, notifier, session } = await setup();
+    session.readaloudAvailable.mockResolvedValueOnce(false).mockResolvedValue(true);
+    session.getBook.mockResolvedValue(remoteBook({ processing: { state: 'running', task: 'SYNC_CHAPTERS', progress: 0.4, error: null } }));
+
+    const attempt = { buildId: 1, textBookId: PAIR.textBookId, stamp: 1234 };
+
+    await runBuild(service, 1, PAIR, USER, { attempt });
+
+    expect(notifier.started).toHaveBeenCalledWith(USER.id, attempt);
+    expect(notifier.progress).toHaveBeenCalledWith(USER.id, attempt, 'transcribing', null);
+    expect(notifier.progress).toHaveBeenCalledWith(USER.id, attempt, 'aligning', 0.4);
+    expect(notifier.progress).toHaveBeenLastCalledWith(USER.id, attempt, 'importing', null);
+    expect(notifier.ready).toHaveBeenCalledWith(USER.id, attempt, 99, TARGET_LIBRARY_ID);
+    expect(notifier.failed).not.toHaveBeenCalled();
+  });
+
+  it('notifies a failure with the error it persisted', async () => {
+    const { service, notifier, session } = await setup();
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    session.uploadBook.mockRejectedValue(new Error('upload refused'));
+
+    await expect(runBuild(service, 1, PAIR, USER)).rejects.toThrow();
+
+    expect(notifier.failed).toHaveBeenCalledWith(
+      USER.id,
+      expect.objectContaining({ buildId: 1, textBookId: PAIR.textBookId }),
+      expect.stringContaining('upload refused'),
+    );
+    expect(notifier.ready).not.toHaveBeenCalled();
+  });
+
+  it('reports no wait progress for a poll that lands after a cancel', async () => {
+    const { service, notifier, session, repo } = await setup();
+    vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const slot = service.tryReserve(PAIR)!;
+    session.getBook.mockResolvedValue(remoteBook({ processing: { state: 'running', task: 'SYNC_CHAPTERS', progress: 0.4, error: null } }));
+    // The cancel lands while the poll's own row write is in flight.
+    repo.updateBuild.mockImplementation((_id: number, values: Record<string, unknown>) => {
+      if (values.remoteTask === 'SYNC_CHAPTERS') service.cancel(PAIR);
+      return Promise.resolve({});
+    });
+
+    await service.runBuild(1, PAIR, USER, {}, slot);
+
+    expect(notifier.progress).not.toHaveBeenCalledWith(USER.id, expect.anything(), 'aligning', 0.4);
+  });
+
+  it('never fails a build over a notification that cannot be sent', async () => {
+    const { service, notifier, repo } = await setup();
+    notifier.started.mockRejectedValue(new Error('bell down'));
+    notifier.ready.mockRejectedValue(new Error('bell down'));
+
+    await expect(runBuild(service, 1, PAIR, USER)).resolves.toBeUndefined();
+    expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ready' }));
   });
 });

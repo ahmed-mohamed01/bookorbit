@@ -1,8 +1,13 @@
-import type { ReadAlongBlockReason, ReadAlongPhase } from '@bookorbit/types'
+import type { ReadAlongBlockReason, ReadAlongPhase, ReadAlongStatus } from '@bookorbit/types'
 import type { ReadAlongSectionState } from '@/features/book/composables/useReadAlong'
 
 export type ReadAlongSectionMode = 'offer' | 'manage' | 'readOnly'
-export type ReadAlongDisplayState = 'offerOn' | 'offerOff' | 'none' | 'building' | 'failed' | 'ready' | 'outOfReach'
+export type ReadAlongDisplayState = 'offerOn' | 'offerOff' | 'none' | 'queued' | 'building' | 'failed' | 'ready' | 'outOfReach'
+
+/** Queued and building both end on their own, so both are polled and both count as a build in flight. */
+export function isReadAlongInFlight(status: ReadAlongStatus): boolean {
+  return status === 'building' || status === 'queued'
+}
 
 /** Index into the four build stages (Sending, Transcribing, Aligning, Importing). Any Storyteller task other than syncing counts as transcription. */
 export function stageIndex(phase: ReadAlongPhase | null, remoteTask: string | null): number {
@@ -26,6 +31,7 @@ export function resolveReadAlongSectionState(
 ): ReadAlongDisplayState {
   if (mode === 'readOnly') return 'ready'
   if (mode === 'offer') return generateOnLink && !toggleDisabled ? 'offerOn' : 'offerOff'
+  if (state.status === 'queued') return 'queued'
   if (state.status === 'building') return 'building'
   if (state.status === 'failed') return 'failed'
   if (state.status !== 'ready') return 'none'

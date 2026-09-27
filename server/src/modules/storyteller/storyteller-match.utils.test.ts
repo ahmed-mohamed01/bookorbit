@@ -14,7 +14,7 @@ function remoteBook(overrides: Partial<StorytellerBookSummary> = {}): Storytelle
     hasAudiobook: true,
     readaloudPath: null,
     ebookPath: null,
-    audiobookPath: null,
+    audiobookPaths: [],
     processing: { state: 'completed', task: null, progress: null, error: null },
     ...overrides,
   };

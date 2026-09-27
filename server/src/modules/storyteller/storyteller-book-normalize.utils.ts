@@ -157,6 +157,29 @@ function readMediaLinked(book: Record<string, unknown>, ...keys: string[]): bool
   return false;
 }
 
+/**
+ * Every file behind a media link. A multi-file audiobook may arrive as one link per file, or as one
+ * link carrying its files or tracks, so all three shapes are read and a path is kept once.
+ */
+function readMediaPaths(book: Record<string, unknown>, ...keys: string[]): string[] {
+  const paths = new Set<string>();
+  const add = (value: unknown): void => {
+    const link = asRecord(value);
+    const filepath = link ? readString(link, 'filepath', 'file_path', 'path') : null;
+    if (filepath) paths.add(filepath);
+  };
+  for (const key of keys) {
+    const value = book[key];
+    for (const link of Array.isArray(value) ? value : [value]) {
+      add(link);
+      const record = asRecord(link);
+      if (!record) continue;
+      for (const nested of [...readArray(record.files), ...readArray(record.tracks)]) add(nested);
+    }
+  }
+  return [...paths];
+}
+
 function readMediaPath(book: Record<string, unknown>, ...keys: string[]): string | null {
   for (const key of keys) {
     const link = asRecord(book[key]);
@@ -197,7 +220,7 @@ export function normalizeBook(raw: unknown): StorytellerBookSummary | null {
     hasAudiobook: readMediaLinked(book, 'audiobook', 'audio'),
     readaloudPath: readReadaloudPath(book),
     ebookPath: readMediaPath(book, 'ebook'),
-    audiobookPath: readMediaPath(book, 'audiobook', 'audio'),
+    audiobookPaths: readMediaPaths(book, 'audiobook', 'audio', 'audiobooks'),
     processing: normalizeProcessing(book),
   };
 }

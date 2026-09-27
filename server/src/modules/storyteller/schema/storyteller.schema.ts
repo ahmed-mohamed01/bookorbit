@@ -3,6 +3,7 @@ import { boolean, check, index, integer, jsonb, pgTable, real, serial, text, tim
 
 import type { StorytellerConnectionTestResult, StorytellerPathMapping } from '@bookorbit/types';
 import { books } from '../../../db/schema/books';
+import { users } from '../../../db/schema/auth';
 import { libraries, libraryFolders } from '../../../db/schema/libraries';
 
 // Single-row table (id is always 1): one Storyteller connection serves every BookOrbit user.
@@ -33,6 +34,17 @@ export const storytellerSettings = pgTable(
   ],
 );
 
+/** What a queued build is started with once a slot frees. */
+export interface StorytellerQueuedRequest {
+  force?: boolean;
+  targetLibraryId?: number;
+  targetFolderId?: number;
+  cleanUpRemote?: boolean;
+  useExistingUuid?: string;
+  /** The row's status before it was queued, so a cancel can put a ready build back. */
+  previousStatus?: string | null;
+}
+
 // Constraint names below are short (`<table>_<column>_fk` rather than repeating the referenced
 // table and column) to stay under Postgres's 63-byte identifier limit; see schema/storyteller-schema.ts.
 export const storytellerReadAlongBuilds = pgTable(
@@ -62,6 +74,11 @@ export const storytellerReadAlongBuilds = pgTable(
     error: text('error'),
     startedAt: timestamp('started_at', { withTimezone: true }),
     builtAt: timestamp('built_at', { withTimezone: true }),
+    // Who asked for the current attempt (kept for its whole life), when it was queued (its origin while
+    // it runs), and the request that starts it (only while queued).
+    requestedBy: integer('requested_by').references(() => users.id, { onDelete: 'set null' }),
+    queuedAt: timestamp('queued_at', { withTimezone: true }),
+    queuedRequest: jsonb('queued_request').$type<StorytellerQueuedRequest>(),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .defaultNow()
@@ -72,7 +89,10 @@ export const storytellerReadAlongBuilds = pgTable(
     unique('storyteller_read_along_builds_pair_unique').on(t.textBookId, t.audioBookId),
     index('storyteller_read_along_builds_output_book_id_idx').on(t.outputBookId),
     index('storyteller_read_along_builds_uuid_idx').on(t.storytellerBookUuid),
-    check('storyteller_read_along_builds_status_chk', sql`${t.status} in ('building', 'ready', 'failed', 'cancelled')`),
+    index('storyteller_read_along_builds_queued_at_idx')
+      .on(t.queuedAt)
+      .where(sql`${t.status} = 'queued'`),
+    check('storyteller_read_along_builds_status_chk', sql`${t.status} in ('queued', 'building', 'ready', 'failed', 'cancelled')`),
     check(
       'storyteller_read_along_builds_phase_chk',
       sql`${t.phase} is null or ${t.phase} in ('prepare', 'register', 'process', 'wait', 'collect', 'link')`,

@@ -33,6 +33,7 @@ function createReadAlongState() {
     transport: ref<StorytellerEffectiveTransport | null>(null),
     remoteTask: ref<string | null>(null),
     remoteProgress: ref<number | null>(null),
+    queuePosition: ref<number | null>(null),
     targetLibraryName: ref<string | null>(null),
     remoteCopyBytes: ref({ epub: null, audio: null, readAlong: null }),
     keepRemoteCopy: ref(true),
@@ -123,7 +124,17 @@ describe('useReadAlongSection', () => {
       hasOutputBook: false,
       error: null,
       mutating: false,
+      queuePosition: null,
     })
+  })
+
+  it('hands the section the queue position of a queued build', () => {
+    readAlongState.status.value = 'queued'
+    readAlongState.queuePosition.value = 2
+
+    const { section } = mountSection()
+
+    expect(section.sectionState.value).toMatchObject({ status: 'queued', queuePosition: 2 })
   })
 
   // A ready build the server described without its book is one this user cannot open, which the section

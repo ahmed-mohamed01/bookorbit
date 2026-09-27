@@ -102,4 +102,28 @@ describe('StorytellerSchemaBootstrapService', () => {
     expect(message).toContain('durationMs=');
     expect(logSpy).not.toHaveBeenCalled();
   });
+
+  it('settles ready once interrupted builds are failed, so the queue starts after them', async () => {
+    const { service, repo } = createService();
+    let settled = false;
+    void service.ready.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await service.onApplicationBootstrap();
+    await service.ready;
+
+    expect(settled).toBe(true);
+    expect(repo.failInterruptedBuilds).toHaveBeenCalledOnce();
+  });
+
+  it('rejects ready when the bootstrap fails', async () => {
+    const { service, repo } = createService();
+    repo.applySchemaStatements.mockRejectedValue(new Error('boom'));
+
+    await expect(service.onApplicationBootstrap()).rejects.toThrow('boom');
+    await expect(service.ready).rejects.toThrow('boom');
+  });
 });

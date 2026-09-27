@@ -33,6 +33,7 @@ function makeState(overrides: Partial<ReadAlongSectionState> = {}): ReadAlongSec
     hasOutputBook: false,
     error: null,
     mutating: false,
+    queuePosition: null,
     ...overrides,
   }
 }
@@ -79,6 +80,41 @@ function stageStates(wrapper: ReturnType<typeof mountSection>) {
 }
 
 describe('ReadAlongSection', () => {
+  describe('while queued', () => {
+    it('tags the build as queued and says how far down the line it is', () => {
+      const wrapper = mountSection({ state: makeState({ status: 'queued', queuePosition: 2 }) })
+
+      expect(sectionState(wrapper)).toBe('queued')
+      const tag = wrapper.get('[data-testid="read-along-tag"]')
+      expect(tag.text()).toBe('Queued')
+      expect(tag.classes()).toEqual(expect.arrayContaining(['bg-info/15', 'text-info']))
+      expect(wrapper.get('[data-testid="read-along-body"]').text()).toBe('Waiting for another read-along to finish (2 in line)')
+    })
+
+    it('still says it is waiting when the position is unknown', () => {
+      const wrapper = mountSection({ state: makeState({ status: 'queued', queuePosition: null }) })
+
+      expect(wrapper.get('[data-testid="read-along-body"]').text()).toBe('Waiting for another read-along to finish')
+    })
+
+    it('shows no bar, no stages and no keep-copy choice, and offers Cancel', async () => {
+      const wrapper = mountSection({ state: makeState({ status: 'queued', queuePosition: 1 }) })
+
+      expect(wrapper.find('[data-testid="read-along-bar"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="read-along-stages"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="read-along-keep-copy-row"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="read-along-generate"]').exists()).toBe(false)
+      await wrapper.get('[data-testid="read-along-cancel"]').trigger('click')
+      expect(wrapper.emitted('cancel')).toHaveLength(1)
+    })
+
+    it('hides Cancel from a reader who cannot build', () => {
+      const wrapper = mountSection({ canGenerate: false, state: makeState({ status: 'queued', queuePosition: 1 }) })
+
+      expect(wrapper.find('[data-testid="read-along-cancel"]').exists()).toBe(false)
+    })
+  })
+
   describe('stages while building', () => {
     it.each([
       [null, null, 'Sending'],

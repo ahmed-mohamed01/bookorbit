@@ -1,5 +1,5 @@
 import { BadGatewayException, Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import type { StorytellerConnectionTestResult } from '@bookorbit/types';
@@ -13,6 +13,7 @@ import { storytellerReadAlongBuilds, storytellerSettings } from './schema/storyt
 import type {
   NewStorytellerReadAlongBuild,
   NewStorytellerSettingsRow,
+  StorytellerQueuedRequest,
   StorytellerReadAlongBuild,
   StorytellerSettingsRow,
 } from './schema/storyteller.schema';
@@ -45,6 +46,13 @@ export interface StorytellerLibraryFolder {
 export interface StorytellerBookFileLocation {
   bookId: number;
   libraryId: number;
+}
+
+export interface StorytellerQueueBuildValues {
+  textBookId: number;
+  audioBookId: number;
+  requestedBy: number;
+  queuedRequest: StorytellerQueuedRequest;
 }
 
 export interface StorytellerBookIdentity {
@@ -129,6 +137,9 @@ export class StorytellerRepository {
    * and `targetFolderId` are outside that list and keep whatever the previous attempt wrote only when
    * the caller omits them; `requestBuild` always passes both, so a claim that changes the library
    * never keeps a folder from another one.
+   *
+   * A queued row is refused as well: it belongs to the queue runner, which claims it through
+   * `claimQueuedBuild`. A direct claim starts a new attempt, so it clears `queued_at`.
    */
   async startBuild(
     rawValues: Pick<NewStorytellerReadAlongBuild, 'textBookId' | 'audioBookId'> & Partial<NewStorytellerReadAlongBuild>,
@@ -143,8 +154,39 @@ export class StorytellerRepository {
       error: null,
       startedAt: now,
       builtAt: null,
+      queuedAt: null,
+      queuedRequest: null,
     };
-    const updateSet: Partial<NewStorytellerReadAlongBuild> = {
+
+    const [row] = await this.db
+      .insert(storytellerReadAlongBuilds)
+      .values(insertValues)
+      .onConflictDoUpdate({
+        target: [storytellerReadAlongBuilds.textBookId, storytellerReadAlongBuilds.audioBookId],
+        set: { ...this.claimSet(values, now), queuedAt: null },
+        setWhere: notInArray(storytellerReadAlongBuilds.status, ['building', 'queued']),
+      })
+      .returning();
+    return row;
+  }
+
+  /**
+   * The queue runner's claim: an update of that one row while it is still queued, never an insert, so
+   * a row a cancel deleted between the runner's read and this write is not brought back. `queued_at`
+   * and `requested_by` stay: they name the attempt and its requester until the build ends.
+   */
+  async claimQueuedBuild(id: number, rawValues: Partial<NewStorytellerReadAlongBuild>): Promise<StorytellerReadAlongBuild | undefined> {
+    this.assertStorableBookUuid(rawValues.storytellerBookUuid);
+    const [row] = await this.db
+      .update(storytellerReadAlongBuilds)
+      .set(this.claimSet(this.withBoundedColumns(rawValues), new Date()))
+      .where(and(eq(storytellerReadAlongBuilds.id, id), eq(storytellerReadAlongBuilds.status, 'queued')))
+      .returning();
+    return row;
+  }
+
+  private claimSet(values: Partial<NewStorytellerReadAlongBuild>, now: Date): Partial<NewStorytellerReadAlongBuild> {
+    return {
       ...values,
       status: 'building',
       phase: 'prepare',
@@ -156,19 +198,72 @@ export class StorytellerRepository {
       error: null,
       startedAt: now,
       builtAt: null,
+      queuedRequest: null,
       updatedAt: now,
     };
+  }
 
+  /**
+   * Records a build that waits for the slot. Only the queue columns are written: everything a ready or
+   * failed row holds (destination, output, uuid, transport, dates) stays untouched until the claim, so
+   * a cancelled or refused queued rebuild leaves the row as it was. The request keeps the destination.
+   *
+   * A compare-and-set on the status the caller read: it matches nothing once the row has moved (a
+   * build finished, another request queued or claimed it), and the caller reads again.
+   */
+  async queueBuild(values: StorytellerQueueBuildValues, expectedStatus: string | null): Promise<StorytellerReadAlongBuild | undefined> {
+    const now = new Date();
+    const queueColumns = {
+      status: 'queued',
+      requestedBy: values.requestedBy,
+      queuedAt: now,
+      queuedRequest: values.queuedRequest,
+    } satisfies Partial<NewStorytellerReadAlongBuild>;
     const [row] = await this.db
       .insert(storytellerReadAlongBuilds)
-      .values(insertValues)
+      .values({ textBookId: values.textBookId, audioBookId: values.audioBookId, ...queueColumns })
       .onConflictDoUpdate({
         target: [storytellerReadAlongBuilds.textBookId, storytellerReadAlongBuilds.audioBookId],
-        set: updateSet,
-        setWhere: ne(storytellerReadAlongBuilds.status, 'building'),
+        set: { ...queueColumns, updatedAt: now },
+        setWhere:
+          expectedStatus === null
+            ? sql`false`
+            : and(notInArray(storytellerReadAlongBuilds.status, ['building', 'queued']), eq(storytellerReadAlongBuilds.status, expectedStatus)),
       })
       .returning();
     return row;
+  }
+
+  async findOldestQueuedBuild(): Promise<StorytellerReadAlongBuild | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(storytellerReadAlongBuilds)
+      .where(eq(storytellerReadAlongBuilds.status, 'queued'))
+      .orderBy(asc(storytellerReadAlongBuilds.queuedAt), asc(storytellerReadAlongBuilds.id))
+      .limit(1);
+    return row;
+  }
+
+  /** Queued rows ahead of this one; the id breaks a tie between two rows queued in the same instant. */
+  async countQueuedBefore(queuedAt: Date, id: number): Promise<number> {
+    const [row] = await this.db
+      .select({ total: count() })
+      .from(storytellerReadAlongBuilds)
+      .where(
+        and(
+          eq(storytellerReadAlongBuilds.status, 'queued'),
+          or(
+            lt(storytellerReadAlongBuilds.queuedAt, queuedAt),
+            and(eq(storytellerReadAlongBuilds.queuedAt, queuedAt), lt(storytellerReadAlongBuilds.id, id)),
+          ),
+        ),
+      );
+    return row?.total ?? 0;
+  }
+
+  async countQueuedBuilds(): Promise<number> {
+    const [row] = await this.db.select({ total: count() }).from(storytellerReadAlongBuilds).where(eq(storytellerReadAlongBuilds.status, 'queued'));
+    return row?.total ?? 0;
   }
 
   async updateBuild(id: number, values: Partial<NewStorytellerReadAlongBuild>): Promise<StorytellerReadAlongBuild | undefined> {
@@ -213,34 +308,89 @@ export class StorytellerRepository {
    * update catches a book recorded between the first two statements.
    */
   async retireCancelledBuild(id: number): Promise<'kept' | 'deleted' | 'unchanged'> {
-    if (await this.markBuildCancelled(id)) return 'kept';
+    if (await this.markBuildCancelled(id, 'building')) return 'kept';
+    if (await this.deleteBookless(id, 'building')) return 'deleted';
+    return (await this.markBuildCancelled(id, 'building')) ? 'kept' : 'unchanged';
+  }
+
+  /**
+   * Retires a cancelled queued row, every statement requiring it to be queued still: a runner claim
+   * that lands first makes all three match nothing, and the caller then treats the row as building.
+   * A queued forced rebuild of a ready read-along goes back to ready, which is all it ever changed.
+   */
+  async retireQueuedBuild(id: number): Promise<'kept' | 'deleted' | 'restored' | 'unchanged'> {
+    if (await this.restoreQueuedReadyBuild(id)) return 'restored';
+    if (await this.markBuildCancelled(id, 'queued')) return 'kept';
+    if (await this.deleteBookless(id, 'queued')) return 'deleted';
+    return 'unchanged';
+  }
+
+  private async deleteBookless(id: number, status: 'building' | 'queued'): Promise<boolean> {
     const deleted = await this.db
       .delete(storytellerReadAlongBuilds)
       .where(
         and(
           eq(storytellerReadAlongBuilds.id, id),
-          eq(storytellerReadAlongBuilds.status, 'building'),
+          eq(storytellerReadAlongBuilds.status, status),
           isNull(storytellerReadAlongBuilds.storytellerBookUuid),
         ),
       )
       .returning({ id: storytellerReadAlongBuilds.id });
-    if (deleted.length > 0) return 'deleted';
-    return (await this.markBuildCancelled(id)) ? 'kept' : 'unchanged';
+    return deleted.length > 0;
   }
 
-  private async markBuildCancelled(id: number): Promise<boolean> {
+  private async restoreQueuedReadyBuild(id: number): Promise<boolean> {
     const rows = await this.db
       .update(storytellerReadAlongBuilds)
-      .set({ status: 'cancelled', phase: null, remoteTask: null, remoteProgress: null, error: null, updatedAt: new Date() })
+      .set({ status: 'ready', queuedAt: null, queuedRequest: null, updatedAt: new Date() })
       .where(
         and(
           eq(storytellerReadAlongBuilds.id, id),
-          eq(storytellerReadAlongBuilds.status, 'building'),
+          eq(storytellerReadAlongBuilds.status, 'queued'),
+          sql`${storytellerReadAlongBuilds.queuedRequest} ->> 'previousStatus' = 'ready'`,
+        ),
+      )
+      .returning({ id: storytellerReadAlongBuilds.id });
+    return rows.length > 0;
+  }
+
+  private async markBuildCancelled(id: number, status: 'building' | 'queued'): Promise<boolean> {
+    const rows = await this.db
+      .update(storytellerReadAlongBuilds)
+      .set({
+        status: 'cancelled',
+        phase: null,
+        remoteTask: null,
+        remoteProgress: null,
+        error: null,
+        queuedAt: null,
+        queuedRequest: null,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(storytellerReadAlongBuilds.id, id),
+          eq(storytellerReadAlongBuilds.status, status),
           isNotNull(storytellerReadAlongBuilds.storytellerBookUuid),
         ),
       )
       .returning({ id: storytellerReadAlongBuilds.id });
     return rows.length > 0;
+  }
+
+  /**
+   * Retires a queued row the runner cannot start, only while it is still queued (a cancel may have
+   * won). A queued rebuild of a ready read-along is never demoted: the row goes back to ready and the
+   * reason reaches the requester through the notification and the log only.
+   */
+  async failQueuedBuild(id: number, error: string): Promise<'failed' | 'restored' | 'gone'> {
+    if (await this.restoreQueuedReadyBuild(id)) return 'restored';
+    const rows = await this.db
+      .update(storytellerReadAlongBuilds)
+      .set({ status: 'failed', phase: null, error, queuedAt: null, queuedRequest: null, updatedAt: new Date() })
+      .where(and(eq(storytellerReadAlongBuilds.id, id), eq(storytellerReadAlongBuilds.status, 'queued')))
+      .returning({ id: storytellerReadAlongBuilds.id });
+    return rows.length > 0 ? 'failed' : 'gone';
   }
 
   // A build runs in-process, so one still marked 'building' at boot was interrupted: reset it to

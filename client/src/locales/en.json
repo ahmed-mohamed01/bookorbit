@@ -6442,6 +6442,7 @@
         "tooltipAligned": "Linked - position sync ready.",
         "tooltipAlignFailed": "Linked - position sync failed. Rebuild it from this panel.",
         "tooltipReadAlongBuilding": "Linked - building the read-along...",
+        "tooltipReadAlongQueued": "Linked - read-along queued.",
         "tooltipReadAlongFailed": "Linked - read-along build failed.",
         "thisBook": "This book",
         "progressRead": "{percentage}% read",
@@ -6490,6 +6491,7 @@
           "via": "via Storyteller",
           "generateToggle": "Generate read-along",
           "tag": {
+            "queued": "Queued",
             "building": "Building",
             "failed": "Failed",
             "ready": "Ready",
@@ -6499,7 +6501,9 @@
             "offerOn": "Generates an EPUB with synced narration that highlights the text as it's read.",
             "offerOff": "Not generated. You can build a read-along later from this panel.",
             "none": "Not generated yet.",
-            "outOfReach": "Added to a library you can't open."
+            "outOfReach": "Added to a library you can't open.",
+            "queued": "Waiting for another read-along to finish ({position} in line)",
+            "queuedUnknown": "Waiting for another read-along to finish"
           },
           "generate": "Generate",
           "retry": "Retry",
@@ -9508,7 +9512,7 @@
         },
         "bulkRename": {
           "label": "Bulk rename",
-          "description": "When a bulk rename or a move of books between libraries completes or fails."
+          "description": "When a bulk rename or a move of books between libraries completes or fails, or a read-along build finishes or fails."
         },
         "migration": {
           "label": "Data migration",

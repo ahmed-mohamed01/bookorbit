@@ -37,6 +37,7 @@ export function useReadAlongSection(bookId: () => number) {
     hasOutputBook: readAlong.outputBook.value !== null,
     error: readAlong.error.value,
     mutating: readAlong.mutating.value,
+    queuePosition: readAlong.queuePosition.value,
   }))
 
   const existingMatch = computed<StorytellerExistingMatch | null>(() => readAlong.existingMatches.value.find((match) => match.aligned) ?? null)

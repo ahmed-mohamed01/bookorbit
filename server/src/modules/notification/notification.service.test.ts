@@ -19,6 +19,7 @@ describe('NotificationService', () => {
     findUserIdsWithPermission: ReturnType<typeof vi.fn>;
     findAllActiveUserIds: ReturnType<typeof vi.fn>;
     findUserSettings: ReturnType<typeof vi.fn>;
+    updateLatestByGroupKey: ReturnType<typeof vi.fn>;
   };
   let gateway: {
     emitNew: ReturnType<typeof vi.fn>;
@@ -46,6 +47,7 @@ describe('NotificationService', () => {
       findUserIdsWithPermission: vi.fn(),
       findAllActiveUserIds: vi.fn(),
       findUserSettings: vi.fn(),
+      updateLatestByGroupKey: vi.fn(),
     };
     gateway = {
       emitNew: vi.fn(),
@@ -353,6 +355,113 @@ describe('NotificationService', () => {
 
       expect(repo.insertOrCollapse.mock.calls[0][0][0].groupKey).toBeNull();
       expect(repo.insertOrCollapse.mock.calls[1][0][0].groupKey).toBeNull();
+    });
+  });
+
+  // ---------- caller-owned group keys ----------
+
+  describe('caller-supplied group key', () => {
+    it('uses the key verbatim, even for a type that never coalesces', async () => {
+      repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
+      repo.insertOrCollapse.mockResolvedValue([makeInserted(3)]);
+
+      await service.notify(makePayload({ kind: 'user', userId: 3 }, { type: 'achievement_unlocked', groupKey: 'job:12' }));
+
+      expect(repo.insertOrCollapse.mock.calls[0][0][0].groupKey).toBe('job:12');
+    });
+  });
+
+  describe('upsertByGroupKey()', () => {
+    const patch = { type: NotificationType.ReadAlongBuild, title: 'Building', message: 'Sending', meta: { progress: 0.2 } };
+
+    it('rewrites the newest row with that key and emits an update', async () => {
+      repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
+      repo.updateLatestByGroupKey.mockResolvedValue({ ...makeInserted(3, { id: 9, type: 'read_along_build', title: 'Building' }), read: true });
+
+      await service.upsertByGroupKey(3, 'read_along_build:7', patch);
+
+      expect(repo.updateLatestByGroupKey).toHaveBeenCalledWith(3, 'read_along_build:7', {
+        type: 'read_along_build',
+        title: 'Building',
+        message: 'Sending',
+        actionUrl: null,
+        meta: { progress: 0.2 },
+      });
+      expect(gateway.emitUpdated).toHaveBeenCalledWith(3, expect.objectContaining({ id: 9, read: true }));
+      expect(repo.insertOrCollapse).not.toHaveBeenCalled();
+    });
+
+    it('creates the row through notify when none has the key yet', async () => {
+      repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
+      repo.updateLatestByGroupKey.mockResolvedValue(undefined);
+      repo.insertOrCollapse.mockResolvedValue([makeInserted(3, { type: 'read_along_build' })]);
+
+      await service.upsertByGroupKey(3, 'read_along_build:7', patch);
+
+      expect(repo.insertOrCollapse.mock.calls[0][0][0]).toEqual(
+        expect.objectContaining({ userId: 3, type: 'read_along_build', groupKey: 'read_along_build:7', meta: { progress: 0.2 } }),
+      );
+      expect(gateway.emitNew).toHaveBeenCalledOnce();
+    });
+
+    it('puts an outcome back in front of a user who had read the progress row, and updates the count', async () => {
+      repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
+      repo.updateLatestByGroupKey.mockResolvedValue({ ...makeInserted(3, { id: 9, type: 'read_along_build' }), read: false });
+      repo.countUnread.mockResolvedValue(4);
+
+      await service.upsertByGroupKey(3, 'read_along_build:7:1', { ...patch, meta: { done: true } }, { markUnread: true });
+
+      expect(repo.updateLatestByGroupKey.mock.calls[0][2]).toMatchObject({ read: false });
+      expect(gateway.emitUpdated).toHaveBeenCalledWith(3, expect.objectContaining({ id: 9, read: false }));
+      expect(gateway.emitCountUpdate).toHaveBeenCalledWith(3, 4);
+    });
+
+    it('leaves the read flag alone without markUnread', async () => {
+      repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
+      repo.updateLatestByGroupKey.mockResolvedValue(makeInserted(3));
+
+      await service.upsertByGroupKey(3, 'read_along_build:7:1', patch);
+
+      expect(repo.updateLatestByGroupKey.mock.calls[0][2]).not.toHaveProperty('read');
+      expect(gateway.emitCountUpdate).not.toHaveBeenCalled();
+    });
+
+    it('never recreates a row the user dismissed for an update-only send', async () => {
+      repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
+      repo.updateLatestByGroupKey.mockResolvedValue(undefined);
+
+      await service.upsertByGroupKey(3, 'read_along_build:7:1', patch, { updateOnly: true });
+
+      expect(repo.insertOrCollapse).not.toHaveBeenCalled();
+    });
+
+    it('still finishes an existing row for a user who turned the category off, without marking it unread', async () => {
+      repo.findUserSettings.mockResolvedValue(new Map([[3, { notificationPreferences: { bulkRename: 'off' } }]]));
+      repo.updateLatestByGroupKey.mockResolvedValue(makeInserted(3));
+
+      await service.upsertByGroupKey(3, 'read_along_build:7:1', { ...patch, meta: { done: true } }, { markUnread: true });
+
+      expect(repo.updateLatestByGroupKey).toHaveBeenCalledOnce();
+      expect(repo.updateLatestByGroupKey.mock.calls[0][2]).not.toHaveProperty('read');
+      expect(repo.insertOrCollapse).not.toHaveBeenCalled();
+    });
+
+    it('never creates a finished row for a user who turned the category off', async () => {
+      repo.findUserSettings.mockResolvedValue(new Map([[3, { notificationPreferences: { bulkRename: 'off' } }]]));
+      repo.updateLatestByGroupKey.mockResolvedValue(undefined);
+
+      await service.upsertByGroupKey(3, 'read_along_build:7:1', { ...patch, meta: { done: true } });
+
+      expect(repo.insertOrCollapse).not.toHaveBeenCalled();
+    });
+
+    it('writes nothing for a user who turned the category off', async () => {
+      repo.findUserSettings.mockResolvedValue(new Map([[3, { notificationPreferences: { bulkRename: 'off' } }]]));
+
+      await service.upsertByGroupKey(3, 'read_along_build:7', patch);
+
+      expect(repo.updateLatestByGroupKey).not.toHaveBeenCalled();
+      expect(repo.insertOrCollapse).not.toHaveBeenCalled();
     });
   });
 

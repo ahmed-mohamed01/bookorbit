@@ -171,7 +171,7 @@ describe('StorytellerRepository build lookups', () => {
 });
 
 describe('StorytellerRepository.startBuild', () => {
-  it('claims the pair on conflict only when the existing row is not already building', async () => {
+  it('claims the pair on conflict only when the existing row is neither building nor queued', async () => {
     const returned = { id: 3, textBookId: 1, audioBookId: 2, status: 'building' };
     const db = mockDb({ insertResults: [[returned]] });
     const repo = new StorytellerRepository(db as never);
@@ -182,8 +182,8 @@ describe('StorytellerRepository.startBuild', () => {
     const conflict = builder.onConflictDoUpdate.mock.calls[0]![0];
     expect(conflict.target).toEqual([expect.objectContaining({ name: 'text_book_id' }), expect.objectContaining({ name: 'audio_book_id' })]);
     const setWhere = renderSql(conflict.setWhere);
-    expect(setWhere.sql).toBe('"storyteller_read_along_builds"."status" <> $1');
-    expect(setWhere.params).toEqual(['building']);
+    expect(setWhere.sql).toBe('"storyteller_read_along_builds"."status" not in ($1, $2)');
+    expect(setWhere.params).toEqual(['building', 'queued']);
   });
 
   it('resets the per-run columns and clears storytellerBookUuid when not supplied', async () => {
@@ -324,7 +324,8 @@ describe('StorytellerRepository.retireCancelledBuild', () => {
     const builder = builderFrom(db.update);
     expect(builder.set.mock.calls[0]![0]).toMatchObject({ status: 'cancelled', phase: null, remoteTask: null, remoteProgress: null, error: null });
     const setColumns = Object.keys(builder.set.mock.calls[0]![0] as object);
-    for (const kept of ['storytellerBookUuid', 'transport', 'targetLibraryId', 'targetFolderId']) expect(setColumns).not.toContain(kept);
+    for (const kept of ['storytellerBookUuid', 'transport', 'targetLibraryId', 'targetFolderId', 'requestedBy'])
+      expect(setColumns).not.toContain(kept);
     const where = renderSql(builder.where.mock.calls[0]![0]);
     expect(where.sql).toBe(
       '("storyteller_read_along_builds"."id" = $1 and "storyteller_read_along_builds"."status" = $2 and "storyteller_read_along_builds"."storyteller_book_uuid" is not null)',
@@ -359,6 +360,192 @@ describe('StorytellerRepository.retireCancelledBuild', () => {
     const repo = new StorytellerRepository(db as never);
 
     await expect(repo.retireCancelledBuild(3)).resolves.toBe('unchanged');
+  });
+});
+
+describe('StorytellerRepository.retireQueuedBuild', () => {
+  it('puts a queued forced rebuild of a ready read-along back to ready, flipping only the status', async () => {
+    const db = mockDb({ updateResults: [[{ id: 3 }]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.retireQueuedBuild(3)).resolves.toBe('restored');
+
+    const builder = builderFrom(db.update);
+    const set = builder.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(set).toMatchObject({ status: 'ready', queuedAt: null, queuedRequest: null });
+    for (const kept of ['targetLibraryId', 'targetFolderId', 'outputBookId', 'builtAt', 'phase', 'storytellerBookUuid'])
+      expect(set).not.toHaveProperty(kept);
+    const where = renderSql(builder.where.mock.calls[0]![0]);
+    expect(where.sql).toContain(`->> 'previousStatus' = 'ready'`);
+    expect(where.params).toEqual([3, 'queued']);
+    expect(db.delete).not.toHaveBeenCalled();
+  });
+
+  it('keeps a queued row holding a Storyteller book as cancelled, only while it is still queued', async () => {
+    const db = mockDb({ updateResults: [[], [{ id: 3 }]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.retireQueuedBuild(3)).resolves.toBe('kept');
+
+    expect(renderSql(builderFrom(db.update, 1).where.mock.calls[0]![0]).params).toEqual([3, 'queued']);
+  });
+
+  it('deletes a bookless queued row, only while it is still queued', async () => {
+    const db = mockDb({ updateResults: [[], []], deleteResults: [[{ id: 3 }]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.retireQueuedBuild(3)).resolves.toBe('deleted');
+
+    expect(renderSql(builderFrom(db.delete).where.mock.calls[0]![0]).params).toEqual([3, 'queued']);
+  });
+
+  it('answers unchanged when a claim made the row building first', async () => {
+    const db = mockDb({ updateResults: [[], []], deleteResults: [[]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.retireQueuedBuild(3)).resolves.toBe('unchanged');
+    expect(db.update).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('StorytellerRepository queue', () => {
+  const queueValues = { textBookId: 1, audioBookId: 2, requestedBy: 42, queuedRequest: { force: false, previousStatus: 'failed' } };
+
+  it('queues only while the row is still in the status the request read, and never over building or queued', async () => {
+    const returned = { id: 5, status: 'queued' };
+    const db = mockDb({ insertResults: [[returned]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.queueBuild(queueValues, 'failed')).resolves.toEqual(returned);
+
+    const conflict = builderFrom(db.insert).onConflictDoUpdate.mock.calls[0]![0];
+    expect(conflict.target).toEqual([expect.objectContaining({ name: 'text_book_id' }), expect.objectContaining({ name: 'audio_book_id' })]);
+    const setWhere = renderSql(conflict.setWhere);
+    expect(setWhere.sql).toBe('("storyteller_read_along_builds"."status" not in ($1, $2) and "storyteller_read_along_builds"."status" = $3)');
+    expect(setWhere.params).toEqual(['building', 'queued', 'failed']);
+  });
+
+  it('only inserts when the request read no row at all', async () => {
+    const db = mockDb({ insertResults: [[]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.queueBuild(queueValues, null)).resolves.toBeUndefined();
+
+    const conflict = builderFrom(db.insert).onConflictDoUpdate.mock.calls[0]![0];
+    expect(renderSql(conflict.setWhere).sql).toBe('false');
+  });
+
+  it('writes only the queue columns, leaving everything a ready or failed row holds', async () => {
+    const db = mockDb({ insertResults: [[{}]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await repo.queueBuild(queueValues, 'ready');
+
+    const builder = builderFrom(db.insert);
+    const inserted = builder.values.mock.calls[0]![0];
+    expect(inserted).toMatchObject({ textBookId: 1, audioBookId: 2, status: 'queued', requestedBy: 42 });
+    expect(inserted.queuedAt).toBeInstanceOf(Date);
+    const set = builder.onConflictDoUpdate.mock.calls[0]![0].set as Record<string, unknown>;
+    expect(Object.keys(set).sort()).toEqual(['queuedAt', 'queuedRequest', 'requestedBy', 'status', 'updatedAt']);
+    expect(set).toMatchObject({ status: 'queued', requestedBy: 42, queuedRequest: { force: false, previousStatus: 'failed' } });
+  });
+
+  it('finds the oldest queued row, oldest first and by id on a tie', async () => {
+    const row = { id: 5, status: 'queued' };
+    const db = mockDb({ selectResults: [[row]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.findOldestQueuedBuild()).resolves.toEqual(row);
+
+    const builder = builderFrom(db.select);
+    expect(renderSql(builder.where.mock.calls[0]![0]).params).toEqual(['queued']);
+    const order = builder.orderBy.mock.calls[0]!;
+    expect(order.map((clause: unknown) => renderSql(clause).sql)).toEqual([
+      '"storyteller_read_along_builds"."queued_at" asc',
+      '"storyteller_read_along_builds"."id" asc',
+    ]);
+    expect(builder.limit).toHaveBeenCalledWith(1);
+  });
+
+  it('counts the queued rows ahead of one, breaking a tie on the id', async () => {
+    const queuedAt = new Date('2026-02-01T00:00:00Z');
+    const db = mockDb({ selectResults: [[{ total: 2 }]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.countQueuedBefore(queuedAt, 9)).resolves.toBe(2);
+
+    const where = renderSql(builderFrom(db.select).where.mock.calls[0]![0]);
+    expect(where.sql).toBe(
+      '("storyteller_read_along_builds"."status" = $1 and ("storyteller_read_along_builds"."queued_at" < $2 or ("storyteller_read_along_builds"."queued_at" = $3 and "storyteller_read_along_builds"."id" < $4)))',
+    );
+    expect(where.params).toEqual(['queued', queuedAt.toISOString(), queuedAt.toISOString(), 9]);
+  });
+
+  it('claims a queued row by update only while it is still queued, keeping when and by whom it was queued', async () => {
+    const returned = { id: 5, status: 'building' };
+    const db = mockDb({ updateResults: [[returned]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.claimQueuedBuild(5, { storytellerBookUuid: 'resume', targetLibraryId: 3, targetFolderId: 30 })).resolves.toEqual(returned);
+
+    expect(db.insert).not.toHaveBeenCalled();
+    const builder = builderFrom(db.update);
+    const set = builder.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(set).toMatchObject({
+      status: 'building',
+      phase: 'prepare',
+      storytellerBookUuid: 'resume',
+      targetLibraryId: 3,
+      targetFolderId: 30,
+      queuedRequest: null,
+    });
+    expect(set.startedAt).toBeInstanceOf(Date);
+    expect(set).not.toHaveProperty('queuedAt');
+    expect(set).not.toHaveProperty('requestedBy');
+    expect(renderSql(builder.where.mock.calls[0]![0]).params).toEqual([5, 'queued']);
+  });
+
+  it('starts a new attempt on a direct claim: fresh started_at, no queued_at, the caller as requester', async () => {
+    const db = mockDb({ insertResults: [[{}]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await repo.startBuild({ textBookId: 1, audioBookId: 2, requestedBy: 42 });
+
+    const builder = builderFrom(db.insert);
+    expect(builder.values.mock.calls[0]![0]).toMatchObject({ requestedBy: 42, queuedAt: null });
+    const conflict = builder.onConflictDoUpdate.mock.calls[0]![0];
+    expect(conflict.set).toMatchObject({ requestedBy: 42, queuedAt: null, queuedRequest: null });
+    expect(conflict.set.startedAt).toBeInstanceOf(Date);
+  });
+
+  it('fails a queued row only while it is still queued', async () => {
+    const db = mockDb({ updateResults: [[], [{ id: 5 }]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.failQueuedBuild(5, 'gone')).resolves.toBe('failed');
+
+    const builder = builderFrom(db.update, 1);
+    expect(builder.set.mock.calls[0]![0]).toMatchObject({ status: 'failed', error: 'gone', queuedAt: null, queuedRequest: null });
+    expect(renderSql(builder.where.mock.calls[0]![0]).params).toEqual([5, 'queued']);
+  });
+
+  it('never demotes a queued rebuild of a ready read-along: it goes back to ready with no error', async () => {
+    const db = mockDb({ updateResults: [[{ id: 5 }]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.failQueuedBuild(5, 'no audio')).resolves.toBe('restored');
+
+    expect(db.update).toHaveBeenCalledOnce();
+    const set = builderFrom(db.update).set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(set.status).toBe('ready');
+    expect(set).not.toHaveProperty('error');
+  });
+
+  it('answers gone when the row left the queue first', async () => {
+    const db = mockDb({ updateResults: [[], []] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.failQueuedBuild(5, 'x')).resolves.toBe('gone');
   });
 });
 

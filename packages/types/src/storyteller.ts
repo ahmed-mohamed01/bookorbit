@@ -78,7 +78,7 @@ export interface UpsertStorytellerSettingsPayload {
   collectionName?: string | null;
 }
 
-export const READ_ALONG_STATUSES = ["none", "building", "ready", "failed"] as const;
+export const READ_ALONG_STATUSES = ["none", "queued", "building", "ready", "failed"] as const;
 export type ReadAlongStatus = (typeof READ_ALONG_STATUSES)[number];
 
 export const READ_ALONG_PHASES = ["prepare", "register", "process", "wait", "collect", "link"] as const;
@@ -160,6 +160,8 @@ export interface ReadAlongStatusResponse {
   error: string | null;
   startedAt: string | null;
   builtAt: string | null;
+  /** 1-based place among the queued builds, oldest first. Null unless `status` is queued. */
+  queuePosition: number | null;
 }
 
 export interface StorytellerExistingMatch {

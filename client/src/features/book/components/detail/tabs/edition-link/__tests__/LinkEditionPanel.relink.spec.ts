@@ -43,6 +43,7 @@ function statusResponse(overrides: Partial<ReadAlongStatusResponse>): Response {
     error: null,
     startedAt: null,
     builtAt: null,
+    queuePosition: null,
     ...overrides,
   }
   return { ok: true, status: 200, json: async () => body } as Response

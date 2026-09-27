@@ -42,9 +42,17 @@ describe('normalizeBook', () => {
       hasAudiobook: true,
       readaloudPath: '/library/Foundation.epub',
       ebookPath: '/library/Foundation.epub',
-      audiobookPath: '/library/Foundation/01.mp3',
+      audiobookPaths: ['/library/Foundation/01.mp3'],
       processing: { state: 'running', task: 'TRANSCRIBE_CHAPTERS', progress: 0.42, error: null },
     });
+  });
+
+  it.each([
+    ['one link per file', { audiobook: [{ filepath: '/a/01.mp3' }, { filepath: '/a/02.mp3' }] }],
+    ['one link carrying its files', { audiobook: { filepath: '/a/01.mp3', files: [{ filepath: '/a/01.mp3' }, { filepath: '/a/02.mp3' }] } }],
+    ['one link carrying its tracks', { audio: { tracks: [{ path: '/a/01.mp3' }, { path: '/a/02.mp3' }] } }],
+  ])('reads every file of a multi-file audiobook given as %s', (_shape, links) => {
+    expect(normalizeBook({ uuid: 'b', ...links })?.audiobookPaths).toEqual(['/a/01.mp3', '/a/02.mp3']);
   });
 
   it('reads the older snake_case shape and percent progress', () => {

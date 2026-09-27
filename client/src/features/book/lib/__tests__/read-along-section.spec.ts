@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import type { ReadAlongPhase, ReadAlongStatus } from '@bookorbit/types'
-import { isActionBlocked, resolveReadAlongSectionState, stageIndex } from '../read-along-section'
+import { isActionBlocked, isReadAlongInFlight, resolveReadAlongSectionState, stageIndex } from '../read-along-section'
 
 function state(status: ReadAlongStatus, hasOutputBook = false) {
   return { status, hasOutputBook }
@@ -36,6 +36,7 @@ describe('resolveReadAlongSectionState', () => {
   })
 
   it.each([
+    ['queued', false, false, 'queued'],
     ['building', false, false, 'building'],
     ['failed', false, false, 'failed'],
     ['none', false, false, 'none'],
@@ -56,5 +57,17 @@ describe('isActionBlocked', () => {
     expect(isActionBlocked('busy')).toBe(false)
     expect(isActionBlocked('unreachable')).toBe(true)
     expect(isActionBlocked('previous_output_not_deletable')).toBe(true)
+  })
+})
+
+describe('isReadAlongInFlight', () => {
+  it.each([
+    ['queued', true],
+    ['building', true],
+    ['ready', false],
+    ['failed', false],
+    ['none', false],
+  ] as [ReadAlongStatus, boolean][])('treats %s as in flight: %s', (status, expected) => {
+    expect(isReadAlongInFlight(status)).toBe(expected)
   })
 })

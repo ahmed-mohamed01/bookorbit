@@ -29,8 +29,15 @@ import type { StorytellerReadAlongPair } from './storyteller-read-along-status.s
 import type { StorytellerBookSummary, StorytellerRemoteSettings, StorytellerSession } from './storyteller-client.types';
 import { StorytellerClientError, StorytellerClientService } from './storyteller-client.service';
 import { describeError } from './storyteller-log.utils';
+import { StorytellerReadAlongNotifierService, readAlongNotifyStage, type ReadAlongAttempt } from './storyteller-read-along-notifier.service';
 import { storytellerConfig } from './storyteller.config';
-import { expectedCustomFolderOutputPath, storytellerSafeFilepathSegment, toLocalPath, toRemotePath } from './storyteller-path.utils';
+import {
+  expectedCustomFolderOutputPath,
+  sharedAudioDirectory,
+  storytellerSafeFilepathSegment,
+  toLocalPath,
+  toRemotePath,
+} from './storyteller-path.utils';
 import {
   StorytellerRepository,
   type StorytellerAudioFile,
@@ -66,6 +73,7 @@ const CLEANUP_EVENT = 'storyteller.read_along.cleanup';
 const FAIL_WRITE_EVENT = 'storyteller.read_along.fail_write';
 const OVERWRITE_EVENT = 'storyteller.read_along.overwrite';
 const STAMP_EVENT = 'storyteller.read_along.stamp_link';
+const SLOT_EVENT = 'storyteller.read_along.slot_release';
 const MATCH_EXISTING_EVENT = 'storyteller.read_along.match_existing';
 const UNMATCHED_EXISTING_MESSAGE = 'Storyteller already has a book for these files and it could not be matched; remove or import it in Storyteller';
 const REFUSAL_PREFIX = /^Storyteller answered \d+: /;
@@ -136,6 +144,8 @@ export interface StorytellerRunBuildOptions {
   oldOutputBookId?: number | null;
   /** Per-build override for the instance-wide `deleteRemoteAfterImport`. */
   cleanUpRemote?: boolean;
+  /** The attempt its notification is keyed to; a build without one keys it to its own start. */
+  attempt?: ReadAlongAttempt;
 }
 
 interface PreparedBuild {
@@ -200,6 +210,8 @@ function defaultSleep(milliseconds: number, signal?: AbortSignal): Promise<void>
   });
 }
 
+type HeldBookMatch = { book: StorytellerBookSummary; matchedBy: 'ebook' | 'audio' | 'audio_directory'; path: string };
+
 function withoutTrailingSlashes(path: string): string {
   return path.replace(/\/+$/, '');
 }
@@ -231,6 +243,7 @@ interface HeldSlot {
 export class StorytellerReadAlongBuildService {
   private readonly logger = new Logger(StorytellerReadAlongBuildService.name);
   private readonly slots = new Map<string, HeldSlot>();
+  private readonly releaseListeners: Array<() => void> = [];
   private readonly sleep: StorytellerSleep;
 
   constructor(
@@ -243,6 +256,7 @@ export class StorytellerReadAlongBuildService {
     private readonly libraryService: LibraryService,
     private readonly scannerService: ScannerService,
     private readonly epubService: EpubService,
+    private readonly notifier: StorytellerReadAlongNotifierService,
     @Optional() @Inject(STORYTELLER_SLEEP) sleep?: StorytellerSleep,
   ) {
     this.sleep = sleep ?? defaultSleep;
@@ -274,8 +288,25 @@ export class StorytellerReadAlongBuildService {
         open = false;
         if (this.slots.get(pairKey) === held) this.slots.delete(pairKey);
         markReleased();
+        this.notifySlotReleased();
       },
     };
+  }
+
+  /** Called once per release, after the slot is free: how the queue learns it can start the next build. */
+  onSlotReleased(listener: () => void): void {
+    this.releaseListeners.push(listener);
+  }
+
+  private notifySlotReleased(): void {
+    for (const listener of this.releaseListeners) {
+      try {
+        listener();
+      } catch (error) {
+        const { errorClass, message } = describeError(error);
+        this.logger.warn(`[${SLOT_EVENT}] [fail] errorClass=${errorClass} error="${sanitizeLogValue(message)}" - slot release listener failed`);
+      }
+    }
   }
 
   /**
@@ -334,6 +365,8 @@ export class StorytellerReadAlongBuildService {
     this.logger.log(
       `[${BUILD_EVENT}] [start] textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} buildId=${buildId} force=${options.force === true} - read-along build started`,
     );
+    const attempt = options.attempt ?? { buildId, textBookId: pair.textBookId, stamp: startedAt };
+    void this.notifier.started(user.id, attempt);
 
     try {
       throwIfCancelled(signal);
@@ -350,10 +383,14 @@ export class StorytellerReadAlongBuildService {
 
       phase = 'wait';
       await this.repo.updateBuild(buildId, { phase });
-      const remoteBook = await this.waitForReadaloud(buildId, registered.session, registered.storytellerBookUuid, signal);
+      void this.notifier.progress(user.id, attempt, readAlongNotifyStage(phase, null), null);
+      const remoteBook = await this.waitForReadaloud(buildId, registered.session, registered.storytellerBookUuid, signal, (task, progress) => {
+        void this.notifier.progress(user.id, attempt, readAlongNotifyStage('wait', task), progress);
+      });
 
       phase = 'collect';
       this.commit(pair, signal);
+      void this.notifier.progress(user.id, attempt, readAlongNotifyStage(phase, null), null);
       const collected = await this.collect(buildId, pair, registered, remoteBook, options);
 
       phase = 'link';
@@ -371,6 +408,7 @@ export class StorytellerReadAlongBuildService {
         error: null,
       });
       await this.stampAttachedLinkBestEffort(buildId, pair.linkId);
+      void this.notifier.ready(user.id, attempt, collected.outputBookId, registered.targetLibraryId);
       // Dropped only once the replacement is on disk and linked: a build can sit in the wait loop for hours.
       if (oldOutputBookId !== null) {
         await this.removePreviousOutputBestEffort(buildId, pair, oldOutputBookId, collected.outputBookId, linkedReadAlongBookId, user);
@@ -397,6 +435,7 @@ export class StorytellerReadAlongBuildService {
       // `storytellerBookUuid` is deliberately not written here: a uuid remembered by this method is
       // stale the moment the 409 fallback uploads a replacement.
       await this.persistTerminalFailure(buildId, phase, persistedError);
+      void this.notifier.failed(user.id, attempt, persistedError);
       this.logger.error(
         `[${BUILD_EVENT}] [fail] textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} buildId=${buildId} durationMs=${Date.now() - startedAt} step=${phase} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - read-along build failed`,
       );
@@ -711,6 +750,12 @@ export class StorytellerReadAlongBuildService {
       throw new BadRequestException('A source file path is not mapped for Storyteller');
     }
 
+    const mappedAudioPaths = audioPaths as string[];
+    // Checked before any import: Storyteller refuses paths it already holds, but an EPUB2 pair's held
+    // ebook is Storyteller's own copy, so the ebook import would succeed and make a second book first.
+    const existing = await this.findExistingReference(buildId, prepared, { epubPath, audioPaths: mappedAudioPaths });
+    if (existing) return { registered: existing, mode: 'reused_existing' };
+
     // One side at a time, then merged: a single request gives both candidates the same uuid hint and
     // drops the loser's half. Storyteller pairs automatically only within one upload or folder.
     let ebook: { uuid: string; copied: boolean } | null;
@@ -718,17 +763,25 @@ export class StorytellerReadAlongBuildService {
       ebook = await this.importEbook(prepared, epubPath, collectionUuid);
     } catch (error) {
       if (!(error instanceof StorytellerClientError) || error.status !== 405) throw error;
-      return { registered: await this.adoptExistingReference(buildId, prepared, epubPath, error), mode: 'reused_existing' };
+      return { registered: await this.adoptExistingReference(buildId, prepared, { epubPath }, error), mode: 'reused_existing' };
     }
     if (ebook === null) {
       return { registered: await this.registerByUpload(buildId, prepared, collectionUuid, 'epub2_not_importable'), mode: 'upload' };
     }
 
-    const audio = await prepared.session.importByReference({
-      paths: audioPaths as string[],
-      importMode: 'reference',
-      ...(collectionUuid ? { collectionUuid } : {}),
-    });
+    let audio: Awaited<ReturnType<StorytellerSession['importByReference']>>;
+    try {
+      audio = await prepared.session.importByReference({
+        paths: mappedAudioPaths,
+        importMode: 'reference',
+        ...(collectionUuid ? { collectionUuid } : {}),
+      });
+    } catch (error) {
+      if (!(error instanceof StorytellerClientError) || error.status !== 405) throw error;
+      const registered = await this.adoptExistingReference(buildId, prepared, { audioPaths: mappedAudioPaths, excludeUuid: ebook.uuid }, error);
+      if (ebook.copied) await this.deleteCopiedEbookBestEffort(buildId, prepared.session, ebook.uuid);
+      return { registered, mode: 'reused_existing' };
+    }
     if (audio.kind === 'epub2_detected') {
       return { registered: await this.registerByUpload(buildId, prepared, collectionUuid, 'audio_import_failed'), mode: 'upload' };
     }
@@ -751,43 +804,124 @@ export class StorytellerReadAlongBuildService {
   }
 
   /**
+   * The one Storyteller book already holding this pair's files: its ebook at the mapped EPUB path, or
+   * its audio at any of the mapped audio paths or at the folder holding them. Null when none does; more than one is
+   * refused rather than guessed. The whole catalogue is read because Storyteller offers no lookup by path.
+   */
+  private async findExistingReference(
+    buildId: number,
+    prepared: PreparedBuild,
+    paths: { epubPath: string; audioPaths: string[] },
+  ): Promise<RegisteredBuild | null> {
+    const startedAt = Date.now();
+    this.logger.log(
+      `[${MATCH_EXISTING_EVENT}] [start] buildId=${buildId} path="${sanitizeLogValue(paths.epubPath)}" audioFiles=${paths.audioPaths.length} check=before_import - existing Storyteller book lookup started`,
+    );
+    try {
+      const matches = this.matchHeldBooks(await prepared.session.listBooks(), paths);
+      if (matches.length > 1) throw new ConflictException(UNMATCHED_EXISTING_MESSAGE);
+      if (matches.length === 0) {
+        this.logger.log(
+          `[${MATCH_EXISTING_EVENT}] [end] buildId=${buildId} durationMs=${Date.now() - startedAt} matches=0 check=before_import - no Storyteller book holds these files`,
+        );
+        return null;
+      }
+      return await this.adoptBook(buildId, prepared, matches[0]!, startedAt);
+    } catch (error) {
+      const { errorClass, message } = describeError(error);
+      this.logger.warn(
+        `[${MATCH_EXISTING_EVENT}] [fail] buildId=${buildId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" check=before_import - existing Storyteller book could not be matched`,
+      );
+      throw error;
+    }
+  }
+
+  private matchHeldBooks(
+    books: StorytellerBookSummary[],
+    paths: { epubPath?: string; audioPaths?: string[]; excludeUuid?: string },
+  ): HeldBookMatch[] {
+    const audio = new Set(paths.audioPaths ?? []);
+    // A reference import records the audio folder rather than a file, and the list omits the per-file manifest.
+    const audioDirectory = sharedAudioDirectory(paths.audioPaths ?? []);
+    const matches: HeldBookMatch[] = [];
+    for (const book of books) {
+      if (book.uuid === paths.excludeUuid) continue;
+      if (paths.epubPath !== undefined && book.ebookPath === paths.epubPath) {
+        matches.push({ book, matchedBy: 'ebook', path: paths.epubPath });
+        continue;
+      }
+      const heldAudio = book.audiobookPaths.find((path) => audio.has(path));
+      if (heldAudio !== undefined) {
+        matches.push({ book, matchedBy: 'audio', path: heldAudio });
+        continue;
+      }
+      if (audioDirectory !== null && book.audiobookPaths.includes(audioDirectory)) {
+        matches.push({ book, matchedBy: 'audio_directory', path: audioDirectory });
+      }
+    }
+    return matches;
+  }
+
+  /** Held exactly like a remembered book: never owned outright, and reference-imported. */
+  private async adoptBook(buildId: number, prepared: PreparedBuild, match: HeldBookMatch, startedAt: number): Promise<RegisteredBuild> {
+    const storytellerBookUuid = match.book.uuid;
+    await this.repo.updateBuild(buildId, { transport: 'shared-paths', storytellerBookUuid });
+    this.logger.log(
+      `[${MATCH_EXISTING_EVENT}] [end] buildId=${buildId} durationMs=${Date.now() - startedAt} matches=1 matchedBy=${match.matchedBy} path="${sanitizeLogValue(match.path)}" storytellerBookUuid=${storytellerBookUuid} outcome=reused_existing - existing Storyteller book matched`,
+    );
+    return { ...prepared, transport: 'shared-paths', remoteOwnsAllSources: false, referenceImported: true, storytellerBookUuid };
+  }
+
+  /**
    * Storyteller answers 405 to an import of paths it already holds, which is what a cancelled or
-   * forgotten build leaves behind, but also to any file it cannot make a book from. The book whose
-   * ebook sits at exactly the path just offered is this pair's, so it is taken over as if this import
-   * had created it; anything less certain is refused rather than guessed. The whole catalogue is read because Storyteller offers no lookup by path,
-   * and this runs only on that refusal.
+   * forgotten build leaves behind, but also to any file it cannot make a book from. The book holding
+   * exactly the paths just offered is this pair's, so it is taken over as if this import had created
+   * it; anything less certain is refused rather than guessed. The whole catalogue is read because
+   * Storyteller offers no lookup by path, and this runs only on that refusal.
    */
   private async adoptExistingReference(
     buildId: number,
     prepared: PreparedBuild,
-    epubPath: string,
+    paths: { epubPath?: string; audioPaths?: string[]; excludeUuid?: string },
     refusal: StorytellerClientError,
   ): Promise<RegisteredBuild> {
     const startedAt = Date.now();
+    const offered = paths.epubPath ?? paths.audioPaths?.[0] ?? '';
     this.logger.log(
-      `[${MATCH_EXISTING_EVENT}] [start] buildId=${buildId} path="${sanitizeLogValue(epubPath)}" refusal="${sanitizeLogValue(refusal.message)}" - existing Storyteller book lookup started`,
+      `[${MATCH_EXISTING_EVENT}] [start] buildId=${buildId} path="${sanitizeLogValue(offered)}" refusal="${sanitizeLogValue(refusal.message)}" - existing Storyteller book lookup started`,
     );
     try {
-      const matches = (await prepared.session.listBooks()).filter((book) => book.ebookPath === epubPath);
+      const matches = this.matchHeldBooks(await prepared.session.listBooks(), paths);
       if (matches.length > 1) throw new ConflictException(UNMATCHED_EXISTING_MESSAGE);
       if (matches.length === 0) {
         throw new BadGatewayException(
           `Storyteller could not create a book from these files (${storytellerRefusalText(refusal)}). If the book already exists there, remove or import it in Storyteller; otherwise the EPUB may be unreadable by Storyteller, check its log`,
         );
       }
-      const storytellerBookUuid = matches[0]!.uuid;
-      await this.repo.updateBuild(buildId, { transport: 'shared-paths', storytellerBookUuid });
-      this.logger.log(
-        `[${MATCH_EXISTING_EVENT}] [end] buildId=${buildId} durationMs=${Date.now() - startedAt} matches=1 storytellerBookUuid=${storytellerBookUuid} - existing Storyteller book matched`,
-      );
-      // Held exactly like a remembered book: never owned outright, and reference-imported.
-      return { ...prepared, transport: 'shared-paths', remoteOwnsAllSources: false, referenceImported: true, storytellerBookUuid };
+      return await this.adoptBook(buildId, prepared, matches[0]!, startedAt);
     } catch (error) {
       const { errorClass, message } = describeError(error);
       this.logger.warn(
         `[${MATCH_EXISTING_EVENT}] [fail] buildId=${buildId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - existing Storyteller book could not be matched`,
       );
       throw error;
+    }
+  }
+
+  private async deleteCopiedEbookBestEffort(buildId: number, session: StorytellerSession, uuid: string): Promise<void> {
+    const startedAt = Date.now();
+    this.logger.log(`[${CLEANUP_EVENT}] [start] buildId=${buildId} storytellerBookUuid=${uuid} target=copied_ebook - Storyteller cleanup started`);
+    try {
+      // Copy-imported and never merged: its only file is Storyteller's internal copy, so no library file is touched.
+      await session.deleteBook(uuid, { preventReImport: true });
+      this.logger.log(
+        `[${CLEANUP_EVENT}] [end] buildId=${buildId} storytellerBookUuid=${uuid} target=copied_ebook durationMs=${Date.now() - startedAt} - Storyteller cleanup completed`,
+      );
+    } catch (error) {
+      const { errorClass, message } = describeError(error);
+      this.logger.warn(
+        `[${CLEANUP_EVENT}] [fail] buildId=${buildId} storytellerBookUuid=${uuid} target=copied_ebook durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - copied ebook could not be removed from Storyteller`,
+      );
     }
   }
 
@@ -936,7 +1070,13 @@ export class StorytellerReadAlongBuildService {
     }
   }
 
-  private async waitForReadaloud(buildId: number, session: StorytellerSession, uuid: string, signal: AbortSignal): Promise<StorytellerBookSummary> {
+  private async waitForReadaloud(
+    buildId: number,
+    session: StorytellerSession,
+    uuid: string,
+    signal: AbortSignal,
+    onProgress: (task: string | null, progress: number | null) => void,
+  ): Promise<StorytellerBookSummary> {
     const startedAt = Date.now();
     let polls = 0;
     let delayMs = WAIT_INITIAL_DELAY_MS;
@@ -955,6 +1095,7 @@ export class StorytellerReadAlongBuildService {
             remoteProgress: book.processing.progress,
           });
           throwIfCancelled(signal);
+          onProgress(book.processing.task, book.processing.progress);
           // Availability first: a reported failure only counts when nothing is there to fetch.
           // Storyteller can drop or halt the job row around a restart and the job record wins in
           // `normalizeProcessing`, so failing on it ends a build whose file is ready and no retry

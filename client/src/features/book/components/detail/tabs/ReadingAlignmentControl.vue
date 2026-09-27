@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { getBookLinkModality, useEditionLink } from '@/features/book/composables/useEditionLink'
 import { useReadingAlignment } from '@/features/book/composables/useReadingAlignment'
+import { isReadAlongInFlight } from '@/features/book/lib/read-along-section'
 import { useReadAlongSection } from '@/features/book/composables/useReadAlongSection'
 import type { EditionFormat } from '@/features/book/composables/useLinkEditionPanel'
 import PositionSyncSection from './edition-link/PositionSyncSection.vue'
@@ -116,7 +117,7 @@ function handleOpenChange(next: boolean) {
   void readAlong.fetchStatus(props.book.id)
   // The lookup is refused without the upload permission, and only offers anything to a pair with no
   // read-along and no build running.
-  if (canGenerate.value && !readAlong.outputBook.value && readAlong.status.value !== 'building') void readAlong.fetchExisting(props.book.id)
+  if (canGenerate.value && !readAlong.outputBook.value && !isReadAlongInFlight(readAlong.status.value)) void readAlong.fetchExisting(props.book.id)
   if (canGenerate.value) readAlongSection.loadTargetLibraries()
 }
 

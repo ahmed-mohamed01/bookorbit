@@ -112,10 +112,13 @@ CREATE TABLE IF NOT EXISTS "storyteller_read_along_builds" (
 	"error" text,
 	"started_at" timestamp with time zone,
 	"built_at" timestamp with time zone,
+	"requested_by" integer,
+	"queued_at" timestamp with time zone,
+	"queued_request" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "storyteller_read_along_builds_pair_unique" UNIQUE("text_book_id", "audio_book_id"),
-	CONSTRAINT "storyteller_read_along_builds_status_chk" CHECK ("status" in ('building', 'ready', 'failed', 'cancelled')),
+	CONSTRAINT "storyteller_read_along_builds_status_chk" CHECK ("status" in ('queued', 'building', 'ready', 'failed', 'cancelled')),
 	CONSTRAINT "storyteller_read_along_builds_phase_chk" CHECK ("phase" is null or "phase" in ('prepare', 'register', 'process', 'wait', 'collect', 'link')),
 	CONSTRAINT "storyteller_read_along_builds_transport_chk" CHECK ("transport" is null or "transport" in ('shared-paths', 'api-transfer')),
 	CONSTRAINT "storyteller_read_along_builds_remote_progress_chk" CHECK ("remote_progress" is null or ("remote_progress" >= 0 and "remote_progress" <= 1))
@@ -124,6 +127,12 @@ CREATE TABLE IF NOT EXISTS "storyteller_read_along_builds" (
 ALTER TABLE "storyteller_read_along_builds" ADD COLUMN IF NOT EXISTS "target_folder_id" integer;
 --> statement-breakpoint
 ALTER TABLE "storyteller_read_along_builds" ADD COLUMN IF NOT EXISTS "attached_link_id" integer;
+--> statement-breakpoint
+ALTER TABLE "storyteller_read_along_builds" ADD COLUMN IF NOT EXISTS "requested_by" integer;
+--> statement-breakpoint
+ALTER TABLE "storyteller_read_along_builds" ADD COLUMN IF NOT EXISTS "queued_at" timestamp with time zone;
+--> statement-breakpoint
+ALTER TABLE "storyteller_read_along_builds" ADD COLUMN IF NOT EXISTS "queued_request" jsonb;
 --> statement-breakpoint
 DO $$ BEGIN
 	IF NOT EXISTS (
@@ -140,7 +149,7 @@ DO $$ BEGIN
 		SELECT 1 FROM pg_constraint
 		WHERE conrelid = to_regclass('storyteller_read_along_builds')
 			AND conname = 'storyteller_read_along_builds_status_chk'
-			AND pg_get_constraintdef(oid) NOT LIKE '%cancelled%'
+			AND pg_get_constraintdef(oid) NOT LIKE '%queued%'
 	) THEN
 		ALTER TABLE "storyteller_read_along_builds" DROP CONSTRAINT "storyteller_read_along_builds_status_chk";
 	END IF;
@@ -152,7 +161,7 @@ DO $$ BEGIN
 		WHERE conrelid = to_regclass('storyteller_read_along_builds')
 			AND conname = 'storyteller_read_along_builds_status_chk'
 	) THEN
-		ALTER TABLE "storyteller_read_along_builds" ADD CONSTRAINT "storyteller_read_along_builds_status_chk" CHECK ("status" in ('building', 'ready', 'failed', 'cancelled'));
+		ALTER TABLE "storyteller_read_along_builds" ADD CONSTRAINT "storyteller_read_along_builds_status_chk" CHECK ("status" in ('queued', 'building', 'ready', 'failed', 'cancelled'));
 	END IF;
 END $$;
 --> statement-breakpoint
@@ -237,6 +246,16 @@ DO $$ BEGIN
 END $$;
 --> statement-breakpoint
 DO $$ BEGIN
+	IF to_regclass('users') IS NOT NULL AND NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conrelid = to_regclass('storyteller_read_along_builds')
+			AND conname = 'storyteller_read_along_builds_requested_by_fk'
+	) THEN
+		ALTER TABLE "storyteller_read_along_builds" ADD CONSTRAINT "storyteller_read_along_builds_requested_by_fk" FOREIGN KEY ("requested_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
 	IF to_regclass('book_edition_links') IS NOT NULL AND NOT EXISTS (
 		SELECT 1 FROM pg_constraint
 		WHERE conrelid = to_regclass('storyteller_read_along_builds')
@@ -262,4 +281,6 @@ END $$;
 CREATE INDEX IF NOT EXISTS "storyteller_read_along_builds_output_book_id_idx" ON "storyteller_read_along_builds" USING btree ("output_book_id");
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "storyteller_read_along_builds_uuid_idx" ON "storyteller_read_along_builds" USING btree ("storyteller_book_uuid");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "storyteller_read_along_builds_queued_at_idx" ON "storyteller_read_along_builds" USING btree ("queued_at") WHERE "status" = 'queued';
 `;

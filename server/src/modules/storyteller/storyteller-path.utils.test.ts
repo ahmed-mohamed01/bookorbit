@@ -8,6 +8,7 @@ import {
   assertMappablePathMappings,
   expectedCustomFolderOutputPath,
   normalizePathMappings,
+  sharedAudioDirectory,
   storytellerSafeFilepathSegment,
   toLocalPath,
   toRemotePath,
@@ -241,5 +242,23 @@ describe('expectedCustomFolderOutputPath', () => {
     expect(expectedCustomFolderOutputPath('/storyteller/readalongs', '???')).toBeNull();
     expect(expectedCustomFolderOutputPath('/storyteller/readalongs', '   ')).toBeNull();
     expect(expectedCustomFolderOutputPath('/storyteller/readalongs', '...')).toBeNull();
+  });
+});
+
+describe('sharedAudioDirectory', () => {
+  it('is the folder of a single file', () => {
+    expect(sharedAudioDirectory(['/remote/books/Dawnshard/Dawnshard.m4b'])).toBe('/remote/books/Dawnshard');
+  });
+
+  it('is the deepest folder holding several files, compared by whole segments', () => {
+    expect(sharedAudioDirectory(['/remote/books/Dawnshard/01.mp3', '/remote/books/Dawnshard/02.mp3'])).toBe('/remote/books/Dawnshard');
+    expect(sharedAudioDirectory(['/remote/books/Dawnshard/cd1/01.mp3', '/remote/books/Dawnshard/cd2/01.mp3'])).toBe('/remote/books/Dawnshard');
+    expect(sharedAudioDirectory(['/remote/books/Dawnshard/01.mp3', '/remote/books/Dawnshard2/01.mp3'])).toBe('/remote/books');
+  });
+
+  it('is null without files or when they share only the root', () => {
+    expect(sharedAudioDirectory([])).toBeNull();
+    expect(sharedAudioDirectory(['/a/01.mp3', '/b/01.mp3'])).toBeNull();
+    expect(sharedAudioDirectory(['/01.mp3'])).toBeNull();
   });
 });

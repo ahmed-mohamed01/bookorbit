@@ -101,6 +101,8 @@ const blockMessage = computed(() => (blocked.value && props.canGenerate ? t(BLOC
 
 const tag = computed(() => {
   switch (sectionState.value) {
+    case 'queued':
+      return { key: 'book.detail.editionLink.readAlong.tag.queued', class: 'bg-info/15 text-info' }
     case 'building':
       return { key: 'book.detail.editionLink.readAlong.tag.building', class: 'bg-info/15 text-info' }
     case 'failed':
@@ -123,7 +125,7 @@ const showGenerate = computed(() => sectionState.value === 'none' && props.canGe
 const showRetry = computed(() => sectionState.value === 'failed' && props.canGenerate)
 // Once the read-along is being imported the server refuses to stop it.
 const pastCancel = computed(() => props.state.phase === 'collect' || props.state.phase === 'link')
-const showCancel = computed(() => sectionState.value === 'building' && props.canGenerate && !pastCancel.value)
+const showCancel = computed(() => props.canGenerate && (sectionState.value === 'queued' || (sectionState.value === 'building' && !pastCancel.value)))
 const showRebuild = computed(() => props.mode === 'manage' && sectionState.value === 'ready' && props.canGenerate && props.canRebuild)
 
 // Only an aligned Storyteller book can be imported: an unaligned one still has to be processed.
@@ -189,6 +191,10 @@ const bodyText = computed(() => {
       return t('book.detail.editionLink.readAlong.body.none')
     case 'outOfReach':
       return t('book.detail.editionLink.readAlong.body.outOfReach')
+    case 'queued':
+      return props.state.queuePosition === null
+        ? t('book.detail.editionLink.readAlong.body.queuedUnknown')
+        : t('book.detail.editionLink.readAlong.body.queued', { position: props.state.queuePosition })
     default:
       return null
   }

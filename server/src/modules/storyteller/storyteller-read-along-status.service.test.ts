@@ -16,12 +16,15 @@ import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
 import { EditionLinkRepository } from '../edition-link/edition-link.repository';
 import { LibraryService } from '../library/library.service';
+import { UserService } from '../user/user.service';
 import { StorytellerReadAlongBuildService } from './storyteller-read-along-build.service';
 import * as epubUtils from './storyteller-epub.utils';
 import { StorytellerReadAlongStatusService, type StorytellerReadAlongPair } from './storyteller-read-along-status.service';
 import { StorytellerClientError, StorytellerClientService } from './storyteller-client.service';
 import { StorytellerRepository } from './storyteller.repository';
 import { StorytellerSettingsService } from './storyteller-settings.service';
+import { StorytellerReadAlongNotifierService } from './storyteller-read-along-notifier.service';
+import { StorytellerSchemaBootstrapService } from './storyteller-schema-bootstrap.service';
 
 const USER = {
   id: 42,
@@ -73,6 +76,7 @@ function createBuildServiceStub() {
   const aborted = new Set<string>();
   const controllers = new Map<string, AbortController>();
   const releaseWaiters = new Map<string, Array<() => void>>();
+  const releaseListeners: Array<() => void> = [];
   const keyOf = (pair: StorytellerReadAlongPair) => `${pair.textBookId}:${pair.audioBookId}`;
   return {
     held,
@@ -92,6 +96,7 @@ function createBuildServiceStub() {
           aborted.delete(pairKey);
           for (const wake of releaseWaiters.get(pairKey) ?? []) wake();
           releaseWaiters.delete(pairKey);
+          for (const listener of releaseListeners) listener();
         },
       };
     }),
@@ -104,6 +109,9 @@ function createBuildServiceStub() {
       aborted.add(keyOf(pair));
       controllers.get(keyOf(pair))?.abort();
       return true;
+    }),
+    onSlotReleased: vi.fn((listener: () => void) => {
+      releaseListeners.push(listener);
     }),
     // Mirrors the one-slot service: a cancelled build holding the slot stands in every pair's way.
     whenReleased: vi.fn((pair: StorytellerReadAlongPair) => {
@@ -146,6 +154,17 @@ async function setup() {
     startBuild: vi.fn().mockResolvedValue(buildRow({ status: 'building' })),
     updateBuild: vi.fn().mockResolvedValue({}),
     retireCancelledBuild: vi.fn().mockResolvedValue('deleted'),
+    queueBuild: vi
+      .fn()
+      .mockImplementation((values: Record<string, unknown>) =>
+        Promise.resolve(buildRow({ ...values, status: 'queued', queuedAt: new Date('2026-02-01T00:00:00Z') })),
+      ),
+    findOldestQueuedBuild: vi.fn().mockResolvedValue(undefined),
+    countQueuedBefore: vi.fn().mockResolvedValue(0),
+    countQueuedBuilds: vi.fn().mockResolvedValue(0),
+    claimQueuedBuild: vi.fn().mockResolvedValue(buildRow({ status: 'building' })),
+    failQueuedBuild: vi.fn().mockResolvedValue('failed'),
+    retireQueuedBuild: vi.fn().mockResolvedValue('deleted'),
     findBookTitleAndAuthors: vi.fn().mockResolvedValue({ title: 'Book', authorNames: ['Author'], isbn10: null, isbn13: null, asin: null }),
   };
   const settings = {
@@ -173,6 +192,13 @@ async function setup() {
     verifyUserAccess: vi.fn().mockResolvedValue(undefined),
     findOne: vi.fn().mockResolvedValue({ id: 3, name: 'Read-alongs', type: 'books', allowedFormats: ['epub'], organizationMode: 'book_per_file' }),
   };
+  const userService = { findByIdWithPermissions: vi.fn().mockResolvedValue({ ...USER, active: true }) };
+  const schemaBootstrap = { ready: Promise.resolve() };
+  const notifier = {
+    queued: vi.fn().mockResolvedValue(undefined),
+    failed: vi.fn().mockResolvedValue(undefined),
+    cancelled: vi.fn().mockResolvedValue(undefined),
+  };
   const editionLinks = {
     findLinkForBook: vi.fn().mockResolvedValue(LINK),
     getBookModality: vi.fn().mockResolvedValue('text'),
@@ -189,6 +215,9 @@ async function setup() {
       { provide: BookService, useValue: bookService },
       { provide: LibraryService, useValue: libraryService },
       { provide: EditionLinkRepository, useValue: editionLinks },
+      { provide: UserService, useValue: userService },
+      { provide: StorytellerSchemaBootstrapService, useValue: schemaBootstrap },
+      { provide: StorytellerReadAlongNotifierService, useValue: notifier },
     ],
   }).compile();
   return {
@@ -201,6 +230,9 @@ async function setup() {
     bookService,
     libraryService,
     editionLinks,
+    userService,
+    notifier,
+    schemaBootstrap,
   };
 }
 
@@ -447,12 +479,23 @@ describe('StorytellerReadAlongStatusService', () => {
     );
   });
 
-  it('blocks when the build service is at capacity', async () => {
-    const { service, buildService, repo } = await setup();
+  it('queues the request when the build service is at capacity', async () => {
+    const { service, buildService, repo, notifier } = await setup();
     buildService.tryReserve.mockReturnValue(null);
 
-    await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'none', blocked: 'busy' });
+    await expect(service.requestBuild(10, USER, { cleanUpRemote: true })).resolves.toEqual({ status: 'queued', blocked: null });
     expect(repo.startBuild).not.toHaveBeenCalled();
+    expect(repo.queueBuild).toHaveBeenCalledWith(
+      {
+        textBookId: 10,
+        audioBookId: 11,
+        requestedBy: 42,
+        queuedRequest: expect.objectContaining({ cleanUpRemote: true, previousStatus: null }),
+      },
+      null,
+    );
+    expect(repo.queueBuild.mock.calls[0]![0].queuedRequest).not.toHaveProperty('oldOutputBookId');
+    expect(notifier.queued).toHaveBeenCalledWith(42, { buildId: 7, textBookId: 10, stamp: Date.parse('2026-02-01T00:00:00Z') }, 1);
   });
 
   // The slot has to be taken before the claim, not merely checked before it: the claim strips
@@ -465,7 +508,7 @@ describe('StorytellerReadAlongStatusService', () => {
     repo.startBuild.mockReturnValueOnce(claim.promise);
 
     const first = service.requestBuild(10, USER, {});
-    await expect(service.requestBuild(12, USER, {})).resolves.toEqual({ status: 'none', blocked: 'busy' });
+    await expect(service.requestBuild(12, USER, {})).resolves.toEqual({ status: 'queued', blocked: null });
 
     claim.resolve(buildRow({ status: 'building' }));
     await expect(first).resolves.toEqual({ status: 'building', blocked: null });
@@ -498,7 +541,7 @@ describe('StorytellerReadAlongStatusService', () => {
     buildService.runBuild.mockImplementation((_buildId, _pair, _user, _options, slot) => running.promise.then(() => slot?.release()));
 
     await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'building', blocked: null });
-    await expect(service.requestBuild(12, USER, {})).resolves.toEqual({ status: 'none', blocked: 'busy' });
+    await expect(service.requestBuild(12, USER, {})).resolves.toEqual({ status: 'queued', blocked: null });
 
     running.resolve();
   });
@@ -1118,7 +1161,7 @@ describe('StorytellerReadAlongStatusService', () => {
       expect(buildService.held.size).toBe(0);
     });
 
-    it('answers busy once the wait for a cancelled build runs past its cap', async () => {
+    it('queues once the wait for a cancelled build runs past its cap', async () => {
       vi.useFakeTimers();
       try {
         const { service, buildService, repo } = await setup();
@@ -1129,7 +1172,7 @@ describe('StorytellerReadAlongStatusService', () => {
         await vi.waitFor(() => expect(buildService.whenReleased).toHaveBeenCalled());
         await vi.advanceTimersByTimeAsync(30_000);
 
-        await expect(request).resolves.toEqual({ status: 'none', blocked: 'busy' });
+        await expect(request).resolves.toEqual({ status: 'queued', blocked: null });
         expect(repo.startBuild).not.toHaveBeenCalled();
       } finally {
         vi.useRealTimers();
@@ -1375,6 +1418,420 @@ describe('StorytellerReadAlongStatusService', () => {
       editionLinks.findLinkForBook.mockResolvedValue(undefined);
 
       await expect(service.cancelBuild(10, USER)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('the read-along queue', () => {
+    const QUEUED_AT = new Date('2026-02-01T00:00:00Z');
+    const queuedRow = (overrides: Record<string, unknown> = {}) =>
+      buildRow({
+        status: 'queued',
+        phase: null,
+        startedAt: null,
+        requestedBy: 42,
+        queuedAt: QUEUED_AT,
+        queuedRequest: { targetLibraryId: 3, targetFolderId: 30, cleanUpRemote: true, previousStatus: 'failed' },
+        ...overrides,
+      });
+
+    it('keeps an already queued pair in its place on a second Generate', async () => {
+      const { service, repo } = await setup();
+      repo.findBuildByPair.mockResolvedValue(queuedRow());
+
+      await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'queued', blocked: null });
+      expect(repo.queueBuild).not.toHaveBeenCalled();
+      expect(repo.startBuild).not.toHaveBeenCalled();
+    });
+
+    it('queues behind a build already waiting even when the slot is free', async () => {
+      const { service, repo, buildService } = await setup();
+      buildService.held.add('12:13');
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow({ id: 8, textBookId: 12, audioBookId: 13 }));
+
+      await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'queued', blocked: null });
+      expect(repo.startBuild).not.toHaveBeenCalled();
+      expect(repo.queueBuild).toHaveBeenCalledOnce();
+    });
+
+    it('answers the running build when the pair is building and cannot be queued', async () => {
+      const { service, repo, buildService } = await setup();
+      buildService.tryReserve.mockReturnValue(null);
+      repo.queueBuild.mockResolvedValue(undefined);
+      repo.findBuildByPair.mockResolvedValueOnce(undefined).mockResolvedValue(buildRow({ status: 'building' }));
+
+      await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'building', blocked: null });
+    });
+
+    it('starts the oldest queued build with its stored request, as the user who queued it', async () => {
+      const { service, repo, buildService, userService } = await setup();
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow({ storytellerBookUuid: 'resume-me', transport: 'api-transfer' }));
+
+      await service.startNextQueuedBuild();
+
+      expect(userService.findByIdWithPermissions).toHaveBeenCalledWith(42);
+      expect(repo.claimQueuedBuild).toHaveBeenCalledWith(7, {
+        storytellerBookUuid: 'resume-me',
+        transport: 'api-transfer',
+        targetLibraryId: 3,
+        targetFolderId: 30,
+      });
+      expect(buildService.runBuild).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ textBookId: 10, audioBookId: 11 }),
+        expect.objectContaining({ id: 42 }),
+        expect.objectContaining({ targetLibraryId: 3, targetFolderId: 30, cleanUpRemote: true, oldOutputBookId: null }),
+        expect.anything(),
+      );
+    });
+
+    it('fails a row whose requester is gone and moves on to the next', async () => {
+      const { service, repo, buildService, userService } = await setup();
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow({ requestedBy: 99 })).mockResolvedValueOnce(queuedRow({ id: 8 }));
+      userService.findByIdWithPermissions.mockImplementation((id: number) => Promise.resolve(id === 42 ? { ...USER, active: true } : null));
+
+      await service.startNextQueuedBuild();
+
+      expect(repo.failQueuedBuild).toHaveBeenCalledWith(7, 'the user who queued this build is no longer available');
+      expect(repo.claimQueuedBuild).toHaveBeenCalledWith(8, expect.anything());
+      expect(buildService.runBuild).toHaveBeenCalledOnce();
+    });
+
+    it('fails a row queued by a user who has since been deactivated', async () => {
+      const { service, repo, userService } = await setup();
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow());
+      userService.findByIdWithPermissions.mockResolvedValue({ ...USER, active: false });
+
+      await service.startNextQueuedBuild();
+
+      expect(repo.failQueuedBuild).toHaveBeenCalledWith(7, 'the user who queued this build is no longer available');
+      expect(repo.claimQueuedBuild).not.toHaveBeenCalled();
+    });
+
+    it('fails a row the checks now refuse, tells its requester, and moves on to the next', async () => {
+      const { service, repo, buildService, notifier } = await setup();
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow()).mockResolvedValueOnce(queuedRow({ id: 8 }));
+      repo.hasAudioContentFile.mockResolvedValueOnce(false);
+
+      await service.startNextQueuedBuild();
+
+      expect(repo.failQueuedBuild).toHaveBeenCalledWith(7, 'This pair has no audio to align.');
+      expect(notifier.failed).toHaveBeenCalledWith(42, expect.objectContaining({ buildId: 7, textBookId: 10 }), 'This pair has no audio to align.');
+      expect(repo.claimQueuedBuild).toHaveBeenCalledWith(8, expect.anything());
+      expect(buildService.runBuild).toHaveBeenCalledOnce();
+    });
+
+    it('fails a row whose pair was relinked to another counterpart', async () => {
+      const { service, repo, editionLinks } = await setup();
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow());
+      editionLinks.findLinkForBook.mockResolvedValue({ ...LINK, audioBookId: 77 });
+
+      await service.startNextQueuedBuild();
+
+      expect(repo.failQueuedBuild).toHaveBeenCalledWith(7, expect.stringContaining('no longer linked'));
+      expect(repo.claimQueuedBuild).not.toHaveBeenCalled();
+    });
+
+    it('stops without touching the row while another build holds the slot', async () => {
+      const { service, repo, buildService, userService } = await setup();
+      buildService.held.add('12:13');
+      repo.findOldestQueuedBuild.mockResolvedValue(queuedRow());
+
+      await service.startNextQueuedBuild();
+
+      expect(repo.findOldestQueuedBuild).toHaveBeenCalledOnce();
+      expect(userService.findByIdWithPermissions).not.toHaveBeenCalled();
+      expect(repo.failQueuedBuild).not.toHaveBeenCalled();
+      expect(repo.claimQueuedBuild).not.toHaveBeenCalled();
+    });
+
+    it('runs one pass at a time and looks again when a release lands during it', async () => {
+      const { service, repo, buildService } = await setup();
+      const oldest = deferred<ReturnType<typeof queuedRow> | undefined>();
+      repo.findOldestQueuedBuild.mockReturnValueOnce(oldest.promise);
+
+      const first = service.startNextQueuedBuild();
+      const second = service.startNextQueuedBuild();
+      await second;
+      expect(repo.findOldestQueuedBuild).toHaveBeenCalledOnce();
+
+      oldest.resolve(queuedRow());
+      await first;
+
+      expect(buildService.runBuild).toHaveBeenCalledOnce();
+      // The second call asked for another look once the first pass finished.
+      expect(repo.findOldestQueuedBuild.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('starts the next queued build when a slot is released', async () => {
+      const { service, repo, buildService } = await setup();
+      service.onModuleInit();
+      expect(buildService.onSlotReleased).toHaveBeenCalledOnce();
+
+      buildService.tryReserve({ textBookId: 12, audioBookId: 13 } as StorytellerReadAlongPair)!.release();
+
+      await vi.waitFor(() => expect(repo.findOldestQueuedBuild).toHaveBeenCalled());
+    });
+
+    it('starts the queue once the schema bootstrap has finished on boot', async () => {
+      const { service, repo } = await setup();
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow());
+
+      service.onApplicationBootstrap();
+
+      await vi.waitFor(() => expect(repo.claimQueuedBuild).toHaveBeenCalledWith(7, expect.anything()));
+    });
+
+    it('leaves a row a cancel took out of the queue before the claim', async () => {
+      const { service, repo, buildService } = await setup();
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow());
+      repo.claimQueuedBuild.mockResolvedValueOnce(undefined);
+
+      await service.startNextQueuedBuild();
+
+      expect(buildService.runBuild).not.toHaveBeenCalled();
+      expect(buildService.held.size).toBe(0);
+    });
+
+    it('cancels a queued row that holds a Storyteller book by keeping it, without calling Storyteller', async () => {
+      const { service, repo, session, notifier } = await setup();
+      const lines: string[] = [];
+      vi.spyOn(Logger.prototype, 'log').mockImplementation((message: unknown) => {
+        lines.push(String(message));
+      });
+      repo.findBuildByPair.mockResolvedValue(queuedRow({ storytellerBookUuid: 'kept-uuid' }));
+      repo.retireQueuedBuild.mockResolvedValue('kept');
+
+      await service.cancelBuild(10, USER);
+
+      expect(repo.retireQueuedBuild).toHaveBeenCalledWith(7);
+      expect(repo.retireCancelledBuild).not.toHaveBeenCalled();
+      expect(session.cancelProcessing).not.toHaveBeenCalled();
+      expect(notifier.cancelled).toHaveBeenCalledExactlyOnceWith(42, { buildId: 7, textBookId: 10, stamp: QUEUED_AT.getTime() });
+      expect(lines.some((line) => line.includes('[storyteller.read_along.cancel] [end]') && line.includes('row=kept'))).toBe(true);
+    });
+
+    it('cancels a queued row with no Storyteller book by deleting it', async () => {
+      const { service, repo } = await setup();
+      const lines: string[] = [];
+      vi.spyOn(Logger.prototype, 'log').mockImplementation((message: unknown) => {
+        lines.push(String(message));
+      });
+      repo.findBuildByPair.mockResolvedValue(queuedRow());
+      repo.retireQueuedBuild.mockResolvedValue('deleted');
+
+      await service.cancelBuild(10, USER);
+
+      expect(repo.retireQueuedBuild).toHaveBeenCalledWith(7);
+      expect(lines.some((line) => line.includes('row=deleted'))).toBe(true);
+    });
+
+    it('never demotes a queued rebuild of a ready read-along: the reason goes to its requester', async () => {
+      const { service, repo, notifier } = await setup();
+      const lines: string[] = [];
+      vi.spyOn(Logger.prototype, 'log').mockImplementation((message: unknown) => {
+        lines.push(String(message));
+      });
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow({ queuedRequest: { force: true, previousStatus: 'ready' } }));
+      repo.hasAudioContentFile.mockResolvedValueOnce(false);
+      repo.failQueuedBuild.mockResolvedValueOnce('restored');
+
+      await service.startNextQueuedBuild();
+
+      expect(notifier.failed).toHaveBeenCalledWith(42, expect.objectContaining({ buildId: 7 }), 'This pair has no audio to align.');
+      expect(lines.some((line) => line.includes('outcome=restored') && line.includes('reason=no_audio'))).toBe(true);
+    });
+
+    it('leaves every row queued while Storyteller is unreachable, and looks again five minutes later', async () => {
+      vi.useFakeTimers({ now: new Date('2026-03-01T00:00:00Z') });
+      try {
+        const { service, repo, settings } = await setup();
+        Object.assign(settings, { lastCheckedAt: new Date().toISOString(), lastCheck: { ok: false } });
+        repo.findOldestQueuedBuild.mockResolvedValue(queuedRow());
+
+        await service.startNextQueuedBuild();
+
+        expect(repo.failQueuedBuild).not.toHaveBeenCalled();
+        expect(repo.claimQueuedBuild).not.toHaveBeenCalled();
+        expect(service['retryTimer']).not.toBeNull();
+
+        Object.assign(settings, { lastCheck: { ok: true } });
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+
+        expect(repo.claimQueuedBuild).toHaveBeenCalledWith(7, expect.anything());
+        service.onModuleDestroy();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('leaves the row queued while Storyteller is not configured, with one retry armed', async () => {
+      const { service, repo, settingsService } = await setup();
+      settingsService.getConnection.mockResolvedValue(null);
+      repo.findOldestQueuedBuild.mockResolvedValue(queuedRow());
+
+      await service.startNextQueuedBuild();
+      const timer = service['retryTimer'];
+      await service.startNextQueuedBuild();
+
+      expect(repo.failQueuedBuild).not.toHaveBeenCalled();
+      expect(service['retryTimer']).toBe(timer);
+      service.onModuleDestroy();
+      expect(service['retryTimer']).toBeNull();
+    });
+
+    it('fails a row whose requester has since lost the build permission', async () => {
+      const { service, repo, userService } = await setup();
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow());
+      userService.findByIdWithPermissions.mockResolvedValue({ ...USER, permissions: [], active: true });
+
+      await service.startNextQueuedBuild();
+
+      expect(repo.failQueuedBuild).toHaveBeenCalledWith(7, 'you no longer have permission to build read-alongs');
+      expect(repo.claimQueuedBuild).not.toHaveBeenCalled();
+    });
+
+    it('records the caller as the requester of a build it starts directly', async () => {
+      const { service, repo } = await setup();
+
+      await service.requestBuild(10, USER, {});
+
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ requestedBy: 42 }));
+    });
+
+    it('tells both the requester and a different user who cancelled the queued build', async () => {
+      const { service, repo, notifier } = await setup();
+      const admin = { ...USER, id: 50 } as RequestUser;
+      repo.findBuildByPair.mockResolvedValue(queuedRow());
+      repo.retireQueuedBuild.mockResolvedValue('deleted');
+
+      await service.cancelBuild(10, admin);
+
+      const attempt = { buildId: 7, textBookId: 10, stamp: QUEUED_AT.getTime() };
+      expect(notifier.cancelled).toHaveBeenCalledWith(42, attempt);
+      expect(notifier.cancelled).toHaveBeenCalledWith(50, attempt);
+    });
+
+    it('cancels as a running build when the runner claimed the queued row after it was read', async () => {
+      const { service, repo, buildService, session } = await setup();
+      repo.findBuildByPair
+        .mockResolvedValueOnce(queuedRow({ storytellerBookUuid: 'resume-me' }))
+        .mockResolvedValueOnce(
+          buildRow({ status: 'building', phase: 'wait', storytellerBookUuid: 'resume-me', requestedBy: 42, queuedAt: QUEUED_AT }),
+        );
+      repo.retireQueuedBuild.mockResolvedValue('unchanged');
+      repo.retireCancelledBuild.mockResolvedValue('kept');
+
+      await service.cancelBuild(10, USER);
+
+      expect(repo.retireQueuedBuild).toHaveBeenCalledWith(7);
+      expect(buildService.cancel).toHaveBeenCalledTimes(2);
+      expect(session.cancelProcessing).toHaveBeenCalledWith('resume-me');
+      expect(repo.retireCancelledBuild).toHaveBeenCalledWith(7);
+    });
+
+    it('takes the ready shortcut when the build it would queue behind finished first', async () => {
+      const { service, repo, buildService, editionLinks } = await setup();
+      buildService.tryReserve.mockReturnValue(null);
+      repo.findBuildByPair
+        .mockResolvedValueOnce(buildRow({ status: 'building' }))
+        .mockResolvedValue(buildRow({ status: 'ready', outputBookId: 99, builtAt: new Date() }));
+      repo.queueBuild.mockResolvedValue(undefined);
+      editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Read-along' });
+
+      await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'ready', blocked: null });
+      expect(repo.queueBuild).toHaveBeenCalledOnce();
+      expect(repo.queueBuild.mock.calls[0]![1]).toBe('building');
+    });
+
+    it('reads again and queues when the row moved between the read and the insert', async () => {
+      const { service, repo, buildService } = await setup();
+      buildService.tryReserve.mockReturnValue(null);
+      repo.findBuildByPair.mockResolvedValueOnce(buildRow({ status: 'failed' })).mockResolvedValue(buildRow({ status: 'cancelled' }));
+      repo.queueBuild.mockResolvedValueOnce(undefined);
+
+      await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'queued', blocked: null });
+      expect(repo.queueBuild.mock.calls.map((call) => call[1])).toEqual(['failed', 'cancelled']);
+    });
+
+    it('answers queued when a direct claim is refused because the row was queued meanwhile', async () => {
+      const { service, repo } = await setup();
+      repo.startBuild.mockResolvedValueOnce(undefined);
+      repo.findBuildByPair.mockResolvedValueOnce(undefined).mockResolvedValue(queuedRow());
+
+      await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'queued', blocked: null });
+    });
+
+    it('replaces the read-along the link names when the build starts, not the one it named at queue time', async () => {
+      const { service, repo, buildService, userService, editionLinks } = await setup();
+      const deletingUser = { ...USER, active: true, permissions: [...USER.permissions, Permission.LibraryDeleteBooks] };
+      userService.findByIdWithPermissions.mockResolvedValue(deletingUser);
+      editionLinks.findLinkForBook.mockResolvedValue({ ...LINK, readAlongBookId: 55 });
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(
+        queuedRow({ outputBookId: null, queuedRequest: { force: true, previousStatus: 'failed', oldOutputBookId: 44 } }),
+      );
+
+      await service.startNextQueuedBuild();
+
+      expect(buildService.runBuild).toHaveBeenCalledWith(
+        7,
+        expect.anything(),
+        expect.anything(),
+        expect.objectContaining({ oldOutputBookId: 55 }),
+        expect.anything(),
+      );
+    });
+
+    it('does not look at the queue before the schema bootstrap has finished', async () => {
+      const { service, repo, schemaBootstrap } = await setup();
+      let finishBootstrap!: () => void;
+      schemaBootstrap.ready = new Promise<void>((resolve) => {
+        finishBootstrap = resolve;
+      });
+
+      service.onApplicationBootstrap();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(repo.findOldestQueuedBuild).not.toHaveBeenCalled();
+
+      finishBootstrap();
+      await vi.waitFor(() => expect(repo.findOldestQueuedBuild).toHaveBeenCalledOnce());
+    });
+
+    it('reports the destination a queued request chose, not the one the row still holds', async () => {
+      const { service, repo } = await setup();
+      repo.findBuildByPair.mockResolvedValue(queuedRow({ targetLibraryId: 3, queuedRequest: { targetLibraryId: 9, previousStatus: 'ready' } }));
+
+      await expect(service.getStatus(10, USER)).resolves.toMatchObject({ status: 'queued', targetLibraryId: 9 });
+    });
+
+    it('reports a queued build with its place in line and nothing about a build', async () => {
+      const { service, repo } = await setup();
+      repo.findBuildByPair.mockResolvedValue(queuedRow({ phase: 'wait', remoteTask: 'align', remoteProgress: 0.4, error: 'old failure' }));
+      repo.countQueuedBefore.mockResolvedValue(2);
+
+      const result = await service.getStatus(10, USER);
+
+      expect(repo.countQueuedBefore).toHaveBeenCalledWith(QUEUED_AT, 7);
+      expect(result).toMatchObject({
+        status: 'queued',
+        queuePosition: 3,
+        phase: null,
+        transport: null,
+        remoteTask: null,
+        remoteProgress: null,
+        error: null,
+        targetLibraryId: 3,
+        startedAt: null,
+      });
+    });
+
+    it('reports no queue position for any other status', async () => {
+      const { service, repo } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building' }));
+
+      await expect(service.getStatus(10, USER)).resolves.toMatchObject({ status: 'building', queuePosition: null });
+      repo.findBuildByPair.mockResolvedValue(undefined);
+      await expect(service.getStatus(10, USER)).resolves.toMatchObject({ status: 'none', queuePosition: null });
+      expect(repo.countQueuedBefore).not.toHaveBeenCalled();
     });
   });
 
