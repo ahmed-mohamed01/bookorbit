@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS "storyteller_read_along_builds" (
 	"requested_by" integer,
 	"queued_at" timestamp with time zone,
 	"queued_request" jsonb,
+	"attempt_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "storyteller_read_along_builds_pair_unique" UNIQUE("text_book_id", "audio_book_id"),
@@ -133,6 +134,10 @@ ALTER TABLE "storyteller_read_along_builds" ADD COLUMN IF NOT EXISTS "requested_
 ALTER TABLE "storyteller_read_along_builds" ADD COLUMN IF NOT EXISTS "queued_at" timestamp with time zone;
 --> statement-breakpoint
 ALTER TABLE "storyteller_read_along_builds" ADD COLUMN IF NOT EXISTS "queued_request" jsonb;
+--> statement-breakpoint
+ALTER TABLE "storyteller_read_along_builds" ADD COLUMN IF NOT EXISTS "attempt_at" timestamp with time zone;
+--> statement-breakpoint
+UPDATE "storyteller_read_along_builds" SET "attempt_at" = coalesce("queued_at", "started_at") WHERE "attempt_at" IS NULL;
 --> statement-breakpoint
 DO $$ BEGIN
 	IF NOT EXISTS (

@@ -17,6 +17,7 @@ import {
 } from '@bookorbit/types'
 import { api } from '@/lib/api'
 import { isReadAlongInFlight } from '@/features/book/lib/read-along-section'
+import { cancelReadAlongBuild, type ReadAlongCancelOutcome } from '@/features/book/lib/read-along-cancel'
 
 // Storyteller alignment runs for minutes to hours, so this polls far slower than the in-app
 // alignment sampler (3 s): the popover only has to narrate phase changes, not progress ticks.
@@ -43,8 +44,7 @@ const TRANSPORTS = new Set(
   >) as StorytellerEffectiveTransport[],
 )
 
-/** `too_late`: the build is already importing its read-along and the server refused to stop it. */
-export type ReadAlongCancelOutcome = 'cancelled' | 'too_late' | 'failed'
+export type { ReadAlongCancelOutcome }
 
 /** The slice of read-along state the presentational section needs. */
 export interface ReadAlongSectionState {
@@ -391,9 +391,8 @@ export function useReadAlong() {
         // The build's own settle cleared it, and this cancel is still running.
         mutating.value = true
       }
-      const res = await api(`/api/v1/storyteller/read-along/books/${bookId}/build`, { method: 'DELETE' })
-      if (res.status === 409) return 'too_late'
-      if (!res.ok) return 'failed'
+      const outcome = await cancelReadAlongBuild(bookId)
+      if (outcome !== 'cancelled') return outcome
       // A build started in this session may still be awaiting its row. A cancelled build never gets
       // one, so waiting for it would hold Building for several more polls.
       awaitingBuildRow = false

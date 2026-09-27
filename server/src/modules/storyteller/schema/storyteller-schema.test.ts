@@ -166,6 +166,7 @@ describe('queue columns on read-along builds', () => {
     ['requested_by', 'integer', 'requestedBy'],
     ['queued_at', 'timestamp with time zone', 'queuedAt'],
     ['queued_request', 'jsonb', 'queuedRequest'],
+    ['attempt_at', 'timestamp with time zone', 'attemptAt'],
   ])('declares %s for a fresh database, adds it to an existing one, and in drizzle', (column, type, property) => {
     const addColumn = statements.find((statement) => statement.includes(`ADD COLUMN IF NOT EXISTS "${column}"`));
 
@@ -188,5 +189,16 @@ describe('queue columns on read-along builds', () => {
 
     expect(index).toContain('CREATE INDEX IF NOT EXISTS');
     expect(index).toContain(`("queued_at") WHERE "status" = 'queued'`);
+  });
+
+  // Keyed notifications of builds that predate the column keep their key: it was queued_at ?? started_at.
+  it('backfills the attempt stamp of existing rows from their queue or start time, after adding the column', () => {
+    const addColumn = statements.find((statement) => statement.includes('ADD COLUMN IF NOT EXISTS "attempt_at"'))!;
+    const backfill = statements.find((statement) => statement.includes('SET "attempt_at"'))!;
+
+    expect(backfill).toBe(
+      'UPDATE "storyteller_read_along_builds" SET "attempt_at" = coalesce("queued_at", "started_at") WHERE "attempt_at" IS NULL;',
+    );
+    expect(statements.indexOf(addColumn)).toBeLessThan(statements.indexOf(backfill));
   });
 });

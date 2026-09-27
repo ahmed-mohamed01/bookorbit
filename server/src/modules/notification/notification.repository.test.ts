@@ -79,3 +79,62 @@ describe('NotificationRepository.updateLatestByGroupKey', () => {
     await expect(repo.updateLatestByGroupKey(3, 'read_along_build:7', patch)).resolves.toBeUndefined();
   });
 });
+
+describe('NotificationRepository deletes', () => {
+  function setup() {
+    const del = builder({ rowCount: 1 });
+    const db = { delete: vi.fn(() => del) };
+    return { repo: new NotificationRepository(db as never), del };
+  }
+
+  const lockedClause = `("notifications"."meta" ->> 'locked') is distinct from 'true'`;
+
+  it('dismisses only an unlocked notification of that user', async () => {
+    const { repo, del } = setup();
+
+    await expect(repo.deleteOne(7, 3)).resolves.toBe(true);
+
+    const where = dialect.sqlToQuery(del.where.mock.calls[0]![0] as SQL);
+    expect(where.sql).toContain('"notifications"."id" = $1');
+    expect(where.sql).toContain('"notifications"."user_id" = $2');
+    expect(where.sql).toContain(lockedClause);
+    expect(where.params.slice(0, 2)).toEqual([7, 3]);
+  });
+
+  it('clears every notification of that user except the locked ones', async () => {
+    const { repo, del } = setup();
+
+    await expect(repo.deleteAllForUser(3)).resolves.toBe(1);
+
+    const where = dialect.sqlToQuery(del.where.mock.calls[0]![0] as SQL);
+    expect(where.sql).toContain('"notifications"."user_id" = $1');
+    expect(where.sql).toContain(lockedClause);
+  });
+});
+
+describe('NotificationRepository locked lookups', () => {
+  it('lists the locked rows of one type, bounded', async () => {
+    const select = builder([{ id: 4 }]);
+    const db = { select: vi.fn(() => select) };
+    const repo = new NotificationRepository(db as never);
+
+    await expect(repo.findLockedByType('read_along_build')).resolves.toEqual([{ id: 4 }]);
+
+    const where = dialect.sqlToQuery(select.where.mock.calls[0]![0] as SQL);
+    expect(where.sql).toBe(`("notifications"."type" = $1 and ("notifications"."meta" ->> 'locked') = 'true')`);
+    expect(where.params).toEqual(['read_along_build']);
+    expect(select.limit).toHaveBeenCalledWith(500);
+  });
+
+  it('reads the newest row of a group key for that user', async () => {
+    const select = builder([{ id: 9, meta: { done: true } }]);
+    const db = { select: vi.fn(() => select) };
+    const repo = new NotificationRepository(db as never);
+
+    await expect(repo.findLatestByGroupKey(3, 'read_along_build:7:1')).resolves.toEqual({ id: 9, meta: { done: true } });
+
+    const where = dialect.sqlToQuery(select.where.mock.calls[0]![0] as SQL);
+    expect(where.params).toEqual([3, 'read_along_build:7:1']);
+    expect(select.limit).toHaveBeenCalledWith(1);
+  });
+});

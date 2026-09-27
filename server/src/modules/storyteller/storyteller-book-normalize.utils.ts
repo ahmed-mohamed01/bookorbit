@@ -77,9 +77,11 @@ function normalizeState(raw: string | null): StorytellerProcessingState {
     case 'IN_ERROR':
     case 'FAILED':
     case 'STOPPED':
+      return 'failed';
+    // Someone stopped the job in Storyteller: the build ends as cancelled, not as a failure to retry.
     case 'CANCELED':
     case 'CANCELLED':
-      return 'failed';
+      return 'cancelled';
     case 'STARTED':
     case 'RUNNING':
     case 'PROCESSING':

@@ -3,7 +3,7 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { splitSchemaStatements } from '../../common/utils/schema-bootstrap.utils';
 import { describeError } from './storyteller-log.utils';
-import { StorytellerRepository } from './storyteller.repository';
+import { StorytellerRepository, type StorytellerInterruptedBuilds } from './storyteller.repository';
 import { STORYTELLER_SCHEMA_SQL } from './schema/storyteller-schema';
 
 const BOOTSTRAP_EVENT = 'storyteller.schema_bootstrap';
@@ -12,15 +12,16 @@ const TABLE_NAMES = ['storyteller_settings', 'storyteller_read_along_builds'] as
 @Injectable()
 export class StorytellerSchemaBootstrapService implements OnApplicationBootstrap {
   private readonly logger = new Logger(StorytellerSchemaBootstrapService.name);
-  private settle!: { resolve: () => void; reject: (error: unknown) => void };
+  private settle!: { resolve: (interrupted: StorytellerInterruptedBuilds) => void; reject: (error: unknown) => void };
   /**
-   * Settles once the schema is applied and interrupted builds are failed. Nest runs the bootstrap
-   * hooks of one module concurrently, so the queue runner waits on this rather than on hook order.
+   * Settles with the builds a restart interrupted once the schema is applied and those builds are
+   * re-queued or failed. Nest runs the bootstrap hooks of one module concurrently, so the queue runner
+   * waits on this rather than on hook order.
    */
-  readonly ready: Promise<void>;
+  readonly ready: Promise<StorytellerInterruptedBuilds>;
 
   constructor(private readonly repo: StorytellerRepository) {
-    this.ready = new Promise<void>((resolve, reject) => {
+    this.ready = new Promise<StorytellerInterruptedBuilds>((resolve, reject) => {
       this.settle = { resolve, reject };
     });
     // A failed bootstrap already fails the boot; this keeps the rejection from also reading as unhandled.
@@ -35,14 +36,16 @@ export class StorytellerSchemaBootstrapService implements OnApplicationBootstrap
       const statements = splitSchemaStatements(STORYTELLER_SCHEMA_SQL);
 
       await this.repo.applySchemaStatements(statements);
-      const interruptedBuildsReset = await this.repo.failInterruptedBuilds();
+      const interrupted = await this.repo.requeueInterruptedBuilds();
+      const requeued = interrupted.requeued.length;
+      const failed = interrupted.failed.length;
 
-      if (missing.length > 0 || interruptedBuildsReset > 0) {
+      if (missing.length > 0 || requeued > 0 || failed > 0) {
         this.logger.log(
-          `[${BOOTSTRAP_EVENT}] [end] durationMs=${Date.now() - startedAt} tablesCreated=${missing.length} interruptedBuildsReset=${interruptedBuildsReset} - schema bootstrap completed`,
+          `[${BOOTSTRAP_EVENT}] [end] durationMs=${Date.now() - startedAt} tablesCreated=${missing.length} interruptedBuildsRequeued=${requeued} interruptedBuildsFailed=${failed} - schema bootstrap completed`,
         );
       }
-      this.settle.resolve();
+      this.settle.resolve(interrupted);
     } catch (err) {
       this.settle.reject(err);
       const { errorClass, message } = describeError(err);

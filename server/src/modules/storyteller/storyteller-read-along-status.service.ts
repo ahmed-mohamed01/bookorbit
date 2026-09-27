@@ -23,7 +23,7 @@ import type {
   StorytellerExistingMatchesResponse,
   StorytellerSettings,
 } from '@bookorbit/types';
-import { Permission } from '@bookorbit/types';
+import { NotificationType, Permission } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { findSourceEpubProblem } from './storyteller-epub.utils';
@@ -36,12 +36,24 @@ import type { BuildReadAlongDto } from './dto';
 import { describeError } from './storyteller-log.utils';
 import { matchExistingBooks } from './storyteller-match.utils';
 import { StorytellerReadAlongBuildService, type StorytellerBuildSlot, type StorytellerRunBuildOptions } from './storyteller-read-along-build.service';
-import { StorytellerReadAlongNotifierService, readAlongAttempt } from './storyteller-read-along-notifier.service';
+import {
+  StorytellerReadAlongNotifierService,
+  readAlongAttempt,
+  readAlongAttemptFromNotification,
+  type ReadAlongAttempt,
+} from './storyteller-read-along-notifier.service';
+import { NotificationService } from '../notification/notification.service';
 import { StorytellerSchemaBootstrapService } from './storyteller-schema-bootstrap.service';
-import type { StorytellerReadAlongBuild } from './schema/storyteller.schema';
+import type { StorytellerQueuedRequest, StorytellerReadAlongBuild } from './schema/storyteller.schema';
 import { StorytellerClientService } from './storyteller-client.service';
 import type { StorytellerConnection } from './storyteller-client.types';
-import { StorytellerRepository, type StorytellerBookIdentity } from './storyteller.repository';
+import {
+  INTERRUPTED_BUILD_ERROR,
+  INTERRUPTED_PREVIOUS_STATUS,
+  StorytellerRepository,
+  type StorytellerBookIdentity,
+  type StorytellerInterruptedBuilds,
+} from './storyteller.repository';
 import { StorytellerSettingsService } from './storyteller-settings.service';
 
 const REQUEST_EVENT = 'storyteller.read_along.request';
@@ -50,6 +62,7 @@ const ATTACH_EVENT = 'storyteller.read_along.attach_existing';
 const CANCEL_EVENT = 'storyteller.read_along.cancel';
 const CANCEL_REMOTE_EVENT = 'storyteller.read_along.cancel_remote';
 const QUEUE_EVENT = 'storyteller.read_along.queue';
+const UNLOCK_EVENT = 'storyteller.read_along.unlock_notifications';
 const REQUESTER_GONE_MESSAGE = 'the user who queued this build is no longer available';
 const MAX_QUEUED_ERROR_CHARS = 2000;
 const CANCEL_TOO_LATE_MESSAGE = 'The read-along is being imported and can no longer be cancelled';
@@ -127,6 +140,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     private readonly userService: UserService,
     private readonly schemaBootstrap: StorytellerSchemaBootstrapService,
     private readonly notifier: StorytellerReadAlongNotifierService,
+    private readonly notifications: NotificationService,
   ) {}
 
   async requestBuild(bookId: number, user: RequestUser, dto: BuildReadAlongDto): Promise<ReadAlongBuildResponse> {
@@ -217,6 +231,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
         // another library than the one this claim targets.
         targetFolderId: runTargetFolderId ?? null,
         requestedBy: user.id,
+        queuedRequest: this.attemptRequest(dto, admission.admitted, existing?.status ?? null),
       });
       if (!claimed) {
         // A queued row belongs to the queue runner: the pair is answered as the queued build it is.
@@ -304,7 +319,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
       dto.targetFolderId === undefined &&
       existing?.targetLibraryId != null &&
       existing.targetFolderId != null &&
-      (existing.status === 'failed' || existing.status === 'cancelled' || dto.force === true);
+      (existing.status === 'failed' || existing.status === 'cancelled' || existing.status === INTERRUPTED_PREVIOUS_STATUS || dto.force === true);
     const runTargetLibraryId = reusesDestination ? (existing?.targetLibraryId ?? undefined) : dto.targetLibraryId;
     const runTargetFolderId = reusesDestination ? (existing?.targetFolderId ?? undefined) : dto.targetFolderId;
     const targetLibraryId = runTargetLibraryId ?? settings.targetLibraryId;
@@ -328,7 +343,11 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     // `startBuild` clears the row's output column on every claim, so after a failed rebuild the
     // edition link is the only record of the book still on disk - and reading only the row orphans
     // that read-along, narration audio and all.
-    const previousOutputBookId = existing?.outputBookId ?? pair.link?.readAlongBookId ?? null;
+    // An interrupted attempt's own column names the output it was producing, never the one it replaces.
+    const previousOutputBookId =
+      existing?.status === INTERRUPTED_PREVIOUS_STATUS
+        ? (pair.link?.readAlongBookId ?? null)
+        : (existing?.outputBookId ?? pair.link?.readAlongBookId ?? null);
 
     // A forced build ends in bookService.deleteBooks() on whatever book the row names, and that only
     // checks read access - so the caller is held to the delete permission and to access to that book
@@ -349,14 +368,18 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
    * importing the same paths again, which Storyteller refuses while it still holds them. A resumed
    * book keeps the transport that registered it: otherwise the claim clears the column and an
    * uploaded book would be collected from a shared folder it never writes to.
+   *
+   * A build a restart interrupted resumes its book even when forced: that book is the one the forced
+   * attempt itself registered, and Storyteller may already be processing it.
    */
   private resumeTarget(
     dto: BuildReadAlongDto,
     priorStatus: string | null | undefined,
     existing: { storytellerBookUuid: string | null; transport: string | null } | undefined,
   ): { storytellerBookUuid: string | null; transport: string | null } {
-    const resumable = priorStatus === 'failed' || priorStatus === 'cancelled';
-    const resumeUuid = dto.useExistingUuid ?? (!dto.force && resumable ? (existing?.storytellerBookUuid ?? null) : null);
+    const interrupted = priorStatus === INTERRUPTED_PREVIOUS_STATUS;
+    const resumable = interrupted || ((priorStatus === 'failed' || priorStatus === 'cancelled') && !dto.force);
+    const resumeUuid = dto.useExistingUuid ?? (resumable ? (existing?.storytellerBookUuid ?? null) : null);
     const transport = resumeUuid !== null && resumeUuid === existing?.storytellerBookUuid ? existing.transport : null;
     return { storytellerBookUuid: resumeUuid, transport };
   }
@@ -376,14 +399,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
         textBookId: pair.textBookId,
         audioBookId: pair.audioBookId,
         requestedBy: user.id,
-        queuedRequest: {
-          force: dto.force,
-          targetLibraryId: admitted.runTargetLibraryId,
-          targetFolderId: admitted.runTargetFolderId,
-          cleanUpRemote: dto.cleanUpRemote,
-          useExistingUuid: dto.useExistingUuid,
-          previousStatus: existing?.status ?? null,
-        },
+        queuedRequest: this.attemptRequest(dto, admitted, existing?.status ?? null),
       },
       existing?.status ?? null,
     );
@@ -394,6 +410,17 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     // release that would have started this row already past.
     this.kickQueue();
     return this.blocked('queued', null, bookId, user.id, startedAt);
+  }
+
+  private attemptRequest(dto: BuildReadAlongDto, admitted: AdmittedBuild, previousStatus: string | null): StorytellerQueuedRequest {
+    return {
+      force: dto.force,
+      targetLibraryId: admitted.runTargetLibraryId,
+      targetFolderId: admitted.runTargetFolderId,
+      cleanUpRemote: dto.cleanUpRemote,
+      useExistingUuid: dto.useExistingUuid,
+      previousStatus,
+    };
   }
 
   private launch(
@@ -436,14 +463,41 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
   }
 
   /**
-   * Queued rows survive a restart. Waits for the schema bootstrap, which fails the builds a restart
-   * interrupted and so frees their pairs, and never holds up the boot itself.
+   * Queued rows survive a restart. Waits for the schema bootstrap, which re-queues the builds a restart
+   * interrupted, tells their requesters where each one stands, and never holds up the boot itself.
    */
   onApplicationBootstrap(): void {
     void this.schemaBootstrap.ready.then(
-      () => this.kickQueue(),
+      async (interrupted) => {
+        await this.notifyInterruptedBuilds(interrupted);
+        await this.unlockStaleReadAlongNotifications();
+        this.kickQueue();
+      },
       () => undefined,
     );
+  }
+
+  /**
+   * Each on the notification its interrupted attempt already had. Sent before the queue starts, so a
+   * re-queued build's queued message lands ahead of its own start on that one notification.
+   */
+  private async notifyInterruptedBuilds({ requeued, failed }: StorytellerInterruptedBuilds): Promise<void> {
+    for (const row of failed) {
+      if (row.requestedBy != null) void this.notifier.failed(row.requestedBy, readAlongAttempt(row), row.error ?? INTERRUPTED_BUILD_ERROR);
+    }
+    for (const row of requeued) {
+      if (row.requestedBy == null) continue;
+      const startedAt = Date.now();
+      try {
+        const position = row.queuedAt ? (await this.repo.countQueuedBefore(row.queuedAt, row.id)) + 1 : 1;
+        void this.notifier.queued(row.requestedBy, readAlongAttempt(row), position);
+      } catch (error) {
+        const { errorClass, message } = describeError(error);
+        this.logger.warn(
+          `[${QUEUE_EVENT}] [fail] buildId=${row.id} requestedBy=${row.requestedBy} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - re-queued read-along build could not be announced`,
+        );
+      }
+    }
   }
 
   private kickQueue(): void {
@@ -470,6 +524,38 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
       this.logger.error(`[${QUEUE_EVENT}] [fail] errorClass=${errorClass} error="${sanitizeLogValue(message)}" - read-along queue run failed`);
     } finally {
       this.queueRunning = false;
+    }
+    // Outside the run guard: a release landing during this sweep starts a run of its own.
+    await this.unlockStaleReadAlongNotifications();
+  }
+
+  /**
+   * A locked notification whose build is no longer queued or building would stay undismissable for
+   * good: a build that ended without its outcome reaching the bell (a crash, a lost send, a deleted
+   * row) is told as no longer tracked. The notifier writes it only while it is still locked, so an
+   * outcome that lands meanwhile is never overwritten.
+   */
+  async unlockStaleReadAlongNotifications(): Promise<void> {
+    const startedAt = Date.now();
+    try {
+      const locked = await this.notifications.findLockedByType(NotificationType.ReadAlongBuild);
+      if (locked.length === 0) return;
+      const candidates = locked
+        .map((notification) => ({ notification, attempt: readAlongAttemptFromNotification(notification.groupKey, notification.meta) }))
+        .filter((entry): entry is { notification: (typeof locked)[number]; attempt: ReadAlongAttempt } => entry.attempt !== null);
+      const active = new Set(await this.repo.findActiveBuildIds([...new Set(candidates.map((entry) => entry.attempt.buildId))]));
+      const stale = candidates.filter((entry) => !active.has(entry.attempt.buildId));
+      for (const { notification, attempt } of stale) void this.notifier.untracked(notification.userId, attempt);
+      if (stale.length > 0) {
+        this.logger.log(
+          `[${UNLOCK_EVENT}] [end] durationMs=${Date.now() - startedAt} locked=${locked.length} unlocked=${stale.length} - stale read-along notifications unlocked`,
+        );
+      }
+    } catch (error) {
+      const { errorClass, message } = describeError(error);
+      this.logger.warn(
+        `[${UNLOCK_EVENT}] [fail] durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - stale read-along notifications could not be unlocked`,
+      );
     }
   }
 
@@ -505,7 +591,8 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
         `[${QUEUE_EVENT}] [start] buildId=${row.id} requestedBy=${requestedBy} queueDepth=${queueDepth} - queued read-along build starting`,
       );
       const user = row.requestedBy == null ? null : await this.userService.findByIdWithPermissions(row.requestedBy).catch(() => null);
-      if (!user || !user.active) return await this.failQueued(row, null, REQUESTER_GONE_MESSAGE, startedAt, 'requester_gone');
+      // Told to the requester's id even when inactive: the notification waits for them if they come back.
+      if (!user || !user.active) return await this.failQueued(row, row.requestedBy, REQUESTER_GONE_MESSAGE, startedAt, 'requester_gone');
 
       const dto: BuildReadAlongDto = {
         force: request.force,
@@ -541,6 +628,8 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
         transport,
         targetLibraryId: admitted.targetLibraryId,
         targetFolderId: admitted.runTargetFolderId ?? null,
+        // A collect a restart cut short already wrote its own output, which the resumed collect adopts.
+        ...(request.previousStatus === INTERRUPTED_PREVIOUS_STATUS && row.outputBookId != null ? { outputBookId: row.outputBookId } : {}),
       });
       if (!claimed) {
         this.logger.log(
@@ -638,7 +727,8 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
    * Storyteller book is kept as cancelled, which status reads report as no build, and one that does
    * not is deleted.
    */
-  async cancelBuild(bookId: number, user: RequestUser): Promise<void> {
+  /** `buildId` pins the cancel to one build: a notification's Cancel must not stop a later build of the pair. */
+  async cancelBuild(bookId: number, user: RequestUser, buildId?: number): Promise<void> {
     await this.bookService.verifyBookAccess(bookId, user);
     const pair = await this.resolvePair(bookId);
     if (!pair || !(await this.canAccessPair(pair, bookId, user))) throw new NotFoundException('This book has no read-along pair');
@@ -649,6 +739,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     );
     try {
       const build = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
+      if (buildId !== undefined && build?.id !== buildId) throw new NotFoundException('That read-along build is no longer running');
       // Collecting writes the read-along into a library and links it; stopping part way would strand
       // a book nothing points at.
       if (build?.status === 'building' && (build.phase === 'collect' || build.phase === 'link')) {
@@ -660,6 +751,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
       let retired = build;
       let row: 'kept' | 'deleted' | 'restored' | 'unchanged' = 'unchanged';
       if (build?.status === 'queued') {
+        await this.cancelRequeuedRemoteJob(build);
         // A queued row has nothing running and nothing in Storyteller to stop, unless the runner claimed
         // it after the read above: then every queued-only statement misses and it is a building row.
         row = await this.repo.retireQueuedBuild(build.id);
@@ -690,6 +782,12 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
         );
         throw error;
       }
+      if (error instanceof NotFoundException) {
+        this.logger.log(
+          `[${CANCEL_EVENT}] [end] bookId=${bookId} userId=${user.id} buildId=${buildId ?? 'none'} durationMs=${Date.now() - startedAt} outcome=not_current - the named read-along build is not the pair's current one`,
+        );
+        throw error;
+      }
       const { errorClass, message } = describeError(error);
       this.logger.error(
         `[${CANCEL_EVENT}] [fail] bookId=${bookId} userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - read-along build cancel failed`,
@@ -712,6 +810,16 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
       await this.cancelRemoteProcessingBestEffort(build.id, build.storytellerBookUuid);
     }
     return this.repo.retireCancelledBuild(build.id);
+  }
+
+  /**
+   * A build a restart re-queued from process or wait still has its job running in Storyteller, which
+   * nothing else would stop once the row is retired.
+   */
+  private async cancelRequeuedRemoteJob(build: StorytellerReadAlongBuild): Promise<void> {
+    const interrupted = build.queuedRequest?.previousStatus === INTERRUPTED_PREVIOUS_STATUS;
+    if (!interrupted || !build.storytellerBookUuid || (build.phase !== 'process' && build.phase !== 'wait')) return;
+    await this.cancelRemoteProcessingBestEffort(build.id, build.storytellerBookUuid);
   }
 
   private async cancelRemoteProcessingBestEffort(buildId: number, uuid: string): Promise<void> {
@@ -779,7 +887,9 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     const queued = build.status === 'queued';
     const active = building || queued;
     // A queued request keeps its destination in the request until the claim writes it to the row.
-    const rowLibraryId = queued ? (build.queuedRequest?.targetLibraryId ?? settings.targetLibraryId) : build.targetLibraryId;
+    // An interrupted build resumes where it was going, which the row records.
+    const resumesDestination = queued && build.queuedRequest?.previousStatus === INTERRUPTED_PREVIOUS_STATUS && build.targetLibraryId != null;
+    const rowLibraryId = queued && !resumesDestination ? (build.queuedRequest?.targetLibraryId ?? settings.targetLibraryId) : build.targetLibraryId;
     // One round trip for the tail of the response, against a 5-second poll.
     const [summary, remoteCopyBytes, targetLibrary, contentBlock, queuedAhead] = await Promise.all([
       visibleOutputBookId != null && !queued ? this.editionLinks.findBookSummary(visibleOutputBookId) : Promise.resolve(null),

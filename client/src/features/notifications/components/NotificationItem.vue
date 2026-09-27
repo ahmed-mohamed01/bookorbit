@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
+import { toast } from 'vue-sonner'
 import { X, FolderSync, PackageOpen, Mail, ArrowRightLeft, FileDown, TriangleAlert, BookOpenCheck } from '@lucide/vue'
 import { NOTIFICATION_TYPE_META, NotificationSeverity, type NotificationItem, type NotificationTypeMeta } from '@bookorbit/types'
-import { useNotifications } from '../composables/useNotifications'
+import { cancelReadAlongBuild } from '@/features/book/lib/read-along-cancel'
+import { isLockedNotification, useNotifications } from '../composables/useNotifications'
 import { NOTIFICATION_CATEGORY_ICONS } from '../lib/notification-category-groups'
+import { Button } from '@/components/ui/button'
 
 const props = defineProps<{ notification: NotificationItem }>()
 const emit = defineEmits<{ read: [id: number]; dismiss: [id: number] }>()
 
 const router = useRouter()
+const { t } = useI18n()
 const { formatRelativeTime } = useNotifications()
 
 // Only types whose icon should differ from their category's. Everything else falls back to the
@@ -46,6 +51,30 @@ const progressPercent = computed(() => {
   return Math.round(Math.min(Math.max(progress, 0), 1) * 100)
 })
 
+const locked = computed(() => isLockedNotification(props.notification))
+const cancelTarget = computed(() => {
+  const meta = props.notification.meta
+  const bookId = meta?.bookId
+  const buildId = meta?.buildId
+  return meta?.cancellable === true && typeof bookId === 'number' && typeof buildId === 'number' ? { bookId, buildId } : null
+})
+const cancelling = ref(false)
+
+// The server's cancel rewrites this notification over the socket, so success needs nothing here.
+async function handleCancelBuild(e: Event) {
+  e.stopPropagation()
+  const target = cancelTarget.value
+  if (target === null || cancelling.value) return
+  cancelling.value = true
+  try {
+    const outcome = await cancelReadAlongBuild(target.bookId, target.buildId)
+    if (outcome === 'too_late') toast.error(t('book.detail.editionLink.readAlong.cancelTooLate'))
+    else if (outcome === 'failed') toast.error(t('book.detail.editionLink.readAlong.cancelUnavailable'))
+  } finally {
+    cancelling.value = false
+  }
+}
+
 function handleClick() {
   if (!props.notification.read) {
     emit('read', props.notification.id)
@@ -71,11 +100,12 @@ function handleDismiss(e: Event) {
     <button
       type="button"
       class="flex w-full cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 pr-10 text-left transition-all hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      :class="
+      :class="[
         notification.read
           ? 'border-border/30 bg-muted/20 hover:border-border/50 hover:bg-muted/40'
-          : 'border-border/60 bg-card shadow-sm hover:bg-muted/30'
-      "
+          : 'border-border/60 bg-card shadow-sm hover:bg-muted/30',
+        cancelTarget !== null ? 'pb-10' : '',
+      ]"
       @click="handleClick"
     >
       <div class="relative mt-0.5 shrink-0">
@@ -119,7 +149,22 @@ function handleDismiss(e: Event) {
       </div>
     </button>
 
+    <Button
+      v-if="cancelTarget !== null"
+      variant="ghost"
+      size="sm"
+      class="absolute bottom-2 right-2 h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+      :disabled="cancelling"
+      :aria-label="t('notifications.cancelBuildLabel')"
+      data-testid="notification-cancel-build"
+      @click="handleCancelBuild"
+    >
+      <X :size="13" aria-hidden="true" />
+      {{ t('notifications.cancelBuild') }}
+    </Button>
+
     <button
+      v-if="!locked"
       type="button"
       :aria-label="$t('notifications.dismiss')"
       class="absolute right-2 top-2 rounded-md p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:opacity-100"

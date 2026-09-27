@@ -75,6 +75,16 @@ describe('normalizeBook', () => {
     expect(book?.processing.state).toBe('failed');
   });
 
+  it.each(['CANCELED', 'CANCELLED', 'cancelled'])('reads a %s job as cancelled, not failed', (status) => {
+    const book = normalizeBook({ uuid: 'book-5', processingStatus: { currentTask: 'SYNC_CHAPTERS', progress: 0.3, status } });
+
+    expect(book?.processing.state).toBe('cancelled');
+  });
+
+  it.each(['STOPPED', 'FAILED', 'ERROR'])('still reads a %s job as failed', (status) => {
+    expect(normalizeBook({ uuid: 'book-6', processingStatus: { status } })?.processing.state).toBe('failed');
+  });
+
   it('falls back to unknown for a shape it does not recognize', () => {
     const book = normalizeBook({ uuid: 'book-4', title: 'Mystery', stateOfMind: 'serene' });
 

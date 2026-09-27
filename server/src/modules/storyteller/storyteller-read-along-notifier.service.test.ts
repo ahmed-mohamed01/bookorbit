@@ -2,7 +2,12 @@ import { Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { NotificationType } from '@bookorbit/types';
-import { StorytellerReadAlongNotifierService, readAlongAttempt, readAlongNotifyStage } from './storyteller-read-along-notifier.service';
+import {
+  StorytellerReadAlongNotifierService,
+  readAlongAttempt,
+  readAlongAttemptFromNotification,
+  readAlongNotifyStage,
+} from './storyteller-read-along-notifier.service';
 
 const QUEUED_AT = new Date('2026-02-01T00:00:00Z');
 const ATTEMPT = { buildId: 7, textBookId: 10, stamp: QUEUED_AT.getTime() };
@@ -37,11 +42,19 @@ describe('StorytellerReadAlongNotifierService', () => {
   });
 
   describe('attempt keys', () => {
-    it('keys an attempt to its row and the time it was queued, else the time it started', () => {
+    it('keys an attempt to its row and the time the attempt began', () => {
       const started = new Date('2026-03-01T00:00:00Z');
 
-      expect(readAlongAttempt({ id: 7, textBookId: 10, queuedAt: QUEUED_AT, startedAt: started })).toEqual(ATTEMPT);
-      expect(readAlongAttempt({ id: 7, textBookId: 10, queuedAt: null, startedAt: started }).stamp).toBe(started.getTime());
+      expect(readAlongAttempt({ id: 7, textBookId: 10, attemptAt: QUEUED_AT, queuedAt: QUEUED_AT, startedAt: started })).toEqual(ATTEMPT);
+      expect(readAlongAttempt({ id: 7, textBookId: 10, attemptAt: null, queuedAt: null, startedAt: started }).stamp).toBe(started.getTime());
+    });
+
+    it('keeps the key of an attempt a restart re-queued, whose queued_at moved', () => {
+      const interrupted = { id: 7, textBookId: 10, attemptAt: QUEUED_AT, queuedAt: null, startedAt: new Date('2026-02-02T00:00:00Z') };
+      const requeued = { ...interrupted, queuedAt: new Date('2026-03-01T00:00:00Z'), startedAt: new Date('2026-03-01T00:01:00Z') };
+
+      expect(readAlongAttempt(requeued)).toEqual(readAlongAttempt(interrupted));
+      expect(readAlongAttempt(requeued).stamp).toBe(QUEUED_AT.getTime());
     });
 
     it('sends every notification of one attempt to the same row, and a later rebuild of the pair to a new one', async () => {
@@ -70,7 +83,7 @@ describe('StorytellerReadAlongNotifierService', () => {
         type: NotificationType.ReadAlongBuild,
         title: 'Read-along queued: Dune',
         message: 'Waiting for another read-along to finish (2 in line)',
-        meta: { buildId: 7 },
+        meta: { buildId: 7, bookId: 10, locked: true, cancellable: true },
       });
       expect(lastOptions()).toEqual({ markUnread: false, updateOnly: false });
     });
@@ -80,7 +93,11 @@ describe('StorytellerReadAlongNotifierService', () => {
 
       await notifier.started(42, ATTEMPT);
 
-      expect(lastPatch()).toMatchObject({ title: 'Building read-along: Dune', message: 'Sending to Storyteller' });
+      expect(lastPatch()).toMatchObject({
+        title: 'Building read-along: Dune',
+        message: 'Sending to Storyteller',
+        meta: { buildId: 7, bookId: 10, locked: true, cancellable: true },
+      });
     });
 
     it('reports progress with the stage name, the percentage and meta.progress, updating only', async () => {
@@ -92,9 +109,17 @@ describe('StorytellerReadAlongNotifierService', () => {
         type: NotificationType.ReadAlongBuild,
         title: 'Building read-along: Dune',
         message: 'Transcribing · 12%',
-        meta: { buildId: 7, progress: 0.12 },
+        meta: { buildId: 7, bookId: 10, progress: 0.12, locked: true, cancellable: true },
       });
       expect(lastOptions()).toEqual({ markUnread: false, updateOnly: true });
+    });
+
+    it('stays locked while importing but can no longer be cancelled', async () => {
+      const { notifier, lastPatch } = setup();
+
+      await notifier.progress(42, ATTEMPT, 'importing', null);
+
+      expect(lastPatch().meta).toEqual({ buildId: 7, bookId: 10, locked: true, cancellable: false });
     });
 
     it('describes a ready read-along with its library and a link to it, and marks it unread', async () => {
@@ -108,7 +133,7 @@ describe('StorytellerReadAlongNotifierService', () => {
         title: 'Read-along ready: Dune',
         message: 'Added to Read-alongs',
         actionUrl: '/book/99',
-        meta: { buildId: 7, done: true },
+        meta: { buildId: 7, bookId: 10, done: true, locked: false, cancellable: false },
       });
       expect(lastOptions()).toEqual({ markUnread: true, updateOnly: false });
     });
@@ -123,7 +148,7 @@ describe('StorytellerReadAlongNotifierService', () => {
         title: 'Read-along failed: Dune',
         message: 'no audio',
         actionUrl: '/book/10?tab=details',
-        meta: { buildId: 7, done: true },
+        meta: { buildId: 7, bookId: 10, done: true, locked: false, cancellable: false },
       });
       expect(lastOptions()).toMatchObject({ markUnread: true });
     });
@@ -133,7 +158,26 @@ describe('StorytellerReadAlongNotifierService', () => {
 
       await notifier.cancelled(42, ATTEMPT);
 
-      expect(lastPatch()).toEqual({ type: NotificationType.ReadAlongBuild, title: 'Read-along cancelled: Dune', meta: { buildId: 7, done: true } });
+      expect(lastPatch()).toEqual({
+        type: NotificationType.ReadAlongBuild,
+        title: 'Read-along cancelled: Dune',
+        meta: { buildId: 7, bookId: 10, done: true, locked: false, cancellable: false },
+      });
+    });
+
+    it('ends a notification whose build is gone as a dismissable failure, only while it is still locked', async () => {
+      const { notifier, lastPatch, lastOptions } = setup();
+
+      await notifier.untracked(42, ATTEMPT);
+
+      expect(lastPatch()).toEqual({
+        type: NotificationType.ReadAlongBuildFailed,
+        title: 'Read-along failed: Dune',
+        message: 'This build is no longer running',
+        actionUrl: '/book/10?tab=details',
+        meta: { buildId: 7, bookId: 10, done: true, locked: false, cancellable: false },
+      });
+      expect(lastOptions()).toEqual({ markUnread: true, updateOnly: true, onlyWhileLocked: true });
     });
 
     it('clips the title to 200 characters and the message to 1000, by code point', async () => {
@@ -249,5 +293,20 @@ describe('readAlongNotifyStage', () => {
     ['link', null, 'importing'],
   ])('maps %s with task %s to %s', (phase, task, stage) => {
     expect(readAlongNotifyStage(phase, task)).toBe(stage);
+  });
+});
+
+describe('readAlongAttemptFromNotification', () => {
+  it('reads the attempt back from the key and meta the notifier wrote', () => {
+    expect(readAlongAttemptFromNotification(KEY, { buildId: 7, bookId: 10, locked: true })).toEqual(ATTEMPT);
+  });
+
+  it.each([
+    ['another key shape', 'scan_completed:user', { buildId: 7, bookId: 10 }],
+    ['no key', null, { buildId: 7, bookId: 10 }],
+    ['no book id', KEY, { buildId: 7 }],
+    ['a build id the key does not name', KEY, { buildId: 8, bookId: 10 }],
+  ])('answers null for %s', (_case, key, meta) => {
+    expect(readAlongAttemptFromNotification(key, meta)).toBeNull();
   });
 });

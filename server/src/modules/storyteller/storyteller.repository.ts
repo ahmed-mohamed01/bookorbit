@@ -55,6 +55,19 @@ export interface StorytellerQueueBuildValues {
   queuedRequest: StorytellerQueuedRequest;
 }
 
+/** What a restart did with the builds it interrupted, oldest first. */
+export interface StorytellerInterruptedBuilds {
+  requeued: StorytellerReadAlongBuild[];
+  failed: StorytellerReadAlongBuild[];
+}
+
+export const INTERRUPTED_BUILD_ERROR = 'build interrupted by a server restart';
+/** The `previousStatus` a restart gives the request of a build it re-queued. */
+export const INTERRUPTED_PREVIOUS_STATUS = 'interrupted';
+
+// The phases in which Storyteller holds the build's job, or has finished it.
+const REMOTE_PHASES: ReadonlySet<string> = new Set(['process', 'wait', 'collect']);
+
 export interface StorytellerBookIdentity {
   title: string | null;
   authorNames: string[];
@@ -139,7 +152,8 @@ export class StorytellerRepository {
    * never keeps a folder from another one.
    *
    * A queued row is refused as well: it belongs to the queue runner, which claims it through
-   * `claimQueuedBuild`. A direct claim starts a new attempt, so it clears `queued_at`.
+   * `claimQueuedBuild`. A direct claim starts a new attempt, so it clears `queued_at`, stamps
+   * `attempt_at` and records the request, which a restart re-queues the attempt with.
    */
   async startBuild(
     rawValues: Pick<NewStorytellerReadAlongBuild, 'textBookId' | 'audioBookId'> & Partial<NewStorytellerReadAlongBuild>,
@@ -155,7 +169,8 @@ export class StorytellerRepository {
       startedAt: now,
       builtAt: null,
       queuedAt: null,
-      queuedRequest: null,
+      queuedRequest: values.queuedRequest ?? null,
+      attemptAt: now,
     };
 
     const [row] = await this.db
@@ -163,7 +178,7 @@ export class StorytellerRepository {
       .values(insertValues)
       .onConflictDoUpdate({
         target: [storytellerReadAlongBuilds.textBookId, storytellerReadAlongBuilds.audioBookId],
-        set: { ...this.claimSet(values, now), queuedAt: null },
+        set: { ...this.claimSet(values, now), queuedAt: null, queuedRequest: values.queuedRequest ?? null, attemptAt: now },
         setWhere: notInArray(storytellerReadAlongBuilds.status, ['building', 'queued']),
       })
       .returning();
@@ -172,8 +187,9 @@ export class StorytellerRepository {
 
   /**
    * The queue runner's claim: an update of that one row while it is still queued, never an insert, so
-   * a row a cancel deleted between the runner's read and this write is not brought back. `queued_at`
-   * and `requested_by` stay: they name the attempt and its requester until the build ends.
+   * a row a cancel deleted between the runner's read and this write is not brought back. `attempt_at`,
+   * `requested_by` and the request stay: they name the attempt, its requester and what it was asked
+   * to do until the build ends.
    */
   async claimQueuedBuild(id: number, rawValues: Partial<NewStorytellerReadAlongBuild>): Promise<StorytellerReadAlongBuild | undefined> {
     this.assertStorableBookUuid(rawValues.storytellerBookUuid);
@@ -198,7 +214,6 @@ export class StorytellerRepository {
       error: null,
       startedAt: now,
       builtAt: null,
-      queuedRequest: null,
       updatedAt: now,
     };
   }
@@ -218,6 +233,7 @@ export class StorytellerRepository {
       requestedBy: values.requestedBy,
       queuedAt: now,
       queuedRequest: values.queuedRequest,
+      attemptAt: now,
     } satisfies Partial<NewStorytellerReadAlongBuild>;
     const [row] = await this.db
       .insert(storytellerReadAlongBuilds)
@@ -232,6 +248,16 @@ export class StorytellerRepository {
       })
       .returning();
     return row;
+  }
+
+  /** The ids among these whose build is still queued or building. */
+  async findActiveBuildIds(ids: number[]): Promise<number[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.db
+      .select({ id: storytellerReadAlongBuilds.id })
+      .from(storytellerReadAlongBuilds)
+      .where(and(inArray(storytellerReadAlongBuilds.id, ids), inArray(storytellerReadAlongBuilds.status, ['queued', 'building'])));
+    return rows.map((row) => row.id);
   }
 
   async findOldestQueuedBuild(): Promise<StorytellerReadAlongBuild | undefined> {
@@ -393,15 +419,71 @@ export class StorytellerRepository {
     return rows.length > 0 ? 'failed' : 'gone';
   }
 
-  // A build runs in-process, so one still marked 'building' at boot was interrupted: reset it to
-  // 'failed' or the client polls a state that will never advance.
-  async failInterruptedBuilds(): Promise<number> {
-    const rows = await this.db
-      .update(storytellerReadAlongBuilds)
-      .set({ status: 'failed', error: 'build interrupted by a server restart', updatedAt: new Date() })
-      .where(eq(storytellerReadAlongBuilds.status, 'building'))
-      .returning({ id: storytellerReadAlongBuilds.id });
-    return rows.length;
+  /**
+   * A build runs in-process, so one still marked 'building' at boot was interrupted. It goes back in
+   * line with its uuid, transport, requester, request and destination: from process on Storyteller
+   * holds the job and the build resumes it, and before that it starts over. Its attempt stamp is left
+   * alone, so the attempt keeps its notification.
+   *
+   * A build Storyteller already holds (process, wait or collect) resumes ahead of every queued row:
+   * Storyteller runs one job at a time, so a job it is still running would hold up the next one anyway,
+   * and a finished read-along only waits to be collected. One that had not reached Storyteller goes
+   * behind the queued rows. Each group keeps the order its builds started in.
+   *
+   * The output column survives only a collect cut short: that book is this attempt's own download,
+   * which the resumed collect adopts again. Before collect it can only name an older output, which a
+   * forced rebuild must not take for its own.
+   *
+   * A build interrupted in `link` is failed instead: its read-along may be half attached to the link,
+   * and running the attach again over whatever the link now names could detach another read-along.
+   */
+  async requeueInterruptedBuilds(): Promise<StorytellerInterruptedBuilds> {
+    const t = storytellerReadAlongBuilds;
+    return this.db.transaction(async (tx) => {
+      const now = new Date();
+      const failed = await tx
+        .update(t)
+        .set({ status: 'failed', error: INTERRUPTED_BUILD_ERROR, updatedAt: now })
+        .where(and(eq(t.status, 'building'), eq(t.phase, 'link')))
+        .returning();
+      const [queueHead] = await tx
+        .select({ oldest: sql<Date | string | null>`min(${t.queuedAt})` })
+        .from(t)
+        .where(eq(t.status, 'queued'));
+      const interrupted = await tx
+        .select()
+        .from(t)
+        .where(eq(t.status, 'building'))
+        .orderBy(sql`${t.startedAt} asc nulls first`, asc(t.id));
+      const resuming = interrupted.filter((row) => REMOTE_PHASES.has(row.phase ?? ''));
+      const restarting = interrupted.filter((row) => !REMOTE_PHASES.has(row.phase ?? ''));
+      const head = queueHead?.oldest == null ? now.getTime() : new Date(queueHead.oldest).getTime();
+      // A millisecond apart keeps their order through the queue's (queued_at, id) ordering, which a
+      // JavaScript Date round trip would lose at finer steps.
+      const placed = [
+        ...resuming.map((row, index) => ({ row, queuedAt: new Date(head - resuming.length + index) })),
+        ...restarting.map((row, index) => ({ row, queuedAt: new Date(now.getTime() + index) })),
+      ];
+      const requeued: StorytellerReadAlongBuild[] = [];
+      for (const { row, queuedAt } of placed) {
+        const [updated] = await tx
+          .update(t)
+          .set({
+            status: 'queued',
+            queuedAt,
+            queuedRequest: { ...(row.queuedRequest ?? {}), previousStatus: INTERRUPTED_PREVIOUS_STATUS },
+            ...(row.phase === 'collect' ? {} : { outputBookId: null }),
+            remoteTask: null,
+            remoteProgress: null,
+            error: null,
+            updatedAt: now,
+          })
+          .where(and(eq(t.id, row.id), eq(t.status, 'building')))
+          .returning();
+        if (updated) requeued.push(updated);
+      }
+      return { requeued, failed };
+    });
   }
 
   // Prefers a non-overlay EPUB: Storyteller aligns from scratch, so a file that already carries a

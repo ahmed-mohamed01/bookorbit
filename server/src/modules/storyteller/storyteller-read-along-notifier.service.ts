@@ -32,7 +32,8 @@ export function readAlongNotifyStage(phase: string | null, remoteTask: string | 
 
 /**
  * One build attempt: a row is reused by every later retry or rebuild of its pair, so the attempt's
- * origin (when it was queued, else when it started) keeps each attempt on its own notification.
+ * origin (`attempt_at`, stamped once when it was first queued or claimed) keeps each attempt on its
+ * own notification, across a restart that re-queues it too.
  */
 export interface ReadAlongAttempt {
   buildId: number;
@@ -40,13 +41,38 @@ export interface ReadAlongAttempt {
   stamp: number;
 }
 
-export function readAlongAttempt(row: { id: number; textBookId: number; queuedAt: Date | null; startedAt: Date | null }): ReadAlongAttempt {
-  return { buildId: row.id, textBookId: row.textBookId, stamp: (row.queuedAt ?? row.startedAt)?.getTime() ?? 0 };
+export function readAlongAttempt(row: {
+  id: number;
+  textBookId: number;
+  attemptAt: Date | null;
+  queuedAt: Date | null;
+  startedAt: Date | null;
+}): ReadAlongAttempt {
+  return { buildId: row.id, textBookId: row.textBookId, stamp: (row.attemptAt ?? row.queuedAt ?? row.startedAt)?.getTime() ?? 0 };
 }
 
-type SendKind = 'queued' | 'started' | 'progress' | 'ready' | 'failed' | 'cancelled';
+const GROUP_KEY_PATTERN = /^read_along_build:(\d+):(\d+)$/;
 
-const TERMINAL_KINDS: ReadonlySet<SendKind> = new Set(['ready', 'failed', 'cancelled']);
+/** The attempt a stored notification tracks, or null for one this notifier did not write. */
+export function readAlongAttemptFromNotification(groupKey: string | null, meta: Record<string, unknown> | null): ReadAlongAttempt | null {
+  const match = groupKey ? GROUP_KEY_PATTERN.exec(groupKey) : null;
+  const bookId = meta?.['bookId'];
+  if (!match || typeof bookId !== 'number') return null;
+  const buildId = Number(match[1]);
+  if (meta?.['buildId'] !== buildId) return null;
+  return { buildId, textBookId: bookId, stamp: Number(match[2]) };
+}
+
+type SendKind = 'queued' | 'started' | 'progress' | 'ready' | 'failed' | 'cancelled' | 'untracked';
+
+const TERMINAL_KINDS: ReadonlySet<SendKind> = new Set(['ready', 'failed', 'cancelled', 'untracked']);
+
+type MetaExtra = Pick<ReadAlongNotificationMeta, 'progress' | 'done'>;
+
+// Only an import can no longer be stopped: the cancel route answers 409 from collect on.
+const RUNNING: Pick<ReadAlongNotificationMeta, 'locked' | 'cancellable'> = { locked: true, cancellable: true };
+const IMPORTING: Pick<ReadAlongNotificationMeta, 'locked' | 'cancellable'> = { locked: true, cancellable: false };
+const ENDED: Pick<ReadAlongNotificationMeta, 'locked' | 'cancellable'> = { locked: false, cancellable: false };
 
 interface SentProgress {
   stage: ReadAlongNotifyStage;
@@ -83,7 +109,7 @@ export class StorytellerReadAlongNotifierService {
       type: NotificationType.ReadAlongBuild,
       title: `Read-along queued: ${title}`,
       message: `Waiting for another read-along to finish (${position} in line)`,
-      meta: this.meta(attempt, {}),
+      meta: this.meta(attempt, RUNNING, {}),
     }));
   }
 
@@ -94,7 +120,7 @@ export class StorytellerReadAlongNotifierService {
       type: NotificationType.ReadAlongBuild,
       title: `Building read-along: ${title}`,
       message: 'Sending to Storyteller',
-      meta: this.meta(attempt, {}),
+      meta: this.meta(attempt, RUNNING, {}),
     }));
   }
 
@@ -118,7 +144,7 @@ export class StorytellerReadAlongNotifierService {
       type: NotificationType.ReadAlongBuild,
       title: `Building read-along: ${title}`,
       message: percent === null ? label : `${label} · ${percent}%`,
-      meta: this.meta(attempt, percent === null ? {} : { progress: percent / 100 }),
+      meta: this.meta(attempt, stage === 'importing' ? IMPORTING : RUNNING, percent === null ? {} : { progress: percent / 100 }),
     }));
   }
 
@@ -130,7 +156,7 @@ export class StorytellerReadAlongNotifierService {
         title: `Read-along ready: ${title}`,
         message: library?.name ? `Added to ${library.name}` : undefined,
         actionUrl: `/book/${outputBookId}`,
-        meta: this.meta(attempt, { done: true }),
+        meta: this.meta(attempt, ENDED, { done: true }),
       };
     });
   }
@@ -141,7 +167,7 @@ export class StorytellerReadAlongNotifierService {
       title: `Read-along failed: ${title}`,
       message: error,
       actionUrl: `/book/${attempt.textBookId}?tab=details`,
-      meta: this.meta(attempt, { done: true }),
+      meta: this.meta(attempt, ENDED, { done: true }),
     }));
   }
 
@@ -149,7 +175,18 @@ export class StorytellerReadAlongNotifierService {
     return this.send(userId, attempt, 'cancelled', (title) => ({
       type: NotificationType.ReadAlongBuild,
       title: `Read-along cancelled: ${title}`,
-      meta: this.meta(attempt, { done: true }),
+      meta: this.meta(attempt, ENDED, { done: true }),
+    }));
+  }
+
+  /** For a locked notification whose build is gone: it ends it so it can be dismissed, and only while still locked. */
+  untracked(userId: number, attempt: ReadAlongAttempt): Promise<void> {
+    return this.send(userId, attempt, 'untracked', (title) => ({
+      type: NotificationType.ReadAlongBuildFailed,
+      title: `Read-along failed: ${title}`,
+      message: 'This build is no longer running',
+      actionUrl: `/book/${attempt.textBookId}?tab=details`,
+      meta: this.meta(attempt, ENDED, { done: true }),
     }));
   }
 
@@ -161,8 +198,12 @@ export class StorytellerReadAlongNotifierService {
     return `${userId}:${this.groupKey(attempt)}`;
   }
 
-  private meta(attempt: ReadAlongAttempt, extra: Omit<ReadAlongNotificationMeta, 'buildId'>): Record<string, unknown> {
-    const meta: ReadAlongNotificationMeta = { buildId: attempt.buildId, ...extra };
+  private meta(
+    attempt: ReadAlongAttempt,
+    state: Pick<ReadAlongNotificationMeta, 'locked' | 'cancellable'>,
+    extra: MetaExtra,
+  ): Record<string, unknown> {
+    const meta: ReadAlongNotificationMeta = { buildId: attempt.buildId, bookId: attempt.textBookId, ...extra, ...state };
     return { ...meta };
   }
 
@@ -179,7 +220,11 @@ export class StorytellerReadAlongNotifierService {
 
     // Terminal sends mark the row unread so the outcome reaches the bell even after the progress row
     // was read; progress only ever updates a row, so a dismissed notification stays dismissed.
-    const options: UpsertByGroupKeyOptions = { markUnread: terminal, updateOnly: kind === 'progress' };
+    const options: UpsertByGroupKeyOptions = {
+      markUnread: terminal,
+      updateOnly: kind === 'progress' || kind === 'untracked',
+      ...(kind === 'untracked' ? { onlyWhileLocked: true } : {}),
+    };
     const previous = this.chains.get(key) ?? Promise.resolve();
     const next = previous.then(() => this.deliver(userId, attempt, kind, compose, options));
     this.chains.set(key, next);

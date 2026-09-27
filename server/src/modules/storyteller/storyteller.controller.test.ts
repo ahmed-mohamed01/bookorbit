@@ -58,11 +58,13 @@ describe('StorytellerController', () => {
     await controller.getStatus(10, USER);
     await controller.findExisting(10, USER);
     await expect(controller.cancelBuild(10, USER)).resolves.toBeUndefined();
+    await expect(controller.cancelBuild(10, USER, { buildId: 7 })).resolves.toBeUndefined();
 
     expect(statusService.requestBuild).toHaveBeenCalledWith(10, USER, dto);
     expect(statusService.getStatus).toHaveBeenCalledWith(10, USER);
     expect(statusService.findExisting).toHaveBeenCalledWith(10, USER);
-    expect(statusService.cancelBuild).toHaveBeenCalledWith(10, USER);
+    expect(statusService.cancelBuild).toHaveBeenCalledWith(10, USER, undefined);
+    expect(statusService.cancelBuild).toHaveBeenCalledWith(10, USER, 7);
   });
 
   it('declares the expected route paths and methods', () => {

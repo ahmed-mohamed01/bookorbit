@@ -23,7 +23,7 @@ export interface StorytellerRemoteSettings {
   aligner: string | null;
 }
 
-export type StorytellerProcessingState = 'idle' | 'running' | 'completed' | 'failed' | 'unknown';
+export type StorytellerProcessingState = 'idle' | 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown';
 
 export interface StorytellerProcessingStatus {
   state: StorytellerProcessingState;

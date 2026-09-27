@@ -194,10 +194,16 @@ export interface NotificationItem {
 /** The `meta` a read-along build notification carries while it tracks one build from queue to finish. */
 export interface ReadAlongNotificationMeta {
   buildId: number;
+  /** The text edition the build belongs to, which its cancel route is addressed by. */
+  bookId: number;
   /** 0..1 for the current stage, while the build runs. */
   progress?: number;
   /** True once the build is ready, failed or cancelled: no further update will follow. */
   done?: boolean;
+  /** True from queued until the build ends: the notification can be read but not dismissed or cleared. */
+  locked: boolean;
+  /** True while a cancel would still be accepted: queued, or before the read-along is imported. */
+  cancellable: boolean;
 }
 
 export interface NotificationPage {

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Post, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
 
 import type {
   ReadAlongBuildResponse,
@@ -12,7 +12,7 @@ import { Permission } from '@bookorbit/types';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
-import { BuildReadAlongDto, TestStorytellerConnectionDto, UpsertStorytellerSettingsDto } from './dto';
+import { BuildReadAlongDto, CancelReadAlongBuildQueryDto, TestStorytellerConnectionDto, UpsertStorytellerSettingsDto } from './dto';
 import { StorytellerReadAlongStatusService } from './storyteller-read-along-status.service';
 import { StorytellerSettingsService } from './storyteller-settings.service';
 
@@ -55,8 +55,12 @@ export class StorytellerController {
   @Delete('read-along/books/:bookId/build')
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequirePermission(Permission.LibraryUpload)
-  cancelBuild(@Param('bookId', ParseIntPipe) bookId: number, @CurrentUser() user: RequestUser): Promise<void> {
-    return this.readAlongStatusService.cancelBuild(bookId, user);
+  cancelBuild(
+    @Param('bookId', ParseIntPipe) bookId: number,
+    @CurrentUser() user: RequestUser,
+    @Query() query: CancelReadAlongBuildQueryDto = {},
+  ): Promise<void> {
+    return this.readAlongStatusService.cancelBuild(bookId, user, query.buildId);
   }
 
   /**

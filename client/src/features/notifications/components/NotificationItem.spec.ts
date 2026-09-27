@@ -1,11 +1,17 @@
-import { mount } from '@vue/test-utils'
-import { describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createI18n } from 'vue-i18n'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { NotificationType, type NotificationItem } from '@bookorbit/types'
 import en from '@/locales/en.json'
 import NotificationItemVue from './NotificationItem.vue'
+
+const mockApi = vi.fn<(...args: unknown[]) => Promise<unknown>>()
+vi.mock('@/lib/api', () => ({ api: (...args: unknown[]) => mockApi(...args) }))
+
+const toastError = vi.fn<(message: string) => void>()
+vi.mock('vue-sonner', () => ({ toast: { error: (message: string) => toastError(message) } }))
 
 function notification(overrides: Partial<NotificationItem> = {}): NotificationItem {
   return {
@@ -29,6 +35,7 @@ async function mountItem(item: NotificationItem) {
     routes: [
       { path: '/', component: { template: '<div />' } },
       { path: '/requests', component: { template: '<div />' } },
+      { path: '/book/:id', component: { template: '<div />' } },
     ],
   })
   await router.push('/')
@@ -120,5 +127,78 @@ describe('NotificationItem', () => {
   // or a user silencing it would not know what else goes quiet.
   it('names read-along builds in the category that carries them', () => {
     expect(en.notifications.preferences.categories.bulkRename.description).toContain('read-along build')
+  })
+
+  describe('a read-along build still running', () => {
+    const running = (meta: Record<string, unknown>) =>
+      notification({
+        type: NotificationType.ReadAlongBuild,
+        title: 'Building read-along: Dune',
+        message: 'Transcribing',
+        actionUrl: '/book/10?tab=details',
+        meta: { buildId: 7, bookId: 10, locked: true, cancellable: true, ...meta },
+      })
+
+    beforeEach(() => {
+      mockApi.mockReset()
+      toastError.mockReset()
+    })
+
+    it('offers Cancel build and no dismiss while it can still be cancelled', async () => {
+      const { wrapper } = await mountItem(running({}))
+
+      const cancel = wrapper.get('[data-testid="notification-cancel-build"]')
+      expect(cancel.attributes('aria-label')).toBe('Cancel the read-along build')
+      expect(cancel.text()).toContain('Cancel build')
+      expect(wrapper.find('button[aria-label="Dismiss notification"]').exists()).toBe(false)
+    })
+
+    it('hides Cancel build once importing, and keeps it undismissable while locked', async () => {
+      const { wrapper } = await mountItem(running({ cancellable: false }))
+
+      expect(wrapper.find('[data-testid="notification-cancel-build"]').exists()).toBe(false)
+      expect(wrapper.find('button[aria-label="Dismiss notification"]').exists()).toBe(false)
+    })
+
+    it('can be dismissed again once the build ended', async () => {
+      const { wrapper } = await mountItem(running({ locked: false, cancellable: false, done: true }))
+
+      expect(wrapper.find('[data-testid="notification-cancel-build"]').exists()).toBe(false)
+      expect(wrapper.find('button[aria-label="Dismiss notification"]').exists()).toBe(true)
+    })
+
+    it('cancels through the build route without opening the notification', async () => {
+      mockApi.mockResolvedValue({ ok: true, status: 204 })
+      const { router, wrapper } = await mountItem(running({}))
+      const push = vi.spyOn(router, 'push')
+
+      await wrapper.get('[data-testid="notification-cancel-build"]').trigger('click')
+      await flushPromises()
+
+      expect(mockApi).toHaveBeenCalledExactlyOnceWith('/api/v1/storyteller/read-along/books/10/build?buildId=7', { method: 'DELETE' })
+      expect(push).not.toHaveBeenCalled()
+      expect(wrapper.emitted('read')).toBeUndefined()
+      expect(toastError).not.toHaveBeenCalled()
+    })
+
+    it('says so when the build is already being imported', async () => {
+      mockApi.mockResolvedValue({ ok: false, status: 409 })
+      const { wrapper } = await mountItem(running({}))
+
+      await wrapper.get('[data-testid="notification-cancel-build"]').trigger('click')
+      await flushPromises()
+
+      expect(toastError).toHaveBeenCalledWith(en.book.detail.editionLink.readAlong.cancelTooLate)
+    })
+
+    it('says so when the cancel fails', async () => {
+      mockApi.mockResolvedValue({ ok: false, status: 500 })
+      const { wrapper } = await mountItem(running({}))
+
+      await wrapper.get('[data-testid="notification-cancel-build"]').trigger('click')
+      await flushPromises()
+
+      expect(toastError).toHaveBeenCalledWith(en.book.detail.editionLink.readAlong.cancelUnavailable)
+    })
   })
 })

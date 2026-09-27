@@ -133,6 +133,14 @@ class ReadAlongCancelledError extends Error {
   }
 }
 
+/** Storyteller reported the job cancelled: someone stopped it there, which ends the build as cancelled. */
+class ReadAlongRemoteCancelledError extends Error {
+  constructor() {
+    super('The read-along job was cancelled in Storyteller');
+    this.name = 'ReadAlongRemoteCancelledError';
+  }
+}
+
 function throwIfCancelled(signal: AbortSignal): void {
   if (signal.aborted) throw new ReadAlongCancelledError();
 }
@@ -421,6 +429,10 @@ export class StorytellerReadAlongBuildService {
         `[${BUILD_EVENT}] [end] textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} buildId=${buildId} durationMs=${Date.now() - startedAt} transport=${collected.transport} outputBookId=${collected.outputBookId} storytellerBookUuid=${registered.storytellerBookUuid} - read-along build completed`,
       );
     } catch (error) {
+      if (error instanceof ReadAlongRemoteCancelledError) {
+        await this.retireRemoteCancelledBuild(buildId, pair, user, attempt, phase, startedAt);
+        return;
+      }
       // Whatever was raised once the signal fired is the cancellation surfacing: the cancel path
       // owns the row from here, so nothing is written back to it.
       if (signal.aborted) {
@@ -442,6 +454,34 @@ export class StorytellerReadAlongBuildService {
       if (error instanceof HttpException) throw error;
       throw new InternalServerErrorException(message);
     }
+  }
+
+  /**
+   * Written as the local cancel writes it, so the row keeps its Storyteller book and the next Generate
+   * resumes it, and Storyteller restarts processing on that same book.
+   */
+  private async retireRemoteCancelledBuild(
+    buildId: number,
+    pair: StorytellerReadAlongPair,
+    user: RequestUser,
+    attempt: ReadAlongAttempt,
+    phase: ReadAlongPhase,
+    startedAt: number,
+  ): Promise<void> {
+    let row: Awaited<ReturnType<StorytellerRepository['retireCancelledBuild']>>;
+    try {
+      row = await this.repo.retireCancelledBuild(buildId);
+    } catch (error) {
+      const { errorClass, message } = describeError(error);
+      this.logger.error(
+        `[${FAIL_WRITE_EVENT}] [fail] buildId=${buildId} step=${phase} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - the remotely cancelled build row could not be retired and stays building until the next restart`,
+      );
+      return;
+    }
+    void this.notifier.cancelled(user.id, attempt);
+    this.logger.log(
+      `[${BUILD_EVENT}] [end] textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} buildId=${buildId} durationMs=${Date.now() - startedAt} step=${phase} outcome=cancelled_remote row=${row} - read-along build cancelled in Storyteller`,
+    );
   }
 
   /**
@@ -470,7 +510,7 @@ export class StorytellerReadAlongBuildService {
 
   /**
    * A dropped terminal write leaves every future request for this pair answering `busy` until a
-   * restart runs `failInterruptedBuilds`, so the retry drops `phase` and keeps only the two columns
+   * restart runs `requeueInterruptedBuilds`, so the retry drops `phase` and keeps only the two columns
    * that unwedge the row. A write that fails twice is logged: it is the operator's only warning.
    */
   private async persistTerminalFailure(buildId: number, phase: ReadAlongPhase, error: string): Promise<void> {
@@ -1109,6 +1149,7 @@ export class StorytellerReadAlongBuildService {
             );
             return finished;
           }
+          if (book.processing.state === 'cancelled') throw new ReadAlongRemoteCancelledError();
           if (book.processing.state === 'failed') {
             throw new BadGatewayException(book.processing.error || 'Storyteller processing failed');
           }
@@ -1117,7 +1158,7 @@ export class StorytellerReadAlongBuildService {
           // The two BadGateways thrown in here - a book Storyteller no longer has, and a failure it
           // reported - are answers, not transport trouble: retrying either burns the whole wait
           // window on a result that cannot change. Everything else gets the retry budget.
-          if (error instanceof BadGatewayException) throw error;
+          if (error instanceof BadGatewayException || error instanceof ReadAlongRemoteCancelledError) throw error;
           throwIfCancelled(signal);
           consecutiveErrors += 1;
           if (consecutiveErrors >= WAIT_ERROR_CAP) {
@@ -1136,6 +1177,12 @@ export class StorytellerReadAlongBuildService {
       if (error instanceof ReadAlongCancelledError) {
         this.logger.log(
           `[${WAIT_EVENT}] [end] buildId=${buildId} durationMs=${Date.now() - startedAt} polls=${polls} outcome=cancelled - waiting for read-along cancelled`,
+        );
+        throw error;
+      }
+      if (error instanceof ReadAlongRemoteCancelledError) {
+        this.logger.log(
+          `[${WAIT_EVENT}] [end] buildId=${buildId} durationMs=${Date.now() - startedAt} polls=${polls} outcome=cancelled_remote - read-along job cancelled in Storyteller`,
         );
         throw error;
       }
@@ -1360,7 +1407,8 @@ export class StorytellerReadAlongBuildService {
    *
    * Adoption belongs to a retry and nothing else. A rebuild registers a new Storyteller book and so
    * a new filename, and an occupied path means something it cannot account for: a reason to refuse,
-   * never a reason to clear the path.
+   * never a reason to clear the path. The one exception is a rebuild a restart cut short in collect:
+   * the book there is the row's own output, which that same attempt downloaded before the restart.
    */
   private async adoptOrClearDestination(
     buildId: number,
@@ -1375,7 +1423,8 @@ export class StorytellerReadAlongBuildService {
       `[${ADOPT_EVENT}] [start] buildId=${buildId} path="${sanitizeLogValue(destination)}" force=${options.force === true} - occupied download destination inspected`,
     );
 
-    if (options.force === true) {
+    const owner = await this.repo.findBookFileByAbsolutePath(destination);
+    if (options.force === true && !(owner && (await this.repo.findBuildByOutputBook(owner.bookId))?.id === buildId)) {
       const refused = new ConflictException('A rebuild cannot adopt or clear a download destination that is already occupied');
       const { errorClass, message } = describeError(refused);
       this.logger.warn(
@@ -1384,7 +1433,6 @@ export class StorytellerReadAlongBuildService {
       throw refused;
     }
 
-    const owner = await this.repo.findBookFileByAbsolutePath(destination);
     if (!owner) {
       await this.removeOrphanedDownload(buildId, destination);
       this.logger.log(

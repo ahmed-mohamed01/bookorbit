@@ -34,14 +34,17 @@ export const storytellerSettings = pgTable(
   ],
 );
 
-/** What a queued build is started with once a slot frees. */
+/** What an attempt is started with: kept on the row while it waits and while it runs. */
 export interface StorytellerQueuedRequest {
   force?: boolean;
   targetLibraryId?: number;
   targetFolderId?: number;
   cleanUpRemote?: boolean;
   useExistingUuid?: string;
-  /** The row's status before it was queued, so a cancel can put a ready build back. */
+  /**
+   * The row's status before it was queued, so a cancel can put a ready build back. `interrupted` marks
+   * a build a restart re-queued: it resumes its own Storyteller book and destination.
+   */
   previousStatus?: string | null;
 }
 
@@ -74,11 +77,14 @@ export const storytellerReadAlongBuilds = pgTable(
     error: text('error'),
     startedAt: timestamp('started_at', { withTimezone: true }),
     builtAt: timestamp('built_at', { withTimezone: true }),
-    // Who asked for the current attempt (kept for its whole life), when it was queued (its origin while
-    // it runs), and the request that starts it (only while queued).
+    // Who asked for the current attempt (kept for its whole life), when it was last queued, and the
+    // request that started or will start it: a restart re-queues an interrupted build with it.
     requestedBy: integer('requested_by').references(() => users.id, { onDelete: 'set null' }),
     queuedAt: timestamp('queued_at', { withTimezone: true }),
     queuedRequest: jsonb('queued_request').$type<StorytellerQueuedRequest>(),
+    // When the attempt began (its first claim or queue). A restart re-queue moves `queued_at` but not
+    // this, so the attempt keeps its one notification across the restart.
+    attemptAt: timestamp('attempt_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .defaultNow()

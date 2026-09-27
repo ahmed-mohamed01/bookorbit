@@ -18,6 +18,9 @@ const PODCAST_NOTIFICATION_TYPES = [
 
 const visibleNotificationCondition = APP_FEATURES.podcasts ? undefined : notInArray(notifications.type, PODCAST_NOTIFICATION_TYPES);
 
+// A notification tracking an operation still running (`meta.locked`) stays until the operation ends.
+const unlockedNotificationCondition = sql`(${notifications.meta} ->> 'locked') is distinct from 'true'`;
+
 @Injectable()
 export class NotificationRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
@@ -60,6 +63,26 @@ export class NotificationRepository {
       .where(inArray(notifications.id, latest))
       .returning();
     return row;
+  }
+
+  async findLatestByGroupKey(userId: number, groupKey: string): Promise<Pick<Notification, 'id' | 'meta'> | undefined> {
+    const [row] = await this.db
+      .select({ id: notifications.id, meta: notifications.meta })
+      .from(notifications)
+      .where(and(eq(notifications.userId, userId), eq(notifications.groupKey, groupKey)))
+      .orderBy(desc(notifications.id))
+      .limit(1);
+    return row;
+  }
+
+  /** Locked rows only exist while their operation runs, so the bound is a guard, not a page. */
+  async findLockedByType(type: NotificationType, limit = 500): Promise<Pick<Notification, 'id' | 'userId' | 'groupKey' | 'meta'>[]> {
+    return this.db
+      .select({ id: notifications.id, userId: notifications.userId, groupKey: notifications.groupKey, meta: notifications.meta })
+      .from(notifications)
+      .where(and(eq(notifications.type, type), sql`(${notifications.meta} ->> 'locked') = 'true'`))
+      .orderBy(notifications.id)
+      .limit(limit);
   }
 
   async findByUser(userId: number, limit: number, offset: number): Promise<{ items: Notification[]; total: number }> {
@@ -106,12 +129,14 @@ export class NotificationRepository {
   async deleteOne(id: number, userId: number): Promise<boolean> {
     const result = await this.db
       .delete(notifications)
-      .where(and(eq(notifications.id, id), eq(notifications.userId, userId), visibleNotificationCondition));
+      .where(and(eq(notifications.id, id), eq(notifications.userId, userId), visibleNotificationCondition, unlockedNotificationCondition));
     return (result.rowCount ?? 0) > 0;
   }
 
   async deleteAllForUser(userId: number): Promise<number> {
-    const result = await this.db.delete(notifications).where(and(eq(notifications.userId, userId), visibleNotificationCondition));
+    const result = await this.db
+      .delete(notifications)
+      .where(and(eq(notifications.userId, userId), visibleNotificationCondition, unlockedNotificationCondition));
     return result.rowCount ?? 0;
   }
 

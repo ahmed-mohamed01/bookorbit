@@ -21,10 +21,11 @@ import { StorytellerReadAlongBuildService } from './storyteller-read-along-build
 import * as epubUtils from './storyteller-epub.utils';
 import { StorytellerReadAlongStatusService, type StorytellerReadAlongPair } from './storyteller-read-along-status.service';
 import { StorytellerClientError, StorytellerClientService } from './storyteller-client.service';
-import { StorytellerRepository } from './storyteller.repository';
+import { StorytellerRepository, type StorytellerInterruptedBuilds } from './storyteller.repository';
 import { StorytellerSettingsService } from './storyteller-settings.service';
 import { StorytellerReadAlongNotifierService } from './storyteller-read-along-notifier.service';
 import { StorytellerSchemaBootstrapService } from './storyteller-schema-bootstrap.service';
+import { NotificationService } from '../notification/notification.service';
 
 const USER = {
   id: 42,
@@ -165,6 +166,7 @@ async function setup() {
     claimQueuedBuild: vi.fn().mockResolvedValue(buildRow({ status: 'building' })),
     failQueuedBuild: vi.fn().mockResolvedValue('failed'),
     retireQueuedBuild: vi.fn().mockResolvedValue('deleted'),
+    findActiveBuildIds: vi.fn().mockResolvedValue([]),
     findBookTitleAndAuthors: vi.fn().mockResolvedValue({ title: 'Book', authorNames: ['Author'], isbn10: null, isbn13: null, asin: null }),
   };
   const settings = {
@@ -193,12 +195,14 @@ async function setup() {
     findOne: vi.fn().mockResolvedValue({ id: 3, name: 'Read-alongs', type: 'books', allowedFormats: ['epub'], organizationMode: 'book_per_file' }),
   };
   const userService = { findByIdWithPermissions: vi.fn().mockResolvedValue({ ...USER, active: true }) };
-  const schemaBootstrap = { ready: Promise.resolve() };
+  const schemaBootstrap = { ready: Promise.resolve<StorytellerInterruptedBuilds>({ requeued: [], failed: [] }) };
   const notifier = {
     queued: vi.fn().mockResolvedValue(undefined),
     failed: vi.fn().mockResolvedValue(undefined),
     cancelled: vi.fn().mockResolvedValue(undefined),
+    untracked: vi.fn().mockResolvedValue(undefined),
   };
+  const notifications = { findLockedByType: vi.fn().mockResolvedValue([]) };
   const editionLinks = {
     findLinkForBook: vi.fn().mockResolvedValue(LINK),
     getBookModality: vi.fn().mockResolvedValue('text'),
@@ -218,6 +222,7 @@ async function setup() {
       { provide: UserService, useValue: userService },
       { provide: StorytellerSchemaBootstrapService, useValue: schemaBootstrap },
       { provide: StorytellerReadAlongNotifierService, useValue: notifier },
+      { provide: NotificationService, useValue: notifications },
     ],
   }).compile();
   return {
@@ -232,6 +237,7 @@ async function setup() {
     editionLinks,
     userService,
     notifier,
+    notifications,
     schemaBootstrap,
   };
 }
@@ -476,6 +482,26 @@ describe('StorytellerReadAlongStatusService', () => {
       deletingUser,
       expect.objectContaining({ force: true, oldOutputBookId: 99 }),
       expect.anything(),
+    );
+  });
+
+  it('records the request on a direct claim, so a restart can re-queue the attempt with it', async () => {
+    const { service, repo } = await setup();
+    repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed' }));
+
+    await expect(service.requestBuild(10, USER, { cleanUpRemote: true })).resolves.toEqual({ status: 'building', blocked: null });
+
+    expect(repo.startBuild).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queuedRequest: {
+          force: undefined,
+          targetLibraryId: 3,
+          targetFolderId: 30,
+          cleanUpRemote: true,
+          useExistingUuid: undefined,
+          previousStatus: 'failed',
+        },
+      }),
     );
   });
 
@@ -1507,6 +1533,20 @@ describe('StorytellerReadAlongStatusService', () => {
       expect(repo.claimQueuedBuild).not.toHaveBeenCalled();
     });
 
+    it('still tells a deactivated requester why their queued build failed', async () => {
+      const { service, repo, userService, notifier } = await setup();
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow());
+      userService.findByIdWithPermissions.mockResolvedValue({ ...USER, active: false });
+
+      await service.startNextQueuedBuild();
+
+      expect(notifier.failed).toHaveBeenCalledWith(
+        42,
+        expect.objectContaining({ buildId: 7 }),
+        'the user who queued this build is no longer available',
+      );
+    });
+
     it('fails a row the checks now refuse, tells its requester, and moves on to the next', async () => {
       const { service, repo, buildService, notifier } = await setup();
       repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow()).mockResolvedValueOnce(queuedRow({ id: 8 }));
@@ -1590,6 +1630,28 @@ describe('StorytellerReadAlongStatusService', () => {
 
       expect(buildService.runBuild).not.toHaveBeenCalled();
       expect(buildService.held.size).toBe(0);
+    });
+
+    it("refuses a cancel for a build that is no longer the pair's current one, cancelling nothing", async () => {
+      const { service, repo, buildService, notifier } = await setup();
+      vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      repo.findBuildByPair.mockResolvedValue(queuedRow({ id: 9 }));
+
+      await expect(service.cancelBuild(10, USER, 7)).rejects.toBeInstanceOf(NotFoundException);
+
+      expect(buildService.cancel).not.toHaveBeenCalled();
+      expect(repo.retireQueuedBuild).not.toHaveBeenCalled();
+      expect(notifier.cancelled).not.toHaveBeenCalled();
+    });
+
+    it("cancels the named build when it is still the pair's current one", async () => {
+      const { service, repo } = await setup();
+      vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      repo.findBuildByPair.mockResolvedValue(queuedRow());
+
+      await service.cancelBuild(10, USER, 7);
+
+      expect(repo.retireQueuedBuild).toHaveBeenCalledWith(7);
     });
 
     it('cancels a queued row that holds a Storyteller book by keeping it, without calling Storyteller', async () => {
@@ -1781,10 +1843,179 @@ describe('StorytellerReadAlongStatusService', () => {
       );
     });
 
+    describe('builds a restart interrupted', () => {
+      const ATTEMPT_AT = new Date('2026-01-01T00:00:00Z');
+      const REQUEUED_AT = new Date('2026-03-01T00:00:00Z');
+      const requeuedRow = (overrides: Record<string, unknown> = {}) =>
+        queuedRow({
+          attemptAt: ATTEMPT_AT,
+          queuedAt: REQUEUED_AT,
+          phase: 'wait',
+          storytellerBookUuid: 'story-uuid',
+          transport: 'shared-paths',
+          targetLibraryId: 4,
+          targetFolderId: 40,
+          queuedRequest: { force: true, cleanUpRemote: false, previousStatus: 'interrupted' },
+          ...overrides,
+        });
+
+      it('tells each requester on the attempt notification it had: queued for a re-queued build, failed for one cut off while linking', async () => {
+        const { service, repo, notifier, schemaBootstrap } = await setup();
+        const linking = buildRow({
+          id: 9,
+          textBookId: 12,
+          status: 'failed',
+          phase: 'link',
+          requestedBy: 43,
+          error: 'build interrupted by a server restart',
+          attemptAt: ATTEMPT_AT,
+        });
+        schemaBootstrap.ready = Promise.resolve({ requeued: [requeuedRow()], failed: [linking] } as never);
+        repo.countQueuedBefore.mockResolvedValue(2);
+        repo.findOldestQueuedBuild.mockResolvedValueOnce(requeuedRow());
+
+        service.onApplicationBootstrap();
+
+        await vi.waitFor(() => expect(repo.claimQueuedBuild).toHaveBeenCalled());
+        const attempt = { buildId: 7, textBookId: 10, stamp: ATTEMPT_AT.getTime() };
+        expect(notifier.queued).toHaveBeenCalledWith(42, attempt, 3);
+        expect(repo.countQueuedBefore).toHaveBeenCalledWith(REQUEUED_AT, 7);
+        expect(notifier.failed).toHaveBeenCalledWith(
+          43,
+          { buildId: 9, textBookId: 12, stamp: ATTEMPT_AT.getTime() },
+          'build interrupted by a server restart',
+        );
+        expect(notifier.queued.mock.invocationCallOrder[0]).toBeLessThan(repo.findOldestQueuedBuild.mock.invocationCallOrder[0]!);
+      });
+
+      it('announces every other re-queued build when one position lookup fails', async () => {
+        const { service, repo, notifier, schemaBootstrap } = await setup();
+        vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        const second = requeuedRow({ id: 8, textBookId: 12, requestedBy: 43 });
+        schemaBootstrap.ready = Promise.resolve({ requeued: [requeuedRow(), second], failed: [] } as never);
+        repo.countQueuedBefore.mockRejectedValueOnce(new Error('db down')).mockResolvedValueOnce(0);
+
+        service.onApplicationBootstrap();
+
+        await vi.waitFor(() => expect(notifier.queued).toHaveBeenCalledWith(43, expect.objectContaining({ buildId: 8 }), 1));
+        expect(notifier.queued).toHaveBeenCalledOnce();
+      });
+
+      it('carries the output a collect cut short already wrote into the claim, and replaces only the linked read-along', async () => {
+        const { service, repo, buildService, editionLinks, userService } = await setup();
+        editionLinks.findLinkForBook.mockResolvedValue({ ...LINK, readAlongBookId: 55 });
+        repo.findOldestQueuedBuild.mockResolvedValueOnce(requeuedRow({ phase: 'collect', outputBookId: 99 }));
+        userService.findByIdWithPermissions.mockResolvedValue({
+          ...USER,
+          active: true,
+          permissions: [...USER.permissions, Permission.LibraryDeleteBooks],
+        });
+
+        await service.startNextQueuedBuild();
+
+        expect(repo.claimQueuedBuild).toHaveBeenCalledWith(7, expect.objectContaining({ outputBookId: 99 }));
+        expect(buildService.runBuild.mock.calls[0]![3]).toMatchObject({ force: true, oldOutputBookId: 55 });
+      });
+
+      it('reports where a re-queued build will land: its own destination, not the settings default', async () => {
+        const { service, repo, libraryService } = await setup();
+        libraryService.findOne.mockResolvedValue({ id: 4, name: 'Resumed', type: 'books', allowedFormats: ['epub'] });
+        repo.findBuildByPair.mockResolvedValue(requeuedRow({ queuedRequest: { previousStatus: 'interrupted' } }));
+
+        await expect(service.getStatus(10, USER)).resolves.toMatchObject({ status: 'queued', targetLibraryId: 4, targetLibraryName: 'Resumed' });
+      });
+
+      it('stops the Storyteller job of a re-queued build that was processing before it is cancelled', async () => {
+        const { service, repo, session } = await setup();
+        vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+        repo.findBuildByPair.mockResolvedValue(requeuedRow());
+        repo.retireQueuedBuild.mockResolvedValue('kept');
+
+        await service.cancelBuild(10, USER);
+
+        expect(session.cancelProcessing).toHaveBeenCalledWith('story-uuid');
+        expect(session.cancelProcessing.mock.invocationCallOrder[0]).toBeLessThan(repo.retireQueuedBuild.mock.invocationCallOrder[0]!);
+      });
+
+      it('still starts the queue when the announcement fails', async () => {
+        const { service, repo, schemaBootstrap } = await setup();
+        vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        schemaBootstrap.ready = Promise.resolve({ requeued: [requeuedRow()], failed: [] } as never);
+        repo.countQueuedBefore.mockRejectedValue(new Error('db down'));
+
+        service.onApplicationBootstrap();
+
+        await vi.waitFor(() => expect(repo.findOldestQueuedBuild).toHaveBeenCalled());
+      });
+
+      it('resumes its own Storyteller book and destination, even when forced', async () => {
+        const { service, repo, buildService } = await setup();
+        repo.findOldestQueuedBuild.mockResolvedValueOnce(requeuedRow());
+
+        await service.startNextQueuedBuild();
+
+        expect(repo.claimQueuedBuild).toHaveBeenCalledWith(7, {
+          storytellerBookUuid: 'story-uuid',
+          transport: 'shared-paths',
+          targetLibraryId: 4,
+          targetFolderId: 40,
+        });
+        expect(buildService.runBuild.mock.calls[0]![3]).toMatchObject({ force: true, targetLibraryId: 4, targetFolderId: 40, cleanUpRemote: false });
+      });
+    });
+
+    describe('locked notifications whose build is gone', () => {
+      const lockedNotification = (buildId: number, overrides: Record<string, unknown> = {}) => ({
+        id: buildId + 100,
+        userId: 42,
+        groupKey: `read_along_build:${buildId}:1000`,
+        meta: { buildId, bookId: 10, locked: true, cancellable: true },
+        ...overrides,
+      });
+
+      it('unlocks them at boot, after the re-queued builds are announced, and leaves live ones alone', async () => {
+        const { service, repo, notifier, notifications } = await setup();
+        notifications.findLockedByType.mockResolvedValue([lockedNotification(7), lockedNotification(8)]);
+        repo.findActiveBuildIds.mockResolvedValue([8]);
+
+        service.onApplicationBootstrap();
+
+        await vi.waitFor(() => expect(repo.findOldestQueuedBuild).toHaveBeenCalled());
+        expect(notifications.findLockedByType).toHaveBeenCalledWith('read_along_build');
+        expect(repo.findActiveBuildIds).toHaveBeenCalledWith([7, 8]);
+        expect(notifier.untracked).toHaveBeenCalledWith(42, { buildId: 7, textBookId: 10, stamp: 1000 });
+        expect(notifier.untracked).not.toHaveBeenCalledWith(42, expect.objectContaining({ buildId: 8 }));
+        // The boot sweep runs before the queue starts; the drain's own sweep follows it.
+        expect(notifier.untracked.mock.invocationCallOrder[0]).toBeLessThan(repo.findOldestQueuedBuild.mock.invocationCallOrder[0]!);
+      });
+
+      it('unlocks them at the end of every queue drain', async () => {
+        const { service, notifier, notifications } = await setup();
+        notifications.findLockedByType.mockResolvedValue([lockedNotification(7)]);
+
+        await service.startNextQueuedBuild();
+
+        expect(notifier.untracked).toHaveBeenCalledExactlyOnceWith(42, { buildId: 7, textBookId: 10, stamp: 1000 });
+      });
+
+      it('skips a locked notification it cannot trace to a build, and never throws', async () => {
+        const { service, notifier, notifications } = await setup();
+        vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        notifications.findLockedByType
+          .mockResolvedValueOnce([lockedNotification(7, { groupKey: 'other:7' })])
+          .mockRejectedValueOnce(new Error('db down'));
+
+        await service.startNextQueuedBuild();
+        await expect(service.startNextQueuedBuild()).resolves.toBeUndefined();
+
+        expect(notifier.untracked).not.toHaveBeenCalled();
+      });
+    });
+
     it('does not look at the queue before the schema bootstrap has finished', async () => {
       const { service, repo, schemaBootstrap } = await setup();
-      let finishBootstrap!: () => void;
-      schemaBootstrap.ready = new Promise<void>((resolve) => {
+      let finishBootstrap!: (interrupted: StorytellerInterruptedBuilds) => void;
+      schemaBootstrap.ready = new Promise<StorytellerInterruptedBuilds>((resolve) => {
         finishBootstrap = resolve;
       });
 
@@ -1792,7 +2023,7 @@ describe('StorytellerReadAlongStatusService', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(repo.findOldestQueuedBuild).not.toHaveBeenCalled();
 
-      finishBootstrap();
+      finishBootstrap({ requeued: [], failed: [] });
       await vi.waitFor(() => expect(repo.findOldestQueuedBuild).toHaveBeenCalledOnce());
     });
 

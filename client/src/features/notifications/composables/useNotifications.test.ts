@@ -44,6 +44,14 @@ function makeNotification(overrides: Partial<NotificationItem> = {}): Notificati
   }
 }
 
+function deferredPage() {
+  let resolve!: (data: unknown) => void
+  const promise = new Promise((settle) => {
+    resolve = (data) => settle({ ok: true, json: () => Promise.resolve(data) })
+  })
+  return { promise, resolve }
+}
+
 function makeMockSocket() {
   return {
     on: vi.fn<(...args: unknown[]) => unknown>(),
@@ -442,7 +450,10 @@ describe('useNotifications', () => {
       mockApi.mockReturnValueOnce(mockOk({ items: [makeNotification({ id: 1 }), makeNotification({ id: 2 })], total: 2 }))
       await fetchNotifications(true)
 
-      mockApi.mockReturnValueOnce(mockOk())
+      mockApi
+        .mockReturnValueOnce(mockOk())
+        .mockReturnValueOnce(mockOk({ items: [], total: 0 }))
+        .mockReturnValueOnce(mockOk({ count: 0 }))
       await clearAll()
 
       expect(notifications.value).toEqual([])
@@ -593,6 +604,105 @@ describe('useNotifications', () => {
         expect(notifications.value[0]?.id).toBe(4)
         expect(unreadCount.value).toBe(1)
       })
+    })
+  })
+
+  describe('in-progress notifications', () => {
+    const locked = (overrides: Partial<NotificationItem> = {}) =>
+      makeNotification({ type: NotificationType.ReadAlongBuild, meta: { buildId: 7, bookId: 10, locked: true, cancellable: true }, ...overrides })
+
+    function onUpdatedFor(mockSocket: { on: { mock: { calls: unknown[][] } } }, event = 'notification:updated') {
+      return mockSocket.on.mock.calls.find(([name]: unknown[]) => name === event)?.[1] as (payload?: never) => void
+    }
+
+    it('pins locked notifications above the rest, newest update first', async () => {
+      const useNotifications = await loadModule()
+      const { fetchNotifications, inProgressNotifications, settledNotifications } = useNotifications()
+      mockApi.mockReturnValueOnce(
+        mockOk({
+          items: [
+            makeNotification({ id: 1, updatedAt: '2026-01-03T00:00:00.000Z' }),
+            locked({ id: 2, updatedAt: '2026-01-01T00:00:00.000Z' }),
+            locked({ id: 3, updatedAt: '2026-01-02T00:00:00.000Z' }),
+          ],
+          total: 3,
+        }),
+      )
+      await fetchNotifications(true)
+
+      expect(inProgressNotifications.value.map((n) => n.id)).toEqual([3, 2])
+      expect(settledNotifications.value.map((n) => n.id)).toEqual([1])
+    })
+
+    it('keeps an updated notification in the group while it stays locked, and moves it out once it unlocks', async () => {
+      const useNotifications = await loadModule()
+      const { subscribe, inProgressNotifications, settledNotifications } = useNotifications()
+      subscribe()
+      const onUpdated = onUpdatedFor(mockSocket)
+
+      onUpdated(locked({ id: 5, message: 'Transcribing' }) as never)
+      onUpdated(locked({ id: 5, message: 'Aligning' }) as never)
+      expect(inProgressNotifications.value.map((n) => n.message)).toEqual(['Aligning'])
+      expect(settledNotifications.value).toHaveLength(0)
+
+      onUpdated(
+        locked({ id: 5, title: 'Read-along ready: Dune', meta: { buildId: 7, bookId: 10, done: true, locked: false, cancellable: false } }) as never,
+      )
+      expect(inProgressNotifications.value).toHaveLength(0)
+      expect(settledNotifications.value.map((n) => n.title)).toEqual(['Read-along ready: Dune'])
+    })
+
+    it('keeps locked notifications when the user clears the feed', async () => {
+      const useNotifications = await loadModule()
+      const { fetchNotifications, clearAll, notifications, total, unreadCount } = useNotifications()
+      mockApi.mockReturnValueOnce(mockOk({ items: [makeNotification({ id: 1 }), locked({ id: 2 })], total: 2 }))
+      await fetchNotifications(true)
+
+      const pending = deferredPage()
+      mockApi
+        .mockReturnValueOnce(mockOk())
+        .mockReturnValueOnce(pending.promise)
+        .mockReturnValueOnce(mockOk({ count: 1 }))
+      await clearAll()
+
+      expect(notifications.value.map((n) => n.id)).toEqual([2])
+      expect(total.value).toBe(1)
+      expect(unreadCount.value).toBe(1)
+      pending.resolve({ items: [locked({ id: 2 })], total: 1 })
+    })
+
+    it('reloads the first page and the badge after a clear, so locked rows past the loaded page appear', async () => {
+      const useNotifications = await loadModule()
+      const { fetchNotifications, clearAll, notifications, unreadCount } = useNotifications()
+      mockApi.mockReturnValueOnce(mockOk({ items: [makeNotification({ id: 1 })], total: 40 }))
+      await fetchNotifications(true)
+
+      mockApi
+        .mockReturnValueOnce(mockOk())
+        .mockReturnValueOnce(mockOk({ items: [locked({ id: 30 })], total: 1 }))
+        .mockReturnValueOnce(mockOk({ count: 1 }))
+      await clearAll()
+
+      await vi.waitFor(() => {
+        expect(notifications.value.map((n) => n.id)).toEqual([30])
+        expect(unreadCount.value).toBe(1)
+      })
+      expect(mockApi).toHaveBeenCalledWith('/api/v1/notifications?limit=20&offset=0')
+      expect(mockApi).toHaveBeenCalledWith('/api/v1/notifications/unread-count')
+    })
+
+    it('keeps locked notifications when another session clears the feed', async () => {
+      const useNotifications = await loadModule()
+      const { fetchNotifications, subscribe, notifications } = useNotifications()
+      mockApi.mockReturnValueOnce(mockOk({ items: [makeNotification({ id: 1 }), locked({ id: 2 })], total: 2 }))
+      await fetchNotifications(true)
+      subscribe()
+
+      mockApi.mockReturnValueOnce(mockOk({ items: [locked({ id: 30 })], total: 1 })).mockReturnValueOnce(mockOk({ count: 1 }))
+      onUpdatedFor(mockSocket, 'notification:cleared')()
+
+      expect(notifications.value.map((n) => n.id)).toEqual([2])
+      await vi.waitFor(() => expect(notifications.value.map((n) => n.id)).toEqual([30]))
     })
   })
 })

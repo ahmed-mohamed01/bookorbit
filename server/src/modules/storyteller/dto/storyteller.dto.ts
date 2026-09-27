@@ -140,3 +140,12 @@ export class BuildReadAlongDto implements ReadAlongBuildRequest {
   @IsBoolean()
   cleanUpRemote?: boolean;
 }
+
+/** Query of the cancel route: `buildId` pins the cancel to one build, as a notification names it. */
+export class CancelReadAlongBuildQueryDto {
+  @ValidateIf((o: CancelReadAlongBuildQueryDto) => o.buildId !== undefined)
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  buildId?: number;
+}

@@ -9455,6 +9455,9 @@
     "empty": "No notifications yet",
     "loadMore": "Load more notifications",
     "dismiss": "Dismiss notification",
+    "inProgress": "In progress",
+    "cancelBuild": "Cancel build",
+    "cancelBuildLabel": "Cancel the read-along build",
     "occurrences": "Happened {count} times",
     "occurrencesShort": "x{count}",
     "preferences": {

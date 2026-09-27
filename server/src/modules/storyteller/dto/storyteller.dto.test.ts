@@ -4,7 +4,7 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { describe, expect, it } from 'vitest';
 
-import { BuildReadAlongDto, UpsertStorytellerSettingsDto } from './storyteller.dto';
+import { BuildReadAlongDto, CancelReadAlongBuildQueryDto, UpsertStorytellerSettingsDto } from './storyteller.dto';
 
 // Mirrors the global ValidationPipe options so nested unknown keys are rejected here too.
 const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true };
@@ -152,5 +152,24 @@ describe('BuildReadAlongDto', () => {
 
   it('still accepts an omitted target library and folder', async () => {
     await expect(buildErrorsFor({ force: true })).resolves.toHaveLength(0);
+  });
+});
+
+describe('CancelReadAlongBuildQueryDto', () => {
+  const errorsFor = (query: Record<string, unknown>) => validate(plainToInstance(CancelReadAlongBuildQueryDto, query), PIPE_OPTIONS);
+
+  it('accepts no build id, and a positive one from the query string', async () => {
+    await expect(errorsFor({})).resolves.toHaveLength(0);
+    const dto = plainToInstance(CancelReadAlongBuildQueryDto, { buildId: '7' });
+    await expect(validate(dto, PIPE_OPTIONS)).resolves.toHaveLength(0);
+    expect(dto.buildId).toBe(7);
+  });
+
+  it.each(['0', '-1', 'abc', '1.5'])('rejects build id %s', async (buildId) => {
+    await expect(errorsFor({ buildId })).resolves.not.toHaveLength(0);
+  });
+
+  it('rejects any other query key', async () => {
+    await expect(errorsFor({ bookId: '3' })).resolves.not.toHaveLength(0);
   });
 });

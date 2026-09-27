@@ -7,14 +7,14 @@ import { STORYTELLER_SCHEMA_SQL } from './schema/storyteller-schema';
 type RepoMock = {
   findMissingTables: ReturnType<typeof vi.fn>;
   applySchemaStatements: ReturnType<typeof vi.fn>;
-  failInterruptedBuilds: ReturnType<typeof vi.fn>;
+  requeueInterruptedBuilds: ReturnType<typeof vi.fn>;
 };
 
 function createService(): { service: StorytellerSchemaBootstrapService; repo: RepoMock } {
   const repo: RepoMock = {
     findMissingTables: vi.fn().mockResolvedValue([]),
     applySchemaStatements: vi.fn().mockResolvedValue(undefined),
-    failInterruptedBuilds: vi.fn().mockResolvedValue(0),
+    requeueInterruptedBuilds: vi.fn().mockResolvedValue({ requeued: [], failed: [] }),
   };
   const service = new StorytellerSchemaBootstrapService(repo as never);
   return { service, repo };
@@ -49,10 +49,10 @@ describe('StorytellerSchemaBootstrapService', () => {
     expect(statements.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "storyteller_settings"'))).toBe(true);
     expect(statements.some((statement) => statement.includes('CREATE TABLE IF NOT EXISTS "storyteller_read_along_builds"'))).toBe(true);
     expect(repo.findMissingTables.mock.invocationCallOrder[0]).toBeLessThan(repo.applySchemaStatements.mock.invocationCallOrder[0]!);
-    expect(repo.applySchemaStatements.mock.invocationCallOrder[0]).toBeLessThan(repo.failInterruptedBuilds.mock.invocationCallOrder[0]!);
+    expect(repo.applySchemaStatements.mock.invocationCallOrder[0]).toBeLessThan(repo.requeueInterruptedBuilds.mock.invocationCallOrder[0]!);
   });
 
-  it('is silent when no tables are missing and no interrupted builds were reset', async () => {
+  it('is silent when no tables are missing and no build was interrupted', async () => {
     const { service } = createService();
 
     await service.onApplicationBootstrap();
@@ -69,20 +69,20 @@ describe('StorytellerSchemaBootstrapService', () => {
 
     expect(logSpy).toHaveBeenCalledTimes(1);
     expect(logSpy.mock.calls[0]![0]).toMatch(
-      /^\[storyteller\.schema_bootstrap\] \[end\] durationMs=\d+ tablesCreated=2 interruptedBuildsReset=0 - schema bootstrap completed$/,
+      /^\[storyteller\.schema_bootstrap\] \[end\] durationMs=\d+ tablesCreated=2 interruptedBuildsRequeued=0 interruptedBuildsFailed=0 - schema bootstrap completed$/,
     );
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it('logs when interrupted builds were reset', async () => {
+  it('logs how many interrupted builds were re-queued and how many failed', async () => {
     const { service, repo } = createService();
-    repo.failInterruptedBuilds.mockResolvedValue(3);
+    repo.requeueInterruptedBuilds.mockResolvedValue({ requeued: [{ id: 1 }, { id: 2 }], failed: [{ id: 3 }] });
 
     await service.onApplicationBootstrap();
 
     expect(logSpy).toHaveBeenCalledTimes(1);
     expect(logSpy.mock.calls[0]![0]).toMatch(
-      /^\[storyteller\.schema_bootstrap\] \[end\] durationMs=\d+ tablesCreated=0 interruptedBuildsReset=3 - schema bootstrap completed$/,
+      /^\[storyteller\.schema_bootstrap\] \[end\] durationMs=\d+ tablesCreated=0 interruptedBuildsRequeued=2 interruptedBuildsFailed=1 - schema bootstrap completed$/,
     );
     expect(errorSpy).not.toHaveBeenCalled();
   });
@@ -103,8 +103,10 @@ describe('StorytellerSchemaBootstrapService', () => {
     expect(logSpy).not.toHaveBeenCalled();
   });
 
-  it('settles ready once interrupted builds are failed, so the queue starts after them', async () => {
+  it('settles ready with the interrupted builds once they are re-queued, so the queue starts after them', async () => {
     const { service, repo } = createService();
+    const interrupted = { requeued: [{ id: 1 }], failed: [] };
+    repo.requeueInterruptedBuilds.mockResolvedValue(interrupted);
     let settled = false;
     void service.ready.then(() => {
       settled = true;
@@ -113,10 +115,10 @@ describe('StorytellerSchemaBootstrapService', () => {
     expect(settled).toBe(false);
 
     await service.onApplicationBootstrap();
-    await service.ready;
+    await expect(service.ready).resolves.toBe(interrupted);
 
     expect(settled).toBe(true);
-    expect(repo.failInterruptedBuilds).toHaveBeenCalledOnce();
+    expect(repo.requeueInterruptedBuilds).toHaveBeenCalledOnce();
   });
 
   it('rejects ready when the bootstrap fails', async () => {
