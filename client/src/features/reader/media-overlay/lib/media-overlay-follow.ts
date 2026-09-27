@@ -1,38 +1,37 @@
-// Decides whether the view should navigate to the sentence foliate is about to
-// highlight. `el` is the narrated element when its section is loaded, or null
-// when the section is not rendered yet.
-export function shouldFollowNarration(el: Element | null, visibleRange: Range | null, detached: boolean): boolean {
-  if (detached) return false
-  if (!el) return true
-  if (!visibleRange) return true
-  try {
-    if (visibleRange.startContainer.ownerDocument !== el.ownerDocument) return true
-    return !visibleRange.intersectsNode(el)
-  } catch {
-    return true
-  }
+export interface NarrationFollowDecision {
+  // Navigate to the narrated element, which in scrolled flow pins it to the top of the viewport.
+  follow: boolean
+  // Leave the detached state because narration has flowed out of the view the reader chose.
+  attach: boolean
+  // Whether the narrated element is in view after this decision, kept for the next one.
+  inView: boolean
 }
 
-const SETTLED_BAND_START = 0.2
-const SETTLED_BAND_END = 0.8
-
-// True when the narrated element has been brought back into comfortable view:
-// on the visible page in paginated flow, or with its centre inside the middle
-// band of the viewport in scrolled flow. `visibleRange` is the range foliate
-// reports as visible, whose bounding box stands in for the viewport since both
-// live in the chapter document's coordinate space.
-export function isNarrationSettledInView(el: Element, visibleRange: Range, scrolled: boolean): boolean {
+export function isNarrationInView(el: Element | null, visibleRange: Range | null): boolean {
+  if (!el || !visibleRange) return false
   try {
     if (visibleRange.startContainer.ownerDocument !== el.ownerDocument) return false
-    if (!visibleRange.intersectsNode(el)) return false
-    if (!scrolled) return true
-    if (typeof visibleRange.getBoundingClientRect !== 'function') return true
-    const viewport = visibleRange.getBoundingClientRect()
-    if (viewport.height <= 0) return true
-    const rect = el.getBoundingClientRect()
-    const center = (rect.top + rect.bottom) / 2
-    return center >= viewport.top + viewport.height * SETTLED_BAND_START && center <= viewport.top + viewport.height * SETTLED_BAND_END
+    return visibleRange.intersectsNode(el)
   } catch {
     return false
   }
+}
+
+// Attached narration always follows, so the sentence being read stays at the
+// top of the page and the book scrolls past it. After the reader scrolls, the
+// highlight is left to drift while it stays visible; once it leaves the view
+// (or moves into a section that is not rendered) the view catches up and pins
+// again. A highlight that was already out of view stays put, since the reader
+// deliberately went elsewhere, and nothing moves while a scroll is in progress.
+export function decideNarrationFollow(
+  el: Element | null,
+  visibleRange: Range | null,
+  state: { detached: boolean; wasInView: boolean; scrolling: boolean },
+): NarrationFollowDecision {
+  if (!state.detached) return { follow: true, attach: false, inView: true }
+  const inView = isNarrationInView(el, visibleRange)
+  if (inView) return { follow: false, attach: false, inView: true }
+  if (state.scrolling) return { follow: false, attach: false, inView: false }
+  if (state.wasInView) return { follow: true, attach: true, inView: true }
+  return { follow: false, attach: false, inView: false }
 }

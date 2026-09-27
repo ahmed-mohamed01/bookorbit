@@ -35,7 +35,7 @@ import { resolveMediaOverlayResume, type MediaOverlayResumePosition } from './me
 import { injectMediaOverlayHighlightCss, MEDIA_OVERLAY_DEFAULT_ACTIVE_CLASS } from './media-overlay/lib/media-overlay-highlight'
 import { startMediaOverlayWithFallback } from './media-overlay/lib/media-overlay-start'
 import { mediaOverlayEntriesOverlapping } from './media-overlay/lib/media-overlay-range'
-import { isNarrationSettledInView, shouldFollowNarration } from './media-overlay/lib/media-overlay-follow'
+import { decideNarrationFollow, isNarrationInView } from './media-overlay/lib/media-overlay-follow'
 import { useMediaOverlayFollow } from './media-overlay/composables/useMediaOverlayFollow'
 import TtsResumePrompt from '@/features/tts/components/TtsResumePrompt.vue'
 import ReaderHeader from './epub/components/ReaderHeader.vue'
@@ -635,10 +635,11 @@ async function handleNarrateFromHere() {
   await beginNarration(sectionIndex.value, visible ? mediaOverlayEntriesOverlapping(visible) : null)
 }
 
-// Brings the view back to the narrated sentence and lets it follow again.
+// Brings the view back to the narrated sentence and pins it there again.
 async function handleReturnToNarration() {
   const fragment = mediaOverlay.currentFragment.value
   mediaOverlay.attach()
+  narrationWasInView = true
   if (fragment) await goTo(fragment)
 }
 
@@ -652,12 +653,15 @@ function narratedElementInChapter(): Element | null {
   return currentChapterDoc.getElementById(id)
 }
 
-// Re-attaches once the reader has brought the narrated sentence back into
-// comfortable view and stopped scrolling, so following resumes on its own.
-function reattachIfNarrationSettled(visible: Range | null, el: Element | null = narratedElementInChapter()) {
-  if (!mediaOverlay.isDetached.value || !el || !visible) return
-  if (narrationFollow.isScrolling()) return
-  if (isNarrationSettledInView(el, visible, isScrolledFlow())) mediaOverlay.attach()
+// Whether the narrated sentence was in view the last time the reader moved or
+// a new sentence was highlighted. Lets a highlight that scrolls off the bottom
+// of the reader's chosen view pull the view along, while one the reader left
+// behind on purpose stays where it is.
+let narrationWasInView = true
+
+function trackNarrationInView(visible: Range | null) {
+  if (!mediaOverlay.isDetached.value) return
+  narrationWasInView = isNarrationInView(narratedElementInChapter(), visible)
 }
 
 async function handleStartMediaOverlay() {
@@ -876,20 +880,22 @@ const {
   resolveSectionIndex,
 } = useFoliate(() => containerRef.value, onRelocateHandler, onApplyStylesHandler, onMiddleTapHandler, onChapterLoadHandler, canRunManualNavigation)
 
-function isScrolledFlow() {
-  return getRenderer()?.getAttribute?.('flow') === 'scrolled'
-}
-
 setMediaOverlayFollow((el) => {
-  reattachIfNarrationSettled(getVisibleRange(), el)
-  return shouldFollowNarration(el, getVisibleRange(), mediaOverlay.isDetached.value)
+  const decision = decideNarrationFollow(el, getVisibleRange(), {
+    detached: mediaOverlay.isDetached.value,
+    wasInView: narrationWasInView,
+    scrolling: narrationFollow.isScrolling(),
+  })
+  narrationWasInView = decision.inView
+  if (decision.attach) mediaOverlay.attach()
+  return decision.follow
 })
 
 const narrationFollow = useMediaOverlayFollow({
   isNarrating: () => mediaOverlay.isActive.value,
-  isScrolledFlow,
+  isScrolledFlow: () => getRenderer()?.getAttribute?.('flow') === 'scrolled',
   onScrollIntent: mediaOverlay.detach,
-  onRelocate: reattachIfNarrationSettled,
+  onRelocate: trackNarrationInView,
 })
 
 const { handleHighlight, handleOpenNoteDialog, handleSaveNote } = useReaderAnnotationActions({
