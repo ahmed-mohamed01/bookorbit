@@ -173,11 +173,21 @@ describe('useDashboardScroller', () => {
     const state = mountComposable('continue-reading', 5)
     await flushPromises()
 
-    mockSuccessfulBatch([{ id: 2 }])
+    let releaseRefresh!: () => void
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve
+    })
+    mockApi.mockImplementation(async (_input, init) => {
+      await refreshGate
+      const body = JSON.parse(String(init?.body)) as { items: Array<{ id: string }> }
+      return mockResponse({ items: body.items.map((item) => ({ id: item.id, books: [{ id: 2 }], failed: false })) })
+    })
     bookEventsMock.progressChangedCallback?.()
     await vi.advanceTimersByTimeAsync(250)
+    expect(mockApi).toHaveBeenCalledTimes(2)
     expect(state.loading.value).toBe(false)
     expect(state.books.value).toEqual([{ id: 1 }])
+    releaseRefresh()
     await flushPromises()
     expect(state.books.value).toEqual([{ id: 2 }])
 
