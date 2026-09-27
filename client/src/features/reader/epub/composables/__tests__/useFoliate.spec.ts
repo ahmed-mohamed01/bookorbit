@@ -31,6 +31,7 @@ vi.mock('../useFoliateSelection', () => ({
 const inputMock = vi.hoisted(() => ({
   cleanup: vi.fn<() => void>(),
   attachIframeClicks: vi.fn<() => void>(),
+  attachHostTouch: vi.fn<() => void>(),
   suppressNextTapNavigation: vi.fn<() => void>(),
 }))
 
@@ -52,6 +53,7 @@ describe('useFoliate.open', () => {
   beforeEach(() => {
     inputMock.cleanup.mockReset()
     inputMock.attachIframeClicks.mockReset()
+    inputMock.attachHostTouch.mockReset()
     inputMock.suppressNextTapNavigation.mockReset()
 
     container = document.createElement('div')
