@@ -104,7 +104,7 @@ function makeMetadataFetchDiagnostics(overrides: Partial<MetadataFetchDiagnostic
   };
 }
 
-function makeService(overrides: { bookMetadataLockService?: unknown } = {}) {
+function makeService(overrides: { bookMetadataLockService?: unknown; audiobookEbookProgressSync?: unknown } = {}) {
   const bookRepo = {
     findCards: vi.fn(),
     countWhere: vi.fn(),
@@ -289,6 +289,9 @@ function makeService(overrides: { bookMetadataLockService?: unknown } = {}) {
     fileWriteService as never,
     fileRenameService as never,
     achievementEvents as never,
+    undefined,
+    undefined,
+    overrides.audiobookEbookProgressSync as never,
   );
 
   return {
@@ -5608,5 +5611,35 @@ describe('BookService', () => {
       expect(bookRepo.findFilesForBook).not.toHaveBeenCalled();
       expect(bookRepo.updateBookPrimaryFile).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('BookService.syncReadAlongForAudiobookPosition', () => {
+  const params = { audioBookId: 5, readAlongBookId: 9, audioSeconds: 95, audioTotalSeconds: 120, sourceUpdatedAt: new Date('2026-09-27T16:09:07Z') };
+
+  function makeReadAlongService() {
+    const audiobookEbookProgressSync = { syncReadAlongFromAudioPosition: vi.fn().mockResolvedValue(true) };
+    const made = makeService({ audiobookEbookProgressSync });
+    made.bookRepo.findLibraryIdByBookId.mockResolvedValue(3);
+    return { ...made, audiobookEbookProgressSync };
+  }
+
+  it('syncs the read-along with the Kobo permission of the listening user', async () => {
+    const { service, libraryService, audiobookEbookProgressSync } = makeReadAlongService();
+    const user = makeUser({ id: 42, permissions: [Permission.KoboSync] });
+
+    await expect(service.syncReadAlongForAudiobookPosition(user, params)).resolves.toBe(true);
+
+    expect(libraryService.verifyUserAccess).toHaveBeenCalledWith(42, 3, false);
+    expect(audiobookEbookProgressSync.syncReadAlongFromAudioPosition).toHaveBeenCalledWith({ userId: 42, ...params, syncKobo: true });
+  });
+
+  it('leaves a read-along the user cannot see untouched', async () => {
+    const { service, libraryService, audiobookEbookProgressSync } = makeReadAlongService();
+    libraryService.verifyUserAccess.mockRejectedValue(new ForbiddenException('no access'));
+
+    await expect(service.syncReadAlongForAudiobookPosition(makeUser(), params)).resolves.toBe(false);
+
+    expect(audiobookEbookProgressSync.syncReadAlongFromAudioPosition).not.toHaveBeenCalled();
   });
 });

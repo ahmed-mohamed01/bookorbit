@@ -1659,6 +1659,14 @@ export class BookRepository {
     return { primaryFileId: book.primaryFileId, files };
   }
 
+  async findAudioChapterStarts(bookId: number): Promise<{ startMs: number }[]> {
+    const [row] = await this.db.select({ chapters: bookMetadata.chapters }).from(bookMetadata).where(eq(bookMetadata.bookId, bookId)).limit(1);
+    if (!Array.isArray(row?.chapters)) return [];
+    return (row.chapters as { startMs?: unknown }[])
+      .filter((chapter): chapter is { startMs: number } => typeof chapter?.startMs === 'number' && Number.isFinite(chapter.startMs))
+      .map((chapter) => ({ startMs: chapter.startMs }));
+  }
+
   async findBookBase(bookId: number) {
     const [row] = await this.db.select().from(books).where(eq(books.id, bookId)).limit(1);
     return row ?? null;

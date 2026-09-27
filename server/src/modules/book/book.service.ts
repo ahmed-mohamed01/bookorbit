@@ -102,7 +102,7 @@ import { BookCoverStore } from '../book-cover-store/book-cover-store.service';
 import { selectEmbeddedCoverSources } from '../book-cover-store/cover-sources';
 import { CoverSlotReconciler } from '../metadata/cover-slot-reconciler.service';
 import { BookQueryBuilder } from './book-query-builder.service';
-import { AudiobookEbookProgressSyncService } from './audiobook-ebook-progress-sync.service';
+import { AudiobookEbookProgressSyncService, type ReadAlongAudioPosition } from './audiobook-ebook-progress-sync.service';
 import { AudiolessEpubService } from './audioless-epub.service';
 import { BookRepository } from './book.repository';
 import { ComicMetadataRepository } from '../metadata/comic-metadata.repository';
@@ -2160,6 +2160,21 @@ export class BookService {
       percentage,
       syncKobo: this.hasPermission(user, Permission.KoboSync),
       sourceUpdatedAt,
+    });
+  }
+
+  async syncReadAlongForAudiobookPosition(user: RequestUser, params: ReadAlongAudioPosition): Promise<boolean> {
+    if (!this.audiobookEbookProgressSync) return false;
+    try {
+      await this.verifyBookAccess(params.readAlongBookId, user);
+    } catch (error) {
+      if (error instanceof NotFoundException) return false;
+      throw error;
+    }
+    return this.audiobookEbookProgressSync.syncReadAlongFromAudioPosition({
+      userId: user.id,
+      ...params,
+      syncKobo: this.hasPermission(user, Permission.KoboSync),
     });
   }
 

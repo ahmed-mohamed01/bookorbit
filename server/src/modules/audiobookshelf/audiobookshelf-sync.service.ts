@@ -5,6 +5,8 @@ import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { toDateKeyInTimeZone } from '../../common/utils/timezone.utils';
 import { ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, AchievementEventsService } from '../achievement/achievement-events.service';
+import { BookService } from '../book/book.service';
+import { EditionLinkRepository } from '../edition-link/edition-link.repository';
 import { LibraryService } from '../library/library.service';
 import { ReadingAttemptService } from '../user-book-status/reading-attempt.service';
 import { UserBookStatusService } from '../user-book-status/user-book-status.service';
@@ -109,6 +111,7 @@ interface AbsDueBook {
 interface AbsSyncPreload {
   audioFilesByBookId: Map<number, { id: number; format: string | null; durationSeconds: number | null }[]>;
   audioProgressByBookId: Map<number, { percentage: number; updatedAt: Date; revision: number }>;
+  readAlongBookIdByAudioBookId: Map<number, number>;
 }
 
 @Injectable()
@@ -128,6 +131,8 @@ export class AudiobookshelfSyncService {
     private readonly sessionsService: AudiobookshelfSessionsService,
     private readonly libraryService: LibraryService,
     private readonly achievementEvents: AchievementEventsService,
+    private readonly bookService: BookService,
+    private readonly editionLinks: EditionLinkRepository,
   ) {}
 
   /**
@@ -226,7 +231,7 @@ export class AudiobookshelfSyncService {
       for (const { mp, state, bookId, statusDue, positionDue } of dueBooks) {
         try {
           const outcome = await this.applyProgressToBook(
-            user.id,
+            user,
             bookId,
             mp,
             timeZone,
@@ -310,15 +315,16 @@ export class AudiobookshelfSyncService {
    */
   private async preloadForDueBooks(userId: number, dueBooks: AbsDueBook[]): Promise<AbsSyncPreload> {
     const positionBookIds = dueBooks.filter((book) => book.positionDue).map((book) => book.bookId);
-    const [audioFilesByBookId, audioProgressByBookId] = await Promise.all([
+    const [audioFilesByBookId, audioProgressByBookId, readAlongBookIdByAudioBookId] = await Promise.all([
       this.repo.findAudioFilesInPlayOrderForBooks(positionBookIds),
       this.repo.findAudioProgressForBooks(userId, positionBookIds),
+      this.editionLinks.findReadAlongBookIdsByAudioBookIds(positionBookIds),
     ]);
-    return { audioFilesByBookId, audioProgressByBookId };
+    return { audioFilesByBookId, audioProgressByBookId, readAlongBookIdByAudioBookId };
   }
 
   private async applyProgressToBook(
-    userId: number,
+    user: RequestUser,
     bookId: number,
     mp: AbsMediaProgress,
     timeZone: string,
@@ -337,6 +343,7 @@ export class AudiobookshelfSyncService {
     let positionWatermarkAdvanced = false;
     let appliedStatus: ReadStatus | null = null;
     let positionProgressAt: Date | null = null;
+    const userId = user.id;
 
     if (due.status) {
       const current = (await this.statusService.findOne(userId, bookId))?.status ?? 'unread';
@@ -362,7 +369,7 @@ export class AudiobookshelfSyncService {
     }
 
     if (due.position) {
-      const position = await this.applyPosition(userId, bookId, mp, positionSyncedProgressAt, preload);
+      const position = await this.applyPosition(user, bookId, mp, positionSyncedProgressAt, preload);
       positionApplied = position.applied;
       positionWatermarkAdvanced = position.watermarkAdvanced;
       positionProgressAt = position.progressAt;
@@ -372,12 +379,13 @@ export class AudiobookshelfSyncService {
   }
 
   private async applyPosition(
-    userId: number,
+    user: RequestUser,
     bookId: number,
     mp: AbsMediaProgress,
     syncedProgressAt: Date | null,
     preload: AbsSyncPreload,
   ): Promise<{ applied: boolean; watermarkAdvanced: boolean; progressAt: Date | null }> {
+    const userId = user.id;
     const skipped = { applied: false, watermarkAdvanced: false, progressAt: null };
     const files = (preload.audioFilesByBookId.get(bookId) ?? []).filter((file) => file.format && isAudioFormat(file.format));
     if (files.length === 0) return skipped;
@@ -453,7 +461,39 @@ export class AudiobookshelfSyncService {
       // look newer than a more recent local update and drag the linked ebook backward.
       ...(mp.lastUpdate ? { occurredAt: new Date(mp.lastUpdate) } : {}),
     });
+    await this.syncLinkedReadAlong(user, bookId, mp, capturedAt, preload);
     return { applied: true, watermarkAdvanced: true, progressAt: written.updatedAt };
+  }
+
+  /**
+   * The read-along is its own book, so the in-book audio -> ebook sync never reaches it. Runs after the
+   * audiobook write has committed: a failure here must not fail the book, or its watermark would stay
+   * put and the next run would read our own write as newer local progress.
+   */
+  private async syncLinkedReadAlong(
+    user: RequestUser,
+    bookId: number,
+    mp: AbsMediaProgress,
+    capturedAt: Date,
+    preload: AbsSyncPreload,
+  ): Promise<void> {
+    const readAlongBookId = preload.readAlongBookIdByAudioBookId.get(bookId);
+    if (readAlongBookId === undefined) return;
+    const startedAt = Date.now();
+    try {
+      await this.bookService.syncReadAlongForAudiobookPosition(user, {
+        audioBookId: bookId,
+        readAlongBookId,
+        audioSeconds: mp.currentTime,
+        audioTotalSeconds: mp.duration,
+        sourceUpdatedAt: capturedAt,
+      });
+    } catch (err) {
+      const { errorClass, error } = describeError(err);
+      this.logger.warn(
+        `[abs.sync] [fail] userId=${user.id} bookId=${bookId} readAlongBookId=${readAlongBookId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${error}" - read-along position sync failed`,
+      );
+    }
   }
 
   /**
