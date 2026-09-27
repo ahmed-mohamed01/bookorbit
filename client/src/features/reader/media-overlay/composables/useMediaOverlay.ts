@@ -23,8 +23,15 @@ const currentFragment = ref<string | null>(null)
 // While detached the view stays put and the mini player offers "Narrate from here".
 const isDetached = ref(false)
 
+export interface MediaOverlayDetachedActions {
+  // Restarts narration at the reader's current position.
+  narrateFromHere: () => void | Promise<void>
+  // Brings the view back to the sentence being narrated and re-attaches.
+  returnToNarration: () => void | Promise<void>
+}
+
 let instance: FoliateMediaOverlay | null = null
-let narrateFromHereHandler: (() => void | Promise<void>) | null = null
+let detachedActions: MediaOverlayDetachedActions | null = null
 let highlightListener: ((e: Event) => void) | null = null
 let errorListener: ((e: Event) => void) | null = null
 
@@ -60,7 +67,7 @@ function stop() {
     detachListeners()
   }
   instance = null
-  narrateFromHereHandler = null
+  detachedActions = null
   isActive.value = false
   isPlaying.value = false
   isDetached.value = false
@@ -89,13 +96,13 @@ export function useMediaOverlay() {
 
   // `mo` is the foliate MediaOverlay instance (view.mediaOverlay) and `startFn`
   // is view.startMediaOverlay - both obtained from useFoliate in the reader.
-  // `onNarrateFromHere` restarts narration at the reader's current position
-  // once the user has scrolled away from the narrated sentence.
-  function start<T>(mo: FoliateMediaOverlay, startFn: () => T, book: TtsCurrentBook, onNarrateFromHere?: () => void | Promise<void>): T {
+  // `actions` are offered by the mini player once the user has scrolled away
+  // from the narrated sentence.
+  function start<T>(mo: FoliateMediaOverlay, startFn: () => T, book: TtsCurrentBook, actions?: MediaOverlayDetachedActions): T {
     stop()
     requestAudioFocus('media-overlay')
     instance = mo
-    narrateFromHereHandler = onNarrateFromHere ?? null
+    detachedActions = actions ?? null
     currentBook.value = book
     isActive.value = true
     isPlaying.value = true
@@ -157,8 +164,13 @@ export function useMediaOverlay() {
   }
 
   function narrateFromHere() {
-    if (!isActive.value || !narrateFromHereHandler) return
-    void narrateFromHereHandler()
+    if (!isActive.value || !detachedActions) return
+    void detachedActions.narrateFromHere()
+  }
+
+  function returnToNarration() {
+    if (!isActive.value || !detachedActions) return
+    void detachedActions.returnToNarration()
   }
 
   function increaseRate() {
@@ -183,6 +195,7 @@ export function useMediaOverlay() {
     detach,
     attach,
     narrateFromHere,
+    returnToNarration,
     toggle,
     pause,
     resume,

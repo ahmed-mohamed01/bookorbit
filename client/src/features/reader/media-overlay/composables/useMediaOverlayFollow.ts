@@ -4,7 +4,10 @@ interface MediaOverlayFollowOptions {
   isNarrating: () => boolean
   isScrolledFlow: () => boolean
   onScrollIntent: () => void
+  onRelocate?: (range: Range | null) => void
 }
+
+const SCROLLING_IDLE_MS = 500
 
 interface RendererLike {
   addEventListener?: EventTarget['addEventListener']
@@ -17,18 +20,28 @@ interface RendererLike {
 export function useMediaOverlayFollow(options: MediaOverlayFollowOptions) {
   let boundRenderer: RendererLike | null = null
   let rendererCleanup: (() => void) | null = null
+  let lastScrollIntentAt = 0
   const documentCleanups = new Map<Document, () => void>()
 
   function reportScrollIntent() {
     if (!options.isNarrating() || !options.isScrolledFlow()) return
+    lastScrollIntentAt = Date.now()
     options.onScrollIntent()
+  }
+
+  // Wheel and touch input keeps arriving while a scroll is in progress, so a
+  // recent intent means the reader has not settled yet.
+  function isScrolling() {
+    return Date.now() - lastScrollIntentAt < SCROLLING_IDLE_MS
   }
 
   // The paginator only tags a relocate with reason "scroll" after a native
   // scroll it did not start itself, so this also catches scrollbar drags.
   function handleRendererRelocate(e: Event) {
     if (!options.isNarrating()) return
-    if ((e as CustomEvent).detail?.reason === 'scroll') options.onScrollIntent()
+    const detail = (e as CustomEvent).detail as { reason?: string | null; range?: Range | null } | undefined
+    if (detail?.reason === 'scroll') options.onScrollIntent()
+    options.onRelocate?.(detail?.range ?? null)
   }
 
   function handleWheel() {
@@ -77,5 +90,5 @@ export function useMediaOverlayFollow(options: MediaOverlayFollowOptions) {
 
   if (getCurrentScope()) onScopeDispose(cleanup)
 
-  return { bindRenderer, bindChapterDocument, cleanup }
+  return { bindRenderer, bindChapterDocument, isScrolling, cleanup }
 }

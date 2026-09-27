@@ -4,12 +4,14 @@ import { useMediaOverlayFollow } from './useMediaOverlayFollow'
 function setup(overrides: Partial<{ narrating: boolean; scrolled: boolean }> = {}) {
   const state = { narrating: true, scrolled: true, ...overrides }
   const onScrollIntent = vi.fn<() => void>()
+  const onRelocate = vi.fn<(range: Range | null) => void>()
   const follow = useMediaOverlayFollow({
     isNarrating: () => state.narrating,
     isScrolledFlow: () => state.scrolled,
     onScrollIntent,
+    onRelocate,
   })
-  return { follow, state, onScrollIntent }
+  return { follow, state, onScrollIntent, onRelocate }
 }
 
 function touchMove(doc: Document, touches = 1) {
@@ -97,5 +99,40 @@ describe('useMediaOverlayFollow', () => {
     renderer.dispatchEvent(new CustomEvent('relocate', { detail: { reason: 'scroll' } }))
     document.dispatchEvent(new Event('wheel'))
     expect(onScrollIntent).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports every relocate with its visible range while narrating', () => {
+    const { follow, state, onRelocate } = setup()
+    const renderer = new EventTarget()
+    const range = document.createRange()
+    follow.bindRenderer(renderer)
+
+    renderer.dispatchEvent(new CustomEvent('relocate', { detail: { reason: 'navigation', range } }))
+    renderer.dispatchEvent(new CustomEvent('relocate', { detail: { reason: 'scroll' } }))
+    expect(onRelocate).toHaveBeenNthCalledWith(1, range)
+    expect(onRelocate).toHaveBeenNthCalledWith(2, null)
+
+    state.narrating = false
+    renderer.dispatchEvent(new CustomEvent('relocate', { detail: { reason: 'scroll', range } }))
+    expect(onRelocate).toHaveBeenCalledTimes(2)
+    follow.cleanup()
+  })
+
+  it('counts as scrolling shortly after wheel input and settles afterwards', () => {
+    vi.useFakeTimers()
+    try {
+      const { follow } = setup()
+      follow.bindChapterDocument(document)
+      expect(follow.isScrolling()).toBe(false)
+
+      document.dispatchEvent(new Event('wheel'))
+      expect(follow.isScrolling()).toBe(true)
+
+      vi.advanceTimersByTime(600)
+      expect(follow.isScrolling()).toBe(false)
+      follow.cleanup()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

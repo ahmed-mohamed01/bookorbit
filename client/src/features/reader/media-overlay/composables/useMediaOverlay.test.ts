@@ -158,22 +158,29 @@ describe('useMediaOverlay', () => {
     expect(player.isDetached.value).toBe(false)
   })
 
-  it('narrateFromHere invokes the handler given to start while active', () => {
+  it('detached actions invoke the handlers given to start only while active', () => {
     const mo = makeFakeMediaOverlay()
     const player = useMediaOverlay()
-    const onNarrateFromHere = vi.fn<() => void>()
+    const narrateFromHere = vi.fn<() => void>()
+    const returnToNarration = vi.fn<() => void>()
 
     player.narrateFromHere()
-    expect(onNarrateFromHere).not.toHaveBeenCalled()
+    player.returnToNarration()
+    expect(narrateFromHere).not.toHaveBeenCalled()
+    expect(returnToNarration).not.toHaveBeenCalled()
 
-    player.start(mo, () => undefined, book, onNarrateFromHere)
+    player.start(mo, () => undefined, book, { narrateFromHere, returnToNarration })
     player.detach()
     player.narrateFromHere()
-    expect(onNarrateFromHere).toHaveBeenCalledOnce()
+    player.returnToNarration()
+    expect(narrateFromHere).toHaveBeenCalledOnce()
+    expect(returnToNarration).toHaveBeenCalledOnce()
 
     player.stop()
     player.narrateFromHere()
-    expect(onNarrateFromHere).toHaveBeenCalledOnce()
+    player.returnToNarration()
+    expect(narrateFromHere).toHaveBeenCalledOnce()
+    expect(returnToNarration).toHaveBeenCalledOnce()
   })
 
   it('restarting narration clears the detached state', () => {

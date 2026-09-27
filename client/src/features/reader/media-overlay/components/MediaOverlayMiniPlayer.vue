@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { ChevronDown, ChevronUp, Headphones, LocateFixed, Pause, Play, SkipBack, SkipForward, X } from '@lucide/vue'
+import { AudioLines, ChevronDown, ChevronUp, Headphones, LocateFixed, Pause, Play, SkipBack, SkipForward, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useMediaOverlay } from '../composables/useMediaOverlay'
 import { useTtsMiniPlayerUi } from '@/features/tts/composables/useTtsMiniPlayerUi'
@@ -9,8 +9,22 @@ import TtsSleepTimerPicker from '@/features/tts/components/TtsSleepTimerPicker.v
 import CoverFill from '@/features/book/components/CoverFill.vue'
 
 const { t } = useI18n()
-const { isActive, isPlaying, isDetached, rate, currentBook, error, sleepTimer, toggle, nextSentence, prevSentence, setRate, stop, narrateFromHere } =
-  useMediaOverlay()
+const {
+  isActive,
+  isPlaying,
+  isDetached,
+  rate,
+  currentBook,
+  error,
+  sleepTimer,
+  toggle,
+  nextSentence,
+  prevSentence,
+  setRate,
+  stop,
+  narrateFromHere,
+  returnToNarration,
+} = useMediaOverlay()
 const { isReaderFooterVisible } = useTtsMiniPlayerUi()
 
 const showPanel = ref(false)
@@ -41,13 +55,21 @@ function handleStop() {
       :class="containerPositionClass"
     >
       <Transition name="fade">
-        <div v-if="isDetached" class="mb-2 flex justify-center">
+        <div v-if="isDetached" class="mb-2 flex justify-center gap-2">
+          <button
+            type="button"
+            class="flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-lg hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            @click="returnToNarration"
+          >
+            <LocateFixed class="h-3.5 w-3.5" />
+            {{ t('reader.narration.returnToNarration') }}
+          </button>
           <button
             type="button"
             class="flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground shadow-lg hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             @click="narrateFromHere"
           >
-            <LocateFixed class="h-3.5 w-3.5" />
+            <AudioLines class="h-3.5 w-3.5" />
             {{ t('reader.narration.narrateFromHere') }}
           </button>
         </div>

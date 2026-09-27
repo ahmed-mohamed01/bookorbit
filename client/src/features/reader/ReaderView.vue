@@ -35,7 +35,7 @@ import { resolveMediaOverlayResume, type MediaOverlayResumePosition } from './me
 import { injectMediaOverlayHighlightCss, MEDIA_OVERLAY_DEFAULT_ACTIVE_CLASS } from './media-overlay/lib/media-overlay-highlight'
 import { startMediaOverlayWithFallback } from './media-overlay/lib/media-overlay-start'
 import { mediaOverlayEntriesOverlapping } from './media-overlay/lib/media-overlay-range'
-import { shouldFollowNarration } from './media-overlay/lib/media-overlay-follow'
+import { isNarrationSettledInView, shouldFollowNarration } from './media-overlay/lib/media-overlay-follow'
 import { useMediaOverlayFollow } from './media-overlay/composables/useMediaOverlayFollow'
 import TtsResumePrompt from '@/features/tts/components/TtsResumePrompt.vue'
 import ReaderHeader from './epub/components/ReaderHeader.vue'
@@ -624,7 +624,7 @@ async function beginNarration(sectionIdx: number, matches: ((item: { text: strin
     mo,
     () => startMediaOverlayWithFallback(mo, sectionIdx, matches, () => startId === mediaOverlayStartId && mediaOverlay.isActive.value),
     book,
-    handleNarrateFromHere,
+    { narrateFromHere: handleNarrateFromHere, returnToNarration: handleReturnToNarration },
   )
 }
 
@@ -633,6 +633,31 @@ async function beginNarration(sectionIdx: number, matches: ((item: { text: strin
 async function handleNarrateFromHere() {
   const visible = getVisibleRange()
   await beginNarration(sectionIndex.value, visible ? mediaOverlayEntriesOverlapping(visible) : null)
+}
+
+// Brings the view back to the narrated sentence and lets it follow again.
+async function handleReturnToNarration() {
+  const fragment = mediaOverlay.currentFragment.value
+  mediaOverlay.attach()
+  if (fragment) await goTo(fragment)
+}
+
+// The element foliate is highlighting, when it lives in the loaded chapter.
+// Ids such as Kobo spans repeat across chapters, so the section is checked too.
+function narratedElementInChapter(): Element | null {
+  const fragment = mediaOverlay.currentFragment.value
+  const id = fragment?.split('#')[1]
+  if (!fragment || !id || !currentChapterDoc) return null
+  if (resolveSectionIndex(fragment) !== sectionIndex.value) return null
+  return currentChapterDoc.getElementById(id)
+}
+
+// Re-attaches once the reader has brought the narrated sentence back into
+// comfortable view and stopped scrolling, so following resumes on its own.
+function reattachIfNarrationSettled(visible: Range | null, el: Element | null = narratedElementInChapter()) {
+  if (!mediaOverlay.isDetached.value || !el || !visible) return
+  if (narrationFollow.isScrolling()) return
+  if (isNarrationSettledInView(el, visible, isScrolledFlow())) mediaOverlay.attach()
 }
 
 async function handleStartMediaOverlay() {
@@ -851,12 +876,20 @@ const {
   resolveSectionIndex,
 } = useFoliate(() => containerRef.value, onRelocateHandler, onApplyStylesHandler, onMiddleTapHandler, onChapterLoadHandler, canRunManualNavigation)
 
-setMediaOverlayFollow((el) => shouldFollowNarration(el, getVisibleRange(), mediaOverlay.isDetached.value))
+function isScrolledFlow() {
+  return getRenderer()?.getAttribute?.('flow') === 'scrolled'
+}
+
+setMediaOverlayFollow((el) => {
+  reattachIfNarrationSettled(getVisibleRange(), el)
+  return shouldFollowNarration(el, getVisibleRange(), mediaOverlay.isDetached.value)
+})
 
 const narrationFollow = useMediaOverlayFollow({
   isNarrating: () => mediaOverlay.isActive.value,
-  isScrolledFlow: () => getRenderer()?.getAttribute?.('flow') === 'scrolled',
+  isScrolledFlow,
   onScrollIntent: mediaOverlay.detach,
+  onRelocate: reattachIfNarrationSettled,
 })
 
 const { handleHighlight, handleOpenNoteDialog, handleSaveNote } = useReaderAnnotationActions({
