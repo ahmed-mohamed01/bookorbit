@@ -22,6 +22,7 @@ vi.mock('@/features/book/composables/useBookEvents', () => ({
 
 import { api } from '@/lib/api'
 import { useDashboardScroller } from '../useDashboardScroller'
+import { PROGRESS_REFRESH_MIN_INTERVAL_MS } from '@/features/book/composables/useBookProgressRefresh'
 
 const mockApi = vi.mocked(api)
 
@@ -164,5 +165,50 @@ describe('useDashboardScroller', () => {
     await flushPromises()
     expect(mockApi).toHaveBeenCalledOnce()
     expect(batchBody().items[0]).toMatchObject({ type: 'continue-reading', limit: 5 })
+  })
+
+  it('refreshes in the background without showing the skeleton or dropping books', async () => {
+    vi.useFakeTimers()
+    mockSuccessfulBatch([{ id: 1 }])
+    const state = mountComposable('continue-reading', 5)
+    await flushPromises()
+
+    mockSuccessfulBatch([{ id: 2 }])
+    bookEventsMock.progressChangedCallback?.()
+    await vi.advanceTimersByTimeAsync(250)
+    expect(state.loading.value).toBe(false)
+    expect(state.books.value).toEqual([{ id: 1 }])
+    await flushPromises()
+    expect(state.books.value).toEqual([{ id: 2 }])
+
+    mockSuccessfulBatch([], true)
+    bookEventsMock.progressChangedCallback?.()
+    await vi.advanceTimersByTimeAsync(PROGRESS_REFRESH_MIN_INTERVAL_MS)
+    await flushPromises()
+    expect(state.books.value).toEqual([{ id: 2 }])
+    expect(state.error.value).toBe(false)
+  })
+
+  it('throttles refreshes while progress events keep arriving', async () => {
+    vi.useFakeTimers()
+    mockSuccessfulBatch([{ id: 1 }])
+    mountComposable('continue-reading', 5)
+    await flushPromises()
+    mockApi.mockClear()
+
+    bookEventsMock.progressChangedCallback?.()
+    await vi.advanceTimersByTimeAsync(250)
+    await flushPromises()
+    expect(mockApi).toHaveBeenCalledOnce()
+
+    for (let i = 0; i < 10; i++) {
+      bookEventsMock.progressChangedCallback?.()
+      await vi.advanceTimersByTimeAsync(2_500)
+    }
+    expect(mockApi).toHaveBeenCalledOnce()
+
+    await vi.advanceTimersByTimeAsync(PROGRESS_REFRESH_MIN_INTERVAL_MS)
+    await flushPromises()
+    expect(mockApi).toHaveBeenCalledTimes(2)
   })
 })
