@@ -2911,6 +2911,21 @@ describe('BookService', () => {
 
       expect(achievementEvents.emit).not.toHaveBeenCalledWith(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, expect.anything());
     });
+
+    it('does not emit book.progress-changed when the stored percentage only differs by real-column precision', async () => {
+      const { service, bookRepo, libraryService, achievementEvents } = makeService();
+      const user = makeUser();
+
+      bookRepo.findFileById.mockResolvedValue({ id: 8, bookId: 11, libraryId: 2, absolutePath: '/books/b.epub', format: 'epub' });
+      bookRepo.findProgress.mockResolvedValue({ percentage: Math.fround(85.240191542863) });
+      bookRepo.upsertProgress.mockResolvedValue(undefined);
+      libraryService.verifyUserAccess.mockResolvedValue(undefined);
+      libraryService.findOne = vi.fn().mockResolvedValue({ readingThreshold: 1, markAsFinishedPercentComplete: 99 });
+
+      await service.saveProgress(user.id, 8, { percentage: 85.240191542863 } as never, user);
+
+      expect(achievementEvents.emit).not.toHaveBeenCalledWith(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, expect.anything());
+    });
   });
 
   describe('clearFileProgress', () => {

@@ -14,6 +14,7 @@ import { mkdtemp, rm, stat, rename } from 'fs/promises';
 import { inArray, type SQL } from 'drizzle-orm';
 
 import { MAX_BOOK_QUERY_OFFSET_ROWS, isBookQueryOffsetWithinLimit } from '../../common/constants/pagination.constants';
+import { isStoredPercentageChanged } from '../../common/utils/progress-percentage.utils';
 import { coverFetchInputs, resolveIsAudiobook } from '../../common/utils/book-media.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { selectPrimaryFile } from '../../common/utils/primary-file-selection.utils';
@@ -2273,7 +2274,7 @@ export class BookService {
       timeZone: this.resolveUserTimeZone(user),
       strongRereadEvidence,
     });
-    if (previous == null || previous.percentage !== text.percentage) {
+    if (isStoredPercentageChanged(previous?.percentage, text.percentage)) {
       this.achievementEvents?.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
         userId,
         bookId: file.bookId,

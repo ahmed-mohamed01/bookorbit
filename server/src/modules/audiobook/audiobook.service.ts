@@ -14,6 +14,7 @@ import {
 } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
+import { isStoredPercentageChanged } from '../../common/utils/progress-percentage.utils';
 import { naturalCompare } from '../../common/utils/natural-sort.utils';
 import type { BookmarkRow } from '../../db/schema';
 import { ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, AchievementEventsService } from '../achievement/achievement-events.service';
@@ -135,7 +136,7 @@ export class AudiobookService {
       saved.capturedAt,
     );
     // No occurredAt from dto.capturedAt: the server-stamped updatedAt is the honest recency signal, and a backwards client clock would stall cross-format projection.
-    if (previous === null || previous.percentage !== percentage) {
+    if (isStoredPercentageChanged(previous?.percentage, percentage)) {
       this.achievementEvents?.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
         userId: user.id,
         bookId,
