@@ -8,11 +8,19 @@ import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { PositionConverterService } from '../position-converter/position-converter.service';
 import { buildEpubMediaOverlayPlaylistFromFile } from '../reader/epub/epub-media-overlay';
 import { BookRepository } from './book.repository';
-import { buildAudioChapterSpans, isPlayable, itemTimelineStarts, mapAudioPositionToReadAlong } from './read-along-chapter-mapping';
+import {
+  audioFileStartsSeconds,
+  buildAudioChapterSpans,
+  isPlayable,
+  itemTimelineStarts,
+  mapAudioPositionToReadAlong,
+  mapReadAlongPositionToAudio,
+} from './read-along-chapter-mapping';
 
 const EVENT = 'book.audio_ebook_progress_sync';
 const REVERSE_EVENT = 'book.ebook_audio_progress_sync';
 const READ_ALONG_EVENT = 'book.audio_read_along_progress_sync';
+const READ_ALONG_REVERSE_EVENT = 'book.read_along_audio_progress_sync';
 const PLAYLIST_CACHE_MAX = 12;
 const MAX_DURATION_DIFF_RATIO = 0.05;
 const MAX_DURATION_DIFF_SECONDS = 300;
@@ -59,6 +67,17 @@ export type ReadAlongAudioPosition = {
   readAlongBookId: number;
   audioSeconds: number;
   audioTotalSeconds: number;
+  sourceUpdatedAt: Date;
+};
+
+/** A reading position on the read-along book headed for the separate audiobook linked to it. */
+export type ReadAlongEbookPosition = {
+  bookFileId: number;
+  cfi?: string | null;
+  koreaderProgress?: string | null;
+  positionSeconds?: number | null;
+  mediaOverlayFragment?: string | null;
+  mediaOverlaySectionIndex?: number | null;
   sourceUpdatedAt: Date;
 };
 
@@ -168,6 +187,84 @@ export class AudiobookEbookProgressSyncService {
         `[${READ_ALONG_EVENT}] [fail] userId=${params.userId} audioBookId=${params.audioBookId} readAlongBookId=${params.readAlongBookId} durationMs=${
           Date.now() - startedAt
         } errorClass=${errorClass} error="${errorMessage}" - audiobook to read-along progress sync failed`,
+      );
+      return false;
+    }
+  }
+
+  async resolveAudioBookPosition(
+    audioBookId: number,
+    currentFileId: number,
+    positionSeconds: number,
+  ): Promise<{ audioSeconds: number; audioTotalSeconds: number } | null> {
+    const timeline = await this.loadAudioTimeline(audioBookId);
+    const index = timeline?.files.findIndex((file) => file.id === currentFileId) ?? -1;
+    if (!timeline || index < 0) return null;
+    const duration = timeline.files[index]!.durationSeconds!;
+    return {
+      audioSeconds: timeline.starts[index]! + Math.max(0, Math.min(duration, positionSeconds)),
+      audioTotalSeconds: timeline.totalSeconds,
+    };
+  }
+
+  /**
+   * Carries a position on the linked read-along book back to its audiobook, through the same per-chapter
+   * mapping the forward sync uses. The audiobook write is guarded by capture time, so an older reading
+   * position never rewinds newer playback.
+   */
+  async syncAudioFromReadAlongPosition(
+    params: ReadAlongEbookPosition & { userId: number; audioBookId: number; readAlongBookId: number },
+  ): Promise<boolean> {
+    const startedAt = Date.now();
+    try {
+      if ((await this.bookRepo.findReadAloudSyncMode(params.userId, params.readAlongBookId)) === 'disabled') return false;
+
+      const syncFiles = await this.bookRepo.findAudioEbookProgressSyncFiles(params.readAlongBookId);
+      const ebookFile = syncFiles?.files.find((file) => file.id === params.bookFileId && file.format?.toLowerCase() === 'epub');
+      const overlaySourceFile = syncFiles ? this.selectOverlaySourceFile(syncFiles.files, syncFiles.primaryFileId) : null;
+      if (!ebookFile || !overlaySourceFile) return false;
+
+      const timeline = await this.loadAudioTimeline(params.audioBookId);
+      if (!timeline) return false;
+      const chapters = buildAudioChapterSpans(timeline.chapterStarts, timeline.totalSeconds);
+      if (chapters.length === 0) return false;
+
+      const playlist = await this.getPlaylist(overlaySourceFile, params.readAlongBookId);
+      if (playlist.items.length === 0) return false;
+
+      const overlaySeconds = await this.resolveOverlaySecondsFromEbookPosition(ebookFile, overlaySourceFile.id, playlist, params);
+      if (overlaySeconds === null) return false;
+
+      const audioSeconds = mapReadAlongPositionToAudio(playlist, chapters, overlaySeconds);
+      if (audioSeconds === null) {
+        this.logger.debug(
+          `[${READ_ALONG_REVERSE_EVENT}] [end] userId=${params.userId} audioBookId=${params.audioBookId} readAlongBookId=${params.readAlongBookId} durationMs=${
+            Date.now() - startedAt
+          } chapters=${chapters.length} matched=false - narration files do not match the audiobook chapters, audiobook sync skipped`,
+        );
+        return false;
+      }
+
+      let fileIndex = timeline.files.length - 1;
+      while (fileIndex > 0 && timeline.starts[fileIndex]! > audioSeconds) fileIndex -= 1;
+      const file = timeline.files[fileIndex]!;
+      const positionSeconds = Math.max(0, Math.min(file.durationSeconds!, audioSeconds - timeline.starts[fileIndex]!));
+      const saved = await this.bookRepo.upsertAudioProgress(
+        params.userId,
+        params.audioBookId,
+        file.id,
+        positionSeconds,
+        this.clampPercentage((audioSeconds / timeline.totalSeconds) * 100),
+        params.sourceUpdatedAt,
+      );
+      return saved != null;
+    } catch (error: unknown) {
+      const errorClass = error instanceof Error ? error.constructor.name : 'UnknownError';
+      const errorMessage = sanitizeLogValue(error instanceof Error ? error.message : String(error));
+      this.logger.warn(
+        `[${READ_ALONG_REVERSE_EVENT}] [fail] userId=${params.userId} audioBookId=${params.audioBookId} readAlongBookId=${params.readAlongBookId} bookFileId=${
+          params.bookFileId
+        } durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${errorMessage}" - read-along to audiobook progress sync failed`,
       );
       return false;
     }
@@ -382,6 +479,25 @@ export class AudiobookEbookProgressSyncService {
       mediaOverlayFragment: narration ? this.itemFragment(item) : null,
       mediaOverlaySectionIndex: narration ? item.sectionIndex : null,
     };
+  }
+
+  private async loadAudioTimeline(audioBookId: number): Promise<{
+    files: SyncFile[];
+    starts: number[];
+    totalSeconds: number;
+    chapterStarts: { startMs: number }[];
+  } | null> {
+    const [syncFiles, chapterStarts] = await Promise.all([
+      this.bookRepo.findAudioEbookProgressSyncFiles(audioBookId),
+      this.bookRepo.findAudioChapterStarts(audioBookId),
+    ]);
+    const files = syncFiles?.files.filter((file) => typeof file.format === 'string' && isAudioFormat(file.format)) ?? [];
+    if (files.length === 0 || files.some((file) => !this.isPositiveFinite(file.durationSeconds))) return null;
+    const starts = audioFileStartsSeconds(
+      files.map((file) => file.durationSeconds!),
+      chapterStarts.map((chapter) => chapter.startMs),
+    );
+    return { files, starts, totalSeconds: starts.at(-1)! + files.at(-1)!.durationSeconds!, chapterStarts };
   }
 
   private persistTarget(userId: number, target: EpubProgressResolution, sourceUpdatedAt: Date): Promise<boolean> {

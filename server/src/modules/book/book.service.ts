@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   HttpException,
   HttpStatus,
+  Inject,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -102,7 +103,9 @@ import { BookCoverStore } from '../book-cover-store/book-cover-store.service';
 import { selectEmbeddedCoverSources } from '../book-cover-store/cover-sources';
 import { CoverSlotReconciler } from '../metadata/cover-slot-reconciler.service';
 import { BookQueryBuilder } from './book-query-builder.service';
-import { AudiobookEbookProgressSyncService, type ReadAlongAudioPosition } from './audiobook-ebook-progress-sync.service';
+import { AudiobookEbookProgressSyncService, type ReadAlongAudioPosition, type ReadAlongEbookPosition } from './audiobook-ebook-progress-sync.service';
+import { READ_ALONG_LINK_SOURCE, type ReadAlongLink, type ReadAlongLinkSource } from './read-along-link-source';
+import { UserService } from '../user/user.service';
 import { AudiolessEpubService } from './audioless-epub.service';
 import { BookRepository } from './book.repository';
 import { ComicMetadataRepository } from '../metadata/comic-metadata.repository';
@@ -302,6 +305,8 @@ export class BookService {
     @Optional() private readonly audiobookEbookProgressSync?: AudiobookEbookProgressSyncService,
     @Optional() private readonly audiolessEpubService?: AudiolessEpubService,
     @Optional() private readonly coverReconciler?: CoverSlotReconciler,
+    @Optional() @Inject(READ_ALONG_LINK_SOURCE) private readonly readAlongLinks?: ReadAlongLinkSource,
+    @Optional() private readonly userService?: UserService,
   ) {
     this.appDataPath = this.config.get<string>('storage.appDataPath')!;
   }
@@ -1496,7 +1501,9 @@ export class BookService {
 
   async updateReadAloudSyncMode(bookId: number, mode: ReadAloudProgressSyncMode, user: RequestUser): Promise<BookDetailDto> {
     await this.verifyBookAccess(bookId, user);
-    await this.bookRepo.upsertReadAloudSyncMode(user.id, bookId, mode);
+    // A linked audiobook and read-along share one setting, kept on the read-along.
+    const link = await this.findAccessibleReadAlongLink(user, bookId);
+    await this.bookRepo.upsertReadAloudSyncMode(user.id, link?.readAlongBookId ?? bookId, mode);
     return this.getDetail(bookId, user);
   }
 
@@ -2136,6 +2143,7 @@ export class BookService {
       syncKobo: this.hasPermission(user, Permission.KoboSync),
       sourceUpdatedAt: saved.capturedAt,
     });
+    await this.syncLinkedReadAlongFromPlayback(user, bookId, dto.currentFileId, dto.positionSeconds, saved.capturedAt);
     const strongRereadEvidence = previous != null && previous.percentage - dto.percentage >= 10;
     await this.autoUpdateReadStatusForProgress(userId, { bookId, libraryId }, dto.percentage, {
       origin: 'bookorbit',
@@ -2161,6 +2169,52 @@ export class BookService {
       syncKobo: this.hasPermission(user, Permission.KoboSync),
       sourceUpdatedAt,
     });
+    await this.syncLinkedReadAlongFromPlayback(user, bookId, currentFileId, positionSeconds, sourceUpdatedAt);
+  }
+
+  private async syncLinkedReadAlongFromPlayback(
+    user: RequestUser,
+    audioBookId: number,
+    currentFileId: number,
+    positionSeconds: number,
+    sourceUpdatedAt: Date,
+  ): Promise<void> {
+    const link = await this.findAccessibleReadAlongLink(user, audioBookId);
+    if (!link || link.audioBookId !== audioBookId || !this.audiobookEbookProgressSync) return;
+    const position = await this.audiobookEbookProgressSync.resolveAudioBookPosition(audioBookId, currentFileId, positionSeconds);
+    if (!position) return;
+    await this.audiobookEbookProgressSync.syncReadAlongFromAudioPosition({
+      userId: user.id,
+      audioBookId,
+      readAlongBookId: link.readAlongBookId,
+      ...position,
+      sourceUpdatedAt,
+      syncKobo: this.hasPermission(user, Permission.KoboSync),
+    });
+  }
+
+  private async syncLinkedAudioFromReadAlong(
+    user: RequestUser,
+    readAlongBookId: number,
+    position: ReadAlongEbookPosition,
+    knownLink?: ReadAlongLink,
+  ): Promise<void> {
+    const link = await this.findAccessibleReadAlongLink(user, readAlongBookId, knownLink);
+    if (!link || link.readAlongBookId !== readAlongBookId || !this.audiobookEbookProgressSync) return;
+    await this.audiobookEbookProgressSync.syncAudioFromReadAlongPosition({ userId: user.id, ...link, ...position });
+  }
+
+  private async findAccessibleReadAlongLink(user: RequestUser, bookId: number, knownLink?: ReadAlongLink): Promise<ReadAlongLink | null> {
+    const link = knownLink ?? (await this.readAlongLinks?.findReadAlongLink(bookId));
+    if (!link) return null;
+    try {
+      await this.verifyBookAccess(link.audioBookId, user);
+      await this.verifyBookAccess(link.readAlongBookId, user);
+    } catch (error) {
+      if (error instanceof NotFoundException) return null;
+      throw error;
+    }
+    return link;
   }
 
   async syncReadAlongForAudiobookPosition(user: RequestUser, params: ReadAlongAudioPosition): Promise<boolean> {
@@ -2282,6 +2336,15 @@ export class BookService {
       sourceUpdatedAt: now,
       syncSiblingEpubs: text.moved,
     });
+    await this.syncLinkedAudioFromReadAlong(user, file.bookId, {
+      bookFileId: fileId,
+      cfi: text.cfi,
+      koreaderProgress: dto.koreaderProgress ?? null,
+      positionSeconds: dto.positionSeconds ?? null,
+      mediaOverlayFragment: dto.mediaOverlayFragment ?? null,
+      mediaOverlaySectionIndex: dto.mediaOverlaySectionIndex ?? null,
+      sourceUpdatedAt: now,
+    });
     const strongRereadEvidence = previous != null && previous.percentage - text.percentage >= 10;
     await this.autoUpdateReadStatusForProgress(userId, file, text.percentage, {
       origin: 'bookorbit',
@@ -2327,6 +2390,26 @@ export class BookService {
       sourceUpdatedAt: locators.sourceUpdatedAt,
       syncSiblingEpubs: locators.syncSiblingEpubs,
     });
+    // Devices report with a user id only, so the full user is loaded for the linked books' access check,
+    // and only once a link is known to exist.
+    const link = await this.readAlongLinks?.findReadAlongLink(bookId);
+    if (!link || link.readAlongBookId !== bookId) return;
+    const user = await this.userService?.findByIdWithPermissions(userId);
+    if (!user) return;
+    await this.syncLinkedAudioFromReadAlong(
+      user,
+      bookId,
+      {
+        bookFileId,
+        cfi: locators.cfi ?? null,
+        koreaderProgress: locators.koreaderProgress ?? null,
+        positionSeconds: locators.positionSeconds ?? null,
+        mediaOverlayFragment: locators.mediaOverlayFragment ?? null,
+        mediaOverlaySectionIndex: locators.mediaOverlaySectionIndex ?? null,
+        sourceUpdatedAt: locators.sourceUpdatedAt ?? new Date(),
+      },
+      link,
+    );
   }
 
   async clearFileProgress(userId: number, fileId: number, user: RequestUser): Promise<void> {
@@ -3268,7 +3351,14 @@ export class BookService {
       collections: collectionRows,
     });
     const mediaOverlayByFileId = await this.resolveMediaOverlayCapabilities(fileRows);
-    const readAloudSync = this.buildReadAloudProgressSync(fileRows, mediaOverlayByFileId, book.books.primaryFileId, readAloudSyncMode);
+    const readAloudSync = await this.resolveReadAloudProgressSync(
+      user,
+      id,
+      fileRows,
+      mediaOverlayByFileId,
+      book.books.primaryFileId,
+      readAloudSyncMode,
+    );
 
     return {
       id: book.books.id,
@@ -3380,11 +3470,51 @@ export class BookService {
     return new Map(entries);
   }
 
+  /**
+   * A linked audiobook and read-along are evaluated as one pair, the way a single book holding both
+   * would be, under the read-along's setting.
+   */
+  private async resolveReadAloudProgressSync(
+    user: RequestUser,
+    bookId: number,
+    fileRows: Array<{ id: number; format: string | null; durationSeconds: number | null }>,
+    mediaOverlayByFileId: Map<number, EpubMediaOverlayCapability | null>,
+    primaryFileId: number | null,
+    mode: ReadAloudProgressSyncMode,
+  ): Promise<ReadAloudProgressSync> {
+    const link = await this.findAccessibleReadAlongLink(user, bookId);
+    if (!link) return this.buildReadAloudProgressSync(fileRows, mediaOverlayByFileId, primaryFileId, mode);
+
+    const isReadAlong = link.readAlongBookId === bookId;
+    const [counterpart, pairMode] = await Promise.all([
+      this.bookRepo.findAudioEbookProgressSyncFiles(isReadAlong ? link.audioBookId : link.readAlongBookId),
+      isReadAlong ? mode : this.bookRepo.findReadAloudSyncMode(user.id, link.readAlongBookId),
+    ]);
+    if (!counterpart) return this.buildReadAloudProgressSync(fileRows, mediaOverlayByFileId, primaryFileId, mode);
+
+    const isEpub = (file: { format: string | null }) => file.format?.toLowerCase() === 'epub';
+    const isAudio = (file: { format: string | null }) => !!file.format && isAudioFormat(file.format);
+    const readAlongFiles = isReadAlong ? fileRows.filter(isEpub) : counterpart.files.filter(isEpub);
+    const audioFiles = isReadAlong ? counterpart.files.filter(isAudio) : fileRows.filter(isAudio);
+    const overlays = new Map(mediaOverlayByFileId);
+    if (!isReadAlong) for (const file of readAlongFiles) overlays.set(file.id, mediaOverlayCapabilityFromFields(file));
+    return this.buildReadAloudProgressSync(
+      [...readAlongFiles, ...audioFiles],
+      overlays,
+      isReadAlong ? primaryFileId : counterpart.primaryFileId,
+      pairMode,
+      { overlayDurationOptional: true },
+    );
+  }
+
   private buildReadAloudProgressSync(
     fileRows: Array<{ id: number; format: string | null; durationSeconds: number | null }>,
     mediaOverlayByFileId: Map<number, EpubMediaOverlayCapability | null>,
     primaryFileId: number | null,
     mode: ReadAloudProgressSyncMode,
+    // A linked pair is mapped per chapter, which verifies the fit itself, so an unknown narration
+    // length is no reason to call it unavailable.
+    options: { overlayDurationOptional?: boolean } = {},
   ): ReadAloudProgressSync {
     const overlayFiles = fileRows
       .map((file) => ({ file, mediaOverlay: mediaOverlayByFileId.get(file.id) ?? null }))
@@ -3419,12 +3549,15 @@ export class BookService {
     if (audioFiles.length === 0) {
       return { ...base, state: 'unavailable', unavailableReason: 'no_audio_files' };
     }
-    if (audioDurationSeconds == null || overlayDurationSeconds == null || overlayDurationSeconds <= 0) {
+    if (audioDurationSeconds == null || (!options.overlayDurationOptional && (overlayDurationSeconds == null || overlayDurationSeconds <= 0))) {
       return { ...base, state: 'unavailable', unavailableReason: 'missing_duration' };
     }
 
-    const tolerance = Math.min(READ_ALOUD_MAX_DURATION_DIFF_SECONDS, overlayDurationSeconds * READ_ALOUD_MAX_DURATION_DIFF_RATIO);
-    if (durationDifferenceSeconds != null && durationDifferenceSeconds > tolerance) {
+    const tolerance =
+      overlayDurationSeconds != null
+        ? Math.min(READ_ALOUD_MAX_DURATION_DIFF_SECONDS, overlayDurationSeconds * READ_ALOUD_MAX_DURATION_DIFF_RATIO)
+        : null;
+    if (tolerance != null && durationDifferenceSeconds != null && durationDifferenceSeconds > tolerance) {
       return { ...base, state: 'unavailable', unavailableReason: 'duration_mismatch' };
     }
 

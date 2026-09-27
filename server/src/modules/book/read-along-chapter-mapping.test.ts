@@ -1,7 +1,13 @@
 import type { EpubMediaOverlayPlaylist, EpubMediaOverlayPlaylistItem } from '@bookorbit/types';
 import { describe, expect, it } from 'vitest';
 
-import { buildAudioChapterSpans, itemTimelineStarts, mapAudioPositionToReadAlong } from './read-along-chapter-mapping';
+import {
+  audioFileStartsSeconds,
+  buildAudioChapterSpans,
+  itemTimelineStarts,
+  mapAudioPositionToReadAlong,
+  mapReadAlongPositionToAudio,
+} from './read-along-chapter-mapping';
 
 /** One narration file per entry, each covered back to back by clips of the given lengths. */
 function makePlaylist(files: { href: string; clips: number[] }[]): EpubMediaOverlayPlaylist {
@@ -143,5 +149,41 @@ describe('mapAudioPositionToReadAlong', () => {
 
   it('refuses when the read-along has more narration files than the audiobook has chapters', () => {
     expect(mapAudioPositionToReadAlong(creditsPlaylist, buildAudioChapterSpans([{ startMs: 0 }], 120), 10)).toBeNull();
+  });
+});
+
+describe('mapReadAlongPositionToAudio', () => {
+  const chapters = buildAudioChapterSpans([{ startMs: 0 }, { startMs: 30_000 }, { startMs: 40_000 }, { startMs: 100_000 }], 120);
+  const playlist = makePlaylist([
+    { href: 'a/00001-00002.mp4', clips: [4, 6] },
+    { href: 'a/00001-00003.mp4', clips: [10, 10, 20, 20] },
+  ]);
+
+  it.each([30.5, 34, 45, 55, 72.25, 99])('returns the audiobook time a forward mapping of %s s came from', (audioSeconds) => {
+    const forward = mapAudioPositionToReadAlong(playlist, chapters, audioSeconds)!;
+
+    expect(mapReadAlongPositionToAudio(playlist, chapters, forward.overlaySeconds)).toBeCloseTo(audioSeconds, 6);
+  });
+
+  it('places a sentence start at the start of its clip within the chapter', () => {
+    // c1-s2 starts 20 s into the second file, which narrates the chapter starting at 40 s.
+    const start = itemTimelineStarts(playlist.items)[4]!;
+
+    expect(mapReadAlongPositionToAudio(playlist, chapters, start)).toBe(60);
+  });
+
+  it('refuses when the narration does not fit the chapter table', () => {
+    expect(mapReadAlongPositionToAudio(playlist, buildAudioChapterSpans([{ startMs: 0 }], 120), 5)).toBeNull();
+  });
+});
+
+describe('audioFileStartsSeconds', () => {
+  it('snaps rounded file starts onto the chapter table, without the rounding piling up', () => {
+    // Alcatraz: whole-second stored durations against millisecond chapter starts.
+    expect(audioFileStartsSeconds([4579, 4528, 4435], [0, 4_578_985, 9_107_403])).toEqual([0, 4578.985, 9107.403]);
+  });
+
+  it('keeps summed starts where no chapter starts near a file', () => {
+    expect(audioFileStartsSeconds([100, 100], [0, 30_000])).toEqual([0, 100]);
   });
 });

@@ -13,6 +13,8 @@ export type ReadAlongPosition = {
 const MAX_CHAPTER_OVERHANG_SECONDS = 4;
 const MAX_CHAPTER_SHORTFALL_SECONDS = 0.5;
 const READ_ALONG_POSITION_EPSILON_SECONDS = 0.001;
+// Covers whole-second rounding of a stored file duration plus an inflated MP3 header.
+const FILE_START_SNAP_SECONDS = 2;
 
 type NarrationFile = { audioHref: string; durationSeconds: number; firstItemIndex: number; lastItemIndex: number };
 
@@ -68,6 +70,51 @@ export function mapAudioPositionToReadAlong(
     if (previous) return atItem(playlist.items, itemStarts, lastPlayableIndex(playlist.items, previous), 0);
   }
   return null;
+}
+
+/**
+ * The inverse of `mapAudioPositionToReadAlong`: the audiobook time narrating the sentence at a
+ * read-along position. Null when the narration does not fit the chapter table.
+ */
+export function mapReadAlongPositionToAudio(playlist: EpubMediaOverlayPlaylist, chapters: AudioChapterSpan[], overlaySeconds: number): number | null {
+  const fileByChapter = matchFilesToChapters(collectNarrationFiles(playlist), chapters);
+  if (!fileByChapter) return null;
+
+  const starts = itemTimelineStarts(playlist.items);
+  let index = -1;
+  for (let candidate = 0; candidate < playlist.items.length; candidate += 1) {
+    if (!isPlayable(playlist.items[candidate]!)) continue;
+    if (index >= 0 && starts[candidate]! > overlaySeconds) break;
+    index = candidate;
+  }
+  if (index < 0) return null;
+
+  const item = playlist.items[index]!;
+  const chapterIndex = [...fileByChapter].find(([, file]) => file.audioHref === item.audioHref)?.[0];
+  if (chapterIndex === undefined) return null;
+
+  const secondsIntoItem = Math.max(0, Math.min(item.durationSeconds ?? 0, overlaySeconds - starts[index]!));
+  return chapters[chapterIndex]!.startMs / 1000 + item.clipBeginSeconds + secondsIntoItem;
+}
+
+/**
+ * Where each audio file starts in the book. A file start within a chapter-table start is snapped to it:
+ * stored file durations are rounded while chapter tables keep milliseconds, and the two must agree for
+ * a position to land on the chapter the mapping expects.
+ */
+export function audioFileStartsSeconds(fileDurationsSeconds: number[], chapterStartsMs: number[]): number[] {
+  const starts: number[] = [];
+  let elapsed = 0;
+  for (const duration of fileDurationsSeconds) {
+    const nearest = chapterStartsMs.reduce<number | null>(
+      (best, startMs) => (best === null || Math.abs(startMs / 1000 - elapsed) < Math.abs(best - elapsed) ? startMs / 1000 : best),
+      null,
+    );
+    const start = nearest !== null && Math.abs(nearest - elapsed) <= FILE_START_SNAP_SECONDS ? nearest : elapsed;
+    starts.push(start);
+    elapsed = start + duration;
+  }
+  return starts;
 }
 
 /**
