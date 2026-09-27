@@ -3,6 +3,7 @@ const RIGHT_ZONE = 0.7
 const DOUBLE_CLICK_MS = 300
 const ANNOTATION_CLICK_SUPPRESSION_MS = DOUBLE_CLICK_MS + 100
 const SWIPE_THRESHOLD = 50
+const SCROLLED_SWIPE_DOMINANCE = 2
 const TAP_MOVEMENT_THRESHOLD = 10
 
 interface FoliateInputView {
@@ -26,6 +27,8 @@ export function useFoliateInput(
   handleSelectionInteractionEnd: ((doc: Document) => void) | undefined = undefined,
 ) {
   const clickedDocs = new WeakSet<Document>()
+  const touchHosts = new WeakSet<HTMLElement>()
+  const hostTouchCleanups: Array<() => void> = []
 
   let lastClickTime = 0
   let lastClickZone: 'left' | 'middle' | 'right' | null = null
@@ -82,15 +85,44 @@ export function useFoliateInput(
     return canNavigate ? canNavigate() : true
   }
 
-  function handleTouchStart(e: TouchEvent, doc: Document) {
-    if (e.touches.length !== 1) return
-    handleSelectionInteractionStart?.(doc)
-    const touch = e.touches[0]!
+  // Signed horizontal distance of a page swipe, or null when the gesture is not one.
+  function resolveSwipeDeltaX(touch: Touch): number | null {
+    if (!isScrolledFlow()) {
+      const deltaX = touch.clientX - touchStartX
+      const deltaY = Math.abs(touch.clientY - touchStartY)
+      return Math.abs(deltaX) >= SWIPE_THRESHOLD && Math.abs(deltaX) > deltaY ? deltaX : null
+    }
+
+    // Scrolled flow scrolls the iframe along with its container, so the content stays under
+    // the finger and client deltas collapse during a scroll. Judge the gesture in screen space
+    // and demand a clearly horizontal motion, so sideways drift while scrolling never turns
+    // the page but a deliberate swipe still leaves a section that has nothing to scroll.
+    const screenDeltaX = touch.screenX - touchStartScreenX
+    const screenDeltaY = Math.abs(touch.screenY - touchStartScreenY)
+    return Math.abs(screenDeltaX) >= SWIPE_THRESHOLD && Math.abs(screenDeltaX) > screenDeltaY * SCROLLED_SWIPE_DOMINANCE ? screenDeltaX : null
+  }
+
+  function recordTouchStart(touch: Touch) {
     touchStartX = touch.clientX
     touchStartY = touch.clientY
     touchStartScreenX = touch.screenX
     touchStartScreenY = touch.screenY
     touchStartTime = Date.now()
+  }
+
+  function navigateBySwipe(swipeDeltaX: number) {
+    if (isNavigating) return
+    if (!canProceedNavigation()) return
+    isNavigating = true
+    if (swipeDeltaX < 0) navigateRight()
+    else navigateLeft()
+    setTimeout(() => (isNavigating = false), 300)
+  }
+
+  function handleTouchStart(e: TouchEvent, doc: Document) {
+    if (e.touches.length !== 1) return
+    handleSelectionInteractionStart?.(doc)
+    recordTouchStart(e.touches[0]!)
     isTextSelectionInProgress = false
     if (longHoldTimeout) clearTimeout(longHoldTimeout)
     longHoldTimeout = setTimeout(() => {
@@ -128,20 +160,10 @@ export function useFoliateInput(
 
     if (!cancelled && !isTextSelectionInProgress && e.changedTouches.length === 1) {
       const touch = e.changedTouches[0]!
-      const deltaX = touch.clientX - touchStartX
-      const deltaY = Math.abs(touch.clientY - touchStartY)
+      const swipeDeltaX = resolveSwipeDeltaX(touch)
 
-      if (Math.abs(deltaX) >= SWIPE_THRESHOLD && Math.abs(deltaX) > deltaY) {
-        // Scrolled flow scrolls the iframe along with its container, so the content stays
-        // under the finger and deltaY collapses to roughly zero. Any sideways drift while
-        // scrolling would then read as a swipe and turn the page.
-        if (isScrolledFlow()) return
-        if (isNavigating) return
-        if (!canProceedNavigation()) return
-        isNavigating = true
-        if (deltaX < 0) navigateRight()
-        else navigateLeft()
-        setTimeout(() => (isNavigating = false), 300)
+      if (swipeDeltaX !== null) {
+        navigateBySwipe(swipeDeltaX)
         return
       }
 
@@ -226,6 +248,39 @@ export function useFoliateInput(
     doc.addEventListener('touchcancel', (e: TouchEvent) => handleTouchEnd(e, doc, true), { passive: true })
 
     doc.addEventListener('selectionchange', () => handleSelectionChange(doc))
+  }
+
+  function handleHostTouchStart(e: TouchEvent) {
+    if (e.touches.length !== 1) return
+    recordTouchStart(e.touches[0]!)
+  }
+
+  function handleHostTouchEnd(e: TouchEvent) {
+    lastTouchTime = Date.now()
+    // Paginated flow already drags and snaps host touches inside the paginator, so a second
+    // navigation here would turn two pages.
+    if (!isScrolledFlow() || e.changedTouches.length !== 1) return
+    const swipeDeltaX = resolveSwipeDeltaX(e.changedTouches[0]!)
+    if (swipeDeltaX !== null) navigateBySwipe(swipeDeltaX)
+  }
+
+  function handleHostTouchCancel() {
+    lastTouchTime = Date.now()
+  }
+
+  // Short scrolled sections leave blank space below the iframe; touches there land on the host.
+  function attachHostTouch(el: HTMLElement) {
+    if (touchHosts.has(el)) return
+    touchHosts.add(el)
+    el.addEventListener('touchstart', handleHostTouchStart, { passive: true })
+    el.addEventListener('touchend', handleHostTouchEnd, { passive: true })
+    el.addEventListener('touchcancel', handleHostTouchCancel, { passive: true })
+    hostTouchCleanups.push(() => {
+      el.removeEventListener('touchstart', handleHostTouchStart)
+      el.removeEventListener('touchend', handleHostTouchEnd)
+      el.removeEventListener('touchcancel', handleHostTouchCancel)
+      touchHosts.delete(el)
+    })
   }
 
   function handleWindowMessage(e: MessageEvent) {
@@ -387,7 +442,8 @@ export function useFoliateInput(
     window.removeEventListener('message', handleWindowMessage)
     document.removeEventListener('keydown', handleKeydown)
     document.removeEventListener('click', handleParentClick, true)
+    for (const remove of hostTouchCleanups.splice(0)) remove()
   }
 
-  return { attachIframeClicks, suppressNextTapNavigation, cleanup }
+  return { attachIframeClicks, attachHostTouch, suppressNextTapNavigation, cleanup }
 }

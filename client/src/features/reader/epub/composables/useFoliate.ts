@@ -190,6 +190,7 @@ export function useFoliate(
       el.innerHTML = ''
       el.appendChild(view)
       viewRef.value = view
+      input.attachHostTouch(view)
 
       // Safety timeout: if the 'load' event never fires (e.g. service worker or
       // iframe restrictions on iOS), clear the loading state with a helpful message

@@ -290,6 +290,60 @@ describe('useFoliateInput', () => {
   })
 
   it.each([
+    { endX: 30, expectedDirection: 'right' },
+    { endX: 170, expectedDirection: 'left' },
+  ])('turns the page for a clearly horizontal swipe to the $expectedDirection in scrolled flow', ({ endX, expectedDirection }) => {
+    const goLeft = vi.fn<() => void>()
+    const goRight = vi.fn<() => void>()
+    const view: ViewLike = {
+      prev: vi.fn<() => void>(),
+      next: vi.fn<() => void>(),
+      goLeft,
+      goRight,
+      getBoundingClientRect: () => ({ left: 0, width: 100 }) as DOMRect,
+      renderer: { getAttribute: (name) => (name === 'flow' ? 'scrolled' : null) },
+    }
+    const input = useFoliateInput(() => view, undefined, vi.fn<() => void>(), vi.fn<() => void>())
+    const doc = makeDocTarget()
+    input.attachIframeClicks(doc)
+
+    doc.dispatchEvent(makeTouchEvent('touchstart', [{ clientX: 100, clientY: 100 }]))
+    doc.dispatchEvent(makeTouchEvent('touchmove', [{ clientX: endX, clientY: 108 }]))
+    doc.dispatchEvent(makeTouchEvent('touchend', [], [{ clientX: endX, clientY: 108 }]))
+
+    expect(goLeft).toHaveBeenCalledTimes(expectedDirection === 'left' ? 1 : 0)
+    expect(goRight).toHaveBeenCalledTimes(expectedDirection === 'right' ? 1 : 0)
+
+    input.cleanup()
+  })
+
+  it('ignores sideways drift while the content scrolls under the finger in scrolled flow', () => {
+    const goLeft = vi.fn<() => void>()
+    const goRight = vi.fn<() => void>()
+    const view: ViewLike = {
+      prev: vi.fn<() => void>(),
+      next: vi.fn<() => void>(),
+      goLeft,
+      goRight,
+      getBoundingClientRect: () => ({ left: 0, width: 100 }) as DOMRect,
+      renderer: { getAttribute: (name) => (name === 'flow' ? 'scrolled' : null) },
+    }
+    const input = useFoliateInput(() => view, undefined, vi.fn<() => void>(), vi.fn<() => void>())
+    const doc = makeDocTarget()
+    input.attachIframeClicks(doc)
+
+    // The page scrolls with the finger, so the client point barely moves while the screen point travels 200px vertically.
+    doc.dispatchEvent(makeTouchEvent('touchstart', [{ clientX: 100, clientY: 100, screenX: 100, screenY: 300 }]))
+    doc.dispatchEvent(makeTouchEvent('touchmove', [{ clientX: 40, clientY: 100, screenX: 40, screenY: 100 }]))
+    doc.dispatchEvent(makeTouchEvent('touchend', [], [{ clientX: 40, clientY: 100, screenX: 40, screenY: 100 }]))
+
+    expect(goLeft).not.toHaveBeenCalled()
+    expect(goRight).not.toHaveBeenCalled()
+
+    input.cleanup()
+  })
+
+  it.each([
     { endX: 149, endY: 100, gesture: 'below the swipe threshold' },
     { endX: 160, endY: 170, gesture: 'predominantly vertical' },
   ])('does not navigate for a gesture $gesture in paginated flow', ({ endX, endY }) => {
@@ -684,6 +738,83 @@ describe('useFoliateInput', () => {
       Object.defineProperty(window, 'ontouchstart', originalOntouchstart)
     }
     Object.defineProperty(window, 'innerHeight', { value: originalInnerHeight, configurable: true })
+  })
+
+  function makeHostSwipeSetup(flow: 'scrolled' | 'paginated') {
+    const goLeft = vi.fn<() => void>()
+    const goRight = vi.fn<() => void>()
+    const view: ViewLike = {
+      prev: vi.fn<() => void>(),
+      next: vi.fn<() => void>(),
+      goLeft,
+      goRight,
+      getBoundingClientRect: () => ({ left: 0, width: 100 }) as DOMRect,
+      renderer: { getAttribute: (name) => (name === 'flow' ? flow : null) },
+    }
+    const input = useFoliateInput(() => view, undefined, vi.fn<() => void>(), vi.fn<() => void>())
+    const host = document.createElement('div')
+    input.attachHostTouch(host)
+    return { goLeft, goRight, input, host }
+  }
+
+  function swipeHost(host: HTMLElement, endX: number, endY: number) {
+    host.dispatchEvent(makeTouchEvent('touchstart', [{ clientX: 100, clientY: 400 }]))
+    host.dispatchEvent(makeTouchEvent('touchmove', [{ clientX: endX, clientY: endY }]))
+    host.dispatchEvent(makeTouchEvent('touchend', [], [{ clientX: endX, clientY: endY }]))
+  }
+
+  it('turns right for a leftward swipe on the host below short content in scrolled flow', () => {
+    const { goLeft, goRight, input, host } = makeHostSwipeSetup('scrolled')
+
+    swipeHost(host, 30, 408)
+
+    expect(goRight).toHaveBeenCalledTimes(1)
+    expect(goLeft).not.toHaveBeenCalled()
+
+    input.cleanup()
+  })
+
+  it('turns left for a rightward swipe on the host below short content in scrolled flow', () => {
+    const { goLeft, goRight, input, host } = makeHostSwipeSetup('scrolled')
+
+    swipeHost(host, 170, 408)
+
+    expect(goLeft).toHaveBeenCalledTimes(1)
+    expect(goRight).not.toHaveBeenCalled()
+
+    input.cleanup()
+  })
+
+  it('leaves host swipes to the paginator in paginated flow', () => {
+    const { goLeft, goRight, input, host } = makeHostSwipeSetup('paginated')
+
+    swipeHost(host, 30, 408)
+
+    expect(goLeft).not.toHaveBeenCalled()
+    expect(goRight).not.toHaveBeenCalled()
+
+    input.cleanup()
+  })
+
+  it('ignores a vertical flick on the host in scrolled flow', () => {
+    const { goLeft, goRight, input, host } = makeHostSwipeSetup('scrolled')
+
+    swipeHost(host, 110, 200)
+
+    expect(goLeft).not.toHaveBeenCalled()
+    expect(goRight).not.toHaveBeenCalled()
+
+    input.cleanup()
+  })
+
+  it('stops responding to host swipes after cleanup', () => {
+    const { goLeft, goRight, input, host } = makeHostSwipeSetup('scrolled')
+    input.cleanup()
+
+    swipeHost(host, 30, 408)
+
+    expect(goLeft).not.toHaveBeenCalled()
+    expect(goRight).not.toHaveBeenCalled()
   })
 
   it('stops responding to document keydown after cleanup', () => {
