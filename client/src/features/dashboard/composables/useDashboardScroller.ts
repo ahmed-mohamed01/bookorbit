@@ -90,7 +90,19 @@ export function useDashboardScroller(type: ScrollerType, limit = 20, smartScopeI
     }
   }
 
-  useBookProgressRefresh(load)
+  // Background refreshes keep the current books on screen instead of flashing the skeleton, and
+  // keep them if the refresh fails.
+  async function refreshInBackground() {
+    if (loading.value || error.value) return load()
+    try {
+      const result = await requestScroller(type, limit, smartScopeId)
+      if (!result.failed) books.value = result.books
+    } catch {
+      // Keep showing the last good result.
+    }
+  }
+
+  useBookProgressRefresh(refreshInBackground)
   onMounted(load)
   return { books, loading, error, refresh: load }
 }
