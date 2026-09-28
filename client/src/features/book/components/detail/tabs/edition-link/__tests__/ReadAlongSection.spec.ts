@@ -164,13 +164,14 @@ describe('ReadAlongSection', () => {
       })
     })
 
-    it('offers Cancel beside the Building tag and emits it', async () => {
+    it('offers Cancel as an icon after the Building tag and emits it', async () => {
       const wrapper = mountSection({ state: makeState({ status: 'building', phase: 'wait' }) })
 
       const cancel = wrapper.get('[data-testid="read-along-cancel"]')
-      expect(cancel.text()).toBe('Cancel')
+      expect(cancel.text()).toBe('')
       expect(cancel.attributes('aria-label')).toBe('Cancel read-along build')
-      expect(cancel.element.nextElementSibling?.getAttribute('data-testid')).toBe('read-along-tag')
+      expect(cancel.classes()).toContain('text-destructive')
+      expect(wrapper.get('[data-testid="read-along-tag"]').element.compareDocumentPosition(cancel.element)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
       await cancel.trigger('click')
       expect(wrapper.emitted('cancel')).toHaveLength(1)
     })

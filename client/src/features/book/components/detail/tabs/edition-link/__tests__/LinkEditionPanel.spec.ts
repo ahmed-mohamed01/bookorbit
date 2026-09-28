@@ -17,6 +17,7 @@ import type { EditionLink, EditionLinkCandidate } from '@/features/book/composab
 import type { ReadAlongBuildOutcome, ReadAlongCancelOutcome } from '@/features/book/composables/useReadAlong'
 import type { AlignmentStatus } from '@/features/book/composables/useReadingAlignment'
 import { useLinkEditionPanel } from '@/features/book/composables/useLinkEditionPanel'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import LinkEditionPanel from '../LinkEditionPanel.vue'
 
 const toastMocks = vi.hoisted(() => ({
@@ -63,6 +64,7 @@ function createEditionLinkState() {
     linkedCounterpart: ref<EditionLinkCounterpartSummary | null>(null),
     role: ref<EditionLinkRole | null>(null),
     members: ref<EditionLinkMembers | null>(null),
+    readAlongOutput: ref(false),
     candidates: ref<EditionLinkCandidate[]>([]),
     loading: ref(false),
     searching: ref(false),
@@ -139,7 +141,7 @@ vi.mock('@/features/library/composables/useLibraries', () => ({
 
 const stubs = {
   RouterLink: { props: ['to'], template: '<a :href="JSON.stringify(to)"><slot /></a>' },
-  ConfirmDialog: { template: '<div />' },
+  ConfirmDialog: { props: ['open', 'title', 'description', 'confirmLabel', 'busy'], emits: ['confirm', 'cancel'], template: '<div />' },
 }
 
 function makeBook(format: 'epub' | 'm4b' = 'epub', id = 10): BookDetail {
@@ -209,26 +211,25 @@ describe('LinkEditionPanel', () => {
     it('shows the pair apart with the auto-match chip, idle sections and the link CTA', () => {
       const wrapper = mountPanel()
 
-      expect(text(wrapper, 'link-edition-chip')).toBe('Ready to link')
+      expect(wrapper.find('[data-testid="link-edition-chip"]').exists()).toBe(false)
       expect(text(wrapper, 'link-edition-intro')).toBe('BookOrbit found a matching pair. Review and link.')
-      expect(wrapper.get('[data-testid="edition-pair"]').classes()).toContain('gap-5')
-      expect(wrapper.get('[data-testid="edition-slot-ebook"]').classes()).not.toContain('pb-4')
-      expect(wrapper.get('[data-testid="edition-slot-audiobook"]').classes()).not.toContain('pt-4')
+      expect(wrapper.get('[data-testid="edition-pair"]').classes()).toContain('gap-[7px]')
+      expect(wrapper.get('[data-testid="edition-slot-ebook"]').classes()).not.toContain('pb-2')
+      expect(wrapper.get('[data-testid="edition-slot-audiobook"]').classes()).not.toContain('pt-2')
+      expect(wrapper.get('[data-testid="edition-rail"]').classes()).toContain('opacity-0')
       expect(text(wrapper, 'edition-slot-ebook')).toContain('This book')
       expect(text(wrapper, 'edition-slot-match')).toBe('Auto-matched · 96%')
-      expect(text(wrapper, 'position-sync-tag')).toBe('Not built')
       expect(wrapper.find('[data-testid="position-sync-build"]').exists()).toBe(false)
       expect(wrapper.get('[data-testid="read-along-section"]').attributes('data-state')).toBe('offerOff')
-      expect(text(wrapper, 'link-edition-cta')).toBe('Link editions')
+      expect(wrapper.get('[data-testid="position-sync-toggle"]').attributes('aria-checked')).toBe('false')
     })
 
-    it('relabels the CTA and links with a read-along build once toggled', async () => {
+    it('links with a read-along build when position sync is turned on after the read-along toggle', async () => {
       const wrapper = mountPanel()
 
       await wrapper.get('[data-testid="read-along-toggle"]').trigger('click')
-      expect(text(wrapper, 'link-edition-cta')).toBe('Link & generate read-along')
 
-      await wrapper.get('[data-testid="link-edition-cta"]').trigger('click')
+      await wrapper.get('[data-testid="position-sync-toggle"]').trigger('click')
       await flushPromises()
 
       expect(editionLinkState.linkBook).toHaveBeenCalledWith(20)
@@ -262,8 +263,7 @@ describe('LinkEditionPanel', () => {
       const wrapper = mountPanel()
 
       expect(wrapper.find('[data-testid="read-along-section"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="position-sync"]').exists()).toBe(true)
-      expect(text(wrapper, 'link-edition-cta')).toBe('Link editions')
+      expect(wrapper.find('[data-testid="position-sync-toggle"]').exists()).toBe(true)
     })
   })
 
@@ -277,7 +277,7 @@ describe('LinkEditionPanel', () => {
       expect(wrapper.get('[data-testid="edition-connector"]').attributes('style')).toContain('display: none')
       expect(wrapper.find('[data-testid="position-sync"]').exists()).toBe(false)
       expect(wrapper.find('[data-testid="read-along-section"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="link-edition-cta"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="position-sync-toggle"]').exists()).toBe(false)
     })
   })
 
@@ -287,23 +287,23 @@ describe('LinkEditionPanel', () => {
       linkOnClick()
     })
 
-    it('tightens the pair, spins the connector and offers Cancel', async () => {
+    it('tightens the pair, spins the connector and cancels when turned off', async () => {
       const wrapper = mountPanel()
-      await wrapper.get('[data-testid="link-edition-cta"]').trigger('click')
+      await wrapper.get('[data-testid="position-sync-toggle"]').trigger('click')
       await flushPromises()
       alignmentState.status.value = 'building'
       alignmentState.samplesDone.value = 5
       alignmentState.samplesTotal.value = 10
       await nextTick()
 
-      expect(text(wrapper, 'link-edition-chip')).toBe('Linking')
+      expect(wrapper.find('[data-testid="link-edition-chip"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="position-sync-toggle"]').attributes('aria-checked')).toBe('true')
       expect(text(wrapper, 'link-edition-intro')).toContain('Mapping audio to text.')
-      expect(wrapper.get('[data-testid="edition-pair"]').classes()).toContain('gap-3.5')
+      expect(wrapper.get('[data-testid="edition-pair"]').classes()).toContain('gap-[5px]')
       expect(wrapper.find('[data-testid="edition-connector-spinner"]').exists()).toBe(true)
       expect(wrapper.findAll('[data-testid="position-sync-tick"]')).toHaveLength(10)
-      expect(text(wrapper, 'link-edition-linking-footer')).toContain('You can close this.')
 
-      await wrapper.get('[data-testid="link-edition-cancel"]').trigger('click')
+      await wrapper.get('[data-testid="position-sync-toggle"]').trigger('click')
       await flushPromises()
       expect(editionLinkState.unlink).toHaveBeenCalled()
     })
@@ -315,14 +315,14 @@ describe('LinkEditionPanel', () => {
       const pair = wrapper.get('[data-testid="edition-pair"]').element
 
       editionLinkState.loading.value = true
-      await wrapper.get('[data-testid="link-edition-cta"]').trigger('click')
+      await wrapper.get('[data-testid="position-sync-toggle"]').trigger('click')
       await flushPromises()
       alignmentState.status.value = 'building'
       await nextTick()
 
       expect(wrapper.get('[data-testid="edition-pair"]').element).toBe(pair)
-      expect(text(wrapper, 'link-edition-chip')).toBe('Linking')
-      expect(wrapper.find('[data-testid="link-edition-linking-footer"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="link-edition-chip"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="position-sync-toggle"]').attributes('aria-checked')).toBe('true')
     })
 
     it('reads the new pair so the read-along section offers Generate instead of the pre-link block', async () => {
@@ -332,7 +332,7 @@ describe('LinkEditionPanel', () => {
       })
       const wrapper = mountPanel()
 
-      await wrapper.get('[data-testid="link-edition-cta"]').trigger('click')
+      await wrapper.get('[data-testid="position-sync-toggle"]').trigger('click')
       await flushPromises()
 
       expect(wrapper.get('[data-testid="read-along-section"]').attributes('data-state')).toBe('none')
@@ -355,12 +355,12 @@ describe('LinkEditionPanel', () => {
       })
       const wrapper = mountPanel()
 
-      await wrapper.get('[data-testid="link-edition-cta"]').trigger('click')
+      await wrapper.get('[data-testid="position-sync-toggle"]').trigger('click')
       await flushPromises()
 
       expect(editionLinkState.loadForBook).toHaveBeenCalledTimes(1)
-      expect(wrapper.get('[data-testid="read-along-ready"]').text()).toContain('Dune (read-along)')
-      expect(text(wrapper, 'link-edition-unlink-note')).toBe('Unlinking keeps the read-along book in its library.')
+      expect(text(wrapper, 'edition-slot-read-along')).toContain('Dune (read-along)')
+      expect(wrapper.find('[data-testid="read-along-ready"]').exists()).toBe(false)
     })
   })
 
@@ -374,14 +374,13 @@ describe('LinkEditionPanel', () => {
       })
       const wrapper = mountPanel()
 
-      await wrapper.get('[data-testid="link-edition-cta"]').trigger('click')
+      await wrapper.get('[data-testid="position-sync-toggle"]').trigger('click')
       await flushPromises()
 
-      const title = wrapper.get('[data-testid="read-along-ready"] a')
+      const title = wrapper.get('[data-testid="edition-slot-read-along"] a')
       expect(title.text()).toBe('Dune (read-along)')
       expect(JSON.parse(title.attributes('href') ?? '{}')).toEqual({ name: 'book-detail', params: { bookId: 9 } })
-      expect(wrapper.find('[data-testid="read-along-progress"]').exists()).toBe(false)
-      expect(text(wrapper, 'link-edition-unlink-note')).toBe('Unlinking keeps the read-along book in its library.')
+      expect(wrapper.find('[data-testid="edition-slot-read-along"] [data-testid="edition-slot-progress"]').exists()).toBe(false)
 
       linkPair(
         makeMembers({
@@ -397,23 +396,26 @@ describe('LinkEditionPanel', () => {
       )
       await flushPromises()
 
-      expect(text(wrapper, 'read-along-progress')).toBe('42% read · 37% listened')
+      expect(wrapper.get('[data-testid="edition-slot-read-along"] [data-testid="edition-slot-progress"]').attributes('aria-label')).toBe('42% read')
     })
   })
 
   describe('rebuilding position sync on an established pair', () => {
-    it('stays linked and narrates the rebuild in the sync section', () => {
+    it('stays merged and narrates the rebuild in the header', () => {
       linkPair()
       alignmentState.status.value = 'building'
       alignmentState.builtAt.value = '2026-02-02T00:00:00.000Z'
       const wrapper = mountPanel()
 
-      expect(text(wrapper, 'link-edition-chip')).toBe('Linked')
+      expect(text(wrapper, 'link-edition-chip')).toBe('Aligning')
       expect(wrapper.get('[data-testid="edition-pair"]').classes()).toContain('gap-0')
-      expect(wrapper.find('[data-testid="link-edition-unlink"]').exists()).toBe(true)
-      expect(wrapper.find('[data-testid="link-edition-linking-footer"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="link-edition-cancel"]').exists()).toBe(false)
-      expect(text(wrapper, 'position-sync-tag')).toBe('Aligning')
+      expect(wrapper.get('[data-testid="position-sync-toggle"]').attributes('aria-checked')).toBe('true')
+      expect(wrapper.find('[data-testid="position-sync-indeterminate"]').exists()).toBe(true)
+      const connector = wrapper.get('[data-testid="edition-connector"]')
+      expect(connector.classes()).toContain('bg-info')
+      expect(connector.classes()).not.toContain('bg-success')
+      expect(wrapper.find('[data-testid="edition-connector-spinner"]').exists()).toBe(true)
+      expect(wrapper.get('[data-testid="edition-rail"]').classes()).toContain('bg-info/40')
     })
   })
 
@@ -425,9 +427,8 @@ describe('LinkEditionPanel', () => {
       const wrapper = mountPanel()
 
       expect(wrapper.get('[data-testid="link-edition-panel"]').attributes('data-phase')).toBe('linking')
-      expect(wrapper.find('[data-testid="link-edition-linking-footer"]').exists()).toBe(true)
-      expect(wrapper.find('[data-testid="link-edition-cancel"]').exists()).toBe(true)
-      expect(text(wrapper, 'link-edition-intro')).not.toBe('Progress syncs both ways between these editions.')
+      expect(wrapper.get('[data-testid="position-sync-toggle"]').attributes('aria-checked')).toBe('true')
+      expect(text(wrapper, 'link-edition-intro')).not.toBe('Progress syncs between these editions.')
     })
   })
 
@@ -440,26 +441,31 @@ describe('LinkEditionPanel', () => {
     it('merges the pair and shows progress, the synced map and Unlink', () => {
       const wrapper = mountPanel()
 
-      expect(text(wrapper, 'link-edition-chip')).toBe('Linked')
-      expect(wrapper.get('[data-testid="link-edition-chip"]').attributes('aria-live')).toBe('polite')
-      expect(text(wrapper, 'link-edition-intro')).toBe('Progress syncs both ways between these editions.')
+      expect(wrapper.find('[data-testid="link-edition-chip"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="position-sync-toggle"]').attributes('aria-checked')).toBe('true')
+      expect(text(wrapper, 'link-edition-intro')).toBe('Progress syncs between these editions.')
       const pair = wrapper.get('[data-testid="edition-pair"]')
       expect(pair.classes()).toContain('gap-0')
-      expect(pair.classes()).toContain('border-success/50')
+      expect(wrapper.get('[data-testid="edition-rail"]').classes()).toContain('opacity-100')
+      expect(wrapper.get('[data-testid="edition-connector"]').classes()).toContain('left-5')
       expect(wrapper.get('[data-testid="edition-connector"]').classes()).toContain('bg-success')
-      expect(wrapper.get('[data-testid="edition-slot-ebook"]').classes()).toContain('pb-4')
-      expect(wrapper.get('[data-testid="edition-slot-audiobook"]').classes()).toContain('pt-4')
-      expect(text(wrapper, 'edition-slot-ebook')).toContain('26% read')
-      expect(text(wrapper, 'edition-slot-audiobook')).toContain('27% listened')
+      expect(wrapper.get('[data-testid="edition-slot-ebook"]').classes()).toContain('pb-2')
+      expect(wrapper.get('[data-testid="edition-slot-audiobook"]').classes()).toContain('pt-2')
+      expect(text(wrapper, 'edition-slot-ebook')).toContain('26%')
+      expect(text(wrapper, 'edition-slot-ebook')).not.toContain('read')
+      expect(wrapper.get('[data-testid="edition-slot-ebook"] [data-testid="edition-slot-progress"]').attributes('aria-label')).toBe('26% read')
+      expect(wrapper.get('[data-testid="edition-slot-audiobook"] [data-testid="edition-slot-progress"]').attributes('aria-label')).toBe(
+        '27% listened',
+      )
+      expect(wrapper.find('[data-testid="link-edition-unlink-note"]').exists()).toBe(false)
       expect(wrapper.get('[data-testid="edition-slot-ebook"] [data-testid="edition-cover"]').attributes('data-medium')).toBe('ebook')
       expect(wrapper.get('[data-testid="edition-slot-audiobook"] [data-testid="edition-cover"]').attributes('data-medium')).toBe('audio')
-      expect(text(wrapper, 'position-sync-tag')).toBe('Synced')
-      expect(text(wrapper, 'position-sync-in-sync')).toBe('In sync with the audiobook')
+      expect(wrapper.find('[data-testid="position-sync"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="edition-read-along"]').exists()).toBe(false)
       expect(wrapper.get('[data-testid="read-along-section"]').attributes('data-state')).toBe('none')
-      expect(text(wrapper, 'link-edition-unlink-note')).toBe('Both editions keep their own progress.')
     })
 
-    it('notes that the read-along stays when one exists, and unlinks', async () => {
+    it('asks before unlinking, notes that the read-along stays, and unlinks', async () => {
       linkPair(
         makeMembers({
           readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
@@ -467,11 +473,15 @@ describe('LinkEditionPanel', () => {
       )
       readAlongState.status.value = 'ready'
       const wrapper = mountPanel()
+      expect(wrapper.find('[data-testid="read-along-section"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="edition-slot-rebuild"]').exists()).toBe(true)
 
-      expect(text(wrapper, 'link-edition-unlink-note')).toBe('Unlinking keeps the read-along book in its library.')
-      expect(wrapper.get('[data-testid="read-along-section"]').attributes('data-state')).toBe('ready')
-
-      await wrapper.get('[data-testid="link-edition-unlink"]').trigger('click')
+      await wrapper.get('[data-testid="position-sync-toggle"]').trigger('click')
+      expect(editionLinkState.unlink).not.toHaveBeenCalled()
+      const dialog = wrapper.findAllComponents(ConfirmDialog)[0]
+      expect(dialog.props('open')).toBe(true)
+      expect(dialog.props('description')).toBe('Their positions stop syncing with each other. The read-along book stays in its library.')
+      dialog.vm.$emit('confirm')
       await flushPromises()
       expect(editionLinkState.unlink).toHaveBeenCalled()
       expect(toastMocks.success).toHaveBeenCalledWith('Books unlinked.')
@@ -487,11 +497,17 @@ describe('LinkEditionPanel', () => {
       expect(readAlongState.cancel).toHaveBeenCalledWith(10)
     })
 
-    it.each(['failed', 'unalignable'] as AlignmentStatus[])('does not promise synced progress when position sync is %s', (status) => {
+    it.each([
+      ['failed', 'Failed', 'Position sync failed. Rebuild to try again.'],
+      ['unalignable', "Can't align", "Position sync isn't available for this book pair."],
+    ] as [AlignmentStatus, string, string][])('names the sync problem instead of promising synced progress when %s', (status, chip, intro) => {
       alignmentState.status.value = status
       const wrapper = mountPanel()
 
-      expect(text(wrapper, 'link-edition-intro')).toBe('Both editions keep their own progress.')
+      expect(text(wrapper, 'link-edition-chip')).toBe(chip)
+      expect(text(wrapper, 'link-edition-intro')).toBe(intro)
+      expect(wrapper.get('[data-testid="edition-connector"]').classes()).not.toContain('bg-success')
+      expect(wrapper.get('[data-testid="edition-rail"]').classes()).toContain('bg-border')
     })
 
     it('shows why position sync failed', () => {
@@ -502,7 +518,7 @@ describe('LinkEditionPanel', () => {
       expect(text(wrapper, 'position-sync-build-error')).toBe('whisper was killed by SIGILL')
     })
 
-    it('rebuilds the position sync with force from the section', async () => {
+    it('rebuilds the position sync with force from the header', async () => {
       const wrapper = mountPanel()
 
       await wrapper.get('[data-testid="position-sync-build"]').trigger('click')
@@ -513,21 +529,28 @@ describe('LinkEditionPanel', () => {
   })
 
   describe('on the read-along book page', () => {
-    it('shows the merged pair and the read-along as this book, with no actions', () => {
+    it("manages the link through the pair's ebook", async () => {
       editionLinkState.link.value = { ...linkRecord, readAlongBookId: 30 }
       editionLinkState.role.value = 'readAlong'
       editionLinkState.members.value = makeMembers({
         readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
       })
-      alignmentState.status.value = 'building'
+      readAlongState.status.value = 'ready'
+      alignmentState.status.value = 'ready'
       const wrapper = mountPanel(makeBook('epub', 30))
 
-      expect(text(wrapper, 'link-edition-chip')).toBe('Linked')
-      expect(wrapper.find('[data-testid="edition-slot-this-book"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="position-sync"]').exists()).toBe(false)
-      expect(wrapper.get('[data-testid="read-along-section"]').attributes('data-state')).toBe('ready')
-      expect(wrapper.find('[data-testid="read-along-this-book"]').exists()).toBe(true)
-      expect(wrapper.find('button').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="link-edition-chip"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="edition-slot-read-along"] [data-testid="edition-slot-this-book"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="read-along-section"]').exists()).toBe(false)
+
+      await wrapper.get('[data-testid="position-sync-build"]').trigger('click')
+      await flushPromises()
+      expect(alignmentState.build).toHaveBeenCalledWith(10, true)
+
+      await wrapper.get('[data-testid="position-sync-toggle"]').trigger('click')
+      wrapper.findAllComponents(ConfirmDialog)[0].vm.$emit('confirm')
+      await flushPromises()
+      expect(editionLinkState.unlink).toHaveBeenCalledWith(10)
     })
   })
 
@@ -542,7 +565,7 @@ describe('LinkEditionPanel', () => {
 
       expect(wrapper.find('[data-testid="edition-slot-change"]').exists()).toBe(false)
       expect(wrapper.find('[data-testid="read-along-toggle"]').exists()).toBe(false)
-      expect(wrapper.find('[data-testid="link-edition-cta"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="position-sync-toggle"]').exists()).toBe(false)
     })
 
     it('presents a proposed match as a suggestion, without sections', () => {
@@ -566,12 +589,11 @@ describe('LinkEditionPanel', () => {
       alignmentState.status.value = 'building'
       const building = mountPanel()
       expect(building.get('[data-testid="link-edition-panel"]').attributes('data-phase')).toBe('linking')
-      expect(building.find('[data-testid="link-edition-cancel"]').exists()).toBe(false)
-      expect(building.find('[data-testid="link-edition-unlink"]').exists()).toBe(false)
+      expect(building.find('[data-testid="position-sync-toggle"]').exists()).toBe(false)
 
       alignmentState.status.value = 'ready'
       const linked = mountPanel()
-      expect(linked.find('[data-testid="link-edition-unlink"]').exists()).toBe(false)
+      expect(linked.find('[data-testid="position-sync-toggle"]').exists()).toBe(false)
       expect(linked.find('[data-testid="position-sync-build"]').exists()).toBe(false)
     })
   })

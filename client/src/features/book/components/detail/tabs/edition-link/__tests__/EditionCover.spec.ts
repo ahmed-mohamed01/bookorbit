@@ -5,7 +5,7 @@ import EditionCover from '../EditionCover.vue'
 describe('EditionCover', () => {
   it('asks for the audio art in a square frame for an audiobook', () => {
     const slot = mount(EditionCover, { props: { bookId: 20, medium: 'audio', version: 'v2' } })
-    expect(slot.get('[data-testid="edition-cover"]').classes()).toContain('size-12')
+    expect(slot.get('[data-testid="edition-cover"]').classes()).toContain('size-10')
     const src = slot.get('img').attributes('src') ?? ''
     expect(src.startsWith('/api/v1/books/20/thumbnail?')).toBe(true)
     expect(new URLSearchParams(src.split('?')[1]).get('medium')).toBe('audio')
@@ -16,7 +16,7 @@ describe('EditionCover', () => {
 
   it('keeps the portrait frame and the ebook art for an ebook', () => {
     const slot = mount(EditionCover, { props: { bookId: 10, medium: 'ebook' } })
-    expect(slot.get('[data-testid="edition-cover"]').classes()).toEqual(expect.arrayContaining(['h-[60px]', 'w-10']))
+    expect(slot.get('[data-testid="edition-cover"]').classes()).toEqual(expect.arrayContaining(['h-12', 'w-8']))
     expect(new URLSearchParams((slot.get('img').attributes('src') ?? '').split('?')[1]).get('medium')).toBe('ebook')
 
     const result = mount(EditionCover, { props: { bookId: 10, medium: 'ebook', size: 'result' } })

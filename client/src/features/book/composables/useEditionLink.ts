@@ -52,6 +52,7 @@ interface EditionLinkEntry {
   // from the same `for-book` response, so the popover can render all three rows without extra fetches.
   role: Ref<EditionLinkRole | null>
   members: Ref<EditionLinkMembers | null>
+  readAlongOutput: Ref<boolean>
   candidates: Ref<EditionLinkCandidate[]>
   loading: Ref<boolean>
   searching: Ref<boolean>
@@ -83,6 +84,7 @@ function createEntry(): EditionLinkEntry {
     linkedCounterpart: ref(null),
     role: ref(null),
     members: ref(null),
+    readAlongOutput: ref(false),
     candidates: ref([]),
     loading: ref(false),
     searching: ref(false),
@@ -144,6 +146,7 @@ export function useEditionLink(bookId: number) {
     entry.linkedCounterpart.value = null
     entry.role.value = null
     entry.members.value = null
+    entry.readAlongOutput.value = false
   }
 
   async function performLoad(requestId: number): Promise<void> {
@@ -162,6 +165,7 @@ export function useEditionLink(bookId: number) {
       entry.linkedCounterpart.value = data.counterpart
       entry.role.value = data.role ?? null
       entry.members.value = data.members ?? null
+      entry.readAlongOutput.value = data.readAlongOutput === true
     } catch {
       if (requestId !== entry.loadRequestId) return
       clearLinkState()
@@ -274,8 +278,10 @@ export function useEditionLink(bookId: number) {
     )
   }
 
-  function unlink(): Promise<boolean> {
-    return runMutation(() => api(`/api/v1/edition-links/link/${bookId}`, { method: 'DELETE' }), 'Failed to unlink book')
+  // A read-along page unlinks its pair through one of the pair's own books: unlinking the read-along
+  // itself would only detach it from the pair.
+  function unlink(targetBookId: number = bookId): Promise<boolean> {
+    return runMutation(() => api(`/api/v1/edition-links/link/${targetBookId}`, { method: 'DELETE' }), 'Failed to unlink book')
   }
 
   return {
@@ -284,6 +290,7 @@ export function useEditionLink(bookId: number) {
     linkedCounterpart: entry.linkedCounterpart,
     role: entry.role,
     members: entry.members,
+    readAlongOutput: entry.readAlongOutput,
     candidates: entry.candidates,
     loading: entry.loading,
     searching: entry.searching,

@@ -5,6 +5,7 @@ import type { BookDetail, EditionLinkCounterpartSummary, EditionLinkMembers, Edi
 import type { EditionLink, EditionLinkCandidate } from '@/features/book/composables/useEditionLink'
 import type { AlignmentStatus } from '@/features/book/composables/useReadingAlignment'
 import { useLinkEditionPanel } from '@/features/book/composables/useLinkEditionPanel'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import LinkEditionPanel from '../LinkEditionPanel.vue'
 
 // The read-along state is the real composable here, so what the section shows after a relink comes
@@ -61,6 +62,7 @@ const editionLink = {
   linkedCounterpart: ref<EditionLinkCounterpartSummary | null>(null),
   role: ref<EditionLinkRole | null>(null),
   members: ref<EditionLinkMembers | null>(null),
+  readAlongOutput: ref(false),
   candidates: ref<EditionLinkCandidate[]>([]),
   loading: ref(false),
   searching: ref(false),
@@ -141,6 +143,7 @@ describe('LinkEditionPanel relinking', () => {
     editionLink.unlink.mockImplementation(async () => {
       editionLink.link.value = null
       editionLink.members.value = null
+      editionLink.readAlongOutput.value = false
       editionLink.role.value = null
       editionLink.proposed.value = counterpartB
       return true
@@ -156,12 +159,13 @@ describe('LinkEditionPanel relinking', () => {
     const { wrapper, state } = mountPanel()
     await state.handleOpen()
     await flushPromises()
-    expect(wrapper.get('[data-testid="read-along-section"]').attributes('data-state')).toBe('ready')
+    expect(wrapper.find('[data-testid="edition-slot-read-along"]').exists()).toBe(true)
 
     apiMocks.status.mockReturnValue(failedRead)
-    await wrapper.get('[data-testid="link-edition-unlink"]').trigger('click')
+    await wrapper.get('[data-testid="position-sync-toggle"]').trigger('click')
+    wrapper.findAllComponents(ConfirmDialog)[0].vm.$emit('confirm')
     await flushPromises()
-    await wrapper.get('[data-testid="link-edition-cta"]').trigger('click')
+    await wrapper.get('[data-testid="position-sync-toggle"]').trigger('click')
     await flushPromises()
 
     const section = wrapper.get('[data-testid="read-along-section"]')

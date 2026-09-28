@@ -2,7 +2,7 @@ import type { ReadAlongBlockReason, ReadAlongPhase, ReadAlongStatus } from '@boo
 import type { ReadAlongSectionState } from '@/features/book/composables/useReadAlong'
 
 export type ReadAlongSectionMode = 'offer' | 'manage' | 'readOnly'
-export type ReadAlongDisplayState = 'offerOn' | 'offerOff' | 'none' | 'queued' | 'building' | 'failed' | 'ready' | 'outOfReach'
+export type ReadAlongDisplayState = 'offerOn' | 'offerOff' | 'offerExisting' | 'none' | 'queued' | 'building' | 'failed' | 'ready' | 'outOfReach'
 
 /** Queued and building both end on their own, so both are polled and both count as a build in flight. */
 export function isReadAlongInFlight(status: ReadAlongStatus): boolean {
@@ -30,6 +30,9 @@ export function resolveReadAlongSectionState(
   toggleDisabled: boolean,
 ): ReadAlongDisplayState {
   if (mode === 'readOnly') return 'ready'
+  // A read-along built for this pair before it was unlinked rejoins it on the next link, so there is
+  // nothing to generate: offering the toggle would build a second copy.
+  if (mode === 'offer' && state.status === 'ready' && state.hasOutputBook) return 'offerExisting'
   if (mode === 'offer') return generateOnLink && !toggleDisabled ? 'offerOn' : 'offerOff'
   if (state.status === 'queued') return 'queued'
   if (state.status === 'building') return 'building'

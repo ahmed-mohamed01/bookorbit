@@ -16,8 +16,8 @@ const isAudio = computed(() => props.medium === 'audio')
 
 // Audiobook art is square, so its frame follows the medium rather than the book's jacket.
 const frameClass = computed(() => {
-  if (isAudio.value) return props.size === 'slot' ? 'size-12' : 'size-8'
-  return props.size === 'slot' ? 'h-[60px] w-10' : 'h-[42px] w-7'
+  if (isAudio.value) return props.size === 'slot' ? 'size-10' : 'size-8'
+  return props.size === 'slot' ? 'h-12 w-8' : 'h-[42px] w-7'
 })
 
 const src = computed(() => coverUrl(props.bookId, 'thumbnail', props.version, props.medium))

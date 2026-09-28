@@ -25,6 +25,12 @@ function handleOpenChange(next: boolean) {
   open.value = next
   if (next) void panel.handleOpen()
 }
+
+// The header's first control rebuilds position sync, so opening the panel keeps focus off it: a stray
+// Enter right after opening must not start an alignment.
+function handleOpenAutoFocus(event: Event) {
+  event.preventDefault()
+}
 </script>
 
 <template>
@@ -37,7 +43,8 @@ function handleOpenChange(next: boolean) {
     <PopoverContent
       align="end"
       :collision-padding="16"
-      class="max-h-(--reka-popover-content-available-height) w-[26rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-4"
+      class="max-h-(--reka-popover-content-available-height) w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-2 sm:w-[20rem]"
+      @open-auto-focus="handleOpenAutoFocus"
     >
       <LinkEditionPanel :panel="panel" />
     </PopoverContent>
