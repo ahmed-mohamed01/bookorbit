@@ -492,14 +492,12 @@ describe('StorytellerSettings', () => {
     expect(wrapper.get('#storyteller-collection-name').attributes('maxlength')).toBe('255')
   })
 
-  it('hides the delete-remote-after-import toggle for the shared-paths transport', async () => {
+  // Under shared paths the toggle still decides whether the read-along is taken out of Storyteller's
+  // read-aloud folder or copied from it.
+  it('shows the delete-remote-after-import toggle for the shared-paths transport too', async () => {
     settings.value = makeSettings({ transport: 'shared-paths' })
     const wrapper = mountSettings()
     await flushPromises()
-
-    expect(wrapper.text()).not.toContain('Delete the Storyteller copy after import')
-
-    await wrapper.get('#storyteller-transport').setValue('api-transfer')
 
     expect(wrapper.text()).toContain('Delete the Storyteller copy after import')
   })

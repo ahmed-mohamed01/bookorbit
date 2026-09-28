@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 import {
   InvalidPathMappingError,
   assertMappablePathMappings,
-  expectedCustomFolderOutputPath,
   normalizePathMappings,
   sharedAudioDirectory,
   storytellerSafeFilepathSegment,
@@ -203,9 +202,7 @@ describe('storytellerSafeFilepathSegment', () => {
   it('drops a leading dot, which would make the read-along a file no scanner walk indexes', () => {
     expect(storytellerSafeFilepathSegment('.hack//SIGN', '.epub')).toBe('hack--SIGN.epub');
     expect(storytellerSafeFilepathSegment('...And Justice for All', '.epub')).toBe('And Justice for All.epub');
-    // Nothing but dots is still nothing: callers fall back to their own name rather than publish
-    // a hidden file every such title would share.
-    expect(expectedCustomFolderOutputPath('/storyteller/readalongs', '..')).toBeNull();
+    expect(storytellerSafeFilepathSegment('..', '.epub')).toBe('.epub');
   });
 
   it('keeps unicode and never splits a code point', () => {
@@ -226,22 +223,6 @@ describe('storytellerSafeFilepathSegment', () => {
 
   it('defaults to no suffix', () => {
     expect(storytellerSafeFilepathSegment('Plain Title')).toBe('Plain Title');
-  });
-});
-
-describe('expectedCustomFolderOutputPath', () => {
-  it('joins the configured folder with the sanitized title', () => {
-    expect(expectedCustomFolderOutputPath('/storyteller/readalongs/', 'Dune: Part One')).toBe('/storyteller/readalongs/Dune- Part One.epub');
-  });
-
-  it('returns null without a folder', () => {
-    expect(expectedCustomFolderOutputPath(null, 'Dune')).toBeNull();
-  });
-
-  it('returns null when the title sanitizes away, instead of a shared hidden file', () => {
-    expect(expectedCustomFolderOutputPath('/storyteller/readalongs', '???')).toBeNull();
-    expect(expectedCustomFolderOutputPath('/storyteller/readalongs', '   ')).toBeNull();
-    expect(expectedCustomFolderOutputPath('/storyteller/readalongs', '...')).toBeNull();
   });
 });
 

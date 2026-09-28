@@ -48,8 +48,8 @@ const PROBLEM_MESSAGE_KEYS: Record<StorytellerSetupProblem, string> = {
   no_path_mappings: 'settings.integrations.storyteller.problems.noPathMappings',
   readaloud_location_not_custom_folder: 'settings.integrations.storyteller.problems.readaloudLocationNotCustomFolder',
   readaloud_folder_not_mapped: 'settings.integrations.storyteller.problems.readaloudFolderNotMapped',
+  readaloud_folder_inside_library: 'settings.integrations.storyteller.problems.readaloudFolderInsideLibrary',
   target_library_missing: 'settings.integrations.storyteller.problems.targetLibraryMissing',
-  target_library_not_book_per_file: 'settings.integrations.storyteller.problems.targetLibraryNotBookPerFile',
   target_library_disallows_epub: 'settings.integrations.storyteller.problems.targetLibraryDisallowsEpub',
 }
 
@@ -110,7 +110,6 @@ const passwordPlaceholder = computed(() => {
 const targetLibraries = computed(() => libraries.value.filter(isReadAlongTargetLibrary))
 const selectedLibrary = computed(() => libraries.value.find((library) => library.id === draft.targetLibraryId) ?? null)
 const targetFolders = computed(() => selectedLibrary.value?.folders ?? [])
-const showDeleteRemoteToggle = computed(() => draft.transport !== 'shared-paths')
 
 // Every folder BookOrbit scans, not just the read-along library's: a mapping has to cover wherever
 // the source ebook and audiobook live, which is rarely the folder the read-along lands in.
@@ -557,7 +556,7 @@ function transportLabel(transport: Exclude<StorytellerTransport, 'auto'> | null)
             </div>
           </div>
 
-          <div v-if="showDeleteRemoteToggle" class="flex items-center justify-between gap-4 border-t border-border pt-4">
+          <div class="flex items-center justify-between gap-4 border-t border-border pt-4">
             <div>
               <p class="text-sm">{{ t('settings.integrations.storyteller.deleteRemoteAfterImport.label') }}</p>
               <p class="mt-0.5 text-xs text-muted-foreground">{{ t('settings.integrations.storyteller.deleteRemoteAfterImport.description') }}</p>

@@ -838,50 +838,86 @@ describe('StorytellerRepository.findLibraryFolders', () => {
   });
 });
 
-describe('StorytellerRepository.findBookFileByAbsolutePath', () => {
-  // The owning library comes back with the row because a path can be indexed by a library other than
-  // the one the build wrote to: `book_files.absolute_path` is globally unique and overlapping book
-  // library folders are allowed, so whichever library indexed the path first owns the row.
-  it('returns the owning library alongside the book and file id', async () => {
-    const db = mockDb({ selectResults: [[{ bookId: 5, libraryId: 3 }]] });
+describe('StorytellerRepository.findSoleEpubContentFile', () => {
+  it('returns the one EPUB content file of a read-along book', async () => {
+    const db = mockDb({ selectResults: [[{ id: 40, absolutePath: '/library/Elantris.epub', format: 'epub' }]] });
     const repo = new StorytellerRepository(db as never);
 
-    await expect(repo.findBookFileByAbsolutePath('/books/read-along/book.epub')).resolves.toEqual({ bookId: 5, libraryId: 3 });
+    await expect(repo.findSoleEpubContentFile(88)).resolves.toEqual({ id: 40, absolutePath: '/library/Elantris.epub' });
 
     const builder = builderFrom(db.select);
-    expect(builder.innerJoin).toHaveBeenCalledTimes(1);
-    expect(Object.keys(db.select.mock.calls[0]![0] as Record<string, unknown>)).toContain('libraryId');
+    expect(builder.limit).toHaveBeenCalledWith(2);
+    const where = renderSql(builder.where.mock.calls[0]![0]);
+    expect(where.params).toEqual([88, 'content']);
   });
 
-  it('returns undefined when no file has that path', async () => {
-    const db = mockDb({ selectResults: [[]] });
+  it('is null for a book holding more than one content file', async () => {
+    const db = mockDb({
+      selectResults: [
+        [
+          { id: 40, absolutePath: '/library/a.epub', format: 'epub' },
+          { id: 41, absolutePath: '/library/b.epub', format: 'epub' },
+        ],
+      ],
+    });
     const repo = new StorytellerRepository(db as never);
 
-    await expect(repo.findBookFileByAbsolutePath('/nope.epub')).resolves.toBeUndefined();
+    await expect(repo.findSoleEpubContentFile(88)).resolves.toBeNull();
+  });
+
+  it('is null for a book whose one content file is not an EPUB', async () => {
+    const db = mockDb({ selectResults: [[{ id: 40, absolutePath: '/library/a.pdf', format: 'pdf' }]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.findSoleEpubContentFile(88)).resolves.toBeNull();
   });
 });
 
-describe('StorytellerRepository.hasContentFileOtherThan', () => {
-  it('asks for one row and filters to content files at another path', async () => {
-    const db = mockDb({ selectResults: [[{ one: 1 }]] });
+describe('StorytellerRepository.findReadAlongMetadata', () => {
+  it('takes the text edition metadata and the audio edition narrators, leaving out what is unset', async () => {
+    const metadataRow = {
+      title: 'Elantris',
+      subtitle: null,
+      description: 'A city of gods',
+      publisher: 'Tor',
+      publishedDate: null,
+      publishedYear: 2005,
+      language: 'en',
+      isbn10: null,
+      isbn13: '9780765350374',
+      seriesName: 'Elantris',
+      seriesIndex: '1',
+    };
+    const db = mockDb({
+      selectResults: [[metadataRow], [{ name: 'Brandon Sanderson' }], [{ name: 'Fantasy' }, { name: 'Epic' }], [{ name: 'Jack Garrett' }]],
+    });
     const repo = new StorytellerRepository(db as never);
 
-    await expect(repo.hasContentFileOtherThan(7, '/library/read-along.epub')).resolves.toBe(true);
+    await expect(repo.findReadAlongMetadata(10, 11)).resolves.toEqual({
+      title: 'Elantris',
+      description: 'A city of gods',
+      publisher: 'Tor',
+      publishedYear: 2005,
+      language: 'en',
+      isbn13: '9780765350374',
+      seriesName: 'Elantris',
+      seriesIndex: '1',
+      authors: ['Brandon Sanderson'],
+      genres: ['Fantasy', 'Epic'],
+      narrators: ['Jack Garrett'],
+    });
 
-    const builder = builderFrom(db.select);
-    expect(builder.limit).toHaveBeenCalledWith(1);
-    const where = renderSql(builder.where.mock.calls[0]![0]);
-    expect(where.sql).toContain('"book_id" = $1');
-    expect(where.sql).toContain('"role" = $2');
-    expect(where.sql).toContain('"absolute_path" <> $3');
-    expect(where.params).toEqual([7, 'content', '/library/read-along.epub']);
+    expect(renderSql(builderFrom(db.select, 1).where.mock.calls[0]![0]).params).toEqual([10]);
+    expect(renderSql(builderFrom(db.select, 2).where.mock.calls[0]![0]).params).toEqual([10]);
+    expect(renderSql(builderFrom(db.select, 3).where.mock.calls[0]![0]).params).toEqual([11]);
   });
 
-  it('is false for a book whose only content file is that path', async () => {
+  it('is null when the text edition has no metadata row', async () => {
     const db = mockDb({ selectResults: [[]] });
     const repo = new StorytellerRepository(db as never);
 
-    await expect(repo.hasContentFileOtherThan(7, '/library/read-along.epub')).resolves.toBe(false);
+    await expect(repo.findReadAlongMetadata(10, 11)).resolves.toBeNull();
+    expect(db.select).toHaveBeenCalledOnce();
   });
 });
 

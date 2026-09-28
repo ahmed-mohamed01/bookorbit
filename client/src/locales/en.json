@@ -1570,10 +1570,10 @@
           "serverUnreachable": "Check that the Storyteller server URL is correct and reachable from BookOrbit",
           "authFailed": "Check the Storyteller username and password",
           "noPathMappings": "Add a path mapping so Storyteller can read BookOrbit's library folders",
-          "readaloudLocationNotCustomFolder": "Set Storyteller's read-aloud location to a custom folder pointing at the read-along library",
+          "readaloudLocationNotCustomFolder": "Set Storyteller's read-aloud location to a custom folder outside every BookOrbit library. BookOrbit picks finished read-alongs up from there",
           "readaloudFolderNotMapped": "Add a path mapping that covers Storyteller's read-aloud folder",
+          "readaloudFolderInsideLibrary": "Storyteller's read-aloud folder is inside a BookOrbit library, so each read-along would be scanned with the audiobook's tags as its title and author. Point it at a folder outside every library. BookOrbit files read-alongs into the read-along library itself",
           "targetLibraryMissing": "Choose a read-along library below",
-          "targetLibraryNotBookPerFile": "Storyteller writes read-alongs into a subfolder of the read-along library, where a one-book-per-folder scan would fold them into a single book. Point the read-along location at the library folder itself, or set the library to one book per file",
           "targetLibraryDisallowsEpub": "Allow the EPUB format in the read-along library's settings"
         },
         "pathMappings": {
@@ -1616,7 +1616,7 @@
         },
         "deleteRemoteAfterImport": {
           "label": "Delete the Storyteller copy after import",
-          "description": "Remove the read-along from Storyteller once BookOrbit has imported it."
+          "description": "Remove the read-along from Storyteller once BookOrbit has imported it. With shared paths, BookOrbit takes the file out of Storyteller's read-aloud folder instead of copying it."
         },
         "collectionName": {
           "label": "Collection name",

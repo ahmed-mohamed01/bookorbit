@@ -13,8 +13,6 @@ import type { PathMapping } from '../migration/planner/planner.types';
 // (`getSafeFilepathSegment` in `applications/web/src/assets/paths.ts`).
 const SAFE_SEGMENT_BYTE_LIMIT = 150;
 
-const READ_ALONG_SUFFIX = '.epub';
-
 const ILLEGAL_FILENAME_CHARS = /[/\\:*?"<>|]/g;
 
 /** A `BadRequestException` so the controller answers 400 untranslated, subclassed so callers can tell it apart. */
@@ -118,20 +116,6 @@ export function toLocalPath(remotePath: string | null | undefined, mappings: rea
 /** Port of Storyteller's `getSafeFilepathSegment`, plus the leading-dot divergence `sanitizeFilename` explains. */
 export function storytellerSafeFilepathSegment(name: string, suffix = ''): string {
   return truncateToByteLimit(sanitizeFilename(name), SAFE_SEGMENT_BYTE_LIMIT, suffix);
-}
-
-/**
- * Where a `CUSTOM_FOLDER` Storyteller writes a reference-imported book's read-along: the configured
- * folder plus the sanitized title, flat, in Storyteller's own path space.
- */
-export function expectedCustomFolderOutputPath(customFolderRemotePath: string | null | undefined, title: string): string | null {
-  const folder = normalizeMatchPath(customFolderRemotePath);
-  if (!folder) return null;
-  // A title of nothing but illegal characters sanitizes away: `<folder>/.epub` is a hidden file
-  // every such title would share, not this book's output.
-  const segment = storytellerSafeFilepathSegment(title, READ_ALONG_SUFFIX);
-  if (segment === READ_ALONG_SUFFIX) return null;
-  return posix.join(folder, segment);
 }
 
 function isUsablePrefix(prefix: string): boolean {

@@ -18,6 +18,7 @@ const mockRepo = {
   upsertSettings: vi.fn(),
   recordCheck: vi.fn(),
   findLibraryFolders: vi.fn(),
+  findAllLibraryFolderPaths: vi.fn(),
 };
 
 const mockSecretService = {
@@ -68,6 +69,10 @@ function libraryRow(overrides: Record<string, unknown> = {}) {
 }
 
 const DEFAULT_FOLDERS = [{ id: 1, path: '/books/read-along' }];
+// Every library folder on the instance. Storyteller's staging folder has to stay out of all of them.
+const ALL_LIBRARY_FOLDERS = ['/books/read-along', '/books/library'];
+// Maps through the default `/books <-> /mnt/books` mapping to a folder no library scans.
+const STAGING_LOCATION = '/mnt/books/storyteller-output';
 
 describe('StorytellerSettingsService.getSettings', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -299,6 +304,7 @@ describe('StorytellerSettingsService.testConnection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRepo.recordCheck.mockResolvedValue(undefined);
+    mockRepo.findAllLibraryFolderPaths.mockResolvedValue(ALL_LIBRARY_FOLDERS);
   });
 
   it('reports not configured without calling the client', async () => {
@@ -492,7 +498,7 @@ describe('StorytellerSettingsService.testConnection', () => {
     mockSession.getServerInfo.mockResolvedValue({ version: '1.2.3', capabilities: ['books'] });
     mockSession.getSettings.mockResolvedValue({
       readaloudLocationType: 'CUSTOM_FOLDER',
-      readaloudLocation: '/mnt/books/read-along',
+      readaloudLocation: STAGING_LOCATION,
       importMode: 'reference',
       aligner: 'whisper',
       transcriptionEngine: 'whisper',
@@ -537,7 +543,7 @@ describe('StorytellerSettingsService.testConnection', () => {
     mockSession.getServerInfo.mockResolvedValue({ version: '3.1.0', capabilities: ['book-upload', 'ctcDevices', 'readaloud-process'] });
     mockSession.getSettings.mockResolvedValue({
       readaloudLocationType: 'CUSTOM_FOLDER',
-      readaloudLocation: '/mnt/books/read-along',
+      readaloudLocation: STAGING_LOCATION,
       importMode: 'reference',
       aligner: 'whisper',
       transcriptionEngine: 'whisper',
@@ -609,19 +615,60 @@ describe('StorytellerSettingsService.testConnection', () => {
     expect(result.problems).not.toContain('readaloud_folder_not_mapped');
   });
 
-  it('requires the mapped path to land specifically inside a configured target folder, not just any library folder', async () => {
-    mockRepo.getSettings.mockResolvedValue(settingsRow({ transport: 'shared-paths', targetLibraryId: 7, targetFolderId: 2 }));
+  // A staging folder inside any library, not only the read-along one, is scanned: every read-along
+  // would be indexed with the audiobook tags Storyteller stamps over the ebook's metadata.
+  it('flags readaloud_folder_inside_library when the staging folder maps into any library folder', async () => {
+    mockRepo.getSettings.mockResolvedValue(settingsRow({ transport: 'shared-paths' }));
     mockLibraryService.findOne.mockResolvedValue(libraryRow({ allowedFormats: ['epub'] }));
-    mockRepo.findLibraryFolders.mockResolvedValue([
-      { id: 1, path: '/books/other-folder' },
-      { id: 2, path: '/books/read-along' },
-    ]);
+    mockRepo.findLibraryFolders.mockResolvedValue(DEFAULT_FOLDERS);
     mockSession.getServerInfo.mockResolvedValue({ version: '1.2.3', capabilities: ['books'] });
-    // Maps (via the /books <-> /mnt/books mapping) to /books/other-folder - a real library folder,
-    // but not the one configured as the target.
     mockSession.getSettings.mockResolvedValue({
       readaloudLocationType: 'CUSTOM_FOLDER',
-      readaloudLocation: '/mnt/books/other-folder',
+      readaloudLocation: '/mnt/books/library/storyteller',
+      importMode: 'reference',
+      aligner: 'whisper',
+      transcriptionEngine: 'whisper',
+      alignmentGranularity: 'word',
+    });
+
+    const result = await makeService().testConnection(user);
+
+    expect(result.sharedPathsReady).toBe(false);
+    expect(result.effectiveTransport).toBeNull();
+    expect(result.problems).toContain('readaloud_folder_inside_library');
+    expect(result.problems).not.toContain('readaloud_folder_not_mapped');
+  });
+
+  // Folder paths come from the database as they were saved, so a stored trailing slash must not let
+  // the library folder itself pass as somewhere outside it.
+  it('treats a library folder path with a trailing slash as the same folder', async () => {
+    mockRepo.getSettings.mockResolvedValue(settingsRow({ transport: 'shared-paths' }));
+    mockLibraryService.findOne.mockResolvedValue(libraryRow({ allowedFormats: ['epub'] }));
+    mockRepo.findLibraryFolders.mockResolvedValue(DEFAULT_FOLDERS);
+    mockRepo.findAllLibraryFolderPaths.mockResolvedValue(['/books/read-along/']);
+    mockSession.getServerInfo.mockResolvedValue({ version: '1.2.3', capabilities: ['books'] });
+    mockSession.getSettings.mockResolvedValue({
+      readaloudLocationType: 'CUSTOM_FOLDER',
+      readaloudLocation: '/mnt/books/read-along',
+      importMode: 'reference',
+      aligner: 'whisper',
+      transcriptionEngine: 'whisper',
+      alignmentGranularity: 'word',
+    });
+
+    const result = await makeService().testConnection(user);
+
+    expect(result.problems).toContain('readaloud_folder_inside_library');
+  });
+
+  it('flags readaloud_folder_not_mapped when no mapping covers the staging folder', async () => {
+    mockRepo.getSettings.mockResolvedValue(settingsRow({ transport: 'shared-paths' }));
+    mockLibraryService.findOne.mockResolvedValue(libraryRow({ allowedFormats: ['epub'] }));
+    mockRepo.findLibraryFolders.mockResolvedValue(DEFAULT_FOLDERS);
+    mockSession.getServerInfo.mockResolvedValue({ version: '1.2.3', capabilities: ['books'] });
+    mockSession.getSettings.mockResolvedValue({
+      readaloudLocationType: 'CUSTOM_FOLDER',
+      readaloudLocation: '/srv/storyteller/output',
       importMode: 'reference',
       aligner: 'whisper',
       transcriptionEngine: 'whisper',
@@ -634,125 +681,14 @@ describe('StorytellerSettingsService.testConnection', () => {
     expect(result.problems).toContain('readaloud_folder_not_mapped');
   });
 
-  it('is ready when the mapped path lands inside the configured target folder specifically', async () => {
-    mockRepo.getSettings.mockResolvedValue(settingsRow({ transport: 'shared-paths', targetLibraryId: 7, targetFolderId: 2 }));
-    mockLibraryService.findOne.mockResolvedValue(libraryRow({ allowedFormats: ['epub'] }));
-    mockRepo.findLibraryFolders.mockResolvedValue([
-      { id: 1, path: '/books/other-folder' },
-      { id: 2, path: '/books/read-along' },
-    ]);
-    mockSession.getServerInfo.mockResolvedValue({ version: '1.2.3', capabilities: ['books'] });
-    mockSession.getSettings.mockResolvedValue({
-      readaloudLocationType: 'CUSTOM_FOLDER',
-      readaloudLocation: '/mnt/books/read-along',
-      importMode: 'reference',
-      aligner: 'whisper',
-      transcriptionEngine: 'whisper',
-      alignmentGranularity: 'word',
-    });
-
-    const result = await makeService().testConnection(user);
-
-    expect(result.sharedPathsReady).toBe(true);
-    expect(result.problems).not.toContain('readaloud_folder_not_mapped');
-  });
-
-  // Shared-paths is usable when the read-along location resolves to the target library folder
-  // itself, or the library is book_per_file. The scanner gives a root-level file its own book in
-  // either organization mode, so only a nested location is a problem - and the build service applies
-  // this same rule, which is why the two must agree.
-  it('flags target_library_not_book_per_file when the read-along lands below the library folder', async () => {
-    mockRepo.getSettings.mockResolvedValue(settingsRow({ transport: 'shared-paths' }));
-    mockLibraryService.findOne.mockResolvedValue(libraryRow({ organizationMode: 'book_per_folder', allowedFormats: ['epub'] }));
-    mockRepo.findLibraryFolders.mockResolvedValue(DEFAULT_FOLDERS);
-    mockSession.getServerInfo.mockResolvedValue({ version: '1.2.3', capabilities: ['books'] });
-    mockSession.getSettings.mockResolvedValue({
-      readaloudLocationType: 'CUSTOM_FOLDER',
-      readaloudLocation: '/mnt/books/read-along/storyteller',
-      importMode: 'reference',
-      aligner: 'whisper',
-      transcriptionEngine: 'whisper',
-      alignmentGranularity: 'word',
-    });
-
-    const result = await makeService().testConnection(user);
-
-    // Pinned shared-paths that the build would refuse resolves to no transport at all: reporting
-    // 'shared-paths' here promised a transfer-free build that the build service never performs.
-    expect(result.effectiveTransport).toBeNull();
-    expect(result.problems).toContain('target_library_not_book_per_file');
-  });
-
-  // The user's live setup: a book_per_folder library whose folder root is where Storyteller writes.
-  // It works, and two read-alongs were built through it, so the test must not call it a problem.
-  it('does not flag target_library_not_book_per_file when the read-along lands in the library folder itself', async () => {
-    mockRepo.getSettings.mockResolvedValue(settingsRow({ transport: 'shared-paths' }));
-    mockLibraryService.findOne.mockResolvedValue(libraryRow({ organizationMode: 'book_per_folder', allowedFormats: ['epub'] }));
-    mockRepo.findLibraryFolders.mockResolvedValue(DEFAULT_FOLDERS);
-    mockSession.getServerInfo.mockResolvedValue({ version: '1.2.3', capabilities: ['books'] });
-    mockSession.getSettings.mockResolvedValue({
-      readaloudLocationType: 'CUSTOM_FOLDER',
-      readaloudLocation: '/mnt/books/read-along',
-      importMode: 'reference',
-      aligner: 'whisper',
-      transcriptionEngine: 'whisper',
-      alignmentGranularity: 'word',
-    });
-
-    const result = await makeService().testConnection(user);
-
-    expect(result.sharedPathsReady).toBe(true);
-    expect(result.problems).not.toContain('target_library_not_book_per_file');
-  });
-
-  // Folder paths come from the database as they were saved, so a stored trailing slash must not turn
-  // the library folder itself into "somewhere below the library folder".
-  it('treats a folder path with a trailing slash as the same folder', async () => {
-    mockRepo.getSettings.mockResolvedValue(settingsRow({ transport: 'shared-paths' }));
-    mockLibraryService.findOne.mockResolvedValue(libraryRow({ organizationMode: 'book_per_folder', allowedFormats: ['epub'] }));
-    mockRepo.findLibraryFolders.mockResolvedValue([{ id: 1, path: '/books/read-along/' }]);
-    mockSession.getServerInfo.mockResolvedValue({ version: '1.2.3', capabilities: ['books'] });
-    mockSession.getSettings.mockResolvedValue({
-      readaloudLocationType: 'CUSTOM_FOLDER',
-      readaloudLocation: '/mnt/books/read-along',
-      importMode: 'reference',
-      aligner: 'whisper',
-      transcriptionEngine: 'whisper',
-      alignmentGranularity: 'word',
-    });
-
-    const result = await makeService().testConnection(user);
-
-    expect(result.problems).not.toContain('target_library_not_book_per_file');
-  });
-
-  it('does not flag target_library_not_book_per_file for a nested location in a book_per_file library', async () => {
-    mockRepo.getSettings.mockResolvedValue(settingsRow({ transport: 'shared-paths' }));
-    mockLibraryService.findOne.mockResolvedValue(libraryRow({ organizationMode: 'book_per_file', allowedFormats: ['epub'] }));
-    mockRepo.findLibraryFolders.mockResolvedValue(DEFAULT_FOLDERS);
-    mockSession.getServerInfo.mockResolvedValue({ version: '1.2.3', capabilities: ['books'] });
-    mockSession.getSettings.mockResolvedValue({
-      readaloudLocationType: 'CUSTOM_FOLDER',
-      readaloudLocation: '/mnt/books/read-along/storyteller',
-      importMode: 'reference',
-      aligner: 'whisper',
-      transcriptionEngine: 'whisper',
-      alignmentGranularity: 'word',
-    });
-
-    const result = await makeService().testConnection(user);
-
-    expect(result.problems).not.toContain('target_library_not_book_per_file');
-  });
-
-  it('does not flag target_library_not_book_per_file when the resolved transport is api-transfer', async () => {
+  it('does not flag the staging folder when the resolved transport is api-transfer', async () => {
     mockRepo.getSettings.mockResolvedValue(settingsRow({ transport: 'api-transfer' }));
-    mockLibraryService.findOne.mockResolvedValue(libraryRow({ organizationMode: 'book_per_folder', allowedFormats: ['epub'] }));
+    mockLibraryService.findOne.mockResolvedValue(libraryRow({ allowedFormats: ['epub'] }));
     mockRepo.findLibraryFolders.mockResolvedValue(DEFAULT_FOLDERS);
     mockSession.getServerInfo.mockResolvedValue({ version: '1.2.3', capabilities: ['books'] });
     mockSession.getSettings.mockResolvedValue({
       readaloudLocationType: 'CUSTOM_FOLDER',
-      readaloudLocation: '/mnt/books/read-along/storyteller',
+      readaloudLocation: '/mnt/books/read-along',
       importMode: 'reference',
       aligner: 'whisper',
       transcriptionEngine: 'whisper',
@@ -761,7 +697,7 @@ describe('StorytellerSettingsService.testConnection', () => {
 
     const result = await makeService().testConnection(user);
 
-    expect(result.problems).not.toContain('target_library_not_book_per_file');
+    expect(result.problems).not.toContain('readaloud_folder_inside_library');
   });
 
   it('reports auth_failed for a 401 from the client', async () => {
@@ -866,26 +802,26 @@ describe('StorytellerSettingsService.testConnection', () => {
  * selection will answer for the same configuration, so the panel never promises a transfer-free
  * build that the build then performs by upload - or the reverse.
  *
- * "Fully viable" is all of: path mappings present, the target folder maps to a remote path, the
- * read-aloud location is a CUSTOM_FOLDER that maps back inside the target folder, and the read-along
- * becomes its own book (book_per_file, or the read-along lands at the target folder root).
+ * Viable is all of: path mappings present, and the read-aloud location is a CUSTOM_FOLDER that maps
+ * to a local staging folder outside every library folder.
  */
 describe('StorytellerSettingsService.testConnection transport contract', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRepo.recordCheck.mockResolvedValue(undefined);
     mockRepo.findLibraryFolders.mockResolvedValue(DEFAULT_FOLDERS);
+    mockRepo.findAllLibraryFolderPaths.mockResolvedValue(ALL_LIBRARY_FOLDERS);
     mockSession.getServerInfo.mockResolvedValue({ version: '3.1.0', capabilities: ['book-upload', 'readaloud-process'] });
   });
 
-  // Only the last rule separates the two: a book_per_folder library whose read-along lands one
-  // folder below the library folder is mapped end to end and still not viable.
+  // Only the last rule separates the two: a staging folder inside a library is mapped end to end
+  // and still not viable.
   function arrangeSharedPaths(transport: string, fullyViable: boolean) {
     mockRepo.getSettings.mockResolvedValue(settingsRow({ transport }));
-    mockLibraryService.findOne.mockResolvedValue(libraryRow({ organizationMode: 'book_per_folder', allowedFormats: ['epub'] }));
+    mockLibraryService.findOne.mockResolvedValue(libraryRow({ allowedFormats: ['epub'] }));
     mockSession.getSettings.mockResolvedValue({
       readaloudLocationType: 'CUSTOM_FOLDER',
-      readaloudLocation: fullyViable ? '/mnt/books/read-along' : '/mnt/books/read-along/storyteller',
+      readaloudLocation: fullyViable ? STAGING_LOCATION : '/mnt/books/read-along/storyteller',
       importMode: 'reference',
       aligner: 'whisper',
       transcriptionEngine: 'whisper',
@@ -912,14 +848,14 @@ describe('StorytellerSettingsService.testConnection transport contract', () => {
     expect(result.sharedPathsReady).toBe(true);
   });
 
-  it('resolves auto to api-transfer when the read-along would not become its own book', async () => {
+  it('resolves auto to api-transfer when the staging folder is inside a library', async () => {
     arrangeSharedPaths('auto', false);
 
     const result = await makeService().testConnection(user);
 
     expect(result.effectiveTransport).toBe('api-transfer');
     expect(result.sharedPathsReady).toBe(false);
-    expect(result.problems).toContain('target_library_not_book_per_file');
+    expect(result.problems).toContain('readaloud_folder_inside_library');
   });
 
   it('resolves a pinned shared-paths to shared-paths when they are fully viable', async () => {
@@ -938,11 +874,11 @@ describe('StorytellerSettingsService.testConnection transport contract', () => {
 
     expect(result.effectiveTransport).toBeNull();
     expect(result.sharedPathsReady).toBe(false);
-    expect(result.problems).toContain('target_library_not_book_per_file');
+    expect(result.problems).toContain('readaloud_folder_inside_library');
   });
 
-  // The folder is mapped, so the specific problem is the organization mode, not the mapping.
-  it('does not blame the path mapping for a read-along that is mapped but not its own book', async () => {
+  // The folder is mapped, so the specific problem is where it is, not the mapping.
+  it('does not blame the path mapping for a staging folder that is mapped but inside a library', async () => {
     arrangeSharedPaths('shared-paths', false);
 
     const result = await makeService().testConnection(user);

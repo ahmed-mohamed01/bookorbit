@@ -1,5 +1,5 @@
-import { rm, stat } from 'fs/promises';
-import { basename, dirname, join } from 'path';
+import { stat } from 'fs/promises';
+import { basename } from 'path';
 import {
   BadGatewayException,
   BadRequestException,
@@ -24,26 +24,15 @@ import { BookService } from '../book/book.service';
 import { EditionLinkRepository } from '../edition-link/edition-link.repository';
 import { LibraryService } from '../library/library.service';
 import { EpubService } from '../reader/epub/epub.service';
-import { ScannerService } from '../scanner/scanner.service';
 import type { StorytellerReadAlongPair } from './storyteller-read-along-status.service';
 import type { StorytellerBookSummary, StorytellerRemoteSettings, StorytellerSession } from './storyteller-client.types';
 import { StorytellerClientError, StorytellerClientService } from './storyteller-client.service';
 import { describeError } from './storyteller-log.utils';
 import { StorytellerReadAlongNotifierService, readAlongNotifyStage, type ReadAlongAttempt } from './storyteller-read-along-notifier.service';
 import { storytellerConfig } from './storyteller.config';
-import {
-  expectedCustomFolderOutputPath,
-  sharedAudioDirectory,
-  storytellerSafeFilepathSegment,
-  toLocalPath,
-  toRemotePath,
-} from './storyteller-path.utils';
-import {
-  StorytellerRepository,
-  type StorytellerAudioFile,
-  type StorytellerBookFileLocation,
-  type StorytellerSourceEpubFile,
-} from './storyteller.repository';
+import { sharedAudioDirectory, toLocalPath, toRemotePath } from './storyteller-path.utils';
+import { StorytellerReadAlongImportService } from './storyteller-read-along-import.service';
+import { StorytellerRepository, type StorytellerAudioFile, type StorytellerSourceEpubFile } from './storyteller.repository';
 import { StorytellerSettingsService, resolveStorytellerTargetFolder } from './storyteller-settings.service';
 
 const MAX_CONCURRENT_BUILDS = 1;
@@ -53,25 +42,17 @@ const WAIT_MAX_DELAY_MS = 60_000;
 const WAIT_ERROR_CAP = 20;
 const MEDIA_LINK_POLL_MS = 2_000;
 const MEDIA_LINK_CEILING_MS = 120_000;
-const COLLECT_POLL_MS = 15_000;
-const COLLECT_RESCAN_MS = 5 * 60_000;
-const COLLECT_CEILING_MS = 15 * 60_000;
 const TERMINAL_WRITE_RETRY_MS = 1_000;
 
 const BUILD_EVENT = 'storyteller.read_along.build';
 const WAIT_EVENT = 'storyteller.read_along.wait';
 const COLLECT_EVENT = 'storyteller.read_along.collect';
-// Sub-operations of a collect get their own event: nested, they would be unmatched [start]/[end] lines.
-const ADOPT_EVENT = 'storyteller.read_along.adopt';
-const ORPHAN_EVENT = 'storyteller.read_along.clear_orphan';
-const CLAIM_EVENT = 'storyteller.read_along.claim';
 const LINK_EVENT = 'storyteller.read_along.link';
 const REGISTER_EVENT = 'storyteller.read_along.register';
 const UPLOAD_EVENT = 'storyteller.read_along.upload';
 const CLEANUP_EVENT = 'storyteller.read_along.cleanup';
 // Its own event: a second [fail] under the build event would read as a second failed build.
 const FAIL_WRITE_EVENT = 'storyteller.read_along.fail_write';
-const OVERWRITE_EVENT = 'storyteller.read_along.overwrite';
 const STAMP_EVENT = 'storyteller.read_along.stamp_link';
 const SLOT_EVENT = 'storyteller.read_along.slot_release';
 const MATCH_EXISTING_EVENT = 'storyteller.read_along.match_existing';
@@ -98,10 +79,10 @@ function storytellerRefusalText(refusal: StorytellerClientError): string {
  */
 const PINNED_SHARED_PATHS_PROBLEM: Record<string, string> = {
   no_path_mappings: 'no path mappings are configured',
-  target_folder_not_mapped: 'the target folder is not covered by a path mapping',
   readaloud_not_custom_folder: 'its read-along location is not set to a custom folder',
-  readaloud_folder_outside_target: 'its read-along folder is outside the target folder',
-  readaloud_folder_not_its_own_book: 'the read-along would not become its own book in the target library',
+  readaloud_folder_not_mapped: 'its read-along folder is not covered by a path mapping',
+  readaloud_folder_inside_library:
+    'its read-along folder is inside a library folder, where every read-along would be scanned with the audiobook tags Storyteller writes into it',
 };
 
 function pinnedSharedPathsMessage(reason: string | null): string {
@@ -164,11 +145,11 @@ interface PreparedBuild {
   sourceEpub: StorytellerSourceEpubFile;
   audioFiles: StorytellerAudioFile[];
   targetLibraryId: number;
-  targetFolderPath: string;
-  organizationMode: string;
+  targetFolderId: number;
+  /** Every library folder on the instance, which Storyteller's staging folder must stay out of. */
+  libraryFolderPaths: string[];
   transport: StorytellerEffectiveTransport;
   transportReason: string | null;
-  outputWouldCollide: boolean;
   signal: AbortSignal;
 }
 
@@ -188,17 +169,6 @@ interface RegisteredBuild extends PreparedBuild {
    */
   remoteOwnsAllSources: boolean;
 }
-
-/**
- * What sits at a collected path: the book this build claimed, or the book that refused it and why.
- * Both are null when nothing was ever indexed there, which is the plain timeout and not an overwrite.
- */
-interface CollectedFile {
-  outputBookId: number | null;
-  refusal: { bookId: number; reason: string } | null;
-}
-
-const NOTHING_COLLECTED: CollectedFile = { outputBookId: null, refusal: null };
 
 function defaultSleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -229,11 +199,8 @@ function pathIsWithinFolder(candidate: string, folderPath: string): boolean {
   return candidate === folder || candidate.startsWith(`${folder}/`);
 }
 
-/** Enough of the Storyteller book id to tell two outputs of one pair apart without burying the title. */
-const REMOTE_KEY_CHARS = 8;
-
-function remoteOutputKey(storytellerBookUuid: string): string {
-  return storytellerSafeFilepathSegment(storytellerBookUuid).slice(0, REMOTE_KEY_CHARS) || 'unknown';
+function isInsideAnyFolder(candidate: string, folderPaths: readonly string[]): boolean {
+  return folderPaths.some((folderPath) => pathIsWithinFolder(withoutTrailingSlashes(candidate), folderPath));
 }
 
 function buildPairKey(pair: StorytellerReadAlongPair): string {
@@ -262,8 +229,8 @@ export class StorytellerReadAlongBuildService {
     private readonly editionLinks: EditionLinkRepository,
     private readonly bookService: BookService,
     private readonly libraryService: LibraryService,
-    private readonly scannerService: ScannerService,
     private readonly epubService: EpubService,
+    private readonly importService: StorytellerReadAlongImportService,
     private readonly notifier: StorytellerReadAlongNotifierService,
     @Optional() @Inject(STORYTELLER_SLEEP) sleep?: StorytellerSleep,
   ) {
@@ -399,12 +366,17 @@ export class StorytellerReadAlongBuildService {
       phase = 'collect';
       this.commit(pair, signal);
       void this.notifier.progress(user.id, attempt, readAlongNotifyStage(phase, null), null);
-      const collected = await this.collect(buildId, pair, registered, remoteBook, options);
-
-      phase = 'link';
       const oldOutputBookId = options.force === true ? (options.oldOutputBookId ?? null) : null;
       // Read fresh, before attachToLink overwrites the column: `pair.link` is a request-time snapshot.
       const linkedReadAlongBookId = oldOutputBookId === null ? null : await this.findLinkedReadAlongBook(pair);
+      const replaceBookId =
+        oldOutputBookId !== null && (await this.previousOutputRefusal(buildId, pair, oldOutputBookId, linkedReadAlongBookId)) === null
+          ? oldOutputBookId
+          : null;
+      const cleanUpRemote = options.cleanUpRemote ?? registered.settings.deleteRemoteAfterImport;
+      const collected = await this.collect(buildId, pair, registered, remoteBook, user, replaceBookId, cleanUpRemote);
+
+      phase = 'link';
       await this.attachToLink(buildId, pair, collected.outputBookId);
 
       await this.repo.updateBuild(buildId, {
@@ -417,16 +389,16 @@ export class StorytellerReadAlongBuildService {
       });
       await this.stampAttachedLinkBestEffort(buildId, pair.linkId);
       void this.notifier.ready(user.id, attempt, collected.outputBookId, registered.targetLibraryId);
-      // Dropped only once the replacement is on disk and linked: a build can sit in the wait loop for hours.
-      if (oldOutputBookId !== null) {
+      // A rebuild that could not replace its previous output in place filed a new book; the old one
+      // is dropped only once the new one is on disk and linked.
+      if (oldOutputBookId !== null && !collected.replaced) {
         await this.removePreviousOutputBestEffort(buildId, pair, oldOutputBookId, collected.outputBookId, linkedReadAlongBookId, user);
       }
-      const cleanUpRemote = options.cleanUpRemote ?? registered.settings.deleteRemoteAfterImport;
       if (cleanUpRemote) {
-        await this.cleanUpRemoteBestEffort(buildId, registered, collected.remoteReadaloudIsLocal);
+        await this.cleanUpRemoteBestEffort(buildId, registered, remoteBook);
       }
       this.logger.log(
-        `[${BUILD_EVENT}] [end] textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} buildId=${buildId} durationMs=${Date.now() - startedAt} transport=${collected.transport} outputBookId=${collected.outputBookId} storytellerBookUuid=${registered.storytellerBookUuid} - read-along build completed`,
+        `[${BUILD_EVENT}] [end] textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} buildId=${buildId} durationMs=${Date.now() - startedAt} transport=${collected.transport} outputBookId=${collected.outputBookId} replaced=${collected.replaced} storytellerBookUuid=${registered.storytellerBookUuid} - read-along build completed`,
       );
     } catch (error) {
       if (error instanceof ReadAlongRemoteCancelledError) {
@@ -579,34 +551,15 @@ export class StorytellerReadAlongBuildService {
     if (audioFiles.length === 0) throw new BadRequestException('The audio edition has no audio files');
 
     const session = this.client.createSession(connection);
-    const [, remoteSettings] = await Promise.all([session.getServerInfo(), session.getSettings()]);
+    const [[, remoteSettings], libraryFolderPaths] = await Promise.all([
+      Promise.all([session.getServerInfo(), session.getSettings()]),
+      this.repo.findAllLibraryFolderPaths(),
+    ]);
     throwIfCancelled(signal);
-    const selected = this.selectTransport(settings, remoteSettings, folder.path, library.organizationMode);
+    const selected = this.selectTransport(settings, remoteSettings, libraryFolderPaths);
     if (settings.transport === 'shared-paths' && selected.transport !== 'shared-paths') {
       throw new BadRequestException(pinnedSharedPathsMessage(selected.reason));
     }
-    const collisionStartedAt = Date.now();
-    const collision = (await this.mightWriteToReadaloudFolder(pair, remoteSettings, selected.transport))
-      ? await this.findPredictedOutputCollision(buildId, pair, targetLibraryId, settings, remoteSettings.readaloudLocation)
-      : null;
-    if (collision !== null) {
-      const durationMs = Date.now() - collisionStartedAt;
-      if (settings.transport === 'shared-paths') {
-        const refused = new ConflictException(
-          `Storyteller would write this read-along at ${collision.path}, which belongs to book ${collision.bookId}`,
-        );
-        const { errorClass, message } = describeError(refused);
-        this.logger.warn(
-          `[${OVERWRITE_EVENT}] [fail] buildId=${buildId} textBookId=${pair.textBookId} ownerBookId=${collision.bookId} path="${sanitizeLogValue(collision.path)}" durationMs=${durationMs} reason="${sanitizeLogValue(collision.reason)}" errorClass=${errorClass} error="${sanitizeLogValue(message)}" - shared paths would write this read-along over another book file`,
-        );
-        throw refused;
-      }
-      this.logger.warn(
-        `[${OVERWRITE_EVENT}] [end] buildId=${buildId} textBookId=${pair.textBookId} ownerBookId=${collision.bookId} path="${sanitizeLogValue(collision.path)}" durationMs=${durationMs} reason="${sanitizeLogValue(collision.reason)}" overwritten=false transport=api-transfer - shared paths would have written this read-along over another book file`,
-      );
-    }
-    const transport = collision === null ? selected.transport : 'api-transfer';
-    const transportReason = collision === null ? selected.reason : 'readaloud_path_owned_by_another_book';
 
     throwIfCancelled(signal);
     // `transport` is deliberately not persisted here: on a resumed build this would overwrite the
@@ -624,92 +577,36 @@ export class StorytellerReadAlongBuildService {
       sourceEpub,
       audioFiles,
       targetLibraryId,
-      targetFolderPath: folder.path,
-      organizationMode: library.organizationMode,
-      transport,
-      transportReason,
-      outputWouldCollide: collision !== null,
+      targetFolderId: folder.id,
+      libraryFolderPaths,
+      transport: selected.transport,
+      transportReason: selected.reason,
       signal,
     };
   }
 
+  /**
+   * Shared paths hand Storyteller the sources by reference, and it then writes the read-along into
+   * its custom folder whatever this build intends. That folder is a staging area BookOrbit files
+   * from, so it has to be one this instance can read and no library scans: a scan would index the
+   * file with the audiobook tags Storyteller stamps over the ebook's title and authors.
+   */
   private selectTransport(
     settings: StorytellerSettings,
     remoteSettings: StorytellerRemoteSettings,
-    targetFolderPath: string,
-    organizationMode: string,
+    libraryFolderPaths: readonly string[],
   ): { transport: StorytellerEffectiveTransport; reason: string | null } {
     if (settings.transport === 'api-transfer') return { transport: 'api-transfer', reason: null };
     if (settings.pathMappings.length === 0) return { transport: 'api-transfer', reason: 'no_path_mappings' };
-    if (!toRemotePath(targetFolderPath, settings.pathMappings)) return { transport: 'api-transfer', reason: 'target_folder_not_mapped' };
     if (remoteSettings.readaloudLocationType !== 'CUSTOM_FOLDER' || !remoteSettings.readaloudLocation) {
       return { transport: 'api-transfer', reason: 'readaloud_not_custom_folder' };
     }
     const localReadaloudPath = toLocalPath(remoteSettings.readaloudLocation, settings.pathMappings);
-    if (!localReadaloudPath || !pathIsWithinFolder(localReadaloudPath, targetFolderPath)) {
-      return { transport: 'api-transfer', reason: 'readaloud_folder_outside_target' };
-    }
-    if (!this.readAlongBecomesItsOwnBook(localReadaloudPath, targetFolderPath, organizationMode)) {
-      return { transport: 'api-transfer', reason: 'readaloud_folder_not_its_own_book' };
+    if (!localReadaloudPath) return { transport: 'api-transfer', reason: 'readaloud_folder_not_mapped' };
+    if (isInsideAnyFolder(localReadaloudPath, libraryFolderPaths)) {
+      return { transport: 'api-transfer', reason: 'readaloud_folder_inside_library' };
     }
     return { transport: 'shared-paths', reason: null };
-  }
-
-  /**
-   * Shared paths need the read-along to become its own book. The scanner gives every root-level file
-   * its own book whatever the organization mode, but one folder deeper a `book_per_folder` library
-   * folds the whole subfolder into one book - which a later rebuild would delete entire.
-   *
-   * `folderPath` is the folder the read-along file itself lands in, not the library folder.
-   */
-  private readAlongBecomesItsOwnBook(folderPath: string, targetFolderPath: string, organizationMode: string): boolean {
-    if (organizationMode === 'book_per_file') return true;
-    return withoutTrailingSlashes(folderPath) === withoutTrailingSlashes(targetFolderPath);
-  }
-
-  /**
-   * Whether this build can end up processing a book Storyteller holds by reference, which is what
-   * makes it write into the one global read-along folder. The transport this run selected settles
-   * that only for a registration this run makes: `register` reinstates the transport stored with a
-   * remembered book, so a run selecting api-transfer still processes a reference import whose
-   * output lands in that folder.
-   */
-  private async mightWriteToReadaloudFolder(
-    pair: StorytellerReadAlongPair,
-    remoteSettings: StorytellerRemoteSettings,
-    selectedTransport: StorytellerEffectiveTransport,
-  ): Promise<boolean> {
-    if (remoteSettings.readaloudLocationType !== 'CUSTOM_FOLDER' || !remoteSettings.readaloudLocation) return false;
-    if (selectedTransport === 'shared-paths') return true;
-    const current = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
-    return current?.storytellerBookUuid != null && current.transport === 'shared-paths';
-  }
-
-  /**
-   * `readaloudLocation` is one global Storyteller setting and BookOrbit does not choose the filename,
-   * so every shared-paths build writes `<folder>/<title>.epub` with no discriminator. Two books whose
-   * titles sanitize alike land on one path, and by the time the collect refuses to claim the file the
-   * other book's read-along has already been overwritten.
-   *
-   * Best effort only: it guesses with BookOrbit's own title, which is user-edited and
-   * provider-refreshed and need not be the one Storyteller reads out of the EPUB. Missing a real
-   * collision leaves the overwrite to the post-hoc warning; predicting one that never happens
-   * refuses a pinned build, or uploads a pair that could have been shared.
-   */
-  private async findPredictedOutputCollision(
-    buildId: number,
-    pair: StorytellerReadAlongPair,
-    targetLibraryId: number,
-    settings: StorytellerSettings,
-    readaloudLocation: string | null,
-  ): Promise<{ path: string; bookId: number; reason: string } | null> {
-    const identity = await this.repo.findBookTitleAndAuthors(pair.textBookId);
-    const predictedPath = toLocalPath(expectedCustomFolderOutputPath(readaloudLocation, identity?.title || 'Read-along'), settings.pathMappings);
-    if (!predictedPath) return null;
-    const located = await this.repo.findBookFileByAbsolutePath(predictedPath);
-    if (!located) return null;
-    const reason = await this.collectedBookRefusal(buildId, pair, targetLibraryId, located, predictedPath);
-    return reason === null ? null : { path: predictedPath, bookId: located.bookId, reason };
   }
 
   private async findMalformedContent(epubPath: string): Promise<{ href: string; message: string } | null> {
@@ -752,11 +649,7 @@ export class StorytellerReadAlongBuildService {
     await this.repo.updateBuild(buildId, { phase: 'register' });
     const current = await this.repo.findBuildByPair(prepared.pair.textBookId, prepared.pair.audioBookId);
     let storytellerBookUuid = current?.storytellerBookUuid ?? null;
-    // A predicted collision is what makes the remembered book unusable rather than the transport:
-    // processing it again writes the read-along to the colliding path whatever this build intended,
-    // so the book is abandoned - never deleted, it holds the user's own files - and the pair is
-    // uploaded instead, under a filename carrying its own discriminators.
-    if (storytellerBookUuid && (prepared.outputWouldCollide || !(await prepared.session.getBook(storytellerBookUuid)))) {
+    if (storytellerBookUuid && !(await prepared.session.getBook(storytellerBookUuid))) {
       storytellerBookUuid = null;
       await this.repo.updateBuild(buildId, { storytellerBookUuid: null });
     }
@@ -1212,43 +1105,44 @@ export class StorytellerReadAlongBuildService {
     pair: StorytellerReadAlongPair,
     registered: RegisteredBuild,
     remoteBook: StorytellerBookSummary,
-    options: StorytellerRunBuildOptions,
-  ): Promise<{ outputBookId: number; transport: StorytellerEffectiveTransport; remoteReadaloudIsLocal: boolean }> {
+    user: RequestUser,
+    replaceBookId: number | null,
+    cleanUpRemote: boolean,
+  ): Promise<{ outputBookId: number; transport: StorytellerEffectiveTransport; replaced: boolean }> {
     const startedAt = Date.now();
-    this.logger.log(`[${COLLECT_EVENT}] [start] buildId=${buildId} transport=${registered.transport} - read-along collection started`);
+    this.logger.log(
+      `[${COLLECT_EVENT}] [start] buildId=${buildId} transport=${registered.transport} replaceBookId=${replaceBookId ?? 'none'} - read-along collection started`,
+    );
     try {
       // Persisted on entry, or a download running for minutes reports as the wait phase with stale progress.
       await this.repo.updateBuild(buildId, { phase: 'collect' });
-      let outputBookId: number | null = null;
-      const identity = await this.repo.findBookTitleAndAuthors(pair.textBookId);
-      const title = remoteBook.title || identity?.title || 'Read-along';
-      // Where the file is decides how to collect it, not how the book was registered: trusting a
-      // remembered transport means waiting out the whole collect window for a file that was never
-      // going to appear.
-      let transport: StorytellerEffectiveTransport = this.readaloudIsInTargetFolder(registered, remoteBook) ? 'shared-paths' : 'api-transfer';
+      const stagedPath = await this.findStagedReadaloud(registered, remoteBook);
+      // Where the file is decides how to collect it, not how the book was registered.
+      const transport: StorytellerEffectiveTransport = stagedPath === null ? 'api-transfer' : 'shared-paths';
       if (transport !== registered.transport) await this.repo.updateBuild(buildId, { transport });
-      if (transport === 'shared-paths') {
-        outputBookId = await this.collectFromSharedPath(buildId, pair, registered, title, remoteBook);
-        if (outputBookId === null) {
-          transport = 'api-transfer';
-          await this.repo.updateBuild(buildId, { transport });
-        }
-      }
-      if (outputBookId === null) {
-        outputBookId = await this.collectByTransfer(buildId, pair, registered, title, options);
-      }
-      if (outputBookId === null) {
-        throw new BadGatewayException('The read-along was collected but never appeared in the read-along library');
-      }
+
+      const imported = await this.importService.importReadAlong({
+        buildId,
+        textBookId: pair.textBookId,
+        audioBookId: pair.audioBookId,
+        userId: user.id,
+        session: registered.session,
+        storytellerBookUuid: registered.storytellerBookUuid,
+        stagedPath,
+        consumeStaged: cleanUpRemote,
+        targetLibraryId: registered.targetLibraryId,
+        targetFolderId: registered.targetFolderId,
+        replaceBookId,
+      });
 
       // Recorded as soon as it is known: attaching to the link can fail, and its error says the book
       // was kept without the row saying which book.
-      await this.repo.updateBuild(buildId, { outputBookId });
+      await this.repo.updateBuild(buildId, { outputBookId: imported.outputBookId });
 
       this.logger.log(
-        `[${COLLECT_EVENT}] [end] buildId=${buildId} durationMs=${Date.now() - startedAt} transport=${transport} outputBookId=${outputBookId} - read-along collection completed`,
+        `[${COLLECT_EVENT}] [end] buildId=${buildId} durationMs=${Date.now() - startedAt} transport=${transport} outputBookId=${imported.outputBookId} replaced=${imported.replaced} - read-along collection completed`,
       );
-      return { outputBookId, transport, remoteReadaloudIsLocal: this.readaloudIsLocallyVisible(registered, remoteBook) };
+      return { outputBookId: imported.outputBookId, transport, replaced: imported.replaced };
     } catch (error) {
       if (registered.signal.aborted) {
         this.logger.log(
@@ -1265,287 +1159,36 @@ export class StorytellerReadAlongBuildService {
   }
 
   /**
-   * Whether Storyteller's read-along file sits somewhere this instance can see, which is the
-   * question remote cleanup asks and is not the transport: the transport records how BookOrbit got
-   * its copy, and `collect` downgrades it to api-transfer whenever a shared-path collect is refused
-   * - a file left exactly where it was.
+   * Storyteller's own output, when it sits in a staging folder this instance can read. One inside a
+   * library folder is never taken from there: it has already been scanned as a book of its own, with
+   * Storyteller's metadata, so the build downloads a copy instead and leaves that book to the user.
    */
-  private readaloudIsLocallyVisible(registered: RegisteredBuild, remoteBook: StorytellerBookSummary): boolean {
-    // An unreported path reads as "not in a library": `removesBook` ANDs this with
-    // `remoteOwnsAllSources`, which only a pure upload sets, and Storyteller keeps an uploaded
-    // book's read-along in its own assets whatever CUSTOM_FOLDER says.
-    // Being covered by a path mapping is not the test - a broad mapping rewrites Storyteller's own
-    // asset directory too - so this asks the library-folder question the collect asks.
-    if (!remoteBook.readaloudPath) return false;
-    const local = toLocalPath(remoteBook.readaloudPath, registered.settings.pathMappings);
-    return local !== null && pathIsWithinFolder(local, registered.targetFolderPath);
-  }
-
-  private readaloudIsInTargetFolder(registered: RegisteredBuild, remoteBook: StorytellerBookSummary): boolean {
-    if (!remoteBook.readaloudPath) return registered.transport === 'shared-paths';
+  private async findStagedReadaloud(registered: RegisteredBuild, remoteBook: StorytellerBookSummary): Promise<string | null> {
+    if (!remoteBook.readaloudPath) return null;
     const localPath = toLocalPath(remoteBook.readaloudPath, registered.settings.pathMappings);
-    return localPath !== null && pathIsWithinFolder(localPath, registered.targetFolderPath);
-  }
-
-  private async collectFromSharedPath(
-    buildId: number,
-    pair: StorytellerReadAlongPair,
-    registered: RegisteredBuild,
-    title: string,
-    remoteBook: StorytellerBookSummary,
-  ): Promise<number | null> {
-    const startedAt = Date.now();
-    // Storyteller's reported path wins over one derived from the title: the expected-path helper is
-    // a port of its sanitizer, and a port can drift.
-    const remoteOutputPath = remoteBook.readaloudPath ?? expectedCustomFolderOutputPath(registered.remoteSettings.readaloudLocation, title);
-    const localOutputPath = toLocalPath(remoteOutputPath, registered.settings.pathMappings);
-    if (!localOutputPath || !pathIsWithinFolder(localOutputPath, registered.targetFolderPath)) return null;
-    // Inside the folder is not enough: claiming a file the scan folded into a subfolder's single
-    // book would take every other read-along in that folder with it on the next rebuild.
-    if (!this.readAlongBecomesItsOwnBook(dirname(localOutputPath), registered.targetFolderPath, registered.organizationMode)) return null;
-    const collected = await this.awaitScannedFile(buildId, pair, registered.targetLibraryId, localOutputPath);
-    if (collected.refusal !== null) this.warnReadAlongWasOverwritten(buildId, pair, collected.refusal, localOutputPath, startedAt);
-    return collected.outputBookId;
-  }
-
-  /**
-   * A refused claim at the shared path means Storyteller wrote over a file another book owns: the
-   * build recovers by downloading its own copy, while that book keeps a row pointing at an alignment
-   * of a different book entirely. The claim refusal alone does not say a file was destroyed.
-   *
-   * Nothing is thrown, so the conflict the pre-flight guard would have raised for this same path is
-   * built here only to name the `[fail]` line's error class and message.
-   */
-  private warnReadAlongWasOverwritten(
-    buildId: number,
-    pair: StorytellerReadAlongPair,
-    refusal: { bookId: number; reason: string },
-    localOutputPath: string,
-    startedAt: number,
-  ): void {
-    const overwrote = new ConflictException(`Storyteller wrote this read-along at ${localOutputPath}, which belongs to book ${refusal.bookId}`);
-    const { errorClass, message } = describeError(overwrote);
-    this.logger.warn(
-      `[${OVERWRITE_EVENT}] [fail] buildId=${buildId} textBookId=${pair.textBookId} ownerBookId=${refusal.bookId} path="${sanitizeLogValue(localOutputPath)}" durationMs=${Date.now() - startedAt} reason="${sanitizeLogValue(refusal.reason)}" errorClass=${errorClass} error="${sanitizeLogValue(message)}" - Storyteller wrote this read-along over another book file`,
-    );
-  }
-
-  /**
-   * Waits for the library scan to index a file already on disk, whichever route put it there.
-   *
-   * A rejected candidate ends the wait - polling will not change which row owns the path - and reads
-   * as a miss, so the shared-paths route can fall back to a download.
-   *
-   * The one recovery rescan is spent only on a scan that was actually accepted: a scan already in
-   * flight swallows the request and has usually walked the folder before the file was written.
-   */
-  private async awaitScannedFile(
-    buildId: number,
-    pair: StorytellerReadAlongPair,
-    libraryId: number,
-    localOutputPath: string,
-  ): Promise<CollectedFile> {
-    await this.startScanIgnoringConflict(libraryId);
-
-    const startedAt = Date.now();
-    let rescanned = false;
-    while (Date.now() - startedAt < COLLECT_CEILING_MS) {
-      const found = await this.repo.findBookFileByAbsolutePath(localOutputPath);
-      if (found) return this.claimCollectedBook(buildId, pair, libraryId, found, localOutputPath);
-      const elapsed = Date.now() - startedAt;
-      if (!rescanned && elapsed >= COLLECT_RESCAN_MS) {
-        rescanned = await this.startScanIgnoringConflict(libraryId);
-      }
-      await this.sleep(Math.min(COLLECT_POLL_MS, COLLECT_CEILING_MS - elapsed));
-    }
-    return NOTHING_COLLECTED;
-  }
-
-  /** True when a scan was accepted; false when one was already running and this request was refused. */
-  private async startScanIgnoringConflict(libraryId: number): Promise<boolean> {
-    try {
-      await this.scannerService.startScan(libraryId, 'manual');
-      return true;
-    } catch (error) {
-      if (!(error instanceof ConflictException)) throw error;
-      return false;
-    }
-  }
-
-  /**
-   * Downloads into the library folder and lets the scanner index it, rather than using the web
-   * upload pipeline: that pipeline caps every file at the browser upload limit a read-along carrying
-   * narration audio routinely exceeds, and this leaves one way a read-along is ever collected. The
-   * download is atomic, so no scan can catch a half-written book.
-   */
-  private async collectByTransfer(
-    buildId: number,
-    pair: StorytellerReadAlongPair,
-    registered: RegisteredBuild,
-    title: string,
-    options: StorytellerRunBuildOptions,
-  ): Promise<number | null> {
-    // Two discriminators: the build id keeps two pairs sharing a title apart, and the Storyteller
-    // book keeps two outputs of the same pair apart - a pair keeps one build row for life, so the id
-    // alone is constant forever and a rebuild would land on top of the output it replaces.
-    const suffix = ` (read-along ${buildId}-${remoteOutputKey(registered.storytellerBookUuid)}).epub`;
-    const safeTitle = storytellerSafeFilepathSegment(title) || 'Read-along';
-    const destination = join(registered.targetFolderPath, storytellerSafeFilepathSegment(safeTitle, suffix));
-
-    const adopted = await this.adoptOrClearDestination(buildId, pair, registered.targetLibraryId, destination, options);
-    if (adopted !== null) return adopted;
-
-    await registered.session.downloadReadaloud(registered.storytellerBookUuid, destination);
-    return (await this.awaitScannedFile(buildId, pair, registered.targetLibraryId, destination)).outputBookId;
-  }
-
-  /**
-   * Lets a retry converge on what its own previous attempt left behind: the filename names the
-   * Storyteller book, a retry resumes that same book, so anything at that exact path came from an
-   * earlier attempt at this same output. Without this the download - published with a hard link, so
-   * EEXIST rather than an overwrite - can never succeed again.
-   *
-   * Adoption belongs to a retry and nothing else. A rebuild registers a new Storyteller book and so
-   * a new filename, and an occupied path means something it cannot account for: a reason to refuse,
-   * never a reason to clear the path. The one exception is a rebuild a restart cut short in collect:
-   * the book there is the row's own output, which that same attempt downloaded before the restart.
-   */
-  private async adoptOrClearDestination(
-    buildId: number,
-    pair: StorytellerReadAlongPair,
-    targetLibraryId: number,
-    destination: string,
-    options: StorytellerRunBuildOptions,
-  ): Promise<number | null> {
-    if (!(await this.fileExists(destination))) return null;
-    const startedAt = Date.now();
-    this.logger.log(
-      `[${ADOPT_EVENT}] [start] buildId=${buildId} path="${sanitizeLogValue(destination)}" force=${options.force === true} - occupied download destination inspected`,
-    );
-
-    const owner = await this.repo.findBookFileByAbsolutePath(destination);
-    if (options.force === true && !(owner && (await this.repo.findBuildByOutputBook(owner.bookId))?.id === buildId)) {
-      const refused = new ConflictException('A rebuild cannot adopt or clear a download destination that is already occupied');
-      const { errorClass, message } = describeError(refused);
-      this.logger.warn(
-        `[${ADOPT_EVENT}] [fail] buildId=${buildId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - the download destination could not be adopted`,
-      );
-      throw refused;
-    }
-
-    if (!owner) {
-      await this.removeOrphanedDownload(buildId, destination);
-      this.logger.log(
-        `[${ADOPT_EVENT}] [end] buildId=${buildId} durationMs=${Date.now() - startedAt} adopted=false cleared=true - an orphaned download was cleared`,
-      );
-      return null;
-    }
-
-    const claimed = await this.claimCollectedBook(buildId, pair, targetLibraryId, owner, destination);
-    if (claimed.outputBookId === null) {
-      const refused = new ConflictException('A book this read-along build did not produce already owns the download destination');
-      const { errorClass, message } = describeError(refused);
-      this.logger.warn(
-        `[${ADOPT_EVENT}] [fail] buildId=${buildId} candidateBookId=${owner.bookId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - the download destination could not be adopted`,
-      );
-      throw refused;
-    }
-    this.logger.log(
-      `[${ADOPT_EVENT}] [end] buildId=${buildId} durationMs=${Date.now() - startedAt} outputBookId=${claimed.outputBookId} adopted=true - a previous attempt's read-along was adopted`,
-    );
-    return claimed.outputBookId;
-  }
-
-  private async removeOrphanedDownload(buildId: number, destination: string): Promise<void> {
-    const startedAt = Date.now();
-    this.logger.log(`[${ORPHAN_EVENT}] [start] buildId=${buildId} path="${sanitizeLogValue(destination)}" - orphaned read-along removal started`);
-    try {
-      await rm(destination, { force: true });
-      this.logger.log(
-        `[${ORPHAN_EVENT}] [end] buildId=${buildId} path="${sanitizeLogValue(destination)}" durationMs=${Date.now() - startedAt} - orphaned read-along removed`,
-      );
-    } catch (error) {
-      const { errorClass, message } = describeError(error);
-      this.logger.error(
-        `[${ORPHAN_EVENT}] [fail] buildId=${buildId} path="${sanitizeLogValue(destination)}" durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - orphaned read-along removal failed`,
-      );
-      throw error;
-    }
+    if (localPath === null || isInsideAnyFolder(localPath, registered.libraryFolderPaths)) return null;
+    return (await this.fileExists(localPath)) ? localPath : null;
   }
 
   private fileExists(path: string): Promise<boolean> {
     return stat(path).then(
-      () => true,
+      (info) => info.isFile(),
       () => false,
     );
   }
 
   /**
-   * A path can be owned by a book this build never produced - the shared-paths route collects a flat
-   * `<title>.epub` with no discriminator - and adopting one makes the user's own book this build's
-   * output, which a later force rebuild deletes, files and all.
-   *
-   * The library is checked first because it is the one thing the path cannot tell you:
-   * `book_files.absolute_path` is unique instance-wide while libraries may cover overlapping
-   * folders, so another library's scan can index the file first and, in `book_per_folder`, own the
-   * folder-book for the entire read-along directory - which every later refusal here would pass.
-   */
-  private async claimCollectedBook(
-    buildId: number,
-    pair: StorytellerReadAlongPair,
-    targetLibraryId: number,
-    located: StorytellerBookFileLocation,
-    collectedPath: string,
-  ): Promise<CollectedFile> {
-    const startedAt = Date.now();
-    const bookId = located.bookId;
-    this.logger.log(
-      `[${CLAIM_EVENT}] [start] buildId=${buildId} candidateBookId=${bookId} candidateLibraryId=${located.libraryId} targetLibraryId=${targetLibraryId} - collected book inspected`,
-    );
-
-    const reason = await this.collectedBookRefusal(buildId, pair, targetLibraryId, located, collectedPath);
-    if (reason === null) {
-      this.logger.log(
-        `[${CLAIM_EVENT}] [end] buildId=${buildId} candidateBookId=${bookId} durationMs=${Date.now() - startedAt} claimed=true - collected book claimed as this build output`,
-      );
-      return { outputBookId: bookId, refusal: null };
-    }
-    this.logger.warn(
-      `[${CLAIM_EVENT}] [end] buildId=${buildId} candidateBookId=${bookId} durationMs=${Date.now() - startedAt} claimed=false reason="${sanitizeLogValue(reason)}" - collected book is not this build output`,
-    );
-    return { outputBookId: null, refusal: { bookId, reason } };
-  }
-
-  /** Why a book at a read-along path is not this build's output, or null when it is. */
-  private async collectedBookRefusal(
-    buildId: number,
-    pair: StorytellerReadAlongPair,
-    targetLibraryId: number,
-    located: StorytellerBookFileLocation,
-    collectedPath: string,
-  ): Promise<string | null> {
-    const bookId = located.bookId;
-    if (located.libraryId !== targetLibraryId) {
-      return `the book belongs to library ${located.libraryId}, not the library this build wrote to`;
-    }
-    if (bookId === pair.textBookId || bookId === pair.audioBookId) return 'the book is the pair own text or audio edition';
-    const owningBuild = await this.repo.findBuildByOutputBook(bookId);
-    if (owningBuild && owningBuild.id !== buildId) return `the book is read-along build ${owningBuild.id} output`;
-    // A book can pass every check above and still be the user's. A read-along this build produced
-    // is exactly one file, so anything else it owns says it is not that book.
-    if (await this.repo.hasContentFileOtherThan(bookId, collectedPath)) return 'the book holds content files this build did not produce';
-    return null;
-  }
-
-  /**
    * Reclaims Storyteller's disk once BookOrbit holds the read-along. Deleting a Storyteller book
    * deletes the files attached to it, so the whole book only goes when Storyteller owns every source
-   * (an upload, and nothing else) and its read-along is not somewhere this instance can see.
-   * Anything else drops only the processing cache and leaves the book alone.
+   * (an upload, and nothing else) and its read-along is not inside a library folder, where the
+   * deletion would take a file BookOrbit scans. Anything else drops only the processing cache and
+   * leaves the book alone.
    */
-  private async cleanUpRemoteBestEffort(buildId: number, registered: RegisteredBuild, remoteReadaloudIsLocal: boolean): Promise<void> {
+  private async cleanUpRemoteBestEffort(buildId: number, registered: RegisteredBuild, remoteBook: StorytellerBookSummary): Promise<void> {
     const startedAt = Date.now();
-    const removesBook = registered.remoteOwnsAllSources && !remoteReadaloudIsLocal;
+    const readaloudPath = remoteBook.readaloudPath ? toLocalPath(remoteBook.readaloudPath, registered.settings.pathMappings) : null;
+    const removesBook =
+      registered.remoteOwnsAllSources && !(readaloudPath !== null && isInsideAnyFolder(readaloudPath, registered.libraryFolderPaths));
     const target = removesBook ? 'remote_book' : 'remote_cache';
     this.logger.log(
       `[${CLEANUP_EVENT}] [start] buildId=${buildId} storytellerBookUuid=${registered.storytellerBookUuid} target=${target} - Storyteller cleanup started`,
@@ -1584,7 +1227,10 @@ export class StorytellerReadAlongBuildService {
     this.logger.log(
       `[${CLEANUP_EVENT}] [start] buildId=${buildId} outputBookId=${outputBookId} target=previous_output - previous read-along removal started`,
     );
-    const refusal = await this.previousOutputRefusal(buildId, pair, outputBookId, newOutputBookId, linkedReadAlongBookId);
+    const refusal =
+      outputBookId === newOutputBookId
+        ? 'the rebuild resolved to the same book'
+        : await this.previousOutputRefusal(buildId, pair, outputBookId, linkedReadAlongBookId);
     if (refusal !== null) {
       this.logger.warn(
         `[${CLEANUP_EVENT}] [end] buildId=${buildId} outputBookId=${outputBookId} target=previous_output durationMs=${Date.now() - startedAt} removed=false reason="${sanitizeLogValue(refusal)}" - previous read-along removal refused`,
@@ -1605,15 +1251,16 @@ export class StorytellerReadAlongBuildService {
     }
   }
 
+  /**
+   * Why a rebuild may not touch its previous output, or null when it may: both replacing its file in
+   * place and deleting it act on a book this build has to show it produced.
+   */
   private async previousOutputRefusal(
     buildId: number,
     pair: StorytellerReadAlongPair,
     outputBookId: number,
-    newOutputBookId: number,
     linkedReadAlongBookId: number | null,
   ): Promise<string | null> {
-    // A shared-path rebuild overwrites the old file in place, so there is nothing to remove.
-    if (outputBookId === newOutputBookId) return 'the rebuild resolved to the same book';
     if (outputBookId === pair.textBookId || outputBookId === pair.audioBookId) {
       return 'the book is the pair own text or audio edition';
     }

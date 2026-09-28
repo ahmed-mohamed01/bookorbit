@@ -1,13 +1,13 @@
 import { BadGatewayException, Inject, Injectable } from '@nestjs/common';
-import { and, asc, count, eq, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, isNotNull, isNull, lt, notInArray, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
-import type { StorytellerConnectionTestResult } from '@bookorbit/types';
+import type { BookDockMetadata, StorytellerConnectionTestResult } from '@bookorbit/types';
 import { AUDIO_FORMAT_LIST, isAudioFormat } from '@bookorbit/types';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
-import { authors, bookAuthors, bookFiles, bookMetadata, books, libraryFolders } from '../../db/schema';
+import { authors, bookAuthors, bookFiles, bookGenres, bookMetadata, bookNarrators, books, genres, libraryFolders, narrators } from '../../db/schema';
 import { compareAudioPlayOrder } from '../../common/utils/audio-play-order.utils';
 import { storytellerReadAlongBuilds, storytellerSettings } from './schema/storyteller.schema';
 import type {
@@ -43,9 +43,19 @@ export interface StorytellerLibraryFolder {
   path: string;
 }
 
-export interface StorytellerBookFileLocation {
-  bookId: number;
-  libraryId: number;
+export interface StorytellerBookContentFile {
+  id: number;
+  absolutePath: string;
+}
+
+export interface StorytellerReplacedFileState {
+  fileHash: string;
+  sizeBytes: number;
+  mtime: Date;
+  ino: bigint;
+  mediaOverlayAvailable: boolean;
+  mediaOverlayDurationSeconds: number | null;
+  mediaOverlayCheckedAt: Date | null;
 }
 
 export interface StorytellerQueueBuildValues {
@@ -563,30 +573,87 @@ export class StorytellerRepository {
       .orderBy(asc(libraryFolders.id));
   }
 
-  /**
-   * Whether a book holds any content file other than the one path given. The read-along a build
-   * produces is exactly one file, so a book that owns anything else was not produced by that build.
-   */
-  async hasContentFileOtherThan(bookId: number, absolutePath: string): Promise<boolean> {
-    const [row] = await this.db
-      .select({ one: sql<number>`1` })
-      .from(bookFiles)
-      .where(and(eq(bookFiles.bookId, bookId), eq(bookFiles.role, 'content'), ne(bookFiles.absolutePath, absolutePath)))
-      .limit(1);
-    return row !== undefined;
+  /** Every library folder on the instance: a read-along staged under any of them would be scanned as a book of its own. */
+  async findAllLibraryFolderPaths(): Promise<string[]> {
+    const rows = await this.db.select({ path: libraryFolders.path }).from(libraryFolders);
+    return rows.map((row) => row.path);
   }
 
-  // `absolute_path` is globally unique while book-library folders may overlap (see
-  // `library-folder-roles.utils`), so the owning library comes back with the ids: whichever library
-  // indexed the path first owns the row, and it need not be the one a build targeted.
-  async findBookFileByAbsolutePath(absolutePath: string): Promise<StorytellerBookFileLocation | undefined> {
-    const [row] = await this.db
-      .select({ bookId: bookFiles.bookId, fileId: bookFiles.id, libraryId: books.libraryId })
+  /** The one content file of a read-along book, or null when it holds anything but a single EPUB. */
+  async findSoleEpubContentFile(bookId: number): Promise<StorytellerBookContentFile | null> {
+    const rows = await this.db
+      .select({ id: bookFiles.id, absolutePath: bookFiles.absolutePath, format: bookFiles.format })
       .from(bookFiles)
-      .innerJoin(books, eq(books.id, bookFiles.bookId))
-      .where(eq(bookFiles.absolutePath, absolutePath))
+      .where(and(eq(bookFiles.bookId, bookId), eq(bookFiles.role, 'content')))
+      .limit(2);
+    if (rows.length !== 1 || rows[0]!.format !== 'epub') return null;
+    return { id: rows[0]!.id, absolutePath: rows[0]!.absolutePath };
+  }
+
+  /**
+   * Records the bytes a rebuild swapped in, so the scanner reads the file as unchanged and never
+   * re-extracts the metadata Storyteller stamped into it from the audio tags.
+   */
+  async recordReplacedFile(bookId: number, fileId: number, state: StorytellerReplacedFileState): Promise<void> {
+    await this.db
+      .update(bookFiles)
+      .set({ ...state, updatedAt: new Date() })
+      .where(and(eq(bookFiles.id, fileId), eq(bookFiles.bookId, bookId)));
+  }
+
+  /**
+   * What a read-along is filed under: the text edition's own metadata, which Storyteller replaces
+   * with the audio tags when it writes the file, and the audio edition's narrators.
+   */
+  async findReadAlongMetadata(textBookId: number, audioBookId: number): Promise<BookDockMetadata | null> {
+    const [row] = await this.db
+      .select({
+        title: bookMetadata.title,
+        subtitle: bookMetadata.subtitle,
+        description: bookMetadata.description,
+        publisher: bookMetadata.publisher,
+        publishedDate: bookMetadata.publishedDate,
+        publishedYear: bookMetadata.publishedYear,
+        language: bookMetadata.language,
+        isbn10: bookMetadata.isbn10,
+        isbn13: bookMetadata.isbn13,
+        seriesName: bookMetadata.seriesName,
+        seriesIndex: bookMetadata.seriesIndex,
+      })
+      .from(bookMetadata)
+      .where(eq(bookMetadata.bookId, textBookId))
       .limit(1);
-    return row;
+    if (!row) return null;
+
+    const [authorRows, genreRows, narratorRows] = await Promise.all([
+      this.db
+        .select({ name: authors.name })
+        .from(bookAuthors)
+        .innerJoin(authors, eq(authors.id, bookAuthors.authorId))
+        .where(eq(bookAuthors.bookId, textBookId))
+        .orderBy(asc(bookAuthors.displayOrder), asc(authors.id)),
+      this.db
+        .select({ name: genres.name })
+        .from(bookGenres)
+        .innerJoin(genres, eq(genres.id, bookGenres.genreId))
+        .where(eq(bookGenres.bookId, textBookId))
+        .orderBy(asc(genres.name)),
+      this.db
+        .select({ name: narrators.name })
+        .from(bookNarrators)
+        .innerJoin(narrators, eq(narrators.id, bookNarrators.narratorId))
+        .where(eq(bookNarrators.bookId, audioBookId))
+        .orderBy(asc(bookNarrators.displayOrder), asc(narrators.id)),
+    ]);
+
+    const metadata: BookDockMetadata = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (value !== null) (metadata as Record<string, unknown>)[key] = value;
+    }
+    if (authorRows.length > 0) metadata.authors = authorRows.map((author) => author.name);
+    if (genreRows.length > 0) metadata.genres = genreRows.map((genre) => genre.name);
+    if (narratorRows.length > 0) metadata.narrators = narratorRows.map((narrator) => narrator.name);
+    return metadata;
   }
 
   // Existing-book matching against Storyteller: ISBN/ASIN first, title+author as the fallback tier.

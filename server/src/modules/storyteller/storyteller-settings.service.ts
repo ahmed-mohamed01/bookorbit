@@ -19,7 +19,7 @@ import { StorytellerSecretService } from './storyteller-secret.service';
 import { StorytellerClientError, StorytellerClientService } from './storyteller-client.service';
 import { describeError } from './storyteller-log.utils';
 import type { StorytellerConnection } from './storyteller-client.types';
-import { assertMappablePathMappings, normalizePathMappings, toLocalPath, toRemotePath } from './storyteller-path.utils';
+import { assertMappablePathMappings, normalizePathMappings, toLocalPath } from './storyteller-path.utils';
 import { ensureSafeStorytellerUrl, parseAndNormalizeServerUrl } from './storyteller-url.utils';
 import type { NewStorytellerSettingsRow } from './schema/storyteller.schema';
 
@@ -40,11 +40,6 @@ function normalizeFolderPath(path: string): string {
 function pathIsWithinFolder(candidate: string, folderPath: string): boolean {
   const normalizedFolder = normalizeFolderPath(folderPath);
   return candidate === normalizedFolder || candidate.startsWith(`${normalizedFolder}/`);
-}
-
-// Stricter than pathIsWithinFolder: the location IS the folder, not somewhere below it.
-function pathIsFolderRoot(candidate: string, folderPath: string): boolean {
-  return normalizeFolderPath(candidate) === normalizeFolderPath(folderPath);
 }
 
 /**
@@ -238,7 +233,6 @@ export class StorytellerSettingsService {
       const pathMappings = settingsRow?.pathMappings ?? [];
       const transportSetting = (settingsRow?.transport as StorytellerTransport | undefined) ?? 'auto';
       const targetLibraryId = settingsRow?.targetLibraryId ?? null;
-      const targetFolderId = settingsRow?.targetFolderId ?? null;
       const constraints = targetLibraryId !== null ? await this.resolveLibraryConstraints(targetLibraryId) : undefined;
 
       const problems: StorytellerSetupProblem[] = [];
@@ -260,28 +254,17 @@ export class StorytellerSettingsService {
         remoteSettings.readaloudLocationType,
         remoteSettings.readaloudLocation,
         pathMappings,
-        constraints,
-        targetFolderId,
+        await this.repo.findAllLibraryFolderPaths(),
       );
       const sharedPathsConsidered = transportSetting === 'auto' || transportSetting === 'shared-paths';
       // Only a real "we can see where this lands, and it's wrong"; the missing-mapping and
-      // missing-library cases have their own, more specific problems above.
-      if (
-        sharedPathsConsidered &&
-        remoteSettings.readaloudLocationType === 'CUSTOM_FOLDER' &&
-        pathMappings.length > 0 &&
-        constraints !== undefined &&
-        !sharedPaths.mappedIntoTargetFolder
-      ) {
-        problems.push('readaloud_folder_not_mapped');
-      }
-      // The mapping is fine here and the organization mode is not, so this stays the explanation of
-      // why shared paths are unusable even though nothing resolves to shared-paths below.
-      if (sharedPathsConsidered && sharedPaths.mappedIntoTargetFolder && !sharedPaths.fullyViable) {
-        problems.push('target_library_not_book_per_file');
+      // not-a-custom-folder cases have their own, more specific problems above.
+      if (sharedPathsConsidered && remoteSettings.readaloudLocationType === 'CUSTOM_FOLDER' && pathMappings.length > 0) {
+        if (sharedPaths.stagingPath === null) problems.push('readaloud_folder_not_mapped');
+        else if (sharedPaths.insideLibrary) problems.push('readaloud_folder_inside_library');
       }
 
-      const effectiveTransport = this.resolveEffectiveTransport(transportSetting, sharedPaths.fullyViable);
+      const effectiveTransport = this.resolveEffectiveTransport(transportSetting, sharedPaths.viable);
 
       const result: StorytellerConnectionTestResult = {
         ok: true,
@@ -292,7 +275,7 @@ export class StorytellerSettingsService {
         readaloudLocation: remoteSettings.readaloudLocation,
         importMode: remoteSettings.importMode,
         aligner: remoteSettings.aligner,
-        sharedPathsReady: sharedPaths.fullyViable,
+        sharedPathsReady: sharedPaths.viable,
         effectiveTransport,
         problems,
         error: null,
@@ -345,11 +328,9 @@ export class StorytellerSettingsService {
   }
 
   /**
-   * Where Storyteller's read-aloud folder lands locally, relative to the one folder a build targets.
-   * `mappedIntoTargetFolder` is "inside the folder BookOrbit scans"; `fullyViable` adds the last rule
-   * shared paths need, that the read-along becomes its own book - a root-level file does in either
-   * organization mode, but one folder deeper a book_per_folder scan folds the whole subfolder into
-   * one book.
+   * Where Storyteller's read-aloud folder lands locally. It is a staging folder the build files
+   * read-alongs from, so it has to be mapped and must sit outside every library: a scan there would
+   * index each read-along with the audiobook tags Storyteller stamps over the ebook's metadata.
    *
    * Every condition below is one the build applies too: an answer this check gives that the next
    * build would not is worse than no answer, because nothing contradicts it in the panel.
@@ -358,28 +339,21 @@ export class StorytellerSettingsService {
     readaloudLocationType: string | null,
     readaloudLocation: string | null,
     pathMappings: StorytellerPathMapping[],
-    constraints: StorytellerLibraryConstraints | undefined,
-    targetFolderId: number | null,
-  ): { mappedIntoTargetFolder: boolean; fullyViable: boolean } {
-    const unusable = { mappedIntoTargetFolder: false, fullyViable: false };
-    if (readaloudLocationType !== 'CUSTOM_FOLDER' || !readaloudLocation || !constraints || pathMappings.length === 0) return unusable;
-    // Resolved exactly as the build resolves it, or this passes a setup whose builds all land elsewhere.
-    const folder = resolveStorytellerTargetFolder(constraints.folders, targetFolderId);
-    if (!folder) return unusable;
-    // The build falls back to api-transfer when no mapping covers the target folder. A mapping
-    // rooted below the folder translates the read-aloud location and nothing else.
-    if (!toRemotePath(folder.path, pathMappings)) return unusable;
-    const mappedLocal = toLocalPath(readaloudLocation, pathMappings);
-    if (!mappedLocal) return unusable;
-    const mappedIntoTargetFolder = pathIsWithinFolder(mappedLocal, folder.path);
-    const becomesItsOwnBook = constraints.organizationMode === 'book_per_file' || pathIsFolderRoot(mappedLocal, folder.path);
-    return { mappedIntoTargetFolder, fullyViable: mappedIntoTargetFolder && becomesItsOwnBook };
+    libraryFolderPaths: readonly string[],
+  ): { stagingPath: string | null; insideLibrary: boolean; viable: boolean } {
+    if (readaloudLocationType !== 'CUSTOM_FOLDER' || !readaloudLocation || pathMappings.length === 0) {
+      return { stagingPath: null, insideLibrary: false, viable: false };
+    }
+    const stagingPath = toLocalPath(readaloudLocation, pathMappings);
+    if (!stagingPath) return { stagingPath: null, insideLibrary: false, viable: false };
+    const insideLibrary = libraryFolderPaths.some((folderPath) => pathIsWithinFolder(normalizeFolderPath(stagingPath), folderPath));
+    return { stagingPath, insideLibrary, viable: !insideLibrary };
   }
 
-  private resolveEffectiveTransport(transportSetting: StorytellerTransport, fullyViable: boolean): StorytellerEffectiveTransport | null {
+  private resolveEffectiveTransport(transportSetting: StorytellerTransport, viable: boolean): StorytellerEffectiveTransport | null {
     if (transportSetting === 'api-transfer') return 'api-transfer';
-    if (transportSetting === 'shared-paths') return fullyViable ? 'shared-paths' : null;
-    return fullyViable ? 'shared-paths' : 'api-transfer';
+    if (transportSetting === 'shared-paths') return viable ? 'shared-paths' : null;
+    return viable ? 'shared-paths' : 'api-transfer';
   }
 
   private buildFailureResult(error: string, problems: StorytellerSetupProblem[]): StorytellerConnectionTestResult {

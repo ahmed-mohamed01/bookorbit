@@ -22,8 +22,8 @@ export type StorytellerSetupProblem =
   | "no_path_mappings"
   | "readaloud_location_not_custom_folder"
   | "readaloud_folder_not_mapped"
+  | "readaloud_folder_inside_library"
   | "target_library_missing"
-  | "target_library_not_book_per_file"
   | "target_library_disallows_epub";
 
 export interface StorytellerConnectionTestResult {
