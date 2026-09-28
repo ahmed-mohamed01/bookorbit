@@ -6447,6 +6447,7 @@
         "thisBook": "This book",
         "progressRead": "{percentage}% read",
         "progressListened": "{percentage}% listened",
+        "notStarted": "Not started",
         "chip": {
           "ready": "Ready to link",
           "noMatch": "No match",
@@ -6459,9 +6460,21 @@
           "noMatchAudiobook": "BookOrbit couldn't find a matching audiobook in your libraries.",
           "noMatchEbook": "BookOrbit couldn't find a matching ebook in your libraries.",
           "linking": "Mapping audio to text. Both editions keep their own progress until linking finishes.",
-          "linked": "Progress syncs both ways between these editions.",
+          "linked": "Progress syncs between these editions.",
           "matchedReadOnly": "BookOrbit found a matching pair.",
           "linkedUnsynced": "Both editions keep their own progress."
+        },
+        "actions": {
+          "build": "Build",
+          "rebuild": "Rebuild",
+          "buildSync": "Build position sync",
+          "rebuildSync": "Rebuild position sync",
+          "rebuildReadAlong": "Rebuild read-along"
+        },
+        "unlinkDialog": {
+          "title": "Unlink these editions?",
+          "description": "Their positions stop syncing with each other.",
+          "descriptionReadAlong": "Their positions stop syncing with each other. The read-along book stays in its library."
         },
         "slot": {
           "autoMatched": "Auto-matched · {score}%",
@@ -6477,15 +6490,6 @@
           "placeholderAudiobook": "Search audiobooks in your libraries...",
           "score": "{score}%"
         },
-        "cta": {
-          "link": "Link editions",
-          "linkAndGenerate": "Link & generate read-along"
-        },
-        "footer": {
-          "linkingNote": "You can close this. Progress continues in the background.",
-          "unlinkNote": "Both editions keep their own progress.",
-          "unlinkNoteReadAlong": "Unlinking keeps the read-along book in its library."
-        },
         "readAlong": {
           "title": "Read-along",
           "via": "via Storyteller",
@@ -6499,6 +6503,7 @@
           },
           "body": {
             "offerOn": "Generates an EPUB with synced narration that highlights the text as it's read.",
+            "offerExisting": "Already built. It rejoins these editions when position sync is on.",
             "offerOff": "Not generated. You can build a read-along later from this panel.",
             "none": "Not generated yet.",
             "outOfReach": "Added to a library you can't open.",

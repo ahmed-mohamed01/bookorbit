@@ -125,6 +125,7 @@ function makeFixture(audioDuration = 100, syncFiles: ReturnType<typeof makeFiles
     upsertSyncedEpubProgressIfNewer: vi.fn().mockResolvedValue(true),
     syncKoboReadingStateFromProgress: vi.fn().mockResolvedValue(undefined),
     upsertAudioProgress: vi.fn().mockResolvedValue({ revision: 2 }),
+    findAudioChapterStarts: vi.fn().mockResolvedValue([]),
   };
   const positionConverter = {
     fragmentToPositions: vi.fn(({ bookFileId, fragment }: { bookFileId: number; fragment: string }) =>
@@ -600,5 +601,162 @@ describe('AudiobookEbookProgressSyncService sibling EPUBs without an audiobook',
     ).resolves.toBe(false);
 
     expect(bookRepo.upsertSyncedEpubProgressIfNewer).toHaveBeenCalledOnce();
+  });
+});
+
+describe('AudiobookEbookProgressSyncService read-along book behind a linked audiobook', () => {
+  // The read-along book holds only its EPUB; 20 s of unnarrated credits open the audiobook.
+  const readAlongFiles = () => ({ primaryFileId: 30, files: makeFiles().files.filter((file) => file.id === 30) });
+  const params = {
+    userId: 7,
+    audioBookId: 5,
+    readAlongBookId: 9,
+    audioSeconds: 95,
+    audioTotalSeconds: 120,
+    syncKobo: true,
+    sourceUpdatedAt: SOURCE_TIME,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockStat.mockResolvedValue({ mtimeMs: 1234 } as never);
+    mockBuildPlaylist.mockResolvedValue(makePlaylist());
+  });
+
+  function makeReadAlongFixture() {
+    const fixture = makeFixture(100, readAlongFiles());
+    fixture.bookRepo.findAudioChapterStarts.mockResolvedValue([{ startMs: 0 }, { startMs: 20_000 }]);
+    return fixture;
+  }
+
+  it('places the audiobook position on the narrated sentence within its chapter', async () => {
+    const { service, bookRepo } = makeReadAlongFixture();
+
+    await expect(service.syncReadAlongFromAudioPosition(params)).resolves.toBe(true);
+
+    expect(bookRepo.findAudioChapterStarts).toHaveBeenCalledWith(5);
+    expect(bookRepo.findAudioEbookProgressSyncFiles).toHaveBeenCalledWith(9);
+    // 95 s is 75 s into the narrated chapter; the credits never reach the read-along timeline.
+    expect(bookRepo.upsertSyncedEpubProgressIfNewer).toHaveBeenCalledWith({
+      userId: 7,
+      fileId: 30,
+      cfi: 'epubcfi(30-second)',
+      percentage: 75,
+      positionSeconds: 75,
+      mediaOverlayFragment: 'OPS/chapter.xhtml#second',
+      mediaOverlaySectionIndex: 0,
+      koreaderProgress: '/body/30/second',
+      sourceUpdatedAt: SOURCE_TIME,
+    });
+    expect(bookRepo.syncKoboReadingStateFromProgress).toHaveBeenCalledWith(7, 30, 75, null, null, null, null);
+  });
+
+  it('writes nothing when the narration does not fit the audiobook chapters', async () => {
+    const { service, bookRepo } = makeReadAlongFixture();
+    bookRepo.findAudioChapterStarts.mockResolvedValue([{ startMs: 0 }, { startMs: 60_000 }]);
+
+    await expect(service.syncReadAlongFromAudioPosition(params)).resolves.toBe(false);
+
+    expect(bookRepo.upsertSyncedEpubProgressIfNewer).not.toHaveBeenCalled();
+  });
+
+  it('skips Kobo when the read-along already holds a newer position', async () => {
+    const { service, bookRepo } = makeReadAlongFixture();
+    bookRepo.upsertSyncedEpubProgressIfNewer.mockResolvedValue(false);
+
+    await expect(service.syncReadAlongFromAudioPosition(params)).resolves.toBe(false);
+
+    expect(bookRepo.syncKoboReadingStateFromProgress).not.toHaveBeenCalled();
+  });
+
+  it('does no mapping work when read-aloud sync is disabled for the read-along book', async () => {
+    const { service, bookRepo } = makeReadAlongFixture();
+    bookRepo.findReadAloudSyncMode.mockResolvedValue('disabled');
+
+    await expect(service.syncReadAlongFromAudioPosition(params)).resolves.toBe(false);
+
+    expect(bookRepo.findReadAloudSyncMode).toHaveBeenCalledWith(7, 9);
+    expect(mockBuildPlaylist).not.toHaveBeenCalled();
+  });
+});
+
+describe('AudiobookEbookProgressSyncService audiobook behind a linked read-along', () => {
+  // Audiobook 5 holds two 60 s files with a chapter each; read-along 9 narrates only the second chapter
+  // with the 100 s playlist, so the first chapter plays the role of unnarrated credits.
+  const audioFiles = {
+    primaryFileId: 11,
+    files: [
+      { ...makeFiles().files[0]!, id: 11, durationSeconds: 20 },
+      { ...makeFiles().files[0]!, id: 12, durationSeconds: 100 },
+    ],
+  };
+  const readAlongFiles = { primaryFileId: 30, files: makeFiles().files.filter((file) => file.id === 30) };
+  const params = { userId: 7, audioBookId: 5, readAlongBookId: 9, bookFileId: 30, sourceUpdatedAt: SOURCE_TIME };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockStat.mockResolvedValue({ mtimeMs: 1234 } as never);
+    mockBuildPlaylist.mockResolvedValue(makePlaylist());
+  });
+
+  function makeLinkedFixture() {
+    const fixture = makeFixture();
+    fixture.bookRepo.findAudioEbookProgressSyncFiles.mockImplementation((bookId: number) =>
+      Promise.resolve(bookId === 5 ? audioFiles : readAlongFiles),
+    );
+    fixture.bookRepo.findAudioChapterStarts.mockResolvedValue([{ startMs: 0 }, { startMs: 20_000 }]);
+    return fixture;
+  }
+
+  it('turns a player file position into time through the whole audiobook', async () => {
+    const { service } = makeLinkedFixture();
+
+    await expect(service.resolveAudioBookPosition(5, 12, 75)).resolves.toEqual({ audioSeconds: 95, audioTotalSeconds: 120 });
+    await expect(service.resolveAudioBookPosition(5, 99, 75)).resolves.toBeNull();
+  });
+
+  it('moves the audiobook to the sentence the read-along narration marker names', async () => {
+    const { service, bookRepo } = makeLinkedFixture();
+
+    await expect(
+      service.syncAudioFromReadAlongPosition({ ...params, positionSeconds: 75, mediaOverlayFragment: 'OPS/chapter.xhtml#second' }),
+    ).resolves.toBe(true);
+
+    // 75 s of narration is 75 s into the narrated chapter, which starts at 20 s: file 12 at 75 s.
+    expect(bookRepo.upsertAudioProgress).toHaveBeenCalledWith(7, 5, 12, 75, (95 / 120) * 100, SOURCE_TIME);
+  });
+
+  it('places a text-only position at the start of its nearest narrated sentence', async () => {
+    const { service, bookRepo } = makeLinkedFixture();
+
+    await expect(service.syncAudioFromReadAlongPosition({ ...params, cfi: 'epubcfi(/6/2)' })).resolves.toBe(true);
+
+    expect(bookRepo.upsertAudioProgress).toHaveBeenCalledWith(7, 5, 12, 50, (70 / 120) * 100, SOURCE_TIME);
+  });
+
+  it('writes nothing when read-aloud sync is disabled on the read-along', async () => {
+    const { service, bookRepo } = makeLinkedFixture();
+    bookRepo.findReadAloudSyncMode.mockResolvedValue('disabled');
+
+    await expect(service.syncAudioFromReadAlongPosition({ ...params, positionSeconds: 75 })).resolves.toBe(false);
+
+    expect(bookRepo.findReadAloudSyncMode).toHaveBeenCalledWith(7, 9);
+    expect(bookRepo.upsertAudioProgress).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when the narration does not fit the audiobook chapters', async () => {
+    const { service, bookRepo } = makeLinkedFixture();
+    bookRepo.findAudioChapterStarts.mockResolvedValue([{ startMs: 0 }, { startMs: 60_000 }]);
+
+    await expect(service.syncAudioFromReadAlongPosition({ ...params, positionSeconds: 75 })).resolves.toBe(false);
+
+    expect(bookRepo.upsertAudioProgress).not.toHaveBeenCalled();
+  });
+
+  it('reports no sync when the audiobook already holds newer playback', async () => {
+    const { service, bookRepo } = makeLinkedFixture();
+    bookRepo.upsertAudioProgress.mockResolvedValue(undefined);
+
+    await expect(service.syncAudioFromReadAlongPosition({ ...params, positionSeconds: 75 })).resolves.toBe(false);
   });
 });

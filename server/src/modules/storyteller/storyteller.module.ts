@@ -10,6 +10,7 @@ import { ScannerModule } from '../scanner/scanner.module';
 import { UserModule } from '../user/user.module';
 import { StorytellerReadAlongBuildService } from './storyteller-read-along-build.service';
 import { StorytellerReadAlongNotifierService } from './storyteller-read-along-notifier.service';
+import { StorytellerReadAlongOutputModule } from './storyteller-read-along-output.module';
 import { StorytellerReadAlongStatusService } from './storyteller-read-along-status.service';
 import { StorytellerClientService } from './storyteller-client.service';
 import { storytellerConfig } from './storyteller.config';
@@ -23,6 +24,7 @@ import { StorytellerSettingsService } from './storyteller-settings.service';
   imports: [
     ConfigModule.forFeature(storytellerConfig),
     EditionLinkModule,
+    StorytellerReadAlongOutputModule,
     BookModule,
     LibraryModule,
     ScannerModule,

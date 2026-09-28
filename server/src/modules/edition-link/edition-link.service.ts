@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import type {
   EditionLinkCandidate,
@@ -13,6 +13,7 @@ import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { BookService } from '../book/book.service';
 import { LibraryService } from '../library/library.service';
 import { type BookModality, EditionLinkRepository, type EditionLinkMemberProgressRow } from './edition-link.repository';
+import { READ_ALONG_OUTPUT_SOURCE, type ReadAlongOutputSource } from './read-along-output-source';
 import type { BookEditionLink } from './schema/edition-link.schema';
 
 export interface EditionLinkForBookResult {
@@ -21,6 +22,8 @@ export interface EditionLinkForBookResult {
   counterpart: EditionLinkCounterpartSummary | null;
   role: EditionLinkRole | null;
   members: EditionLinkMembers | null;
+  /** A generated read-along detached from its pair: it cannot be linked, so there is nothing to offer. */
+  readAlongOutput?: boolean;
 }
 
 function unlinked(proposed: EditionLinkCandidate | null = null): EditionLinkForBookResult {
@@ -57,6 +60,7 @@ export class EditionLinkService {
     private readonly repo: EditionLinkRepository,
     private readonly bookService: BookService,
     private readonly libraryService: LibraryService,
+    @Inject(READ_ALONG_OUTPUT_SOURCE) private readonly readAlongOutputs: ReadAlongOutputSource,
   ) {}
 
   async getForBook(user: RequestUser, bookId: number): Promise<EditionLinkForBookResult> {
@@ -99,6 +103,9 @@ export class EditionLinkService {
     if (modality !== 'text' && modality !== 'audio') {
       return unlinked();
     }
+    if ((await this.readAlongOutputs.findReadAlongOutputs([bookId])).has(bookId)) {
+      return { ...unlinked(), readAlongOutput: true };
+    }
 
     const [proposed] = await this.findCandidates(user, bookId, modality);
     return unlinked(proposed ?? null);
@@ -109,6 +116,7 @@ export class EditionLinkService {
 
     const modality = await this.repo.getBookModality(bookId);
     if (modality !== 'text' && modality !== 'audio') return [];
+    if ((await this.readAlongOutputs.findReadAlongOutputs([bookId])).has(bookId)) return [];
 
     return this.findCandidates(user, bookId, modality, query);
   }
@@ -130,7 +138,9 @@ export class EditionLinkService {
       }
 
       const [bookLink, counterpartLink] = await Promise.all([this.repo.findLinkForBook(bookId), this.repo.findLinkForBook(counterpartId)]);
-      if (bookLink?.readAlongBookId === bookId || counterpartLink?.readAlongBookId === counterpartId) {
+      // Checked on the build records, not the link: a read-along detached from its pair is still one.
+      const outputs = await this.readAlongOutputs.findReadAlongOutputs([bookId, counterpartId]);
+      if (outputs.size > 0 || bookLink?.readAlongBookId === bookId || counterpartLink?.readAlongBookId === counterpartId) {
         throw new BadRequestException('A generated read-along book cannot start an edition link');
       }
       if (bookLink || counterpartLink) {
@@ -214,13 +224,17 @@ export class EditionLinkService {
 
   private async findCandidates(user: RequestUser, bookId: number, modality: 'text' | 'audio', query?: string): Promise<EditionLinkCandidate[]> {
     const accessibleLibraryIds = await this.libraryService.findAccessibleLibraryIds(user);
-    return this.repo.findCounterpartCandidates({
+    const candidates = await this.repo.findCounterpartCandidates({
       bookId,
       modality,
       accessibleLibraryIds,
       contentFilters: user.isSuperuser ? undefined : user.contentFilters,
       query,
     });
+    // A read-along is text with the same title and author as its audiobook, so it would otherwise be
+    // the audiobook's best match.
+    const outputs = await this.readAlongOutputs.findReadAlongOutputs(candidates.map((candidate) => candidate.bookId));
+    return outputs.size === 0 ? candidates : candidates.filter((candidate) => !outputs.has(candidate.bookId));
   }
 
   private areOppositeModalities(left: BookModality, right: BookModality): boolean {

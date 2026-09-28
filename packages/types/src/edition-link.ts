@@ -62,4 +62,6 @@ export interface EditionLinkForBook {
   counterpart: EditionLinkCounterpartSummary | null;
   role: EditionLinkRole | null;
   members: EditionLinkMembers | null;
+  /** A generated read-along detached from its pair. It can never be linked, so nothing is offered for it. */
+  readAlongOutput?: boolean;
 }

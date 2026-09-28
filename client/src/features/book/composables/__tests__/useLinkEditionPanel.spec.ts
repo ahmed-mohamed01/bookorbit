@@ -1,6 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { defineComponent, ref } from 'vue'
+import { defineComponent, nextTick, ref } from 'vue'
 import type {
   BookDetail,
   EditionLinkCounterpartSummary,
@@ -56,6 +56,7 @@ function createEditionLinkState() {
     linkedCounterpart: ref<EditionLinkCounterpartSummary | null>(null),
     role: ref<EditionLinkRole | null>(null),
     members: ref<EditionLinkMembers | null>(null),
+    readAlongOutput: ref(false),
     candidates: ref<EditionLinkCandidate[]>([]),
     loading: ref(false),
     searching: ref(false),
@@ -80,6 +81,7 @@ function createEditionLinkState() {
     state.link.value = null
     state.role.value = null
     state.members.value = null
+    state.readAlongOutput.value = false
     return true
   })
   return state
@@ -311,14 +313,21 @@ describe('useLinkEditionPanel', () => {
       expect(panel.phase.value).toBe('linked')
     })
 
-    it('is always linked on the read-along book page', () => {
+    it('offers nothing on a read-along detached from its pair', () => {
+      editionLinkState.readAlongOutput.value = true
+      const panel = mountPanel()
+
+      expect(panel.isEligible.value).toBe(false)
+    })
+
+    it('is always linked and manageable on the read-along book page', () => {
       editionLinkState.link.value = linkRecord
       editionLinkState.role.value = 'readAlong'
       alignmentState.status.value = 'building'
       const panel = mountPanel()
 
       expect(panel.phase.value).toBe('linked')
-      expect(panel.readAlongMode.value).toBe('readOnly')
+      expect(panel.readAlongMode.value).toBe('manage')
     })
 
     it.each([
@@ -421,7 +430,7 @@ describe('useLinkEditionPanel', () => {
       const panel = mountPanel()
 
       expect(panel.slots.value[0]).toMatchObject({ bookId: 10, isThisBook: true, progress: 26, canChange: false })
-      expect(panel.slots.value[1]).toMatchObject({ bookId: 20, isThisBook: false, progress: null, match: null })
+      expect(panel.slots.value[1]).toMatchObject({ bookId: 20, isThisBook: false, progress: 0, match: null })
     })
 
     it('versions each cover: the current book from its detail, the others from their member or candidate', () => {
@@ -454,14 +463,14 @@ describe('useLinkEditionPanel', () => {
     })
   })
 
-  describe('CTA', () => {
-    it('reads Link editions until a read-along is toggled on', () => {
+  describe('generating on link', () => {
+    it('links without a read-along until one is toggled on', () => {
       editionLinkState.proposed.value = proposal
       const panel = mountPanel()
-      expect(panel.ctaKey.value).toBe('book.detail.editionLink.cta.link')
+      expect(panel.willGenerate.value).toBe(false)
 
       panel.setGenerateOnLink(true)
-      expect(panel.ctaKey.value).toBe('book.detail.editionLink.cta.linkAndGenerate')
+      expect(panel.willGenerate.value).toBe(true)
     })
 
     it('ignores the toggle once Storyteller is blocked for good', () => {
@@ -472,7 +481,20 @@ describe('useLinkEditionPanel', () => {
       readAlongState.blocked.value = 'not_configured'
 
       expect(panel.toggleDisabled.value).toBe(true)
-      expect(panel.ctaKey.value).toBe('book.detail.editionLink.cta.link')
+      expect(panel.willGenerate.value).toBe(false)
+    })
+
+    it('asks whether the matched pair already has a read-along, and asks again for another pick', async () => {
+      editionLinkState.proposed.value = proposal
+      const panel = mountPanel()
+      await panel.handleOpen()
+
+      expect(readAlongState.fetchStatus).toHaveBeenCalledWith(10, 20)
+
+      panel.selectCandidate({ bookId: 21, title: 'Dune (another)', authorName: null, coverVersion: null, score: 80 })
+      await nextTick()
+
+      expect(readAlongState.fetchStatus).toHaveBeenLastCalledWith(10, 21)
     })
 
     it('keeps the toggle usable while the pair simply does not exist yet', () => {
@@ -710,7 +732,8 @@ describe('useLinkEditionPanel', () => {
 
       await panel.cancelLinking()
 
-      expect(calls).toEqual(['unlink', 'readAlongReset', 'alignmentStatus', 'readAlongStatus'])
+      // The last read asks about the restored counterpart, which may already have a read-along.
+      expect(calls).toEqual(['unlink', 'readAlongReset', 'alignmentStatus', 'readAlongStatus', 'readAlongStatus'])
       expect(alignmentState.fetchStatus).toHaveBeenCalledWith(10)
       expect(readAlongState.fetchStatus).toHaveBeenCalledWith(10)
     })

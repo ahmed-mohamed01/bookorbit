@@ -54,12 +54,9 @@ function handlePick(candidate: EditionLinkCandidate) {
 </script>
 
 <template>
-  <div
-    class="relative z-[1] rounded-xl border border-dashed border-border bg-background px-3 pt-3 pb-2"
-    :data-testid="`edition-slot-search-${format}`"
-  >
-    <div class="flex flex-col items-center px-1 pt-1 text-center">
-      <div class="flex size-8 items-center justify-center rounded-lg border-[1.5px] border-dashed border-border text-muted-foreground">
+  <div class="relative z-[1] rounded-xl border border-dashed border-border bg-card px-3 pt-2.5 pb-2" :data-testid="`edition-slot-search-${format}`">
+    <div class="flex flex-col items-center px-1 text-center">
+      <div class="flex size-7 items-center justify-center rounded-lg border-[1.5px] border-dashed border-border text-muted-foreground">
         <Plus class="size-4" aria-hidden="true" />
       </div>
       <p class="mt-2 text-sm font-semibold text-foreground">{{ title }}</p>
@@ -67,7 +64,7 @@ function handlePick(candidate: EditionLinkCandidate) {
     </div>
 
     <template v-if="canSearch">
-      <label class="mt-3 flex h-9 items-center gap-2 rounded-lg border border-input bg-card px-3 focus-within:ring-1 focus-within:ring-ring">
+      <label class="mt-2.5 flex h-8 items-center gap-2 rounded-lg border border-input bg-card px-3 focus-within:ring-1 focus-within:ring-ring">
         <Search class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
         <input
           ref="inputEl"

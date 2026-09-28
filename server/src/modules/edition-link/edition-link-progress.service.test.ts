@@ -40,4 +40,22 @@ describe('EditionLinkProgressService', () => {
     await expect(service.findProgressForBooks(7, [])).resolves.toEqual(new Map());
     expect(execute).not.toHaveBeenCalled();
   });
+
+  it('finds the audiobook and read-along linked with either book, and nothing without a read-along', async () => {
+    const limit = vi
+      .fn()
+      .mockResolvedValueOnce([{ audioBookId: 5, readAlongBookId: 9 }])
+      .mockResolvedValueOnce([]);
+    const chain = { from: vi.fn(), where: vi.fn(), limit };
+    chain.from.mockReturnValue(chain);
+    chain.where.mockReturnValue(chain);
+    const service = new EditionLinkProgressService({ select: vi.fn().mockReturnValue(chain) } as never);
+
+    await expect(service.findReadAlongLink(9)).resolves.toEqual({ audioBookId: 5, readAlongBookId: 9 });
+    await expect(service.findReadAlongLink(5)).resolves.toBeNull();
+
+    const query = new PgDialect().sqlToQuery(chain.where.mock.calls[0]![0]);
+    expect(query.sql).toContain('"read_along_book_id" is not null');
+    expect(query.params).toEqual([9, 9]);
+  });
 });

@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import type { ContentFilterRules, EditionLinkCandidate, EditionLinkCounterpartSummary } from '@bookorbit/types';
@@ -122,6 +122,15 @@ export class EditionLinkRepository {
       .where(or(eq(bookEditionLinks.textBookId, bookId), eq(bookEditionLinks.audioBookId, bookId), eq(bookEditionLinks.readAlongBookId, bookId)))
       .limit(1);
     return row;
+  }
+
+  async findReadAlongBookIdsByAudioBookIds(audioBookIds: number[]): Promise<Map<number, number>> {
+    if (audioBookIds.length === 0) return new Map();
+    const rows = await this.db
+      .select({ audioBookId: bookEditionLinks.audioBookId, readAlongBookId: bookEditionLinks.readAlongBookId })
+      .from(bookEditionLinks)
+      .where(and(inArray(bookEditionLinks.audioBookId, audioBookIds), isNotNull(bookEditionLinks.readAlongBookId)));
+    return new Map(rows.flatMap((row) => (row.readAlongBookId === null ? [] : [[row.audioBookId, row.readAlongBookId] as const])));
   }
 
   // Per-member reading progress for the link popover. Text and read-along read the book's primary

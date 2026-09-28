@@ -1,11 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { sql } from 'drizzle-orm';
+import { and, eq, isNotNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { audiobookProgress, books, readingProgress } from '../../db/schema';
 import type { ExtraProgress, ExtraProgressSource } from '../book/extra-progress-source';
+import type { ReadAlongLink, ReadAlongLinkSource } from '../book/read-along-link-source';
+import { bookEditionLinks } from './schema/edition-link.schema';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -14,8 +16,19 @@ type Db = NodePgDatabase<typeof schema>;
 // row is deliberately never written by the alignment sync (it would clobber the precise CFI and defeat
 // the open-time resolver's newest-wins check), so the merge happens at card-read time instead.
 @Injectable()
-export class EditionLinkProgressService implements ExtraProgressSource {
+export class EditionLinkProgressService implements ExtraProgressSource, ReadAlongLinkSource {
   constructor(@Inject(DB) private readonly db: Db) {}
+
+  async findReadAlongLink(bookId: number): Promise<ReadAlongLink | null> {
+    const [row] = await this.db
+      .select({ audioBookId: bookEditionLinks.audioBookId, readAlongBookId: bookEditionLinks.readAlongBookId })
+      .from(bookEditionLinks)
+      .where(
+        and(isNotNull(bookEditionLinks.readAlongBookId), or(eq(bookEditionLinks.audioBookId, bookId), eq(bookEditionLinks.readAlongBookId, bookId))),
+      )
+      .limit(1);
+    return row?.readAlongBookId != null ? { audioBookId: row.audioBookId, readAlongBookId: row.readAlongBookId } : null;
+  }
 
   async findProgressForBooks(userId: number, bookIds: number[]): Promise<Map<number, ExtraProgress>> {
     if (bookIds.length === 0) return new Map();

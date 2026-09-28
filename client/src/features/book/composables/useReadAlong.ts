@@ -253,7 +253,8 @@ export function useReadAlong() {
     return next === buildBaselineStatus && nextBuiltAt === buildBaselineBuiltAt
   }
 
-  async function fetchStatus(bookId: number): Promise<void> {
+  /** `counterpartId`: the edition an unlinked book is matched with, so a read-along that pair already has is reported. */
+  async function fetchStatus(bookId: number, counterpartId?: number): Promise<void> {
     // The per-book keep-copy choice does not follow the user to the next book. The popover and the
     // alignment control both keep one composable instance per mounted control, and a book detail
     // view can be reused for a different book, so the instance has to forget the choice with it.
@@ -263,7 +264,8 @@ export function useReadAlong() {
     }
     const requestId = ++statusRequestId
     try {
-      const res = await api(`/api/v1/storyteller/read-along/books/${bookId}/status`)
+      const query = counterpartId === undefined ? '' : `?counterpartId=${counterpartId}`
+      const res = await api(`/api/v1/storyteller/read-along/books/${bookId}/status${query}`)
       if (requestId !== statusRequestId) return
       if (!res.ok) {
         handleStatusFailure()

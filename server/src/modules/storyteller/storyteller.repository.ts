@@ -135,6 +135,14 @@ export class StorytellerRepository {
     return row;
   }
 
+  async findOutputBookIds(bookIds: readonly number[]): Promise<Set<number>> {
+    const rows = await this.db
+      .select({ outputBookId: storytellerReadAlongBuilds.outputBookId })
+      .from(storytellerReadAlongBuilds)
+      .where(inArray(storytellerReadAlongBuilds.outputBookId, [...bookIds]));
+    return new Set(rows.flatMap((row) => (row.outputBookId === null ? [] : [row.outputBookId])));
+  }
+
   async findBuildByOutputBook(bookId: number): Promise<StorytellerReadAlongBuild | undefined> {
     const [row] = await this.db.select().from(storytellerReadAlongBuilds).where(eq(storytellerReadAlongBuilds.outputBookId, bookId)).limit(1);
     return row;

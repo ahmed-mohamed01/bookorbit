@@ -6,6 +6,7 @@ import type { EditionLinkMember, ReadAlongBlockReason, StorytellerExistingMatch 
 import { Button } from '@/components/ui/button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ReadAlongSectionState } from '@/features/book/composables/useReadAlong'
 import { isTickBlockReason } from '@/features/book/lib/read-along-blocks'
 import {
@@ -108,6 +109,7 @@ const tag = computed(() => {
     case 'failed':
       return { key: 'book.detail.editionLink.readAlong.tag.failed', class: 'bg-destructive/15 text-destructive' }
     case 'ready':
+    case 'offerExisting':
     case 'outOfReach':
       return { key: 'book.detail.editionLink.readAlong.tag.ready', class: 'bg-success/15 text-success' }
     default:
@@ -120,7 +122,7 @@ const tag = computed(() => {
 
 const actionDisabled = computed(() => props.state.mutating || isActionBlocked(props.state.blocked))
 
-const showToggle = computed(() => props.mode === 'offer' && props.canToggle)
+const showToggle = computed(() => props.mode === 'offer' && props.canToggle && sectionState.value !== 'offerExisting')
 const showGenerate = computed(() => sectionState.value === 'none' && props.canGenerate)
 const showRetry = computed(() => sectionState.value === 'failed' && props.canGenerate)
 // Once the read-along is being imported the server refuses to stop it.
@@ -187,6 +189,8 @@ const bodyText = computed(() => {
       return t('book.detail.editionLink.readAlong.body.offerOn')
     case 'offerOff':
       return t('book.detail.editionLink.readAlong.body.offerOff')
+    case 'offerExisting':
+      return t('book.detail.editionLink.readAlong.body.offerExisting')
     case 'none':
       return t('book.detail.editionLink.readAlong.body.none')
     case 'outOfReach':
@@ -253,25 +257,14 @@ watch(sectionState, (next) => {
 </script>
 
 <template>
-  <section class="mt-2.5 rounded-xl border border-border bg-background p-3" :data-state="sectionState" data-testid="read-along-section">
-    <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-      <BookAudio class="size-3.5 shrink-0 text-info" aria-hidden="true" />
-      <h3 class="text-sm font-semibold text-foreground">{{ t('book.detail.editionLink.readAlong.title') }}</h3>
-      <span class="text-[11px] text-muted-foreground">{{ t('book.detail.editionLink.readAlong.via') }}</span>
-      <div class="ms-auto flex items-center gap-2">
-        <Button
-          v-if="showCancel"
-          variant="ghost"
-          size="sm"
-          class="h-7 px-2 text-xs"
-          :disabled="state.mutating"
-          :aria-label="t('book.detail.editionLink.readAlong.cancelLabel')"
-          data-testid="read-along-cancel"
-          @click="handleCancel"
-        >
-          <X class="size-3.5" aria-hidden="true" />
-          {{ t('book.detail.editionLink.readAlong.cancel') }}
-        </Button>
+  <section class="mt-2 rounded-xl border border-border bg-card px-3 py-2" :data-state="sectionState" data-testid="read-along-section">
+    <div class="flex items-center gap-2">
+      <BookAudio class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <div class="min-w-0 flex-1">
+        <h3 class="truncate text-sm leading-5 font-semibold text-foreground">{{ t('book.detail.editionLink.readAlong.title') }}</h3>
+        <p class="truncate text-[11px] leading-4 text-muted-foreground">{{ t('book.detail.editionLink.readAlong.via') }}</p>
+      </div>
+      <div class="flex shrink-0 items-center gap-1.5">
         <span v-if="tag" class="rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap" :class="tag.class" data-testid="read-along-tag">
           {{ t(tag.key) }}
         </span>
@@ -307,10 +300,26 @@ watch(sectionState, (next) => {
           <RefreshCw class="size-3.5" aria-hidden="true" />
           {{ t('book.detail.editionLink.readAlong.retry') }}
         </Button>
+        <Tooltip v-if="showCancel">
+          <TooltipTrigger as-child>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="-me-1.5 size-7 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              :disabled="state.mutating"
+              :aria-label="t('book.detail.editionLink.readAlong.cancelLabel')"
+              data-testid="read-along-cancel"
+              @click="handleCancel"
+            >
+              <X class="size-4" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{{ t('book.detail.editionLink.readAlong.cancelLabel') }}</TooltipContent>
+        </Tooltip>
       </div>
     </div>
 
-    <p v-if="bodyText" class="mt-1.5 text-xs text-pretty text-muted-foreground" data-testid="read-along-body">{{ bodyText }}</p>
+    <p v-if="bodyText" class="mt-1 text-xs text-pretty text-muted-foreground" data-testid="read-along-body">{{ bodyText }}</p>
 
     <button
       v-if="importMatch"
@@ -324,7 +333,7 @@ watch(sectionState, (next) => {
     </button>
 
     <template v-if="sectionState === 'building'">
-      <div class="mt-2.5 flex items-center gap-2.5">
+      <div class="mt-2 flex items-center gap-2.5">
         <div
           class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
           role="progressbar"
@@ -349,7 +358,7 @@ watch(sectionState, (next) => {
           {{ t('book.detail.editionLink.readAlong.percent', { percent: buildPercent }) }}
         </span>
       </div>
-      <ol class="mt-2 flex flex-wrap gap-x-3.5 gap-y-1" data-testid="read-along-stages">
+      <ol class="mt-1.5 flex flex-wrap gap-x-3 gap-y-1" data-testid="read-along-stages">
         <li
           v-for="stage in stages"
           :key="stage.key"
@@ -372,7 +381,7 @@ watch(sectionState, (next) => {
       </ol>
     </template>
 
-    <p v-else-if="sectionState === 'failed'" class="mt-1.5 text-xs break-words text-muted-foreground" data-testid="read-along-error">
+    <p v-else-if="sectionState === 'failed'" class="mt-1 text-xs break-words text-muted-foreground" data-testid="read-along-error">
       {{ failureMessage }}
     </p>
 
@@ -383,7 +392,7 @@ watch(sectionState, (next) => {
           <span v-else class="truncate">{{ memberTitle }}</span>
           <span
             v-if="isCurrentBook"
-            class="rounded-md bg-muted px-1.5 py-px text-[10px] font-normal text-muted-foreground"
+            class="rounded-md bg-primary/15 px-1.5 py-px text-[10px] font-semibold text-primary"
             data-testid="read-along-this-book"
           >
             {{ t('book.detail.editionLink.thisBook') }}
@@ -408,9 +417,9 @@ watch(sectionState, (next) => {
       </Button>
     </div>
 
-    <p v-if="blockMessage" class="mt-1.5 text-xs text-muted-foreground" data-testid="read-along-blocked">{{ blockMessage }}</p>
+    <p v-if="blockMessage" class="mt-1 text-xs text-muted-foreground" data-testid="read-along-blocked">{{ blockMessage }}</p>
 
-    <div v-if="showKeepCopy" class="mt-2.5 flex items-center gap-2.5 border-t border-border pt-2.5" data-testid="read-along-keep-copy-row">
+    <div v-if="showKeepCopy" class="mt-2 flex items-center gap-2.5 border-t border-border/60 pt-2" data-testid="read-along-keep-copy-row">
       <div class="min-w-0 flex-1">
         <p :id="keepCopyLabelId" class="text-xs text-foreground">{{ t('book.detail.editionLink.readAlong.keepCopy.label') }}</p>
         <p class="mt-px text-[11px] text-muted-foreground" data-testid="read-along-keep-copy-hint">{{ keepCopyHint }}</p>

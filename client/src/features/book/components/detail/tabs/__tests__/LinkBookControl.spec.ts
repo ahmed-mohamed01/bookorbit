@@ -68,6 +68,7 @@ function createMockState() {
     linkedCounterpart: ref<EditionLinkCounterpartSummary | null>(null),
     role: ref<EditionLinkRole | null>(null),
     members: ref<EditionLinkMembers | null>(null),
+    readAlongOutput: ref(false),
     candidates: ref<EditionLinkCandidate[]>([]),
     loading: ref(false),
     searching: ref(false),

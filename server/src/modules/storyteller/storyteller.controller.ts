@@ -12,7 +12,13 @@ import { Permission } from '@bookorbit/types';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
-import { BuildReadAlongDto, CancelReadAlongBuildQueryDto, TestStorytellerConnectionDto, UpsertStorytellerSettingsDto } from './dto';
+import {
+  BuildReadAlongDto,
+  CancelReadAlongBuildQueryDto,
+  ReadAlongStatusQueryDto,
+  TestStorytellerConnectionDto,
+  UpsertStorytellerSettingsDto,
+} from './dto';
 import { StorytellerReadAlongStatusService } from './storyteller-read-along-status.service';
 import { StorytellerSettingsService } from './storyteller-settings.service';
 
@@ -69,8 +75,12 @@ export class StorytellerController {
    * is the gate, and what a reader may not see is masked inside the response instead.
    */
   @Get('read-along/books/:bookId/status')
-  getStatus(@Param('bookId', ParseIntPipe) bookId: number, @CurrentUser() user: RequestUser): Promise<ReadAlongStatusResponse> {
-    return this.readAlongStatusService.getStatus(bookId, user);
+  getStatus(
+    @Param('bookId', ParseIntPipe) bookId: number,
+    @Query() query: ReadAlongStatusQueryDto,
+    @CurrentUser() user: RequestUser,
+  ): Promise<ReadAlongStatusResponse> {
+    return this.readAlongStatusService.getStatus(bookId, user, query.counterpartId);
   }
 
   @Get('read-along/books/:bookId/existing')

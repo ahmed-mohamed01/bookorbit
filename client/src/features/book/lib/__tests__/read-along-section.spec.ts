@@ -35,6 +35,11 @@ describe('resolveReadAlongSectionState', () => {
     expect(resolveReadAlongSectionState('offer', state('none'), false, false, false)).toBe('offerOff')
   })
 
+  it('offers nothing to build when the matched pair already has a read-along, whatever the toggle says', () => {
+    expect(resolveReadAlongSectionState('offer', state('ready', true), false, true, false)).toBe('offerExisting')
+    expect(resolveReadAlongSectionState('offer', state('ready', true), false, false, false)).toBe('offerExisting')
+  })
+
   it.each([
     ['queued', false, false, 'queued'],
     ['building', false, false, 'building'],

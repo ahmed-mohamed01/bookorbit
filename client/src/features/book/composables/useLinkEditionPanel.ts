@@ -13,6 +13,8 @@ import { useReadAlongSection } from './useReadAlongSection'
 export type LinkEditionPhase = 'nomatch' | 'matched' | 'linking' | 'linked'
 export type EditionFormat = 'ebook' | 'audiobook'
 
+export type PairSyncState = 'synced' | 'syncing' | 'unsynced'
+
 export type EditionMatchChip = { source: 'auto'; score: number } | { source: 'manual' }
 
 export interface EditionFilledSlot {
@@ -26,6 +28,7 @@ export interface EditionFilledSlot {
   isThisBook: boolean
   match: EditionMatchChip | null
   canChange: boolean
+  readAlong?: boolean
 }
 
 export interface EditionSearchSlot {
@@ -54,6 +57,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     proposed,
     role,
     members,
+    readAlongOutput,
     linkedCounterpart,
     candidates,
     loading,
@@ -69,7 +73,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   } = useEditionLink(bookId)
 
   const alignment = useReadingAlignment()
-  const readAlongSection = useReadAlongSection(() => book().id)
+  const readAlongSection = useReadAlongSection(() => pairBookId.value)
   const { readAlong, canGenerate } = readAlongSection
 
   // Only the first load shows the skeleton. Later reloads (after a link, an unlink or a finished
@@ -86,7 +90,12 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   // The read-along book is a member of the link, so its own page shows the membership read only: it
   // can never start or end a link of its own.
   const isReadAlongPage = computed(() => role.value === 'readAlong')
-  const isEligible = computed(() => modality.value === 'text' || modality.value === 'audio' || isReadAlongPage.value)
+  // The link is managed from any of its three books. The server keys position sync and read-along builds
+  // to the pair, so a read-along page acts through the pair's ebook.
+  const pairBookId = computed(() => (isReadAlongPage.value && members.value ? members.value.text.id : bookId))
+  // A read-along detached from its pair can never be linked, so it gets no panel: its pair is relinked
+  // from the ebook or audiobook, which brings it back.
+  const isEligible = computed(() => !readAlongOutput.value && (modality.value === 'text' || modality.value === 'audio' || isReadAlongPage.value))
   const currentFormat = computed<EditionFormat>(() => (modality.value === 'audio' ? 'audiobook' : 'ebook'))
   const counterpartFormat = computed<EditionFormat>(() => (currentFormat.value === 'ebook' ? 'audiobook' : 'ebook'))
 
@@ -151,8 +160,6 @@ export function useLinkEditionPanel(book: () => BookDetail) {
 
   const syncUnavailable = computed(() => ALIGNMENT_UNSYNCED.has(alignment.status.value) || isTerminalBlock(alignment.buildBlocked.value))
 
-  const ctaKey = computed(() => (willGenerate.value ? 'book.detail.editionLink.cta.linkAndGenerate' : 'book.detail.editionLink.cta.link'))
-
   const chipKey = computed(() => {
     switch (phase.value) {
       case 'linked':
@@ -190,7 +197,8 @@ export function useLinkEditionPanel(book: () => BookDetail) {
       coverVersion: isThisBook ? book().coverVersion : member.coverVersion,
       title: member.title,
       authorName: member.authorName,
-      progress: member.progress?.percentage ?? null,
+      // A linked member with no progress record has not been started yet, which the slot says outright.
+      progress: member.progress?.percentage ?? 0,
       isThisBook,
       match: null,
       canChange: false,
@@ -237,13 +245,32 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     return currentFormat.value === 'ebook' ? [currentSlot.value, counterpartSlot.value] : [counterpartSlot.value, currentSlot.value]
   })
 
+  // A ready read-along joins the linked pair as its third edition, so the pair box shows all three in sync.
+  const readAlongSlot = computed<EditionFilledSlot | null>(() => {
+    const member = readAlongMember.value
+    if (phase.value !== 'linked' || !member) return null
+    const isThisBook = member.id === bookId
+    return {
+      kind: 'filled',
+      format: 'ebook',
+      bookId: member.id,
+      coverVersion: isThisBook ? book().coverVersion : member.coverVersion,
+      title: member.title,
+      authorName: member.authorName,
+      progress: member.progress?.percentage ?? member.narrationPercentage ?? 0,
+      isThisBook,
+      match: null,
+      canChange: false,
+      readAlong: true,
+    }
+  })
+
   // Before a pair exists there is nothing to align, so a stale status from a cancelled link must not
   // narrate a build that no longer belongs to this panel.
   const syncStatus = computed<AlignmentStatus>(() => (link.value ? alignment.status.value : 'none'))
-  const canBuildSync = computed(() => canEditMetadata.value && link.value !== null && !isReadAlongPage.value)
+  const canBuildSync = computed(() => canEditMetadata.value && link.value !== null)
 
   const readAlongMode = computed<'offer' | 'manage' | 'readOnly'>(() => {
-    if (isReadAlongPage.value) return 'readOnly'
     return phase.value === 'matched' ? 'offer' : 'manage'
   })
 
@@ -273,8 +300,8 @@ export function useLinkEditionPanel(book: () => BookDetail) {
 
   function refreshBuildStatuses(): void {
     if (!link.value) return
-    void alignment.fetchStatus(bookId)
-    void readAlong.fetchStatus(bookId)
+    void alignment.fetchStatus(pairBookId.value)
+    void readAlong.fetchStatus(pairBookId.value)
   }
 
   // Read up front so the trigger's hover title reflects the real state before the popover is opened.
@@ -297,6 +324,15 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     if (!link.value || readAlong.status.value !== 'ready' || !output || members.value?.readAlong) return null
     return output.id
   })
+  // Picking another counterpart before linking changes the pair, and so whether a read-along exists for it.
+  watch(
+    () => selected.value?.bookId,
+    (counterpartId, previous) => {
+      if (link.value || !canGenerate.value || counterpartId === previous) return
+      void readAlong.fetchStatus(pairBookId.value, counterpartId)
+    },
+  )
+
   watch(missingReadAlongMemberId, (outputId) => {
     if (outputId === null || outputId === reloadedForOutputId) return
     reloadedForOutputId = outputId
@@ -323,14 +359,15 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     await load()
     if (link.value) {
       refreshBuildStatuses()
-      if (canGenerate.value && !isReadAlongPage.value && !readAlongMember.value) {
+      if (canGenerate.value && !readAlongMember.value) {
         // An aligned Storyteller book that already covers this pair can be imported instead of rebuilt.
-        void readAlong.fetchExisting(bookId)
+        void readAlong.fetchExisting(pairBookId.value)
         readAlongSection.loadTargetLibraries()
       }
     } else if (canGenerate.value) {
-      // Read on an unlinked book too: the toggle has to know whether Storyteller is usable at all.
-      void readAlong.fetchStatus(bookId)
+      // Read on an unlinked book too: the toggle has to know whether Storyteller is usable at all, and
+      // whether the matched pair already has a read-along that the link would bring back.
+      void readAlong.fetchStatus(pairBookId.value, selected.value?.bookId)
       readAlongSection.loadTargetLibraries()
     }
     if (canEditMetadata.value && !link.value && !proposed.value) runSearch()
@@ -370,15 +407,15 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     }
     toast.success(t('book.detail.editionLink.linkedSuccess'))
     query.value = ''
-    void alignment.build(bookId)
+    void alignment.build(pairBookId.value)
     if (shouldGenerate && !toggleDisabled.value) {
       void readAlongSection.runBuild(readAlongSection.withDestination({}))
       return
     }
     // The pre-link read answered for a book without a pair ('no_pair'), which would keep Generate
     // disabled until the panel is reopened.
-    void readAlong.fetchStatus(bookId)
-    if (canGenerate.value) void readAlong.fetchExisting(bookId)
+    void readAlong.fetchStatus(pairBookId.value)
+    if (canGenerate.value) void readAlong.fetchExisting(pairBookId.value)
   }
 
   function linkedCounterpartCandidate(): EditionLinkCandidate | null {
@@ -404,8 +441,8 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   // otherwise show the previous pair's Synced, Built or Ready until the new reads land.
   function forgetPair(): void {
     readAlong.reset()
-    void alignment.fetchStatus(bookId)
-    void readAlong.fetchStatus(bookId)
+    void alignment.fetchStatus(pairBookId.value)
+    void readAlong.fetchStatus(pairBookId.value)
   }
 
   // Stops whatever this link started, then unlinks. A cancel the server refuses is reported and the
@@ -414,7 +451,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   async function cancelLinking(): Promise<void> {
     const candidate = linkedCounterpartCandidate()
     if (isReadAlongInFlight(readAlong.status.value) || readAlong.mutating.value) {
-      const outcome = await readAlong.cancel(bookId)
+      const outcome = await readAlong.cancel(pairBookId.value)
       if (outcome === 'too_late') {
         toast.error(t('book.detail.editionLink.readAlong.cancelTooLate'))
         return
@@ -422,7 +459,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
       if (outcome === 'failed') toast.error(t('book.detail.editionLink.readAlong.cancelKeptRunning'))
     }
     if (alignmentRunning.value) {
-      const cancelled = await alignment.cancel(bookId)
+      const cancelled = await alignment.cancel(pairBookId.value)
       if (!cancelled) toast.error(t('book.detail.editionLink.syncCancelKeptRunning'))
     }
     const success = await unlinkBook()
@@ -435,7 +472,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   }
 
   async function unlink(): Promise<void> {
-    const success = await unlinkBook()
+    const success = await unlinkBook(pairBookId.value)
     if (!success) {
       toast.error(error.value ?? t('book.detail.editionLink.unlinkFailed'))
       return
@@ -446,7 +483,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   }
 
   async function buildSync(force: boolean): Promise<void> {
-    await alignment.build(bookId, force)
+    await alignment.build(pairBookId.value, force)
     if (alignment.error.value) toast.error(t('book.detail.readingAlignment.buildFailed'))
   }
 
@@ -463,6 +500,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     alignment,
     readAlongSection,
     readAlongMember,
+    readAlongSlot,
     readAlongIsCurrentBook,
     isEligible,
     isReadAlongPage,
@@ -479,7 +517,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     showSections,
     showReadAlong,
     searchAutofocus,
-    ctaKey,
+    willGenerate,
     chipKey,
     introKey,
     syncStatus,

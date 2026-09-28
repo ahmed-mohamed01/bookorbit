@@ -141,7 +141,7 @@ function handleKeepRemoteCopy(value: boolean) {
     <PopoverContent
       align="end"
       :collision-padding="16"
-      class="max-h-(--reka-popover-content-available-height) w-[26rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-4"
+      class="max-h-(--reka-popover-content-available-height) w-[20rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-3.5"
     >
       <PositionSyncSection
         class="mt-0!"

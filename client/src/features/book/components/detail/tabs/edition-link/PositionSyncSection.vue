@@ -3,12 +3,11 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Activity, BookOpen, Headphones, Loader2, RefreshCw } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { formatDate } from '@/i18n/formatters'
 import type { AlignmentBuildBlockReason, AlignmentStatus } from '@/features/book/composables/useReadingAlignment'
 import type { EditionFormat } from '@/features/book/composables/useLinkEditionPanel'
-import { isTerminalBlock, needsForce } from '@/features/book/lib/position-sync'
-
-const MAX_TICKS = 40
+import { usePositionSyncStatus } from '@/features/book/composables/usePositionSyncStatus'
+import { needsForce } from '@/features/book/lib/position-sync'
+import PositionSyncTicks from './PositionSyncTicks.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -30,53 +29,7 @@ const emit = defineEmits<{ build: [force: boolean] }>()
 
 const { t } = useI18n()
 
-const running = computed(() => props.status === 'pending' || props.status === 'building')
-
-const tag = computed(() => {
-  if (running.value) return { key: 'book.detail.readingAlignment.tag.building', class: 'bg-info/15 text-info' }
-  switch (props.status) {
-    case 'ready':
-      return { key: 'book.detail.readingAlignment.tag.ready', class: 'bg-success/15 text-success' }
-    case 'failed':
-      return { key: 'book.detail.readingAlignment.tag.failed', class: 'bg-destructive/15 text-destructive' }
-    case 'unalignable':
-      return { key: 'book.detail.readingAlignment.tag.unalignable', class: 'bg-muted text-muted-foreground' }
-    default:
-      return { key: 'book.detail.readingAlignment.tag.none', class: 'bg-muted text-muted-foreground' }
-  }
-})
-
-const showBuildButton = computed(() => props.canBuild && !running.value && !isTerminalBlock(props.buildBlocked))
-const isRebuild = computed(() => props.status !== 'none')
-
-const tickStrip = computed(() => {
-  const total = props.samplesTotal
-  if (typeof total !== 'number' || total <= 0) return null
-  const count = Math.min(MAX_TICKS, total)
-  const done = Math.min(total, Math.max(0, props.samplesDone ?? 0))
-  const doneTicks = Math.floor((done / total) * count)
-  const ticks = Array.from({ length: count }, (_, index) => {
-    if (index < doneTicks) return 'bg-info'
-    if (index === doneTicks) return 'animate-pulse bg-info/50'
-    return 'bg-muted'
-  })
-  // With every sample done (a resumed, already complete alignment, or the final map-building pass) or
-  // no count yet, there is no current tick to pulse, so the whole strip pulses to show work continues.
-  return { ticks, pulsing: props.samplesDone === null || doneTicks >= count }
-})
-
-const progressPercent = computed(() => {
-  const total = props.samplesTotal
-  if (typeof total !== 'number' || total <= 0) return undefined
-  return Math.round((Math.max(0, Math.min(total, props.samplesDone ?? 0)) / total) * 100)
-})
-
-const builtAtLabel = computed(() => {
-  if (!props.builtAt) return null
-  const parsed = new Date(props.builtAt)
-  if (Number.isNaN(parsed.getTime())) return null
-  return t('book.detail.readingAlignment.builtAt', { date: formatDate(parsed, { year: 'numeric', month: 'short', day: 'numeric' }) })
-})
+const { running, tag, showBuildButton, isRebuild, builtAtLabel, blockMessage } = usePositionSyncStatus(() => props)
 
 // Both editions usually share a title, so the line names the counterpart's format and adds the title
 // only where no pair box already shows it.
@@ -91,26 +44,13 @@ const inSyncLabel = computed(() => {
     : t('book.detail.readingAlignment.inSyncWithType', { type })
 })
 
-const blockMessage = computed(() => {
-  switch (props.buildBlocked) {
-    case 'disabled':
-      return t('book.detail.readingAlignment.buildBlocked.disabled')
-    case 'unavailable':
-      return t('book.detail.readingAlignment.buildBlocked.unavailable')
-    case 'busy':
-      return t('book.detail.readingAlignment.buildBlocked.busy')
-    default:
-      return null
-  }
-})
-
 function handleBuild() {
   emit('build', needsForce(props.status))
 }
 </script>
 
 <template>
-  <section class="mt-2.5 rounded-xl border border-border bg-background p-3" data-testid="position-sync">
+  <section class="mt-2 rounded-xl border border-border bg-card px-3 py-2.5" data-testid="position-sync">
     <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
       <Activity class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
       <h3 class="text-sm font-semibold text-foreground">{{ t('book.detail.readingAlignment.title') }}</h3>
@@ -132,34 +72,7 @@ function handleBuild() {
       </Button>
     </div>
 
-    <template v-if="running">
-      <div
-        v-if="tickStrip"
-        class="mt-2.5 flex gap-0.5"
-        :class="{ 'animate-pulse': tickStrip.pulsing }"
-        role="progressbar"
-        aria-valuemin="0"
-        aria-valuemax="100"
-        :aria-valuenow="progressPercent"
-        :aria-label="t('book.detail.readingAlignment.progressLabel')"
-        data-testid="position-sync-ticks"
-      >
-        <div
-          v-for="(tickClass, index) in tickStrip.ticks"
-          :key="index"
-          class="h-3.5 flex-1 rounded-[2px] transition-colors duration-500"
-          :class="tickClass"
-          data-testid="position-sync-tick"
-        />
-      </div>
-      <div
-        v-else
-        class="mt-2.5 h-1.5 w-full animate-pulse rounded-full bg-info/40"
-        role="progressbar"
-        :aria-label="t('book.detail.readingAlignment.progressLabel')"
-        data-testid="position-sync-indeterminate"
-      />
-    </template>
+    <PositionSyncTicks v-if="running" class="mt-2.5" :samples-done="samplesDone" :samples-total="samplesTotal" />
     <div v-else-if="status === 'ready'" class="mt-1.5 space-y-0.5 text-xs text-muted-foreground" data-testid="position-sync-done">
       <p v-if="builtAtLabel">{{ builtAtLabel }}</p>
       <p v-if="inSyncLabel" class="flex items-center gap-1.5" data-testid="position-sync-in-sync">
