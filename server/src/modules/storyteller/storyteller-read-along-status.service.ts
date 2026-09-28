@@ -855,12 +855,26 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
    * Read-only but for one repair: a ready read-along whose link was dropped and made again is put
    * back on the new link, since nothing else goes looking for it until someone presses Generate.
    */
-  async getStatus(bookId: number, user: RequestUser): Promise<ReadAlongStatusResponse> {
+  /**
+   * `counterpartId` names the edition an unlinked book is about to be linked with. A read-along built
+   * for that pair before it was unlinked rejoins it on the next link, so it is reported as the pair's
+   * build rather than offering to generate a second copy. Without such a build the unlinked answer is
+   * unchanged.
+   */
+  async getStatus(bookId: number, user: RequestUser, counterpartId?: number): Promise<ReadAlongStatusResponse> {
     await this.bookService.verifyBookAccess(bookId, user);
     // Read once and threaded down: this route is polled against a twelve-hour build ceiling.
     const [settings, linkedPair] = await Promise.all([this.settingsService.getSettings(), this.resolvePair(bookId)]);
     let pair = linkedPair;
     let build = pair ? await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId) : undefined;
+    if (!pair && counterpartId !== undefined && counterpartId !== bookId) {
+      const proposed = await this.proposedPair(bookId, counterpartId);
+      const proposedBuild = proposed ? await this.repo.findBuildByPair(proposed.textBookId, proposed.audioBookId) : undefined;
+      if (proposed && proposedBuild) {
+        pair = proposed;
+        build = proposedBuild;
+      }
+    }
     if (!pair) {
       build = await this.repo.findBuildByOutputBook(bookId);
       if (build) {
@@ -1129,6 +1143,15 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
         `[${ATTACH_EVENT}] [fail] linkId=${linkId} buildId=${buildId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - attached link could not be recorded`,
       );
     }
+  }
+
+  // The pair an unlinked book would form with `counterpartId`: one text and one audio edition, in
+  // either order. Anything else is no pair, the same as an unlinked book.
+  private async proposedPair(bookId: number, counterpartId: number): Promise<StorytellerReadAlongPair | null> {
+    const [own, other] = await Promise.all([this.editionLinks.getBookModality(bookId), this.editionLinks.getBookModality(counterpartId)]);
+    if (own === 'text' && other === 'audio') return { textBookId: bookId, audioBookId: counterpartId, linkId: null, role: 'text', link: null };
+    if (own === 'audio' && other === 'text') return { textBookId: counterpartId, audioBookId: bookId, linkId: null, role: 'audio', link: null };
+    return null;
   }
 
   async resolvePair(bookId: number): Promise<StorytellerReadAlongPair | null> {

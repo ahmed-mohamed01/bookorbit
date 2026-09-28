@@ -43,6 +43,21 @@ describe('EditionLinkController', () => {
     expect(Reflect.getMetadata(METHOD_METADATA, EditionLinkController.prototype[method])).toBe(requestMethod);
   });
 
+  it('says when the book is a detached read-along, and says nothing otherwise', async () => {
+    service.getForBook.mockResolvedValueOnce({ link: null, proposed: null, counterpart: null, role: null, members: null, readAlongOutput: true });
+    await expect(controller.getForBook(user, 30)).resolves.toEqual({
+      link: null,
+      proposed: null,
+      counterpart: null,
+      role: null,
+      members: null,
+      readAlongOutput: true,
+    });
+
+    service.getForBook.mockResolvedValueOnce({ link: null, proposed: null, counterpart: null, role: null, members: null });
+    await expect(controller.getForBook(user, 10)).resolves.not.toHaveProperty('readAlongOutput');
+  });
+
   it('delegates all HTTP operations to the service', async () => {
     const link = { id: 1 };
     service.getForBook.mockResolvedValue({ link: null, proposed: null, counterpart: null, role: null, members: null });

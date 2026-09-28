@@ -27,6 +27,14 @@ const PATH_PREFIX_MAX_LENGTH = 500;
 
 const trimString = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
 
+export class ReadAlongStatusQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  counterpartId?: number;
+}
+
 export class StorytellerPathMappingDto implements StorytellerPathMapping {
   @Transform(trimString)
   @IsString()

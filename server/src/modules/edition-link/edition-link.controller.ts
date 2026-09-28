@@ -28,8 +28,9 @@ export class EditionLinkController {
 
   @Get('for-book/:bookId')
   async getForBook(@CurrentUser() user: RequestUser, @Param('bookId', ParseIntPipe) bookId: number): Promise<EditionLinkForBook> {
-    const { link, proposed, counterpart, role, members } = await this.service.getForBook(user, bookId);
-    return { link: link ? toEditionLinkDto(link) : null, proposed, counterpart, role, members };
+    const { link, proposed, counterpart, role, members, readAlongOutput } = await this.service.getForBook(user, bookId);
+    const result: EditionLinkForBook = { link: link ? toEditionLinkDto(link) : null, proposed, counterpart, role, members };
+    return readAlongOutput ? { ...result, readAlongOutput } : result;
   }
 
   @Get('candidates/:bookId')

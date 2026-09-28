@@ -1,13 +1,14 @@
 import { BadRequestException, ConflictException, ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { EMPTY_CONTENT_FILTER_RULES } from '@bookorbit/types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
 import { LibraryService } from '../library/library.service';
 import { EditionLinkRepository } from './edition-link.repository';
 import { EditionLinkService } from './edition-link.service';
+import { READ_ALONG_OUTPUT_SOURCE } from './read-along-output-source';
 
 describe('EditionLinkService', () => {
   let service: EditionLinkService;
@@ -23,6 +24,7 @@ describe('EditionLinkService', () => {
   };
   let bookService: { verifyBookAccess: ReturnType<typeof vi.fn> };
   let libraryService: { findAccessibleLibraryIds: ReturnType<typeof vi.fn> };
+  let readAlongOutputs: { findReadAlongOutputs: Mock<(bookIds: readonly number[]) => Promise<Set<number>>> };
 
   const user = {
     id: 7,
@@ -56,6 +58,7 @@ describe('EditionLinkService', () => {
     libraryService = {
       findAccessibleLibraryIds: vi.fn().mockResolvedValue([1, 2]),
     };
+    readAlongOutputs = { findReadAlongOutputs: vi.fn().mockResolvedValue(new Set()) };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -63,12 +66,45 @@ describe('EditionLinkService', () => {
         { provide: EditionLinkRepository, useValue: repo },
         { provide: BookService, useValue: bookService },
         { provide: LibraryService, useValue: libraryService },
+        { provide: READ_ALONG_OUTPUT_SOURCE, useValue: readAlongOutputs },
       ],
     }).compile();
     service = module.get(EditionLinkService);
 
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+  });
+
+  describe('a generated read-along detached from its pair', () => {
+    it('is reported as such, with no proposal, and searches to nothing', async () => {
+      repo.getBookModality.mockResolvedValue('text');
+      readAlongOutputs.findReadAlongOutputs.mockResolvedValue(new Set([30]));
+      repo.findCounterpartCandidates.mockResolvedValue([{ bookId: 11, title: 'Dune', authorName: null, coverVersion: null, score: 100 }]);
+
+      await expect(service.getForBook(user, 30)).resolves.toMatchObject({ link: null, proposed: null, readAlongOutput: true });
+      await expect(service.searchCandidates(user, 30, 'dune')).resolves.toEqual([]);
+      expect(repo.findCounterpartCandidates).not.toHaveBeenCalled();
+    });
+
+    it('is never linked, from either side', async () => {
+      repo.getBookModality.mockResolvedValueOnce('text').mockResolvedValueOnce('audio').mockResolvedValueOnce('audio').mockResolvedValueOnce('text');
+      readAlongOutputs.findReadAlongOutputs.mockResolvedValue(new Set([30]));
+
+      await expect(service.link(user, 30, 11)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.link(user, 11, 30)).rejects.toBeInstanceOf(BadRequestException);
+      expect(repo.insertLink).not.toHaveBeenCalled();
+    });
+
+    it("is left out of an audiobook's candidates", async () => {
+      const readAlong = { bookId: 30, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null, score: 100 };
+      const ebook = { bookId: 10, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null, score: 96 };
+      repo.getBookModality.mockResolvedValue('audio');
+      repo.findCounterpartCandidates.mockResolvedValue([readAlong, ebook]);
+      readAlongOutputs.findReadAlongOutputs.mockImplementation((ids) => Promise.resolve(new Set(ids.filter((id) => id === 30))));
+
+      await expect(service.getForBook(user, 11)).resolves.toMatchObject({ proposed: ebook });
+      await expect(service.searchCandidates(user, 11)).resolves.toEqual([ebook]);
+    });
   });
 
   it('proposes the top plausible counterpart for an unlinked book', async () => {

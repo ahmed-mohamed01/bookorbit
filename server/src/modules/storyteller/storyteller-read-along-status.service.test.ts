@@ -591,6 +591,60 @@ describe('StorytellerReadAlongStatusService', () => {
     expect(buildService.runBuild).toHaveBeenCalledOnce();
   });
 
+  describe('for a proposed pair', () => {
+    function unlinked(editionLinks: Awaited<ReturnType<typeof setup>>['editionLinks']) {
+      editionLinks.findLinkForBook.mockResolvedValue(undefined);
+      editionLinks.getBookModality.mockImplementation((bookId: number) => Promise.resolve(bookId === 11 ? 'audio' : 'text'));
+    }
+
+    it('reports the read-along an unlinked pair already has, so linking offers no second build', async () => {
+      const { service, repo, editionLinks } = await setup();
+      unlinked(editionLinks);
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'ready', outputBookId: 99, builtAt: new Date() }));
+      editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Dune (read-along)' });
+
+      const result = await service.getStatus(11, USER, 10);
+
+      expect(repo.findBuildByPair).toHaveBeenCalledWith(10, 11);
+      expect(result.status).toBe('ready');
+      expect(result.outputBook).toMatchObject({ id: 99 });
+    });
+
+    it('answers as unlinked when the proposed pair has no build', async () => {
+      const { service, repo, editionLinks } = await setup();
+      unlinked(editionLinks);
+
+      const result = await service.getStatus(11, USER, 10);
+
+      expect(repo.findBuildByPair).toHaveBeenCalledWith(10, 11);
+      expect(result.status).toBe('none');
+      expect(result.outputBook).toBeNull();
+    });
+
+    it('ignores a counterpart of the same format', async () => {
+      const { service, repo, editionLinks } = await setup();
+      unlinked(editionLinks);
+
+      await service.getStatus(10, USER, 12);
+
+      expect(repo.findBuildByPair).not.toHaveBeenCalled();
+    });
+
+    it('does not describe a pair whose counterpart the caller cannot open', async () => {
+      const { service, repo, bookService, editionLinks } = await setup();
+      unlinked(editionLinks);
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'ready', outputBookId: 99, builtAt: new Date() }));
+      bookService.verifyBookAccess.mockImplementation((bookId: number) =>
+        bookId === 10 ? Promise.reject(new NotFoundException('hidden')) : Promise.resolve(undefined),
+      );
+
+      const result = await service.getStatus(11, USER, 10);
+
+      expect(result.status).toBe('none');
+      expect(result.outputBook).toBeNull();
+    });
+  });
+
   it('reports none when a ready output book was deleted', async () => {
     const { service, repo, editionLinks } = await setup();
     repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'ready', outputBookId: 99, builtAt: new Date() }));
