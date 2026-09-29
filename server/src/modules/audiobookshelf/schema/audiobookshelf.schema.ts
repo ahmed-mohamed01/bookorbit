@@ -17,6 +17,7 @@ export const audiobookshelfUserSettings = pgTable('audiobookshelf_user_settings'
   enabled: boolean('enabled').notNull().default(true),
   syncStatus: boolean('sync_status').notNull().default(true),
   syncPosition: boolean('sync_position').notNull().default(true),
+  pushPosition: boolean('push_position').notNull().default(false),
   syncSessions: boolean('sync_sessions').notNull().default(true),
   excludedLibraryIds: text('excluded_library_ids')
     .array()
@@ -61,6 +62,7 @@ export const audiobookshelfBookState = pgTable(
     lastSyncedAbsUpdate: bigint('last_synced_abs_update', { mode: 'number' }),
     lastSyncedPositionAbsUpdate: bigint('last_synced_position_abs_update', { mode: 'number' }),
     lastSyncedProgressAt: timestamp('last_synced_progress_at', { withTimezone: true }),
+    pushPendingAt: timestamp('push_pending_at', { withTimezone: true }),
     syncError: text('sync_error'),
     syncExcluded: boolean('sync_excluded').notNull().default(false),
     manualUnlinked: boolean('manual_unlinked').notNull().default(false),
@@ -73,6 +75,9 @@ export const audiobookshelfBookState = pgTable(
   (t) => [
     unique('audiobookshelf_book_state_user_item_uidx').on(t.userId, t.absLibraryItemId),
     index('audiobookshelf_book_state_user_book_idx').on(t.userId, t.bookId),
+    index('audiobookshelf_book_state_user_push_pending_idx')
+      .on(t.userId, t.pushPendingAt)
+      .where(sql`${t.pushPendingAt} is not null`),
   ],
 );
 

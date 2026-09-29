@@ -1510,6 +1510,12 @@
         "audiobookshelf": "Sync listening progress and sessions from Audiobookshelf.",
         "storyteller": "Generate read-along EPUBs by pairing an ebook with an audiobook through Storyteller."
       },
+      "audiobookshelf": {
+        "pushPosition": {
+          "label": "Send BookOrbit progress to Audiobookshelf",
+          "description": "Your listening and read-along position in BookOrbit updates Audiobookshelf."
+        }
+      },
       "storyteller": {
         "title": "Storyteller",
         "subtitle": "Connect an instance-level Storyteller server to generate read-along EPUBs for every user's library.",

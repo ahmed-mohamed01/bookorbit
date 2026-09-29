@@ -12,6 +12,9 @@ export const ACHIEVEMENT_EVENT_ACHIEVEMENT_AWARDED = 'achievement.awarded';
 export const ACHIEVEMENT_EVENT_BOOK_RATING_CHANGED = 'book.rating-changed';
 export const ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED = 'book.progress-changed';
 export const ACHIEVEMENT_EVENT_BOOK_HARDCOVER_EDITION_CHANGED = 'book.hardcover-edition-changed';
+// An audiobook position written as a side effect of reading its linked read-along. Kept apart from
+// BOOK_PROGRESS_CHANGED so progress listeners (achievements, Hardcover, alignment) do not count it twice.
+export const ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED = 'book.audio-position-derived';
 
 export interface ReadingSessionSavedPayload {
   userId: number;
@@ -67,6 +70,11 @@ export interface BookProgressChangedPayload {
   source: 'koreader' | 'kobo' | 'web_reader' | 'audiobookshelf';
 }
 
+export interface AudioPositionDerivedPayload {
+  userId: number;
+  bookId: number;
+}
+
 export interface BookHardcoverEditionChangedPayload {
   userId: number;
   bookId: number;
@@ -81,7 +89,8 @@ export type AchievementEventPayload =
   | LibraryCatalogChangedPayload
   | BookRatingChangedPayload
   | BookProgressChangedPayload
-  | BookHardcoverEditionChangedPayload;
+  | BookHardcoverEditionChangedPayload
+  | AudioPositionDerivedPayload;
 
 @Injectable()
 export class AchievementEventsService extends EventEmitter {}

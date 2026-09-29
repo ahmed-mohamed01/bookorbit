@@ -121,6 +121,47 @@ describe('AudiobookshelfClientService', () => {
     });
   });
 
+  describe('media progress', () => {
+    it('gets progress with the item id safely encoded', async () => {
+      const progress = { libraryItemId: 'item/with space', currentTime: 40, duration: 100, progress: 0.4, lastUpdate: 5000 };
+      fetchMock.mockResolvedValueOnce(makeResponse({ status: 200, json: progress }));
+
+      await expect(makeService().getMediaProgress(1, SERVER_URL, TOKEN, 'item/with space')).resolves.toEqual(progress);
+
+      const [calledUrl, init] = fetchMock.mock.calls[0];
+      expect(String(calledUrl)).toBe('https://abs.example.com/api/me/progress/item%2Fwith%20space');
+      expect((init as RequestInit).method).toBe('GET');
+    });
+
+    it('returns null when the user has no progress record', async () => {
+      fetchMock.mockResolvedValueOnce(makeResponse({ status: 404 }));
+
+      await expect(makeService().getMediaProgress(1, SERVER_URL, TOKEN, 'item-1')).resolves.toBeNull();
+    });
+
+    it('patches progress with a JSON body and encoded item id, accepting the plain OK acknowledgement', async () => {
+      const payload = { currentTime: 40, duration: 100, progress: 0.4, lastUpdate: 5000 };
+      // ABS answers this PATCH with res.sendStatus(200), a text "OK" body that is not JSON.
+      fetchMock.mockResolvedValueOnce(makeResponse({ status: 200, jsonThrows: true }));
+
+      await expect(makeService().updateMediaProgress(1, SERVER_URL, TOKEN, 'item/1', payload)).resolves.toBeUndefined();
+
+      const [calledUrl, init] = fetchMock.mock.calls[0];
+      expect(String(calledUrl)).toBe('https://abs.example.com/api/me/progress/item%2F1');
+      expect(init).toMatchObject({ method: 'PATCH', body: JSON.stringify(payload), redirect: 'manual' });
+      expect((init as RequestInit).headers).toMatchObject({
+        Authorization: `Bearer ${TOKEN}`,
+        'Content-Type': 'application/json',
+      });
+    });
+
+    it('propagates non-404 progress errors', async () => {
+      fetchMock.mockResolvedValueOnce(makeResponse({ status: 503 }));
+
+      await expect(makeService().getMediaProgress(1, SERVER_URL, TOKEN, 'item-1')).rejects.toMatchObject({ code: 'http', status: 503 });
+    });
+  });
+
   describe('getLibraries', () => {
     it('carries each library folder fullPath through as folderPaths', async () => {
       fetchMock.mockResolvedValueOnce(

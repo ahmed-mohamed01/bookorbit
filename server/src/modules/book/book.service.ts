@@ -96,6 +96,7 @@ import { UserBookStatusService, type AutoReadingActivity } from '../user-book-st
 import {
   ACHIEVEMENT_EVENT_BOOK_HARDCOVER_EDITION_CHANGED,
   ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED,
+  ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED,
   ACHIEVEMENT_EVENT_BOOK_RATING_CHANGED,
   AchievementEventsService,
 } from '../achievement/achievement-events.service';
@@ -2124,6 +2125,10 @@ export class BookService {
     return this.bookRepo.findAudioProgress(userId, bookId);
   }
 
+  async resolveAudiobookPositionForExternalSync(audioBookId: number, currentFileId: number, positionSeconds: number) {
+    return this.audiobookEbookProgressSync?.resolveAudioBookPosition(audioBookId, currentFileId, positionSeconds) ?? null;
+  }
+
   async saveAudioProgress(userId: number, bookId: number, dto: UpsertAudioProgressDto, user: RequestUser) {
     const libraryId = await this.bookRepo.findLibraryIdByBookId(bookId);
     if (libraryId === null) throw new NotFoundException(`Book ${bookId} not found`);
@@ -2202,7 +2207,8 @@ export class BookService {
   ): Promise<void> {
     const link = await this.findAccessibleReadAlongLink(user, readAlongBookId, knownLink);
     if (!link || link.readAlongBookId !== readAlongBookId || !this.audiobookEbookProgressSync) return;
-    await this.audiobookEbookProgressSync.syncAudioFromReadAlongPosition({ userId: user.id, ...link, ...position });
+    const moved = await this.audiobookEbookProgressSync.syncAudioFromReadAlongPosition({ userId: user.id, ...link, ...position });
+    if (moved) this.achievementEvents?.emit(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, { userId: user.id, bookId: link.audioBookId });
   }
 
   private async findAccessibleReadAlongLink(user: RequestUser, bookId: number, knownLink?: ReadAlongLink): Promise<ReadAlongLink | null> {

@@ -17,6 +17,7 @@ export interface AudiobookshelfSettings {
   disabledReason: AudiobookshelfSyncDisabledReason | null;
   syncStatus: boolean;
   syncPosition: boolean;
+  pushPosition: boolean;
   syncSessions: boolean;
   excludedLibraryIds: string[];
   pathMappings: AudiobookshelfPathMapping[];
@@ -36,6 +37,7 @@ export interface UpsertAudiobookshelfSettingsPayload {
   enabled?: boolean;
   syncStatus?: boolean;
   syncPosition?: boolean;
+  pushPosition?: boolean;
   syncSessions?: boolean;
   excludedLibraryIds?: string[];
   pathMappings?: AudiobookshelfPathMapping[];

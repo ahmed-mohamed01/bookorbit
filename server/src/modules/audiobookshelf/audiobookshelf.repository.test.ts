@@ -410,6 +410,22 @@ describe('AudiobookshelfRepository', () => {
     });
   });
 
+  describe('findPendingPositionPushes', () => {
+    it('scopes to the user, orders oldest first, and caps the batch at two hundred', async () => {
+      const rows = [{ id: 2, userId: 7, pushPendingAt: new Date('2026-01-01T00:00:00Z') }];
+      const chain = makeChain(rows);
+      const db = { select: vi.fn(() => chain) };
+      const repo = new AudiobookshelfRepository(db as never);
+
+      await expect(repo.findPendingPositionPushes(7, 500)).resolves.toEqual(rows);
+
+      expect(someCall(eq, (column, value) => column === audiobookshelfBookState.userId && value === 7)).toBe(true);
+      expect(someCall(isNotNull, (column) => column === audiobookshelfBookState.pushPendingAt)).toBe(true);
+      expect(someCall(asc, (column) => column === audiobookshelfBookState.pushPendingAt)).toBe(true);
+      expect(chain.limit).toHaveBeenCalledWith(200);
+    });
+  });
+
   describe('findBookStateCleanupCandidates', () => {
     it('scopes to the user and pages by ascending keyset within the limit', async () => {
       const rows = [{ id: 3, absLibraryItemId: 'abs-3', bookId: null, syncExcluded: false, manualUnlinked: false }];
@@ -740,13 +756,15 @@ describe('AudiobookshelfRepository', () => {
       expect(db.select).not.toHaveBeenCalled();
     });
 
-    it('keys the newest-wins inputs and the CAS revision by bookId, scoped to the user', async () => {
+    it('keys the complete local position snapshot by bookId, scoped to the user', async () => {
+      const capturedAt = new Date('2026-07-18T23:59:00Z');
       const updatedAt = new Date('2026-07-19T00:00:00Z');
-      const chain = makeChain([{ bookId: 10, percentage: 42, updatedAt, revision: 4 }]);
+      const snapshot = { currentFileId: 99, positionSeconds: 420, percentage: 42, capturedAt, updatedAt, revision: 4 };
+      const chain = makeChain([{ bookId: 10, ...snapshot }]);
       const db = { select: vi.fn(() => chain) };
       const repo = new AudiobookshelfRepository(db as never);
 
-      await expect(repo.findAudioProgressForBooks(7, [10])).resolves.toEqual(new Map([[10, { percentage: 42, updatedAt, revision: 4 }]]));
+      await expect(repo.findAudioProgressForBooks(7, [10])).resolves.toEqual(new Map([[10, snapshot]]));
       expect(someCall(eq, (c, v) => c === schema.audiobookProgress.userId && v === 7)).toBe(true);
       expect(someCall(inArray, (c, v) => c === schema.audiobookProgress.bookId && Array.isArray(v))).toBe(true);
     });

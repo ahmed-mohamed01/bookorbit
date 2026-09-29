@@ -59,6 +59,7 @@ function makeSettings(overrides: Partial<AudiobookshelfSettings> = {}): Audioboo
     disabledReason: null,
     syncStatus: true,
     syncPosition: true,
+    pushPosition: false,
     syncSessions: true,
     excludedLibraryIds: [],
     pathMappings: [],
@@ -128,15 +129,16 @@ describe('AudiobookshelfSettings', () => {
     expect(mocks.fetchLibraries).toHaveBeenCalledTimes(1)
   })
 
-  it('renders the three sync-option toggles when configured', async () => {
+  it('renders the four sync-option toggles when configured', async () => {
     settings.value = makeSettings()
     const wrapper = mountSettings()
     await flushPromises()
 
     expect(wrapper.text()).toContain('Reading status')
     expect(wrapper.text()).toContain('Playback position')
+    expect(wrapper.text()).toContain('Send BookOrbit progress to Audiobookshelf')
     expect(wrapper.text()).toContain('Listening sessions')
-    expect(wrapper.findAll('[role="switch"]').length).toBeGreaterThanOrEqual(3)
+    expect(wrapper.findAll('[role="switch"]').length).toBeGreaterThanOrEqual(4)
   })
 
   it('does not render the sync-options section before a token is configured', async () => {
@@ -158,6 +160,18 @@ describe('AudiobookshelfSettings', () => {
 
     expect(mocks.saveSettings).toHaveBeenCalledWith({ syncStatus: false })
     expect(toastSuccess).toHaveBeenCalledWith('Audiobookshelf sync options saved')
+  })
+
+  it('persists the outbound position toggle through the composable', async () => {
+    settings.value = makeSettings()
+    const wrapper = mountSettings()
+    await flushPromises()
+
+    await wrapper.findAll('[role="switch"]')[2]!.trigger('click')
+    await findButton(wrapper, 'Save sync options')!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.saveSettings).toHaveBeenCalledWith({ pushPosition: true })
   })
 
   it('renders the libraries list when configured', async () => {
@@ -357,7 +371,7 @@ describe('AudiobookshelfSettings', () => {
 
     const switches = wrapper.findAll('[role="switch"]')
     expect(switches[0]!.attributes('aria-checked')).toBe('false')
-    expect(switches[4]!.attributes('aria-checked')).toBe('false')
+    expect(switches[5]!.attributes('aria-checked')).toBe('false')
     const absPrefixes = wrapper.findAll('[data-testid="abs-path-prefix"]').map((input) => (input.element as HTMLInputElement).value)
     expect(absPrefixes).toEqual(['/audiobooks'])
   })
@@ -368,13 +382,13 @@ describe('AudiobookshelfSettings', () => {
     const wrapper = mountSettings()
     await flushPromises()
 
-    await wrapper.findAll('[role="switch"]')[3]!.trigger('click')
-    expect(wrapper.findAll('[role="switch"]')[3]!.attributes('aria-checked')).toBe('false')
+    await wrapper.findAll('[role="switch"]')[4]!.trigger('click')
+    expect(wrapper.findAll('[role="switch"]')[4]!.attributes('aria-checked')).toBe('false')
 
     settings.value = makeSettings()
     await flushPromises()
 
-    expect(wrapper.findAll('[role="switch"]')[3]!.attributes('aria-checked')).toBe('false')
+    expect(wrapper.findAll('[role="switch"]')[4]!.attributes('aria-checked')).toBe('false')
     await findButton(wrapper, 'Save sync options')!.trigger('click')
     await flushPromises()
 

@@ -6,14 +6,14 @@ The client keeps all route paths in `api/audiobookshelf.api.ts` and imports Audi
 
 These routes are user-scoped and guarded at the controller by `Permission.AudiobookshelfSync`.
 
-| Method   | Path                                           | Request body                                                                                                                     | Expected response                  |
-| -------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `GET`    | `/api/v1/audiobookshelf/settings`              | None                                                                                                                             | `AudiobookshelfSettings`           |
-| `PATCH`  | `/api/v1/audiobookshelf/settings`              | Changed fields from `{ serverUrl, apiToken, enabled, syncStatus, syncPosition, syncSessions, excludedLibraryIds, pathMappings }` | `AudiobookshelfSettings`           |
-| `GET`    | `/api/v1/audiobookshelf/libraries`             | None                                                                                                                             | `AudiobookshelfLibrariesResponse`  |
-| `DELETE` | `/api/v1/audiobookshelf/settings`              | None                                                                                                                             | `200` with an empty body           |
-| `POST`   | `/api/v1/audiobookshelf/test-connection`       | Any subset of `{ serverUrl, apiToken }`. Omitted values use saved settings.                                                      | `{ success, username?, error? }`   |
-| `POST`   | `/api/v1/audiobookshelf/path-mappings/suggest` | None                                                                                                                             | `AudiobookshelfMappingSuggestions` |
+| Method   | Path                                           | Request body                                                                                                                                   | Expected response                  |
+| -------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `GET`    | `/api/v1/audiobookshelf/settings`              | None                                                                                                                                           | `AudiobookshelfSettings`           |
+| `PATCH`  | `/api/v1/audiobookshelf/settings`              | Changed fields from `{ serverUrl, apiToken, enabled, syncStatus, syncPosition, pushPosition, syncSessions, excludedLibraryIds, pathMappings }` | `AudiobookshelfSettings`           |
+| `GET`    | `/api/v1/audiobookshelf/libraries`             | None                                                                                                                                           | `AudiobookshelfLibrariesResponse`  |
+| `DELETE` | `/api/v1/audiobookshelf/settings`              | None                                                                                                                                           | `200` with an empty body           |
+| `POST`   | `/api/v1/audiobookshelf/test-connection`       | Any subset of `{ serverUrl, apiToken }`. Omitted values use saved settings.                                                                    | `{ success, username?, error? }`   |
+| `POST`   | `/api/v1/audiobookshelf/path-mappings/suggest` | None                                                                                                                                           | `AudiobookshelfMappingSuggestions` |
 
 `AudiobookshelfSettings`, imported from `@bookorbit/types`:
 
@@ -26,6 +26,7 @@ These routes are user-scoped and guarded at the controller by `Permission.Audiob
   disabledReason: 'permission_denied' | 'missing_config' | 'user_disabled' | null
   syncStatus: boolean
   syncPosition: boolean
+  pushPosition: boolean
   syncSessions: boolean
   excludedLibraryIds: string[]
   pathMappings: { absPrefix: string; localPrefix: string }[]
@@ -34,6 +35,8 @@ These routes are user-scoped and guarded at the controller by `Permission.Audiob
   staleCount: number
 }
 ```
+
+`pushPosition` defaults to `false`. When enabled, BookOrbit sends local audiobook and linked read-along positions to Audiobookshelf while keeping the newest position from either system.
 
 `staleCount` is the number of stale entries a cleanup (with `includeManuallyUnlinked: true`) could remove, counted during the last successful full inventory walk (a reconcile or a cleanup): rows whose Audiobookshelf item was gone and that carry no link and no exclusion, including manually unlinked rows, since the point of the count is to surface every row a cleanup control can still clear. It is `0` until such a walk runs, is never written by a partial, hot-tier or failed run, and after a successful cleanup it is set to what a repeat cleanup with `includeManuallyUnlinked: true` would still find, which is `0` only when that cleanup also removed the manually unlinked rows it saw. The sync status strip renders it next to the last-run line together with the inline `Clean up` action whenever it is above zero.
 

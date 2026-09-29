@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { Library, Loader2, Save, WandSparkles } from '@lucide/vue'
+import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import type { AudiobookshelfPathMapping, AudiobookshelfPathMappingSuggestion, UpsertAudiobookshelfSettingsPayload } from '@bookorbit/types'
 import SettingsPageHeader from '@/features/settings/SettingsPageHeader.vue'
@@ -13,6 +14,7 @@ import { useAudiobookshelfSettings } from '../composables/useAudiobookshelfSetti
 import { PATH_MAPPING_MAX_ROWS } from '../audiobookshelf.constants'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+const { t } = useI18n()
 const {
   settings,
   saving,
@@ -28,7 +30,7 @@ const {
   suggestPathMappings,
 } = useAudiobookshelfSettings()
 
-const syncOptions = reactive({ syncStatus: true, syncPosition: true, syncSessions: true })
+const syncOptions = reactive({ syncStatus: true, syncPosition: true, pushPosition: false, syncSessions: true })
 const excludedLibraryIds = ref<string[]>([])
 const pathMappings = ref<AudiobookshelfPathMapping[]>([])
 // Follows the local toggle state, not the saved one, so deselecting a library above immediately
@@ -40,10 +42,15 @@ const absFolderPaths = computed(() => {
 })
 const includedLibraryCount = computed(() => libraries.value.filter((library) => !excludedLibraryIds.value.includes(library.id)).length)
 
-type SyncOptions = { syncStatus: boolean; syncPosition: boolean; syncSessions: boolean }
+type SyncOptions = { syncStatus: boolean; syncPosition: boolean; pushPosition: boolean; syncSessions: boolean }
 
 function pickSyncOptions(source: SyncOptions): SyncOptions {
-  return { syncStatus: source.syncStatus, syncPosition: source.syncPosition, syncSessions: source.syncSessions }
+  return {
+    syncStatus: source.syncStatus,
+    syncPosition: source.syncPosition,
+    pushPosition: source.pushPosition,
+    syncSessions: source.syncSessions,
+  }
 }
 
 function copyMappings(mappings: AudiobookshelfPathMapping[]): AudiobookshelfPathMapping[] {
@@ -155,6 +162,7 @@ async function handleSaveSyncOptions(): Promise<void> {
   const payload: UpsertAudiobookshelfSettingsPayload = {
     ...(syncOptions.syncStatus !== settings.value?.syncStatus ? { syncStatus: syncOptions.syncStatus } : {}),
     ...(syncOptions.syncPosition !== settings.value?.syncPosition ? { syncPosition: syncOptions.syncPosition } : {}),
+    ...(syncOptions.pushPosition !== settings.value?.pushPosition ? { pushPosition: syncOptions.pushPosition } : {}),
     ...(syncOptions.syncSessions !== settings.value?.syncSessions ? { syncSessions: syncOptions.syncSessions } : {}),
     ...(!sameIds(excludedLibraryIds.value, settings.value?.excludedLibraryIds ?? []) ? { excludedLibraryIds: excludedLibraryIds.value } : {}),
     ...(!sameValue(savedPathMappings(), settings.value?.pathMappings ?? []) ? { pathMappings: savedPathMappings() } : {}),
@@ -196,6 +204,15 @@ async function handleSaveSyncOptions(): Promise<void> {
             <p class="mt-0.5 text-xs text-muted-foreground">Resume BookOrbit audiobooks from the latest Audiobookshelf position.</p>
           </div>
           <ToggleSwitch v-model="syncOptions.syncPosition" :disabled="!settings.enabled" />
+        </div>
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <p class="text-sm">{{ t('settings.integrations.audiobookshelf.pushPosition.label') }}</p>
+            <p class="mt-0.5 text-xs text-muted-foreground">
+              {{ t('settings.integrations.audiobookshelf.pushPosition.description') }}
+            </p>
+          </div>
+          <ToggleSwitch v-model="syncOptions.pushPosition" :disabled="!settings.enabled" />
         </div>
         <div class="flex items-center justify-between gap-4">
           <div>

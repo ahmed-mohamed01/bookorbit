@@ -13,6 +13,7 @@ import { parsePdfFile } from '../metadata/lib/pdf-parser';
 import {
   ACHIEVEMENT_EVENT_BOOK_HARDCOVER_EDITION_CHANGED,
   ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED,
+  ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED,
   ACHIEVEMENT_EVENT_BOOK_RATING_CHANGED,
 } from '../achievement/achievement-events.service';
 import { UpdateBookMetadataDto } from './dto/update-book-metadata.dto';
@@ -5684,6 +5685,16 @@ describe('BookService linked audiobook and read-along', () => {
     return { ...made, audiobookEbookProgressSync, readAlongLinks, userService };
   }
 
+  it('exposes the chapter-snapped audiobook timeline through the BookService boundary', async () => {
+    const { service, audiobookEbookProgressSync } = makeLinkedService();
+
+    await expect(service.resolveAudiobookPositionForExternalSync(5, 12, 75)).resolves.toEqual({
+      audioSeconds: 95,
+      audioTotalSeconds: 120,
+    });
+    expect(audiobookEbookProgressSync.resolveAudioBookPosition).toHaveBeenCalledWith(5, 12, 75);
+  });
+
   it('moves the linked read-along from in-app playback of the audiobook', async () => {
     const { service, audiobookEbookProgressSync } = makeLinkedService();
     const user = makeUser({ id: 42, permissions: [Permission.KoboSync] });
@@ -5728,6 +5739,18 @@ describe('BookService linked audiobook and read-along', () => {
     expect(audiobookEbookProgressSync.syncAudioFromReadAlongPosition).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 42, audioBookId: 5, readAlongBookId: 9, bookFileId: 30, cfi: 'epubcfi(/6/2)', sourceUpdatedAt: captured }),
     );
+  });
+
+  it('announces an audiobook moved by reading the read-along, and nothing when it did not move', async () => {
+    const { service, audiobookEbookProgressSync, achievementEvents } = makeLinkedService();
+
+    await service.syncAudioProgressForExternalEbookProgress(42, 9, 30, 40, { sourceUpdatedAt: captured });
+    expect(achievementEvents.emit).toHaveBeenCalledWith(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, { userId: 42, bookId: 5 });
+
+    achievementEvents.emit.mockClear();
+    audiobookEbookProgressSync.syncAudioFromReadAlongPosition.mockResolvedValue(false);
+    await service.syncAudioProgressForExternalEbookProgress(42, 9, 30, 40, { sourceUpdatedAt: captured });
+    expect(achievementEvents.emit).not.toHaveBeenCalledWith(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, expect.anything());
   });
 
   it('loads no user for a device position on a book without a read-along link', async () => {

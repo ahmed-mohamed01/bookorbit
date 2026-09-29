@@ -92,6 +92,7 @@ export class AudiobookshelfSettingsService {
       disabledReason: this.resolveDisabledReason({ hasSyncPermission, configComplete, enabled }),
       syncStatus: row?.syncStatus ?? true,
       syncPosition: row?.syncPosition ?? true,
+      pushPosition: row?.pushPosition ?? false,
       syncSessions: row?.syncSessions ?? true,
       excludedLibraryIds: row?.excludedLibraryIds ?? [],
       pathMappings: row?.pathMappings ?? [],
@@ -126,6 +127,7 @@ export class AudiobookshelfSettingsService {
     if (payload.enabled !== undefined) data.enabled = payload.enabled;
     if (payload.syncStatus !== undefined) data.syncStatus = payload.syncStatus;
     if (payload.syncPosition !== undefined) data.syncPosition = payload.syncPosition;
+    if (payload.pushPosition !== undefined) data.pushPosition = payload.pushPosition;
     if (payload.syncSessions !== undefined) data.syncSessions = payload.syncSessions;
     if (payload.excludedLibraryIds !== undefined) {
       data.excludedLibraryIds = [...new Set(payload.excludedLibraryIds.map((id) => id.trim()))];

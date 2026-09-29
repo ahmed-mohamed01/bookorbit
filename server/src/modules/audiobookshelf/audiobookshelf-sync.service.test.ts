@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AudiobookshelfApiError, type AbsMediaProgress } from './audiobookshelf-client.service';
+import { AudiobookshelfSyncCoordinatorService } from './audiobookshelf-sync-coordinator.service';
 import { AudiobookshelfSyncService, resolveAbsPosition, resolveAbsTargetStatus } from './audiobookshelf-sync.service';
 
 const mockRepo = {
@@ -52,6 +53,10 @@ const mockEditionLinks = {
   findReadAlongBookIdsByAudioBookIds: vi.fn(),
 };
 
+const mockProgressPush = {
+  sweepPending: vi.fn(),
+};
+
 function makeService() {
   return new AudiobookshelfSyncService(
     mockRepo as any,
@@ -64,6 +69,8 @@ function makeService() {
     mockAchievementEvents as any,
     mockBookService as any,
     mockEditionLinks as any,
+    mockProgressPush as any,
+    new AudiobookshelfSyncCoordinatorService(),
   );
 }
 
@@ -76,6 +83,7 @@ function makeSettings(overrides: Record<string, unknown> = {}) {
     apiToken: 'token-abc',
     syncStatus: true,
     syncPosition: true,
+    pushPosition: false,
     syncSessions: false,
     initialReconcileCompletedAt: new Date('2026-01-01T00:00:00Z'),
     excludedLibraryIds: [],
@@ -208,6 +216,7 @@ describe('AudiobookshelfSyncService.sync', () => {
     mockLibraryService.findAccessibleLibraryIds.mockResolvedValue([]);
     mockEditionLinks.findReadAlongBookIdsByAudioBookIds.mockResolvedValue(new Map());
     mockBookService.syncReadAlongForAudiobookPosition.mockResolvedValue(true);
+    mockProgressPush.sweepPending.mockResolvedValue(undefined);
   });
 
   describe('reconcile gate', () => {
@@ -414,6 +423,16 @@ describe('AudiobookshelfSyncService.sync', () => {
       expect(mockRepo.upsertAudioProgressGuarded).not.toHaveBeenCalled();
     });
 
+    it('does not re-apply a pushed position whose ABS timestamp equals the outbound watermark', async () => {
+      mockRepo.findSettings.mockResolvedValue(positionSettings());
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ lastUpdate: 5000 })] });
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10, lastSyncedPositionAbsUpdate: 5000 })]);
+
+      await makeService().sync(user);
+
+      expect(mockRepo.upsertAudioProgressGuarded).not.toHaveBeenCalled();
+    });
+
     it('skips position when the ABS duration is invalid (<= 0)', async () => {
       mockRepo.findSettings.mockResolvedValue(positionSettings());
       mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ duration: 0 })] });
@@ -460,12 +479,95 @@ describe('AudiobookshelfSyncService.sync', () => {
       mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ progress: 0.5, currentTime: 500, duration: 1000, lastUpdate: 9000 })] });
       mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10, lastSyncedProgressAt: syncedProgressAt })]);
       mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map([[10, [{ id: 501, format: 'm4b', durationSeconds: 1000 }]]]));
-      mockRepo.findAudioProgressForBooks.mockResolvedValue(new Map([[10, { percentage: 10, updatedAt: syncedProgressAt, revision: 7 }]]));
+      mockRepo.findAudioProgressForBooks.mockResolvedValue(
+        new Map([
+          [
+            10,
+            {
+              currentFileId: 501,
+              positionSeconds: 100,
+              percentage: 10,
+              capturedAt: new Date(8000),
+              updatedAt: syncedProgressAt,
+              revision: 7,
+            },
+          ],
+        ]),
+      );
 
       await makeService().sync(user);
 
       expect(mockRepo.upsertAudioProgressGuarded).toHaveBeenCalledWith(user.id, 10, 501, 500, 50, 7, new Date(9000));
     });
+
+    it('applies ABS when it is newer than a local change after the pull snapshot', async () => {
+      mockRepo.findSettings.mockResolvedValue(positionSettings());
+      const syncedProgressAt = new Date('2026-07-19T00:00:00Z');
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ lastUpdate: 9000 })] });
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10, lastSyncedProgressAt: syncedProgressAt })]);
+      mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map([[10, [{ id: 501, format: 'm4b', durationSeconds: 1000 }]]]));
+      mockRepo.findAudioProgressForBooks.mockResolvedValue(
+        new Map([
+          [
+            10,
+            {
+              currentFileId: 501,
+              positionSeconds: 400,
+              percentage: 40,
+              capturedAt: new Date(8000),
+              updatedAt: new Date('2026-07-20T00:00:00Z'),
+              revision: 8,
+            },
+          ],
+        ]),
+      );
+
+      await makeService().sync(user);
+
+      expect(mockRepo.upsertAudioProgressGuarded).toHaveBeenCalledWith(user.id, 10, 501, 500, 50, 8, new Date(9000));
+    });
+
+    it('skips a newer local change and marks it pending when push is enabled', async () => {
+      mockRepo.findSettings.mockResolvedValue(makeSettings({ syncStatus: false, syncPosition: true, pushPosition: true }));
+      const syncedProgressAt = new Date('2026-07-19T00:00:00Z');
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ lastUpdate: 9000 })] });
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10, lastSyncedProgressAt: syncedProgressAt })]);
+      mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map([[10, [{ id: 501, format: 'm4b', durationSeconds: 1000 }]]]));
+      mockRepo.findAudioProgressForBooks.mockResolvedValue(
+        new Map([
+          [
+            10,
+            {
+              currentFileId: 501,
+              positionSeconds: 600,
+              percentage: 60,
+              capturedAt: new Date(10_000),
+              updatedAt: new Date('2026-07-20T00:00:00Z'),
+              revision: 8,
+            },
+          ],
+        ]),
+      );
+
+      await makeService().sync(user);
+
+      expect(mockRepo.upsertAudioProgressGuarded).not.toHaveBeenCalled();
+      expect(mockRepo.updateBookState).toHaveBeenCalledWith(
+        user.id,
+        'item-1',
+        expect.objectContaining({ pushPendingAt: expect.any(Date), lastSyncedProgressAt: syncedProgressAt }),
+      );
+    });
+  });
+
+  it('runs the bounded pending-position sweep on full syncs only', async () => {
+    const service = makeService();
+
+    await service.sync(user);
+    await service.sync(user, { hotInProgressOnly: true });
+
+    expect(mockProgressPush.sweepPending).toHaveBeenCalledTimes(1);
+    expect(mockProgressPush.sweepPending).toHaveBeenCalledWith(user.id);
   });
 
   describe('linked read-along', () => {
