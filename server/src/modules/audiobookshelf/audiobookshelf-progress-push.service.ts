@@ -1,4 +1,5 @@
 import { BadGatewayException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { isAudioFormat } from '@bookorbit/types';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import {
@@ -10,17 +11,45 @@ import {
 } from '../achievement/achievement-events.service';
 import { BookService } from '../book/book.service';
 import { EditionLinkRepository } from '../edition-link/edition-link.repository';
-import { AudiobookshelfClientService } from './audiobookshelf-client.service';
-import { AudiobookshelfRepository } from './audiobookshelf.repository';
+import { LibraryService } from '../library/library.service';
+import { UserService } from '../user/user.service';
+import { AudiobookshelfApiError, AudiobookshelfClientService } from './audiobookshelf-client.service';
+import { AudiobookshelfRepository, type AbsBookAccessScope } from './audiobookshelf.repository';
 import { AudiobookshelfSyncCoordinatorService } from './audiobookshelf-sync-coordinator.service';
-import { describeError } from './audiobookshelf-user.utils';
-import type { AudiobookshelfBookState } from './schema/audiobookshelf.schema';
+import { buildBookAccessScope, describeError, isAbsSyncConfigured, isEligibleSyncUser } from './audiobookshelf-user.utils';
+import {
+  AUDIOBOOKSHELF_DURATION_TOLERANCE_BASE_SECONDS,
+  AUDIOBOOKSHELF_DURATION_TOLERANCE_PER_FILE_SECONDS,
+  AUDIOBOOKSHELF_DURATION_TOLERANCE_RELATIVE,
+} from './audiobookshelf.constants';
+import type { AudiobookshelfBookState, AudiobookshelfUserSetting } from './schema/audiobookshelf.schema';
 
 export const AUDIOBOOKSHELF_POSITION_PUSH_DEBOUNCE_MS = 10_000;
 // The player saves every few seconds while playing, which would keep resetting the debounce, so a
 // continuous session still pushes at least this often.
 export const AUDIOBOOKSHELF_POSITION_PUSH_MAX_WAIT_MS = 60_000;
 export const AUDIOBOOKSHELF_POSITION_PUSH_SWEEP_LIMIT = 200;
+// Audiobookshelf marks an item finished when a client reports less than this much remaining.
+export const AUDIOBOOKSHELF_POSITION_PUSH_NEAR_END_SECONDS = 10;
+// A playing client saves every few seconds; the eligibility lookup behind marking is reused for this
+// long instead of repeated per save. Every push run still loads it fresh.
+export const AUDIOBOOKSHELF_POSITION_PUSH_CONTEXT_TTL_MS = 10_000;
+
+/** Same tolerance for both directions: a position is only exchanged when both sides describe the same recording. */
+export function isWithinAbsDurationTolerance(localTotalSeconds: number, localFileCount: number, absDurationSeconds: number): boolean {
+  const tolerance =
+    Math.max(AUDIOBOOKSHELF_DURATION_TOLERANCE_BASE_SECONDS, localFileCount * AUDIOBOOKSHELF_DURATION_TOLERANCE_PER_FILE_SECONDS) +
+    localTotalSeconds * AUDIOBOOKSHELF_DURATION_TOLERANCE_RELATIVE;
+  return Math.abs(localTotalSeconds - absDurationSeconds) <= tolerance;
+}
+
+interface PushContext {
+  settings: AudiobookshelfUserSetting;
+  scope: AbsBookAccessScope;
+  excludedLibraryIds: string[];
+}
+
+type PushOutcome = 'pushed' | 'skipped' | 'failed' | 'unreachable';
 
 interface PushDebounceState {
   key: string;
@@ -37,6 +66,7 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
   private readonly logger = new Logger(AudiobookshelfProgressPushService.name);
   private readonly states = new Map<string, PushDebounceState>();
   private readonly userQueues = new Map<number, Promise<void>>();
+  private readonly eventContexts = new Map<number, { context: Promise<PushContext | null>; expiresAt: number }>();
 
   constructor(
     private readonly achievementEvents: AchievementEventsService,
@@ -45,6 +75,8 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
     private readonly bookService: BookService,
     private readonly editionLinks: EditionLinkRepository,
     private readonly coordinator: AudiobookshelfSyncCoordinatorService,
+    private readonly userService: UserService,
+    private readonly libraryService: LibraryService,
   ) {}
 
   onModuleInit(): void {
@@ -58,26 +90,65 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
     });
   }
 
+  /** Runs inside the caller's sync lock. Stops at the first unreachable-server failure so an outage cannot hold the lock. */
   async sweepPending(userId: number): Promise<void> {
-    const states = await this.repo.findPendingPositionPushes(userId, AUDIOBOOKSHELF_POSITION_PUSH_SWEEP_LIMIT);
-    for (const state of states) {
-      await this.pushPosition(state);
+    const startedAt = Date.now();
+    const context = await this.loadPushContext(userId);
+    if (!context) {
+      await this.repo.clearPositionPushPending(userId);
+      return;
     }
+    await this.repo.clearIneligiblePositionPushes(userId, context.scope, context.excludedLibraryIds);
+    const states = await this.repo.findPendingPositionPushes(
+      userId,
+      context.scope,
+      context.excludedLibraryIds,
+      AUDIOBOOKSHELF_POSITION_PUSH_SWEEP_LIMIT,
+    );
+    if (states.length === 0) return;
+
+    this.logger.log(`[abs.push_sweep] [start] userId=${userId} pending=${states.length} - pending position push sweep started`);
+    let attempted = 0;
+    let pushed = 0;
+    let stoppedUnreachable = false;
+    for (const state of states) {
+      attempted++;
+      const outcome = await this.pushPosition(context, state);
+      if (outcome === 'pushed') pushed++;
+      if (outcome === 'unreachable') {
+        stoppedUnreachable = true;
+        break;
+      }
+    }
+    this.logger.log(
+      `[abs.push_sweep] [end] userId=${userId} durationMs=${Date.now() - startedAt} pending=${states.length} attempted=${attempted} pushed=${pushed} stoppedUnreachable=${stoppedUnreachable} - pending position push sweep completed`,
+    );
+  }
+
+  /** Schedules a debounced push for a book whose ABS row is already marked pending. */
+  requestPush(userId: number, bookId: number): void {
+    const state = this.getOrCreateState(userId, bookId);
+    if (state.inFlight) {
+      state.rerun = true;
+      return;
+    }
+    this.schedule(state);
   }
 
   private async handleProgressChanged(payload: { userId: number; bookId: number }): Promise<void> {
     const startedAt = Date.now();
     try {
-      const settings = await this.repo.findSettings(payload.userId);
-      if (!settings?.enabled || !settings.pushPosition) return;
+      const context = await this.eventContext(payload.userId);
+      if (!context) return;
 
-      let state = await this.repo.findBookStateByBookId(payload.userId, payload.bookId);
+      let state = await this.repo.findPushableBookStateByBookId(payload.userId, payload.bookId, context.scope, context.excludedLibraryIds);
       if (!state) {
-        const audioBookId = await this.editionLinks.findAudioBookIdByReadAlongBookId(payload.bookId);
-        if (audioBookId === null) return;
-        state = await this.repo.findBookStateByBookId(payload.userId, audioBookId);
+        // The text edition and the read-along reach Audiobookshelf through their linked audiobook.
+        const link = await this.editionLinks.findLinkForBook(payload.bookId);
+        if (!link || link.audioBookId === payload.bookId) return;
+        state = await this.repo.findPushableBookStateByBookId(payload.userId, link.audioBookId, context.scope, context.excludedLibraryIds);
       }
-      if (!state || state.bookId === null || state.syncExcluded || state.manualUnlinked) return;
+      if (!state || state.bookId === null) return;
 
       await this.repo.markPositionPushPending(payload.userId, state.absLibraryItemId);
       this.requestPush(payload.userId, state.bookId);
@@ -89,13 +160,30 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
     }
   }
 
-  private requestPush(userId: number, bookId: number): void {
-    const state = this.getOrCreateState(userId, bookId);
-    if (state.inFlight) {
-      state.rerun = true;
-      return;
+  /** The same gate the sync scheduler applies (configured, active, permitted), plus the push opt-in. */
+  private async loadPushContext(userId: number): Promise<PushContext | null> {
+    const settings = await this.repo.findSettings(userId);
+    if (!settings || !isAbsSyncConfigured(settings) || !settings.pushPosition) return null;
+    const user = await this.userService.findByIdWithPermissions(userId);
+    if (!user || !isEligibleSyncUser(user)) return null;
+    return {
+      settings,
+      scope: await buildBookAccessScope(user, this.libraryService),
+      excludedLibraryIds: settings.excludedLibraryIds ?? [],
+    };
+  }
+
+  private eventContext(userId: number): Promise<PushContext | null> {
+    const now = Date.now();
+    const cached = this.eventContexts.get(userId);
+    if (cached && cached.expiresAt > now) return cached.context;
+    for (const [key, entry] of this.eventContexts) {
+      if (entry.expiresAt <= now) this.eventContexts.delete(key);
     }
-    this.schedule(state);
+    const context = this.loadPushContext(userId);
+    this.eventContexts.set(userId, { context, expiresAt: now + AUDIOBOOKSHELF_POSITION_PUSH_CONTEXT_TTL_MS });
+    context.catch(() => this.eventContexts.delete(userId));
+    return context;
   }
 
   private getOrCreateState(userId: number, bookId: number): PushDebounceState {
@@ -140,8 +228,14 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
           return;
         }
         try {
-          const bookState = await this.repo.findBookStateByBookId(state.userId, state.bookId);
-          if (bookState) await this.pushPosition(bookState);
+          const context = await this.loadPushContext(state.userId);
+          if (!context) {
+            await this.repo.clearPositionPushPending(state.userId);
+            return;
+          }
+          const bookState = await this.repo.findPushableBookStateByBookId(state.userId, state.bookId, context.scope, context.excludedLibraryIds);
+          if (bookState) await this.pushPosition(context, bookState);
+          else await this.repo.clearIneligiblePositionPushes(state.userId, context.scope, context.excludedLibraryIds);
         } finally {
           this.coordinator.endPush(state.userId);
         }
@@ -170,8 +264,9 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
     return current;
   }
 
-  private async pushPosition(initialState: AudiobookshelfBookState): Promise<void> {
-    if (initialState.bookId === null) return;
+  private async pushPosition(context: PushContext, initialState: AudiobookshelfBookState): Promise<PushOutcome> {
+    if (initialState.bookId === null) return 'skipped';
+    const { settings, scope, excludedLibraryIds } = context;
     const userId = initialState.userId;
     const bookId = initialState.bookId;
     const absItemId = initialState.absLibraryItemId;
@@ -180,47 +275,51 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
     this.logger.log(`[abs.push_position] [start] userId=${userId} bookId=${bookId} absItemId="${safeAbsItemId}" - position push started`);
 
     try {
-      const [settings, state, local] = await Promise.all([
-        this.repo.findSettings(userId),
-        this.repo.findBookStateRow(userId, absItemId),
+      // Re-read right before the PATCH: the row may have been unlinked, excluded or flagged since it was queued.
+      const [state, local] = await Promise.all([
+        this.repo.findPushableBookStateRow(userId, absItemId, scope, excludedLibraryIds),
         this.repo.findAudioProgress(userId, bookId),
       ]);
-      if (!settings?.enabled || !settings.pushPosition || !state || state.bookId !== bookId || state.syncExcluded || state.manualUnlinked) {
-        this.logEnd(userId, bookId, safeAbsItemId, startedAt, false, 'disabled_or_unlinked');
-        return;
+      if (!state) {
+        await this.repo.clearPositionPushPending(userId, absItemId);
+        return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'ineligible');
       }
+      if (state.bookId !== bookId) return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'relinked');
 
       if (!local || (state.lastSyncedProgressAt !== null && local.updatedAt.getTime() === state.lastSyncedProgressAt.getTime())) {
         await this.repo.clearPositionPushPendingIfUnchanged(userId, absItemId, bookId, local?.updatedAt ?? null);
-        this.logEnd(userId, bookId, safeAbsItemId, startedAt, false, 'no_local_change');
-        return;
+        return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'no_local_change');
       }
 
       const abs = await this.client.getMediaProgress(userId, settings.serverUrl, settings.apiToken, absItemId);
-      if (abs && abs.lastUpdate > (state.lastSyncedPositionAbsUpdate ?? 0) && abs.lastUpdate > local.capturedAt.getTime()) {
+      // Checked even when ABS has not moved past our watermark: the watermark may record an ABS update
+      // that was never applied locally, and an older local position must not overwrite it.
+      if (abs && abs.lastUpdate > local.capturedAt.getTime()) {
         await this.repo.clearPositionPushPendingIfUnchanged(userId, absItemId, bookId, local.updatedAt);
-        this.logEnd(userId, bookId, safeAbsItemId, startedAt, false, 'abs_newer');
-        return;
+        return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'abs_newer');
       }
 
       const position = await this.bookService.resolveAudiobookPositionForExternalSync(bookId, local.currentFileId, local.positionSeconds);
       if (!position) {
         await this.repo.clearPositionPushPendingIfUnchanged(userId, absItemId, bookId, local.updatedAt);
-        this.logEnd(userId, bookId, safeAbsItemId, startedAt, false, 'no_timeline');
-        return;
+        return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'no_timeline');
       }
 
-      const duration = abs && Number.isFinite(abs.duration) && abs.duration > 0 ? abs.duration : position.audioTotalSeconds;
+      const absDurationValid = abs !== null && Number.isFinite(abs.duration) && abs.duration > 0;
+      if (absDurationValid && !(await this.matchesAbsDuration(bookId, position.audioTotalSeconds, abs.duration))) {
+        await this.repo.clearPositionPushPendingIfUnchanged(userId, absItemId, bookId, local.updatedAt);
+        return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'duration_mismatch');
+      }
+
+      const duration = absDurationValid ? abs.duration : position.audioTotalSeconds;
       const currentTime = Math.max(0, Math.min(position.audioSeconds, duration));
       if (!Number.isFinite(duration) || duration <= 0) {
         await this.repo.clearPositionPushPendingIfUnchanged(userId, absItemId, bookId, local.updatedAt);
-        this.logEnd(userId, bookId, safeAbsItemId, startedAt, false, 'no_timeline');
-        return;
+        return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'no_timeline');
       }
-      if (duration - currentTime < 10) {
+      if (duration - currentTime < AUDIOBOOKSHELF_POSITION_PUSH_NEAR_END_SECONDS) {
         await this.repo.clearPositionPushPendingIfUnchanged(userId, absItemId, bookId, local.updatedAt);
-        this.logEnd(userId, bookId, safeAbsItemId, startedAt, false, 'near_end');
-        return;
+        return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'near_end');
       }
 
       const lastUpdate = local.capturedAt.getTime();
@@ -238,18 +337,28 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
         watermark = created.lastUpdate;
       }
       await this.repo.completePositionPush(userId, absItemId, bookId, local.updatedAt, watermark);
-      this.logEnd(userId, bookId, safeAbsItemId, startedAt, true, 'pushed');
+      return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'pushed', 'pushed');
     } catch (error) {
       const described = describeError(error);
+      const unreachable = error instanceof AudiobookshelfApiError && (error.code === 'network' || error.code === 'timeout');
       this.logger.warn(
-        `[abs.push_position] [fail] userId=${userId} bookId=${bookId} absItemId="${safeAbsItemId}" durationMs=${Date.now() - startedAt} errorClass=${described.errorClass} error="${described.error}" - position push failed`,
+        `[abs.push_position] [fail] userId=${userId} bookId=${bookId} absItemId="${safeAbsItemId}" durationMs=${Date.now() - startedAt} unreachable=${unreachable} errorClass=${described.errorClass} error="${described.error}" - position push failed`,
       );
+      return unreachable ? 'unreachable' : 'failed';
     }
   }
 
-  private logEnd(userId: number, bookId: number, safeAbsItemId: string, startedAt: number, pushed: boolean, reason: string): void {
-    this.logger.log(
-      `[abs.push_position] [end] userId=${userId} bookId=${bookId} absItemId="${safeAbsItemId}" durationMs=${Date.now() - startedAt} pushed=${pushed} reason=${reason} - position push completed`,
+  private async matchesAbsDuration(bookId: number, localTotalSeconds: number, absDurationSeconds: number): Promise<boolean> {
+    const files = ((await this.repo.findAudioFilesInPlayOrderForBooks([bookId])).get(bookId) ?? []).filter(
+      (file) => file.format && isAudioFormat(file.format),
     );
+    return isWithinAbsDurationTolerance(localTotalSeconds, files.length, absDurationSeconds);
+  }
+
+  private logEnd(userId: number, bookId: number, safeAbsItemId: string, startedAt: number, outcome: PushOutcome, reason: string): PushOutcome {
+    this.logger.log(
+      `[abs.push_position] [end] userId=${userId} bookId=${bookId} absItemId="${safeAbsItemId}" durationMs=${Date.now() - startedAt} pushed=${outcome === 'pushed'} reason=${reason} - position push completed`,
+    );
+    return outcome;
   }
 }

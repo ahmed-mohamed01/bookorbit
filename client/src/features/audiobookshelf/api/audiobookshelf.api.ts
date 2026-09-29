@@ -3,6 +3,8 @@ import type {
   AudiobookshelfBookState,
   AudiobookshelfBookStateBucket,
   AudiobookshelfBookStatePage,
+  AudiobookshelfBookSyncLink,
+  AudiobookshelfBookSyncLive,
   AudiobookshelfCleanupPayload,
   AudiobookshelfCleanupResult,
   AudiobookshelfConnectionTestPayload,
@@ -100,6 +102,24 @@ export async function fetchAudiobookshelfBookStates(
   const response = await api(`${BASE}/books?${params.toString()}`)
   if (!response.ok) throw await responseError(response, 'Failed to load Audiobookshelf books')
   return response.json()
+}
+
+export async function fetchAudiobookshelfSyncLink(bookId: number): Promise<AudiobookshelfBookSyncLink | null> {
+  const response = await api(`${BASE}/books/for-book/${bookId}`)
+  if (!response.ok) throw await responseError(response, 'Failed to load the Audiobookshelf link')
+  // The route answers an empty body when the book has no link, so read text before parsing.
+  const body = await response.text()
+  return body ? (JSON.parse(body) as AudiobookshelfBookSyncLink) : null
+}
+
+export async function fetchAudiobookshelfSyncLive(absLibraryItemId: string): Promise<AudiobookshelfBookSyncLive> {
+  const response = await api(`${BASE}/books/${encodeURIComponent(absLibraryItemId)}/live`)
+  if (!response.ok) throw await responseError(response, 'Failed to check Audiobookshelf')
+  return response.json()
+}
+
+export function audiobookshelfCoverUrl(absLibraryItemId: string): string {
+  return `${BASE}/books/${encodeURIComponent(absLibraryItemId)}/cover`
 }
 
 export async function confirmAudiobookshelfMatch(absLibraryItemId: string): Promise<AudiobookshelfBookState> {

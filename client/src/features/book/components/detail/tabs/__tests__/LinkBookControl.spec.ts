@@ -29,6 +29,20 @@ vi.mock('@/features/auth/composables/usePermissions', () => ({
   usePermissions: () => ({ hasPermission: permissionMocks.hasPermission }),
 }))
 
+const absSyncLinkMocks = vi.hoisted(() => ({
+  audioBookIds: [] as (number | null)[],
+  refreshLive: vi.fn<() => void>(),
+}))
+vi.mock('@/features/book/composables/useAudiobookshelfSyncLink', async () => {
+  const { ref, watch } = await import('vue')
+  return {
+    useAudiobookshelfSyncLink: (audioBookId: import('vue').Ref<number | null>) => {
+      watch(audioBookId, (id) => absSyncLinkMocks.audioBookIds.push(id), { immediate: true })
+      return { link: ref(null), live: ref(null), checking: ref(false), refreshLive: absSyncLinkMocks.refreshLive }
+    },
+  }
+})
+
 const editionLinkRecord: EditionLink = {
   id: 1,
   textBookId: 10,
@@ -324,6 +338,20 @@ describe('LinkBookControl', () => {
     const wrapper = mountControl()
 
     expect(wrapper.find('button').find('svg').classes()).not.toContain('text-primary')
+  })
+
+  it('looks the Audiobookshelf link up for the audiobook slot with the page, and refreshes it on open', async () => {
+    absSyncLinkMocks.audioBookIds.length = 0
+    absSyncLinkMocks.refreshLive.mockClear()
+    linkWithMembers()
+    const wrapper = mountControl()
+    await flushPromises()
+
+    expect(absSyncLinkMocks.audioBookIds.at(-1)).toBe(20)
+    expect(absSyncLinkMocks.refreshLive).not.toHaveBeenCalled()
+
+    await openPopover(wrapper)
+    expect(absSyncLinkMocks.refreshLive).toHaveBeenCalledTimes(1)
   })
 
   it('opens the panel, reloads the link and searches straight away when nothing was proposed', async () => {

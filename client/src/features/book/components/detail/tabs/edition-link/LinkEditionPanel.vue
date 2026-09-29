@@ -2,7 +2,7 @@
 import { useI18n } from 'vue-i18n'
 import { computed, ref } from 'vue'
 import { Activity, Link2, Loader2, RefreshCw, Sparkles } from '@lucide/vue'
-import type { EditionLinkCandidate } from '@bookorbit/types'
+import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive, EditionLinkCandidate } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
@@ -15,7 +15,15 @@ import { needsForce } from '@/features/book/lib/position-sync'
 import PositionSyncTicks from './PositionSyncTicks.vue'
 import ReadAlongSection from './ReadAlongSection.vue'
 
-const props = defineProps<{ panel: LinkEditionPanelView }>()
+const props = withDefaults(
+  defineProps<{
+    panel: LinkEditionPanelView
+    absLink?: AudiobookshelfBookSyncLink | null
+    absLive?: AudiobookshelfBookSyncLive | null
+    absChecking?: boolean
+  }>(),
+  { absLink: null, absLive: null, absChecking: false },
+)
 
 const { t } = useI18n()
 
@@ -253,6 +261,9 @@ async function handleUnlink() {
         :phase="panel.phase"
         :slots="panel.slots"
         :read-along="panel.readAlongSlot"
+        :abs-link="absLink"
+        :abs-live="absLive"
+        :abs-checking="absChecking"
         :sync-state="pairSyncState"
         :read-along-rebuild-label="canRebuildReadAlong ? t('book.detail.editionLink.actions.rebuildReadAlong') : null"
         :read-along-rebuild-disabled="readAlongRebuildDisabled"

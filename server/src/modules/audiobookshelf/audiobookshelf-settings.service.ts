@@ -152,6 +152,11 @@ export class AudiobookshelfSettingsService {
       this.logger.log(`[abs.settings] [end] userId=${userId} resetMatchMemo=${reset} - path mappings changed, unmatched match memo cleared`);
     }
 
+    // A queued push must not survive the opt-out: the next opt-in would otherwise send stale positions.
+    if (existing?.pushPosition && data.pushPosition === false) {
+      await this.repo.clearPositionPushPending(userId);
+    }
+
     return this.getSettings(userId);
   }
 

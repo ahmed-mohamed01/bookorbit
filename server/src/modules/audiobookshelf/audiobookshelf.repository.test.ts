@@ -410,19 +410,49 @@ describe('AudiobookshelfRepository', () => {
     });
   });
 
-  describe('findPendingPositionPushes', () => {
-    it('scopes to the user, orders oldest first, and caps the batch at two hundred', async () => {
-      const rows = [{ id: 2, userId: 7, pushPendingAt: new Date('2026-01-01T00:00:00Z') }];
-      const chain = makeChain(rows);
+  describe('push eligibility', () => {
+    const scope = { libraryIds: [3], contentFilters: undefined };
+
+    function expectPullEquivalentFilters(userId: number): void {
+      expect(someCall(eq, (column, value) => column === audiobookshelfBookState.userId && value === userId)).toBe(true);
+      expect(someCall(eq, (column, value) => column === audiobookshelfBookState.needsReview && value === false)).toBe(true);
+      expect(someCall(eq, (column, value) => column === audiobookshelfBookState.syncExcluded && value === false)).toBe(true);
+      expect(someCall(eq, (column, value) => column === audiobookshelfBookState.manualUnlinked && value === false)).toBe(true);
+      expect(someCall(isNull, (column) => column === audiobookshelfBookState.matchError)).toBe(true);
+      expect(someCall(inArray, (column, value) => column === schema.books.libraryId && Array.isArray(value) && value[0] === 3)).toBe(true);
+      expect(
+        someCall(notInArray, (column, value) => column === audiobookshelfBookState.absLibraryId && Array.isArray(value) && value[0] === 'abs-hidden'),
+      ).toBe(true);
+    }
+
+    it('finds pending rows with the same filters as the pull, oldest first, bounded by the caller limit', async () => {
+      const state = { id: 2, userId: 7, pushPendingAt: new Date('2026-01-01T00:00:00Z') };
+      const chain = makeChain([{ audiobookshelf_book_state: state, books: { id: 11 } }]);
       const db = { select: vi.fn(() => chain) };
       const repo = new AudiobookshelfRepository(db as never);
 
-      await expect(repo.findPendingPositionPushes(7, 500)).resolves.toEqual(rows);
+      await expect(repo.findPendingPositionPushes(7, scope, ['abs-hidden'], 500)).resolves.toEqual([state]);
 
-      expect(someCall(eq, (column, value) => column === audiobookshelfBookState.userId && value === 7)).toBe(true);
+      expectPullEquivalentFilters(7);
       expect(someCall(isNotNull, (column) => column === audiobookshelfBookState.pushPendingAt)).toBe(true);
       expect(someCall(asc, (column) => column === audiobookshelfBookState.pushPendingAt)).toBe(true);
-      expect(chain.limit).toHaveBeenCalledWith(200);
+      expect(chain.limit).toHaveBeenCalledWith(500);
+    });
+
+    it('looks up a pushable row by book and by item with the pull filters', async () => {
+      const state = { id: 2, userId: 7, bookId: 11, absLibraryItemId: 'abs-1' };
+      const chain = makeChain([{ audiobookshelf_book_state: state, books: { id: 11 } }]);
+      const db = { select: vi.fn(() => chain) };
+      const repo = new AudiobookshelfRepository(db as never);
+
+      await expect(repo.findPushableBookStateByBookId(7, 11, scope, ['abs-hidden'])).resolves.toEqual(state);
+      expectPullEquivalentFilters(7);
+      expect(someCall(eq, (column, value) => column === audiobookshelfBookState.bookId && value === 11)).toBe(true);
+
+      vi.clearAllMocks();
+      await expect(repo.findPushableBookStateRow(7, 'abs-1', scope, ['abs-hidden'])).resolves.toEqual(state);
+      expectPullEquivalentFilters(7);
+      expect(someCall(eq, (column, value) => column === audiobookshelfBookState.absLibraryItemId && value === 'abs-1')).toBe(true);
     });
   });
 

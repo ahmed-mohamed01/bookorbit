@@ -2140,6 +2140,8 @@ export class BookService {
     const previous = await this.bookRepo.findAudioProgress(userId, bookId);
     const saved = await this.bookRepo.upsertAudioProgress(userId, bookId, dto.currentFileId, dto.positionSeconds, dto.percentage);
     if (!saved) return;
+    // This legacy route emits no progress event, so outbound position sync would never see the write.
+    this.achievementEvents?.emit(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, { userId, bookId });
     await this.audiobookEbookProgressSync?.syncFromAudioProgress({
       userId,
       bookId,

@@ -1,7 +1,11 @@
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { BookProgressChangedPayload } from '../achievement/achievement-events.service';
+import {
+  ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED,
+  ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED,
+  type BookProgressChangedPayload,
+} from '../achievement/achievement-events.service';
 import { ReadingAlignmentSyncService } from './reading-alignment-sync.service';
 
 const USER_ID = 42;
@@ -120,8 +124,11 @@ describe('ReadingAlignmentSyncService', () => {
       // fraction 0.5 -> 100s absolute -> second file (start 100s) offset 0s; 100/200 -> 50%.
       expect(repo.projectAudiobookProgress).toHaveBeenCalledWith(USER_ID, AUDIO_BOOK_ID, AUDIO_FILE_B, 0, 50, NEWER);
       // The projection must NOT re-emit a progress event - that drove external trackers (Storygraph /
-      // Hardcover) and achievement eval off derived, non-user progress.
-      expect(achievementEvents.emit).not.toHaveBeenCalled();
+      // Hardcover) and achievement eval off derived, non-user progress. It only announces the derived
+      // audio position so outbound position sync can pick up this late write.
+      expect(achievementEvents.emit).toHaveBeenCalledTimes(1);
+      expect(achievementEvents.emit).toHaveBeenCalledWith(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, { userId: USER_ID, bookId: AUDIO_BOOK_ID });
+      expect(achievementEvents.emit).not.toHaveBeenCalledWith(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, expect.anything());
     });
   });
 

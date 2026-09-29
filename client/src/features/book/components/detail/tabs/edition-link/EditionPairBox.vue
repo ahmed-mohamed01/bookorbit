@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Link2 } from '@lucide/vue'
-import type { EditionLinkCandidate } from '@bookorbit/types'
+import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive, EditionLinkCandidate } from '@bookorbit/types'
 import type { EditionFilledSlot, EditionSlot, LinkEditionPhase, PairSyncState } from '@/features/book/composables/useLinkEditionPanel'
+import AudiobookshelfSyncStop from './AudiobookshelfSyncStop.vue'
 import EditionSlotCard from './EditionSlotCard.vue'
 import EditionSlotSearch from './EditionSlotSearch.vue'
 
@@ -10,6 +11,9 @@ const props = defineProps<{
   phase: LinkEditionPhase
   slots: [EditionSlot, EditionSlot]
   readAlong?: EditionFilledSlot | null
+  absLink?: AudiobookshelfBookSyncLink | null
+  absLive?: AudiobookshelfBookSyncLive | null
+  absChecking?: boolean
   syncState?: PairSyncState
   readAlongRebuildLabel?: string | null
   readAlongRebuildDisabled?: boolean
@@ -71,10 +75,20 @@ const readAlongConnectorClass = computed(() =>
     : 'border border-border bg-popover text-muted-foreground',
 )
 
+// Audiobookshelf only ever matches the audiobook, but its stop follows the whole pair so the pair's own
+// connector keeps joining just the two editions, whichever slot holds the audiobook.
+const showsAbs = computed(
+  () =>
+    !!props.absLink &&
+    props.slots.some((slot) => slot.kind === 'filled' && slot.format === 'audiobook' && slot.bookId === props.absLink?.audioBookId),
+)
+
 function cardPosition(index: number): 'top' | 'middle' | 'bottom' {
   if (index === 0) return 'top'
-  return index === 1 && props.readAlong ? 'middle' : 'bottom'
+  return props.readAlong || showsAbs.value ? 'middle' : 'bottom'
 }
+
+const absPosition = computed<'middle' | 'bottom'>(() => (props.readAlong ? 'middle' : 'bottom'))
 
 function handleRebuildReadAlong() {
   emit('rebuild-read-along')
@@ -145,6 +159,15 @@ function handleQuery(value: string) {
         @update:query="handleQuery"
       />
     </template>
+    <AudiobookshelfSyncStop
+      v-if="absLink && showsAbs"
+      :link="absLink"
+      :live="absLive ?? null"
+      :checking="absChecking ?? false"
+      :merged="merged"
+      :connector-placement="connectorPlacement"
+      :position="absPosition"
+    />
     <Transition
       enter-active-class="transition-all duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
       enter-from-class="opacity-0 -translate-y-3 scale-95"

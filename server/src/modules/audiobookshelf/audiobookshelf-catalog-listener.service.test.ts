@@ -2,7 +2,7 @@ import { ConflictException, Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AchievementEventsService, ACHIEVEMENT_EVENT_LIBRARY_CATALOG_CHANGED } from '../achievement/achievement-events.service';
-import { AudiobookshelfCatalogListenerService } from './audiobookshelf-catalog-listener.service';
+import { AUDIOBOOKSHELF_CATALOG_MATCH_MAX_RETRIES, AudiobookshelfCatalogListenerService } from './audiobookshelf-catalog-listener.service';
 import { AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS } from './audiobookshelf.constants';
 
 const mockRepo = {
@@ -144,6 +144,32 @@ describe('AudiobookshelfCatalogListenerService', () => {
 
     expect(mockSyncService.sync).toHaveBeenCalledTimes(1);
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('retries the reconcile after a busy lock instead of dropping it', async () => {
+    mockSyncService.sync.mockRejectedValueOnce(new ConflictException('sync already running')).mockResolvedValueOnce(undefined);
+
+    emitCatalogChanged();
+    await vi.advanceTimersByTimeAsync(AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS);
+    expect(mockSyncService.sync).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS);
+    expect(mockSyncService.sync).toHaveBeenCalledTimes(2);
+    expect(mockSyncService.sync).toHaveBeenLastCalledWith(eligibleUser(), { reconcile: true });
+
+    await vi.advanceTimersByTimeAsync(AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS * 3);
+    expect(mockSyncService.sync).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up with a warning when the lock stays busy past the retry limit', async () => {
+    const warnSpy = vi.spyOn(Logger.prototype, 'warn');
+    mockSyncService.sync.mockRejectedValue(new ConflictException('sync already running'));
+
+    emitCatalogChanged();
+    await vi.advanceTimersByTimeAsync(AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS * (AUDIOBOOKSHELF_CATALOG_MATCH_MAX_RETRIES + 3));
+
+    expect(mockSyncService.sync).toHaveBeenCalledTimes(AUDIOBOOKSHELF_CATALOG_MATCH_MAX_RETRIES + 1);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[abs.catalog_match] [fail] userId=1'));
   });
 
   it('logs a sanitized warning for a non-Conflict sync failure', async () => {

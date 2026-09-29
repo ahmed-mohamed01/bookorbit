@@ -36,7 +36,7 @@ These routes are user-scoped and guarded at the controller by `Permission.Audiob
 }
 ```
 
-`pushPosition` defaults to `false`. When enabled, BookOrbit sends local audiobook and linked read-along positions to Audiobookshelf while keeping the newest position from either system.
+`pushPosition` defaults to `false`. When enabled, BookOrbit sends its audiobook position to Audiobookshelf, including where reading the linked ebook or read-along moves it, while keeping the newest position from either system.
 
 `staleCount` is the number of stale entries a cleanup (with `includeManuallyUnlinked: true`) could remove, counted during the last successful full inventory walk (a reconcile or a cleanup): rows whose Audiobookshelf item was gone and that carry no link and no exclusion, including manually unlinked rows, since the point of the count is to surface every row a cleanup control can still clear. It is `0` until such a walk runs, is never written by a partial, hot-tier or failed run, and after a successful cleanup it is set to what a repeat cleanup with `includeManuallyUnlinked: true` would still find, which is `0` only when that cleanup also removed the manually unlinked rows it saw. The sync status strip renders it next to the last-run line together with the inline `Clean up` action whenever it is above zero.
 
@@ -145,7 +145,23 @@ A rescan (`force`) also re-tests pending review proposals. A unique ASIN, ISBN, 
 
 Every match tier (ASIN, ISBN, path, title/author/series) only considers BookOrbit books that have at least one audio content file, the same rule `isAudioFormat` uses for the sync itself. An ebook-only book is never a candidate at any tier, and a rescan clears any earlier proposal that pointed at one instead of leaving it standing. This is intentional: an Audiobookshelf item can only ever play an audio file, so matching it to an ebook-only book would be a match no sync could ever act on, and scoring ebook-only candidates on every reconcile would be pointless work at library scale.
 
-There is no cover URL: authenticated Audiobookshelf cover proxying would require echoing the ABS token to the client, which this fork does not do. The UI always renders a local placeholder icon instead. Linked-book routes and shapes are verified against server commit `197df6c0`.
+The linked-books review UI renders a local placeholder icon instead of a cover, so the ABS token never reaches the client. Linked-book routes and shapes are verified against server commit `197df6c0`.
+
+## Position sync link
+
+The book's connections panel shows the Audiobookshelf item an audiobook's position syncs with. These routes are user-scoped and guarded by `Permission.AudiobookshelfSync`; the client wraps them as `fetchAudiobookshelfSyncLink`, `fetchAudiobookshelfSyncLive`, and `audiobookshelfCoverUrl`.
+
+| Method | Path                                                   | Request body | Expected response                                      |
+| ------ | ------------------------------------------------------ | ------------ | ------------------------------------------------------ |
+| `GET`  | `/api/v1/audiobookshelf/books/for-book/:bookId`        | None         | `AudiobookshelfBookSyncLink`, or `200` with empty body |
+| `GET`  | `/api/v1/audiobookshelf/books/:absLibraryItemId/live`  | None         | `AudiobookshelfBookSyncLive`                           |
+| `GET`  | `/api/v1/audiobookshelf/books/:absLibraryItemId/cover` | None         | Image bytes (proxied thumbnail)                        |
+
+`for-book` reads BookOrbit's own tables only, so the stop renders with the other editions. It resolves a text edition or read-along to its linked audiobook, and answers an empty body when there is nothing to show: Audiobookshelf disabled or unconfigured, no position sync in either direction, no match, or the item in an excluded library. `AudiobookshelfBookSyncLink` is `{ audioBookId, absLibraryItemId, title, authorName, libraryName, direction, webUrl }`, with `direction` one of `two_way`, `from_abs`, `to_abs`.
+
+`live` asks Audiobookshelf itself (4 s timeout) and answers `{ status, progress }`, with `status` one of `synced`, `sending`, `receiving`, `unreachable`. The client treats a failed live request (non-2xx or network error) as `unreachable` so the stop always offers the Settings link.
+
+`cover` proxies the Audiobookshelf thumbnail through BookOrbit (the ABS token stays server side) with `Cache-Control: private, max-age=86400`. The `<img>` authenticates by session cookie like BookOrbit's own thumbnails and falls back to a local icon when it fails.
 
 ## Book picker
 

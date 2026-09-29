@@ -23,15 +23,62 @@ interface ResponseInput {
   type?: ResponseType;
   json?: unknown;
   jsonThrows?: boolean;
+  headers?: Record<string, string>;
+  bytes?: Uint8Array;
 }
 
 function makeResponse(input: ResponseInput): Response {
-  const { status, type = 'basic', json, jsonThrows } = input;
+  const { status, type = 'basic', json, jsonThrows, headers = {}, bytes = new Uint8Array() } = input;
   return {
+    headers: new Headers(headers),
+    body: bytesStream(bytes),
     ok: status >= 200 && status < 300,
     status,
     type,
-    json: jsonThrows ? vi.fn().mockRejectedValue(new Error('bad json')) : vi.fn().mockResolvedValue(json),
+    json: jsonThrows ? vi.fn().mockRejectedValue(new SyntaxError('bad json')) : vi.fn().mockResolvedValue(json),
+  } as unknown as Response;
+}
+
+function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      if (bytes.byteLength > 0) controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
+// An endless body with no content-length, counting how many chunks the reader actually pulled.
+function endlessImageBody(chunkBytes: number) {
+  const stats = { pulled: 0, cancelled: false };
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      stats.pulled++;
+      controller.enqueue(new Uint8Array(chunkBytes));
+    },
+    cancel() {
+      stats.cancelled = true;
+    },
+  });
+  return { body, stats };
+}
+
+// Headers arrive, then the body never does: json() settles only when the request signal aborts.
+function stalledJsonResponse(signal: () => AbortSignal): Response {
+  return {
+    headers: new Headers(),
+    body: null,
+    ok: true,
+    status: 200,
+    type: 'basic',
+    json: () =>
+      new Promise((_resolve, reject) => {
+        signal().addEventListener('abort', () => {
+          const abortError = new Error('The operation was aborted');
+          abortError.name = 'AbortError';
+          reject(abortError);
+        });
+      }),
   } as unknown as Response;
 }
 
@@ -153,6 +200,85 @@ describe('AudiobookshelfClientService', () => {
         Authorization: `Bearer ${TOKEN}`,
         'Content-Type': 'application/json',
       });
+    });
+
+    it('fetches a sized cover as image bytes', async () => {
+      const bytes = new Uint8Array([1, 2, 3]);
+      fetchMock.mockResolvedValueOnce(makeResponse({ status: 200, headers: { 'content-type': 'image/webp' }, bytes }));
+
+      const cover = await makeService().getItemCover(1, SERVER_URL, TOKEN, 'item/1', 80);
+
+      const [calledUrl, init] = fetchMock.mock.calls[0];
+      expect(String(calledUrl)).toBe('https://abs.example.com/api/items/item%2F1/cover?width=80');
+      expect((init as RequestInit).headers).toMatchObject({ Accept: 'image/*' });
+      expect(cover).toEqual({ contentType: 'image/webp', body: Buffer.from(bytes) });
+    });
+
+    it('returns null for an item without a cover', async () => {
+      fetchMock.mockResolvedValueOnce(makeResponse({ status: 404 }));
+
+      await expect(makeService().getItemCover(1, SERVER_URL, TOKEN, 'item-1', 80)).resolves.toBeNull();
+    });
+
+    it.each([
+      ['a non-image body', { 'content-type': 'text/html' }],
+      ['an SVG image', { 'content-type': 'image/svg+xml' }],
+      ['an oversized image', { 'content-type': 'image/webp', 'content-length': String(2 * 1024 * 1024) }],
+    ])('rejects %s without reading its body', async (_label, headers) => {
+      const { body, stats } = endlessImageBody(1024);
+      fetchMock.mockResolvedValueOnce(new Response(body, { status: 200, headers }));
+
+      await expect(makeService().getItemCover(1, SERVER_URL, TOKEN, 'item-1', 80)).rejects.toMatchObject({ code: 'invalid_response' });
+      expect(stats.cancelled).toBe(true);
+    });
+
+    it('rejects a small SVG cover, which could carry script on our origin', async () => {
+      fetchMock.mockResolvedValueOnce(new Response('<svg/>', { status: 200, headers: { 'content-type': 'image/svg+xml' } }));
+
+      await expect(makeService().getItemCover(1, SERVER_URL, TOKEN, 'item-1', 80)).rejects.toMatchObject({ code: 'invalid_response' });
+    });
+
+    it('accepts a JPEG cover whose content type carries parameters', async () => {
+      fetchMock.mockResolvedValueOnce(new Response(new Uint8Array([9]), { status: 200, headers: { 'content-type': 'image/jpeg; charset=binary' } }));
+
+      await expect(makeService().getItemCover(1, SERVER_URL, TOKEN, 'item-1', 80)).resolves.toEqual({
+        contentType: 'image/jpeg',
+        body: Buffer.from([9]),
+      });
+    });
+
+    it('stops reading an image body with no content-length once it passes the cap', async () => {
+      const { body, stats } = endlessImageBody(256 * 1024);
+      fetchMock.mockResolvedValueOnce(new Response(body, { status: 200, headers: { 'content-type': 'image/png' } }));
+
+      await expect(makeService().getItemCover(1, SERVER_URL, TOKEN, 'item-1', 80)).rejects.toMatchObject({ code: 'invalid_response' });
+      expect(stats.cancelled).toBe(true);
+      // 1 MB cap / 256 KB chunks: the fifth chunk crosses it; a little read-ahead is the stream's own queue.
+      expect(stats.pulled).toBeLessThanOrEqual(7);
+    });
+
+    it('releases the unread acknowledgement body of a progress write', async () => {
+      const { body, stats } = endlessImageBody(2);
+      fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
+
+      await makeService().updateMediaProgress(1, SERVER_URL, TOKEN, 'item-1', { currentTime: 1, duration: 2, progress: 0.5, lastUpdate: 3 });
+
+      expect(stats.cancelled).toBe(true);
+    });
+
+    it('passes the per-call timeout to the abort timer', async () => {
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      fetchMock.mockResolvedValueOnce(makeResponse({ status: 200, json: null }));
+
+      await makeService().getMediaProgress(1, SERVER_URL, TOKEN, 'item-1', 4000);
+
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 4000);
+    });
+
+    it('times out a response whose body stalls after the headers arrive', async () => {
+      fetchMock.mockResolvedValueOnce(stalledJsonResponse(() => (fetchMock.mock.calls[0][1] as RequestInit).signal!));
+
+      await expect(makeService().getMediaProgress(1, SERVER_URL, TOKEN, 'item-1', 20)).rejects.toMatchObject({ code: 'timeout' });
     });
 
     it('propagates non-404 progress errors', async () => {

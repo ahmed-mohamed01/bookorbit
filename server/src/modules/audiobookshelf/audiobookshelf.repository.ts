@@ -896,21 +896,101 @@ export class AudiobookshelfRepository {
     return row;
   }
 
-  async findPendingPositionPushes(userId: number, limit: number): Promise<AudiobookshelfBookState[]> {
-    return this.db
+  /**
+   * The rows the push may act on: exactly what the pull accepts (see findSyncableBookStatesByAbsItemIds)
+   * plus not manually unlinked, so a position is only ever sent for a match the pull would also apply.
+   */
+  private pushEligibleClauses(userId: number, scope: AbsBookAccessScope, excludedAbsLibraryIds: string[]): SQL[] {
+    const excludedClause = this.excludedAbsLibraryClause(excludedAbsLibraryIds);
+    return [
+      eq(audiobookshelfBookState.userId, userId),
+      eq(audiobookshelfBookState.needsReview, false),
+      eq(audiobookshelfBookState.syncExcluded, false),
+      eq(audiobookshelfBookState.manualUnlinked, false),
+      isNull(audiobookshelfBookState.matchError),
+      this.linkedStateScopeClause(scope),
+      ...(excludedClause ? [excludedClause] : []),
+    ];
+  }
+
+  async findPushableBookStateByBookId(
+    userId: number,
+    bookId: number,
+    scope: AbsBookAccessScope,
+    excludedAbsLibraryIds: string[],
+  ): Promise<AudiobookshelfBookState | undefined> {
+    const [row] = await this.db
       .select()
       .from(audiobookshelfBookState)
+      .innerJoin(schema.books, eq(schema.books.id, audiobookshelfBookState.bookId))
+      .where(and(eq(audiobookshelfBookState.bookId, bookId), ...this.pushEligibleClauses(userId, scope, excludedAbsLibraryIds)))
+      .orderBy(asc(audiobookshelfBookState.id))
+      .limit(1);
+    return row?.audiobookshelf_book_state;
+  }
+
+  async findPushableBookStateRow(
+    userId: number,
+    absLibraryItemId: string,
+    scope: AbsBookAccessScope,
+    excludedAbsLibraryIds: string[],
+  ): Promise<AudiobookshelfBookState | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(audiobookshelfBookState)
+      .innerJoin(schema.books, eq(schema.books.id, audiobookshelfBookState.bookId))
+      .where(and(eq(audiobookshelfBookState.absLibraryItemId, absLibraryItemId), ...this.pushEligibleClauses(userId, scope, excludedAbsLibraryIds)))
+      .limit(1);
+    return row?.audiobookshelf_book_state;
+  }
+
+  async findPendingPositionPushes(
+    userId: number,
+    scope: AbsBookAccessScope,
+    excludedAbsLibraryIds: string[],
+    limit: number,
+  ): Promise<AudiobookshelfBookState[]> {
+    const rows = await this.db
+      .select()
+      .from(audiobookshelfBookState)
+      .innerJoin(schema.books, eq(schema.books.id, audiobookshelfBookState.bookId))
+      .where(and(isNotNull(audiobookshelfBookState.pushPendingAt), ...this.pushEligibleClauses(userId, scope, excludedAbsLibraryIds)))
+      .orderBy(asc(audiobookshelfBookState.pushPendingAt), asc(audiobookshelfBookState.id))
+      .limit(limit);
+    return rows.map((row) => row.audiobookshelf_book_state);
+  }
+
+  /** Drops the pending marker from the user's rows the push may no longer act on. */
+  async clearIneligiblePositionPushes(userId: number, scope: AbsBookAccessScope, excludedAbsLibraryIds: string[]): Promise<void> {
+    const eligiblePending = this.db
+      .select({ id: audiobookshelfBookState.id })
+      .from(audiobookshelfBookState)
+      .innerJoin(schema.books, eq(schema.books.id, audiobookshelfBookState.bookId))
+      .where(and(isNotNull(audiobookshelfBookState.pushPendingAt), ...this.pushEligibleClauses(userId, scope, excludedAbsLibraryIds)));
+    await this.db
+      .update(audiobookshelfBookState)
+      .set({ pushPendingAt: null, updatedAt: new Date() })
       .where(
         and(
           eq(audiobookshelfBookState.userId, userId),
           isNotNull(audiobookshelfBookState.pushPendingAt),
-          isNotNull(audiobookshelfBookState.bookId),
-          eq(audiobookshelfBookState.syncExcluded, false),
-          eq(audiobookshelfBookState.manualUnlinked, false),
+          notInArray(audiobookshelfBookState.id, eligiblePending),
         ),
-      )
-      .orderBy(asc(audiobookshelfBookState.pushPendingAt), asc(audiobookshelfBookState.id))
-      .limit(Math.min(Math.max(limit, 1), 200));
+      );
+  }
+
+  /** Clears the pending marker unconditionally: one item, or every item of the user when none is given. */
+  async clearPositionPushPending(userId: number, absLibraryItemId?: string): Promise<void> {
+    await this.db
+      .update(audiobookshelfBookState)
+      .set({ pushPendingAt: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(audiobookshelfBookState.userId, userId),
+          isNotNull(audiobookshelfBookState.pushPendingAt),
+          ...(absLibraryItemId === undefined ? [] : [eq(audiobookshelfBookState.absLibraryItemId, absLibraryItemId)]),
+        ),
+      );
   }
 
   async markPositionPushPending(userId: number, absLibraryItemId: string): Promise<void> {
@@ -918,6 +998,17 @@ export class AudiobookshelfRepository {
       .update(audiobookshelfBookState)
       .set({ pushPendingAt: new Date(), updatedAt: new Date() })
       .where(and(eq(audiobookshelfBookState.userId, userId), eq(audiobookshelfBookState.absLibraryItemId, absLibraryItemId)));
+  }
+
+  // The JS Date carries milliseconds while a row stamped by the column default now() carries
+  // microseconds, so an exact comparison would never match that row.
+  private progressUnchangedClause(userId: number, bookId: number, expectedProgressUpdatedAt: Date): SQL {
+    return sql`exists (
+      select 1 from ${schema.audiobookProgress} progress
+      where progress.user_id = ${userId}
+        and progress.book_id = ${bookId}
+        and date_trunc('milliseconds', progress.updated_at) = ${expectedProgressUpdatedAt}
+    )`;
   }
 
   async clearPositionPushPendingIfUnchanged(
@@ -932,12 +1023,7 @@ export class AudiobookshelfRepository {
             select 1 from ${schema.audiobookProgress} progress
             where progress.user_id = ${userId} and progress.book_id = ${bookId}
           )`
-        : sql`exists (
-            select 1 from ${schema.audiobookProgress} progress
-            where progress.user_id = ${userId}
-              and progress.book_id = ${bookId}
-              and progress.updated_at = ${expectedProgressUpdatedAt}
-          )`;
+        : this.progressUnchangedClause(userId, bookId, expectedProgressUpdatedAt);
     await this.db
       .update(audiobookshelfBookState)
       .set({ pushPendingAt: null, updatedAt: new Date() })
@@ -957,12 +1043,7 @@ export class AudiobookshelfRepository {
         lastSyncedPositionAbsUpdate,
         lastSyncedProgressAt: expectedProgressUpdatedAt,
         pushPendingAt: sql`case
-          when exists (
-            select 1 from ${schema.audiobookProgress} progress
-            where progress.user_id = ${userId}
-              and progress.book_id = ${bookId}
-              and progress.updated_at = ${expectedProgressUpdatedAt}
-          ) then null
+          when ${this.progressUnchangedClause(userId, bookId, expectedProgressUpdatedAt)} then null
           else coalesce(${audiobookshelfBookState.pushPendingAt}, now())
         end`,
         updatedAt: new Date(),

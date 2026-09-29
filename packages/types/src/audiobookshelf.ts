@@ -109,6 +109,39 @@ export interface AudiobookshelfBookState {
   lastSyncedAt: string | null;
 }
 
+/** Which way audiobook positions flow between BookOrbit and Audiobookshelf for a matched book. */
+export type AudiobookshelfPositionSyncDirection = "two_way" | "from_abs" | "to_abs";
+
+/**
+ * synced: nothing waiting in either direction. sending: a BookOrbit position is waiting to be pushed.
+ * receiving: Audiobookshelf holds a newer position the next pull will bring in. unreachable: the live
+ * check could not reach the server.
+ */
+export type AudiobookshelfSyncLinkStatus = "synced" | "sending" | "receiving" | "unreachable";
+
+export interface AudiobookshelfItemProgress {
+  percentage: number;
+  isFinished: boolean;
+  lastUpdate: number;
+}
+
+export interface AudiobookshelfBookSyncLink {
+  audioBookId: number;
+  absLibraryItemId: string;
+  title: string | null;
+  authorName: string | null;
+  libraryName: string | null;
+  direction: AudiobookshelfPositionSyncDirection;
+  webUrl: string | null;
+}
+
+/** The live half of a sync link, read from Audiobookshelf itself so it arrives after the link. */
+export interface AudiobookshelfBookSyncLive {
+  status: AudiobookshelfSyncLinkStatus;
+  /** Audiobookshelf's own progress for the item; null when it has none yet or could not be read. */
+  progress: AudiobookshelfItemProgress | null;
+}
+
 export interface AudiobookshelfBookStatePage {
   items: AudiobookshelfBookState[];
   total: number;
