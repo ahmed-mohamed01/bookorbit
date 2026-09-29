@@ -68,6 +68,10 @@ export class UpsertAudiobookshelfSettingsDto implements UpsertAudiobookshelfSett
 
   @IsOptional()
   @IsBoolean()
+  pushPosition?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   syncSessions?: boolean;
 
   @IsOptional()

@@ -18,6 +18,8 @@ import { AudiobookshelfSettingsService } from './audiobookshelf-settings.service
 import { AudiobookshelfCatalogListenerService } from './audiobookshelf-catalog-listener.service';
 import { AudiobookshelfSyncSchedulerService } from './audiobookshelf-sync-scheduler.service';
 import { AudiobookshelfSyncService } from './audiobookshelf-sync.service';
+import { AudiobookshelfProgressPushService } from './audiobookshelf-progress-push.service';
+import { AudiobookshelfSyncCoordinatorService } from './audiobookshelf-sync-coordinator.service';
 
 @Module({
   imports: [AchievementModule, BookModule, EditionLinkModule, LibraryModule, UserModule, UserBookStatusModule, AudiobookshelfMetadataModule],
@@ -29,6 +31,8 @@ import { AudiobookshelfSyncService } from './audiobookshelf-sync.service';
     AudiobookshelfMatchService,
     AudiobookshelfBookStateService,
     AudiobookshelfSessionsService,
+    AudiobookshelfSyncCoordinatorService,
+    AudiobookshelfProgressPushService,
     AudiobookshelfSyncService,
     AudiobookshelfSyncSchedulerService,
     AudiobookshelfCatalogListenerService,

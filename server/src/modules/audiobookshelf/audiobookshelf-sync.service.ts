@@ -13,7 +13,9 @@ import { UserBookStatusService } from '../user-book-status/user-book-status.serv
 import { AudiobookshelfApiError, AudiobookshelfClientService, type AbsMediaProgress } from './audiobookshelf-client.service';
 import { AudiobookshelfMatchService } from './audiobookshelf-match.service';
 import { AudiobookshelfRepository } from './audiobookshelf.repository';
+import { AudiobookshelfProgressPushService } from './audiobookshelf-progress-push.service';
 import { AudiobookshelfSessionsService } from './audiobookshelf-sessions.service';
+import { AudiobookshelfSyncCoordinatorService } from './audiobookshelf-sync-coordinator.service';
 import { buildBookAccessScope, describeError, isAbsSyncConfigured, resolveUserTimeZone } from './audiobookshelf-user.utils';
 import {
   AUDIOBOOKSHELF_DURATION_TOLERANCE_BASE_SECONDS,
@@ -110,14 +112,13 @@ interface AbsDueBook {
  */
 interface AbsSyncPreload {
   audioFilesByBookId: Map<number, { id: number; format: string | null; durationSeconds: number | null }[]>;
-  audioProgressByBookId: Map<number, { percentage: number; updatedAt: Date; revision: number }>;
+  audioProgressByBookId: Awaited<ReturnType<AudiobookshelfRepository['findAudioProgressForBooks']>>;
   readAlongBookIdByAudioBookId: Map<number, number>;
 }
 
 @Injectable()
 export class AudiobookshelfSyncService {
   private readonly logger = new Logger(AudiobookshelfSyncService.name);
-  private readonly runningUsers = new Set<number>();
   // Last warned position-skip signature per "userId:bookId", so the hot tier's 30s cadence doesn't
   // re-warn every tick for a book stuck out of tolerance. See `logDurationWarning`.
   private readonly durationWarningSignatures = new Map<string, string>();
@@ -133,6 +134,8 @@ export class AudiobookshelfSyncService {
     private readonly achievementEvents: AchievementEventsService,
     private readonly bookService: BookService,
     private readonly editionLinks: EditionLinkRepository,
+    private readonly progressPush: AudiobookshelfProgressPushService,
+    private readonly coordinator: AudiobookshelfSyncCoordinatorService,
   ) {}
 
   /**
@@ -151,10 +154,9 @@ export class AudiobookshelfSyncService {
       throw new BadRequestException('Audiobookshelf sync is not configured');
     }
 
-    if (this.runningUsers.has(user.id)) {
+    if (!this.coordinator.tryStartSync(user.id)) {
       throw new ConflictException('An Audiobookshelf sync is already running');
     }
-    this.runningUsers.add(user.id);
 
     // Fresh connection reconciles the whole inventory; subsequent syncs only poll progress against the
     // already-matched state. Forced paths (full resync, explicit rescan) always reconcile. The hot
@@ -237,6 +239,7 @@ export class AudiobookshelfSyncService {
             timeZone,
             { status: statusDue, position: positionDue },
             state.lastSyncedProgressAt,
+            settings.pushPosition,
             preload,
           );
           if (outcome.statusApplied) result.statusApplied++;
@@ -248,6 +251,7 @@ export class AudiobookshelfSyncService {
             ...(outcome.positionWatermarkAdvanced
               ? { lastSyncedPositionAbsUpdate: mp.lastUpdate, lastSyncedProgressAt: outcome.positionProgressAt }
               : {}),
+            ...(outcome.positionPushPending ? { pushPendingAt: new Date() } : {}),
           });
         } catch (err) {
           result.failed++;
@@ -257,6 +261,10 @@ export class AudiobookshelfSyncService {
           );
           await this.repo.updateBookState(user.id, state.absLibraryItemId, { syncError: error });
         }
+      }
+
+      if (!options.hotInProgressOnly) {
+        await this.progressPush.sweepPending(user.id);
       }
 
       // Sessions ingest on the full/full-resync path (deep or incremental), and on the warm hot-tier
@@ -303,7 +311,7 @@ export class AudiobookshelfSyncService {
         .catch(() => undefined);
       throw err;
     } finally {
-      this.runningUsers.delete(user.id);
+      this.coordinator.endSync(user.id);
     }
   }
 
@@ -330,17 +338,20 @@ export class AudiobookshelfSyncService {
     timeZone: string,
     due: { status: boolean; position: boolean },
     positionSyncedProgressAt: Date | null,
+    pushPosition: boolean,
     preload: AbsSyncPreload,
   ): Promise<{
     statusApplied: boolean;
     positionApplied: boolean;
     positionWatermarkAdvanced: boolean;
+    positionPushPending: boolean;
     appliedStatus: ReadStatus | null;
     positionProgressAt: Date | null;
   }> {
     let statusApplied = false;
     let positionApplied = false;
     let positionWatermarkAdvanced = false;
+    let positionPushPending = false;
     let appliedStatus: ReadStatus | null = null;
     let positionProgressAt: Date | null = null;
     const userId = user.id;
@@ -369,13 +380,14 @@ export class AudiobookshelfSyncService {
     }
 
     if (due.position) {
-      const position = await this.applyPosition(user, bookId, mp, positionSyncedProgressAt, preload);
+      const position = await this.applyPosition(user, bookId, mp, positionSyncedProgressAt, pushPosition, preload);
       positionApplied = position.applied;
       positionWatermarkAdvanced = position.watermarkAdvanced;
+      positionPushPending = position.pushPending;
       positionProgressAt = position.progressAt;
     }
 
-    return { statusApplied, positionApplied, positionWatermarkAdvanced, appliedStatus, positionProgressAt };
+    return { statusApplied, positionApplied, positionWatermarkAdvanced, positionPushPending, appliedStatus, positionProgressAt };
   }
 
   private async applyPosition(
@@ -383,10 +395,11 @@ export class AudiobookshelfSyncService {
     bookId: number,
     mp: AbsMediaProgress,
     syncedProgressAt: Date | null,
+    pushPosition: boolean,
     preload: AbsSyncPreload,
-  ): Promise<{ applied: boolean; watermarkAdvanced: boolean; progressAt: Date | null }> {
+  ): Promise<{ applied: boolean; watermarkAdvanced: boolean; pushPending: boolean; progressAt: Date | null }> {
     const userId = user.id;
-    const skipped = { applied: false, watermarkAdvanced: false, progressAt: null };
+    const skipped = { applied: false, watermarkAdvanced: false, pushPending: false, progressAt: null };
     const files = (preload.audioFilesByBookId.get(bookId) ?? []).filter((file) => file.format && isAudioFormat(file.format));
     if (files.length === 0) return skipped;
 
@@ -414,16 +427,19 @@ export class AudiobookshelfSyncService {
       return skipped;
     }
 
-    // Newest-wins guard: never move a locally advanced position backward. A snapshot of the progress
-    // row's updatedAt from our last ABS write that no longer matches means local playback changed it
-    // since; with no snapshot (first sync) compare positions rather than the two systems' clocks.
+    // A snapshot mismatch means local playback changed after the last ABS pull. Compare the activity
+    // clocks so a still-newer ABS position can win; without a snapshot, preserve the first-sync
+    // percentage comparison because there is no shared baseline yet.
     const local = preload.audioProgressByBookId.get(bookId);
     if (local) {
-      const localAdvanced =
-        syncedProgressAt != null ? local.updatedAt.getTime() !== syncedProgressAt.getTime() : (local.percentage ?? 0) > mp.progress * 100;
-      if (localAdvanced) {
+      const localChangedSincePull = syncedProgressAt != null && local.updatedAt.getTime() !== syncedProgressAt.getTime();
+      if (localChangedSincePull && local.capturedAt.getTime() >= mp.lastUpdate) {
         this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress is newer`);
-        return { applied: false, watermarkAdvanced: true, progressAt: local.updatedAt };
+        return { applied: false, watermarkAdvanced: true, pushPending: pushPosition, progressAt: syncedProgressAt };
+      }
+      if (syncedProgressAt == null && (local.percentage ?? 0) > mp.progress * 100) {
+        this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress is newer`);
+        return { applied: false, watermarkAdvanced: true, pushPending: false, progressAt: local.updatedAt };
       }
     }
 
@@ -445,10 +461,17 @@ export class AudiobookshelfSyncService {
       // The CAS missed: local playback wrote the row between the pre-load snapshot and this apply.
       // Defer exactly like the guard above; the next run re-snapshots and re-decides.
       this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress won the write race`);
-      return { applied: false, watermarkAdvanced: true, progressAt: local?.updatedAt ?? null };
+      return { applied: false, watermarkAdvanced: true, pushPending: false, progressAt: local?.updatedAt ?? null };
     }
     this.durationWarningSignatures.delete(`${userId}:${bookId}`);
-    preload.audioProgressByBookId.set(bookId, { percentage, updatedAt: written.updatedAt, revision: written.revision });
+    preload.audioProgressByBookId.set(bookId, {
+      currentFileId: written.currentFileId,
+      positionSeconds: written.positionSeconds,
+      percentage,
+      capturedAt: written.capturedAt,
+      updatedAt: written.updatedAt,
+      revision: written.revision,
+    });
     // Announce the position write on the shared bus like every other progress writer (web reader, Kobo,
     // KOReader), so source-agnostic listeners such as the reading-alignment sync observe ABS advances.
     this.achievementEvents.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
@@ -462,7 +485,7 @@ export class AudiobookshelfSyncService {
       ...(mp.lastUpdate ? { occurredAt: new Date(mp.lastUpdate) } : {}),
     });
     await this.syncLinkedReadAlong(user, bookId, mp, capturedAt, preload);
-    return { applied: true, watermarkAdvanced: true, progressAt: written.updatedAt };
+    return { applied: true, watermarkAdvanced: true, pushPending: false, progressAt: written.updatedAt };
   }
 
   /**

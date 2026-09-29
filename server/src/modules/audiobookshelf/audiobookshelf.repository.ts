@@ -146,6 +146,15 @@ export interface AbsEnabledUser {
   userId: number;
 }
 
+export interface AbsAudioProgressSnapshot {
+  currentFileId: number;
+  positionSeconds: number;
+  percentage: number;
+  capturedAt: Date;
+  updatedAt: Date;
+  revision: number;
+}
+
 function daySpanDays(from: string, to: string): number {
   const [fy, fm, fd] = from.split('-').map(Number);
   const [ty, tm, td] = to.split('-').map(Number);
@@ -870,6 +879,97 @@ export class AudiobookshelfRepository {
     return row;
   }
 
+  async findBookStateByBookId(userId: number, bookId: number): Promise<AudiobookshelfBookState | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(audiobookshelfBookState)
+      .where(
+        and(
+          eq(audiobookshelfBookState.userId, userId),
+          eq(audiobookshelfBookState.bookId, bookId),
+          eq(audiobookshelfBookState.syncExcluded, false),
+          eq(audiobookshelfBookState.manualUnlinked, false),
+        ),
+      )
+      .orderBy(asc(audiobookshelfBookState.id))
+      .limit(1);
+    return row;
+  }
+
+  async findPendingPositionPushes(userId: number, limit: number): Promise<AudiobookshelfBookState[]> {
+    return this.db
+      .select()
+      .from(audiobookshelfBookState)
+      .where(
+        and(
+          eq(audiobookshelfBookState.userId, userId),
+          isNotNull(audiobookshelfBookState.pushPendingAt),
+          isNotNull(audiobookshelfBookState.bookId),
+          eq(audiobookshelfBookState.syncExcluded, false),
+          eq(audiobookshelfBookState.manualUnlinked, false),
+        ),
+      )
+      .orderBy(asc(audiobookshelfBookState.pushPendingAt), asc(audiobookshelfBookState.id))
+      .limit(Math.min(Math.max(limit, 1), 200));
+  }
+
+  async markPositionPushPending(userId: number, absLibraryItemId: string): Promise<void> {
+    await this.db
+      .update(audiobookshelfBookState)
+      .set({ pushPendingAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(audiobookshelfBookState.userId, userId), eq(audiobookshelfBookState.absLibraryItemId, absLibraryItemId)));
+  }
+
+  async clearPositionPushPendingIfUnchanged(
+    userId: number,
+    absLibraryItemId: string,
+    bookId: number,
+    expectedProgressUpdatedAt: Date | null,
+  ): Promise<void> {
+    const progressUnchanged =
+      expectedProgressUpdatedAt === null
+        ? sql`not exists (
+            select 1 from ${schema.audiobookProgress} progress
+            where progress.user_id = ${userId} and progress.book_id = ${bookId}
+          )`
+        : sql`exists (
+            select 1 from ${schema.audiobookProgress} progress
+            where progress.user_id = ${userId}
+              and progress.book_id = ${bookId}
+              and progress.updated_at = ${expectedProgressUpdatedAt}
+          )`;
+    await this.db
+      .update(audiobookshelfBookState)
+      .set({ pushPendingAt: null, updatedAt: new Date() })
+      .where(and(eq(audiobookshelfBookState.userId, userId), eq(audiobookshelfBookState.absLibraryItemId, absLibraryItemId), progressUnchanged));
+  }
+
+  async completePositionPush(
+    userId: number,
+    absLibraryItemId: string,
+    bookId: number,
+    expectedProgressUpdatedAt: Date,
+    lastSyncedPositionAbsUpdate: number,
+  ): Promise<void> {
+    await this.db
+      .update(audiobookshelfBookState)
+      .set({
+        lastSyncedPositionAbsUpdate,
+        lastSyncedProgressAt: expectedProgressUpdatedAt,
+        pushPendingAt: sql`case
+          when exists (
+            select 1 from ${schema.audiobookProgress} progress
+            where progress.user_id = ${userId}
+              and progress.book_id = ${bookId}
+              and progress.updated_at = ${expectedProgressUpdatedAt}
+          ) then null
+          else coalesce(${audiobookshelfBookState.pushPendingAt}, now())
+        end`,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(audiobookshelfBookState.userId, userId), eq(audiobookshelfBookState.absLibraryItemId, absLibraryItemId)));
+  }
+
   async updateBookState(
     userId: number,
     absLibraryItemId: string,
@@ -995,27 +1095,40 @@ export class AudiobookshelfRepository {
     return byBook;
   }
 
-  // Local audio position rows for a batch of books, keyed by bookId. Feeds the sync loop's
-  // newest-wins guard (percentage, updatedAt) and the CAS base version (revision).
-  async findAudioProgressForBooks(
-    userId: number,
-    bookIds: number[],
-  ): Promise<Map<number, { percentage: number; updatedAt: Date; revision: number }>> {
-    const byBook = new Map<number, { percentage: number; updatedAt: Date; revision: number }>();
+  // Local audio position rows for a batch of books, keyed by bookId. Feeds pull conflict resolution,
+  // outbound timeline mapping, and the CAS base version.
+  async findAudioProgressForBooks(userId: number, bookIds: number[]): Promise<Map<number, AbsAudioProgressSnapshot>> {
+    const byBook = new Map<number, AbsAudioProgressSnapshot>();
     if (bookIds.length === 0) return byBook;
     for (const group of chunk([...new Set(bookIds)], BOOK_ID_LOOKUP_CHUNK)) {
       const rows = await this.db
         .select({
           bookId: schema.audiobookProgress.bookId,
+          currentFileId: schema.audiobookProgress.currentFileId,
+          positionSeconds: schema.audiobookProgress.positionSeconds,
           percentage: schema.audiobookProgress.percentage,
+          capturedAt: schema.audiobookProgress.capturedAt,
           updatedAt: schema.audiobookProgress.updatedAt,
           revision: schema.audiobookProgress.revision,
         })
         .from(schema.audiobookProgress)
         .where(and(eq(schema.audiobookProgress.userId, userId), inArray(schema.audiobookProgress.bookId, group)));
-      for (const row of rows) byBook.set(row.bookId, { percentage: row.percentage, updatedAt: row.updatedAt, revision: row.revision });
+      for (const row of rows) {
+        byBook.set(row.bookId, {
+          currentFileId: row.currentFileId,
+          positionSeconds: row.positionSeconds,
+          percentage: row.percentage,
+          capturedAt: row.capturedAt,
+          updatedAt: row.updatedAt,
+          revision: row.revision,
+        });
+      }
     }
     return byBook;
+  }
+
+  async findAudioProgress(userId: number, bookId: number): Promise<AbsAudioProgressSnapshot | undefined> {
+    return (await this.findAudioProgressForBooks(userId, [bookId])).get(bookId);
   }
 
   /**

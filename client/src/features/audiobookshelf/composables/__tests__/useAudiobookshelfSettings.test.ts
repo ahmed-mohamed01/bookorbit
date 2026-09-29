@@ -41,6 +41,7 @@ function makeSettings(overrides: Partial<AudiobookshelfSettings> = {}): Audioboo
     disabledReason: null,
     syncStatus: true,
     syncPosition: true,
+    pushPosition: false,
     syncSessions: true,
     excludedLibraryIds: [],
     pathMappings: [],

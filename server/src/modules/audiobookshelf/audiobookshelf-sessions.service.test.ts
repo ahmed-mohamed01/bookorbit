@@ -49,6 +49,7 @@ function makeSettings(overrides: Partial<AudiobookshelfUserSetting> = {}): Audio
     enabled: true,
     syncStatus: true,
     syncPosition: true,
+    pushPosition: false,
     syncSessions: true,
     excludedLibraryIds: [],
     lastSyncedAt: null,

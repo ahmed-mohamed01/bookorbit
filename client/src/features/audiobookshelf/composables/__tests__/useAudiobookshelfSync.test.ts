@@ -47,6 +47,7 @@ function makeSettings(): AudiobookshelfSettings {
     disabledReason: null,
     syncStatus: true,
     syncPosition: true,
+    pushPosition: false,
     syncSessions: true,
     excludedLibraryIds: [],
     pathMappings: [],

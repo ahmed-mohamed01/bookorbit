@@ -43,6 +43,7 @@ function configuredRow(overrides: Record<string, unknown> = {}) {
     enabled: true,
     syncStatus: true,
     syncPosition: true,
+    pushPosition: false,
     syncSessions: true,
     excludedLibraryIds: [],
     pathMappings: [],
@@ -85,6 +86,7 @@ describe('AudiobookshelfSettingsService', () => {
       expect(result.enabled).toBe(false);
       expect(result.effectiveEnabled).toBe(false);
       expect(result.disabledReason).toBe('missing_config');
+      expect(result.pushPosition).toBe(false);
       expect(result.excludedLibraryIds).toEqual([]);
       expect(result.lastSyncedAt).toBeNull();
     });
@@ -167,6 +169,16 @@ describe('AudiobookshelfSettingsService', () => {
 
       expect(mockRepo.updateSettings).toHaveBeenCalledWith(1, { enabled: false });
       expect(mockRepo.upsertSettings).not.toHaveBeenCalled();
+    });
+
+    it('persists and returns the outbound position setting', async () => {
+      mockRepo.findSettings.mockResolvedValueOnce(configuredRow()).mockResolvedValue(configuredRow({ pushPosition: true }));
+      mockRepo.updateSettings.mockResolvedValue(configuredRow({ pushPosition: true }));
+
+      const result = await makeService().upsertSettings(1, { pushPosition: true });
+
+      expect(mockRepo.updateSettings).toHaveBeenCalledWith(1, { pushPosition: true });
+      expect(result.pushPosition).toBe(true);
     });
 
     it('throws NotFoundException when the row disappears during update', async () => {

@@ -22,6 +22,11 @@ function mappings(count: number) {
 }
 
 describe('UpsertAudiobookshelfSettingsDto pathMappings', () => {
+  it('accepts a boolean pushPosition and rejects other types', async () => {
+    await expect(errorsFor({ pushPosition: true })).resolves.toHaveLength(0);
+    await expect(errorsFor({ pushPosition: 'true' })).resolves.not.toHaveLength(0);
+  });
+
   it('accepts an omitted list and a well-formed list', async () => {
     await expect(errorsFor({ enabled: true })).resolves.toHaveLength(0);
     await expect(errorsFor({ pathMappings: [{ absPrefix: '/audiobooks', localPrefix: '/books' }] })).resolves.toHaveLength(0);

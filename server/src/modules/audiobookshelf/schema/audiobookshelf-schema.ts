@@ -22,6 +22,7 @@ export const AUDIOBOOKSHELF_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS "audiobooks
 	"last_synced_abs_update" bigint,
 	"last_synced_position_abs_update" bigint,
 	"last_synced_progress_at" timestamp with time zone,
+	"push_pending_at" timestamp with time zone,
 	"sync_error" text,
 	"sync_excluded" boolean DEFAULT false NOT NULL,
 	"manual_unlinked" boolean DEFAULT false NOT NULL,
@@ -38,6 +39,7 @@ CREATE TABLE IF NOT EXISTS "audiobookshelf_user_settings" (
 	"enabled" boolean DEFAULT true NOT NULL,
 	"sync_status" boolean DEFAULT true NOT NULL,
 	"sync_position" boolean DEFAULT true NOT NULL,
+	"push_position" boolean DEFAULT false NOT NULL,
 	"sync_sessions" boolean DEFAULT true NOT NULL,
 	"excluded_library_ids" text[] DEFAULT '{}'::text[] NOT NULL,
 	"path_mappings" jsonb DEFAULT '[]'::jsonb NOT NULL,
@@ -58,6 +60,10 @@ ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "initial_rec
 ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "path_mappings" jsonb DEFAULT '[]'::jsonb NOT NULL;
 --> statement-breakpoint
 ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "stale_count" integer DEFAULT 0 NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "audiobookshelf_user_settings" ADD COLUMN IF NOT EXISTS "push_position" boolean DEFAULT false NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "audiobookshelf_book_state" ADD COLUMN IF NOT EXISTS "push_pending_at" timestamp with time zone;
 --> statement-breakpoint
 ALTER TABLE "audiobookshelf_book_state" ADD COLUMN IF NOT EXISTS "abs_series_name" varchar(1000);
 --> statement-breakpoint
@@ -99,6 +105,8 @@ DO $$ BEGIN
 END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "audiobookshelf_book_state_user_book_idx" ON "audiobookshelf_book_state" USING btree ("user_id","book_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "audiobookshelf_book_state_user_push_pending_idx" ON "audiobookshelf_book_state" USING btree ("user_id","push_pending_at") WHERE "push_pending_at" IS NOT NULL;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "books_library_updated_at_idx" ON "books" USING btree ("library_id","updated_at");
 

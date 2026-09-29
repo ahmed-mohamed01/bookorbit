@@ -65,6 +65,26 @@ describe('EditionLinkRepository', () => {
     });
   });
 
+  describe('findAudioBookIdByReadAlongBookId', () => {
+    it('returns the audio member only for the read-along column', async () => {
+      const chain = makeChain([{ audioBookId: 24 }]);
+      const repo = new EditionLinkRepository({ select: vi.fn(() => chain) } as never);
+
+      await expect(repo.findAudioBookIdByReadAlongBookId(42)).resolves.toBe(24);
+
+      const where = chain.where.mock.calls[0]![0];
+      expect(referencedColumns(where)).toContain(bookEditionLinks.readAlongBookId.name);
+      expect(boundValues(where)).toContain(42);
+      expect(chain.limit).toHaveBeenCalledWith(1);
+    });
+
+    it('returns null when the book is not a read-along member', async () => {
+      const repo = new EditionLinkRepository({ select: vi.fn(() => makeChain([])) } as never);
+
+      await expect(repo.findAudioBookIdByReadAlongBookId(42)).resolves.toBeNull();
+    });
+  });
+
   it('ranks plausible opposite-modality candidates and filters unrelated rows', async () => {
     const sourceChain = makeChain([{ title: 'Dune' }]);
     const sourceAuthorsChain = makeChain([{ name: 'Frank Herbert' }]);

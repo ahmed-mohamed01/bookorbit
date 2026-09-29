@@ -33,6 +33,13 @@ export interface AbsMediaProgress {
   finishedAt: number | null;
 }
 
+export interface AbsMediaProgressUpdate {
+  currentTime: number;
+  duration: number;
+  progress: number;
+  lastUpdate: number;
+}
+
 interface AbsMeResponse {
   id: string;
   username: string;
@@ -172,6 +179,17 @@ export class AudiobookshelfClientService {
     return this.request<AbsLibraryItemsResponse>(userId, serverUrl, token, path, { limit: params.limit, page: params.page });
   }
 
+  async getMediaProgress(userId: number, serverUrl: string, token: string, libraryItemId: string): Promise<AbsMediaProgress | null> {
+    const path = `/api/me/progress/${encodeURIComponent(libraryItemId)}`;
+    return this.request<AbsMediaProgress | null>(userId, serverUrl, token, path, undefined, { allowNotFound: true });
+  }
+
+  async updateMediaProgress(userId: number, serverUrl: string, token: string, libraryItemId: string, payload: AbsMediaProgressUpdate): Promise<void> {
+    const path = `/api/me/progress/${encodeURIComponent(libraryItemId)}`;
+    // ABS acknowledges this write with a bare "OK" (sendStatus), not JSON.
+    await this.request<void>(userId, serverUrl, token, path, undefined, { method: 'PATCH', body: payload, expectJson: false });
+  }
+
   async testConnection(userId: number, serverUrl: string, token: string): Promise<AudiobookshelfConnectionTestResult> {
     const started = Date.now();
     this.logger.log(`[abs.client] [start] userId=${userId} - connection test started`);
@@ -214,7 +232,14 @@ export class AudiobookshelfClientService {
     }
   }
 
-  private async request<T>(userId: number, serverUrl: string, token: string, path: string, query?: QueryParams): Promise<T> {
+  private async request<T>(
+    userId: number,
+    serverUrl: string,
+    token: string,
+    path: string,
+    query?: QueryParams,
+    options: { method?: 'GET' | 'PATCH'; body?: unknown; allowNotFound?: boolean; expectJson?: boolean } = {},
+  ): Promise<T> {
     const normalized = parseAndNormalizeServerUrl(serverUrl);
     if (!normalized) {
       throw new AudiobookshelfApiError('Invalid Audiobookshelf server URL', 'invalid_url');
@@ -239,14 +264,16 @@ export class AudiobookshelfClientService {
     let response: Response;
     try {
       response = await fetch(url, {
-        method: 'GET',
+        method: options.method ?? 'GET',
         redirect: 'manual',
         signal: controller.signal,
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: 'application/json',
+          ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
           'User-Agent': AUDIOBOOKSHELF_USER_AGENT,
         },
+        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
       });
     } catch (err) {
       const durationMs = Date.now() - started;
@@ -269,6 +296,8 @@ export class AudiobookshelfClientService {
       throw new AudiobookshelfApiError('Audiobookshelf server returned an unexpected redirect', 'redirect', response.status);
     }
 
+    if (response.status === 404 && options.allowNotFound) return null as T;
+
     if (!response.ok) {
       const durationMs = Date.now() - started;
       this.logger.error(
@@ -276,6 +305,8 @@ export class AudiobookshelfClientService {
       );
       throw new AudiobookshelfApiError(`Audiobookshelf API returned status ${response.status}`, 'http', response.status);
     }
+
+    if (options.expectJson === false) return undefined as T;
 
     try {
       return (await response.json()) as T;
