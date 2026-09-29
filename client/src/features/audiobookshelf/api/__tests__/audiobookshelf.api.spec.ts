@@ -8,12 +8,15 @@ vi.mock('@/lib/api', () => ({
 
 import { api } from '@/lib/api'
 import {
+  audiobookshelfCoverUrl,
   cleanupAudiobookshelfStaleEntries,
   confirmAudiobookshelfMatch,
   disconnectAudiobookshelf,
   fetchAudiobookshelfBookStates,
   fetchAudiobookshelfLibraries,
   fetchAudiobookshelfSettings,
+  fetchAudiobookshelfSyncLink,
+  fetchAudiobookshelfSyncLive,
   linkAudiobookshelfBook,
   rescanAudiobookshelfMatches,
   searchAudiobookshelfLinkCandidates,
@@ -255,5 +258,55 @@ describe('audiobookshelf.api', () => {
     mockApi.mockResolvedValueOnce(jsonResponse({}, false, 409))
 
     await expect(fetchAudiobookshelfSettings()).rejects.toThrow('Failed to load Audiobookshelf settings')
+  })
+
+  describe('position sync link', () => {
+    function textResponse(body: string, ok = true, status = ok ? 200 : 500): Response {
+      return {
+        ok,
+        status,
+        text: vi.fn<() => Promise<string>>().mockResolvedValue(body),
+        json: vi.fn<() => Promise<unknown>>().mockResolvedValue({}),
+      } as unknown as Response
+    }
+
+    it('reads the link for a book and treats an empty body as no link', async () => {
+      const link = {
+        audioBookId: 20,
+        absLibraryItemId: 'abs-1',
+        title: 'Dune',
+        authorName: null,
+        libraryName: null,
+        direction: 'two_way',
+        webUrl: null,
+      }
+      mockApi.mockResolvedValueOnce(textResponse(JSON.stringify(link))).mockResolvedValueOnce(textResponse(''))
+
+      await expect(fetchAudiobookshelfSyncLink(20)).resolves.toEqual(link)
+      await expect(fetchAudiobookshelfSyncLink(21)).resolves.toBeNull()
+
+      expect(mockApi).toHaveBeenNthCalledWith(1, '/api/v1/audiobookshelf/books/for-book/20')
+      expect(mockApi).toHaveBeenNthCalledWith(2, '/api/v1/audiobookshelf/books/for-book/21')
+    })
+
+    it('throws when the link lookup fails', async () => {
+      mockApi.mockResolvedValueOnce(textResponse('', false, 403))
+
+      await expect(fetchAudiobookshelfSyncLink(20)).rejects.toThrow('Failed to load the Audiobookshelf link')
+    })
+
+    it('reads the live status of an encoded item id and throws when it fails', async () => {
+      const live = { status: 'synced', progress: null }
+      mockApi.mockResolvedValueOnce(jsonResponse(live)).mockResolvedValueOnce(jsonResponse({}, false, 502))
+
+      await expect(fetchAudiobookshelfSyncLive('abs/1')).resolves.toEqual(live)
+      await expect(fetchAudiobookshelfSyncLive('abs/1')).rejects.toThrow('Failed to check Audiobookshelf')
+
+      expect(mockApi).toHaveBeenCalledWith('/api/v1/audiobookshelf/books/abs%2F1/live')
+    })
+
+    it('builds the proxied cover URL for an encoded item id', () => {
+      expect(audiobookshelfCoverUrl('abs/1')).toBe('/api/v1/audiobookshelf/books/abs%2F1/cover')
+    })
   })
 })

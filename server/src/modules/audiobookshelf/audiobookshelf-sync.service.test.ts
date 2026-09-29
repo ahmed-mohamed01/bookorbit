@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AudiobookshelfApiError, type AbsMediaProgress } from './audiobookshelf-client.service';
 import { AudiobookshelfSyncCoordinatorService } from './audiobookshelf-sync-coordinator.service';
-import { AudiobookshelfSyncService, resolveAbsPosition, resolveAbsTargetStatus } from './audiobookshelf-sync.service';
+import {
+  AUDIOBOOKSHELF_SYNC_PUSH_WAIT_MS,
+  AudiobookshelfSyncService,
+  resolveAbsPosition,
+  resolveAbsTargetStatus,
+} from './audiobookshelf-sync.service';
 
 const mockRepo = {
   findSettings: vi.fn(),
@@ -55,9 +60,10 @@ const mockEditionLinks = {
 
 const mockProgressPush = {
   sweepPending: vi.fn(),
+  requestPush: vi.fn(),
 };
 
-function makeService() {
+function makeService(coordinator = new AudiobookshelfSyncCoordinatorService()) {
   return new AudiobookshelfSyncService(
     mockRepo as any,
     mockClient as any,
@@ -70,7 +76,7 @@ function makeService() {
     mockBookService as any,
     mockEditionLinks as any,
     mockProgressPush as any,
-    new AudiobookshelfSyncCoordinatorService(),
+    coordinator,
   );
 }
 
@@ -557,6 +563,156 @@ describe('AudiobookshelfSyncService.sync', () => {
         'item-1',
         expect.objectContaining({ pushPendingAt: expect.any(Date), lastSyncedProgressAt: syncedProgressAt }),
       );
+    });
+  });
+
+  describe('push-aware pull guards', () => {
+    const snapshotAt = new Date('2026-07-19T00:00:00Z');
+
+    function arrange(options: { pushPosition: boolean; lastSyncedProgressAt: Date | null; local: Record<string, unknown>; mpLastUpdate?: number }) {
+      mockRepo.findSettings.mockResolvedValue(makeSettings({ syncStatus: false, syncPosition: true, pushPosition: options.pushPosition }));
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ lastUpdate: options.mpLastUpdate ?? 9000 })] });
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10, lastSyncedProgressAt: options.lastSyncedProgressAt })]);
+      mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map([[10, [{ id: 501, format: 'm4b', durationSeconds: 1000 }]]]));
+      mockRepo.findAudioProgressForBooks.mockResolvedValue(
+        new Map([
+          [
+            10,
+            {
+              currentFileId: 501,
+              positionSeconds: 100,
+              percentage: 10,
+              capturedAt: new Date(8000),
+              updatedAt: snapshotAt,
+              revision: 3,
+              ...options.local,
+            },
+          ],
+        ]),
+      );
+    }
+
+    function bookStatePatch(): Record<string, unknown> {
+      const call = mockRepo.updateBookState.mock.calls.find(([, itemId, patch]) => itemId === 'item-1' && 'lastSyncedAt' in patch);
+      return call![2];
+    }
+
+    it('does not advance the position watermark on a CAS miss, and marks the row pending when push is on', async () => {
+      arrange({ pushPosition: true, lastSyncedProgressAt: null, local: {} });
+      mockRepo.upsertAudioProgressGuarded.mockResolvedValue(undefined);
+
+      await makeService().sync(user);
+
+      const patch = bookStatePatch();
+      expect(patch).not.toHaveProperty('lastSyncedPositionAbsUpdate');
+      expect(patch).not.toHaveProperty('lastSyncedProgressAt');
+      expect(patch.pushPendingAt).toBeInstanceOf(Date);
+    });
+
+    it('does not advance the position watermark on a CAS miss with push off either', async () => {
+      arrange({ pushPosition: false, lastSyncedProgressAt: null, local: {} });
+      mockRepo.upsertAudioProgressGuarded.mockResolvedValue(undefined);
+
+      await makeService().sync(user);
+
+      const patch = bookStatePatch();
+      expect(patch).not.toHaveProperty('lastSyncedPositionAbsUpdate');
+      expect(patch).not.toHaveProperty('pushPendingAt');
+    });
+
+    it('applies ABS when the local change has exactly the ABS timestamp (an ABS write, not newer local activity)', async () => {
+      arrange({
+        pushPosition: true,
+        lastSyncedProgressAt: snapshotAt,
+        local: { capturedAt: new Date(9000), updatedAt: new Date('2026-07-20T00:00:00Z') },
+      });
+
+      await makeService().sync(user);
+
+      expect(mockRepo.upsertAudioProgressGuarded).toHaveBeenCalledWith(user.id, 10, 501, 500, 50, 3, new Date(9000));
+      expect(bookStatePatch()).not.toHaveProperty('pushPendingAt');
+    });
+
+    it('on a first pull with push on, keeps a newer local row unsynced and pending instead of recording it as synced', async () => {
+      arrange({ pushPosition: true, lastSyncedProgressAt: null, local: { percentage: 90, capturedAt: new Date(10_000) } });
+
+      await makeService().sync(user);
+
+      expect(mockRepo.upsertAudioProgressGuarded).not.toHaveBeenCalled();
+      const patch = bookStatePatch();
+      expect(patch.pushPendingAt).toBeInstanceOf(Date);
+      expect(patch).not.toHaveProperty('lastSyncedProgressAt');
+      expect(patch).not.toHaveProperty('lastSyncedPositionAbsUpdate');
+    });
+
+    it('on a first pull with push on, applies a newer ABS position even when the local percentage is higher', async () => {
+      arrange({ pushPosition: true, lastSyncedProgressAt: null, local: { percentage: 90, capturedAt: new Date(8000) } });
+
+      await makeService().sync(user);
+
+      expect(mockRepo.upsertAudioProgressGuarded).toHaveBeenCalledTimes(1);
+    });
+
+    it('on a first pull with push off, keeps the percentage comparison and records the local row', async () => {
+      arrange({ pushPosition: false, lastSyncedProgressAt: null, local: { percentage: 90, capturedAt: new Date(1000) } });
+
+      await makeService().sync(user);
+
+      expect(mockRepo.upsertAudioProgressGuarded).not.toHaveBeenCalled();
+      expect(bookStatePatch()).toMatchObject({ lastSyncedPositionAbsUpdate: 9000, lastSyncedProgressAt: snapshotAt });
+    });
+
+    it('hands rows the hot tier marked pending to the debounced push', async () => {
+      arrange({ pushPosition: true, lastSyncedProgressAt: null, local: { capturedAt: new Date(10_000) } });
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ lastUpdate: 9000, progress: 0.5 })] });
+
+      await makeService().sync(user, { hotInProgressOnly: true });
+
+      expect(mockProgressPush.requestPush).toHaveBeenCalledWith(user.id, 10);
+      expect(mockProgressPush.sweepPending).not.toHaveBeenCalled();
+    });
+
+    it('leaves pending rows of a full sync to its sweep', async () => {
+      arrange({ pushPosition: true, lastSyncedProgressAt: null, local: { capturedAt: new Date(10_000) } });
+
+      await makeService().sync(user);
+
+      expect(mockProgressPush.requestPush).not.toHaveBeenCalled();
+      expect(mockProgressPush.sweepPending).toHaveBeenCalledWith(user.id);
+    });
+  });
+
+  describe('sharing the lock with position pushes', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('waits for an in-flight push instead of failing', async () => {
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [] });
+      const coordinator = new AudiobookshelfSyncCoordinatorService();
+      expect(coordinator.tryStartPush(user.id)).toBe(true);
+
+      const running = makeService(coordinator).sync(user);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mockClient.getMe).not.toHaveBeenCalled();
+
+      coordinator.endPush(user.id);
+      await expect(running).resolves.toMatchObject({ failed: 0 });
+      expect(mockClient.getMe).toHaveBeenCalledTimes(1);
+    });
+
+    it('fails with ConflictException only after the push outlasts the wait', async () => {
+      vi.useFakeTimers();
+      const coordinator = new AudiobookshelfSyncCoordinatorService();
+      coordinator.tryStartPush(user.id);
+
+      const running = makeService(coordinator).sync(user);
+      const outcome = expect(running).rejects.toBeInstanceOf(ConflictException);
+      await vi.advanceTimersByTimeAsync(AUDIOBOOKSHELF_SYNC_PUSH_WAIT_MS);
+
+      await outcome;
+      expect(mockClient.getMe).not.toHaveBeenCalled();
     });
   });
 

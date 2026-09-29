@@ -5753,6 +5753,22 @@ describe('BookService linked audiobook and read-along', () => {
     expect(achievementEvents.emit).not.toHaveBeenCalledWith(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, expect.anything());
   });
 
+  it('announces a legacy audio progress save so outbound position sync sees it, and nothing when the write was a no-op', async () => {
+    const { service, bookRepo, achievementEvents } = makeLinkedService(null);
+    bookRepo.findFileById.mockResolvedValue({ id: 12, absolutePath: '/books/a.mp3', format: 'mp3', bookId: 5, libraryId: 3 });
+    bookRepo.findAudioProgress.mockResolvedValue(null);
+    bookRepo.upsertAudioProgress.mockResolvedValue({ capturedAt: captured });
+    const dto = { currentFileId: 12, positionSeconds: 75, percentage: 40 };
+
+    await service.saveAudioProgress(42, 5, dto, makeUser({ id: 42 }));
+    expect(achievementEvents.emit).toHaveBeenCalledWith(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, { userId: 42, bookId: 5 });
+
+    achievementEvents.emit.mockClear();
+    bookRepo.upsertAudioProgress.mockResolvedValue(null);
+    await service.saveAudioProgress(42, 5, dto, makeUser({ id: 42 }));
+    expect(achievementEvents.emit).not.toHaveBeenCalledWith(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, expect.anything());
+  });
+
   it('loads no user for a device position on a book without a read-along link', async () => {
     const { service, userService, audiobookEbookProgressSync } = makeLinkedService(null);
 

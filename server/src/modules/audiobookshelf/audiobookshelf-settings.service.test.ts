@@ -19,6 +19,7 @@ const mockRepo = {
   deleteSettings: vi.fn(),
   findLibraryFolderPaths: vi.fn(),
   clearMatchMemoForUnmatched: vi.fn(),
+  clearPositionPushPending: vi.fn(),
 };
 
 const mockClient = {
@@ -179,6 +180,27 @@ describe('AudiobookshelfSettingsService', () => {
 
       expect(mockRepo.updateSettings).toHaveBeenCalledWith(1, { pushPosition: true });
       expect(result.pushPosition).toBe(true);
+    });
+
+    it('clears queued position pushes when the outbound setting is switched off', async () => {
+      mockRepo.findSettings.mockResolvedValueOnce(configuredRow({ pushPosition: true })).mockResolvedValue(configuredRow());
+      mockRepo.updateSettings.mockResolvedValue(configuredRow());
+
+      await makeService().upsertSettings(1, { pushPosition: false });
+
+      expect(mockRepo.clearPositionPushPending).toHaveBeenCalledWith(1);
+    });
+
+    it('leaves queued position pushes alone when the outbound setting stays on or was already off', async () => {
+      mockRepo.findSettings.mockResolvedValueOnce(configuredRow({ pushPosition: true })).mockResolvedValue(configuredRow({ pushPosition: true }));
+      mockRepo.updateSettings.mockResolvedValue(configuredRow({ pushPosition: true }));
+      await makeService().upsertSettings(1, { syncStatus: false });
+
+      mockRepo.findSettings.mockReset();
+      mockRepo.findSettings.mockResolvedValue(configuredRow());
+      await makeService().upsertSettings(1, { pushPosition: false });
+
+      expect(mockRepo.clearPositionPushPending).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException when the row disappears during update', async () => {

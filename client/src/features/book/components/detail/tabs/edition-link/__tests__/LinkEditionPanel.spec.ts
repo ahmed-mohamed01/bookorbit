@@ -16,9 +16,12 @@ import type {
 import type { EditionLink, EditionLinkCandidate } from '@/features/book/composables/useEditionLink'
 import type { ReadAlongBuildOutcome, ReadAlongCancelOutcome } from '@/features/book/composables/useReadAlong'
 import type { AlignmentStatus } from '@/features/book/composables/useReadingAlignment'
-import { useLinkEditionPanel } from '@/features/book/composables/useLinkEditionPanel'
+import { useLinkEditionPanel, type EditionFilledSlot } from '@/features/book/composables/useLinkEditionPanel'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import LinkEditionPanel from '../LinkEditionPanel.vue'
+import EditionPairBox from '../EditionPairBox.vue'
+import EditionSlotCard from '../EditionSlotCard.vue'
+import AudiobookshelfSyncStop from '../AudiobookshelfSyncStop.vue'
 
 const toastMocks = vi.hoisted(() => ({
   success: vi.fn<(...args: unknown[]) => void>(),
@@ -31,6 +34,13 @@ const permissionMocks = vi.hoisted(() => ({ hasPermission: vi.fn<(name: string) 
 vi.mock('@/features/auth/composables/usePermissions', () => ({
   usePermissions: () => ({ hasPermission: permissionMocks.hasPermission }),
 }))
+
+// The panel's host looks the Audiobookshelf link up and hands it down as props; tests stand in for it.
+const absLinkState = {
+  link: ref<import('@bookorbit/types').AudiobookshelfBookSyncLink | null>(null),
+  live: ref<import('@bookorbit/types').AudiobookshelfBookSyncLive | null>(null),
+  checking: ref(false),
+}
 
 const linkRecord: EditionLink = { id: 1, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
 
@@ -162,7 +172,13 @@ function mountPanelWithState(book = makeBook(), attachTo?: HTMLElement) {
     setup() {
       state = useLinkEditionPanel(() => book)
       const panel = reactive(state)
-      return () => h(LinkEditionPanel, { panel })
+      return () =>
+        h(LinkEditionPanel, {
+          panel,
+          absLink: absLinkState.link.value,
+          absLive: absLinkState.live.value,
+          absChecking: absLinkState.checking.value,
+        })
     },
   })
   const wrapper = mount(Host, { global: { stubs }, attachTo })
@@ -205,6 +221,7 @@ function text(wrapper: ReturnType<typeof mountPanel>, testId: string) {
 
 describe('LinkEditionPanel', () => {
   beforeEach(() => {
+    absLinkState.link.value = null
     editionLinkState = createEditionLinkState()
     alignmentState = createAlignmentState()
     readAlongState = createReadAlongState()
@@ -906,5 +923,163 @@ describe('LinkEditionPanel', () => {
       expect(linked.find('[data-testid="link-edition-footer"]').exists()).toBe(false)
       expect(linked.find('[data-testid="position-sync-build"]').exists()).toBe(false)
     })
+  })
+})
+
+describe('LinkEditionPanel Audiobookshelf stop', () => {
+  beforeEach(() => {
+    editionLinkState = createEditionLinkState()
+    alignmentState = createAlignmentState()
+    readAlongState = createReadAlongState()
+    permissionMocks.hasPermission.mockReset()
+    permissionMocks.hasPermission.mockReturnValue(true)
+    absLinkState.link.value = null
+    absLinkState.live.value = null
+    absLinkState.checking.value = false
+  })
+
+  const STOP_ORDER_SELECTOR =
+    '[data-testid="edition-slot-ebook"], [data-testid="edition-slot-audiobook"], [data-testid="edition-slot-read-along"], [data-testid="edition-abs-stop"]'
+
+  function stopOrder(wrapper: {
+    get: (selector: string) => { findAll: (selector: string) => { attributes: (name: string) => string | undefined }[] }
+  }) {
+    return wrapper
+      .get('[data-testid="edition-pair"]')
+      .findAll(STOP_ORDER_SELECTOR)
+      .map((node) => node.attributes('data-testid'))
+  }
+
+  const absLink = {
+    audioBookId: 20,
+    absLibraryItemId: 'abs-1',
+    title: 'Dune (ABS)',
+    authorName: null,
+    libraryName: 'Fiction',
+    direction: 'two_way' as const,
+    webUrl: null,
+  }
+
+  it('places the Audiobookshelf stop right after the audiobook it is matched to', async () => {
+    linkPair()
+    absLinkState.link.value = absLink
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const order = wrapper
+      .get('[data-testid="edition-pair"]')
+      .findAll(
+        '[data-testid="edition-slot-ebook"], [data-testid="edition-slot-audiobook"], [data-testid="edition-slot-read-along"], [data-testid="edition-abs-stop"]',
+      )
+      .map((node) => node.attributes('data-testid'))
+    expect(order).toEqual(['edition-slot-ebook', 'edition-slot-audiobook', 'edition-abs-stop'])
+    expect(wrapper.get('[data-testid="edition-abs-stop"]').text()).toContain('Dune (ABS)')
+  })
+
+  it('renders the checking shimmer, then the live progress, through the panel', async () => {
+    linkPair()
+    absLinkState.link.value = absLink
+    absLinkState.checking.value = true
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="edition-abs-checking"]').exists()).toBe(true)
+
+    absLinkState.checking.value = false
+    absLinkState.live.value = { status: 'synced', progress: { percentage: 64, isFinished: false, lastUpdate: 1 } }
+    await flushPromises()
+    expect(wrapper.find('[data-testid="edition-abs-checking"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="edition-abs-progress"]').text()).toContain('64%')
+  })
+
+  it('keeps the stop after the pair and before the read-along, with the cards closing the rail', async () => {
+    editionLinkState.link.value = { ...linkRecord, readAlongBookId: 30 }
+    editionLinkState.role.value = 'audio'
+    editionLinkState.members.value = makeMembers({
+      readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
+    })
+    readAlongState.status.value = 'ready'
+    alignmentState.status.value = 'ready'
+    absLinkState.link.value = absLink
+    const wrapper = mountPanel(makeBook('m4b', 20))
+    await flushPromises()
+
+    expect(stopOrder(wrapper)).toEqual(['edition-slot-ebook', 'edition-slot-audiobook', 'edition-abs-stop', 'edition-slot-read-along'])
+    expect(wrapper.findAllComponents(EditionSlotCard).map((card) => card.props('position'))).toEqual(['top', 'middle', 'bottom'])
+    expect(wrapper.getComponent(AudiobookshelfSyncStop).props('position')).toBe('middle')
+  })
+
+  describe('with the audiobook in either slot', () => {
+    const ebookSlot: EditionFilledSlot = {
+      kind: 'filled',
+      format: 'ebook',
+      bookId: 10,
+      coverVersion: null,
+      title: 'Dune',
+      authorName: null,
+      progress: null,
+      isThisBook: false,
+      match: null,
+      canChange: false,
+    }
+    const audiobookSlot: EditionFilledSlot = { ...ebookSlot, format: 'audiobook', bookId: 20, title: 'Dune (audio)', isThisBook: true }
+    const readAlongSlot: EditionFilledSlot = { ...ebookSlot, bookId: 30, title: 'Dune (read-along)', readAlong: true }
+
+    function mountBox(slots: [EditionFilledSlot, EditionFilledSlot], readAlong: EditionFilledSlot | null) {
+      return mount(EditionPairBox, {
+        props: {
+          phase: 'linked',
+          slots,
+          readAlong,
+          absLink,
+          canSearch: false,
+          query: '',
+          candidates: [],
+          searching: false,
+          searchError: null,
+          hasSearched: false,
+          searchAutofocus: false,
+          disabled: false,
+        },
+        global: { stubs },
+      })
+    }
+
+    it.each([
+      ['slot 0', [audiobookSlot, ebookSlot], null, ['edition-slot-audiobook', 'edition-slot-ebook', 'edition-abs-stop'], 'bottom'],
+      ['slot 1', [ebookSlot, audiobookSlot], null, ['edition-slot-ebook', 'edition-slot-audiobook', 'edition-abs-stop'], 'bottom'],
+      [
+        'slot 0 with a read-along',
+        [audiobookSlot, ebookSlot],
+        readAlongSlot,
+        ['edition-slot-audiobook', 'edition-slot-ebook', 'edition-abs-stop', 'edition-slot-read-along'],
+        'middle',
+      ],
+      [
+        'slot 1 with a read-along',
+        [ebookSlot, audiobookSlot],
+        readAlongSlot,
+        ['edition-slot-ebook', 'edition-slot-audiobook', 'edition-abs-stop', 'edition-slot-read-along'],
+        'middle',
+      ],
+    ] as const)('places the stop after the pair with the audiobook in %s', (_label, slots, readAlong, order, absPosition) => {
+      const wrapper = mountBox([slots[0], slots[1]], readAlong)
+
+      expect(stopOrder(wrapper)).toEqual(order)
+      const positions = wrapper.findAllComponents(EditionSlotCard).map((card) => card.props('position'))
+      expect(positions).toEqual(readAlong ? ['top', 'middle', 'bottom'] : ['top', 'middle'])
+      expect(wrapper.getComponent(AudiobookshelfSyncStop).props('position')).toBe(absPosition)
+    })
+  })
+
+  it('shows no stop when the item belongs to a different audiobook or there is none', async () => {
+    linkPair()
+    absLinkState.link.value = { ...absLink, audioBookId: 99 }
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="edition-abs-stop"]').exists()).toBe(false)
+
+    absLinkState.link.value = null
+    await flushPromises()
+    expect(wrapper.find('[data-testid="edition-abs-stop"]').exists()).toBe(false)
   })
 })

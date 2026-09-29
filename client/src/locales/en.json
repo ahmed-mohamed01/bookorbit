@@ -1513,7 +1513,7 @@
       "audiobookshelf": {
         "pushPosition": {
           "label": "Send BookOrbit progress to Audiobookshelf",
-          "description": "Your listening and read-along position in BookOrbit updates Audiobookshelf."
+          "description": "BookOrbit sends its audiobook position to Audiobookshelf, including where reading the linked ebook or read-along moves it."
         }
       },
       "storyteller": {
@@ -6426,6 +6426,26 @@
         "totalHint": "Total books in this series. Shared with everyone who has this series."
       },
       "editionLink": {
+        "abs": {
+          "label": "Audiobookshelf",
+          "library": "{name} library",
+          "settings": "Settings",
+          "external": "External",
+          "opensNewTab": "(opens Audiobookshelf in a new tab)",
+          "finished": "Finished",
+          "checking": "Checking Audiobookshelf",
+          "status": {
+            "unreachable": "Unreachable",
+            "unreachableHint": "Could not reach Audiobookshelf. Check the connection in Audiobookshelf settings.",
+            "sending": "Sending",
+            "sendingHint": "A newer BookOrbit position is on its way to Audiobookshelf.",
+            "receiving": "Newer in Audiobookshelf",
+            "receivingHint": "Audiobookshelf has a newer position. BookOrbit picks it up on the next sync."
+          },
+          "twoWay": "Two-way sync with Audiobookshelf. BookOrbit sends its audiobook position, including where reading the linked ebook or read-along moves it, and picks up newer positions from Audiobookshelf.",
+          "fromAbs": "One-way: Audiobookshelf updates BookOrbit, but BookOrbit progress is not sent back. Turn on \"Send BookOrbit progress to Audiobookshelf\" in Audiobookshelf settings.",
+          "toAbs": "One-way: BookOrbit sends progress to Audiobookshelf, but Audiobookshelf positions are not imported. Turn on \"Playback position\" in Audiobookshelf settings."
+        },
         "trigger": "Link book",
         "tooltipNeedsAudio": "Link an audiobook to enable position sync.",
         "tooltipNeedsText": "Link an ebook to enable position sync.",

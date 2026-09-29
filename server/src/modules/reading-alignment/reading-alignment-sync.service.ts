@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDest
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import {
+  ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED,
   ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED,
   AchievementEventsService,
   type BookProgressChangedPayload,
@@ -303,8 +304,11 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     // deliberately does NOT re-emit a progress event: doing so drove external trackers (Storygraph /
     // Hardcover) and achievement evaluation off derived, non-user progress. Real per-format activity
     // still emits its own events; the counterpart's status change is broadcast by the status path below.
+    // The narrower derived-position event lets outbound position sync (Audiobookshelf) pick up this
+    // write, which can land after the push already ran for the triggering progress event.
     const applied = await this.repo.projectAudiobookProgress(payload.userId, pair.audioBookId, fileId, positionSeconds, audioPercentage, advancedAt);
     if (!applied) return this.logSkippedStale(payload, pair, 'ebook_to_audio', startedAt);
+    this.achievementEvents.emit(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, { userId: payload.userId, bookId: pair.audioBookId });
     await this.syncCounterpartStatus(payload.userId, pair.audioBookId, pair.textBookId, ebookProgress.percentage, audioPercentage);
     this.logEnd(payload, pair, 'ebook_to_audio', audioPercentage, startedAt);
   }

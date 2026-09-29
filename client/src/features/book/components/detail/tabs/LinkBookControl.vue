@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Link2 } from '@lucide/vue'
 import type { BookDetail } from '@bookorbit/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { useLinkEditionPanel } from '@/features/book/composables/useLinkEditionPanel'
+import { useAudiobookshelfSyncLink } from '@/features/book/composables/useAudiobookshelfSyncLink'
+import { useLinkEditionPanel, type EditionFilledSlot } from '@/features/book/composables/useLinkEditionPanel'
 import LinkEditionPanel from './edition-link/LinkEditionPanel.vue'
 
 const props = withDefaults(defineProps<{ book: BookDetail; triggerClass?: string }>(), {
@@ -15,6 +16,13 @@ const { t } = useI18n()
 
 const panel = reactive(useLinkEditionPanel(() => props.book))
 
+// Looked up with the page rather than when the popover opens, so the Audiobookshelf stop renders
+// together with the other editions; opening only refreshes its live status.
+const audioBookId = computed(
+  () => panel.slots.find((slot): slot is EditionFilledSlot => slot.kind === 'filled' && slot.format === 'audiobook')?.bookId ?? null,
+)
+const abs = useAudiobookshelfSyncLink(audioBookId)
+
 onMounted(() => {
   if (panel.isEligible) void panel.loadInitial()
 })
@@ -23,7 +31,9 @@ const open = ref(false)
 
 function handleOpenChange(next: boolean) {
   open.value = next
-  if (next) void panel.handleOpen()
+  if (!next) return
+  void panel.handleOpen()
+  abs.refreshLive()
 }
 
 // The header's first control rebuilds position sync, so opening the panel keeps focus off it: a stray
@@ -46,7 +56,7 @@ function handleOpenAutoFocus(event: Event) {
       class="max-h-(--reka-popover-content-available-height) w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-2 sm:w-[20rem]"
       @open-auto-focus="handleOpenAutoFocus"
     >
-      <LinkEditionPanel :panel="panel" />
+      <LinkEditionPanel :panel="panel" :abs-link="abs.link.value" :abs-live="abs.live.value" :abs-checking="abs.checking.value" />
     </PopoverContent>
   </Popover>
 </template>

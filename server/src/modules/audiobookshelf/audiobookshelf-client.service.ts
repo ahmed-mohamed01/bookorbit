@@ -3,7 +3,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { AudiobookshelfConnectionTestResult } from '@bookorbit/types';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
-import { AUDIOBOOKSHELF_REQUEST_TIMEOUT_MS, AUDIOBOOKSHELF_USER_AGENT } from './audiobookshelf.constants';
+import {
+  AUDIOBOOKSHELF_COVER_CONTENT_TYPES,
+  AUDIOBOOKSHELF_COVER_MAX_BYTES,
+  AUDIOBOOKSHELF_REQUEST_TIMEOUT_MS,
+  AUDIOBOOKSHELF_USER_AGENT,
+} from './audiobookshelf.constants';
 import { ensureSafeAudiobookshelfUrl, parseAndNormalizeServerUrl } from './audiobookshelf-url.utils';
 
 type AudiobookshelfErrorCode = 'invalid_url' | 'timeout' | 'network' | 'redirect' | 'http' | 'invalid_response';
@@ -31,6 +36,11 @@ export interface AbsMediaProgress {
   lastUpdate: number;
   startedAt: number;
   finishedAt: number | null;
+}
+
+export interface AbsItemCover {
+  contentType: string;
+  body: Buffer;
 }
 
 export interface AbsMediaProgressUpdate {
@@ -137,6 +147,14 @@ interface AbsLibraryItemsResponse {
 
 type QueryParams = Record<string, string | number | undefined>;
 
+interface RequestOptions {
+  method?: 'GET' | 'PATCH';
+  body?: unknown;
+  allowNotFound?: boolean;
+  response?: 'json' | 'none' | 'image';
+  timeoutMs?: number;
+}
+
 @Injectable()
 export class AudiobookshelfClientService {
   private readonly logger = new Logger(AudiobookshelfClientService.name);
@@ -179,15 +197,26 @@ export class AudiobookshelfClientService {
     return this.request<AbsLibraryItemsResponse>(userId, serverUrl, token, path, { limit: params.limit, page: params.page });
   }
 
-  async getMediaProgress(userId: number, serverUrl: string, token: string, libraryItemId: string): Promise<AbsMediaProgress | null> {
+  async getMediaProgress(
+    userId: number,
+    serverUrl: string,
+    token: string,
+    libraryItemId: string,
+    timeoutMs?: number,
+  ): Promise<AbsMediaProgress | null> {
     const path = `/api/me/progress/${encodeURIComponent(libraryItemId)}`;
-    return this.request<AbsMediaProgress | null>(userId, serverUrl, token, path, undefined, { allowNotFound: true });
+    return this.request<AbsMediaProgress | null>(userId, serverUrl, token, path, undefined, { allowNotFound: true, timeoutMs });
   }
 
   async updateMediaProgress(userId: number, serverUrl: string, token: string, libraryItemId: string, payload: AbsMediaProgressUpdate): Promise<void> {
     const path = `/api/me/progress/${encodeURIComponent(libraryItemId)}`;
     // ABS acknowledges this write with a bare "OK" (sendStatus), not JSON.
-    await this.request<void>(userId, serverUrl, token, path, undefined, { method: 'PATCH', body: payload, expectJson: false });
+    await this.request<void>(userId, serverUrl, token, path, undefined, { method: 'PATCH', body: payload, response: 'none' });
+  }
+
+  async getItemCover(userId: number, serverUrl: string, token: string, libraryItemId: string, width: number): Promise<AbsItemCover | null> {
+    const path = `/api/items/${encodeURIComponent(libraryItemId)}/cover`;
+    return this.request<AbsItemCover | null>(userId, serverUrl, token, path, { width }, { allowNotFound: true, response: 'image' });
   }
 
   async testConnection(userId: number, serverUrl: string, token: string): Promise<AudiobookshelfConnectionTestResult> {
@@ -238,7 +267,7 @@ export class AudiobookshelfClientService {
     token: string,
     path: string,
     query?: QueryParams,
-    options: { method?: 'GET' | 'PATCH'; body?: unknown; allowNotFound?: boolean; expectJson?: boolean } = {},
+    options: RequestOptions = {},
   ): Promise<T> {
     const normalized = parseAndNormalizeServerUrl(serverUrl);
     if (!normalized) {
@@ -259,36 +288,44 @@ export class AudiobookshelfClientService {
 
     const started = Date.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), AUDIOBOOKSHELF_REQUEST_TIMEOUT_MS);
+    // Held until the body is consumed: a server that sends headers and then stalls must still time out.
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? AUDIOBOOKSHELF_REQUEST_TIMEOUT_MS);
+    try {
+      return await this.send<T>(userId, url, path, token, controller.signal, started, options);
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
 
+  private async send<T>(
+    userId: number,
+    url: URL,
+    path: string,
+    token: string,
+    signal: AbortSignal,
+    started: number,
+    options: RequestOptions,
+  ): Promise<T> {
     let response: Response;
     try {
       response = await fetch(url, {
         method: options.method ?? 'GET',
         redirect: 'manual',
-        signal: controller.signal,
+        signal,
         headers: {
           Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
+          Accept: options.response === 'image' ? 'image/*' : 'application/json',
           ...(options.body === undefined ? {} : { 'Content-Type': 'application/json' }),
           'User-Agent': AUDIOBOOKSHELF_USER_AGENT,
         },
         ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
       });
     } catch (err) {
-      const durationMs = Date.now() - started;
-      const aborted = err instanceof Error && err.name === 'AbortError';
-      const code: AudiobookshelfErrorCode = aborted ? 'timeout' : 'network';
-      const errorClass = err instanceof Error ? err.constructor.name : 'UnknownError';
-      this.logger.error(
-        `[abs.client] [fail] userId=${userId} path="${sanitizeLogValue(path)}" durationMs=${durationMs} errorClass=${errorClass} code=${code} - request failed`,
-      );
-      throw new AudiobookshelfApiError(aborted ? 'Audiobookshelf request timed out' : 'Could not reach the Audiobookshelf server', code);
-    } finally {
-      clearTimeout(timeout);
+      throw this.transportError(userId, path, started, err);
     }
 
     if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+      await this.discardBody(response);
       const durationMs = Date.now() - started;
       this.logger.error(
         `[abs.client] [fail] userId=${userId} path="${sanitizeLogValue(path)}" durationMs=${durationMs} status=${response.status} code=redirect - redirect rejected`,
@@ -296,9 +333,13 @@ export class AudiobookshelfClientService {
       throw new AudiobookshelfApiError('Audiobookshelf server returned an unexpected redirect', 'redirect', response.status);
     }
 
-    if (response.status === 404 && options.allowNotFound) return null as T;
+    if (response.status === 404 && options.allowNotFound) {
+      await this.discardBody(response);
+      return null as T;
+    }
 
     if (!response.ok) {
+      await this.discardBody(response);
       const durationMs = Date.now() - started;
       this.logger.error(
         `[abs.client] [fail] userId=${userId} path="${sanitizeLogValue(path)}" durationMs=${durationMs} status=${response.status} errorClass=HttpError${response.status} code=http - request failed`,
@@ -306,16 +347,68 @@ export class AudiobookshelfClientService {
       throw new AudiobookshelfApiError(`Audiobookshelf API returned status ${response.status}`, 'http', response.status);
     }
 
-    if (options.expectJson === false) return undefined as T;
+    if (options.response === 'none') {
+      await this.discardBody(response);
+      return undefined as T;
+    }
+    if (options.response === 'image') return (await this.readImage(userId, path, response, started)) as T;
 
     try {
       return (await response.json()) as T;
-    } catch {
-      const durationMs = Date.now() - started;
-      this.logger.error(
-        `[abs.client] [fail] userId=${userId} path="${sanitizeLogValue(path)}" durationMs=${durationMs} status=${response.status} code=invalid_response - response parse failed`,
-      );
-      throw new AudiobookshelfApiError('Audiobookshelf returned an invalid response', 'invalid_response', response.status);
+    } catch (err) {
+      if (err instanceof SyntaxError) throw this.invalidResponse(userId, path, started, response.status, 'response parse failed');
+      throw this.transportError(userId, path, started, err);
     }
+  }
+
+  private async readImage(userId: number, path: string, response: Response, started: number): Promise<AbsItemCover> {
+    const contentType = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+    const declaredLength = Number(response.headers.get('content-length') ?? 0);
+    if (!AUDIOBOOKSHELF_COVER_CONTENT_TYPES.has(contentType) || declaredLength > AUDIOBOOKSHELF_COVER_MAX_BYTES || !response.body) {
+      await this.discardBody(response);
+      throw this.invalidResponse(userId, path, started, response.status, 'cover response rejected');
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > AUDIOBOOKSHELF_COVER_MAX_BYTES) {
+          await reader.cancel().catch(() => undefined);
+          throw this.invalidResponse(userId, path, started, response.status, 'cover response rejected');
+        }
+        chunks.push(value);
+      }
+    } catch (err) {
+      if (err instanceof AudiobookshelfApiError) throw err;
+      throw this.transportError(userId, path, started, err);
+    }
+    return { contentType, body: Buffer.concat(chunks) };
+  }
+
+  private async discardBody(response: Response): Promise<void> {
+    await response.body?.cancel().catch(() => undefined);
+  }
+
+  private transportError(userId: number, path: string, started: number, err: unknown): AudiobookshelfApiError {
+    const durationMs = Date.now() - started;
+    const aborted = err instanceof Error && err.name === 'AbortError';
+    const code: AudiobookshelfErrorCode = aborted ? 'timeout' : 'network';
+    const errorClass = err instanceof Error ? err.constructor.name : 'UnknownError';
+    this.logger.error(
+      `[abs.client] [fail] userId=${userId} path="${sanitizeLogValue(path)}" durationMs=${durationMs} errorClass=${errorClass} code=${code} - request failed`,
+    );
+    return new AudiobookshelfApiError(aborted ? 'Audiobookshelf request timed out' : 'Could not reach the Audiobookshelf server', code);
+  }
+
+  private invalidResponse(userId: number, path: string, started: number, status: number, message: string): AudiobookshelfApiError {
+    this.logger.error(
+      `[abs.client] [fail] userId=${userId} path="${sanitizeLogValue(path)}" durationMs=${Date.now() - started} status=${status} code=invalid_response - ${message}`,
+    );
+    return new AudiobookshelfApiError('Audiobookshelf returned an invalid response', 'invalid_response', status);
   }
 }

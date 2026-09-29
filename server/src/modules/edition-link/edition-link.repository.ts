@@ -133,15 +133,6 @@ export class EditionLinkRepository {
     return new Map(rows.flatMap((row) => (row.readAlongBookId === null ? [] : [[row.audioBookId, row.readAlongBookId] as const])));
   }
 
-  async findAudioBookIdByReadAlongBookId(readAlongBookId: number): Promise<number | null> {
-    const [row] = await this.db
-      .select({ audioBookId: bookEditionLinks.audioBookId })
-      .from(bookEditionLinks)
-      .where(eq(bookEditionLinks.readAlongBookId, readAlongBookId))
-      .limit(1);
-    return row?.audioBookId ?? null;
-  }
-
   // Per-member reading progress for the link popover. Text and read-along read the book's primary
   // file row in `reading_progress`; the audiobook keeps its own book-level `audiobook_progress` row.
   async findMemberProgress(userId: number, ids: EditionLinkMemberIds): Promise<EditionLinkMemberProgressRows> {

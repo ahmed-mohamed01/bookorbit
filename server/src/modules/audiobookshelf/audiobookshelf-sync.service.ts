@@ -13,15 +13,10 @@ import { UserBookStatusService } from '../user-book-status/user-book-status.serv
 import { AudiobookshelfApiError, AudiobookshelfClientService, type AbsMediaProgress } from './audiobookshelf-client.service';
 import { AudiobookshelfMatchService } from './audiobookshelf-match.service';
 import { AudiobookshelfRepository } from './audiobookshelf.repository';
-import { AudiobookshelfProgressPushService } from './audiobookshelf-progress-push.service';
+import { AudiobookshelfProgressPushService, isWithinAbsDurationTolerance } from './audiobookshelf-progress-push.service';
 import { AudiobookshelfSessionsService } from './audiobookshelf-sessions.service';
 import { AudiobookshelfSyncCoordinatorService } from './audiobookshelf-sync-coordinator.service';
 import { buildBookAccessScope, describeError, isAbsSyncConfigured, resolveUserTimeZone } from './audiobookshelf-user.utils';
-import {
-  AUDIOBOOKSHELF_DURATION_TOLERANCE_BASE_SECONDS,
-  AUDIOBOOKSHELF_DURATION_TOLERANCE_PER_FILE_SECONDS,
-  AUDIOBOOKSHELF_DURATION_TOLERANCE_RELATIVE,
-} from './audiobookshelf.constants';
 import type { AudiobookshelfBookState } from './schema/audiobookshelf.schema';
 
 export interface AudiobookshelfSyncOptions {
@@ -47,6 +42,10 @@ export interface AudiobookshelfSyncOptions {
 // Bounds the per-process duration-warning dedupe map (see `logDurationWarning`) across many users;
 // cleared wholesale rather than evicted individually since a stale entry only costs one extra warn.
 const DURATION_WARNING_SIGNATURE_CAP = 10_000;
+
+// A position push holds the user's lock for about a second (one GET, one PATCH); a sync waits this
+// long for it rather than failing with a conflict.
+export const AUDIOBOOKSHELF_SYNC_PUSH_WAIT_MS = 10_000;
 
 // Upgrade-only ranking. A sync may promote a book toward completion but never move it backward.
 // `abandoned` is terminal: in-progress ABS state never resurrects it, but `isFinished` still promotes to `read`.
@@ -154,7 +153,7 @@ export class AudiobookshelfSyncService {
       throw new BadRequestException('Audiobookshelf sync is not configured');
     }
 
-    if (!this.coordinator.tryStartSync(user.id)) {
+    if (!(await this.coordinator.acquireSync(user.id, AUDIOBOOKSHELF_SYNC_PUSH_WAIT_MS))) {
       throw new ConflictException('An Audiobookshelf sync is already running');
     }
 
@@ -229,6 +228,7 @@ export class AudiobookshelfSyncService {
       }
 
       const preload = await this.preloadForDueBooks(user.id, dueBooks);
+      const pushPendingBookIds = new Set<number>();
 
       for (const { mp, state, bookId, statusDue, positionDue } of dueBooks) {
         try {
@@ -253,6 +253,7 @@ export class AudiobookshelfSyncService {
               : {}),
             ...(outcome.positionPushPending ? { pushPendingAt: new Date() } : {}),
           });
+          if (outcome.positionPushPending) pushPendingBookIds.add(bookId);
         } catch (err) {
           result.failed++;
           const { errorClass, error } = describeError(err);
@@ -265,6 +266,10 @@ export class AudiobookshelfSyncService {
 
       if (!options.hotInProgressOnly) {
         await this.progressPush.sweepPending(user.id);
+      } else {
+        // The hot tier does not sweep; hand the rows it marked to the debounced push so they go out
+        // once this run releases the lock, not 15 minutes later.
+        for (const bookId of pushPendingBookIds) this.progressPush.requestPush(user.id, bookId);
       }
 
       // Sessions ingest on the full/full-resync path (deep or incremental), and on the warm hot-tier
@@ -414,10 +419,7 @@ export class AudiobookshelfSyncService {
     }
 
     const totalDuration = files.reduce((sum, file) => sum + (file.durationSeconds ?? 0), 0);
-    const durationTolerance =
-      Math.max(AUDIOBOOKSHELF_DURATION_TOLERANCE_BASE_SECONDS, files.length * AUDIOBOOKSHELF_DURATION_TOLERANCE_PER_FILE_SECONDS) +
-      totalDuration * AUDIOBOOKSHELF_DURATION_TOLERANCE_RELATIVE;
-    if (Math.abs(totalDuration - mp.duration) > durationTolerance) {
+    if (!isWithinAbsDurationTolerance(totalDuration, files.length, mp.duration)) {
       this.logDurationWarning(
         userId,
         bookId,
@@ -428,18 +430,27 @@ export class AudiobookshelfSyncService {
     }
 
     // A snapshot mismatch means local playback changed after the last ABS pull. Compare the activity
-    // clocks so a still-newer ABS position can win; without a snapshot, preserve the first-sync
-    // percentage comparison because there is no shared baseline yet.
+    // clocks so a still-newer ABS position can win. An equal clock is an ABS position we already
+    // applied, so it must not be treated as newer local activity and echoed back.
     const local = preload.audioProgressByBookId.get(bookId);
     if (local) {
       const localChangedSincePull = syncedProgressAt != null && local.updatedAt.getTime() !== syncedProgressAt.getTime();
-      if (localChangedSincePull && local.capturedAt.getTime() >= mp.lastUpdate) {
+      if (localChangedSincePull && local.capturedAt.getTime() > mp.lastUpdate) {
         this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress is newer`);
         return { applied: false, watermarkAdvanced: true, pushPending: pushPosition, progressAt: syncedProgressAt };
       }
-      if (syncedProgressAt == null && (local.percentage ?? 0) > mp.progress * 100) {
-        this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress is newer`);
-        return { applied: false, watermarkAdvanced: true, pushPending: false, progressAt: local.updatedAt };
+      if (syncedProgressAt == null) {
+        // No shared baseline yet. With push on, newest activity wins like every later run, and a
+        // winning local row stays unsynced and pending until the push lands it on ABS. Without push,
+        // keep the first-sync percentage comparison.
+        if (pushPosition && local.capturedAt.getTime() > mp.lastUpdate) {
+          this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress is newer, push pending`);
+          return { applied: false, watermarkAdvanced: false, pushPending: true, progressAt: null };
+        }
+        if (!pushPosition && (local.percentage ?? 0) > mp.progress * 100) {
+          this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress is newer`);
+          return { applied: false, watermarkAdvanced: true, pushPending: false, progressAt: local.updatedAt };
+        }
       }
     }
 
@@ -458,10 +469,11 @@ export class AudiobookshelfSyncService {
       capturedAt,
     );
     if (!written) {
-      // The CAS missed: local playback wrote the row between the pre-load snapshot and this apply.
-      // Defer exactly like the guard above; the next run re-snapshots and re-decides.
+      // The CAS missed: local playback wrote the row between the pre-load snapshot and this apply. The
+      // ABS update was not applied, so the watermark must not record it; the next run re-snapshots and
+      // re-decides, and the push (if on) compares the new local row against ABS.
       this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress won the write race`);
-      return { applied: false, watermarkAdvanced: true, pushPending: false, progressAt: local?.updatedAt ?? null };
+      return { applied: false, watermarkAdvanced: false, pushPending: pushPosition, progressAt: null };
     }
     this.durationWarningSignatures.delete(`${userId}:${bookId}`);
     preload.audioProgressByBookId.set(bookId, {

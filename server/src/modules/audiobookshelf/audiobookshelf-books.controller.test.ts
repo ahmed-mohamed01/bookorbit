@@ -10,6 +10,9 @@ const mockBookStateService = {
   link: vi.fn(),
   unlink: vi.fn(),
   setExclusion: vi.fn(),
+  findPositionSyncLink: vi.fn(),
+  getCoverThumbnail: vi.fn(),
+  getLiveSyncStatus: vi.fn(),
 };
 
 const mockMatchService = {
@@ -28,6 +31,40 @@ describe('AudiobookshelfBooksController', () => {
 
   it('requires the AudiobookshelfSync permission at the class level', () => {
     expect(Reflect.getMetadata(PERMISSION_KEY, AudiobookshelfBooksController)).toBe(Permission.AudiobookshelfSync);
+  });
+
+  it('findForBook asks the book-state service for the book position sync link', async () => {
+    const link = {
+      audioBookId: 218,
+      absLibraryItemId: 'abs-1',
+      title: 'T',
+      authorName: null,
+      libraryName: 'Fiction',
+      direction: 'two_way',
+      webUrl: null,
+    };
+    mockBookStateService.findPositionSyncLink.mockResolvedValue(link);
+    await expect(makeController().findForBook(mockUser as never, 307)).resolves.toEqual(link);
+    expect(mockBookStateService.findPositionSyncLink).toHaveBeenCalledWith(mockUser, 307);
+  });
+
+  it('getLive asks the book-state service for the live status of the item', async () => {
+    mockBookStateService.getLiveSyncStatus.mockResolvedValue({ status: 'synced', progress: null });
+    await expect(makeController().getLive(mockUser as never, 'abs-1')).resolves.toEqual({ status: 'synced', progress: null });
+    expect(mockBookStateService.getLiveSyncStatus).toHaveBeenCalledWith(mockUser, 'abs-1');
+  });
+
+  it('getCover sends the thumbnail bytes with their type and a private cache', async () => {
+    const body = Buffer.from([1, 2]);
+    mockBookStateService.getCoverThumbnail.mockResolvedValue({ contentType: 'image/webp', body });
+    const reply = { header: vi.fn(), type: vi.fn(), send: vi.fn() };
+
+    await makeController().getCover(mockUser as never, 'abs-1', reply as never);
+
+    expect(mockBookStateService.getCoverThumbnail).toHaveBeenCalledWith(mockUser, 'abs-1', 80);
+    expect(reply.header).toHaveBeenCalledWith('Cache-Control', 'private, max-age=86400');
+    expect(reply.type).toHaveBeenCalledWith('image/webp');
+    expect(reply.send).toHaveBeenCalledWith(body);
   });
 
   it('list threads the user and query dto to the book-state service', async () => {

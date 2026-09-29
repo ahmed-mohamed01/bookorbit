@@ -1,4 +1,8 @@
 export const AUDIOBOOKSHELF_REQUEST_TIMEOUT_MS = 15_000;
+// A proxied cover thumbnail is a few kilobytes; anything far larger is not the image the route asked for.
+export const AUDIOBOOKSHELF_COVER_MAX_BYTES = 1024 * 1024;
+// Only raster formats a browser renders safely from our origin (no SVG, which can carry script).
+export const AUDIOBOOKSHELF_COVER_CONTENT_TYPES: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/webp']);
 export const AUDIOBOOKSHELF_SESSIONS_PAGE_SIZE = 500;
 // Trailing window re-scanned on every incremental sync. ABS mutates open sessions in place under a
 // stable id, so a session that grew after our last watermark can sort just behind it; the overlap
