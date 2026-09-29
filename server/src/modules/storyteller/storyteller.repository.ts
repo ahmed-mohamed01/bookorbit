@@ -8,7 +8,7 @@ import { applySchemaStatements, findMissingTables } from '../../common/utils/sch
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { authors, bookAuthors, bookFiles, bookGenres, bookMetadata, bookNarrators, books, genres, libraryFolders, narrators } from '../../db/schema';
-import { compareAudioPlayOrder } from '../../common/utils/audio-play-order.utils';
+import { compareAudioTracks } from '../../common/utils/book-media.utils';
 import { storytellerReadAlongBuilds, storytellerSettings } from './schema/storyteller.schema';
 import type {
   NewStorytellerReadAlongBuild,
@@ -548,7 +548,7 @@ export class StorytellerRepository {
 
     return rows
       .filter((row) => row.format != null && isAudioFormat(row.format))
-      .sort(compareAudioPlayOrder)
+      .sort(compareAudioTracks)
       .map((row) => ({ absolutePath: row.absolutePath }));
   }
 

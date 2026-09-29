@@ -11,8 +11,11 @@ const IDLE_TIMEOUT_MS = 5 * 60 * 1000
 const MIN_SESSION_MS = 10 * 1000
 const ELAPSED_UPDATE_INTERVAL_MS = 30 * 1000
 
+export type ReadingSessionType = 'read' | 'tts' | 'listen'
+
 export interface ReadingSessionOptions {
   trackingEnabled?: MaybeRef<boolean>
+  sessionType?: ReadingSessionType
 }
 
 function generateSessionId(): string {
@@ -150,6 +153,7 @@ export function useReadingSession(bookFileId: number, getProgress: () => Progres
       durationSeconds,
       progressDelta,
       endProgress,
+      ...(options.sessionType ? { sessionType: options.sessionType } : {}),
     })
 
     const url = `/api/v1/books/files/${bookFileId}/sessions`

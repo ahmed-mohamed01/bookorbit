@@ -7,6 +7,7 @@ import {
   withReadAlongFormatPriority,
 } from '@bookorbit/types'
 import type { AddedAtSource, CoverAspectRatio, Library, LibraryType, OrganizationMode, PrescanResult } from '@bookorbit/types'
+import { i18n } from '@/i18n'
 import { coveringFolderPath, normalizeFolderPath } from './folder-paths'
 
 export { DEFAULT_FORMAT_PRIORITY }
@@ -90,11 +91,11 @@ export function useLibraryCreator() {
     if (form.readingThreshold < 0.05 || form.readingThreshold > 5) {
       errors.reading = 'Reading start must be between 0.05% and 5%.'
     } else if (
-      !Number.isInteger(form.markAsFinishedPercentComplete) ||
+      !Number.isFinite(form.markAsFinishedPercentComplete) ||
       form.markAsFinishedPercentComplete < 90 ||
       form.markAsFinishedPercentComplete > 100
     ) {
-      errors.reading = 'Finished progress must be a whole number between 90% and 100%.'
+      errors.reading = i18n.global.t('library.creator.reading.markAsFinished.invalidThreshold')
     }
     const fileSizes = [
       form.fileWriteEpubMaxFileSizeMb,

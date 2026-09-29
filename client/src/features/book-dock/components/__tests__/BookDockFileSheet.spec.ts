@@ -1,15 +1,21 @@
-import { shallowMount } from '@vue/test-utils'
+import { flushPromises, shallowMount } from '@vue/test-utils'
 import { defineComponent, reactive, ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BookDockFile, MetadataCandidate } from '@bookorbit/types'
+import type { BookDockFile, Library, MetadataCandidate } from '@bookorbit/types'
 import BookDockFileSheet from '../BookDockFileSheet.vue'
+
+type LibraryOption = Pick<Library, 'id' | 'name'> & {
+  folders: Array<Pick<Library['folders'][number], 'id' | 'path'>>
+}
 
 const mocks = vi.hoisted(() => ({
   fetchLibraries: vi.fn<() => Promise<void>>(),
   loadProviders: vi.fn<() => Promise<void>>(),
   search: vi.fn<(...args: unknown[]) => Promise<void>>(),
   saveMetadata: vi.fn<(...args: unknown[]) => Promise<null>>(),
+  setTarget: vi.fn<(...args: unknown[]) => Promise<BookDockFile | null>>(),
   filteredResults: [] as MetadataCandidate[],
+  libraries: [] as LibraryOption[],
 }))
 
 vi.mock('../../composables/useBookDockDetail', () => ({
@@ -17,14 +23,14 @@ vi.mock('../../composables/useBookDockDetail', () => ({
     saved: ref(false),
     saveError: ref(null),
     saveMetadata: mocks.saveMetadata,
-    setTarget: vi.fn<(...args: unknown[]) => Promise<null>>().mockResolvedValue(null),
+    setTarget: mocks.setTarget,
     coverUrl: (id: number) => `/api/v1/book-dock/files/${id}/cover`,
   }),
 }))
 
 vi.mock('@/features/library/composables/useLibraries', () => ({
   useLibraries: () => ({
-    libraries: ref([]),
+    libraries: ref(mocks.libraries),
     fetchLibraries: mocks.fetchLibraries,
   }),
 }))
@@ -108,13 +114,15 @@ async function openSearchAndReadDefaults(file: BookDockFile): Promise<Record<str
   return wrapper.getComponent(MetadataSearchPanelStub).props('searchDefaults') as Record<string, string | undefined>
 }
 
-describe('BookDockFileSheet metadata search defaults', () => {
+describe('BookDockFileSheet', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.fetchLibraries.mockResolvedValue(undefined)
     mocks.loadProviders.mockResolvedValue(undefined)
     mocks.saveMetadata.mockResolvedValue(null)
+    mocks.setTarget.mockResolvedValue(null)
     mocks.filteredResults.length = 0
+    mocks.libraries.length = 0
   })
 
   it.each([
@@ -281,6 +289,96 @@ describe('BookDockFileSheet metadata search defaults', () => {
     await discardButton!.trigger('click')
 
     expect(wrapper.emitted('discard')).toEqual([[dockFile]])
+    expect(wrapper.emitted('close')).toBeUndefined()
+  })
+
+  it('persists the visible default destination when finishing metadata edits', async () => {
+    mocks.libraries.push({
+      id: 7,
+      name: 'Novels',
+      folders: [{ id: 70, path: '/library/novels' }],
+    })
+    const updatedFile = makeFile({ targetLibraryId: 7, targetFolderId: 70 })
+    mocks.setTarget.mockResolvedValue(updatedFile)
+    const wrapper = mountSheet(makeFile())
+    const [librarySelect, folderSelect] = wrapper.findAll<HTMLSelectElement>('select')
+
+    expect(librarySelect!.element.value).toBe('7')
+    expect(folderSelect!.element.value).toBe('70')
+
+    const doneButton = wrapper.findAll('button').find((button) => button.text().trim() === 'Done')
+    await doneButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.setTarget).toHaveBeenCalledWith(1, 7, 70)
+    expect(wrapper.emitted('updated')).toEqual([[updatedFile]])
+    expect(wrapper.emitted('close')).toEqual([[]])
+  })
+
+  it('does not save an unchanged destination again when finishing', async () => {
+    mocks.libraries.push({
+      id: 7,
+      name: 'Novels',
+      folders: [{ id: 70, path: '/library/novels' }],
+    })
+    const wrapper = mountSheet(makeFile({ targetLibraryId: 7, targetFolderId: 70 }))
+
+    const doneButton = wrapper.findAll('button').find((button) => button.text().trim() === 'Done')
+    await doneButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.setTarget).not.toHaveBeenCalled()
+    expect(wrapper.emitted('close')).toEqual([[]])
+  })
+
+  it('does not repeat a destination save that completed after changing the library', async () => {
+    mocks.libraries.push(
+      {
+        id: 7,
+        name: 'Novels',
+        folders: [{ id: 70, path: '/library/novels' }],
+      },
+      {
+        id: 8,
+        name: 'Comics',
+        folders: [{ id: 80, path: '/library/comics' }],
+      },
+    )
+    const updatedFile = makeFile({ targetLibraryId: 8, targetFolderId: 80 })
+    mocks.setTarget.mockResolvedValue(updatedFile)
+    const wrapper = mountSheet(makeFile({ targetLibraryId: 7, targetFolderId: 70 }))
+    const [librarySelect] = wrapper.findAll<HTMLSelectElement>('select')
+
+    await librarySelect!.setValue('8')
+    await flushPromises()
+
+    expect(mocks.setTarget).toHaveBeenCalledTimes(1)
+    expect(mocks.setTarget).toHaveBeenLastCalledWith(1, 8, 80)
+    mocks.setTarget.mockClear()
+
+    const doneButton = wrapper.findAll('button').find((button) => button.text().trim() === 'Done')
+    await doneButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.setTarget).not.toHaveBeenCalled()
+    expect(wrapper.emitted('close')).toEqual([[]])
+  })
+
+  it('keeps the sheet open when the visible destination cannot be saved', async () => {
+    mocks.libraries.push({
+      id: 7,
+      name: 'Novels',
+      folders: [{ id: 70, path: '/library/novels' }],
+    })
+    mocks.setTarget.mockResolvedValue(null)
+    const wrapper = mountSheet(makeFile())
+
+    const doneButton = wrapper.findAll('button').find((button) => button.text().trim() === 'Done')
+    await doneButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.setTarget).toHaveBeenCalledWith(1, 7, 70)
+    expect(wrapper.emitted('updated')).toBeUndefined()
     expect(wrapper.emitted('close')).toBeUndefined()
   })
 })

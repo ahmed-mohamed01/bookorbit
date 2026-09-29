@@ -2,9 +2,6 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 
 import { ReadingAlignmentRepository } from './reading-alignment.repository';
 
-// compareAudioPlayOrder moved to ../../common/utils/audio-play-order.utils.ts (shared with the
-// Storyteller module); its unit tests moved with it.
-
 function makeSelectDb(rows: unknown[]) {
   const orderBy = vi.fn().mockResolvedValue(rows);
   const where = vi.fn().mockReturnValue({ orderBy });

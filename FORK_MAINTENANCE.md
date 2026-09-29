@@ -162,8 +162,10 @@ byte-identical to upstream (see "Schema decoupling"), so upstream migrations flo
 untouched and `_journal.json` can no longer collide.
 
 Known pre-existing upstream failures (**not** caused by the fork): the
-`published-date.utils` timezone bug, which also fails `kobo.scraper.test.ts`. Don't
-chase these during a merge.
+`published-date.utils` timezone bug, which also fails `kobo.scraper.test.ts`; and since
+`acce1e15`, `SettingsNav.spec.ts` / `SettingsSidebar.spec.ts` (upstream's `SettingsNav.vue` now
+reaches the real router through `useBookRequestVisibility` -> `useAuth`, and its `vue-router` mock
+has no `createRouter`). Don't chase these during a merge.
 
 Fork-caused spec drift, which **is** ours to fix at merge time: upstream specs that count
 the permission catalog (`UserFormDrawer.spec.ts` expects one more than upstream because of
@@ -173,6 +175,18 @@ breaks it). Each is a one-line catch-up; make it rather than carry a red test.
 
 ### Merge log
 
+- **2026-09-30, upstream `acce1e15`, 26 commits.** 7 conflicted files, all small. Upstream added a
+  per-user Requests visibility toggle: `notification.repository.ts` `deleteAllForUser` now ANDs the
+  fork's locked-row guard with upstream's request filter, and the sidebar still fetches the Monitored
+  badge when requests are hidden (Monitored is not a request surface). Upstream's fractional finished
+  thresholds replaced `formatPercent` in `LibraryDetailPanel.vue`; the fork keeps only the row
+  `v-if`s for the narrower non-superuser projection (42 -> 37). Upstream exported
+  `compareAudioTracks` from `book-media.utils.ts`, identical to the fork's `compareAudioPlayOrder`,
+  so `common/utils/audio-play-order.utils.ts` was deleted and reading-alignment and Storyteller
+  sort with upstream's. Migrations 0099 / 0100 touch neither fork CHECK constraint (no parking).
+  Fork spec drift: the notification delete fixture now mocks the user-settings `select`. Verified:
+  `verify:fast` green, server 17,240 and client 8,044 tests green apart from the upstream
+  `SettingsNav` / `SettingsSidebar` failures above, dev DB migrated through 0100.
 - **2026-09-26, upstream v3.1.0 + 12 (`0b2df6e3`), 27 commits.** 18 conflicted files. Upstream added
   an `android` reading-session source (unioned beside `audiobookshelf` in every enum, bucket and `IN`
   list; the ABS bootstrap's constraint list and `LIKE` guard now name `android`) and **separate ebook
@@ -508,11 +522,11 @@ catch the same behaviour drift. Re-point or inline the two functions in both fil
 Audio-format predicates in ABS, `reading-alignment`, `edition-link` and `storyteller` come from
 `@bookorbit/types` (`AUDIO_FORMAT_LIST` / `isAudioFormat`), not from `scanner/lib/classify.ts`.
 
-**Audio play order must match upstream's manifest.** `reading-alignment.repository.ts`
-`compareAudioPlayOrder` replicates `AudiobookService.loadManifestContext` (sortOrder with null last,
-then `naturalCompare(basename)`), because absolute positions are derived from the ordering on both
-sides; a divergent tiebreak silently writes wrong percentages. Re-check it whenever upstream touches
-that comparator. The projection's percentage divides by the sum of file durations (upstream's player
+**Audio play order must match upstream's manifest.** `reading-alignment.repository.ts` and
+`storyteller.repository.ts` sort with upstream's exported `compareAudioTracks`
+(`common/utils/book-media.utils.ts`), the same comparator the manifest uses, because absolute
+positions are derived from the ordering on both sides; a divergent tiebreak silently writes wrong
+percentages. The fork's own copy was deleted once upstream exported it. The projection's percentage divides by the sum of file durations (upstream's player
 prefers `book_metadata.duration_seconds`); they differ only when that column is overridden.
 
 **Merge notes:** the progress-sync projection into reading-state is the irreducible core coupling (like
@@ -605,10 +619,9 @@ the build orchestrator and status service, schema), `client/src/features/storyte
 reading-alignment overlay's own fork-owned files (`client/src/features/book/composables/useReadAlong.ts`,
 `client/src/features/book/components/detail/tabs/ReadAlongMemberRow.vue`, and the `readAlongBookId` /
 `role` / `members` additions in `edition-link/*` and `useEditionLink.ts`). Three common utils, each shared by this
-module without an inter-module import: one moved out of `reading-alignment`, one out of
-`audiobookshelf`, and one new:
-`server/src/common/utils/audio-play-order.utils.ts` (upstream's audio manifest ordering, needed by
-both integrations to derive absolute positions), `path-prefix-mapping.utils.ts` (prefix rewriting
+module without an inter-module import: one moved out of `reading-alignment` (the audio play-order
+comparator, since replaced by upstream's `compareAudioTracks`), one out of `audiobookshelf`, and one new:
+`path-prefix-mapping.utils.ts` (prefix rewriting
 between two servers sharing storage, modelled on the ABS path-mapping matcher and deliberately a
 separate copy: ABS keeps its own in `audiobookshelf-match.utils.ts`, and importing it here would
 couple two integrations that must stay independently removable), and

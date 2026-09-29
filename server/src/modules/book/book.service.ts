@@ -16,7 +16,7 @@ import { inArray, type SQL } from 'drizzle-orm';
 
 import { MAX_BOOK_QUERY_OFFSET_ROWS, isBookQueryOffsetWithinLimit } from '../../common/constants/pagination.constants';
 import { isStoredPercentageChanged } from '../../common/utils/progress-percentage.utils';
-import { coverFetchInputs, resolveIsAudiobook } from '../../common/utils/book-media.utils';
+import { compareAudioTracks, coverFetchInputs, resolveIsAudiobook } from '../../common/utils/book-media.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { selectPrimaryFile } from '../../common/utils/primary-file-selection.utils';
 import { normalizeMetadataText, normalizeMetadataTextKey } from '../../common/utils/metadata-text-normalize.utils';
@@ -3834,12 +3834,14 @@ export class BookService {
 
   private resolveChapters(
     stored: AudiobookChapter[] | null | undefined,
-    fileRows: { absolutePath: string; format: string | null; durationSeconds: number | null }[],
+    fileRows: { absolutePath: string; format: string | null; durationSeconds: number | null; sortOrder?: number | null }[],
   ): AudiobookChapter[] | null {
     if (stored && stored.length > 0) return stored;
 
-    const audioFiles = fileRows.filter((f) => f.format && isAudioFormat(f.format));
+    const audioFiles = fileRows.filter((f) => f.format && isAudioFormat(f.format)).sort(compareAudioTracks);
     if (audioFiles.length < 2) return stored ?? null;
+    // Offsets past a track of unknown length would be wrong; clients fall back to one entry per track.
+    if (audioFiles.some((f) => f.durationSeconds === null || f.durationSeconds <= 0)) return stored ?? null;
 
     const chapters: AudiobookChapter[] = [];
     let offsetMs = 0;

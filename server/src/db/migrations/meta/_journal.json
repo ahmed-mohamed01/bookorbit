@@ -694,6 +694,20 @@
       "when": 1790398181669,
       "tag": "0098_add_subtitle_search_index",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1790446233976,
+      "tag": "0099_fractional_finished_threshold",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1790634252132,
+      "tag": "0100_audio_bookmark_position_ignores_tombstones",
+      "breakpoints": true
     }
   ]
 }

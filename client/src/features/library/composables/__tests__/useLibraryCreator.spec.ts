@@ -125,6 +125,23 @@ describe('useLibraryCreator', () => {
     expect(creator.form.fileWriteAudioMaxFileSizeMb).toBe(500)
   })
 
+  it('accepts and sends a fractional finished threshold', async () => {
+    const { useLibraryCreator } = await import('../useLibraryCreator')
+    const creator = useLibraryCreator()
+    apiMock.mockResolvedValue(jsonResponse(makeLibrary({ markAsFinishedPercentComplete: 99.95 }), 201))
+    creator.form.name = 'Main Library'
+    creator.form.icon = 'BookOpen'
+    creator.form.folders = ['/books']
+    creator.form.markAsFinishedPercentComplete = 99.95
+
+    expect(creator.validationErrors.value.reading).toBeUndefined()
+    await creator.save()
+    expect(JSON.parse(apiMock.mock.calls[0]?.[1]?.body as string).markAsFinishedPercentComplete).toBe(99.95)
+
+    creator.form.markAsFinishedPercentComplete = 100.05
+    expect(creator.validationErrors.value.reading).toBe('Finished progress must be between 90% and 100%.')
+  })
+
   it('hydrates file rename and audio write settings when editing a library', async () => {
     const { useLibraryCreator } = await import('../useLibraryCreator')
     const creator = useLibraryCreator()

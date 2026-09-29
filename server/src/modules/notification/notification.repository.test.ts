@@ -83,7 +83,7 @@ describe('NotificationRepository.updateLatestByGroupKey', () => {
 describe('NotificationRepository deletes', () => {
   function setup() {
     const del = builder({ rowCount: 1 });
-    const db = { delete: vi.fn(() => del) };
+    const db = { delete: vi.fn(() => del), select: vi.fn(() => builder([{ settings: {} }])) };
     return { repo: new NotificationRepository(db as never), del };
   }
 

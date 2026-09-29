@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { formatNumber, formatPercent } from '@/i18n/formatters'
 
 const { t } = useI18n()
 
@@ -19,8 +20,12 @@ function onReadingThresholdInput(e: Event) {
 }
 
 function onFinishPercentInput(e: Event) {
-  const val = parseInt((e.target as HTMLInputElement).value, 10)
+  const val = parseFloat((e.target as HTMLInputElement).value)
   if (!isNaN(val)) emit('update:markAsFinishedPercentComplete', val)
+}
+
+function formatFinishedThreshold(value: number): string {
+  return formatNumber(value / 100, { style: 'percent', maximumFractionDigits: 2 })
 }
 </script>
 
@@ -35,7 +40,7 @@ function onFinishPercentInput(e: Event) {
         <output for="reading-threshold" class="text-sm font-medium text-foreground tabular-nums">{{ readingThreshold }}%</output>
       </div>
       <p id="reading-threshold-help" class="text-xs text-muted-foreground mb-3">
-        A book is marked as "reading" once this percentage of progress is reached.
+        {{ t('library.creator.reading.readingStart.hint') }}
       </p>
       <input
         id="reading-threshold"
@@ -60,10 +65,12 @@ function onFinishPercentInput(e: Event) {
         <label for="finished-threshold" class="text-[11px] font-semibold uppercase tracking-widest text-foreground">
           {{ t('library.creator.reading.markAsFinished.title') }}
         </label>
-        <output for="finished-threshold" class="text-sm font-medium text-foreground tabular-nums"> {{ markAsFinishedPercentComplete }}% </output>
+        <output for="finished-threshold" class="text-sm font-medium text-foreground tabular-nums">
+          {{ formatFinishedThreshold(markAsFinishedPercentComplete) }}
+        </output>
       </div>
       <p id="finished-threshold-help" class="text-xs text-muted-foreground mb-3">
-        A book is automatically marked as "read" when this percentage of progress is reached.
+        {{ t('library.creator.reading.markAsFinished.hint') }}
       </p>
       <input
         id="finished-threshold"
@@ -71,14 +78,14 @@ function onFinishPercentInput(e: Event) {
         :value="markAsFinishedPercentComplete"
         min="90"
         max="100"
-        step="1"
+        step="0.05"
         class="w-full accent-primary"
         aria-describedby="finished-threshold-help"
         @input="onFinishPercentInput"
       />
       <div class="flex justify-between text-xs text-muted-foreground mt-1">
-        <span>90%</span>
-        <span>100%</span>
+        <span>{{ formatPercent(0.9) }}</span>
+        <span>{{ formatPercent(1) }}</span>
       </div>
     </div>
   </div>

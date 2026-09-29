@@ -524,9 +524,40 @@ describe('LibrariesSettings ledger', () => {
       expect(panel).toContain('Embedded metadata, OPF files')
       expect(panel).toContain('All supported')
       expect(panel).toContain('1 pattern')
-      expect(panel).toContain('25%')
+      expect(panel).toContain('0.25%')
       expect(panel).toContain('98%')
       expect(panel).toContain('2 people')
+    })
+
+    it.each([
+      { threshold: 0.05, expected: '0.05%' },
+      { threshold: 0.25, expected: '0.25%' },
+      { threshold: 0.5, expected: '0.5%' },
+      { threshold: 1, expected: '1%' },
+      { threshold: 5, expected: '5%' },
+    ])('shows a $threshold% reading threshold as $expected', async ({ threshold, expected }) => {
+      librariesRef.value = [makeLibrary({ id: 4, readingThreshold: threshold, markAsFinishedPercentComplete: 98 })]
+      const wrapper = await mountLoaded()
+      await expandFirst(wrapper)
+      const panel = wrapper.get('[id="library-detail-4"]')
+      const startedLabel = panel.findAll('dt').find((label) => label.text() === 'Counts as started')
+      const finishedLabel = panel.findAll('dt').find((label) => label.text() === 'Counts as finished')
+      expect(startedLabel?.element.nextElementSibling?.textContent?.trim()).toBe(expected)
+      expect(finishedLabel?.element.nextElementSibling?.textContent?.trim()).toBe('98%')
+    })
+
+    it.each([
+      { threshold: 90, expected: '90%' },
+      { threshold: 98.05, expected: '98.05%' },
+      { threshold: 99.95, expected: '99.95%' },
+      { threshold: 100, expected: '100%' },
+    ])('shows a $threshold% finished threshold as $expected', async ({ threshold, expected }) => {
+      librariesRef.value = [makeLibrary({ id: 4, readingThreshold: 0.25, markAsFinishedPercentComplete: threshold })]
+      const wrapper = await mountLoaded()
+      await expandFirst(wrapper)
+      const panel = wrapper.get('[id="library-detail-4"]')
+      const finishedLabel = panel.findAll('dt').find((label) => label.text() === 'Counts as finished')
+      expect(finishedLabel?.element.nextElementSibling?.textContent?.trim()).toBe(expected)
     })
 
     it('renders the scan history with trigger and deltas', async () => {

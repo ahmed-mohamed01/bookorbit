@@ -41,6 +41,7 @@ import { useWhatsNew } from '@/features/whats-new/composables/useWhatsNew'
 import { useBookRequestSummary } from '@/features/book-requests/composables/useBookRequestSummary'
 import { useMonitoredSummary } from '@/features/monitored/composables/useMonitoredSummary'
 import { useBookRequestProgress } from '@/features/book-requests/composables/useBookRequestProgress'
+import { useBookRequestVisibility } from '@/features/book-requests/composables/useBookRequestVisibility'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -51,6 +52,7 @@ const { libraries, fetchLibraries, refreshLibraries, reorderLibraries } = useLib
 const { bookScopes, podcastScopes, fetchSmartScopes, reorderSmartScopes } = useSmartScopes()
 const { bookCollections, podcastCollections, fetchCollections, reorderCollections } = useCollections()
 const { hasPermission } = usePermissions()
+const { showBookRequests } = useBookRequestVisibility()
 const { subscribeLibrary, getProgress } = useScanProgress()
 const podcastImportProgress = APP_FEATURES.podcasts ? usePodcastImportProgress() : null
 const { handleLibraryCreated } = useLibraryCreationRedirect()
@@ -274,7 +276,7 @@ onMounted(async () => {
   void fetchCollections()
   void fetchBrowseCounts()
   if (hasPermission(Permission.BookRequestAccess)) {
-    void fetchBookRequestSummary()
+    if (showBookRequests.value) void fetchBookRequestSummary()
     void fetchMonitoredSummaryBadge()
   }
   void loadAppInfo()
@@ -285,14 +287,18 @@ onMounted(async () => {
 })
 
 requestProgress?.onRequestsChanged(() => {
-  void refreshBookRequestSummary()
+  if (showBookRequests.value) void refreshBookRequestSummary()
 })
 
 if (requestProgress) {
   watch(requestProgress.connected, (connected) => {
-    if (connected) void refreshBookRequestSummary()
+    if (connected && showBookRequests.value) void refreshBookRequestSummary()
   })
 }
+
+watch(showBookRequests, (visible) => {
+  if (visible && hasPermission(Permission.BookRequestAccess)) void fetchBookRequestSummary()
+})
 
 const { onLibraryUploadCompleted } = useLibraryUploadEvents()
 const stopLibraryUploadListener = onLibraryUploadCompleted((event) => {

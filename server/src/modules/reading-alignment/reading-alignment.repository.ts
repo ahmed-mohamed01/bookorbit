@@ -5,7 +5,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { isAudioFormat } from '@bookorbit/types';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
-import { compareAudioPlayOrder } from '../../common/utils/audio-play-order.utils';
+import { compareAudioTracks } from '../../common/utils/book-media.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import type { AudioTimelineFile } from './reading-alignment-audio-timeline.util';
 import { audiobookAlignment, audiobookAlignmentAnchor } from './schema/reading-alignment.schema';
@@ -68,7 +68,7 @@ export class ReadingAlignmentRepository {
 
     return rows
       .filter((row) => row.format != null && isAudioFormat(row.format))
-      .sort(compareAudioPlayOrder)
+      .sort(compareAudioTracks)
       .map((row) => ({ fileId: row.id, durationSeconds: row.durationSeconds }));
   }
 
@@ -89,7 +89,7 @@ export class ReadingAlignmentRepository {
 
     return rows
       .filter((row) => row.format != null && isAudioFormat(row.format))
-      .sort(compareAudioPlayOrder)
+      .sort(compareAudioTracks)
       .map((row) => ({ fileId: row.id, absolutePath: row.absolutePath, durationSeconds: row.durationSeconds }));
   }
 

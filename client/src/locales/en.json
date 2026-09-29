@@ -428,6 +428,11 @@
         "collapseSeries": {
           "label": "Collapse series by default",
           "hint": "Group books in the same series into a single card in library and collection views"
+        },
+        "bookRequests": {
+          "label": "Show Book Requests",
+          "hint": "Show request pages, prompts, and settings in this account. Existing requests keep running when hidden.",
+          "saveFailed": "Could not update Book Requests visibility"
         }
       },
       "icons": {
@@ -9022,7 +9027,8 @@
         },
         "markAsFinished": {
           "title": "Mark as finished",
-          "hint": "A book is automatically marked as \"read\" when this percentage of progress is reached."
+          "hint": "A book is automatically marked as \"read\" when this percentage of progress is reached.",
+          "invalidThreshold": "Finished progress must be between 90% and 100%."
         }
       },
       "schedule": {

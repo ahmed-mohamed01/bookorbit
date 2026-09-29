@@ -6,7 +6,7 @@ import type { Library, LibraryScanHistoryEntry } from '@bookorbit/types'
 import { formatKeyName } from '@/features/book/lib/book-formats'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatDate, formatList, formatPercent } from '@/i18n/formatters'
+import { formatDate, formatList, formatNumber } from '@/i18n/formatters'
 import { METADATA_LABELS } from '@/features/library/composables/useLibraryCreator'
 import LibraryScanHistory from './LibraryScanHistory.vue'
 
@@ -47,10 +47,6 @@ const precedenceLabel = computed(() =>
       ? t('settings.admin.libraries.detail.none')
       : formatList(props.library.metadataPrecedence.map((key) => METADATA_LABELS[key] ?? key)),
 )
-const startedLabel = computed(() => (props.library.readingThreshold === undefined ? null : formatPercent(props.library.readingThreshold)))
-const finishedLabel = computed(() =>
-  props.library.markAsFinishedPercentComplete === undefined ? null : formatPercent(props.library.markAsFinishedPercentComplete / 100),
-)
 const formatsLabel = computed(() =>
   !props.library.allowedFormats
     ? null
@@ -59,6 +55,10 @@ const formatsLabel = computed(() =>
       : formatList(props.library.allowedFormats.map((format) => formatKeyName(format))),
 )
 const accessLabel = computed(() => (props.accessCount === null ? '' : t('settings.admin.libraries.detail.peopleCount', { count: props.accessCount })))
+const readingThresholdLabel = computed(() => formatNumber(props.library.readingThreshold / 100, { style: 'percent', maximumFractionDigits: 2 }))
+const finishedThresholdLabel = computed(() =>
+  formatNumber(props.library.markAsFinishedPercentComplete / 100, { style: 'percent', maximumFractionDigits: 2 }),
+)
 
 function requestEdit() {
   emit('edit', props.library)
@@ -131,14 +131,17 @@ function requestEdit() {
             <dt class="shrink-0 text-[12.5px] text-muted-foreground">{{ t('settings.admin.libraries.detail.allowedFormats') }}</dt>
             <dd class="ms-auto min-w-0 truncate text-[12.5px] font-medium text-foreground" :title="formatsLabel">{{ formatsLabel }}</dd>
           </div>
-          <div v-if="startedLabel !== null" class="flex items-center gap-3 border-t border-border py-1.5 first:border-t-0">
+          <div v-if="library.readingThreshold !== undefined" class="flex items-center gap-3 border-t border-border py-1.5 first:border-t-0">
             <dt class="shrink-0 text-[12.5px] text-muted-foreground">{{ t('settings.admin.libraries.detail.countsAsStarted') }}</dt>
-            <dd class="ms-auto text-[12.5px] font-medium tabular-nums text-foreground">{{ startedLabel }}</dd>
+            <dd class="ms-auto text-[12.5px] font-medium tabular-nums text-foreground">{{ readingThresholdLabel }}</dd>
           </div>
-          <div v-if="finishedLabel !== null" class="flex items-center gap-3 border-t border-border py-1.5 first:border-t-0">
+          <div
+            v-if="library.markAsFinishedPercentComplete !== undefined"
+            class="flex items-center gap-3 border-t border-border py-1.5 first:border-t-0"
+          >
             <dt class="shrink-0 text-[12.5px] text-muted-foreground">{{ t('settings.admin.libraries.detail.countsAsFinished') }}</dt>
             <dd class="ms-auto text-[12.5px] font-medium tabular-nums text-foreground">
-              {{ finishedLabel }}
+              {{ finishedThresholdLabel }}
             </dd>
           </div>
         </dl>

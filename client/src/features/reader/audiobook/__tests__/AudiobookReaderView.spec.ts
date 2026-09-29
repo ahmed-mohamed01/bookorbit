@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   createCoverFillArtworkUrl: vi.fn<(src: string, size?: number) => Promise<string | null>>(),
   revokeObjectURL: vi.fn<(url: string) => void>(),
 }))
+let activeQueueLoadError: ReturnType<typeof ref<string | null>> | null = null
 
 vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }))
 
@@ -60,7 +61,7 @@ vi.mock('../composables/useAudioQueue', () => ({
   useAudioQueue: () => ({
     currentIndex: ref(0),
     isPlaying: ref(false),
-    loadError: ref<string | null>(null),
+    loadError: (activeQueueLoadError = ref<string | null>(null)),
     activateIndex: vi.fn<(index: number, positionSeconds: number) => void>(),
     play: vi.fn<() => void>(),
     pause: vi.fn<() => void>(),
@@ -195,7 +196,7 @@ function audiobookManifest(): AudiobookManifest {
     schemaVersion: 2,
     revision: 'manifest-rev-1',
     book: { id: BOOK_ID, title: 'The Long Orbit', authors: ['Ada Vance'], narrators: ['Sam Reed'], hasCover: true },
-    assets: [{ assetId: 'asset-1', sequence: 0, format: 'm4b', durationMs: 3_600_000, sizeBytes: 4096, etag: 'etag-1' }],
+    assets: [{ assetId: 'asset-1', fileId: FILE_ID, sequence: 0, format: 'm4b', durationMs: 3_600_000, sizeBytes: 4096, etag: 'etag-1' }],
     chapters: [{ id: 'chapter-1', title: 'Launch', assetId: 'asset-1', sequence: 0, startMs: 0, endMs: 3_600_000, assetOffsetMs: 0 }],
     totalDurationMs: 3_600_000,
   }
@@ -254,6 +255,7 @@ async function mountView() {
 describe('AudiobookReaderView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    activeQueueLoadError = null
     mocks.createCoverFillArtworkUrl.mockResolvedValue(ARTWORK_URL)
     vi.stubGlobal(
       'URL',
@@ -320,5 +322,15 @@ describe('AudiobookReaderView', () => {
     expect(placeholder.exists()).toBe(true)
     expect(placeholder.props()).toMatchObject({ title: 'The Long Orbit', authorLine: 'Ada Vance', isAudio: true })
     expect(session.metadata).toMatchObject({ title: 'The Long Orbit', artist: 'Ada Vance', artwork: [] })
+  })
+
+  it('shows a queue failure even when playback is idle', async () => {
+    serve(bookDetail())
+    const view = await mountView()
+    activeQueueLoadError!.value = 'Failed to load audio file'
+    await flushPromises()
+
+    expect(view.text()).toContain('Failed to load audio file')
+    expect(view.text()).toContain('reader.audiobook.loadError')
   })
 })

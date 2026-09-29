@@ -49,6 +49,9 @@ const sheetWidthClass = computed(() => (metaView.value === 'editor' ? 'sm:w-md l
 
 const targetLibraryId = ref<number | null>(null)
 const targetFolderId = ref<number | null>(null)
+const persistedTargetLibraryId = ref<number | null>(null)
+const persistedTargetFolderId = ref<number | null>(null)
+const finishing = ref(false)
 
 const selectedLibrary = computed(() => libraries.value.find((l) => l.id === targetLibraryId.value))
 const folders = computed(() => selectedLibrary.value?.folders ?? [])
@@ -101,6 +104,8 @@ watch(
     targetLibraryId.value = props.file.targetLibraryId ?? libraries.value[0]?.id ?? null
     const lib = libraries.value.find((l) => l.id === targetLibraryId.value)
     targetFolderId.value = props.file.targetFolderId ?? lib?.folders?.[0]?.id ?? null
+    persistedTargetLibraryId.value = props.file.targetLibraryId
+    persistedTargetFolderId.value = props.file.targetFolderId
   },
   { immediate: true },
 )
@@ -120,6 +125,7 @@ watch(
 )
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
+let pendingTargetSave: Promise<BookDockFile | null> | null = null
 
 onUnmounted(() => {
   if (debounceTimer) clearTimeout(debounceTimer)
@@ -182,15 +188,43 @@ async function onLibraryChange(event: Event) {
   targetLibraryId.value = id
   const lib = libraries.value.find((l) => l.id === targetLibraryId.value)
   targetFolderId.value = lib?.folders?.[0]?.id ?? null
-  const updated = await setTarget(props.file.id, targetLibraryId.value, targetFolderId.value)
-  if (updated) emit('updated', updated)
+  await persistTarget()
 }
 
 async function onFolderChange(event: Event) {
   const raw = Number((event.target as HTMLSelectElement).value)
   targetFolderId.value = Number.isFinite(raw) && raw > 0 ? raw : null
-  const updated = await setTarget(props.file.id, targetLibraryId.value, targetFolderId.value)
-  if (updated) emit('updated', updated)
+  await persistTarget()
+}
+
+async function persistTarget(): Promise<BookDockFile | null> {
+  const libraryId = targetLibraryId.value
+  const folderId = targetFolderId.value
+  const previousSave = pendingTargetSave
+  const request = (previousSave ?? Promise.resolve(null)).then(() => setTarget(props.file.id, libraryId, folderId))
+  pendingTargetSave = request
+
+  const updated = await request
+  if (updated) {
+    persistedTargetLibraryId.value = libraryId
+    persistedTargetFolderId.value = folderId
+    emit('updated', updated)
+  }
+  if (pendingTargetSave === request) pendingTargetSave = null
+  return updated
+}
+
+async function handleDone() {
+  if (finishing.value) return
+  finishing.value = true
+  try {
+    if (pendingTargetSave) await pendingTargetSave
+    const targetChanged = targetLibraryId.value !== persistedTargetLibraryId.value || targetFolderId.value !== persistedTargetFolderId.value
+    if (targetChanged && !(await persistTarget())) return
+    emit('close')
+  } finally {
+    finishing.value = false
+  }
 }
 
 function formatDate(iso: string): string {
@@ -639,7 +673,8 @@ onMounted(() => {
             </button>
             <button
               class="relative h-8 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-medium transition-all hover:opacity-90 active:scale-95"
-              @click="$emit('close')"
+              :disabled="finishing"
+              @click="handleDone"
             >
               {{ t('bookDock.done') }}
             </button>

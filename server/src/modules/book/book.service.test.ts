@@ -4414,6 +4414,76 @@ describe('BookService', () => {
       );
     });
 
+    function mockAudiobookDetail(
+      bookRepo: ReturnType<typeof makeService>['bookRepo'],
+      fileRows: { id: number; absolutePath: string; durationSeconds: number | null; sortOrder: number | null }[],
+    ) {
+      bookRepo.findById.mockResolvedValue({
+        book: {
+          books: {
+            id: 21,
+            libraryId: 3,
+            primaryFileId: fileRows[0]!.id,
+            status: 'present',
+            folderPath: '/audio',
+            addedAt: new Date('2026-02-01T00:00:00.000Z'),
+          },
+          libraries: { name: 'Main', formatPriority: null },
+          book_metadata: { title: 'Tracks', chapters: null, durationSeconds: null },
+        },
+        authorRows: [],
+        genreRows: [],
+        tagRows: [],
+        fileRows: fileRows.map((file) => ({
+          ...file,
+          format: 'mp3',
+          role: 'content',
+          sizeBytes: 10,
+          createdAt: new Date('2026-02-01T00:00:00.000Z'),
+        })),
+        narratorRows: [],
+        communityRatingRows: [],
+      });
+      bookRepo.findCollectionsByBookId.mockResolvedValue([]);
+      bookRepo.findRatingByBookAndUser.mockResolvedValue(null);
+    }
+
+    it('synthesizes chapters in manifest track order while the file list keeps name order', async () => {
+      const { service, bookRepo } = makeService();
+      vi.spyOn(service, 'verifyBookAccess').mockResolvedValue(undefined);
+      mockAudiobookDetail(bookRepo, [
+        { id: 1, absolutePath: '/audio/Part 01.mp3', durationSeconds: 30, sortOrder: 2 },
+        { id: 2, absolutePath: '/audio/Part 02.mp3', durationSeconds: 60, sortOrder: 1 },
+        { id: 3, absolutePath: '/audio/Bonus.mp3', durationSeconds: 10, sortOrder: null },
+      ]);
+
+      const result = await service.getDetail(21, makeUser());
+
+      expect(result.audioMetadata?.chapters).toEqual([
+        { title: 'Part 02', startMs: 0 },
+        { title: 'Part 01', startMs: 60_000 },
+        { title: 'Bonus', startMs: 90_000 },
+      ]);
+      expect(result.files.map((file) => file.filename)).toEqual(['Bonus.mp3', 'Part 01.mp3', 'Part 02.mp3']);
+    });
+
+    it('does not synthesize chapters while any track duration is unknown', async () => {
+      const { service, bookRepo } = makeService();
+      vi.spyOn(service, 'verifyBookAccess').mockResolvedValue(undefined);
+
+      for (const unknown of [null, 0]) {
+        mockAudiobookDetail(bookRepo, [
+          { id: 1, absolutePath: '/audio/Part 01.mp3', durationSeconds: 30, sortOrder: null },
+          { id: 2, absolutePath: '/audio/Part 02.mp3', durationSeconds: unknown, sortOrder: null },
+          { id: 3, absolutePath: '/audio/Part 03.mp3', durationSeconds: 20, sortOrder: null },
+        ]);
+
+        const result = await service.getDetail(21, makeUser());
+
+        expect(result.audioMetadata?.chapters).toBeNull();
+      }
+    });
+
     it('preserves null personal detail fields when no user-specific state exists', async () => {
       const { service, bookRepo, userBookStatusService, comicMetadataService } = makeService();
       const user = makeUser();
