@@ -30,10 +30,12 @@ import { findSourceEpubProblem } from './storyteller-epub.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { BookService } from '../book/book.service';
 import { EditionLinkRepository } from '../edition-link/edition-link.repository';
+import { EditionLinkService } from '../edition-link/edition-link.service';
 import { LibraryService } from '../library/library.service';
 import { UserService } from '../user/user.service';
 import type { BuildReadAlongDto } from './dto';
 import { describeError } from './storyteller-log.utils';
+import { isLostReadAlongMember } from './read-along-attachment';
 import { matchExistingBooks } from './storyteller-match.utils';
 import { StorytellerReadAlongBuildService, type StorytellerBuildSlot, type StorytellerRunBuildOptions } from './storyteller-read-along-build.service';
 import {
@@ -58,7 +60,6 @@ import { StorytellerSettingsService } from './storyteller-settings.service';
 
 const REQUEST_EVENT = 'storyteller.read_along.request';
 const EXISTING_EVENT = 'storyteller.read_along.find_existing';
-const ATTACH_EVENT = 'storyteller.read_along.attach_existing';
 const CANCEL_EVENT = 'storyteller.read_along.cancel';
 const CANCEL_REMOTE_EVENT = 'storyteller.read_along.cancel_remote';
 const QUEUE_EVENT = 'storyteller.read_along.queue';
@@ -102,7 +103,10 @@ interface AdmittedBuild {
   targetLibraryId: number;
   runTargetLibraryId: number | undefined;
   runTargetFolderId: number | undefined;
+  /** The previous output the build replaces in place, when the caller can open it. */
   previousOutputBookId: number | null;
+  /** Whether a build that could not replace it in place may delete it once the new one is linked. */
+  removePreviousOutput: boolean;
 }
 
 function normalizeReadAlongStatus(status: string | undefined): ReadAlongStatus {
@@ -137,6 +141,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     private readonly bookService: BookService,
     private readonly libraryService: LibraryService,
     private readonly editionLinks: EditionLinkRepository,
+    private readonly editionLinkService: EditionLinkService,
     private readonly userService: UserService,
     private readonly schemaBootstrap: StorytellerSchemaBootstrapService,
     private readonly notifier: StorytellerReadAlongNotifierService,
@@ -175,7 +180,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     const existing = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
     const admission = await this.admit(bookId, pair, user, dto, settings, existing, startedAt);
     if ('blocked' in admission) return this.blocked(existing?.status, admission.blocked, bookId, user.id, startedAt);
-    const { targetLibraryId, runTargetLibraryId, runTargetFolderId, previousOutputBookId } = admission.admitted;
+    const { targetLibraryId, runTargetLibraryId, runTargetFolderId, previousOutputBookId, removePreviousOutput } = admission.admitted;
 
     const existingOutput = existing?.outputBookId ? await this.editionLinks.findBookSummary(existing.outputBookId) : null;
     if (existing?.status === 'ready' && existingOutput && !dto.force) {
@@ -257,7 +262,8 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
           force: dto.force,
           targetLibraryId: runTargetLibraryId,
           targetFolderId: runTargetFolderId,
-          oldOutputBookId: dto.force ? previousOutputBookId : null,
+          oldOutputBookId: previousOutputBookId,
+          removePreviousOutput,
           cleanUpRemote: dto.cleanUpRemote,
           attempt: readAlongAttempt(claimed),
         },
@@ -340,27 +346,22 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     if (library.type === 'podcasts') return { blocked: 'target_not_allowed' };
     if (library.allowedFormats.length > 0 && !library.allowedFormats.includes('epub')) return { blocked: 'format_not_allowed' };
 
-    // `startBuild` clears the row's output column on every claim, so after a failed rebuild the
-    // edition link is the only record of the book still on disk - and reading only the row orphans
-    // that read-along, narration audio and all.
-    // An interrupted attempt's own column names the output it was producing, never the one it replaces.
-    const previousOutputBookId =
-      existing?.status === INTERRUPTED_PREVIOUS_STATUS
-        ? (pair.link?.readAlongBookId ?? null)
-        : (existing?.outputBookId ?? pair.link?.readAlongBookId ?? null);
+    // A claim keeps the row's output column and a collect only overwrites it once the new read-along
+    // is filed, so the row names the previous output even for a failed or interrupted rebuild. The
+    // link covers rows claimed before the column was kept.
+    const previousOutput = existing?.outputBookId ?? pair.link?.readAlongBookId ?? null;
+    const previousOutputVisible = previousOutput !== null && (previousOutput === bookId || (await this.canAccessBook(previousOutput, user)));
+    // Any build replaces a previous output in place, which keeps the book and deletes nothing; without
+    // one to replace it would file a second copy the dock refuses as a destination conflict. Only the
+    // fallback that files a new book deletes the old one, through bookService.deleteBooks(), which
+    // checks read access alone, so that step is held to the delete permission.
+    const previousOutputBookId = previousOutputVisible ? previousOutput : null;
+    const removePreviousOutput = previousOutputVisible && this.canDeleteBooks(user);
 
-    // A forced build ends in bookService.deleteBooks() on whatever book the row names, and that only
-    // checks read access - so the caller is held to the delete permission and to access to that book
-    // for every row carrying an output id, including a 'failed' one, since `collect` writes the id
-    // as soon as it knows it.
-    //
     // A refusal is a block reason, never an exception: getStatus masks an output the caller cannot
     // open, and a POST about the text edition must not 404 over a book it only mentions.
-    if (dto.force && previousOutputBookId != null) {
-      const replaceable = this.canDeleteBooks(user) && (previousOutputBookId === bookId || (await this.canAccessBook(previousOutputBookId, user)));
-      if (!replaceable) return { blocked: 'previous_output_not_deletable' };
-    }
-    return { admitted: { targetLibraryId, runTargetLibraryId, runTargetFolderId, previousOutputBookId } };
+    if (dto.force && previousOutput !== null && !removePreviousOutput) return { blocked: 'previous_output_not_deletable' };
+    return { admitted: { targetLibraryId, runTargetLibraryId, runTargetFolderId, previousOutputBookId, removePreviousOutput } };
   }
 
   /**
@@ -628,8 +629,6 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
         transport,
         targetLibraryId: admitted.targetLibraryId,
         targetFolderId: admitted.runTargetFolderId ?? null,
-        // A collect a restart cut short already wrote its own output, which the resumed collect adopts.
-        ...(request.previousStatus === INTERRUPTED_PREVIOUS_STATUS && row.outputBookId != null ? { outputBookId: row.outputBookId } : {}),
       });
       if (!claimed) {
         this.logger.log(
@@ -651,7 +650,8 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
           targetLibraryId: admitted.runTargetLibraryId,
           targetFolderId: admitted.runTargetFolderId,
           // Read at start, not at queue time: the link's read-along may have changed while the row waited.
-          oldOutputBookId: dto.force ? admitted.previousOutputBookId : null,
+          oldOutputBookId: admitted.previousOutputBookId,
+          removePreviousOutput: admitted.removePreviousOutput,
           cleanUpRemote: dto.cleanUpRemote,
           attempt: readAlongAttempt(claimed),
         },
@@ -956,15 +956,8 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     };
   }
 
-  /**
-   * A link this row was never attached to is a relink that lost the read-along. The link it was
-   * attached to and that names no read-along was detached on purpose, from the read-along's own page,
-   * and stays so.
-   */
   private lostReadAlongMember(pair: StorytellerReadAlongPair, attachedLinkId: number | null): boolean {
-    // Another read-along already on the link is the user's choice, not a gap to fill.
-    if (pair.linkId === null || !pair.link || pair.link.readAlongBookId !== null) return false;
-    return pair.linkId !== attachedLinkId;
+    return pair.link !== null && isLostReadAlongMember(pair.link, attachedLinkId);
   }
 
   /**
@@ -1098,51 +1091,12 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
    * Re-attaches a read-along to a link that lost it, which is what an unlink and relink leaves
    * behind. One-sided: the link only ever gains the member it is missing.
    */
-  private async attachExistingOutput(
-    pair: StorytellerReadAlongPair,
-    build: { id: number; attachedLinkId: number | null },
-    outputBookId: number,
-    user: RequestUser,
-  ): Promise<void> {
-    const buildId = build.id;
-    if (pair.linkId === null) return;
-    if (pair.link?.readAlongBookId === outputBookId) {
-      // Already on the link but never recorded there (a row built before the stamp existed): without
-      // the stamp a later detach on this link would be undone by the next status read.
-      if (build.attachedLinkId !== pair.linkId) await this.stampAttachedLinkBestEffort(buildId, pair.linkId);
-      return;
-    }
+  private async attachExistingOutput(pair: StorytellerReadAlongPair, build: { id: number }, outputBookId: number, user: RequestUser): Promise<void> {
+    // Already on the link, recorded or not: a detach records itself, so an unrecorded attach is
+    // never undone by the next read.
+    if (!pair.link || pair.link.readAlongBookId === outputBookId) return;
     if (!(await this.canAccessBook(outputBookId, user))) return;
-
-    const startedAt = Date.now();
-    this.logger.log(
-      `[${ATTACH_EVENT}] [start] linkId=${pair.linkId} buildId=${buildId} outputBookId=${outputBookId} userId=${user.id} - existing read-along re-attach started`,
-    );
-    try {
-      const linked = await this.editionLinks.setReadAlongBook(pair.linkId, outputBookId);
-      // Stamped so a later detach on this same link reads as deliberate and is left alone.
-      if (linked !== undefined) await this.repo.updateBuild(buildId, { attachedLinkId: pair.linkId });
-      this.logger.log(
-        `[${ATTACH_EVENT}] [end] linkId=${pair.linkId} buildId=${buildId} outputBookId=${outputBookId} durationMs=${Date.now() - startedAt} attached=${linked !== undefined} - existing read-along re-attach completed`,
-      );
-    } catch (error) {
-      const { errorClass, message } = describeError(error);
-      this.logger.warn(
-        `[${ATTACH_EVENT}] [fail] linkId=${pair.linkId} buildId=${buildId} outputBookId=${outputBookId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - existing read-along re-attach failed`,
-      );
-    }
-  }
-
-  private async stampAttachedLinkBestEffort(buildId: number, linkId: number): Promise<void> {
-    const startedAt = Date.now();
-    try {
-      await this.repo.updateBuild(buildId, { attachedLinkId: linkId });
-    } catch (error) {
-      const { errorClass, message } = describeError(error);
-      this.logger.warn(
-        `[${ATTACH_EVENT}] [fail] linkId=${linkId} buildId=${buildId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - attached link could not be recorded`,
-      );
-    }
+    await this.editionLinkService.attachReadAlong(pair.link, { buildId: build.id, outputBookId }, user.id);
   }
 
   // The pair an unlinked book would form with `counterpartId`: one text and one audio edition, in

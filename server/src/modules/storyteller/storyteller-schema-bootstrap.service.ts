@@ -39,10 +39,11 @@ export class StorytellerSchemaBootstrapService implements OnApplicationBootstrap
       const interrupted = await this.repo.requeueInterruptedBuilds();
       const requeued = interrupted.requeued.length;
       const failed = interrupted.failed.length;
+      const settled = interrupted.settled.length;
 
-      if (missing.length > 0 || requeued > 0 || failed > 0) {
+      if (missing.length > 0 || requeued > 0 || failed > 0 || settled > 0) {
         this.logger.log(
-          `[${BOOTSTRAP_EVENT}] [end] durationMs=${Date.now() - startedAt} tablesCreated=${missing.length} interruptedBuildsRequeued=${requeued} interruptedBuildsFailed=${failed} - schema bootstrap completed`,
+          `[${BOOTSTRAP_EVENT}] [end] durationMs=${Date.now() - startedAt} tablesCreated=${missing.length} interruptedBuildsRequeued=${requeued} interruptedBuildsFailed=${failed} producedBuildsSettled=${settled} - schema bootstrap completed`,
         );
       }
       this.settle.resolve(interrupted);

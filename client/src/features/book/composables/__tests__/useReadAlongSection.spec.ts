@@ -280,17 +280,6 @@ describe('useReadAlongSection', () => {
       expect(readAlongState.build).toHaveBeenLastCalledWith(10, { targetLibraryId: 5 })
     })
 
-    // The server answers reclaimability only for the configured library, so a different pick brings
-    // the keep-copy choice back.
-    it('offers the keep-copy choice again once another destination is picked', () => {
-      readAlongState.remoteCopyReclaimable.value = false
-      const { section } = mountSection()
-      expect(section.keepCopyOffered.value).toBe(false)
-
-      section.setTargetLibrary(5)
-      expect(section.keepCopyOffered.value).toBe(true)
-    })
-
     it('forgets the destination and keep-copy choices for a visit that starts over', () => {
       const { section } = mountSection()
       section.setTargetLibrary(5)

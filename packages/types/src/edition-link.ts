@@ -62,6 +62,10 @@ export interface EditionLinkForBook {
   counterpart: EditionLinkCounterpartSummary | null;
   role: EditionLinkRole | null;
   members: EditionLinkMembers | null;
-  /** A generated read-along detached from its pair. It can never be linked, so nothing is offered for it. */
+  /**
+   * A generated read-along detached from a pair the requester cannot see or relink as it was built, so
+   * nothing is offered for it. When the pair can be relinked the response instead has role 'readAlong',
+   * that pair as `members` and no link.
+   */
   readAlongOutput?: boolean;
 }

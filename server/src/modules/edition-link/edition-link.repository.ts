@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, isNotNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import type { ContentFilterRules, EditionLinkCandidate, EditionLinkCounterpartSummary } from '@bookorbit/types';
@@ -174,24 +174,34 @@ export class EditionLinkRepository {
     return row;
   }
 
-  // Returns undefined when nothing was updated: either the link is gone, or the book is already the
-  // text or audio member of SOME link - this one or another. A row-scoped predicate would only catch
-  // the first case, so the exclusion is a subquery over the whole table. A book that is already
-  // another link's read-along member is rejected by the partial unique index as a 23505 instead,
-  // which the caller maps to its own error.
-  async setReadAlongBook(linkId: number, bookId: number | null): Promise<BookEditionLink | undefined> {
-    const notAlreadyAPairMember =
+  // Returns undefined when nothing was updated: the link is gone, the link already names another
+  // read-along, or the book is already the text or audio member of SOME link - this one or another. A
+  // row-scoped predicate would only catch the member case for this row, so that exclusion is a
+  // subquery over the whole table. Attaching is a compare-and-set: a caller acting on a stale read
+  // must not overwrite a detach or another read-along made in between, so only an empty slot, the
+  // same book (a rebuild replaced in place) or the `replacing` book it read is taken over. A book that
+  // is already another link's read-along member is rejected by the partial unique index as a 23505
+  // instead, which the caller maps to its own error.
+  async setReadAlongBook(linkId: number, bookId: number | null, replacing: number | null = null): Promise<BookEditionLink | undefined> {
+    const attachable =
       bookId === null
         ? undefined
-        : sql`NOT EXISTS (
-            SELECT 1 FROM book_edition_links member_link
-            WHERE member_link.text_book_id = ${bookId}
-               OR member_link.audio_book_id = ${bookId}
-          )`;
+        : and(
+            or(
+              isNull(bookEditionLinks.readAlongBookId),
+              eq(bookEditionLinks.readAlongBookId, bookId),
+              replacing === null ? undefined : eq(bookEditionLinks.readAlongBookId, replacing),
+            ),
+            sql`NOT EXISTS (
+              SELECT 1 FROM book_edition_links member_link
+              WHERE member_link.text_book_id = ${bookId}
+                 OR member_link.audio_book_id = ${bookId}
+            )`,
+          );
     const [row] = await this.db
       .update(bookEditionLinks)
       .set({ readAlongBookId: bookId })
-      .where(and(eq(bookEditionLinks.id, linkId), notAlreadyAPairMember))
+      .where(and(eq(bookEditionLinks.id, linkId), attachable))
       .returning();
     return row;
   }

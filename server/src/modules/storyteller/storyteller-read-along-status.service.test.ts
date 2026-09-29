@@ -10,11 +10,12 @@ import {
 import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Permission } from '@bookorbit/types';
+import { Permission, type StorytellerSettings } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
 import { EditionLinkRepository } from '../edition-link/edition-link.repository';
+import { EditionLinkService } from '../edition-link/edition-link.service';
 import { LibraryService } from '../library/library.service';
 import { UserService } from '../user/user.service';
 import { StorytellerReadAlongBuildService } from './storyteller-read-along-build.service';
@@ -169,7 +170,7 @@ async function setup() {
     findActiveBuildIds: vi.fn().mockResolvedValue([]),
     findBookTitleAndAuthors: vi.fn().mockResolvedValue({ title: 'Book', authorNames: ['Author'], isbn10: null, isbn13: null, asin: null }),
   };
-  const settings = {
+  const settings: StorytellerSettings = {
     serverUrl: 'http://storyteller',
     username: 'service',
     passwordConfigured: true,
@@ -195,7 +196,7 @@ async function setup() {
     findOne: vi.fn().mockResolvedValue({ id: 3, name: 'Read-alongs', type: 'books', allowedFormats: ['epub'], organizationMode: 'book_per_file' }),
   };
   const userService = { findByIdWithPermissions: vi.fn().mockResolvedValue({ ...USER, active: true }) };
-  const schemaBootstrap = { ready: Promise.resolve<StorytellerInterruptedBuilds>({ requeued: [], failed: [] }) };
+  const schemaBootstrap = { ready: Promise.resolve<StorytellerInterruptedBuilds>({ requeued: [], failed: [], settled: [] }) };
   const notifier = {
     queued: vi.fn().mockResolvedValue(undefined),
     failed: vi.fn().mockResolvedValue(undefined),
@@ -209,6 +210,15 @@ async function setup() {
     findBookSummary: vi.fn().mockResolvedValue(null),
     setReadAlongBook: vi.fn().mockResolvedValue(LINK),
   };
+  // The attach itself belongs to EditionLinkService; this stand-in makes the same two writes so the
+  // tests below can keep reading the link and the build row.
+  const editionLinkService = {
+    attachReadAlong: vi.fn(async (link: { id: number }, readAlong: { buildId: number; outputBookId: number }) => {
+      const updated = await editionLinks.setReadAlongBook(link.id, readAlong.outputBookId);
+      if (updated) await repo.updateBuild(readAlong.buildId, { attachedLinkId: link.id });
+      return updated ?? link;
+    }),
+  };
   const module = await Test.createTestingModule({
     providers: [
       StorytellerReadAlongStatusService,
@@ -219,6 +229,7 @@ async function setup() {
       { provide: BookService, useValue: bookService },
       { provide: LibraryService, useValue: libraryService },
       { provide: EditionLinkRepository, useValue: editionLinks },
+      { provide: EditionLinkService, useValue: editionLinkService },
       { provide: UserService, useValue: userService },
       { provide: StorytellerSchemaBootstrapService, useValue: schemaBootstrap },
       { provide: StorytellerReadAlongNotifierService, useValue: notifier },
@@ -235,6 +246,7 @@ async function setup() {
     bookService,
     libraryService,
     editionLinks,
+    editionLinkService,
     userService,
     notifier,
     notifications,
@@ -994,12 +1006,13 @@ describe('StorytellerReadAlongStatusService', () => {
     }
 
     it('attaches the output once to a link the row was never attached to, and stamps that link', async () => {
-      const { service, repo, editionLinks } = await setup();
+      const { service, repo, editionLinks, editionLinkService } = await setup();
       editionLinks.findLinkForBook.mockResolvedValue(RELINKED);
       repo.findBuildByPair.mockResolvedValue(readyRow(5));
       editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Read-along', authorName: null });
 
       await expect(service.getStatus(10, USER)).resolves.toMatchObject({ status: 'ready', outputBook: { id: 99 } });
+      expect(editionLinkService.attachReadAlong).toHaveBeenCalledWith(RELINKED, { buildId: 7, outputBookId: 99 }, USER.id);
       expect(editionLinks.setReadAlongBook).toHaveBeenCalledOnce();
       expect(editionLinks.setReadAlongBook).toHaveBeenCalledWith(8, 99);
       expect(repo.updateBuild).toHaveBeenCalledWith(7, { attachedLinkId: 8 });
@@ -1031,16 +1044,18 @@ describe('StorytellerReadAlongStatusService', () => {
       expect(repo.updateBuild).toHaveBeenCalledWith(7, { attachedLinkId: 9 });
     });
 
-    it('records the link when a Generate finds the output already on it but never stamped there', async () => {
-      const { service, repo, editionLinks } = await setup();
+    // A detach records itself on the build, so an attach that was never stamped needs no repair.
+    it('leaves an output already on the link alone when a Generate finds it unstamped', async () => {
+      const { service, repo, editionLinks, editionLinkService } = await setup();
       editionLinks.findLinkForBook.mockResolvedValue({ ...RELINKED, readAlongBookId: 99 });
       repo.findBuildByPair.mockResolvedValue(readyRow(null));
       editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Read-along', authorName: null });
 
       await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'ready', blocked: null });
 
+      expect(editionLinkService.attachReadAlong).not.toHaveBeenCalled();
       expect(editionLinks.setReadAlongBook).not.toHaveBeenCalled();
-      expect(repo.updateBuild).toHaveBeenCalledWith(7, { attachedLinkId: 8 });
+      expect(repo.updateBuild).not.toHaveBeenCalled();
     });
 
     it('does not rewrite a stamp that already names the link', async () => {
@@ -1877,6 +1892,37 @@ describe('StorytellerReadAlongStatusService', () => {
       await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'queued', blocked: null });
     });
 
+    it('hands a non-forced Generate the previous output to replace, without leave to delete it', async () => {
+      const { service, repo, buildService } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed', outputBookId: 99 }));
+
+      await expect(service.requestBuild(10, USER, {})).resolves.toEqual({ status: 'building', blocked: null });
+
+      expect(buildService.runBuild.mock.calls[0]![3]).toMatchObject({ oldOutputBookId: 99, removePreviousOutput: false });
+    });
+
+    it('lets a caller with the delete permission remove a previous output it could not replace', async () => {
+      const { service, repo, buildService } = await setup();
+      const deleting = { ...USER, permissions: [...USER.permissions, Permission.LibraryDeleteBooks] } as unknown as RequestUser;
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed', outputBookId: 99 }));
+
+      await service.requestBuild(10, deleting, {});
+
+      expect(buildService.runBuild.mock.calls[0]![3]).toMatchObject({ oldOutputBookId: 99, removePreviousOutput: true });
+    });
+
+    it('names no previous output the caller cannot open', async () => {
+      const { service, repo, buildService, bookService } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed', outputBookId: 99 }));
+      bookService.verifyBookAccess.mockImplementation((bookId: number) =>
+        bookId === 99 ? Promise.reject(new ForbiddenException('no access')) : Promise.resolve(undefined),
+      );
+
+      await service.requestBuild(10, USER, {});
+
+      expect(buildService.runBuild.mock.calls[0]![3]).toMatchObject({ oldOutputBookId: null, removePreviousOutput: false });
+    });
+
     it('replaces the read-along the link names when the build starts, not the one it named at queue time', async () => {
       const { service, repo, buildService, userService, editionLinks } = await setup();
       const deletingUser = { ...USER, active: true, permissions: [...USER.permissions, Permission.LibraryDeleteBooks] };
@@ -1924,7 +1970,7 @@ describe('StorytellerReadAlongStatusService', () => {
           error: 'build interrupted by a server restart',
           attemptAt: ATTEMPT_AT,
         });
-        schemaBootstrap.ready = Promise.resolve({ requeued: [requeuedRow()], failed: [linking] } as never);
+        schemaBootstrap.ready = Promise.resolve({ requeued: [requeuedRow()], failed: [linking], settled: [] } as never);
         repo.countQueuedBefore.mockResolvedValue(2);
         repo.findOldestQueuedBuild.mockResolvedValueOnce(requeuedRow());
 
@@ -1946,7 +1992,7 @@ describe('StorytellerReadAlongStatusService', () => {
         const { service, repo, notifier, schemaBootstrap } = await setup();
         vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
         const second = requeuedRow({ id: 8, textBookId: 12, requestedBy: 43 });
-        schemaBootstrap.ready = Promise.resolve({ requeued: [requeuedRow(), second], failed: [] } as never);
+        schemaBootstrap.ready = Promise.resolve({ requeued: [requeuedRow(), second], failed: [], settled: [] } as never);
         repo.countQueuedBefore.mockRejectedValueOnce(new Error('db down')).mockResolvedValueOnce(0);
 
         service.onApplicationBootstrap();
@@ -1955,9 +2001,10 @@ describe('StorytellerReadAlongStatusService', () => {
         expect(notifier.queued).toHaveBeenCalledOnce();
       });
 
-      it('carries the output a collect cut short already wrote into the claim, and replaces only the linked read-along', async () => {
-        const { service, repo, buildService, editionLinks, userService } = await setup();
-        editionLinks.findLinkForBook.mockResolvedValue({ ...LINK, readAlongBookId: 55 });
+      // A collect records its output together with the link phase, so a re-queued row still names the
+      // read-along it replaces, which is the only record of one detached from the link.
+      it('replaces the output its own row names, even when the link names none', async () => {
+        const { service, repo, buildService, userService } = await setup();
         repo.findOldestQueuedBuild.mockResolvedValueOnce(requeuedRow({ phase: 'collect', outputBookId: 99 }));
         userService.findByIdWithPermissions.mockResolvedValue({
           ...USER,
@@ -1967,8 +2014,8 @@ describe('StorytellerReadAlongStatusService', () => {
 
         await service.startNextQueuedBuild();
 
-        expect(repo.claimQueuedBuild).toHaveBeenCalledWith(7, expect.objectContaining({ outputBookId: 99 }));
-        expect(buildService.runBuild.mock.calls[0]![3]).toMatchObject({ force: true, oldOutputBookId: 55 });
+        expect(repo.claimQueuedBuild.mock.calls[0]![1]).not.toHaveProperty('outputBookId');
+        expect(buildService.runBuild.mock.calls[0]![3]).toMatchObject({ force: true, oldOutputBookId: 99 });
       });
 
       it('reports where a re-queued build will land: its own destination, not the settings default', async () => {
@@ -1994,7 +2041,7 @@ describe('StorytellerReadAlongStatusService', () => {
       it('still starts the queue when the announcement fails', async () => {
         const { service, repo, schemaBootstrap } = await setup();
         vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-        schemaBootstrap.ready = Promise.resolve({ requeued: [requeuedRow()], failed: [] } as never);
+        schemaBootstrap.ready = Promise.resolve({ requeued: [requeuedRow()], failed: [], settled: [] } as never);
         repo.countQueuedBefore.mockRejectedValue(new Error('db down'));
 
         service.onApplicationBootstrap();
@@ -2077,7 +2124,7 @@ describe('StorytellerReadAlongStatusService', () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(repo.findOldestQueuedBuild).not.toHaveBeenCalled();
 
-      finishBootstrap({ requeued: [], failed: [] });
+      finishBootstrap({ requeued: [], failed: [], settled: [] });
       await vi.waitFor(() => expect(repo.findOldestQueuedBuild).toHaveBeenCalledOnce());
     });
 

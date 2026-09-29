@@ -69,6 +69,8 @@ export interface StorytellerQueueBuildValues {
 export interface StorytellerInterruptedBuilds {
   requeued: StorytellerReadAlongBuild[];
   failed: StorytellerReadAlongBuild[];
+  /** Builds found stuck in `link` with their read-along already imported, now ready. */
+  settled: StorytellerReadAlongBuild[];
 }
 
 export const INTERRUPTED_BUILD_ERROR = 'build interrupted by a server restart';
@@ -167,7 +169,9 @@ export class StorytellerRepository {
    * (`useExistingUuid` flows straight into storytellerBookUuid to skip registration). `targetLibraryId`
    * and `targetFolderId` are outside that list and keep whatever the previous attempt wrote only when
    * the caller omits them; `requestBuild` always passes both, so a claim that changes the library
-   * never keeps a folder from another one.
+   * never keeps a folder from another one. `outputBookId` is kept too: until the collect records the
+   * new read-along, the previous one is still this pair's generated output, and only this column
+   * says so while the rebuild runs or after it fails.
    *
    * A queued row is refused as well: it belongs to the queue runner, which claims it through
    * `claimQueuedBuild`. A direct claim starts a new attempt, so it clears `queued_at`, stamps
@@ -228,7 +232,6 @@ export class StorytellerRepository {
       remoteTask: values.remoteTask ?? null,
       remoteProgress: values.remoteProgress ?? null,
       transport: values.transport ?? null,
-      outputBookId: values.outputBookId ?? null,
       error: null,
       startedAt: now,
       builtAt: null,
@@ -352,6 +355,8 @@ export class StorytellerRepository {
    * update catches a book recorded between the first two statements.
    */
   async retireCancelledBuild(id: number): Promise<'kept' | 'deleted' | 'unchanged'> {
+    // A row naming an output is kept like one holding a Storyteller book: deleting it would forget
+    // which book is this pair's read-along.
     if (await this.markBuildCancelled(id, 'building')) return 'kept';
     if (await this.deleteBookless(id, 'building')) return 'deleted';
     return (await this.markBuildCancelled(id, 'building')) ? 'kept' : 'unchanged';
@@ -377,6 +382,7 @@ export class StorytellerRepository {
           eq(storytellerReadAlongBuilds.id, id),
           eq(storytellerReadAlongBuilds.status, status),
           isNull(storytellerReadAlongBuilds.storytellerBookUuid),
+          isNull(storytellerReadAlongBuilds.outputBookId),
         ),
       )
       .returning({ id: storytellerReadAlongBuilds.id });
@@ -415,7 +421,7 @@ export class StorytellerRepository {
         and(
           eq(storytellerReadAlongBuilds.id, id),
           eq(storytellerReadAlongBuilds.status, status),
-          isNotNull(storytellerReadAlongBuilds.storytellerBookUuid),
+          or(isNotNull(storytellerReadAlongBuilds.storytellerBookUuid), isNotNull(storytellerReadAlongBuilds.outputBookId)),
         ),
       )
       .returning({ id: storytellerReadAlongBuilds.id });
@@ -448,17 +454,25 @@ export class StorytellerRepository {
    * and a finished read-along only waits to be collected. One that had not reached Storyteller goes
    * behind the queued rows. Each group keeps the order its builds started in.
    *
-   * The output column survives only a collect cut short: that book is this attempt's own download,
-   * which the resumed collect adopts again. Before collect it can only name an older output, which a
-   * forced rebuild must not take for its own.
+   * The output column is kept: until the collect records the new read-along it names the previous
+   * one, which stays this pair's output. The collect writes the new output together with the `link`
+   * phase, so a restart after filing never re-queues a build whose read-along is already a book.
    *
-   * A build interrupted in `link` is failed instead: its read-along may be half attached to the link,
-   * and running the attach again over whatever the link now names could detach another read-along.
+   * A build stuck in `link` with its output recorded has already imported its read-along: only the
+   * attach to the edition link was left, and a failed attach no longer fails a build. It is settled as
+   * ready, whether a restart cut it short or an older attach failure marked it failed, and the edition
+   * link attaches it the next time the pair is read, which only ever fills a link that names none.
+   * One interrupted in `link` without an output is failed: there is nothing to settle it on.
    */
   async requeueInterruptedBuilds(): Promise<StorytellerInterruptedBuilds> {
     const t = storytellerReadAlongBuilds;
     return this.db.transaction(async (tx) => {
       const now = new Date();
+      const settled = await tx
+        .update(t)
+        .set({ status: 'ready', error: null, builtAt: sql`coalesce(${t.builtAt}, now())`, updatedAt: now })
+        .where(and(inArray(t.status, ['building', 'failed']), eq(t.phase, 'link'), isNotNull(t.outputBookId)))
+        .returning();
       const failed = await tx
         .update(t)
         .set({ status: 'failed', error: INTERRUPTED_BUILD_ERROR, updatedAt: now })
@@ -490,7 +504,6 @@ export class StorytellerRepository {
             status: 'queued',
             queuedAt,
             queuedRequest: { ...(row.queuedRequest ?? {}), previousStatus: INTERRUPTED_PREVIOUS_STATUS },
-            ...(row.phase === 'collect' ? {} : { outputBookId: null }),
             remoteTask: null,
             remoteProgress: null,
             error: null,
@@ -500,7 +513,7 @@ export class StorytellerRepository {
           .returning();
         if (updated) requeued.push(updated);
       }
-      return { requeued, failed };
+      return { requeued, failed, settled };
     });
   }
 
@@ -579,15 +592,28 @@ export class StorytellerRepository {
     return rows.map((row) => row.path);
   }
 
-  /** The one content file of a read-along book, or null when it holds anything but a single EPUB. */
-  async findSoleEpubContentFile(bookId: number): Promise<StorytellerBookContentFile | null> {
-    const rows = await this.db
-      .select({ id: bookFiles.id, absolutePath: bookFiles.absolutePath, format: bookFiles.format })
+  /**
+   * The EPUB a rebuild replaces in a read-along book: the book's primary file when that is an EPUB,
+   * otherwise its first EPUB content file. Null when the book holds no EPUB content at all.
+   */
+  async findReplaceableEpubContentFile(bookId: number): Promise<StorytellerBookContentFile | null> {
+    const [row] = await this.db
+      .select({ id: bookFiles.id, absolutePath: bookFiles.absolutePath })
       .from(bookFiles)
-      .where(and(eq(bookFiles.bookId, bookId), eq(bookFiles.role, 'content')))
-      .limit(2);
-    if (rows.length !== 1 || rows[0]!.format !== 'epub') return null;
-    return { id: rows[0]!.id, absolutePath: rows[0]!.absolutePath };
+      .innerJoin(books, eq(books.id, bookFiles.bookId))
+      .where(and(eq(bookFiles.bookId, bookId), eq(bookFiles.role, 'content'), eq(bookFiles.format, 'epub')))
+      .orderBy(sql`(${bookFiles.id} = ${books.primaryFileId}) desc nulls last`, sql`${bookFiles.sortOrder} asc nulls last`, asc(bookFiles.id))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async findLockedMetadataFields(bookId: number): Promise<string[]> {
+    const [row] = await this.db
+      .select({ lockedFields: bookMetadata.lockedFields })
+      .from(bookMetadata)
+      .where(eq(bookMetadata.bookId, bookId))
+      .limit(1);
+    return row?.lockedFields ?? [];
   }
 
   /**

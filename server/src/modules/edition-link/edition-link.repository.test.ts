@@ -1,3 +1,5 @@
+import { type SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { EditionLinkRepository } from './edition-link.repository';
@@ -285,6 +287,41 @@ describe('EditionLinkRepository', () => {
       expect(columns).toContain('id');
       expect(columns).not.toContain('text_book_id');
       expect(columns).not.toContain('audio_book_id');
+    });
+
+    function renderWhere(chain: ReturnType<typeof makeChain>): { sql: string; params: unknown[] } {
+      return new PgDialect().sqlToQuery(chain.where.mock.calls[0]![0] as SQL);
+    }
+
+    // A heal acting on a stale read must not overwrite a detach, or another read-along, made after it.
+    it('attaches only into an empty slot or over the same book', async () => {
+      const chain = makeChain([]);
+      const repo = new EditionLinkRepository({ update: vi.fn(() => chain) } as never);
+
+      await expect(repo.setReadAlongBook(5, 30)).resolves.toBeUndefined();
+      const { sql: text, params } = renderWhere(chain);
+      expect(text).toMatch(/\("book_edition_links"\."read_along_book_id" is null or "book_edition_links"\."read_along_book_id" = \$\d+\)/);
+      expect(params.slice(0, 2)).toEqual([5, 30]);
+    });
+
+    it('also takes over the read-along the caller read when it names one it replaces', async () => {
+      const chain = makeChain([]);
+      const repo = new EditionLinkRepository({ update: vi.fn(() => chain) } as never);
+
+      await repo.setReadAlongBook(5, 30, 25);
+      const { sql: text, params } = renderWhere(chain);
+      expect(text).toMatch(
+        /\("book_edition_links"\."read_along_book_id" is null or "book_edition_links"\."read_along_book_id" = \$\d+ or "book_edition_links"\."read_along_book_id" = \$\d+\)/,
+      );
+      expect(params.slice(0, 3)).toEqual([5, 30, 25]);
+    });
+
+    it('detaches without a compare on the current read-along', async () => {
+      const chain = makeChain([]);
+      const repo = new EditionLinkRepository({ update: vi.fn(() => chain) } as never);
+
+      await repo.setReadAlongBook(5, null);
+      expect(renderWhere(chain).sql).not.toContain('read_along_book_id');
     });
   });
 

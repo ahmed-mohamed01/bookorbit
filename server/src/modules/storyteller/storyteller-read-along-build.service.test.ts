@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { ConflictException, Logger } from '@nestjs/common';
@@ -108,8 +108,9 @@ let libraryDir = '';
 let stagingDir = '';
 
 beforeEach(async () => {
-  libraryDir = await mkdtemp(join(tmpdir(), 'storyteller-library-'));
-  stagingDir = await mkdtemp(join(tmpdir(), 'storyteller-staging-'));
+  // Real paths, as the build compares them: macOS keeps the temp dir behind a /var symlink.
+  libraryDir = await realpath(await mkdtemp(join(tmpdir(), 'storyteller-library-')));
+  stagingDir = await realpath(await mkdtemp(join(tmpdir(), 'storyteller-staging-')));
 });
 
 afterEach(async () => {
@@ -128,6 +129,8 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
     findAllLibraryFolderPaths: vi.fn().mockImplementation(() => Promise.resolve([libraryDir, '/books'])),
     findBuildByOutputBook: vi.fn().mockResolvedValue(undefined),
     findBookTitleAndAuthors: vi.fn().mockResolvedValue({ title: 'Local Title', authorNames: [], isbn10: null, isbn13: null, asin: null }),
+    findReadAlongMetadata: vi.fn().mockResolvedValue({ title: 'Elantris', authors: ['Brandon Sanderson'], narrators: ['Jack Garrett'] }),
+    findLockedMetadataFields: vi.fn().mockResolvedValue([]),
   };
   const settings = {
     serverUrl: 'http://storyteller',
@@ -178,7 +181,7 @@ async function setup(options: { waitCeilingMs?: number; settings?: Record<string
     setReadAlongBook: vi.fn().mockResolvedValue(PAIR.link),
     findLinkForBook: vi.fn().mockResolvedValue(linkNaming(null)),
   };
-  const bookService = { deleteBooks: vi.fn().mockResolvedValue(undefined) };
+  const bookService = { deleteBooks: vi.fn().mockResolvedValue(undefined), updateMetadata: vi.fn().mockResolvedValue({}) };
   const libraryService = {
     verifyUserAccess: vi.fn().mockResolvedValue(undefined),
     findOne: vi.fn().mockResolvedValue({ id: TARGET_LIBRARY_ID, type: 'books', allowedFormats: ['epub'], organizationMode: 'book_per_file' }),
@@ -988,10 +991,10 @@ describe('StorytellerReadAlongBuildService', () => {
     editionLinks.findLinkForBook.mockResolvedValue(linkNaming(88));
     importService.importReadAlong.mockResolvedValue({ outputBookId: 88, replaced: true });
 
-    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88 });
+    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
 
     expect(importService.importReadAlong).toHaveBeenCalledWith(downloadImport({ replaceBookId: 88 }));
-    expect(editionLinks.setReadAlongBook).toHaveBeenCalledWith(5, 88);
+    expect(editionLinks.setReadAlongBook).toHaveBeenCalledWith(5, 88, 88);
     expect(bookService.deleteBooks).not.toHaveBeenCalled();
     expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ready', outputBookId: 88 }));
   });
@@ -1002,17 +1005,52 @@ describe('StorytellerReadAlongBuildService', () => {
     // The previous output was not a single EPUB, so the import filed a new book instead.
     importService.importReadAlong.mockResolvedValue({ outputBookId: 99, replaced: false });
 
-    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88 });
+    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
 
     expect(bookService.deleteBooks).toHaveBeenCalledWith([88], USER);
     expect(bookService.deleteBooks.mock.invocationCallOrder[0]).toBeGreaterThan(editionLinks.setReadAlongBook.mock.invocationCallOrder[0]);
+  });
+
+  it('keeps the previous output after filing a new book when the caller may not delete it', async () => {
+    const { service, importService, editionLinks, bookService } = await setup();
+    editionLinks.findLinkForBook.mockResolvedValue(linkNaming(88));
+    importService.importReadAlong.mockResolvedValue({ outputBookId: 99, replaced: false });
+
+    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88 });
+
+    expect(editionLinks.setReadAlongBook).toHaveBeenCalledWith(5, 99, 88);
+    expect(bookService.deleteBooks).not.toHaveBeenCalled();
+  });
+
+  // A Generate after a failed rebuild is not forced, and filing a second copy next to the previous
+  // read-along is refused by the dock as a destination conflict.
+  it('replaces the previous output in place on a build that is not forced', async () => {
+    const { service, importService, editionLinks } = await setup();
+    editionLinks.findLinkForBook.mockResolvedValue(linkNaming(88));
+    importService.importReadAlong.mockResolvedValue({ outputBookId: 88, replaced: true });
+
+    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { oldOutputBookId: 88 });
+
+    expect(importService.importReadAlong).toHaveBeenCalledWith(downloadImport({ replaceBookId: 88 }));
+  });
+
+  it('keeps the previous output when the new one could not be linked in its place', async () => {
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { service, importService, editionLinks, bookService } = await setup();
+    editionLinks.findLinkForBook.mockResolvedValue(linkNaming(88));
+    importService.importReadAlong.mockResolvedValue({ outputBookId: 99, replaced: false });
+    editionLinks.setReadAlongBook.mockRejectedValue({ code: '23505' });
+
+    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
+
+    expect(bookService.deleteBooks).not.toHaveBeenCalled();
   });
 
   it('never replaces a previous output the edition link does not name', async () => {
     const { service, importService, editionLinks, bookService } = await setup();
     editionLinks.findLinkForBook.mockResolvedValue(linkNaming(77));
 
-    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88 });
+    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
 
     expect(importService.importReadAlong).toHaveBeenCalledWith(downloadImport({ replaceBookId: null }));
     expect(bookService.deleteBooks).not.toHaveBeenCalled();
@@ -1022,7 +1060,11 @@ describe('StorytellerReadAlongBuildService', () => {
     const { service, importService, editionLinks } = await setup();
     editionLinks.findLinkForBook.mockResolvedValue(linkNaming(PAIR.textBookId));
 
-    await runBuild(service, 1, pairWithPreviousOutput(PAIR.textBookId), USER, { force: true, oldOutputBookId: PAIR.textBookId });
+    await runBuild(service, 1, pairWithPreviousOutput(PAIR.textBookId), USER, {
+      force: true,
+      oldOutputBookId: PAIR.textBookId,
+      removePreviousOutput: true,
+    });
 
     expect(importService.importReadAlong).toHaveBeenCalledWith(downloadImport({ replaceBookId: null }));
   });
@@ -1031,7 +1073,9 @@ describe('StorytellerReadAlongBuildService', () => {
     const { service, session, bookService } = await setup();
     session.uploadBook.mockRejectedValue(new Error('storyteller unreachable'));
 
-    await expect(runBuild(service, 1, PAIR, USER, { force: true, oldOutputBookId: 88 })).rejects.toThrow('storyteller unreachable');
+    await expect(runBuild(service, 1, PAIR, USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true })).rejects.toThrow(
+      'storyteller unreachable',
+    );
 
     // Deleting up front leaves the user with nothing: the file is gone from disk, the book row with
     // it, and the link cleared, while the replacement was never built.
@@ -1052,7 +1096,7 @@ describe('StorytellerReadAlongBuildService', () => {
     // Every other refusal passes, so the same-book one is the only thing that can stop the delete.
     editionLinks.findLinkForBook.mockResolvedValue(linkNaming(99));
 
-    await runBuild(service, 1, PAIR, USER, { force: true, oldOutputBookId: 99 });
+    await runBuild(service, 1, PAIR, USER, { force: true, oldOutputBookId: 99, removePreviousOutput: true });
 
     expect(bookService.deleteBooks).not.toHaveBeenCalled();
   });
@@ -1195,16 +1239,24 @@ describe('StorytellerReadAlongBuildService', () => {
     expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ready', outputBookId: 99 }));
   });
 
-  it('maps a unique violation while linking and persists the failed build', async () => {
-    const { service, editionLinks, repo, session } = await setup({ settings: { deleteRemoteAfterImport: true } });
+  it('ends ready when the link cannot take the imported read-along, and leaves the link to attach it later', async () => {
+    const errorSpy = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const { service, editionLinks, repo, notifier } = await setup({ settings: { deleteRemoteAfterImport: true } });
     editionLinks.setReadAlongBook.mockRejectedValue({ code: '23505' });
 
-    await expect(runBuild(service, 1, PAIR, USER)).rejects.toThrow('imported book was kept');
-    expect(repo.updateBuild).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({ status: 'failed', phase: 'link', error: expect.stringContaining('imported book was kept') }),
+    await expect(runBuild(service, 1, PAIR, USER)).resolves.toBeUndefined();
+
+    expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ready', phase: 'link', outputBookId: 99, error: null }));
+    expect(repo.updateBuild).not.toHaveBeenCalledWith(1, expect.objectContaining({ status: 'failed' }));
+    // Unstamped, so the edition link's attach still reads the read-along as lost from this link.
+    expect(repo.updateBuild).not.toHaveBeenCalledWith(1, expect.objectContaining({ attachedLinkId: expect.anything() }));
+    expect(notifier.ready).toHaveBeenCalled();
+    expect(notifier.failed).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\[storyteller\.read_along\.link\] \[fail\] buildId=1 linkId=\d+ outputBookId=99 .*errorClass=ConflictException error="The read-along could not be attached to the link; the imported book was kept"/,
+      ),
     );
-    expect(session.deleteBook).not.toHaveBeenCalled();
   });
 
   it('persists failures without deleting the Storyteller book', async () => {
@@ -1227,14 +1279,17 @@ describe('StorytellerReadAlongBuildService', () => {
     expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ error: 'cannot read "/books/a\\b.epub"' }));
   });
 
-  it('records the imported book before it is attached to the link', async () => {
+  // One statement: a restart after the filing finds the row in link with its output, which the boot
+  // settle turns ready, instead of a collect it would resume and file a second time.
+  it('records the imported book together with the link phase before it is attached to the link', async () => {
     const { service, editionLinks, repo } = await setup();
     editionLinks.setReadAlongBook.mockRejectedValue({ code: '23505' });
 
-    await expect(runBuild(service, 1, PAIR, USER)).rejects.toThrow('imported book was kept');
+    await runBuild(service, 1, PAIR, USER);
 
-    // The failure says the imported book was kept, so the row has to say which book that is.
-    expect(repo.updateBuild).toHaveBeenCalledWith(1, { outputBookId: 99 });
+    const recorded = repo.updateBuild.mock.calls.findIndex(([, values]) => (values as { outputBookId?: number }).outputBookId === 99);
+    expect(repo.updateBuild.mock.calls[recorded]).toEqual([1, { outputBookId: 99, phase: 'link' }]);
+    expect(repo.updateBuild.mock.invocationCallOrder[recorded]).toBeLessThan(editionLinks.setReadAlongBook.mock.invocationCallOrder[0]!);
   });
 
   it('keeps the shared-paths transport when the upload that would replace it fails', async () => {
@@ -1418,7 +1473,7 @@ describe('StorytellerReadAlongBuildService', () => {
     const { service, bookService, editionLinks } = await setup();
     editionLinks.findLinkForBook.mockResolvedValue(linkNaming(PAIR.textBookId));
 
-    await runBuild(service, 1, PAIR, USER, { force: true, oldOutputBookId: PAIR.textBookId });
+    await runBuild(service, 1, PAIR, USER, { force: true, oldOutputBookId: PAIR.textBookId, removePreviousOutput: true });
 
     // deleteBooks removes every file the book owns from disk.
     expect(bookService.deleteBooks).not.toHaveBeenCalled();
@@ -1428,7 +1483,7 @@ describe('StorytellerReadAlongBuildService', () => {
     const { service, bookService, editionLinks } = await setup();
     editionLinks.findLinkForBook.mockResolvedValue(linkNaming(88));
 
-    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 77 });
+    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 77, removePreviousOutput: true });
 
     expect(bookService.deleteBooks).not.toHaveBeenCalled();
   });
@@ -1440,7 +1495,7 @@ describe('StorytellerReadAlongBuildService', () => {
     // was handed at request time still names it.
     editionLinks.findLinkForBook.mockResolvedValue(linkNaming(null));
 
-    await runBuild(service, 1, pairWithPreviousOutput(300), USER, { force: true, oldOutputBookId: 300 });
+    await runBuild(service, 1, pairWithPreviousOutput(300), USER, { force: true, oldOutputBookId: 300, removePreviousOutput: true });
 
     // Nothing left says this build produced book 300, and deleteBooks takes its files with it.
     expect(bookService.deleteBooks).not.toHaveBeenCalled();
@@ -1452,7 +1507,7 @@ describe('StorytellerReadAlongBuildService', () => {
     editionLinks.findLinkForBook.mockResolvedValue(linkNaming(88));
     repo.findBuildByOutputBook.mockImplementation((bookId: number) => Promise.resolve(bookId === 88 ? { id: 2, outputBookId: 88 } : undefined));
 
-    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88 });
+    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
 
     expect(bookService.deleteBooks).not.toHaveBeenCalled();
     // A removal that declined is the operation's outcome, not an exception: nothing named
@@ -1648,7 +1703,7 @@ describe('StorytellerReadAlongBuildService', () => {
     });
     editionLinks.findLinkForBook.mockImplementation(() => Promise.resolve(linkNaming(attached ? 99 : 88)));
 
-    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88 });
+    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
 
     // Reading the link after attachToLink has overwritten it makes every force rebuild refuse the
     // removal as "the link does not name this book", with all the other tests still green.
@@ -1774,17 +1829,13 @@ describe('StorytellerReadAlongBuildService cancellation', () => {
     expect(repo.updateBuild).toHaveBeenCalledWith(1, { phase: 'prepare', targetLibraryId: TARGET_LIBRARY_ID, targetFolderId: 30 });
   });
 
-  it('stamps the link the read-along was attached to after the ready write', async () => {
+  it('stamps the link the read-along was attached to in the ready write itself', async () => {
     const { service, repo } = await setup();
 
     await runBuild(service, 1, PAIR, USER);
 
-    const readyCall = repo.updateBuild.mock.calls.findIndex(([, values]) => (values as { status?: string }).status === 'ready');
-    const stampCall = repo.updateBuild.mock.calls.findIndex(([, values]) => 'attachedLinkId' in (values as object));
-    expect(readyCall).toBeGreaterThanOrEqual(0);
-    expect(stampCall).toBeGreaterThan(readyCall);
-    expect(repo.updateBuild.mock.calls[stampCall]).toEqual([1, { attachedLinkId: PAIR.linkId }]);
-    expect(repo.updateBuild.mock.calls[readyCall]![1]).not.toHaveProperty('attachedLinkId');
+    const stampCalls = repo.updateBuild.mock.calls.filter(([, values]) => 'attachedLinkId' in (values as object));
+    expect(stampCalls).toEqual([[1, expect.objectContaining({ status: 'ready', outputBookId: 99, attachedLinkId: PAIR.linkId })]]);
   });
 
   it('keeps an imported build ready when the link vanished before its stamp could be written', async () => {
@@ -1798,7 +1849,8 @@ describe('StorytellerReadAlongBuildService cancellation', () => {
 
     await expect(runBuild(service, 1, PAIR, USER)).resolves.toBeUndefined();
 
-    expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ready' }));
+    expect(repo.updateBuild).toHaveBeenLastCalledWith(1, expect.objectContaining({ status: 'ready', outputBookId: 99 }));
+    expect(repo.updateBuild.mock.lastCall![1]).not.toHaveProperty('attachedLinkId');
     expect(failedWrites(repo)).toEqual([]);
     expect(warnings.some((line) => line.startsWith('[storyteller.read_along.stamp_link] [fail] buildId=1 linkId=5 durationMs='))).toBe(true);
   });
@@ -2134,5 +2186,181 @@ describe('StorytellerReadAlongBuildService resuming a build a restart re-queued'
     expect(importService.importReadAlong).toHaveBeenCalledWith(downloadImport({ buildId: 7 }));
     expect(repo.updateBuild).toHaveBeenCalledWith(7, expect.objectContaining({ status: 'ready', outputBookId: 99 }));
     expect(notifier.ready).toHaveBeenCalled();
+  });
+});
+
+describe('StorytellerReadAlongBuildService rebuilds and staging', () => {
+  beforeEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  function failedWrites(repo: { updateBuild: ReturnType<typeof vi.fn> }): unknown[] {
+    return repo.updateBuild.mock.calls.filter(([, values]) => (values as { status?: string }).status === 'failed');
+  }
+
+  // Detach, then Rebuild: the link names nothing, but the pair's own row still records the output,
+  // and filing a second book would land on the same library path and fail the whole run.
+  it('replaces a detached read-along in place when the pair own build row records it, then attaches it', async () => {
+    const { service, importService, editionLinks, repo } = await setup();
+    editionLinks.findLinkForBook.mockResolvedValue(linkNaming(null));
+    repo.findBuildByOutputBook.mockResolvedValue({ id: 1, outputBookId: 88 });
+    importService.importReadAlong.mockResolvedValue({ outputBookId: 88, replaced: true });
+
+    await runBuild(service, 1, PAIR, USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
+
+    expect(importService.importReadAlong).toHaveBeenCalledWith(downloadImport({ replaceBookId: 88 }));
+    expect(editionLinks.setReadAlongBook).toHaveBeenCalledWith(5, 88, null);
+  });
+
+  it('still refuses to replace a detached book no build records', async () => {
+    const { service, importService, editionLinks } = await setup();
+    editionLinks.findLinkForBook.mockResolvedValue(linkNaming(null));
+
+    await runBuild(service, 1, PAIR, USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
+
+    expect(importService.importReadAlong).toHaveBeenCalledWith(downloadImport({ replaceBookId: null }));
+  });
+
+  it('takes the link over from the previous read-along when the rebuild had to file a new book', async () => {
+    const { service, importService, editionLinks, bookService } = await setup();
+    editionLinks.findLinkForBook.mockResolvedValue(linkNaming(88));
+    importService.importReadAlong.mockResolvedValue({ outputBookId: 99, replaced: false });
+
+    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
+
+    expect(editionLinks.setReadAlongBook).toHaveBeenCalledWith(5, 99, 88);
+    expect(bookService.deleteBooks).toHaveBeenCalledWith([88], USER);
+  });
+
+  it('never fails a build whose read-along is ready over a lookup made after the ready write', async () => {
+    const { service, importService, editionLinks, repo, notifier } = await setup();
+    editionLinks.findLinkForBook.mockResolvedValue(linkNaming(88));
+    importService.importReadAlong.mockResolvedValue({ outputBookId: 99, replaced: false });
+    repo.findBuildByOutputBook.mockResolvedValueOnce(undefined).mockRejectedValue(new Error('connection terminated'));
+
+    await expect(
+      runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true }),
+    ).resolves.toBeUndefined();
+
+    expect(failedWrites(repo)).toEqual([]);
+    expect(notifier.failed).not.toHaveBeenCalled();
+    expect(notifier.ready).toHaveBeenCalled();
+  });
+
+  it('writes the linked editions metadata onto a read-along it replaced in place, leaving locked fields alone', async () => {
+    const { service, importService, editionLinks, repo, bookService } = await setup();
+    editionLinks.findLinkForBook.mockResolvedValue(linkNaming(88));
+    importService.importReadAlong.mockResolvedValue({ outputBookId: 88, replaced: true });
+    repo.findReadAlongMetadata.mockResolvedValue({
+      title: 'Elantris',
+      authors: ['Brandon Sanderson'],
+      narrators: ['Jack Garrett'],
+      seriesName: 'Elantris',
+      seriesIndex: 1,
+      publishedDate: '2005-04-21',
+    });
+    repo.findLockedMetadataFields.mockResolvedValue(['authors', 'seriesIndex']);
+
+    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
+
+    expect(repo.findReadAlongMetadata).toHaveBeenCalledWith(PAIR.textBookId, PAIR.audioBookId);
+    expect(bookService.updateMetadata).toHaveBeenCalledWith(
+      88,
+      { title: 'Elantris', publishedDate: '2005-04-21', audioMetadata: { narrators: ['Jack Garrett'] } },
+      USER,
+    );
+  });
+
+  it('leaves a newly filed read-along to the dock, and never fails a build over the metadata refresh', async () => {
+    const newBook = await setup();
+    await runBuild(newBook.service, 1, PAIR, USER);
+    expect(newBook.bookService.updateMetadata).not.toHaveBeenCalled();
+
+    const { service, importService, editionLinks, repo, bookService, notifier } = await setup();
+    const warnings = captureLogs('warn');
+    editionLinks.findLinkForBook.mockResolvedValue(linkNaming(88));
+    importService.importReadAlong.mockResolvedValue({ outputBookId: 88, replaced: true });
+    bookService.updateMetadata.mockRejectedValue(new ConflictException('Metadata fields are locked: title'));
+
+    await expect(
+      runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true }),
+    ).resolves.toBeUndefined();
+
+    expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ready', outputBookId: 88 }));
+    expect(notifier.failed).not.toHaveBeenCalled();
+    expect(warnings.some((line) => line.startsWith('[storyteller.read_along.metadata] [fail] buildId=1 outputBookId=88 durationMs='))).toBe(true);
+  });
+
+  // A reference import keeps the aligned book after a collect with cleanup took the staged file, and
+  // an aligned book is never processed on its own.
+  it('processes an aligned book again when its read-along file is gone', async () => {
+    const { service, session } = await setup();
+    session.getBook.mockResolvedValue(remoteBook({ aligned: true, processing: { state: 'completed', task: null, progress: 1, error: null } }));
+    session.readaloudAvailable.mockResolvedValueOnce(false).mockResolvedValue(true);
+
+    await runBuild(service, 1, PAIR, USER);
+
+    expect(session.process).toHaveBeenCalledOnce();
+  });
+
+  it('fails fast rather than wait to the ceiling when an aligned book stays without its file', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const { service, session, sleep, repo } = await setup();
+    advanceClock(sleep);
+    session.getBook.mockResolvedValue(remoteBook({ aligned: true, processing: { state: 'completed', task: null, progress: 1, error: null } }));
+    session.readaloudAvailable.mockResolvedValue(false);
+    const startedAt = Date.now();
+
+    await expect(runBuild(service, 1, PAIR, USER)).rejects.toThrow('no longer has its read-along file');
+
+    expect(session.process).toHaveBeenCalledOnce();
+    expect(Date.now() - startedAt).toBeLessThan(10 * 60_000);
+    expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'failed', phase: 'wait' }));
+  });
+
+  it('downloads rather than take a staged path that resolves into a library folder through a symlink', async () => {
+    const { service, session, importService } = await setup({
+      settings: { transport: 'api-transfer', pathMappings: [{ localPrefix: stagingDir, remotePrefix: '/remote/output' }] },
+      remoteSettings: { readaloudLocationType: 'CUSTOM_FOLDER', readaloudLocation: '/remote/output' },
+    });
+    await writeFile(join(libraryDir, 'Library Book.epub'), Buffer.from('PK\u0003\u0004'));
+    await symlink(libraryDir, join(stagingDir, 'linked'));
+    session.getBook.mockResolvedValue(remoteBook({ aligned: true, readaloudPath: '/remote/output/linked/Library Book.epub' }));
+
+    await runBuild(service, 1, PAIR, USER, { cleanUpRemote: true });
+
+    expect(importService.importReadAlong).toHaveBeenCalledWith(downloadImport());
+  });
+
+  it('downloads rather than take a staged path outside the configured read-aloud folder', async () => {
+    const elsewhere = join(stagingDir, 'elsewhere');
+    await mkdir(join(stagingDir, 'output'));
+    await mkdir(elsewhere);
+    const { service, session, importService } = await setup({
+      settings: { transport: 'api-transfer', pathMappings: [{ localPrefix: stagingDir, remotePrefix: '/remote' }] },
+      remoteSettings: { readaloudLocationType: 'CUSTOM_FOLDER', readaloudLocation: '/remote/output' },
+    });
+    await writeFile(join(elsewhere, 'Remote Title.epub'), Buffer.from('PK\u0003\u0004'));
+    session.getBook.mockResolvedValue(remoteBook({ aligned: true, readaloudPath: '/remote/elsewhere/Remote Title.epub' }));
+
+    await runBuild(service, 1, PAIR, USER, { cleanUpRemote: true });
+
+    expect(importService.importReadAlong).toHaveBeenCalledWith(downloadImport());
+  });
+
+  it('logs the build identifiers first on completion', async () => {
+    const { service } = await setup();
+    const logs = captureLogs('log');
+
+    await runBuild(service, 1, PAIR, USER);
+
+    expect(
+      logs.some((line) =>
+        line.startsWith('[storyteller.read_along.build] [end] textBookId=10 audioBookId=11 buildId=1 storytellerBookUuid=story-uuid durationMs='),
+      ),
+    ).toBe(true);
   });
 });

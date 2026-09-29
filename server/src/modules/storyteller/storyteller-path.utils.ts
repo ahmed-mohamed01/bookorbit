@@ -1,4 +1,5 @@
-import { posix } from 'path';
+import { realpath } from 'fs/promises';
+import { posix, resolve } from 'path';
 import { BadRequestException } from '@nestjs/common';
 
 import type { StorytellerPathMapping } from '@bookorbit/types';
@@ -14,6 +15,32 @@ import type { PathMapping } from '../migration/planner/planner.types';
 const SAFE_SEGMENT_BYTE_LIMIT = 150;
 
 const ILLEGAL_FILENAME_CHARS = /[/\\:*?"<>|]/g;
+
+/**
+ * Symlinks resolved, so a folder reached through a link or spelled differently compares as the
+ * folder it is. A path that does not exist (yet) falls back to its normalized spelling.
+ */
+export async function canonicalPath(path: string): Promise<string> {
+  try {
+    return await realpath(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+/**
+ * `ignoreCase` is for the conservative direction only, a check that keeps BookOrbit away from a
+ * folder: on a case-insensitive volume two spellings of one library folder must both count.
+ */
+export function isPathWithinFolder(candidate: string, folderPath: string, options: { ignoreCase?: boolean } = {}): boolean {
+  const fold = (path: string): string => {
+    const trimmed = path.replace(/\/+$/, '') || '/';
+    return options.ignoreCase ? trimmed.toLowerCase() : trimmed;
+  };
+  const folder = fold(folderPath);
+  const path = fold(candidate);
+  return path === folder || path.startsWith(folder === '/' ? '/' : `${folder}/`);
+}
 
 /** A `BadRequestException` so the controller answers 400 untranslated, subclassed so callers can tell it apart. */
 export class InvalidPathMappingError extends BadRequestException {

@@ -166,7 +166,6 @@ function handleKeepRemoteCopy(value: boolean) {
         :can-generate="canGenerate"
         :can-rebuild="readAlongSection.canRebuild.value"
         :existing-match="readAlongSection.existingMatch.value"
-        :keep-copy-offered="readAlongSection.keepCopyOffered.value"
         :target-libraries="readAlongSection.targetLibraries.value"
         :chosen-target-library-id="readAlongSection.chosenTargetLibraryId.value"
         :target-library-name="readAlongSection.targetLibraryName.value"

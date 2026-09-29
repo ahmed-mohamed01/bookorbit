@@ -62,6 +62,15 @@ const connectorClass = computed(() => {
   return 'border border-border bg-popover text-muted-foreground'
 })
 
+// A detached read-along shows beside its unlinked pair, so its stop takes the pair's styling: settled
+// green only once the three are linked.
+const readAlongRailClass = computed(() => (merged.value ? 'opacity-100 bg-success/40' : 'opacity-0 bg-success/40'))
+const readAlongConnectorClass = computed(() =>
+  merged.value
+    ? 'border-2 border-popover bg-success text-success-foreground ring-2 ring-success/25'
+    : 'border border-border bg-popover text-muted-foreground',
+)
+
 function cardPosition(index: number): 'top' | 'middle' | 'bottom' {
   if (index === 0) return 'top'
   return index === 1 && props.readAlong ? 'middle' : 'bottom'
@@ -142,13 +151,22 @@ function handleQuery(value: string) {
       leave-active-class="transition-all duration-300 ease-in"
       leave-to-class="opacity-0 -translate-y-3 scale-95"
     >
-      <div v-if="readAlong && merged" data-testid="edition-read-along">
+      <div v-if="readAlong" data-testid="edition-read-along">
         <div class="relative h-0">
-          <div class="pointer-events-none absolute -top-8 left-5 h-16 w-0.5 -translate-x-1/2 rounded-full bg-success/40" aria-hidden="true" />
-          <div class="pointer-events-none absolute top-0 right-0 left-9.5 h-px bg-border/60" aria-hidden="true" />
+          <div
+            class="pointer-events-none absolute -top-8 left-5 h-16 w-0.5 -translate-x-1/2 rounded-full transition-all duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+            :class="readAlongRailClass"
+            aria-hidden="true"
+          />
+          <div
+            class="pointer-events-none absolute top-0 right-0 left-9.5 h-px bg-border/60 transition-opacity duration-700"
+            :class="merged ? 'opacity-100' : 'opacity-0'"
+            aria-hidden="true"
+          />
           <div
             aria-hidden="true"
-            class="absolute top-0 left-5 z-[2] flex size-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-popover bg-success text-success-foreground ring-2 ring-success/25"
+            class="absolute top-0 z-[2] flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full transition-all duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+            :class="[connectorPlacement, readAlongConnectorClass]"
             data-testid="edition-connector-read-along"
           >
             <Link2 class="size-3" aria-hidden="true" />

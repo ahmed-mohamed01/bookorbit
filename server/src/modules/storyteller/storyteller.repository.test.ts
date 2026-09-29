@@ -186,7 +186,7 @@ describe('StorytellerRepository.startBuild', () => {
     expect(setWhere.params).toEqual(['building', 'queued']);
   });
 
-  it('resets the per-run columns and clears storytellerBookUuid when not supplied', async () => {
+  it('resets the per-run columns and clears storytellerBookUuid when not supplied, keeping the previous output', async () => {
     const db = mockDb({ insertResults: [[{}]] });
     const repo = new StorytellerRepository(db as never);
 
@@ -201,10 +201,12 @@ describe('StorytellerRepository.startBuild', () => {
       remoteTask: null,
       remoteProgress: null,
       transport: null,
-      outputBookId: null,
       error: null,
       builtAt: null,
     });
+    // The previous read-along stays recognised as this pair's output while the rebuild runs, and
+    // after it fails: nothing else records it.
+    expect(conflict.set).not.toHaveProperty('outputBookId');
     expect(conflict.set.startedAt).toBeInstanceOf(Date);
   });
 
@@ -328,13 +330,13 @@ describe('StorytellerRepository.retireCancelledBuild', () => {
       expect(setColumns).not.toContain(kept);
     const where = renderSql(builder.where.mock.calls[0]![0]);
     expect(where.sql).toBe(
-      '("storyteller_read_along_builds"."id" = $1 and "storyteller_read_along_builds"."status" = $2 and "storyteller_read_along_builds"."storyteller_book_uuid" is not null)',
+      '("storyteller_read_along_builds"."id" = $1 and "storyteller_read_along_builds"."status" = $2 and ("storyteller_read_along_builds"."storyteller_book_uuid" is not null or "storyteller_read_along_builds"."output_book_id" is not null))',
     );
     expect(where.params).toEqual([3, 'building']);
     expect(db.delete).not.toHaveBeenCalled();
   });
 
-  it('deletes a building row with no Storyteller book', async () => {
+  it('deletes a building row with no Storyteller book and no output', async () => {
     const db = mockDb({ updateResults: [[]], deleteResults: [[{ id: 3 }]] });
     const repo = new StorytellerRepository(db as never);
 
@@ -342,7 +344,7 @@ describe('StorytellerRepository.retireCancelledBuild', () => {
 
     const where = renderSql(builderFrom(db.delete).where.mock.calls[0]![0]);
     expect(where.sql).toBe(
-      '("storyteller_read_along_builds"."id" = $1 and "storyteller_read_along_builds"."status" = $2 and "storyteller_read_along_builds"."storyteller_book_uuid" is null)',
+      '("storyteller_read_along_builds"."id" = $1 and "storyteller_read_along_builds"."status" = $2 and "storyteller_read_along_builds"."storyteller_book_uuid" is null and "storyteller_read_along_builds"."output_book_id" is null)',
     );
     expect(where.params).toEqual([3, 'building']);
   });
@@ -579,26 +581,43 @@ describe('StorytellerRepository queue', () => {
 });
 
 describe('StorytellerRepository.requeueInterruptedBuilds', () => {
-  function setup(options: { failed?: unknown[]; oldestQueued?: Date | null; interrupted?: unknown[]; requeued?: unknown[][] }) {
+  function setup(options: { settled?: unknown[]; failed?: unknown[]; oldestQueued?: Date | null; interrupted?: unknown[]; requeued?: unknown[][] }) {
     const tx = mockDb({
       selectResults: [[{ oldest: options.oldestQueued ?? null }], options.interrupted ?? []],
-      updateResults: [options.failed ?? [], ...(options.requeued ?? [])],
+      updateResults: [options.settled ?? [], options.failed ?? [], ...(options.requeued ?? [])],
     });
     const db = { transaction: vi.fn((run: (inner: typeof tx) => Promise<unknown>) => run(tx)) };
     return { repo: new StorytellerRepository(db as never), tx, db };
   }
 
   const requeuedSet = (tx: ReturnType<typeof mockDb>, index: number) =>
-    builderFrom(tx.update, index + 1).set.mock.calls[0]![0] as Record<string, unknown>;
-  const requeuedId = (tx: ReturnType<typeof mockDb>, index: number) => renderSql(builderFrom(tx.update, index + 1).where.mock.calls[0]![0]).params[0];
+    builderFrom(tx.update, index + 2).set.mock.calls[0]![0] as Record<string, unknown>;
+  const requeuedId = (tx: ReturnType<typeof mockDb>, index: number) => renderSql(builderFrom(tx.update, index + 2).where.mock.calls[0]![0]).params[0];
+
+  it('settles as ready a build stuck in link whose read-along was already imported, however it got stuck', async () => {
+    const produced = { id: 27, status: 'ready', phase: 'link', outputBookId: 312 };
+    const { repo, tx } = setup({ settled: [produced] });
+
+    await expect(repo.requeueInterruptedBuilds()).resolves.toEqual({ requeued: [], failed: [], settled: [produced] });
+
+    const builder = builderFrom(tx.update, 0);
+    const set = builder.set.mock.calls[0]![0] as Record<string, unknown>;
+    expect(set).toMatchObject({ status: 'ready', error: null });
+    expect(renderSql(set.builtAt).sql).toBe('coalesce("storyteller_read_along_builds"."built_at", now())');
+    const where = renderSql(builder.where.mock.calls[0]![0]);
+    expect(where.sql).toBe(
+      '("storyteller_read_along_builds"."status" in ($1, $2) and "storyteller_read_along_builds"."phase" = $3 and "storyteller_read_along_builds"."output_book_id" is not null)',
+    );
+    expect(where.params).toEqual(['building', 'failed', 'link']);
+  });
 
   it('fails only the builds interrupted while linking, with the restart message', async () => {
     const linking = { id: 1, status: 'failed', phase: 'link' };
     const { repo, tx } = setup({ failed: [linking] });
 
-    await expect(repo.requeueInterruptedBuilds()).resolves.toEqual({ requeued: [], failed: [linking] });
+    await expect(repo.requeueInterruptedBuilds()).resolves.toEqual({ requeued: [], failed: [linking], settled: [] });
 
-    const builder = builderFrom(tx.update);
+    const builder = builderFrom(tx.update, 1);
     expect(builder.set.mock.calls[0]![0]).toMatchObject({ status: 'failed', error: 'build interrupted by a server restart' });
     const where = renderSql(builder.where.mock.calls[0]![0]);
     expect(where.sql).toBe('("storyteller_read_along_builds"."status" = $1 and "storyteller_read_along_builds"."phase" = $2)');
@@ -627,18 +646,28 @@ describe('StorytellerRepository.requeueInterruptedBuilds', () => {
     expect(set).toMatchObject({
       status: 'queued',
       queuedRequest: { force: true, targetLibraryId: 3, previousStatus: 'interrupted' },
-      outputBookId: null,
       error: null,
     });
-    for (const kept of ['storytellerBookUuid', 'transport', 'requestedBy', 'targetLibraryId', 'targetFolderId', 'attemptAt', 'phase']) {
+    for (const kept of [
+      'storytellerBookUuid',
+      'transport',
+      'requestedBy',
+      'targetLibraryId',
+      'targetFolderId',
+      'attemptAt',
+      'phase',
+      'outputBookId',
+    ]) {
       expect(set).not.toHaveProperty(kept);
     }
-    expect(renderSql(builderFrom(tx.update, 1).where.mock.calls[0]![0]).params).toEqual([4, 'building']);
+    expect(renderSql(builderFrom(tx.update, 2).where.mock.calls[0]![0]).params).toEqual([4, 'building']);
   });
 
-  it('keeps the output of a build cut short in collect, the download its resume adopts', async () => {
-    const collecting = { id: 4, phase: 'collect', startedAt: new Date('2026-01-01T00:00:00Z'), outputBookId: 99, queuedRequest: null };
-    const { repo, tx } = setup({ interrupted: [collecting], requeued: [[{ id: 4 }]] });
+  // Before the collect records the new read-along, the column names the previous one, which is
+  // still this pair's output; a filed read-along is written with the link phase and settled instead.
+  it('keeps the previous output of a build interrupted before it filed its read-along', async () => {
+    const waiting = { id: 4, phase: 'wait', startedAt: new Date('2026-01-01T00:00:00Z'), outputBookId: 99, queuedRequest: null };
+    const { repo, tx } = setup({ interrupted: [waiting], requeued: [[{ id: 4 }]] });
 
     await repo.requeueInterruptedBuilds();
 
@@ -671,7 +700,7 @@ describe('StorytellerRepository.requeueInterruptedBuilds', () => {
   it('answers empty lists when nothing was interrupted', async () => {
     const { repo } = setup({});
 
-    await expect(repo.requeueInterruptedBuilds()).resolves.toEqual({ requeued: [], failed: [] });
+    await expect(repo.requeueInterruptedBuilds()).resolves.toEqual({ requeued: [], failed: [], settled: [] });
   });
 });
 
@@ -838,38 +867,39 @@ describe('StorytellerRepository.findLibraryFolders', () => {
   });
 });
 
-describe('StorytellerRepository.findSoleEpubContentFile', () => {
-  it('returns the one EPUB content file of a read-along book', async () => {
-    const db = mockDb({ selectResults: [[{ id: 40, absolutePath: '/library/Elantris.epub', format: 'epub' }]] });
+describe('StorytellerRepository.findReplaceableEpubContentFile', () => {
+  it('prefers the book primary file, then sort order, among its EPUB content files', async () => {
+    const db = mockDb({ selectResults: [[{ id: 40, absolutePath: '/library/Elantris.epub' }]] });
     const repo = new StorytellerRepository(db as never);
 
-    await expect(repo.findSoleEpubContentFile(88)).resolves.toEqual({ id: 40, absolutePath: '/library/Elantris.epub' });
+    await expect(repo.findReplaceableEpubContentFile(88)).resolves.toEqual({ id: 40, absolutePath: '/library/Elantris.epub' });
 
     const builder = builderFrom(db.select);
-    expect(builder.limit).toHaveBeenCalledWith(2);
+    expect(builder.limit).toHaveBeenCalledWith(1);
     const where = renderSql(builder.where.mock.calls[0]![0]);
-    expect(where.params).toEqual([88, 'content']);
+    expect(where.params).toEqual([88, 'content', 'epub']);
+    expect(builder.orderBy.mock.calls[0]!.map((clause: unknown) => renderSql(clause).sql)).toEqual([
+      '("book_files"."id" = "books"."primary_file_id") desc nulls last',
+      '"book_files"."sort_order" asc nulls last',
+      '"book_files"."id" asc',
+    ]);
   });
 
-  it('is null for a book holding more than one content file', async () => {
-    const db = mockDb({
-      selectResults: [
-        [
-          { id: 40, absolutePath: '/library/a.epub', format: 'epub' },
-          { id: 41, absolutePath: '/library/b.epub', format: 'epub' },
-        ],
-      ],
-    });
+  it('is null for a book holding no EPUB content file', async () => {
+    const db = mockDb({ selectResults: [[]] });
     const repo = new StorytellerRepository(db as never);
 
-    await expect(repo.findSoleEpubContentFile(88)).resolves.toBeNull();
+    await expect(repo.findReplaceableEpubContentFile(88)).resolves.toBeNull();
   });
+});
 
-  it('is null for a book whose one content file is not an EPUB', async () => {
-    const db = mockDb({ selectResults: [[{ id: 40, absolutePath: '/library/a.pdf', format: 'pdf' }]] });
+describe('StorytellerRepository.findLockedMetadataFields', () => {
+  it('reads the locked fields of the book, and none when it has no metadata row', async () => {
+    const db = mockDb({ selectResults: [[{ lockedFields: ['title'] }], []] });
     const repo = new StorytellerRepository(db as never);
 
-    await expect(repo.findSoleEpubContentFile(88)).resolves.toBeNull();
+    await expect(repo.findLockedMetadataFields(88)).resolves.toEqual(['title']);
+    await expect(repo.findLockedMetadataFields(89)).resolves.toEqual([]);
   });
 });
 

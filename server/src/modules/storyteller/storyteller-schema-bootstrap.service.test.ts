@@ -14,7 +14,7 @@ function createService(): { service: StorytellerSchemaBootstrapService; repo: Re
   const repo: RepoMock = {
     findMissingTables: vi.fn().mockResolvedValue([]),
     applySchemaStatements: vi.fn().mockResolvedValue(undefined),
-    requeueInterruptedBuilds: vi.fn().mockResolvedValue({ requeued: [], failed: [] }),
+    requeueInterruptedBuilds: vi.fn().mockResolvedValue({ requeued: [], failed: [], settled: [] }),
   };
   const service = new StorytellerSchemaBootstrapService(repo as never);
   return { service, repo };
@@ -69,20 +69,20 @@ describe('StorytellerSchemaBootstrapService', () => {
 
     expect(logSpy).toHaveBeenCalledTimes(1);
     expect(logSpy.mock.calls[0]![0]).toMatch(
-      /^\[storyteller\.schema_bootstrap\] \[end\] durationMs=\d+ tablesCreated=2 interruptedBuildsRequeued=0 interruptedBuildsFailed=0 - schema bootstrap completed$/,
+      /^\[storyteller\.schema_bootstrap\] \[end\] durationMs=\d+ tablesCreated=2 interruptedBuildsRequeued=0 interruptedBuildsFailed=0 producedBuildsSettled=0 - schema bootstrap completed$/,
     );
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it('logs how many interrupted builds were re-queued and how many failed', async () => {
+  it('logs how many interrupted builds were re-queued, failed and settled', async () => {
     const { service, repo } = createService();
-    repo.requeueInterruptedBuilds.mockResolvedValue({ requeued: [{ id: 1 }, { id: 2 }], failed: [{ id: 3 }] });
+    repo.requeueInterruptedBuilds.mockResolvedValue({ requeued: [{ id: 1 }, { id: 2 }], failed: [{ id: 3 }], settled: [{ id: 27 }] });
 
     await service.onApplicationBootstrap();
 
     expect(logSpy).toHaveBeenCalledTimes(1);
     expect(logSpy.mock.calls[0]![0]).toMatch(
-      /^\[storyteller\.schema_bootstrap\] \[end\] durationMs=\d+ tablesCreated=0 interruptedBuildsRequeued=2 interruptedBuildsFailed=1 - schema bootstrap completed$/,
+      /^\[storyteller\.schema_bootstrap\] \[end\] durationMs=\d+ tablesCreated=0 interruptedBuildsRequeued=2 interruptedBuildsFailed=1 producedBuildsSettled=1 - schema bootstrap completed$/,
     );
     expect(errorSpy).not.toHaveBeenCalled();
   });
@@ -105,7 +105,7 @@ describe('StorytellerSchemaBootstrapService', () => {
 
   it('settles ready with the interrupted builds once they are re-queued, so the queue starts after them', async () => {
     const { service, repo } = createService();
-    const interrupted = { requeued: [{ id: 1 }], failed: [] };
+    const interrupted = { requeued: [{ id: 1 }], failed: [], settled: [] };
     repo.requeueInterruptedBuilds.mockResolvedValue(interrupted);
     let settled = false;
     void service.ready.then(() => {

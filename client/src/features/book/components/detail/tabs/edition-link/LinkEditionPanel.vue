@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import { computed, ref } from 'vue'
-import { Activity, Loader2, RefreshCw } from '@lucide/vue'
+import { Activity, Link2, Loader2, RefreshCw, Sparkles } from '@lucide/vue'
 import type { EditionLinkCandidate } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { isActionBlocked } from '@/features/book/lib/read-along-section'
 import type { LinkEditionPanelView, PairSyncState } from '@/features/book/composables/useLinkEditionPanel'
 import EditionPairBox from './EditionPairBox.vue'
@@ -42,9 +43,6 @@ const pairSyncState = computed<PairSyncState>(() => {
 })
 const showTicks = computed(() => props.panel.phase === 'linking' || (tracksSync.value && sync.running.value))
 const showSyncButton = computed(() => tracksSync.value && sync.showBuildButton.value)
-const syncShortLabel = computed(() =>
-  sync.isRebuild.value ? t('book.detail.editionLink.actions.rebuild') : t('book.detail.editionLink.actions.build'),
-)
 const syncActionLabel = computed(() =>
   sync.isRebuild.value ? t('book.detail.editionLink.actions.rebuildSync') : t('book.detail.editionLink.actions.buildSync'),
 )
@@ -61,13 +59,23 @@ const chipClass = computed(() => {
   }
 })
 
-// The footer stays pinned to the popover's bottom edge so the primary action never needs a scroll to reach.
-// The toggle is the link: on links the pair (or keeps it), off cancels a link in progress or unlinks.
-// Its state already says linked or not, so the chip only speaks up for a sync that needs attention,
-// except to a viewer who cannot toggle and so has only the chip to read.
-const showSyncToggle = computed(() => props.panel.canEditMetadata && props.panel.phase !== 'nomatch')
-const syncToggleOn = computed(() => props.panel.phase === 'linking' || props.panel.phase === 'linked')
-const showChip = computed(() => syncChip.value !== null || !showSyncToggle.value)
+// Linking and building are hours of work, so their switches only choose and the footer carries them out.
+// Switching sync off ends the link straight away instead, behind a confirm for an established pair.
+// The footer stays pinned to the popover's bottom edge so the action never needs a scroll to reach.
+const ACTION_LABEL_KEYS = {
+  link: 'book.detail.editionLink.cta.link',
+  linkAndGenerate: 'book.detail.editionLink.cta.linkAndGenerate',
+  generate: 'book.detail.editionLink.cta.generate',
+} as const
+
+const actionBusy = computed(() => props.panel.mutating || props.panel.alignment.mutating || props.panel.readAlongSection.sectionState.mutating)
+const actionLabel = computed(() => (props.panel.pendingAction ? t(ACTION_LABEL_KEYS[props.panel.pendingAction]) : ''))
+const actionGenerates = computed(() => props.panel.pendingAction === 'generate' || props.panel.pendingAction === 'linkAndGenerate')
+// Before a link only the upload permission decides whether the read-along can be chosen; once linked a
+// reader who may upload can build one without being able to edit the link.
+const canToggleReadAlong = computed(() =>
+  props.panel.phase === 'matched' ? props.panel.canToggleReadAlong : props.panel.readAlongSection.canGenerate,
+)
 
 const readAlongOutput = computed(() => props.panel.readAlongMember)
 const isReadAlongOutputCurrent = computed(() => props.panel.readAlongIsCurrentBook)
@@ -77,8 +85,9 @@ const isReadAlongOutputCurrent = computed(() => props.panel.readAlongIsCurrentBo
 const readAlongReady = computed(() => props.panel.readAlongSlot !== null && props.panel.readAlongSection.sectionState.status === 'ready')
 const showReadAlongSection = computed(() => props.panel.showReadAlong && !readAlongReady.value)
 
+// A build belongs to a linked pair, so a detached read-along is rebuilt only once its pair is linked again.
 const canRebuildReadAlong = computed(
-  () => readAlongReady.value && props.panel.readAlongSection.canGenerate && props.panel.readAlongSection.canRebuild,
+  () => readAlongReady.value && props.panel.link !== null && props.panel.readAlongSection.canGenerate && props.panel.readAlongSection.canRebuild,
 )
 const readAlongRebuildDisabled = computed(
   () => props.panel.readAlongSection.sectionState.mutating || isActionBlocked(props.panel.readAlongSection.sectionState.blocked),
@@ -95,6 +104,7 @@ const unlinkDescription = computed(() =>
 
 function handleUnlinkCancelled() {
   confirmingUnlink.value = false
+  props.panel.keepLink()
 }
 
 function handleReadAlongRebuildRequest() {
@@ -159,16 +169,18 @@ function handleRebuild() {
 }
 
 function handleSyncToggle(value: boolean) {
-  if (value) {
-    if (props.panel.phase === 'matched') void props.panel.startLink()
-    return
-  }
-  if (props.panel.phase === 'linking') void props.panel.cancelLinking()
+  props.panel.setSyncWanted(value)
+  if (value) return
+  if (props.panel.phase === 'linking') void props.panel.endLink()
   else if (props.panel.phase === 'linked') confirmingUnlink.value = true
 }
 
+function handleAction() {
+  void props.panel.runPendingAction()
+}
+
 async function handleUnlink() {
-  await props.panel.unlink()
+  await props.panel.endLink()
   confirmingUnlink.value = false
 }
 </script>
@@ -180,7 +192,6 @@ async function handleUnlink() {
       <h2 class="min-w-0 flex-1 truncate text-base font-semibold text-foreground">{{ t('book.detail.readingAlignment.title') }}</h2>
       <template v-if="!panel.initialLoading">
         <span
-          v-if="showChip"
           class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap"
           :class="chipClass"
           aria-live="polite"
@@ -189,24 +200,27 @@ async function handleUnlink() {
           <span v-if="showTicks" class="size-2 animate-spin rounded-full border-2 border-info/30 border-t-info" aria-hidden="true" />
           {{ syncChip ? t(syncChip.key) : t(panel.chipKey) }}
         </span>
-        <Button
-          v-if="showSyncButton"
-          variant="ghost"
-          size="sm"
-          class="h-7 shrink-0 gap-1 px-1.5 text-xs text-muted-foreground"
-          :disabled="panel.alignment.mutating"
-          :aria-label="syncActionLabel"
-          data-testid="position-sync-build"
-          @click="handleBuildSync"
-        >
-          <Loader2 v-if="panel.alignment.mutating" class="size-3.5 animate-spin" aria-hidden="true" />
-          <RefreshCw v-else class="size-3.5" aria-hidden="true" />
-          {{ syncShortLabel }}
-        </Button>
+        <Tooltip v-if="showSyncButton">
+          <TooltipTrigger as-child>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="size-7 shrink-0 text-muted-foreground"
+              :disabled="panel.alignment.mutating"
+              :aria-label="syncActionLabel"
+              data-testid="position-sync-build"
+              @click="handleBuildSync"
+            >
+              <Loader2 v-if="panel.alignment.mutating" class="size-3.5 animate-spin" aria-hidden="true" />
+              <RefreshCw v-else class="size-3.5" aria-hidden="true" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{{ syncActionLabel }}</TooltipContent>
+        </Tooltip>
         <ToggleSwitch
-          v-if="showSyncToggle"
-          :model-value="syncToggleOn"
-          :disabled="panel.mutating"
+          v-if="panel.canToggleSync"
+          :model-value="panel.syncWanted"
+          :disabled="actionBusy"
           :aria-label="t('book.detail.readingAlignment.title')"
           data-testid="position-sync-toggle"
           @update:model-value="handleSyncToggle"
@@ -268,9 +282,8 @@ async function handleUnlink() {
             :can-rebuild="panel.readAlongSection.canRebuild"
             :existing-match="panel.readAlongSection.existingMatch"
             :generate-on-link="panel.generateOnLink"
-            :can-toggle="panel.canToggleReadAlong"
+            :can-toggle="canToggleReadAlong"
             :toggle-disabled="panel.toggleDisabled"
-            :keep-copy-offered="panel.readAlongSection.keepCopyOffered"
             :target-libraries="panel.readAlongSection.targetLibraries"
             :chosen-target-library-id="panel.readAlongSection.chosenTargetLibraryId"
             :target-library-name="panel.readAlongSection.targetLibraryName"
@@ -285,6 +298,25 @@ async function handleUnlink() {
           />
         </div>
       </template>
+
+      <div
+        v-if="panel.pendingAction"
+        class="sticky -bottom-2 z-[3] -mx-2 mt-2 -mb-2 border-t border-border bg-popover p-2"
+        data-testid="link-edition-footer"
+      >
+        <Button
+          class="h-9 w-full text-sm font-semibold"
+          :disabled="actionBusy"
+          :data-action="panel.pendingAction"
+          data-testid="link-edition-cta"
+          @click="handleAction"
+        >
+          <Loader2 v-if="actionBusy" class="size-4 animate-spin" aria-hidden="true" />
+          <Sparkles v-else-if="actionGenerates" class="size-4" aria-hidden="true" />
+          <Link2 v-else class="size-4" aria-hidden="true" />
+          {{ actionLabel }}
+        </Button>
+      </div>
     </template>
 
     <ConfirmDialog

@@ -284,6 +284,17 @@ describe('useEditionLink', () => {
   })
 
   describe('linkBook', () => {
+    it("links through another book, and still re-fetches this book's own view", async () => {
+      mocks.api.mockResolvedValueOnce(response({ id: 5 }))
+      mocks.api.mockResolvedValueOnce(response({ link: null, proposed: null, counterpart: null }))
+      const { linkBook } = await load(30)
+
+      await linkBook(20, 10)
+
+      expect(mocks.api).toHaveBeenNthCalledWith(1, '/api/v1/edition-links/link/10', expect.objectContaining({ method: 'POST' }))
+      expect(mocks.api).toHaveBeenNthCalledWith(2, '/api/v1/edition-links/for-book/30')
+    })
+
     it('links the book, then refreshes link/proposed/counterpart from a single for-book re-fetch', async () => {
       const created = { id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
       mocks.api.mockResolvedValueOnce(response(created))

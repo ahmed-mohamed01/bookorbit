@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BookAudio, Loader2, RefreshCw, Sparkles, X } from '@lucide/vue'
+import { BookAudio, Info, Loader2, RefreshCw, Sparkles, X } from '@lucide/vue'
 import type { EditionLinkMember, ReadAlongBlockReason, StorytellerExistingMatch } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
@@ -54,7 +54,6 @@ const props = withDefaults(
     generateOnLink?: boolean
     canToggle?: boolean
     toggleDisabled?: boolean
-    keepCopyOffered: boolean
     targetLibraries?: { id: number; name: string }[]
     chosenTargetLibraryId?: number | null
     targetLibraryName?: string | null
@@ -122,8 +121,12 @@ const tag = computed(() => {
 
 const actionDisabled = computed(() => props.state.mutating || isActionBlocked(props.state.blocked))
 
-const showToggle = computed(() => props.mode === 'offer' && props.canToggle && sectionState.value !== 'offerExisting')
-const showGenerate = computed(() => sectionState.value === 'none' && props.canGenerate)
+// A host with its own action button offers the build as a choice, both before a link and on a linked
+// pair that has none yet; without one the section commits it with Generate.
+const offersChoice = computed(() => props.canToggle && props.canGenerate && sectionState.value === 'none')
+const showToggle = computed(() => (props.mode === 'offer' && props.canToggle && sectionState.value !== 'offerExisting') || offersChoice.value)
+const toggleOn = computed(() => props.generateOnLink && !props.toggleDisabled)
+const showGenerate = computed(() => sectionState.value === 'none' && props.canGenerate && !props.canToggle)
 const showRetry = computed(() => sectionState.value === 'failed' && props.canGenerate)
 // Once the read-along is being imported the server refuses to stop it.
 const pastCancel = computed(() => props.state.phase === 'collect' || props.state.phase === 'link')
@@ -134,14 +137,13 @@ const showRebuild = computed(() => props.mode === 'manage' && sectionState.value
 const importMatch = computed(() => (sectionState.value === 'none' && props.canGenerate && props.existingMatch?.aligned ? props.existingMatch : null))
 
 // A choice made after the build has started would change nothing, so it is only offered before one.
-const showKeepCopy = computed(
-  () => props.keepCopyOffered && (sectionState.value === 'offerOn' || (sectionState.value === 'none' && props.canGenerate)),
+const showBuildChoices = computed(
+  () => sectionState.value === 'offerOn' || (sectionState.value === 'none' && props.canGenerate && (!offersChoice.value || toggleOn.value)),
 )
 const keepCopyHint = computed(() =>
   props.state.keepRemoteCopy ? t('book.detail.editionLink.readAlong.keepCopy.hintKeep') : t('book.detail.editionLink.readAlong.keepCopy.hintRemove'),
 )
 
-const showDestination = computed(() => sectionState.value === 'offerOn' || (sectionState.value === 'none' && props.canGenerate))
 const destinationText = computed(() =>
   props.targetLibraryName
     ? t('book.detail.editionLink.readAlong.destination.willBeAdded', { library: props.targetLibraryName })
@@ -260,8 +262,8 @@ watch(sectionState, (next) => {
   <section class="mt-2 rounded-xl border border-border bg-card px-3 py-2" :data-state="sectionState" data-testid="read-along-section">
     <div class="flex items-center gap-2">
       <BookAudio class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <div class="min-w-0 flex-1">
-        <h3 class="truncate text-sm leading-5 font-semibold text-foreground">{{ t('book.detail.editionLink.readAlong.title') }}</h3>
+      <div class="flex min-w-0 flex-1 items-baseline gap-1.5">
+        <h3 class="shrink-0 text-sm leading-5 font-semibold text-foreground">{{ t('book.detail.editionLink.readAlong.title') }}</h3>
         <p class="truncate text-[11px] leading-4 text-muted-foreground">{{ t('book.detail.editionLink.readAlong.via') }}</p>
       </div>
       <div class="flex shrink-0 items-center gap-1.5">
@@ -270,7 +272,7 @@ watch(sectionState, (next) => {
         </span>
         <ToggleSwitch
           v-if="showToggle"
-          :model-value="generateOnLink"
+          :model-value="toggleOn"
           :disabled="toggleDisabled"
           :aria-label="t('book.detail.editionLink.readAlong.generateToggle')"
           data-testid="read-along-toggle"
@@ -419,10 +421,22 @@ watch(sectionState, (next) => {
 
     <p v-if="blockMessage" class="mt-1 text-xs text-muted-foreground" data-testid="read-along-blocked">{{ blockMessage }}</p>
 
-    <div v-if="showKeepCopy" class="mt-2 flex items-center gap-2.5 border-t border-border/60 pt-2" data-testid="read-along-keep-copy-row">
-      <div class="min-w-0 flex-1">
-        <p :id="keepCopyLabelId" class="text-xs text-foreground">{{ t('book.detail.editionLink.readAlong.keepCopy.label') }}</p>
-        <p class="mt-px text-[11px] text-muted-foreground" data-testid="read-along-keep-copy-hint">{{ keepCopyHint }}</p>
+    <div v-if="showBuildChoices" class="mt-2 flex items-center gap-2.5 border-t border-border/60 pt-2" data-testid="read-along-keep-copy-row">
+      <div class="flex min-w-0 flex-1 items-center gap-1">
+        <p :id="keepCopyLabelId" class="truncate text-xs text-foreground">{{ t('book.detail.editionLink.readAlong.keepCopy.label') }}</p>
+        <Tooltip>
+          <TooltipTrigger as-child>
+            <button
+              type="button"
+              class="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              :aria-label="keepCopyHint"
+              data-testid="read-along-keep-copy-info"
+            >
+              <Info class="size-3.5" aria-hidden="true" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent class="max-w-60" data-testid="read-along-keep-copy-hint">{{ keepCopyHint }}</TooltipContent>
+        </Tooltip>
       </div>
       <ToggleSwitch
         :model-value="state.keepRemoteCopy"
@@ -433,7 +447,7 @@ watch(sectionState, (next) => {
       />
     </div>
 
-    <div v-if="showDestination" class="mt-2 text-xs text-muted-foreground" data-testid="read-along-destination">
+    <div v-if="showBuildChoices" class="mt-2 text-xs text-muted-foreground" data-testid="read-along-destination">
       <p class="flex flex-wrap items-center gap-x-1.5">
         <span>{{ destinationText }}</span>
         <button

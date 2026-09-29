@@ -65,7 +65,7 @@ function createEditionLinkState() {
     searchError: ref<string | null>(null),
     loadForBook: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     searchCandidates: vi.fn<(query: string) => Promise<EditionLinkCandidate[]>>().mockResolvedValue([]),
-    linkBook: vi.fn<(id: number) => Promise<boolean>>(),
+    linkBook: vi.fn<(id: number, sourceBookId?: number) => Promise<boolean>>(),
     unlink: vi.fn<() => Promise<boolean>>(),
     resetSearch: vi.fn<() => void>(),
   }
@@ -320,14 +320,28 @@ describe('useLinkEditionPanel', () => {
       expect(panel.isEligible.value).toBe(false)
     })
 
-    it('is always linked and manageable on the read-along book page', () => {
+    it('is linked and manageable on the read-along book page', () => {
       editionLinkState.link.value = linkRecord
       editionLinkState.role.value = 'readAlong'
       alignmentState.status.value = 'building'
+      alignmentState.builtAt.value = '2026-02-02T00:00:00.000Z'
       const panel = mountPanel()
 
       expect(panel.phase.value).toBe('linked')
       expect(panel.readAlongMode.value).toBe('manage')
+    })
+
+    it('is linking on the read-along book page during the first alignment, so sync off cancels it', async () => {
+      editionLinkState.link.value = linkRecord
+      editionLinkState.role.value = 'readAlong'
+      editionLinkState.members.value = makeMembers()
+      alignmentState.status.value = 'building'
+      const panel = mountPanel()
+
+      expect(panel.phase.value).toBe('linking')
+      await panel.endLink()
+      expect(alignmentState.cancel).toHaveBeenCalledWith(10)
+      expect(editionLinkState.unlink).toHaveBeenCalledWith(10)
     })
 
     it.each([
@@ -467,10 +481,20 @@ describe('useLinkEditionPanel', () => {
     it('links without a read-along until one is toggled on', () => {
       editionLinkState.proposed.value = proposal
       const panel = mountPanel()
+      panel.setSyncWanted(true)
       expect(panel.willGenerate.value).toBe(false)
 
       panel.setGenerateOnLink(true)
       expect(panel.willGenerate.value).toBe(true)
+    })
+
+    it('holds the read-along off while the pair is not wanted', () => {
+      editionLinkState.proposed.value = proposal
+      const panel = mountPanel()
+      panel.setGenerateOnLink(true)
+
+      expect(panel.toggleDisabled.value).toBe(true)
+      expect(panel.willGenerate.value).toBe(false)
     })
 
     it('ignores the toggle once Storyteller is blocked for good', () => {
@@ -500,8 +524,150 @@ describe('useLinkEditionPanel', () => {
     it('keeps the toggle usable while the pair simply does not exist yet', () => {
       readAlongState.blocked.value = 'no_pair'
       const panel = mountPanel()
+      panel.setSyncWanted(true)
 
       expect(panel.toggleDisabled.value).toBe(false)
+    })
+  })
+
+  describe('pending action', () => {
+    it('starts with the switches matching the pair, so nothing is pending', async () => {
+      editionLinkState.proposed.value = proposal
+      const matched = mountPanel()
+      expect(matched.syncWanted.value).toBe(false)
+      expect(matched.pendingAction.value).toBeNull()
+
+      editionLinkState.link.value = linkRecord
+      alignmentState.status.value = 'ready'
+      alignmentState.builtAt.value = '2026-01-01'
+      await nextTick()
+      expect(matched.syncWanted.value).toBe(true)
+      expect(matched.pendingAction.value).toBeNull()
+    })
+
+    it('names the link, the link with a build, and runs it', async () => {
+      editionLinkState.proposed.value = proposal
+      const panel = mountPanel()
+
+      panel.setSyncWanted(true)
+      expect(panel.pendingAction.value).toBe('link')
+      panel.setGenerateOnLink(true)
+      expect(panel.pendingAction.value).toBe('linkAndGenerate')
+
+      await panel.runPendingAction()
+      await flushPromises()
+      expect(editionLinkState.linkBook).toHaveBeenCalledWith(20, 10)
+      expect(readAlongState.build).toHaveBeenCalledWith(10, {})
+    })
+
+    it('names a build on an existing pair, and nothing once sync is switched off', () => {
+      editionLinkState.link.value = linkRecord
+      alignmentState.status.value = 'ready'
+      alignmentState.builtAt.value = '2026-01-01'
+      const linked = mountPanel()
+
+      linked.setGenerateOnLink(true)
+      expect(linked.pendingAction.value).toBe('generate')
+      linked.setSyncWanted(false)
+      expect(linked.generateOnLink.value).toBe(false)
+      expect(linked.pendingAction.value).toBeNull()
+    })
+
+    it('ends a link in progress by cancelling it, and an established one by unlinking', async () => {
+      editionLinkState.link.value = linkRecord
+      alignmentState.status.value = 'building'
+      const linking = mountPanel()
+
+      await linking.endLink()
+      expect(alignmentState.cancel).toHaveBeenCalledWith(10)
+      expect(editionLinkState.unlink).toHaveBeenCalledWith(10)
+
+      editionLinkState.unlink.mockClear()
+      editionLinkState.link.value = linkRecord
+      alignmentState.status.value = 'ready'
+      alignmentState.builtAt.value = '2026-01-01'
+      await nextTick()
+      await linking.endLink()
+      expect(editionLinkState.unlink).toHaveBeenCalledWith(10)
+    })
+
+    it('offers no build on a pair whose read-along is already building', () => {
+      editionLinkState.link.value = linkRecord
+      alignmentState.status.value = 'ready'
+      alignmentState.builtAt.value = '2026-01-01'
+      readAlongState.status.value = 'building'
+      const panel = mountPanel()
+
+      panel.setGenerateOnLink(true)
+
+      expect(panel.pendingAction.value).toBeNull()
+    })
+
+    it('keeps a read-along chosen during the first alignment once it finishes', async () => {
+      editionLinkState.proposed.value = proposal
+      const panel = mountPanel()
+      panel.setSyncWanted(true)
+      await panel.startLink()
+      alignmentState.status.value = 'building'
+      await nextTick()
+      expect(panel.phase.value).toBe('linking')
+      panel.setGenerateOnLink(true)
+      expect(panel.pendingAction.value).toBe('generate')
+
+      alignmentState.status.value = 'ready'
+      alignmentState.builtAt.value = '2026-02-02T00:00:00.000Z'
+      await nextTick()
+
+      expect(panel.phase.value).toBe('linked')
+      expect(panel.generateOnLink.value).toBe(true)
+      expect(panel.pendingAction.value).toBe('generate')
+    })
+
+    it('gives the read-along choice back when the unlink is not confirmed', () => {
+      editionLinkState.link.value = linkRecord
+      alignmentState.status.value = 'ready'
+      alignmentState.builtAt.value = '2026-01-01'
+      const panel = mountPanel()
+      panel.setGenerateOnLink(true)
+      panel.setSyncWanted(false)
+      expect(panel.generateOnLink.value).toBe(false)
+
+      panel.keepLink()
+
+      expect(panel.syncWanted.value).toBe(true)
+      expect(panel.generateOnLink.value).toBe(true)
+      expect(panel.pendingAction.value).toBe('generate')
+    })
+
+    it('starts the choices over when the pair is unlinked', async () => {
+      editionLinkState.link.value = linkRecord
+      editionLinkState.members.value = makeMembers()
+      alignmentState.status.value = 'ready'
+      alignmentState.builtAt.value = '2026-01-01'
+      const panel = mountPanel()
+      panel.setGenerateOnLink(true)
+
+      await panel.unlink()
+      editionLinkState.proposed.value = proposal
+      await nextTick()
+
+      expect(panel.phase.value).toBe('matched')
+      expect(panel.syncWanted.value).toBe(false)
+      expect(panel.generateOnLink.value).toBe(false)
+    })
+
+    it('sets the switch back when an unlink is refused', async () => {
+      editionLinkState.link.value = linkRecord
+      alignmentState.status.value = 'ready'
+      alignmentState.builtAt.value = '2026-01-01'
+      editionLinkState.unlink.mockResolvedValue(false)
+      const panel = mountPanel()
+      panel.setSyncWanted(false)
+
+      await panel.endLink()
+
+      expect(panel.syncWanted.value).toBe(true)
+      expect(panel.pendingAction.value).toBeNull()
     })
   })
 
@@ -518,7 +684,7 @@ describe('useLinkEditionPanel', () => {
       await flushPromises()
 
       expect(calls).toEqual(['link', 'alignment', 'readAlong'])
-      expect(editionLinkState.linkBook).toHaveBeenCalledWith(20)
+      expect(editionLinkState.linkBook).toHaveBeenCalledWith(20, 10)
       expect(alignmentState.build).toHaveBeenCalledWith(10)
       expect(readAlongState.build).toHaveBeenCalledWith(10, {})
       expect(toastMocks.success).toHaveBeenCalledWith('Books linked.')
@@ -558,7 +724,7 @@ describe('useLinkEditionPanel', () => {
 
       await panel.startLink()
 
-      expect(editionLinkState.linkBook).toHaveBeenCalledWith(21)
+      expect(editionLinkState.linkBook).toHaveBeenCalledWith(21, 10)
     })
 
     it('never builds a read-along without the upload permission', async () => {
@@ -582,6 +748,27 @@ describe('useLinkEditionPanel', () => {
       expect(alignmentState.build).not.toHaveBeenCalled()
       expect(readAlongState.build).not.toHaveBeenCalled()
       expect(toastMocks.error).toHaveBeenCalledWith('Failed to link book.')
+    })
+
+    it('acts on the pair a read-along page linked, even when the reload no longer names it', async () => {
+      editionLinkState.proposed.value = null
+      editionLinkState.role.value = 'readAlong'
+      editionLinkState.members.value = makeMembers()
+      editionLinkState.linkBook.mockImplementation(async () => {
+        editionLinkState.link.value = null
+        editionLinkState.role.value = null
+        editionLinkState.members.value = null
+        editionLinkState.readAlongOutput.value = true
+        return true
+      })
+      const panel = mountPanel({ ...makeBook(), id: 30 } as BookDetail)
+
+      await panel.startLink()
+
+      expect(editionLinkState.linkBook).toHaveBeenCalledWith(20, 10)
+      expect(alignmentState.build).toHaveBeenCalledWith(10)
+      expect(readAlongState.fetchStatus).toHaveBeenLastCalledWith(10)
+      expect(readAlongState.fetchExisting).toHaveBeenCalledWith(10)
     })
 
     it('does nothing without a selected candidate', async () => {
@@ -732,10 +919,9 @@ describe('useLinkEditionPanel', () => {
 
       await panel.cancelLinking()
 
-      // The last read asks about the restored counterpart, which may already have a read-along.
-      expect(calls).toEqual(['unlink', 'readAlongReset', 'alignmentStatus', 'readAlongStatus', 'readAlongStatus'])
+      expect(calls.slice(0, 4)).toEqual(['unlink', 'readAlongReset', 'alignmentStatus', 'readAlongStatus'])
       expect(alignmentState.fetchStatus).toHaveBeenCalledWith(10)
-      expect(readAlongState.fetchStatus).toHaveBeenCalledWith(10)
+      expect(readAlongState.fetchStatus).toHaveBeenLastCalledWith(10, 20)
     })
 
     it('leaves the read-along alone when none is building', async () => {
@@ -799,6 +985,52 @@ describe('useLinkEditionPanel', () => {
     })
   })
 
+  // A rebuild keeps the previous read-along on its build row, so the status names a book while the new
+  // one is still running or after it failed.
+  describe('a build row naming the previous read-along', () => {
+    it.each(['queued', 'building', 'failed'] as ReadAlongStatus[])('never reads a %s build as the pair having one', async (status) => {
+      editionLinkState.link.value = linkRecord
+      editionLinkState.members.value = makeMembers()
+      alignmentState.status.value = 'ready'
+      alignmentState.builtAt.value = '2026-01-01'
+      const panel = mountPanel()
+
+      readAlongState.outputBook.value = { id: 30, title: 'Dune (read-along)' }
+      readAlongState.status.value = status
+      await flushPromises()
+
+      expect(panel.readAlongMember.value).toBeNull()
+      expect(panel.readAlongSlot.value).toBeNull()
+      expect(editionLinkState.loadForBook).not.toHaveBeenCalled()
+    })
+
+    it.each(['building', 'failed'] as ReadAlongStatus[])('keeps the linked read-along as the third stop while a rebuild is %s', (status) => {
+      editionLinkState.link.value = { ...linkRecord, readAlongBookId: 30 }
+      editionLinkState.members.value = {
+        ...makeMembers(),
+        readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
+      }
+      alignmentState.status.value = 'ready'
+      alignmentState.builtAt.value = '2026-01-01'
+      readAlongState.outputBook.value = { id: 30, title: 'Dune (read-along)' }
+      readAlongState.status.value = status
+      const panel = mountPanel()
+
+      expect(panel.readAlongSlot.value).toMatchObject({ bookId: 30, readAlong: true })
+    })
+
+    it('still offers a build before a link when the named read-along only belongs to a failed build', () => {
+      editionLinkState.proposed.value = proposal
+      readAlongState.outputBook.value = { id: 30, title: 'Dune (read-along)' }
+      readAlongState.status.value = 'failed'
+      const panel = mountPanel()
+      panel.setSyncWanted(true)
+      panel.setGenerateOnLink(true)
+
+      expect(panel.pendingAction.value).toBe('linkAndGenerate')
+    })
+  })
+
   describe('unlink', () => {
     it('forgets the unlinked pair before reading the statuses again', async () => {
       editionLinkState.link.value = linkRecord
@@ -807,8 +1039,30 @@ describe('useLinkEditionPanel', () => {
 
       await panel.unlink()
 
-      expect(calls).toEqual(['unlink', 'readAlongReset', 'alignmentStatus', 'readAlongStatus'])
+      expect(calls.slice(0, 4)).toEqual(['unlink', 'readAlongReset', 'alignmentStatus', 'readAlongStatus'])
       expect(toastMocks.success).toHaveBeenCalledWith('Books unlinked.')
+    })
+
+    // The real unlink reloads the for-book state, whose proposal is the pair just unlinked. The status
+    // read after it must ask about that pair, or a surviving read-along is offered as a new build.
+    it('reads the status of the pair it restores, so a surviving read-along is not offered again', async () => {
+      editionLinkState.link.value = linkRecord
+      editionLinkState.members.value = makeMembers()
+      editionLinkState.unlink.mockImplementation(async () => {
+        editionLinkState.link.value = null
+        editionLinkState.role.value = null
+        editionLinkState.members.value = null
+        editionLinkState.proposed.value = proposal
+        return true
+      })
+      const panel = mountPanel()
+
+      await panel.unlink()
+      await flushPromises()
+
+      expect(panel.selected.value?.bookId).toBe(20)
+      expect(readAlongState.fetchStatus).toHaveBeenLastCalledWith(10, 20)
+      expect(readAlongState.fetchStatus).not.toHaveBeenCalledWith(10)
     })
 
     it('keeps everything it read when the unlink fails', async () => {

@@ -54,10 +54,6 @@ export function useReadAlongSection(bookId: () => number) {
     return targetLibraries.value.find((library) => library.id === chosenTargetLibraryId.value)?.name ?? null
   })
 
-  // The server answers reclaimability for the configured destination only. Picking a different library
-  // makes that answer someone else's, so the choice is offered again rather than hidden.
-  const keepCopyOffered = computed(() => readAlong.remoteCopyReclaimable.value || chosenTargetLibraryId.value !== null)
-
   function setTargetLibrary(id: number | null): void {
     chosenTargetLibraryId.value = id
   }
@@ -121,7 +117,6 @@ export function useReadAlongSection(bookId: () => number) {
     targetLibraries,
     chosenTargetLibraryId,
     targetLibraryName,
-    keepCopyOffered,
     setTargetLibrary,
     loadTargetLibraries,
     resetChoices,

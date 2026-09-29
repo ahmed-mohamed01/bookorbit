@@ -58,6 +58,14 @@ describe('EditionLinkController', () => {
     await expect(controller.getForBook(user, 10)).resolves.not.toHaveProperty('readAlongOutput');
   });
 
+  it('carries a detached read-along matched to its pair without a link', async () => {
+    const member = (id: number) => ({ id, title: null, authorName: null, coverVersion: null, progress: null, narrationPercentage: null });
+    const members = { text: member(10), audio: member(20), readAlong: member(30) };
+    service.getForBook.mockResolvedValueOnce({ link: null, proposed: null, counterpart: null, role: 'readAlong', members });
+
+    await expect(controller.getForBook(user, 30)).resolves.toEqual({ link: null, proposed: null, counterpart: null, role: 'readAlong', members });
+  });
+
   it('delegates all HTTP operations to the service', async () => {
     const link = { id: 1 };
     service.getForBook.mockResolvedValue({ link: null, proposed: null, counterpart: null, role: null, members: null });

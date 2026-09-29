@@ -1,7 +1,7 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SelfWriteRegistry } from '../../common/services/self-write-registry.service';
@@ -23,7 +23,9 @@ let stagingDir = '';
 let libraryDir = '';
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'storyteller-import-'));
+  // The service resolves the dock to its real path, as the dock watcher does, so the fixture starts
+  // from one too: macOS keeps the temp dir behind a /var -> /private/var symlink.
+  root = await realpath(await mkdtemp(join(tmpdir(), 'storyteller-import-')));
   dockDir = join(root, 'dock');
   stagingDir = join(root, 'staging');
   libraryDir = join(root, 'library');
@@ -38,7 +40,7 @@ afterEach(async () => {
 async function setup() {
   const repo = {
     findReadAlongMetadata: vi.fn().mockResolvedValue(METADATA),
-    findSoleEpubContentFile: vi.fn().mockResolvedValue(null),
+    findReplaceableEpubContentFile: vi.fn().mockResolvedValue(null),
     recordReplacedFile: vi.fn().mockResolvedValue(undefined),
   };
   const dockRows: Array<Record<string, unknown>> = [];
@@ -107,10 +109,11 @@ describe('StorytellerReadAlongImportService', () => {
     await expect(service.importReadAlong(request(session))).resolves.toEqual({ outputBookId: 77, replaced: false });
 
     const dockPath = join(dockDir, 'storyteller-read-along-3-story-uu.epub');
-    expect(session.downloadReadaloud).toHaveBeenCalledWith('story-uuid-123', dockPath);
+    expect(session.downloadReadaloud).toHaveBeenCalledWith('story-uuid-123', join(dockDir, '.storyteller-read-along-3-story-uu.epub.part'));
     expect(dockRepo.create).toHaveBeenCalledWith(
       expect.objectContaining({
         absolutePath: dockPath,
+        fileSize: 'downloaded'.length,
         status: 'ready',
         selectedMetadata: METADATA,
         targetLibraryId: 9,
@@ -119,10 +122,68 @@ describe('StorytellerReadAlongImportService', () => {
         autoFinalizeSuppressed: true,
       }),
     );
-    // The row is claimed before the file lands, so the watcher can never ingest it as its own.
-    expect(dockRepo.create.mock.invocationCallOrder[0]).toBeLessThan(session.downloadReadaloud.mock.invocationCallOrder[0]);
     expect(dockFinalize.finalizeManagedFile).toHaveBeenCalledWith(500, { libraryId: 9, folderId: 30 });
     expect(await readFile(filedPaths[0]!, 'utf8')).toBe('downloaded');
+    expect(await exists(join(dockDir, '.storyteller-read-along-3-story-uu.epub.part'))).toBe(false);
+  });
+
+  // A download runs for up to two hours: a row listed that long could be filed or discarded from the
+  // dock by hand, which breaks the build and can let Storyteller's metadata in.
+  it('lists nothing in the dock while the read-along downloads, and claims the row before it takes its real name', async () => {
+    const { service, session, dockRepo } = await setup();
+    const dockPath = join(dockDir, 'storyteller-read-along-3-story-uu.epub');
+    let rowsDuringDownload = -1;
+    let realNameDuringDownload = true;
+    session.downloadReadaloud.mockImplementationOnce(async (_uuid: string, destination: string) => {
+      rowsDuringDownload = dockRepo.create.mock.calls.length;
+      realNameDuringDownload = await exists(dockPath);
+      await writeFile(destination, 'downloaded');
+    });
+    let realNameAtClaim = true;
+    const claim = dockRepo.create.getMockImplementation()!;
+    dockRepo.create.mockImplementationOnce(async (row: Record<string, unknown>) => {
+      realNameAtClaim = await exists(dockPath);
+      return claim(row);
+    });
+
+    await service.importReadAlong(request(session));
+
+    expect(rowsDuringDownload).toBe(0);
+    expect(realNameDuringDownload).toBe(false);
+    // The watcher never sees the real name before the row exists, so it cannot ingest it as its own.
+    expect(realNameAtClaim).toBe(false);
+  });
+
+  it('clears its partial download and claims no row when the download breaks', async () => {
+    const { service, session, dockRepo } = await setup();
+    session.downloadReadaloud.mockImplementationOnce(async (_uuid: string, destination: string) => {
+      await writeFile(destination, 'half');
+      throw new Error('connection reset');
+    });
+
+    await expect(service.importReadAlong(request(session))).rejects.toThrow('connection reset');
+
+    expect(dockRepo.create).not.toHaveBeenCalled();
+    expect(await exists(join(dockDir, '.storyteller-read-along-3-story-uu.epub.part'))).toBe(false);
+  });
+
+  it('logs how long a failed staged cleanup took', async () => {
+    const { service, session } = await setup();
+    const warnings: string[] = [];
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation((message: unknown) => {
+      warnings.push(String(message));
+    });
+    // A directory where a file is expected: unlink refuses it with something other than ENOENT.
+    const staged = join(stagingDir, 'staged.epub');
+    await mkdir(staged);
+
+    await (service as unknown as { removeStagedBestEffort(r: StorytellerReadAlongImport): Promise<void> }).removeStagedBestEffort(
+      request(session, { stagedPath: staged, consumeStaged: true }),
+    );
+
+    expect(
+      warnings.some((line) => /^\[storyteller\.read_along\.staged_cleanup\] \[fail\] buildId=3 path="[^"]+" durationMs=\d+ errorClass=/.test(line)),
+    ).toBe(true);
   });
 
   it('names a read-along whose text edition has no title rather than filing it untitled', async () => {
@@ -206,7 +267,7 @@ describe('StorytellerReadAlongImportService', () => {
       const { service, session, repo, dockRepo, selfWrites } = await setup();
       const bookFile = join(libraryDir, 'Elantris.epub');
       await writeFile(bookFile, 'old alignment');
-      repo.findSoleEpubContentFile.mockResolvedValue({ id: 40, absolutePath: bookFile });
+      repo.findReplaceableEpubContentFile.mockResolvedValue({ id: 40, absolutePath: bookFile });
       let suppressedWhileRecording = false;
       repo.recordReplacedFile.mockImplementation(() => {
         suppressedWhileRecording = selfWrites.isSuppressed(bookFile);
@@ -232,7 +293,7 @@ describe('StorytellerReadAlongImportService', () => {
       await writeFile(bookFile, 'old alignment');
       const staged = join(stagingDir, '- 04-16.epub');
       await writeFile(staged, 'new alignment');
-      repo.findSoleEpubContentFile.mockResolvedValue({ id: 40, absolutePath: bookFile });
+      repo.findReplaceableEpubContentFile.mockResolvedValue({ id: 40, absolutePath: bookFile });
 
       await service.importReadAlong(request(session, { replaceBookId: 88, stagedPath: staged, consumeStaged: true }));
 
@@ -241,9 +302,9 @@ describe('StorytellerReadAlongImportService', () => {
       expect(session.downloadReadaloud).not.toHaveBeenCalled();
     });
 
-    it('files a new book instead when the previous output is not a single EPUB', async () => {
+    it('files a new book instead only when the previous output holds no EPUB', async () => {
       const { service, session, repo, dockFinalize } = await setup();
-      repo.findSoleEpubContentFile.mockResolvedValue(null);
+      repo.findReplaceableEpubContentFile.mockResolvedValue(null);
 
       await expect(service.importReadAlong(request(session, { replaceBookId: 88 }))).resolves.toEqual({ outputBookId: 77, replaced: false });
 
@@ -255,7 +316,7 @@ describe('StorytellerReadAlongImportService', () => {
       const { service, session, repo } = await setup();
       const bookFile = join(libraryDir, 'Elantris.epub');
       await writeFile(bookFile, 'old alignment');
-      repo.findSoleEpubContentFile.mockResolvedValue({ id: 40, absolutePath: bookFile });
+      repo.findReplaceableEpubContentFile.mockResolvedValue({ id: 40, absolutePath: bookFile });
       session.downloadReadaloud.mockRejectedValueOnce(new Error('connection reset'));
 
       await expect(service.importReadAlong(request(session, { replaceBookId: 88 }))).rejects.toThrow('connection reset');

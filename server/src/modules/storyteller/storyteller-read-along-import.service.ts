@@ -96,32 +96,38 @@ export class StorytellerReadAlongImportService implements OnApplicationBootstrap
   }
 
   /**
-   * The dock row is claimed before the file lands, as request imports claim theirs: a watcher that
-   * saw the file first would ingest it with no owner and read Storyteller's metadata out of it.
-   * The name carries the build and the Storyteller book, so a retry finds its own leftovers there.
+   * The download lands under a hidden `.part` name the dock watcher and rescan never ingest, so for
+   * its whole length the dock lists nothing a user could file or discard. Only then is the row
+   * claimed, before the file takes its real name, as request imports claim theirs: a watcher that saw
+   * the file first would ingest it with no owner and read Storyteller's metadata out of it. The row
+   * is `ready` so the dock never extracts or fetches metadata for it, and it is finalized at once.
+   * The names carry the build and the Storyteller book, so a retry finds its own leftovers there.
    */
   private async fileThroughDock(request: StorytellerReadAlongImport): Promise<number> {
     const metadata = await this.readAlongMetadata(request);
     const key = storytellerSafeFilepathSegment(request.storytellerBookUuid).slice(0, REMOTE_KEY_CHARS) || 'unknown';
     const fileName = `storyteller-read-along-${request.buildId}-${key}.epub`;
     const dockPath = join(this.bookDockPath, fileName);
+    const partialPath = join(this.bookDockPath, `.${fileName}.part`);
     await this.discardDockEntry(dockPath);
+    await rm(partialPath, { force: true });
 
-    const row = await this.dockRepo.create({
-      fileName,
-      absolutePath: dockPath,
-      format: 'epub',
-      // Ready from the start, so the dock never extracts or fetches metadata for it.
-      status: 'ready',
-      selectedMetadata: metadata,
-      targetLibraryId: request.targetLibraryId,
-      targetFolderId: request.targetFolderId,
-      uploadedBy: request.userId,
-      autoFinalizeSuppressed: true,
-    });
     try {
-      await this.placeFile(request, dockPath);
-      await this.dockRepo.update(row.id, { fileSize: (await stat(dockPath)).size });
+      await this.placeFile(request, partialPath);
+      const fileSize = (await stat(partialPath)).size;
+      const row = await this.dockRepo.create({
+        fileName,
+        absolutePath: dockPath,
+        fileSize,
+        format: 'epub',
+        status: 'ready',
+        selectedMetadata: metadata,
+        targetLibraryId: request.targetLibraryId,
+        targetFolderId: request.targetFolderId,
+        uploadedBy: request.userId,
+        autoFinalizeSuppressed: true,
+      });
+      await rename(partialPath, dockPath);
       const result = await this.dockFinalize.finalizeManagedFile(row.id, { libraryId: request.targetLibraryId, folderId: request.targetFolderId });
       if (!result.success || result.bookId === undefined) {
         const reason = result.message ?? 'the Book Dock could not file it';
@@ -131,6 +137,7 @@ export class StorytellerReadAlongImportService implements OnApplicationBootstrap
       return result.bookId;
     } catch (error) {
       await this.discardDockEntry(dockPath);
+      await rm(partialPath, { force: true }).catch(() => undefined);
       throw error;
     }
   }
@@ -150,10 +157,11 @@ export class StorytellerReadAlongImportService implements OnApplicationBootstrap
    * Written next to the file and renamed over it, so a reader never opens half a book, while the
    * scanner is told the path is ours: the book row is brought up to date before the suppression
    * lifts, which is what keeps the scan from reading Storyteller's metadata back into the book.
-   * False when the previous output is not a single EPUB, which the caller files as a new book.
+   * A book holding several files has its primary EPUB replaced and the rest left alone: filing a
+   * second book instead would land on the same library path. False only when it holds no EPUB.
    */
   private async replaceInPlace(request: StorytellerReadAlongImport, bookId: number): Promise<boolean> {
-    const file = await this.repo.findSoleEpubContentFile(bookId);
+    const file = await this.repo.findReplaceableEpubContentFile(bookId);
     if (!file) return false;
     const temporaryPath = join(dirname(file.absolutePath), `.storyteller-read-along-${request.buildId}.tmp`);
     await rm(temporaryPath, { force: true });
@@ -205,13 +213,14 @@ export class StorytellerReadAlongImportService implements OnApplicationBootstrap
   /** Only once the read-along is filed: until then the staged file is the one copy a retry can use. */
   private async removeStagedBestEffort(request: StorytellerReadAlongImport): Promise<void> {
     if (request.stagedPath === null || !request.consumeStaged) return;
+    const startedAt = Date.now();
     try {
       await unlink(request.stagedPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
       const { errorClass, message } = describeError(error);
       this.logger.warn(
-        `[${STAGED_CLEANUP_EVENT}] [fail] buildId=${request.buildId} path="${sanitizeLogValue(request.stagedPath)}" errorClass=${errorClass} error="${sanitizeLogValue(message)}" - staged read-along could not be removed`,
+        `[${STAGED_CLEANUP_EVENT}] [fail] buildId=${request.buildId} path="${sanitizeLogValue(request.stagedPath)}" durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - staged read-along could not be removed`,
       );
     }
   }

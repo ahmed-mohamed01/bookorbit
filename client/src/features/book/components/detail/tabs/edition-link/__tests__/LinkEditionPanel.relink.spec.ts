@@ -71,7 +71,7 @@ const editionLink = {
   searchError: ref<string | null>(null),
   loadForBook: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   searchCandidates: vi.fn<() => Promise<EditionLinkCandidate[]>>().mockResolvedValue([]),
-  linkBook: vi.fn<(id: number) => Promise<boolean>>(),
+  linkBook: vi.fn<(id: number, sourceBookId?: number) => Promise<boolean>>(),
   unlink: vi.fn<() => Promise<boolean>>(),
   resetSearch: vi.fn<() => void>(),
 }
@@ -132,7 +132,9 @@ function mountPanel() {
       return () => h(LinkEditionPanel, { panel: reactive(state) })
     },
   })
-  const wrapper = mount(Host, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, ConfirmDialog: { template: '<div />' } } } })
+  const wrapper = mount(Host, {
+    global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, ConfirmDialog: { template: '<div />' } } },
+  })
   return { wrapper, state }
 }
 
@@ -166,11 +168,12 @@ describe('LinkEditionPanel relinking', () => {
     wrapper.findAllComponents(ConfirmDialog)[0].vm.$emit('confirm')
     await flushPromises()
     await wrapper.get('[data-testid="position-sync-toggle"]').trigger('click')
+    await wrapper.get('[data-testid="link-edition-cta"]').trigger('click')
     await flushPromises()
 
     const section = wrapper.get('[data-testid="read-along-section"]')
     expect(section.attributes('data-state')).toBe('none')
     expect(wrapper.get('[data-testid="read-along-body"]').text()).toBe('Not generated yet.')
-    expect(wrapper.get('[data-testid="read-along-generate"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('[data-testid="read-along-toggle"]').attributes('disabled')).toBeUndefined()
   })
 })

@@ -18,9 +18,8 @@ serves every BookOrbit user. Who can generate a read-along is controlled entirel
 permissions, not by anything in Storyteller:
 
 - Generating a read-along requires the `LibraryUpload` permission on the source books and library.
-  Replacing an existing one also requires `LibraryDeleteBooks`, and BookOrbit asks for confirmation
-  before it deletes the read-along being replaced
-  access to see the read-along output once it lands.
+  Rebuilding an existing one also requires `LibraryDeleteBooks` and access to the read-along being
+  rebuilt.
 - Configuring the connection (server URL, credentials, path mappings, transport, target library)
   requires `ManageAppSettings`.
 - Storyteller's own per-user accounts and reading state are not used by BookOrbit at all; the service
@@ -64,25 +63,28 @@ later.
 
 To make the shared-paths transport available, mount the same storage into both containers:
 
-- Mount BookOrbit's existing library folders into the Storyteller container **read-only**. Storyteller
-  only needs to read these to align a pair; it should never be able to modify a source library.
-- Mount the folder for BookOrbit's read-along output library into the Storyteller container
-  **read-write**. This is where Storyteller writes the finished EPUB when it imports a pair by
-  reference.
+- Mount BookOrbit's library folders into the Storyteller container **read-only**. Storyteller only
+  needs to read the sources to align a pair, and it writes metadata tags into the files it imports on
+  its own (BookOrbit never asks it to), so a writable mount lets it modify a user's source library.
+- Give Storyteller one **staging folder** for its output, mounted **read-write**, and make it visible
+  to BookOrbit as well. It must sit **outside every BookOrbit library folder**: Storyteller names the
+  finished EPUB after the audio tags and writes those tags over the ebook's title and authors, so a
+  library scan there would index every read-along with the wrong metadata. The build and the "Test
+  connection" check both refuse a staging folder inside any library folder, compared by real path,
+  so a symlink or a second spelling of a library folder does not get past it.
 - In Storyteller's own settings, set its read-aloud location type to **`CUSTOM_FOLDER`** and point it
-  at that same read-along output folder (from Storyteller's side of the mount). Storyteller writes
-  every reference-imported book's read-along output there, flat, named after the book's sanitized
-  title - so this folder is not shared with any other Storyteller output.
+  at that staging folder (from Storyteller's side of the mount). The setting is global in
+  Storyteller, so every reference-imported book on that server writes its read-along there.
 - In BookOrbit's Storyteller settings, add a **path mapping** for every mount point that differs
   between the two containers: a BookOrbit-side prefix and the corresponding Storyteller-side prefix
-  for the same storage. BookOrbit uses these mappings in both directions - to translate a source
-  file's BookOrbit path into what Storyteller should read, and to translate Storyteller's read-aloud
-  output path back into where BookOrbit should expect to find the finished file. "Test connection"
-  reports whether the current mappings and Storyteller's read-aloud location actually line up, and
-  explains what's missing when they don't.
+  for the same storage, covering the source libraries and the staging folder. BookOrbit uses these
+  mappings in both directions: to translate a source file's BookOrbit path into what Storyteller
+  should read, and to translate the read-along path Storyteller reports back into the staging file
+  BookOrbit reads. "Test connection" reports whether the mappings and Storyteller's read-aloud
+  location line up, and explains what is missing when they do not.
 
 If the mounts or the `CUSTOM_FOLDER` setting are not in place, BookOrbit falls back to (or can be
-pinned to) API transfer, which needs no shared storage at all - only network access from BookOrbit to
+pinned to) API transfer, which needs no shared storage at all, only network access from BookOrbit to
 the Storyteller server.
 
 ## A local Storyteller for development
@@ -104,44 +106,58 @@ services:
       - storyteller_data:/data
       - ${EBOOK_LIBRARY_PATH:?}:/libraries/ebooks:ro
       - ${AUDIO_LIBRARY_PATH:?}:/libraries/audiobooks:ro
-      - ${READALONG_LIBRARY_PATH:?}:/libraries/readalongs:rw
+      - ${STORYTELLER_OUTPUT_PATH:?}:/libraries/output:rw
 
 volumes:
   storyteller_data:
 ```
 
-Source libraries are mounted read-only because Storyteller writes metadata edits back into the files
-it imports; the read-along folder is read-write because that is where it writes the finished EPUB.
-Create the first account through the web interface, set its read-aloud location to `CUSTOM_FOLDER`
-pointing at `/libraries/readalongs`, and then add one BookOrbit path mapping per library, each local
-folder to its `/libraries/...` mount point. The first alignment downloads a transcription model, so
-it is much slower than later ones.
+`STORYTELLER_OUTPUT_PATH` is a host folder that is not inside any BookOrbit library. Create the first
+account through the web interface, set its read-aloud location to `CUSTOM_FOLDER` pointing at
+`/libraries/output`, and then add one BookOrbit path mapping per mount: each library folder to its
+`/libraries/...` mount point, and the output folder to `/libraries/output`. The first alignment
+downloads a transcription model, so it is much slower than later ones.
 
-## Read-along library organization mode
+## Where the finished read-along goes
 
-Either organization mode works, as long as the read-along lands as its own book rather than joining
-one that already owns its folder. The rule the build and the "Test connection" check both apply:
+BookOrbit holds the true copy of every read-along; Storyteller's output folder is only where the file
+waits to be collected.
 
-> Shared paths are usable when the read-along location resolves to the target library folder itself,
-> or the library is `book_per_file`.
-
-Storyteller's `CUSTOM_FOLDER` output is flat - every book lands as a single EPUB directly in that
-folder, named after its sanitized title, with no per-book subfolder. The scanner gives every file at
-a library folder's root its own book whatever the organization mode, so a flat `CUSTOM_FOLDER`
-pointed at the library folder is correct in both. One directory deeper is where it breaks: a
-`book_per_folder` scan folds a whole subfolder into a single book, so every read-along written there
-would be absorbed into one book instead of becoming its own.
-
-When the location is nested and the library is not `book_per_file`, the build falls back to
-api-transfer (which writes to the folder root itself and is unaffected) and the connection test says
-so. "Test connection" also flags a target library that does not allow the EPUB format.
+- **Filed through the Book Dock.** A new read-along is placed in the Book Dock under a row this build
+  owns and filed straight away into the read-along library and folder chosen in the settings (or on
+  the request), named with that library's naming pattern like any other docked book. Its metadata is
+  the linked ebook's (title, subtitle, authors, series, description, publisher, dates, language,
+  ISBNs, genres) plus the linked audiobook's narrators; nothing is read from the file Storyteller
+  wrote. The read-along library is a plain filing destination, in either organization mode. The
+  download is written under a hidden temporary name the dock never lists, and the dock row exists
+  only for the moment it takes to file it.
+- **Where the file comes from.** When Storyteller reports its read-along inside the configured
+  staging folder and the file is there, BookOrbit takes it from disk. Otherwise (an uploaded book, a
+  path outside the staging folder, or a path that resolves into a library folder) it downloads the
+  read-along from Storyteller's API.
+- **Rebuilds replace in place.** A rebuild of a pair that already has a read-along swaps the new file
+  under the existing book, so it keeps its id, reading progress, shelves and link, and writes the
+  linked editions' metadata onto it again (fields you locked on the read-along are left alone; file
+  write and rename follow the library's own settings). This holds after the read-along was detached
+  from the link too: its build still records it as the pair's output, and the rebuild attaches it
+  again. A read-along book holding several EPUB files has its primary EPUB replaced.
+- **Cleanup.** With "delete Storyteller copy after import" on (instance setting, or per request), the
+  staged file is hard-linked into BookOrbit (copied when the two folders are on different file
+  systems) and removed from the staging folder once the read-along is filed, and Storyteller's
+  processing cache for the book is dropped. Storyteller deletes the whole book only when it owns
+  every source file, which is only the case for an upload; a reference-imported book is never deleted,
+  because deleting it would remove the source files it points at. With cleanup off, the staged file is
+  copied and left where it is.
 
 ## One build at a time
 
-A BookOrbit instance runs one read-along build at a time; further requests answer `busy` rather than
-queueing. Alignment is a long job - `STORYTELLER_WAIT_CEILING_MINUTES` defaults to 12 hours - so on a
-multi-user instance one long build can hold the slot for a long time. Storyteller queues its own jobs
-independently; the cap is BookOrbit's, to bound how much transfer and scanning it drives at once.
+A BookOrbit instance runs one read-along build at a time; further requests wait in a queue, oldest
+first, and each shows its place in line. Alignment is a long job (`STORYTELLER_WAIT_CEILING_MINUTES`
+defaults to 12 hours), so on a multi-user instance one long build can hold the slot for a long time.
+Storyteller queues its own jobs independently; the cap is BookOrbit's, to bound how much transfer and
+filing it drives at once. A restart re-queues the builds it interrupted: one Storyteller was already
+working on resumes that same Storyteller book ahead of the queue, and one whose read-along was
+already filed is marked ready and attached to its link on the next read.
 
 ## Environment variables
 
@@ -176,24 +192,8 @@ defaults):
   reference-imported book on that server, not only BookOrbit's. Books that were uploaded keep their
   read-along inside Storyteller's own assets whatever that setting says, which is why the build decides
   how to collect from the path Storyteller reports rather than from the transport it registered with.
-- **Title collisions are detected, not prevented.** `CUSTOM_FOLDER` names files after the sanitized
-  title, flat, and BookOrbit does not choose that name. Two books whose titles sanitize alike resolve
-  to one path, so Storyteller overwrites whichever read-along is already there. A build predicts the
-  path before registering and, when a book already owns it, either refuses (pinned `shared-paths`) or
-  downgrades to api-transfer, whose filename carries the build id and the Storyteller uuid. The build
-  that hit the collision is then correct, and the overwrite is logged with both book ids.
-  The prediction is best effort, and this is the honest limit of the current design: BookOrbit predicts
-  from its own stored title while Storyteller derives the name from the source EPUB, so the two can
-  differ. A missed prediction means the overwrite happens with only the after-the-fact warning.
-  The direction that removes the hazard rather than detecting it is to stop predicting names at all:
-  point `readaloudLocation` at a staging folder that is not a BookOrbit library and hand the finished
-  file to the Book Dock, whose `resolveUniquePath` already makes an ingested name unique, which can
-  target a library on finalize and auto-finalize without a human. That would also collapse the two
-  collect paths into one, which is where most of this feature's defects have lived. Three questions
-  need answering first: whether the dock can ingest a file with its identity pinned, since a read-along
-  is a derived artifact and its metadata should not be re-matched; that the three-way link tolerates an
-  output book that appears only after finalize; and what the extra upstream surface costs, since the
-  dock is upstream and this feature's hook surface is deliberately small.
+- **Storyteller writes into the files it imports.** It tags reference-imported source files on its
+  own, which is why the source libraries must be mounted read-only into its container.
 
 ## Alignment quality is Storyteller's concern
 
@@ -214,8 +214,7 @@ A read-along is always generated from an existing ebook <-> audiobook link (Book
 - Once a build exists, the popover shows all three members of the link - the ebook, the audiobook, and
   the read-along - each with its own status and progress. The read-along member's row shows its build
   phase and Storyteller's own task/progress while a build is running, and offers **Retry** on failure
-  or **Rebuild** once it's ready. Rebuild asks for confirmation first, because it deletes the
-  read-along it replaces.
+  or **Rebuild** once it's ready. Rebuild replaces the read-along's file in place, keeping the book.
 - The finished read-along is a normal, independent book in the designated read-along library. Nothing
   is attached to or rewritten on the original ebook or audiobook records.
 - **Unlinking the pair does not delete the read-along book.** Unlink only removes the link row; the

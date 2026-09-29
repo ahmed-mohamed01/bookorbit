@@ -266,10 +266,11 @@ export function useEditionLink(bookId: number) {
     }
   }
 
-  function linkBook(counterpartId: number): Promise<boolean> {
+  // A detached read-along's page links its pair through one of the pair's own books.
+  function linkBook(counterpartId: number, sourceBookId: number = bookId): Promise<boolean> {
     return runMutation(
       () =>
-        api(`/api/v1/edition-links/link/${bookId}`, {
+        api(`/api/v1/edition-links/link/${sourceBookId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ counterpartId }),

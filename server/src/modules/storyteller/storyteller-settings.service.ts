@@ -19,7 +19,7 @@ import { StorytellerSecretService } from './storyteller-secret.service';
 import { StorytellerClientError, StorytellerClientService } from './storyteller-client.service';
 import { describeError } from './storyteller-log.utils';
 import type { StorytellerConnection } from './storyteller-client.types';
-import { assertMappablePathMappings, normalizePathMappings, toLocalPath } from './storyteller-path.utils';
+import { assertMappablePathMappings, canonicalPath, isPathWithinFolder, normalizePathMappings, toLocalPath } from './storyteller-path.utils';
 import { ensureSafeStorytellerUrl, parseAndNormalizeServerUrl } from './storyteller-url.utils';
 import type { NewStorytellerSettingsRow } from './schema/storyteller.schema';
 
@@ -31,15 +31,6 @@ interface StorytellerLibraryConstraints {
   organizationMode: string;
   allowedFormats: string[];
   folders: { id: number; path: string }[];
-}
-
-function normalizeFolderPath(path: string): string {
-  return path.replace(/\/+$/, '');
-}
-
-function pathIsWithinFolder(candidate: string, folderPath: string): boolean {
-  const normalizedFolder = normalizeFolderPath(folderPath);
-  return candidate === normalizedFolder || candidate.startsWith(`${normalizedFolder}/`);
 }
 
 /**
@@ -250,7 +241,7 @@ export class StorytellerSettingsService {
         problems.push('readaloud_location_not_custom_folder');
       }
 
-      const sharedPaths = this.evaluateSharedPaths(
+      const sharedPaths = await this.evaluateSharedPaths(
         remoteSettings.readaloudLocationType,
         remoteSettings.readaloudLocation,
         pathMappings,
@@ -335,18 +326,19 @@ export class StorytellerSettingsService {
    * Every condition below is one the build applies too: an answer this check gives that the next
    * build would not is worse than no answer, because nothing contradicts it in the panel.
    */
-  private evaluateSharedPaths(
+  private async evaluateSharedPaths(
     readaloudLocationType: string | null,
     readaloudLocation: string | null,
     pathMappings: StorytellerPathMapping[],
     libraryFolderPaths: readonly string[],
-  ): { stagingPath: string | null; insideLibrary: boolean; viable: boolean } {
+  ): Promise<{ stagingPath: string | null; insideLibrary: boolean; viable: boolean }> {
     if (readaloudLocationType !== 'CUSTOM_FOLDER' || !readaloudLocation || pathMappings.length === 0) {
       return { stagingPath: null, insideLibrary: false, viable: false };
     }
     const stagingPath = toLocalPath(readaloudLocation, pathMappings);
     if (!stagingPath) return { stagingPath: null, insideLibrary: false, viable: false };
-    const insideLibrary = libraryFolderPaths.some((folderPath) => pathIsWithinFolder(normalizeFolderPath(stagingPath), folderPath));
+    const [stagingFolder, libraryFolders] = await Promise.all([canonicalPath(stagingPath), Promise.all(libraryFolderPaths.map(canonicalPath))]);
+    const insideLibrary = libraryFolders.some((folderPath) => isPathWithinFolder(stagingFolder, folderPath, { ignoreCase: true }));
     return { stagingPath, insideLibrary, viable: !insideLibrary };
   }
 

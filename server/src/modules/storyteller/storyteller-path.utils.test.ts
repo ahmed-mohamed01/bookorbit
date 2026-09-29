@@ -1,4 +1,5 @@
-import { readFile } from 'fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink } from 'fs/promises';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
@@ -6,6 +7,8 @@ import { describe, expect, it } from 'vitest';
 import {
   InvalidPathMappingError,
   assertMappablePathMappings,
+  canonicalPath,
+  isPathWithinFolder,
   normalizePathMappings,
   sharedAudioDirectory,
   storytellerSafeFilepathSegment,
@@ -241,5 +244,34 @@ describe('sharedAudioDirectory', () => {
     expect(sharedAudioDirectory([])).toBeNull();
     expect(sharedAudioDirectory(['/a/01.mp3', '/b/01.mp3'])).toBeNull();
     expect(sharedAudioDirectory(['/01.mp3'])).toBeNull();
+  });
+});
+
+describe('canonicalPath', () => {
+  it('resolves a symlinked folder to the folder it points at, and keeps a missing path as spelled', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'storyteller-path-')));
+    try {
+      await mkdir(join(root, 'library'));
+      await symlink(join(root, 'library'), join(root, 'alias'));
+
+      await expect(canonicalPath(join(root, 'alias'))).resolves.toBe(join(root, 'library'));
+      await expect(canonicalPath(join(root, 'missing', '..', 'gone/'))).resolves.toBe(join(root, 'gone'));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('isPathWithinFolder', () => {
+  it('matches the folder itself and what is below it, never a sibling sharing the prefix', () => {
+    expect(isPathWithinFolder('/books/readalongs', '/books/readalongs/')).toBe(true);
+    expect(isPathWithinFolder('/books/readalongs/a.epub', '/books/readalongs')).toBe(true);
+    expect(isPathWithinFolder('/books/readalongs-old/a.epub', '/books/readalongs')).toBe(false);
+    expect(isPathWithinFolder('/anything', '/')).toBe(true);
+  });
+
+  it('ignores case only when asked', () => {
+    expect(isPathWithinFolder('/Books/ReadAlongs/a.epub', '/books/readalongs')).toBe(false);
+    expect(isPathWithinFolder('/Books/ReadAlongs/a.epub', '/books/readalongs', { ignoreCase: true })).toBe(true);
   });
 });

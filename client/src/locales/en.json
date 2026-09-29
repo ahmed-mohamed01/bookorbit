@@ -6448,6 +6448,11 @@
         "progressRead": "{percentage}% read",
         "progressListened": "{percentage}% listened",
         "notStarted": "Not started",
+        "cta": {
+          "link": "Link editions",
+          "linkAndGenerate": "Link & generate read-along",
+          "generate": "Generate read-along"
+        },
         "chip": {
           "ready": "Ready to link",
           "noMatch": "No match",
@@ -6462,10 +6467,10 @@
           "linking": "Mapping audio to text. Both editions keep their own progress until linking finishes.",
           "linked": "Progress syncs between these editions.",
           "matchedReadOnly": "BookOrbit found a matching pair.",
-          "linkedUnsynced": "Both editions keep their own progress."
+          "linkedUnsynced": "Both editions keep their own progress.",
+          "readAlongDetached": "This read-along was generated from these editions. Link them to sync positions again."
         },
         "actions": {
-          "build": "Build",
           "rebuild": "Rebuild",
           "buildSync": "Build position sync",
           "rebuildSync": "Rebuild position sync",
@@ -6503,14 +6508,14 @@
           },
           "body": {
             "offerOn": "Generates an EPUB with synced narration that highlights the text as it's read.",
-            "offerExisting": "Already built. It rejoins these editions when position sync is on.",
+            "offerExisting": "Already built. It rejoins these editions when you link them.",
             "offerOff": "Not generated. You can build a read-along later from this panel.",
             "none": "Not generated yet.",
             "outOfReach": "Added to a library you can't open.",
             "queued": "Waiting for another read-along to finish ({position} in line)",
             "queuedUnknown": "Waiting for another read-along to finish"
           },
-          "generate": "Generate",
+          "generate": "Generate read-along",
           "retry": "Retry",
           "rebuild": "Rebuild",
           "cancel": "Cancel",

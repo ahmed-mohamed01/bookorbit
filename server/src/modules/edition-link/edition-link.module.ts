@@ -12,6 +12,6 @@ import { EditionLinkService } from './edition-link.service';
   imports: [BookModule, LibraryModule, EditionLinkProgressModule],
   controllers: [EditionLinkController],
   providers: [EditionLinkRepository, EditionLinkSchemaBootstrapService, EditionLinkService],
-  exports: [EditionLinkRepository],
+  exports: [EditionLinkRepository, EditionLinkService],
 })
 export class EditionLinkModule {}

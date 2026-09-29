@@ -279,7 +279,7 @@ DO $$ BEGIN
 			AND b."built_at" IS NOT NULL
 			AND l."text_book_id" = b."text_book_id"
 			AND l."audio_book_id" = b."audio_book_id"
-			AND (l."created_at" < b."built_at" OR l."read_along_book_id" = b."output_book_id");
+			AND l."read_along_book_id" = b."output_book_id";
 	END IF;
 END $$;
 --> statement-breakpoint

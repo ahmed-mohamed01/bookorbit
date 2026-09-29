@@ -7,13 +7,15 @@ import { isTickBlockReason } from '@/features/book/lib/read-along-blocks'
 import { isTerminalBlock } from '@/features/book/lib/position-sync'
 import { getBookLinkModality, useEditionLink, type EditionLinkCandidate } from './useEditionLink'
 import { useReadingAlignment, type AlignmentStatus } from './useReadingAlignment'
-import { isReadAlongInFlight } from '@/features/book/lib/read-along-section'
+import { isActionBlocked, isReadAlongInFlight } from '@/features/book/lib/read-along-section'
 import { useReadAlongSection } from './useReadAlongSection'
 
 export type LinkEditionPhase = 'nomatch' | 'matched' | 'linking' | 'linked'
 export type EditionFormat = 'ebook' | 'audiobook'
 
 export type PairSyncState = 'synced' | 'syncing' | 'unsynced'
+
+export type LinkEditionAction = 'link' | 'linkAndGenerate' | 'generate'
 
 export type EditionMatchChip = { source: 'auto'; score: number } | { source: 'manual' }
 
@@ -93,8 +95,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   // The link is managed from any of its three books. The server keys position sync and read-along builds
   // to the pair, so a read-along page acts through the pair's ebook.
   const pairBookId = computed(() => (isReadAlongPage.value && members.value ? members.value.text.id : bookId))
-  // A read-along detached from its pair can never be linked, so it gets no panel: its pair is relinked
-  // from the ebook or audiobook, which brings it back.
+  // A read-along whose pair this reader cannot relink gets no panel; the pair's own books relink it.
   const isEligible = computed(() => !readAlongOutput.value && (modality.value === 'text' || modality.value === 'audio' || isReadAlongPage.value))
   const currentFormat = computed<EditionFormat>(() => (modality.value === 'audio' ? 'audiobook' : 'ebook'))
   const counterpartFormat = computed<EditionFormat>(() => (currentFormat.value === 'ebook' ? 'audiobook' : 'ebook'))
@@ -102,7 +103,13 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   // A pick from the search replaces the server's proposal; "Change" clears both until a new pick.
   const picked = ref<EditionLinkCandidate | null>(null)
   const proposalDismissed = ref(false)
-  const selected = computed(() => picked.value ?? (proposalDismissed.value ? null : proposed.value))
+  // A generated read-along stays matched to the pair it was built from even once that pair is unlinked,
+  // so its own page offers to link that pair again and never any other.
+  const detachedReadAlong = computed(() => isReadAlongPage.value && !link.value && members.value !== null)
+  const selected = computed(() => {
+    if (detachedReadAlong.value && members.value) return toCandidate(members.value.audio, 0)
+    return picked.value ?? (proposalDismissed.value ? null : proposed.value)
+  })
   const matchChip = computed<EditionMatchChip | null>(() => {
     if (picked.value) return { source: 'manual' }
     const candidate = selected.value
@@ -117,8 +124,8 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   const firstAlignment = computed(() => alignmentRunning.value && alignment.builtAt.value === null)
 
   const phase = computed<LinkEditionPhase>(() => {
-    if (isReadAlongPage.value) return 'linked'
     if (link.value) return firstAlignment.value ? 'linking' : 'linked'
+    if (isReadAlongPage.value) return 'matched'
     return selected.value ? 'matched' : 'nomatch'
   })
 
@@ -140,23 +147,38 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   const query = ref('')
   const hasSearched = ref(false)
 
+  // The toggles only choose; the footer action carries out whatever they differ from the current state.
   // Deliberately per visit: a read-along is hours of CPU and hundreds of MB, so it is asked for each
   // time rather than carried over from some earlier link.
+  const syncWanted = ref(false)
   const generateOnLink = ref(false)
+  // Switching sync off on a linked pair only asks to unlink; a cancelled confirm gives the choice back.
+  let generateBeforeSyncOff = false
 
   const tickBlockReason = computed(() => {
     const blocked = readAlong.blocked.value
     return isTickBlockReason(blocked) ? blocked : null
   })
-  const toggleDisabled = computed(() => !canGenerate.value || tickBlockReason.value !== null)
-  const willGenerate = computed(() => generateOnLink.value && !toggleDisabled.value)
+  // Before a link the server answers pair-shaped reasons that the link itself clears, so only a tick
+  // blocker stops an offer; once linked every reason but 'busy' does.
+  const generateBlocked = computed(
+    () => !canGenerate.value || (link.value ? isActionBlocked(readAlong.blocked.value) : tickBlockReason.value !== null),
+  )
+  // A matched pair whose read-along survived an unlink gets it back on link, so it offers no build.
+  const readAlongOffered = computed(() => {
+    if (link.value) return readAlong.status.value === 'none'
+    return !(readAlong.status.value === 'ready' && readAlong.outputBook.value !== null)
+  })
+  const toggleDisabled = computed(() => generateBlocked.value || !syncWanted.value)
+  const willGenerate = computed(() => generateOnLink.value && readAlongOffered.value && !toggleDisabled.value)
   const canToggleReadAlong = computed(() => canEditMetadata.value && canGenerate.value)
 
   // A viewer who cannot link sees a suggested pair, not an offer: there is nothing to build or toggle.
   const matchedReadOnly = computed(() => phase.value === 'matched' && !canEditMetadata.value)
   const showSections = computed(() => phase.value !== 'nomatch' && !matchedReadOnly.value)
   // Before the link, the read-along section is only the toggle, so a user who cannot take it sees none.
-  const showReadAlong = computed(() => phase.value !== 'matched' || canToggleReadAlong.value)
+  // A detached read-along already exists and joins the pair's timeline, so there is nothing to offer.
+  const showReadAlong = computed(() => !detachedReadAlong.value && (phase.value !== 'matched' || canToggleReadAlong.value))
 
   const syncUnavailable = computed(() => ALIGNMENT_UNSYNCED.has(alignment.status.value) || isTerminalBlock(alignment.buildBlocked.value))
 
@@ -184,6 +206,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
           ? 'book.detail.editionLink.intro.noMatchAudiobook'
           : 'book.detail.editionLink.intro.noMatchEbook'
       default:
+        if (detachedReadAlong.value) return 'book.detail.editionLink.intro.readAlongDetached'
         return matchedReadOnly.value ? 'book.detail.editionLink.intro.matchedReadOnly' : 'book.detail.editionLink.intro.matched'
     }
   })
@@ -241,14 +264,14 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   // Ebook above, audiobook below, whichever page the panel is opened from.
   const slots = computed<[EditionSlot, EditionSlot]>(() => {
     const resolved = members.value
-    if (link.value && resolved) return [memberSlot('ebook', resolved.text), memberSlot('audiobook', resolved.audio)]
+    if (resolved) return [memberSlot('ebook', resolved.text), memberSlot('audiobook', resolved.audio)]
     return currentFormat.value === 'ebook' ? [currentSlot.value, counterpartSlot.value] : [counterpartSlot.value, currentSlot.value]
   })
 
   // A ready read-along joins the linked pair as its third edition, so the pair box shows all three in sync.
   const readAlongSlot = computed<EditionFilledSlot | null>(() => {
     const member = readAlongMember.value
-    if (phase.value !== 'linked' || !member) return null
+    if ((phase.value !== 'linked' && !detachedReadAlong.value) || !member) return null
     const isThisBook = member.id === bookId
     return {
       kind: 'filled',
@@ -273,6 +296,38 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   const readAlongMode = computed<'offer' | 'manage' | 'readOnly'>(() => {
     return phase.value === 'matched' ? 'offer' : 'manage'
   })
+
+  const isEstablished = computed(() => phase.value === 'linking' || phase.value === 'linked')
+  const canToggleSync = computed(() => canEditMetadata.value && phase.value !== 'nomatch')
+
+  const pendingAction = computed<LinkEditionAction | null>(() => {
+    if (phase.value === 'matched' && canEditMetadata.value && syncWanted.value) return willGenerate.value ? 'linkAndGenerate' : 'link'
+    return isEstablished.value && willGenerate.value ? 'generate' : null
+  })
+
+  function resyncChoices(): void {
+    syncWanted.value = isEstablished.value
+    generateOnLink.value = false
+    generateBeforeSyncOff = false
+  }
+
+  // Linking to linked is the same pair finishing its first alignment, so a read-along chosen meanwhile
+  // must survive it. Only a pair that is not established starts the choices over.
+  watch(
+    phase,
+    (next) => {
+      if (next === 'matched' || next === 'nomatch') resyncChoices()
+      else syncWanted.value = true
+    },
+    { immediate: true },
+  )
+  // Once a build is queued, running or done there is nothing left to ask for.
+  watch(
+    () => readAlong.status.value,
+    () => {
+      generateOnLink.value = false
+    },
+  )
 
   const alignmentBusy = computed(() => alignmentRunning.value)
   const readAlongBusy = computed(() => readAlong.mutating.value || isReadAlongInFlight(readAlong.status.value))
@@ -353,10 +408,10 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     searchAutofocus.value = false
     // Toggling, closing without linking and reopening on a different candidate would otherwise start
     // an hours-long build nobody re-confirmed. The destination and keep-copy choices go with it.
-    generateOnLink.value = false
     readAlongSection.resetChoices()
 
     await load()
+    resyncChoices()
     if (link.value) {
       refreshBuildStatuses()
       if (canGenerate.value && !readAlongMember.value) {
@@ -370,7 +425,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
       void readAlong.fetchStatus(pairBookId.value, selected.value?.bookId)
       readAlongSection.loadTargetLibraries()
     }
-    if (canEditMetadata.value && !link.value && !proposed.value) runSearch()
+    if (canEditMetadata.value && !link.value && !proposed.value && !isReadAlongPage.value) runSearch()
   }
 
   function setQuery(value: string): void {
@@ -396,26 +451,44 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     generateOnLink.value = value
   }
 
+  function setSyncWanted(value: boolean): void {
+    syncWanted.value = value
+    if (value) return
+    generateBeforeSyncOff = generateOnLink.value
+    generateOnLink.value = false
+  }
+
+  function keepLink(): void {
+    syncWanted.value = true
+    generateOnLink.value = generateBeforeSyncOff
+    generateBeforeSyncOff = false
+  }
+
   async function startLink(): Promise<void> {
     const candidate = selected.value
     if (!candidate) return
-    const shouldGenerate = willGenerate.value
-    const success = await linkBook(candidate.bookId)
+    const shouldGenerate = generateOnLink.value && readAlongOffered.value && !generateBlocked.value
+    // Taken before the link reloads the page's state: a read-along page whose attach failed reads as a
+    // bare read-along afterwards, and pairBookId would then name the read-along itself.
+    const pairId = pairBookId.value
+    // A read-along never starts a link, so its page links the pair through the pair's own ebook. The
+    // server puts the read-along back on the new link in the same request.
+    const success = await linkBook(candidate.bookId, detachedReadAlong.value ? pairId : bookId)
     if (!success) {
       toast.error(error.value ?? t('book.detail.editionLink.linkFailed'))
       return
     }
     toast.success(t('book.detail.editionLink.linkedSuccess'))
     query.value = ''
-    void alignment.build(pairBookId.value)
-    if (shouldGenerate && !toggleDisabled.value) {
+    void alignment.build(pairId)
+    if (shouldGenerate && canGenerate.value && tickBlockReason.value === null) {
       void readAlongSection.runBuild(readAlongSection.withDestination({}))
       return
     }
     // The pre-link read answered for a book without a pair ('no_pair'), which would keep Generate
     // disabled until the panel is reopened.
-    void readAlong.fetchStatus(pairBookId.value)
-    if (canGenerate.value) void readAlong.fetchExisting(pairBookId.value)
+    void readAlong.fetchStatus(pairId)
+    if (canGenerate.value) void readAlong.fetchExisting(pairId)
   }
 
   function linkedCounterpartCandidate(): EditionLinkCandidate | null {
@@ -438,11 +511,14 @@ export function useLinkEditionPanel(book: () => BookDetail) {
   }
 
   // Nothing read for the old pair may narrate the next one: a relink with another counterpart would
-  // otherwise show the previous pair's Synced, Built or Ready until the new reads land.
-  function forgetPair(): void {
+  // otherwise show the previous pair's Synced, Built or Ready until the new reads land. The status is
+  // asked for the restored counterpart, since without one the server answers no_pair and the pair's
+  // surviving read-along would be offered as a new build.
+  function forgetPair(candidate: EditionLinkCandidate | null): void {
+    restoreSelection(candidate)
     readAlong.reset()
     void alignment.fetchStatus(pairBookId.value)
-    void readAlong.fetchStatus(pairBookId.value)
+    void readAlong.fetchStatus(pairBookId.value, selected.value?.bookId)
   }
 
   // Stops whatever this link started, then unlinks. A cancel the server refuses is reported and the
@@ -462,13 +538,12 @@ export function useLinkEditionPanel(book: () => BookDetail) {
       const cancelled = await alignment.cancel(pairBookId.value)
       if (!cancelled) toast.error(t('book.detail.editionLink.syncCancelKeptRunning'))
     }
-    const success = await unlinkBook()
+    const success = await unlinkBook(pairBookId.value)
     if (!success) {
       toast.error(t('book.detail.editionLink.cancelFailed'))
       return
     }
-    forgetPair()
-    restoreSelection(candidate)
+    forgetPair(candidate)
   }
 
   async function unlink(): Promise<void> {
@@ -478,8 +553,20 @@ export function useLinkEditionPanel(book: () => BookDetail) {
       return
     }
     toast.success(t('book.detail.editionLink.unlinkedSuccess'))
-    forgetPair()
-    restoreSelection(null)
+    forgetPair(null)
+  }
+
+  async function runPendingAction(): Promise<void> {
+    const action = pendingAction.value
+    if (action === 'link' || action === 'linkAndGenerate') await startLink()
+    else if (action === 'generate') await readAlongSection.runBuild(readAlongSection.withDestination({}))
+  }
+
+  async function endLink(): Promise<void> {
+    if (phase.value === 'linking') await cancelLinking()
+    else if (phase.value === 'linked') await unlink()
+    // A refused cancel or unlink leaves the pair as it was, so the switch goes back to saying so.
+    resyncChoices()
   }
 
   async function buildSync(force: boolean): Promise<void> {
@@ -511,6 +598,9 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     query,
     hasSearched,
     generateOnLink,
+    syncWanted,
+    canToggleSync,
+    pendingAction,
     toggleDisabled,
     tickBlockReason,
     canToggleReadAlong,
@@ -531,6 +621,10 @@ export function useLinkEditionPanel(book: () => BookDetail) {
     selectCandidate,
     changeSelection,
     setGenerateOnLink,
+    setSyncWanted,
+    keepLink,
+    runPendingAction,
+    endLink,
     startLink,
     cancelLinking,
     unlink,

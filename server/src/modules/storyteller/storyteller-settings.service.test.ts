@@ -1,4 +1,7 @@
 import { BadRequestException, ForbiddenException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { mkdir, mkdtemp, realpath, rm, symlink } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ensureSafeUrl } from '../../common/utils/ssrf.utils';
@@ -650,6 +653,58 @@ describe('StorytellerSettingsService.testConnection', () => {
     mockSession.getSettings.mockResolvedValue({
       readaloudLocationType: 'CUSTOM_FOLDER',
       readaloudLocation: '/mnt/books/read-along',
+      importMode: 'reference',
+      aligner: 'whisper',
+      transcriptionEngine: 'whisper',
+      alignmentGranularity: 'word',
+    });
+
+    const result = await makeService().testConnection(user);
+
+    expect(result.problems).toContain('readaloud_folder_inside_library');
+  });
+
+  // Compared by real path: a staging folder reached through a symlink, or a second spelling on a
+  // case-insensitive volume, is still the library folder it resolves to.
+  it('flags a staging folder that resolves into a library folder through a symlink', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'storyteller-settings-')));
+    try {
+      await mkdir(join(root, 'library', 'staging'), { recursive: true });
+      await symlink(join(root, 'library', 'staging'), join(root, 'output'));
+      mockRepo.getSettings.mockResolvedValue(
+        settingsRow({ transport: 'shared-paths', pathMappings: [{ localPrefix: root, remotePrefix: '/mnt/root' }] }),
+      );
+      mockLibraryService.findOne.mockResolvedValue(libraryRow({ allowedFormats: ['epub'] }));
+      mockRepo.findLibraryFolders.mockResolvedValue(DEFAULT_FOLDERS);
+      mockRepo.findAllLibraryFolderPaths.mockResolvedValue([join(root, 'library')]);
+      mockSession.getServerInfo.mockResolvedValue({ version: '1.2.3', capabilities: ['books'] });
+      mockSession.getSettings.mockResolvedValue({
+        readaloudLocationType: 'CUSTOM_FOLDER',
+        readaloudLocation: '/mnt/root/output',
+        importMode: 'reference',
+        aligner: 'whisper',
+        transcriptionEngine: 'whisper',
+        alignmentGranularity: 'word',
+      });
+
+      const result = await makeService().testConnection(user);
+
+      expect(result.problems).toContain('readaloud_folder_inside_library');
+      expect(result.sharedPathsReady).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('flags a staging folder that differs from a library folder only in case', async () => {
+    mockRepo.getSettings.mockResolvedValue(settingsRow({ transport: 'shared-paths' }));
+    mockLibraryService.findOne.mockResolvedValue(libraryRow({ allowedFormats: ['epub'] }));
+    mockRepo.findLibraryFolders.mockResolvedValue(DEFAULT_FOLDERS);
+    mockRepo.findAllLibraryFolderPaths.mockResolvedValue(['/books/Read-Along']);
+    mockSession.getServerInfo.mockResolvedValue({ version: '1.2.3', capabilities: ['books'] });
+    mockSession.getSettings.mockResolvedValue({
+      readaloudLocationType: 'CUSTOM_FOLDER',
+      readaloudLocation: '/mnt/books/read-along/staging',
       importMode: 'reference',
       aligner: 'whisper',
       transcriptionEngine: 'whisper',

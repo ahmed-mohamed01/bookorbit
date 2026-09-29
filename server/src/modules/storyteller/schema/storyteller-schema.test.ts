@@ -126,15 +126,17 @@ describe('attached_link_id on read-along builds', () => {
     expect(alter).toContain('REFERENCES "public"."book_edition_links"("id") ON DELETE set null');
   });
 
-  // Rows built before the column existed were attached by their build to a link that predates it or
-  // that already carries the output; left null, a read-along detached from such a link would be put
-  // back on the next poll. The null guard keeps the statement idempotent across boots.
-  it('stamps a legacy ready row with the link that predates its build or already carries its output', () => {
+  // A row is stamped only with a link that carries its output. A link merely older than the build
+  // proves nothing: a build whose attach failed ends ready and unstamped for the edition link's heal,
+  // and stamping it on the next boot would read as a deliberate detach the heal never undoes. The null
+  // guard keeps the statement idempotent across boots.
+  it('stamps a legacy ready row only with the link that already carries its output', () => {
     const backfill = statements.find((statement) => statement.includes('SET "attached_link_id" = l."id"'))!;
 
     expect(backfill).toContain("to_regclass('book_edition_links') IS NOT NULL");
     expect(backfill).toContain('b."attached_link_id" IS NULL');
-    expect(backfill).toContain('(l."created_at" < b."built_at" OR l."read_along_book_id" = b."output_book_id")');
+    expect(backfill).toContain('AND l."read_along_book_id" = b."output_book_id";');
+    expect(backfill).not.toContain('created_at');
   });
 });
 

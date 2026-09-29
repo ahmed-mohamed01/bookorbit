@@ -64,7 +64,6 @@ function mountSection(props: Partial<SectionProps> = {}) {
       member: null,
       canGenerate: true,
       canRebuild: true,
-      keepCopyOffered: true,
       ...props,
     } as SectionProps,
     global: { stubs },
@@ -214,6 +213,40 @@ describe('ReadAlongSection', () => {
   })
 
   describe('with no read-along yet', () => {
+    it('offers Generate read-along with its choices when the host has no action button of its own', () => {
+      const wrapper = mountSection()
+
+      expect(wrapper.find('[data-testid="read-along-toggle"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="read-along-generate"]').text()).toBe('Generate read-along')
+      expect(wrapper.find('[data-testid="read-along-keep-copy-row"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="read-along-destination"]').exists()).toBe(true)
+    })
+
+    it('offers a switch instead when the host carries the build out, with its choices only once on', async () => {
+      const off = mountSection({ canToggle: true, generateOnLink: false })
+      expect(off.find('[data-testid="read-along-generate"]').exists()).toBe(false)
+      expect(off.get('[data-testid="read-along-toggle"]').attributes('aria-checked')).toBe('false')
+      expect(off.find('[data-testid="read-along-keep-copy-row"]').exists()).toBe(false)
+      expect(off.find('[data-testid="read-along-destination"]').exists()).toBe(false)
+      await off.get('[data-testid="read-along-toggle"]').trigger('click')
+      expect(off.emitted('update:generateOnLink')?.[0]).toEqual([true])
+      expect(off.emitted('generate')).toBeUndefined()
+
+      const on = mountSection({ canToggle: true, generateOnLink: true })
+      expect(on.get('[data-testid="read-along-toggle"]').attributes('aria-checked')).toBe('true')
+      expect(on.find('[data-testid="read-along-keep-copy-row"]').exists()).toBe(true)
+      expect(on.find('[data-testid="read-along-destination"]').exists()).toBe(true)
+    })
+
+    it('shows the switch off and disabled while the host holds it', () => {
+      const wrapper = mountSection({ canToggle: true, generateOnLink: true, toggleDisabled: true })
+
+      const toggle = wrapper.get('[data-testid="read-along-toggle"]')
+      expect(toggle.attributes('disabled')).toBeDefined()
+      expect(toggle.attributes('aria-checked')).toBe('false')
+      expect(wrapper.find('[data-testid="read-along-keep-copy-row"]').exists()).toBe(false)
+    })
+
     it('offers Generate and an aligned Storyteller import', async () => {
       const wrapper = mountSection({ existingMatch: makeMatch() })
 
@@ -278,10 +311,12 @@ describe('ReadAlongSection', () => {
   describe('keeping the Storyteller copy', () => {
     it('explains each choice and emits it', async () => {
       const kept = mountSection({ state: makeState({ keepRemoteCopy: true }) })
-      expect(kept.get('[data-testid="read-along-keep-copy-hint"]').text()).toBe('Storyteller keeps its copy after BookOrbit imports the read-along.')
+      expect(kept.get('[data-testid="read-along-keep-copy-info"]').attributes('aria-label')).toBe(
+        'Storyteller keeps its copy after BookOrbit imports the read-along.',
+      )
 
       const dropped = mountSection({ state: makeState({ keepRemoteCopy: false }) })
-      expect(dropped.get('[data-testid="read-along-keep-copy-hint"]').text()).toBe(
+      expect(dropped.get('[data-testid="read-along-keep-copy-info"]').attributes('aria-label')).toBe(
         'Removed from Storyteller after import. BookOrbit keeps the only copy.',
       )
 
@@ -289,10 +324,10 @@ describe('ReadAlongSection', () => {
       expect(dropped.emitted('update:keepRemoteCopy')?.[0]).toEqual([true])
     })
 
-    it('renders nothing when there is no Storyteller copy to keep', () => {
-      const wrapper = mountSection({ keepCopyOffered: false })
+    it('offers the choice whenever a build can start, reclaimable or not', () => {
+      const wrapper = mountSection({ state: makeState({ remoteCopyReclaimable: false }) })
 
-      expect(wrapper.find('[data-testid="read-along-keep-copy-row"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="read-along-keep-copy-row"]').exists()).toBe(true)
     })
   })
 
@@ -348,6 +383,8 @@ describe('ReadAlongSection', () => {
     it('shows the toggle and the full offer once it is on', async () => {
       const off = mountSection({ mode: 'offer', canToggle: true, generateOnLink: false })
       expect(sectionState(off)).toBe('offerOff')
+      expect(off.get('h3').text()).toBe('Read-along')
+      expect(off.get('[data-testid="read-along-toggle"]').attributes('aria-label')).toBe('Generate read-along')
       expect(off.get('[data-testid="read-along-body"]').text()).toContain('You can build a read-along later')
       expect(off.find('[data-testid="read-along-keep-copy-row"]').exists()).toBe(false)
       expect(off.find('[data-testid="read-along-destination"]').exists()).toBe(false)
@@ -417,6 +454,32 @@ describe('ReadAlongSection', () => {
       const wrapper = mountSection({ state: makeState({ status: 'failed' }) })
 
       expect(wrapper.get('[data-testid="read-along-error"]').text()).toContain("couldn't finish")
+    })
+  })
+
+  // A rebuild keeps the previous read-along on its build row, so the status names a book while the new
+  // one is still running or after it failed. Only 'ready' may read as ready.
+  describe('with the previous read-along still named by the build', () => {
+    it.each(['queued', 'building'] as const)('narrates a %s rebuild, not the ready book', (status) => {
+      const wrapper = mountSection({ state: makeState({ status, hasOutputBook: true }), member: makeMember() })
+
+      expect(sectionState(wrapper)).toBe(status)
+      expect(wrapper.find('[data-testid="read-along-ready"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="read-along-rebuild"]').exists()).toBe(false)
+    })
+
+    it('shows a failed rebuild as failed with Retry, not Rebuild', () => {
+      const wrapper = mountSection({ state: makeState({ status: 'failed', hasOutputBook: true }), member: makeMember() })
+
+      expect(sectionState(wrapper)).toBe('failed')
+      expect(wrapper.find('[data-testid="read-along-retry"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="read-along-rebuild"]').exists()).toBe(false)
+    })
+
+    it.each(['building', 'failed'] as const)('does not offer a %s build as already built before a link', (status) => {
+      const wrapper = mountSection({ mode: 'offer', state: makeState({ status, hasOutputBook: true }), canToggle: true })
+
+      expect(sectionState(wrapper)).toBe('offerOff')
     })
   })
 
