@@ -27,8 +27,9 @@ function makeUser(overrides: Partial<RequestUser> = {}): RequestUser {
   };
 }
 
-function makeContext() {
+function makeContext(type: 'http' | 'ws' = 'http') {
   return {
+    getType: () => type,
     getHandler: vi.fn(),
     getClass: vi.fn(),
     switchToHttp: () => ({
@@ -48,6 +49,14 @@ describe('JwtAuthGuard', () => {
     const guard = new JwtAuthGuard(reflector as never);
 
     expect(guard.canActivate(makeContext())).toBe(true);
+  });
+
+  it('lets a WebSocket message through without asking passport, since gateways verify the token at the handshake', () => {
+    const reflector = { getAllAndOverride: vi.fn() };
+    const guard = new JwtAuthGuard(reflector as never);
+
+    expect(guard.canActivate(makeContext('ws'))).toBe(true);
+    expect(reflector.getAllAndOverride).not.toHaveBeenCalled();
   });
 
   it('throws UnauthorizedException when passport strategy returns an error', () => {
