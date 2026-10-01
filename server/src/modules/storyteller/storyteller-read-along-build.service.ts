@@ -90,7 +90,17 @@ const PINNED_SHARED_PATHS_PROBLEM: Record<string, string> = {
   readaloud_folder_not_mapped: 'its read-along folder is not covered by a path mapping',
   readaloud_folder_inside_library:
     'its read-along folder is inside a library folder, where every read-along would be scanned with the audiobook tags Storyteller writes into it',
+  audio_names_out_of_order:
+    'the audiobook file names do not sort in track order (such as [Track 10] before [Track 2]), so Storyteller would narrate the tracks out of order',
 };
+
+/**
+ * Storyteller numbers a multi-file audiobook's tracks in the order its folder lists them, which is name
+ * order, so names that sort differently from the track order produce a read-along narrated out of order.
+ */
+function audioNamesSortInTrackOrder(audioFiles: readonly StorytellerAudioFile[]): boolean {
+  return audioFiles.every((file, index) => index === 0 || audioFiles[index - 1]!.absolutePath < file.absolutePath);
+}
 
 function pinnedSharedPathsMessage(reason: string | null): string {
   const problem = (reason === null ? null : PINNED_SHARED_PATHS_PROBLEM[reason]) ?? 'the shared-paths configuration is incomplete';
@@ -642,7 +652,7 @@ export class StorytellerReadAlongBuildService {
       this.resolveStagingFolder(settings, remoteSettings),
     ]);
     throwIfCancelled(signal);
-    const selected = this.selectTransport(settings, remoteSettings, stagingFolder, libraryFolderPaths);
+    const selected = this.selectTransport(settings, remoteSettings, stagingFolder, libraryFolderPaths, audioFiles);
     if (settings.transport === 'shared-paths' && selected.transport !== 'shared-paths') {
       throw new BadRequestException(pinnedSharedPathsMessage(selected.reason));
     }
@@ -683,6 +693,7 @@ export class StorytellerReadAlongBuildService {
     remoteSettings: StorytellerRemoteSettings,
     stagingFolder: string | null,
     libraryFolderPaths: readonly string[],
+    audioFiles: readonly StorytellerAudioFile[],
   ): { transport: StorytellerEffectiveTransport; reason: string | null } {
     if (settings.transport === 'api-transfer') return { transport: 'api-transfer', reason: null };
     if (settings.pathMappings.length === 0) return { transport: 'api-transfer', reason: 'no_path_mappings' };
@@ -693,6 +704,8 @@ export class StorytellerReadAlongBuildService {
     if (isInsideAnyFolder(stagingFolder, libraryFolderPaths)) {
       return { transport: 'api-transfer', reason: 'readaloud_folder_inside_library' };
     }
+    // An upload is named in track order, so it can carry audio whose own names would mislead Storyteller.
+    if (!audioNamesSortInTrackOrder(audioFiles)) return { transport: 'api-transfer', reason: 'audio_names_out_of_order' };
     return { transport: 'shared-paths', reason: null };
   }
 

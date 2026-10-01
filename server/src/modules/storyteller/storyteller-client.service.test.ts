@@ -619,6 +619,21 @@ describe('StorytellerClientService', () => {
       return path;
     }
 
+    it('names a multi-file audiobook upload by track number so Storyteller keeps the track order', async () => {
+      const epubPath = await writeFixture('Well.epub', 10);
+      const audioPaths = await Promise.all(['Well [Track 1].mp3', 'Well [Track 2].mp3', 'Well [Track 10].mp3'].map((name) => writeFixture(name, 10)));
+      const created = (index: number) => new Response(null, { status: 201, headers: { location: `/api/v2/books/upload/upload-${index}` } });
+      record(tokenResponse(), ...[0, 1, 2, 3].flatMap((index) => [created(index), noContent({ 'upload-offset': '10' })]), noContent());
+
+      await session.uploadBook({ epubPath, audioPaths });
+
+      const filenames = [1, 3, 5, 7].map((index) => {
+        const pair = (call(index).headers['Upload-Metadata'] ?? '').split(',').find((entry) => entry.startsWith('filename '))!;
+        return Buffer.from(pair.split(' ')[1]!, 'base64').toString('utf8');
+      });
+      expect(filenames).toEqual(['Well.epub', '0001 - Well [Track 1].mp3', '0002 - Well [Track 2].mp3', '0003 - Well [Track 10].mp3']);
+    });
+
     it('uploads every file in chunks and finalizes with the generated uuid', async () => {
       const epubPath = await writeFixture('Foundation.epub', 6 * 1024 * 1024);
       const audioPath = await writeFixture('01.mp3', 1024, 2);

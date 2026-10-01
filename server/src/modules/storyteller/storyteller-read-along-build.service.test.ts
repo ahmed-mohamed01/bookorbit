@@ -336,6 +336,45 @@ describe('StorytellerReadAlongBuildService', () => {
     expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'failed', phase: 'prepare' }));
   });
 
+  describe('an audiobook whose file names sort out of track order', () => {
+    const tracks = ['/books/Well [Track 1].mp3', '/books/Well [Track 2].mp3', '/books/Well [Track 10].mp3'].map((absolutePath, index) => ({
+      fileId: 21 + index,
+      absolutePath,
+      durationSeconds: 60,
+      format: 'mp3',
+    }));
+    const viable = {
+      pathMappings: [
+        { localPrefix: '/books', remotePrefix: '/remote/books' },
+        { localPrefix: '@staging', remotePrefix: '/remote/output' },
+      ],
+    };
+    const remoteSettings = { readaloudLocationType: 'CUSTOM_FOLDER', readaloudLocation: '/remote/output' };
+
+    it('uploads it in track order instead of referencing it', async () => {
+      const { service, session, repo } = await setup({ settings: { ...viable, pathMappings: resolveMappings(viable.pathMappings) }, remoteSettings });
+      repo.findAudioFiles.mockResolvedValue(tracks);
+
+      await runBuild(service, 1, PAIR, USER);
+
+      expect(session.importByReference).not.toHaveBeenCalled();
+      expect(session.uploadBook).toHaveBeenCalledWith(expect.objectContaining({ audioPaths: tracks.map((track) => track.absolutePath) }));
+    });
+
+    it('fails a pinned shared-paths build rather than narrate the tracks out of order', async () => {
+      const { service, session, repo } = await setup({
+        settings: { transport: 'shared-paths', ...viable, pathMappings: resolveMappings(viable.pathMappings) },
+        remoteSettings,
+      });
+      repo.findAudioFiles.mockResolvedValue(tracks);
+
+      await expect(runBuild(service, 1, PAIR, USER)).rejects.toThrow(/do not sort in track order/);
+
+      expect(session.uploadBook).not.toHaveBeenCalled();
+      expect(session.importByReference).not.toHaveBeenCalled();
+    });
+  });
+
   it('takes shared paths for a pinned build whose configuration is fully viable', async () => {
     const { service, session } = await setup({
       settings: {

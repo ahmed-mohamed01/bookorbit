@@ -179,6 +179,16 @@ function encodeTusMetadata(pairs: Record<string, string | undefined>): string {
     .join(',');
 }
 
+/**
+ * Storyteller numbers a multi-file audiobook's tracks in the order its folder lists them, so each upload
+ * is prefixed with its track number: `[Track 10]` would otherwise be narrated before `[Track 2]`.
+ */
+function audioUploadName(filePath: string, trackIndex: number, trackCount: number): string {
+  if (trackCount < 2) return basename(filePath);
+  const width = Math.max(4, String(trackCount).length);
+  return `${String(trackIndex + 1).padStart(width, '0')} - ${basename(filePath)}`;
+}
+
 function guessFiletype(filePath: string): string {
   return AUDIO_MIME_TYPES[extname(filePath).toLowerCase()] ?? 'application/octet-stream';
 }
@@ -366,6 +376,7 @@ class StorytellerHttpSession implements StorytellerSession {
       for (const [index, file] of files.entries()) {
         await this.uploadFile(
           file,
+          index === 0 ? basename(file) : audioUploadName(file, index - 1, input.audioPaths.length),
           sizes[index],
           bookUuid,
           ceilingAt,
@@ -634,6 +645,7 @@ class StorytellerHttpSession implements StorytellerSession {
 
   private async uploadFile(
     filePath: string,
+    filename: string,
     size: number,
     bookUuid: string,
     ceilingAt: number,
@@ -641,7 +653,7 @@ class StorytellerHttpSession implements StorytellerSession {
     onOffset: (offset: number) => void,
     signal?: AbortSignal,
   ): Promise<void> {
-    const metadata = encodeTusMetadata({ bookUuid, filename: basename(filePath), filetype: guessFiletype(filePath) });
+    const metadata = encodeTusMetadata({ bookUuid, filename, filetype: guessFiletype(filePath) });
     const create = await this.send({
       method: 'POST',
       path: '/api/v2/books/upload',
