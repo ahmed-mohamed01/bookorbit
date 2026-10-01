@@ -47,7 +47,7 @@ function makeLibrary(overrides: Partial<Library> = {}): Library {
 
 function mountPanel(library: Library) {
   return mount(LibraryDetailPanel, {
-    props: { library, history: [], accessCount: 1, loading: false, failed: false },
+    props: { library, history: [], access: [], loading: false, failed: false },
   })
 }
 
@@ -58,13 +58,13 @@ describe('LibraryDetailPanel', () => {
     expect(wrapper.text()).toContain('EPUB')
     expect(wrapper.text()).toContain('Exclude patterns')
     expect(wrapper.text()).toContain('Organization')
-    expect(wrapper.text()).toContain('File mode')
+    expect(wrapper.text()).toContain('File as Book')
   })
 
   it('names folder mode when that is what the library is organized by', () => {
     const wrapper = mountPanel(makeLibrary({ organizationMode: 'book_per_folder' }))
 
-    expect(wrapper.text()).toContain('Folder mode')
+    expect(wrapper.text()).toContain('Folder as Book')
   })
 
   // GET /api/v1/libraries answers a non-superuser with a narrower projection that leaves these four
@@ -95,14 +95,14 @@ describe('LibraryDetailPanel', () => {
     const wrapper = mountPanel(reduced)
 
     // Left out rather than defaulted: "All supported" would be a lie for a library that restricts
-    // formats, and so would "Folder mode" for one that stores a book per file.
+    // formats, and so would "Folder as Book" for one that stores a book per file.
     expect(wrapper.text()).not.toContain('EPUB')
     expect(wrapper.text()).not.toContain('Exclude patterns')
     // The rows that are rendered must be true: a missing number used to print as NaN%.
     expect(wrapper.text()).not.toContain('NaN')
     expect(wrapper.text()).not.toContain('undefined')
     expect(wrapper.text()).not.toContain('Organization')
-    expect(wrapper.text()).not.toContain('Folder mode')
+    expect(wrapper.text()).not.toContain('Folder as Book')
     // The rows that projection does answer are still there.
     expect(wrapper.text()).toContain('Cover shape')
   })

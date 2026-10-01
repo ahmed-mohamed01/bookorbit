@@ -1,6 +1,7 @@
 import { onUnmounted, ref, unref, type MaybeRef } from 'vue'
 import type { AudiobookManifestAsset, AudiobookPlaybackState } from '@bookorbit/types'
 import { api } from '@/lib/api'
+import { createUuid } from '@/lib/uuid'
 
 const SAVE_THROTTLE_MS = 5_000
 
@@ -64,7 +65,7 @@ export function useAudioProgress(bookId: number, options: AudioProgressOptions) 
       assetId,
       positionMs: Math.max(0, Math.round(positionSeconds * 1000)),
       capturedAt: new Date().toISOString(),
-      operationId: crypto.randomUUID(),
+      operationId: createUuid(),
     }
     scheduleFlush()
   }

@@ -51,7 +51,29 @@ describe('useAudioProgress', () => {
   })
 
   afterEach(() => {
+    vi.unstubAllGlobals()
     vi.useRealTimers()
+  })
+
+  it('persists playback state when randomUUID is unavailable on an insecure origin', async () => {
+    const getRandomValues = vi.fn<(bytes: Uint8Array) => Uint8Array>((bytes) => {
+      bytes.fill(0)
+      return bytes
+    })
+    vi.stubGlobal('crypto', { getRandomValues })
+    apiMock.mockResolvedValue(response(200, serverState({ revision: 1 })))
+    const { progress } = setup()
+
+    expect(() => progress.update(ASSET_ID, 12)).not.toThrow()
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    expect(puts()).toEqual([
+      expect.objectContaining({
+        positionMs: 12_000,
+        operationId: '00000000-0000-4000-8000-000000000000',
+      }),
+    ])
+    expect(getRandomValues).toHaveBeenCalledOnce()
   })
 
   it('stamps capturedAt when the position is captured and clamps it to the asset duration', async () => {

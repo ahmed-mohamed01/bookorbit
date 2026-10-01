@@ -463,6 +463,29 @@ describe('BookService', () => {
 
       expect(filename).toBe('Dune.pdf.epub');
     });
+
+    it('adds the readaloud marker only to a media-overlay EPUB', async () => {
+      const { service, appSettings, bookRepo } = makeService();
+      appSettings.getDownloadPattern.mockResolvedValue('{title}< ({readaloud})>');
+      bookRepo.findPatternMetadataByBookIds.mockResolvedValue([metaRow(10, { title: 'Dune' })]);
+
+      await expect(
+        service.resolveDownloadFilename({
+          bookId: 10,
+          absolutePath: '/books/read-along.epub',
+          format: 'epub',
+          mediaOverlayAvailable: true,
+        }),
+      ).resolves.toBe('Dune (readaloud).epub');
+      await expect(
+        service.resolveDownloadFilename({
+          bookId: 10,
+          absolutePath: '/books/plain.epub',
+          format: 'epub',
+          mediaOverlayAvailable: false,
+        }),
+      ).resolves.toBe('Dune.epub');
+    });
   });
 
   describe('export files', () => {
@@ -513,6 +536,29 @@ describe('BookService', () => {
       const plan = await service.getExportFiles([1], user, 'audio');
 
       expect(plan.archiveFilename).toBe('Frank Herbert - Dune.zip');
+    });
+
+    it('keeps the readaloud marker on an EPUB inside an export but not on the ZIP archive', async () => {
+      const { service, appSettings, bookRepo } = makeService();
+      const user = makeUser();
+
+      appSettings.getDownloadPattern.mockResolvedValue('{title}< ({readaloud})>');
+      bookRepo.findLibraryIdsByBookIds.mockResolvedValue([{ id: 1, libraryId: 77 }]);
+      bookRepo.findPrimaryFilesByBookIds.mockResolvedValue([
+        {
+          bookId: 1,
+          absolutePath: '/books/read-aloud.epub',
+          format: 'epub',
+          sizeBytes: 100,
+          mediaOverlayAvailable: true,
+        },
+      ]);
+      bookRepo.findPatternMetadataByBookIds.mockResolvedValue([metaRow(1, { title: 'Dune' })]);
+
+      const plan = await service.getExportFiles([1], user, 'primary');
+
+      expect(plan.archiveFilename).toBe('Dune.zip');
+      expect(plan.files).toEqual([{ absolutePath: '/books/read-aloud.epub', zipPath: 'Dune (readaloud).epub', sizeBytes: 100 }]);
     });
 
     it('uses the book title as originalFilename for single-book audiobook archive filenames', async () => {

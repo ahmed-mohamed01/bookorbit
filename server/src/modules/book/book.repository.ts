@@ -2074,10 +2074,16 @@ export class BookRepository {
 
   async findPrimaryFilesByBookIds(
     bookIds: number[],
-  ): Promise<{ bookId: number; absolutePath: string; format: string | null; sizeBytes: number | null }[]> {
+  ): Promise<{ bookId: number; absolutePath: string; format: string | null; sizeBytes: number | null; mediaOverlayAvailable: boolean }[]> {
     if (bookIds.length === 0) return [];
     return this.db
-      .select({ bookId: books.id, absolutePath: bookFiles.absolutePath, format: bookFiles.format, sizeBytes: bookFiles.sizeBytes })
+      .select({
+        bookId: books.id,
+        absolutePath: bookFiles.absolutePath,
+        format: bookFiles.format,
+        sizeBytes: bookFiles.sizeBytes,
+        mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
+      })
       .from(books)
       .innerJoin(bookFiles, eq(bookFiles.id, books.primaryFileId))
       .where(inArray(books.id, bookIds))
@@ -2103,9 +2109,16 @@ export class BookRepository {
       .orderBy(asc(books.id));
   }
 
-  async findAllFilesByBookIds(
-    bookIds: number[],
-  ): Promise<{ bookId: number; absolutePath: string; format: string | null; sizeBytes: number | null; sortOrder: number }[]> {
+  async findAllFilesByBookIds(bookIds: number[]): Promise<
+    {
+      bookId: number;
+      absolutePath: string;
+      format: string | null;
+      sizeBytes: number | null;
+      sortOrder: number;
+      mediaOverlayAvailable: boolean;
+    }[]
+  > {
     if (bookIds.length === 0) return [];
     return this.db
       .select({
@@ -2114,6 +2127,7 @@ export class BookRepository {
         format: bookFiles.format,
         sizeBytes: bookFiles.sizeBytes,
         sortOrder: bookFiles.sortOrder,
+        mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
       })
       .from(bookFiles)
       .where(inArray(bookFiles.bookId, bookIds))

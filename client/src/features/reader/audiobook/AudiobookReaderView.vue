@@ -1190,7 +1190,7 @@ onMounted(async () => {
 
       <!-- Chapter sheet backdrop -->
       <Transition name="fade">
-        <div v-if="showChapters" class="absolute inset-0 z-20 bg-black/40" @click="showChapters = false" />
+        <div v-if="showChapters" class="absolute inset-0 z-20 bg-scrim" @click="showChapters = false" />
       </Transition>
 
       <!-- Chapter / Bookmarks sheet (slide up) -->
@@ -1272,7 +1272,7 @@ onMounted(async () => {
 
       <!-- Settings sheet backdrop -->
       <Transition name="fade">
-        <div v-if="showSettings" class="absolute inset-0 z-20 bg-black/40" @click="showSettings = false" />
+        <div v-if="showSettings" class="absolute inset-0 z-20 bg-scrim" @click="showSettings = false" />
       </Transition>
 
       <!-- Settings sheet (slide up) -->

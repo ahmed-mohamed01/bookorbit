@@ -154,7 +154,7 @@ async function handleSubmit() {
 <template>
   <DialogRoot :open="open" @update:open="handleOpenChange">
     <DialogPortal>
-      <DialogOverlay class="fixed inset-0 z-50 bg-foreground/50 backdrop-blur-sm" />
+      <DialogOverlay class="fixed inset-0 z-50 bg-scrim backdrop-blur-sm" />
       <DialogContent
         aria-modal="true"
         class="fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-[620px] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6"

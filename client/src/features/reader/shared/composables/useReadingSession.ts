@@ -1,5 +1,6 @@
 import { onUnmounted, ref, unref, type MaybeRef } from 'vue'
 import { api } from '@/lib/api'
+import { createUuid } from '@/lib/uuid'
 
 export interface ProgressSnapshot {
   percentage: number
@@ -18,14 +19,8 @@ export interface ReadingSessionOptions {
   sessionType?: ReadingSessionType
 }
 
-function generateSessionId(): string {
-  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}` // codeql[js/insecure-randomness] - session IDs are non-security deduplication keys
-}
-
 export function useReadingSession(bookFileId: number, getProgress: () => ProgressSnapshot, options: ReadingSessionOptions = {}) {
-  let sessionId = generateSessionId()
+  let sessionId = createUuid()
   let startedAt: Date | null = null
   let activeMs = 0
   let activeStart: number | null = null
@@ -107,7 +102,7 @@ export function useReadingSession(bookFileId: number, getProgress: () => Progres
     if (!canTrack()) return
     // No active session or previous session ended (e.g. after idle timeout) - start fresh.
     if (!startedAt || ended) {
-      sessionId = generateSessionId()
+      sessionId = createUuid()
       startSession()
       return
     }

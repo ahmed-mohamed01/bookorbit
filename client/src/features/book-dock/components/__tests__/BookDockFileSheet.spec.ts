@@ -39,35 +39,34 @@ vi.mock('@/features/book/composables/useMetadataSearch', () => ({
   useMetadataSearch: () => ({
     filteredResults: ref(mocks.filteredResults),
     providerCounts: reactive({}),
+    interruptedProviders: ref([]),
+    retryingProviders: ref([]),
+    resultProviderOrder: ref([]),
+    coverProviderOrder: ref(['amazon']),
+    audioCoverProviderOrder: ref(['audible']),
     isStreaming: ref(false),
     hasSearched: ref(false),
     providers: ref([]),
     selectedProviders: ref([]),
     loadProviders: mocks.loadProviders,
     search: mocks.search,
+    retryProvider: vi.fn<(...args: unknown[]) => Promise<void>>(),
     toggleProvider: vi.fn<(...args: unknown[]) => void>(),
     selectFieldRuleProviders: vi.fn<() => void>(),
     clearProviderFilter: vi.fn<() => void>(),
   }),
 }))
 
-const MetadataSearchPanelStub = defineComponent({
-  name: 'MetadataSearchPanel',
+const WorkspaceStub = defineComponent({
+  name: 'MetadataMatchWorkspace',
   props: {
-    searchDefaults: {
-      type: Object,
-      required: true,
-    },
+    searchDefaults: { type: Object, required: true },
+    coverMedium: { type: String, default: undefined },
+    coverPriority: { type: Array, default: undefined },
+    fixedCandidate: { type: Object, default: null },
   },
-  emits: ['search', 'select'],
-  template: '<div data-test="metadata-search-panel" />',
-})
-
-const MetadataDiffPanelStub = defineComponent({
-  name: 'MetadataDiffPanel',
-  props: { coverMedium: { type: String, default: undefined } },
-  emits: ['apply'],
-  template: '<div data-test="metadata-diff-panel" />',
+  emits: ['search', 'apply', 'cancel'],
+  template: '<div data-test="metadata-match-workspace" />',
 })
 
 function makeFile(overrides: Partial<BookDockFile> = {}): BookDockFile {
@@ -98,8 +97,7 @@ function mountSheet(file: BookDockFile) {
     props: { file },
     global: {
       stubs: {
-        MetadataSearchPanel: MetadataSearchPanelStub,
-        MetadataDiffPanel: MetadataDiffPanelStub,
+        MetadataMatchWorkspace: WorkspaceStub,
         BookDockStatusBadge: true,
       },
     },
@@ -111,7 +109,7 @@ async function openSearchAndReadDefaults(file: BookDockFile): Promise<Record<str
   const searchButton = wrapper.findAll('button').find((button) => button.text().trim() === 'Search')
   expect(searchButton).toBeDefined()
   await searchButton!.trigger('click')
-  return wrapper.getComponent(MetadataSearchPanelStub).props('searchDefaults') as Record<string, string | undefined>
+  return wrapper.getComponent(WorkspaceStub).props('searchDefaults') as Record<string, string | undefined>
 }
 
 describe('BookDockFileSheet', () => {
@@ -219,10 +217,8 @@ describe('BookDockFileSheet', () => {
     const wrapper = mountSheet(makeFile())
     const searchButton = wrapper.findAll('button').find((button) => button.text().trim() === 'Search')
     await searchButton!.trigger('click')
-    wrapper.getComponent(MetadataSearchPanelStub).vm.$emit('select', candidate)
-    await wrapper.vm.$nextTick()
 
-    wrapper.getComponent(MetadataDiffPanelStub).vm.$emit('apply', {
+    wrapper.getComponent(WorkspaceStub).vm.$emit('apply', {
       formPatch: {
         title: 'Dune',
         pageCount: 688,
@@ -259,6 +255,20 @@ describe('BookDockFileSheet', () => {
     )
   })
 
+  it('searches a docked file with its own name as soon as the search opens', async () => {
+    const wrapper = mountSheet(makeFile({ fileName: 'Dune.epub', format: 'epub' }))
+    const searchButton = wrapper.findAll('button').find((button) => button.text().trim() === 'Search')
+    await searchButton!.trigger('click')
+    await flushPromises()
+
+    expect(mocks.search).toHaveBeenCalledWith(expect.objectContaining({ title: 'Dune', mediaKind: 'ebook' }))
+    expect(wrapper.getComponent(WorkspaceStub).props('fixedCandidate')).toBeNull()
+
+    wrapper.getComponent(WorkspaceStub).vm.$emit('cancel')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findComponent(WorkspaceStub).exists()).toBe(false)
+  })
+
   it('searches a docked audio file as an audiobook and stages the audiobook cover it picks', async () => {
     const candidate: MetadataCandidate = { provider: 'audible', providerId: 'B0DUNE', title: 'Dune' }
     mocks.filteredResults.push(candidate)
@@ -266,15 +276,13 @@ describe('BookDockFileSheet', () => {
     const searchButton = wrapper.findAll('button').find((button) => button.text().trim() === 'Search')
     await searchButton!.trigger('click')
 
-    wrapper.getComponent(MetadataSearchPanelStub).vm.$emit('search', { title: 'Dune', author: 'Frank Herbert', isbn: '' })
+    const workspace = wrapper.getComponent(WorkspaceStub)
+    workspace.vm.$emit('search', { title: 'Dune', author: 'Frank Herbert', isbn: '' })
     expect(mocks.search).toHaveBeenLastCalledWith({ title: 'Dune', author: 'Frank Herbert', isbn: '', mediaKind: 'audiobook' })
+    expect(workspace.props('coverMedium')).toBe('audio')
+    expect(workspace.props('coverPriority')).toEqual(['audible'])
 
-    wrapper.getComponent(MetadataSearchPanelStub).vm.$emit('select', candidate)
-    await wrapper.vm.$nextTick()
-    const diff = wrapper.getComponent(MetadataDiffPanelStub)
-    expect(diff.props('coverMedium')).toBe('audio')
-
-    diff.vm.$emit('apply', { formPatch: {}, audioCoverUrl: 'https://covers.example/dune-audio.jpg' })
+    workspace.vm.$emit('apply', { formPatch: {}, audioCoverUrl: 'https://covers.example/dune-audio.jpg' })
     await wrapper.vm.$nextTick()
 
     expect(mocks.saveMetadata).toHaveBeenCalledWith(1, expect.objectContaining({ coverUrl: 'https://covers.example/dune-audio.jpg' }))

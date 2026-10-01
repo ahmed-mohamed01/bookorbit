@@ -17,8 +17,8 @@ import {
   SERIES_INDEX_MAX_LENGTH,
 } from '@bookorbit/types'
 import BookDockStatusBadge from './BookDockStatusBadge.vue'
-import MetadataSearchPanel from '@/features/book/components/detail/tabs/MetadataSearchPanel.vue'
-import MetadataDiffPanel from '@/features/book/components/detail/tabs/MetadataDiffPanel.vue'
+import MetadataMatchWorkspace from '@/features/book/components/metadata-match/MetadataMatchWorkspace.vue'
+import type { MetadataQuery } from '@/features/book/components/metadata-match/MetadataMatchQuery.vue'
 import { useBookDockDetail } from '../composables/useBookDockDetail'
 import { useLibraries } from '@/features/library/composables/useLibraries'
 import { useMetadataSearch } from '@/features/book/composables/useMetadataSearch'
@@ -42,10 +42,10 @@ const { libraries, fetchLibraries: fetchLibs } = useLibraries()
 const meta = computed(() => props.file.selectedMetadata ?? props.file.embeddedMetadata ?? ({} as BookDockMetadata))
 
 const metaView = ref<'editor' | 'search' | 'diff'>('editor')
-const selectedCandidate = ref<MetadataCandidate | null>(null)
-const diffSource = ref<'search' | 'fetched'>('search')
+/** Metadata fetched earlier, compared on its own without a search. */
+const fetchedCandidate = ref<MetadataCandidate | null>(null)
 
-const sheetWidthClass = computed(() => (metaView.value === 'editor' ? 'sm:w-md lg:w-lg' : 'sm:w-3/4 sm:max-w-4xl'))
+const sheetWidthClass = computed(() => (metaView.value === 'editor' ? 'sm:w-md lg:w-lg' : 'sm:w-[min(100vw-3rem,80rem)] sm:max-w-none'))
 
 const targetLibraryId = ref<number | null>(null)
 const targetFolderId = ref<number | null>(null)
@@ -239,12 +239,17 @@ const {
   filteredResults,
   providerCounts,
   interruptedProviders,
+  retryingProviders,
   isStreaming,
   hasSearched,
   providers,
   selectedProviders,
+  resultProviderOrder,
+  coverProviderOrder,
+  audioCoverProviderOrder,
   loadProviders,
   search,
+  retryProvider,
   toggleProvider,
   selectFieldRuleProviders,
   clearProviderFilter,
@@ -308,33 +313,32 @@ const providerIds = computed<ProviderIds>(() => ({
   aladin: passthroughMetadata.value.aladinId ?? null,
 }))
 
-function openSearch() {
+async function openSearch() {
   metaView.value = 'search'
-  loadProviders()
+  if (hasSearched.value) return
+  await loadProviders()
+  const defaults = searchDefaults.value
+  if (defaults.title || defaults.isbn) handleSearchSubmit({ title: defaults.title ?? '', author: defaults.author ?? '', isbn: defaults.isbn ?? '' })
 }
 
 // A dock file has one medium, so its search asks only the providers for it, and audio files get square art.
 const fileMediaKind = computed(() => getBookMediaKind(props.file.format))
 const fileCoverMedium = computed<CoverMedium>(() => (fileMediaKind.value === 'audiobook' ? 'audio' : 'ebook'))
 
-function handleSearchSubmit(params: { title: string; author: string; isbn: string }) {
+const fileCoverPriority = computed(() => (fileCoverMedium.value === 'audio' ? audioCoverProviderOrder.value : coverProviderOrder.value))
+
+function handleSearchSubmit(params: MetadataQuery) {
   const mediaKind = fileMediaKind.value
   search(mediaKind === 'unknown' ? params : { ...params, mediaKind })
 }
 
-function selectCandidate(candidate: MetadataCandidate) {
-  selectedCandidate.value = candidate
-  diffSource.value = 'search'
-  metaView.value = 'diff'
+function backToEditor() {
+  metaView.value = 'editor'
+  fetchedCandidate.value = null
 }
 
-function backFromDiff() {
-  if (diffSource.value === 'fetched') {
-    metaView.value = 'editor'
-  } else {
-    metaView.value = 'search'
-  }
-  selectedCandidate.value = null
+function handleRetry(provider: MetadataProviderKey) {
+  void retryProvider(provider)
 }
 
 async function handleApply(patch: MetadataDiffApply) {
@@ -369,8 +373,7 @@ async function handleApply(patch: MetadataDiffApply) {
   const updated = await saveMetadata(props.file.id, buildMetadataPatchFromForm())
   if (updated) emit('updated', updated)
 
-  metaView.value = 'editor'
-  selectedCandidate.value = null
+  backToEditor()
 }
 
 const hasFetchedMetadata = computed(() => {
@@ -405,7 +408,7 @@ function onCurrentBookDockCoverError(event: Event) {
 function openFetchedDiff() {
   const f = props.file.fetchedMetadata
   if (!f) return
-  selectedCandidate.value = {
+  fetchedCandidate.value = {
     provider: 'auto' as MetadataProviderKey,
     providerId: '',
     title: f.title ?? '',
@@ -431,7 +434,6 @@ function openFetchedDiff() {
     chapters: f.chapters ?? undefined,
     comicMetadata: f.comicMetadata ?? undefined,
   }
-  diffSource.value = 'fetched'
   metaView.value = 'diff'
 }
 
@@ -443,7 +445,7 @@ onMounted(() => {
 
 <template>
   <div class="fixed inset-0 z-50 flex">
-    <div class="hidden sm:block flex-1 bg-black/50 backdrop-blur-sm" @click="$emit('close')" />
+    <div class="hidden sm:block flex-1 bg-scrim" @click="$emit('close')" />
 
     <div
       class="relative flex flex-col w-full h-full bg-background sm:border-l border-border shadow-2xl overflow-hidden transition-[width,max-width] duration-300"
@@ -682,54 +684,48 @@ onMounted(() => {
         </div>
       </template>
 
-      <!-- Metadata search view -->
-      <template v-else-if="metaView === 'search'">
+      <!-- Metadata search and compare -->
+      <template v-else>
         <div class="flex items-center gap-2 px-4 py-2 border-b border-border shrink-0">
           <button
             class="size-7 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
-            @click="metaView = 'editor'"
+            :aria-label="t('common.back')"
+            @click="backToEditor"
           >
             <ArrowLeft class="size-4" />
           </button>
           <Sparkles class="size-3.5 text-primary" />
-          <span class="text-sm font-medium">{{ t('bookDock.sheet.searchMetadata') }}</span>
+          <span class="text-sm font-medium">{{
+            metaView === 'diff' ? t('book.detail.editMetadata.searchDrawer.compareTitle') : t('bookDock.sheet.searchMetadata')
+          }}</span>
         </div>
-        <div class="flex-1 min-h-0">
-          <MetadataSearchPanel
-            :search-defaults="searchDefaults"
-            :providers="providers"
-            :filtered-results="filteredResults"
-            :provider-counts="providerCounts"
-            :selected-providers="selectedProviders"
-            :is-streaming="isStreaming"
-            :has-searched="hasSearched"
-            :interrupted-providers="interruptedProviders"
-            @search="handleSearchSubmit"
-            @toggle-provider="toggleProvider"
-            @clear-filter="clearProviderFilter"
-            @select-field-rules="selectFieldRuleProviders"
-            @select="selectCandidate"
-          />
-        </div>
-      </template>
-
-      <!-- Metadata diff view -->
-      <template v-else-if="metaView === 'diff' && selectedCandidate">
-        <div class="flex-1 min-h-0">
-          <MetadataDiffPanel
-            :current="currentSource"
-            :candidates="diffSource === 'fetched' ? [selectedCandidate] : filteredResults"
-            :initial-candidate="selectedCandidate"
-            :filtered-results="diffSource === 'fetched' ? [selectedCandidate] : filteredResults"
-            :providers="providers"
-            :back-label="diffSource === 'fetched' ? t('common.back') : t('bookDock.sheet.results')"
-            :current-cover-url="currentBookDockCoverUrl"
-            :cover-medium="fileCoverMedium"
-            :provider-ids="providerIds"
-            @back="backFromDiff"
-            @apply="handleApply"
-          />
-        </div>
+        <MetadataMatchWorkspace
+          class="min-h-0 flex-1"
+          :current="currentSource"
+          :provider-ids="providerIds"
+          :current-cover-url="currentBookDockCoverUrl"
+          :cover-medium="fileCoverMedium"
+          :cover-priority="fileCoverPriority"
+          :search-defaults="searchDefaults"
+          :providers="providers"
+          :results="filteredResults"
+          :provider-counts="providerCounts"
+          :selected-providers="selectedProviders"
+          :interrupted-providers="interruptedProviders"
+          :retrying-providers="retryingProviders"
+          :provider-order="resultProviderOrder"
+          :is-streaming="isStreaming"
+          :has-searched="hasSearched"
+          :fixed-candidate="metaView === 'diff' ? fetchedCandidate : null"
+          :apply-hint="t('book.detail.editMetadata.match.footer.fileHint')"
+          @search="handleSearchSubmit"
+          @toggle-provider="toggleProvider"
+          @select-all="clearProviderFilter"
+          @select-field-rules="selectFieldRuleProviders"
+          @retry-provider="handleRetry"
+          @apply="handleApply"
+          @cancel="backToEditor"
+        />
       </template>
     </div>
   </div>
