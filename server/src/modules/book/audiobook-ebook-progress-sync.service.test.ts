@@ -118,7 +118,11 @@ function makeFilesWithoutAudio() {
   return { ...files, primaryFileId: 30, files: files.files.filter((file) => file.format === 'epub') };
 }
 
-function makeFixture(audioDuration = 100, syncFiles: ReturnType<typeof makeFiles> = makeFiles(audioDuration)) {
+function makeFixture(
+  audioDuration = 100,
+  syncFiles: ReturnType<typeof makeFiles> = makeFiles(audioDuration),
+  provenance?: { findSourceAudioBookId: ReturnType<typeof vi.fn> },
+) {
   const bookRepo = {
     findReadAloudSyncMode: vi.fn().mockResolvedValue('auto'),
     findAudioEbookProgressSyncFiles: vi.fn().mockResolvedValue(syncFiles),
@@ -136,7 +140,7 @@ function makeFixture(audioDuration = 100, syncFiles: ReturnType<typeof makeFiles
   return {
     bookRepo,
     positionConverter,
-    service: new AudiobookEbookProgressSyncService(bookRepo as never, positionConverter as never),
+    service: new AudiobookEbookProgressSyncService(bookRepo as never, positionConverter as never, provenance),
   };
 }
 
@@ -658,6 +662,61 @@ describe('AudiobookEbookProgressSyncService read-along book behind a linked audi
     await expect(service.syncReadAlongFromAudioPosition(params)).resolves.toBe(false);
 
     expect(bookRepo.upsertSyncedEpubProgressIfNewer).not.toHaveBeenCalled();
+  });
+
+  describe('a read-along BookOrbit built from this audiobook', () => {
+    // Storyteller moved the chapter 2 cut: its 100 s narration file stands for a 115 s chapter.
+    function makeBuiltFixture(sourceAudioBookId: number | null) {
+      const playlist = makePlaylist();
+      mockBuildPlaylist.mockResolvedValue({
+        ...playlist,
+        items: playlist.items.map((item) => ({ ...item, audioHref: 'OPS/Audio/00001-00002.mp4' })),
+      });
+      const provenance = { findSourceAudioBookId: vi.fn().mockResolvedValue(sourceAudioBookId) };
+      const fixture = makeFixture(100, readAlongFiles(), provenance);
+      fixture.bookRepo.findAudioChapterStarts.mockResolvedValue([{ startMs: 0 }, { startMs: 20_000 }]);
+      return { ...fixture, provenance };
+    }
+
+    it('pairs the narration with its chapter by Storyteller file name', async () => {
+      const { service, bookRepo, provenance } = makeBuiltFixture(5);
+
+      await expect(service.syncReadAlongFromAudioPosition({ ...params, audioTotalSeconds: 135 })).resolves.toBe(true);
+
+      expect(provenance.findSourceAudioBookId).toHaveBeenCalledWith(9);
+      expect(bookRepo.upsertSyncedEpubProgressIfNewer).toHaveBeenCalledWith(expect.objectContaining({ positionSeconds: 75 }));
+    });
+
+    it('keeps duration matching when the read-along was built from another audiobook', async () => {
+      const { service, bookRepo } = makeBuiltFixture(6);
+
+      await expect(service.syncReadAlongFromAudioPosition({ ...params, audioTotalSeconds: 135 })).resolves.toBe(false);
+
+      expect(bookRepo.upsertSyncedEpubProgressIfNewer).not.toHaveBeenCalled();
+    });
+  });
+
+  it('warns once per mismatched book pair and logs repeats at debug', async () => {
+    const { service, bookRepo } = makeReadAlongFixture();
+    const logger = service['logger'];
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    bookRepo.findAudioChapterStarts.mockResolvedValue([{ startMs: 0 }, { startMs: 60_000 }]);
+
+    await expect(service.syncReadAlongFromAudioPosition(params)).resolves.toBe(false);
+    await expect(service.syncReadAlongFromAudioPosition(params)).resolves.toBe(false);
+    await expect(service.syncReadAlongFromAudioPosition({ ...params, readAlongBookId: 10 })).resolves.toBe(false);
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(debug).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenNthCalledWith(
+      1,
+      expect.stringMatching(
+        /audioBookId=5 readAlongBookId=9 durationMs=\d+ chapters=2 narrationFiles=1 firstMismatch=1 chapterSeconds=60\.000 narrationSeconds=100\.000 builtFromAudio=false matched=false/,
+      ),
+    );
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('audioBookId=5 readAlongBookId=9'));
+    expect(warn).toHaveBeenNthCalledWith(2, expect.stringContaining('audioBookId=5 readAlongBookId=10'));
   });
 
   it('skips Kobo when the read-along already holds a newer position', async () => {

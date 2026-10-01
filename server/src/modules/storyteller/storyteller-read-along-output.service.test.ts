@@ -30,6 +30,13 @@ describe('StorytellerReadAlongOutputService', () => {
     await expect(service.findReadAlongOutputs([30, 31])).resolves.toEqual(new Set([30]));
   });
 
+  it('names the audiobook a read-along was built from, and none for a book no build produced', async () => {
+    repo.findBuildByOutputBook.mockResolvedValueOnce({ id: 4, textBookId: 10, audioBookId: 20, outputBookId: 30 }).mockResolvedValueOnce(undefined);
+
+    await expect(service.findSourceAudioBookId(30)).resolves.toBe(20);
+    await expect(service.findSourceAudioBookId(31)).resolves.toBeNull();
+  });
+
   it('names the pair a read-along was built from', async () => {
     repo.findBuildByOutputBook.mockResolvedValue({ id: 4, textBookId: 10, audioBookId: 20, outputBookId: 30 });
 

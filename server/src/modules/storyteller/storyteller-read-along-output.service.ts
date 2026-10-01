@@ -1,11 +1,12 @@
 import { Injectable } from '@nestjs/common';
 
+import type { ReadAlongProvenanceSource } from '../book/read-along-provenance-source';
 import type { ReadAlongAttachment, ReadAlongLinkTarget, ReadAlongOutputSource, ReadAlongSourcePair } from '../edition-link/read-along-output-source';
 import { isLostReadAlongMember } from './read-along-attachment';
 import { StorytellerRepository } from './storyteller.repository';
 
 @Injectable()
-export class StorytellerReadAlongOutputService implements ReadAlongOutputSource {
+export class StorytellerReadAlongOutputService implements ReadAlongOutputSource, ReadAlongProvenanceSource {
   constructor(private readonly repo: StorytellerRepository) {}
 
   findReadAlongOutputs(bookIds: readonly number[]): Promise<Set<number>> {
@@ -16,6 +17,10 @@ export class StorytellerReadAlongOutputService implements ReadAlongOutputSource 
   async findSourcePair(readAlongBookId: number): Promise<ReadAlongSourcePair | null> {
     const build = await this.repo.findBuildByOutputBook(readAlongBookId);
     return build ? { textBookId: build.textBookId, audioBookId: build.audioBookId } : null;
+  }
+
+  async findSourceAudioBookId(readAlongBookId: number): Promise<number | null> {
+    return (await this.findSourcePair(readAlongBookId))?.audioBookId ?? null;
   }
 
   async findLostReadAlong(link: ReadAlongLinkTarget): Promise<ReadAlongAttachment | null> {

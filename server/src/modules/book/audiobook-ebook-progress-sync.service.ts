@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { stat } from 'fs/promises';
 
 import type { EpubMediaOverlayPlaylist, EpubMediaOverlayPlaylistItem } from '@bookorbit/types';
@@ -9,19 +9,24 @@ import { PositionConverterService } from '../position-converter/position-convert
 import { buildEpubMediaOverlayPlaylistFromFile } from '../reader/epub/epub-media-overlay';
 import { BookRepository } from './book.repository';
 import {
+  type AudioChapterSpan,
   audioFileStartsSeconds,
   buildAudioChapterSpans,
+  describeChapterMismatch,
   isPlayable,
   itemTimelineStarts,
   mapAudioPositionToReadAlong,
   mapReadAlongPositionToAudio,
 } from './read-along-chapter-mapping';
+import { READ_ALONG_PROVENANCE_SOURCE, type ReadAlongProvenanceSource } from './read-along-provenance-source';
 
 const EVENT = 'book.audio_ebook_progress_sync';
 const REVERSE_EVENT = 'book.ebook_audio_progress_sync';
 const READ_ALONG_EVENT = 'book.audio_read_along_progress_sync';
 const READ_ALONG_REVERSE_EVENT = 'book.read_along_audio_progress_sync';
 const PLAYLIST_CACHE_MAX = 12;
+// Bounds the once-per-pair mismatch warnings; cleared wholesale since a repeat only costs one warn line.
+const CHAPTER_MISMATCH_WARNED_MAX = 1000;
 const MAX_DURATION_DIFF_RATIO = 0.05;
 const MAX_DURATION_DIFF_SECONDS = 300;
 
@@ -91,10 +96,12 @@ type AudioPosition = {
 export class AudiobookEbookProgressSyncService {
   private readonly logger = new Logger(AudiobookEbookProgressSyncService.name);
   private readonly playlistCache = new Map<number, PlaylistCacheEntry>();
+  private readonly chapterMismatchWarned = new Set<string>();
 
   constructor(
     private readonly bookRepo: BookRepository,
     private readonly positionConverter: PositionConverterService,
+    @Optional() @Inject(READ_ALONG_PROVENANCE_SOURCE) private readonly provenance?: ReadAlongProvenanceSource,
   ) {}
 
   async syncFromAudioProgress(params: {
@@ -159,13 +166,12 @@ export class AudiobookEbookProgressSyncService {
       const playlist = await this.getPlaylist(overlaySourceFile, params.readAlongBookId);
       if (playlist.items.length === 0 || playlist.durationSeconds == null || playlist.durationSeconds <= 0) return false;
 
-      const position = mapAudioPositionToReadAlong(playlist, chapters, params.audioSeconds);
+      const builtFromAudio = await this.isBuiltFromAudio(params.readAlongBookId, params.audioBookId);
+      // Only a built read-along's names need the file starts, so other pairs skip the file query.
+      const audioFileStartsSeconds = builtFromAudio ? (await this.loadAudioTimeline(params.audioBookId))?.starts : undefined;
+      const position = mapAudioPositionToReadAlong(playlist, chapters, params.audioSeconds, { builtFromAudio, audioFileStartsSeconds });
       if (!position) {
-        this.logger.debug(
-          `[${READ_ALONG_EVENT}] [end] userId=${params.userId} audioBookId=${params.audioBookId} readAlongBookId=${params.readAlongBookId} durationMs=${
-            Date.now() - startedAt
-          } chapters=${chapters.length} matched=false - narration files do not match the audiobook chapters, read-along sync skipped`,
-        );
+        this.logChapterMismatch(READ_ALONG_EVENT, params, playlist, chapters, builtFromAudio, startedAt, 'read-along sync skipped');
         return false;
       }
 
@@ -235,13 +241,13 @@ export class AudiobookEbookProgressSyncService {
       const overlaySeconds = await this.resolveOverlaySecondsFromEbookPosition(ebookFile, overlaySourceFile.id, playlist, params);
       if (overlaySeconds === null) return false;
 
-      const audioSeconds = mapReadAlongPositionToAudio(playlist, chapters, overlaySeconds);
+      const builtFromAudio = await this.isBuiltFromAudio(params.readAlongBookId, params.audioBookId);
+      const audioSeconds = mapReadAlongPositionToAudio(playlist, chapters, overlaySeconds, {
+        builtFromAudio,
+        audioFileStartsSeconds: timeline.starts,
+      });
       if (audioSeconds === null) {
-        this.logger.debug(
-          `[${READ_ALONG_REVERSE_EVENT}] [end] userId=${params.userId} audioBookId=${params.audioBookId} readAlongBookId=${params.readAlongBookId} durationMs=${
-            Date.now() - startedAt
-          } chapters=${chapters.length} matched=false - narration files do not match the audiobook chapters, audiobook sync skipped`,
-        );
+        this.logChapterMismatch(READ_ALONG_REVERSE_EVENT, params, playlist, chapters, builtFromAudio, startedAt, 'audiobook sync skipped');
         return false;
       }
 
@@ -498,6 +504,39 @@ export class AudiobookEbookProgressSyncService {
       chapterStarts.map((chapter) => chapter.startMs),
     );
     return { files, starts, totalSeconds: starts.at(-1)! + files.at(-1)!.durationSeconds!, chapterStarts };
+  }
+
+  private async isBuiltFromAudio(readAlongBookId: number, audioBookId: number): Promise<boolean> {
+    return (await this.provenance?.findSourceAudioBookId(readAlongBookId)) === audioBookId;
+  }
+
+  /**
+   * A mismatch refuses every position for the pair, so it is worth one warning naming the chapter that
+   * broke the match; repeats (every narration save) stay at debug.
+   */
+  private logChapterMismatch(
+    event: string,
+    params: { userId: number; audioBookId: number; readAlongBookId: number },
+    playlist: EpubMediaOverlayPlaylist,
+    chapters: AudioChapterSpan[],
+    builtFromAudio: boolean,
+    startedAt: number,
+    outcome: string,
+  ): void {
+    const mismatch = describeChapterMismatch(playlist, chapters);
+    const message = `[${event}] [end] userId=${params.userId} audioBookId=${params.audioBookId} readAlongBookId=${params.readAlongBookId} durationMs=${
+      Date.now() - startedAt
+    } chapters=${mismatch.chapters} narrationFiles=${mismatch.narrationFiles} firstMismatch=${mismatch.firstMismatch ?? 'none'} chapterSeconds=${
+      mismatch.chapterSeconds?.toFixed(3) ?? 'none'
+    } narrationSeconds=${mismatch.narrationSeconds?.toFixed(3) ?? 'none'} builtFromAudio=${builtFromAudio} matched=false - narration files do not match the audiobook chapters, ${outcome}`;
+    const key = `${params.audioBookId}:${params.readAlongBookId}`;
+    if (this.chapterMismatchWarned.has(key)) {
+      this.logger.debug(message);
+      return;
+    }
+    if (this.chapterMismatchWarned.size >= CHAPTER_MISMATCH_WARNED_MAX) this.chapterMismatchWarned.clear();
+    this.chapterMismatchWarned.add(key);
+    this.logger.warn(message);
   }
 
   private persistTarget(userId: number, target: EpubProgressResolution, sourceUpdatedAt: Date): Promise<boolean> {
