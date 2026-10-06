@@ -10481,7 +10481,23 @@
       "stop": "Stop narration",
       "narrateFromHere": "Narrate from here",
       "returnToNarration": "Back to narration",
-      "error": "Narration playback error"
+      "error": "Narration playback error",
+      "playerLabel": "Audio narration",
+      "minimise": "Minimise player",
+      "chapters": "Chapters",
+      "playbackSpeed": "Playback speed",
+      "normalSpeed": "{speed}x (Normal)",
+      "speedValue": "{speed}x",
+      "sleepTimer": "Sleep timer",
+      "sleepTimerWith": "Sleep timer: {value}",
+      "sleep": "Sleep",
+      "stopAfter": "Stop playing after",
+      "sleepOff": "Off",
+      "sleepMinutes": "{count, plural, one {# minute} other {# minutes}}",
+      "sleepRemaining": "{count} min",
+      "sleepRemainingShort": "{count}m",
+      "sleepChapterBadge": "Ch",
+      "endOfChapter": "End of chapter"
     }
   },
   "scanner": {

@@ -401,7 +401,7 @@ export function useFoliate(
           getSectionFractions?: () => number[]
           resolveNavigation?: (target: string | number) => { index?: number } | Promise<{ index?: number }>
           getTOCItemOf?: (target: string | number) => Promise<{ label?: string } | null>
-          book?: { toc?: unknown[]; media?: { activeClass?: string } }
+          book?: { toc?: unknown[]; media?: { activeClass?: string }; sections?: { mediaOverlay?: unknown }[] }
           renderer?: FoliateRenderer
           destroy?: () => void
           mediaOverlay?: FoliateMediaOverlay | null
@@ -458,6 +458,7 @@ export function useFoliate(
     getMediaOverlay: (): FoliateMediaOverlay | null => getViewEl()?.mediaOverlay ?? null,
     startMediaOverlay: (): unknown => getViewEl()?.startMediaOverlay?.(),
     getMediaActiveClass: (): string | null => getViewEl()?.book?.media?.activeClass ?? null,
+    sectionHasMediaOverlay: (index: number): boolean => !!getViewEl()?.book?.sections?.[index]?.mediaOverlay,
     setMediaOverlayFollow: (decider: MediaOverlayFollowDecider | null) => {
       mediaOverlayFollow = decider
     },

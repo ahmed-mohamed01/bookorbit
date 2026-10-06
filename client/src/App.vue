@@ -11,7 +11,7 @@ import WhatsNewDialog from '@/features/whats-new/WhatsNewDialog.vue'
 import { useWhatsNew } from '@/features/whats-new/composables/useWhatsNew'
 import { useAuth } from '@/features/auth/composables/useAuth'
 import TtsMiniPlayer from '@/features/tts/components/TtsMiniPlayer.vue'
-import MediaOverlayMiniPlayer from '@/features/reader/media-overlay/components/MediaOverlayMiniPlayer.vue'
+import MediaOverlayDock from '@/features/reader/media-overlay/components/MediaOverlayDock.vue'
 import PodcastMiniPlayer from '@/features/podcast/components/PodcastMiniPlayer.vue'
 import PodcastLiveRegion from '@/features/podcast/components/PodcastLiveRegion.vue'
 import PodcastDownloadWidget from '@/features/podcast/components/PodcastDownloadWidget.vue'
@@ -99,7 +99,7 @@ provide(
     <WhatsNewDialog v-if="popupOpen" />
     <LegalNotices />
     <TtsMiniPlayer />
-    <MediaOverlayMiniPlayer />
+    <MediaOverlayDock />
     <PodcastMiniPlayer v-if="APP_FEATURES.podcasts" />
     <PodcastDownloadWidget v-if="APP_FEATURES.podcasts && user" />
     <PodcastShortcutsDialog v-if="APP_FEATURES.podcasts" />

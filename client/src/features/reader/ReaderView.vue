@@ -37,6 +37,8 @@ import { startMediaOverlayWithFallback } from './media-overlay/lib/media-overlay
 import { mediaOverlayEntriesOverlapping } from './media-overlay/lib/media-overlay-range'
 import { decideNarrationFollow, isNarrationInView } from './media-overlay/lib/media-overlay-follow'
 import { useMediaOverlayFollow } from './media-overlay/composables/useMediaOverlayFollow'
+import MediaOverlayStartButton from './media-overlay/components/MediaOverlayStartButton.vue'
+import { registerNarrationChapters } from './media-overlay/composables/useNarrationChapters'
 import TtsResumePrompt from '@/features/tts/components/TtsResumePrompt.vue'
 import ReaderHeader from './epub/components/ReaderHeader.vue'
 import ReaderFooter from './epub/components/ReaderFooter.vue'
@@ -291,6 +293,9 @@ useTtsKeyboard(() => mediaOverlay.isActive.value, {
   decreaseSpeed: mediaOverlay.decreaseRate,
 })
 const isOverlayFooterVisible = computed(() => footerVisible.value && !showTapZones.value)
+const showNarrationStart = computed(
+  () => isOverlayFooterVisible.value && isMediaOverlayAvailable.value && !mediaOverlay.isActive.value && !isTtsActive.value,
+)
 const showTtsResumePrompt = ref(false)
 const clearingSavedTtsPosition = ref(false)
 const pendingTtsChapterNavigation = ref<number | null>(null)
@@ -909,6 +914,7 @@ const {
   getMediaActiveClass,
   setMediaOverlayFollow,
   resolveSectionIndex,
+  sectionHasMediaOverlay,
 } = useFoliate(() => containerRef.value, onRelocateHandler, onApplyStylesHandler, onMiddleTapHandler, onChapterLoadHandler, canRunManualNavigation)
 
 setMediaOverlayFollow((el) => {
@@ -921,6 +927,15 @@ setMediaOverlayFollow((el) => {
   if (decision.attach) mediaOverlay.attach()
   return decision.follow
 })
+
+onUnmounted(
+  registerNarrationChapters({
+    toc: chapters,
+    resolveSectionIndex,
+    hasNarration: sectionHasMediaOverlay,
+    playSection: (section) => beginNarration(section, null),
+  }),
+)
 
 const narrationFollow = useMediaOverlayFollow({
   isNarrating: () => mediaOverlay.isActive.value,
@@ -1698,6 +1713,8 @@ onUnmounted(() => {
       @nextSection="navigateToSection(sectionIndex + 1)"
       @seek="navigateToFraction($event)"
     />
+
+    <MediaOverlayStartButton :visible="showNarrationStart" @start="handleStartMediaOverlay" />
 
     <ReaderSidebar
       v-if="showSidebar"
