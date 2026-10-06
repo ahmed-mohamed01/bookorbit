@@ -6,6 +6,8 @@ import { stat } from 'fs/promises';
 import { Readable } from 'stream';
 import * as unzipper from 'unzipper';
 
+import { readStream } from '../../../common/test-utils/read-stream';
+import { EpubMediaStreamService } from './epub-media-stream.service';
 import { EpubService } from './epub.service';
 
 const mockStat = stat as MockedFunction<typeof stat>;
@@ -32,14 +34,6 @@ function zipEntry(spec: ZipEntrySpec) {
 
 function makeArchive(entries: ZipEntrySpec[]) {
   return { files: entries.map(zipEntry) };
-}
-
-async function readStream(stream: NodeJS.ReadableStream): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
 }
 
 const CONTAINER_XML = `
@@ -205,7 +199,7 @@ describe('EpubService', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
-    service = new EpubService(bookReadService as any, libraryService as any);
+    service = new EpubService(bookReadService as any, libraryService as any, new EpubMediaStreamService());
     bookReadService.findLibraryIdByBookId.mockResolvedValue(3);
     bookReadService.findPrimaryFilesByBookIds.mockResolvedValue([{ format: 'epub', absolutePath: '/books/book.epub', sizeBytes: null }]);
     libraryService.verifyUserAccess.mockResolvedValue(undefined);
@@ -370,40 +364,109 @@ describe('EpubService', () => {
   });
 
   it('rejects stream requests with invalid paths', async () => {
-    await expect(service.streamFile(1, '../OPS/text/ch1.xhtml', undefined, user)).rejects.toThrow(ForbiddenException);
-    await expect(service.streamFile(1, '/', undefined, user)).rejects.toThrow(ForbiddenException);
+    await expect(service.streamFile(1, '../OPS/text/ch1.xhtml', undefined, {}, user)).rejects.toThrow(ForbiddenException);
+    await expect(service.streamFile(1, '/', undefined, {}, user)).rejects.toThrow(ForbiddenException);
   });
 
   it('streams manifest entries with manifest media type and size', async () => {
     mockOpenFile.mockResolvedValueOnce(makeEpubArchive() as any).mockResolvedValueOnce(makeEpubArchive() as any);
 
-    const result = await service.streamFile(1, 'OPS/text/ch1.xhtml', undefined, user);
+    const result = await service.streamFile(1, 'OPS/text/ch1.xhtml', undefined, {}, user);
 
     expect(result.contentType).toBe('application/xhtml+xml');
     expect(result.size).toBe(11);
-    await expect(readStream(result.stream)).resolves.toEqual(Buffer.from('chapter-one'));
+    await expect(readStream(result.openBody())).resolves.toEqual(Buffer.from('chapter-one'));
+  });
+
+  describe('streaming stored entries', () => {
+    const stored = {
+      archivePath: '/books/book.epub',
+      dataStart: 0,
+      layout: { size: 1000, segments: [], indexBytes: 0 },
+      etag: '"v1"',
+    };
+    const mediaStream = { knownEntry: vi.fn(), storedEntry: vi.fn(), openRange: vi.fn() };
+
+    beforeEach(() => {
+      service = new EpubService(bookReadService as any, libraryService as any, mediaStream as any);
+      mockStat.mockResolvedValue({ mtimeMs: 100, size: 5000 } as Awaited<ReturnType<typeof stat>>);
+    });
+
+    it('serves a known entry without reading the zip directory again', async () => {
+      mockOpenFile.mockResolvedValueOnce(makeEpubArchive() as any);
+      await service.getBookInfo(1, undefined, user);
+      mediaStream.knownEntry.mockReturnValue(stored);
+
+      const result = await service.streamFile(1, 'OPS/text/ch1.xhtml', undefined, { range: 'bytes=10-19' }, user);
+
+      expect(mediaStream.knownEntry).toHaveBeenCalledWith({ path: '/books/book.epub', mtime: 100, size: 5000 }, 'OPS/text/ch1.xhtml');
+      expect(mockOpenFile).toHaveBeenCalledOnce();
+      expect(mediaStream.storedEntry).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ status: 206, size: 10, contentRange: 'bytes 10-19/1000', etag: '"v1"', acceptsRanges: true });
+    });
+
+    it('reads the zip directory for an entry it has not seen yet', async () => {
+      mockOpenFile.mockResolvedValueOnce(makeEpubArchive() as any).mockResolvedValueOnce(makeEpubArchive() as any);
+      mediaStream.knownEntry.mockReturnValue(null);
+      mediaStream.storedEntry.mockResolvedValue(stored);
+
+      const result = await service.streamFile(1, 'OPS/text/ch1.xhtml', undefined, {}, user);
+
+      expect(mockOpenFile).toHaveBeenCalledTimes(2);
+      expect(mediaStream.storedEntry).toHaveBeenCalledWith(
+        1,
+        { path: '/books/book.epub', mtime: 100, size: 5000 },
+        'OPS/text/ch1.xhtml',
+        expect.objectContaining({ path: 'OPS/text/ch1.xhtml' }),
+      );
+      expect(result).toMatchObject({ status: 200, size: 1000, etag: '"v1"' });
+    });
+
+    it('answers a matching If-None-Match with 304 and an If-Range mismatch with the full body', async () => {
+      mockOpenFile.mockResolvedValueOnce(makeEpubArchive() as any);
+      mediaStream.knownEntry.mockReturnValue(stored);
+
+      await expect(service.streamFile(1, 'OPS/text/ch1.xhtml', undefined, { ifNoneMatch: '"v1"' }, user)).resolves.toMatchObject({ status: 304 });
+      await expect(service.streamFile(1, 'OPS/text/ch1.xhtml', undefined, { range: 'bytes=0-9', ifRange: '"v0"' }, user)).resolves.toMatchObject({
+        status: 200,
+        size: 1000,
+        contentRange: null,
+      });
+    });
+  });
+
+  it('answers a Range request on an entry it cannot slice with the full body', async () => {
+    mockOpenFile.mockResolvedValueOnce(makeEpubArchive() as any).mockResolvedValueOnce(makeEpubArchive() as any);
+
+    const result = await service.streamFile(1, 'OPS/text/ch1.xhtml', undefined, { range: 'bytes=0-3' }, user);
+
+    expect(result.status).toBe(200);
+    expect(result.contentRange).toBeNull();
+    expect(result.acceptsRanges).toBe(false);
+    expect(result.size).toBe(11);
+    await expect(readStream(result.openBody())).resolves.toEqual(Buffer.from('chapter-one'));
   });
 
   it('streams optional META-INF files using guessed content type', async () => {
     mockOpenFile.mockResolvedValueOnce(makeEpubArchive() as any).mockResolvedValueOnce(makeEpubArchive() as any);
 
-    const result = await service.streamFile(1, 'META-INF/encryption.xml', undefined, user);
+    const result = await service.streamFile(1, 'META-INF/encryption.xml', undefined, {}, user);
 
     expect(result.contentType).toBe('application/xml');
-    await expect(readStream(result.stream)).resolves.toEqual(Buffer.from('<enc />'));
+    await expect(readStream(result.openBody())).resolves.toEqual(Buffer.from('<enc />'));
   });
 
   it('throws when requested path is outside parsed manifest/optional files', async () => {
     mockOpenFile.mockResolvedValueOnce(makeEpubArchive() as any);
 
-    await expect(service.streamFile(1, 'OPS/text/missing.xhtml', undefined, user)).rejects.toThrow(NotFoundException);
+    await expect(service.streamFile(1, 'OPS/text/missing.xhtml', undefined, {}, user)).rejects.toThrow(NotFoundException);
     expect(mockOpenFile).toHaveBeenCalledTimes(1);
   });
 
   it('throws when parsed path exists but archive entry cannot be found at stream time', async () => {
     mockOpenFile.mockResolvedValueOnce(makeEpubArchive() as any).mockResolvedValueOnce(makeEpubArchive({ omitChapterFile: true }) as any);
 
-    await expect(service.streamFile(1, 'OPS/text/ch1.xhtml', undefined, user)).rejects.toThrow(NotFoundException);
+    await expect(service.streamFile(1, 'OPS/text/ch1.xhtml', undefined, {}, user)).rejects.toThrow(NotFoundException);
   });
 
   it('uses cache when mtime is unchanged and reparses after mtime update', async () => {

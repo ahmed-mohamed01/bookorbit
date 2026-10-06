@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { AudioLines, Pause, Play } from '@lucide/vue'
+import { AudioLines, LoaderCircle, Pause, Play } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useMediaOverlay } from '../composables/useMediaOverlay'
 import { installNarrationSleepWatchers } from '../composables/useNarrationSleep'
@@ -12,7 +12,11 @@ import MediaOverlayFullPlayer from './MediaOverlayFullPlayer.vue'
 const collapsed = ref(true)
 
 const { t } = useI18n()
-const { isActive, isPlaying, isDetached, error, toggle } = useMediaOverlay()
+const { isActive, isPlaying, isWaitingForAudio, isDetached, error, toggle } = useMediaOverlay()
+const toggleLabel = computed(() => {
+  if (isWaitingForAudio.value) return t('reader.narration.buffering')
+  return isPlaying.value ? t('reader.narration.pause') : t('reader.narration.play')
+})
 const { isReaderFooterVisible } = useTtsMiniPlayerUi()
 installNarrationSleepWatchers()
 
@@ -164,10 +168,12 @@ function handleLeave(el: Element, done: () => void) {
           <button
             type="button"
             class="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
-            :aria-label="isPlaying ? t('reader.narration.pause') : t('reader.narration.play')"
+            :aria-label="toggleLabel"
+            :title="toggleLabel"
             @click="toggle"
           >
-            <Pause v-if="isPlaying" class="h-4 w-4" />
+            <LoaderCircle v-if="isWaitingForAudio" class="h-4 w-4 animate-spin" />
+            <Pause v-else-if="isPlaying" class="h-4 w-4" />
             <Play v-else class="h-4 w-4" />
           </button>
           <button

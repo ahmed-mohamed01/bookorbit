@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { PassThrough } from 'stream';
+import { PassThrough, Readable } from 'stream';
 
 import { EpubController } from './epub.controller';
 
@@ -41,27 +41,101 @@ describe('EpubController', () => {
     );
   });
 
-  it('decodes wildcard file path, sets headers, and streams payload', async () => {
-    const user = { id: 1, isSuperuser: false, permissions: [] } as any;
+  function fileResult(overrides: Record<string, unknown> = {}) {
     const stream = new PassThrough();
-    const reply = {
-      header: vi.fn(),
-      send: vi.fn(),
-    };
-
-    epubService.streamFile.mockResolvedValue({
+    return {
       stream,
-      contentType: 'application/xhtml+xml',
-      size: 321,
-    });
+      result: {
+        openBody: vi.fn(() => stream),
+        contentType: 'application/xhtml+xml',
+        size: 321,
+        status: 200,
+        contentRange: null,
+        etag: null,
+        acceptsRanges: false,
+        ...overrides,
+      },
+    };
+  }
 
-    await controller.getFile(9, 'OPS/text/Chapter%201.xhtml', '13', user, reply as any);
+  const makeReply = () => ({ code: vi.fn(), header: vi.fn(), send: vi.fn() });
+  const user = { id: 1, isSuperuser: false, permissions: [] } as any;
 
-    expect(epubService.streamFile).toHaveBeenCalledWith(9, 'OPS/text/Chapter 1.xhtml', 13, user);
-    expect(reply.header).toHaveBeenNthCalledWith(1, 'Content-Type', 'application/xhtml+xml');
-    expect(reply.header).toHaveBeenNthCalledWith(2, 'Content-Length', 321);
-    expect(reply.header).toHaveBeenNthCalledWith(3, 'Cache-Control', 'public, max-age=3600');
+  it('decodes wildcard file path, sets headers, and streams payload', async () => {
+    const reply = makeReply();
+    const { stream, result } = fileResult();
+    epubService.streamFile.mockResolvedValue(result);
+
+    await controller.getFile(9, 'OPS/text/Chapter%201.xhtml', '13', user, { method: 'GET', headers: {} } as any, reply as any);
+
+    expect(epubService.streamFile).toHaveBeenCalledWith(
+      9,
+      'OPS/text/Chapter 1.xhtml',
+      13,
+      { range: undefined, ifRange: undefined, ifNoneMatch: undefined },
+      user,
+    );
+    expect(reply.code).toHaveBeenCalledWith(200);
+    expect(reply.header).toHaveBeenCalledWith('Content-Type', 'application/xhtml+xml');
+    expect(reply.header).toHaveBeenCalledWith('Content-Length', 321);
+    expect(reply.header).toHaveBeenCalledWith('Cache-Control', 'private, max-age=3600');
+    expect(reply.header).not.toHaveBeenCalledWith('Accept-Ranges', expect.anything());
+    expect(reply.header).not.toHaveBeenCalledWith('Content-Range', expect.anything());
     expect(reply.send).toHaveBeenCalledWith(stream);
+  });
+
+  it('forwards range conditions and answers with partial content', async () => {
+    const reply = makeReply();
+    const { result } = fileResult({
+      contentType: 'video/mp4',
+      size: 100,
+      status: 206,
+      contentRange: 'bytes 0-99/5000',
+      etag: '"v1"',
+      acceptsRanges: true,
+    });
+    epubService.streamFile.mockResolvedValue(result);
+    const headers = { range: 'bytes=0-99', 'if-range': '"v1"', 'if-none-match': '"v0"' };
+
+    await controller.getFile(9, 'OEBPS/Audio/00001.mp4', '13', user, { method: 'GET', headers } as any, reply as any);
+
+    expect(epubService.streamFile).toHaveBeenCalledWith(
+      9,
+      'OEBPS/Audio/00001.mp4',
+      13,
+      { range: 'bytes=0-99', ifRange: '"v1"', ifNoneMatch: '"v0"' },
+      user,
+    );
+    expect(reply.code).toHaveBeenCalledWith(206);
+    expect(reply.header).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
+    expect(reply.header).toHaveBeenCalledWith('Content-Range', 'bytes 0-99/5000');
+    expect(reply.header).toHaveBeenCalledWith('Content-Length', 100);
+    expect(reply.header).toHaveBeenCalledWith('ETag', '"v1"');
+  });
+
+  it('answers a HEAD request without opening the body', async () => {
+    const reply = makeReply();
+    const { result } = fileResult({ acceptsRanges: true });
+    epubService.streamFile.mockResolvedValue(result);
+
+    await controller.getFile(9, 'OEBPS/Audio/00001.mp4', '13', user, { method: 'HEAD', headers: {} } as any, reply as any);
+
+    expect(reply.header).toHaveBeenCalledWith('Content-Length', 321);
+    expect(result.openBody).not.toHaveBeenCalled();
+    expect(reply.send).toHaveBeenCalledWith(expect.any(Readable));
+  });
+
+  it('answers a matching If-None-Match with 304 and no body', async () => {
+    const reply = makeReply();
+    const { result } = fileResult({ status: 304, size: 0, etag: '"v1"', acceptsRanges: true });
+    epubService.streamFile.mockResolvedValue(result);
+
+    await controller.getFile(9, 'OEBPS/Audio/00001.mp4', '13', user, { method: 'GET', headers: { 'if-none-match': '"v1"' } } as any, reply as any);
+
+    expect(reply.code).toHaveBeenCalledWith(304);
+    expect(reply.header).toHaveBeenCalledWith('ETag', '"v1"');
+    expect(reply.header).not.toHaveBeenCalledWith('Content-Length', expect.anything());
+    expect(result.openBody).not.toHaveBeenCalled();
   });
 
   it('delegates media-overlay playlist requests', async () => {
@@ -98,28 +172,19 @@ describe('EpubController', () => {
   });
 
   it('does not set content-length when size is zero', async () => {
-    const user = { id: 1, isSuperuser: false, permissions: [] } as any;
-    const stream = new PassThrough();
-    const reply = {
-      header: vi.fn(),
-      send: vi.fn(),
-    };
-    epubService.streamFile.mockResolvedValue({
-      stream,
-      contentType: 'application/xml',
-      size: 0,
-    });
+    const reply = makeReply();
+    const { result } = fileResult({ contentType: 'application/xml', size: 0 });
+    epubService.streamFile.mockResolvedValue(result);
 
-    await controller.getFile(9, 'META-INF/container.xml', undefined, user, reply as any);
+    await controller.getFile(9, 'META-INF/container.xml', undefined, user, { method: 'GET', headers: {} } as any, reply as any);
 
     expect(reply.header).toHaveBeenCalledWith('Content-Type', 'application/xml');
     expect(reply.header).not.toHaveBeenCalledWith('Content-Length', expect.anything());
-    expect(reply.header).toHaveBeenCalledWith('Cache-Control', 'public, max-age=3600');
   });
 
   it('rejects malformed encoded file paths', async () => {
     await expect(
-      controller.getFile(9, 'OPS/text/%E0%A4%A', undefined, { id: 1, isSuperuser: false, permissions: [] } as any, {} as any),
+      controller.getFile(9, 'OPS/text/%E0%A4%A', undefined, { id: 1, isSuperuser: false, permissions: [] } as any, { headers: {} } as any, {} as any),
     ).rejects.toThrow(new BadRequestException('Invalid file path'));
   });
 });

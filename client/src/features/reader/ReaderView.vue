@@ -275,6 +275,12 @@ const { loadBookPreferences, loadUserPreferences, defaultProviderId, defaultVoic
 const ttsPosition = useTtsPosition()
 const mediaOverlay = useMediaOverlay()
 const audiobookDefaults = useReaderDefaultSettings<AudioReaderSettings>('m4b')
+// Loaded once and shared with narration warm-up, so the first press of play does not wait on it.
+let audiobookDefaultsLoad: Promise<void> | null = null
+function loadAudiobookDefaults() {
+  audiobookDefaultsLoad ??= audiobookDefaults.load().catch(() => {})
+  return audiobookDefaultsLoad
+}
 let mediaOverlayStartId = 0
 // Null until the first narration start of this reader session picks the book's speed.
 let narrationRate: number | null = null
@@ -385,7 +391,36 @@ function onChapterLoadHandler(doc: Document, viewEl: HTMLElement) {
     showResumeNarrationHighlight(doc)
     narrationFollow.bindRenderer(getRenderer())
     narrationFollow.bindChapterDocument(doc)
+    scheduleNarrationPrepare()
   }
+}
+
+// Warms the audio for where narration would start, so pressing play is
+// instant. Repeating it is cheap: a file already warm is only re-pointed.
+const NARRATION_PREPARE_DELAY_MS = 1000
+let narrationPrepareTimer: ReturnType<typeof setTimeout> | null = null
+// Not a sliding debounce: while a book loads, relocations keep arriving and
+// would postpone warming until after the reader pressed play.
+function scheduleNarrationPrepare() {
+  if (narrationPrepareTimer) return
+  narrationPrepareTimer = setTimeout(() => {
+    narrationPrepareTimer = null
+    void prepareNarration()
+  }, NARRATION_PREPARE_DELAY_MS)
+}
+
+async function prepareNarration() {
+  const mo = getMediaOverlay()
+  if (!mo?.prepare || !isMediaOverlayAvailable.value || mediaOverlay.isActive.value) return
+  void loadAudiobookDefaults()
+  const saved = await resolveSavedNarrationPos()
+  if (mediaOverlay.isActive.value) return
+  if (saved) {
+    await mo.prepare(saved.section, (item) => item.text === saved.fragment)
+    return
+  }
+  const visible = getVisibleRange()
+  await mo.prepare(sectionIndex.value, visible ? mediaOverlayEntriesOverlapping(visible) : undefined)
 }
 
 function syncFoliateHighlightToCurrentBlock() {
@@ -629,6 +664,7 @@ watch(
   () => mediaOverlay.isActive.value,
   (active, wasActive) => {
     if (wasActive && !active && currentChapterDoc) showResumeNarrationHighlight(currentChapterDoc)
+    if (wasActive && !active) scheduleNarrationPrepare()
   },
 )
 
@@ -649,7 +685,7 @@ async function beginNarration(sectionIdx: number, matches: ((item: { text: strin
 
   // Picked once per reader session so "Narrate from here" restarts keep the current speed.
   if (narrationRate === null) {
-    await audiobookDefaults.load().catch(() => {})
+    await loadAudiobookDefaults()
     const bookRate = (bookSettings.effective.value as EpubReaderSettings).narrationSpeed
     const initialRate = bookRate ?? audiobookDefaults.effective.value.playbackSpeed
     narrationRate = initialRate
@@ -837,6 +873,7 @@ function onRelocateHandler(detail: RelocateDetail) {
     }
   }
   onActivity()
+  if (getMediaOverlay()) scheduleNarrationPrepare()
   bookmarks.setCfi(detail?.cfi ?? null)
   toc.setActiveHref(detail?.tocItem?.href ?? '')
   const renderer = getRenderer()
@@ -1368,6 +1405,7 @@ watch(
 onUnmounted(() => {
   mediaOverlayStartId++
   if (pendingManualNavigationClearTimer) clearTimeout(pendingManualNavigationClearTimer)
+  if (narrationPrepareTimer) clearTimeout(narrationPrepareTimer)
   setReaderFooterVisible(false)
   mediaOverlay.stop()
 })

@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { EPUB_NARRATION_SPEED_MAX, EPUB_NARRATION_SPEED_MIN } from '@bookorbit/types'
 import { i18n } from '@/i18n'
 import { registerAudioFocusOwner, requestAudioFocus } from '@/lib/audio-focus'
@@ -23,6 +23,9 @@ const currentFragment = ref<string | null>(null)
 // True once the reader has scrolled or paged away from the narrated sentence.
 // While detached the view stays put and the mini player offers "Narrate from here".
 const isDetached = ref(false)
+// True while narration is waiting for audio to arrive over the network.
+const isBuffering = ref(false)
+const isWaitingForAudio = computed(() => isPlaying.value && isBuffering.value)
 
 export interface MediaOverlayDetachedActions {
   // Restarts narration at the reader's current position.
@@ -35,6 +38,7 @@ let instance: FoliateMediaOverlay | null = null
 let detachedActions: MediaOverlayDetachedActions | null = null
 let highlightListener: ((e: Event) => void) | null = null
 let errorListener: ((e: Event) => void) | null = null
+let bufferingListener: ((e: Event) => void) | null = null
 
 const mediaSession = useTtsMediaSession()
 
@@ -42,9 +46,11 @@ function detachListeners() {
   if (instance) {
     if (highlightListener) instance.removeEventListener('highlight', highlightListener)
     if (errorListener) instance.removeEventListener('error', errorListener)
+    if (bufferingListener) instance.removeEventListener('buffering', bufferingListener)
   }
   highlightListener = null
   errorListener = null
+  bufferingListener = null
 }
 
 function pause() {
@@ -72,6 +78,7 @@ function stop() {
   isActive.value = false
   isPlaying.value = false
   isDetached.value = false
+  isBuffering.value = false
   currentBook.value = null
   currentFragment.value = null
   error.value = null
@@ -122,8 +129,12 @@ export function useMediaOverlay() {
       const detail = (e as CustomEvent).detail
       error.value = detail instanceof Error ? detail.message : i18n.global.t('reader.narration.error')
     }
+    bufferingListener = (e: Event) => {
+      isBuffering.value = (e as CustomEvent).detail === true
+    }
     instance.addEventListener('highlight', highlightListener)
     instance.addEventListener('error', errorListener)
+    instance.addEventListener('buffering', bufferingListener)
 
     mediaSession.setMetadata(book)
     mediaSession.registerHandlers({
@@ -190,6 +201,8 @@ export function useMediaOverlay() {
     currentBook,
     currentFragment,
     isDetached,
+    isBuffering,
+    isWaitingForAudio,
     error,
     sleepTimer,
     start,

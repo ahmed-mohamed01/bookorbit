@@ -1,5 +1,6 @@
 import { BadRequestException, Controller, Get, Param, ParseIntPipe, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { Readable } from 'stream';
 
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import type { RequestUser } from '../../../common/types/request-user';
@@ -29,20 +30,16 @@ export class EpubController {
     @Res() reply: FastifyReply,
   ) {
     const filePath = this.decodePathParam(encodedPath);
-    const range = typeof request.headers.range === 'string' ? request.headers.range : undefined;
     const { data, contentType, size, status, contentRange } = await this.epubService.streamMediaOverlayFile(
       bookId,
       filePath,
       this.parseFileId(fileId),
-      range,
+      this.header(request, 'range'),
       user,
     );
 
-    reply.code(status);
-    reply.header('Content-Type', contentType);
-    reply.header('Accept-Ranges', 'bytes');
+    this.setRangeHeaders(reply, status, contentType, contentRange, true);
     reply.header('Content-Length', data.length);
-    if (contentRange) reply.header('Content-Range', contentRange);
     if (!contentRange && size > 0) reply.header('X-Content-Length-Full', size);
     reply.header('Cache-Control', 'private, max-age=3600');
     reply.send(data);
@@ -54,16 +51,43 @@ export class EpubController {
     @Param('*') encodedPath: string,
     @Query('fileId') fileId: string | undefined,
     @CurrentUser() user: RequestUser,
+    @Req() request: FastifyRequest,
     @Res() reply: FastifyReply,
   ) {
     const filePath = this.decodePathParam(encodedPath);
+    const file = await this.epubService.streamFile(
+      bookId,
+      filePath,
+      this.parseFileId(fileId),
+      {
+        range: this.header(request, 'range'),
+        ifRange: this.header(request, 'if-range'),
+        ifNoneMatch: this.header(request, 'if-none-match'),
+      },
+      user,
+    );
 
-    const { stream, contentType, size } = await this.epubService.streamFile(bookId, filePath, this.parseFileId(fileId), user);
+    this.setRangeHeaders(reply, file.status, file.contentType, file.contentRange, file.acceptsRanges);
+    if (file.etag) reply.header('ETag', file.etag);
+    // The book is only readable after an access check, so shared caches must not keep it.
+    reply.header('Cache-Control', 'private, max-age=3600');
+    if (file.status === 304) return reply.send();
+    if (file.size > 0) reply.header('Content-Length', file.size);
+    // Fastify answers HEAD through this route: an empty stream keeps the Content-Length above,
+    // where no body would reset it to 0 and the real body would be read in full and dropped.
+    reply.send(request.method === 'HEAD' ? Readable.from([]) : file.openBody());
+  }
 
+  private header(request: FastifyRequest, name: string): string | undefined {
+    const value = request.headers[name];
+    return typeof value === 'string' ? value : undefined;
+  }
+
+  private setRangeHeaders(reply: FastifyReply, status: number, contentType: string, contentRange: string | null, acceptsRanges: boolean) {
+    reply.code(status);
     reply.header('Content-Type', contentType);
-    if (size > 0) reply.header('Content-Length', size);
-    reply.header('Cache-Control', 'public, max-age=3600');
-    reply.send(stream);
+    if (acceptsRanges) reply.header('Accept-Ranges', 'bytes');
+    if (contentRange) reply.header('Content-Range', contentRange);
   }
 
   private parseFileId(fileId: string | undefined): number | undefined {

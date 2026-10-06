@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { stat } from 'fs/promises';
+import { Readable } from 'stream';
 import * as unzipper from 'unzipper';
 import { XMLParser } from 'fast-xml-parser';
 
@@ -8,6 +9,8 @@ import { BookReadService } from '../../book/book-read.service';
 import { LibraryService } from '../../library/library.service';
 import type { RequestUser } from '../../../common/types/request-user';
 import { buildEpubMediaOverlayPlaylist, findEpubZipEntry, normalizeEpubZipPath } from './epub-media-overlay';
+import type { ByteRange } from './epub-zip-range';
+import { EpubMediaStreamService } from './epub-media-stream.service';
 
 const CONTENT_TYPES: Record<string, string> = {
   '.xhtml': 'application/xhtml+xml',
@@ -50,6 +53,7 @@ const OPTIONAL_META_INF_FILES = [
 interface CacheEntry {
   info: EpubBookInfo;
   mtime: number;
+  size: number;
   validPaths: Set<string>;
   lastAccessed: number;
 }
@@ -62,9 +66,25 @@ interface EpubFileResolution {
   sizeBytes?: number | null;
 }
 
-interface ByteRange {
-  start: number;
-  end: number;
+export interface EpubFileConditions {
+  range?: string;
+  ifRange?: string;
+  ifNoneMatch?: string;
+}
+
+interface EpubFileStream {
+  // Opened only when the body is sent, so a HEAD or 304 reply never touches the archive.
+  openBody: () => NodeJS.ReadableStream;
+  contentType: string;
+  size: number;
+  status: 200 | 206 | 304;
+  contentRange: string | null;
+  etag: string | null;
+  acceptsRanges: boolean;
+}
+
+function formatContentRange(range: ByteRange, size: number): string {
+  return `bytes ${range.start}-${range.end}/${size}`;
 }
 
 interface MediaOverlayFileResponse {
@@ -338,6 +358,7 @@ export class EpubService {
   constructor(
     private readonly bookReadService: BookReadService,
     private readonly libraryService: LibraryService,
+    private readonly mediaStream: EpubMediaStreamService,
   ) {}
 
   async getBookInfo(bookId: number, fileId: number | undefined, user: RequestUser): Promise<EpubBookInfo> {
@@ -424,7 +445,7 @@ export class EpubService {
       contentType: resource.mediaType,
       size: full.length,
       status: range ? 206 : 200,
-      contentRange: range ? `bytes ${range.start}-${range.end}/${full.length}` : null,
+      contentRange: range ? formatContentRange(range, full.length) : null,
     };
   }
 
@@ -432,8 +453,9 @@ export class EpubService {
     bookId: number,
     filePath: string,
     fileId: number | undefined,
+    conditions: EpubFileConditions,
     user: RequestUser,
-  ): Promise<{ stream: NodeJS.ReadableStream; contentType: string; size: number }> {
+  ): Promise<EpubFileStream> {
     if (filePath.includes('..')) throw new ForbiddenException('Invalid path');
     const normalizedPath = normalizeZipPath(filePath);
     if (!normalizedPath) throw new ForbiddenException('Invalid path');
@@ -443,14 +465,40 @@ export class EpubService {
     if (!cached.validPaths.has(normalizedPath)) {
       throw new NotFoundException(`Entry not in archive: ${normalizedPath}`);
     }
-    const zip = await unzipper.Open.file(epubPath);
-    const entry = findInZip(zip.files, normalizedPath);
-    if (!entry) throw new NotFoundException(`Entry not in archive: ${normalizedPath}`);
-
     const manifestItem = cached.info.manifest.find((m) => m.href === normalizedPath);
     const contentType = manifestItem?.mediaType ?? guessContentType(normalizedPath);
 
-    return { stream: entry.stream(), contentType, size: entry.uncompressedSize };
+    const archive = { path: epubPath, mtime: cached.mtime, size: cached.size };
+    let stored = this.mediaStream.knownEntry(archive, normalizedPath);
+    if (!stored) {
+      const zip = await unzipper.Open.file(epubPath);
+      const entry = findInZip(zip.files, normalizedPath);
+      if (!entry) throw new NotFoundException(`Entry not in archive: ${normalizedPath}`);
+      stored = await this.mediaStream.storedEntry(bookId, archive, normalizedPath, entry);
+      if (!stored) {
+        // A compressed entry cannot be sliced without inflating it, so the full body is sent, which a 200 makes valid for any Range request.
+        const size = entry.uncompressedSize;
+        return { openBody: () => entry.stream(), contentType, size, status: 200, contentRange: null, etag: null, acceptsRanges: false };
+      }
+    }
+    const playable = stored;
+    const { size } = playable.layout;
+
+    const requested = this.parseRange(conditions.range, size);
+    const range = requested && (!conditions.ifRange || conditions.ifRange === playable.etag) ? requested : null;
+    if (!range && conditions.ifNoneMatch === playable.etag) {
+      return { openBody: () => Readable.from([]), contentType, size: 0, status: 304, contentRange: null, etag: playable.etag, acceptsRanges: true };
+    }
+    const served = range ?? { start: 0, end: size - 1 };
+    return {
+      openBody: () => this.mediaStream.openRange(playable, served),
+      contentType,
+      size: served.end - served.start + 1,
+      status: range ? 206 : 200,
+      contentRange: range ? formatContentRange(range, size) : null,
+      etag: playable.etag,
+      acceptsRanges: true,
+    };
   }
 
   // The web reader always renders the original EPUB: every stored CFI is epub-DOM.
@@ -502,9 +550,9 @@ export class EpubService {
   }
 
   private async getCachedEntry(epubPath: string): Promise<CacheEntry> {
-    const { mtimeMs } = await stat(epubPath);
+    const { mtimeMs, size } = await stat(epubPath);
     const cached = this.cache.get(epubPath);
-    if (cached && cached.mtime === mtimeMs) {
+    if (cached && cached.mtime === mtimeMs && cached.size === size) {
       cached.lastAccessed = Date.now();
       return cached;
     }
@@ -516,7 +564,7 @@ export class EpubService {
     for (const item of info.manifest) validPaths.add(normalizeZipPath(item.href));
     for (const path of info.optionalFiles ?? []) validPaths.add(normalizeZipPath(path));
 
-    const entry: CacheEntry = { info, mtime: mtimeMs, validPaths, lastAccessed: Date.now() };
+    const entry: CacheEntry = { info, mtime: mtimeMs, size, validPaths, lastAccessed: Date.now() };
     this.evict();
     this.cache.set(epubPath, entry);
     return entry;

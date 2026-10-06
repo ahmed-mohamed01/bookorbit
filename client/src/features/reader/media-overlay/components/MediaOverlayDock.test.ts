@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Ref } from 'vue'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import MediaOverlayDock from './MediaOverlayDock.vue'
 import { useMediaOverlay } from '../composables/useMediaOverlay'
@@ -9,6 +10,7 @@ vi.mock('../composables/useMediaOverlay', async () => {
   const state = {
     isActive: ref(false),
     isPlaying: ref(false),
+    isWaitingForAudio: ref(false),
     isDetached: ref(false),
     error: ref<string | null>(null),
     currentFragment: ref<string | null>(null),
@@ -25,6 +27,9 @@ vi.mock('../composables/useMediaOverlay', async () => {
   }
   return { useMediaOverlay: () => state }
 })
+
+// The real flag is a read-only computed; the mock is a ref the tests drive.
+const waitingForAudio = (state: ReturnType<typeof useMediaOverlay>) => state.isWaitingForAudio as Ref<boolean>
 
 function mountDock() {
   return mount(MediaOverlayDock, {
@@ -47,6 +52,7 @@ describe('MediaOverlayDock', () => {
     const state = useMediaOverlay()
     state.isActive.value = false
     state.isPlaying.value = true
+    waitingForAudio(state).value = false
     state.isDetached.value = false
     state.error.value = null
     vi.mocked(state.toggle).mockClear()
@@ -59,6 +65,18 @@ describe('MediaOverlayDock', () => {
     await wrapper.vm.$nextTick()
     return wrapper
   }
+
+  it('shows a spinner on the play button while audio is loading', async () => {
+    const wrapper = await startNarration()
+    const playButton = () => wrapper.find('[data-dock="pill"] button')
+    expect(playButton().attributes('aria-label')).toBe('Pause narration')
+
+    waitingForAudio(useMediaOverlay()).value = true
+    await wrapper.vm.$nextTick()
+
+    expect(playButton().attributes('aria-label')).toBe('Loading narration audio')
+    expect(playButton().find('.animate-spin').exists()).toBe(true)
+  })
 
   it('stays off the page while the reader toolbars are hidden, unless something needs acting on', async () => {
     const wrapper = await startNarration()

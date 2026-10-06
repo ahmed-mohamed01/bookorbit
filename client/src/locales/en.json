@@ -10476,6 +10476,7 @@
       "nextSentence": "Next sentence",
       "play": "Play narration",
       "pause": "Pause narration",
+      "buffering": "Loading narration audio",
       "showControls": "Show controls",
       "hideControls": "Hide controls",
       "stop": "Stop narration",

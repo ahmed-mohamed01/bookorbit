@@ -96,6 +96,23 @@ export const makeStreamingLoader = (bookId, baseUrl, bookInfo, fetchFile = fetch
   }
 
   /**
+   * Returns a URL the browser can stream with Range requests (audio elements),
+   * so narration starts without downloading a whole chapter's audio first.
+   * Media elements authenticate with the access-token cookie, and the probe
+   * goes through `requestFile` so an expiring session is refreshed, which also
+   * renews that cookie. Throws when the probe fails, so the caller can retry
+   * instead of falling back to downloading the whole file.
+   */
+  const getMediaUrl = async (name) => {
+    if (!name) return null
+    const url = getFileUrl(name)
+    const response = await requestFile(url, { headers: { Range: 'bytes=0-0' } })
+    await response.body?.cancel()
+    if (!response.ok) throw new Error(`Media probe failed: ${name} (${response.status})`)
+    return url
+  }
+
+  /**
    * Get uncompressed size of a file
    */
   const getSize = (name) => {
@@ -107,6 +124,7 @@ export const makeStreamingLoader = (bookId, baseUrl, bookInfo, fetchFile = fetch
   return {
     loadText,
     loadBlob,
+    getMediaUrl,
     getSize,
     // getDirectUrl intentionally omitted: browser-initiated fetches from inside a
     // sandboxed blob-URL iframe are blocked by Cross-Origin-Resource-Policy headers.

@@ -51,7 +51,7 @@ async function writeEpub(name: string, chapterTwo: string): Promise<string> {
 }
 
 describe('EpubService.findMalformedSpineItem', () => {
-  const service = new EpubService({} as never, {} as never);
+  const service = new EpubService({} as never, {} as never, {} as never);
 
   it('accepts an EPUB whose spine documents all parse', async () => {
     const path = await writeEpub('clean.epub', CLEAN_XHTML);

@@ -73,7 +73,7 @@ describe('EpubService.extractSpineText', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
-    service = new EpubService(bookReadService as any, libraryService as any);
+    service = new EpubService(bookReadService as any, libraryService as any, {} as any);
     bookReadService.findLibraryIdByBookId.mockResolvedValue(3);
     bookReadService.findPrimaryFilesByBookIds.mockResolvedValue([{ format: 'epub', absolutePath: '/books/book.epub', sizeBytes: null }]);
     libraryService.verifyUserAccess.mockResolvedValue(undefined);

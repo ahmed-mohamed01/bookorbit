@@ -70,4 +70,36 @@ describe('makeStreamingLoader auth integration', () => {
     await expect(loader.loadText('text/chapter 1.xhtml')).resolves.toBe('<html>chapter</html>')
     expect(calls).toEqual([{ url: chapterUrl, auth: 'Bearer legacy-token' }])
   })
+
+  it('prepares a streamable media URL with a one-byte probe that refreshes an expired session', async () => {
+    const audioUrl = '/api/v1/epub/42/file/Audio/00001.mp4?fileId=9'
+    const calls: { url: string; auth: string | null; range: string | null }[] = []
+    const fetchMock = vi.fn<typeof fetch>((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      const headers = new Headers(init?.headers)
+      calls.push({ url, auth: headers.get('Authorization'), range: headers.get('Range') })
+      if (url === '/api/v1/auth/refresh') return Promise.resolve(new Response(JSON.stringify({ accessToken: 'fresh-token' }), { status: 200 }))
+      if (headers.get('Authorization') === 'Bearer stale-token') return Promise.resolve(new Response('', { status: 401 }))
+      return Promise.resolve(new Response('a', { status: 206 }))
+    })
+    globalThis.fetch = fetchMock as never
+    setAccessToken('stale-token')
+
+    const loader = makeStreamingLoader(42, '/api/v1/epub', { manifest: [{ href: 'Audio/00001.mp4', size: 20 }] }, api, null, 9)
+
+    await expect(loader.getMediaUrl('Audio/00001.mp4')).resolves.toBe(audioUrl)
+    expect(calls).toEqual([
+      { url: audioUrl, auth: 'Bearer stale-token', range: 'bytes=0-0' },
+      { url: '/api/v1/auth/refresh', auth: 'Bearer stale-token', range: null },
+      { url: audioUrl, auth: 'Bearer fresh-token', range: 'bytes=0-0' },
+    ])
+  })
+
+  it('throws when the probe fails so the caller can retry', async () => {
+    globalThis.fetch = vi.fn<typeof fetch>(() => Promise.resolve(new Response('', { status: 503 }))) as never
+
+    const loader = makeStreamingLoader(42, '/api/v1/epub', { manifest: [] }, 'legacy-token')
+
+    await expect(loader.getMediaUrl('Audio/00001.mp4')).rejects.toThrow('503')
+  })
 })

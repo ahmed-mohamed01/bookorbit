@@ -400,13 +400,82 @@ const parseClock = (str) => {
   return n * f
 }
 
+// BookOrbit fork: buffering for streamed media-overlay audio.
+// The next clip is warmed this long before the current one ends, so a
+// chapter boundary does not wait on its probe, metadata and first bytes.
+const PRELOAD_LEAD_SECONDS = 45
+// Within this distance of the boundary the next clip is warmed even if the
+// current one is not fully buffered yet.
+const PRELOAD_FORCE_SECONDS = 15
+// After a stall, playback resumes once this much audio is buffered ahead, so a
+// slow link plays in longer runs instead of stuttering on every bit of data.
+// Starts and seeks play at once: right after a seek the browser is still
+// filling the media before the playhead, so waiting there only adds delay.
+const REBUFFER_SECONDS = 3
+const SEEK_SETTLE_MS = 5000
+const BUFFER_WAIT_MAX_MS = 8000
+const STREAM_RETRY_DELAYS_MS = [1000, 3000, 8000]
+// A stream that keeps failing after it played gets fresh retries, but only
+// this many within the window, so a dead link ends in an error, not a loop.
+const MAX_STREAM_FAILURES = 6
+const STREAM_FAILURE_WINDOW_MS = 5 * 60 * 1000
+const HAVE_METADATA = 1
+
+const bufferedAhead = (audio) => {
+  const t = audio.currentTime
+  const { buffered } = audio
+  for (let i = 0; i < buffered.length; i++) {
+    if (buffered.start(i) <= t + 0.05 && t < buffered.end(i)) return buffered.end(i) - t
+  }
+  return 0
+}
+
+// Resolves once `seconds` of audio (or the rest of the file) is buffered, the
+// browser stops fetching, or BUFFER_WAIT_MAX_MS passes.
+const whenBuffered = (audio, seconds) =>
+  new Promise((resolve) => {
+    const remaining = Number.isFinite(audio.duration) ? audio.duration - audio.currentTime - 0.25 : Infinity
+    const target = Math.max(0, Math.min(seconds, remaining))
+    const events = ['progress', 'canplay', 'suspend', 'emptied', 'error']
+    let timer
+    const finish = () => {
+      clearTimeout(timer)
+      for (const type of events) audio.removeEventListener(type, check)
+      resolve()
+    }
+    const check = (e) => {
+      if (e?.type === 'suspend' || e?.type === 'emptied' || e?.type === 'error' || bufferedAhead(audio) >= target) finish()
+    }
+    timer = setTimeout(finish, BUFFER_WAIT_MAX_MS)
+    for (const type of events) audio.addEventListener(type, check)
+    check()
+  })
+
+const releaseAudio = (audio) => {
+  audio.pause()
+  // Detaching the source aborts the in-flight range requests.
+  audio.removeAttribute('src')
+  audio.load()
+}
+
 class MediaOverlay extends EventTarget {
   #entries
   #lastMediaOverlayItem
+  #smil = new Map()
   #sectionIndex
   #audioIndex
   #itemIndex
   #audio
+  #audioSrc = null
+  #audioStreamed = false
+  // A skip within the same file hands the playing element to the newer
+  // playback, so its listeners check this rather than the id they began with.
+  #audioPlaybackId = 0
+  #streamFailures = []
+  #preload = null
+  #preloadFor = null
+  #preparing = Promise.resolve(false)
+  #buffering = false
   #volume = 1
   #rate = 1
   #state
@@ -416,26 +485,39 @@ class MediaOverlay extends EventTarget {
     this.book = book
     this.loadXML = loadXML
   }
+  #parseSMIL(item) {
+    let entries = this.#smil.get(item)
+    if (!entries) {
+      entries = this.loadXML(item.href).then((doc) => {
+        const resolve = (href) => (href ? resolveURL(href, item.href) : null)
+        const { $, $$$ } = childGetter(doc, NS.SMIL)
+        return $$$(doc, 'par').reduce((arr, $par) => {
+          const text = resolve($($par, 'text')?.getAttribute('src'))
+          const $audio = $($par, 'audio')
+          if (!text || !$audio) return arr
+          const src = resolve($audio.getAttribute('src'))
+          const begin = parseClock($audio.getAttribute('clipBegin'))
+          const end = parseClock($audio.getAttribute('clipEnd'))
+          const last = arr.at(-1)
+          if (last?.src === src) last.items.push({ text, begin, end })
+          else arr.push({ src, items: [{ text, begin, end }] })
+          return arr
+        }, [])
+      })
+      entries.catch(() => this.#smil.delete(item))
+      this.#smil.set(item, entries)
+      // Playback only moves between neighbouring sections, so a few suffice.
+      if (this.#smil.size > 3) this.#smil.delete(this.#smil.keys().next().value)
+    }
+    return entries
+  }
   async #loadSMIL(item, playbackId) {
     if (this.#lastMediaOverlayItem === item) return playbackId === this.#playbackId
-    const doc = await this.loadXML(item.href)
+    const entries = await this.#parseSMIL(item)
     if (playbackId !== this.#playbackId) return false
-    const resolve = (href) => (href ? resolveURL(href, item.href) : null)
-    const { $, $$$ } = childGetter(doc, NS.SMIL)
     this.#audioIndex = -1
     this.#itemIndex = -1
-    this.#entries = $$$(doc, 'par').reduce((arr, $par) => {
-      const text = resolve($($par, 'text')?.getAttribute('src'))
-      const $audio = $($par, 'audio')
-      if (!text || !$audio) return arr
-      const src = resolve($audio.getAttribute('src'))
-      const begin = parseClock($audio.getAttribute('clipBegin'))
-      const end = parseClock($audio.getAttribute('clipEnd'))
-      const last = arr.at(-1)
-      if (last?.src === src) last.items.push({ text, begin, end })
-      else arr.push({ src, items: [{ text, begin, end }] })
-      return arr
-    }, [])
+    this.#entries = entries
     this.#lastMediaOverlayItem = item
     return true
   }
@@ -455,25 +537,201 @@ class MediaOverlay extends EventTarget {
   #unhighlight() {
     this.dispatchEvent(new CustomEvent('unhighlight', { detail: this.#activeItem }))
   }
-  async #play(audioIndex, itemIndex, playbackId = ++this.#playbackId) {
+  #setBuffering(buffering) {
+    if (this.#buffering === buffering) return
+    this.#buffering = buffering
+    this.dispatchEvent(new CustomEvent('buffering', { detail: buffering }))
+  }
+  #playAudio(audio) {
+    audio.play().catch((e) => {
+      if (e?.name !== 'AbortError') this.#error(e)
+    })
+  }
+  async #rebuffer(audio, isCurrent) {
+    audio.pause()
+    this.#setBuffering(true)
+    await whenBuffered(audio, REBUFFER_SECONDS)
+    if (!isCurrent() || this.#state === 'paused') return
+    this.#playAudio(audio)
+  }
+  // BookOrbit fork: chapter audio is streamed from a URL when the book can
+  // provide one. getMediaUrl resolves null when streaming is not possible for
+  // this file and throws when the server could not be reached.
+  async #loadAudioSource(src, blob) {
+    if (!blob && this.book.getMediaUrl) {
+      const url = await this.book.getMediaUrl(src)
+      if (url) return { url, streamed: true }
+    }
+    return { blob: await this.book.loadBlob(src) }
+  }
+  // A dropped connection or an expired session is retried with backoff at the
+  // current sentence. Downloading the whole file is the last resort, and only
+  // when the server answers but the audio element never manages to play.
+  #retryStream(audioIndex, itemIndex, attempt, serverAnswered, error) {
+    const now = Date.now()
+    this.#streamFailures = this.#streamFailures.filter((at) => now - at < STREAM_FAILURE_WINDOW_MS)
+    this.#streamFailures.push(now)
+    if (this.#streamFailures.length > MAX_STREAM_FAILURES) {
+      this.#setBuffering(false)
+      return this.#error(error)
+    }
+    if (attempt >= STREAM_RETRY_DELAYS_MS.length) {
+      this.#setBuffering(false)
+      if (serverAnswered) return this.#play(audioIndex, itemIndex, undefined, { blob: true }).catch((e) => this.#error(e))
+      return this.#error(error)
+    }
+    this.#setBuffering(true)
+    const playbackId = this.#playbackId
+    setTimeout(() => {
+      if (playbackId !== this.#playbackId) return
+      this.#play(audioIndex, itemIndex, undefined, { attempt: attempt + 1 }).catch((e) => this.#error(e))
+    }, STREAM_RETRY_DELAYS_MS[attempt])
+  }
+  #seekWithin(audioIndex, itemIndex, playbackId) {
+    const audio = this.#audio
+    this.#unhighlight()
+    this.#audioIndex = audioIndex
+    this.#itemIndex = itemIndex
+    this.#audioPlaybackId = playbackId
+    audio.currentTime = this.#activeItem.begin ?? 0
+    this.#highlight()
+    if (this.#state !== 'paused' && audio.paused) this.#playAudio(audio)
+  }
+  // A warmed element for the same file is used even when playback starts at
+  // another sentence: seeking it is cheaper than a new probe and index.
+  #takePreload(src) {
+    const preload = this.#preload
+    this.#preload = null
+    if (!preload) return null
+    if (preload.src === src && !preload.audio.error) return preload.audio
+    releaseAudio(preload.audio)
+    return null
+  }
+  #dropPreload() {
+    if (this.#preload) releaseAudio(this.#preload.audio)
+    this.#preload = null
+  }
+  async #findClip(sectionIndex, filter = () => true) {
+    for (let index = sectionIndex; index < this.book.sections.length; index++) {
+      const section = this.book.sections[index]
+      if (!section?.id) return null
+      if (!section.mediaOverlay) {
+        // start() drops the filter once it moves past the requested section.
+        filter = () => true
+        continue
+      }
+      const entries = await this.#parseSMIL(section.mediaOverlay)
+      for (const { src, items } of entries) {
+        for (let j = 0; j < items.length; j++) {
+          if (items[j].text.split('#')[0] === section.id && filter(items[j], j, items)) return { src, begin: items[j].begin ?? 0 }
+        }
+      }
+      return null
+    }
+    return null
+  }
+  #nextClip() {
+    const next = this.#entries[this.#audioIndex + 1]
+    if (next) return { src: next.src, begin: next.items[0]?.begin ?? 0 }
+    return this.#findClip(this.#sectionIndex + 1)
+  }
+  async #warm(clip, preload, isStale) {
+    const url = await this.book.getMediaUrl(clip.src)
+    if (!url || isStale()) return
+    const audio = new Audio(url)
+    audio.preload = preload
+    const warmed = { ...clip, audio }
+    audio.addEventListener(
+      'loadedmetadata',
+      () => {
+        audio.currentTime = warmed.begin
+      },
+      { once: true },
+    )
+    this.#dropPreload()
+    this.#preload = warmed
+  }
+  #maybePreload(audio) {
+    if (this.#preloadFor === audio || !this.book.getMediaUrl) return
+    const clipEnd = this.#activeAudio.items.at(-1)?.end
+    const left = (Number.isFinite(clipEnd) ? clipEnd : audio.duration) - audio.currentTime
+    const secondsLeft = left / (this.#rate || 1)
+    if (!(secondsLeft <= PRELOAD_LEAD_SECONDS)) return
+    // Keep the link for the current clip until it is buffered to its end.
+    if (secondsLeft > PRELOAD_FORCE_SECONDS && bufferedAhead(audio) < left - 0.5) return
+    this.#preloadFor = audio
+    this.#preloadNext(audio).catch(() => {})
+  }
+  async #preloadNext(current) {
+    const isStale = () => this.#audio !== current
+    const clip = await this.#nextClip()
+    if (clip && !isStale()) await this.#warm(clip, 'auto', isStale)
+  }
+  // BookOrbit fork: lets the reader warm narration for where play would start,
+  // so pressing play is instant. Fetches only the index and a little audio.
+  // Calls run one after another so overlapping ones never warm a file twice.
+  prepare(sectionIndex, filter) {
+    const run = () => this.#prepare(sectionIndex, filter)
+    this.#preparing = this.#preparing.then(run, run)
+    return this.#preparing
+  }
+  async #prepare(sectionIndex, filter) {
+    if (this.#audio || !this.book.getMediaUrl) return false
+    const playbackId = this.#playbackId
+    const isStale = () => !!this.#audio || playbackId !== this.#playbackId
+    // As startMediaOverlayWithFallback: no match plays the section from its start.
+    const clip = (await this.#findClip(sectionIndex, filter)) ?? (filter ? await this.#findClip(sectionIndex) : null)
+    if (!clip || isStale()) return false
+    if (this.#preload?.src === clip.src && !this.#preload.audio.error) {
+      if (this.#preload.begin === clip.begin) return true
+      this.#preload.begin = clip.begin
+      if (this.#preload.audio.readyState >= HAVE_METADATA) this.#preload.audio.currentTime = clip.begin
+      return true
+    }
+    await this.#warm(clip, 'metadata', isStale)
+    return !isStale()
+  }
+  async #play(audioIndex, itemIndex, playbackId = ++this.#playbackId, { attempt = 0, blob = false } = {}) {
+    const target = this.#entries[audioIndex]
+    if (!attempt && !blob && this.#audio && !this.#audio.error && target?.src === this.#audioSrc && target.items[itemIndex]) {
+      return this.#seekWithin(audioIndex, itemIndex, playbackId)
+    }
     this.#stop()
     this.#audioIndex = audioIndex
     this.#itemIndex = itemIndex
     const src = this.#activeAudio?.src
     if (!src || !this.#activeItem) return this.start(this.#sectionIndex + 1, undefined, playbackId)
+    const begin = this.#activeItem.begin ?? 0
 
-    const blob = await this.book.loadBlob(src)
+    let audio = attempt || blob ? null : this.#takePreload(src)
+    if (audio) audio.preload = 'auto'
+    let source = audio ? { url: audio.src, streamed: true } : null
+    if (!source) {
+      this.#setBuffering(true)
+      try {
+        source = await this.#loadAudioSource(src, blob)
+      } catch (e) {
+        if (playbackId === this.#playbackId) this.#retryStream(audioIndex, itemIndex, attempt, false, e)
+        return
+      }
+    }
     if (playbackId !== this.#playbackId) return
-    const url = URL.createObjectURL(blob)
-    const audio = new Audio(url)
+    const streamed = source.streamed === true
+    const url = streamed ? source.url : URL.createObjectURL(source.blob)
+    audio ??= new Audio(url)
     this.#audio = audio
-    const isCurrent = () => playbackId === this.#playbackId && this.#audio === audio
+    this.#audioSrc = src
+    this.#audioStreamed = streamed
+    this.#audioPlaybackId = playbackId
+    const isCurrent = () => this.#audio === audio && this.#audioPlaybackId === this.#playbackId
+    let hasPlayed = false
     audio.volume = this.#volume
     audio.playbackRate = this.#rate
     audio.addEventListener('timeupdate', () => {
       if (!isCurrent() || audio.paused) return
       const t = audio.currentTime
       const { items } = this.#activeAudio
+      if (streamed) this.#maybePreload(audio)
       if (t > this.#activeItem?.end) {
         this.#unhighlight()
         if (this.#itemIndex === items.length - 1) {
@@ -486,21 +744,54 @@ class MediaOverlay extends EventTarget {
       if (this.#itemIndex !== oldIndex) this.#highlight()
     })
     audio.addEventListener('error', () => {
-      if (isCurrent()) this.#error(new Error(`Failed to load ${src}`))
+      if (!isCurrent()) return
+      this.#setBuffering(false)
+      if (!streamed) return this.#error(new Error(`Failed to load ${src}`))
+      // A stream that had been playing earns a fresh set of retries.
+      this.#retryStream(this.#audioIndex, this.#itemIndex, hasPlayed ? 0 : attempt, true, new Error(`Failed to stream ${src}`))
     })
     audio.addEventListener('playing', () => {
-      if (isCurrent()) this.#highlight()
+      hasPlayed = true
+      if (!isCurrent()) return
+      this.#setBuffering(false)
+      this.#highlight()
+    })
+    // The browser resumes after a stall as soon as any data arrives, which
+    // stutters on a slow link; hold playback until a few seconds are buffered.
+    // Stalls just after a seek are left to the browser, see REBUFFER_SECONDS.
+    let holdStallsFrom = 0
+    audio.addEventListener('seeking', () => {
+      holdStallsFrom = performance.now() + SEEK_SETTLE_MS
+    })
+    audio.addEventListener('waiting', () => {
+      if (!isCurrent() || this.#state !== 'playing') return
+      this.#setBuffering(true)
+      if (hasPlayed && !audio.seeking && performance.now() >= holdStallsFrom) this.#rebuffer(audio, isCurrent)
     })
     audio.addEventListener('ended', () => {
       if (!isCurrent()) return
       this.#unhighlight()
-      URL.revokeObjectURL(url)
+      if (!streamed) URL.revokeObjectURL(url)
       this.#audio = null
-      this.#play(audioIndex + 1, 0).catch((e) => this.#error(e))
+      this.#audioSrc = null
+      this.#play(this.#audioIndex + 1, 0).catch((e) => this.#error(e))
     })
     if (this.#state === 'paused') {
+      this.#setBuffering(false)
       this.#highlight()
-      audio.currentTime = this.#activeItem.begin ?? 0
+      audio.currentTime = begin
+    } else if (streamed) {
+      // Seeking once metadata is known lets the browser fetch from the clip
+      // position instead of buffering the file from its start.
+      const startStreamed = () => {
+        if (!isCurrent()) return
+        if (audio.currentTime !== begin) audio.currentTime = begin
+        if (this.#state === 'paused') return this.#setBuffering(false)
+        this.#state = 'playing'
+        this.#playAudio(audio)
+      }
+      if (audio.readyState >= HAVE_METADATA) startStreamed()
+      else audio.addEventListener('loadedmetadata', startStreamed, { once: true })
     } else
       audio.addEventListener(
         'canplaythrough',
@@ -508,8 +799,9 @@ class MediaOverlay extends EventTarget {
           if (!isCurrent()) return
           // for some reason need to seek in `canplaythrough`
           // or it won't play when skipping in WebKit
-          audio.currentTime = this.#activeItem.begin ?? 0
+          audio.currentTime = begin
           this.#state = 'playing'
+          this.#setBuffering(false)
           audio.play().catch((e) => this.#error(e))
         },
         { once: true },
@@ -540,6 +832,7 @@ class MediaOverlay extends EventTarget {
   }
   pause() {
     this.#state = 'paused'
+    this.#setBuffering(false)
     this.#audio?.pause()
   }
   resume() {
@@ -547,10 +840,15 @@ class MediaOverlay extends EventTarget {
     this.#audio?.play().catch((e) => this.#error(e))
   }
   #stop() {
+    this.#setBuffering(false)
     if (this.#audio) {
-      this.#audio.pause()
-      URL.revokeObjectURL(this.#audio.src)
+      if (this.#audioStreamed) releaseAudio(this.#audio)
+      else {
+        this.#audio.pause()
+        URL.revokeObjectURL(this.#audio.src)
+      }
       this.#audio = null
+      this.#audioSrc = null
       this.#unhighlight()
     }
   }
@@ -558,6 +856,8 @@ class MediaOverlay extends EventTarget {
     this.#playbackId++
     this.#state = 'stopped'
     this.#stop()
+    this.#dropPreload()
+    this.#streamFailures = []
   }
   prev() {
     if (this.#itemIndex > 0) this.#play(this.#audioIndex, this.#itemIndex - 1)
@@ -651,6 +951,9 @@ class Encryption {
   }
   getDecoder(uri) {
     return this.#decoders.get(this.#uris.get(uri)) ?? ((x) => x)
+  }
+  isEncrypted(uri) {
+    return this.#uris.has(uri)
   }
 }
 
@@ -1038,11 +1341,13 @@ export class EPUB {
   #loader
   #encryption
   #getDirectUrl = null
-  constructor({ loadText, loadBlob, getSize, getDirectUrl, sha1 }) {
+  #loaderMediaUrl = null
+  constructor({ loadText, loadBlob, getSize, getDirectUrl, getMediaUrl, sha1 }) {
     this.loadText = loadText
     this.loadBlob = loadBlob
     this.getSize = getSize
     this.#getDirectUrl = getDirectUrl ?? null
+    this.#loaderMediaUrl = getMediaUrl ?? null
     this.#encryption = new Encryption(deobfuscators(sha1))
   }
   async #loadXML(uri) {
@@ -1151,6 +1456,12 @@ ${doc.querySelector('parsererror').innerText}`)
     const str = await this.loadText(item.href)
     if (!str) throw new Error(`Failed to load section document: ${item.href}`)
     return this.parser.parseFromString(str, item.mediaType)
+  }
+  // BookOrbit fork: a streamable URL for media-overlay audio, or null when the
+  // loader cannot provide one or the file has to be decoded in memory.
+  async getMediaUrl(href) {
+    if (!this.#loaderMediaUrl || this.#encryption.isEncrypted(href)) return null
+    return this.#loaderMediaUrl(href)
   }
   getMediaOverlay() {
     return new MediaOverlay(this, this.#loadXML.bind(this))

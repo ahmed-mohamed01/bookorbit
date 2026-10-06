@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, RotateCw, Headphones, ListOrdered, Moon, Pause, Play, RotateCcw, X } from '@lucide/vue'
+import { Check, ChevronDown, RotateCw, Headphones, ListOrdered, LoaderCircle, Moon, Pause, Play, RotateCcw, X } from '@lucide/vue'
 import { EPUB_NARRATION_SPEED_MAX, EPUB_NARRATION_SPEED_MIN } from '@bookorbit/types'
 import {
   DropdownMenu,
@@ -23,7 +23,7 @@ const emit = defineEmits<{ minimise: [] }>()
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3].filter((speed) => speed >= EPUB_NARRATION_SPEED_MIN && speed <= EPUB_NARRATION_SPEED_MAX)
 
 const { t } = useI18n()
-const { isPlaying, isDetached, rate, currentBook, error, toggle, nextSentence, prevSentence, setRate, stop } = useMediaOverlay()
+const { isPlaying, isWaitingForAudio, isDetached, rate, currentBook, error, toggle, nextSentence, prevSentence, setRate, stop } = useMediaOverlay()
 const { chapters, currentIndex, currentChapter, playChapter } = useNarrationChapters()
 const sleep = useNarrationSleep()
 const { mode: sleepMode, badge: sleepBadge, isActive: isSleepActive, options: sleepOptions } = sleep
@@ -31,6 +31,10 @@ const { mode: sleepMode, badge: sleepBadge, isActive: isSleepActive, options: sl
 const positionClass = useNarrationDockPosition()
 
 const speedLabel = computed(() => t('reader.narration.speedValue', { speed: rate.value }))
+const toggleLabel = computed(() => {
+  if (isWaitingForAudio.value) return t('reader.narration.buffering')
+  return isPlaying.value ? t('reader.narration.pause') : t('reader.narration.play')
+})
 const sleepButtonLabel = computed(() =>
   isSleepActive.value ? t('reader.narration.sleepTimerWith', { value: sleep.label.value }) : t('reader.narration.sleepTimer'),
 )
@@ -186,10 +190,12 @@ function handleSleepSelect(value: unknown) {
         <button
           type="button"
           class="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55 focus-visible:ring-offset-2 focus-visible:ring-offset-card"
-          :aria-label="isPlaying ? t('reader.narration.pause') : t('reader.narration.play')"
+          :aria-label="toggleLabel"
+          :title="toggleLabel"
           @click="toggle"
         >
-          <Pause v-if="isPlaying" class="h-6 w-6" fill="currentColor" />
+          <LoaderCircle v-if="isWaitingForAudio" class="h-6 w-6 animate-spin" />
+          <Pause v-else-if="isPlaying" class="h-6 w-6" fill="currentColor" />
           <Play v-else class="h-6 w-6" fill="currentColor" />
         </button>
         <button

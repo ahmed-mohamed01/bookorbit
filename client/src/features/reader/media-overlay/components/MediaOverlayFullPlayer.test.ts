@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { enableAutoUnmount, mount, type VueWrapper } from '@vue/test-utils'
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import type { TocItem } from '@/features/reader/epub/composables/useToc'
 import MediaOverlayFullPlayer from './MediaOverlayFullPlayer.vue'
 import { useMediaOverlay } from '../composables/useMediaOverlay'
@@ -12,6 +12,7 @@ vi.mock('../composables/useMediaOverlay', async () => {
   const state = {
     isActive: ref(true),
     isPlaying: ref(true),
+    isWaitingForAudio: ref(false),
     isDetached: ref(false),
     rate: ref(1),
     currentBook: ref({ title: 'Book', author: 'Author' }),
@@ -154,6 +155,17 @@ describe('MediaOverlayFullPlayer', () => {
     expect(timer.cancelTimer).toHaveBeenCalledOnce()
     expect(useNarrationSleep().mode.value).toBe('off')
     expect(wrapper.find('[aria-label="Sleep timer"]').exists()).toBe(true)
+  })
+
+  it('shows a spinner on the play button while audio is loading', async () => {
+    const waiting = useMediaOverlay().isWaitingForAudio as Ref<boolean>
+    waiting.value = true
+    const wrapper = mount(MediaOverlayFullPlayer)
+
+    const button = wrapper.find('[aria-label="Loading narration audio"]')
+    expect(button.exists()).toBe(true)
+    expect(button.find('.animate-spin').exists()).toBe(true)
+    waiting.value = false
   })
 
   it('asks to be minimised', async () => {
