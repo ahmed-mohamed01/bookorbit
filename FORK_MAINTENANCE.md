@@ -250,6 +250,76 @@ breaks it). Each is a one-line catch-up; make it rather than carry a red test.
   impossible calendar dates, and the Audible bibliography mapper uses upstream's date and
   series normalizers.
 
+## Issues, versions and releases
+
+Upstream's process (`docs/RELEASE_PROCESS.md`, semantic-release, `BO-<n>` branches) does not
+apply to the fork. The fork tracks work and ships releases like this.
+
+### Issues
+
+Every fork feature, bug and follow-up gets an issue on `ahmed-mohamed01/bookorbit` before work
+starts.
+
+- **Labels:** one `type:` (`feat`, `bug`, `chore`), one or more `area:` (`monitored`,
+  `storyteller`, `abs`, `reader`, `metadata`, `docker`, `upstream-sync`), optional `status:`
+  (`in-progress`, `blocked`).
+- **Branches:** `F-<n>-<desc>` for fork issue `#n` (e.g. `F-12-abs-retry-backoff`). The `F-`
+  prefix keeps fork numbers apart from upstream's `BO-` numbers. Land on `monitored` by rebase
+  and `git merge --ff-only`; upstream syncs stay the only merge commits.
+- **Commits:** reference the issue in the footer: `Closes #12`, or `Refs #12` for partial work.
+- **Upstream bugs:** label `upstream` and link the `bookorbit/bookorbit` issue. Not ours to fix
+  (see "Reviewing changes"); carry a fork patch only when it cannot wait.
+- **Closing:** close an issue when its commit is on `monitored`, at the latest when the release
+  that carries it ships.
+
+### Versioning
+
+Fork versions are `v<upstream base>-m<N>`, e.g. `v3.1.0-m2`.
+
+- `<upstream base>` is the newest upstream release tag merged into `monitored`
+  (`git describe --tags --abbrev=0 --exclude '*-m*' monitored`).
+- `N` starts at 1 and increases with each fork release on that base. A merge that brings a new
+  upstream release resets it: the next fork release is `v3.2.0-m1`.
+- Merging untagged upstream `main` does not change the base; the notes list the synced commit.
+- Tags are annotated, signed, and point at a commit on `monitored`.
+
+### Changelog
+
+`CHANGELOG.fork.md` holds fork changes only, newest first. Draft an entry from the commits that
+are on the fork but not upstream (grouped by type, `Closes #n` references carried over, upstream
+syncs listed), then edit it by hand:
+
+```
+git fetch upstream
+node scripts/fork/release-notes.mjs v3.1.0-m2
+```
+
+The GitHub Release for a fork version reads top to bottom as upstream first, then fork:
+
+1. **Upstream BookOrbit `<base>`**: upstream's own release notes for the base, verbatim (or every
+   upstream release the fork release newly brings in, newest first, when the base moved).
+2. **Upstream changes after `<base>`**: upstream `main` commits merged but not yet in an upstream
+   release, features and fixes listed, maintenance counted.
+3. **Fork additions in `<version>`**: the `CHANGELOG.fork.md` entry.
+
+Upstream `#123` references are rewritten to `bookorbit/bookorbit#123` so they do not link to fork
+issues. Preview the body locally with `--release-body` (add `--changelog CHANGELOG.fork.md` to use
+the working-tree changelog).
+
+### Cutting a release
+
+1. `git fetch upstream`; `monitored` clean and pushed; `pnpm run verify:fast`.
+2. Add the drafted entry to the top of `CHANGELOG.fork.md`, commit `docs(release): v3.1.0-m2`.
+3. Push `monitored` so the Container Image workflow builds `sha-<12>` for that commit.
+4. `git tag -s v3.1.0-m2 -m "BookOrbit 3.1.0-m2"` and `git push origin v3.1.0-m2`.
+5. `.github/workflows/fork-release.yml` waits for the commit image, tags it
+   `ghcr.io/ahmed-mohamed01/bookorbit:3.1.0-m2` and `:latest` without rebuilding, and publishes
+   the GitHub Release (upstream notes, then fork additions) with `--release-body`.
+6. Close any issues the release finished.
+
+Rollback is deploying the previous version tag. Version tags are never rebuilt, so each one is
+exactly the image that ran from `monitored`.
+
 ## Schema decoupling (done)
 
 ABS schema is **not** a Drizzle migration. It is applied at runtime by
@@ -678,6 +748,43 @@ runs otherwise: the settings panel and the read-along tick box/row disappear fro
 any book Storyteller had already produced stays exactly where it landed as an ordinary book. The fork
 Vue component files must remain for the client to compile (expected UI-registration coupling, same as
 the other three overlays).
+
+## Read-along narration player overlay (fifth permanent feature)
+
+The fork carries a **fifth** overlay: the player for EPUB3 media-overlay narration (read-along books,
+often Storyteller output). Upstream shows `MediaOverlayMiniPlayer`, a 480px bar at the bottom of the
+reader that covers the text. The fork replaces it with a small floating **pill** (play/pause and an
+"open controls" button) that expands into a **full player** (cover, title, chapter dropdown, speed,
+previous/next sentence, sleep timer with an end-of-chapter option). When the reader has moved away from
+the narrated sentence, "Back to narration" and "Narrate from here" chips sit beside the pill. A
+"Listen with narration" chip above the reader footer starts narration. Narration itself still runs
+through upstream's `useMediaOverlay.ts`, which this overlay does not edit: the sleep-timer carry-over
+across restarts is done with watchers instead. Upstream's `MediaOverlayMiniPlayer.vue` is left in place,
+unused, so upstream changes to it merge cleanly.
+
+**Owned (fork-only) code - never conflicts:** everything under
+`client/src/features/reader/media-overlay/` that upstream does not ship:
+`components/MediaOverlayDock.vue` (+ `.test.ts`), `components/MediaOverlayFullPlayer.vue`
+(+ `.test.ts`), `components/MediaOverlayDetachedChips.vue`, `components/MediaOverlayStartButton.vue`
+(+ `.test.ts`), `composables/useNarrationChapters.ts` (+ `.test.ts`),
+`composables/useNarrationSleep.ts` (+ `.test.ts`) and `composables/useNarrationDockPosition.ts`.
+
+**Seams / hooks in shared files (keep minimal + generic):**
+
+| Shared file      | Hook                                                                                                                                                                                                                       | Conflict cost     |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `App.vue`        | import and render `MediaOverlayDock` in place of `MediaOverlayMiniPlayer`                                                                                                                                                  | 2 lines, trivial  |
+| `ReaderView.vue` | `MediaOverlayStartButton` import and render, the `showNarrationStart` computed, `registerNarrationChapters` import and its registration wrapped in `onUnmounted`, `sectionHasMediaOverlay` in the `useFoliate` destructure | additive          |
+| `useFoliate.ts`  | `sectionHasMediaOverlay` on the returned API + the `sections` field on the view's `book` type                                                                                                                              | 2 lines, additive |
+| `en.json`        | `reader.narration.*` additions                                                                                                                                                                                             | additive, en-only |
+
+**Plugin removal:** in `App.vue`, swap the `MediaOverlayDock` import and render back to
+`MediaOverlayMiniPlayer`. In `ReaderView.vue`, drop the `MediaOverlayStartButton` import and render,
+the `showNarrationStart` computed, the `registerNarrationChapters` import and the `onUnmounted`
+registration, and `sectionHasMediaOverlay` from the `useFoliate` destructure. In `useFoliate.ts`, drop
+`sectionHasMediaOverlay` and the `sections` type field. Then delete the fork-only files listed above.
+The unused `reader.narration.*` keys in `en.json` can go too; nothing else reads them. Upstream's bar
+then works as before, since `useMediaOverlay.ts` was never changed.
 
 ## Investigated and rejected - do not re-chase
 
