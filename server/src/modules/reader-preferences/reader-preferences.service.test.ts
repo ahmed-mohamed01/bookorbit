@@ -378,6 +378,20 @@ describe('ReaderPreferencesService', () => {
       });
     });
 
+    it('accepts a per-book epub read-along speed', async () => {
+      mockBookService.verifyFileAccess.mockResolvedValueOnce({ format: 'epub' });
+
+      await service.upsertPreference(makeUser(), 26, { narrationSpeed: 1.75 });
+
+      expect(mockRepo.upsertPreference).toHaveBeenCalledWith(7, 26, { narrationSpeed: 1.75 });
+    });
+
+    it.each([0.25, 4.5])('rejects a per-book epub read-along speed of %s', async (narrationSpeed) => {
+      mockBookService.verifyFileAccess.mockResolvedValueOnce({ format: 'epub' });
+
+      await expect(service.upsertPreference(makeUser(), 26, { narrationSpeed })).rejects.toThrow(BadRequestException);
+    });
+
     it.each([[0], [0.8], [2]])('accepts paragraph spacing %s em', async (paragraphSpacing) => {
       const user = makeUser();
       mockBookService.verifyFileAccess.mockResolvedValueOnce({

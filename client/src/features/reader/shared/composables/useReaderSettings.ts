@@ -10,6 +10,8 @@ import {
   EPUB_FONT_SIZE_MIN,
   EPUB_LETTER_SPACING_MAX,
   EPUB_LETTER_SPACING_MIN,
+  EPUB_NARRATION_SPEED_MAX,
+  EPUB_NARRATION_SPEED_MIN,
   EPUB_PARAGRAPH_SPACING_MAX,
   EPUB_PARAGRAPH_SPACING_MIN,
   EPUB_READER_DEFAULTS,
@@ -138,6 +140,9 @@ function sanitizeEpubPartialSettings(settings: unknown): Partial<EpubReaderSetti
   }
   if (settings.fixedLayoutSpread === 'auto' || settings.fixedLayoutSpread === 'none') {
     out.fixedLayoutSpread = settings.fixedLayoutSpread
+  }
+  if (isNumberInRange(settings.narrationSpeed, EPUB_NARRATION_SPEED_MIN, EPUB_NARRATION_SPEED_MAX)) {
+    out.narrationSpeed = settings.narrationSpeed
   }
 
   return out

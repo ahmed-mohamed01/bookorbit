@@ -12,6 +12,8 @@ export const EPUB_WORD_SPACING_MIN = 0;
 export const EPUB_WORD_SPACING_MAX = 0.5;
 export const EPUB_TEXT_INDENT_MIN = 0;
 export const EPUB_TEXT_INDENT_MAX = 4;
+export const EPUB_NARRATION_SPEED_MIN = 0.5;
+export const EPUB_NARRATION_SPEED_MAX = 4;
 export const CBX_SPREAD_GAP_MIN = 0;
 export const CBX_SPREAD_GAP_MAX = 64;
 
@@ -100,6 +102,9 @@ export interface EpubReaderSettings {
   footerDisplayMode: 0 | 1 | 2;
   // Fixed-layout EPUB spread handling. auto = respect book metadata; none = force one spine item per page.
   fixedLayoutSpread: "auto" | "none";
+  // Read-along speed this book was last listened at. Per-book only: a book without one opens
+  // at the audiobook default playback speed.
+  narrationSpeed?: number; // EPUB_NARRATION_SPEED_MIN-EPUB_NARRATION_SPEED_MAX
 }
 
 export interface PdfReaderSettings {

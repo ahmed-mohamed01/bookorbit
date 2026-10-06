@@ -10,7 +10,7 @@ import { fetchEbookCrossFormatResume } from './shared/composables/useCrossFormat
 import { useReadingSession } from './shared/composables/useReadingSession'
 import { useReaderPageTitle } from './shared/composables/useReaderPageTitle'
 import { useReaderState } from './epub/composables/useReaderState'
-import { useReaderSettings } from './shared/composables/useReaderSettings'
+import { useReaderDefaultSettings, useReaderSettings } from './shared/composables/useReaderSettings'
 import { useCustomFonts } from './epub/composables/useCustomFonts'
 import { useVisibility } from './shared/composables/useVisibility'
 import { useWakeLock } from './shared/composables/useWakeLock'
@@ -53,7 +53,7 @@ import CbzReaderView from './cbz/CbzReaderView.vue'
 import AudiobookReaderView from './audiobook/AudiobookReaderView.vue'
 import type { ReaderState } from './epub/composables/useReaderState'
 import type { FoliateLocationContext, FoliateRenderer } from './epub/composables/useFoliate'
-import type { BookDetail, EpubMediaOverlayPlaylist, EpubReaderSettings } from '@bookorbit/types'
+import type { AudioReaderSettings, BookDetail, EpubMediaOverlayPlaylist, EpubReaderSettings } from '@bookorbit/types'
 import { findMatchingCfiRange } from './epub/utils'
 import { getFormatGroup } from '@bookorbit/types'
 import { resolveReaderResumeTarget } from '@/lib/reading-checkpoint'
@@ -92,6 +92,13 @@ const sidebarLocationMetaByCfi = ref<Record<string, { chapterTitle: string | nul
 let sidebarLocationResolveSeq = 0
 
 const bookSettings = useReaderSettings(fileId, fileFormat)
+// The book's look overrides. Read-along speed lives in the same per-book delta but must not
+// switch on style injection for a book whose publisher formatting is otherwise untouched.
+const bookStyleDelta = computed<Partial<ReaderState> | null>(() => {
+  const style = { ...bookSettings.bookDelta.value } as Partial<EpubReaderSettings>
+  delete style.narrationSpeed
+  return Object.keys(style).length > 0 ? (style as Partial<ReaderState>) : null
+})
 // False when overrideBookFormatting is off and the book has no per-book delta.
 // Prevents injecting any CSS so the book renders with its own embedded styles.
 const shouldApplyStyles = ref(true)
@@ -265,7 +272,10 @@ const { setExpanded: setMiniPlayerExpanded, setReaderFooterVisible } = useTtsMin
 const { loadBookPreferences, loadUserPreferences, defaultProviderId, defaultVoiceId, defaultSpeed } = useTtsPreferences()
 const ttsPosition = useTtsPosition()
 const mediaOverlay = useMediaOverlay()
+const audiobookDefaults = useReaderDefaultSettings<AudioReaderSettings>('m4b')
 let mediaOverlayStartId = 0
+// Null until the first narration start of this reader session picks the book's speed.
+let narrationRate: number | null = null
 
 const isMediaOverlayAvailable = computed(() => isTtsAvailable && hasMediaOverlay.value)
 const isTtsActive = computed(() => isActive.value && currentBook.value?.bookFileId === fileId)
@@ -596,6 +606,18 @@ watch(
   },
 )
 
+// A speed the listener picks is remembered for this book only; the session's initial
+// speed is not written back, so books never listened to keep following the default.
+watch(
+  () => mediaOverlay.rate.value,
+  (rate) => {
+    if (narrationRate === null || rate === narrationRate) return
+    if (mediaOverlay.currentBook.value?.bookFileId !== fileId) return
+    narrationRate = rate
+    bookSettings.updateBookSettings({ narrationSpeed: rate })
+  },
+)
+
 // When narration is stopped (mini player closed), foliate clears its highlight.
 // Re-mark the last sentence so the resume point stays visible.
 watch(
@@ -619,6 +641,15 @@ async function beginNarration(sectionIdx: number, matches: ((item: { text: strin
   if (!book) return
 
   clearResumeNarrationHighlight()
+
+  // Picked once per reader session so "Narrate from here" restarts keep the current speed.
+  if (narrationRate === null) {
+    await audiobookDefaults.load().catch(() => {})
+    const bookRate = (bookSettings.effective.value as EpubReaderSettings).narrationSpeed
+    const initialRate = bookRate ?? audiobookDefaults.effective.value.playbackSpeed
+    narrationRate = initialRate
+    mediaOverlay.setRate(initialRate)
+  }
 
   await mediaOverlay.start(
     mo,
@@ -952,9 +983,9 @@ onMounted(async () => {
   if (effective.overrideBookFormatting) {
     shouldApplyStyles.value = true
     seedState(effective)
-  } else if (bookSettings.isCustomized.value) {
+  } else if (bookStyleDelta.value) {
     shouldApplyStyles.value = true
-    seedState(bookSettings.bookDelta.value as Partial<ReaderState>)
+    seedState(bookStyleDelta.value)
   } else {
     shouldApplyStyles.value = false
   }

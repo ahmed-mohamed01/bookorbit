@@ -8,6 +8,8 @@ import {
   EPUB_FONT_SIZE_MIN,
   EPUB_LETTER_SPACING_MAX,
   EPUB_LETTER_SPACING_MIN,
+  EPUB_NARRATION_SPEED_MAX,
+  EPUB_NARRATION_SPEED_MIN,
   EPUB_PARAGRAPH_SPACING_MAX,
   EPUB_PARAGRAPH_SPACING_MIN,
   EPUB_TEXT_INDENT_MAX,
@@ -50,6 +52,7 @@ const EPUB_SETTINGS_SCHEMA = z
     overrideBookFormatting: z.boolean(),
     footerDisplayMode: z.union([z.literal(0), z.literal(1), z.literal(2)]),
     fixedLayoutSpread: z.enum(['auto', 'none']),
+    narrationSpeed: z.number().min(EPUB_NARRATION_SPEED_MIN).max(EPUB_NARRATION_SPEED_MAX).optional(),
   })
   .strict();
 

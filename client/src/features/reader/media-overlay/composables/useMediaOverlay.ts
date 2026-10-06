@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { EPUB_NARRATION_SPEED_MAX, EPUB_NARRATION_SPEED_MIN } from '@bookorbit/types'
 import { i18n } from '@/i18n'
 import { registerAudioFocusOwner, requestAudioFocus } from '@/lib/audio-focus'
 import type { FoliateMediaOverlay } from '@/features/reader/epub/composables/useFoliate'
@@ -6,8 +7,8 @@ import { useTtsMediaSession } from '@/features/tts/composables/useTtsMediaSessio
 import { useTtsSleepTimer } from '@/features/tts/composables/useTtsSleepTimer'
 import type { TtsCurrentBook } from '@/features/tts/lib/tts-state'
 
-const MIN_RATE = 0.5
-const MAX_RATE = 4.0
+const MIN_RATE = EPUB_NARRATION_SPEED_MIN
+const MAX_RATE = EPUB_NARRATION_SPEED_MAX
 const RATE_STEP = 0.25
 
 const isActive = ref(false)
