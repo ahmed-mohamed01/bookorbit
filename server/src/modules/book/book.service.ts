@@ -105,7 +105,12 @@ import { BookCoverStore } from '../book-cover-store/book-cover-store.service';
 import { selectEmbeddedCoverSources } from '../book-cover-store/cover-sources';
 import { CoverSlotReconciler } from '../metadata/cover-slot-reconciler.service';
 import { BookQueryBuilder } from './book-query-builder.service';
-import { AudiobookEbookProgressSyncService, type ReadAlongAudioPosition, type ReadAlongEbookPosition } from './audiobook-ebook-progress-sync.service';
+import {
+  AudiobookEbookProgressSyncService,
+  type ReadAlongAudioPosition,
+  type ReadAlongEbookPosition,
+  type ReadAlongFit,
+} from './audiobook-ebook-progress-sync.service';
 import { READ_ALONG_LINK_SOURCE, type ReadAlongLink, type ReadAlongLinkSource } from './read-along-link-source';
 import { UserService } from '../user/user.service';
 import { AudiolessEpubService } from './audioless-epub.service';
@@ -3526,13 +3531,30 @@ export class BookService {
     const audioFiles = isReadAlong ? counterpart.files.filter(isAudio) : fileRows.filter(isAudio);
     const overlays = new Map(mediaOverlayByFileId);
     if (!isReadAlong) for (const file of readAlongFiles) overlays.set(file.id, mediaOverlayCapabilityFromFields(file));
-    return this.buildReadAloudProgressSync(
+    const sync = this.buildReadAloudProgressSync(
       [...readAlongFiles, ...audioFiles],
       overlays,
       isReadAlong ? primaryFileId : counterpart.primaryFileId,
       pairMode,
-      { overlayDurationOptional: true },
+      { linkedPair: true },
     );
+    if (sync.state !== 'enabled' || !this.audiobookEbookProgressSync) return sync;
+    return this.applyReadAlongFit(sync, await this.audiobookEbookProgressSync.resolveReadAlongFit(link.audioBookId, link.readAlongBookId));
+  }
+
+  private applyReadAlongFit(sync: ReadAloudProgressSync, fit: ReadAlongFit): ReadAloudProgressSync {
+    switch (fit.status) {
+      case 'ready':
+        return { ...sync, offsetsSource: fit.source };
+      case 'narration_mismatch':
+        return { ...sync, state: 'unavailable', unavailableReason: 'narration_mismatch', narrationMismatch: fit.mismatch };
+      case 'audio_changed':
+        return { ...sync, state: 'unavailable', unavailableReason: 'audio_changed' };
+      case 'missing_duration':
+        return { ...sync, state: 'unavailable', unavailableReason: 'missing_duration' };
+      case 'no_narration':
+        return { ...sync, state: 'unavailable', unavailableReason: 'no_media_overlay_epub' };
+    }
   }
 
   private buildReadAloudProgressSync(
@@ -3540,9 +3562,9 @@ export class BookService {
     mediaOverlayByFileId: Map<number, EpubMediaOverlayCapability | null>,
     primaryFileId: number | null,
     mode: ReadAloudProgressSyncMode,
-    // A linked pair is mapped per chapter, which verifies the fit itself, so an unknown narration
-    // length is no reason to call it unavailable.
-    options: { overlayDurationOptional?: boolean } = {},
+    // A linked pair is judged by its narration fit instead of comparing totals, so neither an unknown
+    // narration length nor a difference in totals makes it unavailable.
+    options: { linkedPair?: boolean } = {},
   ): ReadAloudProgressSync {
     const overlayFiles = fileRows
       .map((file) => ({ file, mediaOverlay: mediaOverlayByFileId.get(file.id) ?? null }))
@@ -3566,6 +3588,8 @@ export class BookService {
       durationDifferenceSeconds,
       durationDifferenceRatio,
       koreaderDownloadAvailable: selectedOverlay != null,
+      narrationMismatch: null,
+      offsetsSource: null,
     };
 
     if (mode === 'disabled') {
@@ -3577,12 +3601,12 @@ export class BookService {
     if (audioFiles.length === 0) {
       return { ...base, state: 'unavailable', unavailableReason: 'no_audio_files' };
     }
-    if (audioDurationSeconds == null || (!options.overlayDurationOptional && (overlayDurationSeconds == null || overlayDurationSeconds <= 0))) {
+    if (audioDurationSeconds == null || (!options.linkedPair && (overlayDurationSeconds == null || overlayDurationSeconds <= 0))) {
       return { ...base, state: 'unavailable', unavailableReason: 'missing_duration' };
     }
 
     const tolerance =
-      overlayDurationSeconds != null
+      overlayDurationSeconds != null && !options.linkedPair
         ? Math.min(READ_ALOUD_MAX_DURATION_DIFF_SECONDS, overlayDurationSeconds * READ_ALOUD_MAX_DURATION_DIFF_RATIO)
         : null;
     if (tolerance != null && durationDifferenceSeconds != null && durationDifferenceSeconds > tolerance) {

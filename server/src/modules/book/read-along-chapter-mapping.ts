@@ -1,4 +1,6 @@
-import type { EpubMediaOverlayPlaylist, EpubMediaOverlayPlaylistItem } from '@bookorbit/types';
+import type { EpubMediaOverlayPlaylist, EpubMediaOverlayPlaylistItem, ReadAlongNarrationMismatch } from '@bookorbit/types';
+
+import type { NarrationFileOffset, NarrationSignatureEntry } from './read-along-offsets-store';
 
 export type AudioChapterSpan = { startMs: number; endMs: number };
 
@@ -12,6 +14,7 @@ export type ReadAlongPosition = {
 // from it by that much. The reverse only happens through millisecond rounding.
 const MAX_CHAPTER_OVERHANG_SECONDS = 4;
 const MAX_CHAPTER_SHORTFALL_SECONDS = 0.5;
+const MAX_RUN_LENGTH = 8;
 // A narration file can end a few seconds past its chapter when its last sentence is timed beyond the
 // audio. One such chapter must not disable a book whose every other chapter fits exactly, so an
 // in-order pairing is still trusted when nearly all files fit and the outliers stay close.
@@ -49,61 +52,88 @@ export function buildAudioChapterSpans(chapters: { startMs: number }[], audioTot
 }
 
 /**
- * Places an audiobook position on a Storyteller read-along's narration.
- *
- * Storyteller cuts one narration file per source chapter and drops chapters it could not align
- * (credits, pages under four words), so the read-along's timeline is the audiobook's with gaps. A
- * whole-book stretch smears those gaps across every chapter; mapping per chapter keeps each sentence
- * exact. Narration files are matched to chapters by duration in order, so file naming never matters
- * and a read-along built from different audio fails to match instead of landing on a wrong sentence.
+ * The chapter spans narration runs are matched against. A book without a chapter table is one chapter
+ * spanning the whole audio, which a read-along cut into several files still fits as one run.
  */
-export function mapAudioPositionToReadAlong(
+export function buildNarrationChapterSpans(chapterStarts: { startMs: number }[], audioTotalSeconds: number): AudioChapterSpan[] {
+  const spans = buildAudioChapterSpans(chapterStarts, audioTotalSeconds);
+  if (spans.length > 0 || !(audioTotalSeconds > 0)) return spans;
+  return [{ startMs: 0, endMs: audioTotalSeconds * 1000 }];
+}
+
+/** Each narration file of the playlist, in playlist order, with its length from the SMIL clip ends. */
+export function narrationSignature(playlist: EpubMediaOverlayPlaylist): NarrationSignatureEntry[] {
+  return collectNarrationFiles(playlist).map((file) => ({ audioHref: file.audioHref, durationSeconds: file.durationSeconds }));
+}
+
+export type NarrationRunMatch = { offsets: NarrationFileOffset[] } | { mismatch: ReadAlongNarrationMismatch };
+
+/**
+ * Places every narration file of a Storyteller read-along on the audiobook clock.
+ *
+ * Storyteller cuts narration per chapter but folds short chapters into one file, splits a chapter over
+ * two hours into several, and drops chapters it could not align (credits). So a run of consecutive
+ * narration files is paired with a run of consecutive chapters whose lengths agree, and inside a run
+ * the files follow each other. A read-along built from different audio fails to match instead of
+ * landing on a wrong sentence.
+ */
+export function matchNarrationRuns(
   playlist: EpubMediaOverlayPlaylist,
   chapters: AudioChapterSpan[],
-  audioSeconds: number,
   options: ReadAlongMappingOptions = {},
-): ReadAlongPosition | null {
+): NarrationRunMatch {
   const files = collectNarrationFiles(playlist);
-  const fileByChapter = matchFilesToChapters(files, chapters, options);
-  if (!fileByChapter) return null;
+  const named = options.builtFromAudio ? matchFilesByStorytellerName(files, chapters, options.audioFileStartsSeconds ?? [0]) : null;
+  if (named) return { offsets: offsetsFromChapterPairs(files, chapters, named) };
 
-  const positionMs = Math.max(0, audioSeconds * 1000);
-  let chapterIndex = chapters.findIndex((chapter) => positionMs >= chapter.startMs && positionMs < chapter.endMs);
-  if (chapterIndex < 0) chapterIndex = positionMs < (chapters[0]?.startMs ?? 0) ? 0 : chapters.length - 1;
+  const runs = matchRuns(files, chapters);
+  if ('offsets' in runs) return runs;
 
-  const itemStarts = itemTimelineStarts(playlist.items);
-  const file = fileByChapter.get(chapterIndex);
-  if (file) {
-    const offsetSeconds = (positionMs - chapters[chapterIndex]!.startMs) / 1000;
-    return locateInFile(playlist.items, itemStarts, file, offsetSeconds);
-  }
-
-  // A chapter with no narration (opening or closing credits): the nearest narration that follows it,
-  // or the last sentence when nothing does.
-  for (let index = chapterIndex + 1; index < chapters.length; index += 1) {
-    const next = fileByChapter.get(index);
-    if (next) return atItem(playlist.items, itemStarts, firstPlayableIndex(playlist.items, next), 0);
-  }
-  for (let index = chapterIndex - 1; index >= 0; index -= 1) {
-    const previous = fileByChapter.get(index);
-    if (previous) return atItem(playlist.items, itemStarts, lastPlayableIndex(playlist.items, previous), 0);
-  }
-  return null;
+  const outliers = matchFilesWithOutliers(files, chapters);
+  if (outliers) return { offsets: offsetsFromChapterPairs(files, chapters, outliers) };
+  return runs;
 }
 
 /**
- * The inverse of `mapAudioPositionToReadAlong`: the audiobook time narrating the sentence at a
- * read-along position. Null when the narration does not fit the chapter table.
+ * Places an audiobook time on the read-along narration through stored file offsets. A time between
+ * two files (unnarrated credits, a chapter that outruns its narration) waits at the next file's first
+ * sentence; a time past the last file stays on its last sentence.
  */
-export function mapReadAlongPositionToAudio(
+export function mapAudioPositionWithOffsets(
   playlist: EpubMediaOverlayPlaylist,
-  chapters: AudioChapterSpan[],
-  overlaySeconds: number,
-  options: ReadAlongMappingOptions = {},
-): number | null {
-  const fileByChapter = matchFilesToChapters(collectNarrationFiles(playlist), chapters, options);
-  if (!fileByChapter) return null;
+  offsets: NarrationFileOffset[],
+  audioSeconds: number,
+): ReadAlongPosition | null {
+  const filesByHref = new Map(collectNarrationFiles(playlist).map((file) => [file.audioHref, file]));
+  const ordered = offsets.filter((offset) => filesByHref.has(offset.audioHref)).sort((left, right) => left.startSeconds - right.startSeconds);
+  if (ordered.length === 0) return null;
 
+  const time = Math.max(0, audioSeconds);
+  let index = -1;
+  while (index + 1 < ordered.length && ordered[index + 1]!.startSeconds <= time) index += 1;
+
+  const items = playlist.items;
+  const itemStarts = itemTimelineStarts(items);
+  if (index < 0) return atItem(items, itemStarts, firstPlayableIndex(items, filesByHref.get(ordered[0]!.audioHref)!), 0);
+
+  const offset = ordered[index]!;
+  const next = ordered[index + 1];
+  const secondsIntoFile = time - offset.startSeconds;
+  if (next && secondsIntoFile > offset.durationSeconds) {
+    return atItem(items, itemStarts, firstPlayableIndex(items, filesByHref.get(next.audioHref)!), 0);
+  }
+  return locateInFile(items, itemStarts, filesByHref.get(offset.audioHref)!, Math.min(secondsIntoFile, offset.durationSeconds));
+}
+
+/**
+ * The inverse of `mapAudioPositionWithOffsets`: the audiobook time narrating the sentence at a
+ * read-along position.
+ */
+export function mapReadAlongPositionWithOffsets(
+  playlist: EpubMediaOverlayPlaylist,
+  offsets: NarrationFileOffset[],
+  overlaySeconds: number,
+): number | null {
   const starts = itemTimelineStarts(playlist.items);
   let index = -1;
   for (let candidate = 0; candidate < playlist.items.length; candidate += 1) {
@@ -114,13 +144,19 @@ export function mapReadAlongPositionToAudio(
   if (index < 0) return null;
 
   const item = playlist.items[index]!;
-  const chapterIndex = [...fileByChapter].find(([, file]) => file.audioHref === item.audioHref)?.[0];
-  if (chapterIndex === undefined) return null;
+  const offset = offsets.find((candidate) => candidate.audioHref === item.audioHref);
+  if (!offset) return null;
 
   const secondsIntoItem = Math.max(0, Math.min(item.durationSeconds ?? 0, overlaySeconds - starts[index]!));
-  const chapter = chapters[chapterIndex]!;
-  // A narration file that runs past its chapter must not land the audiobook in the next chapter.
-  return Math.min(chapter.startMs / 1000 + item.clipBeginSeconds + secondsIntoItem, chapter.endMs / 1000 - READ_ALONG_POSITION_EPSILON_SECONDS);
+  // A file paired by name may run past the start of the next one; its tail must not land the audiobook
+  // in the next file's narration.
+  const nextStart = offsets.reduce(
+    (nearest, candidate) => (candidate.startSeconds > offset.startSeconds && candidate.startSeconds < nearest ? candidate.startSeconds : nearest),
+    Number.POSITIVE_INFINITY,
+  );
+  const end = Math.min(offset.startSeconds + offset.durationSeconds, nextStart);
+  const audioSeconds = offset.startSeconds + item.clipBeginSeconds + secondsIntoItem;
+  return Math.max(offset.startSeconds, Math.min(audioSeconds, end - READ_ALONG_POSITION_EPSILON_SECONDS));
 }
 
 /**
@@ -178,18 +214,6 @@ function collectNarrationFiles(playlist: EpubMediaOverlayPlaylist): NarrationFil
   return files;
 }
 
-function matchFilesToChapters(
-  files: NarrationFile[],
-  chapters: AudioChapterSpan[],
-  options: ReadAlongMappingOptions,
-): Map<number, NarrationFile> | null {
-  return (
-    (options.builtFromAudio ? matchFilesByStorytellerName(files, chapters, options.audioFileStartsSeconds ?? [0]) : null) ??
-    matchFilesInOrder(files, chapters) ??
-    matchFilesWithOutliers(files, chapters)
-  );
-}
-
 /**
  * Pairs each narration file with the chapter its Storyteller name points at, in whatever order the
  * EPUB plays them (a book may narrate an appendix chapter early). Source file N is the audiobook's file
@@ -223,18 +247,110 @@ function matchFilesByStorytellerName(
   return matched;
 }
 
-function matchFilesInOrder(files: NarrationFile[], chapters: AudioChapterSpan[]): Map<number, NarrationFile> | null {
-  if (files.length === 0 || files.length > chapters.length) return null;
+/**
+ * Dynamic programme over (narration files placed, chapters consumed). A step pairs a run of up to
+ * `MAX_RUN_LENGTH` files with a run of up to as many chapters whose lengths agree, or skips a chapter
+ * Storyteller dropped. The fewest skipped chapters win, then the most runs: every run is anchored to a
+ * chapter start, so a finer pairing keeps each file exact instead of chaining file lengths.
+ */
+function matchRuns(files: NarrationFile[], chapters: AudioChapterSpan[]): NarrationRunMatch {
+  const fileCount = files.length;
+  const chapterCount = chapters.length;
+  if (fileCount === 0 || chapterCount === 0) return { mismatch: describeRunMismatch(files, chapters, 0, 0) };
 
-  const matched = new Map<number, NarrationFile>();
-  let chapterIndex = 0;
-  for (const file of files) {
-    while (chapterIndex < chapters.length && !chapterFitsFile(chapters[chapterIndex]!, file)) chapterIndex += 1;
-    if (chapterIndex === chapters.length) return null;
-    matched.set(chapterIndex, file);
-    chapterIndex += 1;
+  const fileEnds = prefixSums(files.map((file) => file.durationSeconds));
+  const chapterEnds = prefixSums(chapters.map((chapter) => (chapter.endMs - chapter.startMs) / 1000));
+  // A skipped chapter costs more than any number of runs can earn back.
+  const skipCost = fileCount + 1;
+  const width = chapterCount + 1;
+  const cost = new Float64Array((fileCount + 1) * width).fill(Number.POSITIVE_INFINITY);
+  const stepFiles = new Int16Array((fileCount + 1) * width);
+  const stepChapters = new Int16Array((fileCount + 1) * width);
+  cost[0] = 0;
+  const relax = (file: number, chapter: number, value: number, runFiles: number, runChapters: number): void => {
+    const index = file * width + chapter;
+    if (value >= cost[index]!) return;
+    cost[index] = value;
+    stepFiles[index] = runFiles;
+    stepChapters[index] = runChapters;
+  };
+
+  for (let file = 0; file <= fileCount; file += 1) {
+    for (let chapter = 0; chapter <= chapterCount; chapter += 1) {
+      const here = cost[file * width + chapter]!;
+      if (here === Number.POSITIVE_INFINITY) continue;
+      if (chapter < chapterCount) relax(file, chapter + 1, here + skipCost, 0, 1);
+      for (let runFiles = 1; runFiles <= MAX_RUN_LENGTH && file + runFiles <= fileCount; runFiles += 1) {
+        const narrationSeconds = fileEnds[file + runFiles]! - fileEnds[file]!;
+        for (let runChapters = 1; runChapters <= MAX_RUN_LENGTH && chapter + runChapters <= chapterCount; runChapters += 1) {
+          const overhang = chapterEnds[chapter + runChapters]! - chapterEnds[chapter]! - narrationSeconds;
+          if (overhang > MAX_CHAPTER_OVERHANG_SECONDS) break;
+          if (overhang >= -runShortfallSeconds(runFiles)) relax(file + runFiles, chapter + runChapters, here - 1, runFiles, runChapters);
+        }
+      }
+    }
   }
-  return matched;
+
+  if (cost[fileCount * width + chapterCount] === Number.POSITIVE_INFINITY) {
+    let placed = fileCount;
+    while (placed > 0 && !cost.subarray(placed * width, (placed + 1) * width).some(Number.isFinite)) placed -= 1;
+    const nextChapter = cost.subarray(placed * width, (placed + 1) * width).findIndex(Number.isFinite);
+    return { mismatch: describeRunMismatch(files, chapters, placed, nextChapter) };
+  }
+
+  const offsets: NarrationFileOffset[] = new Array<NarrationFileOffset>(fileCount);
+  let file = fileCount;
+  let chapter = chapterCount;
+  while (file > 0 || chapter > 0) {
+    const runFiles = stepFiles[file * width + chapter]!;
+    const runChapters = stepChapters[file * width + chapter]!;
+    file -= runFiles;
+    chapter -= runChapters;
+    let startSeconds = chapters[chapter]!.startMs / 1000;
+    for (let index = file; index < file + runFiles; index += 1) {
+      const { audioHref, durationSeconds } = files[index]!;
+      offsets[index] = { audioHref, startSeconds, durationSeconds };
+      startSeconds += durationSeconds;
+    }
+  }
+  return { offsets };
+}
+
+// Each file in a run carries its own millisecond rounding, so a longer run may outrun its chapters by more.
+function runShortfallSeconds(runFiles: number): number {
+  return MAX_CHAPTER_SHORTFALL_SECONDS * runFiles;
+}
+
+function prefixSums(values: number[]): number[] {
+  const sums = [0];
+  for (const value of values) sums.push(sums.at(-1)! + value);
+  return sums;
+}
+
+/** The first narration file no run could place, against the chapter after the last one consumed. */
+function describeRunMismatch(
+  files: NarrationFile[],
+  chapters: AudioChapterSpan[],
+  placedFiles: number,
+  nextChapter: number,
+): ReadAlongNarrationMismatch {
+  const chapterIndex = Math.min(Math.max(0, nextChapter), chapters.length - 1);
+  const chapter = chapters[chapterIndex];
+  return {
+    narrationFile: placedFiles + 1,
+    narrationSeconds: files[placedFiles]?.durationSeconds ?? 0,
+    chapter: chapter ? chapterIndex + 1 : 0,
+    chapterSeconds: chapter ? (chapter.endMs - chapter.startMs) / 1000 : 0,
+  };
+}
+
+function offsetsFromChapterPairs(
+  files: NarrationFile[],
+  chapters: AudioChapterSpan[],
+  fileByChapter: Map<number, NarrationFile>,
+): NarrationFileOffset[] {
+  const startByHref = new Map([...fileByChapter].map(([chapterIndex, file]) => [file.audioHref, chapters[chapterIndex]!.startMs / 1000]));
+  return files.map((file) => ({ audioHref: file.audioHref, startSeconds: startByHref.get(file.audioHref)!, durationSeconds: file.durationSeconds }));
 }
 
 /**
@@ -279,35 +395,6 @@ function fitCost(chapter: AudioChapterSpan, file: NarrationFile): 0 | 1 | null {
   const spanSeconds = (chapter.endMs - chapter.startMs) / 1000;
   const allowed = Math.max(MAX_CHAPTER_OVERHANG_SECONDS, spanSeconds * MAX_OUTLIER_SHARE_OF_CHAPTER);
   return Math.abs(spanSeconds - file.durationSeconds) <= allowed ? 1 : null;
-}
-
-/**
- * Why a read-along's narration does not fit an audiobook's chapters, for the refusal log: the first
- * narration file the strict in-order match cannot place, against the chapter after the last one placed.
- */
-export function describeChapterMismatch(
-  playlist: EpubMediaOverlayPlaylist,
-  chapters: AudioChapterSpan[],
-): { narrationFiles: number; chapters: number; firstMismatch: number | null; chapterSeconds: number | null; narrationSeconds: number | null } {
-  const files = collectNarrationFiles(playlist);
-  let chapterIndex = 0;
-  for (const [fileIndex, file] of files.entries()) {
-    const resumeIndex = chapterIndex;
-    while (chapterIndex < chapters.length && !chapterFitsFile(chapters[chapterIndex]!, file)) chapterIndex += 1;
-    if (chapterIndex < chapters.length) {
-      chapterIndex += 1;
-      continue;
-    }
-    const chapter = chapters[resumeIndex];
-    return {
-      narrationFiles: files.length,
-      chapters: chapters.length,
-      firstMismatch: fileIndex + 1,
-      chapterSeconds: chapter ? (chapter.endMs - chapter.startMs) / 1000 : null,
-      narrationSeconds: file.durationSeconds,
-    };
-  }
-  return { narrationFiles: files.length, chapters: chapters.length, firstMismatch: null, chapterSeconds: null, narrationSeconds: null };
 }
 
 function chapterFitsFile(chapter: AudioChapterSpan, file: NarrationFile): boolean {

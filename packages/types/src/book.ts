@@ -246,7 +246,23 @@ export type ReadAloudProgressSyncMode = "auto" | "disabled";
 
 export type ReadAloudProgressSyncState = "enabled" | "disabled" | "unavailable";
 
-export type ReadAloudProgressSyncUnavailableReason = "no_media_overlay_epub" | "no_audio_files" | "missing_duration" | "duration_mismatch";
+export type ReadAloudProgressSyncUnavailableReason =
+  | "no_media_overlay_epub"
+  | "no_audio_files"
+  | "missing_duration"
+  | "duration_mismatch"
+  | "narration_mismatch"
+  | "audio_changed";
+
+/** The first narration file the run match could not place, and the chapter it was tried against. */
+export type ReadAlongNarrationMismatch = {
+  narrationFile: number;
+  narrationSeconds: number;
+  chapter: number;
+  chapterSeconds: number;
+};
+
+export type ReadAlongOffsetsSource = "build" | "match";
 
 export type ReadAloudProgressSync = {
   mode: ReadAloudProgressSyncMode;
@@ -258,6 +274,8 @@ export type ReadAloudProgressSync = {
   durationDifferenceSeconds: number | null;
   durationDifferenceRatio: number | null;
   koreaderDownloadAvailable: boolean;
+  narrationMismatch: ReadAlongNarrationMismatch | null;
+  offsetsSource: ReadAlongOffsetsSource | null;
 };
 
 export type BookFileWriteDisabledReason =

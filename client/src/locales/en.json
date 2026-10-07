@@ -5592,7 +5592,8 @@
             "enabled": "Enabled",
             "disabled": "Disabled",
             "unavailable": "Unavailable",
-            "epubCopiesOnly": "EPUB copies only"
+            "epubCopiesOnly": "EPUB copies only",
+            "notSyncing": "Not syncing"
           },
           "enabledDescription": "Audiobook, web reader, Kobo, and KOReader positions stay in sync.",
           "disabledDescription": "Each format keeps its own reading position.",
@@ -5601,7 +5602,10 @@
             "no_media_overlay_epub": "A read-along EPUB with media overlays is required.",
             "no_audio_files": "Matching standalone audiobook files are required.",
             "missing_duration": "Audio duration metadata is incomplete.",
-            "durationMismatch": "Durations do not match closely enough: audiobook {audio}, read-along EPUB {overlay}."
+            "durationMismatch": "Durations do not match closely enough: audiobook {audio}, read-along EPUB {overlay}.",
+            "narration_mismatch": "Narration does not follow this audiobook's chapters.",
+            "narrationMismatch": "Narration does not follow this audiobook's chapters: file {file} is {narration}, chapter {chapter} is {chapterLength}.",
+            "audio_changed": "The audiobook files changed after this read-along was built."
           },
           "enable": "Enable",
           "disable": "Disable",
@@ -6726,15 +6730,32 @@
           "checking": "Checking Audiobookshelf",
           "status": {
             "unreachable": "Unreachable",
-            "unreachableHint": "Could not reach Audiobookshelf. Check the connection in Audiobookshelf settings.",
+            "unreachableHint": "Could not reach Audiobookshelf.",
             "sending": "Sending",
             "sendingHint": "A newer BookOrbit position is on its way to Audiobookshelf.",
             "receiving": "Newer in Audiobookshelf",
-            "receivingHint": "Audiobookshelf has a newer position. BookOrbit picks it up on the next sync."
+            "receivingHint": "Audiobookshelf has a newer position.",
+            "receivingUpdated": "Updated {time} on Audiobookshelf.",
+            "diverged": "Out of sync",
+            "divergedHint": "Audiobookshelf is at {abs}%, BookOrbit at {local}%.",
+            "divergedReason": {
+              "push_off": "Nothing is scheduled to send.",
+              "pull_refused": "The last pull did not apply.",
+              "stale": "Neither side has moved since the last sync."
+            }
           },
-          "twoWay": "Two-way sync with Audiobookshelf. BookOrbit sends its audiobook position, including where reading the linked ebook or read-along moves it, and picks up newer positions from Audiobookshelf.",
-          "fromAbs": "One-way: Audiobookshelf updates BookOrbit, but BookOrbit progress is not sent back. Turn on \"Send BookOrbit progress to Audiobookshelf\" in Audiobookshelf settings.",
-          "toAbs": "One-way: BookOrbit sends progress to Audiobookshelf, but Audiobookshelf positions are not imported. Turn on \"Playback position\" in Audiobookshelf settings."
+          "twoWay": "Two-way sync: the newer audiobook position wins on either side.",
+          "fromAbs": "One-way from Audiobookshelf: turn on \"Send BookOrbit progress to Audiobookshelf\" in settings to sync both ways.",
+          "toAbs": "One-way to Audiobookshelf: turn on \"Playback position\" in settings to sync both ways.",
+          "reconcile": {
+            "push": "Send BookOrbit position",
+            "pull": "Use Audiobookshelf position",
+            "useNow": "Use it now",
+            "retry": "Retry",
+            "failed": "Could not update the position. Try again.",
+            "busy": "Sync is busy, try again in a moment.",
+            "unreachable": "Could not reach Audiobookshelf."
+          }
         },
         "trigger": "Link book",
         "tooltipNeedsAudio": "Link an audiobook to enable position sync.",

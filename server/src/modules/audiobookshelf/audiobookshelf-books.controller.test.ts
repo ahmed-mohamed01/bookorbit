@@ -1,8 +1,15 @@
+import 'reflect-metadata';
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Permission } from '@bookorbit/types';
+import { RequestMethod } from '@nestjs/common';
+import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 
 import { AudiobookshelfBooksController } from './audiobookshelf-books.controller';
 import { PERMISSION_KEY } from '../../common/decorators/require-permission.decorator';
+import { ReconcileAudiobookshelfPositionDto } from './dto';
 
 const mockBookStateService = {
   list: vi.fn(),
@@ -13,6 +20,7 @@ const mockBookStateService = {
   findPositionSyncLink: vi.fn(),
   getCoverThumbnail: vi.fn(),
   getLiveSyncStatus: vi.fn(),
+  reconcile: vi.fn(),
 };
 
 const mockMatchService = {
@@ -128,5 +136,27 @@ describe('AudiobookshelfBooksController', () => {
     const result = await makeController().setExclusion(mockUser as never, 'abs-1', { syncExcluded: true } as never);
     expect(result).toEqual({ absLibraryItemId: 'abs-1', syncExcluded: true });
     expect(mockBookStateService.setExclusion).toHaveBeenCalledWith(mockUser, 'abs-1', true);
+  });
+
+  it('reconcile is POST :absLibraryItemId/reconcile and passes the direction through', async () => {
+    const handler = AudiobookshelfBooksController.prototype.reconcile;
+    expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.POST);
+    expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe(':absLibraryItemId/reconcile');
+
+    const live = { status: 'synced', progress: null, local: null, divergedReason: null };
+    mockBookStateService.reconcile.mockResolvedValue(live);
+    await expect(makeController().reconcile(mockUser as never, 'abs-1', { direction: 'pull' } as never)).resolves.toEqual(live);
+    expect(mockBookStateService.reconcile).toHaveBeenCalledWith(mockUser, 'abs-1', 'pull');
+  });
+
+  it.each([
+    [{ direction: 'push' }, 0],
+    [{ direction: 'pull' }, 0],
+    [{ direction: 'both' }, 1],
+    [{}, 1],
+    [{ direction: 'pull', force: true }, 1],
+  ])('validates the reconcile body %j', async (payload, errorCount) => {
+    const errors = await validate(plainToInstance(ReconcileAudiobookshelfPositionDto, payload), { whitelist: true, forbidNonWhitelisted: true });
+    expect(errors).toHaveLength(errorCount);
   });
 });

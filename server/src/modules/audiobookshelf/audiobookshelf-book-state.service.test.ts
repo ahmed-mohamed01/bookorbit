@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { BadGatewayException, BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 
 import { AudiobookshelfBookStateService } from './audiobookshelf-book-state.service';
 import { AudiobookshelfApiError } from './audiobookshelf-client.service';
@@ -27,6 +27,22 @@ const mockClient = {
 
 const mockBookService = {
   verifyBookAccess: vi.fn(),
+  resolveAudiobookPositionForExternalSync: vi.fn(),
+};
+
+const mockSyncService = {
+  pullPositionNow: vi.fn(),
+};
+
+const mockProgressPush = {
+  pushPositionNow: vi.fn(),
+};
+
+const mockCoordinator = {
+  acquireSync: vi.fn(),
+  endSync: vi.fn(),
+  tryStartPush: vi.fn(),
+  endPush: vi.fn(),
 };
 
 const mockLibraryService = {
@@ -83,6 +99,9 @@ function makeService() {
     mockLibraryService as never,
     mockEditionLinks as never,
     mockClient as never,
+    mockSyncService as never,
+    mockProgressPush as never,
+    mockCoordinator as never,
   );
 }
 
@@ -568,12 +587,15 @@ describe('AudiobookshelfBookStateService.getLiveSyncStatus', () => {
     mockRepo.findBookStateRow.mockResolvedValue(row());
     mockBookService.verifyBookAccess.mockResolvedValue(undefined);
     mockClient.getMediaProgress.mockResolvedValue({ progress: 0.25, isFinished: false, lastUpdate: 5000 });
+    mockRepo.findAudioProgress.mockResolvedValue(undefined);
   });
 
   it('reads Audiobookshelf progress with a short timeout and reports it in sync', async () => {
     await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toEqual({
       status: 'synced',
       progress: { percentage: 25, isFinished: false, lastUpdate: 5000 },
+      local: null,
+      divergedReason: null,
     });
     expect(mockClient.getMediaProgress).toHaveBeenCalledWith(baseUser.id, 'https://abs.example.com', 'token', 'abs-1', 4000);
     expect(mockBookService.verifyBookAccess).toHaveBeenCalledWith(218, baseUser);
@@ -582,13 +604,23 @@ describe('AudiobookshelfBookStateService.getLiveSyncStatus', () => {
   it('reports an unreachable server instead of failing', async () => {
     mockClient.getMediaProgress.mockRejectedValue(new AudiobookshelfApiError('timed out', 'timeout'));
 
-    await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toEqual({ status: 'unreachable', progress: null });
+    await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toEqual({
+      status: 'unreachable',
+      progress: null,
+      local: null,
+      divergedReason: null,
+    });
   });
 
   it('reports no progress for an item Audiobookshelf has none for yet', async () => {
     mockClient.getMediaProgress.mockResolvedValue(null);
 
-    await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toEqual({ status: 'synced', progress: null });
+    await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toEqual({
+      status: 'synced',
+      progress: null,
+      local: null,
+      divergedReason: null,
+    });
   });
 
   it('reports a waiting push as sending when the local position is newer', async () => {
@@ -649,10 +681,233 @@ describe('AudiobookshelfBookStateService.getLiveSyncStatus', () => {
     expect(mockClient.getMediaProgress).not.toHaveBeenCalled();
   });
 
+  describe('diverged', () => {
+    const localRow = (capturedAtMs: number, overrides: Record<string, unknown> = {}) => ({
+      currentFileId: 11,
+      positionSeconds: 100,
+      percentage: 40,
+      capturedAt: new Date(capturedAtMs),
+      updatedAt: new Date(capturedAtMs),
+      revision: 1,
+      ...overrides,
+    });
+    const remote = (currentTime: number, lastUpdate: number) => ({ progress: 0.25, isFinished: false, currentTime, lastUpdate });
+    const localAt = (audioSeconds: number) =>
+      mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue({ audioSeconds, audioTotalSeconds: 36_000 });
+
+    it('reports the local position and stays synced when both sides agree within a minute on the book clock', async () => {
+      mockRepo.findAudioProgress.mockResolvedValue(localRow(4000));
+      mockClient.getMediaProgress.mockResolvedValue(remote(1_030, 5000));
+      localAt(1_000);
+
+      await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toEqual({
+        status: 'synced',
+        progress: { percentage: 25, isFinished: false, lastUpdate: 5000 },
+        local: { percentage: 40, capturedAt: new Date(4000).toISOString() },
+        divergedReason: null,
+      });
+      expect(mockBookService.resolveAudiobookPositionForExternalSync).toHaveBeenCalledWith(218, 11, 100);
+    });
+
+    it('reports push_off when the newer local position has nowhere to go', async () => {
+      mockRepo.findSettings.mockResolvedValue(settings({ pushPosition: false }));
+      mockRepo.findAudioProgress.mockResolvedValue(localRow(9000));
+      mockClient.getMediaProgress.mockResolvedValue(remote(1_000, 5000));
+      localAt(2_000);
+
+      await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toMatchObject({ status: 'diverged', divergedReason: 'push_off' });
+    });
+
+    it('reports pull_refused when the newer Audiobookshelf position was looked at and not applied', async () => {
+      mockRepo.findBookStateRow.mockResolvedValue(row({ lastSyncedAt: new Date(9500) }));
+      mockRepo.findAudioProgress.mockResolvedValue(localRow(4000));
+      mockClient.getMediaProgress.mockResolvedValue(remote(5_000, 9000));
+      localAt(1_000);
+
+      await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toMatchObject({
+        status: 'diverged',
+        divergedReason: 'pull_refused',
+      });
+    });
+
+    it('reports stale when neither side moved since the last sync but they disagree', async () => {
+      mockRepo.findAudioProgress.mockResolvedValue(localRow(5000));
+      mockClient.getMediaProgress.mockResolvedValue(remote(5_000, 5000));
+      localAt(1_000);
+
+      await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toMatchObject({ status: 'diverged', divergedReason: 'stale' });
+    });
+
+    it('reports stale for a newer local position while push is on but nothing is pending', async () => {
+      mockRepo.findAudioProgress.mockResolvedValue(localRow(9000));
+      mockClient.getMediaProgress.mockResolvedValue(remote(1_000, 5000));
+      localAt(2_000);
+
+      await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toMatchObject({ status: 'diverged', divergedReason: 'stale' });
+    });
+
+    it('keeps sending and receiving ahead of a divergence', async () => {
+      mockRepo.findBookStateRow.mockResolvedValue(row({ pushPendingAt: new Date() }));
+      mockRepo.findAudioProgress.mockResolvedValue(localRow(9000));
+      mockClient.getMediaProgress.mockResolvedValue(remote(1_000, 5000));
+      localAt(5_000);
+      await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toMatchObject({ status: 'sending', divergedReason: null });
+
+      mockRepo.findBookStateRow.mockResolvedValue(row());
+      mockRepo.findAudioProgress.mockResolvedValue(localRow(4000));
+      mockClient.getMediaProgress.mockResolvedValue(remote(5_000, 9000));
+      await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toMatchObject({ status: 'receiving', divergedReason: null });
+    });
+
+    it('stays synced when the local position cannot be placed on the book clock', async () => {
+      mockRepo.findAudioProgress.mockResolvedValue(localRow(5000));
+      mockClient.getMediaProgress.mockResolvedValue(remote(9_000, 5000));
+      mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue(null);
+
+      await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toMatchObject({ status: 'synced', divergedReason: null });
+    });
+
+    it('reports the local position even when Audiobookshelf is unreachable', async () => {
+      mockRepo.findAudioProgress.mockResolvedValue(localRow(5000));
+      mockClient.getMediaProgress.mockRejectedValue(new AudiobookshelfApiError('timed out', 'timeout'));
+
+      await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).resolves.toEqual({
+        status: 'unreachable',
+        progress: null,
+        local: { percentage: 40, capturedAt: new Date(5000).toISOString() },
+        divergedReason: null,
+      });
+      expect(mockBookService.resolveAudiobookPositionForExternalSync).not.toHaveBeenCalled();
+    });
+  });
+
   it('answers not found for an item that is not one of the user matches', async () => {
     mockRepo.findBookStateRow.mockResolvedValue(undefined);
 
     await expect(makeService().getLiveSyncStatus(baseUser, 'abs-1')).rejects.toThrow(NotFoundException);
     expect(mockClient.getMediaProgress).not.toHaveBeenCalled();
+  });
+});
+
+describe('AudiobookshelfBookStateService.reconcile', () => {
+  const settings = {
+    enabled: true,
+    serverUrl: 'https://abs.example.com',
+    apiToken: 'token',
+    syncPosition: true,
+    pushPosition: false,
+    excludedLibraryIds: [],
+  };
+  const row = {
+    absLibraryItemId: 'abs-1',
+    absLibraryId: 'lib-1',
+    bookId: 218,
+    needsReview: false,
+    matchError: null,
+    syncExcluded: false,
+    manualUnlinked: false,
+    pushPendingAt: null,
+    lastSyncedPositionAbsUpdate: 5000,
+    lastSyncedProgressAt: null,
+    lastSyncedAt: null,
+    syncError: null,
+    updatedAt: new Date(0),
+  };
+  const remote = { progress: 0.5, isFinished: false, currentTime: 1_800, duration: 3_600, lastUpdate: 5000 };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRepo.findSettings.mockResolvedValue(settings);
+    mockRepo.findBookStateRow.mockResolvedValue(row);
+    mockRepo.findAudioProgress.mockResolvedValue(undefined);
+    mockBookService.verifyBookAccess.mockResolvedValue(undefined);
+    mockClient.getMediaProgress.mockResolvedValue(remote);
+    mockCoordinator.acquireSync.mockResolvedValue(true);
+    mockCoordinator.tryStartPush.mockReturnValue(true);
+    mockSyncService.pullPositionNow.mockResolvedValue({ applied: true, reason: 'applied' });
+    mockProgressPush.pushPositionNow.mockResolvedValue({ outcome: 'pushed', reason: 'pushed' });
+  });
+
+  it('pulls the Audiobookshelf position under the sync lock and returns the fresh live status', async () => {
+    const result = await makeService().reconcile(baseUser, 'abs-1', 'pull');
+
+    expect(mockCoordinator.acquireSync).toHaveBeenCalledWith(baseUser.id, 10_000);
+    expect(mockClient.getMediaProgress).toHaveBeenNthCalledWith(1, baseUser.id, 'https://abs.example.com', 'token', 'abs-1');
+    expect(mockSyncService.pullPositionNow).toHaveBeenCalledWith(
+      baseUser,
+      expect.objectContaining({ absLibraryItemId: 'abs-1', bookId: 218 }),
+      remote,
+    );
+    expect(mockCoordinator.endSync).toHaveBeenCalledWith(baseUser.id);
+    expect(result).toMatchObject({ status: 'synced', progress: { percentage: 50 } });
+  });
+
+  it('answers conflict when a sync holds the lock past the wait', async () => {
+    mockCoordinator.acquireSync.mockResolvedValue(false);
+
+    await expect(makeService().reconcile(baseUser, 'abs-1', 'pull')).rejects.toThrow(ConflictException);
+    expect(mockSyncService.pullPositionNow).not.toHaveBeenCalled();
+    expect(mockCoordinator.endSync).not.toHaveBeenCalled();
+  });
+
+  it('applies nothing when Audiobookshelf has no progress for the item', async () => {
+    mockClient.getMediaProgress.mockResolvedValue(null);
+
+    await makeService().reconcile(baseUser, 'abs-1', 'pull');
+
+    expect(mockSyncService.pullPositionNow).not.toHaveBeenCalled();
+    expect(mockCoordinator.endSync).toHaveBeenCalledWith(baseUser.id);
+  });
+
+  it('reports an unreachable server on pull as a bad gateway and releases the lock', async () => {
+    mockClient.getMediaProgress.mockRejectedValue(new AudiobookshelfApiError('timed out', 'timeout'));
+
+    await expect(makeService().reconcile(baseUser, 'abs-1', 'pull')).rejects.toThrow(BadGatewayException);
+    expect(mockCoordinator.endSync).toHaveBeenCalledWith(baseUser.id);
+  });
+
+  it('pushes the local position under the push lock even with push switched off', async () => {
+    await makeService().reconcile(baseUser, 'abs-1', 'push');
+
+    expect(mockCoordinator.tryStartPush).toHaveBeenCalledWith(baseUser.id);
+    expect(mockProgressPush.pushPositionNow).toHaveBeenCalledWith(baseUser.id, 'abs-1');
+    expect(mockCoordinator.endPush).toHaveBeenCalledWith(baseUser.id);
+    expect(mockSyncService.pullPositionNow).not.toHaveBeenCalled();
+  });
+
+  it('reads the status from the row the push just updated', async () => {
+    mockRepo.findBookStateRow.mockResolvedValueOnce(row).mockResolvedValueOnce({ ...row, lastSyncedPositionAbsUpdate: 9000 });
+    mockClient.getMediaProgress.mockResolvedValue({ ...remote, lastUpdate: 9000 });
+
+    await expect(makeService().reconcile(baseUser, 'abs-1', 'push')).resolves.toMatchObject({ status: 'synced' });
+    expect(mockRepo.findBookStateRow).toHaveBeenCalledTimes(2);
+  });
+
+  it('answers conflict when a sync or push already holds the push lock', async () => {
+    mockCoordinator.tryStartPush.mockReturnValue(false);
+
+    await expect(makeService().reconcile(baseUser, 'abs-1', 'push')).rejects.toThrow(ConflictException);
+    expect(mockProgressPush.pushPositionNow).not.toHaveBeenCalled();
+    expect(mockCoordinator.endPush).not.toHaveBeenCalled();
+  });
+
+  it('reports a failed push as a bad gateway and releases the lock', async () => {
+    mockProgressPush.pushPositionNow.mockResolvedValue({ outcome: 'unreachable', reason: 'unreachable' });
+
+    await expect(makeService().reconcile(baseUser, 'abs-1', 'push')).rejects.toThrow(BadGatewayException);
+    expect(mockCoordinator.endPush).toHaveBeenCalledWith(baseUser.id);
+  });
+
+  it('returns the live status when a push guard declines', async () => {
+    mockProgressPush.pushPositionNow.mockResolvedValue({ outcome: 'skipped', reason: 'near_end' });
+
+    await expect(makeService().reconcile(baseUser, 'abs-1', 'push')).resolves.toMatchObject({ status: 'synced' });
+  });
+
+  it('answers not found without taking a lock for an item that is not one of the user matches', async () => {
+    mockRepo.findBookStateRow.mockResolvedValue(undefined);
+
+    await expect(makeService().reconcile(baseUser, 'abs-1', 'pull')).rejects.toThrow(NotFoundException);
+    expect(mockCoordinator.acquireSync).not.toHaveBeenCalled();
   });
 });

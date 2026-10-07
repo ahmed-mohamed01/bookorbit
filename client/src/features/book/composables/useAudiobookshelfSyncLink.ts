@@ -4,7 +4,7 @@ import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { fetchAudiobookshelfSyncLink, fetchAudiobookshelfSyncLive } from '@/features/audiobookshelf/api/audiobookshelf.api'
 
 // A live check that fails still has to leave the stop with a way to act, which the unreachable state offers.
-const UNREACHABLE: AudiobookshelfBookSyncLive = { status: 'unreachable', progress: null }
+const UNREACHABLE: AudiobookshelfBookSyncLive = { status: 'unreachable', progress: null, local: null, divergedReason: null }
 
 /**
  * The Audiobookshelf item an audiobook's position syncs with, or null when there is none to show:
@@ -28,7 +28,8 @@ export function useAudiobookshelfSyncLink(audioBookId: Ref<number | null>) {
     try {
       status = await fetchAudiobookshelfSyncLive(absLibraryItemId)
     } catch {
-      status = UNREACHABLE
+      // A fresh object each time, so a retry that fails again still reads as a new answer.
+      status = { ...UNREACHABLE }
     }
     if (current !== requestId) return
     live.value = status
@@ -57,7 +58,14 @@ export function useAudiobookshelfSyncLink(audioBookId: Ref<number | null>) {
     if (link.value) void loadLive(requestId, link.value.absLibraryItemId)
   }
 
+  /** Takes a status the server already answered with, such as a reconcile's, instead of asking again. */
+  function applyLive(status: AudiobookshelfBookSyncLive) {
+    if (!link.value) return
+    live.value = status
+    checking.value = false
+  }
+
   watch(audioBookId, (bookId) => void load(bookId), { immediate: true })
 
-  return { link, live, checking, refreshLive }
+  return { link, live, checking, refreshLive, applyLive }
 }

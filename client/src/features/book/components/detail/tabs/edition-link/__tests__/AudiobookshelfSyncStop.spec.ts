@@ -1,8 +1,19 @@
-import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
-import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive } from '@bookorbit/types'
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive, AudiobookshelfReconcileDirection } from '@bookorbit/types'
 import AudiobookshelfSyncStop from '../AudiobookshelfSyncStop.vue'
+import { AudiobookshelfReconcileError } from '@/features/audiobookshelf/api/audiobookshelf.api'
+import { i18n } from '@/i18n'
 import { withMessages } from './with-messages'
+
+const mocks = vi.hoisted(() => ({
+  reconcile: vi.fn<(id: string, direction: AudiobookshelfReconcileDirection) => Promise<AudiobookshelfBookSyncLive>>(),
+}))
+
+vi.mock('@/features/audiobookshelf/api/audiobookshelf.api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/audiobookshelf/api/audiobookshelf.api')>()),
+  reconcileAudiobookshelfPosition: mocks.reconcile,
+}))
 
 const stubs = { RouterLink: { props: ['to'], template: '<a :href="JSON.stringify(to)"><slot /></a>' } }
 
@@ -20,7 +31,13 @@ function makeLink(overrides: Partial<AudiobookshelfBookSyncLink> = {}): Audioboo
 }
 
 function makeLive(overrides: Partial<AudiobookshelfBookSyncLive> = {}): AudiobookshelfBookSyncLive {
-  return { status: 'synced', progress: { percentage: 42.4, isFinished: false, lastUpdate: 5000 }, ...overrides }
+  return {
+    status: 'synced',
+    progress: { percentage: 42.4, isFinished: false, lastUpdate: 5000 },
+    local: null,
+    divergedReason: null,
+    ...overrides,
+  }
 }
 
 function mountStop(link = makeLink(), live: AudiobookshelfBookSyncLive | null = makeLive(), checking = false) {
@@ -31,6 +48,10 @@ function mountStop(link = makeLink(), live: AudiobookshelfBookSyncLive | null = 
 }
 
 describe('AudiobookshelfSyncStop', () => {
+  beforeEach(() => {
+    mocks.reconcile.mockReset()
+  })
+
   it('names the matched item and its library', () => {
     const wrapper = mountStop()
 
@@ -204,4 +225,144 @@ describe('AudiobookshelfSyncStop', () => {
   it('leaves out the library line when Audiobookshelf reported none', () => {
     expect(mountStop(makeLink({ libraryName: null })).text()).not.toContain('library')
   })
+  describe('out of sync', () => {
+    function divergedLive(reason: AudiobookshelfBookSyncLive['divergedReason'] = 'stale') {
+      return makeLive({
+        status: 'diverged',
+        progress: { percentage: 62.2, isFinished: false, lastUpdate: 5000 },
+        local: { percentage: 18.6, capturedAt: '2026-10-01T10:00:00.000Z' },
+        divergedReason: reason,
+      })
+    }
+
+    it('flags the stop with a warning and names both positions and the reason', async () => {
+      const wrapper = mountStop(makeLink(), divergedLive('push_off'))
+      const status = wrapper.get('[data-testid="edition-abs-status"]')
+
+      expect(status.attributes('data-status')).toBe('diverged')
+      expect(status.text()).toBe('Out of sync')
+      expect(status.classes()).toContain('text-warning')
+      expect(wrapper.find('[data-testid="edition-abs-progress"]').exists()).toBe(false)
+
+      await status.trigger('click')
+      expect(wrapper.get('[data-testid="edition-abs-status-hint"]').text()).toBe(
+        'Audiobookshelf is at 62%, BookOrbit at 19%. Nothing is scheduled to send.',
+      )
+    })
+
+    it.each([
+      ['pull_refused', 'The last pull did not apply.'],
+      ['stale', 'Neither side has moved since the last sync.'],
+    ] as const)('explains the %s reason in one clause', async (reason, clause) => {
+      const wrapper = mountStop(makeLink(), divergedLive(reason))
+
+      expect(wrapper.get('[data-testid="edition-abs-status-hint"]').text()).toContain(clause)
+    })
+
+    it.each([
+      ['edition-abs-reconcile-push', 'push', 'Send BookOrbit position'],
+      ['edition-abs-reconcile-pull', 'pull', 'Use Audiobookshelf position'],
+    ] as const)('reconciles from %s, holds both buttons while it runs, then hands up the fresh status', async (testId, direction, label) => {
+      let resolve!: (value: AudiobookshelfBookSyncLive) => void
+      mocks.reconcile.mockReturnValue(new Promise((done) => (resolve = done)))
+      const wrapper = mountStop(makeLink({ absLibraryItemId: 'abs-9' }), divergedLive())
+      const button = wrapper.get(`[data-testid="${testId}"]`)
+
+      expect(button.text()).toBe(label)
+      await button.trigger('click')
+
+      expect(mocks.reconcile).toHaveBeenCalledWith('abs-9', direction)
+      expect(wrapper.get('[data-testid="edition-abs-reconcile-push"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.get('[data-testid="edition-abs-reconcile-pull"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.get(`[data-testid="${testId}"]`).find('.animate-spin').exists()).toBe(true)
+
+      const fresh = makeLive()
+      resolve(fresh)
+      await flushPromises()
+      expect(wrapper.emitted('refresh-live')).toEqual([[fresh]])
+      expect(wrapper.get(`[data-testid="${testId}"]`).attributes('disabled')).toBeUndefined()
+    })
+
+    it.each([
+      [409, 'Sync is busy, try again in a moment.'],
+      [502, 'Could not reach Audiobookshelf.'],
+      [404, 'Could not update the position. Try again.'],
+    ])('names a %s failure in one line', async (status, line) => {
+      mocks.reconcile.mockRejectedValueOnce(new AudiobookshelfReconcileError('nope', status))
+      const wrapper = mountStop(makeLink(), divergedLive())
+
+      await wrapper.get('[data-testid="edition-abs-reconcile-push"]').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.get('[data-testid="edition-abs-reconcile-error"]').text()).toBe(line)
+    })
+
+    it('says so in one line when a reconcile fails and lets the user try again', async () => {
+      mocks.reconcile.mockRejectedValueOnce(new Error('An Audiobookshelf sync is already running'))
+      const wrapper = mountStop(makeLink(), divergedLive())
+
+      await wrapper.get('[data-testid="edition-abs-reconcile-pull"]').trigger('click')
+      await flushPromises()
+
+      const details = wrapper.get('[data-testid="edition-abs-details"]')
+      expect(details.attributes('style') ?? '').not.toContain('display: none')
+      expect(wrapper.get('[data-testid="edition-abs-reconcile-error"]').text()).toBe('Could not update the position. Try again.')
+      expect(wrapper.get('[data-testid="edition-abs-reconcile-pull"]').attributes('disabled')).toBeUndefined()
+      expect(wrapper.emitted('refresh-live')).toBeUndefined()
+    })
+  })
+
+  it('offers to use a newer Audiobookshelf position now and says when it moved', async () => {
+    vi.useFakeTimers({ now: new Date('2026-10-07T12:00:00.000Z') })
+    try {
+      mocks.reconcile.mockResolvedValueOnce(makeLive())
+      const lastUpdate = new Date('2026-10-07T11:55:00.000Z').getTime()
+      const wrapper = mountStop(makeLink(), makeLive({ status: 'receiving', progress: { percentage: 50, isFinished: false, lastUpdate } }))
+
+      expect(wrapper.get('[data-testid="edition-abs-status-hint"]').text()).toBe('Updated 5 minutes ago on Audiobookshelf.')
+      expect(wrapper.find('[data-testid="edition-abs-reconcile-push"]').exists()).toBe(false)
+
+      const button = wrapper.get('[data-testid="edition-abs-reconcile-pull"]')
+      expect(button.text()).toBe('Use it now')
+      await button.trigger('click')
+      await flushPromises()
+
+      expect(mocks.reconcile).toHaveBeenCalledWith('abs-1', 'pull')
+      expect(wrapper.emitted('refresh-live')).toEqual([[makeLive()]])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retries the live check when Audiobookshelf is unreachable', async () => {
+    const wrapper = mountStop(makeLink(), makeLive({ status: 'unreachable', progress: null }))
+    const retry = wrapper.get('[data-testid="edition-abs-retry"]')
+
+    expect(retry.text()).toBe('Retry')
+    await retry.trigger('click')
+
+    expect(mocks.reconcile).not.toHaveBeenCalled()
+    expect(wrapper.emitted('refresh-live')).toEqual([[]])
+    expect(wrapper.get('[data-testid="edition-abs-retry"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.setProps({ live: makeLive({ status: 'unreachable', progress: null }) })
+    expect(wrapper.get('[data-testid="edition-abs-retry"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('offers no action while a newer BookOrbit position is sending or when in sync', () => {
+    for (const status of ['sending', 'synced'] as const) {
+      const wrapper = mountStop(makeLink(), makeLive({ status }))
+      expect(wrapper.find('[data-testid="edition-abs-reconcile-push"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="edition-abs-reconcile-pull"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="edition-abs-retry"]').exists()).toBe(false)
+    }
+  })
+
+  it.each(['twoWay', 'fromAbs', 'toAbs', 'status.unreachableHint', 'status.sendingHint', 'status.receivingHint'])(
+    'keeps the %s hint to one sentence',
+    (key) => {
+      const text = i18n.global.t(`book.detail.editionLink.abs.${key}`)
+      expect(text.match(/[.!?](\s|$)/g)?.length ?? 0).toBe(1)
+    },
+  )
 })

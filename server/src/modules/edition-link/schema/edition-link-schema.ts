@@ -69,4 +69,22 @@ DO $$ BEGIN
 END $$;
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "book_edition_links_read_along_book_id_unique" ON "book_edition_links" USING btree ("read_along_book_id") WHERE "read_along_book_id" IS NOT NULL;
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "read_along_narration_offsets" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"read_along_file_id" integer NOT NULL REFERENCES "public"."book_files"("id") ON DELETE cascade ON UPDATE no action,
+	"audio_book_id" integer NOT NULL REFERENCES "public"."books"("id") ON DELETE cascade ON UPDATE no action,
+	"narration_signature" jsonb NOT NULL,
+	"audio_signature" jsonb NOT NULL,
+	"status" varchar(20) NOT NULL,
+	"source" varchar(20) NOT NULL,
+	"offsets" jsonb,
+	"mismatch" jsonb,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "read_along_narration_offsets_file_audio_unique" ON "read_along_narration_offsets" USING btree ("read_along_file_id","audio_book_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "read_along_narration_offsets_audio_book_id_idx" ON "read_along_narration_offsets" USING btree ("audio_book_id");
 `;

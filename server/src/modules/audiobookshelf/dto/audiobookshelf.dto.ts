@@ -21,10 +21,13 @@ import type {
   AudiobookshelfExclusionPayload,
   AudiobookshelfLinkBookPayload,
   AudiobookshelfPathMapping,
+  AudiobookshelfReconcileDirection,
+  AudiobookshelfReconcilePayload,
   UpsertAudiobookshelfSettingsPayload,
 } from '@bookorbit/types';
 
 const AUDIOBOOKSHELF_BOOK_STATE_BUCKETS: AudiobookshelfBookStateBucket[] = ['linked', 'needs-review', 'unmatched'];
+const AUDIOBOOKSHELF_RECONCILE_DIRECTIONS: AudiobookshelfReconcileDirection[] = ['push', 'pull'];
 const PATH_PREFIX_MAX_LENGTH = 500;
 
 const trimString = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
@@ -142,4 +145,9 @@ export class CleanupAudiobookshelfStaleDto implements AudiobookshelfCleanupPaylo
   @IsOptional()
   @IsBoolean()
   includeManuallyUnlinked?: boolean;
+}
+
+export class ReconcileAudiobookshelfPositionDto implements AudiobookshelfReconcilePayload {
+  @IsIn(AUDIOBOOKSHELF_RECONCILE_DIRECTIONS)
+  direction!: AudiobookshelfReconcileDirection;
 }

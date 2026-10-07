@@ -5,7 +5,7 @@ import { splitSchemaStatements } from '../../common/utils/schema-bootstrap.utils
 import { EditionLinkRepository } from './edition-link.repository';
 import { EDITION_LINK_SCHEMA_SQL } from './schema/edition-link-schema';
 
-const TABLE_NAMES = ['book_edition_links'] as const;
+const TABLE_NAMES = ['book_edition_links', 'read_along_narration_offsets'] as const;
 
 @Injectable()
 export class EditionLinkSchemaBootstrapService implements OnApplicationBootstrap {

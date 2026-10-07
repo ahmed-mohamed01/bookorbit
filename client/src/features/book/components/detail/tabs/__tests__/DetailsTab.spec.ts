@@ -98,6 +98,8 @@ function makeBook(overrides: Partial<BookDetail> = {}): BookDetail {
       durationDifferenceSeconds: null,
       durationDifferenceRatio: null,
       koreaderDownloadAvailable: false,
+      narrationMismatch: null,
+      offsetsSource: null,
     },
     formatPriority: [],
     comicMetadata: null,
@@ -784,6 +786,8 @@ describe('DetailsTab cover surface', () => {
         durationDifferenceSeconds: 0,
         durationDifferenceRatio: 0,
         koreaderDownloadAvailable: true,
+        narrationMismatch: null,
+        offsetsSource: null,
       },
     })
     const updated = makeBook({ ...book, readAloudSync: { ...book.readAloudSync, mode: 'disabled', state: 'disabled' } })
@@ -840,6 +844,8 @@ describe('DetailsTab cover surface', () => {
         durationDifferenceSeconds: 400,
         durationDifferenceRatio: 400 / 3600,
         koreaderDownloadAvailable: true,
+        narrationMismatch: null,
+        offsetsSource: null,
       },
     })
     const wrapper = mountDetails(book)
@@ -852,6 +858,106 @@ describe('DetailsTab cover surface', () => {
 
     expect(wrapper.get('[role="status"]').text()).toBe('Could not update read-aloud progress sync.')
     expect(wrapper.emitted('saved')).toBeUndefined()
+  })
+
+  describe('read-aloud sync that a read-along rebuild fixes', () => {
+    const readAlongEpub = { ...makeBook().files[0]!, mediaOverlay: { available: true, durationSeconds: 3600 } }
+    const audiobook = {
+      id: 104,
+      format: 'm4b',
+      role: 'content',
+      sizeBytes: 5000,
+      absolutePath: '/books/audio.m4b',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      filename: 'audio.m4b',
+      durationSeconds: 3600,
+    }
+    const requestReadAlongRebuild = vi.fn<() => void>()
+
+    function issueSync(overrides: Partial<BookDetail['readAloudSync']> = {}): BookDetail['readAloudSync'] {
+      return {
+        mode: 'auto',
+        state: 'unavailable',
+        unavailableReason: 'audio_changed',
+        overlayFileId: 101,
+        audioDurationSeconds: 3600,
+        overlayDurationSeconds: 3600,
+        durationDifferenceSeconds: null,
+        durationDifferenceRatio: null,
+        koreaderDownloadAvailable: true,
+        narrationMismatch: null,
+        offsetsSource: null,
+        ...overrides,
+      }
+    }
+
+    function mountWithLinkControl(book: BookDetail, canRequestReadAlongRebuild = true) {
+      const LinkBookControlStub = defineComponent({
+        name: 'LinkBookControl',
+        setup(_, { expose }) {
+          expose({ canRequestReadAlongRebuild, requestReadAlongRebuild })
+          return () => null
+        },
+      })
+      const wrapper = shallowMount(DetailsTab, {
+        props: { book },
+        global: { stubs: { RouterLink: RouterLinkStub, LinkBookControl: LinkBookControlStub } },
+      })
+      mountedWrappers.push(wrapper)
+      return wrapper
+    }
+
+    beforeEach(() => {
+      requestReadAlongRebuild.mockReset()
+    })
+
+    it('says the audiobook changed, flags it as not syncing and asks the link panel to rebuild', async () => {
+      const wrapper = mountWithLinkControl(makeBook({ files: [readAlongEpub, audiobook], readAloudSync: issueSync() }))
+      await flushPromises()
+
+      const card = wrapper.get('[data-test="read-aloud-sync"]')
+      expect(card.get('[data-test="read-aloud-sync-issue"]').text()).toBe('Not syncing')
+      expect(card.text()).toContain('The audiobook files changed after this read-along was built.')
+      expect(card.find('[data-test="read-aloud-sync-toggle"]').exists()).toBe(true)
+
+      const rebuild = card.get('[data-test="read-aloud-sync-rebuild"]')
+      expect(rebuild.text()).toBe('Rebuild read-along')
+      await rebuild.trigger('click')
+      expect(requestReadAlongRebuild).toHaveBeenCalledTimes(1)
+    })
+
+    it('names the narration file and chapter that do not line up', async () => {
+      const sync = issueSync({
+        unavailableReason: 'narration_mismatch',
+        narrationMismatch: { narrationFile: 4, narrationSeconds: 1210, chapter: 5, chapterSeconds: 1325 },
+      })
+      const wrapper = mountWithLinkControl(makeBook({ files: [readAlongEpub, audiobook], readAloudSync: sync }))
+      await flushPromises()
+
+      expect(wrapper.get('[data-test="read-aloud-sync"]').text()).toContain(
+        "Narration does not follow this audiobook's chapters: file 4 is 20:10, chapter 5 is 22:05.",
+      )
+      expect(wrapper.find('[data-test="read-aloud-sync-rebuild"]').exists()).toBe(true)
+    })
+
+    it('keeps the not syncing label and sentence without a rebuild the link panel cannot run', async () => {
+      const wrapper = mountWithLinkControl(makeBook({ files: [readAlongEpub, audiobook], readAloudSync: issueSync() }), false)
+      await flushPromises()
+
+      expect(wrapper.get('[data-test="read-aloud-sync-issue"]').text()).toBe('Not syncing')
+      expect(wrapper.get('[data-test="read-aloud-sync"]').text()).toContain('The audiobook files changed after this read-along was built.')
+      expect(wrapper.find('[data-test="read-aloud-sync-rebuild"]').exists()).toBe(false)
+    })
+
+    it('offers no rebuild for failures a rebuild does not fix', async () => {
+      const sync = issueSync({ unavailableReason: 'duration_mismatch', audioDurationSeconds: 4000 })
+      const wrapper = mountWithLinkControl(makeBook({ files: [readAlongEpub, audiobook], readAloudSync: sync }))
+      await flushPromises()
+
+      expect(wrapper.find('[data-test="read-aloud-sync-issue"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="read-aloud-sync-rebuild"]').exists()).toBe(false)
+      expect(wrapper.get('[data-test="read-aloud-sync"]').text()).toContain('Unavailable')
+    })
   })
 
   describe('read-aloud sync with a second EPUB beside the read-along file', () => {
@@ -876,6 +982,8 @@ describe('DetailsTab cover surface', () => {
       durationDifferenceSeconds: audioDurationSeconds === null ? null : audioDurationSeconds - 3600,
       durationDifferenceRatio: audioDurationSeconds === null ? null : (audioDurationSeconds - 3600) / 3600,
       koreaderDownloadAvailable: true,
+      narrationMismatch: null,
+      offsetsSource: null,
     })
 
     it('reports the EPUB copies as in sync when no audiobook is imported', async () => {

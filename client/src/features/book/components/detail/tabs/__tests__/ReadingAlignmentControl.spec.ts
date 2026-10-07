@@ -196,6 +196,8 @@ function makeBook(overrides = {}) {
       durationDifferenceSeconds: null,
       durationDifferenceRatio: null,
       koreaderDownloadAvailable: false,
+      narrationMismatch: null,
+      offsetsSource: null,
     },
     formatPriority: [],
     comicMetadata: null,

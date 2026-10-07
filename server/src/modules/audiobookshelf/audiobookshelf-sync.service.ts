@@ -115,6 +115,16 @@ interface AbsSyncPreload {
   readAlongBookIdByAudioBookId: Map<number, number>;
 }
 
+type PositionApplyReason = 'applied' | 'no_audio_files' | 'invalid_duration' | 'duration_mismatch' | 'local_newer' | 'no_position' | 'write_race';
+
+interface PositionApplyResult {
+  applied: boolean;
+  watermarkAdvanced: boolean;
+  pushPending: boolean;
+  progressAt: Date | null;
+  reason: PositionApplyReason;
+}
+
 @Injectable()
 export class AudiobookshelfSyncService {
   private readonly logger = new Logger(AudiobookshelfSyncService.name);
@@ -321,13 +331,39 @@ export class AudiobookshelfSyncService {
   }
 
   /**
+   * Applies one item's Audiobookshelf position to its matched book because the user chose it: the
+   * watermark and newest-wins checks are skipped, every other position guard stays, and an applied
+   * position advances the watermarks exactly like a scheduled pull. The caller holds the sync lock.
+   */
+  async pullPositionNow(
+    user: RequestUser,
+    state: Pick<AudiobookshelfBookState, 'absLibraryItemId'> & { bookId: number },
+    mp: AbsMediaProgress,
+  ): Promise<{ applied: boolean; reason: PositionApplyReason }> {
+    const preload = await this.preloadPositions(user.id, [state.bookId]);
+    const position = await this.applyPosition(user, state.bookId, mp, null, false, preload, { bypassNewestWins: true });
+    await this.repo.updateBookState(user.id, state.absLibraryItemId, {
+      lastSyncedAt: new Date(),
+      syncError: null,
+      ...(position.watermarkAdvanced ? { lastSyncedPositionAbsUpdate: mp.lastUpdate, lastSyncedProgressAt: position.progressAt } : {}),
+    });
+    return { applied: position.applied, reason: position.reason };
+  }
+
+  /**
    * One batched read per kind for the whole run for the position phase. Status reads stay per-book:
    * status transitions are rare, and a fresh read is what lets the upgrade-only rank guard see a
    * status the user set while the run was in flight. The position maps are safe to snapshot because
    * the write itself is guarded (CAS on revision) against concurrent local writes.
    */
   private async preloadForDueBooks(userId: number, dueBooks: AbsDueBook[]): Promise<AbsSyncPreload> {
-    const positionBookIds = dueBooks.filter((book) => book.positionDue).map((book) => book.bookId);
+    return this.preloadPositions(
+      userId,
+      dueBooks.filter((book) => book.positionDue).map((book) => book.bookId),
+    );
+  }
+
+  private async preloadPositions(userId: number, positionBookIds: number[]): Promise<AbsSyncPreload> {
     const [audioFilesByBookId, audioProgressByBookId, readAlongBookIdByAudioBookId] = await Promise.all([
       this.repo.findAudioFilesInPlayOrderForBooks(positionBookIds),
       this.repo.findAudioProgressForBooks(userId, positionBookIds),
@@ -402,11 +438,18 @@ export class AudiobookshelfSyncService {
     syncedProgressAt: Date | null,
     pushPosition: boolean,
     preload: AbsSyncPreload,
-  ): Promise<{ applied: boolean; watermarkAdvanced: boolean; pushPending: boolean; progressAt: Date | null }> {
+    options: { bypassNewestWins?: boolean } = {},
+  ): Promise<PositionApplyResult> {
     const userId = user.id;
-    const skipped = { applied: false, watermarkAdvanced: false, pushPending: false, progressAt: null };
+    const skipped = (reason: PositionApplyReason): PositionApplyResult => ({
+      applied: false,
+      watermarkAdvanced: false,
+      pushPending: false,
+      progressAt: null,
+      reason,
+    });
     const files = (preload.audioFilesByBookId.get(bookId) ?? []).filter((file) => file.format && isAudioFormat(file.format));
-    if (files.length === 0) return skipped;
+    if (files.length === 0) return skipped('no_audio_files');
 
     if (!Number.isFinite(mp.duration) || mp.duration <= 0) {
       this.logDurationWarning(
@@ -415,7 +458,7 @@ export class AudiobookshelfSyncService {
         'invalid',
         `[abs.sync] userId=${userId} bookId=${bookId} absDuration=${mp.duration} - position skipped: invalid ABS duration`,
       );
-      return skipped;
+      return skipped('invalid_duration');
     }
 
     const totalDuration = files.reduce((sum, file) => sum + (file.durationSeconds ?? 0), 0);
@@ -426,18 +469,18 @@ export class AudiobookshelfSyncService {
         `${totalDuration}:${mp.duration}`,
         `[abs.sync] userId=${userId} bookId=${bookId} localDuration=${totalDuration} absDuration=${mp.duration} - position skipped: duration mismatch`,
       );
-      return skipped;
+      return skipped('duration_mismatch');
     }
 
     // A snapshot mismatch means local playback changed after the last ABS pull. Compare the activity
     // clocks so a still-newer ABS position can win. An equal clock is an ABS position we already
     // applied, so it must not be treated as newer local activity and echoed back.
     const local = preload.audioProgressByBookId.get(bookId);
-    if (local) {
+    if (local && !options.bypassNewestWins) {
       const localChangedSincePull = syncedProgressAt != null && local.updatedAt.getTime() !== syncedProgressAt.getTime();
       if (localChangedSincePull && local.capturedAt.getTime() > mp.lastUpdate) {
         this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress is newer`);
-        return { applied: false, watermarkAdvanced: true, pushPending: pushPosition, progressAt: syncedProgressAt };
+        return { applied: false, watermarkAdvanced: true, pushPending: pushPosition, progressAt: syncedProgressAt, reason: 'local_newer' };
       }
       if (syncedProgressAt == null) {
         // No shared baseline yet. With push on, newest activity wins like every later run, and a
@@ -445,17 +488,17 @@ export class AudiobookshelfSyncService {
         // keep the first-sync percentage comparison.
         if (pushPosition && local.capturedAt.getTime() > mp.lastUpdate) {
           this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress is newer, push pending`);
-          return { applied: false, watermarkAdvanced: false, pushPending: true, progressAt: null };
+          return { applied: false, watermarkAdvanced: false, pushPending: true, progressAt: null, reason: 'local_newer' };
         }
         if (!pushPosition && (local.percentage ?? 0) > mp.progress * 100) {
           this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress is newer`);
-          return { applied: false, watermarkAdvanced: true, pushPending: false, progressAt: local.updatedAt };
+          return { applied: false, watermarkAdvanced: true, pushPending: false, progressAt: local.updatedAt, reason: 'local_newer' };
         }
       }
     }
 
     const resolved = resolveAbsPosition(files, mp.currentTime);
-    if (!resolved) return skipped;
+    if (!resolved) return skipped('no_position');
 
     const percentage = Math.max(0, Math.min(100, (mp.currentTime / mp.duration) * 100));
     const capturedAt = mp.lastUpdate ? new Date(mp.lastUpdate) : new Date();
@@ -473,7 +516,7 @@ export class AudiobookshelfSyncService {
       // ABS update was not applied, so the watermark must not record it; the next run re-snapshots and
       // re-decides, and the push (if on) compares the new local row against ABS.
       this.logger.debug(`[abs.sync] userId=${userId} bookId=${bookId} - position skipped: local progress won the write race`);
-      return { applied: false, watermarkAdvanced: false, pushPending: pushPosition, progressAt: null };
+      return { applied: false, watermarkAdvanced: false, pushPending: pushPosition, progressAt: null, reason: 'write_race' };
     }
     this.durationWarningSignatures.delete(`${userId}:${bookId}`);
     preload.audioProgressByBookId.set(bookId, {
@@ -496,8 +539,9 @@ export class AudiobookshelfSyncService {
       // look newer than a more recent local update and drag the linked ebook backward.
       ...(mp.lastUpdate ? { occurredAt: new Date(mp.lastUpdate) } : {}),
     });
-    await this.syncLinkedReadAlong(user, bookId, mp, capturedAt, preload);
-    return { applied: true, watermarkAdvanced: true, pushPending: false, progressAt: written.updatedAt };
+    // A user-chosen pull makes ABS the truth for the read-along too, which may hold newer activity than ABS's own timestamp.
+    await this.syncLinkedReadAlong(user, bookId, mp, options.bypassNewestWins ? new Date() : capturedAt, preload);
+    return { applied: true, watermarkAdvanced: true, pushPending: false, progressAt: written.updatedAt, reason: 'applied' };
   }
 
   /**

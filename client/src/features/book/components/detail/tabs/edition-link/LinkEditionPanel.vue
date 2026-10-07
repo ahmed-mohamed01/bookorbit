@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Activity, Link2, Loader2, RefreshCw, Sparkles } from '@lucide/vue'
-import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive, EditionLinkCandidate } from '@bookorbit/types'
+import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive, EditionLinkCandidate, ReadAloudProgressSync } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { isActionBlocked } from '@/features/book/lib/read-along-section'
+import { canRebuildReadAlong as canRebuildReadAlongOf, isActionBlocked } from '@/features/book/lib/read-along-section'
 import type { LinkEditionPanelView, PairSyncState } from '@/features/book/composables/useLinkEditionPanel'
 import EditionPairBox from './EditionPairBox.vue'
 import { usePositionSyncStatus } from '@/features/book/composables/usePositionSyncStatus'
@@ -21,9 +21,12 @@ const props = withDefaults(
     absLink?: AudiobookshelfBookSyncLink | null
     absLive?: AudiobookshelfBookSyncLive | null
     absChecking?: boolean
+    readAloudSync?: ReadAloudProgressSync | null
+    readAlongRebuildRequested?: boolean
   }>(),
-  { absLink: null, absLive: null, absChecking: false },
+  { absLink: null, absLive: null, absChecking: false, readAloudSync: null, readAlongRebuildRequested: false },
 )
+const emit = defineEmits<{ 'refresh-abs-live': [live?: AudiobookshelfBookSyncLive]; 'read-along-rebuild-request-handled': [] }>()
 
 const { t } = useI18n()
 
@@ -93,10 +96,7 @@ const isReadAlongOutputCurrent = computed(() => props.panel.readAlongIsCurrentBo
 const readAlongReady = computed(() => props.panel.readAlongSlot !== null && props.panel.readAlongSection.sectionState.status === 'ready')
 const showReadAlongSection = computed(() => props.panel.showReadAlong && !readAlongReady.value)
 
-// A build belongs to a linked pair, so a detached read-along is rebuilt only once its pair is linked again.
-const canRebuildReadAlong = computed(
-  () => readAlongReady.value && props.panel.link !== null && props.panel.readAlongSection.canGenerate && props.panel.readAlongSection.canRebuild,
-)
+const canRebuildReadAlong = computed(() => canRebuildReadAlongOf(props.panel))
 const readAlongRebuildDisabled = computed(
   () => props.panel.readAlongSection.sectionState.mutating || isActionBlocked(props.panel.readAlongSection.sectionState.blocked),
 )
@@ -117,6 +117,22 @@ function handleUnlinkCancelled() {
 
 function handleReadAlongRebuildRequest() {
   confirmingReadAlongRebuild.value = true
+}
+
+// A rebuild asked for from outside the panel waits for the read-along status to load, then goes
+// through the same confirm as the row's own button.
+watch(
+  () => props.readAlongRebuildRequested && canRebuildReadAlong.value && !readAlongRebuildDisabled.value,
+  (ready) => {
+    if (!ready) return
+    confirmingReadAlongRebuild.value = true
+    emit('read-along-rebuild-request-handled')
+  },
+  { immediate: true },
+)
+
+function handleRefreshAbsLive(live?: AudiobookshelfBookSyncLive) {
+  emit('refresh-abs-live', live)
 }
 
 function handleReadAlongRebuildCancelled() {
@@ -267,6 +283,7 @@ async function handleUnlink() {
         :sync-state="pairSyncState"
         :read-along-rebuild-label="canRebuildReadAlong ? t('book.detail.editionLink.actions.rebuildReadAlong') : null"
         :read-along-rebuild-disabled="readAlongRebuildDisabled"
+        :read-aloud-sync="readAloudSync"
         :can-search="panel.canEditMetadata"
         :query="panel.query"
         :candidates="panel.candidates"
@@ -279,6 +296,7 @@ async function handleUnlink() {
         @pick="handlePick"
         @update:query="handleQuery"
         @rebuild-read-along="handleReadAlongRebuildRequest"
+        @refresh-abs-live="handleRefreshAbsLive"
       />
 
       <template v-if="panel.showSections">

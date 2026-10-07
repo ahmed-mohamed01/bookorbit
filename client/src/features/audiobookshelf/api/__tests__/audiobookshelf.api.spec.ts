@@ -8,6 +8,7 @@ vi.mock('@/lib/api', () => ({
 
 import { api } from '@/lib/api'
 import {
+  AudiobookshelfReconcileError,
   audiobookshelfCoverUrl,
   cleanupAudiobookshelfStaleEntries,
   confirmAudiobookshelfMatch,
@@ -18,6 +19,7 @@ import {
   fetchAudiobookshelfSyncLink,
   fetchAudiobookshelfSyncLive,
   linkAudiobookshelfBook,
+  reconcileAudiobookshelfPosition,
   rescanAudiobookshelfMatches,
   searchAudiobookshelfLinkCandidates,
   startAudiobookshelfFullResync,
@@ -303,6 +305,27 @@ describe('audiobookshelf.api', () => {
       await expect(fetchAudiobookshelfSyncLive('abs/1')).rejects.toThrow('Failed to check Audiobookshelf')
 
       expect(mockApi).toHaveBeenCalledWith('/api/v1/audiobookshelf/books/abs%2F1/live')
+    })
+
+    it('reconciles an encoded item id with a POST direction body and returns the fresh live status', async () => {
+      const live = { status: 'synced', progress: null, local: null, divergedReason: null }
+      mockApi.mockResolvedValueOnce(jsonResponse(live, true, 201))
+
+      await expect(reconcileAudiobookshelfPosition('abs/1', 'pull')).resolves.toEqual(live)
+      expect(mockApi).toHaveBeenCalledWith('/api/v1/audiobookshelf/books/abs%2F1/reconcile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direction: 'pull' }),
+      })
+    })
+
+    it('throws an error carrying the HTTP status when a reconcile fails', async () => {
+      mockApi.mockResolvedValueOnce(jsonResponse({ message: 'Sync is busy' }, false, 409)).mockResolvedValueOnce(jsonResponse({}, false, 502))
+
+      const busy = await reconcileAudiobookshelfPosition('abs-1', 'push').catch((error: unknown) => error)
+      expect(busy).toBeInstanceOf(AudiobookshelfReconcileError)
+      expect(busy).toMatchObject({ status: 409, message: 'Sync is busy' })
+      await expect(reconcileAudiobookshelfPosition('abs-1', 'push')).rejects.toMatchObject({ status: 502, message: 'Failed to sync the position' })
     })
 
     it('builds the proxied cover URL for an encoded item id', () => {

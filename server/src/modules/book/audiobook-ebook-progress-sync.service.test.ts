@@ -122,6 +122,7 @@ function makeFixture(
   audioDuration = 100,
   syncFiles: ReturnType<typeof makeFiles> = makeFiles(audioDuration),
   provenance?: { findSourceAudioBookId: ReturnType<typeof vi.fn> },
+  offsetsStore?: { find: ReturnType<typeof vi.fn>; save: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> },
 ) {
   const bookRepo = {
     findReadAloudSyncMode: vi.fn().mockResolvedValue('auto'),
@@ -140,7 +141,7 @@ function makeFixture(
   return {
     bookRepo,
     positionConverter,
-    service: new AudiobookEbookProgressSyncService(bookRepo as never, positionConverter as never, provenance),
+    service: new AudiobookEbookProgressSyncService(bookRepo as never, positionConverter as never, provenance, offsetsStore),
   };
 }
 
@@ -608,9 +609,18 @@ describe('AudiobookEbookProgressSyncService sibling EPUBs without an audiobook',
   });
 });
 
+/** Audiobook 5 split into files of the given lengths, ids 11, 12, ... */
+function makeAudioBookFiles(durations: (number | null)[]) {
+  return { primaryFileId: 11, files: durations.map((durationSeconds, index) => ({ ...makeFiles().files[0]!, id: 11 + index, durationSeconds })) };
+}
+
 describe('AudiobookEbookProgressSyncService read-along book behind a linked audiobook', () => {
   // The read-along book holds only its EPUB; 20 s of unnarrated credits open the audiobook.
   const readAlongFiles = () => ({ primaryFileId: 30, files: makeFiles().files.filter((file) => file.id === 30) });
+  const linkFiles = (fixture: ReturnType<typeof makeFixture>, audioDurations: number[]) =>
+    fixture.bookRepo.findAudioEbookProgressSyncFiles.mockImplementation((bookId: number) =>
+      Promise.resolve(bookId === 5 ? makeAudioBookFiles(audioDurations) : readAlongFiles()),
+    );
   const params = {
     userId: 7,
     audioBookId: 5,
@@ -629,6 +639,7 @@ describe('AudiobookEbookProgressSyncService read-along book behind a linked audi
 
   function makeReadAlongFixture() {
     const fixture = makeFixture(100, readAlongFiles());
+    linkFiles(fixture, [20, 100]);
     fixture.bookRepo.findAudioChapterStarts.mockResolvedValue([{ startMs: 0 }, { startMs: 20_000 }]);
     return fixture;
   }
@@ -674,6 +685,7 @@ describe('AudiobookEbookProgressSyncService read-along book behind a linked audi
       });
       const provenance = { findSourceAudioBookId: vi.fn().mockResolvedValue(sourceAudioBookId) };
       const fixture = makeFixture(100, readAlongFiles(), provenance);
+      linkFiles(fixture, [135]);
       fixture.bookRepo.findAudioChapterStarts.mockResolvedValue([{ startMs: 0 }, { startMs: 20_000 }]);
       return { ...fixture, provenance };
     }
@@ -712,7 +724,7 @@ describe('AudiobookEbookProgressSyncService read-along book behind a linked audi
     expect(warn).toHaveBeenNthCalledWith(
       1,
       expect.stringMatching(
-        /audioBookId=5 readAlongBookId=9 durationMs=\d+ chapters=2 narrationFiles=1 firstMismatch=1 chapterSeconds=60\.000 narrationSeconds=100\.000 builtFromAudio=false matched=false/,
+        /audioBookId=5 readAlongBookId=9 durationMs=\d+ matched=false reason=narration_mismatch narrationFile=1 narrationSeconds=100\.000 chapter=1 chapterSeconds=60\.000 - /,
       ),
     );
     expect(debug).toHaveBeenCalledWith(expect.stringContaining('audioBookId=5 readAlongBookId=9'));
@@ -817,5 +829,253 @@ describe('AudiobookEbookProgressSyncService audiobook behind a linked read-along
     bookRepo.upsertAudioProgress.mockResolvedValue(undefined);
 
     await expect(service.syncAudioFromReadAlongPosition({ ...params, positionSeconds: 75 })).resolves.toBe(false);
+  });
+});
+
+describe('AudiobookEbookProgressSyncService read-along fit', () => {
+  const readAlongFiles = { primaryFileId: 30, files: makeFiles().files.filter((file) => file.id === 30) };
+  const narration = [{ audioHref: 'OPS/audio.mp3', durationSeconds: 100 }];
+  const matchedOffsets = [{ audioHref: 'OPS/audio.mp3', startSeconds: 20, durationSeconds: 100 }];
+  const storedRecord = {
+    readAlongFileId: 30,
+    audioBookId: 5,
+    narrationSignature: narration,
+    audioSignature: [
+      { fileId: 11, durationSeconds: 20 },
+      { fileId: 12, durationSeconds: 100 },
+    ],
+    status: 'ready' as const,
+    source: 'build' as const,
+    offsets: [{ audioHref: 'OPS/audio.mp3', startSeconds: 15, durationSeconds: 100 }],
+    mismatch: null,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockStat.mockResolvedValue({ mtimeMs: 1234 } as never);
+    mockBuildPlaylist.mockResolvedValue(makePlaylist());
+  });
+
+  function makeFitFixture(audioDurations: (number | null)[] = [20, 100], stored: unknown = null) {
+    const store = { find: vi.fn().mockResolvedValue(stored), save: vi.fn().mockResolvedValue(undefined), delete: vi.fn() };
+    const fixture = makeFixture(100, readAlongFiles, undefined, store);
+    fixture.bookRepo.findAudioEbookProgressSyncFiles.mockImplementation((bookId: number) =>
+      Promise.resolve(bookId === 5 ? makeAudioBookFiles(audioDurations) : readAlongFiles),
+    );
+    fixture.bookRepo.findAudioChapterStarts.mockResolvedValue([{ startMs: 0 }, { startMs: 20_000 }]);
+    vi.spyOn(fixture.service['logger'], 'log').mockImplementation(() => undefined);
+    return { ...fixture, store };
+  }
+
+  it('matches a pair seen for the first time and stores the result', async () => {
+    const { service, store } = makeFitFixture();
+
+    await expect(service.resolveReadAlongFit(5, 9)).resolves.toEqual({ status: 'ready', offsets: matchedOffsets, source: 'match' });
+
+    expect(store.find).toHaveBeenCalledWith(30, 5);
+    expect(store.save).toHaveBeenCalledWith({
+      ...storedRecord,
+      source: 'match',
+      offsets: matchedOffsets,
+    });
+  });
+
+  it('stores a narration that fits no chapter run as a mismatch', async () => {
+    const { service, bookRepo, store } = makeFitFixture();
+    bookRepo.findAudioChapterStarts.mockResolvedValue([{ startMs: 0 }, { startMs: 60_000 }]);
+
+    const fit = await service.resolveReadAlongFit(5, 9);
+
+    expect(fit).toEqual({ status: 'narration_mismatch', mismatch: { narrationFile: 1, narrationSeconds: 100, chapter: 1, chapterSeconds: 60 } });
+    expect(store.save).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'mismatch', offsets: null, mismatch: (fit as { mismatch: unknown }).mismatch }),
+    );
+  });
+
+  it('places narration over audio without a chapter table', async () => {
+    const { service, bookRepo } = makeFitFixture([100]);
+    bookRepo.findAudioChapterStarts.mockResolvedValue([]);
+
+    await expect(service.resolveReadAlongFit(5, 9)).resolves.toMatchObject({ status: 'ready', offsets: [{ startSeconds: 0 }] });
+  });
+
+  it('uses the stored offsets while neither narration nor audio changed, whatever the chapter table says', async () => {
+    const { service, bookRepo, store } = makeFitFixture([20, 100], storedRecord);
+    bookRepo.findAudioChapterStarts.mockResolvedValue([{ startMs: 0 }, { startMs: 60_000 }]);
+
+    await expect(service.resolveReadAlongFit(5, 9)).resolves.toEqual({ status: 'ready', offsets: storedRecord.offsets, source: 'build' });
+
+    expect(store.save).not.toHaveBeenCalled();
+  });
+
+  it('keeps the stored offsets and records new file ids when the files were re-imported with the same lengths', async () => {
+    const { service, bookRepo, store } = makeFitFixture([20, 100], storedRecord);
+    bookRepo.findAudioEbookProgressSyncFiles.mockImplementation((bookId: number) =>
+      Promise.resolve(
+        bookId === 5
+          ? { primaryFileId: 41, files: [41, 42].map((id, index) => ({ ...makeFiles().files[0]!, id, durationSeconds: [20.6, 100][index]! })) }
+          : readAlongFiles,
+      ),
+    );
+
+    await expect(service.resolveReadAlongFit(5, 9)).resolves.toMatchObject({ status: 'ready', offsets: storedRecord.offsets });
+
+    expect(store.save).toHaveBeenCalledWith({
+      ...storedRecord,
+      audioSignature: [
+        { fileId: 41, durationSeconds: 20.6 },
+        { fileId: 42, durationSeconds: 100 },
+      ],
+    });
+  });
+
+  it.each([
+    ['a file length moved by more than a second', [21.5, 100]],
+    ['a file was added', [20, 100, 5]],
+  ])('reports changed audio without touching the record when %s', async (_, durations) => {
+    const { service, store } = makeFitFixture(durations, storedRecord);
+
+    await expect(service.resolveReadAlongFit(5, 9)).resolves.toEqual({ status: 'audio_changed' });
+
+    expect(store.save).not.toHaveBeenCalled();
+    expect(store.delete).not.toHaveBeenCalled();
+  });
+
+  it('matches again when the audio of a refused pair changed', async () => {
+    const refused = {
+      ...storedRecord,
+      status: 'mismatch' as const,
+      offsets: null,
+      mismatch: { narrationFile: 1, narrationSeconds: 100, chapter: 1, chapterSeconds: 60 },
+    };
+    const { service, store } = makeFitFixture([20, 101.5], refused);
+
+    await expect(service.resolveReadAlongFit(5, 9)).resolves.toMatchObject({ status: 'ready', source: 'match' });
+
+    expect(store.save).toHaveBeenCalledWith(expect.objectContaining({ status: 'ready' }));
+  });
+
+  it('matches again when the read-along narration changed', async () => {
+    const { service, store } = makeFitFixture([20, 100], {
+      ...storedRecord,
+      narrationSignature: [{ audioHref: 'OPS/audio.mp3', durationSeconds: 90 }],
+    });
+
+    await expect(service.resolveReadAlongFit(5, 9)).resolves.toEqual({ status: 'ready', offsets: matchedOffsets, source: 'match' });
+
+    expect(store.save).toHaveBeenCalledOnce();
+  });
+
+  it('reports a missing duration before looking for a record', async () => {
+    const { service, store } = makeFitFixture([20, null]);
+
+    await expect(service.resolveReadAlongFit(5, 9)).resolves.toEqual({ status: 'missing_duration' });
+
+    expect(store.find).not.toHaveBeenCalled();
+  });
+
+  it('reports no narration when the read-along has no media overlay file', async () => {
+    const { service, bookRepo } = makeFitFixture();
+    bookRepo.findAudioEbookProgressSyncFiles.mockImplementation((bookId: number) =>
+      Promise.resolve(
+        bookId === 5 ? makeAudioBookFiles([20, 100]) : { primaryFileId: 20, files: makeFiles().files.filter((file) => file.id === 20) },
+      ),
+    );
+
+    await expect(service.resolveReadAlongFit(5, 9)).resolves.toEqual({ status: 'no_narration' });
+  });
+
+  it('logs a failed fit and reports no narration rather than throwing', async () => {
+    const { service, store } = makeFitFixture();
+    store.find.mockRejectedValue(new Error('connection "lost"'));
+    const warn = vi.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+
+    await expect(service.resolveReadAlongFit(5, 9)).resolves.toEqual({ status: 'no_narration' });
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\[book\.read_along_fit\] \[fail\] audioBookId=5 readAlongBookId=9 durationMs=\d+ errorClass=Error error="connection \\"lost\\"" - /,
+      ),
+    );
+  });
+
+  it('logs the match with its outcome', async () => {
+    const { service } = makeFitFixture();
+    const log = service['logger'].log as ReturnType<typeof vi.fn>;
+
+    await service.resolveReadAlongFit(5, 9);
+
+    expect(log).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\[book\.read_along_fit\] \[start\] audioBookId=5 readAlongBookId=9 readAlongFileId=30 builtFromAudio=false hadRecord=false - /,
+      ),
+    );
+    expect(log).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\[book\.read_along_fit\] \[end\] audioBookId=5 readAlongBookId=9 readAlongFileId=30 durationMs=\d+ narrationFiles=1 chapters=2 audioFiles=2 status=ready stored=true - /,
+      ),
+    );
+  });
+
+  it('syncs both directions through the stored offsets', async () => {
+    const { service, bookRepo } = makeFitFixture([20, 100], storedRecord);
+
+    await expect(
+      service.syncReadAlongFromAudioPosition({
+        userId: 7,
+        audioBookId: 5,
+        readAlongBookId: 9,
+        audioSeconds: 90,
+        audioTotalSeconds: 120,
+        syncKobo: false,
+        sourceUpdatedAt: SOURCE_TIME,
+      }),
+    ).resolves.toBe(true);
+    // Stored offsets put the narration at 15 s, so 90 s is 75 s in.
+    expect(bookRepo.upsertSyncedEpubProgressIfNewer).toHaveBeenCalledWith(expect.objectContaining({ positionSeconds: 75 }));
+
+    await expect(
+      service.syncAudioFromReadAlongPosition({
+        userId: 7,
+        audioBookId: 5,
+        readAlongBookId: 9,
+        bookFileId: 30,
+        positionSeconds: 75,
+        mediaOverlayFragment: 'OPS/chapter.xhtml#second',
+        sourceUpdatedAt: SOURCE_TIME,
+      }),
+    ).resolves.toBe(true);
+    expect(bookRepo.upsertAudioProgress).toHaveBeenCalledWith(7, 5, 12, 70, 75, SOURCE_TIME);
+  });
+
+  it('refuses both directions while the audio changed', async () => {
+    const { service, bookRepo } = makeFitFixture([25, 100], storedRecord);
+    const warn = vi.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+
+    await expect(
+      service.syncReadAlongFromAudioPosition({
+        userId: 7,
+        audioBookId: 5,
+        readAlongBookId: 9,
+        audioSeconds: 90,
+        audioTotalSeconds: 125,
+        syncKobo: false,
+        sourceUpdatedAt: SOURCE_TIME,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      service.syncAudioFromReadAlongPosition({
+        userId: 7,
+        audioBookId: 5,
+        readAlongBookId: 9,
+        bookFileId: 30,
+        positionSeconds: 75,
+        sourceUpdatedAt: SOURCE_TIME,
+      }),
+    ).resolves.toBe(false);
+
+    expect(bookRepo.upsertSyncedEpubProgressIfNewer).not.toHaveBeenCalled();
+    expect(bookRepo.upsertAudioProgress).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('matched=false reason=audio_changed - '));
   });
 });

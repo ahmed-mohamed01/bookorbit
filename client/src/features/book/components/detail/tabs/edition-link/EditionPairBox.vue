@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Link2 } from '@lucide/vue'
-import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive, EditionLinkCandidate } from '@bookorbit/types'
+import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive, EditionLinkCandidate, ReadAloudProgressSync } from '@bookorbit/types'
 import type { EditionFilledSlot, EditionSlot, LinkEditionPhase, PairSyncState } from '@/features/book/composables/useLinkEditionPanel'
 import AudiobookshelfSyncStop from './AudiobookshelfSyncStop.vue'
 import EditionSlotCard from './EditionSlotCard.vue'
@@ -17,6 +17,7 @@ const props = defineProps<{
   syncState?: PairSyncState
   readAlongRebuildLabel?: string | null
   readAlongRebuildDisabled?: boolean
+  readAloudSync?: ReadAloudProgressSync | null
   canSearch: boolean
   query: string
   candidates: EditionLinkCandidate[]
@@ -32,6 +33,7 @@ const emit = defineEmits<{
   pick: [candidate: EditionLinkCandidate]
   'update:query': [value: string]
   'rebuild-read-along': []
+  'refresh-abs-live': [live?: AudiobookshelfBookSyncLive]
 }>()
 
 const merged = computed(() => props.phase === 'linked')
@@ -92,6 +94,10 @@ const absPosition = computed<'middle' | 'bottom'>(() => (props.readAlong ? 'midd
 
 function handleRebuildReadAlong() {
   emit('rebuild-read-along')
+}
+
+function handleRefreshAbsLive(live?: AudiobookshelfBookSyncLive) {
+  emit('refresh-abs-live', live)
 }
 
 function handleChange() {
@@ -167,6 +173,7 @@ function handleQuery(value: string) {
       :merged="merged"
       :connector-placement="connectorPlacement"
       :position="absPosition"
+      @refresh-live="handleRefreshAbsLive"
     />
     <Transition
       enter-active-class="transition-all duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
@@ -201,6 +208,7 @@ function handleQuery(value: string) {
           position="bottom"
           :rebuild-label="readAlongRebuildLabel"
           :rebuild-disabled="readAlongRebuildDisabled"
+          :read-aloud-sync="readAloudSync ?? null"
           @rebuild="handleRebuildReadAlong"
         />
       </div>

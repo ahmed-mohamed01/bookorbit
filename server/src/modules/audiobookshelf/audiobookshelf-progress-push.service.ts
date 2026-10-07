@@ -49,7 +49,17 @@ interface PushContext {
   excludedLibraryIds: string[];
 }
 
-type PushOutcome = 'pushed' | 'skipped' | 'failed' | 'unreachable';
+export type PushOutcome = 'pushed' | 'skipped' | 'failed' | 'unreachable';
+
+export interface PushResult {
+  outcome: PushOutcome;
+  reason: string;
+}
+
+interface PushOptions {
+  // The user chose BookOrbit's position: send it even when ABS holds a newer one or nothing changed since the last sync.
+  userChosen?: boolean;
+}
 
 interface PushDebounceState {
   key: string;
@@ -113,7 +123,7 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
     let stoppedUnreachable = false;
     for (const state of states) {
       attempted++;
-      const outcome = await this.pushPosition(context, state);
+      const { outcome } = await this.pushPosition(context, state);
       if (outcome === 'pushed') pushed++;
       if (outcome === 'unreachable') {
         stoppedUnreachable = true;
@@ -123,6 +133,18 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
     this.logger.log(
       `[abs.push_sweep] [end] userId=${userId} durationMs=${Date.now() - startedAt} pending=${states.length} attempted=${attempted} pushed=${pushed} stoppedUnreachable=${stoppedUnreachable} - pending position push sweep completed`,
     );
+  }
+
+  /**
+   * Pushes one item's local position now because the user chose it, whether or not push is switched on
+   * and even over a newer Audiobookshelf position. Every safety guard still applies. The caller holds the push lock.
+   */
+  async pushPositionNow(userId: number, absLibraryItemId: string): Promise<PushResult> {
+    const context = await this.loadPushContext(userId, { requirePushSetting: false });
+    if (!context) return { outcome: 'skipped', reason: 'ineligible' };
+    const state = await this.repo.findPushableBookStateRow(userId, absLibraryItemId, context.scope, context.excludedLibraryIds);
+    if (!state) return { outcome: 'skipped', reason: 'ineligible' };
+    return this.pushPosition(context, state, { userChosen: true });
   }
 
   /** Schedules a debounced push for a book whose ABS row is already marked pending. */
@@ -161,9 +183,9 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
   }
 
   /** The same gate the sync scheduler applies (configured, active, permitted), plus the push opt-in. */
-  private async loadPushContext(userId: number): Promise<PushContext | null> {
+  private async loadPushContext(userId: number, { requirePushSetting = true } = {}): Promise<PushContext | null> {
     const settings = await this.repo.findSettings(userId);
-    if (!settings || !isAbsSyncConfigured(settings) || !settings.pushPosition) return null;
+    if (!settings || !isAbsSyncConfigured(settings) || (requirePushSetting && !settings.pushPosition)) return null;
     const user = await this.userService.findByIdWithPermissions(userId);
     if (!user || !isEligibleSyncUser(user)) return null;
     return {
@@ -264,15 +286,18 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
     return current;
   }
 
-  private async pushPosition(context: PushContext, initialState: AudiobookshelfBookState): Promise<PushOutcome> {
-    if (initialState.bookId === null) return 'skipped';
+  private async pushPosition(context: PushContext, initialState: AudiobookshelfBookState, options: PushOptions = {}): Promise<PushResult> {
+    if (initialState.bookId === null) return { outcome: 'skipped', reason: 'ineligible' };
     const { settings, scope, excludedLibraryIds } = context;
     const userId = initialState.userId;
     const bookId = initialState.bookId;
     const absItemId = initialState.absLibraryItemId;
     const safeAbsItemId = sanitizeLogValue(absItemId);
     const startedAt = Date.now();
-    this.logger.log(`[abs.push_position] [start] userId=${userId} bookId=${bookId} absItemId="${safeAbsItemId}" - position push started`);
+    const userChosen = options.userChosen === true;
+    this.logger.log(
+      `[abs.push_position] [start] userId=${userId} bookId=${bookId} absItemId="${safeAbsItemId}" userChosen=${userChosen} - position push started`,
+    );
 
     try {
       // Re-read right before the PATCH: the row may have been unlinked, excluded or flagged since it was queued.
@@ -286,7 +311,8 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
       }
       if (state.bookId !== bookId) return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'relinked');
 
-      if (!local || (state.lastSyncedProgressAt !== null && local.updatedAt.getTime() === state.lastSyncedProgressAt.getTime())) {
+      const localUnchanged = state.lastSyncedProgressAt !== null && local?.updatedAt.getTime() === state.lastSyncedProgressAt.getTime();
+      if (!local || (localUnchanged && !userChosen)) {
         await this.repo.clearPositionPushPendingIfUnchanged(userId, absItemId, bookId, local?.updatedAt ?? null);
         return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'no_local_change');
       }
@@ -294,7 +320,8 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
       const abs = await this.client.getMediaProgress(userId, settings.serverUrl, settings.apiToken, absItemId);
       // Checked even when ABS has not moved past our watermark: the watermark may record an ABS update
       // that was never applied locally, and an older local position must not overwrite it.
-      if (abs && abs.lastUpdate > local.capturedAt.getTime()) {
+      const absNewer = abs !== null && abs.lastUpdate > local.capturedAt.getTime();
+      if (absNewer && !userChosen) {
         await this.repo.clearPositionPushPendingIfUnchanged(userId, absItemId, bookId, local.updatedAt);
         return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'abs_newer');
       }
@@ -322,7 +349,9 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
         return this.logEnd(userId, bookId, safeAbsItemId, startedAt, 'skipped', 'near_end');
       }
 
-      const lastUpdate = local.capturedAt.getTime();
+      // Stamped with the push time when ABS holds a newer position, so ABS and its other clients treat
+      // the chosen position as the latest rather than keeping their own newer one.
+      const lastUpdate = absNewer ? Date.now() : local.capturedAt.getTime();
       await this.client.updateMediaProgress(userId, settings.serverUrl, settings.apiToken, absItemId, {
         currentTime,
         duration,
@@ -344,7 +373,7 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
       this.logger.warn(
         `[abs.push_position] [fail] userId=${userId} bookId=${bookId} absItemId="${safeAbsItemId}" durationMs=${Date.now() - startedAt} unreachable=${unreachable} errorClass=${described.errorClass} error="${described.error}" - position push failed`,
       );
-      return unreachable ? 'unreachable' : 'failed';
+      return { outcome: unreachable ? 'unreachable' : 'failed', reason: unreachable ? 'unreachable' : 'error' };
     }
   }
 
@@ -355,10 +384,10 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
     return isWithinAbsDurationTolerance(localTotalSeconds, files.length, absDurationSeconds);
   }
 
-  private logEnd(userId: number, bookId: number, safeAbsItemId: string, startedAt: number, outcome: PushOutcome, reason: string): PushOutcome {
+  private logEnd(userId: number, bookId: number, safeAbsItemId: string, startedAt: number, outcome: PushOutcome, reason: string): PushResult {
     this.logger.log(
       `[abs.push_position] [end] userId=${userId} bookId=${bookId} absItemId="${safeAbsItemId}" durationMs=${Date.now() - startedAt} pushed=${outcome === 'pushed'} reason=${reason} - position push completed`,
     );
-    return outcome;
+    return { outcome, reason };
   }
 }

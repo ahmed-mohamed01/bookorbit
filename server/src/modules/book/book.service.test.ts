@@ -5896,6 +5896,7 @@ describe('BookService linked audiobook and read-along', () => {
       resolveAudioBookPosition: vi.fn().mockResolvedValue({ audioSeconds: 95, audioTotalSeconds: 120 }),
       syncReadAlongFromAudioPosition: vi.fn().mockResolvedValue(true),
       syncAudioFromReadAlongPosition: vi.fn().mockResolvedValue(true),
+      resolveReadAlongFit: vi.fn().mockResolvedValue({ status: 'ready', offsets: [], source: 'match' }),
     };
     const readAlongLinks = { findReadAlongLink: vi.fn().mockResolvedValue(found) };
     const userService = { findByIdWithPermissions: vi.fn().mockResolvedValue(makeUser({ id: 42 })) };
@@ -6025,7 +6026,76 @@ describe('BookService linked audiobook and read-along', () => {
 
     expect(bookRepo.findAudioEbookProgressSyncFiles).toHaveBeenCalledWith(9);
     expect(bookRepo.findReadAloudSyncMode).toHaveBeenCalledWith(42, 9);
-    expect(sync).toMatchObject({ state: 'enabled', mode: 'auto', overlayFileId: 30, audioDurationSeconds: 120, overlayDurationSeconds: 118 });
+    expect(sync).toMatchObject({
+      state: 'enabled',
+      mode: 'auto',
+      overlayFileId: 30,
+      audioDurationSeconds: 120,
+      overlayDurationSeconds: 118,
+      offsetsSource: 'match',
+      narrationMismatch: null,
+    });
+  });
+
+  function resolveLinkedAudiobookSync(service: BookService) {
+    return (service as any).resolveReadAloudProgressSync(
+      makeUser({ id: 42 }),
+      5,
+      [{ id: 12, format: 'mp3', durationSeconds: 120 }],
+      new Map(),
+      12,
+      'auto',
+    ) as Promise<Record<string, unknown>>;
+  }
+
+  function linkReadAlong(bookRepo: ReturnType<typeof makeLinkedService>['bookRepo'], narrationSeconds = 118) {
+    bookRepo.findAudioEbookProgressSyncFiles = vi.fn().mockResolvedValue({
+      primaryFileId: 30,
+      files: [{ id: 30, format: 'epub', durationSeconds: null, mediaOverlayAvailable: true, mediaOverlayDurationSeconds: narrationSeconds }],
+    });
+    bookRepo.findReadAloudSyncMode.mockResolvedValue('auto');
+  }
+
+  it.each([
+    [
+      { status: 'narration_mismatch', mismatch: { narrationFile: 4, narrationSeconds: 2035.1, chapter: 6, chapterSeconds: 6 } },
+      {
+        state: 'unavailable',
+        unavailableReason: 'narration_mismatch',
+        narrationMismatch: { narrationFile: 4, narrationSeconds: 2035.1, chapter: 6, chapterSeconds: 6 },
+        offsetsSource: null,
+      },
+    ],
+    [{ status: 'audio_changed' }, { state: 'unavailable', unavailableReason: 'audio_changed', narrationMismatch: null, offsetsSource: null }],
+    [{ status: 'missing_duration' }, { state: 'unavailable', unavailableReason: 'missing_duration', offsetsSource: null }],
+    [{ status: 'no_narration' }, { state: 'unavailable', unavailableReason: 'no_media_overlay_epub', offsetsSource: null }],
+    [
+      { status: 'ready', offsets: [], source: 'build' },
+      { state: 'enabled', unavailableReason: null, offsetsSource: 'build' },
+    ],
+  ])('reports the linked pair from its narration fit %j', async (fit, expected) => {
+    const { service, bookRepo, audiobookEbookProgressSync } = makeLinkedService();
+    linkReadAlong(bookRepo);
+    audiobookEbookProgressSync.resolveReadAlongFit.mockResolvedValue(fit);
+
+    await expect(resolveLinkedAudiobookSync(service)).resolves.toMatchObject(expected);
+    expect(audiobookEbookProgressSync.resolveReadAlongFit).toHaveBeenCalledWith(5, 9);
+  });
+
+  it('judges a linked pair by its fit, not by comparing narration and audio totals', async () => {
+    const { service, bookRepo } = makeLinkedService();
+    linkReadAlong(bookRepo, 60);
+
+    await expect(resolveLinkedAudiobookSync(service)).resolves.toMatchObject({ state: 'enabled', durationDifferenceSeconds: 60 });
+  });
+
+  it('reports a disabled linked pair without matching its narration', async () => {
+    const { service, bookRepo, audiobookEbookProgressSync } = makeLinkedService();
+    linkReadAlong(bookRepo);
+    bookRepo.findReadAloudSyncMode.mockResolvedValue('disabled');
+
+    await expect(resolveLinkedAudiobookSync(service)).resolves.toMatchObject({ state: 'disabled', narrationMismatch: null, offsetsSource: null });
+    expect(audiobookEbookProgressSync.resolveReadAlongFit).not.toHaveBeenCalled();
   });
 
   it('does not call a linked pair unavailable for a read-along whose narration length was never stored', async () => {

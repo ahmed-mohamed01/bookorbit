@@ -14,6 +14,7 @@ import {
   Lock,
   MoreVertical,
   Pencil,
+  RefreshCw,
   RotateCcw,
   Send,
   Star,
@@ -72,6 +73,7 @@ import BookReadingActivityCard from '@/features/book/components/detail/details/B
 import { useBookReadingLog } from '@/features/book/composables/useBookReadingLog'
 import { useProviderLinkSettings } from '@/features/book/composables/useProviderLinkSettings'
 import { hasReadAlong } from '@/features/book/lib/file-capabilities'
+import { describeReadAloudSyncIssue, readAloudSyncIssue } from '@/features/book/lib/read-aloud-sync-issue'
 
 type FileProgress = {
   percentage: number
@@ -383,12 +385,15 @@ const syncsEpubCopiesOnly = computed(
     readAloudSync.value.unavailableReason !== 'no_media_overlay_epub' &&
     props.book.files.filter((file) => file.format?.toLowerCase() === 'epub').length > 1,
 )
-const readAloudSyncStatus = computed(() =>
-  syncsEpubCopiesOnly.value
+const readAloudSyncIssueReason = computed(() => readAloudSyncIssue(readAloudSync.value))
+const readAloudSyncStatus = computed(() => {
+  if (readAloudSyncIssueReason.value) return t('book.detail.details.readAloudSync.state.notSyncing')
+  return syncsEpubCopiesOnly.value
     ? t('book.detail.details.readAloudSync.state.epubCopiesOnly')
-    : t(`book.detail.details.readAloudSync.state.${readAloudSync.value.state}`),
-)
+    : t(`book.detail.details.readAloudSync.state.${readAloudSync.value.state}`)
+})
 const readAloudSyncDescription = computed(() => {
+  if (readAloudSyncIssueReason.value) return readAloudSyncUnavailableReason()
   if (readAloudSync.value.state === 'enabled') return t('book.detail.details.readAloudSync.enabledDescription')
   if (readAloudSync.value.state === 'disabled') return t('book.detail.details.readAloudSync.disabledDescription')
   if (syncsEpubCopiesOnly.value) return t('book.detail.details.readAloudSync.epubCopiesDescription')
@@ -396,11 +401,23 @@ const readAloudSyncDescription = computed(() => {
 })
 /** Why the audiobook is left out, when there is one and it is not simply missing. */
 const readAloudSyncAudiobookNote = computed(() =>
-  syncsEpubCopiesOnly.value && readAloudSync.value.unavailableReason !== 'no_audio_files' ? readAloudSyncUnavailableReason() : null,
+  syncsEpubCopiesOnly.value && !readAloudSyncIssueReason.value && readAloudSync.value.unavailableReason !== 'no_audio_files'
+    ? readAloudSyncUnavailableReason()
+    : null,
 )
+// The link panel owns the rebuild and its confirm, so the card asks it to open on that confirm.
+const linkBookControl = ref<InstanceType<typeof LinkBookControl> | null>(null)
+const canRebuildReadAlongFromCard = computed(
+  () => readAloudSyncIssueReason.value !== null && (linkBookControl.value?.canRequestReadAlongRebuild ?? false),
+)
+
+function handleRebuildReadAlongFromCard() {
+  linkBookControl.value?.requestReadAlongRebuild()
+}
 
 function readAloudSyncUnavailableReason(): string {
   const reason = readAloudSync.value.unavailableReason ?? 'missing_duration'
+  if (readAloudSyncIssueReason.value) return describeReadAloudSyncIssue(readAloudSync.value, t)
   if (reason === 'duration_mismatch') {
     return t('book.detail.details.readAloudSync.reason.durationMismatch', {
       audio: formatDuration(readAloudSync.value.audioDurationSeconds),
@@ -1439,6 +1456,7 @@ watch(
               <TooltipContent>{{ t('book.detail.details.peek') }}</TooltipContent>
             </Tooltip>
             <LinkBookControl
+              ref="linkBookControl"
               :book="book"
               trigger-class="flex items-center justify-center h-9 w-12 shrink-0 rounded-md border border-input bg-background hover:bg-muted transition-colors"
             />
@@ -1727,9 +1745,29 @@ watch(
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
               <p class="text-xs font-semibold text-foreground">{{ t('book.detail.details.readAloudSync.title') }}</p>
-              <span class="text-[11px] text-muted-foreground">{{ readAloudSyncStatus }}</span>
+              <span
+                v-if="readAloudSyncIssueReason"
+                data-test="read-aloud-sync-issue"
+                :data-reason="readAloudSyncIssueReason"
+                class="inline-flex items-center gap-1 text-[11px] text-warning"
+              >
+                <TriangleAlert class="size-3.5 shrink-0" aria-hidden="true" />
+                {{ readAloudSyncStatus }}
+              </span>
+              <span v-else class="text-[11px] text-muted-foreground">{{ readAloudSyncStatus }}</span>
             </div>
             <p class="mt-0.5 text-xs text-muted-foreground">{{ readAloudSyncDescription }}</p>
+            <div v-if="canRebuildReadAlongFromCard" class="mt-1.5 flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                data-test="read-aloud-sync-rebuild"
+                class="inline-flex items-center gap-1 rounded-md border border-input bg-background px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                @click="handleRebuildReadAlongFromCard"
+              >
+                <RefreshCw class="size-3" aria-hidden="true" />
+                {{ t('book.detail.editionLink.actions.rebuildReadAlong') }}
+              </button>
+            </div>
             <p v-if="readAloudSyncAudiobookNote" data-test="read-aloud-sync-audiobook-note" class="mt-0.5 text-xs text-muted-foreground">
               {{ readAloudSyncAudiobookNote }}
             </p>

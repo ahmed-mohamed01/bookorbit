@@ -1,32 +1,46 @@
-import { BadGatewayException, BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type {
   AudiobookshelfBookState,
   AudiobookshelfBookStatePage,
   AudiobookshelfBookSyncLink,
   AudiobookshelfBookSyncLive,
+  AudiobookshelfDivergedReason,
   AudiobookshelfMatchMethod,
+  AudiobookshelfReconcileDirection,
   AudiobookshelfSyncLinkStatus,
 } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
+import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { BookService } from '../book/book.service';
 import { EditionLinkRepository } from '../edition-link/edition-link.repository';
 import { LibraryService } from '../library/library.service';
 import { AudiobookshelfApiError, AudiobookshelfClientService, type AbsItemCover, type AbsMediaProgress } from './audiobookshelf-client.service';
+import { AudiobookshelfProgressPushService } from './audiobookshelf-progress-push.service';
+import { AudiobookshelfSyncCoordinatorService } from './audiobookshelf-sync-coordinator.service';
+import { AUDIOBOOKSHELF_SYNC_PUSH_WAIT_MS, AudiobookshelfSyncService } from './audiobookshelf-sync.service';
 import { parseAndNormalizeServerUrl } from './audiobookshelf-url.utils';
-import { AudiobookshelfRepository, type AbsBookAccessScope, type AbsBookStateView } from './audiobookshelf.repository';
-import { buildBookAccessScope, isAbsSyncConfigured } from './audiobookshelf-user.utils';
+import { AudiobookshelfRepository, type AbsAudioProgressSnapshot, type AbsBookAccessScope, type AbsBookStateView } from './audiobookshelf.repository';
+import { buildBookAccessScope, describeError, isAbsSyncConfigured } from './audiobookshelf-user.utils';
 import type { ListAudiobookshelfBookStatesDto } from './dto';
 import type { AudiobookshelfBookState as AudiobookshelfBookStateRow, AudiobookshelfUserSetting } from './schema/audiobookshelf.schema';
 
 // A panel opening should not wait the full request timeout on a server that is down.
 const AUDIOBOOKSHELF_LIVE_CHECK_TIMEOUT_MS = 4_000;
+// Positions closer than this on the book clock are the same place: a player saves every few seconds
+// and ABS rounds, so a smaller gap is noise rather than two different positions.
+const AUDIOBOOKSHELF_DIVERGED_THRESHOLD_SECONDS = 60;
 
 type SyncTargetState = AudiobookshelfBookStateRow & { bookId: number };
 
 interface SyncTarget {
   settings: AudiobookshelfUserSetting;
   state: SyncTargetState;
+}
+
+interface LinkStatus {
+  status: AudiobookshelfSyncLinkStatus;
+  divergedReason: AudiobookshelfDivergedReason | null;
 }
 
 @Injectable()
@@ -39,6 +53,9 @@ export class AudiobookshelfBookStateService {
     private readonly libraryService: LibraryService,
     private readonly editionLinks: EditionLinkRepository,
     private readonly client: AudiobookshelfClientService,
+    private readonly syncService: AudiobookshelfSyncService,
+    private readonly progressPush: AudiobookshelfProgressPushService,
+    private readonly coordinator: AudiobookshelfSyncCoordinatorService,
   ) {}
 
   /** A small cover for an item matched to one of the user's books, fetched with the user's ABS token. */
@@ -86,56 +103,132 @@ export class AudiobookshelfBookStateService {
 
   /** Audiobookshelf's own progress for a matched item and whether anything is waiting to sync. */
   async getLiveSyncStatus(user: RequestUser, absLibraryItemId: string): Promise<AudiobookshelfBookSyncLive> {
-    const { settings, state } = await this.findItemSyncTarget(user, absLibraryItemId);
+    return this.liveStatusFor(user.id, await this.findItemSyncTarget(user, absLibraryItemId));
+  }
 
-    let remote: AbsMediaProgress | null = null;
-    let reachable = true;
+  /**
+   * The user's explicit answer to a diverged or waiting position: pull takes Audiobookshelf's position
+   * and push sends BookOrbit's, each bypassing the automatic newest-wins rules but no safety guard.
+   */
+  async reconcile(user: RequestUser, absLibraryItemId: string, direction: AudiobookshelfReconcileDirection): Promise<AudiobookshelfBookSyncLive> {
+    const target = await this.findItemSyncTarget(user, absLibraryItemId);
+    const { bookId } = target.state;
+    const logIds = `userId=${user.id} bookId=${bookId} absItemId="${sanitizeLogValue(absLibraryItemId)}" direction=${direction}`;
+    const startedAt = Date.now();
+    this.logger.log(`[abs.reconcile] [start] ${logIds} - reconcile started`);
+
     try {
-      remote = await this.client.getMediaProgress(
-        user.id,
-        settings.serverUrl,
-        settings.apiToken,
-        absLibraryItemId,
-        AUDIOBOOKSHELF_LIVE_CHECK_TIMEOUT_MS,
+      const { applied, reason } = direction === 'pull' ? await this.reconcilePull(user, target) : await this.reconcilePush(user.id, absLibraryItemId);
+      this.logger.log(
+        `[abs.reconcile] [end] ${logIds} durationMs=${Date.now() - startedAt} applied=${applied} reason=${reason} - reconcile completed`,
       );
     } catch (error) {
-      if (!(error instanceof AudiobookshelfApiError)) throw error;
-      reachable = false;
+      const { errorClass, error: message } = describeError(error);
+      this.logger.warn(
+        `[abs.reconcile] [fail] ${logIds} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${message}" - reconcile failed`,
+      );
+      throw error;
     }
 
+    return this.liveStatusFor(user.id, await this.findItemSyncTarget(user, absLibraryItemId));
+  }
+
+  private async reconcilePull(user: RequestUser, target: SyncTarget): Promise<{ applied: boolean; reason: string }> {
+    if (!(await this.coordinator.acquireSync(user.id, AUDIOBOOKSHELF_SYNC_PUSH_WAIT_MS))) {
+      throw new ConflictException('An Audiobookshelf sync is already running');
+    }
+    try {
+      const { settings, state } = target;
+      let remote: AbsMediaProgress | null;
+      try {
+        remote = await this.client.getMediaProgress(user.id, settings.serverUrl, settings.apiToken, state.absLibraryItemId);
+      } catch (error) {
+        if (error instanceof AudiobookshelfApiError) throw new BadGatewayException('Audiobookshelf progress unavailable');
+        throw error;
+      }
+      if (!remote) return { applied: false, reason: 'no_remote_progress' };
+      return await this.syncService.pullPositionNow(user, state, remote);
+    } finally {
+      this.coordinator.endSync(user.id);
+    }
+  }
+
+  private async reconcilePush(userId: number, absLibraryItemId: string): Promise<{ applied: boolean; reason: string }> {
+    if (!this.coordinator.tryStartPush(userId)) {
+      throw new ConflictException('An Audiobookshelf sync or position push is already running');
+    }
+    try {
+      const { outcome, reason } = await this.progressPush.pushPositionNow(userId, absLibraryItemId);
+      if (outcome === 'unreachable' || outcome === 'failed') throw new BadGatewayException('Audiobookshelf position push failed');
+      return { applied: outcome === 'pushed', reason };
+    } finally {
+      this.coordinator.endPush(userId);
+    }
+  }
+
+  private async liveStatusFor(userId: number, { settings, state }: SyncTarget): Promise<AudiobookshelfBookSyncLive> {
+    let reachable = true;
+    const [remote, local] = await Promise.all([
+      this.client
+        .getMediaProgress(userId, settings.serverUrl, settings.apiToken, state.absLibraryItemId, AUDIOBOOKSHELF_LIVE_CHECK_TIMEOUT_MS)
+        .catch((error: unknown) => {
+          if (!(error instanceof AudiobookshelfApiError)) throw error;
+          reachable = false;
+          return null;
+        }),
+      this.repo.findAudioProgress(userId, state.bookId),
+    ]);
+
+    const link: LinkStatus = reachable ? await this.syncLinkStatus(settings, state, remote, local) : { status: 'unreachable', divergedReason: null };
     return {
-      status: reachable ? await this.syncLinkStatus(user.id, settings, state, remote) : 'unreachable',
+      status: link.status,
       progress: remote
         ? { percentage: Math.max(0, Math.min(100, remote.progress * 100)), isFinished: remote.isFinished, lastUpdate: remote.lastUpdate }
         : null,
+      local: local ? { percentage: Math.max(0, Math.min(100, local.percentage)), capturedAt: local.capturedAt.toISOString() } : null,
+      divergedReason: link.divergedReason,
     };
   }
 
   private async syncLinkStatus(
-    userId: number,
     settings: AudiobookshelfUserSetting,
     state: SyncTargetState,
     remote: AbsMediaProgress | null,
-  ): Promise<AudiobookshelfSyncLinkStatus> {
+    local: AbsAudioProgressSnapshot | undefined,
+  ): Promise<LinkStatus> {
     const watermark = state.lastSyncedPositionAbsUpdate ?? 0;
     const absMovedSinceSync = remote !== null && remote.lastUpdate > watermark;
+    // Every pull attempt stamps the row (lastSyncedAt, or updatedAt with syncError on a throw).
+    const lastAttemptAt = state.syncError ? state.updatedAt : state.lastSyncedAt;
 
     if (settings.pushPosition && state.pushPendingAt) {
       // Mirrors the push decision: nothing new locally means nothing to send, and when both sides
       // moved the newer timestamp wins, so an ABS position newer than ours will be pulled instead.
-      const local = await this.repo.findAudioProgress(userId, state.bookId);
       const localUnchanged = !local || (state.lastSyncedProgressAt !== null && local.updatedAt.getTime() === state.lastSyncedProgressAt.getTime());
       const absWins = absMovedSinceSync && local !== undefined && remote.lastUpdate > local.capturedAt.getTime();
-      if (!localUnchanged && !absWins) return 'sending';
+      if (!localUnchanged && !absWins) return { status: 'sending', divergedReason: null };
     }
 
-    if (!settings.syncPosition || !absMovedSinceSync) return 'synced';
     // The pull leaves the watermark behind for positions it refuses for good (no audio files, a
     // duration mismatch, an unresolvable position), so a lagging watermark alone would read as
-    // receiving forever. Every pull attempt stamps the row (lastSyncedAt, or updatedAt with
-    // syncError on a throw); once an attempt has run since ABS changed, the lag is not closing.
-    const lastAttemptAt = state.syncError ? state.updatedAt : state.lastSyncedAt;
-    return lastAttemptAt && lastAttemptAt.getTime() >= remote.lastUpdate ? 'synced' : 'receiving';
+    // receiving forever; once an attempt has run since ABS changed, the lag is not closing.
+    const pullPending = settings.syncPosition && absMovedSinceSync && !(lastAttemptAt && lastAttemptAt.getTime() >= remote.lastUpdate);
+    if (pullPending) return { status: 'receiving', divergedReason: null };
+
+    if (!remote || !local || !(await this.positionsDiverge(state.bookId, remote, local))) return { status: 'synced', divergedReason: null };
+
+    const localNewer = local.capturedAt.getTime() > remote.lastUpdate;
+    const pullRefused = remote.lastUpdate > local.capturedAt.getTime() && lastAttemptAt !== null && lastAttemptAt.getTime() >= remote.lastUpdate;
+    const divergedReason: AudiobookshelfDivergedReason = localNewer && !settings.pushPosition ? 'push_off' : pullRefused ? 'pull_refused' : 'stale';
+    return { status: 'diverged', divergedReason };
+  }
+
+  /** Compares both positions on the audiobook's own clock; no comparison is possible without a resolvable local position. */
+  private async positionsDiverge(bookId: number, remote: AbsMediaProgress, local: AbsAudioProgressSnapshot): Promise<boolean> {
+    if (!Number.isFinite(remote.currentTime)) return false;
+    const position = await this.bookService.resolveAudiobookPositionForExternalSync(bookId, local.currentFileId, local.positionSeconds);
+    if (!position) return false;
+    return Math.abs(position.audioSeconds - remote.currentTime) > AUDIOBOOKSHELF_DIVERGED_THRESHOLD_SECONDS;
   }
 
   private async findItemSyncTarget(user: RequestUser, absLibraryItemId: string): Promise<SyncTarget> {

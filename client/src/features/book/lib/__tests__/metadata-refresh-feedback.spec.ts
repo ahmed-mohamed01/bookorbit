@@ -51,6 +51,8 @@ function makeBook(overrides: Partial<BookDetail> = {}): BookDetail {
       durationDifferenceSeconds: null,
       durationDifferenceRatio: null,
       koreaderDownloadAvailable: false,
+      narrationMismatch: null,
+      offsetsSource: null,
     },
     formatPriority: [],
     comicMetadata: null,

@@ -2,9 +2,14 @@
 import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowDownToLine, ExternalLink, Library, Link2, Loader2, TriangleAlert } from '@lucide/vue'
-import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive } from '@bookorbit/types'
+import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive, AudiobookshelfReconcileDirection } from '@bookorbit/types'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { audiobookshelfCoverUrl } from '@/features/audiobookshelf/api/audiobookshelf.api'
+import {
+  AudiobookshelfReconcileError,
+  audiobookshelfCoverUrl,
+  reconcileAudiobookshelfPosition,
+} from '@/features/audiobookshelf/api/audiobookshelf.api'
+import { formatRelativeTimeFromNow } from '@/i18n/formatters'
 
 const props = defineProps<{
   link: AudiobookshelfBookSyncLink
@@ -14,6 +19,8 @@ const props = defineProps<{
   connectorPlacement: string
   position: 'middle' | 'bottom'
 }>()
+// A reconcile hands back the fresh status; a retry has none and asks for a new live check.
+const emit = defineEmits<{ 'refresh-live': [live?: AudiobookshelfBookSyncLive] }>()
 
 const { t } = useI18n()
 
@@ -58,21 +65,110 @@ const settingsRoute = { name: 'settings-audiobookshelf' }
 const status = computed(() => props.live?.status ?? null)
 const showSettings = computed(() => !twoWay.value || status.value === 'unreachable')
 
-const progress = computed(() => {
-  const value = props.live?.progress?.percentage
+function displayPercentage(value: number | undefined, finished: boolean): number | null {
   if (typeof value !== 'number') return null
   if (value <= 0) return 0
-  if (props.live?.progress?.isFinished) return 100
+  if (finished) return 100
   // Rounding alone would read 100% for an unfinished book at 99.5%.
   return Math.min(99, Math.max(1, Math.round(value)))
-})
+}
+
+const progress = computed(() => displayPercentage(props.live?.progress?.percentage, props.live?.progress?.isFinished ?? false))
+const localProgress = computed(() => displayPercentage(props.live?.local?.percentage, false))
 
 const statusHint = computed(() => {
-  if (status.value === 'unreachable') return t('book.detail.editionLink.abs.status.unreachableHint')
-  if (status.value === 'sending') return t('book.detail.editionLink.abs.status.sendingHint')
-  if (status.value === 'receiving') return t('book.detail.editionLink.abs.status.receivingHint')
-  return null
+  switch (status.value) {
+    case 'unreachable':
+      return t('book.detail.editionLink.abs.status.unreachableHint')
+    case 'sending':
+      return t('book.detail.editionLink.abs.status.sendingHint')
+    case 'receiving': {
+      const lastUpdate = props.live?.progress?.lastUpdate
+      if (!lastUpdate) return t('book.detail.editionLink.abs.status.receivingHint')
+      return t('book.detail.editionLink.abs.status.receivingUpdated', { time: formatRelativeTimeFromNow(lastUpdate, { smallestUnit: 'minute' }) })
+    }
+    case 'diverged': {
+      const positions = t('book.detail.editionLink.abs.status.divergedHint', { abs: progress.value ?? 0, local: localProgress.value ?? 0 })
+      const reason = props.live?.divergedReason
+      return reason ? `${positions} ${t(`book.detail.editionLink.abs.status.divergedReason.${reason}`)}` : positions
+    }
+    default:
+      return null
+  }
 })
+const statusWarns = computed(() => status.value === 'unreachable' || status.value === 'diverged')
+
+type StopAction = AudiobookshelfReconcileDirection | 'retry'
+interface StopActionButton {
+  action: StopAction
+  label: string
+  testId: string
+}
+
+const pushAction = computed<StopActionButton>(() => ({
+  action: 'push',
+  label: t('book.detail.editionLink.abs.reconcile.push'),
+  testId: 'edition-abs-reconcile-push',
+}))
+const pullAction = computed<StopActionButton>(() => ({
+  action: 'pull',
+  label: t(status.value === 'receiving' ? 'book.detail.editionLink.abs.reconcile.useNow' : 'book.detail.editionLink.abs.reconcile.pull'),
+  testId: 'edition-abs-reconcile-pull',
+}))
+const detailActions = computed<StopActionButton[]>(() => {
+  if (status.value === 'diverged') return [pushAction.value, pullAction.value]
+  if (status.value === 'receiving') return [pullAction.value]
+  return []
+})
+const showRetry = computed(() => status.value === 'unreachable')
+
+// A retry stays busy until the refreshed status arrives, so the old status never reads as actionable
+// again in between.
+const busy = ref<StopAction | null>(null)
+const actionError = ref<string | null>(null)
+
+watch(
+  () => props.live,
+  () => {
+    busy.value = null
+  },
+)
+
+async function runAction(action: StopAction) {
+  if (busy.value) return
+  busy.value = action
+  actionError.value = null
+  if (action === 'retry') {
+    emit('refresh-live')
+    return
+  }
+  let fresh: AudiobookshelfBookSyncLive
+  try {
+    fresh = await reconcileAudiobookshelfPosition(props.link.absLibraryItemId, action)
+  } catch (error) {
+    busy.value = null
+    actionError.value = reconcileFailure(error)
+    detailsOpen.value = true
+    return
+  }
+  busy.value = null
+  emit('refresh-live', fresh)
+}
+
+function reconcileFailure(error: unknown): string {
+  const status = error instanceof AudiobookshelfReconcileError ? error.status : null
+  if (status === 409) return t('book.detail.editionLink.abs.reconcile.busy')
+  if (status === 502) return t('book.detail.editionLink.abs.reconcile.unreachable')
+  return t('book.detail.editionLink.abs.reconcile.failed')
+}
+
+function handleAction(action: StopAction) {
+  void runAction(action)
+}
+
+function handleRetry() {
+  void runAction('retry')
+}
 
 // Tooltips need a hover, so the connector and the status both open the same reasons inline for touch and
 // keyboard users, and screen readers get them as the stop's description.
@@ -157,9 +253,22 @@ function toggleDetails() {
               {{ t('book.detail.editionLink.abs.external') }}
               <span class="sr-only">{{ t('book.detail.editionLink.abs.opensNewTab') }}</span>
             </a>
-            <RouterLink v-if="showSettings" :to="settingsRoute" class="ms-auto text-xs text-info hover:underline" data-testid="edition-abs-settings">
-              {{ t('book.detail.editionLink.abs.settings') }}
-            </RouterLink>
+            <span v-if="showRetry || showSettings" class="ms-auto inline-flex items-center gap-2">
+              <button
+                v-if="showRetry"
+                type="button"
+                class="inline-flex items-center gap-1 text-xs text-info hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="busy !== null"
+                data-testid="edition-abs-retry"
+                @click="handleRetry"
+              >
+                <Loader2 v-if="busy === 'retry'" class="size-3 animate-spin" aria-hidden="true" />
+                {{ t('book.detail.editionLink.abs.reconcile.retry') }}
+              </button>
+              <RouterLink v-if="showSettings" :to="settingsRoute" class="text-xs text-info hover:underline" data-testid="edition-abs-settings">
+                {{ t('book.detail.editionLink.abs.settings') }}
+              </RouterLink>
+            </span>
           </div>
           <p class="truncate text-sm leading-5 font-medium text-foreground">
             <a
@@ -190,7 +299,7 @@ function toggleDetails() {
               v-else-if="statusHint"
               type="button"
               class="ms-auto inline-flex shrink-0 items-center gap-1 rounded-sm text-[11px] whitespace-nowrap hover:underline"
-              :class="status === 'unreachable' ? 'text-warning' : 'text-info'"
+              :class="statusWarns ? 'text-warning' : 'text-info'"
               :title="statusHint"
               :aria-expanded="detailsOpen"
               :aria-controls="detailsId"
@@ -198,7 +307,7 @@ function toggleDetails() {
               :data-status="status"
               @click="toggleDetails"
             >
-              <TriangleAlert v-if="status === 'unreachable'" class="size-3" aria-hidden="true" />
+              <TriangleAlert v-if="statusWarns" class="size-3.5" aria-hidden="true" />
               <Loader2 v-else-if="status === 'sending'" class="size-3 animate-spin" aria-hidden="true" />
               <ArrowDownToLine v-else class="size-3" aria-hidden="true" />
               {{ t(`book.detail.editionLink.abs.status.${status}`) }}
@@ -230,7 +339,23 @@ function toggleDetails() {
             data-testid="edition-abs-details"
           >
             <p>{{ directionHint }}</p>
-            <p v-if="statusHint">{{ statusHint }}</p>
+            <p v-if="statusHint" data-testid="edition-abs-status-hint">{{ statusHint }}</p>
+            <p v-if="actionError" class="text-destructive" role="status" data-testid="edition-abs-reconcile-error">{{ actionError }}</p>
+            <div v-if="detailActions.length" class="flex flex-wrap gap-1.5 pt-1">
+              <button
+                v-for="item in detailActions"
+                :key="item.action"
+                type="button"
+                class="inline-flex items-center gap-1 rounded-md border border-input bg-background px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="busy !== null"
+                :aria-busy="busy === item.action"
+                :data-testid="item.testId"
+                @click="handleAction(item.action)"
+              >
+                <Loader2 v-if="busy === item.action" class="size-3 animate-spin" aria-hidden="true" />
+                {{ item.label }}
+              </button>
+            </div>
           </div>
         </div>
       </div>

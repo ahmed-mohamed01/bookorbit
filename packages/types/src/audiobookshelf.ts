@@ -117,7 +117,21 @@ export type AudiobookshelfPositionSyncDirection = "two_way" | "from_abs" | "to_a
  * receiving: Audiobookshelf holds a newer position the next pull will bring in. unreachable: the live
  * check could not reach the server.
  */
-export type AudiobookshelfSyncLinkStatus = "synced" | "sending" | "receiving" | "unreachable";
+export type AudiobookshelfSyncLinkStatus = "synced" | "sending" | "receiving" | "unreachable" | "diverged";
+
+/** Why both sides hold a position and nothing is moving them together. */
+export type AudiobookshelfDivergedReason = "push_off" | "pull_refused" | "stale";
+
+export interface AudiobookshelfLocalProgress {
+  percentage: number;
+  capturedAt: string;
+}
+
+export type AudiobookshelfReconcileDirection = "push" | "pull";
+
+export interface AudiobookshelfReconcilePayload {
+  direction: AudiobookshelfReconcileDirection;
+}
 
 export interface AudiobookshelfItemProgress {
   percentage: number;
@@ -140,6 +154,9 @@ export interface AudiobookshelfBookSyncLive {
   status: AudiobookshelfSyncLinkStatus;
   /** Audiobookshelf's own progress for the item; null when it has none yet or could not be read. */
   progress: AudiobookshelfItemProgress | null;
+  /** BookOrbit's own position for the matched book; null when it has none. */
+  local: AudiobookshelfLocalProgress | null;
+  divergedReason: AudiobookshelfDivergedReason | null;
 }
 
 export interface AudiobookshelfBookStatePage {

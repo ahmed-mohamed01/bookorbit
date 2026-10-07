@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BookAudio, BookOpen, Headphones, RefreshCw } from '@lucide/vue'
-import type { CoverMedium } from '@bookorbit/types'
+import { BookAudio, BookOpen, Headphones, RefreshCw, TriangleAlert } from '@lucide/vue'
+import type { CoverMedium, ReadAloudProgressSync } from '@bookorbit/types'
 import type { EditionFilledSlot } from '@/features/book/composables/useLinkEditionPanel'
+import { describeReadAloudSyncIssue, readAloudSyncIssue } from '@/features/book/lib/read-aloud-sync-issue'
 import EditionCover from './EditionCover.vue'
 
 const props = withDefaults(
@@ -13,8 +14,9 @@ const props = withDefaults(
     position: 'top' | 'middle' | 'bottom'
     rebuildLabel?: string | null
     rebuildDisabled?: boolean
+    readAloudSync?: ReadAloudProgressSync | null
   }>(),
-  { rebuildLabel: null, rebuildDisabled: false },
+  { rebuildLabel: null, rebuildDisabled: false, readAloudSync: null },
 )
 const emit = defineEmits<{ change: []; rebuild: [] }>()
 
@@ -52,6 +54,10 @@ const cardClass = computed(() => {
   const edges = { top: 'pt-0.5 pb-2', middle: 'py-2', bottom: 'pt-2 pb-0.5' }[props.position]
   return `border-transparent bg-transparent px-0 ${edges}`
 })
+
+// Only the read-along row narrates read-aloud sync, and only the failures a rebuild fixes.
+const syncIssue = computed(() => (props.edition.readAlong ? readAloudSyncIssue(props.readAloudSync) : null))
+const syncIssueDetail = computed(() => (syncIssue.value && props.readAloudSync ? describeReadAloudSyncIssue(props.readAloudSync, t) : null))
 
 const route = computed(() => ({ name: 'book-detail', params: { bookId: props.edition.bookId } }))
 const title = computed(() => props.edition.title ?? t('book.detail.editionLink.unknownTitle'))
@@ -101,7 +107,7 @@ function handleRebuild() {
             {{ t('book.detail.editionLink.slot.change') }}
           </button>
           <button
-            v-if="rebuildLabel"
+            v-if="rebuildLabel && !syncIssue"
             type="button"
             class="ms-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
             :disabled="rebuildDisabled"
@@ -117,9 +123,19 @@ function handleRebuild() {
           <span v-if="edition.isThisBook">{{ title }}</span>
           <RouterLink v-else :to="route" class="hover:underline">{{ title }}</RouterLink>
         </p>
-        <div v-if="edition.authorName || progress !== null" class="flex items-center gap-2 text-xs text-muted-foreground">
+        <div v-if="edition.authorName || progress !== null || syncIssue" class="flex items-center gap-2 text-xs text-muted-foreground">
           <p v-if="edition.authorName" class="min-w-0 flex-1 truncate">{{ edition.authorName }}</p>
-          <span v-if="progress === 0" class="ms-auto shrink-0 text-[11px] whitespace-nowrap" data-testid="edition-slot-not-started">
+          <span
+            v-if="syncIssue"
+            class="ms-auto inline-flex shrink-0 items-center gap-1 text-[11px] whitespace-nowrap text-warning"
+            :title="syncIssueDetail ?? undefined"
+            data-testid="edition-slot-sync-issue"
+            :data-reason="syncIssue"
+          >
+            <TriangleAlert class="size-3.5" aria-hidden="true" />
+            {{ t('book.detail.details.readAloudSync.state.notSyncing') }}
+          </span>
+          <span v-else-if="progress === 0" class="ms-auto shrink-0 text-[11px] whitespace-nowrap" data-testid="edition-slot-not-started">
             {{ t('book.detail.editionLink.notStarted') }}
           </span>
           <div
@@ -138,6 +154,21 @@ function handleRebuild() {
               />
             </div>
             <span class="text-[11px] tabular-nums whitespace-nowrap" aria-hidden="true">{{ progress }}%</span>
+          </div>
+        </div>
+        <div v-if="syncIssue" class="mt-1 space-y-1 text-[11px] text-pretty text-muted-foreground" data-testid="edition-slot-sync-issue-detail">
+          <p>{{ syncIssueDetail }}</p>
+          <div v-if="rebuildLabel" class="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 rounded-md border border-input bg-background px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="rebuildDisabled"
+              data-testid="edition-slot-sync-issue-rebuild"
+              @click="handleRebuild"
+            >
+              <RefreshCw class="size-3" aria-hidden="true" />
+              {{ rebuildLabel }}
+            </button>
           </div>
         </div>
       </div>

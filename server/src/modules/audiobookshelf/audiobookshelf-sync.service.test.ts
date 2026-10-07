@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED } from '../achievement/achievement-events.service';
 import { AudiobookshelfApiError, type AbsMediaProgress } from './audiobookshelf-client.service';
 import { AudiobookshelfSyncCoordinatorService } from './audiobookshelf-sync-coordinator.service';
 import {
@@ -980,5 +981,94 @@ describe('AudiobookshelfSyncService.sync', () => {
       await makeService().sync(user);
       expect(mockSessionsService.syncSessions).toHaveBeenCalledWith(user, expect.anything(), { quiet: false });
     });
+  });
+});
+
+describe('AudiobookshelfSyncService.pullPositionNow', () => {
+  const written = { currentFileId: 501, positionSeconds: 500, updatedAt: new Date('2026-07-20T00:00:00Z'), capturedAt: new Date(5000), revision: 8 };
+  const newerLocal = {
+    currentFileId: 501,
+    positionSeconds: 900,
+    percentage: 90,
+    capturedAt: new Date(9000),
+    updatedAt: new Date(9000),
+    revision: 7,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRepo.updateBookState.mockResolvedValue(undefined);
+    mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map([[10, [{ id: 501, format: 'm4b', durationSeconds: 1000 }]]]));
+    mockRepo.findAudioProgressForBooks.mockResolvedValue(new Map([[10, newerLocal]]));
+    mockRepo.upsertAudioProgressGuarded.mockResolvedValue(written);
+    mockEditionLinks.findReadAlongBookIdsByAudioBookIds.mockResolvedValue(new Map([[10, 30]]));
+    mockBookService.syncReadAlongForAudiobookPosition.mockResolvedValue(true);
+  });
+
+  it('applies an older Audiobookshelf position over a newer local one and advances the watermarks', async () => {
+    const mp = makeMp({ currentTime: 500, duration: 1000, lastUpdate: 5000 });
+
+    await expect(makeService().pullPositionNow(user, { absLibraryItemId: 'item-1', bookId: 10 }, mp)).resolves.toEqual({
+      applied: true,
+      reason: 'applied',
+    });
+
+    expect(mockRepo.upsertAudioProgressGuarded).toHaveBeenCalledWith(user.id, 10, 501, 500, 50, 7, new Date(5000));
+    expect(mockRepo.updateBookState).toHaveBeenCalledWith(user.id, 'item-1', {
+      lastSyncedAt: expect.any(Date),
+      syncError: null,
+      lastSyncedPositionAbsUpdate: 5000,
+      lastSyncedProgressAt: written.updatedAt,
+    });
+    expect(mockAchievementEvents.emit).toHaveBeenCalledWith(
+      ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED,
+      expect.objectContaining({ userId: user.id, bookId: 10, source: 'audiobookshelf' }),
+    );
+    expect(mockBookService.syncReadAlongForAudiobookPosition).toHaveBeenCalledWith(
+      user,
+      expect.objectContaining({ audioBookId: 10, readAlongBookId: 30 }),
+    );
+  });
+
+  it('hands the read-along a fresh time on a user-chosen pull, while the audiobook row keeps the ABS capture time', async () => {
+    vi.useFakeTimers({ now: new Date('2026-10-07T12:00:00Z') });
+    try {
+      await makeService().pullPositionNow(
+        user,
+        { absLibraryItemId: 'item-1', bookId: 10 },
+        makeMp({ currentTime: 500, duration: 1000, lastUpdate: 5000 }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(mockRepo.upsertAudioProgressGuarded).toHaveBeenCalledWith(user.id, 10, 501, 500, 50, 7, new Date(5000));
+    expect(mockBookService.syncReadAlongForAudiobookPosition).toHaveBeenCalledWith(
+      user,
+      expect.objectContaining({ readAlongBookId: 30, sourceUpdatedAt: new Date('2026-10-07T12:00:00Z') }),
+    );
+  });
+
+  it('keeps the duration guard and leaves the watermark alone when it refuses', async () => {
+    const mp = makeMp({ currentTime: 500, duration: 5000, lastUpdate: 5000 });
+
+    await expect(makeService().pullPositionNow(user, { absLibraryItemId: 'item-1', bookId: 10 }, mp)).resolves.toEqual({
+      applied: false,
+      reason: 'duration_mismatch',
+    });
+
+    expect(mockRepo.upsertAudioProgressGuarded).not.toHaveBeenCalled();
+    expect(mockAchievementEvents.emit).not.toHaveBeenCalled();
+    expect(mockRepo.updateBookState).toHaveBeenCalledWith(user.id, 'item-1', { lastSyncedAt: expect.any(Date), syncError: null });
+  });
+
+  it('keeps the write race guard against playback that lands mid-apply', async () => {
+    mockRepo.upsertAudioProgressGuarded.mockResolvedValue(null);
+
+    await expect(makeService().pullPositionNow(user, { absLibraryItemId: 'item-1', bookId: 10 }, makeMp())).resolves.toEqual({
+      applied: false,
+      reason: 'write_race',
+    });
+    expect(mockAchievementEvents.emit).not.toHaveBeenCalled();
   });
 });

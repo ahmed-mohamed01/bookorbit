@@ -10,6 +10,7 @@ import type {
   ReadAlongOutputBook,
   ReadAlongPhase,
   ReadAlongStatus,
+  ReadAloudProgressSync,
   StorytellerEffectiveTransport,
   StorytellerExistingMatch,
 } from '@bookorbit/types'
@@ -166,7 +167,7 @@ function makeBook(format: 'epub' | 'm4b' = 'epub', id = 10): BookDetail {
 
 const proposal: EditionLinkCandidate = { bookId: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', coverVersion: null, score: 96 }
 
-function mountPanelWithState(book = makeBook(), attachTo?: HTMLElement) {
+function mountPanelWithState(book = makeBook(), attachTo?: HTMLElement, extra: Record<string, unknown> = {}) {
   let state!: ReturnType<typeof useLinkEditionPanel>
   const Host = defineComponent({
     setup() {
@@ -178,6 +179,7 @@ function mountPanelWithState(book = makeBook(), attachTo?: HTMLElement) {
           absLink: absLinkState.link.value,
           absLive: absLinkState.live.value,
           absChecking: absLinkState.checking.value,
+          ...extra,
         })
     },
   })
@@ -985,7 +987,7 @@ describe('LinkEditionPanel Audiobookshelf stop', () => {
     expect(wrapper.find('[data-testid="edition-abs-checking"]').exists()).toBe(true)
 
     absLinkState.checking.value = false
-    absLinkState.live.value = { status: 'synced', progress: { percentage: 64, isFinished: false, lastUpdate: 1 } }
+    absLinkState.live.value = { status: 'synced', progress: { percentage: 64, isFinished: false, lastUpdate: 1 }, local: null, divergedReason: null }
     await flushPromises()
     expect(wrapper.find('[data-testid="edition-abs-checking"]').exists()).toBe(false)
     expect(wrapper.get('[data-testid="edition-abs-progress"]').text()).toContain('64%')
@@ -1006,6 +1008,103 @@ describe('LinkEditionPanel Audiobookshelf stop', () => {
     expect(stopOrder(wrapper)).toEqual(['edition-slot-ebook', 'edition-slot-audiobook', 'edition-abs-stop', 'edition-slot-read-along'])
     expect(wrapper.findAllComponents(EditionSlotCard).map((card) => card.props('position'))).toEqual(['top', 'middle', 'bottom'])
     expect(wrapper.getComponent(AudiobookshelfSyncStop).props('position')).toBe('middle')
+  })
+
+  describe('read-aloud sync that a rebuild fixes', () => {
+    function linkWithReadAlong() {
+      editionLinkState.link.value = { ...linkRecord, readAlongBookId: 30 }
+      editionLinkState.role.value = 'audio'
+      editionLinkState.members.value = makeMembers({
+        readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
+      })
+      readAlongState.status.value = 'ready'
+      alignmentState.status.value = 'ready'
+    }
+
+    function readAloudSync(overrides: Partial<ReadAloudProgressSync> = {}): ReadAloudProgressSync {
+      return {
+        mode: 'auto',
+        state: 'unavailable',
+        unavailableReason: 'audio_changed',
+        overlayFileId: 300,
+        audioDurationSeconds: null,
+        overlayDurationSeconds: null,
+        durationDifferenceSeconds: null,
+        durationDifferenceRatio: null,
+        koreaderDownloadAvailable: false,
+        narrationMismatch: null,
+        offsetsSource: null,
+        ...overrides,
+      }
+    }
+
+    it('flags the read-along row and rebuilds it behind the same confirm', async () => {
+      linkWithReadAlong()
+      const wrapper = mountPanelWithState(makeBook('m4b', 20), undefined, { readAloudSync: readAloudSync() }).wrapper
+      await flushPromises()
+
+      const issue = wrapper.get('[data-testid="edition-slot-read-along"] [data-testid="edition-slot-sync-issue"]')
+      expect(issue.text()).toBe('Not syncing')
+      expect(issue.attributes('data-reason')).toBe('audio_changed')
+      expect(text(wrapper, 'edition-slot-sync-issue-detail')).toContain('The audiobook files changed after this read-along was built.')
+      expect(wrapper.find('[data-testid="edition-slot-rebuild"]').exists()).toBe(false)
+
+      await click(wrapper, 'edition-slot-sync-issue-rebuild')
+      const dialog = wrapper.findAllComponents(ConfirmDialog).find((candidate) => candidate.props('open'))!
+      dialog.vm.$emit('confirm')
+      await flushPromises()
+
+      expect(readAlongState.build).toHaveBeenCalledWith(20, { force: true })
+    })
+
+    it('names the narration file and chapter that do not fit', async () => {
+      linkWithReadAlong()
+      const sync = readAloudSync({
+        unavailableReason: 'narration_mismatch',
+        narrationMismatch: { narrationFile: 2, narrationSeconds: 600, chapter: 3, chapterSeconds: 640 },
+      })
+      const wrapper = mountPanelWithState(makeBook('m4b', 20), undefined, { readAloudSync: sync }).wrapper
+      await flushPromises()
+
+      expect(text(wrapper, 'edition-slot-sync-issue-detail')).toContain('file 2 is 10:00, chapter 3 is 10:40.')
+    })
+
+    it('shows nothing new while read-aloud sync is enabled', async () => {
+      linkWithReadAlong()
+      const sync = readAloudSync({ state: 'enabled', unavailableReason: null, offsetsSource: 'match' })
+      const wrapper = mountPanelWithState(makeBook('m4b', 20), undefined, { readAloudSync: sync }).wrapper
+      await flushPromises()
+
+      expect(wrapper.find('[data-testid="edition-slot-sync-issue"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="edition-slot-rebuild"]').exists()).toBe(true)
+    })
+
+    it('opens the rebuild confirm when asked from outside the panel', async () => {
+      linkWithReadAlong()
+      const handled = vi.fn<() => void>()
+      const wrapper = mountPanelWithState(makeBook('m4b', 20), undefined, {
+        readAloudSync: readAloudSync(),
+        readAlongRebuildRequested: true,
+        onReadAlongRebuildRequestHandled: handled,
+      }).wrapper
+      await flushPromises()
+
+      const dialog = wrapper.findAllComponents(ConfirmDialog).find((candidate) => candidate.props('title') === 'Replace this read-along?')
+      expect(dialog?.props('open')).toBe(true)
+      expect(handled).toHaveBeenCalled()
+    })
+  })
+
+  it('asks for a fresh Audiobookshelf status when the stop wants one', async () => {
+    linkPair()
+    absLinkState.link.value = absLink
+    absLinkState.live.value = { status: 'unreachable', progress: null, local: null, divergedReason: null }
+    const refresh = vi.fn<() => void>()
+    const wrapper = mountPanelWithState(makeBook(), undefined, { onRefreshAbsLive: refresh }).wrapper
+    await flushPromises()
+
+    await click(wrapper, 'edition-abs-retry')
+    expect(refresh).toHaveBeenCalledTimes(1)
   })
 
   describe('with the audiobook in either slot', () => {

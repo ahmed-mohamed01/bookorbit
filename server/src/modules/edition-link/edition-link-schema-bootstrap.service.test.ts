@@ -36,7 +36,7 @@ describe('EditionLinkSchemaBootstrapService', () => {
 
     await service.onApplicationBootstrap();
 
-    expect(repo.findMissingTables).toHaveBeenCalledWith(['book_edition_links']);
+    expect(repo.findMissingTables).toHaveBeenCalledWith(['book_edition_links', 'read_along_narration_offsets']);
     expect(repo.applySchemaStatements).toHaveBeenCalledTimes(1);
     const statements = repo.applySchemaStatements.mock.calls[0]![0] as string[];
     const expectedCount = EDITION_LINK_SCHEMA_SQL.split('--> statement-breakpoint')

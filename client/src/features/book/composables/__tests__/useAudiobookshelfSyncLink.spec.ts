@@ -39,7 +39,12 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
-const synced: AudiobookshelfBookSyncLive = { status: 'synced', progress: { percentage: 3, isFinished: false, lastUpdate: 1 } }
+const synced: AudiobookshelfBookSyncLive = {
+  status: 'synced',
+  progress: { percentage: 3, isFinished: false, lastUpdate: 1 },
+  local: null,
+  divergedReason: null,
+}
 
 describe('useAudiobookshelfSyncLink', () => {
   beforeEach(() => {
@@ -94,7 +99,7 @@ describe('useAudiobookshelfSyncLink', () => {
 
     for (const result of [thrown, failed]) {
       expect(result.link.value).toEqual(makeLink())
-      expect(result.live.value).toEqual({ status: 'unreachable', progress: null })
+      expect(result.live.value).toEqual({ status: 'unreachable', progress: null, local: null, divergedReason: null })
       expect(result.checking.value).toBe(false)
     }
   })
@@ -157,7 +162,7 @@ describe('useAudiobookshelfSyncLink', () => {
     bookId.value = 21
     await nextTick()
     await flushPromises()
-    liveA.resolve({ status: 'receiving', progress: null })
+    liveA.resolve({ status: 'receiving', progress: null, local: null, divergedReason: null })
     await flushPromises()
     expect(link.value).toEqual(linkB)
     expect(live.value).toBeNull()
@@ -183,11 +188,43 @@ describe('useAudiobookshelfSyncLink', () => {
     expect(checking.value).toBe(false)
     expect(live.value).toEqual(synced)
 
-    const newer: AudiobookshelfBookSyncLive = { status: 'receiving', progress: { percentage: 9, isFinished: false, lastUpdate: 2 } }
+    const newer: AudiobookshelfBookSyncLive = {
+      status: 'receiving',
+      progress: { percentage: 9, isFinished: false, lastUpdate: 2 },
+      local: null,
+      divergedReason: null,
+    }
     next.resolve(newer)
     await flushPromises()
     expect(apiMocks.fetchAudiobookshelfSyncLive).toHaveBeenLastCalledWith('abs-1')
     expect(live.value).toEqual(newer)
+  })
+
+  it('applies a status the server already answered with, without asking again', async () => {
+    apiMocks.fetchAudiobookshelfSyncLink.mockResolvedValue(makeLink())
+    apiMocks.fetchAudiobookshelfSyncLive.mockResolvedValueOnce(synced)
+    const { live, applyLive } = useAudiobookshelfSyncLink(ref(20))
+    await flushPromises()
+    const diverged: AudiobookshelfBookSyncLive = { ...synced, status: 'diverged', divergedReason: 'stale' }
+
+    applyLive(diverged)
+
+    expect(live.value).toEqual(diverged)
+    expect(apiMocks.fetchAudiobookshelfSyncLive).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a failed retry as a new unreachable answer', async () => {
+    apiMocks.fetchAudiobookshelfSyncLink.mockResolvedValue(makeLink())
+    apiMocks.fetchAudiobookshelfSyncLive.mockRejectedValue(new Error('down'))
+    const { live, refreshLive } = useAudiobookshelfSyncLink(ref(20))
+    await flushPromises()
+    const first = live.value
+
+    refreshLive()
+    await flushPromises()
+
+    expect(live.value).toEqual(first)
+    expect(live.value).not.toBe(first)
   })
 
   it('does nothing on refresh before a link is known', async () => {

@@ -32,13 +32,20 @@ vi.mock('@/features/auth/composables/usePermissions', () => ({
 const absSyncLinkMocks = vi.hoisted(() => ({
   audioBookIds: [] as (number | null)[],
   refreshLive: vi.fn<() => void>(),
+  applyLive: vi.fn<(live: unknown) => void>(),
 }))
 vi.mock('@/features/book/composables/useAudiobookshelfSyncLink', async () => {
   const { ref, watch } = await import('vue')
   return {
     useAudiobookshelfSyncLink: (audioBookId: import('vue').Ref<number | null>) => {
       watch(audioBookId, (id) => absSyncLinkMocks.audioBookIds.push(id), { immediate: true })
-      return { link: ref(null), live: ref(null), checking: ref(false), refreshLive: absSyncLinkMocks.refreshLive }
+      return {
+        link: ref(null),
+        live: ref(null),
+        checking: ref(false),
+        refreshLive: absSyncLinkMocks.refreshLive,
+        applyLive: absSyncLinkMocks.applyLive,
+      }
     },
   }
 })
@@ -233,6 +240,8 @@ function makeBook(overrides = {}) {
       durationDifferenceSeconds: null,
       durationDifferenceRatio: null,
       koreaderDownloadAvailable: false,
+      narrationMismatch: null,
+      offsetsSource: null,
     },
     formatPriority: [],
     comicMetadata: null,
@@ -352,6 +361,89 @@ describe('LinkBookControl', () => {
 
     await openPopover(wrapper)
     expect(absSyncLinkMocks.refreshLive).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes the Audiobookshelf status when the panel asks for it', async () => {
+    absSyncLinkMocks.refreshLive.mockClear()
+    linkWithMembers()
+    const wrapper = mountControl()
+    await openPopover(wrapper)
+    absSyncLinkMocks.refreshLive.mockClear()
+
+    wrapper.findComponent({ name: 'LinkEditionPanel' }).vm.$emit('refresh-abs-live')
+    expect(absSyncLinkMocks.refreshLive).toHaveBeenCalledTimes(1)
+  })
+
+  it('takes the status a reconcile answered with instead of asking Audiobookshelf again', async () => {
+    absSyncLinkMocks.refreshLive.mockClear()
+    absSyncLinkMocks.applyLive.mockClear()
+    linkWithMembers()
+    const wrapper = mountControl()
+    await openPopover(wrapper)
+    absSyncLinkMocks.refreshLive.mockClear()
+    const fresh = { status: 'diverged', progress: null, local: null, divergedReason: 'stale' }
+
+    wrapper.findComponent({ name: 'LinkEditionPanel' }).vm.$emit('refresh-abs-live', fresh)
+    expect(absSyncLinkMocks.applyLive).toHaveBeenCalledWith(fresh)
+    expect(absSyncLinkMocks.refreshLive).not.toHaveBeenCalled()
+  })
+
+  function linkWithBuiltReadAlong() {
+    linkWithMembers(
+      makeMembers({
+        readAlong: { id: 30, title: 'Read-along', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
+      }),
+    )
+    mockState.link.value = { ...editionLinkRecord, readAlongBookId: 30 }
+    mockReadAlong.status.value = 'ready'
+  }
+
+  it('opens on the read-along rebuild confirm when asked from elsewhere on the page', async () => {
+    linkWithBuiltReadAlong()
+    const wrapper = mountControl()
+    await flushPromises()
+    const control = wrapper.vm as unknown as { canRequestReadAlongRebuild: boolean; requestReadAlongRebuild: () => void }
+
+    expect(control.canRequestReadAlongRebuild).toBe(true)
+    control.requestReadAlongRebuild()
+    await flushPromises()
+
+    expect(wrapper.findComponent({ name: 'Popover' }).props('open')).toBe(true)
+    // The panel takes the request straight to its own confirm and hands the flag back.
+    expect(wrapper.get('[title="Replace this read-along?"]').attributes('open')).toBe('true')
+    expect(wrapper.findComponent({ name: 'LinkEditionPanel' }).props('readAlongRebuildRequested')).toBe(false)
+  })
+
+  it('offers no outside rebuild without the permissions a rebuild needs', async () => {
+    permissionMocks.hasPermission.mockImplementation((permission) => permission !== 'library_delete_books')
+    linkWithBuiltReadAlong()
+    const wrapper = mountControl()
+    await flushPromises()
+
+    expect((wrapper.vm as unknown as { canRequestReadAlongRebuild: boolean }).canRequestReadAlongRebuild).toBe(false)
+  })
+
+  it.each([
+    [
+      'a read-along BookOrbit did not build',
+      () =>
+        linkWithMembers(
+          makeMembers({
+            readAlong: { id: 30, title: 'Read-along', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
+          }),
+        ),
+    ],
+    ['no read-along at all', () => linkWithMembers()],
+  ])('offers no outside rebuild for %s, like the panel', async (_label, setup) => {
+    setup()
+    const wrapper = mountControl()
+    await flushPromises()
+    const control = wrapper.vm as unknown as { canRequestReadAlongRebuild: boolean; requestReadAlongRebuild: () => void }
+
+    expect(control.canRequestReadAlongRebuild).toBe(false)
+    control.requestReadAlongRebuild()
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'Popover' }).props('open')).toBe(false)
   })
 
   it('opens the panel, reloads the link and searches straight away when nothing was proposed', async () => {

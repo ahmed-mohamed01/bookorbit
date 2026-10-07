@@ -7,7 +7,13 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import type { RequestUser } from '../../common/types/request-user';
 import { AudiobookshelfBookStateService } from './audiobookshelf-book-state.service';
 import { AudiobookshelfMatchService } from './audiobookshelf-match.service';
-import { CleanupAudiobookshelfStaleDto, LinkAudiobookshelfBookDto, ListAudiobookshelfBookStatesDto, UpdateAudiobookshelfExclusionDto } from './dto';
+import {
+  CleanupAudiobookshelfStaleDto,
+  LinkAudiobookshelfBookDto,
+  ListAudiobookshelfBookStatesDto,
+  ReconcileAudiobookshelfPositionDto,
+  UpdateAudiobookshelfExclusionDto,
+} from './dto';
 
 // Twice the 40px rail stop, so the thumbnail stays sharp on high-density screens.
 const AUDIOBOOKSHELF_COVER_THUMBNAIL_WIDTH = 80;
@@ -56,6 +62,11 @@ export class AudiobookshelfBooksController {
   @Post(':absLibraryItemId/confirm')
   confirm(@CurrentUser() user: RequestUser, @Param('absLibraryItemId') absLibraryItemId: string) {
     return this.bookStateService.confirm(user, absLibraryItemId);
+  }
+
+  @Post(':absLibraryItemId/reconcile')
+  reconcile(@CurrentUser() user: RequestUser, @Param('absLibraryItemId') absLibraryItemId: string, @Body() dto: ReconcileAudiobookshelfPositionDto) {
+    return this.bookStateService.reconcile(user, absLibraryItemId, dto.direction);
   }
 
   @Patch(':absLibraryItemId/link')

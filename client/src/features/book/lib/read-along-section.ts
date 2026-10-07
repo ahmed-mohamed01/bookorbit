@@ -48,3 +48,22 @@ export function resolveReadAlongSectionState(
 export function isActionBlocked(blocked: ReadAlongBlockReason | null): boolean {
   return blocked !== null && blocked !== 'busy'
 }
+
+/** The slice of the link panel that decides whether its ready read-along can be rebuilt. */
+export interface ReadAlongRebuildInputs {
+  readAlongSlot: unknown
+  link: unknown
+  readAlongSection: { sectionState: { status: ReadAlongStatus }; canGenerate: boolean; canRebuild: boolean }
+}
+
+// A build belongs to a linked pair, so a detached read-along is rebuilt only once its pair is linked
+// again, and only a read-along BookOrbit built (status ready) has a build to replace.
+export function canRebuildReadAlong(panel: ReadAlongRebuildInputs): boolean {
+  return (
+    panel.readAlongSlot !== null &&
+    panel.readAlongSection.sectionState.status === 'ready' &&
+    panel.link !== null &&
+    panel.readAlongSection.canGenerate &&
+    panel.readAlongSection.canRebuild
+  )
+}

@@ -13,6 +13,7 @@ import type {
   AudiobookshelfLinkBookPayload,
   AudiobookshelfLibrariesResponse,
   AudiobookshelfMappingSuggestions,
+  AudiobookshelfReconcileDirection,
   AudiobookshelfRescanResult,
   AudiobookshelfSettings,
   AudiobookshelfSyncResult,
@@ -115,6 +116,33 @@ export async function fetchAudiobookshelfSyncLink(bookId: number): Promise<Audio
 export async function fetchAudiobookshelfSyncLive(absLibraryItemId: string): Promise<AudiobookshelfBookSyncLive> {
   const response = await api(`${BASE}/books/${encodeURIComponent(absLibraryItemId)}/live`)
   if (!response.ok) throw await responseError(response, 'Failed to check Audiobookshelf')
+  return response.json()
+}
+
+/** Carries the HTTP status so the caller can tell a busy sync from an unreachable Audiobookshelf. */
+export class AudiobookshelfReconcileError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message)
+    this.name = 'AudiobookshelfReconcileError'
+  }
+}
+
+export async function reconcileAudiobookshelfPosition(
+  absLibraryItemId: string,
+  direction: AudiobookshelfReconcileDirection,
+): Promise<AudiobookshelfBookSyncLive> {
+  const response = await api(`${BASE}/books/${encodeURIComponent(absLibraryItemId)}/reconcile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ direction }),
+  })
+  if (!response.ok) {
+    const error = await responseError(response, 'Failed to sync the position')
+    throw new AudiobookshelfReconcileError(error.message, response.status)
+  }
   return response.json()
 }
 

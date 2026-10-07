@@ -549,6 +549,81 @@ describe('AudiobookshelfProgressPushService', () => {
     expect(mockClient.updateMediaProgress).toHaveBeenCalledTimes(1);
   });
 
+  describe('pushPositionNow (the user chose BookOrbit position)', () => {
+    it('pushes with push switched off', async () => {
+      mockRepo.findSettings.mockResolvedValue(settings({ pushPosition: false }));
+
+      await expect(makeService().service.pushPositionNow(USER_ID, ITEM_ID)).resolves.toEqual({ outcome: 'pushed', reason: 'pushed' });
+
+      expect(mockRepo.findPushableBookStateRow).toHaveBeenCalledWith(USER_ID, ITEM_ID, SCOPE, EXCLUDED_ABS_LIBRARIES);
+      expect(mockClient.updateMediaProgress).toHaveBeenCalledWith(USER_ID, 'https://abs.example.com', 'secret', ITEM_ID, {
+        currentTime: 40,
+        duration: 100,
+        progress: 0.4,
+        lastUpdate: 5000,
+      });
+    });
+
+    it('overrides a newer Audiobookshelf position and stamps it with the push time', async () => {
+      vi.useFakeTimers({ now: 20_000 });
+      mockClient.getMediaProgress.mockResolvedValue({ duration: 100, lastUpdate: 6000 });
+
+      await expect(makeService().service.pushPositionNow(USER_ID, ITEM_ID)).resolves.toEqual({ outcome: 'pushed', reason: 'pushed' });
+
+      expect(mockClient.updateMediaProgress).toHaveBeenCalledWith(
+        USER_ID,
+        'https://abs.example.com',
+        'secret',
+        ITEM_ID,
+        expect.objectContaining({ lastUpdate: 20_000 }),
+      );
+      expect(mockRepo.completePositionPush).toHaveBeenCalledWith(USER_ID, ITEM_ID, BOOK_ID, localProgress().updatedAt, 20_000);
+    });
+
+    it('sends a local position the last sync already recorded', async () => {
+      const snapshot = new Date('2026-09-29T10:02:00.000Z');
+      mockRepo.findPushableBookStateRow.mockResolvedValue(bookState({ lastSyncedProgressAt: snapshot }));
+      mockRepo.findAudioProgress.mockResolvedValue(localProgress({ updatedAt: snapshot }));
+
+      await expect(makeService().service.pushPositionNow(USER_ID, ITEM_ID)).resolves.toMatchObject({ outcome: 'pushed' });
+    });
+
+    it.each([
+      ['near_end', () => mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue({ audioSeconds: 95, audioTotalSeconds: 100 })],
+      [
+        'duration_mismatch',
+        () => mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue({ audioSeconds: 40, audioTotalSeconds: 200 }),
+      ],
+      ['no_timeline', () => mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue(null)],
+      ['no_local_change', () => mockRepo.findAudioProgress.mockResolvedValue(undefined)],
+    ])('keeps the %s guard', async (reason, arrange) => {
+      arrange();
+
+      await expect(makeService().service.pushPositionNow(USER_ID, ITEM_ID)).resolves.toEqual({ outcome: 'skipped', reason });
+      expect(mockClient.updateMediaProgress).not.toHaveBeenCalled();
+    });
+
+    it('skips an item the pull would refuse without calling Audiobookshelf', async () => {
+      mockRepo.findPushableBookStateRow.mockResolvedValue(undefined);
+
+      await expect(makeService().service.pushPositionNow(USER_ID, ITEM_ID)).resolves.toEqual({ outcome: 'skipped', reason: 'ineligible' });
+      expect(mockClient.getMediaProgress).not.toHaveBeenCalled();
+    });
+
+    it('skips a user who lost the sync permission', async () => {
+      mockUserService.findByIdWithPermissions.mockResolvedValue(syncUser({ isSuperuser: false, permissions: [] }));
+
+      await expect(makeService().service.pushPositionNow(USER_ID, ITEM_ID)).resolves.toEqual({ outcome: 'skipped', reason: 'ineligible' });
+      expect(mockClient.getMediaProgress).not.toHaveBeenCalled();
+    });
+
+    it('reports an unreachable server', async () => {
+      mockClient.getMediaProgress.mockRejectedValue(new AudiobookshelfApiError('down', 'network'));
+
+      await expect(makeService().service.pushPositionNow(USER_ID, ITEM_ID)).resolves.toEqual({ outcome: 'unreachable', reason: 'unreachable' });
+    });
+  });
+
   describe('sweep during an Audiobookshelf outage', () => {
     const rows = [
       bookState({ id: 1, absLibraryItemId: 'item-a' }),

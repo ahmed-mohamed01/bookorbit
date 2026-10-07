@@ -149,17 +149,20 @@ The linked-books review UI renders a local placeholder icon instead of a cover, 
 
 ## Position sync link
 
-The book's connections panel shows the Audiobookshelf item an audiobook's position syncs with. These routes are user-scoped and guarded by `Permission.AudiobookshelfSync`; the client wraps them as `fetchAudiobookshelfSyncLink`, `fetchAudiobookshelfSyncLive`, and `audiobookshelfCoverUrl`.
+The book's connections panel shows the Audiobookshelf item an audiobook's position syncs with. These routes are user-scoped and guarded by `Permission.AudiobookshelfSync`; the client wraps them as `fetchAudiobookshelfSyncLink`, `fetchAudiobookshelfSyncLive`, `reconcileAudiobookshelfPosition`, and `audiobookshelfCoverUrl`.
 
-| Method | Path                                                   | Request body | Expected response                                      |
-| ------ | ------------------------------------------------------ | ------------ | ------------------------------------------------------ |
-| `GET`  | `/api/v1/audiobookshelf/books/for-book/:bookId`        | None         | `AudiobookshelfBookSyncLink`, or `200` with empty body |
-| `GET`  | `/api/v1/audiobookshelf/books/:absLibraryItemId/live`  | None         | `AudiobookshelfBookSyncLive`                           |
-| `GET`  | `/api/v1/audiobookshelf/books/:absLibraryItemId/cover` | None         | Image bytes (proxied thumbnail)                        |
+| Method | Path                                                       | Request body                      | Expected response                                      |
+| ------ | ---------------------------------------------------------- | --------------------------------- | ------------------------------------------------------ |
+| `GET`  | `/api/v1/audiobookshelf/books/for-book/:bookId`            | None                              | `AudiobookshelfBookSyncLink`, or `200` with empty body |
+| `GET`  | `/api/v1/audiobookshelf/books/:absLibraryItemId/live`      | None                              | `AudiobookshelfBookSyncLive`                           |
+| `GET`  | `/api/v1/audiobookshelf/books/:absLibraryItemId/cover`     | None                              | Image bytes (proxied thumbnail)                        |
+| `POST` | `/api/v1/audiobookshelf/books/:absLibraryItemId/reconcile` | `{ direction: 'push' \| 'pull' }` | `AudiobookshelfBookSyncLive`                           |
 
 `for-book` reads BookOrbit's own tables only, so the stop renders with the other editions. It resolves a text edition or read-along to its linked audiobook, and answers an empty body when there is nothing to show: Audiobookshelf disabled or unconfigured, no position sync in either direction, no match, or the item in an excluded library. `AudiobookshelfBookSyncLink` is `{ audioBookId, absLibraryItemId, title, authorName, libraryName, direction, webUrl }`, with `direction` one of `two_way`, `from_abs`, `to_abs`.
 
-`live` asks Audiobookshelf itself (4 s timeout) and answers `{ status, progress }`, with `status` one of `synced`, `sending`, `receiving`, `unreachable`. The client treats a failed live request (non-2xx or network error) as `unreachable` so the stop always offers the Settings link.
+`live` asks Audiobookshelf itself (4 s timeout) and answers `{ status, progress, local, divergedReason }`, with `status` one of `synced`, `sending`, `receiving`, `unreachable`, `diverged`. `local` is BookOrbit's own audiobook position (`{ percentage, capturedAt }`) or `null`; `divergedReason` (`push_off`, `pull_refused`, `stale`) is set only with `diverged`. The client treats a failed live request (non-2xx or network error) as `unreachable` so the stop always offers the Settings link.
+
+`reconcile` applies one side's position to the other on an explicit user choice: `pull` applies the Audiobookshelf position to BookOrbit, `push` sends BookOrbit's position to Audiobookshelf, each bypassing the newest-wins and direction settings. It answers the fresh live status; `409` means a sync is already running.
 
 `cover` proxies the Audiobookshelf thumbnail through BookOrbit (the ABS token stays server side) with `Cache-Control: private, max-age=86400`. The `<img>` authenticates by session cookie like BookOrbit's own thumbnails and falls back to a local icon when it fails.
 
