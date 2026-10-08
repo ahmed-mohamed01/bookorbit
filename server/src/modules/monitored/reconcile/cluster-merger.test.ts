@@ -37,6 +37,33 @@ function cluster(...observations: Observation[]): WorkCluster {
 }
 
 describe('mergeCluster', () => {
+  it('stores the title without its marketing tail and keeps a real subtitle', () => {
+    const merged = mergeCluster(
+      cluster(observation('hardcover', { title: 'He Who Fights with Monsters 13: A LitRPG Adventure', subtitle: 'Book 13' })),
+      '2026-10-08',
+    );
+
+    expect(merged.title).toBe('He Who Fights with Monsters 13');
+    expect(merged.subtitle).toBe('Book 13');
+  });
+
+  it('drops a subtitle that only repeats the title with a marketing tail', () => {
+    const merged = mergeCluster(
+      cluster(observation('audible', { title: 'Upping the Ante', subtitle: 'Upping the Ante: A LitRPG Adventure' })),
+      '2026-10-08',
+    );
+
+    expect(merged.title).toBe('Upping the Ante');
+    expect(merged.subtitle).toBeNull();
+  });
+
+  it('leaves a title whose colon segment is part of the name alone', () => {
+    const merged = mergeCluster(cluster(observation('hardcover', { title: '2001: A Space Odyssey', subtitle: 'A Space Odyssey' })), '2026-10-08');
+
+    expect(merged.title).toBe('2001: A Space Odyssey');
+    expect(merged.subtitle).toBe('A Space Odyssey');
+  });
+
   it('keeps an unreleased Audible date as the audio date', () => {
     const work = mergeCluster(cluster(observation('audible', { releaseDate: '2027-04-12', releaseYear: 2027, precision: 'day' })), '2026-09-03');
 

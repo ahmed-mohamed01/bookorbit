@@ -25,6 +25,18 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * The title as a reader would write it, without the marketing tail a listing appends: "He Who
+ * Fights with Monsters 13: A LitRPG Adventure" is the book "He Who Fights with Monsters 13". The
+ * tail only ever narrows a tracker search and never names a different book, so the stored title
+ * drops it; `normalizeCore` drops the same tail for matching.
+ */
+export function stripEditionTail(title: string): string {
+  const trimmed = title.trim();
+  const stripped = trimmed.replace(EDITION_TAIL_PATTERN, '').trim();
+  return stripped.length >= 3 ? stripped : trimmed;
+}
+
 export function normalizeCore(title: string, seriesName?: string | null): string {
   let core = title;
   let previous: string;

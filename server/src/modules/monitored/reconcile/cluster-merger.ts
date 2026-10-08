@@ -1,6 +1,6 @@
 import type { MonitoredDatePrecision } from '@bookorbit/types';
 
-import { normalizeCore, normalizeText } from './observation-matcher';
+import { normalizeCore, normalizeText, stripEditionTail } from './observation-matcher';
 import type { MergedWork, Observation, ObservationSource, SeriesMembership, WorkCluster } from './observation.types';
 
 type DateChoice = {
@@ -13,6 +13,14 @@ function bySource(observations: Observation[], source: ObservationSource): Obser
   return observations
     .filter((observation) => observation.source === source)
     .sort((left, right) => right.popularity - left.popularity || left.id.localeCompare(right.id));
+}
+
+/** A subtitle that only repeats the title, with or without a marketing tail, says nothing. */
+function cleanSubtitle(subtitle: string | null, title: string): string | null {
+  if (!subtitle) return null;
+  const stripped = stripEditionTail(subtitle);
+  if (stripped.length === 0 || stripped.toLowerCase() === title.toLowerCase()) return null;
+  return stripped;
 }
 
 function firstValue<T>(
@@ -211,9 +219,9 @@ export function mergeCluster(cluster: WorkCluster, today: string): MergedWork {
   const hardcover = bySource(observations, 'hardcover');
   const canonicalHardcover = hardcover.filter((observation) => !observation.canonicalId)[0] ?? hardcover[0];
   const titleChoice = firstValue(observations, ['goodreads', 'audible'], (observation) => observation.title);
-  const title = canonicalHardcover?.title || titleChoice.value || observations[0].title;
+  const title = stripEditionTail(canonicalHardcover?.title || titleChoice.value || observations[0].title);
   const titleObservation = canonicalHardcover ?? titleChoice.observation ?? observations[0];
-  const subtitle = firstValue(observations, ['hardcover', 'goodreads', 'audible'], (observation) => observation.subtitle).value;
+  const subtitle = cleanSubtitle(firstValue(observations, ['hardcover', 'goodreads', 'audible'], (observation) => observation.subtitle).value, title);
   const consensusYear = medianYear(observations);
   const ebook = chooseFormatDate(observations, ['hardcover', 'goodreads'], consensusYear);
   const audio = chooseFormatDate(observations, ['audible'], consensusYear);
