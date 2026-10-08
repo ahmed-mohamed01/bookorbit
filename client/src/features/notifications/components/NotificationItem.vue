@@ -3,7 +3,20 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
-import { X, FolderSync, PackageOpen, Mail, ArrowRightLeft, FileDown, TriangleAlert, BookOpenCheck, Check, ChevronDown, Loader2 } from '@lucide/vue'
+import {
+  X,
+  FolderSync,
+  PackageOpen,
+  Mail,
+  ArrowRightLeft,
+  FileDown,
+  TriangleAlert,
+  BookOpenCheck,
+  Check,
+  ChevronDown,
+  Loader2,
+  PartyPopper,
+} from '@lucide/vue'
 import {
   NOTIFICATION_TYPE_META,
   NotificationSeverity,
@@ -45,6 +58,7 @@ const TYPE_ICON_OVERRIDES: Partial<Record<NotificationItem['type'], typeof Folde
   file_write_back_failed: FileDown,
   file_rename_completed: FileDown,
   file_rename_failed: FileDown,
+  monitored_release_available: PartyPopper,
 }
 
 const meta = computed(() => (NOTIFICATION_TYPE_META as Partial<Record<string, NotificationTypeMeta>>)[props.notification.type])

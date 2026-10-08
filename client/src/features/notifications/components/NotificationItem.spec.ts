@@ -293,6 +293,13 @@ describe('NotificationItem', () => {
       permissions.granted = new Set([Permission.BookRequestAccess])
     })
 
+    it('marks the announcement with the new-release icon', async () => {
+      const { wrapper } = await mountItem(release())
+
+      expect(wrapper.find('svg.lucide-party-popper').exists()).toBe(true)
+      expect(wrapper.find('svg.lucide-bell').exists()).toBe(false)
+    })
+
     it('offers one request button per format', async () => {
       const { wrapper } = await mountItem(release())
 
