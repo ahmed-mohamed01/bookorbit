@@ -1,6 +1,6 @@
 import type { MonitoredDatePrecision } from '@bookorbit/types';
 
-import { normalizeCore, normalizeText, stripEditionTail } from './observation-matcher';
+import { isEditionTail, normalizeCore, normalizeText, stripEditionTail } from './observation-matcher';
 import type { MergedWork, Observation, ObservationSource, SeriesMembership, WorkCluster } from './observation.types';
 
 type DateChoice = {
@@ -17,7 +17,7 @@ function bySource(observations: Observation[], source: ObservationSource): Obser
 
 /** A subtitle that only repeats the title, with or without a marketing tail, says nothing. */
 function cleanSubtitle(subtitle: string | null, title: string): string | null {
-  if (!subtitle) return null;
+  if (!subtitle || isEditionTail(subtitle)) return null;
   const stripped = stripEditionTail(subtitle);
   if (stripped.length === 0 || stripped.toLowerCase() === title.toLowerCase()) return null;
   return stripped;

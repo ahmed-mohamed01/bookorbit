@@ -37,6 +37,12 @@ export function stripEditionTail(title: string): string {
   return stripped.length >= 3 ? stripped : trimmed;
 }
 
+/** True when the whole value is such a tail, as a subtitle often is. */
+export function isEditionTail(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.replace(EDITION_TAIL_PATTERN, '').trim().length === 0;
+}
+
 export function normalizeCore(title: string, seriesName?: string | null): string {
   let core = title;
   let previous: string;

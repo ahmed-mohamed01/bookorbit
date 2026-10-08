@@ -57,6 +57,23 @@ describe('mergeCluster', () => {
     expect(merged.subtitle).toBeNull();
   });
 
+  it('keeps a published title and drops a subtitle that is only a marketing tail', () => {
+    const merged = mergeCluster(
+      cluster(
+        observation('hardcover', {
+          title: 'Azarinth Healer: Book Seven',
+          subtitle: 'A LitRPG Adventure',
+          seriesName: 'Azarinth Healer',
+          seriesIndex: '7',
+        }),
+      ),
+      '2026-10-08',
+    );
+
+    expect(merged.title).toBe('Azarinth Healer: Book Seven');
+    expect(merged.subtitle).toBeNull();
+  });
+
   it('leaves a title whose colon segment is part of the name alone', () => {
     const merged = mergeCluster(cluster(observation('hardcover', { title: '2001: A Space Odyssey', subtitle: 'A Space Odyssey' })), '2026-10-08');
 
