@@ -10026,6 +10026,14 @@
     "cancelBuildLabel": "Cancel the read-along build",
     "occurrences": "Happened {count} times",
     "occurrencesShort": "x{count}",
+    "showMore": "Show more",
+    "showLess": "Show less",
+    "request": {
+      "ebook": "Request ebook",
+      "audiobook": "Request audiobook"
+    },
+    "requested": "Requested",
+    "requestFailed": "Could not file the request",
     "preferences": {
       "title": "Notifications",
       "subtitle": "Choose which notification categories you want to receive.",

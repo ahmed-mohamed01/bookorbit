@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createI18n } from 'vue-i18n'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
-import { NotificationType, type NotificationItem } from '@bookorbit/types'
+import { NotificationType, Permission, type NotificationItem } from '@bookorbit/types'
 import en from '@/locales/en.json'
 import NotificationItemVue from './NotificationItem.vue'
 
@@ -12,6 +12,11 @@ vi.mock('@/lib/api', () => ({ api: (...args: unknown[]) => mockApi(...args) }))
 
 const toastError = vi.fn<(message: string) => void>()
 vi.mock('vue-sonner', () => ({ toast: { error: (message: string) => toastError(message) } }))
+
+const permissions = vi.hoisted(() => ({ granted: new Set<string>() }))
+vi.mock('@/features/auth/composables/usePermissions', () => ({
+  usePermissions: () => ({ hasPermission: (name: string) => permissions.granted.has(name) }),
+}))
 
 function notification(overrides: Partial<NotificationItem> = {}): NotificationItem {
   return {
@@ -34,7 +39,14 @@ async function mountItem(item: NotificationItem) {
     history: createMemoryHistory(),
     routes: [
       { path: '/', component: { template: '<div />' } },
-      { path: '/requests', component: { template: '<div />' } },
+      {
+        path: '/requests',
+        component: { template: '<router-view />' },
+        children: [
+          { path: ':id', name: 'book-request-detail', component: { template: '<div />' } },
+          { path: ':id/releases', name: 'book-request-releases', component: { template: '<div />' } },
+        ],
+      },
       { path: '/book/:id', component: { template: '<div />' } },
     ],
   })
@@ -199,6 +211,173 @@ describe('NotificationItem', () => {
       await flushPromises()
 
       expect(toastError).toHaveBeenCalledWith(en.book.detail.editionLink.readAlong.cancelUnavailable)
+    })
+  })
+
+  describe('expandable text', () => {
+    const CLAMP = '[-webkit-line-clamp:2]'
+    const long = () =>
+      notification({
+        title: 'He Who Fights with Monsters 13: A LitRPG Adventure is out now',
+        message: 'The ebook and audiobook of He Who Fights with Monsters 13: A LitRPG Adventure by Shirtaloon released on 2026-10-06.',
+      })
+
+    it('clamps the message to two lines and offers a collapsed toggle for long text', async () => {
+      const { wrapper } = await mountItem(long())
+
+      expect(wrapper.get('[data-testid="notification-message"]').classes()).toContain(CLAMP)
+      const toggle = wrapper.get('[data-testid="notification-expand"]')
+      expect(toggle.element.tagName).toBe('BUTTON')
+      expect(toggle.attributes('type')).toBe('button')
+      expect(toggle.attributes('aria-expanded')).toBe('false')
+      expect(toggle.attributes('aria-label')).toBe('Show more')
+    })
+
+    it('expands the text without opening the notification', async () => {
+      const { router, wrapper } = await mountItem(long())
+      const push = vi.spyOn(router, 'push')
+
+      await wrapper.get('[data-testid="notification-expand"]').trigger('click')
+
+      const toggle = wrapper.get('[data-testid="notification-expand"]')
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+      expect(toggle.attributes('aria-label')).toBe('Show less')
+      expect(wrapper.get('[data-testid="notification-message"]').classes()).not.toContain(CLAMP)
+      expect(push).not.toHaveBeenCalled()
+      expect(wrapper.emitted('read')).toBeUndefined()
+    })
+
+    it('opens a cut-off item in place on the first tap and leaves the sheet on the second', async () => {
+      const { router, wrapper } = await mountItem(long())
+      const push = vi.spyOn(router, 'push')
+
+      await wrapper.get('button').trigger('click')
+
+      expect(wrapper.get('[data-testid="notification-expand"]').attributes('aria-expanded')).toBe('true')
+      expect(wrapper.get('[data-testid="notification-message"]').classes()).not.toContain(CLAMP)
+      expect(wrapper.emitted('read')).toEqual([[1]])
+      expect(push).not.toHaveBeenCalled()
+
+      await wrapper.get('button').trigger('click')
+
+      expect(push).toHaveBeenCalledWith({ name: 'book-request-detail', params: { id: 42 } })
+    })
+
+    it('offers no toggle when the title and message fit', async () => {
+      const { wrapper } = await mountItem(notification())
+
+      expect(wrapper.find('[data-testid="notification-expand"]').exists()).toBe(false)
+      expect(wrapper.find('button button').exists()).toBe(false)
+    })
+
+    it('offers a toggle for a long title alone', async () => {
+      const { wrapper } = await mountItem(notification({ title: 'He Who Fights with Monsters 13: A LitRPG Adventure is out now', message: null }))
+
+      expect(wrapper.find('[data-testid="notification-expand"]').exists()).toBe(true)
+    })
+  })
+
+  describe('a monitored release announcement', () => {
+    const release = () =>
+      notification({
+        type: NotificationType.MonitoredReleaseAvailable,
+        title: 'New release: Dune',
+        message: 'Dune is out as an ebook and an audiobook',
+        actionUrl: '/monitored/authors/a1',
+        meta: { monitorAuthorId: 'a1', workId: 'w 1', formats: ['ebook', 'audiobook'], releaseDates: {} },
+      })
+
+    beforeEach(() => {
+      mockApi.mockReset()
+      toastError.mockReset()
+      permissions.granted = new Set([Permission.BookRequestAccess])
+    })
+
+    it('offers one request button per format', async () => {
+      const { wrapper } = await mountItem(release())
+
+      expect(wrapper.get('[data-testid="notification-request-ebook"]').text()).toBe('Request ebook')
+      expect(wrapper.get('[data-testid="notification-request-audiobook"]').text()).toBe('Request audiobook')
+    })
+
+    it('requests the format with auto-download without opening the notification', async () => {
+      let resolve!: (value: unknown) => void
+      mockApi.mockReturnValue(new Promise((r) => (resolve = r)))
+      const { router, wrapper } = await mountItem(release())
+      const push = vi.spyOn(router, 'push')
+
+      await wrapper.get('[data-testid="notification-request-ebook"]').trigger('click')
+
+      expect(mockApi).toHaveBeenCalledExactlyOnceWith('/api/v1/monitored/works/w%201/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: 'ebook', autoDownload: true }),
+      })
+      const pending = wrapper.get('[data-testid="notification-request-ebook"]')
+      expect(pending.attributes('disabled')).toBeDefined()
+      expect(pending.find('.animate-spin').exists()).toBe(true)
+
+      resolve({ ok: true, status: 200, json: () => Promise.resolve({ requestIds: { ebook: 9 } }) })
+      await flushPromises()
+
+      const done = wrapper.get('[data-testid="notification-request-ebook"]')
+      expect(done.text()).toBe('Requested')
+      expect(done.attributes('disabled')).toBeDefined()
+      expect(done.find('.lucide-check').exists()).toBe(true)
+      expect(wrapper.get('[data-testid="notification-request-audiobook"]').text()).toBe('Request audiobook')
+      expect(push).not.toHaveBeenCalled()
+      expect(wrapper.emitted('read')).toBeUndefined()
+    })
+
+    it('says so and returns to idle when the request fails', async () => {
+      mockApi.mockResolvedValue({ ok: false, status: 409, json: () => Promise.resolve({ message: 'Work is not monitored' }) })
+      const { wrapper } = await mountItem(release())
+
+      await wrapper.get('[data-testid="notification-request-ebook"]').trigger('click')
+      await flushPromises()
+
+      expect(toastError).toHaveBeenCalledExactlyOnceWith('Work is not monitored')
+      const button = wrapper.get('[data-testid="notification-request-ebook"]')
+      expect(button.text()).toBe('Request ebook')
+      expect(button.attributes('disabled')).toBeUndefined()
+    })
+
+    it('offers no request buttons without the request permission', async () => {
+      permissions.granted = new Set()
+      const { wrapper } = await mountItem(release())
+
+      expect(wrapper.find('[data-testid="notification-request-ebook"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="notification-request-audiobook"]').exists()).toBe(false)
+    })
+  })
+
+  describe('request deep links', () => {
+    it('opens the release picker for a request that needs a release', async () => {
+      const { router, wrapper } = await mountItem(notification({ type: NotificationType.BookRequestNeedsRelease, meta: { requestId: 42 } }))
+
+      await wrapper.findAll('button')[0].trigger('click')
+      await flushPromises()
+
+      expect(router.currentRoute.value.fullPath).toBe('/requests/42/releases')
+      expect(wrapper.emitted('read')).toEqual([[1]])
+    })
+
+    it('opens the request detail for any other request notification', async () => {
+      const { router, wrapper } = await mountItem(notification({ type: NotificationType.BookRequestFailed, meta: { requestId: 42 } }))
+
+      await wrapper.findAll('button')[0].trigger('click')
+      await flushPromises()
+
+      expect(router.currentRoute.value.fullPath).toBe('/requests/42')
+    })
+
+    it('falls back to the request list without a request id', async () => {
+      const { router, wrapper } = await mountItem(notification({ meta: null }))
+
+      await wrapper.findAll('button')[0].trigger('click')
+      await flushPromises()
+
+      expect(router.currentRoute.value.fullPath).toBe('/requests')
     })
   })
 })
