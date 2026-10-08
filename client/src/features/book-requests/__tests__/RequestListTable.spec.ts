@@ -5,6 +5,8 @@ import type { BookRequestItem } from '@bookorbit/types'
 import RequestListTable from '../components/RequestListTable.vue'
 
 const LONG_TITLE = 'Teddy and Booker T: How Two American Icons Blazed a Path for Racial Equality (Unabridged)'
+const UNREADABLE_PATH_REASON =
+  'The downloaded content is not readable at /Volumes/Data/downloads/torrents/complete/bookorbit/The_Fires_of_December_by_Brandon_Sanderson.epub'
 
 function request(overrides: Partial<BookRequestItem> = {}): BookRequestItem {
   return {
@@ -103,5 +105,30 @@ describe('RequestListTable', () => {
     const titleButton = wrapper.findAll('tbody button').find((button) => button.text() === LONG_TITLE)
 
     expect(titleButton?.text()).toBe(LONG_TITLE)
+  })
+
+  it('keeps an unbreakable failure path from widening the outcome column', () => {
+    const wrapper = render(request({ status: 'failed', statusReason: UNREADABLE_PATH_REASON }))
+    const failure = wrapper.findAll('tbody p').find((paragraph) => paragraph.text() === UNREADABLE_PATH_REASON)
+
+    expect(failure).toBeDefined()
+    expect(failure!.classes()).toEqual(expect.arrayContaining(['line-clamp-2', 'break-words']))
+    expect(failure!.attributes('title')).toBe(UNREADABLE_PATH_REASON)
+
+    const outcomeCell = failure!.element.parentElement
+    expect(outcomeCell?.tagName).toBe('TD')
+    expect(outcomeCell?.classList.contains('max-w-0')).toBe(true)
+  })
+
+  it('gives Outcome a share of the table and leaves Title as the only column without a width', () => {
+    const wrapper = render()
+    const headers = wrapper.findAll('thead th')
+    const titleHeader = headers.find((header) => header.attributes('aria-sort') !== undefined)
+    const outcomeHeader = headers.find((header) => header.text() !== '' && !header.find('button').exists())
+
+    expect(titleHeader).toBeDefined()
+    expect(outcomeHeader).toBeDefined()
+    expect(outcomeHeader!.classes()).toContain('w-1/5')
+    expect(titleHeader!.classes().some((cls) => cls.startsWith('w-'))).toBe(false)
   })
 })

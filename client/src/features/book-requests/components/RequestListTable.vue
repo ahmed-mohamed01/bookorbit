@@ -225,8 +225,10 @@ function handleGrab(request: BookRequestItem) {
 <template>
   <div class="rounded-lg border border-border bg-card">
     <!--
-      One list, two shapes. The table needs roughly 900px of columns before anything truncates, so
-      below `lg` the same rows stack rather than growing a horizontal scrollbar. Nothing wraps the
+      One list, two shapes. The fixed columns take about 700px, Outcome a fifth of the table and
+      Title whatever is left, so below `lg` the same rows stack rather than growing a horizontal
+      scrollbar. Outcome is a share rather than a width so a laptop keeps Title readable while a
+      wide screen gives long reasons room to finish. Nothing wraps the
       table in an overflow container on purpose: `overflow-x` would trap the sticky header inside a
       box that never scrolls vertically, and the header would stop sticking.
     -->
@@ -271,7 +273,7 @@ function handleGrab(request: BookRequestItem) {
             </button>
           </th>
 
-          <th scope="col" class="hidden w-36 px-3 py-2.5 text-start xl:table-cell" :aria-sort="ariaSort('requester')">
+          <th scope="col" class="hidden w-28 px-3 py-2.5 text-start xl:table-cell" :aria-sort="ariaSort('requester')">
             <button
               type="button"
               class="inline-flex items-center gap-1 rounded text-xs font-semibold tracking-wide text-muted-foreground uppercase transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-reduce:transition-none"
@@ -282,7 +284,7 @@ function handleGrab(request: BookRequestItem) {
             </button>
           </th>
 
-          <th scope="col" class="w-32 px-3 py-2.5 text-start" :aria-sort="ariaSort('createdAt')">
+          <th scope="col" class="w-28 px-3 py-2.5 text-start" :aria-sort="ariaSort('createdAt')">
             <button
               type="button"
               class="inline-flex items-center gap-1 rounded text-xs font-semibold tracking-wide text-muted-foreground uppercase transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-reduce:transition-none"
@@ -304,7 +306,7 @@ function handleGrab(request: BookRequestItem) {
             </button>
           </th>
 
-          <th scope="col" class="w-72 px-3 py-2.5 text-start text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          <th scope="col" class="w-1/5 px-3 py-2.5 text-start text-xs font-semibold tracking-wide text-muted-foreground uppercase">
             {{ t('bookRequests.table.outcome') }}
           </th>
 
@@ -373,7 +375,7 @@ function handleGrab(request: BookRequestItem) {
           </td>
 
           <!--
-            `max-w-0` with the header's `w-36`: an auto-layout table sizes a column to its widest
+            `max-w-0` with the header's `w-28`: an auto-layout table sizes a column to its widest
             content, so `truncate` alone never fires here and one long display name takes its width
             out of Title instead. Zero maximum plus a stated width is what holds the column still.
           -->
@@ -409,7 +411,7 @@ function handleGrab(request: BookRequestItem) {
             </div>
           </td>
 
-          <td class="px-3 text-xs" :class="isCompact ? 'py-1.5' : 'py-2.5'">
+          <td class="max-w-0 px-3 text-xs" :class="isCompact ? 'py-1.5' : 'py-2.5'">
             <template v-if="outcomeFor(request).kind === 'progress'">
               <div
                 class="h-1.5 w-full max-w-24 overflow-hidden rounded-full bg-muted"
@@ -430,7 +432,7 @@ function handleGrab(request: BookRequestItem) {
               </p>
             </template>
 
-            <p v-else-if="isFailure(request)" class="line-clamp-2 text-destructive">
+            <p v-else-if="isFailure(request)" class="line-clamp-2 break-words text-destructive" :title="failureFor(request) ?? undefined">
               {{ failureFor(request) ?? t('bookRequests.outcome.failedUnknown') }}
             </p>
 
@@ -439,7 +441,7 @@ function handleGrab(request: BookRequestItem) {
               reads "Looking for a release" - which is the one thing nothing is doing for it. When
               there is a reason on the row, the reason is the outcome.
             -->
-            <p v-else-if="failureFor(request)" class="line-clamp-2 text-muted-foreground">
+            <p v-else-if="failureFor(request)" class="line-clamp-2 text-muted-foreground" :title="failureFor(request) ?? undefined">
               {{ failureFor(request) }}
             </p>
 
@@ -541,7 +543,7 @@ function handleGrab(request: BookRequestItem) {
               :class="isFailure(request) ? 'text-destructive' : 'text-muted-foreground'"
             >
               <TriangleAlert v-if="isFailure(request)" :size="12" class="mt-0.5 shrink-0" aria-hidden="true" />
-              <span class="line-clamp-2">{{ failureFor(request) }}</span>
+              <span class="line-clamp-2 break-words">{{ failureFor(request) }}</span>
             </p>
             <p v-else-if="outcomeFor(request).kind === 'progress'" class="text-xs text-muted-foreground tabular-nums">
               {{ percentLabel(request) }}
