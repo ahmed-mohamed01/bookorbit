@@ -340,7 +340,7 @@ export class MonitoredService {
 
   /**
    * A catalog refresh with no HTTP concerns: fetch, re-resolve the local author, persist, and fan
-   * out unless told not to.
+   * out.
    *
    * Shared with the background sweep, which must not inherit the two things that belong to the
    * interactive route - the cooldown, which exists to stop a user hammering the button, and the 503
@@ -350,7 +350,6 @@ export class MonitoredService {
     monitor: MonitoredAuthorConfig,
     config: ProviderConfigurations,
     user: RequestUser,
-    fanOut = true,
   ): Promise<{ refreshed: MonitoredAuthorConfig; works: MonitoredWork[] }> {
     const result = await this.catalog.fetchCatalog(monitor, config);
     const probeStartedAt = Date.now();
@@ -380,24 +379,19 @@ export class MonitoredService {
       user,
     );
     let works = (await this.store.getCatalog(monitor.id, user))?.works ?? [];
-    if (fanOut) {
-      const outcome = await this.autoRequests.fanOut(refreshed, works, user);
-      if (outcome.created > 0) works = (await this.store.getCatalog(monitor.id, user))?.works ?? [];
-    }
+    const outcome = await this.autoRequests.fanOut(refreshed, works, user);
+    if (outcome.created > 0) works = (await this.store.getCatalog(monitor.id, user))?.works ?? [];
     return { refreshed, works };
   }
 
   /**
    * The background sweep's way in. Returns false when the owner has no usable Hardcover token, so
    * the scheduler can count a skip rather than treat a configuration gap as a failure.
-   *
-   * It refreshes and detects but never files requests: unattended requesting is the auto-request
-   * follow-up, and until it lands a request must trace back to a human clicking Refresh.
    */
   async refreshForSchedule(monitor: MonitoredAuthorConfig, owner: RequestUser): Promise<boolean> {
     const config = await this.providerConfigs.forUser(monitor.ownerUserId);
     if (!isHardcoverConfigured(config)) return false;
-    await this.runCatalogRefresh(monitor, config, owner, false);
+    await this.runCatalogRefresh(monitor, config, owner);
     return true;
   }
 

@@ -891,9 +891,7 @@ describe('MonitoredService', () => {
     await expect(instance.refreshAuthor(monitoredAuthor.id, viewer)).resolves.toMatchObject({ works: [] });
   });
 
-  // Unattended requesting is the auto-request follow-up; until then a request must trace back to
-  // a human clicking Refresh, so the scheduled path refreshes and persists but never fans out.
-  it('refreshes for the scheduler without filing requests', async () => {
+  it('refreshes for the scheduler and fans out like the interactive refresh', async () => {
     const monitoredAuthor = author({ localAuthorId: 7 });
     const monitoredWork = work();
     const store = {
@@ -919,7 +917,31 @@ describe('MonitoredService', () => {
       expect.objectContaining({ lastRefreshedAt: expect.anything() }),
       viewer,
     );
-    expect(fanOut).not.toHaveBeenCalled();
+    expect(fanOut).toHaveBeenCalledWith(monitoredAuthor, [monitoredWork], viewer);
+    expect(store.updateAuthorFields.mock.invocationCallOrder[0]).toBeLessThan(fanOut.mock.invocationCallOrder[0]);
+  });
+
+  it('re-reads the catalog after a scheduled fan-out files requests', async () => {
+    const monitoredAuthor = author({ localAuthorId: 7 });
+    const store = {
+      updateAuthorFields: vi.fn().mockResolvedValue(monitoredAuthor),
+      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [work()] }),
+    };
+    const instance = service(
+      store,
+      {},
+      {
+        catalog: { fetchCatalog: vi.fn().mockResolvedValue({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null }) },
+        autoRequests: { fanOut: vi.fn().mockResolvedValue({ created: 1, skipped: 0, failed: 0 }) },
+        authorsRepository: {
+          findByIdForEnrichment: vi.fn().mockResolvedValue({ description: 'bio', website: null, genres: [], hasPhoto: true }),
+        },
+      },
+    );
+
+    await instance.refreshForSchedule(monitoredAuthor, viewer);
+
+    expect(store.getCatalog).toHaveBeenCalledTimes(2);
   });
 
   it('probes after the catalog fetch and before reading the catalog or filing requests', async () => {

@@ -1,9 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import type { MonitoredAuthorConfig } from '@bookorbit/types';
+import type { MonitoredAuthorConfig, MonitoredWork } from '@bookorbit/types';
 
+import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { UserService } from '../user/user.service';
+import { autoRequestFormats, isRequestable, MonitoredAutoRequestService, submitThrottled } from './monitored-autorequest.service';
 import { MonitoredReleaseNotifier } from './monitored-release-notifier.service';
 import { MonitoredStoreService, type MonitoredDueRelease } from './monitored-store.service';
 import { releaseDueDay } from './release-window';
@@ -43,12 +45,16 @@ interface ReleaseSweepResult {
   seeded: number;
   announced: number;
   failed: number;
+  requested: number;
+  requestFailed: number;
 }
 
 export interface ReleaseCheckResult {
   seeded: number;
   announced: number;
   failed: number;
+  requested: number;
+  requestFailed: number;
   releases: MonitoredDueRelease[];
 }
 
@@ -60,8 +66,8 @@ export interface ReleaseCheckResult {
  * releases was never told anything. The sweep is pure SQL over dates the catalog already holds, so
  * it costs no provider call and runs on the hour regardless of whether a catalog sync is enabled.
  *
- * It deliberately stops at the notification. `checkMonitor` returns what it announced so the
- * auto-request path can consume the same list without the detection rules being written twice.
+ * For a format in an auto mode it then files the download request for what it just announced. The
+ * notification always goes first, so a refused or failed request never costs the owner the news.
  */
 @Injectable()
 export class MonitoredReleaseWatcher {
@@ -72,6 +78,7 @@ export class MonitoredReleaseWatcher {
     private readonly store: MonitoredStoreService,
     private readonly notifier: MonitoredReleaseNotifier,
     private readonly users: UserService,
+    private readonly autoRequests: MonitoredAutoRequestService,
   ) {}
 
   @Cron(RELEASE_SWEEP_CRON)
@@ -82,7 +89,15 @@ export class MonitoredReleaseWatcher {
     }
     this.sweeping = true;
     const startedAt = Date.now();
-    const totals: ReleaseSweepResult = { monitorsChecked: 0, monitorsFailed: 0, seeded: 0, announced: 0, failed: 0 };
+    const totals: ReleaseSweepResult = {
+      monitorsChecked: 0,
+      monitorsFailed: 0,
+      seeded: 0,
+      announced: 0,
+      failed: 0,
+      requested: 0,
+      requestFailed: 0,
+    };
     try {
       const monitors = await this.store.findMonitorsDueForReleaseCheck(MONITORS_PER_TICK);
       if (monitors.length === 0) return;
@@ -96,6 +111,8 @@ export class MonitoredReleaseWatcher {
           totals.seeded += result.seeded;
           totals.announced += result.announced;
           totals.failed += result.failed;
+          totals.requested += result.requested;
+          totals.requestFailed += result.requestFailed;
         } catch (error) {
           totals.monitorsFailed++;
           const errorClass = error instanceof Error ? error.constructor.name : 'UnknownError';
@@ -115,7 +132,7 @@ export class MonitoredReleaseWatcher {
       }
 
       this.logger.log(
-        `[monitored.release.sweep] [end] durationMs=${Date.now() - startedAt} monitorsChecked=${totals.monitorsChecked} monitorsFailed=${totals.monitorsFailed} seeded=${totals.seeded} announced=${totals.announced} failed=${totals.failed} - release sweep completed`,
+        `[monitored.release.sweep] [end] durationMs=${Date.now() - startedAt} monitorsChecked=${totals.monitorsChecked} monitorsFailed=${totals.monitorsFailed} seeded=${totals.seeded} announced=${totals.announced} failed=${totals.failed} requested=${totals.requested} requestFailed=${totals.requestFailed} - release sweep completed`,
       );
     } catch (error) {
       const errorClass = error instanceof Error ? error.constructor.name : 'UnknownError';
@@ -137,11 +154,11 @@ export class MonitoredReleaseWatcher {
    * nowhere else, from the stamp rather than from the presence of ledger rows: a monitor created
    * yesterday also has no rows, and reading that as "seed me" would swallow its first real release.
    *
-   * Returns the releases it announced so a caller can act on them further; the sweep ignores them.
+   * Returns the releases it announced so a caller can act on them further.
    */
   async checkMonitor(monitor: MonitoredAuthorConfig, suppliedStamp?: Date | null): Promise<ReleaseCheckResult> {
     const startedAt = Date.now();
-    const empty: ReleaseCheckResult = { seeded: 0, announced: 0, failed: 0, releases: [] };
+    const empty: ReleaseCheckResult = { seeded: 0, announced: 0, failed: 0, requested: 0, requestFailed: 0, releases: [] };
     const owner = await this.users.findByIdWithPermissions(monitor.ownerUserId);
     if (!owner) {
       await this.store.stampReleaseCheck(monitor.id, new Date());
@@ -213,10 +230,78 @@ export class MonitoredReleaseWatcher {
       }
     }
 
+    const { requested, requestFailed } = await this.requestAnnounced(monitor, owner, releases);
+
     // Stamped whatever happened: the stamp only says "the watcher has seen this monitor", and the
     // unnotified ledger rows are what carry a failure forward to the next tick.
     await this.store.stampReleaseCheck(monitor.id, new Date());
-    return { seeded: 0, announced, failed, releases };
+    return { seeded: 0, announced, failed, requested, requestFailed, releases };
+  }
+
+  /**
+   * Files the download request for each announced release in an auto format. A work the refresh
+   * fan-out already requested carries its request id by now and is skipped, which is what keeps the
+   * two paths from filing the same request twice.
+   */
+  private async requestAnnounced(
+    monitor: MonitoredAuthorConfig,
+    owner: RequestUser,
+    releases: MonitoredDueRelease[],
+  ): Promise<{ requested: number; requestFailed: number }> {
+    const formats = autoRequestFormats(monitor);
+    const wanted = releases.filter((release) => formats.includes(release.format));
+    if (wanted.length === 0) return { requested: 0, requestFailed: 0 };
+
+    let works: Map<string, MonitoredWork>;
+    const loadStartedAt = Date.now();
+    try {
+      works = await this.store.getComposedWorks([...new Set(wanted.map((release) => release.workId))], owner);
+    } catch (error) {
+      this.logRequestFailure(monitor, null, loadStartedAt, error);
+      return { requested: 0, requestFailed: wanted.length };
+    }
+
+    const candidates = wanted.flatMap((release) => {
+      const work = works.get(release.workId);
+      return work && isRequestable(work, release.format) ? [{ work, format: release.format }] : [];
+    });
+    const outcomes = await submitThrottled(candidates, async ({ work, format }, deferred) => {
+      const startedAt = Date.now();
+      const ids = `monitorId="${sanitizeLogValue(monitor.id)}" userId=${monitor.ownerUserId} workId="${sanitizeLogValue(work.id)}" format=${format}`;
+      this.logger.log(`[monitored.release.request] [start] ${ids} - release request started`);
+      try {
+        const updated = await this.autoRequests.submitWorkRequest(owner, monitor, work, format, { autoGrab: true, deferAutomation: deferred });
+        this.logger.log(
+          `[monitored.release.request] [end] ${ids} requestId=${updated.requestIds[format] ?? null} deferred=${deferred} durationMs=${Date.now() - startedAt} - release request filed`,
+        );
+        return updated;
+      } catch (error) {
+        this.logRequestFailure(monitor, { workId: work.id, format }, startedAt, error);
+        throw error;
+      }
+    });
+
+    let requested = 0;
+    let requestFailed = 0;
+    for (const outcome of outcomes) {
+      if (outcome.status === 'fulfilled') requested++;
+      else if (outcome.status === 'rejected') requestFailed++;
+    }
+    return { requested, requestFailed };
+  }
+
+  private logRequestFailure(
+    monitor: MonitoredAuthorConfig,
+    target: Pick<MonitoredDueRelease, 'workId' | 'format'> | null,
+    startedAt: number,
+    error: unknown,
+  ): void {
+    const errorClass = error instanceof Error ? error.constructor.name : 'UnknownError';
+    const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
+    const targetFields = target ? ` workId="${sanitizeLogValue(target.workId)}" format=${target.format}` : '';
+    this.logger.warn(
+      `[monitored.release.request] [fail] monitorId="${sanitizeLogValue(monitor.id)}" userId=${monitor.ownerUserId}${targetFields} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${message}" - release request failed`,
+    );
   }
 
   private logLeaseReleaseFailure(

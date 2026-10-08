@@ -59,6 +59,16 @@ describe('MonitoredSyncSchedulerService', () => {
     expect(store.stampSyncAttempt.mock.invocationCallOrder[0]).toBeLessThan(watcher.checkMonitor.mock.invocationCallOrder[0]);
   });
 
+  // refreshForSchedule is where the auto-request fan-out runs, so it must finish before the release
+  // check: works it just requested then carry a request id and the watcher's hand-off skips them.
+  it('finishes the refresh, fan-out included, before the release check starts', async () => {
+    const { scheduler, monitored, watcher } = harness();
+
+    await scheduler.runScheduledSync();
+
+    expect(monitored.refreshForSchedule.mock.invocationCallOrder[0]).toBeLessThan(watcher.checkMonitor.mock.invocationCallOrder[0]);
+  });
+
   it('does nothing at all when the operator has turned sync off', async () => {
     const { scheduler, store, monitored } = harness({ syncEnabled: false });
 
