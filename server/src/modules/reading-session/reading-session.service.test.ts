@@ -239,7 +239,9 @@ describe('ReadingSessionService', () => {
 const mockRepoExtended = {
   saveSession: vi.fn(),
   listByBook: vi.fn(),
+  listByBooks: vi.fn(),
   deleteSessionByBook: vi.fn(),
+  deleteSessionByBooks: vi.fn(),
   findBookContext: vi.fn(),
   findLatestEndProgressBefore: vi.fn(),
   insertManualSession: vi.fn(),
@@ -328,6 +330,94 @@ describe('ReadingSessionService - listByBook', () => {
     await svc.listByBook(10, makeUser({ id: 5 }), {});
 
     expect(mockRepoExtended.listByBook).toHaveBeenCalledWith(5, 10, 1, 25, 'startedAt', 'desc', undefined, undefined, undefined, 'UTC');
+  });
+});
+
+describe('ReadingSessionService - linked work scope', () => {
+  const emptyResult = { items: [], total: 0, page: 1, pageSize: 25, stats: {} };
+  const resolveScope = vi.fn();
+
+  function makeScopedService(withSource = true) {
+    return new ReadingSessionService(
+      mockRepoExtended as unknown as ReadingSessionRepository,
+      mockBookServiceExtended as unknown as BookService,
+      { emit: vi.fn() } as never,
+      mockUserStatistics as never,
+      withSource ? { resolveScope } : undefined,
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockBookServiceExtended.verifyBookAccess.mockResolvedValue(undefined);
+    mockRepoExtended.listByBook.mockResolvedValue(emptyResult);
+    mockRepoExtended.listByBooks.mockResolvedValue(emptyResult);
+    resolveScope.mockResolvedValue([
+      { bookId: 20, role: 'audio' },
+      { bookId: 10, role: 'text' },
+    ]);
+    vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+  });
+
+  it('lists only the requested book when no scope source is registered', async () => {
+    await makeScopedService(false).listByBook(10, makeUser({ id: 5 }), {});
+
+    expect(mockRepoExtended.listByBook).toHaveBeenCalledWith(5, 10, 1, 25, 'startedAt', 'desc', undefined, undefined, undefined, 'UTC');
+    expect(mockRepoExtended.listByBooks).not.toHaveBeenCalled();
+  });
+
+  it('merges every accessible member of the link with the requested book first', async () => {
+    const result = await makeScopedService().listByBook(10, makeUser({ id: 5 }), {});
+
+    expect(mockBookServiceExtended.verifyBookAccess).toHaveBeenCalledWith(20, expect.objectContaining({ id: 5 }));
+    expect(mockRepoExtended.listByBooks).toHaveBeenCalledWith(
+      5,
+      [10, 20],
+      new Map([
+        [10, 'text'],
+        [20, 'audio'],
+      ]),
+      1,
+      25,
+      'startedAt',
+      'desc',
+      undefined,
+      undefined,
+      undefined,
+      'UTC',
+    );
+    expect(result.scope).toEqual({
+      members: [
+        { bookId: 10, role: 'text' },
+        { bookId: 20, role: 'audio' },
+      ],
+    });
+  });
+
+  it.each([new ForbiddenException(), new NotFoundException()])('drops a counterpart the user cannot access (%s)', async (error) => {
+    mockBookServiceExtended.verifyBookAccess.mockResolvedValueOnce(undefined).mockRejectedValueOnce(error);
+
+    const result = await makeScopedService().listByBook(10, makeUser({ id: 5 }), {});
+
+    expect(mockRepoExtended.listByBook).toHaveBeenCalledWith(5, 10, 1, 25, 'startedAt', 'desc', undefined, undefined, undefined, 'UTC');
+    expect(mockRepoExtended.listByBooks).not.toHaveBeenCalled();
+    expect(result.scope).toBeUndefined();
+  });
+
+  it('rethrows unexpected counterpart access errors', async () => {
+    mockBookServiceExtended.verifyBookAccess.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('db down'));
+
+    await expect(makeScopedService().listByBook(10, makeUser({ id: 5 }), {})).rejects.toThrow('db down');
+  });
+
+  it('deletes a session from any accessible member of the link', async () => {
+    mockRepoExtended.deleteSessionByBooks.mockResolvedValue({ found: true });
+
+    await makeScopedService().deleteSessionByBook(10, 99, makeUser({ id: 5 }));
+
+    expect(mockRepoExtended.deleteSessionByBooks).toHaveBeenCalledWith(5, [10, 20], 99, 'UTC');
+    expect(mockRepoExtended.deleteSessionByBook).not.toHaveBeenCalled();
   });
 });
 

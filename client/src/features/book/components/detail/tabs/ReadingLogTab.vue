@@ -38,6 +38,7 @@ const {
   sessions,
   total,
   stats,
+  scope,
   loading,
   loadingMore,
   error,
@@ -292,6 +293,7 @@ const quickFilters = computed<{ label: string; value: QuickFilter }[]>(() => [
           class="max-h-[28rem] xl:col-start-2 xl:row-start-1 xl:max-h-none"
           :book-id="book.id"
           :sessions="sessions"
+          :scope="scope"
           :total="total"
           :sort-by="sortBy"
           :sort-dir="sortDir"

@@ -7,6 +7,7 @@ import * as schema from '../../db/schema';
 import { audiobookProgress, books, readingProgress } from '../../db/schema';
 import type { ExtraProgress, ExtraProgressSource } from '../book/extra-progress-source';
 import type { ReadAlongLink, ReadAlongLinkSource } from '../book/read-along-link-source';
+import type { ReadingSessionScopeMember, ReadingSessionScopeSource } from '../reading-session/reading-session-scope-source';
 import { bookEditionLinks } from './schema/edition-link.schema';
 
 type Db = NodePgDatabase<typeof schema>;
@@ -16,7 +17,7 @@ type Db = NodePgDatabase<typeof schema>;
 // row is deliberately never written by the alignment sync (it would clobber the precise CFI and defeat
 // the open-time resolver's newest-wins check), so the merge happens at card-read time instead.
 @Injectable()
-export class EditionLinkProgressService implements ExtraProgressSource, ReadAlongLinkSource {
+export class EditionLinkProgressService implements ExtraProgressSource, ReadAlongLinkSource, ReadingSessionScopeSource {
   constructor(@Inject(DB) private readonly db: Db) {}
 
   async findReadAlongLink(bookId: number): Promise<ReadAlongLink | null> {
@@ -28,6 +29,26 @@ export class EditionLinkProgressService implements ExtraProgressSource, ReadAlon
       )
       .limit(1);
     return row?.readAlongBookId != null ? { audioBookId: row.audioBookId, readAlongBookId: row.readAlongBookId } : null;
+  }
+
+  async resolveScope(bookId: number): Promise<ReadingSessionScopeMember[] | null> {
+    const [row] = await this.db
+      .select({
+        textBookId: bookEditionLinks.textBookId,
+        audioBookId: bookEditionLinks.audioBookId,
+        readAlongBookId: bookEditionLinks.readAlongBookId,
+      })
+      .from(bookEditionLinks)
+      .where(or(eq(bookEditionLinks.textBookId, bookId), eq(bookEditionLinks.audioBookId, bookId), eq(bookEditionLinks.readAlongBookId, bookId)))
+      .limit(1);
+    if (!row) return null;
+
+    const members: ReadingSessionScopeMember[] = [
+      { bookId: row.textBookId, role: 'text' },
+      { bookId: row.audioBookId, role: 'audio' },
+    ];
+    if (row.readAlongBookId != null) members.push({ bookId: row.readAlongBookId, role: 'readAlong' });
+    return members;
   }
 
   async findProgressForBooks(userId: number, bookIds: number[]): Promise<Map<number, ExtraProgress>> {

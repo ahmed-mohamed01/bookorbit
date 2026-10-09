@@ -621,6 +621,60 @@ describe('ReadingSessionRepository - listByBook', () => {
   });
 });
 
+describe('ReadingSessionRepository - listByBooks', () => {
+  function makeChain(result: unknown) {
+    const self: Record<string, unknown> = {};
+    const terminal = Promise.resolve(result);
+    for (const m of ['from', 'innerJoin', 'leftJoin', 'where', 'orderBy', 'limit', 'offset', 'groupBy']) {
+      self[m] = vi.fn().mockReturnValue(self);
+    }
+    self['then'] = (onFulfilled: (v: unknown) => unknown, onRejected: (e: unknown) => unknown) => terminal.then(onFulfilled, onRejected);
+    return self;
+  }
+
+  function makeRow(id: number, bookId: number, sessionType: string) {
+    const at = new Date('2026-04-15T10:00:00.000Z');
+    return {
+      id,
+      bookId,
+      sessionType,
+      bookFileId: null,
+      startedAt: at,
+      endedAt: at,
+      durationSeconds: 60,
+      progressDelta: null,
+      endProgress: null,
+      format: null,
+      source: 'web',
+      attemptId: 3,
+    };
+  }
+
+  it('returns each row with its book and the medium it was consumed in', async () => {
+    const rows = [makeRow(1, 10, 'read'), makeRow(2, 10, 'listen'), makeRow(3, 10, 'tts'), makeRow(4, 20, 'read'), makeRow(5, 30, 'read')];
+    const select = vi.fn().mockReturnValueOnce({ from: vi.fn().mockReturnValue(makeChain(rows)) });
+    for (let i = 0; i < 5; i++) select.mockReturnValueOnce({ from: vi.fn().mockReturnValue(makeChain([])) });
+    const repo = new ReadingSessionRepository({ select } as never);
+
+    const roles = new Map([
+      [10, 'text'],
+      [20, 'audio'],
+      [30, 'readAlong'],
+    ] as const);
+    const result = await repo.listByBooks(1, [10, 20, 30], roles, 1, 25, 'startedAt', 'desc');
+
+    expect(result.items.map((item) => [item.id, item.bookId, item.medium])).toEqual([
+      [1, 10, 'read'],
+      [2, 10, 'listened'],
+      [3, 10, 'listened'],
+      [4, 20, 'listened'],
+      [5, 30, 'read'],
+    ]);
+    expect(result.items[0]).not.toHaveProperty('sessionType');
+    expect(result.items.every((item) => item.attemptId === 3)).toBe(true);
+  });
+});
+
 describe('ReadingSessionRepository - findLatestEndProgress', () => {
   beforeEach(() => {
     vi.clearAllMocks();

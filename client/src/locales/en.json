@@ -6475,7 +6475,12 @@
           "attemptBegan": "Attempt {index} began",
           "attemptOutsideAny": "Outside any attempt",
           "empty": "No sessions recorded yet",
-          "emptyHint": "Open the book in the reader, sync a device, or add a session by hand."
+          "emptyHint": "Open the book in the reader, sync a device, or add a session by hand.",
+          "scopeAudio": "Includes listening from the linked audiobook",
+          "scopeText": "Includes reading from the linked ebook",
+          "scopeReadAlong": "Includes the read-along copy",
+          "mediumListened": "Listened",
+          "mediumRead": "Read"
         },
         "attempts": {
           "title": "Attempts",

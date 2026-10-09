@@ -48,7 +48,7 @@ async function exportCsv() {
   exporting.value = true
   try {
     const items = await props.exportAll()
-    const header = 'startedAt,endedAt,durationSeconds,progressDelta,endProgress,pacePercentPerHour,format,source'
+    const header = 'startedAt,endedAt,durationSeconds,progressDelta,endProgress,pacePercentPerHour,format,source,medium'
     const rows = items.map((s) =>
       [
         s.startedAt,
@@ -59,6 +59,7 @@ async function exportCsv() {
         pacePercentPerHour(s),
         s.format ?? '',
         s.source ?? '',
+        s.medium ?? '',
       ]
         .map(csvEscape)
         .join(','),

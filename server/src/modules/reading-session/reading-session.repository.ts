@@ -21,6 +21,7 @@ import { resolveTimeZone, toDateKeyInTimeZone } from '../../common/utils/timezon
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { bookFiles, books, readingSessionSyncCursors, readingSessions, userReadingDailyStats } from '../../db/schema';
+import type { ReadingSessionScopeRole } from './reading-session-scope-source';
 
 type Db = NodePgDatabase<typeof schema>;
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -424,10 +425,14 @@ export class ReadingSessionRepository {
   // Deliberately unscoped by the list filters: this feeds the book's progress ring, which
   // must not move when the reading log is filtered by date range or format.
   async findLatestEndProgress(userId: number, bookId: number): Promise<number | null> {
+    return this.findLatestEndProgressForBooks(userId, [bookId]);
+  }
+
+  async findLatestEndProgressForBooks(userId: number, bookIds: readonly number[]): Promise<number | null> {
     const [row] = await this.db
       .select({ endProgress: readingSessions.endProgress })
       .from(readingSessions)
-      .where(and(eq(readingSessions.userId, userId), eq(readingSessions.bookId, bookId), isNotNull(readingSessions.endProgress)))
+      .where(and(eq(readingSessions.userId, userId), inArray(readingSessions.bookId, [...bookIds]), isNotNull(readingSessions.endProgress)))
       .orderBy(desc(readingSessions.startedAt), desc(readingSessions.id))
       .limit(1);
 
@@ -446,7 +451,23 @@ export class ReadingSessionRepository {
     format?: string,
     timeZone = 'UTC',
   ): Promise<BookReadingSessionListResponse> {
-    const conditions = [eq(readingSessions.bookId, bookId), eq(readingSessions.userId, userId)];
+    return this.listByBooks(userId, [bookId], new Map(), page, pageSize, sortBy, sortDir, dateFrom, dateTo, format, timeZone);
+  }
+
+  async listByBooks(
+    userId: number,
+    bookIds: readonly number[],
+    roleByBookId: ReadonlyMap<number, ReadingSessionScopeRole>,
+    page: number,
+    pageSize: number,
+    sortBy: string,
+    sortDir: string,
+    dateFrom?: string,
+    dateTo?: string,
+    format?: string,
+    timeZone = 'UTC',
+  ): Promise<BookReadingSessionListResponse> {
+    const conditions = [inArray(readingSessions.bookId, [...bookIds]), eq(readingSessions.userId, userId)];
     if (dateFrom) conditions.push(gte(readingSessions.startedAt, new Date(dateFrom)));
     if (dateTo) conditions.push(lte(readingSessions.startedAt, new Date(dateTo)));
     if (format) conditions.push(eq(sql`upper(${bookFiles.format})`, format.toUpperCase()));
@@ -483,6 +504,8 @@ export class ReadingSessionRepository {
           format: sql<string | null>`nullif(${bookFiles.format}, '')`,
           source: readingSessions.source,
           attemptId: readingSessions.attemptId,
+          bookId: readingSessions.bookId,
+          sessionType: readingSessions.sessionType,
         })
         .from(readingSessions)
         .leftJoin(bookFiles, eq(bookFiles.id, readingSessions.bookFileId))
@@ -531,7 +554,7 @@ export class ReadingSessionRepository {
         .where(whereClause)
         .groupBy(readingSessions.source),
 
-      this.findLatestEndProgress(userId, bookId),
+      this.findLatestEndProgressForBooks(userId, bookIds),
     ]);
 
     const total = countRows[0]?.total ?? 0;
@@ -618,12 +641,19 @@ export class ReadingSessionRepository {
       format: r.format ?? null,
       source: r.source ?? null,
       attemptId: r.attemptId ?? null,
+      bookId: r.bookId,
+      // Audiobookshelf-ingested sessions keep the default session type, so the audio member's role is what marks them as listening.
+      medium: r.sessionType === 'listen' || r.sessionType === 'tts' || roleByBookId.get(r.bookId) === 'audio' ? 'listened' : 'read',
     }));
 
     return { items, total, page, pageSize, stats };
   }
 
   async deleteSessionByBook(userId: number, bookId: number, sessionId: number, timeZone = 'UTC'): Promise<{ found: boolean }> {
+    return this.deleteSessionByBooks(userId, [bookId], sessionId, timeZone);
+  }
+
+  async deleteSessionByBooks(userId: number, bookIds: readonly number[], sessionId: number, timeZone = 'UTC'): Promise<{ found: boolean }> {
     return this.db.transaction(async (tx) => {
       const [row] = await tx
         .select({
@@ -636,7 +666,7 @@ export class ReadingSessionRepository {
         })
         .from(readingSessions)
         .innerJoin(books, eq(books.id, readingSessions.bookId))
-        .where(and(eq(readingSessions.id, sessionId), eq(readingSessions.userId, userId), eq(readingSessions.bookId, bookId)))
+        .where(and(eq(readingSessions.id, sessionId), eq(readingSessions.userId, userId), inArray(readingSessions.bookId, [...bookIds])))
         .limit(1);
 
       if (!row) return { found: false };

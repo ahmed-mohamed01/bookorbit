@@ -169,4 +169,53 @@ describe('ReadingLogLedger', () => {
     const settled = mountLedger({ hasMore: false })
     expect(settled.findAll('button').some((button) => button.text() === 'Load more')).toBe(false)
   })
+  describe('merged linked-work log', () => {
+    const scope = {
+      members: [
+        { bookId: 10, role: 'text' as const },
+        { bookId: 20, role: 'audio' as const },
+        { bookId: 30, role: 'readAlong' as const },
+      ],
+    }
+
+    it('captions the merged log and marks each row as listened or read', () => {
+      const wrapper = mountLedger({
+        scope,
+        sessions: [makeSession({ id: 1, bookId: 20, medium: 'listened', attemptId: 99 }), makeSession({ id: 2, bookId: 10, medium: 'read' })],
+        total: 2,
+      })
+
+      expect(wrapper.find('[data-testid="reading-log-scope-caption"]').text()).toBe(
+        'Includes listening from the linked audiobook · Includes the read-along copy',
+      )
+      const markers = wrapper.findAll('[data-testid="reading-log-medium"]')
+      expect(markers.map((marker) => marker.attributes('aria-label'))).toEqual(['Listened', 'Read'])
+    })
+
+    it('renders neither caption nor medium markers for a standalone log', () => {
+      const wrapper = mountLedger({ sessions: [makeSession({ id: 1, bookId: 10, medium: 'read' })] })
+
+      expect(wrapper.find('[data-testid="reading-log-scope-caption"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="reading-log-medium"]').exists()).toBe(false)
+    })
+
+    it('does not rule off an attempt around a session from another member of the link', () => {
+      const wrapper = mountLedger({
+        scope,
+        sessions: [
+          makeSession({ id: 1, bookId: 10, startedAt: '2026-04-15T10:00:00.000Z', attemptId: 1 }),
+          makeSession({ id: 2, bookId: 20, startedAt: '2026-04-14T10:00:00.000Z', attemptId: 99, medium: 'listened' }),
+          makeSession({ id: 3, bookId: 10, startedAt: '2026-04-13T10:00:00.000Z', attemptId: 1 }),
+          makeSession({ id: 4, bookId: 20, startedAt: '2026-04-12T10:00:00.000Z', attemptId: 99, medium: 'listened' }),
+        ],
+        total: 4,
+        attempts: [makeAttempt({ id: 1 })],
+      })
+
+      const markers = wrapper.findAll('p').filter((row) => row.text().includes('began') || row.text().includes('Outside any attempt'))
+      // Only the tail rule for this book's own attempt; the foreign attempt id never becomes a rule.
+      expect(markers).toHaveLength(1)
+      expect(markers[0]!.text()).toContain('Attempt 1 began')
+    })
+  })
 })

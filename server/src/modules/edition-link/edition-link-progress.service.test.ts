@@ -58,4 +58,43 @@ describe('EditionLinkProgressService', () => {
     expect(query.sql).toContain('"read_along_book_id" is not null');
     expect(query.params).toEqual([9, 9]);
   });
+  describe('resolveScope', () => {
+    function makeScopeService(rows: unknown[]) {
+      const limit = vi.fn().mockResolvedValue(rows);
+      const chain = { from: vi.fn(), where: vi.fn(), limit };
+      chain.from.mockReturnValue(chain);
+      chain.where.mockReturnValue(chain);
+      return { service: new EditionLinkProgressService({ select: vi.fn().mockReturnValue(chain) } as never), chain };
+    }
+
+    it('returns every member of the link, the read-along copy included', async () => {
+      const { service, chain } = makeScopeService([{ textBookId: 10, audioBookId: 20, readAlongBookId: 30 }]);
+
+      await expect(service.resolveScope(20)).resolves.toEqual([
+        { bookId: 10, role: 'text' },
+        { bookId: 20, role: 'audio' },
+        { bookId: 30, role: 'readAlong' },
+      ]);
+
+      const query = new PgDialect().sqlToQuery(chain.where.mock.calls[0]![0]);
+      expect(query.sql).toContain('"text_book_id"');
+      expect(query.sql).toContain('"read_along_book_id"');
+      expect(query.params).toEqual([20, 20, 20]);
+    });
+
+    it('returns the text and audio members when the link has no read-along copy', async () => {
+      const { service } = makeScopeService([{ textBookId: 10, audioBookId: 20, readAlongBookId: null }]);
+
+      await expect(service.resolveScope(10)).resolves.toEqual([
+        { bookId: 10, role: 'text' },
+        { bookId: 20, role: 'audio' },
+      ]);
+    });
+
+    it('returns null when the book is not linked', async () => {
+      const { service } = makeScopeService([]);
+
+      await expect(service.resolveScope(10)).resolves.toBeNull();
+    });
+  });
 });

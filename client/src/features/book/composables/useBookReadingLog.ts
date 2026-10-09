@@ -1,5 +1,5 @@
 import { computed, ref, watch, type Ref } from 'vue'
-import type { BookReadingSession, BookReadingSessionListResponse, BookReadingSessionStats } from '@bookorbit/types'
+import type { BookReadingSession, BookReadingSessionListResponse, BookReadingSessionStats, ReadingLogScope } from '@bookorbit/types'
 import { api } from '@/lib/api'
 
 export interface AddReadingSessionPayload {
@@ -16,6 +16,7 @@ export function useBookReadingLog(bookIdRef: Ref<number>) {
   const sessions = ref<BookReadingSession[]>([])
   const total = ref(0)
   const stats = ref<BookReadingSessionStats | null>(null)
+  const scope = ref<ReadingLogScope | null>(null)
   const loading = ref(false)
   const loadingMore = ref(false)
   const error = ref<string | null>(null)
@@ -64,6 +65,7 @@ export function useBookReadingLog(bookIdRef: Ref<number>) {
       }
       total.value = data.total
       stats.value = data.stats
+      scope.value = data.scope ?? null
     } catch (e) {
       error.value = e instanceof Error ? e.message : 'Failed to load reading sessions'
     } finally {
@@ -88,6 +90,7 @@ export function useBookReadingLog(bookIdRef: Ref<number>) {
       const data: BookReadingSessionListResponse = await res.json()
       total.value = data.total
       stats.value = data.stats
+      scope.value = data.scope ?? null
     } catch {
       // Stats refresh is best-effort; the optimistic list update already happened.
     }
@@ -185,6 +188,7 @@ export function useBookReadingLog(bookIdRef: Ref<number>) {
     sessions,
     total,
     stats,
+    scope,
     loading,
     loadingMore,
     error,

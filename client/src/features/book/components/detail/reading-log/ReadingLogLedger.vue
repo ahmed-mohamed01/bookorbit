@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronDown, ChevronUp, ChevronsUpDown, Loader2, RotateCcw, Trash2, X } from '@lucide/vue'
-import type { BookReadingSession, ReadingAttempt, ReadingSessionSourceBucket } from '@bookorbit/types'
+import { BookOpen, ChevronDown, ChevronUp, ChevronsUpDown, Headphones, Loader2, RotateCcw, Trash2, X } from '@lucide/vue'
+import type { BookReadingSession, ReadingAttempt, ReadingLogScope, ReadingLogScopeMember, ReadingSessionSourceBucket } from '@bookorbit/types'
 import { toReadingSessionSourceBucket, READING_SESSION_SOURCE_BUCKET_LABELS } from '@bookorbit/types'
 import { formatDate } from '@/i18n/formatters'
 import { formatColorVar } from '@/features/book/lib/format-colors'
@@ -18,6 +18,7 @@ const props = defineProps<{
   loadingMore: boolean
   hasMore: boolean
   attempts: ReadingAttempt[]
+  scope?: ReadingLogScope | null
 }>()
 
 const emit = defineEmits<{
@@ -102,7 +103,29 @@ function formatEndProgress(endProgress: number | null): string {
 }
 
 function checkpointRoute(session: BookReadingSession) {
-  return buildReadingCheckpointRoute(props.bookId, session)
+  return buildReadingCheckpointRoute(session.bookId ?? props.bookId, session)
+}
+
+const SCOPE_CAPTION_KEY: Record<ReadingLogScopeMember['role'], string> = {
+  audio: 'book.detail.readingLog.ledger.scopeAudio',
+  text: 'book.detail.readingLog.ledger.scopeText',
+  readAlong: 'book.detail.readingLog.ledger.scopeReadAlong',
+}
+
+const scopeCaption = computed(() => {
+  if (!props.scope) return ''
+  return props.scope.members
+    .filter((member) => member.bookId !== props.bookId)
+    .map((member) => t(SCOPE_CAPTION_KEY[member.role]))
+    .join(' · ')
+})
+
+function mediumLabel(session: BookReadingSession): string {
+  return session.medium === 'listened' ? t('book.detail.readingLog.ledger.mediumListened') : t('book.detail.readingLog.ledger.mediumRead')
+}
+
+function isOwnSession(session: BookReadingSession): boolean {
+  return session.bookId == null || session.bookId === props.bookId
 }
 
 function sourceLabel(session: BookReadingSession): string {
@@ -157,12 +180,15 @@ type LedgerRow =
 const rows = computed<LedgerRow[]>(() => {
   const out: LedgerRow[] = []
   let previousDay: string | null = null
+  // Attempts belong to one record, so a merged log compares each own row with the previous own row only.
+  let previousOwn: BookReadingSession | null = null
   props.sessions.forEach((session, index) => {
     const dayKey = localDayKey(session.startedAt)
+    const own = isOwnSession(session)
     if (chronological.value && index > 0) {
-      const previous = props.sessions[index - 1]!
-      const previousKey = localDayKey(previous.startedAt)
-      if (session.attemptId !== previous.attemptId) {
+      const previousKey = localDayKey(props.sessions[index - 1]!.startedAt)
+      const previous = previousOwn
+      if (own && previous && session.attemptId !== previous.attemptId) {
         // The rule marks where the newer of the two attempts began, whichever way the list runs.
         // Sessions recorded while no attempt was open carry null, which is not an event.
         const newerAttemptId = props.sortDir === 'desc' ? previous.attemptId : session.attemptId
@@ -174,9 +200,10 @@ const rows = computed<LedgerRow[]>(() => {
     const startsDay = dayKey !== previousDay
     out.push({ kind: 'session', key: `s-${session.id}`, session, showDay: !chronological.value || startsDay, startsDay })
     previousDay = dayKey
+    if (own) previousOwn = session
   })
   // Only claim where the oldest attempt began once there is nothing older left to load.
-  const last = props.sessions[props.sessions.length - 1]
+  const last = previousOwn as BookReadingSession | null
   if (chronological.value && props.sortDir === 'desc' && last?.attemptId != null && !props.hasMore) {
     out.push({ kind: 'attempt', key: `a-tail-${last.id}`, attemptId: last.attemptId })
   }
@@ -249,6 +276,7 @@ function handleLoadMore() {
       <div class="ml-auto flex flex-wrap items-center gap-1.5">
         <slot name="actions" />
       </div>
+      <p v-if="scopeCaption" class="w-full text-[11px] text-muted-foreground" data-testid="reading-log-scope-caption">{{ scopeCaption }}</p>
     </header>
 
     <div v-if="sessions.length === 0 && loading" class="flex flex-1 flex-col gap-2 px-3 py-3" aria-hidden="true">
@@ -386,6 +414,22 @@ function handleLoadMore() {
               <template v-else>{{ formatEndProgress(row.session.endProgress) }}</template>
             </span>
             <span class="hidden min-w-0 items-center gap-1.5 lg:flex">
+              <template v-if="scope">
+                <Headphones
+                  v-if="row.session.medium === 'listened'"
+                  class="size-3.5 shrink-0 text-muted-foreground"
+                  :title="mediumLabel(row.session)"
+                  :aria-label="mediumLabel(row.session)"
+                  data-testid="reading-log-medium"
+                />
+                <BookOpen
+                  v-else
+                  class="size-3.5 shrink-0 text-muted-foreground"
+                  :title="mediumLabel(row.session)"
+                  :aria-label="mediumLabel(row.session)"
+                  data-testid="reading-log-medium"
+                />
+              </template>
               <span class="size-1.5 shrink-0 rounded-full" :style="{ backgroundColor: sourceColor(row.session) }" :title="sourceLabel(row.session)" />
               <span
                 v-if="row.session.format"
