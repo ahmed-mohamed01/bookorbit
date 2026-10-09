@@ -169,6 +169,16 @@ export interface CurrentlyReadingBook {
   /** The EPUB carrying media overlays, when the book has one. Null means no read-along. */
   readAlongFileId: number | null;
   hasAudio: boolean;
+  /**
+   * Editions linked into one work (an ebook, its audiobook, a generated read-along) share an id, so a
+   * client can show them as one entry. Absent or null when the book stands alone.
+   */
+  editionGroupId?: number | null;
+  /**
+   * When the reader last spent time with this edition: the end of its latest recorded reading session,
+   * ISO 8601. Reported only for a book in an edition group; null when no session was recorded.
+   */
+  lastActivityAt?: string | null;
 }
 
 export interface CurrentlyReadingWidgetData {

@@ -1,12 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, isNotNull, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, max, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
-import { audiobookProgress, books, readingProgress } from '../../db/schema';
+import { audiobookProgress, books, readingProgress, readingSessions } from '../../db/schema';
 import type { ExtraProgress, ExtraProgressSource } from '../book/extra-progress-source';
 import type { ReadAlongLink, ReadAlongLinkSource } from '../book/read-along-link-source';
+import type { CurrentlyReadingGroupMembership, CurrentlyReadingGroupSource } from '../dashboard/currently-reading-group-source';
 import type { ReadingSessionScopeMember, ReadingSessionScopeSource } from '../reading-session/reading-session-scope-source';
 import { bookEditionLinks } from './schema/edition-link.schema';
 
@@ -17,7 +18,7 @@ type Db = NodePgDatabase<typeof schema>;
 // row is deliberately never written by the alignment sync (it would clobber the precise CFI and defeat
 // the open-time resolver's newest-wins check), so the merge happens at card-read time instead.
 @Injectable()
-export class EditionLinkProgressService implements ExtraProgressSource, ReadAlongLinkSource, ReadingSessionScopeSource {
+export class EditionLinkProgressService implements ExtraProgressSource, ReadAlongLinkSource, ReadingSessionScopeSource, CurrentlyReadingGroupSource {
   constructor(@Inject(DB) private readonly db: Db) {}
 
   async findReadAlongLink(bookId: number): Promise<ReadAlongLink | null> {
@@ -70,5 +71,47 @@ export class EditionLinkProgressService implements ExtraProgressSource, ReadAlon
     // Raw execute() bypasses drizzle's column mapping, so timestamps arrive as strings: normalize to
     // Date here or the newest-wins comparison against real Date columns silently coerces to NaN.
     return new Map(result.rows.map((row) => [row.bookId, { percentage: row.percentage, updatedAt: new Date(row.at) }]));
+  }
+
+  // Activity comes from reading_sessions, never progress rows: the alignment sync projects audio position onto the
+  // ebook's reading_progress row, the ebook-to-audio projection stamps audiobook_progress.updated_at, and the
+  // Audiobookshelf sync writes the read-along row. A session is only recorded by a reader or player, or ingested from
+  // Audiobookshelf listening, so its latest ended_at is real activity.
+  async findGroupsForBooks(userId: number, bookIds: number[]): Promise<Map<number, CurrentlyReadingGroupMembership>> {
+    if (bookIds.length === 0) return new Map();
+
+    const links = await this.db
+      .select({
+        id: bookEditionLinks.id,
+        textBookId: bookEditionLinks.textBookId,
+        audioBookId: bookEditionLinks.audioBookId,
+        readAlongBookId: bookEditionLinks.readAlongBookId,
+      })
+      .from(bookEditionLinks)
+      .where(
+        or(
+          inArray(bookEditionLinks.textBookId, bookIds),
+          inArray(bookEditionLinks.audioBookId, bookIds),
+          inArray(bookEditionLinks.readAlongBookId, bookIds),
+        ),
+      );
+
+    const requested = new Set(bookIds);
+    const groupByBook = new Map<number, number>();
+    for (const link of links) {
+      for (const memberId of [link.textBookId, link.audioBookId, link.readAlongBookId]) {
+        if (memberId != null && requested.has(memberId)) groupByBook.set(memberId, link.id);
+      }
+    }
+    if (groupByBook.size === 0) return new Map();
+
+    const activity = await this.db
+      .select({ bookId: readingSessions.bookId, lastEndedAt: max(readingSessions.endedAt) })
+      .from(readingSessions)
+      .where(and(eq(readingSessions.userId, userId), inArray(readingSessions.bookId, [...groupByBook.keys()])))
+      .groupBy(readingSessions.bookId);
+    const lastEndedByBook = new Map(activity.map((row) => [row.bookId, row.lastEndedAt]));
+
+    return new Map([...groupByBook].map(([bookId, groupId]) => [bookId, { groupId, lastActivityAt: lastEndedByBook.get(bookId) ?? null }]));
   }
 }

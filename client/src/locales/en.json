@@ -8612,7 +8612,8 @@
       "currentlyReading": {
         "title": "Currently Reading",
         "empty": "No books in progress. Start reading one to see it here.",
-        "continueReading": "Continue reading"
+        "continueReading": "Continue reading",
+        "editions": "{count, plural, one {# edition} other {# editions}}"
       },
       "diversityScore": {
         "title": "Diversity Score",

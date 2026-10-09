@@ -5,6 +5,7 @@ import { EventEmitter } from 'events';
 import type { RequestUser } from '../../common/types/request-user';
 import { ACHIEVEMENT_EVENT_BOOK_STATUS_CHANGED } from '../achievement/achievement-events.service';
 import { pickAnnotationIndex } from './dashboard-widget.calculations';
+import type { CurrentlyReadingGroupSource } from './currently-reading-group-source';
 import { DashboardWidgetService } from './dashboard-widget.service';
 import { EMPTY_CONTENT_FILTER_RULES } from '@bookorbit/types';
 
@@ -28,7 +29,7 @@ function makeUser(overrides: Partial<RequestUser> = {}): RequestUser {
   };
 }
 
-function makeService() {
+function makeService(groupSource?: CurrentlyReadingGroupSource) {
   const widgetRepo = {
     countCompletedBooks: vi.fn(),
     getCurrentlyReadingBooks: vi.fn(),
@@ -50,7 +51,7 @@ function makeService() {
   };
 
   const achievementEvents = new EventEmitter();
-  const service = new DashboardWidgetService(widgetRepo as never, libraryService as never, achievementEvents as never);
+  const service = new DashboardWidgetService(widgetRepo as never, libraryService as never, achievementEvents as never, groupSource);
   service.onModuleInit();
   return { service, widgetRepo, libraryService, achievementEvents };
 }
@@ -105,6 +106,62 @@ describe('DashboardWidgetService', () => {
   });
 
   describe('getCurrentlyReading', () => {
+    const groupedBooks = (): CurrentlyReadingWidgetData => ({
+      books: [
+        { bookId: 10, title: 'Ebook', authors: [], progress: 40, hasCover: true },
+        { bookId: 20, title: 'Audiobook', authors: [], progress: 55, hasCover: true },
+        { bookId: 30, title: 'Standalone', authors: [], progress: 5, hasCover: false },
+      ] as unknown as CurrentlyReadingWidgetData['books'],
+    });
+
+    it('marks linked editions with their group and latest session end', async () => {
+      const findGroupsForBooks = vi.fn().mockResolvedValue(
+        new Map([
+          [10, { groupId: 3, lastActivityAt: new Date('2026-10-01T08:30:00.000Z') }],
+          [20, { groupId: 3, lastActivityAt: null }],
+        ]),
+      );
+      const { service, widgetRepo, libraryService } = makeService({ findGroupsForBooks });
+      libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
+      widgetRepo.getCurrentlyReadingBooks.mockResolvedValue(groupedBooks());
+
+      const result = await service.getCurrentlyReading(makeUser({ id: 7 }));
+
+      expect(findGroupsForBooks).toHaveBeenCalledWith(7, [10, 20, 30]);
+      expect(result.books[0]).toMatchObject({ bookId: 10, editionGroupId: 3, lastActivityAt: '2026-10-01T08:30:00.000Z' });
+      expect(result.books[1]).toMatchObject({ bookId: 20, editionGroupId: 3, lastActivityAt: null });
+      expect(result.books[2]).not.toHaveProperty('editionGroupId');
+      expect(result.books[2]).not.toHaveProperty('lastActivityAt');
+    });
+
+    it('returns the books unchanged when no group source is registered', async () => {
+      const { service, widgetRepo, libraryService } = makeService();
+      libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
+      widgetRepo.getCurrentlyReadingBooks.mockResolvedValue(groupedBooks());
+
+      await expect(service.getCurrentlyReading(makeUser())).resolves.toEqual(groupedBooks());
+    });
+
+    it('returns the undecorated books when the group source fails', async () => {
+      const findGroupsForBooks = vi.fn().mockRejectedValue(new Error('db down'));
+      const { service, widgetRepo, libraryService } = makeService({ findGroupsForBooks });
+      libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
+      widgetRepo.getCurrentlyReadingBooks.mockResolvedValue(groupedBooks());
+
+      await expect(service.getCurrentlyReading(makeUser())).resolves.toEqual(groupedBooks());
+      expect(findGroupsForBooks).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not ask the group source about an empty list', async () => {
+      const findGroupsForBooks = vi.fn();
+      const { service, widgetRepo, libraryService } = makeService({ findGroupsForBooks });
+      libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
+      widgetRepo.getCurrentlyReadingBooks.mockResolvedValue({ books: [] });
+
+      await expect(service.getCurrentlyReading(makeUser())).resolves.toEqual({ books: [] });
+      expect(findGroupsForBooks).not.toHaveBeenCalled();
+    });
+
     it('delegates to widgetRepo with accessible library ids', async () => {
       const { service, widgetRepo, libraryService } = makeService();
       const user = makeUser({ id: 7 });

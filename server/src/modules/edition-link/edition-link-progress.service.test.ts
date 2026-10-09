@@ -97,4 +97,58 @@ describe('EditionLinkProgressService', () => {
       await expect(service.resolveScope(10)).resolves.toBeNull();
     });
   });
+
+  describe('findGroupsForBooks', () => {
+    function makeGroupService(links: unknown[], sessions: unknown[]) {
+      const linkChain = { from: vi.fn(), where: vi.fn().mockResolvedValue(links) };
+      linkChain.from.mockReturnValue(linkChain);
+      const sessionChain = { from: vi.fn(), where: vi.fn(), groupBy: vi.fn().mockResolvedValue(sessions) };
+      sessionChain.from.mockReturnValue(sessionChain);
+      sessionChain.where.mockReturnValue(sessionChain);
+      const select = vi.fn().mockReturnValueOnce(linkChain).mockReturnValueOnce(sessionChain);
+      return { service: new EditionLinkProgressService({ select } as never), select, linkChain, sessionChain };
+    }
+
+    it('skips both queries when no book ids are requested', async () => {
+      const { service, select } = makeGroupService([], []);
+
+      await expect(service.findGroupsForBooks(7, [])).resolves.toEqual(new Map());
+      expect(select).not.toHaveBeenCalled();
+    });
+
+    it('groups every requested member under its link and reports the latest session end per member', async () => {
+      const { service, sessionChain } = makeGroupService(
+        [{ id: 4, textBookId: 10, audioBookId: 20, readAlongBookId: 30 }],
+        [
+          { bookId: 10, lastEndedAt: new Date('2026-10-01T08:00:00.000Z') },
+          { bookId: 30, lastEndedAt: new Date('2026-10-02T21:15:00.000Z') },
+        ],
+      );
+
+      const result = await service.findGroupsForBooks(7, [10, 20, 30]);
+
+      expect(result).toEqual(
+        new Map([
+          [10, { groupId: 4, lastActivityAt: new Date('2026-10-01T08:00:00.000Z') }],
+          [20, { groupId: 4, lastActivityAt: null }],
+          [30, { groupId: 4, lastActivityAt: new Date('2026-10-02T21:15:00.000Z') }],
+        ]),
+      );
+      const query = new PgDialect().sqlToQuery(sessionChain.where.mock.calls[0]![0]);
+      expect(query.sql).toContain('"user_id"');
+      expect(query.params).toEqual([7, 10, 20, 30]);
+    });
+
+    it('leaves out a member that was not requested and books without a link', async () => {
+      const { service, sessionChain } = makeGroupService(
+        [{ id: 4, textBookId: 10, audioBookId: 20, readAlongBookId: null }],
+        [{ bookId: 20, lastEndedAt: new Date('2026-10-03T07:00:00.000Z') }],
+      );
+
+      const result = await service.findGroupsForBooks(7, [20, 50]);
+
+      expect(result).toEqual(new Map([[20, { groupId: 4, lastActivityAt: new Date('2026-10-03T07:00:00.000Z') }]]));
+      expect(new PgDialect().sqlToQuery(sessionChain.where.mock.calls[0]![0]).params).toEqual([7, 20]);
+    });
+  });
 });
