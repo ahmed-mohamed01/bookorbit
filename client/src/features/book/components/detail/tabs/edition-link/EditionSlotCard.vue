@@ -135,9 +135,6 @@ function handleRebuild() {
             <TriangleAlert class="size-3.5" aria-hidden="true" />
             {{ t('book.detail.details.readAloudSync.state.notSyncing') }}
           </span>
-          <span v-else-if="progress === 0" class="ms-auto shrink-0 text-[11px] whitespace-nowrap" data-testid="edition-slot-not-started">
-            {{ t('book.detail.editionLink.notStarted') }}
-          </span>
           <div
             v-else-if="progress !== null"
             class="ms-auto flex shrink-0 items-center gap-1.5"

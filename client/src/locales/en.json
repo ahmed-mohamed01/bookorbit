@@ -6737,21 +6737,21 @@
             "unreachable": "Unreachable",
             "unreachableHint": "Could not reach Audiobookshelf.",
             "sending": "Sending",
-            "sendingHint": "A newer BookOrbit position is on its way to Audiobookshelf.",
+            "sendingHint": "Your newer position is on its way.",
             "receiving": "Newer in Audiobookshelf",
-            "receivingHint": "Audiobookshelf has a newer position.",
-            "receivingUpdated": "Updated {time} on Audiobookshelf.",
+            "receivingHint": "Picked up on the next sync.",
+            "receivingUpdated": "Updated {time}, picked up on the next sync.",
             "diverged": "Out of sync",
-            "divergedHint": "Audiobookshelf is at {abs}%, BookOrbit at {local}%.",
+            "divergedHint": "Audiobookshelf {abs}%, BookOrbit {local}%.",
             "divergedReason": {
-              "push_off": "Nothing is scheduled to send.",
+              "push_off": "Sending is off.",
               "pull_refused": "The last pull did not apply.",
               "stale": "Neither side has moved since the last sync."
             }
           },
-          "twoWay": "Two-way sync: the newer audiobook position wins on either side.",
-          "fromAbs": "One-way from Audiobookshelf: turn on \"Send BookOrbit progress to Audiobookshelf\" in settings to sync both ways.",
-          "toAbs": "One-way to Audiobookshelf: turn on \"Playback position\" in settings to sync both ways.",
+          "twoWay": "Two-way sync with Audiobookshelf.",
+          "fromAbs": "One-way from Audiobookshelf. Turn on sending in Settings.",
+          "toAbs": "One-way to Audiobookshelf. Turn on playback position in Settings.",
           "reconcile": {
             "push": "Send BookOrbit position",
             "pull": "Use Audiobookshelf position",
@@ -6807,7 +6807,7 @@
           "noMatchAudiobook": "BookOrbit couldn't find a matching audiobook in your libraries.",
           "noMatchEbook": "BookOrbit couldn't find a matching ebook in your libraries.",
           "linking": "Mapping audio to text. Both editions keep their own progress until linking finishes.",
-          "linked": "Progress syncs between these editions.",
+          "linked": "Positions sync between these editions.",
           "matchedReadOnly": "BookOrbit found a matching pair.",
           "linkedUnsynced": "Both editions keep their own progress.",
           "readAlongDetached": "This read-along was generated from these editions. Link them to sync positions again."

@@ -40,9 +40,14 @@ function makeLive(overrides: Partial<AudiobookshelfBookSyncLive> = {}): Audioboo
   }
 }
 
-function mountStop(link = makeLink(), live: AudiobookshelfBookSyncLive | null = makeLive(), checking = false) {
+function mountStop(
+  link = makeLink(),
+  live: AudiobookshelfBookSyncLive | null = makeLive(),
+  checking = false,
+  position: 'middle' | 'bottom' = 'middle',
+) {
   return mount(AudiobookshelfSyncStop, {
-    props: { link, live, checking, merged: true, connectorPlacement: 'left-5 size-5', position: 'middle' },
+    props: { link, live, checking, merged: true, connectorPlacement: 'left-5 size-5', position },
     global: { stubs },
   })
 }
@@ -189,6 +194,28 @@ describe('AudiobookshelfSyncStop', () => {
     })
   })
 
+  it('leaves the direction out of the open details when sync runs both ways', async () => {
+    await withMessages({ book: { detail: { editionLink: { abs: { twoWay: 'Both ways', status: { sendingHint: 'On its way' } } } } } }, async () => {
+      const wrapper = mountStop(makeLink(), makeLive({ status: 'sending' }))
+
+      await wrapper.get('[data-testid="edition-connector-abs"]').trigger('click')
+      const details = wrapper.get('[data-testid="edition-abs-details"]')
+      expect(details.text()).not.toContain('Both ways')
+      expect(details.text()).toContain('On its way')
+      expect(wrapper.get('[data-testid="edition-abs-hint"]').text()).toContain('Both ways')
+    })
+  })
+
+  it('stretches a middle rail with the card and ends the last rail at the cover', () => {
+    const middle = mountStop(makeLink(), makeLive(), false, 'middle').get('[data-testid="edition-abs-rail"]')
+    expect(middle.classes()).toContain('bottom-8')
+    expect(middle.classes()).not.toContain('h-16')
+
+    const bottom = mountStop(makeLink(), makeLive(), false, 'bottom').get('[data-testid="edition-abs-rail"]')
+    expect(bottom.classes()).toContain('h-16')
+    expect(bottom.classes()).not.toContain('bottom-8')
+  })
+
   it.each(['sending', 'receiving'] as const)('replaces the progress with the %s status', (status) => {
     const wrapper = mountStop(makeLink(), makeLive({ status }))
 
@@ -245,9 +272,7 @@ describe('AudiobookshelfSyncStop', () => {
       expect(wrapper.find('[data-testid="edition-abs-progress"]').exists()).toBe(false)
 
       await status.trigger('click')
-      expect(wrapper.get('[data-testid="edition-abs-status-hint"]').text()).toBe(
-        'Audiobookshelf is at 62%, BookOrbit at 19%. Nothing is scheduled to send.',
-      )
+      expect(wrapper.get('[data-testid="edition-abs-status-hint"]').text()).toBe('Audiobookshelf 62%, BookOrbit 19%. Sending is off.')
     })
 
     it.each([
@@ -319,7 +344,7 @@ describe('AudiobookshelfSyncStop', () => {
       const lastUpdate = new Date('2026-10-07T11:55:00.000Z').getTime()
       const wrapper = mountStop(makeLink(), makeLive({ status: 'receiving', progress: { percentage: 50, isFinished: false, lastUpdate } }))
 
-      expect(wrapper.get('[data-testid="edition-abs-status-hint"]').text()).toBe('Updated 5 minutes ago on Audiobookshelf.')
+      expect(wrapper.get('[data-testid="edition-abs-status-hint"]').text()).toBe('Updated 5 minutes ago, picked up on the next sync.')
       expect(wrapper.find('[data-testid="edition-abs-reconcile-push"]').exists()).toBe(false)
 
       const button = wrapper.get('[data-testid="edition-abs-reconcile-pull"]')
@@ -358,11 +383,13 @@ describe('AudiobookshelfSyncStop', () => {
     }
   })
 
-  it.each(['twoWay', 'fromAbs', 'toAbs', 'status.unreachableHint', 'status.sendingHint', 'status.receivingHint'])(
-    'keeps the %s hint to one sentence',
-    (key) => {
-      const text = i18n.global.t(`book.detail.editionLink.abs.${key}`)
-      expect(text.match(/[.!?](\s|$)/g)?.length ?? 0).toBe(1)
-    },
-  )
+  it.each(['twoWay', 'status.unreachableHint', 'status.sendingHint', 'status.receivingHint'])('keeps the %s hint to one sentence', (key) => {
+    const text = i18n.global.t(`book.detail.editionLink.abs.${key}`)
+    expect(text.match(/[.!?](\s|$)/g)?.length ?? 0).toBe(1)
+  })
+
+  it.each(['fromAbs', 'toAbs'])('keeps the %s hint to a direction and a fix', (key) => {
+    const text = i18n.global.t(`book.detail.editionLink.abs.${key}`)
+    expect(text.match(/[.!?](\s|$)/g)?.length ?? 0).toBe(2)
+  })
 })

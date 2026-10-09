@@ -459,7 +459,7 @@ describe('LinkEditionPanel', () => {
       alignmentState.builtAt.value = '2026-02-02T00:00:00.000Z'
       await nextTick()
 
-      expect(text(wrapper, 'link-edition-chip')).toBe('Linked')
+      expect(wrapper.find('[data-testid="link-edition-chip"]').exists()).toBe(false)
       expect(text(wrapper, 'link-edition-cta')).toBe('Generate read-along')
     })
 
@@ -513,7 +513,7 @@ describe('LinkEditionPanel', () => {
       const title = wrapper.get('[data-testid="edition-slot-read-along"] a')
       expect(title.text()).toBe('Dune (read-along)')
       expect(JSON.parse(title.attributes('href') ?? '{}')).toEqual({ name: 'book-detail', params: { bookId: 9 } })
-      expect(wrapper.find('[data-testid="edition-slot-read-along"] [data-testid="edition-slot-progress"]').exists()).toBe(false)
+      expect(wrapper.get('[data-testid="edition-slot-read-along"] [data-testid="edition-slot-progress"]').text()).toBe('0%')
 
       linkPair(
         makeMembers({
@@ -561,7 +561,7 @@ describe('LinkEditionPanel', () => {
       const wrapper = mountPanel()
 
       expect(wrapper.get('[data-testid="link-edition-panel"]').attributes('data-phase')).toBe('linking')
-      expect(text(wrapper, 'link-edition-intro')).not.toBe('Progress syncs between these editions.')
+      expect(text(wrapper, 'link-edition-intro')).not.toBe('Positions sync between these editions.')
 
       await click(wrapper, 'position-sync-toggle')
       await flushPromises()
@@ -592,10 +592,10 @@ describe('LinkEditionPanel', () => {
     it('merges the pair and shows progress, the synced map and Unlink', () => {
       const wrapper = mountPanel()
 
-      expect(text(wrapper, 'link-edition-chip')).toBe('Linked')
+      expect(wrapper.find('[data-testid="link-edition-chip"]').exists()).toBe(false)
       expect(wrapper.get('[data-testid="position-sync-toggle"]').attributes('aria-checked')).toBe('true')
       expect(wrapper.find('[data-testid="link-edition-footer"]').exists()).toBe(false)
-      expect(text(wrapper, 'link-edition-intro')).toBe('Progress syncs between these editions.')
+      expect(text(wrapper, 'link-edition-intro')).toBe('Positions sync between these editions.')
       const pair = wrapper.get('[data-testid="edition-pair"]')
       expect(pair.classes()).toContain('gap-0')
       expect(wrapper.get('[data-testid="edition-rail"]').classes()).toContain('opacity-100')
@@ -814,7 +814,7 @@ describe('LinkEditionPanel', () => {
       alignmentState.status.value = 'ready'
       const wrapper = mountPanel(makeBook('epub', 30))
 
-      expect(text(wrapper, 'link-edition-chip')).toBe('Linked')
+      expect(wrapper.find('[data-testid="link-edition-chip"]').exists()).toBe(false)
       expect(wrapper.find('[data-testid="link-edition-footer"]').exists()).toBe(false)
       expect(wrapper.find('[data-testid="edition-slot-read-along"] [data-testid="edition-slot-this-book"]').exists()).toBe(true)
       expect(wrapper.find('[data-testid="read-along-section"]').exists()).toBe(false)

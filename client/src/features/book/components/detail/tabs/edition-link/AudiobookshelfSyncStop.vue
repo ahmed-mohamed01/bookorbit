@@ -31,6 +31,9 @@ const railClass = computed(() => {
   return twoWay.value ? 'opacity-100 bg-success/40' : 'opacity-100 bg-warning/50'
 })
 
+// A middle stop's rail ends where the next divider's segment begins, so it stays joined however tall the card grows.
+const railHeightClass = computed(() => (props.position === 'middle' ? 'bottom-8' : 'h-16'))
+
 const connectorClass = computed(() =>
   twoWay.value
     ? 'border-2 border-popover bg-success text-success-foreground ring-2 ring-success/25'
@@ -187,18 +190,20 @@ function toggleDetails() {
     role="group"
     :aria-label="t('book.detail.editionLink.abs.label')"
     :aria-describedby="hintId"
+    class="relative"
     data-testid="edition-abs-stop"
     :data-direction="link.direction"
   >
     <p :id="hintId" class="sr-only" data-testid="edition-abs-hint">
       {{ directionHint }}<template v-if="statusHint"> {{ statusHint }}</template>
     </p>
+    <div
+      aria-hidden="true"
+      class="pointer-events-none absolute -top-8 left-5 w-0.5 -translate-x-1/2 rounded-full transition-all duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+      :class="[railClass, railHeightClass]"
+      data-testid="edition-abs-rail"
+    />
     <div class="relative h-0">
-      <div
-        aria-hidden="true"
-        class="pointer-events-none absolute -top-8 left-5 h-16 w-0.5 -translate-x-1/2 rounded-full transition-all duration-700 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
-        :class="railClass"
-      />
       <div
         aria-hidden="true"
         class="pointer-events-none absolute top-0 right-0 left-9.5 h-px bg-border/60 transition-opacity duration-700"
@@ -338,7 +343,7 @@ function toggleDetails() {
             class="mt-1 space-y-0.5 text-[11px] text-pretty text-muted-foreground"
             data-testid="edition-abs-details"
           >
-            <p>{{ directionHint }}</p>
+            <p v-if="!twoWay">{{ directionHint }}</p>
             <p v-if="statusHint" data-testid="edition-abs-status-hint">{{ statusHint }}</p>
             <p v-if="actionError" class="text-destructive" role="status" data-testid="edition-abs-reconcile-error">{{ actionError }}</p>
             <div v-if="detailActions.length" class="flex flex-wrap gap-1.5 pt-1">

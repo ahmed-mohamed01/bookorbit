@@ -220,7 +220,7 @@ export function useLinkEditionPanel(book: () => BookDetail) {
       coverVersion: isThisBook ? book().coverVersion : member.coverVersion,
       title: member.title,
       authorName: member.authorName,
-      // A linked member with no progress record has not been started yet, which the slot says outright.
+      // A linked member with no progress record has not been started yet, so the slot shows it at 0%.
       progress: member.progress?.percentage ?? 0,
       isThisBook,
       match: null,

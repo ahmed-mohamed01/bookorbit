@@ -58,6 +58,9 @@ const syncActionLabel = computed(() =>
   sync.isRebuild.value ? t('book.detail.editionLink.actions.rebuildSync') : t('book.detail.editionLink.actions.buildSync'),
 )
 
+// The switched-on toggle already says the pair is linked, so the chip only speaks up for any other state.
+const showChip = computed(() => syncChip.value !== null || props.panel.chipKey !== 'book.detail.editionLink.chip.linked')
+
 const chipClass = computed(() => {
   if (syncChip.value) return syncChip.value.class
   switch (props.panel.phase) {
@@ -216,6 +219,7 @@ async function handleUnlink() {
       <h2 class="min-w-0 flex-1 truncate text-base font-semibold text-foreground">{{ t('book.detail.readingAlignment.title') }}</h2>
       <template v-if="!panel.initialLoading">
         <span
+          v-if="showChip"
           class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap"
           :class="chipClass"
           aria-live="polite"
