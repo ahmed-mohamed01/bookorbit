@@ -6,6 +6,7 @@ import { ReadingAlignmentRepository } from './reading-alignment.repository';
 import { READING_ALIGNMENT_SCHEMA_SQL } from './schema/reading-alignment-schema';
 
 const TABLE_NAMES = ['audiobook_alignment', 'audiobook_alignment_anchor'] as const;
+const READING_PROGRESS_COLUMN_NAMES = ['alignment_projected_at'] as const;
 
 @Injectable()
 export class ReadingAlignmentSchemaBootstrapService implements OnApplicationBootstrap {
@@ -18,14 +19,15 @@ export class ReadingAlignmentSchemaBootstrapService implements OnApplicationBoot
 
     try {
       const missing = await this.repo.findMissingTables(TABLE_NAMES);
+      const missingColumns = await this.repo.findMissingColumns('reading_progress', READING_PROGRESS_COLUMN_NAMES);
       const statements = splitSchemaStatements(READING_ALIGNMENT_SCHEMA_SQL);
 
       await this.repo.applySchemaStatements(statements);
       const interruptedBuildsReset = await this.repo.failInterruptedBuilds();
 
-      if (missing.length > 0 || interruptedBuildsReset > 0) {
+      if (missing.length > 0 || missingColumns.length > 0 || interruptedBuildsReset > 0) {
         this.logger.log(
-          `[reading_alignment.schema_bootstrap] [end] durationMs=${Date.now() - startedAt} tablesCreated=${missing.length} interruptedBuildsReset=${interruptedBuildsReset} - schema bootstrap completed`,
+          `[reading_alignment.schema_bootstrap] [end] durationMs=${Date.now() - startedAt} tablesCreated=${missing.length} columnsAdded=${missingColumns.length} interruptedBuildsReset=${interruptedBuildsReset} - schema bootstrap completed`,
         );
       }
     } catch (err) {

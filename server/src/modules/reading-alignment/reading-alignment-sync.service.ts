@@ -12,7 +12,7 @@ import { BookService } from '../book/book.service';
 import { LibraryService } from '../library/library.service';
 import { UserService } from '../user/user.service';
 import { absoluteSecondsToFilePosition, buildAudioTimeline, filePositionToAbsoluteSeconds } from './reading-alignment-audio-timeline.util';
-import { clampToPresent, isStrictlyNewer } from './reading-alignment-freshness.util';
+import { clampToPresent, ebookActivityTime, isProjectedEbookProgress, isStrictlyNewer } from './reading-alignment-freshness.util';
 import { describeError } from './reading-alignment-error.util';
 import { classifyMovement, type MovementState } from './reading-alignment-movement.util';
 import type { ReadingAlignmentPair } from './reading-alignment-pair.service';
@@ -116,7 +116,7 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
   // audiobook is the preferred side, but it only pulls the ebook's reading state forward when it is
   // BOTH the more recently active side AND positionally ahead; an ebook with newer activity is left
   // untouched until real listening resumes. Never writes a position - the ebook keeps its own CFI and
-  // the open-time resolver provides the precise jump.
+  // the open-time resolver provides the precise jump. A projected ebook row counts as no ebook activity.
   async reconcilePairOnReady(pair: ReadingAlignmentPair, userId: number): Promise<void> {
     const startedAt = Date.now();
     try {
@@ -139,9 +139,10 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
       // A 0% row (e.g. an untouched ABS import) must not clamp to the first anchor and flip an
       // unread ebook to "reading".
       if (audioProgress.percentage <= 0) return this.logReconcileEnd(pair, userId, startedAt, 'audio_not_started');
-      // KOReader deliberately freezes reading_progress.updatedAt, so ebook recency must come from
-      // lastReadAt - the honest last-actually-read column - with updatedAt as a safety fallback.
-      const ebookActiveAt = ebookProgress ? (ebookProgress.lastReadAt ?? ebookProgress.updatedAt) : undefined;
+      // A projected ebook row carries no reading activity or position of its own: the audiobook put it
+      // there, so it never blocks the audiobook from pulling the ebook forward.
+      const ebookActiveAt = ebookActivityTime(ebookProgress);
+      const ebookIsProjection = ebookProgress != null && isProjectedEbookProgress(ebookProgress);
       if (ebookActiveAt && !isStrictlyNewer(audioProgress.updatedAt, ebookActiveAt)) {
         return this.logReconcileEnd(pair, userId, startedAt, 'ebook_newer');
       }
@@ -157,15 +158,17 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
       // but only when its source actually marked it read; a bare percentage can be a parked scrub.
       const finished = (await this.isFinished(pair.audioBookId, audioProgress.percentage)) && (await this.isMarkedRead(userId, pair.audioBookId));
       const projectedPercentage = finished ? MAX_PERCENTAGE : resolution.percentage;
-      if (projectedPercentage <= (ebookProgress?.percentage ?? 0)) {
+      const ebookOwnPercentage = ebookIsProjection ? 0 : (ebookProgress?.percentage ?? 0);
+      if (projectedPercentage <= ebookOwnPercentage) {
         return this.logReconcileEnd(pair, userId, startedAt, 'audio_not_ahead');
       }
 
       if (
         projectedPercentage >= MAX_PERCENTAGE &&
         ebookProgress &&
+        ebookActiveAt &&
         ebookProgress.percentage < ESTABLISHED_EBOOK_PERCENTAGE &&
-        Date.now() - (ebookProgress.lastReadAt ?? ebookProgress.updatedAt).getTime() < RECENT_EBOOK_ACTIVITY_MS
+        Date.now() - ebookActiveAt.getTime() < RECENT_EBOOK_ACTIVITY_MS
       ) {
         return this.logReconcileEnd(pair, userId, startedAt, 'ebook_recently_active');
       }
@@ -313,12 +316,13 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     this.logEnd(payload, pair, 'ebook_to_audio', audioPercentage, startedAt);
   }
 
-  // Audio advancing deliberately does NOT write a position onto the ebook row. A coarse percentage
-  // projected here would (a) clobber the reader's precise CFI and (b) stamp the ebook row with the
-  // audio activity time, which defeats the open-time cross-format resolver's newest-wins check and
-  // leaves it unable to fire. Instead the ebook keeps its own last-read position, and the resolver
-  // provides a precise phrase-based resume when the ebook is opened. Only read-status is kept in sync
-  // here so finishing (or starting) the audiobook still advances the ebook's status.
+  // Audio advancing writes a percentage-only projection onto the ebook row, marked by the fork-owned
+  // alignment_projected_at column, so every view of the ebook's own progress agrees with the audiobook.
+  // The stored CFI is never touched, so the reader keeps its precise position and its Undo target. On
+  // update the row's updated_at and last_read_at are left alone, so the projection carries no reading
+  // activity: the open-time resolver still sees the audiobook as the fresher side and jumps to the exact
+  // narrated phrase. A real read bumps last_read_at past the projection time and the row is a real read
+  // again. Read status is kept in sync as before.
   private async projectAudioToEbook(
     payload: BookProgressChangedPayload,
     pair: ReadingAlignmentPair,
@@ -336,9 +340,11 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     // sound fallback; occurredAt still wins when a source reports a real activity time.
     const advancedAt = clampToPresent(payload.occurredAt ?? audioProgress.updatedAt, MAX_OCCURRED_AT_SKEW_MS);
     const ebookProgress = await this.repo.getReadingProgress(ebookFileId, payload.userId);
-    // KOReader freezes reading_progress.updatedAt; lastReadAt carries the real reading recency, so
-    // an actively re-read ebook is never dragged forward by stale audio events.
-    const ebookActiveAt = ebookProgress ? (ebookProgress.lastReadAt ?? ebookProgress.updatedAt) : undefined;
+    // A projection is compared against its own projection time, so a re-delivered or out-of-order audio
+    // event is a no-op. A real read is compared against its real activity, so an actively re-read ebook
+    // is never dragged forward by stale audio events.
+    const ebookActiveAt =
+      ebookProgress && isProjectedEbookProgress(ebookProgress) ? ebookProgress.alignmentProjectedAt! : ebookActivityTime(ebookProgress);
     if (!isStrictlyNewer(advancedAt, ebookActiveAt)) return;
 
     const timeline = buildAudioTimeline(await this.repo.resolveAudioPlayOrder(pair.audioBookId));
@@ -360,8 +366,15 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     if (!resolution) return;
 
     const ebookPercentage = finished ? MAX_PERCENTAGE : resolution.percentage;
+    // Never store a future projection time: a real read inside the skew window must un-project the row.
+    const projectedAt = clampToPresent(advancedAt, 0);
 
     this.logStart(payload, pair, 'audio_to_ebook');
+    // No progress event follows this write: its listeners (achievements, Storygraph, Hardcover, the
+    // Audiobookshelf push) must run off real activity only, and the client already refreshes off the
+    // audiobook's own event.
+    const applied = await this.repo.projectReadingProgress(payload.userId, ebookFileId, ebookPercentage, projectedAt);
+    if (!applied) return this.logSkippedStale(payload, pair, 'audio_to_ebook', startedAt);
     await this.syncCounterpartStatus(payload.userId, pair.textBookId, pair.audioBookId, audioProgress.percentage, ebookPercentage);
     this.logEnd(payload, pair, 'audio_to_ebook', ebookPercentage, startedAt);
   }

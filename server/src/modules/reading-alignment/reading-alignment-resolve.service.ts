@@ -5,7 +5,7 @@ import { BookService } from '../book/book.service';
 import { EpubService } from '../reader/epub/epub.service';
 import { buildAudioTimeline, filePositionToAbsoluteSeconds } from './reading-alignment-audio-timeline.util';
 import { computeAnchorFraction } from './reading-alignment-fraction.util';
-import { isStrictlyNewer } from './reading-alignment-freshness.util';
+import { ebookActivityTime, type EbookProgressActivity, isStrictlyNewer } from './reading-alignment-freshness.util';
 import type { ReadingAlignmentPair } from './reading-alignment-pair.service';
 import { ReadingAlignmentPairService } from './reading-alignment-pair.service';
 import type { Anchor } from './reading-alignment-resolver.util';
@@ -31,7 +31,8 @@ export class ReadingAlignmentResolveService {
   ) {}
 
   // Resolve where to resume in the ebook when audiobook progress is strictly newer. Read-only: no
-  // progress is written and no projection is persisted beyond backfilling missing anchor fractions.
+  // progress is written here and nothing is persisted beyond backfilling missing anchor fractions (the
+  // live ebook projection is written by the sync service, never by this resolver).
   async resolveResume(bookId: number, user: RequestUser): Promise<CrossFormatResume> {
     this.logger.log(`[${RESOLVE_EVENT}] [start] bookId=${bookId} userId=${user.id} - cross-format resume started`);
 
@@ -95,13 +96,15 @@ export class ReadingAlignmentResolveService {
   private async resolveEbookResume(
     audioBookId: number,
     anchors: Anchor[],
-    ebookProgress: { updatedAt: Date; lastReadAt?: Date } | undefined,
+    ebookProgress: EbookProgressActivity | undefined,
     audioProgress: { currentFileId: number; positionSeconds: number; updatedAt: Date } | undefined,
   ): Promise<CrossFormatResume> {
     if (!audioProgress) return UNAVAILABLE;
-    // KOReader freezes reading_progress.updatedAt; lastReadAt carries the real reading recency, so a
-    // user actively re-reading on a device is never yanked forward to a stale audio position.
-    const ebookActiveAt = ebookProgress ? (ebookProgress.lastReadAt ?? ebookProgress.updatedAt) : undefined;
+    // A real read is compared by its real recency (lastReadAt, since KOReader freezes updatedAt), so a
+    // user actively re-reading is never yanked forward to a stale audio position. A projected row is
+    // where the audiobook already put the ebook, so the audiobook is the fresher side by definition and
+    // the precise phrase resume stays available.
+    const ebookActiveAt = ebookActivityTime(ebookProgress);
     if (!isStrictlyNewer(audioProgress.updatedAt, ebookActiveAt)) return UNAVAILABLE;
 
     const timeline = buildAudioTimeline(await this.repo.resolveAudioPlayOrder(audioBookId));

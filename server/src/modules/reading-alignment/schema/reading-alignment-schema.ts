@@ -82,4 +82,6 @@ DO $$ BEGIN
 		CREATE UNIQUE INDEX "audiobook_alignment_anchor_alignment_id_audio_seconds_unique" ON "audiobook_alignment_anchor" USING btree ("alignment_id","audio_seconds");
 	END IF;
 END $$;
+--> statement-breakpoint
+ALTER TABLE "reading_progress" ADD COLUMN IF NOT EXISTS "alignment_projected_at" timestamp with time zone;
 `;

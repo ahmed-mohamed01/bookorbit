@@ -94,6 +94,16 @@ describe('ReadingAlignmentResolveService.resolveResume', () => {
     expect(result).toEqual({ available: true, source: 'audio', spineIndex: 4, phrase: 'end', percentage: 75 });
   });
 
+  it('stays available when the ebook row is a projection whose timestamps are newer than the audio row', async () => {
+    const { service } = build({
+      // The sync stamped the projection at the audio activity time, which can be newer than the audio row.
+      ebookProgress: { percentage: 75, updatedAt: NEWER, lastReadAt: NEWER, alignmentProjectedAt: NEWER },
+      audioProgress: { currentFileId: 10, positionSeconds: 50, percentage: 75, updatedAt: OLDER },
+    });
+
+    expect(await service.resolveResume(BOOK_ID, USER)).toEqual({ available: true, source: 'audio', spineIndex: 4, phrase: 'end', percentage: 75 });
+  });
+
   it('is unavailable when audio progress is missing', async () => {
     const { service } = build({ ebookProgress: { percentage: 0, updatedAt: OLDER }, audioProgress: undefined });
     expect(await service.resolveResume(BOOK_ID, USER)).toEqual({ available: false });

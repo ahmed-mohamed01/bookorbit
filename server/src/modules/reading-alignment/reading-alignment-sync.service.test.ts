@@ -1,4 +1,4 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -38,7 +38,7 @@ function playOrder() {
 interface Overrides {
   pair?: { textBookId: number; audioBookId: number } | null;
   ready?: unknown;
-  ebookProgress?: { percentage: number; updatedAt: Date; lastReadAt?: Date } | undefined;
+  ebookProgress?: { percentage: number; updatedAt: Date; lastReadAt?: Date; alignmentProjectedAt?: Date | null } | undefined;
   audioProgress?: { currentFileId: number; positionSeconds: number; percentage: number; updatedAt: Date } | undefined;
   bookFileKind?: 'text' | 'audio' | null;
   finishThreshold?: number;
@@ -59,6 +59,7 @@ function build(overrides: Overrides = {}) {
     resolveAudioPlayOrder: vi.fn().mockResolvedValue(playOrder()),
     resolveBookFileKind: vi.fn().mockResolvedValue(overrides.bookFileKind ?? null),
     projectAudiobookProgress: vi.fn().mockResolvedValue(true),
+    projectReadingProgress: vi.fn().mockResolvedValue(true),
     getUserBookStatus: vi.fn().mockResolvedValue('advancingReadStatus' in overrides ? overrides.advancingReadStatus : { status: 'read' }),
   };
   const achievementEvents = { on: vi.fn(), removeListener: vi.fn(), emit: vi.fn() };
@@ -132,8 +133,8 @@ describe('ReadingAlignmentSyncService', () => {
     });
   });
 
-  describe('audio advance syncs ebook status only (no position clobber)', () => {
-    it('advances the ebook read status but never writes the ebook position or emits a progress refresh', async () => {
+  describe('audio advance projects a percentage onto the ebook row', () => {
+    it('writes the mapped percentage and syncs status without emitting any event', async () => {
       const { service, repo, achievementEvents, bookService } = build({
         audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 50, percentage: 25, updatedAt: NEWER },
         ebookProgress: undefined,
@@ -141,12 +142,75 @@ describe('ReadingAlignmentSyncService', () => {
 
       await dispatch(service, audioEvent());
 
-      // The ebook keeps its own last-read position; the open-time resolver provides a precise resume.
-      // 50s absolute -> fraction 0.25 -> ebook status advanced to 25%.
+      // 50s absolute -> fraction 0.25 -> ebook projected to 25%.
+      expect(repo.projectReadingProgress).toHaveBeenCalledWith(USER_ID, EBOOK_FILE_ID, 25, expect.any(Date));
       expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenCalledWith(USER_ID, { bookId: TEXT_BOOK_ID, libraryId: 1 }, 25);
       expect(repo.projectAudiobookProgress).not.toHaveBeenCalled();
-      // No coarse position is written onto reading_progress, and no ebook progress event is emitted.
+      // Progress listeners must run off real activity only, never off this derived ebook write.
       expect(achievementEvents.emit).not.toHaveBeenCalled();
+    });
+
+    it('skips status sync when the projection write loses the race', async () => {
+      const { service, repo, bookService } = build({
+        audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 50, percentage: 25, updatedAt: NEWER },
+        ebookProgress: undefined,
+      });
+      repo.projectReadingProgress.mockResolvedValue(false);
+      const logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+      await dispatch(service, audioEvent());
+
+      expect(repo.projectReadingProgress).toHaveBeenCalled();
+      expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
+      expect(
+        logSpy.mock.calls.some(([message]) => String(message).includes('direction=audio_to_ebook') && String(message).includes('skipped=stale')),
+      ).toBe(true);
+    });
+
+    it('projects onto an earlier projection whose timestamps are older than the audio advance', async () => {
+      const { service, repo } = build({
+        audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 50, percentage: 25, updatedAt: NEWER },
+        ebookProgress: { percentage: 10, updatedAt: OLDER, lastReadAt: OLDER, alignmentProjectedAt: MIDDLE },
+      });
+
+      await dispatch(service, audioEvent());
+
+      expect(repo.projectReadingProgress).toHaveBeenCalledWith(USER_ID, EBOOK_FILE_ID, 25, NEWER);
+    });
+
+    it('skips an audio advance older than the projection already on the ebook row', async () => {
+      const { service, repo, bookService } = build({
+        audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 50, percentage: 25, updatedAt: MIDDLE },
+        ebookProgress: { percentage: 40, updatedAt: OLDER, lastReadAt: OLDER, alignmentProjectedAt: NEWER },
+      });
+
+      await dispatch(service, audioEvent());
+
+      expect(repo.projectReadingProgress).not.toHaveBeenCalled();
+      expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
+    });
+
+    it('never overwrites a real read newer than the audio advance', async () => {
+      const { service, repo, bookService } = build({
+        audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 50, percentage: 25, updatedAt: MIDDLE },
+        ebookProgress: { percentage: 40, updatedAt: NEWER, lastReadAt: NEWER, alignmentProjectedAt: OLDER },
+      });
+
+      await dispatch(service, audioEvent());
+
+      expect(repo.projectReadingProgress).not.toHaveBeenCalled();
+      expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
+    });
+
+    it('projects 100% when the audiobook is finished', async () => {
+      const { service, repo } = build({
+        audioProgress: { currentFileId: AUDIO_FILE_B, positionSeconds: 92, percentage: 100, updatedAt: NEWER },
+        ebookProgress: undefined,
+      });
+
+      await dispatch(service, audioEvent());
+
+      expect(repo.projectReadingProgress).toHaveBeenCalledWith(USER_ID, EBOOK_FILE_ID, 100, NEWER);
     });
   });
 
@@ -360,7 +424,8 @@ describe('ReadingAlignmentSyncService', () => {
       expect(repo.resolveBookFileKind).toHaveBeenCalledWith(AUDIO_FILE_A);
       // Routed into the audio->ebook path (reached the timeline resolve)...
       expect(repo.resolveAudioPlayOrder).toHaveBeenCalled();
-      // ...but a self-pair shares one status row and the ebook position is left untouched, so nothing is written.
+      // The projection lands on the alignment's ebook file; a self-pair shares one status row, so no status is synced.
+      expect(repo.projectReadingProgress).toHaveBeenCalledWith(USER_ID, EBOOK_FILE_ID, 25, NEWER);
       expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
     });
   });
@@ -382,11 +447,13 @@ describe('ReadingAlignmentSyncService movement gate', () => {
     repo.getAudiobookProgress.mockResolvedValueOnce({ currentFileId: AUDIO_FILE_B, positionSeconds: 90, percentage: 95, updatedAt: t(1) });
     await dispatch(service, audioEvent({ occurredAt: t(1) }));
     expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenCalledTimes(1);
+    expect(repo.projectReadingProgress).toHaveBeenCalledTimes(1);
 
     // Listening continues from the jumped position past the 2-minute window: now trusted.
     repo.getAudiobookProgress.mockResolvedValueOnce({ currentFileId: AUDIO_FILE_B, positionSeconds: 90, percentage: 95, updatedAt: t(130) });
     await dispatch(service, audioEvent({ occurredAt: t(130) }));
     expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenCalledTimes(2);
+    expect(repo.projectReadingProgress).toHaveBeenCalledTimes(2);
   });
 
   it('quarantines a sudden ebook jump so it never projects onto the audiobook', async () => {
@@ -591,6 +658,20 @@ describe('reconcilePairOnReady', () => {
 
     // Without the marked-read finished override, 192s maps to 96% which is not ahead of 97%.
     expect(bookService.autoUpdateReadStatusForProgress).not.toHaveBeenCalled();
+  });
+
+  it('does not let a projected ebook row block the reconcile', async () => {
+    const { service, bookService } = build({
+      audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 100, percentage: 50, updatedAt: MIDDLE },
+      // The audiobook already projected 80% onto the ebook with a newer stamp; the row carries no reading.
+      ebookProgress: { percentage: 80, updatedAt: NEWER, lastReadAt: NEWER, alignmentProjectedAt: NEWER },
+    });
+    const logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+    await service.reconcilePairOnReady(PAIR, USER_ID);
+
+    expect(bookService.autoUpdateReadStatusForProgress).toHaveBeenCalledWith(USER_ID, { bookId: TEXT_BOOK_ID, libraryId: 1 }, 50);
+    expect(logSpy.mock.calls.some(([message]) => String(message).includes('outcome=ebook_status_updated'))).toBe(true);
   });
 
   it('does nothing when the user has never played the audiobook', async () => {

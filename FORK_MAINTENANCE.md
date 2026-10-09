@@ -552,6 +552,16 @@ from SQL embedded in each module's `schema/*-schema.ts`. They are **not** reacha
 and add no migration to `server/src/db/migrations/`. `ReadingAlignmentSchemaBootstrapService` also resets
 interrupted `building` rows on boot.
 
+**Live ebook projection (fork column `reading_progress.alignment_projected_at`):** when the audiobook
+side advances, the sync writes the mapped percentage onto the ebook's `reading_progress` row so every
+view of the ebook's progress agrees with the audiobook. It never touches `cfi`, and on update it leaves
+`updated_at` and `last_read_at` alone, so the open-time resolver still fires and the reader's Undo still
+has its target. A row is a projection while `alignment_projected_at >= last_read_at`; any real read bumps
+`last_read_at` through the upstream table's `$onUpdateFn`, so no writer ever clears the column. Per the
+fork-column rule it is nullable, added with `ADD COLUMN IF NOT EXISTS` from the module's own bootstrap
+SQL, and read or written only through the module-local `pgTable` in
+`modules/reading-alignment/schema/reading-progress-projection.schema.ts`.
+
 **Seams / hooks in shared files (keep minimal + generic):**
 
 | Shared file                                             | Hook                                                                                                                                                           | Conflict cost                                                       |

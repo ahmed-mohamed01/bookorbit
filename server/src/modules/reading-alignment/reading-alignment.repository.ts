@@ -1,12 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { isAudioFormat } from '@bookorbit/types';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { compareAudioTracks } from '../../common/utils/book-media.utils';
-import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
+import { applySchemaStatements, findMissingColumns, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import type { AudioTimelineFile } from './reading-alignment-audio-timeline.util';
 import { audiobookAlignment, audiobookAlignmentAnchor } from './schema/reading-alignment.schema';
 import type {
@@ -15,6 +15,7 @@ import type {
   NewAudiobookAlignment,
   NewAudiobookAlignmentAnchor,
 } from './schema/reading-alignment.schema';
+import { readingProgressProjection } from './schema/reading-progress-projection.schema';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -26,7 +27,7 @@ export type ReadyAlignmentWithAnchors = { alignment: AudiobookAlignment; anchors
 
 // Minimal progress projections. Only the fields the resolver compares (freshness)
 // and maps (position) are read; the wide progress rows are never returned whole.
-type ReadingProgressSnapshot = { percentage: number; updatedAt: Date; lastReadAt: Date };
+type ReadingProgressSnapshot = { percentage: number; updatedAt: Date; lastReadAt: Date; alignmentProjectedAt: Date | null };
 type AudiobookProgressSnapshot = { currentFileId: number; positionSeconds: number; percentage: number; updatedAt: Date };
 
 // An audio content file resolved in play order, carrying both the on-disk path the transcriber needs
@@ -45,6 +46,10 @@ export class ReadingAlignmentRepository {
 
   async findMissingTables(tableNames: readonly string[]): Promise<string[]> {
     return findMissingTables(this.db, tableNames);
+  }
+
+  async findMissingColumns(tableName: string, columnNames: readonly string[]): Promise<string[]> {
+    return findMissingColumns(this.db, tableName, columnNames);
   }
 
   // Applies the reading-alignment schema bootstrap statements. DB access lives here rather than in
@@ -243,18 +248,20 @@ export class ReadingAlignmentRepository {
     await this.db.update(audiobookAlignmentAnchor).set({ ebookFraction: fraction }).where(eq(audiobookAlignmentAnchor.id, anchorId));
   }
 
-  // The user's ebook progress for a specific file, projected to just the fields the resolver needs.
+  // The user's ebook progress for a specific file, projected to just the fields the resolver needs. Read
+  // through the module-local table so the fork-owned alignment_projected_at column comes along.
   async getReadingProgress(bookFileId: number, userId: number): Promise<ReadingProgressSnapshot | undefined> {
     const [row] = await this.db
       .select({
-        percentage: schema.readingProgress.percentage,
-        updatedAt: schema.readingProgress.updatedAt,
+        percentage: readingProgressProjection.percentage,
+        updatedAt: readingProgressProjection.updatedAt,
         // updatedAt is deliberately frozen by some writers (KOReader); lastReadAt is the honest
         // "when did the user actually read this" ordering column (see the schema comment).
-        lastReadAt: schema.readingProgress.lastReadAt,
+        lastReadAt: readingProgressProjection.lastReadAt,
+        alignmentProjectedAt: readingProgressProjection.alignmentProjectedAt,
       })
-      .from(schema.readingProgress)
-      .where(and(eq(schema.readingProgress.bookFileId, bookFileId), eq(schema.readingProgress.userId, userId)))
+      .from(readingProgressProjection)
+      .where(and(eq(readingProgressProjection.bookFileId, bookFileId), eq(readingProgressProjection.userId, userId)))
       .limit(1);
     return row;
   }
@@ -331,6 +338,38 @@ export class ReadingAlignmentRepository {
         setWhere: lt(schema.audiobookProgress.updatedAt, updatedAt),
       })
       .returning({ userId: schema.audiobookProgress.userId });
+    return rows.length > 0;
+  }
+
+  // Writes the ebook side of an audio-to-ebook projection: a percentage only, never a CFI, so the
+  // reader keeps its precise position and its Undo target. On update, updated_at and last_read_at are
+  // left alone because they mean real reading activity; touching them would make the audio look like a
+  // read and stop the open-time resolver from firing. A fresh insert has to fill those NOT NULL columns,
+  // so it stamps them equal to projectedAt, and that equality is what marks the new row as a projection.
+  // The setWhere guard never overwrites a real read newer than this projection, nor a newer projection.
+  // Returns true when the row was actually written.
+  async projectReadingProgress(userId: number, bookFileId: number, percentage: number, projectedAt: Date): Promise<boolean> {
+    const clamped = Math.min(100, Math.max(0, percentage));
+    const rows = await this.db
+      .insert(readingProgressProjection)
+      .values({
+        userId,
+        bookFileId,
+        percentage: clamped,
+        cfi: null,
+        updatedAt: projectedAt,
+        lastReadAt: projectedAt,
+        alignmentProjectedAt: projectedAt,
+      })
+      .onConflictDoUpdate({
+        target: [readingProgressProjection.bookFileId, readingProgressProjection.userId],
+        set: { percentage: clamped, alignmentProjectedAt: projectedAt },
+        setWhere: and(
+          lt(readingProgressProjection.lastReadAt, projectedAt),
+          or(isNull(readingProgressProjection.alignmentProjectedAt), lt(readingProgressProjection.alignmentProjectedAt, projectedAt)),
+        ),
+      })
+      .returning({ userId: readingProgressProjection.userId });
     return rows.length > 0;
   }
 }

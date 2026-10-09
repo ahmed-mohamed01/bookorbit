@@ -66,6 +66,50 @@ describe('ReadingAlignmentRepository.projectAudiobookProgress', () => {
   });
 });
 
+describe('ReadingAlignmentRepository.projectReadingProgress', () => {
+  const projectedAt = new Date('2026-02-01T00:00:00.000Z');
+
+  it('inserts a projection with equal timestamps and updates only the percentage and projection time', async () => {
+    const { db, values, onConflictDoUpdate } = makeInsertDb([{ userId: 7 }]);
+    const repo = new ReadingAlignmentRepository(db as never);
+
+    await expect(repo.projectReadingProgress(7, 500, 42.5, projectedAt)).resolves.toBe(true);
+
+    expect(values).toHaveBeenCalledWith({
+      userId: 7,
+      bookFileId: 500,
+      percentage: 42.5,
+      cfi: null,
+      updatedAt: projectedAt,
+      lastReadAt: projectedAt,
+      alignmentProjectedAt: projectedAt,
+    });
+
+    const conflict = onConflictDoUpdate.mock.calls[0]![0];
+    expect(conflict.set).toEqual({ percentage: 42.5, alignmentProjectedAt: projectedAt });
+    const guard = new PgDialect().sqlToQuery(conflict.setWhere);
+    expect(guard.sql).toBe(
+      '("reading_progress"."last_read_at" < $1 and ("reading_progress"."alignment_projected_at" is null or "reading_progress"."alignment_projected_at" < $2))',
+    );
+  });
+
+  it('clamps the percentage to the column CHECK range', async () => {
+    const { db, values } = makeInsertDb([{ userId: 7 }]);
+    const repo = new ReadingAlignmentRepository(db as never);
+
+    await repo.projectReadingProgress(7, 500, 104, projectedAt);
+
+    expect(values.mock.calls[0]![0]).toMatchObject({ percentage: 100 });
+  });
+
+  it('reports a guarded no-op as not applied', async () => {
+    const { db } = makeInsertDb([]);
+    const repo = new ReadingAlignmentRepository(db as never);
+
+    await expect(repo.projectReadingProgress(7, 500, 42.5, projectedAt)).resolves.toBe(false);
+  });
+});
+
 describe('ReadingAlignmentRepository.deleteAlignment', () => {
   function makeDeleteDb(returned: unknown[]) {
     const returning = vi.fn().mockResolvedValue(returned);

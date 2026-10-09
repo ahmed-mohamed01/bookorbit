@@ -13,3 +13,23 @@ export function clampToPresent(candidate: Date, maxSkewMs: number): Date {
   const ceiling = Date.now() + maxSkewMs;
   return candidate.getTime() > ceiling ? new Date(ceiling) : candidate;
 }
+
+export type EbookProgressActivity = { updatedAt: Date; lastReadAt?: Date; alignmentProjectedAt?: Date | null };
+
+// A reading_progress row is a projection when the alignment sync wrote it and no real read has
+// happened since. Every real writer bumps last_read_at through the upstream table's $onUpdateFn, so a
+// real read moves last_read_at past alignment_projected_at and the row stops being a projection. A
+// fresh projected insert stamps both columns equal, which is why equality still counts as projected.
+export function isProjectedEbookProgress(progress: EbookProgressActivity): boolean {
+  if (progress.alignmentProjectedAt == null) return false;
+  const activityAt = progress.lastReadAt ?? progress.updatedAt;
+  return progress.alignmentProjectedAt.getTime() >= activityAt.getTime();
+}
+
+// When the user last actually read the ebook. KOReader freezes reading_progress.updatedAt, so
+// lastReadAt carries the real reading recency with updatedAt as a safety fallback. A projection
+// carries no reading activity of its own, so it reports none.
+export function ebookActivityTime(progress: EbookProgressActivity | undefined): Date | undefined {
+  if (!progress || isProjectedEbookProgress(progress)) return undefined;
+  return progress.lastReadAt ?? progress.updatedAt;
+}
