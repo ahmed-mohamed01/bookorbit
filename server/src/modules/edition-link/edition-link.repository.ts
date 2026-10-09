@@ -8,7 +8,7 @@ import { buildContentFilterClauses } from '../../common/utils/content-filter-sql
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { audiobookProgress, authors, bookAuthors, bookFiles, bookMetadata, books, readingProgress } from '../../db/schema';
-import { normalizeName, scoreAuthors, scoreTitle } from '../../common/utils/fuzzy-match.utils';
+import { normalizeName, scoreAuthors, scoreTitle, titleVolumeConflict } from '../../common/utils/fuzzy-match.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { bookEditionLinks, type BookEditionLink } from './schema/edition-link.schema';
 
@@ -321,18 +321,22 @@ export class EditionLinkRepository {
 
     const sourceAuthorNames = sourceAuthors.map((row) => row.name);
     const normalizedQuery = query ? normalizeName(query) : null;
+    // Sibling volumes share the author and differ by a digit, so edit distance puts "Series 13" and
+    // "Series 11" in the high nineties. A typed search is exempt: the reader may want any volume.
+    const scoreSourceTitle = (candidateTitle: string) =>
+      titleVolumeConflict(source!.title!, candidateTitle) ? 0 : scoreTitle(source!.title!, candidateTitle);
 
     return rows
       .filter((row) => {
         if (normalizedQuery) {
           return [row.title, ...row.authorNames].some((value) => value && normalizeName(value).includes(normalizedQuery));
         }
-        const titleScore = scoreTitle(source!.title!, row.title ?? '');
+        const titleScore = scoreSourceTitle(row.title ?? '');
         const authorScore = scoreAuthors(sourceAuthorNames, row.authorNames);
         return titleScore >= 0.8 && (sourceAuthorNames.length === 0 || row.authorNames.length === 0 ? titleScore >= 0.9 : authorScore >= 0.75);
       })
       .map((row) => {
-        const titleScore = scoreTitle(query ?? source!.title!, row.title ?? '');
+        const titleScore = query ? scoreTitle(query, row.title ?? '') : scoreSourceTitle(row.title ?? '');
         const authorScore = query ? scoreAuthors([query], row.authorNames) : scoreAuthors(sourceAuthorNames, row.authorNames);
         const hasComparableAuthors = query ? row.authorNames.length > 0 : sourceAuthorNames.length > 0 && row.authorNames.length > 0;
         const score = query ? Math.max(titleScore, authorScore) : hasComparableAuthors ? titleScore * 0.7 + authorScore * 0.3 : titleScore;

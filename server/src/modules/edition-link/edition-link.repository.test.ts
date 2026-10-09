@@ -90,6 +90,40 @@ describe('EditionLinkRepository', () => {
     expect(candidatesChain.limit).toHaveBeenCalledWith(100);
   });
 
+  it('does not propose a sibling volume of the same series as the counterpart', async () => {
+    const sourceChain = makeChain([{ title: 'He Who Fights with Monsters 13: A LitRPG Adventure' }]);
+    const sourceAuthorsChain = makeChain([{ name: 'Shirtaloon' }, { name: 'Travis Deverell' }]);
+    const candidatesChain = makeChain([
+      { bookId: 2, title: 'He Who Fights with Monsters 11: A LitRPG Adventure', authorNames: ['Shirtaloon'], coverUpdatedAt: null },
+      { bookId: 3, title: 'He Who Fights with Monsters: A LitRPG Adventure, Book 13', authorNames: ['Shirtaloon'], coverUpdatedAt: null },
+    ]);
+    const db = {
+      select: vi.fn().mockReturnValueOnce(sourceChain).mockReturnValueOnce(sourceAuthorsChain).mockReturnValueOnce(candidatesChain),
+    };
+    const repo = new EditionLinkRepository(db as never);
+
+    const results = await repo.findCounterpartCandidates({ bookId: 1, modality: 'text', accessibleLibraryIds: [10] });
+
+    expect(results.map((candidate) => candidate.bookId)).toEqual([3]);
+  });
+
+  it('keeps sibling volumes in an explicit search, where the reader may want any of them', async () => {
+    const sourceChain = makeChain([{ title: 'He Who Fights with Monsters 13: A LitRPG Adventure' }]);
+    const sourceAuthorsChain = makeChain([{ name: 'Shirtaloon' }]);
+    const candidatesChain = makeChain([
+      { bookId: 2, title: 'He Who Fights with Monsters 11: A LitRPG Adventure', authorNames: ['Shirtaloon'], coverUpdatedAt: null },
+      { bookId: 3, title: 'He Who Fights with Monsters 12: A LitRPG Adventure', authorNames: ['Shirtaloon'], coverUpdatedAt: null },
+    ]);
+    const db = {
+      select: vi.fn().mockReturnValueOnce(sourceChain).mockReturnValueOnce(sourceAuthorsChain).mockReturnValueOnce(candidatesChain),
+    };
+    const repo = new EditionLinkRepository(db as never);
+
+    const results = await repo.findCounterpartCandidates({ bookId: 1, modality: 'text', accessibleLibraryIds: [10], query: 'Monsters' });
+
+    expect(results.map((candidate) => candidate.bookId)).toEqual([2, 3]);
+  });
+
   it('filters explicit candidate searches by title or author text', async () => {
     const sourceChain = makeChain([{ title: 'Dune' }]);
     const sourceAuthorsChain = makeChain([{ name: 'Frank Herbert' }]);
