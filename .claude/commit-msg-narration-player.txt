@@ -1,0 +1,16 @@
+feat(reader): replace the read-along narration bar with a pill and full player
+
+Upstream's media-overlay mini player is a 480px bar across the bottom of the
+reader that covers the text. Replace it with a small floating pill that shows
+only with the reader toolbars, or on its own when the reader has moved away
+from the narrated sentence (with "Back to narration" and "Narrate from here"
+chips at its sides) or playback failed. The pill expands into a full player
+with the audiobook cover, title, author, a chapter list limited to narrated
+chapters, previous/next sentence, and speed and sleep menus. The sleep menu
+adds an end-of-chapter option, and a running timer survives chapter jumps and
+"Narrate from here" restarts. A "Listen with narration" chip above the footer
+starts narration while the toolbars are showing.
+
+Upstream's MediaOverlayMiniPlayer.vue and useMediaOverlay.ts stay untouched so
+upstream merges apply cleanly; the hooks live in App.vue, ReaderView.vue and
+useFoliate.ts.

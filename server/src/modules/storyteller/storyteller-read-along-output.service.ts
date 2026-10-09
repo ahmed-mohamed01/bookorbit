@@ -23,6 +23,12 @@ export class StorytellerReadAlongOutputService implements ReadAlongOutputSource,
     return (await this.findSourcePair(readAlongBookId))?.audioBookId ?? null;
   }
 
+  async findReadAlongForPair(link: ReadAlongLinkTarget): Promise<ReadAlongAttachment | null> {
+    const build = await this.repo.findBuildByPair(link.textBookId, link.audioBookId);
+    if (!build || build.status !== 'ready' || build.outputBookId === null) return null;
+    return { buildId: build.id, outputBookId: build.outputBookId };
+  }
+
   async findLostReadAlong(link: ReadAlongLinkTarget): Promise<ReadAlongAttachment | null> {
     if (link.readAlongBookId !== null) return null;
     const build = await this.repo.findBuildByPair(link.textBookId, link.audioBookId);

@@ -1,0 +1,17 @@
+fix(client): trim the Position sync panel and keep its rail joined
+
+The Audiobookshelf stop explained how syncing works every time it was opened,
+then repeated the row's own status chip underneath, so the panel ran to two
+paragraphs for a fact the chip already stated. Keep the stop to its state:
+drop the two-way explanation from the details (Settings already carries it),
+shorten the one-way notes to a sentence and a pointer to Settings, and make
+each status hint say only what happens next. Shorten the panel intro to the
+positions it talks about, show an unread edition as a 0% bar like every other
+row instead of the words "Not started", and hide the Linked chip while the
+switched-on toggle already says so.
+
+The timeline rail was drawn as 64px segments centred on each row divider,
+which only join up while every card is 64px tall; the Audiobookshelf stop
+grows when its details open and the rail broke below its node. Its segment now
+ends where the next divider's segment begins, however tall the card is, and
+still stops at the cover's centre when it is the last stop.

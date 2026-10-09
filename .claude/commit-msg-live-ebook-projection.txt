@@ -1,0 +1,20 @@
+fix(reader): keep the linked ebook's progress live while the audiobook plays
+
+A linked ebook's own reading_progress row never moved when the audiobook
+advanced: the alignment sync only synced read status, so the library card
+showed the audiobook percentage through the newest-wins merge while the Files
+tab and the reader row stayed at 0% until the book was opened and the
+cross-format resume jumped. Write the mapped percentage onto the ebook row on
+every accepted audio advance instead, marked by the fork-owned nullable column
+reading_progress.alignment_projected_at (added with ADD COLUMN IF NOT EXISTS
+from the reading-alignment bootstrap and reached only through a module-local
+pgTable, so the upstream schema file stays untouched).
+
+The projection never writes a CFI and leaves updated_at and last_read_at alone
+on update, so the reader keeps its precise position and its Undo target. A row
+counts as a projection while alignment_projected_at >= last_read_at; any real
+read bumps last_read_at through the upstream table's $onUpdateFn and the row is
+a real read again. The resolver, the sync and the match-time reconcile treat a
+projected row as carrying no reading activity, so the open-time phrase jump
+still fires. No progress event follows the write, so achievements, Storygraph,
+Hardcover and the Audiobookshelf push keep running off real activity only.

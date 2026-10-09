@@ -174,6 +174,52 @@ export class EditionLinkService {
     }
   }
 
+  async attachReadAlongByUser(user: RequestUser, bookId: number, readAlongBookId: number): Promise<BookEditionLink> {
+    const startedAt = Date.now();
+    this.logger.log(
+      `[${ATTACH_EVENT}] [start] bookId=${bookId} readAlongBookId=${readAlongBookId} userId=${user.id} - explicit read-along attach started`,
+    );
+
+    try {
+      await this.bookService.verifyBookAccess(bookId, user);
+      const link = await this.repo.findLinkForBook(bookId);
+      if (!link || (link.textBookId !== bookId && link.audioBookId !== bookId)) {
+        throw new NotFoundException('Edition link not found');
+      }
+
+      const otherBookId = link.textBookId === bookId ? link.audioBookId : link.textBookId;
+      await this.bookService.verifyBookAccess(otherBookId, user);
+
+      if (link.readAlongBookId !== null && link.readAlongBookId !== readAlongBookId) {
+        throw new ConflictException('A different read-along is already attached');
+      }
+      if (link.readAlongBookId === readAlongBookId) {
+        this.logger.log(
+          `[${ATTACH_EVENT}] [end] bookId=${bookId} readAlongBookId=${readAlongBookId} userId=${user.id} linkId=${link.id} durationMs=${Date.now() - startedAt} outcome=already_attached - explicit read-along attach completed`,
+        );
+        return link;
+      }
+
+      const readAlong = await this.readAlongOutputs.findReadAlongForPair(link);
+      if (!readAlong || readAlong.outputBookId !== readAlongBookId) {
+        throw new NotFoundException('Generated read-along not found for this edition pair');
+      }
+
+      const updated = await this.attachReadAlong(link, readAlong, user.id);
+      if (updated.readAlongBookId !== readAlongBookId) {
+        throw new ConflictException('Read-along could not be attached');
+      }
+
+      this.logger.log(
+        `[${ATTACH_EVENT}] [end] bookId=${bookId} readAlongBookId=${readAlongBookId} userId=${user.id} linkId=${updated.id} durationMs=${Date.now() - startedAt} outcome=attached - explicit read-along attach completed`,
+      );
+      return updated;
+    } catch (err) {
+      this.logFailure(ATTACH_EVENT, user.id, bookId, readAlongBookId, startedAt, err, 'explicit read-along attach failed');
+      throw err;
+    }
+  }
+
   /**
    * Gives a link the read-along its pair generated when the link lost it, as an unlink and relink
    * leaves it. Idempotent, and never fails the caller: a link that cannot take its read-along is still

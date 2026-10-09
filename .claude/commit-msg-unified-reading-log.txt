@@ -1,0 +1,21 @@
+feat(books): merge a linked work's sessions into one reading log
+
+An ebook, its audiobook and a generated read-along copy are separate book
+records joined by an edition link, so each Reading Log tab showed only its own
+record's sessions: the ebook's log never showed the hours spent listening and
+the audiobook's log never showed the pages read. Resolve the link's members
+when listing or deleting a book's sessions and run the existing paginated
+query and stats over all of them, so any member's tab shows one date-ordered
+ledger with the merged totals. Each row carries its record id and a medium,
+listened or read, derived from the session type or, for Audiobookshelf
+sessions that keep the default type, from the audio member's role. Members
+the user cannot see are dropped before the query so a hidden counterpart
+never leaks sessions.
+
+The reading-session module gains a READING_SESSION_SCOPE_SOURCE seam, same
+shape as EXTRA_PROGRESS_SOURCE, which the edition-link module provides; an
+unlinked book takes the unchanged single-record path. The ledger shows a
+caption naming the other members and a headphones or book icon per row,
+compares attempt boundaries between own-record rows only, routes the
+jump-to-position link to the row's own record, and the CSV export gains a
+medium column. Attempts stay per record.

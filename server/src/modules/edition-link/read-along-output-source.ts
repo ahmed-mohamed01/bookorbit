@@ -8,6 +8,8 @@ export interface ReadAlongOutputSource {
   findReadAlongOutputs(bookIds: readonly number[]): Promise<Set<number>>;
   /** The text/audio pair a read-along was generated from, which it stays matched to once detached. */
   findSourcePair(readAlongBookId: number): Promise<ReadAlongSourcePair | null>;
+  /** The generated output for a pair, including one deliberately detached from its link. */
+  findReadAlongForPair(link: ReadAlongLinkTarget): Promise<ReadAlongAttachment | null>;
   /**
    * The read-along generated for this link's pair when the link lost it, as an unlink and relink
    * leaves it. Null when there is none, or when it was detached from this same link on purpose.

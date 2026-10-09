@@ -4,6 +4,7 @@ import { Permission, type EditionLink, type EditionLinkCandidate, type EditionLi
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
+import { AttachReadAlongDto } from './dto/attach-read-along.dto';
 import { CandidatesQueryDto } from './dto/candidates-query.dto';
 import { LinkEditionDto } from './dto/link-edition.dto';
 import { EditionLinkService } from './edition-link.service';
@@ -46,6 +47,16 @@ export class EditionLinkController {
   @RequirePermission(Permission.LibraryEditMetadata)
   async link(@CurrentUser() user: RequestUser, @Param('bookId', ParseIntPipe) bookId: number, @Body() dto: LinkEditionDto): Promise<EditionLink> {
     return toEditionLinkDto(await this.service.link(user, bookId, dto.counterpartId));
+  }
+
+  @Post('read-along/:bookId')
+  @RequirePermission(Permission.LibraryEditMetadata)
+  async attachReadAlong(
+    @CurrentUser() user: RequestUser,
+    @Param('bookId', ParseIntPipe) bookId: number,
+    @Body() dto: AttachReadAlongDto,
+  ): Promise<EditionLink> {
+    return toEditionLinkDto(await this.service.attachReadAlongByUser(user, bookId, dto.readAlongBookId));
   }
 
   @Delete('link/:bookId')

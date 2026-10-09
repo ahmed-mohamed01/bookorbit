@@ -6522,17 +6522,7 @@
       },
       "readingAlignment": {
         "title": "Position alignment",
-        "status": {
-          "none": "Not built",
-          "pending": "Not built",
-          "building": "Aligning...",
-          "ready": "Aligned",
-          "failed": "Alignment failed",
-          "unalignable": "Can't align"
-        },
         "builtAt": "Built {date}",
-        "buildButton": "Build alignment",
-        "rebuildButton": "Rebuild alignment",
         "unalignableHint": "Position alignment isn't available for this book pair.",
         "buildFailed": "Failed to start alignment build.",
         "buildBlocked": {

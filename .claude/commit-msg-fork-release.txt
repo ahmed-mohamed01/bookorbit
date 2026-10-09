@@ -1,0 +1,9 @@
+docs(release): add fork issue, versioning and release protocol
+
+Document how the fork tracks work in GitHub issues, versions releases as
+v<upstream base>-m<N>, and keeps a fork-only changelog. Add a script that
+drafts release notes from commits that are on the fork but not upstream,
+a tag-triggered workflow that retags the already built commit image and
+publishes the GitHub Release, and backfill the changelog for v3.1.0-m1
+and v3.1.0-m2. Release notes carry upstream's notes for the base
+version and any unreleased upstream changes ahead of the fork additions.

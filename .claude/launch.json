@@ -1,0 +1,85 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "bookorbit",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "dev"
+      ],
+      "port": 6263
+    },
+    {
+      "name": "bookorbit-server",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "run",
+        "dev:server"
+      ],
+      "port": 6262
+    },
+    {
+      "name": "bookorbit-client",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "run",
+        "dev:client"
+      ],
+      "port": 6263
+    },
+    {
+      "name": "abs-push-server",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/ahmed/Desktop/repos/bookorbit-abs-push/server && export $(grep -v \"^#\" .env | xargs) 2>/dev/null; CI=true exec pnpm exec nest start --config nest-cli.dev.json"
+      ],
+      "port": 6272
+    },
+    {
+      "name": "abs-push-client",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/ahmed/Desktop/repos/bookorbit-abs-push/client && BOOKORBIT_API_TARGET=http://localhost:6272 CI=true pnpm exec vite --port 6273 --host"
+      ],
+      "port": 6273
+    },
+    {
+      "name": "showcase-server",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/ahmed/Desktop/repos/bookorbit/server && export $(grep -v \"^#\" .env | xargs) 2>/dev/null; export DATABASE_URL=\"${DATABASE_URL%/bookorbit}/bookorbit_showcase\" PORT=6282 APP_URL=http://localhost:6283 APP_DATA_PATH=../local/showcase-data; CI=true exec pnpm exec nest start --config nest-cli.dev.json"
+      ],
+      "port": 6282
+    },
+    {
+      "name": "showcase-client",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/ahmed/Desktop/repos/bookorbit/client && BOOKORBIT_API_TARGET=http://localhost:6282 CI=true pnpm exec vite --port 6283 --host"
+      ],
+      "port": 6283
+    },
+    {
+      "name": "offsets-server",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/ahmed/Desktop/repos/bookorbit-offsets/server && export $(grep -v \"^#\" .env | xargs) 2>/dev/null; CI=true exec pnpm exec nest start --watch --config nest-cli.dev.json"
+      ],
+      "port": 6302
+    },
+    {
+      "name": "offsets-client",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/ahmed/Desktop/repos/bookorbit-offsets/client && BOOKORBIT_API_TARGET=http://localhost:6302 CI=true pnpm exec vite --port 6303 --host"
+      ],
+      "port": 6303
+    }
+  ]
+}

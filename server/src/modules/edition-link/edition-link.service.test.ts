@@ -27,6 +27,7 @@ describe('EditionLinkService', () => {
   let readAlongOutputs: {
     findReadAlongOutputs: Mock<(bookIds: readonly number[]) => Promise<Set<number>>>;
     findSourcePair: Mock<(bookId: number) => Promise<{ textBookId: number; audioBookId: number } | null>>;
+    findReadAlongForPair: Mock<(link: { id: number }) => Promise<{ buildId: number; outputBookId: number } | null>>;
     findLostReadAlong: Mock<(link: { id: number }) => Promise<{ buildId: number; outputBookId: number } | null>>;
     recordAttachment: Mock<(buildId: number, linkId: number) => Promise<void>>;
     recordDetach: Mock<(readAlongBookId: number, linkId: number) => Promise<void>>;
@@ -67,6 +68,7 @@ describe('EditionLinkService', () => {
     readAlongOutputs = {
       findReadAlongOutputs: vi.fn().mockResolvedValue(new Set()),
       findSourcePair: vi.fn().mockResolvedValue(null),
+      findReadAlongForPair: vi.fn().mockResolvedValue(null),
       findLostReadAlong: vi.fn().mockResolvedValue(null),
       recordAttachment: vi.fn().mockResolvedValue(undefined),
       recordDetach: vi.fn().mockResolvedValue(undefined),
@@ -86,6 +88,59 @@ describe('EditionLinkService', () => {
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+  });
+
+  describe('attachReadAlongByUser', () => {
+    it('attaches the pair output and records the attachment', async () => {
+      const attached = { ...linkRow, readAlongBookId: 30 };
+      repo.findLinkForBook.mockResolvedValue(linkRow);
+      readAlongOutputs.findReadAlongForPair.mockResolvedValue({ buildId: 4, outputBookId: 30 });
+      repo.setReadAlongBook.mockResolvedValue(attached);
+
+      await expect(service.attachReadAlongByUser(user, 10, 30)).resolves.toEqual(attached);
+      expect(bookService.verifyBookAccess).toHaveBeenNthCalledWith(1, 10, user);
+      expect(bookService.verifyBookAccess).toHaveBeenNthCalledWith(2, 20, user);
+      expect(repo.setReadAlongBook).toHaveBeenCalledWith(9, 30);
+      expect(readAlongOutputs.recordAttachment).toHaveBeenCalledWith(4, 9);
+    });
+
+    it('returns an already attached link unchanged', async () => {
+      const attached = { ...linkRow, readAlongBookId: 30 };
+      repo.findLinkForBook.mockResolvedValue(attached);
+
+      await expect(service.attachReadAlongByUser(user, 20, 30)).resolves.toBe(attached);
+      expect(readAlongOutputs.findReadAlongForPair).not.toHaveBeenCalled();
+      expect(repo.setReadAlongBook).not.toHaveBeenCalled();
+    });
+
+    it('rejects a different attached read-along with a conflict', async () => {
+      repo.findLinkForBook.mockResolvedValue({ ...linkRow, readAlongBookId: 31 });
+
+      await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBeInstanceOf(ConflictException);
+      expect(readAlongOutputs.findReadAlongForPair).not.toHaveBeenCalled();
+    });
+
+    it('returns not found when the requested book has no pair link', async () => {
+      await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('returns not found when the requested output differs from the pair output', async () => {
+      repo.findLinkForBook.mockResolvedValue(linkRow);
+      readAlongOutputs.findReadAlongForPair.mockResolvedValue({ buildId: 4, outputBookId: 31 });
+
+      await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.setReadAlongBook).not.toHaveBeenCalled();
+    });
+
+    it('propagates an access denial before changing the link', async () => {
+      const forbidden = new ForbiddenException('No access to this library');
+      repo.findLinkForBook.mockResolvedValue(linkRow);
+      bookService.verifyBookAccess.mockResolvedValueOnce(undefined).mockRejectedValueOnce(forbidden);
+
+      await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBe(forbidden);
+      expect(readAlongOutputs.findReadAlongForPair).not.toHaveBeenCalled();
+      expect(repo.setReadAlongBook).not.toHaveBeenCalled();
+    });
   });
 
   describe('a generated read-along detached from its pair', () => {

@@ -1,0 +1,24 @@
+feat(dashboard): stack linked editions in Currently Reading
+
+An ebook, its audiobook and a generated read-along are separate book records
+joined by an edition link, so the Currently Reading widget listed a linked
+work once per edition: three rows of the same title at the same percentage.
+Fold the editions of one link into a single row whose cover is a deck in a
+single cover's space, the lead in front, the other editions stepping out
+behind it and a link badge pinned to the stack's corner, and make that row act for the edition the reader most recently spent
+time with: clicking it opens that edition's detail page and Continue reading
+resumes it, so switching from the ebook to the audiobook in Audiobookshelf
+makes the audiobook the entry, and switching to the read-along makes the
+read-along the entry.
+
+Recency is the end of the latest recorded reading session, never a progress
+row: the alignment sync projects audio position onto the ebook row, the
+ebook-to-audio projection stamps the audiobook row, and the Audiobookshelf
+sync writes the read-along row, while a session only comes from a reader, a
+player or ingested Audiobookshelf listening. The dashboard widget service
+asks a new optional CURRENTLY_READING_GROUP_SOURCE seam, same shape as
+EXTRA_PROGRESS_SOURCE and provided by the edition-link module, which books
+share a link and when each was last active, and stamps editionGroupId and
+lastActivityAt onto those books; a failing source logs and leaves the list
+flat. The client groups by that id, leads with the latest session and falls
+back to the server's progress order on ties. Standalone rows are unchanged.

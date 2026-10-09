@@ -1,0 +1,4 @@
+docs: record the read-along narration player overlay in FORK_MAINTENANCE.md
+
+List the fork-only files, the hooks in App.vue, ReaderView.vue, useFoliate.ts
+and en.json, and the removal path for the narration player overlay.

@@ -78,17 +78,34 @@ export class AudiobookshelfBookStateService {
    * Only the audiobook is ever matched in Audiobookshelf, so its linked editions reach the item through it.
    */
   async findPositionSyncLink(user: RequestUser, bookId: number): Promise<AudiobookshelfBookSyncLink | null> {
-    const target = await this.findSyncTarget(user, async (settings) => {
-      await this.bookService.verifyBookAccess(bookId, user);
-      const direct = await this.repo.findBookStateByBookId(user.id, bookId);
-      if (direct && this.isSyncEligible(settings, direct)) return direct;
-      const link = await this.editionLinks.findLinkForBook(bookId);
-      if (!link || link.audioBookId === bookId) return undefined;
-      return this.repo.findBookStateByBookId(user.id, link.audioBookId);
-    });
-    if (!target) return null;
+    const settings = await this.repo.findSettings(user.id);
+    if (!settings || !isAbsSyncConfigured(settings)) return null;
 
-    const { settings, state } = target;
+    await this.bookService.verifyBookAccess(bookId, user);
+    let state = await this.repo.findBookStateByBookId(user.id, bookId);
+    if (!state) {
+      const link = await this.editionLinks.findLinkForBook(bookId);
+      if (!link || link.audioBookId === bookId) return null;
+      state = await this.repo.findBookStateByBookId(user.id, link.audioBookId);
+    }
+    if (
+      !state ||
+      state.bookId == null ||
+      state.matchError != null ||
+      state.manualUnlinked ||
+      (state.absLibraryId && (settings.excludedLibraryIds ?? []).includes(state.absLibraryId)) ||
+      !(await this.canAccessBook(user, state.bookId))
+    ) {
+      return null;
+    }
+
+    const pausedReason = state.needsReview
+      ? 'needs_review'
+      : state.syncExcluded
+        ? 'excluded'
+        : !(settings.syncPosition || settings.pushPosition)
+          ? 'position_sync_off'
+          : null;
     const normalizedServer = parseAndNormalizeServerUrl(settings.serverUrl);
     return {
       audioBookId: state.bookId,
@@ -97,6 +114,8 @@ export class AudiobookshelfBookStateService {
       authorName: state.absAuthorName,
       libraryName: state.absLibraryName,
       direction: settings.syncPosition && settings.pushPosition ? 'two_way' : settings.syncPosition ? 'from_abs' : 'to_abs',
+      syncing: pausedReason === null,
+      pausedReason,
       webUrl: normalizedServer ? `${normalizedServer}/item/${encodeURIComponent(state.absLibraryItemId)}` : null,
     };
   }

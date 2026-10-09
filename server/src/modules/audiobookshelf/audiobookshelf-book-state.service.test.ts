@@ -413,6 +413,8 @@ describe('AudiobookshelfBookStateService.findPositionSyncLink', () => {
       authorName: 'Brandon Sanderson',
       libraryName: 'Fiction',
       direction: 'two_way',
+      syncing: true,
+      pausedReason: null,
       webUrl: 'https://abs.example.com/item/abs-1',
     });
     expect(mockClient.getMediaProgress).not.toHaveBeenCalled();
@@ -447,7 +449,6 @@ describe('AudiobookshelfBookStateService.findPositionSyncLink', () => {
 
   it.each([
     ['sync is switched off', { enabled: false }],
-    ['no position sync in either direction', { syncPosition: false, pushPosition: false }],
     ['the connection is incomplete', { apiToken: null }],
   ])('returns nothing when %s', async (_label, overrides) => {
     mockRepo.findSettings.mockResolvedValue(syncSettings(overrides));
@@ -463,9 +464,7 @@ describe('AudiobookshelfBookStateService.findPositionSyncLink', () => {
   });
 
   it.each([
-    ['a match still awaiting review', { needsReview: true }],
     ['a match that failed', { matchError: 'ambiguous' }],
-    ['an item excluded from sync', { syncExcluded: true }],
     ['an item the user unlinked', { manualUnlinked: true }],
     ['an unmatched item', { bookId: null }],
   ])('returns nothing for %s, which the pull would not sync either', async (_label, overrides) => {
@@ -474,11 +473,30 @@ describe('AudiobookshelfBookStateService.findPositionSyncLink', () => {
     await expect(makeService().findPositionSyncLink(baseUser, 218)).resolves.toBeNull();
   });
 
-  it('returns nothing when the linked audiobook match is still awaiting review', async () => {
-    mockRepo.findBookStateByBookId.mockResolvedValueOnce(undefined).mockResolvedValueOnce(audiobookState({ needsReview: true }));
-    mockEditionLinks.findLinkForBook.mockResolvedValue({ audioBookId: 218, textBookId: 163, readAlongBookId: 307 });
+  it.each([
+    ['needs_review', { needsReview: true }],
+    ['excluded', { syncExcluded: true }],
+  ] as const)('returns a paused link for %s', async (pausedReason, overrides) => {
+    mockRepo.findBookStateByBookId.mockResolvedValue(audiobookState(overrides));
 
-    await expect(makeService().findPositionSyncLink(baseUser, 307)).resolves.toBeNull();
+    await expect(makeService().findPositionSyncLink(baseUser, 218)).resolves.toMatchObject({ syncing: false, pausedReason });
+  });
+
+  it('returns a paused link when position sync is off in both directions', async () => {
+    mockRepo.findSettings.mockResolvedValue(syncSettings({ syncPosition: false, pushPosition: false }));
+
+    await expect(makeService().findPositionSyncLink(baseUser, 218)).resolves.toMatchObject({
+      direction: 'to_abs',
+      syncing: false,
+      pausedReason: 'position_sync_off',
+    });
+  });
+
+  it('returns nothing when no settings exist', async () => {
+    mockRepo.findSettings.mockResolvedValue(undefined);
+
+    await expect(makeService().findPositionSyncLink(baseUser, 218)).resolves.toBeNull();
+    expect(mockRepo.findBookStateByBookId).not.toHaveBeenCalled();
   });
 
   it('returns nothing for a book with no Audiobookshelf match and no link', async () => {

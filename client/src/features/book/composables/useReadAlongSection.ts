@@ -10,8 +10,8 @@ import { useReadAlong, type ReadAlongSectionState } from './useReadAlong'
 /**
  * Everything a host of ReadAlongSection needs on top of the raw state: the props the section reads,
  * the permissions its actions are gated on, the destination choice, and the build runner that
- * narrates the outcomes the section cannot show by itself. Both hosts (the Link edition panel and the
- * Reading Log position sync popover) mount one section each, so none of this belongs in either.
+ * narrates the outcomes the section cannot show by itself. Only the Link edition panel mounts the
+ * section, so none of this belongs in it.
  */
 export function useReadAlongSection(bookId: () => number) {
   const { t } = useI18n()

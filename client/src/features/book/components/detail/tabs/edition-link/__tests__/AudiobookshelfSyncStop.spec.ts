@@ -25,6 +25,8 @@ function makeLink(overrides: Partial<AudiobookshelfBookSyncLink> = {}): Audioboo
     authorName: 'Frank Herbert',
     libraryName: 'Fiction',
     direction: 'two_way',
+    syncing: true,
+    pausedReason: null,
     webUrl: 'https://abs.example.com/item/abs-1',
     ...overrides,
   }

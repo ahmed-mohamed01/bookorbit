@@ -129,6 +129,8 @@ export interface AudiobookshelfLocalProgress {
 
 export type AudiobookshelfReconcileDirection = "push" | "pull";
 
+export type AudiobookshelfSyncPausedReason = "excluded" | "needs_review" | "position_sync_off";
+
 export interface AudiobookshelfReconcilePayload {
   direction: AudiobookshelfReconcileDirection;
 }
@@ -146,6 +148,10 @@ export interface AudiobookshelfBookSyncLink {
   authorName: string | null;
   libraryName: string | null;
   direction: AudiobookshelfPositionSyncDirection;
+  /** Whether position sync is active for this matched item. */
+  syncing: boolean;
+  /** Why position sync is paused, or null while it is active. */
+  pausedReason: AudiobookshelfSyncPausedReason | null;
   webUrl: string | null;
 }
 
