@@ -65,14 +65,14 @@ interface EditionLinkEntry {
   searchTimer: ReturnType<typeof setTimeout> | null
   pendingSearchResolvers: ((value: EditionLinkCandidate[]) => void)[]
   // The in-flight `for-book` load shared by every control mounted for this bookId (e.g. the two
-  // responsive LinkBookControl wrappers, plus ReadingAlignmentControl), so a burst of concurrent
+  // responsive LinkBookControl wrappers), so a burst of concurrent
   // loadForBook() calls collapses into a single GET instead of one per mounted control. Cleared once
   // the request settles - this is request de-duplication, not a persistent result cache.
   loadPromise: Promise<void> | null
 }
 
-// Module-scoped so every control mounted for the same bookId (e.g. LinkBookControl and
-// ReadingAlignmentControl side by side) shares one reactive record - linking/unlinking in one
+// Module-scoped so every control mounted for the same bookId (e.g. the two
+// LinkBookControl wrappers side by side) shares one reactive record - linking/unlinking in one
 // is reflected in the other without a manual refresh. Entries are ref-counted and dropped once
 // the last consumer's scope disposes, so this stays bounded to the books a user actually views.
 const entries = new Map<number, EditionLinkEntry>()

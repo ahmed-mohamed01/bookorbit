@@ -14,7 +14,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import ReadingLogVitals from '../reading-log/ReadingLogVitals.vue'
 import ReadingLogLedger from '../reading-log/ReadingLogLedger.vue'
 import ReadingLogAttempts from '../reading-log/ReadingLogAttempts.vue'
-import ReadingAlignmentControl from './ReadingAlignmentControl.vue'
 import { useBookProgressRefresh } from '@/features/book/composables/useBookProgressRefresh'
 import ReadingLogRecords from '../reading-log/ReadingLogRecords.vue'
 import ReadingLogBand from '../reading-log/ReadingLogBand.vue'
@@ -359,7 +358,6 @@ const quickFilters = computed<{ label: string; value: QuickFilter }[]>(() => [
         </ReadingLogLedger>
 
         <div class="flex min-h-0 flex-col gap-4 xl:col-start-3 xl:row-start-1">
-          <ReadingAlignmentControl :book="book" />
           <ReadingLogAttempts
             ref="attemptsRef"
             class="max-h-80 xl:min-h-0 xl:max-h-none xl:flex-1"
@@ -377,11 +375,6 @@ const quickFilters = computed<{ label: string; value: QuickFilter }[]>(() => [
 
         <ReadingLogBand class="h-56 xl:col-span-full xl:row-start-2 xl:h-auto" :sessions="sessions" :stats="stats" :loading="loading" />
       </template>
-
-      <!-- Outside the v-if chain above on purpose: the grid places it by explicit column/row. -->
-      <div v-if="resolved && blank" class="flex min-h-0 flex-col gap-4 xl:col-start-3 xl:row-start-1">
-        <ReadingAlignmentControl :book="book" />
-      </div>
     </div>
 
     <AddSessionDialog

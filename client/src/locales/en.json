@@ -6914,20 +6914,8 @@
       },
       "readingAlignment": {
         "title": "Position sync",
-        "status": {
-          "none": "Not built",
-          "pending": "Not built",
-          "building": "Aligning...",
-          "ready": "Aligned",
-          "failed": "Alignment failed",
-          "unalignable": "Can't align"
-        },
         "builtAt": "Built {date}",
-        "buildButton": "Build",
-        "rebuildButton": "Rebuild",
         "unalignableHint": "Position sync isn't available for this book pair.",
-        "inSyncWithType": "In sync with the {type}",
-        "inSyncWithTypeTitled": "In sync with the {type}: {title}",
         "buildFailed": "Failed to start alignment build.",
         "buildBlocked": {
           "disabled": "Reading alignment is turned off for this server.",
@@ -6941,13 +6929,8 @@
           "failed": "Failed",
           "unalignable": "Can't align"
         },
-        "idleHint": "Maps audio to text so your position carries between editions.",
         "failedHint": "Position sync failed. Rebuild to try again.",
-        "progressLabel": "Position sync progress",
-        "counterpartType": {
-          "audiobook": "audiobook",
-          "ebook": "ebook"
-        }
+        "progressLabel": "Position sync progress"
       }
     },
     "table": {
