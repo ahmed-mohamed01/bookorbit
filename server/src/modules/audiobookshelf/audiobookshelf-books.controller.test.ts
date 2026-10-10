@@ -49,6 +49,8 @@ describe('AudiobookshelfBooksController', () => {
       authorName: null,
       libraryName: 'Fiction',
       direction: 'two_way',
+      syncing: true,
+      pausedReason: null,
       webUrl: null,
     };
     mockBookStateService.findPositionSyncLink.mockResolvedValue(link);

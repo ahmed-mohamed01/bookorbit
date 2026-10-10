@@ -99,6 +99,45 @@ describe('useReadingAlignment', () => {
       expect(buildError.value).toBeNull()
     })
 
+    it('follows the stale flag from the response and resets it on none', async () => {
+      const ready = { status: 'ready', samplesDone: 40, samplesTotal: 40, anchorCount: 12, builtAt: '2026-02-02T00:00:00.000Z' }
+      mocks.api
+        .mockResolvedValueOnce(response({ ...ready, stale: true }))
+        .mockResolvedValueOnce(response({ ...ready, stale: false }))
+        .mockResolvedValueOnce(response({ ...ready, stale: true }))
+        .mockResolvedValueOnce(response({ status: 'none' }))
+        .mockResolvedValueOnce(response({ ...ready, stale: true }))
+        .mockResolvedValueOnce(response(ready))
+
+      const { stale, fetchStatus } = useReadingAlignment()
+      expect(stale.value).toBe(false)
+      await fetchStatus(10)
+      expect(stale.value).toBe(true)
+      await fetchStatus(10)
+      expect(stale.value).toBe(false)
+      await fetchStatus(10)
+      expect(stale.value).toBe(true)
+      await fetchStatus(10)
+      expect(stale.value).toBe(false)
+      await fetchStatus(10)
+      expect(stale.value).toBe(true)
+      await fetchStatus(10)
+      expect(stale.value).toBe(false)
+    })
+
+    it('clears the stale flag when the status request fails', async () => {
+      mocks.api
+        .mockResolvedValueOnce(response({ status: 'ready', samplesDone: 1, samplesTotal: 1, anchorCount: 2, builtAt: null, stale: true }))
+        .mockResolvedValueOnce(response(null, { ok: false }))
+
+      const { stale, fetchStatus } = useReadingAlignment()
+      await fetchStatus(10)
+      expect(stale.value).toBe(true)
+      await fetchStatus(10)
+
+      expect(stale.value).toBe(false)
+    })
+
     it('falls back to none for a status value the client does not recognize', async () => {
       mocks.api.mockResolvedValueOnce(response({ status: 'some_future_status', samplesDone: 1, samplesTotal: 2, anchorCount: 0, builtAt: null }))
 

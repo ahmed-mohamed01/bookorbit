@@ -451,7 +451,7 @@ are excluded.
 | `.env.example` / `Dockerfile` / `config/config.ts`                                                       | 17 / 15 / 6       | alignment      | whisper stage + alignment config, additive                                                              |
 | `audiobook/audiobook.service.ts` / `.module.ts`                                                          | 14 / 3            | ABS+alignment  | `book:progress-changed` emit from `putPlaybackState` - **propose upstream**                             |
 | `book-request/fulfillment/request-automation.service.ts` / `indexers/indexer-search.service.ts` / module | 13 / 11 / 4       | monitored      | `grabAllowed`, `IndexerSearchRequest` Pick, exports                                                     |
-| client `book/.../tabs/ReadingLogTab.vue` / `DetailsTab.vue`                                              | 13 / 10           | alignment      | control insertions + upstream's `useBookProgressRefresh` (pure additions)                               |
+| client `book/.../tabs/DetailsTab.vue`                                                                    | 25                | alignment      | `LinkBookControl` + card rebuild action + upstream's `useBookProgressRefresh` (pure additions)          |
 | `metadata/metadata-extraction.service.ts`                                                                | 12                | ABS            | the extractor seam itself                                                                               |
 | client `useLibraryCreator.ts`                                                                            | 12                | ABS            | UI registration                                                                                         |
 | `metadata/lib/cover.ts`                                                                                  | 11                | ABS            | shared helper (`isDecodableImage`)                                                                      |
@@ -540,7 +540,8 @@ returns a precise ebook resume point. Upstream has no analogue, so this is maint
 under the same rules as ABS.
 
 **Owned (fork-only) modules - never conflict:** `server/src/modules/reading-alignment/`,
-`server/src/modules/edition-link/`, and the client feature files (`features/reader/shared/composables/
+`server/src/modules/edition-link/`, `packages/types/src/reading-alignment.ts`,
+`server/src/modules/reading-alignment/reading-alignment-content-hash.util.ts`, and the client feature files (`features/reader/shared/composables/
 useCrossFormatResume.ts`, `features/reader/epub/composables/crossFormatResumeNav.ts`,
 `features/book/composables/useReadingAlignment.ts` / `useEditionLink.ts`, and the `*Control.vue`
 components).
@@ -593,6 +594,7 @@ the server's progress order.
 | `reader/epub/epub.service.ts`                                                                             | `extractSpineText()` + `findMalformedSpineItem()` added (spine text for matching/backfill; malformed-XHTML pre-check before a read-along build)                                            | real; a generic method, reused by the module - keep it generic                          |
 | `config/config.ts`                                                                                        | `whisperPath`/`whisperModel`/`ffmpegPath`/`readingAlignment*` on `appConfig`                                                                                                               | additive                                                                                |
 | `achievement-events.service.ts` + `koreader.service.ts`                                                   | `occurredAt` (effective activity time) on the progress event                                                                                                                               | **generic, shared with ABS**, additive/removable - propose upstream                     |
+| `packages/types/src/index.ts`                                                                             | `export * from "./reading-alignment"` (plus the earlier `./edition-link` export)                                                                                                           | 2 lines, trivial                                                                        |
 | client `DetailsTab.vue`                                                                                   | `<LinkBookControl>` in the action bar                                                                                                                                                      | keep additive (do not relocate upstream buttons)                                        |
 | client `ReaderView.vue`                                                                                   | open-time `fetchEbookCrossFormatResume`, passed to `useFoliate` as the `crossFormatResume` open option; wins over saved CFI and media-overlay positions                                    | one option field, one branch, a `{ crossFormatResumed }` return                         |
 | `book/book.repository.ts`                                                                                 | `EXTRA_PROGRESS_SOURCE` token (optional) feeds an N-way newest-wins merge in `enrichBookIds`; the SQL lives in `edition-link/edition-link-progress.service.ts`                             | one constructor param, one `Promise.all` entry, the merge branch                        |
@@ -763,7 +765,9 @@ already is.
 settings/test` require `Permission.ManageAppSettings`; `POST read-along/books/:bookId/build` and `GET
 .../existing` require `Permission.LibraryUpload` plus the requester's normal library access to every
 member book; replacing an existing read-along additionally requires `Permission.LibraryDeleteBooks`,
-since the build deletes the output it supersedes. Storyteller's own per-user accounts and reading state are never read; the service account
+since the build deletes the output it supersedes. `POST edition-links/read-along/:bookId` (attach a
+generated read-along to its pair) requires `Permission.LibraryEditMetadata`, and access is verified on
+both pair members before any write. Storyteller's own per-user accounts and reading state are never read; the service account
 configured in Settings is the only identity BookOrbit authenticates as.
 
 **Runtime deps (feature is inert until configured):** no new packages and no Dockerfile change - the

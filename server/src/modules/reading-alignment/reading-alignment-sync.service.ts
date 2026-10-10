@@ -13,6 +13,7 @@ import { LibraryService } from '../library/library.service';
 import { UserService } from '../user/user.service';
 import { absoluteSecondsToFilePosition, buildAudioTimeline, filePositionToAbsoluteSeconds } from './reading-alignment-audio-timeline.util';
 import { clampToPresent, ebookActivityTime, isProjectedEbookProgress, isStrictlyNewer } from './reading-alignment-freshness.util';
+import { alignmentContentChanged } from './reading-alignment-content-hash.util';
 import { describeError } from './reading-alignment-error.util';
 import { classifyMovement, type MovementState } from './reading-alignment-movement.util';
 import type { ReadingAlignmentPair } from './reading-alignment-pair.service';
@@ -73,7 +74,7 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
   private async handleProgressChanged(payload: BookProgressChangedPayload): Promise<void> {
     const startedAt = Date.now();
     try {
-      await this.project(payload);
+      await this.project(payload, startedAt);
     } catch (error: unknown) {
       const { errorClass, message } = describeError(error);
       this.logger.warn(
@@ -82,13 +83,12 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     }
   }
 
-  private async project(payload: BookProgressChangedPayload): Promise<void> {
+  private async project(payload: BookProgressChangedPayload, startedAt: number): Promise<void> {
     const pair = await this.pairService.resolveAlignmentPair(payload.bookId);
     if (!pair) return;
 
     const ready = await this.repo.getReadyAlignmentWithAnchors(pair.textBookId, pair.audioBookId);
     if (!ready) return;
-
     // Interpolation needs at least two anchors that carry an ebook fraction. Fractions are backfilled
     // when a user opens the book cross-format; until then we no-op rather than project off partial data.
     const anchors = usableAnchors(ready.anchors);
@@ -96,6 +96,13 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
 
     const side = await this.determineAdvancedSide(payload, pair, ready);
     if (!side) return;
+
+    if (await alignmentContentChanged(this.repo, pair, ready.alignment)) {
+      this.logger.debug(
+        `[${SYNC_EVENT}] [end] userId=${payload.userId} bookId=${payload.bookId} textBookId=${pair.textBookId} audioBookId=${pair.audioBookId} alignmentId=${ready.alignment.id} durationMs=${Date.now() - startedAt} skipped=alignment_stale - alignment stale, sync paused`,
+      );
+      return;
+    }
 
     // For a linked pair we write progress onto the counterpart record; never do so for a book the user
     // can no longer access (library access can change after a link is created). A self-pair writes onto

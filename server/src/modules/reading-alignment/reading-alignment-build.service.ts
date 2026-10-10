@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import { basename } from 'path';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
@@ -9,6 +8,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { appConfig } from '../../config/config';
 import { EpubService } from '../reader/epub/epub.service';
 import { absoluteSecondsToFilePosition, buildAudioTimeline } from './reading-alignment-audio-timeline.util';
+import { audioContentHashOf, epubContentHashOf } from './reading-alignment-content-hash.util';
 import { computeAnchorFraction } from './reading-alignment-fraction.util';
 import { matchTranscript } from './reading-alignment-matcher.util';
 import type { SpineText } from './reading-alignment-matcher.util';
@@ -170,8 +170,8 @@ export class ReadingAlignmentBuildService {
     // long path would overflow the whisper_model column and fail the insert (crashing every build).
     const whisperModel = this.config.whisperModel ? basename(this.config.whisperModel) : null;
 
-    const audioContentHash = this.computeHash(audioFiles.map((f) => [f.fileId, f.absolutePath, f.durationSeconds]));
-    const epubContentHash = this.computeHash([ebook.id, ebook.absolutePath, ebook.sizeBytes]);
+    const audioContentHash = audioContentHashOf(audioFiles);
+    const epubContentHash = epubContentHashOf(ebook);
 
     const existing = await this.repo.getAlignmentByPair(textBookId, audioBookId);
     const hashesMatch = Boolean(existing && existing.audioContentHash === audioContentHash && existing.epubContentHash === epubContentHash);
@@ -415,9 +415,5 @@ export class ReadingAlignmentBuildService {
       ebookFraction: fraction,
     });
     return { kind: 'anchored', spineIndex: match.spineIndex, fraction, inserted };
-  }
-
-  private computeHash(input: unknown): string {
-    return createHash('sha256').update(JSON.stringify(input)).digest('hex');
   }
 }

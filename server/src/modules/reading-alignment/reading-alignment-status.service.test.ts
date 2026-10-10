@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Permission } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
+import { audioContentHashOf, epubContentHashOf } from './reading-alignment-content-hash.util';
 import { ReadingAlignmentStatusService } from './reading-alignment-status.service';
 
 const USER = { id: 42, isSuperuser: false, permissions: [] } as unknown as RequestUser;
@@ -12,6 +13,8 @@ const SUPERUSER = { id: 1, isSuperuser: true, permissions: [] } as unknown as Re
 const BOOK_ID = 7;
 const TEXT_BOOK_ID = 8;
 const AUDIO_BOOK_ID = BOOK_ID;
+const EBOOK_FILE = { id: 5, absolutePath: '/books/x.epub', sizeBytes: 1000 };
+const AUDIO_FILES = [{ fileId: 9, absolutePath: '/books/x.m4b', durationSeconds: 40 }];
 
 function alignmentRow(overrides?: Partial<Record<string, unknown>>) {
   return {
@@ -24,6 +27,8 @@ function alignmentRow(overrides?: Partial<Record<string, unknown>>) {
     samplesTotal: 10,
     anchorCount: 4,
     builtAt: new Date('2026-02-02T00:00:00Z'),
+    audioContentHash: audioContentHashOf(AUDIO_FILES),
+    epubContentHash: epubContentHashOf(EBOOK_FILE),
     ...overrides,
   };
 }
@@ -37,11 +42,15 @@ function build(overrides?: {
   enabled?: boolean;
   whisperAvailable?: boolean;
   atCapacity?: boolean;
+  ebookFile?: typeof EBOOK_FILE | null;
+  audioFiles?: typeof AUDIO_FILES;
 }) {
   const config = { readingAlignmentEnabled: overrides?.enabled ?? true };
   const repo = {
     getAlignmentByPair: vi.fn().mockResolvedValue(overrides?.existing ?? undefined),
     deleteAlignment: vi.fn().mockResolvedValue(true),
+    findEbookFile: vi.fn().mockResolvedValue(overrides?.ebookFile === null ? undefined : (overrides?.ebookFile ?? EBOOK_FILE)),
+    resolveAudioFilesWithPaths: vi.fn().mockResolvedValue(overrides?.audioFiles ?? AUDIO_FILES),
   };
   const buildService = {
     buildAlignment: vi.fn().mockReturnValue(overrides?.buildResult ?? Promise.resolve()),
@@ -195,9 +204,52 @@ describe('ReadingAlignmentStatusService.getStatus', () => {
       samplesDone: 10,
       samplesTotal: 10,
       anchorCount: 4,
-      builtAt: new Date('2026-02-02T00:00:00Z'),
+      builtAt: '2026-02-02T00:00:00.000Z',
       error: null,
+      stale: false,
     });
+  });
+
+  it('reports a null builtAt for a row that never finished', async () => {
+    const { service } = build({ existing: alignmentRow({ status: 'building', builtAt: null }) });
+
+    await expect(service.getStatus(BOOK_ID, USER)).resolves.toMatchObject({ builtAt: null });
+  });
+
+  it('checks the current files of a ready row against its stored hashes', async () => {
+    const { service, repo } = build({ existing: alignmentRow() });
+
+    await expect(service.getStatus(BOOK_ID, USER)).resolves.toMatchObject({ stale: false });
+    expect(repo.findEbookFile).toHaveBeenCalledWith(TEXT_BOOK_ID);
+    expect(repo.resolveAudioFilesWithPaths).toHaveBeenCalledWith(AUDIO_BOOK_ID);
+  });
+
+  it('reports a ready row stale when an audio duration changed', async () => {
+    const { service } = build({ existing: alignmentRow(), audioFiles: [{ ...AUDIO_FILES[0], durationSeconds: 41 }] });
+
+    await expect(service.getStatus(BOOK_ID, USER)).resolves.toMatchObject({ status: 'ready', stale: true });
+  });
+
+  it('reports a ready row stale when the ebook changed', async () => {
+    const { service } = build({ existing: alignmentRow(), ebookFile: { ...EBOOK_FILE, sizeBytes: 2000 } });
+
+    await expect(service.getStatus(BOOK_ID, USER)).resolves.toMatchObject({ stale: true });
+  });
+
+  it('reports a ready row stale when the ebook or audio files are gone', async () => {
+    const noEbook = build({ existing: alignmentRow(), ebookFile: null });
+    await expect(noEbook.service.getStatus(BOOK_ID, USER)).resolves.toMatchObject({ stale: true });
+
+    const noAudio = build({ existing: alignmentRow(), audioFiles: [] });
+    await expect(noAudio.service.getStatus(BOOK_ID, USER)).resolves.toMatchObject({ stale: true });
+  });
+
+  it.each(['building', 'failed', 'pending', 'unalignable'])('reports a %s row not stale without loading files', async (status) => {
+    const { service, repo } = build({ existing: alignmentRow({ status, audioContentHash: 'old' }) });
+
+    await expect(service.getStatus(BOOK_ID, USER)).resolves.toMatchObject({ status, stale: false });
+    expect(repo.findEbookFile).not.toHaveBeenCalled();
+    expect(repo.resolveAudioFilesWithPaths).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -221,8 +273,9 @@ describe('ReadingAlignmentStatusService.getStatus', () => {
   });
 
   it("returns { status: 'none' } when no alignment row exists", async () => {
-    const { service } = build({ existing: undefined });
+    const { service, repo } = build({ existing: undefined });
     expect(await service.getStatus(BOOK_ID, USER)).toEqual({ status: 'none' });
+    expect(repo.findEbookFile).not.toHaveBeenCalled();
   });
 
   it("returns { status: 'none' } when the book has no alignment pair", async () => {

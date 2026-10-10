@@ -4,6 +4,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
 import { EpubService } from '../reader/epub/epub.service';
 import { buildAudioTimeline, filePositionToAbsoluteSeconds } from './reading-alignment-audio-timeline.util';
+import { alignmentContentChanged } from './reading-alignment-content-hash.util';
 import { computeAnchorFraction } from './reading-alignment-fraction.util';
 import { ebookActivityTime, type EbookProgressActivity, isStrictlyNewer } from './reading-alignment-freshness.util';
 import type { ReadingAlignmentPair } from './reading-alignment-pair.service';
@@ -34,26 +35,30 @@ export class ReadingAlignmentResolveService {
   // progress is written here and nothing is persisted beyond backfilling missing anchor fractions (the
   // live ebook projection is written by the sync service, never by this resolver).
   async resolveResume(bookId: number, user: RequestUser): Promise<CrossFormatResume> {
+    const startedAt = Date.now();
     this.logger.log(`[${RESOLVE_EVENT}] [start] bookId=${bookId} userId=${user.id} - cross-format resume started`);
 
     await this.assertAccess(bookId, user);
     const pair = await this.pairService.resolveAlignmentPair(bookId);
     if (!pair) {
-      return this.done(bookId, null, UNAVAILABLE);
+      return this.done(startedAt, bookId, null, UNAVAILABLE);
     }
     await this.assertPairAccess(pair, bookId, user);
 
     const ready = await this.repo.getReadyAlignmentWithAnchors(pair.textBookId, pair.audioBookId);
     if (!ready || ready.anchors.length < MIN_ANCHORS) {
-      return this.done(bookId, pair, UNAVAILABLE);
+      return this.done(startedAt, bookId, pair, UNAVAILABLE);
     }
 
     const { alignment } = ready;
+    if (await alignmentContentChanged(this.repo, pair, alignment)) {
+      return this.done(startedAt, bookId, pair, UNAVAILABLE, `alignmentId=${alignment.id} skipped=alignment_stale`);
+    }
     const ebookFileId = alignment.ebookFileId;
 
     const anchors = await this.resolveAnchors(pair.textBookId, ebookFileId, user, ready.anchors);
     if (anchors.length < MIN_ANCHORS) {
-      return this.done(bookId, pair, UNAVAILABLE);
+      return this.done(startedAt, bookId, pair, UNAVAILABLE);
     }
 
     const ebookProgress = ebookFileId != null ? await this.repo.getReadingProgress(ebookFileId, user.id) : undefined;
@@ -61,7 +66,7 @@ export class ReadingAlignmentResolveService {
 
     const result = await this.resolveEbookResume(pair.audioBookId, anchors, ebookProgress, audioProgress);
 
-    return this.done(bookId, pair, result);
+    return this.done(startedAt, bookId, pair, result);
   }
 
   // Ensure every anchor carries a usable ebookFraction, enforcing library access along the way.
@@ -129,9 +134,12 @@ export class ReadingAlignmentResolveService {
     await Promise.all([...counterpartIds].map((bookId) => this.assertAccess(bookId, user)));
   }
 
-  private done(bookId: number, pair: ReadingAlignmentPair | null, result: CrossFormatResume): CrossFormatResume {
+  private done(startedAt: number, bookId: number, pair: ReadingAlignmentPair | null, result: CrossFormatResume, skip?: string): CrossFormatResume {
     const pairFields = pair ? ` textBookId=${pair.textBookId} audioBookId=${pair.audioBookId}` : '';
-    this.logger.log(`[${RESOLVE_EVENT}] [end] bookId=${bookId}${pairFields} available=${result.available} - cross-format resume completed`);
+    const skipFields = skip ? ` ${skip}` : '';
+    this.logger.log(
+      `[${RESOLVE_EVENT}] [end] bookId=${bookId}${pairFields} durationMs=${Date.now() - startedAt}${skipFields} available=${result.available} - cross-format resume completed`,
+    );
     return result;
   }
 }

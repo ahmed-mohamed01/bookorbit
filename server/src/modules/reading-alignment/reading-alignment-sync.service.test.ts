@@ -6,6 +6,7 @@ import {
   ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED,
   type BookProgressChangedPayload,
 } from '../achievement/achievement-events.service';
+import { audioContentHashOf, epubContentHashOf } from './reading-alignment-content-hash.util';
 import { ReadingAlignmentSyncService } from './reading-alignment-sync.service';
 
 const USER_ID = 42;
@@ -14,6 +15,13 @@ const AUDIO_BOOK_ID = 9;
 const EBOOK_FILE_ID = 5;
 const AUDIO_FILE_A = 20;
 const AUDIO_FILE_B = 21;
+
+const EBOOK_FILE = { id: EBOOK_FILE_ID, absolutePath: '/books/x.epub', sizeBytes: 1000 };
+const AUDIO_FILES_WITH_PATHS = [
+  { fileId: AUDIO_FILE_A, absolutePath: '/books/x-1.mp3', durationSeconds: 100 },
+  { fileId: AUDIO_FILE_B, absolutePath: '/books/x-2.mp3', durationSeconds: 100 },
+];
+const FRESH_HASHES = { audioContentHash: audioContentHashOf(AUDIO_FILES_WITH_PATHS), epubContentHash: epubContentHashOf(EBOOK_FILE) };
 
 const NEWER = new Date('2026-02-02T00:00:00Z');
 const MIDDLE = new Date('2026-01-15T00:00:00Z');
@@ -43,6 +51,8 @@ interface Overrides {
   bookFileKind?: 'text' | 'audio' | null;
   finishThreshold?: number;
   advancingReadStatus?: { status: string } | undefined;
+  ebookFile?: typeof EBOOK_FILE | undefined;
+  audioFilesWithPaths?: typeof AUDIO_FILES_WITH_PATHS;
 }
 
 function build(overrides: Overrides = {}) {
@@ -51,9 +61,11 @@ function build(overrides: Overrides = {}) {
       .fn()
       .mockResolvedValue(overrides.pair === undefined ? { textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID } : overrides.pair),
   };
-  const ready = 'ready' in overrides ? overrides.ready : { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID }, anchors: anchors() };
+  const ready = 'ready' in overrides ? overrides.ready : { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID, ...FRESH_HASHES }, anchors: anchors() };
   const repo = {
     getReadyAlignmentWithAnchors: vi.fn().mockResolvedValue(ready),
+    findEbookFile: vi.fn().mockResolvedValue('ebookFile' in overrides ? overrides.ebookFile : EBOOK_FILE),
+    resolveAudioFilesWithPaths: vi.fn().mockResolvedValue(overrides.audioFilesWithPaths ?? AUDIO_FILES_WITH_PATHS),
     getReadingProgress: vi.fn().mockResolvedValue(overrides.ebookProgress),
     getAudiobookProgress: vi.fn().mockResolvedValue(overrides.audioProgress),
     resolveAudioPlayOrder: vi.fn().mockResolvedValue(playOrder()),
@@ -239,6 +251,60 @@ describe('ReadingAlignmentSyncService', () => {
     });
   });
 
+  describe('stale alignment', () => {
+    it('pauses projection when the audio files changed since the build', async () => {
+      const debug = vi.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+      const { service, repo } = build({
+        ebookProgress: { percentage: 50, updatedAt: NEWER },
+        audioFilesWithPaths: [AUDIO_FILES_WITH_PATHS[0], { ...AUDIO_FILES_WITH_PATHS[1], durationSeconds: 120 }],
+      });
+
+      await dispatch(service, ebookEvent());
+
+      expect(repo.findEbookFile).toHaveBeenCalledWith(TEXT_BOOK_ID);
+      expect(repo.resolveAudioFilesWithPaths).toHaveBeenCalledWith(AUDIO_BOOK_ID);
+      expect(repo.projectAudiobookProgress).not.toHaveBeenCalled();
+      expect(repo.getReadingProgress).not.toHaveBeenCalled();
+      expect(debug).toHaveBeenCalledTimes(1);
+      expect(debug.mock.calls[0][0]).toMatch(/durationMs=\d+ skipped=alignment_stale/);
+    });
+
+    it('does not read the content rows when the event would bail anyway', async () => {
+      const unrelated = build({ ebookProgress: { percentage: 50, updatedAt: NEWER } });
+      await dispatch(unrelated.service, { ...ebookEvent(), bookId: 999 });
+      expect(unrelated.repo.findEbookFile).not.toHaveBeenCalled();
+      expect(unrelated.repo.resolveAudioFilesWithPaths).not.toHaveBeenCalled();
+
+      const fewAnchors = build({
+        ebookProgress: { percentage: 50, updatedAt: NEWER },
+        ready: { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID, ...FRESH_HASHES }, anchors: anchors().slice(0, 1) },
+      });
+      await dispatch(fewAnchors.service, ebookEvent());
+      expect(fewAnchors.repo.findEbookFile).not.toHaveBeenCalled();
+      expect(fewAnchors.repo.resolveAudioFilesWithPaths).not.toHaveBeenCalled();
+    });
+
+    it('pauses projection when the ebook file is gone', async () => {
+      vi.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+      const { service, repo } = build({
+        audioProgress: { currentFileId: AUDIO_FILE_A, positionSeconds: 50, percentage: 25, updatedAt: NEWER },
+        ebookFile: undefined,
+      });
+
+      await dispatch(service, audioEvent());
+
+      expect(repo.projectReadingProgress).not.toHaveBeenCalled();
+    });
+
+    it('still projects when the stored hashes match the current files', async () => {
+      const { service, repo } = build({ ebookProgress: { percentage: 50, updatedAt: NEWER } });
+
+      await dispatch(service, ebookEvent());
+
+      expect(repo.projectAudiobookProgress).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('no projection targets', () => {
     it('does nothing when the book has no alignment pair', async () => {
       const { service, repo } = build({ pair: null });
@@ -263,7 +329,7 @@ describe('ReadingAlignmentSyncService', () => {
         { id: 2, alignmentId: 3, audioSeconds: 200, spineIndex: 4, phrase: 'end', confidence: 1, ebookFraction: null },
       ];
       const { service, repo } = build({
-        ready: { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID }, anchors: partialAnchors },
+        ready: { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID, ...FRESH_HASHES }, anchors: partialAnchors },
         ebookProgress: { percentage: 50, updatedAt: NEWER },
       });
 
@@ -383,7 +449,7 @@ describe('ReadingAlignmentSyncService', () => {
         { id: 2, alignmentId: 3, audioSeconds: 160, spineIndex: 4, phrase: 'near-end', confidence: 1, ebookFraction: 0.8 },
       ];
       const { service, repo } = build({
-        ready: { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID }, anchors: shortAnchors },
+        ready: { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID, ...FRESH_HASHES }, anchors: shortAnchors },
         ebookProgress: { percentage: 100, updatedAt: NEWER },
         audioProgress: undefined,
         finishThreshold: 98,

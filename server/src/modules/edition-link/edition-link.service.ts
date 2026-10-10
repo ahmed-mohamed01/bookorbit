@@ -27,6 +27,7 @@ export interface EditionLinkForBookResult {
 }
 
 const ATTACH_EVENT = 'edition_link.attach_read_along';
+const RESTORE_EVENT = 'edition_link.restore_read_along';
 
 function unlinked(proposed: EditionLinkCandidate | null = null): EditionLinkForBookResult {
   return { link: null, proposed, counterpart: null, role: null, members: null };
@@ -174,6 +175,56 @@ export class EditionLinkService {
     }
   }
 
+  async attachReadAlongByUser(user: RequestUser, bookId: number, readAlongBookId: number): Promise<BookEditionLink> {
+    const startedAt = Date.now();
+    this.logger.log(
+      `[${ATTACH_EVENT}] [start] bookId=${bookId} readAlongBookId=${readAlongBookId} userId=${user.id} - explicit read-along attach started`,
+    );
+
+    try {
+      await this.bookService.verifyBookAccess(bookId, user);
+      const link = await this.repo.findLinkForBook(bookId);
+      if (!link || (link.textBookId !== bookId && link.audioBookId !== bookId)) {
+        throw new NotFoundException('Edition link not found');
+      }
+
+      const otherBookId = link.textBookId === bookId ? link.audioBookId : link.textBookId;
+      await this.bookService.verifyBookAccess(otherBookId, user);
+
+      if (link.readAlongBookId !== null && link.readAlongBookId !== readAlongBookId) {
+        throw new ConflictException('A different read-along is already attached');
+      }
+      if (link.readAlongBookId === readAlongBookId) {
+        this.logger.log(
+          `[${ATTACH_EVENT}] [end] bookId=${bookId} readAlongBookId=${readAlongBookId} userId=${user.id} linkId=${link.id} durationMs=${Date.now() - startedAt} outcome=already_attached - explicit read-along attach completed`,
+        );
+        return link;
+      }
+
+      const readAlong = await this.readAlongOutputs.findReadAlongForPair(link);
+      if (!readAlong || readAlong.outputBookId !== readAlongBookId) {
+        throw new NotFoundException('Generated read-along not found for this edition pair');
+      }
+
+      const updated = await this.writeReadAlongAttachment(link, readAlong);
+      if (!updated) {
+        throw new ConflictException('Read-along could not be attached');
+      }
+
+      this.logger.log(
+        `[${ATTACH_EVENT}] [end] bookId=${bookId} readAlongBookId=${readAlongBookId} userId=${user.id} linkId=${updated.id} durationMs=${Date.now() - startedAt} outcome=attached - explicit read-along attach completed`,
+      );
+      return updated;
+    } catch (err) {
+      const errorClass = err instanceof Error ? err.name : 'UnknownError';
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      this.logger.error(
+        `[${ATTACH_EVENT}] [fail] bookId=${bookId} readAlongBookId=${readAlongBookId} userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(errorMessage)}" - explicit read-along attach failed`,
+      );
+      throw err;
+    }
+  }
+
   /**
    * Gives a link the read-along its pair generated when the link lost it, as an unlink and relink
    * leaves it. Idempotent, and never fails the caller: a link that cannot take its read-along is still
@@ -202,12 +253,11 @@ export class EditionLinkService {
   async attachReadAlong(link: BookEditionLink, readAlong: ReadAlongAttachment, userId: number): Promise<BookEditionLink> {
     const startedAt = Date.now();
     const ids = `linkId=${link.id} buildId=${readAlong.buildId} outputBookId=${readAlong.outputBookId} userId=${userId}`;
-    this.logger.log(`[${ATTACH_EVENT}] [start] ${ids} - read-along attach started`);
+    this.logger.log(`[${RESTORE_EVENT}] [start] ${ids} - read-along restore started`);
     try {
-      const updated = await this.repo.setReadAlongBook(link.id, readAlong.outputBookId);
-      if (updated) await this.readAlongOutputs.recordAttachment(readAlong.buildId, link.id);
+      const updated = await this.writeReadAlongAttachment(link, readAlong);
       this.logger.log(
-        `[${ATTACH_EVENT}] [end] ${ids} durationMs=${Date.now() - startedAt} attached=${updated !== undefined} - read-along attach completed`,
+        `[${RESTORE_EVENT}] [end] ${ids} durationMs=${Date.now() - startedAt} attached=${updated !== undefined} - read-along restore completed`,
       );
       return updated ?? link;
     } catch (err) {
@@ -216,12 +266,18 @@ export class EditionLinkService {
     }
   }
 
+  private async writeReadAlongAttachment(link: BookEditionLink, readAlong: ReadAlongAttachment): Promise<BookEditionLink | undefined> {
+    const updated = await this.repo.setReadAlongBook(link.id, readAlong.outputBookId);
+    if (updated) await this.readAlongOutputs.recordAttachment(readAlong.buildId, link.id);
+    return updated;
+  }
+
   private logAttachFailure(linkId: number, readAlong: ReadAlongAttachment | null, userId: number, startedAt: number, err: unknown): void {
     const errorClass = err instanceof Error ? err.name : 'UnknownError';
     const errorMessage = err instanceof Error ? err.message : String(err);
     const buildField = readAlong ? ` buildId=${readAlong.buildId} outputBookId=${readAlong.outputBookId}` : '';
     this.logger.warn(
-      `[${ATTACH_EVENT}] [fail] linkId=${linkId}${buildField} userId=${userId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(errorMessage)}" - read-along attach failed`,
+      `[${RESTORE_EVENT}] [fail] linkId=${linkId}${buildField} userId=${userId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(errorMessage)}" - read-along restore failed`,
     );
   }
 

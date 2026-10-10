@@ -15,6 +15,7 @@ export * from "./metadata-lock";
 export * from "./dashboard";
 export * from "./book";
 export * from "./edition-link";
+export * from "./reading-alignment";
 export * from "./book-duplicates";
 export * from "./book-move";
 export * from "./book-selection";

@@ -883,14 +883,7 @@ export class AudiobookshelfRepository {
     const [row] = await this.db
       .select()
       .from(audiobookshelfBookState)
-      .where(
-        and(
-          eq(audiobookshelfBookState.userId, userId),
-          eq(audiobookshelfBookState.bookId, bookId),
-          eq(audiobookshelfBookState.syncExcluded, false),
-          eq(audiobookshelfBookState.manualUnlinked, false),
-        ),
-      )
+      .where(and(eq(audiobookshelfBookState.userId, userId), eq(audiobookshelfBookState.bookId, bookId)))
       .orderBy(asc(audiobookshelfBookState.id))
       .limit(1);
     return row;

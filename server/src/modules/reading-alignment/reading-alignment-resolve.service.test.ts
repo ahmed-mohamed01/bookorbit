@@ -1,7 +1,8 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { RequestUser } from '../../common/types/request-user';
+import { audioContentHashOf, epubContentHashOf } from './reading-alignment-content-hash.util';
 import { ReadingAlignmentResolveService } from './reading-alignment-resolve.service';
 
 const USER = { id: 42, isSuperuser: false } as RequestUser;
@@ -9,6 +10,13 @@ const BOOK_ID = 7;
 const TEXT_BOOK_ID = 8;
 const AUDIO_BOOK_ID = BOOK_ID;
 const EBOOK_FILE_ID = 5;
+
+const EBOOK_FILE = { id: EBOOK_FILE_ID, absolutePath: '/books/x.epub', sizeBytes: 1000 };
+const AUDIO_FILES_WITH_PATHS = [
+  { fileId: 9, absolutePath: '/books/x-1.mp3', durationSeconds: 100 },
+  { fileId: 10, absolutePath: '/books/x-2.mp3', durationSeconds: 100 },
+];
+const FRESH_HASHES = { audioContentHash: audioContentHashOf(AUDIO_FILES_WITH_PATHS), epubContentHash: epubContentHashOf(EBOOK_FILE) };
 
 const NEWER = new Date('2026-02-02T00:00:00Z');
 const OLDER = new Date('2026-01-01T00:00:00Z');
@@ -42,6 +50,8 @@ interface RepoMock {
   getReadingProgress: ReturnType<typeof vi.fn>;
   getAudiobookProgress: ReturnType<typeof vi.fn>;
   resolveAudioPlayOrder: ReturnType<typeof vi.fn>;
+  findEbookFile: ReturnType<typeof vi.fn>;
+  resolveAudioFilesWithPaths: ReturnType<typeof vi.fn>;
 }
 
 function build(overrides?: {
@@ -52,17 +62,22 @@ function build(overrides?: {
   verifyThrows?: boolean;
   libraryId?: number | null;
   pair?: { textBookId: number; audioBookId: number } | null;
+  ebookFile?: typeof EBOOK_FILE;
 }) {
   const repo: RepoMock = {
     getReadyAlignmentWithAnchors: vi
       .fn()
       .mockResolvedValue(
-        overrides?.ready === undefined ? { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID }, anchors: anchorRows() } : overrides.ready,
+        overrides?.ready === undefined
+          ? { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID, ...FRESH_HASHES }, anchors: anchorRows() }
+          : overrides.ready,
       ),
     backfillAnchorFraction: vi.fn().mockResolvedValue(undefined),
     getReadingProgress: vi.fn().mockResolvedValue(overrides?.ebookProgress ?? undefined),
     getAudiobookProgress: vi.fn().mockResolvedValue(overrides?.audioProgress ?? undefined),
     resolveAudioPlayOrder: vi.fn().mockResolvedValue(playOrder()),
+    findEbookFile: vi.fn().mockResolvedValue(overrides?.ebookFile ?? EBOOK_FILE),
+    resolveAudioFilesWithPaths: vi.fn().mockResolvedValue(AUDIO_FILES_WITH_PATHS),
   };
   const epub = { extractSpineText: vi.fn().mockResolvedValue(overrides?.spines ?? []) };
   const bookService = {
@@ -94,6 +109,19 @@ describe('ReadingAlignmentResolveService.resolveResume', () => {
     expect(result).toEqual({ available: true, source: 'audio', spineIndex: 4, phrase: 'end', percentage: 75 });
   });
 
+  it('logs the completion with durationMs', async () => {
+    const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const { service } = build({
+      ebookProgress: { percentage: 0, updatedAt: OLDER },
+      audioProgress: { currentFileId: 10, positionSeconds: 50, percentage: 75, updatedAt: NEWER },
+    });
+
+    await service.resolveResume(BOOK_ID, USER);
+
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/\[end\] bookId=7 textBookId=8 audioBookId=7 durationMs=\d+ available=true/));
+    log.mockRestore();
+  });
+
   it('stays available when the ebook row is a projection whose timestamps are newer than the audio row', async () => {
     const { service } = build({
       // The sync stamped the projection at the audio activity time, which can be newer than the audio row.
@@ -102,6 +130,30 @@ describe('ReadingAlignmentResolveService.resolveResume', () => {
     });
 
     expect(await service.resolveResume(BOOK_ID, USER)).toEqual({ available: true, source: 'audio', spineIndex: 4, phrase: 'end', percentage: 75 });
+  });
+
+  it('is unavailable when the ebook changed since the alignment was built', async () => {
+    const { service, repo, epub } = build({
+      ebookProgress: { percentage: 0, updatedAt: OLDER },
+      audioProgress: { currentFileId: 10, positionSeconds: 50, percentage: 75, updatedAt: NEWER },
+      ebookFile: { ...EBOOK_FILE, sizeBytes: 2000 },
+    });
+
+    expect(await service.resolveResume(BOOK_ID, USER)).toEqual({ available: false });
+    expect(repo.findEbookFile).toHaveBeenCalledWith(TEXT_BOOK_ID);
+    expect(repo.resolveAudioFilesWithPaths).toHaveBeenCalledWith(AUDIO_BOOK_ID);
+    expect(repo.getAudiobookProgress).not.toHaveBeenCalled();
+    expect(epub.extractSpineText).not.toHaveBeenCalled();
+  });
+
+  it('is unavailable when the alignment predates content hashing', async () => {
+    const { service } = build({
+      ready: { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID, audioContentHash: null, epubContentHash: null }, anchors: anchorRows() },
+      ebookProgress: { percentage: 0, updatedAt: OLDER },
+      audioProgress: { currentFileId: 10, positionSeconds: 50, percentage: 75, updatedAt: NEWER },
+    });
+
+    expect(await service.resolveResume(BOOK_ID, USER)).toEqual({ available: false });
   });
 
   it('is unavailable when audio progress is missing', async () => {
@@ -122,13 +174,13 @@ describe('ReadingAlignmentResolveService.resolveResume', () => {
   });
 
   it('unavailable when the alignment has fewer than two anchors', async () => {
-    const { service } = build({ ready: { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID }, anchors: [anchorRows()[0]] } });
+    const { service } = build({ ready: { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID, ...FRESH_HASHES }, anchors: [anchorRows()[0]] } });
     expect(await service.resolveResume(BOOK_ID, USER)).toEqual({ available: false });
   });
 
   it('backfills and persists a missing anchor fraction from spine text', async () => {
     const { service, repo, epub } = build({
-      ready: { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID }, anchors: anchorRows({ secondFraction: null }) },
+      ready: { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID, ...FRESH_HASHES }, anchors: anchorRows({ secondFraction: null }) },
       spines: [
         { spineIndex: 0, text: '0123456789' },
         { spineIndex: 4, text: 'xxend' },
@@ -147,7 +199,7 @@ describe('ReadingAlignmentResolveService.resolveResume', () => {
 
   it('drops an anchor whose phrase cannot be located, falling to unavailable', async () => {
     const { service, repo } = build({
-      ready: { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID }, anchors: anchorRows({ secondFraction: null }) },
+      ready: { alignment: { id: 3, ebookFileId: EBOOK_FILE_ID, ...FRESH_HASHES }, anchors: anchorRows({ secondFraction: null }) },
       spines: [{ spineIndex: 0, text: 'no phrase here' }],
       ebookProgress: { percentage: 25, updatedAt: NEWER },
     });

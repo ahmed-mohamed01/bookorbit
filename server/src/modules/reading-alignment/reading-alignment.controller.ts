@@ -1,5 +1,6 @@
 import { Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { Permission } from '@bookorbit/types';
+import type { AlignmentBuildResponse, AlignmentStatusResponse } from '@bookorbit/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -8,7 +9,6 @@ import { BuildAlignmentQueryDto } from './dto';
 import { ReadingAlignmentResolveService } from './reading-alignment-resolve.service';
 import type { CrossFormatResume } from './reading-alignment-resolve.service';
 import { ReadingAlignmentStatusService } from './reading-alignment-status.service';
-import type { AlignmentBuildRequestResult, AlignmentStatusResult } from './reading-alignment-status.service';
 
 @Controller('reading-alignment')
 export class ReadingAlignmentController {
@@ -29,7 +29,7 @@ export class ReadingAlignmentController {
     @Param('bookId', ParseIntPipe) bookId: number,
     @Query() query: BuildAlignmentQueryDto,
     @CurrentUser() user: RequestUser,
-  ): Promise<AlignmentBuildRequestResult> {
+  ): Promise<AlignmentBuildResponse> {
     return this.statusService.requestBuild(bookId, user, query.force ?? false);
   }
 
@@ -41,7 +41,7 @@ export class ReadingAlignmentController {
   }
 
   @Get('books/:bookId/alignment')
-  getAlignmentStatus(@Param('bookId', ParseIntPipe) bookId: number, @CurrentUser() user: RequestUser): Promise<AlignmentStatusResult> {
+  getAlignmentStatus(@Param('bookId', ParseIntPipe) bookId: number, @CurrentUser() user: RequestUser): Promise<AlignmentStatusResponse> {
     return this.statusService.getStatus(bookId, user);
   }
 }

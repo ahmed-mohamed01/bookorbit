@@ -1,10 +1,12 @@
 import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Permission } from '@bookorbit/types';
+import type { AlignmentBuildResponse, AlignmentStatusResponse } from '@bookorbit/types';
 import type { ConfigType } from '@nestjs/config';
 
 import { appConfig } from '../../config/config';
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { alignmentContentChanged } from './reading-alignment-content-hash.util';
 import { describeError } from './reading-alignment-error.util';
 import { BookService } from '../book/book.service';
 import { ReadingAlignmentBuildService } from './reading-alignment-build.service';
@@ -16,18 +18,6 @@ import { WhisperService } from './whisper.service';
 const REQUEST_EVENT = 'reading_alignment.request_build';
 const CANCEL_EVENT = 'reading_alignment.cancel_build';
 const MAX_STATUS_ERROR_LENGTH = 500;
-
-export type AlignmentBuildRequestResult = { status: string };
-export type AlignmentStatusResult =
-  | { status: 'none' }
-  | {
-      status: string;
-      samplesDone: number;
-      samplesTotal: number | null;
-      anchorCount: number;
-      builtAt: Date | null;
-      error: string | null;
-    };
 
 @Injectable()
 export class ReadingAlignmentStatusService {
@@ -45,7 +35,7 @@ export class ReadingAlignmentStatusService {
   // Kicks off a build WITHOUT awaiting it (a build can run for minutes) and reports the status the UI
   // should show right now: the existing row's status when one exists, or 'building' for a fresh kickoff.
   // The build service owns an in-flight guard, so a repeated request never starts a duplicate build.
-  async requestBuild(bookId: number, user: RequestUser, force = false): Promise<AlignmentBuildRequestResult> {
+  async requestBuild(bookId: number, user: RequestUser, force = false): Promise<AlignmentBuildResponse> {
     await this.assertAccess(bookId, user);
     const pair = await this.pairService.resolveAlignmentPair(bookId);
     if (!pair) return { status: 'none' };
@@ -112,7 +102,7 @@ export class ReadingAlignmentStatusService {
     }
   }
 
-  async getStatus(bookId: number, user: RequestUser): Promise<AlignmentStatusResult> {
+  async getStatus(bookId: number, user: RequestUser): Promise<AlignmentStatusResponse> {
     await this.assertAccess(bookId, user);
     const pair = await this.pairService.resolveAlignmentPair(bookId);
     if (!pair) return { status: 'none' };
@@ -126,9 +116,10 @@ export class ReadingAlignmentStatusService {
       samplesDone: alignment.samplesDone,
       samplesTotal: alignment.samplesTotal,
       anchorCount: alignment.anchorCount,
-      builtAt: alignment.builtAt,
+      builtAt: alignment.builtAt?.toISOString() ?? null,
       // The stored error can carry file paths and tool output, so only someone who may rebuild sees it.
       error: this.canBuild(user) && alignment.error ? alignment.error.slice(0, MAX_STATUS_ERROR_LENGTH) : null,
+      stale: alignment.status === 'ready' && (await alignmentContentChanged(this.repo, pair, alignment)),
     };
   }
 

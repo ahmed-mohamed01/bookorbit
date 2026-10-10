@@ -1,4 +1,5 @@
 import { getCurrentScope, onScopeDispose, ref } from 'vue'
+import type { AlignmentBuildBlockReason, AlignmentBuildResponse, AlignmentStatus, AlignmentStatusResponse } from '@bookorbit/types'
 import { api } from '@/lib/api'
 
 const POLL_INTERVAL_MS = 3000
@@ -7,27 +8,13 @@ const POLL_INTERVAL_MS = 3000
 // read as "not created yet" before giving up, instead of polling forever.
 const MAX_AWAIT_BUILD_ROW_POLLS = 5
 
-export type AlignmentStatus = 'none' | 'pending' | 'building' | 'ready' | 'failed' | 'unalignable'
-export type AlignmentBuildBlockReason = 'disabled' | 'unavailable' | 'busy'
+export type { AlignmentBuildBlockReason, AlignmentStatus }
 
 const KNOWN_STATUSES = new Set<AlignmentStatus>(['none', 'pending', 'building', 'ready', 'failed', 'unalignable'])
 // 'pending' is the row's schema default, so a read landing between the insert and the first update
 // returns it; stopping there would leave the panel on Aligning until it is reopened.
 const RUNNING_STATUSES = new Set<AlignmentStatus>(['pending', 'building'])
 const BUILD_BLOCK_REASONS = new Set<AlignmentBuildBlockReason>(['disabled', 'unavailable', 'busy'])
-
-interface AlignmentStatusResponse {
-  status: string
-  samplesDone?: number
-  samplesTotal?: number | null
-  anchorCount?: number
-  builtAt?: string | null
-  error?: string | null
-}
-
-interface AlignmentBuildResponse {
-  status: string
-}
 
 function normalizeStatus(value: string): AlignmentStatus {
   return KNOWN_STATUSES.has(value as AlignmentStatus) ? (value as AlignmentStatus) : 'none'
@@ -43,6 +30,8 @@ export function useReadingAlignment() {
   const samplesTotal = ref<number | null>(null)
   const anchorCount = ref<number | null>(null)
   const builtAt = ref<string | null>(null)
+  // True when a ready alignment no longer matches the pair's current files; position sync is paused.
+  const stale = ref(false)
   const mutating = ref(false)
   const error = ref<string | null>(null)
   // The build's own failure reason from the server, distinct from `error`, which is a failed request.
@@ -102,6 +91,7 @@ export function useReadingAlignment() {
       anchorCount.value = null
       builtAt.value = null
       buildError.value = null
+      stale.value = false
       return
     }
     samplesDone.value = data.samplesDone ?? null
@@ -109,6 +99,7 @@ export function useReadingAlignment() {
     anchorCount.value = data.anchorCount ?? null
     builtAt.value = data.builtAt ?? null
     buildError.value = data.error ?? null
+    stale.value = data.stale ?? false
   }
 
   function applyUnknown(): void {
@@ -118,6 +109,7 @@ export function useReadingAlignment() {
     anchorCount.value = null
     builtAt.value = null
     buildError.value = null
+    stale.value = false
   }
 
   function giveUpOnBuildRow(): void {
@@ -265,6 +257,7 @@ export function useReadingAlignment() {
     samplesTotal,
     anchorCount,
     builtAt,
+    stale,
     mutating,
     error,
     buildError,

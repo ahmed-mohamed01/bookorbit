@@ -959,6 +959,8 @@ describe('LinkEditionPanel Audiobookshelf stop', () => {
     authorName: null,
     libraryName: 'Fiction',
     direction: 'two_way' as const,
+    syncing: true,
+    pausedReason: null,
     webUrl: null,
   }
 

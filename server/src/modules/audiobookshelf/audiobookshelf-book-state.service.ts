@@ -78,17 +78,52 @@ export class AudiobookshelfBookStateService {
    * Only the audiobook is ever matched in Audiobookshelf, so its linked editions reach the item through it.
    */
   async findPositionSyncLink(user: RequestUser, bookId: number): Promise<AudiobookshelfBookSyncLink | null> {
-    const target = await this.findSyncTarget(user, async (settings) => {
-      await this.bookService.verifyBookAccess(bookId, user);
-      const direct = await this.repo.findBookStateByBookId(user.id, bookId);
-      if (direct && this.isSyncEligible(settings, direct)) return direct;
-      const link = await this.editionLinks.findLinkForBook(bookId);
-      if (!link || link.audioBookId === bookId) return undefined;
-      return this.repo.findBookStateByBookId(user.id, link.audioBookId);
-    });
-    if (!target) return null;
+    const settings = await this.repo.findSettings(user.id);
+    if (!settings || !isAbsSyncConfigured(settings)) return null;
 
-    const { settings, state } = target;
+    await this.bookService.verifyBookAccess(bookId, user);
+    const direct = await this.usableLinkState(user, settings, await this.repo.findBookStateByBookId(user.id, bookId));
+    if (direct && this.pausedReasonFor(settings, direct) === null) return this.toSyncLink(settings, direct);
+
+    const link = await this.editionLinks.findLinkForBook(bookId);
+    const linked =
+      link && link.audioBookId !== bookId
+        ? await this.usableLinkState(user, settings, await this.repo.findBookStateByBookId(user.id, link.audioBookId))
+        : null;
+    const state = linked ?? direct;
+    return state ? this.toSyncLink(settings, state) : null;
+  }
+
+  private async usableLinkState(
+    user: RequestUser,
+    settings: AudiobookshelfUserSetting,
+    state: AudiobookshelfBookStateRow | undefined,
+  ): Promise<SyncTargetState | null> {
+    if (
+      !state ||
+      state.bookId == null ||
+      state.matchError != null ||
+      state.manualUnlinked ||
+      (state.absLibraryId && (settings.excludedLibraryIds ?? []).includes(state.absLibraryId)) ||
+      !(await this.canAccessBook(user, state.bookId))
+    ) {
+      return null;
+    }
+    return state as SyncTargetState;
+  }
+
+  private pausedReasonFor(settings: AudiobookshelfUserSetting, state: AudiobookshelfBookStateRow): AudiobookshelfBookSyncLink['pausedReason'] {
+    return state.needsReview
+      ? 'needs_review'
+      : state.syncExcluded
+        ? 'excluded'
+        : !(settings.syncPosition || settings.pushPosition)
+          ? 'position_sync_off'
+          : null;
+  }
+
+  private toSyncLink(settings: AudiobookshelfUserSetting, state: SyncTargetState): AudiobookshelfBookSyncLink {
+    const pausedReason = this.pausedReasonFor(settings, state);
     const normalizedServer = parseAndNormalizeServerUrl(settings.serverUrl);
     return {
       audioBookId: state.bookId,
@@ -97,6 +132,8 @@ export class AudiobookshelfBookStateService {
       authorName: state.absAuthorName,
       libraryName: state.absLibraryName,
       direction: settings.syncPosition && settings.pushPosition ? 'two_way' : settings.syncPosition ? 'from_abs' : 'to_abs',
+      syncing: pausedReason === null,
+      pausedReason,
       webUrl: normalizedServer ? `${normalizedServer}/item/${encodeURIComponent(state.absLibraryItemId)}` : null,
     };
   }

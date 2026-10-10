@@ -60,6 +60,13 @@ describe('StorytellerReadAlongOutputService', () => {
       expect(repo.findBuildByPair).toHaveBeenCalledWith(10, 20);
     });
 
+    it('finds a deliberately detached output for an explicit re-attach', async () => {
+      repo.findBuildByPair.mockResolvedValue({ ...ready, attachedLinkId: 9 });
+
+      await expect(service.findReadAlongForPair(link)).resolves.toEqual({ buildId: 4, outputBookId: 30 });
+      expect(repo.findBuildByPair).toHaveBeenCalledWith(10, 20);
+    });
+
     it.each([
       ['the link already carries a read-along', { ...link, readAlongBookId: 31 }, ready],
       ['it was detached from this same link on purpose', link, { ...ready, attachedLinkId: 9 }],
