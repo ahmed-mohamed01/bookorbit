@@ -202,6 +202,34 @@ describe('useAudiobookshelfSyncLink', () => {
     expect(live.value).toEqual(newer)
   })
 
+  it('settles a refresh when its answer lands, and also when the audiobook changed before it did', async () => {
+    apiMocks.fetchAudiobookshelfSyncLink.mockResolvedValue(makeLink())
+    apiMocks.fetchAudiobookshelfSyncLive.mockResolvedValueOnce(synced)
+    const bookId = ref<number | null>(20)
+    const { live, refreshLive } = useAudiobookshelfSyncLink(bookId)
+    await flushPromises()
+
+    const answered = deferred<AudiobookshelfBookSyncLive>()
+    apiMocks.fetchAudiobookshelfSyncLive.mockReturnValueOnce(answered.promise)
+    let settled = false
+    const first = refreshLive().then(() => (settled = true))
+    await flushPromises()
+    expect(settled).toBe(false)
+    answered.resolve(synced)
+    await first
+    expect(settled).toBe(true)
+
+    const superseded = deferred<AudiobookshelfBookSyncLive>()
+    apiMocks.fetchAudiobookshelfSyncLive.mockReturnValueOnce(superseded.promise)
+    const second = refreshLive()
+    apiMocks.fetchAudiobookshelfSyncLink.mockResolvedValue(null)
+    bookId.value = 21
+    await nextTick()
+    superseded.resolve({ ...synced, status: 'receiving' })
+    await second
+    expect(live.value).toBeNull()
+  })
+
   it('applies a status the server already answered with, without asking again', async () => {
     apiMocks.fetchAudiobookshelfSyncLink.mockResolvedValue(makeLink())
     apiMocks.fetchAudiobookshelfSyncLive.mockResolvedValueOnce(synced)
@@ -227,6 +255,40 @@ describe('useAudiobookshelfSyncLink', () => {
 
     expect(live.value).toEqual(first)
     expect(live.value).not.toBe(first)
+  })
+
+  it('passes a paused match through with its reason and never asks Audiobookshelf for its live status', async () => {
+    const paused = makeLink({ syncing: false, pausedReason: 'excluded' })
+    apiMocks.fetchAudiobookshelfSyncLink.mockResolvedValue(paused)
+    const { link, live, checking, refreshLive } = useAudiobookshelfSyncLink(ref(20))
+    await flushPromises()
+    refreshLive()
+    await flushPromises()
+
+    expect(link.value).toEqual(paused)
+    expect(live.value).toBeNull()
+    expect(checking.value).toBe(false)
+    expect(apiMocks.fetchAudiobookshelfSyncLive).not.toHaveBeenCalled()
+  })
+
+  it('reloads the match for the same audiobook, keeping the current one on screen until it answers', async () => {
+    apiMocks.fetchAudiobookshelfSyncLink.mockResolvedValueOnce(makeLink({ syncing: false, pausedReason: 'excluded' }))
+    const { link, live, reload } = useAudiobookshelfSyncLink(ref(20))
+    await flushPromises()
+
+    const next = deferred<AudiobookshelfBookSyncLink | null>()
+    apiMocks.fetchAudiobookshelfSyncLink.mockReturnValueOnce(next.promise)
+    apiMocks.fetchAudiobookshelfSyncLive.mockResolvedValueOnce(synced)
+    const reloading = reload()
+    await nextTick()
+    expect(link.value?.syncing).toBe(false)
+
+    next.resolve(makeLink())
+    await reloading
+    await flushPromises()
+    expect(apiMocks.fetchAudiobookshelfSyncLink).toHaveBeenLastCalledWith(20)
+    expect(link.value).toEqual(makeLink())
+    expect(live.value).toEqual(synced)
   })
 
   it('does nothing on refresh before a link is known', async () => {

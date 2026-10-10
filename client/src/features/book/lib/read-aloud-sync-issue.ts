@@ -1,4 +1,5 @@
 import type { ReadAloudProgressSync } from '@bookorbit/types'
+import type { ChainMessage } from './sync-chain'
 import { formatPlaybackClock } from '@/features/podcast/lib/podcast-format'
 
 /** The read-aloud sync failures a rebuild of the read-along fixes. */
@@ -14,15 +15,23 @@ export function readAloudSyncIssue(sync: ReadAloudProgressSync | null | undefine
 
 // A narration file and its chapter differ by seconds, so a minutes-only duration would print the same
 // value on both sides of the mismatch.
-export function describeReadAloudSyncIssue(sync: ReadAloudProgressSync, t: Translate): string {
+export function readAloudSyncIssueMessage(sync: ReadAloudProgressSync): ChainMessage {
   const mismatch = sync.unavailableReason === 'narration_mismatch' ? sync.narrationMismatch : null
   if (mismatch) {
-    return t('book.detail.details.readAloudSync.reason.narrationMismatch', {
-      file: mismatch.narrationFile,
-      narration: formatPlaybackClock(mismatch.narrationSeconds),
-      chapter: mismatch.chapter,
-      chapterLength: formatPlaybackClock(mismatch.chapterSeconds),
-    })
+    return {
+      key: 'book.detail.details.readAloudSync.reason.narrationMismatch',
+      params: {
+        file: mismatch.narrationFile,
+        narration: formatPlaybackClock(mismatch.narrationSeconds),
+        chapter: mismatch.chapter,
+        chapterLength: formatPlaybackClock(mismatch.chapterSeconds),
+      },
+    }
   }
-  return t(`book.detail.details.readAloudSync.reason.${sync.unavailableReason ?? 'missing_duration'}`)
+  return { key: `book.detail.details.readAloudSync.reason.${sync.unavailableReason ?? 'missing_duration'}` }
+}
+
+export function describeReadAloudSyncIssue(sync: ReadAloudProgressSync, t: Translate): string {
+  const { key, params } = readAloudSyncIssueMessage(sync)
+  return t(key, params)
 }

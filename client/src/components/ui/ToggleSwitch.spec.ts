@@ -19,6 +19,17 @@ describe('ToggleSwitch', () => {
     expect(track.attributes('aria-checked')).toBe('true')
   })
 
+  it('keeps the primary track without a tone and takes the tone colour only while checked', async () => {
+    const plain = mount(ToggleSwitch, { props: { modelValue: true } })
+    expect(plain.get('[role="switch"]').classes()).toContain('bg-primary')
+
+    const toned = mount(ToggleSwitch, { props: { modelValue: true, tone: 'warning' } })
+    expect(toned.get('[role="switch"]').classes()).toContain('bg-warning')
+
+    await toned.setProps({ modelValue: false })
+    expect(toned.get('[role="switch"]').classes()).toContain('bg-muted')
+  })
+
   it('emits the next checked state when clicked', async () => {
     const wrapper = mount(ToggleSwitch, { props: { modelValue: false } })
 

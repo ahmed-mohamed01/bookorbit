@@ -2,12 +2,11 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Link2 } from '@lucide/vue'
-import type { AudiobookshelfBookSyncLive, BookDetail } from '@bookorbit/types'
-import { canRebuildReadAlong } from '@/features/book/lib/read-along-section'
+import type { BookDetail } from '@bookorbit/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { useAudiobookshelfSyncLink } from '@/features/book/composables/useAudiobookshelfSyncLink'
-import { useLinkEditionPanel, type EditionFilledSlot } from '@/features/book/composables/useLinkEditionPanel'
-import LinkEditionPanel from './edition-link/LinkEditionPanel.vue'
+import { useSyncChainPanel } from '@/features/book/composables/useSyncChainPanel'
+import { availableHeightFromTrigger } from '@/features/book/lib/sync-chain'
+import SyncChainPanel from './edition-link/SyncChainPanel.vue'
 
 const props = withDefaults(defineProps<{ book: BookDetail; triggerClass?: string }>(), {
   triggerClass: 'flex flex-1 items-center justify-center h-9 rounded-md border border-input bg-background text-sm hover:bg-muted transition-colors',
@@ -15,20 +14,14 @@ const props = withDefaults(defineProps<{ book: BookDetail; triggerClass?: string
 
 const { t } = useI18n()
 
-const panel = reactive(useLinkEditionPanel(() => props.book))
-
-// Looked up with the page rather than when the popover opens, so the Audiobookshelf stop renders
-// together with the other editions; opening only refreshes its live status.
-const audioBookId = computed(
-  () => panel.slots.find((slot): slot is EditionFilledSlot => slot.kind === 'filled' && slot.format === 'audiobook')?.bookId ?? null,
-)
-const abs = useAudiobookshelfSyncLink(audioBookId)
+const panel = reactive(useSyncChainPanel(() => props.book))
 
 onMounted(() => {
   if (panel.isEligible) void panel.loadInitial()
 })
 
 const open = ref(false)
+const triggerEl = ref<HTMLButtonElement | null>(null)
 
 const readAlongRebuildRequested = ref(false)
 
@@ -38,21 +31,18 @@ function handleOpenChange(next: boolean) {
     readAlongRebuildRequested.value = false
     return
   }
+  // Measured before the content mounts, so the panel opens in its final view without a flash.
+  const rect = triggerEl.value?.getBoundingClientRect()
+  const availableHeight = rect ? availableHeightFromTrigger(rect, window.innerHeight) : window.innerHeight
+  panel.prepareView(availableHeight, readAlongRebuildRequested.value ? 'modify' : undefined)
   void panel.handleOpen()
-  abs.refreshLive()
-}
-
-function handleRefreshAbsLive(live?: AudiobookshelfBookSyncLive) {
-  if (live) abs.applyLive(live)
-  else abs.refreshLive()
 }
 
 function handleReadAlongRebuildRequestHandled() {
   readAlongRebuildRequested.value = false
 }
 
-// The same check the panel's own rebuild button uses, so the page never offers a rebuild the panel refuses.
-const canRequestReadAlongRebuild = computed(() => panel.isEligible && canRebuildReadAlong(panel))
+const canRequestReadAlongRebuild = computed(() => panel.canRequestReadAlongRebuild)
 
 /** Opens the panel on its read-along rebuild confirm, for a rebuild offered elsewhere on the page. */
 function requestReadAlongRebuild() {
@@ -63,8 +53,7 @@ function requestReadAlongRebuild() {
 
 defineExpose({ canRequestReadAlongRebuild, requestReadAlongRebuild })
 
-// The header's first control rebuilds position sync, so opening the panel keeps focus off it: a stray
-// Enter right after opening must not start an alignment.
+// Opening keeps focus off the panel's first control, so a stray Enter right after opening changes nothing.
 function handleOpenAutoFocus(event: Event) {
   event.preventDefault()
 }
@@ -73,7 +62,7 @@ function handleOpenAutoFocus(event: Event) {
 <template>
   <Popover v-if="panel.isEligible" :open="open" @update:open="handleOpenChange">
     <PopoverTrigger as-child>
-      <button type="button" :class="triggerClass" :title="panel.triggerTooltip" :aria-label="t('book.detail.editionLink.trigger')">
+      <button ref="triggerEl" type="button" :class="triggerClass" :title="panel.triggerTooltip" :aria-label="t('book.detail.editionLink.trigger')">
         <Link2 class="size-3.5" :class="panel.triggerIconClass" />
       </button>
     </PopoverTrigger>
@@ -83,14 +72,9 @@ function handleOpenAutoFocus(event: Event) {
       class="max-h-(--reka-popover-content-available-height) w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-2 sm:w-[20rem]"
       @open-auto-focus="handleOpenAutoFocus"
     >
-      <LinkEditionPanel
+      <SyncChainPanel
         :panel="panel"
-        :abs-link="abs.link.value"
-        :abs-live="abs.live.value"
-        :abs-checking="abs.checking.value"
-        :read-aloud-sync="book.readAloudSync"
         :read-along-rebuild-requested="readAlongRebuildRequested"
-        @refresh-abs-live="handleRefreshAbsLive"
         @read-along-rebuild-request-handled="handleReadAlongRebuildRequestHandled"
       />
     </PopoverContent>

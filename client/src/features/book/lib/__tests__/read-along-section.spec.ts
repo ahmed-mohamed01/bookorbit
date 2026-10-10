@@ -1,11 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import type { ReadAlongPhase, ReadAlongStatus } from '@bookorbit/types'
-import { isActionBlocked, isReadAlongInFlight, resolveReadAlongSectionState, stageIndex } from '../read-along-section'
-
-function state(status: ReadAlongStatus, hasOutputBook = false) {
-  return { status, hasOutputBook }
-}
+import { isActionBlocked, isReadAlongInFlight, readAlongPercent, readAlongSteps, stageIndex } from '../read-along-section'
 
 describe('stageIndex', () => {
   it.each([
@@ -22,38 +18,6 @@ describe('stageIndex', () => {
   ] as [ReadAlongPhase | null, string | null, number][])('places phase %s with task %s at stage %i', (phase, task, expected) => {
     expect(stageIndex(phase, task)).toBe(expected)
   })
-})
-
-describe('resolveReadAlongSectionState', () => {
-  it('is always ready on the read-along book itself', () => {
-    expect(resolveReadAlongSectionState('readOnly', state('none'), false, false, false)).toBe('ready')
-  })
-
-  it('offers a build only while the toggle is on and usable', () => {
-    expect(resolveReadAlongSectionState('offer', state('ready'), true, true, false)).toBe('offerOn')
-    expect(resolveReadAlongSectionState('offer', state('none'), false, true, true)).toBe('offerOff')
-    expect(resolveReadAlongSectionState('offer', state('none'), false, false, false)).toBe('offerOff')
-  })
-
-  it('offers nothing to build when the matched pair already has a read-along, whatever the toggle says', () => {
-    expect(resolveReadAlongSectionState('offer', state('ready', true), false, true, false)).toBe('offerExisting')
-    expect(resolveReadAlongSectionState('offer', state('ready', true), false, false, false)).toBe('offerExisting')
-  })
-
-  it.each([
-    ['queued', false, false, 'queued'],
-    ['building', false, false, 'building'],
-    ['failed', false, false, 'failed'],
-    ['none', false, false, 'none'],
-    ['ready', true, false, 'ready'],
-    ['ready', false, true, 'ready'],
-    ['ready', false, false, 'outOfReach'],
-  ] as [ReadAlongStatus, boolean, boolean, string][])(
-    'manages status %s (member %s, output book %s) as %s',
-    (status, hasMember, hasOutputBook, expected) => {
-      expect(resolveReadAlongSectionState('manage', state(status, hasOutputBook), hasMember, false, false)).toBe(expected)
-    },
-  )
 })
 
 describe('isActionBlocked', () => {
@@ -74,5 +38,21 @@ describe('isReadAlongInFlight', () => {
     ['none', false],
   ] as [ReadAlongStatus, boolean][])('treats %s as in flight: %s', (status, expected) => {
     expect(isReadAlongInFlight(status)).toBe(expected)
+  })
+})
+
+describe('readAlongSteps', () => {
+  it('marks the stages before, at and after the current one', () => {
+    expect(readAlongSteps(1).map((step) => step.state)).toEqual(['done', 'current', 'todo', 'todo'])
+    expect(readAlongSteps(1)[0]?.key).toBe('book.detail.editionLink.readAlong.stages.sending')
+  })
+})
+
+describe('readAlongPercent', () => {
+  it("reports Storyteller's progress only while it transcribes or aligns", () => {
+    expect(readAlongPercent(1, 0.426)).toBe(43)
+    expect(readAlongPercent(2, 1.4)).toBe(100)
+    expect(readAlongPercent(0, 0.5)).toBeNull()
+    expect(readAlongPercent(1, null)).toBeNull()
   })
 })

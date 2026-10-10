@@ -3,17 +3,15 @@ import { Permission, type AudiobookshelfBookSyncLink, type AudiobookshelfBookSyn
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { fetchAudiobookshelfSyncLink, fetchAudiobookshelfSyncLive } from '@/features/audiobookshelf/api/audiobookshelf.api'
 
-// A live check that fails still has to leave the stop with a way to act, which the unreachable state offers.
+// A live check that fails still has to leave the sync chain with a way to act, which the unreachable state offers.
 const UNREACHABLE: AudiobookshelfBookSyncLive = { status: 'unreachable', progress: null, local: null, divergedReason: null }
 
 /**
- * The Audiobookshelf item an audiobook's position syncs with, or null when there is none to show:
- * no permission, sync switched off, no match, or no position sync in either direction. The link comes
- * from BookOrbit alone so it renders with the other editions; the live status follows from
- * Audiobookshelf itself.
+ * The Audiobookshelf item an audiobook is matched with, or null when there is none to show: no
+ * permission or no match. A paused match is returned too (`syncing` false, with its reason), so the
+ * panel can offer to resume it. The link comes from BookOrbit alone so it renders with the other
+ * editions; the live status follows from Audiobookshelf itself, and only for a match that syncs.
  */
-export type AudiobookshelfSyncLinkState = Pick<ReturnType<typeof useAudiobookshelfSyncLink>, 'link' | 'live' | 'checking'>
-
 export function useAudiobookshelfSyncLink(audioBookId: Ref<number | null>) {
   const { hasPermission } = usePermissions()
   const link = ref<AudiobookshelfBookSyncLink | null>(null)
@@ -36,12 +34,19 @@ export function useAudiobookshelfSyncLink(audioBookId: Ref<number | null>) {
     checking.value = false
   }
 
-  async function load(bookId: number | null) {
+  // A reload after a change made here keeps the current match on screen until the new answer lands.
+  async function load(bookId: number | null, keepCurrent = false) {
     const current = ++requestId
-    link.value = null
-    live.value = null
-    checking.value = false
-    if (bookId === null || !hasPermission(Permission.AudiobookshelfSync)) return
+    if (!keepCurrent) {
+      link.value = null
+      live.value = null
+      checking.value = false
+    }
+    if (bookId === null || !hasPermission(Permission.AudiobookshelfSync)) {
+      link.value = null
+      live.value = null
+      return
+    }
     let found: AudiobookshelfBookSyncLink | null
     try {
       found = await fetchAudiobookshelfSyncLink(bookId)
@@ -50,12 +55,17 @@ export function useAudiobookshelfSyncLink(audioBookId: Ref<number | null>) {
       return
     }
     if (current !== requestId) return
+    if (found?.absLibraryItemId !== link.value?.absLibraryItemId) live.value = null
     link.value = found
-    if (found) await loadLive(current, found.absLibraryItemId)
+    if (found?.syncing) await loadLive(current, found.absLibraryItemId)
+    else {
+      live.value = null
+      checking.value = false
+    }
   }
 
-  function refreshLive() {
-    if (link.value) void loadLive(requestId, link.value.absLibraryItemId)
+  function refreshLive(): Promise<void> {
+    return link.value?.syncing ? loadLive(requestId, link.value.absLibraryItemId) : Promise.resolve()
   }
 
   /** Takes a status the server already answered with, such as a reconcile's, instead of asking again. */
@@ -65,7 +75,12 @@ export function useAudiobookshelfSyncLink(audioBookId: Ref<number | null>) {
     checking.value = false
   }
 
+  /** Reads the match again for the current audiobook, after a pause, resume, confirm or change. */
+  function reload(): Promise<void> {
+    return load(audioBookId.value, true)
+  }
+
   watch(audioBookId, (bookId) => void load(bookId), { immediate: true })
 
-  return { link, live, checking, refreshLive, applyLive }
+  return { link, live, checking, refreshLive, applyLive, reload }
 }

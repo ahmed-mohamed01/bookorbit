@@ -5,13 +5,12 @@ import { Permission, type ReadAlongBuildRequest, type StorytellerExistingMatch }
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useLibraries } from '@/features/library/composables/useLibraries'
 import { isReadAlongTargetLibrary } from '@/features/storyteller/lib/read-along-libraries'
-import { useReadAlong, type ReadAlongSectionState } from './useReadAlong'
+import { useReadAlong } from './useReadAlong'
 
 /**
- * Everything a host of ReadAlongSection needs on top of the raw state: the props the section reads,
- * the permissions its actions are gated on, the destination choice, and the build runner that
- * narrates the outcomes the section cannot show by itself. Only the Link edition panel mounts the
- * section, so none of this belongs in it.
+ * What the sync chain panel needs on top of the raw read-along state: the permissions its build
+ * actions are gated on, the destination choice, and the build runner that narrates the outcomes the
+ * read-along step and the build options cannot show by themselves.
  */
 export function useReadAlongSection(bookId: () => number) {
   const { t } = useI18n()
@@ -22,23 +21,6 @@ export function useReadAlongSection(bookId: () => number) {
   const canGenerate = computed(() => hasPermission(Permission.LibraryUpload))
   /** Replacing an output means deleting it, which the build endpoint holds to LibraryDeleteBooks. */
   const canRebuild = computed(() => hasPermission(Permission.LibraryDeleteBooks))
-
-  const sectionState = computed<ReadAlongSectionState>(() => ({
-    status: readAlong.status.value,
-    blocked: readAlong.blocked.value,
-    phase: readAlong.phase.value,
-    transport: readAlong.transport.value,
-    remoteTask: readAlong.remoteTask.value,
-    remoteProgress: readAlong.remoteProgress.value,
-    targetLibraryName: readAlong.targetLibraryName.value,
-    remoteCopyBytes: readAlong.remoteCopyBytes.value,
-    keepRemoteCopy: readAlong.keepRemoteCopy.value,
-    remoteCopyReclaimable: readAlong.remoteCopyReclaimable.value,
-    hasOutputBook: readAlong.outputBook.value !== null,
-    error: readAlong.error.value,
-    mutating: readAlong.mutating.value,
-    queuePosition: readAlong.queuePosition.value,
-  }))
 
   const existingMatch = computed<StorytellerExistingMatch | null>(() => readAlong.existingMatches.value.find((match) => match.aligned) ?? null)
 
@@ -84,10 +66,6 @@ export function useReadAlongSection(bookId: () => number) {
     else if (outcome === 'ready') toast.info(t('book.detail.editionLink.readAlong.buildAlreadyReady'))
   }
 
-  function handleGenerate(): void {
-    void runBuild(withDestination({}))
-  }
-
   // A failed build resumes from its last phase, so it must not force: only a deliberate rebuild
   // replaces an output that already exists.
   function handleRetry(): void {
@@ -112,7 +90,6 @@ export function useReadAlongSection(bookId: () => number) {
     readAlong,
     canGenerate,
     canRebuild,
-    sectionState,
     existingMatch,
     targetLibraries,
     chosenTargetLibraryId,
@@ -122,7 +99,6 @@ export function useReadAlongSection(bookId: () => number) {
     resetChoices,
     withDestination,
     runBuild,
-    handleGenerate,
     handleRetry,
     handleRebuild,
     handleCancel,

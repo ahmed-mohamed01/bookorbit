@@ -1,12 +1,23 @@
 import type { ReadAlongBlockReason, ReadAlongPhase, ReadAlongStatus } from '@bookorbit/types'
-import type { ReadAlongSectionState } from '@/features/book/composables/useReadAlong'
-
-export type ReadAlongSectionMode = 'offer' | 'manage' | 'readOnly'
-export type ReadAlongDisplayState = 'offerOn' | 'offerOff' | 'offerExisting' | 'none' | 'queued' | 'building' | 'failed' | 'ready' | 'outOfReach'
 
 /** Queued and building both end on their own, so both are polled and both count as a build in flight. */
 export function isReadAlongInFlight(status: ReadAlongStatus): boolean {
   return status === 'building' || status === 'queued'
+}
+
+/** The four build stages a read-along job moves through, in order. */
+export const READ_ALONG_STAGES = ['sending', 'transcribing', 'aligning', 'importing'] as const
+export type ReadAlongStage = (typeof READ_ALONG_STAGES)[number]
+
+export const READ_ALONG_STAGE_KEYS: Record<ReadAlongStage, string> = {
+  sending: 'book.detail.editionLink.readAlong.stages.sending',
+  transcribing: 'book.detail.editionLink.readAlong.stages.transcribing',
+  aligning: 'book.detail.editionLink.readAlong.stages.aligning',
+  importing: 'book.detail.editionLink.readAlong.stages.importing',
+}
+
+export function isReadAlongStage(value: unknown): value is ReadAlongStage {
+  return typeof value === 'string' && (READ_ALONG_STAGES as readonly string[]).includes(value)
 }
 
 /** Index into the four build stages (Sending, Transcribing, Aligning, Importing). Any Storyteller task other than syncing counts as transcription. */
@@ -22,48 +33,33 @@ export function stageIndex(phase: ReadAlongPhase | null, remoteTask: string | nu
   }
 }
 
-export function resolveReadAlongSectionState(
-  mode: ReadAlongSectionMode,
-  state: Pick<ReadAlongSectionState, 'status' | 'hasOutputBook'>,
-  hasMember: boolean,
-  generateOnLink: boolean,
-  toggleDisabled: boolean,
-): ReadAlongDisplayState {
-  if (mode === 'readOnly') return 'ready'
-  // A read-along built for this pair before it was unlinked rejoins it on the next link, so there is
-  // nothing to generate: offering the toggle would build a second copy.
-  if (mode === 'offer' && state.status === 'ready' && state.hasOutputBook) return 'offerExisting'
-  if (mode === 'offer') return generateOnLink && !toggleDisabled ? 'offerOn' : 'offerOff'
-  if (state.status === 'queued') return 'queued'
-  if (state.status === 'building') return 'building'
-  if (state.status === 'failed') return 'failed'
-  if (state.status !== 'ready') return 'none'
-  // A ready build the server described without its book landed in a library this user cannot open.
-  // The server reports a ready build whose output was deleted as 'none' instead, which stays generatable.
-  return hasMember || state.hasOutputBook ? 'ready' : 'outOfReach'
-}
-
 // 'busy' clears on its own once Storyteller frees a slot, so actions stay clickable for a retry. Every
 // other reason needs a change elsewhere first, so the action is disabled instead of refused again.
 export function isActionBlocked(blocked: ReadAlongBlockReason | null): boolean {
   return blocked !== null && blocked !== 'busy'
 }
 
-/** The slice of the link panel that decides whether its ready read-along can be rebuilt. */
-export interface ReadAlongRebuildInputs {
-  readAlongSlot: unknown
-  link: unknown
-  readAlongSection: { sectionState: { status: ReadAlongStatus }; canGenerate: boolean; canRebuild: boolean }
+export type ReadAlongStepState = 'done' | 'current' | 'todo'
+
+export interface ReadAlongStep {
+  stage: ReadAlongStage
+  key: string
+  state: ReadAlongStepState
 }
 
-// A build belongs to a linked pair, so a detached read-along is rebuilt only once its pair is linked
-// again, and only a read-along BookOrbit built (status ready) has a build to replace.
-export function canRebuildReadAlong(panel: ReadAlongRebuildInputs): boolean {
-  return (
-    panel.readAlongSlot !== null &&
-    panel.readAlongSection.sectionState.status === 'ready' &&
-    panel.link !== null &&
-    panel.readAlongSection.canGenerate &&
-    panel.readAlongSection.canRebuild
-  )
+export function readAlongSteps(currentStage: number): ReadAlongStep[] {
+  return READ_ALONG_STAGES.map((stage, index) => ({
+    stage,
+    key: READ_ALONG_STAGE_KEYS[stage],
+    state: index < currentStage ? 'done' : index === currentStage ? 'current' : 'todo',
+  }))
+}
+
+// Storyteller only reports its own progress while it transcribes and aligns.
+const REPORTING_STAGES = new Set([1, 2])
+
+/** Storyteller's own progress as a whole percentage, or null outside the stages that report one. */
+export function readAlongPercent(currentStage: number, remoteProgress: number | null): number | null {
+  if (!REPORTING_STAGES.has(currentStage) || typeof remoteProgress !== 'number' || Number.isNaN(remoteProgress)) return null
+  return Math.min(100, Math.max(0, Math.round(remoteProgress * 100)))
 }

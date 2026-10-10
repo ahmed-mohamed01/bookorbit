@@ -46,27 +46,6 @@ const TRANSPORTS = new Set(
 
 export type { ReadAlongCancelOutcome }
 
-/** The slice of read-along state the presentational section needs. */
-export interface ReadAlongSectionState {
-  status: ReadAlongStatus
-  blocked: ReadAlongBlockReason | null
-  phase: ReadAlongPhase | null
-  transport: StorytellerEffectiveTransport | null
-  remoteTask: string | null
-  remoteProgress: number | null
-  targetLibraryName: string | null
-  remoteCopyBytes: ReadAlongCopySizes
-  keepRemoteCopy: boolean
-  remoteCopyReclaimable: boolean
-  // Whether the server described the read-along book at all. A ready build without one is a build
-  // whose output this user cannot open, which is not the same as a build that has no output.
-  hasOutputBook: boolean
-  error: string | null
-  mutating: boolean
-  /** 1-based place in the read-along queue while queued, null otherwise. */
-  queuePosition: number | null
-}
-
 /** 'started' is the only outcome that leaves a job running; the caller has to narrate the other three. */
 export type ReadAlongBuildOutcome = 'started' | 'ready' | 'blocked' | 'failed'
 

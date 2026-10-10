@@ -339,6 +339,33 @@ describe('useEditionLink', () => {
     })
   })
 
+  describe('attachReadAlong', () => {
+    it("posts the read-along to the pair's read-along route, then re-fetches this book's view", async () => {
+      const attached = { id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: 30, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+      mocks.api.mockResolvedValueOnce(response(attached))
+      mocks.api.mockResolvedValueOnce(response({ link: attached, proposed: null, counterpart: counterpartSummary }))
+      const { link, attachReadAlong } = await load(10)
+
+      await expect(attachReadAlong(10, 30)).resolves.toBe(true)
+
+      expect(mocks.api).toHaveBeenNthCalledWith(1, '/api/v1/edition-links/read-along/10', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ readAlongBookId: 30 }),
+      })
+      expect(mocks.api).toHaveBeenNthCalledWith(2, '/api/v1/edition-links/for-book/10')
+      expect(link.value).toEqual(attached)
+    })
+
+    it('returns false and sets an error when the attach is refused', async () => {
+      mocks.api.mockResolvedValueOnce(response(null, { ok: false, status: 409 }))
+      const { error, attachReadAlong } = await load(10)
+
+      await expect(attachReadAlong(10, 30)).resolves.toBe(false)
+      expect(error.value).toBe('Failed to attach the read-along')
+    })
+  })
+
   describe('unlink', () => {
     it('clears link state on success', async () => {
       mocks.api.mockResolvedValueOnce(

@@ -8,8 +8,6 @@ const POLL_INTERVAL_MS = 3000
 // read as "not created yet" before giving up, instead of polling forever.
 const MAX_AWAIT_BUILD_ROW_POLLS = 5
 
-export type { AlignmentBuildBlockReason, AlignmentStatus }
-
 const KNOWN_STATUSES = new Set<AlignmentStatus>(['none', 'pending', 'building', 'ready', 'failed', 'unalignable'])
 // 'pending' is the row's schema default, so a read landing between the insert and the first update
 // returns it; stopping there would leave the panel on Aligning until it is reopened.

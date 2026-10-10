@@ -6507,8 +6507,6 @@
         "tooltipNeedsAudio": "Link an audiobook to enable position alignment.",
         "tooltipNeedsText": "Link an ebook to enable position alignment.",
         "tooltipLinked": "Manage the linked edition.",
-        "counterpartAudiobook": "Audiobook",
-        "counterpartEbook": "Ebook",
         "title": "Link edition",
         "unknownTitle": "Untitled",
         "unlink": "Unlink",

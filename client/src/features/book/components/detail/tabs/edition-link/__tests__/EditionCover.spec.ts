@@ -23,6 +23,15 @@ describe('EditionCover', () => {
     expect(result.get('[data-testid="edition-cover"]').classes()).toEqual(expect.arrayContaining(['h-[42px]', 'w-7']))
   })
 
+  it('draws a mini frame for each medium and greys it out only when muted', () => {
+    const audio = mount(EditionCover, { props: { bookId: 20, medium: 'audio', size: 'mini', muted: true } })
+    expect(audio.get('[data-testid="edition-cover"]').classes()).toEqual(expect.arrayContaining(['size-7', 'grayscale']))
+
+    const ebook = mount(EditionCover, { props: { bookId: 10, medium: 'ebook', size: 'mini' } })
+    expect(ebook.get('[data-testid="edition-cover"]').classes()).toEqual(expect.arrayContaining(['h-7', 'w-5']))
+    expect(ebook.get('[data-testid="edition-cover"]').classes()).not.toContain('grayscale')
+  })
+
   it('falls back to a neutral placeholder when the image fails', async () => {
     const wrapper = mount(EditionCover, { props: { bookId: 20, medium: 'audio' } })
 

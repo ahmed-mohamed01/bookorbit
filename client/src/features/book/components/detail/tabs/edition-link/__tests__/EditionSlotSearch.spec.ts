@@ -115,6 +115,17 @@ describe('EditionSlotSearch', () => {
     expect(wrapper.find('[data-testid="edition-search-result"]').exists()).toBe(false)
   })
 
+  it('offers a cancel only when cancellable, and emits it', async () => {
+    expect(mountSearch().find('[data-testid="edition-search-cancel"]').exists()).toBe(false)
+
+    const wrapper = mountSearch({ cancellable: true })
+    const cancel = wrapper.get('[data-testid="edition-search-cancel"]')
+    expect(cancel.attributes('aria-label')).toBe('Cancel')
+    await cancel.trigger('click')
+
+    expect(wrapper.emitted('cancel')).toHaveLength(1)
+  })
+
   it('disables picking while a link is being made', () => {
     const wrapper = mountSearch({ disabled: true })
 

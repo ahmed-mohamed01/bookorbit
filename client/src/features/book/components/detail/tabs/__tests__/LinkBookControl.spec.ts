@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import type {
   EditionLinkCounterpartSummary,
@@ -45,6 +45,7 @@ vi.mock('@/features/book/composables/useAudiobookshelfSyncLink', async () => {
         checking: ref(false),
         refreshLive: absSyncLinkMocks.refreshLive,
         applyLive: absSyncLinkMocks.applyLive,
+        reload: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
       }
     },
   }
@@ -100,6 +101,7 @@ function createMockState() {
     searchCandidates: vi.fn<() => Promise<EditionLinkCandidate[]>>().mockResolvedValue([]),
     linkBook: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
     unlink: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
+    attachReadAlong: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
     resetSearch: vi.fn<() => void>(),
   }
 }
@@ -118,11 +120,14 @@ function createAlignmentState() {
     samplesTotal: ref<number | null>(null),
     anchorCount: ref<number | null>(null),
     builtAt: ref<string | null>(null),
+    stale: ref(false),
     mutating: ref(false),
     error: ref<string | null>(null),
+    buildError: ref<string | null>(null),
     buildBlocked: ref<string | null>(null),
     fetchStatus: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     build: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    cancel: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
   }
 }
 
@@ -181,6 +186,12 @@ const stubs = {
   PopoverTrigger: { template: '<div><slot /></div>' },
   PopoverContent: { template: '<div><slot /></div>' },
   RouterLink: { props: ['to'], template: '<a><slot /></a>' },
+  SyncChainPanel: {
+    name: 'SyncChainPanel',
+    props: ['panel', 'readAlongRebuildRequested'],
+    emits: ['read-along-rebuild-request-handled'],
+    template: '<div data-testid="sync-chain-panel" />',
+  },
 }
 
 function makeBook(overrides = {}) {
@@ -256,7 +267,7 @@ function makeBook(overrides = {}) {
 }
 
 function mountControl(overrides = {}) {
-  return mount(LinkBookControl, { props: { book: makeBook(overrides) }, global: { stubs: { ...stubs, ConfirmDialog: { template: '<div />' } } } })
+  return mount(LinkBookControl, { props: { book: makeBook(overrides) }, global: { stubs } })
 }
 
 async function openPopover(wrapper: ReturnType<typeof mountControl>) {
@@ -363,31 +374,6 @@ describe('LinkBookControl', () => {
     expect(absSyncLinkMocks.refreshLive).toHaveBeenCalledTimes(1)
   })
 
-  it('refreshes the Audiobookshelf status when the panel asks for it', async () => {
-    absSyncLinkMocks.refreshLive.mockClear()
-    linkWithMembers()
-    const wrapper = mountControl()
-    await openPopover(wrapper)
-    absSyncLinkMocks.refreshLive.mockClear()
-
-    wrapper.findComponent({ name: 'LinkEditionPanel' }).vm.$emit('refresh-abs-live')
-    expect(absSyncLinkMocks.refreshLive).toHaveBeenCalledTimes(1)
-  })
-
-  it('takes the status a reconcile answered with instead of asking Audiobookshelf again', async () => {
-    absSyncLinkMocks.refreshLive.mockClear()
-    absSyncLinkMocks.applyLive.mockClear()
-    linkWithMembers()
-    const wrapper = mountControl()
-    await openPopover(wrapper)
-    absSyncLinkMocks.refreshLive.mockClear()
-    const fresh = { status: 'diverged', progress: null, local: null, divergedReason: 'stale' }
-
-    wrapper.findComponent({ name: 'LinkEditionPanel' }).vm.$emit('refresh-abs-live', fresh)
-    expect(absSyncLinkMocks.applyLive).toHaveBeenCalledWith(fresh)
-    expect(absSyncLinkMocks.refreshLive).not.toHaveBeenCalled()
-  })
-
   function linkWithBuiltReadAlong() {
     linkWithMembers(
       makeMembers({
@@ -398,7 +384,7 @@ describe('LinkBookControl', () => {
     mockReadAlong.status.value = 'ready'
   }
 
-  it('opens on the read-along rebuild confirm when asked from elsewhere on the page', async () => {
+  it('opens the panel in Modify with the rebuild request when asked from elsewhere on the page', async () => {
     linkWithBuiltReadAlong()
     const wrapper = mountControl()
     await flushPromises()
@@ -409,9 +395,13 @@ describe('LinkBookControl', () => {
     await flushPromises()
 
     expect(wrapper.findComponent({ name: 'Popover' }).props('open')).toBe(true)
-    // The panel takes the request straight to its own confirm and hands the flag back.
-    expect(wrapper.get('[title="Replace this read-along?"]').attributes('open')).toBe('true')
-    expect(wrapper.findComponent({ name: 'LinkEditionPanel' }).props('readAlongRebuildRequested')).toBe(false)
+    const panel = wrapper.findComponent({ name: 'SyncChainPanel' })
+    expect(panel.props('readAlongRebuildRequested')).toBe(true)
+    expect(panel.props('panel').viewMode).toBe('modify')
+
+    panel.vm.$emit('read-along-rebuild-request-handled')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'SyncChainPanel' }).props('readAlongRebuildRequested')).toBe(false)
   })
 
   it('offers no outside rebuild without the permissions a rebuild needs', async () => {
@@ -446,14 +436,55 @@ describe('LinkBookControl', () => {
     expect(wrapper.findComponent({ name: 'Popover' }).props('open')).toBe(false)
   })
 
-  it('opens the panel, reloads the link and searches straight away when nothing was proposed', async () => {
+  it('opens the panel and reloads the link without searching straight away', async () => {
     const wrapper = mountControl()
     await openPopover(wrapper)
 
-    expect(wrapper.find('[data-testid="link-edition-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="sync-chain-panel"]').exists()).toBe(true)
     expect(mockState.resetSearch).toHaveBeenCalled()
-    expect(mockState.searchCandidates).toHaveBeenCalledWith('')
+    expect(mockState.loadForBook).toHaveBeenCalled()
+    expect(mockState.searchCandidates).not.toHaveBeenCalled()
     expect(fetchLibraries).toHaveBeenCalled()
+  })
+
+  describe('view on open', () => {
+    let rectSpy: ReturnType<typeof vi.spyOn> | null = null
+    const innerHeight = window.innerHeight
+
+    afterEach(() => {
+      rectSpy?.mockRestore()
+      rectSpy = null
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight })
+    })
+
+    function placeTrigger(top: number, bottom: number, viewport: number) {
+      rectSpy = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ top, bottom } as DOMRect)
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: viewport })
+    }
+
+    function alignedPair() {
+      linkWithMembers()
+      mockAlignment.status.value = 'ready'
+      mockAlignment.builtAt.value = '2026-10-01T00:00:00.000Z'
+    }
+
+    it('opens compact when the Modify chain would not fit the space beside the trigger', async () => {
+      alignedPair()
+      placeTrigger(10, 40, 200)
+      const wrapper = mountControl()
+      await openPopover(wrapper)
+
+      expect(wrapper.findComponent({ name: 'SyncChainPanel' }).props('panel').viewMode).toBe('compact')
+    })
+
+    it('opens in Modify when it fits', async () => {
+      alignedPair()
+      placeTrigger(10, 40, 2000)
+      const wrapper = mountControl()
+      await openPopover(wrapper)
+
+      expect(wrapper.findComponent({ name: 'SyncChainPanel' }).props('panel').viewMode).toBe('modify')
+    })
   })
 
   it('looks up an importable Storyteller book when a linked pair has no read-along yet', async () => {

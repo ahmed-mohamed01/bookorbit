@@ -542,9 +542,14 @@ under the same rules as ABS.
 **Owned (fork-only) modules - never conflict:** `server/src/modules/reading-alignment/`,
 `server/src/modules/edition-link/`, `packages/types/src/reading-alignment.ts`,
 `server/src/modules/reading-alignment/reading-alignment-content-hash.util.ts`, and the client feature files (`features/reader/shared/composables/
-useCrossFormatResume.ts`, `features/reader/epub/composables/crossFormatResumeNav.ts`,
-`features/book/composables/useReadingAlignment.ts` / `useEditionLink.ts`, and the `*Control.vue`
-components).
+useCrossFormatResume.ts`, `features/reader/epub/composables/crossFormatResumeNav.ts`, and the `*Control.vue`
+components). The Position sync panel is owned as well, all under `client/src/features/book/`:
+`components/detail/tabs/edition-link/` (every `SyncChain*.vue`, `ReadAlongStepper.vue`,
+`ReadAlongBuildOptions.vue`, `EditionCover.vue`, `EditionSlotSearch.vue`, `PositionSyncTicks.vue`),
+`composables/` (`useSyncChainPanel.ts`, `useAudiobookshelfSyncActions.ts`, `useAudiobookshelfSyncLink.ts`,
+`useReadAlongSection.ts`, `useReadAlong.ts`, `useReadingAlignment.ts`, `useEditionLink.ts`) and `lib/`
+(`sync-chain.ts`, `sync-chain-messages.ts`, `sync-chain-view.ts`, `abs-sync-status.ts`,
+`read-along-section.ts`, `read-aloud-sync-issue.ts`, `position-sync.ts`).
 
 **Schema decoupling (same pattern as ABS):** three tables - `audiobook_alignment`,
 `audiobook_alignment_anchor`, `book_edition_links` - are applied at runtime by
@@ -602,6 +607,7 @@ the server's progress order.
 | `packages/types/src/reading-session.ts`                                                                   | `bookId`, `medium`, `scope`                                                                                                                                                                | additive                                                                                |
 | `dashboard/dashboard-widget.service.ts`                                                                   | `CURRENTLY_READING_GROUP_SOURCE` seam (optional) stamps `editionGroupId` / `lastActivityAt` onto Currently Reading books; the SQL lives in `edition-link/edition-link-progress.service.ts` | one optional constructor param, one decorate call, a warn-and-fallback                  |
 | `packages/types/src/dashboard.ts`                                                                         | `editionGroupId`, `lastActivityAt` on `CurrentlyReadingBook`                                                                                                                               | additive, optional                                                                      |
+| client `components/ui/ToggleSwitch.vue`                                                                   | optional `tone` prop that only changes the checked colour classes (the chain connectors' switches)                                                                                         | additive; defaults to the existing look                                                 |
 | client `dashboard/components/widgets/CurrentlyReadingWidget.vue`                                          | rows come from `stackCurrentlyReading()`; a multi-edition row draws a deck with a link badge in the cover slot and acts for the lead                                                       | additive branch in the cover slot; single rows unchanged                                |
 | client `ReadingLogLedger.vue` / `ReadingLogTab.vue` / `useBookReadingLog.ts` / `ReadingLogExportMenu.vue` | merged-log caption, medium marker, scope plumbing, per-record attempt rules, `medium` CSV column                                                                                           | additive; the attempt-rule change is the one to re-check on an upstream ledger refactor |
 | `Dockerfile`                                                                                              | `whisper-builder` stage compiles whisper.cpp `v1.9.1` (CPU-only, static) -> `whisper-cli`; runtime adds `libstdc++`/`libgomp`                                                              | isolated stage + one COPY                                                               |
@@ -727,7 +733,8 @@ service, encryption, the typed Storyteller API client, path-mapping and existing
 the build orchestrator and status service, schema), `client/src/features/storyteller/`
 (`useStorytellerSettings.ts` + `StorytellerSettings.vue`), and the read-along pieces of the
 reading-alignment overlay's own fork-owned files (`client/src/features/book/composables/useReadAlong.ts`,
-`client/src/features/book/components/detail/tabs/ReadAlongMemberRow.vue`, and the `readAlongBookId` /
+`useReadAlongSection.ts`, `ReadAlongStepper.vue` and `ReadAlongBuildOptions.vue` under
+`client/src/features/book/components/detail/tabs/edition-link/`, and the `readAlongBookId` /
 `role` / `members` additions in `edition-link/*` and `useEditionLink.ts`). Three common utils, each shared by this
 module without an inter-module import: one moved out of `reading-alignment` (the audio play-order
 comparator, since replaced by upstream's `compareAudioTracks`), one out of `audiobookshelf`, and one new:
@@ -751,15 +758,15 @@ already is.
 
 **Seams / hooks in shared files (keep minimal + generic):**
 
-| Shared file                   | Hook                                                                                                 | Conflict cost                                        |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `app.module.ts`               | register `StorytellerModule`                                                                         | 2 lines, trivial                                     |
-| `packages/types/src/index.ts` | `export * from "./storyteller"`                                                                      | 1 line, trivial                                      |
-| `integration-tabs.ts`         | `storyteller` tab entry, gated on `Permission.ManageAppSettings`                                     | additive                                             |
-| `router/index.ts`             | `settings-storyteller` route + `INTEGRATION_ROUTES` entry, same shape as every other integration tab | additive                                             |
-| `en.json`                     | `settings.integrations.storyteller.*` + `book.detail.editionLink.readAlong.*` keys                   | additive, en-only                                    |
-| client `LinkBookControl.vue`  | "Generate read-along" tick box / button and the read-along member row via `ReadAlongMemberRow.vue`   | additive, same slot pattern as the alignment overlay |
-| `settings-nav.ts`             | `storyteller` entry under ACCOUNTS, same shape as every other integration                            | additive                                             |
+| Shared file                   | Hook                                                                                                                                               | Conflict cost                                        |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `app.module.ts`               | register `StorytellerModule`                                                                                                                       | 2 lines, trivial                                     |
+| `packages/types/src/index.ts` | `export * from "./storyteller"`                                                                                                                    | 1 line, trivial                                      |
+| `integration-tabs.ts`         | `storyteller` tab entry, gated on `Permission.ManageAppSettings`                                                                                   | additive                                             |
+| `router/index.ts`             | `settings-storyteller` route + `INTEGRATION_ROUTES` entry, same shape as every other integration tab                                               | additive                                             |
+| `en.json`                     | `settings.integrations.storyteller.*` + `book.detail.editionLink.readAlong.*` keys                                                                 | additive, en-only                                    |
+| client `LinkBookControl.vue`  | mounts `SyncChainPanel.vue` (the modality chain); the read-along is generated from the Available row's options block (`ReadAlongBuildOptions.vue`) | additive, same slot pattern as the alignment overlay |
+| `settings-nav.ts`             | `storyteller` entry under ACCOUNTS, same shape as every other integration                                                                          | additive                                             |
 
 **Access control is entirely BookOrbit's, not Storyteller's.** `GET/PUT settings` and `POST
 settings/test` require `Permission.ManageAppSettings`; `POST read-along/books/:bookId/build` and `GET
@@ -775,7 +782,7 @@ client is native `fetch` and the server calls out over HTTP. `STORYTELLER_ENCRYP
 `STORYTELLER_REQUEST_TIMEOUT_MS` / `STORYTELLER_TRANSFER_TIMEOUT_MINUTES` /
 `STORYTELLER_WAIT_CEILING_MINUTES` are all optional with documented defaults (see
 `server/.env.example`); with no Storyteller server configured under Settings, the connection is simply
-unset and the read-along tick box stays disabled with the reason why.
+unset and the Available row's generate action stays disabled with the reason why.
 
 **Plugin removal:** unregister `StorytellerModule` in `app.module.ts`, then remove `storyteller` from
 `INTEGRATION_TABS` (and its `INTEGRATION_TAB_INFO` entry) in `integration-tabs.ts` together with the
@@ -785,7 +792,7 @@ drop `storyteller` from `INTEGRATION_TABS` while its `INTEGRATION_ROUTES` entry 
 fails to typecheck on an excess property; drop the `INTEGRATION_ROUTES` entry first and it fails on a
 missing property instead. Also drop the `storyteller` item from the `accounts` group in
 `settings-nav.ts`, or it is left pointing at a route that no longer exists. The app still builds and
-runs otherwise: the settings panel and the read-along tick box/row disappear from the UI,
+runs otherwise: the settings panel and the read-along row and card disappear from the UI,
 `book_edition_links.read_along_book_id` and the two storyteller tables are left in place unused, and
 any book Storyteller had already produced stays exactly where it landed as an ordinary book. The fork
 Vue component files must remain for the client to compile (expected UI-registration coupling, same as

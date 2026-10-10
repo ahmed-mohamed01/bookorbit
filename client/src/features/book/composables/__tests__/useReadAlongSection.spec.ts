@@ -99,56 +99,6 @@ describe('useReadAlongSection', () => {
     permissionMocks.hasPermission.mockReturnValue(true)
   })
 
-  it('hands the section the state slice it renders from', () => {
-    readAlongState.status.value = 'building'
-    readAlongState.phase.value = 'wait'
-    readAlongState.transport.value = 'shared-paths'
-    readAlongState.remoteTask.value = 'TRANSCRIBE_CHAPTERS'
-    readAlongState.remoteProgress.value = 0.5
-    readAlongState.targetLibraryName.value = 'Read-alongs'
-    readAlongState.error.value = null
-
-    const { section } = mountSection()
-
-    expect(section.sectionState.value).toEqual({
-      status: 'building',
-      blocked: null,
-      phase: 'wait',
-      transport: 'shared-paths',
-      remoteTask: 'TRANSCRIBE_CHAPTERS',
-      remoteProgress: 0.5,
-      targetLibraryName: 'Read-alongs',
-      remoteCopyBytes: { epub: null, audio: null, readAlong: null },
-      keepRemoteCopy: true,
-      remoteCopyReclaimable: true,
-      hasOutputBook: false,
-      error: null,
-      mutating: false,
-      queuePosition: null,
-    })
-  })
-
-  it('hands the section the queue position of a queued build', () => {
-    readAlongState.status.value = 'queued'
-    readAlongState.queuePosition.value = 2
-
-    const { section } = mountSection()
-
-    expect(section.sectionState.value).toMatchObject({ status: 'queued', queuePosition: 2 })
-  })
-
-  // A ready build the server described without its book is one this user cannot open, which the section
-  // shows as out of reach rather than as something to build again.
-  it('reports whether the server described the read-along book at all', async () => {
-    const { section } = mountSection()
-    expect(section.sectionState.value.hasOutputBook).toBe(false)
-
-    readAlongState.outputBook.value = { id: 30, title: 'Dune (read-along)' }
-    await flushPromises()
-
-    expect(section.sectionState.value.hasOutputBook).toBe(true)
-  })
-
   it('offers only an aligned Storyteller book for import', async () => {
     readAlongState.existingMatches.value = [makeMatch({ uuid: 'uuid-unaligned', aligned: false })]
     const { section } = mountSection()
@@ -169,7 +119,6 @@ describe('useReadAlongSection', () => {
   })
 
   it.each([
-    ['handleGenerate', {}],
     ['handleRetry', {}],
     ['handleRebuild', { force: true }],
   ] as const)('sends the request %s means', async (handler, expected) => {
@@ -218,7 +167,7 @@ describe('useReadAlongSection', () => {
     const { section } = mountSection(bookId)
 
     bookId.value = 11
-    section.handleGenerate()
+    section.handleRetry()
     await flushPromises()
 
     expect(readAlongState.build).toHaveBeenCalledWith(11, {})
@@ -269,13 +218,13 @@ describe('useReadAlongSection', () => {
       expect(section.chosenTargetLibraryId.value).toBeNull()
       expect(section.targetLibraryName.value).toBe('Read-alongs')
 
-      section.handleGenerate()
+      section.handleRetry()
       await flushPromises()
       expect(readAlongState.build).toHaveBeenLastCalledWith(10, {})
 
       section.setTargetLibrary(5)
       expect(section.targetLibraryName.value).toBe('Fiction')
-      section.handleGenerate()
+      section.handleRetry()
       await flushPromises()
       expect(readAlongState.build).toHaveBeenLastCalledWith(10, { targetLibraryId: 5 })
     })
@@ -297,14 +246,13 @@ describe('useReadAlongSection', () => {
       const { section } = mountSection()
 
       section.setTargetLibrary(4)
-      section.handleGenerate()
+      section.handleRetry()
       await flushPromises()
 
       expect(readAlongState.build).toHaveBeenLastCalledWith(10, { targetLibraryId: 4 })
     })
 
     it.each([
-      ['handleGenerate', {}],
       ['handleRetry', {}],
       ['handleRebuild', { force: true }],
     ] as const)('honours a chosen destination from %s', async (handler, expected) => {

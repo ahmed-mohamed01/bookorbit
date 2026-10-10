@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Plus, Search } from '@lucide/vue'
+import { Plus, Search, X } from '@lucide/vue'
 import type { CoverMedium, EditionLinkCandidate } from '@bookorbit/types'
-import type { EditionFormat } from '@/features/book/composables/useLinkEditionPanel'
+import type { EditionFormat } from '@/features/book/lib/sync-chain'
 import EditionCover from './EditionCover.vue'
 
 const STRONG_MATCH_SCORE = 80
@@ -19,11 +19,12 @@ const props = withDefaults(
     hasSearched: boolean
     disabled: boolean
     autofocus?: boolean
+    cancellable?: boolean
   }>(),
-  { autofocus: false },
+  { autofocus: false, cancellable: false },
 )
 
-const emit = defineEmits<{ 'update:query': [value: string]; pick: [candidate: EditionLinkCandidate] }>()
+const emit = defineEmits<{ 'update:query': [value: string]; pick: [candidate: EditionLinkCandidate]; cancel: [] }>()
 
 const { t } = useI18n()
 const inputEl = ref<HTMLInputElement | null>(null)
@@ -51,10 +52,24 @@ function handleInput(event: Event) {
 function handlePick(candidate: EditionLinkCandidate) {
   emit('pick', candidate)
 }
+
+function handleCancel() {
+  emit('cancel')
+}
 </script>
 
 <template>
   <div class="relative z-[1] rounded-xl border border-dashed border-border bg-card px-3 pt-2.5 pb-2" :data-testid="`edition-slot-search-${format}`">
+    <button
+      v-if="cancellable"
+      type="button"
+      class="absolute end-1.5 top-1.5 flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      :aria-label="t('book.detail.editionLink.chain.action.cancel')"
+      data-testid="edition-search-cancel"
+      @click="handleCancel"
+    >
+      <X class="size-4" aria-hidden="true" />
+    </button>
     <div class="flex flex-col items-center px-1 text-center">
       <div class="flex size-7 items-center justify-center rounded-lg border-[1.5px] border-dashed border-border text-muted-foreground">
         <Plus class="size-4" aria-hidden="true" />

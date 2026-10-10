@@ -285,6 +285,19 @@ export function useEditionLink(bookId: number) {
     return runMutation(() => api(`/api/v1/edition-links/link/${targetBookId}`, { method: 'DELETE' }), 'Failed to unlink book')
   }
 
+  // Puts the pair's own generated read-along back on the link, after a deliberate detach.
+  function attachReadAlong(pairBookId: number, readAlongBookId: number): Promise<boolean> {
+    return runMutation(
+      () =>
+        api(`/api/v1/edition-links/read-along/${pairBookId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ readAlongBookId }),
+        }),
+      'Failed to attach the read-along',
+    )
+  }
+
   return {
     link: entry.link,
     proposed: entry.proposed,
@@ -302,6 +315,7 @@ export function useEditionLink(bookId: number) {
     searchCandidates,
     linkBook,
     unlink,
+    attachReadAlong,
     resetSearch,
   }
 }
