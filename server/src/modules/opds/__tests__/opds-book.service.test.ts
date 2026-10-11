@@ -1,7 +1,9 @@
 import { ForbiddenException } from '@nestjs/common';
+import { EMPTY_CONTENT_FILTER_RULES } from '@bookorbit/types';
 
 import { bookSeries, bookSeriesMemberships } from '../../../db/schema';
 import { OpdsBookService } from '../opds-book.service';
+import { OpdsCollectionRepository } from '../opds-collection.repository';
 
 type BookPageResult = { entries: unknown[]; total: number };
 
@@ -49,8 +51,9 @@ function makeService(selectQueue: unknown[] = [], queryBuilderOverrides: Record<
     buildWhere: vi.fn().mockReturnValue(undefined),
     ...queryBuilderOverrides,
   };
-  const service = new OpdsBookService(db as never, queryBuilder as never);
-  return { service, db, queryBuilder };
+  const collectionRepository = new OpdsCollectionRepository(db as never);
+  const service = new OpdsBookService(db as never, queryBuilder as never, collectionRepository);
+  return { service, db, queryBuilder, collectionRepository };
 }
 
 function collectValues(value: unknown, seen = new WeakSet<object>()): unknown[] {
@@ -69,16 +72,16 @@ function collectValues(value: unknown, seen = new WeakSet<object>()): unknown[] 
 describe('OpdsBookService', () => {
   it('returns accessible library ids for superusers and regular users', async () => {
     const superDb = makeDb([[{ id: 1 }, { id: 4 }]]);
-    const superService = new OpdsBookService(superDb as never, {} as never);
+    const superService = new OpdsBookService(superDb as never, {} as never, new OpdsCollectionRepository(superDb as never));
     await expect(superService.getAccessibleLibraryIds(7, true)).resolves.toEqual([1, 4]);
 
     const userDb = makeDb([[{ libraryId: 2 }, { libraryId: 3 }]]);
-    const userService = new OpdsBookService(userDb as never, {} as never);
+    const userService = new OpdsBookService(userDb as never, {} as never, new OpdsCollectionRepository(userDb as never));
     await expect(userService.getAccessibleLibraryIds(7, false)).resolves.toEqual([2, 3]);
   });
 
   it('handles getBooksPage access checks and smartScope delegation', async () => {
-    const { service } = makeService([[{ userId: 999 }], [{ userId: 7 }]]);
+    const { service } = makeService([[{ userId: 999, isPublic: false, mediaType: 'books' }], [{ userId: 7, isPublic: false, mediaType: 'books' }]]);
     const accessSpy = vi.spyOn(service, 'getAccessibleLibraryIds');
     const privateService = testable(service);
     const smartScopeSpy = vi.spyOn(privateService, 'buildSmartScopeWhere');
@@ -227,14 +230,47 @@ describe('OpdsBookService', () => {
     expect(seriesChain.innerJoin).toHaveBeenCalledWith(bookSeriesMemberships, expect.anything());
   });
 
-  it('returns user collections and smartScopes', async () => {
-    const { service, db } = makeService([[{ id: 4, name: 'Favorites', bookCount: 1 }], [{ id: 7, name: 'Unread', icon: 'sparkles' }]]);
+  it.each([
+    { userId: 7, isPublic: false, mediaType: 'books', allowed: true },
+    { userId: 999, isPublic: true, mediaType: 'books', allowed: true },
+    { userId: 999, isPublic: false, mediaType: 'books', allowed: false },
+    { userId: 7, isPublic: true, mediaType: 'podcasts', allowed: false },
+    undefined,
+  ])('checks collection access for both catalog pages and counts: %j', async (collection) => {
+    const { service, collectionRepository } = makeService();
+    vi.spyOn(service, 'getAccessibleLibraryIds').mockResolvedValue([1]);
+    vi.spyOn(collectionRepository, 'findById').mockResolvedValue(collection ? [collection] : []);
+    const pageSpy = vi.spyOn(testable(service), 'paginatedBookQuery').mockResolvedValue({ entries: [], total: 0 });
 
-    await expect(service.getUserCollections(8)).resolves.toEqual([{ id: 4, name: 'Favorites', bookCount: 1 }]);
+    if (collection?.allowed) {
+      await expect(service.getBooksPage(7, 'recent', 1, 20, { collectionId: 11 })).resolves.toEqual({ entries: [], total: 0 });
+      await expect(service.countBooks(7, { collectionId: 11 })).resolves.toBe(0);
+      expect(pageSpy).toHaveBeenCalledOnce();
+    } else {
+      await expect(service.getBooksPage(7, 'recent', 1, 20, { collectionId: 11 })).rejects.toThrow(ForbiddenException);
+      await expect(service.countBooks(7, { collectionId: 11 })).rejects.toThrow(ForbiddenException);
+      expect(pageSpy).not.toHaveBeenCalled();
+    }
+  });
+
+  it('passes viewer permissions to collection counts', async () => {
+    const { service, collectionRepository } = makeService();
+    const filters = { ...EMPTY_CONTENT_FILTER_RULES, excludeTagIds: [12] };
+    const listSpy = vi.spyOn(collectionRepository, 'findVisibleForUser').mockResolvedValue([{ id: 4, name: 'Favorites', bookCount: 1 }]);
+    const countSpy = vi.spyOn(collectionRepository, 'countVisibleForUser').mockResolvedValue(3);
+    await expect(service.getUserCollections(8, false, filters)).resolves.toEqual([{ id: 4, name: 'Favorites', bookCount: 1 }]);
+    expect(listSpy).toHaveBeenCalledWith(8, false, filters);
+    await expect(service.countUserCollections(8)).resolves.toBe(3);
+    expect(countSpy).toHaveBeenCalledWith(8);
+  });
+
+  it('returns user smartScopes', async () => {
+    const { service, db } = makeService([[{ id: 7, name: 'Unread', icon: 'sparkles' }]]);
+
     await expect(service.getUserSmartScopes(8)).resolves.toEqual([{ id: 7, name: 'Unread', icon: 'sparkles' }]);
 
     const chains = (db.select as ReturnType<typeof vi.fn>).mock.results.map((r) => r.value as Record<string, unknown>);
-    const smartScopeChain = chains[1]!;
+    const smartScopeChain = chains[0]!;
     const whereClause = (smartScopeChain.where as ReturnType<typeof vi.fn>).mock.calls[0]?.[0];
     expect(collectValues(whereClause)).toContain(8);
     expect(collectValues(whereClause)).toContain(true);
@@ -252,11 +288,20 @@ describe('OpdsBookService', () => {
   });
 
   it('resolves getBookFiles with fallback formatting and title values', async () => {
-    const { service } = makeService([[], [{ absolutePath: '/books/a.epub', format: null, title: null }], []]);
+    const { service } = makeService([
+      [],
+      [{ id: 1, updatedAt: new Date('2026-01-01'), absolutePath: '/books/a.epub', format: null, title: null }],
+      [],
+    ]);
 
     await expect(service.getBookFiles(7, 42)).resolves.toBeNull();
 
     await expect(service.getBookFiles(7)).resolves.toEqual({
+      id: 1,
+      mtime: undefined,
+      sizeBytes: undefined,
+      ino: undefined,
+      contentVersion: new Date('2026-01-01').toISOString(),
       absolutePath: '/books/a.epub',
       format: 'unknown',
       readAlong: false,
@@ -269,6 +314,7 @@ describe('OpdsBookService', () => {
     const rows = [
       {
         id: 1,
+        updatedAt: new Date('2026-01-01'),
         absolutePath: '/books/a.m4b',
         format: 'm4b',
         role: 'content',
@@ -280,6 +326,7 @@ describe('OpdsBookService', () => {
       },
       {
         id: 2,
+        updatedAt: new Date('2026-01-01'),
         absolutePath: '/books/a.epub',
         format: 'epub',
         role: 'content',
@@ -533,10 +580,10 @@ describe('OpdsBookService', () => {
         { bookId: 2, name: 'Author Two' },
       ],
       [
-        { bookId: 1, id: 10, format: 'epub', role: 'content' },
-        { bookId: 1, id: 11, format: 'mobi', role: 'content' },
-        { bookId: 1, id: 12, format: 'jpg', role: 'cover' },
-        { bookId: 2, id: 20, format: null, role: 'content' },
+        { bookId: 1, id: 10, format: 'epub', role: 'content', contentVersion: new Date('2026-01-01') },
+        { bookId: 1, id: 11, format: 'mobi', role: 'content', contentVersion: new Date('2026-01-01') },
+        { bookId: 1, id: 12, format: 'jpg', role: 'cover', contentVersion: new Date('2026-01-01') },
+        { bookId: 2, id: 20, format: null, role: 'content', contentVersion: new Date('2026-01-01') },
       ],
     ]);
 
@@ -547,17 +594,14 @@ describe('OpdsBookService', () => {
         seriesId: 42,
         hasCover: true,
         authors: ['Author One'],
-        files: [
-          { id: 10, format: 'epub' },
-          { id: 11, format: 'mobi' },
-        ],
+        files: [expect.objectContaining({ id: 10, format: 'epub' }), expect.objectContaining({ id: 11, format: 'mobi' })],
       }),
       expect.objectContaining({
         id: 2,
         title: 'second',
         hasCover: false,
         authors: ['Author Two'],
-        files: [{ id: 20, format: 'unknown' }],
+        files: [expect.objectContaining({ id: 20, format: 'unknown' })],
       }),
     ]);
 
@@ -585,7 +629,7 @@ describe('OpdsBookService', () => {
         },
       ],
       [{ bookId: 1, name: 'Author One' }],
-      [{ bookId: 1, id: 10, format: 'epub', role: 'content' }],
+      [{ bookId: 1, id: 10, format: 'epub', role: 'content', contentVersion: new Date('2026-01-01') }],
       [{ bookId: 1, seriesId: 42, seriesName: 'Secondary Arc', seriesIndex: '3' }],
     ]);
 

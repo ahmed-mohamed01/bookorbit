@@ -1,3 +1,4 @@
+import { recordBookFileHashHistory, deleteBookFilesWithHashInvalidation, deleteBooksWithHashInvalidation } from '../../db/book-file-hash-history';
 import { BadRequestException, Inject, Injectable, Optional } from '@nestjs/common';
 import { SQL, and, asc, count, eq, inArray, isNotNull, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import { SUPPORTED_BOOK_FORMATS } from '../upload/upload-validator.service';
@@ -1470,6 +1471,8 @@ export class BookRepository {
           sizeBytes: bookFiles.sizeBytes,
           absolutePath: bookFiles.absolutePath,
           createdAt: bookFiles.createdAt,
+          updatedAt: bookFiles.updatedAt,
+          fileHash: bookFiles.fileHash,
           durationSeconds: bookFiles.durationSeconds,
           sortOrder: bookFiles.sortOrder,
           mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
@@ -1549,6 +1552,10 @@ export class BookRepository {
       });
   }
 
+  async recordFileHashHistory(fileId: number, hash: string): Promise<void> {
+    await this.db.transaction((tx) => recordBookFileHashHistory(tx, fileId, hash, 'kobo_download'));
+  }
+
   async upsertKoreaderBookHashLink(userId: number, hash: string, bookFileId: number): Promise<void> {
     const now = new Date();
     await this.db
@@ -1589,6 +1596,7 @@ export class BookRepository {
         libraryId: books.libraryId,
         libraryFolderPath: libraryFolders.path,
         fileHash: bookFiles.fileHash,
+        updatedAt: bookFiles.updatedAt,
         sizeBytes: bookFiles.sizeBytes,
         durationSeconds: bookFiles.durationSeconds,
         mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
@@ -1602,7 +1610,7 @@ export class BookRepository {
   }
 
   async deleteBookFile(fileId: number): Promise<void> {
-    await this.db.delete(bookFiles).where(eq(bookFiles.id, fileId));
+    await deleteBookFilesWithHashInvalidation(this.db, eq(bookFiles.id, fileId));
   }
 
   async updateBookFile(
@@ -2092,9 +2100,17 @@ export class BookRepository {
       .orderBy(asc(books.id));
   }
 
-  async findPrimaryReaderFilesByBookIds(
-    bookIds: number[],
-  ): Promise<{ id: number; bookId: number; absolutePath: string; format: string | null; fileHash: string | null; sizeBytes: number | null }[]> {
+  async findPrimaryReaderFilesByBookIds(bookIds: number[]): Promise<
+    {
+      id: number;
+      bookId: number;
+      absolutePath: string;
+      format: string | null;
+      fileHash: string | null;
+      sizeBytes: number | null;
+      mediaOverlayAvailable: boolean;
+    }[]
+  > {
     if (bookIds.length === 0) return [];
     return this.db
       .select({
@@ -2103,6 +2119,7 @@ export class BookRepository {
         absolutePath: bookFiles.absolutePath,
         format: bookFiles.format,
         fileHash: bookFiles.fileHash,
+        mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
         sizeBytes: bookFiles.sizeBytes,
       })
       .from(books)
@@ -2168,7 +2185,7 @@ export class BookRepository {
   }
 
   async deleteByIds(bookIds: number[]): Promise<void> {
-    await this.db.delete(books).where(inArray(books.id, bookIds));
+    await deleteBooksWithHashInvalidation(this.db, inArray(books.id, bookIds));
   }
 
   async deleteByIdsAndInvalidateScanState(bookIds: number[]): Promise<void> {
@@ -2222,7 +2239,8 @@ export class BookRepository {
         }
       }
 
-      await tx.delete(books).where(
+      await deleteBooksWithHashInvalidation(
+        tx,
         inArray(
           books.id,
           rows.map((row) => row.id),
@@ -2531,7 +2549,7 @@ export class BookRepository {
       .where(eq(bookFiles.id, fileId))
       .limit(1);
 
-    if (!file || file.primaryFileId !== fileId || file.format !== 'epub') return false;
+    if (!file || file.primaryFileId !== fileId || (file.format !== 'epub' && file.format !== 'kepub')) return false;
 
     const clampedPercentage = this.clampProgressPercentage(percentage);
     const normalizedKoboLocationSource = this.normalizeKoboLocationPart(koboLocationSource);

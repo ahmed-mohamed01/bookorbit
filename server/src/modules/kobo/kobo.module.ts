@@ -24,6 +24,13 @@ import { KoboAnnotationExchangeService } from './services/kobo-annotation-exchan
 import { KoboAnnotationMaterializerService } from './services/kobo-annotation-materializer.service';
 import { KoboDeviceService } from './services/kobo-device.service';
 import { KoboDownloadService } from './services/kobo-download.service';
+import { KoboReadingProgressRepository } from './kobo-reading-progress.repository';
+import { KoboDeliveryRepository } from './kobo-delivery.repository';
+import { KoboDeliveryService } from './services/kobo-delivery.service';
+import { KoboDownloadRepository } from './kobo-download.repository';
+import { KoboDownloadHashRegistrationService } from './services/kobo-download-hash-registration.service';
+import { KoboDownloadHashBackfillService } from './services/kobo-download-hash-backfill.service';
+import { AppSettingsModule } from '../app-settings/app-settings.module';
 import { KoboKepubContextService } from './services/kobo-kepub-context.service';
 import { KoboPositionRebuildService } from './services/kobo-position-rebuild.service';
 import { KoboProgressBridgeService } from './services/kobo-progress-bridge.service';
@@ -39,6 +46,7 @@ import { KoboAnalyticsService } from './services/kobo-analytics.service';
 
 @Module({
   imports: [
+    AppSettingsModule,
     CommonModule,
     AchievementModule,
     AnnotationModule,
@@ -70,6 +78,12 @@ import { KoboAnalyticsService } from './services/kobo-analytics.service';
     KoboSyncHistoryService,
     KoboThumbnailService,
     KoboDownloadService,
+    KoboDownloadRepository,
+    KoboDeliveryRepository,
+    KoboReadingProgressRepository,
+    KoboDeliveryService,
+    KoboDownloadHashBackfillService,
+    KoboDownloadHashRegistrationService,
     KoboProxyService,
     KoboAnalyticsResolverService,
     KoboAnalyticsService,

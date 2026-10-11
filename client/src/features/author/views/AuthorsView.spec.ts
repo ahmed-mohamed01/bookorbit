@@ -51,11 +51,23 @@ const mocks = vi.hoisted(() => ({
   minBookCount: null as unknown as { value: number | null },
   viewMode: null as unknown as { value: string },
   searchMonitoredAuthors: vi.fn<(query: string) => Promise<MonitoredAuthorSearchResult[]>>(),
+  selectionMode: null as unknown as { value: boolean },
+  selectedIds: null as unknown as { value: Set<number> },
+  selectedCount: null as unknown as { value: number },
+  bulkRefresh:
+    vi.fn<
+      (ids: number[], onProgress?: unknown, options?: { ignoreCache?: boolean }) => Promise<{ processed: number; failed: number; updated: number }>
+    >(),
 }))
 
 vi.mock('@/features/monitored/api/monitored', () => ({
   searchMonitoredAuthors: mocks.searchMonitoredAuthors,
   monitorAuthor: vi.fn<() => Promise<never>>(),
+}))
+
+vi.mock('../api/author', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api/author')>()),
+  bulkRefreshAuthorsMetadata: mocks.bulkRefresh,
 }))
 
 vi.mock('vue-router', () => ({
@@ -128,9 +140,9 @@ vi.mock('../composables/useAuthorsList', () => ({
 
 vi.mock('../composables/useAuthorSelection', () => ({
   useAuthorSelection: () => ({
-    selectionMode: ref(false),
-    selectedIds: ref<number[]>([]),
-    selectedCount: ref(0),
+    selectionMode: mocks.selectionMode,
+    selectedIds: mocks.selectedIds,
+    selectedCount: mocks.selectedCount,
     enterSelectionMode: vi.fn<() => void>(),
     exitSelectionMode: vi.fn<() => void>(),
     toggleAuthor: vi.fn<(id: number) => void>(),
@@ -174,6 +186,10 @@ describe('AuthorsView', () => {
     mocks.minBookCount = ref(null)
     mocks.viewMode = ref('list')
     mocks.searchMonitoredAuthors.mockResolvedValue([])
+    mocks.selectionMode = ref(false)
+    mocks.selectedIds = ref(new Set<number>())
+    mocks.selectedCount = ref(0)
+    mocks.bulkRefresh.mockResolvedValue({ processed: 2, failed: 0, updated: 2 })
   })
 
   afterEach(() => {
@@ -305,6 +321,53 @@ describe('AuthorsView', () => {
       expect(toast.error).toHaveBeenCalledWith('Failed to search authors.')
       expect(wrapper.findComponent(MonitorAuthorModal).props('open')).toBe(false)
       expect(wrapper.findComponent(AuthorTile).props('monitoring')).toBe(false)
+    })
+  })
+
+  describe('bulk metadata refresh', () => {
+    const passthrough = { template: '<div><slot /></div>' }
+
+    async function mountSelecting() {
+      mocks.selectionMode.value = true
+      mocks.selectedIds.value = new Set([4, 9])
+      mocks.selectedCount.value = 2
+      const wrapper = shallowMount(AuthorsView, {
+        global: {
+          stubs: {
+            SelectionActionBar: { template: '<div><slot name="content" /></div>' },
+            Tooltip: passthrough,
+            TooltipTrigger: passthrough,
+            TooltipContent: passthrough,
+            IgnoreCacheCheckbox: false,
+          },
+        },
+      })
+      await flushPromises()
+      return wrapper
+    }
+
+    it('asks for confirmation and keeps cached results unless told to ignore them', async () => {
+      const wrapper = await mountSelecting()
+
+      await wrapper.get('[data-testid="author-bulk-refresh"]').trigger('click')
+      expect(mocks.bulkRefresh).not.toHaveBeenCalled()
+      expect(wrapper.find('[data-testid="author-bulk-refresh-confirm"]').exists()).toBe(true)
+
+      await wrapper.get('[data-testid="author-bulk-refresh-confirm-action"]').trigger('click')
+      await flushPromises()
+
+      expect(mocks.bulkRefresh).toHaveBeenCalledWith([4, 9], expect.any(Function), { ignoreCache: false })
+    })
+
+    it('ignores cached results when the box is checked', async () => {
+      const wrapper = await mountSelecting()
+
+      await wrapper.get('[data-testid="author-bulk-refresh"]').trigger('click')
+      await wrapper.get('[data-testid="ignore-cache-checkbox"]').setValue(true)
+      await wrapper.get('[data-testid="author-bulk-refresh-confirm-action"]').trigger('click')
+      await flushPromises()
+
+      expect(mocks.bulkRefresh).toHaveBeenCalledWith([4, 9], expect.any(Function), { ignoreCache: true })
     })
   })
 })

@@ -75,12 +75,14 @@ const READER_ROUTES: Record<ReaderTab, string> = {
 }
 
 const METADATA_ROUTES: Record<MetadataTab, string> = {
+  reminders: 'settings-metadata-reminders',
   providers: 'settings-metadata-providers',
   'field-rules': 'settings-metadata-field-rules',
   'custom-fields': 'settings-metadata-custom-fields',
   score: 'settings-metadata-score',
   'auto-fetch': 'settings-metadata-auto-fetch',
   authors: 'settings-metadata-authors',
+  'search-cache': 'settings-metadata-search-cache',
   'genre-blocklist': 'settings-metadata-genre-blocklist',
 }
 
@@ -350,6 +352,12 @@ export const routes: RouteRecordRaw[] = [
             redirect: tabRedirect(normalizeMetadataTab, METADATA_ROUTES),
           },
           {
+            path: 'metadata/reminders',
+            name: 'settings-metadata-reminders',
+            component: () => import('@/features/settings/MetadataRemindersSettings.vue'),
+            meta: { maxWidth: 'max-w-3xl', title: () => t('metadataReminders.title') },
+          },
+          {
             path: 'metadata/providers',
             name: 'settings-metadata-providers',
             component: () => import('@/features/settings/metadata-preferences/MetadataPreferencesSettings.vue'),
@@ -388,6 +396,17 @@ export const routes: RouteRecordRaw[] = [
             name: 'settings-metadata-authors',
             component: () => import('@/features/settings/AuthorEnrichmentSettings.vue'),
             meta: { maxWidth: 'max-w-3xl', title: () => t('titles.metadata.authors') },
+          },
+          {
+            path: 'metadata/search-cache',
+            name: 'settings-metadata-search-cache',
+            component: () => import('@/features/settings/metadata-cache/MetadataCacheSettings.vue'),
+            meta: {
+              maxWidth: 'max-w-5xl',
+              requiredPermission: Permission.ManageMetadataConfig,
+              permissionFallback: 'settings-metadata-reminders',
+              title: () => t('titles.metadata.search-cache'),
+            },
           },
           {
             path: 'metadata/genre-blocklist',

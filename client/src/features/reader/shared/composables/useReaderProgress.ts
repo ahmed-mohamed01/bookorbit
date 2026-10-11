@@ -150,7 +150,7 @@ export function useReaderProgress(
     startSaveTimer(isNarrating() ? NARRATION_SAVE_INTERVAL_MS : TEXT_SAVE_DEBOUNCE_MS)
   }
 
-  function onRelocate(detail: RelocateDetail) {
+  function onRelocate(detail: RelocateDetail, source: 'text' | 'narration' = 'text') {
     cfi.value = normalizeString(detail?.cfi)
     const relocatedFraction = normalizeFraction(detail?.fraction)
     if (relocatedFraction !== null) {
@@ -179,7 +179,7 @@ export function useReaderProgress(
       if (saveTimer) clearTimeout(saveTimer)
       return
     }
-    pendingSource.value = 'text'
+    pendingSource.value = source
     scheduleSave()
   }
 
@@ -200,12 +200,6 @@ export function useReaderProgress(
       saveTimer = null
     }
     void save()
-  }
-
-  function clearMediaOverlayProgress() {
-    positionSeconds.value = null
-    mediaOverlayFragment.value = null
-    mediaOverlaySectionIndex.value = null
   }
 
   // One save runs at a time; a change made meanwhile is saved once it finishes. A failed
@@ -391,7 +385,6 @@ export function useReaderProgress(
     load,
     onRelocate,
     setMediaOverlayProgress,
-    clearMediaOverlayProgress,
     save,
     flush,
     cycleFooterMode,

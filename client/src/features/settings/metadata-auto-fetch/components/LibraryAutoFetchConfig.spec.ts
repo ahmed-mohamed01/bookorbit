@@ -113,6 +113,9 @@ function makeLibrary(): Library {
     fileWriteKindleMaxFileSizeMb: 100,
     fileWriteAudioEnabled: false,
     fileWriteAudioMaxFileSizeMb: 500,
+    fileWriteAllFiles: false,
+    fileWriteReadAlongEnabled: false,
+    fileWriteReadAlongMaxFileSizeMb: 1000,
     fileRenameEnabled: false,
     folders: [],
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -227,6 +230,30 @@ describe('LibraryAutoFetchConfig', () => {
 
     expect(wrapper.text()).toContain('No eligible books found')
     expect(wrapper.text()).toContain('Last run: just now - no eligible books')
+  })
+
+  it('asks the library run to ignore cached results only when the box is checked', async () => {
+    apiMock.mockImplementation(async (url, init) => {
+      const path = String(url)
+      if (path === '/api/v1/book-metadata-fetch/config/libraries/2' && !init) return response(makeInheritedLibraryConfig())
+      if (path === '/api/v1/book-metadata-fetch/preview-count') return response({ count: 8 })
+      if (path === '/api/v1/book-metadata-fetch/run/2') return response({ queued: 1 })
+      return response({})
+    })
+    const wrapper = mountComponent()
+    await flushPromises()
+
+    const runNow = () => wrapper.findAll('button').find((button) => button.text().includes('Run now'))!
+    await runNow().trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-testid="ignore-cache-checkbox"]').setValue(true)
+    await runNow().trigger('click')
+    await flushPromises()
+
+    const runs = apiMock.mock.calls.filter(([url]) => String(url) === '/api/v1/book-metadata-fetch/run/2').map(([, init]) => init as RequestInit)
+    expect(runs).toHaveLength(2)
+    expect(runs[0]).toEqual({ method: 'POST' })
+    expect(JSON.parse(String(runs[1]!.body))).toEqual({ ignoreCache: true })
   })
 
   it('records a queued manual run in the library card', async () => {

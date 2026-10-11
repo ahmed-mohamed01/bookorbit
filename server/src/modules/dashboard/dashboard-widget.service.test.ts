@@ -8,6 +8,7 @@ import { pickAnnotationIndex } from './dashboard-widget.calculations';
 import type { CurrentlyReadingGroupSource } from './currently-reading-group-source';
 import { DashboardWidgetService } from './dashboard-widget.service';
 import { EMPTY_CONTENT_FILTER_RULES } from '@bookorbit/types';
+import { READING_ATTEMPT_CHANGED, ReadingAttemptEventsService } from '../user-book-status/reading-attempt-events.service';
 
 function makeUser(overrides: Partial<RequestUser> = {}): RequestUser {
   return {
@@ -50,10 +51,10 @@ function makeService(groupSource?: CurrentlyReadingGroupSource) {
     findAccessibleLibraryIds: vi.fn(),
   };
 
+  const events = new ReadingAttemptEventsService();
   const achievementEvents = new EventEmitter();
-  const service = new DashboardWidgetService(widgetRepo as never, libraryService as never, achievementEvents as never, groupSource);
-  service.onModuleInit();
-  return { service, widgetRepo, libraryService, achievementEvents };
+  const service = new DashboardWidgetService(widgetRepo as never, libraryService as never, events, achievementEvents as never, groupSource);
+  return { service, widgetRepo, libraryService, events, achievementEvents };
 }
 
 describe('DashboardWidgetService', () => {
@@ -623,6 +624,7 @@ describe('DashboardWidgetService', () => {
 
     it('a book.status-changed event busts that user live cache so the header refetches', async () => {
       const { service, widgetRepo, libraryService, achievementEvents } = makeService();
+      service.onModuleInit();
       libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
       widgetRepo.getCurrentlyReadingBooks.mockResolvedValue({ books: [] } as never);
 
@@ -644,6 +646,7 @@ describe('DashboardWidgetService', () => {
 
     it('a status change for another user does not bust this user live cache', async () => {
       const { service, widgetRepo, libraryService, achievementEvents } = makeService();
+      service.onModuleInit();
       libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
       widgetRepo.getCurrentlyReadingBooks.mockResolvedValue({ books: [] } as never);
 
@@ -929,5 +932,25 @@ describe('DashboardWidgetService', () => {
       expect(libraryOverview?.failed).toBe(false);
       expect(libraryOverview?.data).toBeTruthy();
     });
+  });
+});
+
+describe('DashboardWidgetService reading-attempt subscription', () => {
+  it('registers through lifecycle initialization and stops invalidating on destruction', async () => {
+    const { service, widgetRepo, libraryService, events } = makeService();
+    libraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
+    widgetRepo.countCompletedBooks.mockResolvedValueOnce(0).mockResolvedValueOnce(1).mockResolvedValueOnce(2);
+    service.onModuleInit();
+    const user = makeUser();
+    expect((await service.getReadingGoal(user)).completedBooks).toBe(0);
+    events.notifyChanged(user.id);
+    expect((await service.getReadingGoal(user)).completedBooks).toBe(1);
+    const unrelated = vi.fn();
+    events.on(READING_ATTEMPT_CHANGED, unrelated);
+    service.onModuleDestroy();
+    events.notifyChanged(user.id);
+    expect((await service.getReadingGoal(user)).completedBooks).toBe(1);
+    expect(widgetRepo.countCompletedBooks).toHaveBeenCalledTimes(2);
+    expect(unrelated).toHaveBeenCalledExactlyOnceWith({ userId: user.id });
   });
 });

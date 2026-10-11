@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   sharpToBuffer: vi.fn(),
   unlink: vi.fn(),
   writeFile: vi.fn(),
+  writeMp4FreeformTags: vi.fn(),
 }));
 
 vi.mock('child_process', () => ({
@@ -34,6 +35,11 @@ vi.mock('sharp', () => ({
 
 vi.mock('../shared/atomic-file-replace', () => ({
   replaceFileAtomically: mocks.replaceFileAtomically,
+}));
+
+vi.mock('./mp4-freeform-tags', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./mp4-freeform-tags')>()),
+  writeMp4FreeformTags: mocks.writeMp4FreeformTags,
 }));
 
 import { replaceFileAtomically } from '../shared/atomic-file-replace';
@@ -62,6 +68,7 @@ describe('AudioMetadataEmbedder', () => {
     writeFileMock.mockResolvedValue(undefined);
     unlinkMock.mockResolvedValue(undefined);
     replaceFileAtomicallyMock.mockResolvedValue(undefined);
+    mocks.writeMp4FreeformTags.mockResolvedValue(undefined);
   });
 
   it('writes text metadata, replaces cover when cover bytes are present, and atomically replaces the source file', async () => {
@@ -112,6 +119,28 @@ describe('AudioMetadataEmbedder', () => {
     expect(unlinkMock).toHaveBeenCalledWith('/books/audio/.bookorbit-cover-fixed-id.jpg');
   });
 
+  it('converts one shared cover to JPEG once across every track of a run', async () => {
+    const embedder = new AudioMetadataEmbedder();
+    const sharedCover = Buffer.from('png-cover');
+
+    for (const track of ['01', '02', '03']) {
+      await embedder.embedMetadata(`/books/audio/${track}.mp3`, 'mp3', { coverBytes: sharedCover, metadata: [] });
+    }
+
+    expect(sharpMock).toHaveBeenCalledTimes(1);
+    expect(writeFileMock).toHaveBeenCalledTimes(3);
+    expect(writeFileMock).toHaveBeenCalledWith('/books/audio/.bookorbit-cover-fixed-id.jpg', Buffer.from('jpeg-cover'));
+  });
+
+  it('converts a different cover buffer again rather than reusing an earlier run', async () => {
+    const embedder = new AudioMetadataEmbedder();
+
+    await embedder.embedMetadata('/books/audio/a.mp3', 'mp3', { coverBytes: Buffer.from('first'), metadata: [] });
+    await embedder.embedMetadata('/books/audio/b.mp3', 'mp3', { coverBytes: Buffer.from('second'), metadata: [] });
+
+    expect(sharpMock).toHaveBeenCalledTimes(2);
+  });
+
   it('preserves existing embedded cover streams when no replacement cover is provided', async () => {
     const embedder = new AudioMetadataEmbedder();
 
@@ -119,14 +148,45 @@ describe('AudioMetadataEmbedder', () => {
 
     expect(sharpMock).not.toHaveBeenCalled();
     expect(writeFileMock).not.toHaveBeenCalled();
-    expect(execFileMock).toHaveBeenCalledWith(
-      'ffmpeg',
-      expect.arrayContaining(['-map', '0', '-metadata', 'album=Book', '/books/audio/.bookorbit-write-fixed-id.flac']),
-      expect.any(Object),
-      expect.any(Function),
-    );
+    const args = execFileMock.mock.calls[0]![1] as string[];
+    expect(args).toEqual(expect.arrayContaining(['-metadata', 'album=Book', '/books/audio/.bookorbit-write-fixed-id.flac']));
+    // Audio, existing art, and subtitles only: a copied MP4 chapter data track fails the whole write.
+    expect(mapArgs(args)).toEqual(['0:a', '0:v?', '0:s?']);
     expect(unlinkMock).not.toHaveBeenCalledWith('/books/audio/.bookorbit-cover-fixed-id.jpg');
   });
+
+  it('never maps data streams, with or without a replacement cover', () => {
+    expect(mapArgs(testing.buildFfmpegArgs('/a.m4b', null, '/t.m4b', 'm4b', []))).toEqual(['0:a', '0:v?', '0:s?']);
+    expect(mapArgs(testing.buildFfmpegArgs('/a.m4b', '/c.jpg', '/t.m4b', 'm4b', []))).toEqual(['0:a', '0:s?', '1:v:0']);
+  });
+
+  it('bounds the ffprobe stream check and treats a timed-out probe as having art', async () => {
+    vi.stubEnv('FFPROBE_PATH', '/opt/bin/ffprobe');
+    execFileMock.mockImplementation((bin: string, _args: string[], _options: unknown, callback: (error: Error | null, stdout: string) => void) => {
+      if (bin === '/opt/bin/ffprobe') callback(Object.assign(new Error('Command failed'), { killed: true, signal: 'SIGTERM' }), '');
+      else callback(null, '');
+    });
+    const embedder = new AudioMetadataEmbedder();
+
+    await embedder.embedMetadata('/books/audio/book.m4b', 'm4b', { coverBytes: null, metadata: [{ key: 'album', value: 'Book' }] });
+
+    const probeCall = execFileMock.mock.calls.find(([bin]) => bin === '/opt/bin/ffprobe')!;
+    expect(probeCall[2]).toEqual({ timeout: 30_000 });
+    const ffmpegArgs = execFileMock.mock.calls.find(([bin]) => bin !== '/opt/bin/ffprobe')![1] as string[];
+    expect(ffmpegArgs).not.toContain('use_metadata_tags');
+  });
+
+  function mockProbedVideoStreams(stdout: string): void {
+    execFileMock.mockImplementation(
+      (bin: string, _args: string[], _options: unknown, callback: (error: Error | null, result: { stdout: string; stderr: string }) => void) => {
+        callback(null, { stdout: bin === 'ffprobe' ? stdout : '', stderr: '' });
+      },
+    );
+  }
+
+  function mapArgs(args: string[]): string[] {
+    return args.flatMap((arg, index) => (arg === '-map' ? [args[index + 1]!] : []));
+  }
 
   it('ignores temporary-file cleanup failures after a successful write', async () => {
     unlinkMock.mockRejectedValue(new Error('cleanup failed'));
@@ -179,6 +239,74 @@ describe('AudioMetadataEmbedder', () => {
     ]);
 
     expect(args).toEqual(expect.arrayContaining(['-metadata:s:a:0', 'language=eng']));
+  });
+
+  it('writes the tags the iTunes mode drops as freeform atoms before replacing the file', async () => {
+    const embedder = new AudioMetadataEmbedder();
+
+    await embedder.embedMetadata('/books/audio/book.m4b', 'm4b', {
+      coverBytes: Buffer.from('raw-cover'),
+      metadata: [
+        { key: 'album', value: 'Dune' },
+        { key: 'subtitle', value: 'Book One' },
+        { key: 'series-part', value: '' },
+        { key: 'language', value: 'eng', specifier: 's:a:0' },
+      ],
+    });
+
+    expect(mocks.writeMp4FreeformTags).toHaveBeenCalledWith(
+      '/books/audio/.bookorbit-write-fixed-id.m4b',
+      [
+        { name: 'SUBTITLE', value: 'Book One' },
+        { name: 'SERIES-PART', value: '' },
+      ],
+      { carryOverFrom: '/books/audio/book.m4b' },
+    );
+    expect(mocks.writeMp4FreeformTags.mock.invocationCallOrder[0]).toBeLessThan(replaceFileAtomicallyMock.mock.invocationCallOrder[0]!);
+  });
+
+  it('adds freeform atoms when keeping existing art in an MP4', async () => {
+    mockProbedVideoStreams('0\n');
+    const embedder = new AudioMetadataEmbedder();
+
+    await embedder.embedMetadata('/books/audio/book.m4a', 'm4a', { coverBytes: null, metadata: [{ key: 'publisher', value: 'Ace' }] });
+
+    expect(mocks.writeMp4FreeformTags).toHaveBeenCalledWith('/books/audio/.bookorbit-write-fixed-id.m4a', [{ name: 'PUBLISHER', value: 'Ace' }], {
+      carryOverFrom: '/books/audio/book.m4a',
+    });
+  });
+
+  it('leaves extended tags to FFmpeg when it writes QuickTime metadata keys', async () => {
+    mockProbedVideoStreams('');
+    const embedder = new AudioMetadataEmbedder();
+
+    await embedder.embedMetadata('/books/audio/book.m4b', 'm4b', { coverBytes: null, metadata: [{ key: 'subtitle', value: 'Book One' }] });
+
+    expect(execFileMock.mock.calls.find(([bin]) => bin === 'ffmpeg')![1]).toContain('use_metadata_tags');
+    expect(mocks.writeMp4FreeformTags).not.toHaveBeenCalled();
+  });
+
+  it.each(['mp3', 'flac'])('never edits MP4 atoms in %s files', async (format) => {
+    const embedder = new AudioMetadataEmbedder();
+
+    await embedder.embedMetadata(`/books/audio/book.${format}`, format, {
+      coverBytes: Buffer.from('raw-cover'),
+      metadata: [{ key: 'subtitle', value: 'x' }],
+    });
+
+    expect(mocks.writeMp4FreeformTags).not.toHaveBeenCalled();
+  });
+
+  it('keeps the original file when the freeform tags cannot be written', async () => {
+    mocks.writeMp4FreeformTags.mockRejectedValue(new Error('MP4 movie box is not at the end of the file'));
+    const embedder = new AudioMetadataEmbedder();
+
+    await expect(
+      embedder.embedMetadata('/books/audio/book.m4b', 'm4b', { coverBytes: Buffer.from('raw-cover'), metadata: [{ key: 'subtitle', value: 'x' }] }),
+    ).rejects.toThrow('MP4 movie box is not at the end of the file');
+
+    expect(replaceFileAtomicallyMock).not.toHaveBeenCalled();
+    expect(unlinkMock).toHaveBeenCalledWith('/books/audio/.bookorbit-write-fixed-id.m4b');
   });
 
   it('preserves the ffmpeg error when cleanup also fails', async () => {

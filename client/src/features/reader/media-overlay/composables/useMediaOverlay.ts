@@ -33,6 +33,7 @@ export interface MediaOverlayDetachedActions {
   // Brings the view back to the sentence being narrated and re-attaches.
   returnToNarration: () => void | Promise<void>
 }
+const currentSectionIndex = ref<number | null>(null)
 
 let instance: FoliateMediaOverlay | null = null
 let detachedActions: MediaOverlayDetachedActions | null = null
@@ -81,6 +82,7 @@ function stop() {
   isBuffering.value = false
   currentBook.value = null
   currentFragment.value = null
+  currentSectionIndex.value = null
   error.value = null
   mediaSession.clearHandlers()
   mediaSession.setPlaybackState('none')
@@ -122,6 +124,8 @@ export function useMediaOverlay() {
     highlightListener = (e: Event) => {
       isPlaying.value = true
       const text = (e as CustomEvent).detail?.text
+      const section = (e as CustomEvent).detail?.sectionIndex
+      currentSectionIndex.value = Number.isInteger(section) && section >= 0 ? section : null
       if (typeof text === 'string') currentFragment.value = text
       mediaSession.setPlaybackState('playing')
     }
@@ -203,6 +207,7 @@ export function useMediaOverlay() {
     isDetached,
     isBuffering,
     isWaitingForAudio,
+    currentSectionIndex,
     error,
     sleepTimer,
     start,

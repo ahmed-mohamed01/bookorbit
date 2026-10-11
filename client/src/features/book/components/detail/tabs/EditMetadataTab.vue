@@ -12,7 +12,7 @@ import {
   RefreshCw,
   Sparkles,
   Star,
-  TriangleAlert,
+  ListChecks,
   X,
 } from '@lucide/vue'
 import { toast } from 'vue-sonner'
@@ -27,6 +27,7 @@ import type {
 } from '@bookorbit/types'
 import { BOOK_FILE_WRITE_FIELD_LABELS, FORMAT_TO_GROUP, getPrimaryBookFile, isValidSeriesIndex, parseSeriesIndex } from '@bookorbit/types'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { api } from '@/lib/api'
 import { metadataScoreColor } from '@/lib/metadata-score-color'
 import ChipInput from '@/components/ui/ChipInput.vue'
@@ -38,7 +39,7 @@ import SeriesMembershipEditor from './SeriesMembershipEditor.vue'
 import WriteAndRenameResultPanel from '../WriteAndRenameResultPanel.vue'
 import type { MetadataDiffApply, MetadataPatch } from '../../../composables/useMetadataDiff'
 import { type EditableSeriesMembership, normalizeSeriesMemberships, useMetadataEditor } from '../../../composables/useMetadataEditor'
-import { type MetadataRefreshPreview, useRefreshMetadata } from '../../../composables/useRefreshMetadata'
+import { type MetadataRefreshPreview, type MetadataRefreshPreviewResult, useRefreshMetadata } from '../../../composables/useRefreshMetadata'
 import { type FileMetadata, useFileMetadata } from '../../../composables/useFileMetadata'
 import { useWriteAndRename } from '../../../composables/useWriteAndRename'
 import { useMetadataLocks } from '../../../composables/useMetadataLocks'
@@ -49,11 +50,16 @@ import { usePublisherSearch, useSeriesNameSearch, useLanguageSearch } from '../.
 import InputWithSuggestions from '@/components/ui/InputWithSuggestions.vue'
 import { RATING_STARS, getRatingStarClass } from '@/features/book/lib/rating-stars'
 import { buildFileMetadataPatch } from '@/features/book/lib/file-metadata-patch'
-import { metadataRefreshAppliedMessage, metadataRefreshEmptyMessage } from '@/features/book/lib/metadata-refresh-feedback'
+import { metadataProviderLabel, metadataRefreshAppliedMessage, metadataRefreshEmptyMessage } from '@/features/book/lib/metadata-refresh-feedback'
+import { showCacheFallbackToast } from '@/features/metadata-cache/lib/cache-feedback'
+import { diagnosticsFallbackProviders } from '@/features/metadata-cache/lib/metadata-cache'
 import { filterProviderIdFields, isProviderIdFieldAvailable, isProviderIdFormField } from '@/features/book/lib/provider-id-fields'
 import { formatCommunityRatingLine } from '@/features/book/lib/community-rating'
 import { coverFieldMedium, coverLockField } from '@/features/book/lib/cover-slots'
-import { formatList } from '@/i18n/formatters'
+import { formatList, formatNumber } from '@/i18n/formatters'
+import { useMetadataReminders } from '@/features/metadata-reminders/composables/useMetadataReminders'
+import { missingMetadataFields } from '@/features/metadata-reminders/lib/missing-metadata'
+import MetadataReminderSheet from '@/features/metadata-reminders/components/MetadataReminderSheet.vue'
 import MetadataSourceCard from './MetadataSourceCard.vue'
 
 const AUTO_FILL_EMPTY_TOAST_DURATION_MS = 10_000
@@ -285,23 +291,23 @@ const saveErrorMessage = computed(() => {
 
 const combinedError = computed(() => lockError.value ?? saveErrorMessage.value)
 
-// Fields whose emptiness the toolbar counts. Provider ids are deliberately excluded: most books
-// legitimately have none, so counting them would report a gap on every healthy record.
-const emptyFields = computed(() => {
-  const checks: { label: string; filled: boolean }[] = [
-    { label: t('book.detail.editMetadata.publisherLabel'), filled: Boolean(form.publisher?.trim()) },
-    { label: t('book.detail.editMetadata.languageLabel'), filled: Boolean(form.language?.trim()) },
-    { label: t('book.detail.editMetadata.yearLabel'), filled: form.publishedYear != null },
-    { label: t('book.detail.editMetadata.pageCountLabel'), filled: form.pageCount != null },
-    { label: t('book.detail.editMetadata.isbn13Label'), filled: Boolean(form.isbn13?.trim()) },
-    { label: t('book.detail.editMetadata.isbn10Label'), filled: Boolean(form.isbn10?.trim()) },
-    { label: t('book.detail.editMetadata.genresLabel'), filled: form.genres.length > 0 },
-    { label: t('book.detail.editMetadata.tagsLabel'), filled: form.tags.length > 0 },
-    { label: t('book.detail.editMetadata.descriptionLabel'), filled: Boolean(form.description?.trim()) },
-  ]
-  return checks.filter((check) => !check.filled).map((check) => check.label)
-})
-const emptyFieldsTitle = computed(() => t('book.detail.editMetadata.emptyFieldsTooltip', { fields: formatList(emptyFields.value) }))
+const { fields: reminderFields } = useMetadataReminders()
+const remindersOpen = ref(false)
+const missingFieldsOpen = ref(false)
+const missingFieldsTrigger = ref<HTMLButtonElement | null>(null)
+const metadataToolbar = ref<HTMLElement | null>(null)
+const emptyFields = computed(() => missingMetadataFields(form, props.book.files, reminderFields.value))
+
+function customizeReminders() {
+  missingFieldsOpen.value = false
+  remindersOpen.value = true
+}
+
+async function restoreReminderFocus() {
+  await nextTick()
+  const target = missingFieldsTrigger.value ?? metadataToolbar.value
+  target?.focus()
+}
 const metadataScore = computed(() => props.book.metadataScore)
 const metadataScoreColour = computed(() => (metadataScore.value == null ? null : metadataScoreColor(metadataScore.value)))
 
@@ -710,6 +716,8 @@ function showSaveResultToast(write: WriteResult | null, libraryAutoWriteEnabled:
 
 function buildPreviewPatch(preview: MetadataRefreshPreview): MetadataPatch {
   return {
+    isbn10: preview.isbn10,
+    isbn13: preview.isbn13,
     title: preview.title,
     subtitle: preview.subtitle,
     description: preview.description,
@@ -754,6 +762,11 @@ async function autoFill() {
     return
   }
 
+  applyAutoFillResult(result)
+  showCacheFallbackToast(diagnosticsFallbackProviders(result.diagnostics), metadataProviderLabel)
+}
+
+function applyAutoFillResult(result: MetadataRefreshPreviewResult) {
   const preview = result.metadata
   if (Object.keys(preview).length === 0) {
     const message =
@@ -857,7 +870,11 @@ function handleCoverChanged(medium: CoverMedium | null) {
   <div class="@container/edit flex min-h-full min-w-0 flex-col">
     <div class="flex flex-1 flex-col gap-3">
       <!-- Command strip -->
-      <div class="sticky top-0 z-30 -mx-4 flex flex-none items-center gap-2 bg-card/95 px-4 py-0.5 backdrop-blur-sm sm:mx-0 sm:px-0">
+      <div
+        ref="metadataToolbar"
+        tabindex="-1"
+        class="sticky top-0 z-30 -mx-4 flex flex-none items-center gap-2 bg-card/95 px-4 py-0.5 backdrop-blur-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:mx-0 sm:px-0"
+      >
         <div class="no-scrollbar flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
           <div
             v-if="metadataScore !== null"
@@ -871,17 +888,34 @@ function handleCoverChanged(medium: CoverMedium | null) {
             </span>
           </div>
 
-          <button
-            v-if="emptyFields.length > 0"
-            type="button"
-            class="flex h-9 flex-none items-center gap-1.5 rounded-lg border border-dashed border-amber-500/40 bg-amber-500/10 px-2.5 text-xs font-semibold text-amber-600 transition-colors hover:bg-amber-500/15 sm:h-8 dark:text-amber-400"
-            :title="emptyFieldsTitle"
-            @click="handleOpenSearch"
-          >
-            <TriangleAlert class="size-3.5 shrink-0" aria-hidden="true" />
-            <span>{{ emptyFields.length }}</span>
-            <span class="hidden @3xl/edit:inline">{{ t('book.detail.editMetadata.emptyFields', { count: emptyFields.length }) }}</span>
-          </button>
+          <Popover v-if="emptyFields.length > 0" v-model:open="missingFieldsOpen">
+            <PopoverTrigger as-child>
+              <button
+                ref="missingFieldsTrigger"
+                type="button"
+                class="flex h-9 flex-none items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-xs font-semibold text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-8"
+                :aria-label="t('metadataReminders.missingCount', { count: emptyFields.length })"
+              >
+                <ListChecks class="size-3.5 shrink-0" aria-hidden="true" />
+                <span>{{ formatNumber(emptyFields.length) }}</span>
+                <span class="hidden @3xl/edit:inline">{{ t('metadataReminders.missingFields', { count: emptyFields.length }) }}</span>
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" class="w-72 max-w-[calc(100vw-2rem)] p-3" :aria-label="t('metadataReminders.missingHeading')">
+              <p class="text-sm font-semibold">{{ t('metadataReminders.missingHeading') }}</p>
+              <p class="mb-3 mt-1 text-xs text-muted-foreground">{{ t('metadataReminders.missingDescription') }}</p>
+              <ul class="grid gap-1 text-sm text-muted-foreground">
+                <li v-for="field in emptyFields" :key="field">{{ t(`metadataReminders.fields.${field}.label`) }}</li>
+              </ul>
+              <button
+                type="button"
+                class="mt-3 w-full rounded-md border-t border-border pt-3 text-start text-sm text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                @click="customizeReminders"
+              >
+                {{ t('metadataReminders.customize') }}
+              </button>
+            </PopoverContent>
+          </Popover>
 
           <div class="flex-1" />
 
@@ -1182,7 +1216,7 @@ function handleCoverChanged(medium: CoverMedium | null) {
                   <span v-else class="flex h-10 items-center rounded-lg border border-input bg-background px-3 sm:h-8">
                     <input
                       type="checkbox"
-                      class="size-4 rounded border-input accent-primary"
+                      class="size-4 rounded-xs border-input accent-primary"
                       :checked="field.value === true"
                       :aria-label="field.label"
                       @change="setCustomBooleanField(field.fieldId, $event)"
@@ -1328,7 +1362,7 @@ function handleCoverChanged(medium: CoverMedium | null) {
                     <input
                       v-model="form.abridged"
                       type="checkbox"
-                      class="size-4 rounded border-input accent-primary"
+                      class="size-4 rounded-xs border-input accent-primary"
                       :aria-label="t('book.detail.editMetadata.abridgedLabel')"
                       :disabled="isLocked('abridged')"
                     />
@@ -1395,12 +1429,12 @@ function handleCoverChanged(medium: CoverMedium | null) {
                     <input
                       :id="`provider-id-${field}`"
                       v-model="form[field]"
-                      class="h-8 min-w-0 flex-1 rounded border border-transparent bg-transparent px-1.5 font-mono text-xs transition-shadow outline-none hover:border-input focus:border-input focus:bg-background focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:h-7"
+                      class="h-8 min-w-0 flex-1 rounded-xs border border-transparent bg-transparent px-1.5 font-mono text-xs transition-shadow outline-none hover:border-input focus:border-input focus:bg-background focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:h-7"
                       :disabled="isLocked(field)"
                     />
                     <button
                       type="button"
-                      class="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded border transition-colors disabled:cursor-not-allowed"
+                      class="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-xs border transition-colors disabled:cursor-not-allowed"
                       :class="
                         isLocked(field)
                           ? 'border-primary/30 bg-primary/15 text-primary hover:bg-primary/25'
@@ -1457,7 +1491,7 @@ function handleCoverChanged(medium: CoverMedium | null) {
                 </h3>
                 <button
                   type="button"
-                  class="ml-auto flex size-6 cursor-pointer items-center justify-center rounded border transition-colors disabled:cursor-not-allowed"
+                  class="ml-auto flex size-6 cursor-pointer items-center justify-center rounded-xs border transition-colors disabled:cursor-not-allowed"
                   :class="
                     isLocked('description')
                       ? 'border-primary/30 bg-primary/15 text-primary hover:bg-primary/25'
@@ -1582,6 +1616,7 @@ function handleCoverChanged(medium: CoverMedium | null) {
   </div>
 
   <MetadataSearchDrawer v-if="searchOpen" :book="props.book" :locked-fields="lockedFields" @close="handleCloseSearch" @apply="handleApply" />
+  <MetadataReminderSheet v-if="remindersOpen" v-model:open="remindersOpen" @closed="restoreReminderFocus" />
 </template>
 
 <style scoped>

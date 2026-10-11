@@ -13,7 +13,6 @@ import {
   bookSeries,
   bookSeriesMemberships,
   books,
-  collections,
   collectionBooks,
   smartScopes,
   libraries,
@@ -25,6 +24,7 @@ import { isAudioFormat, type ContentFilterRules, type GroupRule } from '@bookorb
 import { rankFileRowsByBook, rankFilesByFormatPriority } from '../../common/utils/primary-file-selection.utils';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
 import { seriesIndexOrderBy } from '../../common/utils/series-index-sql.utils';
+import { OpdsCollectionRepository } from './opds-collection.repository';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -105,6 +105,7 @@ export interface OpdsBookEntry {
   isbn13: string | null;
   hasCover: boolean;
   authors: string[];
+  allFiles?: { id: number; format: string; mediaOverlayAvailable: boolean; contentVersion: string }[];
   files: { id: number; format: string }[];
 }
 
@@ -153,6 +154,7 @@ export class OpdsBookService {
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly queryBuilder: BookQueryBuilder,
+    private readonly collectionRepository: OpdsCollectionRepository,
   ) {}
 
   async getAccessibleLibraryIds(userId: number, isSuperuser = false): Promise<number[]> {
@@ -223,12 +225,8 @@ export class OpdsBookService {
     }
 
     if (filters?.collectionId) {
-      const [collection] = await this.db
-        .select({ userId: collections.userId })
-        .from(collections)
-        .where(eq(collections.id, filters.collectionId))
-        .limit(1);
-      if (!collection || collection.userId !== userId) {
+      const [collection] = await this.collectionRepository.findById(filters.collectionId);
+      if (!collection || collection.mediaType !== 'books' || (collection.userId !== userId && !collection.isPublic)) {
         throw new ForbiddenException('No access to this collection');
       }
     }
@@ -597,29 +595,15 @@ export class OpdsBookService {
     return { items: hasNext ? rows.slice(0, opts.limit) : rows, hasNext };
   }
 
-  async getUserCollections(userId: number) {
-    return this.db
-      .select({
-        id: collections.id,
-        name: collections.name,
-        bookCount: sql<number>`count(${collectionBooks.bookId})::int`,
-      })
-      .from(collections)
-      .leftJoin(collectionBooks, eq(collectionBooks.collectionId, collections.id))
-      .where(and(eq(collections.userId, userId), eq(collections.mediaType, 'books')))
-      .groupBy(collections.id)
-      .orderBy(collections.name);
+  async getUserCollections(userId: number, isSuperuser = false, contentFilters?: ContentFilterRules) {
+    return this.collectionRepository.findVisibleForUser(userId, isSuperuser, contentFilters);
   }
 
   // Badge counts only need the totals, so these skip the per-entity book counts
   // their list siblings compute. Counting collections through getUserCollections
   // would aggregate over collection_books just to read the row count back.
   async countUserCollections(userId: number): Promise<number> {
-    const [row] = await this.db
-      .select({ total: count() })
-      .from(collections)
-      .where(and(eq(collections.userId, userId), eq(collections.mediaType, 'books')));
-    return Number(row?.total ?? 0);
+    return this.collectionRepository.countVisibleForUser(userId);
   }
 
   async countUserSmartScopes(userId: number): Promise<number> {
@@ -677,11 +661,26 @@ export class OpdsBookService {
   async getBookFiles(
     bookId: number,
     fileId?: number,
-  ): Promise<{ absolutePath: string; format: string; readAlong: boolean; title: string; authorName: string } | null> {
+    original = false,
+  ): Promise<{
+    id: number;
+    contentVersion: string;
+    mtime: Date | null;
+    sizeBytes: number | null;
+    ino: bigint;
+    absolutePath: string;
+    format: string;
+    readAlong: boolean;
+    title: string;
+    authorName: string;
+  } | null> {
     const candidates = await this.db
       .select({
         id: bookFiles.id,
         absolutePath: bookFiles.absolutePath,
+        updatedAt: bookFiles.updatedAt,
+        mtime: bookFiles.mtime,
+        ino: bookFiles.ino,
         format: bookFiles.format,
         role: bookFiles.role,
         sizeBytes: bookFiles.sizeBytes,
@@ -703,7 +702,10 @@ export class OpdsBookService {
       ? candidates.find((candidate) => candidate.id === fileId)
       : (() => {
           const ranked = rankFilesByFormatPriority(candidates, first.formatPriority as string[] | null, first.primaryFileId);
-          return ranked.find((candidate) => candidate.format != null && !isAudioFormat(candidate.format)) ?? ranked[0];
+          const selected = ranked.find((candidate) => candidate.format != null && !isAudioFormat(candidate.format)) ?? ranked[0];
+          return original && selected?.format?.toLowerCase() === 'epub'
+            ? (ranked.find((candidate) => candidate.format?.toLowerCase() === 'epub' && candidate.mediaOverlayAvailable) ?? selected)
+            : selected;
         })();
     if (!file) return null;
 
@@ -716,6 +718,11 @@ export class OpdsBookService {
       .limit(1);
 
     return {
+      id: file.id,
+      contentVersion: file.updatedAt.toISOString(),
+      mtime: file.mtime,
+      sizeBytes: file.sizeBytes,
+      ino: file.ino,
       absolutePath: file.absolutePath,
       format: file.format ?? 'unknown',
       readAlong: file.format?.toLowerCase() === 'epub' && file.mediaOverlayAvailable,
@@ -875,6 +882,7 @@ export class OpdsBookService {
           role: bookFiles.role,
           sizeBytes: bookFiles.sizeBytes,
           mediaOverlayAvailable: bookFiles.mediaOverlayAvailable,
+          contentVersion: bookFiles.updatedAt,
         })
         .from(bookFiles)
         .innerJoin(books, eq(books.id, bookFiles.bookId))
@@ -894,6 +902,17 @@ export class OpdsBookService {
       fileRows,
       new Map(metaRows.map((row) => [row.id, { formatPriority: row.formatPriority as string[] | null, primaryFileId: row.primaryFileId }])),
     );
+    const allFilesByBook = new Map<number, NonNullable<OpdsBookEntry['allFiles']>>();
+    for (const row of rankedFileRows) {
+      const files = allFilesByBook.get(row.bookId) ?? [];
+      files.push({
+        id: row.id,
+        format: row.format ?? 'unknown',
+        mediaOverlayAvailable: row.mediaOverlayAvailable,
+        contentVersion: row.contentVersion.toISOString(),
+      });
+      allFilesByBook.set(row.bookId, files);
+    }
     const filesByBook = new Map<number, { id: number; format: string }[]>();
     for (const row of rankedFileRows) {
       if (row.role !== 'content' || isRedundantReadAlong(row, rankedFileRows)) continue;
@@ -924,6 +943,7 @@ export class OpdsBookService {
           hasCover: row.coverSource !== null,
           authors: authorsByBook.get(row.id) ?? [],
           files: filesByBook.get(row.id) ?? [],
+          allFiles: allFilesByBook.get(row.id) ?? [],
         };
       })
       .sort((a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0));

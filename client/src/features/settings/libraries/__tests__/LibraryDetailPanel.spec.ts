@@ -24,6 +24,9 @@ function makeLibrary(overrides: Partial<Library> = {}): Library {
     markAsFinishedPercentComplete: 90,
     fileNamingPattern: null,
     fileWriteEnabled: false,
+    fileWriteAllFiles: false,
+    fileWriteReadAlongEnabled: false,
+    fileWriteReadAlongMaxFileSizeMb: 500,
     fileWriteWriteCover: false,
     fileWriteEpubEnabled: false,
     fileWriteEpubMaxFileSizeMb: 100,
@@ -104,6 +107,6 @@ describe('LibraryDetailPanel', () => {
     expect(wrapper.text()).not.toContain('Organization')
     expect(wrapper.text()).not.toContain('Folder as Book')
     // The rows that projection does answer are still there.
-    expect(wrapper.text()).toContain('Cover shape')
+    expect(wrapper.text()).toContain('Grid shape')
   })
 })
