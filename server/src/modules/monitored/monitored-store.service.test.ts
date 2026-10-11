@@ -718,7 +718,7 @@ describe('MonitoredStoreService paged lists', () => {
     const execute = vi.fn((statement: SQL) => {
       const compiled = dialect.sqlToQuery(statement);
       statements.push(compiled);
-      return Promise.resolve(compiled.sql.includes('count(*)::int') ? { rows: [{ total: 456 }] } : { rows: [] });
+      return Promise.resolve(compiled.sql.includes('count(*)::int') ? { rows: [{ total: 456, byStatus: 300, byWork: 240 }] } : { rows: [] });
     });
     const store = new MonitoredStoreService({ execute } as never, {} as never);
 
@@ -744,7 +744,9 @@ describe('MonitoredStoreService paged lists', () => {
     expect(data?.params).toEqual(expect.arrayContaining([25, 100]));
     expect(total?.sql).not.toContain('limit');
     expect(total?.sql).not.toContain('offset');
-    expect(result).toEqual({ items: [], total: 456, page: 4, size: 25 });
+    expect(total?.sql).toContain('count(distinct "workId")');
+    expect(total?.params).toEqual(expect.arrayContaining(['2026-09-05']));
+    expect(result).toEqual({ items: [], total: 456, cards: { byStatus: 300, byWork: 240 }, page: 4, size: 25 });
   });
 });
 

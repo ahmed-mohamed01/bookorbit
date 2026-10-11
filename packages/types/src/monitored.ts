@@ -289,10 +289,20 @@ export interface MonitoredReleaseItem {
   requestId: number | null;
 }
 
+/**
+ * How many cards the release cards view draws. It merges a work's ebook and audiobook into one card,
+ * once per Released/Upcoming section when grouped by status and once overall when ungrouped.
+ */
+export interface MonitoredReleaseCardCounts {
+  byStatus: number;
+  byWork: number;
+}
+
 export interface MonitoredSummary {
   authors: number;
   books: number;
   releases: number;
+  releaseCards: MonitoredReleaseCardCounts;
   hardcoverConfigured: boolean;
   audibleConfigured: boolean;
 }
@@ -302,6 +312,10 @@ export interface MonitoredPage<T> {
   total: number;
   page: number;
   size: number;
+}
+
+export interface MonitoredReleasePage extends MonitoredPage<MonitoredReleaseItem> {
+  cards: MonitoredReleaseCardCounts;
 }
 
 export interface MonitoredAuthorSearchResult {

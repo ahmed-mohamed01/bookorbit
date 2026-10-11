@@ -12,7 +12,7 @@ import type {
   MonitoredPage,
   MonitoredReleaseDateLookup,
   MonitoredReleaseFilter,
-  MonitoredReleaseItem,
+  MonitoredReleasePage,
   MonitoredReleaseListSort,
   MonitoredSort,
   MonitoredWork,
@@ -106,7 +106,7 @@ export async function fetchMonitoredReleases(options: {
   sort: MonitoredReleaseListSort
   order: MonitoredListOrder
   filter: MonitoredReleaseFilter
-}): Promise<MonitoredPage<MonitoredReleaseItem>> {
+}): Promise<MonitoredReleasePage> {
   return readJson(await api(`${BASE_PATH}/releases?${pageQuery(options)}`))
 }
 

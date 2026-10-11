@@ -23,7 +23,7 @@ import type {
   MonitoredFormat,
   MonitoredPage,
   MonitoredReleaseDateLookup,
-  MonitoredReleaseItem,
+  MonitoredReleasePage,
   MonitoredReleaseStatus,
   MonitoredSummary,
   MonitoredWork,
@@ -147,9 +147,10 @@ export class MonitoredService {
 
   async getSummary(user: RequestUser): Promise<MonitoredSummary> {
     const now = Date.now();
+    const today = new Date(now).toISOString().slice(0, 10);
     const earliest = new Date(now - RELEASE_LOOKBACK_MS).toISOString().slice(0, 10);
     const latest = new Date(now + RELEASE_LOOKAHEAD_MS).toISOString().slice(0, 10);
-    const [counts, config] = await Promise.all([this.store.countSummary(user, earliest, latest), this.providerConfigs.forUser(user.id)]);
+    const [counts, config] = await Promise.all([this.store.countSummary(user, earliest, latest, today), this.providerConfigs.forUser(user.id)]);
     return { ...counts, hardcoverConfigured: isHardcoverConfigured(config), audibleConfigured: isAudibleConfigured(config) };
   }
 
@@ -494,7 +495,7 @@ export class MonitoredService {
     }
   }
 
-  async listReleases(user: RequestUser, query: ListMonitoredReleasesDto): Promise<MonitoredPage<MonitoredReleaseItem>> {
+  async listReleases(user: RequestUser, query: ListMonitoredReleasesDto): Promise<MonitoredReleasePage> {
     const now = new Date();
     const today = now.toISOString().slice(0, 10);
     const earliest = new Date(now.getTime() - RELEASE_LOOKBACK_MS).toISOString().slice(0, 10);

@@ -40,6 +40,7 @@ import SettingsSidebar from '@/features/settings/components/SettingsSidebar.vue'
 import { useWhatsNew } from '@/features/whats-new/composables/useWhatsNew'
 import { useBookRequestSummary } from '@/features/book-requests/composables/useBookRequestSummary'
 import { useMonitoredSummary } from '@/features/monitored/composables/useMonitoredSummary'
+import { releaseCount } from '@/features/monitored/lib/release-view'
 import { useBookRequestProgress } from '@/features/book-requests/composables/useBookRequestProgress'
 import { useBookRequestVisibility } from '@/features/book-requests/composables/useBookRequestVisibility'
 
@@ -67,7 +68,7 @@ const outstandingRequestTotal = computed(() =>
 )
 const { zones } = useSidebarNav(
   () => outstandingRequestTotal.value,
-  () => monitoredSummary.value?.releases ?? 0,
+  () => (monitoredSummary.value ? releaseCount(monitoredSummary.value.releases, monitoredSummary.value.releaseCards) : 0),
 )
 const requestProgress = hasPermission(Permission.BookRequestAccess) ? useBookRequestProgress() : null
 useLibraryScanRefresh()

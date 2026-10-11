@@ -4,6 +4,7 @@ import type {
   MonitoredAuthorItem,
   MonitoredAuthorListSort,
   MonitoredListOrder,
+  MonitoredReleaseCardCounts,
   MonitoredReleaseFilter,
   MonitoredReleaseItem,
   MonitoredReleaseListSort,
@@ -22,7 +23,14 @@ export const MONITORED_RELEASE_GROUPS = ['status', 'none'] as const
 export type MonitoredReleaseGroup = (typeof MONITORED_RELEASE_GROUPS)[number]
 
 // Assume configured until the summary loads so the notice does not flash during startup.
-const EMPTY_SUMMARY: MonitoredSummary = { authors: 0, books: 0, releases: 0, hardcoverConfigured: true, audibleConfigured: true }
+const EMPTY_SUMMARY: MonitoredSummary = {
+  authors: 0,
+  books: 0,
+  releases: 0,
+  releaseCards: { byStatus: 0, byWork: 0 },
+  hardcoverConfigured: true,
+  audibleConfigured: true,
+}
 const PAGE_SIZE = 50
 export const MONITORED_MAX_RETAINED_ITEMS = 1500
 export const MONITORED_IDLE_TRIM_MS = 10 * 60 * 1000
@@ -34,6 +42,7 @@ export function useMonitored() {
   const releases = ref<MonitoredReleaseItem[]>([])
   const authorTotal = ref(0)
   const releaseTotal = ref(0)
+  const releaseCardTotal = ref<MonitoredReleaseCardCounts>({ byStatus: 0, byWork: 0 })
   const authorPage = ref(0)
   const releasePage = ref(0)
   const authorDroppedOffset = ref(0)
@@ -57,6 +66,7 @@ export function useMonitored() {
     authors: summary.value.authors,
     releases: summary.value.releases,
   }))
+  const summaryReleaseCards = computed(() => summary.value.releaseCards)
   const hardcoverConfigured = computed(() => summary.value.hardcoverConfigured)
   const audibleConfigured = computed(() => summary.value.audibleConfigured)
   const authorHasMore = computed(() => authorPage.value * PAGE_SIZE < authorTotal.value)
@@ -175,6 +185,7 @@ export function useMonitored() {
         releaseDroppedOffset.value = retained.droppedOffset
       }
       releaseTotal.value = result.total
+      releaseCardTotal.value = result.cards
       releasePage.value = requestPage + 1
     } catch (cause) {
       if (token === releaseToken) error.value = monitoredErrorText(cause, t('monitored.errors.load'))
@@ -188,6 +199,7 @@ export function useMonitored() {
     releases,
     authorTotal,
     releaseTotal,
+    releaseCardTotal,
     authorDroppedOffset,
     releaseDroppedOffset,
     idleTrimmed,
@@ -197,6 +209,7 @@ export function useMonitored() {
     authorHasMore,
     releaseHasMore,
     counts,
+    summaryReleaseCards,
     hardcoverConfigured,
     audibleConfigured,
     error,

@@ -13,6 +13,7 @@ import type {
   MonitoredListOrder,
   MonitoredReleaseFilter,
   MonitoredReleaseListSort,
+  MonitoredReleaseCardCounts,
   MonitoredSummary,
   MonitoredWork,
   MonitoredWorkPatch,
@@ -100,7 +101,7 @@ export interface MonitoredReleasePageEntry {
   releaseDate: string;
 }
 
-export type MonitoredCounts = Pick<MonitoredSummary, 'authors' | 'books' | 'releases'>;
+export type MonitoredCounts = Pick<MonitoredSummary, 'authors' | 'books' | 'releases' | 'releaseCards'>;
 
 interface ReleasePageRef extends Record<string, unknown> {
   workId: string;
@@ -130,6 +131,11 @@ type WorkMatchUpdate = Pick<MonitoredWork, 'matchedBookId' | 'matchedBookIds' | 
 
 export function releaseEventKey(workId: string, format: MonitoredFormat): string {
   return `${workId}:${format}`;
+}
+
+/** Where a release sits Released rather than Upcoming; the cards view cuts its sections at the same UTC date. */
+function releasedBySql(date: AnyPgColumn | SQL, today: string): SQL {
+  return sql`${date} <= ${today}`;
 }
 
 function releaseRangeStartSql(date: AnyPgColumn, precision: AnyPgColumn) {
@@ -364,7 +370,7 @@ export class MonitoredStoreService {
     today: string;
     soonLatest: string;
     currentYear: string;
-  }): Promise<{ items: MonitoredReleasePageEntry[]; total: number; page: number; size: number }> {
+  }): Promise<{ items: MonitoredReleasePageEntry[]; total: number; cards: MonitoredReleaseCardCounts; page: number; size: number }> {
     const releaseRows = this.releaseRowsSql(params);
     const direction = sql.raw(params.order === 'asc' ? 'asc' : 'desc');
     const orderExpression =
@@ -378,14 +384,21 @@ export class MonitoredStoreService {
         order by ${orderExpression} ${direction}${secondaryOrder}, "workId" asc, format asc
         limit ${params.size} offset ${params.page * params.size}
       `),
-      this.db.execute<{ total: number }>(sql`
+      this.db.execute<{ total: number; byStatus: number; byWork: number }>(sql`
         with release_rows as (${releaseRows})
-        select count(*)::int as total from release_rows
+        select
+          count(*)::int as total,
+          count(distinct "workId" || case when ${releasedBySql(sql.raw('"releaseDate"'), params.today)} then ':released' else ':upcoming' end)::int as "byStatus",
+          count(distinct "workId")::int as "byWork"
+        from release_rows
       `),
     ]);
+    const counts = countResult.rows[0];
+    const total = Number(counts?.total ?? 0);
+    const cards = { byStatus: Number(counts?.byStatus ?? 0), byWork: Number(counts?.byWork ?? 0) };
     const refs = pageResult.rows;
     if (!refs.length) {
-      return { items: [], total: Number(countResult.rows[0]?.total ?? 0), page: params.page, size: params.size };
+      return { items: [], total, cards, page: params.page, size: params.size };
     }
     const workIds = [...new Set(refs.map((row) => row.workId))];
     const monitorIds = [...new Set(refs.map((row) => row.monitorAuthorId))];
@@ -402,7 +415,8 @@ export class MonitoredStoreService {
         const work = worksById.get(ref.workId);
         return monitor && work ? [{ monitor, work, format: ref.format, releaseDate: ref.releaseDate }] : [];
       }),
-      total: Number(countResult.rows[0]?.total ?? 0),
+      total,
+      cards,
       page: params.page,
       size: params.size,
     };
@@ -1137,7 +1151,7 @@ export class MonitoredStoreService {
     return sql`true`;
   }
 
-  async countSummary(viewer: RequestUser, earliest: string, latest: string): Promise<MonitoredCounts> {
+  async countSummary(viewer: RequestUser, earliest: string, latest: string, today: string): Promise<MonitoredCounts> {
     const authorScope = this.readScope(viewer, schema.monitoredAuthors.ownerUserId);
     const visible = visibleWorkCondition();
     const active = activeWorkCondition(visible);
@@ -1151,19 +1165,30 @@ export class MonitoredStoreService {
       or(ne(schema.monitoredAuthorWorks.monitorAudiobook, false), sql`${schema.monitoredAuthorWorks.monitorAudiobook} is null`),
       releaseRangeOverlapsSql(schema.authorCatalogWorks.audioReleaseDate, schema.authorCatalogWorks.audioDatePrecision, earliest, latest),
     );
+    const ebookReleased = releasedBySql(schema.authorCatalogWorks.ebookReleaseDate, today);
+    const audioReleased = releasedBySql(schema.authorCatalogWorks.audioReleaseDate, today);
+    const anyReleased = sql`(${ebook} and ${ebookReleased}) or (${audio} and ${audioReleased})`;
+    const anyUpcoming = sql`(${ebook} and not ${ebookReleased}) or (${audio} and not ${audioReleased})`;
     const [[authors], [books], [releases]] = await Promise.all([
       this.db.select({ value: count() }).from(schema.monitoredAuthors).where(authorScope),
       this.bookSummaryQuery(viewer),
       this.db
         .select({
           value: sql<number>`coalesce(sum((case when ${ebook} then 1 else 0 end) + (case when ${audio} then 1 else 0 end)), 0)::int`,
+          byStatus: sql<number>`coalesce(sum((case when ${anyReleased} then 1 else 0 end) + (case when ${anyUpcoming} then 1 else 0 end)), 0)::int`,
+          byWork: sql<number>`coalesce(sum(case when ${ebook} or ${audio} then 1 else 0 end), 0)::int`,
         })
         .from(schema.authorCatalogWorks)
         .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, schema.authorCatalogWorks.monitorAuthorId))
         .leftJoin(schema.monitoredAuthorWorks, eq(schema.monitoredAuthorWorks.workId, schema.authorCatalogWorks.id))
         .where(and(authorScope, active)),
     ]);
-    return { authors: authors.value, books: books.value, releases: releases.value };
+    return {
+      authors: authors.value,
+      books: books.value,
+      releases: releases.value,
+      releaseCards: { byStatus: releases.byStatus, byWork: releases.byWork },
+    };
   }
 
   private bookSummaryQuery(viewer: RequestUser) {

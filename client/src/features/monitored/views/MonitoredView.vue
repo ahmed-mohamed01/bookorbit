@@ -51,6 +51,7 @@ import MonitoredEmptyState from '../components/MonitoredEmptyState.vue'
 import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
 import MonitoredAudibleNotice from '../components/MonitoredAudibleNotice.vue'
 import MonitoredHardcoverNotice from '../components/MonitoredHardcoverNotice.vue'
+import { isReleasedByUtcDate, releaseCount, releaseGroup, releasesView } from '../lib/release-view'
 import MonitoredReleaseRow from '../components/MonitoredReleaseRow.vue'
 import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
 import MonitoredVirtualGrid from '../components/MonitoredVirtualGrid.vue'
@@ -70,6 +71,7 @@ const {
   releases,
   authorTotal,
   releaseTotal,
+  releaseCardTotal,
   authorDroppedOffset,
   releaseDroppedOffset,
   authorLoading,
@@ -78,6 +80,7 @@ const {
   authorHasMore,
   releaseHasMore,
   counts,
+  summaryReleaseCards,
   hardcoverConfigured,
   audibleConfigured,
   error,
@@ -257,11 +260,10 @@ const DEFAULT_SORT = { authors: 'name', releases: 'date' } as const
 const DEFAULT_ORDER = { authors: 'asc', releases: 'asc' } as const
 const tabs = computed(() => [
   { id: 'authors' as const, label: t('monitored.tabs.authors'), count: counts.value.authors },
-  { id: 'releases' as const, label: t('monitored.tabs.releases'), count: counts.value.releases },
+  { id: 'releases' as const, label: t('monitored.tabs.releases'), count: releaseCount(counts.value.releases, summaryReleaseCards.value) },
   ...(canManage.value ? [{ id: 'add' as const, label: t('monitored.tabs.add'), count: null }] : []),
 ])
 // ---- View mode, filter, sort and grouping (persisted; Shelfmark-style, Book Orbit visuals) ----
-type ListView = 'table' | 'cards'
 type ReleaseFilter = MonitoredReleaseFilter
 type ReleaseSort = MonitoredReleaseListSort
 type ReleaseGroup = MonitoredReleaseGroup
@@ -274,11 +276,9 @@ function persisted<T extends string>(key: string, fallback: T, allowed: readonly
   return value
 }
 
-const releasesView = persisted<ListView>('monitored:view:releases', 'table', ['table', 'cards'])
 const releaseFilter = persisted<ReleaseFilter>('monitored:releases:filter', 'all', MONITORED_RELEASE_FILTERS)
 const releaseSort = persisted<ReleaseSort>('monitored:releases:sort', 'date', MONITORED_RELEASE_LIST_SORTS)
 const releaseOrder = persisted<'asc' | 'desc'>('monitored:releases:order', 'asc', MONITORED_LIST_ORDERS)
-const releaseGroup = persisted<ReleaseGroup>('monitored:releases:group', 'status', MONITORED_RELEASE_GROUPS)
 
 type AuthorSort = MonitoredAuthorListSort
 
@@ -373,13 +373,9 @@ const sortedReleases = computed(() => releases.value)
 const releaseGroups = computed<{ key: string; label: string | null; items: MonitoredReleaseItem[] }[]>(() => {
   const items = sortedReleases.value
   if (releaseGroup.value === 'none') return [{ key: 'all', label: null, items }]
-  const now = Date.now()
-  const isReleased = (item: MonitoredReleaseItem) => {
-    const time = monitoredDateTime(item.releaseDate)
-    return time !== null && time <= now
-  }
-  const released = items.filter(isReleased)
-  const upcoming = items.filter((item) => !isReleased(item))
+  const todayUtc = new Date().toISOString().slice(0, 10)
+  const released = items.filter((item) => isReleasedByUtcDate(item.releaseDate, todayUtc))
+  const upcoming = items.filter((item) => !isReleasedByUtcDate(item.releaseDate, todayUtc))
   return [
     { key: 'released', label: t('monitored.controlsBar.sectionReleased'), items: released },
     { key: 'upcoming', label: t('monitored.controlsBar.sectionUpcoming'), items: upcoming },
@@ -401,7 +397,7 @@ const showAudibleNotice = computed(() => activeTab.value === 'releases' && !audi
 const activeTotal = computed(() => {
   if (activeTab.value === 'add') return 0
   if (activeTab.value === 'authors') return authorTotal.value
-  return releaseTotal.value
+  return releaseCount(releaseTotal.value, releaseCardTotal.value)
 })
 
 const showSkeleton = computed(() => activeTab.value !== 'add' && !initialLoaded.value && loading.value)
