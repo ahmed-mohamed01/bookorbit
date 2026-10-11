@@ -4,6 +4,13 @@ import type { FoliateRenderer, RelocateDetail } from '../../epub/composables/use
 
 export type FooterDisplayMode = 0 | 1 | 2
 
+const TEXT_SAVE_DEBOUNCE_MS = 2_000
+// Narration moves the position every sentence. Saving that often competes with the
+// streamed audio for bandwidth on a weak link, so it is saved on an interval instead.
+const NARRATION_SAVE_INTERVAL_MS = 15_000
+const SAVE_TIMEOUT_MS = 10_000
+const SAVE_RETRY_MS = 15_000
+
 export interface ReaderProgressOptions {
   trackingEnabled?: MaybeRef<boolean>
 }
@@ -87,10 +94,11 @@ export function useReaderProgress(
 
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let lastValidPercentage = 0
+  let dirty = false
+  let saving = false
+  let lastNarrationAt = 0
 
-  onUnmounted(() => {
-    if (saveTimer) clearTimeout(saveTimer)
-  })
+  onUnmounted(() => flush())
 
   function updatePercentage(value: unknown, fallback = lastValidPercentage): number {
     const normalized = normalizePercentage(value) ?? fallback
@@ -121,10 +129,25 @@ export function useReaderProgress(
     mediaOverlaySectionIndex.value = typeof data.mediaOverlaySectionIndex === 'number' ? data.mediaOverlaySectionIndex : null
   }
 
-  function scheduleSave() {
+  function isNarrating() {
+    return lastNarrationAt > 0 && Date.now() - lastNarrationAt < NARRATION_SAVE_INTERVAL_MS
+  }
+
+  function startSaveTimer(delayMs: number) {
     if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      saveTimer = null
+      void save()
+    }, delayMs)
+  }
+
+  // Text moves are debounced. While narration runs, a pending save is kept rather than
+  // pushed back, so the position is saved once per interval with its latest value.
+  function scheduleSave() {
     if (!unref(trackingEnabled)) return
-    saveTimer = setTimeout(() => save(), 2000)
+    dirty = true
+    if (saveTimer && isNarrating()) return
+    startSaveTimer(isNarrating() ? NARRATION_SAVE_INTERVAL_MS : TEXT_SAVE_DEBOUNCE_MS)
   }
 
   function onRelocate(detail: RelocateDetail) {
@@ -165,7 +188,18 @@ export function useReaderProgress(
     mediaOverlaySectionIndex.value = section
     positionSeconds.value = seconds
     pendingSource.value = 'narration'
+    lastNarrationAt = Date.now()
     scheduleSave()
+  }
+
+  // Saves a pending position now, e.g. when narration pauses or stops.
+  function flush() {
+    if (!dirty) return
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    void save()
   }
 
   function clearMediaOverlayProgress() {
@@ -174,27 +208,45 @@ export function useReaderProgress(
     mediaOverlaySectionIndex.value = null
   }
 
+  // One save runs at a time; a change made meanwhile is saved once it finishes. A failed
+  // save stays dirty and is retried later instead of surfacing an error.
   async function save() {
     if (!unref(trackingEnabled)) return
+    if (saving) {
+      dirty = true
+      return
+    }
+    saving = true
+    dirty = false
     const safePercentage = updatePercentage(percentage.value)
-    await api(`/api/v1/books/files/${fileId}/progress`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        cfi: cfi.value,
-        pageNumber: normalizePageNumber(pageNumber.value),
-        percentage: safePercentage,
-        koboLocationSource: koboLocationSource.value,
-        koboLocationType: koboLocationType.value,
-        koboLocationValue: koboLocationValue.value,
-        koboContentSourceProgressPercent: normalizeNullablePercentage(koboContentSourceProgressPercent.value),
-        koreaderProgress: koreaderProgress.value,
-        positionSeconds: positionSeconds.value,
-        mediaOverlayFragment: mediaOverlayFragment.value,
-        mediaOverlaySectionIndex: mediaOverlaySectionIndex.value,
-        source: pendingSource.value,
-      }),
+    const body = JSON.stringify({
+      cfi: cfi.value,
+      pageNumber: normalizePageNumber(pageNumber.value),
+      percentage: safePercentage,
+      koboLocationSource: koboLocationSource.value,
+      koboLocationType: koboLocationType.value,
+      koboLocationValue: koboLocationValue.value,
+      koboContentSourceProgressPercent: normalizeNullablePercentage(koboContentSourceProgressPercent.value),
+      koreaderProgress: koreaderProgress.value,
+      positionSeconds: positionSeconds.value,
+      mediaOverlayFragment: mediaOverlayFragment.value,
+      mediaOverlaySectionIndex: mediaOverlaySectionIndex.value,
+      source: pendingSource.value,
     })
+    try {
+      const res = await api(`/api/v1/books/files/${fileId}/progress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        signal: AbortSignal.timeout(SAVE_TIMEOUT_MS),
+      })
+      if (!res.ok && (res.status >= 500 || res.status === 429)) dirty = true
+    } catch {
+      dirty = true
+    } finally {
+      saving = false
+      if (dirty && !saveTimer) startSaveTimer(SAVE_RETRY_MS)
+    }
   }
 
   function cycleFooterMode() {
@@ -341,6 +393,7 @@ export function useReaderProgress(
     setMediaOverlayProgress,
     clearMediaOverlayProgress,
     save,
+    flush,
     cycleFooterMode,
     updateHeadsFeet,
   }

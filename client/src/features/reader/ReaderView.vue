@@ -646,6 +646,14 @@ watch(
   },
 )
 
+// Narration progress is saved on an interval, so a pause or stop saves where it ended.
+watch(
+  () => mediaOverlay.isPlaying.value,
+  (playing, wasPlaying) => {
+    if (wasPlaying && !playing) progress.flush()
+  },
+)
+
 // A speed the listener picks is remembered for this book only; the session's initial
 // speed is not written back, so books never listened to keep following the default.
 watch(

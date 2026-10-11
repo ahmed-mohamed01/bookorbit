@@ -617,6 +617,134 @@ describe('useReaderProgress', () => {
     })
   })
 
+  describe('narration saves', () => {
+    function narrateSentences(setMediaOverlayProgress: (fragment: string, section: number) => void, count: number, everyMs: number) {
+      for (let i = 1; i <= count; i++) {
+        setMediaOverlayProgress(`OPS/ch1.xhtml#s${i}`, 2)
+        vi.advanceTimersByTime(everyMs)
+      }
+    }
+
+    it('saves narration once per interval with the latest sentence, not every sentence', async () => {
+      mockApi.mockResolvedValue(makeOkResponse({}))
+      const { setMediaOverlayProgress } = useReaderProgress(1, 42, ref(0))
+
+      narrateSentences(setMediaOverlayProgress, 5, 3_000)
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(mockApi).toHaveBeenCalledTimes(1)
+      expect(postedProgressBody().mediaOverlayFragment).toBe('OPS/ch1.xhtml#s5')
+    })
+
+    it('keeps the narration interval when the page follows the narrated sentence', async () => {
+      mockApi.mockResolvedValue(makeOkResponse({}))
+      const { setMediaOverlayProgress, onRelocate } = useReaderProgress(1, 42, ref(0))
+
+      for (let i = 1; i <= 4; i++) {
+        setMediaOverlayProgress(`OPS/ch1.xhtml#s${i}`, 2)
+        onRelocate({ fraction: 0.1 * i, cfi: `epubcfi(/6/${i})` } as never)
+        vi.advanceTimersByTime(3_000)
+      }
+
+      expect(mockApi).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(mockApi).toHaveBeenCalledTimes(1)
+    })
+
+    it('saves the pending position at once on flush', async () => {
+      mockApi.mockResolvedValue(makeOkResponse({}))
+      const { setMediaOverlayProgress, flush } = useReaderProgress(1, 42, ref(0))
+
+      setMediaOverlayProgress('OPS/ch1.xhtml#s7', 2)
+      flush()
+      await vi.advanceTimersByTimeAsync(0)
+
+      expect(mockApi).toHaveBeenCalledTimes(1)
+      expect(postedProgressBody().mediaOverlayFragment).toBe('OPS/ch1.xhtml#s7')
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(mockApi).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not save on flush when nothing changed', () => {
+      const { flush } = useReaderProgress(1, 42, ref(0))
+
+      flush()
+
+      expect(mockApi).not.toHaveBeenCalled()
+    })
+
+    it('runs one save at a time and saves a change made meanwhile afterwards', async () => {
+      let finish!: (res: Response) => void
+      mockApi.mockReturnValueOnce(new Promise<Response>((resolve) => (finish = resolve)))
+      mockApi.mockResolvedValue(makeOkResponse({}))
+      const { setMediaOverlayProgress, flush } = useReaderProgress(1, 42, ref(0))
+
+      setMediaOverlayProgress('OPS/ch1.xhtml#s1', 2)
+      flush()
+      setMediaOverlayProgress('OPS/ch1.xhtml#s2', 2)
+      flush()
+      expect(mockApi).toHaveBeenCalledTimes(1)
+
+      finish(makeOkResponse({}))
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(mockApi).toHaveBeenCalledTimes(2)
+      expect(postedProgressBody(1).mediaOverlayFragment).toBe('OPS/ch1.xhtml#s2')
+    })
+
+    it('swallows a failed save and retries it on the next interval', async () => {
+      mockApi.mockRejectedValueOnce(new Error('offline'))
+      mockApi.mockResolvedValue(makeOkResponse({}))
+      const { setMediaOverlayProgress, flush } = useReaderProgress(1, 42, ref(0))
+
+      setMediaOverlayProgress('OPS/ch1.xhtml#s3', 2)
+      flush()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(mockApi).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(mockApi).toHaveBeenCalledTimes(2)
+      expect(postedProgressBody(1).mediaOverlayFragment).toBe('OPS/ch1.xhtml#s3')
+    })
+
+    it('retries a failed page save on the retry interval rather than every debounce', async () => {
+      mockApi.mockRejectedValue(new Error('offline'))
+      const { onRelocate } = useReaderProgress(1, 42, ref(0))
+
+      onRelocate({ fraction: 0.4, cfi: 'epubcfi(/6/9)' } as never)
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(mockApi).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(14_000)
+      expect(mockApi).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(mockApi).toHaveBeenCalledTimes(2)
+    })
+
+    it('gives a save a timeout so a stuck request does not block later saves', async () => {
+      mockApi.mockResolvedValue(makeOkResponse({}))
+      const { setMediaOverlayProgress, flush } = useReaderProgress(1, 42, ref(0))
+
+      setMediaOverlayProgress('OPS/ch1.xhtml#s1', 2)
+      flush()
+
+      const [, opts] = mockApi.mock.calls[0]!
+      expect((opts as RequestInit).signal).toBeInstanceOf(AbortSignal)
+    })
+
+    it('debounces page turns again once narration has stopped', async () => {
+      mockApi.mockResolvedValue(makeOkResponse({}))
+      const { setMediaOverlayProgress, onRelocate } = useReaderProgress(1, 42, ref(0))
+
+      setMediaOverlayProgress('OPS/ch1.xhtml#s1', 2)
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(mockApi).toHaveBeenCalledTimes(1)
+
+      onRelocate({ fraction: 0.4, cfi: 'epubcfi(/6/9)' } as never)
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(mockApi).toHaveBeenCalledTimes(2)
+    })
+  })
+
   describe('cycleFooterMode()', () => {
     it('starts at initialFooterMode (default 0)', () => {
       const elapsedMinutes = ref(0)
