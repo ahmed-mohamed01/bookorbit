@@ -14,7 +14,6 @@ import {
   Lock,
   MoreVertical,
   Pencil,
-  RefreshCw,
   RotateCcw,
   Send,
   Star,
@@ -34,7 +33,7 @@ import { getProviderColor, PROVIDER_SHORT_LABELS } from '@/lib/provider-colors'
 import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import { useBookCoverAspectRatio } from '@/features/book/composables/useBookCoverAspectRatio'
 import { FORMAT_TO_GROUP, getPrimaryBookFile, READER_OPENABLE_FORMATS } from '@bookorbit/types'
-import type { BookDetail, BookKoboState, CustomMetadataBookValue, ReadAloudProgressSync, ReadStatus, UserBookStatus } from '@bookorbit/types'
+import type { BookDetail, BookKoboState, CustomMetadataBookValue, ReadStatus, UserBookStatus } from '@bookorbit/types'
 import { STATUS_OPTIONS, STATUS_ICONS, STATUS_COLORS, useBookStatus } from '@/features/book/composables/useBookStatus'
 import BookDownloadButton from '@/features/book/components/BookDownloadButton.vue'
 import DiscoverRow from '@/features/book/components/detail/DiscoverRow.vue'
@@ -73,8 +72,6 @@ import BookReadingActivityCard from '@/features/book/components/detail/details/B
 import BookMissingFormatRequest from '@/features/book-requests/components/BookMissingFormatRequest.vue'
 import { useBookReadingLog } from '@/features/book/composables/useBookReadingLog'
 import { useProviderLinkSettings } from '@/features/book/composables/useProviderLinkSettings'
-import { hasReadAlong } from '@/features/book/lib/file-capabilities'
-import { describeReadAloudSyncIssue, readAloudSyncIssue } from '@/features/book/lib/read-aloud-sync-issue'
 
 type FileProgress = {
   percentage: number
@@ -356,8 +353,6 @@ const detailCoverAspectRatio = computed(() => {
   return `${coverImageRatio.value} / 1`
 })
 const primaryFile = computed(() => getPrimaryBookFile(props.book.files))
-const readAlongFile = computed(() => props.book.files.find((file) => hasReadAlong(file)) ?? null)
-const hasAudioFile = computed(() => props.book.files.some((file) => file.format != null && FORMAT_TO_GROUP[file.format] === 'audio'))
 const isPrimaryAudio = computed(() => primaryFile.value?.format != null && FORMAT_TO_GROUP[primaryFile.value.format] === 'audio')
 // The hero shows the face: the primary file's slot, or the other one when that slot has no art.
 const isFaceAudio = computed(() => {
@@ -374,89 +369,6 @@ const openableFiles = computed(() =>
     .filter((file) => READER_OPENABLE_FORMATS.has(file.format!.toLowerCase())),
 )
 const hasMultipleFiles = computed(() => openableFiles.value.length > 1)
-const readAloudSync = ref<ReadAloudProgressSync>(props.book.readAloudSync)
-const readAloudSyncSaving = ref(false)
-const readAloudSyncError = ref<string | null>(null)
-const showReadAloudSync = computed(() => readAlongFile.value != null || hasAudioFile.value)
-// Another EPUB beside the read-along file keeps its position in sync through the read-along's
-// narration even when no audiobook can be matched, so only the audiobook half is unavailable.
-const syncsEpubCopiesOnly = computed(
-  () =>
-    readAloudSync.value.state === 'unavailable' &&
-    readAloudSync.value.unavailableReason !== 'no_media_overlay_epub' &&
-    props.book.files.filter((file) => file.format?.toLowerCase() === 'epub').length > 1,
-)
-const readAloudSyncIssueReason = computed(() => readAloudSyncIssue(readAloudSync.value))
-const readAloudSyncStatus = computed(() => {
-  if (readAloudSyncIssueReason.value) return t('book.detail.details.readAloudSync.state.notSyncing')
-  return syncsEpubCopiesOnly.value
-    ? t('book.detail.details.readAloudSync.state.epubCopiesOnly')
-    : t(`book.detail.details.readAloudSync.state.${readAloudSync.value.state}`)
-})
-const readAloudSyncDescription = computed(() => {
-  if (readAloudSyncIssueReason.value) return readAloudSyncUnavailableReason()
-  if (readAloudSync.value.state === 'enabled') return t('book.detail.details.readAloudSync.enabledDescription')
-  if (readAloudSync.value.state === 'disabled') return t('book.detail.details.readAloudSync.disabledDescription')
-  if (syncsEpubCopiesOnly.value) return t('book.detail.details.readAloudSync.epubCopiesDescription')
-  return readAloudSyncUnavailableReason()
-})
-/** Why the audiobook is left out, when there is one and it is not simply missing. */
-const readAloudSyncAudiobookNote = computed(() =>
-  syncsEpubCopiesOnly.value && !readAloudSyncIssueReason.value && readAloudSync.value.unavailableReason !== 'no_audio_files'
-    ? readAloudSyncUnavailableReason()
-    : null,
-)
-// The link panel owns the rebuild and its confirm, so the card asks it to open on that confirm.
-const linkBookControl = ref<InstanceType<typeof LinkBookControl> | null>(null)
-const canRebuildReadAlongFromCard = computed(
-  () => readAloudSyncIssueReason.value !== null && (linkBookControl.value?.canRequestReadAlongRebuild ?? false),
-)
-
-function handleRebuildReadAlongFromCard() {
-  linkBookControl.value?.requestReadAlongRebuild()
-}
-
-function readAloudSyncUnavailableReason(): string {
-  const reason = readAloudSync.value.unavailableReason ?? 'missing_duration'
-  if (readAloudSyncIssueReason.value) return describeReadAloudSyncIssue(readAloudSync.value, t)
-  if (reason === 'duration_mismatch') {
-    return t('book.detail.details.readAloudSync.reason.durationMismatch', {
-      audio: formatDuration(readAloudSync.value.audioDurationSeconds),
-      overlay: formatDuration(readAloudSync.value.overlayDurationSeconds),
-    })
-  }
-  return t(`book.detail.details.readAloudSync.reason.${reason}`)
-}
-
-watch(
-  () => props.book.readAloudSync,
-  (value) => {
-    readAloudSync.value = value
-    readAloudSyncError.value = null
-  },
-)
-
-async function handleToggleReadAloudSync() {
-  if (readAloudSyncSaving.value) return
-  const mode = readAloudSync.value.mode === 'disabled' ? 'auto' : 'disabled'
-  readAloudSyncSaving.value = true
-  readAloudSyncError.value = null
-  try {
-    const res = await api(`/api/v1/books/${props.book.id}/read-aloud-sync`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode }),
-    })
-    if (!res.ok) throw new Error('Failed to update read-aloud sync')
-    const updated = (await res.json()) as BookDetail
-    readAloudSync.value = updated.readAloudSync
-    emit('saved', updated)
-  } catch {
-    readAloudSyncError.value = t('book.detail.details.readAloudSync.saveFailed')
-  } finally {
-    readAloudSyncSaving.value = false
-  }
-}
 const authorLinks = computed(() => props.book.authors.filter((author) => author.name.trim().length > 0))
 const narratorLine = computed(() => props.book.audioMetadata?.narrators?.map((n) => n.name).join(', ') || null)
 function formatDuration(seconds: number | null | undefined): string {
@@ -1457,7 +1369,6 @@ watch(
               <TooltipContent>{{ t('book.detail.details.peek') }}</TooltipContent>
             </Tooltip>
             <LinkBookControl
-              ref="linkBookControl"
               :book="book"
               trigger-class="flex items-center justify-center h-9 w-12 shrink-0 rounded-md border border-input bg-background hover:bg-muted transition-colors"
             />
@@ -1739,60 +1650,6 @@ watch(
           </span>
         </div>
       </div>
-
-      <section v-if="showReadAloudSync" data-test="read-aloud-sync" class="rounded-lg border border-border bg-card px-3 py-2.5">
-        <div class="flex items-start gap-3">
-          <Headphones class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-          <div class="min-w-0 flex-1">
-            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <p class="text-xs font-semibold text-foreground">{{ t('book.detail.details.readAloudSync.title') }}</p>
-              <span
-                v-if="readAloudSyncIssueReason"
-                data-test="read-aloud-sync-issue"
-                :data-reason="readAloudSyncIssueReason"
-                class="inline-flex items-center gap-1 text-[11px] text-warning"
-              >
-                <TriangleAlert class="size-3.5 shrink-0" aria-hidden="true" />
-                {{ readAloudSyncStatus }}
-              </span>
-              <span v-else class="text-[11px] text-muted-foreground">{{ readAloudSyncStatus }}</span>
-            </div>
-            <p class="mt-0.5 text-xs text-muted-foreground">{{ readAloudSyncDescription }}</p>
-            <div v-if="canRebuildReadAlongFromCard" class="mt-1.5 flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                data-test="read-aloud-sync-rebuild"
-                class="inline-flex items-center gap-1 rounded-md border border-input bg-background px-2 py-0.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                @click="handleRebuildReadAlongFromCard"
-              >
-                <RefreshCw class="size-3" aria-hidden="true" />
-                {{ t('book.detail.editionLink.actions.rebuildReadAlong') }}
-              </button>
-            </div>
-            <p v-if="readAloudSyncAudiobookNote" data-test="read-aloud-sync-audiobook-note" class="mt-0.5 text-xs text-muted-foreground">
-              {{ readAloudSyncAudiobookNote }}
-            </p>
-            <p v-if="readAloudSyncError" class="mt-1 text-xs text-destructive" role="status" aria-live="polite">
-              {{ readAloudSyncError }}
-            </p>
-          </div>
-          <button
-            type="button"
-            data-test="read-aloud-sync-toggle"
-            class="shrink-0 rounded-md border border-input px-2.5 py-1 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="readAloudSyncSaving"
-            @click="handleToggleReadAloudSync"
-          >
-            {{
-              readAloudSyncSaving
-                ? t('book.detail.details.readAloudSync.saving')
-                : readAloudSync.mode === 'disabled'
-                  ? t('book.detail.details.readAloudSync.enable')
-                  : t('book.detail.details.readAloudSync.disable')
-            }}
-          </button>
-        </div>
-      </section>
 
       <!-- Genres + Tags -->
       <div v-if="book.genres.length || book.tags.length" class="space-y-1">

@@ -287,7 +287,6 @@ describe('useSyncChainPanel', () => {
         switch: { disabled: true },
         disabledReason: { key: 'book.detail.editionLink.chain.disabled.noPermission' },
       })
-      expect(panel.canRequestReadAlongRebuild.value).toBe(false)
     })
   })
 
@@ -895,37 +894,6 @@ describe('useSyncChainPanel', () => {
       await panel.confirmDialog()
       await flushPromises()
       expect(readAlongState.build).toHaveBeenCalledWith(10, { force: true })
-    })
-
-    it('offers an outside rebuild only for a ready member with both permissions', () => {
-      alignedPair(member(30, 'Dune (read-along)'))
-      readAlongState.status.value = 'ready'
-      expect(mountPanel().canRequestReadAlongRebuild.value).toBe(true)
-
-      permissionMocks.hasPermission.mockImplementation((name) => name !== 'library_delete_books')
-      expect(mountPanel().canRequestReadAlongRebuild.value).toBe(false)
-
-      permissionMocks.hasPermission.mockReturnValue(true)
-      readAlongState.status.value = 'none'
-      expect(mountPanel().canRequestReadAlongRebuild.value).toBe(false)
-    })
-
-    it('offers an outside rebuild for the read-along of an audiobook whose link has no ebook yet', () => {
-      editionLinkState.link.value = { ...linkRecord, textBookId: null, readAlongBookId: 30 }
-      editionLinkState.proposed.value = proposal
-      editionLinkState.members.value = { ...makeMembers(member(30, 'Dune (read-along)')), text: null }
-      readAlongState.status.value = 'ready'
-
-      expect(mountPanel().canRequestReadAlongRebuild.value).toBe(true)
-    })
-
-    it('offers no rebuild for the read-along of a candidate audiobook that is not linked', () => {
-      editionLinkState.proposed.value = proposal
-      editionLinkState.members.value = { ...makeMembers(member(30, 'Dune (read-along)')), text: null }
-      readAlongState.status.value = 'ready'
-      const panel = mountPanel()
-
-      expect(panel.canRequestReadAlongRebuild.value).toBe(false)
     })
   })
 

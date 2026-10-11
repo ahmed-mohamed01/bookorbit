@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Link2 } from '@lucide/vue'
 import type { BookDetail } from '@bookorbit/types'
@@ -23,35 +23,15 @@ onMounted(() => {
 const open = ref(false)
 const triggerEl = ref<HTMLButtonElement | null>(null)
 
-const readAlongRebuildRequested = ref(false)
-
 function handleOpenChange(next: boolean) {
   open.value = next
-  if (!next) {
-    readAlongRebuildRequested.value = false
-    return
-  }
+  if (!next) return
   // Measured before the content mounts, so the panel opens in its final view without a flash.
   const rect = triggerEl.value?.getBoundingClientRect()
   const availableHeight = rect ? availableHeightFromTrigger(rect, window.innerHeight) : window.innerHeight
-  panel.prepareView(availableHeight, readAlongRebuildRequested.value ? 'modify' : undefined)
+  panel.prepareView(availableHeight)
   void panel.handleOpen()
 }
-
-function handleReadAlongRebuildRequestHandled() {
-  readAlongRebuildRequested.value = false
-}
-
-const canRequestReadAlongRebuild = computed(() => panel.canRequestReadAlongRebuild)
-
-/** Opens the panel on its read-along rebuild confirm, for a rebuild offered elsewhere on the page. */
-function requestReadAlongRebuild() {
-  if (!canRequestReadAlongRebuild.value) return
-  readAlongRebuildRequested.value = true
-  if (!open.value) handleOpenChange(true)
-}
-
-defineExpose({ canRequestReadAlongRebuild, requestReadAlongRebuild })
 
 // Opening keeps focus off the panel's first control, so a stray Enter right after opening changes nothing.
 function handleOpenAutoFocus(event: Event) {
@@ -72,11 +52,7 @@ function handleOpenAutoFocus(event: Event) {
       class="max-h-(--reka-popover-content-available-height) w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-2 [view-transition-name:sync-chain-popover] sm:w-[20rem]"
       @open-auto-focus="handleOpenAutoFocus"
     >
-      <SyncChainPanel
-        :panel="panel"
-        :read-along-rebuild-requested="readAlongRebuildRequested"
-        @read-along-rebuild-request-handled="handleReadAlongRebuildRequestHandled"
-      />
+      <SyncChainPanel :panel="panel" />
     </PopoverContent>
   </Popover>
 </template>

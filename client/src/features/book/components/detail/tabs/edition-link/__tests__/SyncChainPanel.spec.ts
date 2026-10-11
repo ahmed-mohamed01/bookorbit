@@ -81,18 +81,10 @@ interface MountOptions {
 
 async function mountPanel({ height = 10_000, force, open = true }: MountOptions = {}) {
   let panel!: SyncChainPanelView
-  const requested = ref(false)
   const Host = defineComponent({
     setup() {
       panel = reactive(useSyncChainPanel(makeBook))
-      return () =>
-        h(SyncChainPanel, {
-          panel,
-          readAlongRebuildRequested: requested.value,
-          onReadAlongRebuildRequestHandled: () => {
-            requested.value = false
-          },
-        })
+      return () => h(SyncChainPanel, { panel })
     },
   })
   const wrapper = mount(Host, { attachTo: document.body, global: { stubs } })
@@ -101,7 +93,7 @@ async function mountPanel({ height = 10_000, force, open = true }: MountOptions 
     await panel.handleOpen()
     await flushPromises()
   }
-  return { wrapper, panel, requested }
+  return { wrapper, panel }
 }
 
 function alignedPair(withReadAlong = false) {
@@ -323,18 +315,6 @@ describe('SyncChainPanel', () => {
       await flushPromises()
       expect(switchOf(wrapper, 'audiobook-abs').attributes('aria-checked')).toBe('true')
     })
-  })
-
-  it('takes a rebuild asked for from outside to its confirm and hands the request back', async () => {
-    alignedPair(true)
-    const { wrapper, requested } = await mountPanel({ force: 'modify' })
-    requested.value = true
-    await flushPromises()
-
-    expect(dialogText(wrapper)).toMatchObject({ title: 'Replace this read-along?', confirmLabel: 'Rebuild and replace', destructive: 'true' })
-    expect(wrapper.get('[data-testid="confirm-description"]').text()).toContain('"Dune (read-along)"')
-    expect(requested.value).toBe(false)
-    expect(wrapper.get('[data-testid="sync-chain-panel"]').attributes('data-view')).toBe('modify')
   })
 
   it('searches in place of the card on Change', async () => {

@@ -755,20 +755,6 @@ export function useSyncChainPanel(book: () => BookDetail) {
     },
   )
 
-  const canRequestReadAlongRebuild = computed(
-    () =>
-      isEligible.value &&
-      link.value !== null &&
-      readAlongMember.value !== null &&
-      readAlong.status.value === 'ready' &&
-      canGenerate.value &&
-      canRebuild.value,
-  )
-
-  function openReadAlongRebuildConfirm(): void {
-    if (canRequestReadAlongRebuild.value) openDialog('rebuildReadAlong')
-  }
-
   /* Actions. */
 
   function rowEdition(rowKey: string | undefined): EditionKey | null {
@@ -1006,8 +992,6 @@ export function useSyncChainPanel(book: () => BookDetail) {
     cancelling,
     loadInitial,
     handleOpen,
-    canRequestReadAlongRebuild,
-    openReadAlongRebuildConfirm,
   }
 }
 

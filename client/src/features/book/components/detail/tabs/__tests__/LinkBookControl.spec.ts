@@ -192,8 +192,7 @@ const stubs = {
   RouterLink: { props: ['to'], template: '<a><slot /></a>' },
   SyncChainPanel: {
     name: 'SyncChainPanel',
-    props: ['panel', 'readAlongRebuildRequested'],
-    emits: ['read-along-rebuild-request-handled'],
+    props: ['panel'],
     template: '<div data-testid="sync-chain-panel" />',
   },
 }
@@ -385,68 +384,6 @@ describe('LinkBookControl', () => {
 
     await openPopover(wrapper)
     expect(absSyncLinkMocks.refreshLive).toHaveBeenCalledTimes(1)
-  })
-
-  function linkWithBuiltReadAlong() {
-    linkWithMembers(
-      makeMembers({
-        readAlong: { id: 30, title: 'Read-along', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
-      }),
-    )
-    mockState.link.value = { ...editionLinkRecord, readAlongBookId: 30 }
-    mockReadAlong.status.value = 'ready'
-  }
-
-  it('opens the panel in Modify with the rebuild request when asked from elsewhere on the page', async () => {
-    linkWithBuiltReadAlong()
-    const wrapper = mountControl()
-    await flushPromises()
-    const control = wrapper.vm as unknown as { canRequestReadAlongRebuild: boolean; requestReadAlongRebuild: () => void }
-
-    expect(control.canRequestReadAlongRebuild).toBe(true)
-    control.requestReadAlongRebuild()
-    await flushPromises()
-
-    expect(wrapper.findComponent({ name: 'Popover' }).props('open')).toBe(true)
-    const panel = wrapper.findComponent({ name: 'SyncChainPanel' })
-    expect(panel.props('readAlongRebuildRequested')).toBe(true)
-    expect(panel.props('panel').viewMode).toBe('modify')
-
-    panel.vm.$emit('read-along-rebuild-request-handled')
-    await flushPromises()
-    expect(wrapper.findComponent({ name: 'SyncChainPanel' }).props('readAlongRebuildRequested')).toBe(false)
-  })
-
-  it('offers no outside rebuild without the permissions a rebuild needs', async () => {
-    permissionMocks.hasPermission.mockImplementation((permission) => permission !== 'library_delete_books')
-    linkWithBuiltReadAlong()
-    const wrapper = mountControl()
-    await flushPromises()
-
-    expect((wrapper.vm as unknown as { canRequestReadAlongRebuild: boolean }).canRequestReadAlongRebuild).toBe(false)
-  })
-
-  it.each([
-    [
-      'a read-along BookOrbit did not build',
-      () =>
-        linkWithMembers(
-          makeMembers({
-            readAlong: { id: 30, title: 'Read-along', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
-          }),
-        ),
-    ],
-    ['no read-along at all', () => linkWithMembers()],
-  ])('offers no outside rebuild for %s, like the panel', async (_label, setup) => {
-    setup()
-    const wrapper = mountControl()
-    await flushPromises()
-    const control = wrapper.vm as unknown as { canRequestReadAlongRebuild: boolean; requestReadAlongRebuild: () => void }
-
-    expect(control.canRequestReadAlongRebuild).toBe(false)
-    control.requestReadAlongRebuild()
-    await flushPromises()
-    expect(wrapper.findComponent({ name: 'Popover' }).props('open')).toBe(false)
   })
 
   it('opens the panel and reloads the link without searching straight away', async () => {

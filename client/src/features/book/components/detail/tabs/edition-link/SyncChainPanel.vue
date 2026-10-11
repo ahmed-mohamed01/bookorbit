@@ -10,8 +10,7 @@ import { chainViewItems, chainViewSegments, groupChromeClass, TONE_PILL_CLASS, t
 import SyncChainRow from './SyncChainRow.vue'
 import { chainRowStyle } from './chain-ui'
 
-const props = withDefaults(defineProps<{ panel: SyncChainPanelView; readAlongRebuildRequested?: boolean }>(), { readAlongRebuildRequested: false })
-const emit = defineEmits<{ 'read-along-rebuild-request-handled': [] }>()
+const props = defineProps<{ panel: SyncChainPanelView }>()
 
 const { t } = useI18n()
 
@@ -54,18 +53,6 @@ watch(
     await nextTick()
     cards.get(previous)?.focusChange()
   },
-)
-
-// A rebuild asked for from outside the panel waits for the read-along status to load, then goes
-// through the same confirm as the panel's own button.
-watch(
-  () => props.readAlongRebuildRequested && props.panel.canRequestReadAlongRebuild,
-  (requested) => {
-    if (!requested) return
-    props.panel.openReadAlongRebuildConfirm()
-    emit('read-along-rebuild-request-handled')
-  },
-  { immediate: true },
 )
 
 function bindCard(edition: EditionKey) {
