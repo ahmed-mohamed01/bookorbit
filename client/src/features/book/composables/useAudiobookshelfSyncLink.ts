@@ -1,7 +1,11 @@
 import { ref, watch, type Ref } from 'vue'
 import { Permission, type AudiobookshelfBookSyncLink, type AudiobookshelfBookSyncLive } from '@bookorbit/types'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
-import { fetchAudiobookshelfSyncLink, fetchAudiobookshelfSyncLive } from '@/features/audiobookshelf/api/audiobookshelf.api'
+import {
+  fetchAudiobookshelfSettings,
+  fetchAudiobookshelfSyncLink,
+  fetchAudiobookshelfSyncLive,
+} from '@/features/audiobookshelf/api/audiobookshelf.api'
 
 // A live check that fails still has to leave the sync chain with a way to act, which the unreachable state offers.
 const UNREACHABLE: AudiobookshelfBookSyncLive = { status: 'unreachable', progress: null, local: null, divergedReason: null }
@@ -17,6 +21,7 @@ export function useAudiobookshelfSyncLink(audioBookId: Ref<number | null>) {
   const link = ref<AudiobookshelfBookSyncLink | null>(null)
   const live = ref<AudiobookshelfBookSyncLive | null>(null)
   const checking = ref(false)
+  const configured = ref(false)
   let requestId = 0
 
   async function loadLive(current: number, absLibraryItemId: string) {
@@ -80,7 +85,20 @@ export function useAudiobookshelfSyncLink(audioBookId: Ref<number | null>) {
     return load(audioBookId.value, true)
   }
 
+  /** Whether the integration is effectively on for this reader: a permission alone does not mean a server is set up. */
+  async function loadConfigured(): Promise<void> {
+    if (!hasPermission(Permission.AudiobookshelfSync)) {
+      configured.value = false
+      return
+    }
+    try {
+      configured.value = (await fetchAudiobookshelfSettings()).effectiveEnabled
+    } catch {
+      // A failed read keeps the last answer, so a flaky request does not make the rows flicker.
+    }
+  }
+
   watch(audioBookId, (bookId) => void load(bookId), { immediate: true })
 
-  return { link, live, checking, refreshLive, applyLive, reload }
+  return { link, live, checking, configured, loadConfigured, refreshLive, applyLive, reload }
 }

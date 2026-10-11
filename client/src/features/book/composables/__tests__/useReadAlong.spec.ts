@@ -693,6 +693,105 @@ describe('useReadAlong', () => {
     })
   })
 
+  describe('counterpart of an unlinked pair', () => {
+    it('sends the counterpart of the build on every later poll, the cancel and the matches lookup', async () => {
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', blocked: null }))
+      mocks.api.mockResolvedValue(response(statusResponse({ status: 'building', phase: 'register' })))
+      const readAlong = useReadAlong()
+
+      await readAlong.build(10, { counterpartId: 20 })
+      expect(mocks.api).toHaveBeenNthCalledWith(2, '/api/v1/storyteller/read-along/books/10/status?counterpartId=20')
+
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(mocks.api).toHaveBeenNthCalledWith(3, '/api/v1/storyteller/read-along/books/10/status?counterpartId=20')
+
+      mocks.api.mockResolvedValueOnce(response({}))
+      mocks.api.mockResolvedValueOnce(response(statusResponse({ status: 'none' })))
+      await readAlong.cancel(10)
+      expect(mocks.api).toHaveBeenNthCalledWith(4, '/api/v1/storyteller/read-along/books/10/build?counterpartId=20', { method: 'DELETE' })
+      expect(mocks.api).toHaveBeenNthCalledWith(5, '/api/v1/storyteller/read-along/books/10/status?counterpartId=20')
+
+      mocks.api.mockResolvedValueOnce(response({ matches: [] }))
+      await readAlong.fetchExisting(10)
+      expect(mocks.api).toHaveBeenLastCalledWith('/api/v1/storyteller/read-along/books/10/existing?counterpartId=20')
+    })
+
+    it('remembers the counterpart a status read names, and reuses it when the next read names none', async () => {
+      mocks.api.mockResolvedValue(response(statusResponse({ status: 'ready' })))
+      const readAlong = useReadAlong()
+
+      await readAlong.fetchStatus(10, 20)
+      await readAlong.fetchStatus(10)
+
+      expect(mocks.api).toHaveBeenLastCalledWith('/api/v1/storyteller/read-along/books/10/status?counterpartId=20')
+    })
+
+    it('stops sending a counterpart once a read says the pair is linked', async () => {
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', blocked: null }))
+      mocks.api.mockResolvedValue(response(statusResponse({ status: 'building' })))
+      const readAlong = useReadAlong()
+      await readAlong.build(10, { counterpartId: 20 })
+
+      await readAlong.fetchStatus(10, null)
+      expect(mocks.api).toHaveBeenLastCalledWith('/api/v1/storyteller/read-along/books/10/status')
+
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(mocks.api).toHaveBeenLastCalledWith('/api/v1/storyteller/read-along/books/10/status')
+
+      mocks.api.mockResolvedValueOnce(response({}))
+      await readAlong.cancel(10)
+      expect(mocks.api).toHaveBeenCalledWith('/api/v1/storyteller/read-along/books/10/build', { method: 'DELETE' })
+
+      mocks.api.mockResolvedValueOnce(response({ matches: [] }))
+      await readAlong.fetchExisting(10)
+      expect(mocks.api).toHaveBeenLastCalledWith('/api/v1/storyteller/read-along/books/10/existing')
+    })
+
+    it('keeps the counterpart of a running build when a read names another one', async () => {
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', blocked: null }))
+      mocks.api.mockResolvedValue(response(statusResponse({ status: 'building' })))
+      const readAlong = useReadAlong()
+      await readAlong.build(10, { counterpartId: 21 })
+
+      await readAlong.fetchStatus(10, 20)
+      expect(mocks.api).toHaveBeenLastCalledWith('/api/v1/storyteller/read-along/books/10/status?counterpartId=21')
+
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(mocks.api).toHaveBeenLastCalledWith('/api/v1/storyteller/read-along/books/10/status?counterpartId=21')
+    })
+
+    it('takes another counterpart once the build is no longer running', async () => {
+      mocks.api.mockResolvedValue(response(statusResponse({ status: 'failed' })))
+      const readAlong = useReadAlong()
+      await readAlong.fetchStatus(10, 21)
+
+      await readAlong.fetchStatus(10, 20)
+
+      expect(mocks.api).toHaveBeenLastCalledWith('/api/v1/storyteller/read-along/books/10/status?counterpartId=20')
+    })
+
+    it('forgets the counterpart of a build that names none', async () => {
+      mocks.api.mockResolvedValue(response(statusResponse({ status: 'ready' })))
+      const readAlong = useReadAlong()
+      await readAlong.fetchStatus(10, 20)
+
+      mocks.api.mockResolvedValueOnce(response({ status: 'ready', blocked: null }))
+      await readAlong.build(10, { force: true })
+
+      expect(mocks.api).toHaveBeenLastCalledWith('/api/v1/storyteller/read-along/books/10/status')
+    })
+
+    it('does not carry one book counterpart over to another book', async () => {
+      mocks.api.mockResolvedValue(response(statusResponse({ status: 'ready' })))
+      const readAlong = useReadAlong()
+      await readAlong.fetchStatus(10, 20)
+
+      await readAlong.fetchStatus(11)
+
+      expect(mocks.api).toHaveBeenLastCalledWith('/api/v1/storyteller/read-along/books/11/status')
+    })
+  })
+
   describe('polling lifecycle', () => {
     it('stops polling when the owning scope disposes', async () => {
       mocks.api.mockResolvedValue(response(statusResponse({ status: 'building' })))

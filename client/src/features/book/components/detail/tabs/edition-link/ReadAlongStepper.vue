@@ -69,7 +69,7 @@ const percent = computed(() => readAlongPercent(props.stage, props.remoteProgres
         {{ t('book.detail.editionLink.readAlong.percent', { percent }) }}
       </span>
     </div>
-    <ol class="flex flex-wrap gap-x-2.5 gap-y-1">
+    <ol class="flex flex-wrap gap-x-2 gap-y-1">
       <li
         v-for="step in steps"
         :key="step.stage"

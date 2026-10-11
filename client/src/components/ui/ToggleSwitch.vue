@@ -1,22 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-
-type ToggleSwitchTone = 'success' | 'info' | 'warning'
-
-const props = defineProps<{ modelValue: boolean; disabled?: boolean; tone?: ToggleSwitchTone }>()
+const props = defineProps<{ modelValue: boolean; disabled?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
-
-// Without a tone the switch keeps the app's primary colour, so the many settings switches stay as they were.
-const CHECKED_CLASS: Record<ToggleSwitchTone, string> = {
-  success: 'bg-success',
-  info: 'bg-info',
-  warning: 'bg-warning',
-}
-
-const trackClass = computed(() => {
-  if (!props.modelValue) return 'bg-muted'
-  return props.tone ? CHECKED_CLASS[props.tone] : 'bg-primary'
-})
 
 function handleToggle() {
   emit('update:modelValue', !props.modelValue)
@@ -29,7 +13,7 @@ function handleToggle() {
     role="switch"
     :aria-checked="modelValue"
     class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer overflow-hidden rounded-full border-2 border-transparent p-0 transition-colors focus:outline-none focus:ring-2 focus:ring-primary/50 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-    :class="trackClass"
+    :class="modelValue ? 'bg-primary' : 'bg-muted'"
     :disabled="disabled"
     @click="handleToggle"
   >

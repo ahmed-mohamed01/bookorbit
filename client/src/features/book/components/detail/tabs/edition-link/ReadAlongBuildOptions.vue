@@ -48,6 +48,13 @@ const destinationText = computed(() =>
 const importMatch = computed(() => (props.existingMatch?.aligned ? props.existingMatch : null))
 
 const destinationOpen = ref(false)
+const generateButton = ref<{ $el: HTMLElement } | null>(null)
+
+function focusGenerate() {
+  generateButton.value?.$el.focus()
+}
+
+defineExpose({ focusGenerate })
 const destinationModel = computed({
   get: () => props.chosenTargetLibraryId,
   set: (value: number | null) => emit('update:targetLibraryId', value),
@@ -76,7 +83,7 @@ function handleCancel() {
 
 <template>
   <div class="flex flex-col gap-2 rounded-xl border border-border bg-card px-3 py-2.5" data-testid="read-along-build-options">
-    <p class="text-xs text-pretty text-muted-foreground">{{ t('book.detail.editionLink.chain.available.readAlong.optionsHint') }}</p>
+    <p class="text-xs text-pretty text-muted-foreground">{{ t('book.detail.editionLink.chain.slot.optionsHint') }}</p>
 
     <div v-if="reclaimable" class="flex items-center gap-2.5" data-testid="read-along-keep-copy-row">
       <div class="flex min-w-0 flex-1 items-center gap-1">
@@ -146,7 +153,7 @@ function handleCancel() {
       <Button variant="ghost" size="sm" class="h-8 px-2.5 text-xs" data-testid="read-along-options-cancel" @click="handleCancel">
         {{ t('book.detail.editionLink.chain.action.cancel') }}
       </Button>
-      <Button size="sm" class="h-8 px-2.5 text-xs" :disabled="busy" data-testid="read-along-generate" @click="handleGenerate">
+      <Button ref="generateButton" size="sm" class="h-8 px-2.5 text-xs" :disabled="busy" data-testid="read-along-generate" @click="handleGenerate">
         <Loader2 v-if="busy" class="size-3.5 animate-spin" aria-hidden="true" />
         <Sparkles v-else class="size-3.5" aria-hidden="true" />
         {{ t('book.detail.editionLink.readAlong.generate') }}

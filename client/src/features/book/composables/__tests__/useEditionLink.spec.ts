@@ -200,6 +200,79 @@ describe('useEditionLink', () => {
 
       expect(mocks.api).toHaveBeenCalledTimes(2)
     })
+
+    it('asks for the audiobook on screen, and keeps asking for it on the reload after a mutation', async () => {
+      mocks.api.mockResolvedValue(response({ link: null, proposed: null, counterpart: null }))
+      const { loadForBook, attachReadAlong } = await load(10)
+
+      await loadForBook(21)
+      await attachReadAlong(21, 30)
+      await loadForBook(null)
+
+      expect(mocks.api.mock.calls.map(([url]) => url)).toEqual([
+        '/api/v1/edition-links/for-book/10?counterpartId=21',
+        '/api/v1/edition-links/read-along/21',
+        '/api/v1/edition-links/for-book/10?counterpartId=21',
+        '/api/v1/edition-links/for-book/10',
+      ])
+    })
+
+    it('stops naming the audiobook once an answer carries a link', async () => {
+      const linkRecord = { id: 1, textBookId: 10, audioBookId: 21, readAlongBookId: null, createdBy: 1, createdAt: '2026-01-01T00:00:00.000Z' }
+      mocks.api.mockResolvedValueOnce(response({ link: null, proposed: null, counterpart: null }))
+      mocks.api.mockResolvedValueOnce(response({ link: linkRecord, proposed: null, counterpart: null }))
+      mocks.api.mockResolvedValueOnce(response({ link: linkRecord, proposed: null, counterpart: null }))
+      const { loadForBook } = await load(10)
+
+      await loadForBook(21)
+      await loadForBook()
+      await loadForBook()
+
+      expect(mocks.api.mock.calls.map(([url]) => url)).toEqual([
+        '/api/v1/edition-links/for-book/10?counterpartId=21',
+        '/api/v1/edition-links/for-book/10?counterpartId=21',
+        '/api/v1/edition-links/for-book/10',
+      ])
+    })
+
+    it('exposes the position of the picked audiobook', async () => {
+      mocks.api.mockResolvedValueOnce(response({ link: null, proposed: null, counterpart: null, pickedProgress: 33 }))
+      mocks.api.mockResolvedValueOnce(response({ link: null, proposed: null, counterpart: null }))
+      const { pickedProgress, loadForBook } = await load(10)
+
+      await loadForBook(21)
+      expect(pickedProgress.value).toBe(33)
+
+      await loadForBook()
+      expect(pickedProgress.value).toBeNull()
+    })
+
+    it("exposes this book's own position, and clears it on failure", async () => {
+      mocks.api.mockResolvedValueOnce(response({ link: null, proposed: null, counterpart: null, thisBookProgress: 37 }))
+      mocks.api.mockResolvedValueOnce(response(null, { ok: false, status: 500 }))
+      const { thisBookProgress, loadForBook } = await load(10)
+
+      await loadForBook()
+      expect(thisBookProgress.value).toBe(37)
+
+      await loadForBook()
+      expect(thisBookProgress.value).toBeNull()
+    })
+
+    it('does not hand a load for one audiobook to a caller asking for another', async () => {
+      let resolveFirst: ((value: Response) => void) | undefined
+      mocks.api.mockImplementationOnce(() => new Promise<Response>((resolve) => (resolveFirst = resolve)))
+      mocks.api.mockResolvedValueOnce(response({ link: null, proposed: null, counterpart: null, members: null }))
+      const { members, loadForBook } = await load(10)
+
+      const first = loadForBook(20)
+      const second = loadForBook(21)
+      resolveFirst!(response({ link: null, proposed: null, counterpart: null, members: { text: null, audio: { id: 20 }, readAlong: null } }))
+      await Promise.all([first, second])
+
+      expect(mocks.api).toHaveBeenLastCalledWith('/api/v1/edition-links/for-book/10?counterpartId=21')
+      expect(members.value).toBeNull()
+    })
   })
 
   describe('searchCandidates', () => {
@@ -218,6 +291,17 @@ describe('useEditionLink', () => {
       expect(mocks.api).toHaveBeenCalledExactlyOnceWith('/api/v1/edition-links/candidates/10?q=harry')
       expect(candidates.value).toEqual([{ bookId: 1, title: 'Found', authorName: 'Author', coverVersion: null, score: 90 }])
       expect(searching.value).toBe(false)
+    })
+
+    it('searches from another member of the pair when given one', async () => {
+      mocks.api.mockResolvedValueOnce(response([]))
+      const { searchCandidates } = await load(10)
+
+      const pending = searchCandidates('x', 20)
+      await vi.advanceTimersByTimeAsync(250)
+      await pending
+
+      expect(mocks.api).toHaveBeenLastCalledWith('/api/v1/edition-links/candidates/20?q=x')
     })
 
     it('omits the q param for an empty query', async () => {

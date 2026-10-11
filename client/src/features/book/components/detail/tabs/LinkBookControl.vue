@@ -69,7 +69,7 @@ function handleOpenAutoFocus(event: Event) {
     <PopoverContent
       align="end"
       :collision-padding="16"
-      class="max-h-(--reka-popover-content-available-height) w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-2 sm:w-[20rem]"
+      class="max-h-(--reka-popover-content-available-height) w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto p-2 [view-transition-name:sync-chain-popover] sm:w-[20rem]"
       @open-auto-focus="handleOpenAutoFocus"
     >
       <SyncChainPanel

@@ -52,6 +52,9 @@ interface EditionLinkEntry {
   // from the same `for-book` response, so the popover can render all three rows without extra fetches.
   role: Ref<EditionLinkRole | null>
   members: Ref<EditionLinkMembers | null>
+  thisBookProgress: Ref<number | null>
+  // The position of the audiobook the page was asked about, which the server answers for a pick as it does for its own proposal.
+  pickedProgress: Ref<number | null>
   readAlongOutput: Ref<boolean>
   candidates: Ref<EditionLinkCandidate[]>
   loading: Ref<boolean>
@@ -69,6 +72,10 @@ interface EditionLinkEntry {
   // loadForBook() calls collapses into a single GET instead of one per mounted control. Cleared once
   // the request settles - this is request de-duplication, not a persistent result cache.
   loadPromise: Promise<void> | null
+  // The audiobook an unlinked ebook page has on screen, so every reload (including the one after a
+  // mutation) describes that audiobook rather than the server's first candidate.
+  loadCounterpartId: number | null
+  loadPromiseCounterpartId: number | null
 }
 
 // Module-scoped so every control mounted for the same bookId (e.g. the two
@@ -84,6 +91,8 @@ function createEntry(): EditionLinkEntry {
     linkedCounterpart: ref(null),
     role: ref(null),
     members: ref(null),
+    thisBookProgress: ref(null),
+    pickedProgress: ref(null),
     readAlongOutput: ref(false),
     candidates: ref([]),
     loading: ref(false),
@@ -97,6 +106,8 @@ function createEntry(): EditionLinkEntry {
     searchTimer: null,
     pendingSearchResolvers: [],
     loadPromise: null,
+    loadCounterpartId: null,
+    loadPromiseCounterpartId: null,
   }
 }
 
@@ -146,12 +157,16 @@ export function useEditionLink(bookId: number) {
     entry.linkedCounterpart.value = null
     entry.role.value = null
     entry.members.value = null
+    entry.thisBookProgress.value = null
+    entry.pickedProgress.value = null
     entry.readAlongOutput.value = false
   }
 
   async function performLoad(requestId: number): Promise<void> {
     try {
-      const res = await api(`/api/v1/edition-links/for-book/${bookId}`)
+      const counterpartId = entry.loadPromiseCounterpartId
+      const qs = counterpartId === null ? '' : `?counterpartId=${counterpartId}`
+      const res = await api(`/api/v1/edition-links/for-book/${bookId}${qs}`)
       if (requestId !== entry.loadRequestId) return
       if (!res.ok) {
         clearLinkState()
@@ -165,6 +180,10 @@ export function useEditionLink(bookId: number) {
       entry.linkedCounterpart.value = data.counterpart
       entry.role.value = data.role ?? null
       entry.members.value = data.members ?? null
+      entry.thisBookProgress.value = data.thisBookProgress ?? null
+      entry.pickedProgress.value = data.pickedProgress ?? null
+      // A link settles the pair, so a reload after a mutation must not keep asking about the audiobook that was on screen.
+      if (data.link !== null) entry.loadCounterpartId = null
       entry.readAlongOutput.value = data.readAlongOutput === true
     } catch {
       if (requestId !== entry.loadRequestId) return
@@ -179,9 +198,12 @@ export function useEditionLink(bookId: number) {
   // etc.), so a burst of near-simultaneous calls share the one in-flight request/promise below instead
   // of each firing its own GET. loadRequestId keeps its usual role of discarding stale responses across
   // genuinely sequential calls (e.g. the popover closing and reopening before the first load lands).
-  function loadForBook(): Promise<void> {
-    if (entry.loadPromise) return entry.loadPromise
+  /** `counterpartId`: the audiobook an unlinked ebook page shows; omitted, the previous one is kept. */
+  function loadForBook(counterpartId?: number | null): Promise<void> {
+    if (counterpartId !== undefined) entry.loadCounterpartId = counterpartId
+    if (entry.loadPromise && entry.loadPromiseCounterpartId === entry.loadCounterpartId) return entry.loadPromise
     const requestId = ++entry.loadRequestId
+    entry.loadPromiseCounterpartId = entry.loadCounterpartId
     entry.loading.value = true
     entry.error.value = null
     const promise = performLoad(requestId).finally(() => {
@@ -191,10 +213,10 @@ export function useEditionLink(bookId: number) {
     return promise
   }
 
-  async function performSearch(query: string, requestId: number): Promise<EditionLinkCandidate[]> {
+  async function performSearch(query: string, sourceBookId: number, requestId: number): Promise<EditionLinkCandidate[]> {
     try {
       const qs = query.trim() ? `?q=${encodeURIComponent(query.trim())}` : ''
-      const res = await api(`/api/v1/edition-links/candidates/${bookId}${qs}`)
+      const res = await api(`/api/v1/edition-links/candidates/${sourceBookId}${qs}`)
       if (requestId !== entry.searchRequestId) return entry.candidates.value
       if (!res.ok) {
         entry.candidates.value = []
@@ -217,7 +239,8 @@ export function useEditionLink(bookId: number) {
     }
   }
 
-  function searchCandidates(query: string): Promise<EditionLinkCandidate[]> {
+  /** `sourceBookId`: the pair member a pick will join, for a page (a read-along) the server finds no candidates for. */
+  function searchCandidates(query: string, sourceBookId: number = bookId): Promise<EditionLinkCandidate[]> {
     if (entry.searchTimer) clearTimeout(entry.searchTimer)
     const requestId = ++entry.searchRequestId
     entry.searching.value = true
@@ -227,7 +250,7 @@ export function useEditionLink(bookId: number) {
       entry.searchTimer = setTimeout(() => {
         const resolvers = entry.pendingSearchResolvers
         entry.pendingSearchResolvers = []
-        void performSearch(query, requestId).then((result) => {
+        void performSearch(query, sourceBookId, requestId).then((result) => {
           for (const resolveOne of resolvers) resolveOne(result)
         })
       }, SEARCH_DEBOUNCE_MS)
@@ -304,6 +327,8 @@ export function useEditionLink(bookId: number) {
     linkedCounterpart: entry.linkedCounterpart,
     role: entry.role,
     members: entry.members,
+    thisBookProgress: entry.thisBookProgress,
+    pickedProgress: entry.pickedProgress,
     readAlongOutput: entry.readAlongOutput,
     candidates: entry.candidates,
     loading: entry.loading,
@@ -312,6 +337,7 @@ export function useEditionLink(bookId: number) {
     error: entry.error,
     searchError: entry.searchError,
     loadForBook,
+    invalidateLoad,
     searchCandidates,
     linkBook,
     unlink,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import en from '@/locales/en.json'
 import { cardProgress, chainText, chainTitle } from '../sync-chain-messages'
 
 const t = (key: string, params?: Record<string, unknown>) => (params && Object.keys(params).length ? `${key}${JSON.stringify(params)}` : key)
@@ -34,5 +35,21 @@ describe('cardProgress', () => {
     expect(cardProgress(0.2)).toBe(1)
     expect(cardProgress(41.6)).toBe(42)
     expect(cardProgress(130)).toBe(100)
+  })
+})
+
+describe('chain copy', () => {
+  const chain = en.book.detail.editionLink.chain
+
+  it('asks only for an audiobook on screen, not a linked one', () => {
+    expect(chain.ghost.absNeedsAudio).toBe('Pick an audiobook first')
+    expect(chain.off.pickAudiobookFirst).toBe('pick an audiobook first')
+    expect(chain.slot.needsAudio).toBe('Not generated. Pick an audiobook first.')
+    expect(chain.off).not.toHaveProperty('linkAudiobookFirst')
+  })
+
+  it('leaves the Settings pointer of a one-way explainer to the appended link', () => {
+    expect(chain.explain.absFromAbs).not.toMatch(/Settings/)
+    expect(chain.explain.absToAbs).not.toMatch(/Settings/)
   })
 })

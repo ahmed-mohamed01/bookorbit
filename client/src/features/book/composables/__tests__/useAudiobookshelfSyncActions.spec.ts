@@ -100,11 +100,25 @@ describe('useAudiobookshelfSyncActions', () => {
 
       const running = actions.reconcile('push')
       expect(actions.busy.value).toBe('push')
-      await running
+      await expect(running).resolves.toBe(true)
 
       expect(apiMocks.reconcile).toHaveBeenCalledWith('abs-1', 'push')
       expect(handle.applyLive).toHaveBeenCalledWith(synced)
       expect(actions.busy.value).toBeNull()
+    })
+
+    it('drops the answer when the match was swapped while the reconcile ran', async () => {
+      const handle = createHandle()
+      const actions = mountActions(handle)
+      let resolveReconcile!: (live: AudiobookshelfBookSyncLive) => void
+      apiMocks.reconcile.mockReturnValueOnce(new Promise((resolve) => (resolveReconcile = resolve)))
+
+      const running = actions.reconcile('push')
+      handle.link.value = makeLink({ absLibraryItemId: 'abs-2' })
+      resolveReconcile(synced)
+      await running
+
+      expect(handle.applyLive).not.toHaveBeenCalled()
     })
 
     it.each([
@@ -115,7 +129,7 @@ describe('useAudiobookshelfSyncActions', () => {
       const actions = mountActions()
       apiMocks.reconcile.mockRejectedValueOnce(new AudiobookshelfReconcileError('nope', status))
 
-      await actions.reconcile('pull')
+      await expect(actions.reconcile('pull')).resolves.toBe(false)
 
       expect(actions.actionError.value).toBe(message)
       expect(actions.busy.value).toBeNull()

@@ -24,6 +24,14 @@ describe('cancelReadAlongBuild', () => {
     expect(mockApi).toHaveBeenCalledWith('/api/v1/storyteller/read-along/books/10/build?buildId=7', { method: 'DELETE' })
   })
 
+  it('names the counterpart of an unlinked pair when given one', async () => {
+    mockApi.mockResolvedValue({ ok: true, status: 204 })
+
+    await cancelReadAlongBuild(10, undefined, 20)
+
+    expect(mockApi).toHaveBeenCalledWith('/api/v1/storyteller/read-along/books/10/build?counterpartId=20', { method: 'DELETE' })
+  })
+
   it('answers too_late when the server is already importing the read-along', async () => {
     mockApi.mockResolvedValue({ ok: false, status: 409 })
 

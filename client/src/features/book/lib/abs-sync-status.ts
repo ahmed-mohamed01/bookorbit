@@ -16,7 +16,7 @@ export function displayPercentage(value: number | undefined, finished: boolean):
 }
 
 /** The hint the live status adds: when a newer position landed, and why both sides diverged. */
-export function absStatusHint(live: AudiobookshelfBookSyncLive | null, t: Translate): string | null {
+function absStatusHint(live: AudiobookshelfBookSyncLive | null, t: Translate): string | null {
   switch (live?.status) {
     case 'receiving': {
       const lastUpdate = live.progress?.lastUpdate
@@ -48,7 +48,7 @@ export function absConnectorHint(
   return absStatusHint(live, t) ?? fallback
 }
 
-export type AbsReconcileActionId = Extract<ChainActionId, 'absPush' | 'absPull' | 'retryAbs'>
+type AbsReconcileActionId = Extract<ChainActionId, 'absPush' | 'absPull' | 'retryAbs'>
 
 /** Which reconcile each chain action runs; a retry has no direction and only asks for a fresh live check. */
 export const ABS_RECONCILE_ACTIONS: Record<AbsReconcileActionId, AudiobookshelfReconcileDirection | 'retry'> = {

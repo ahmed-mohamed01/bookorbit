@@ -101,6 +101,9 @@ export function useReadAlong() {
   const remoteCopyReclaimable = ref(true)
   const keepRemoteCopyTouched = ref(false)
   let lastBookId: number | null = null
+  // A pair that is not linked yet is only found through its counterpart, so every read and cancel
+  // after the build has to name it again, or the running build reads as 'none' and cannot be stopped.
+  let counterpart: { bookId: number; counterpartId: number } | null = null
   const error = ref<string | null>(null)
   const builtAt = ref<string | null>(null)
   const mutating = ref(false)
@@ -232,8 +235,29 @@ export function useReadAlong() {
     return next === buildBaselineStatus && nextBuiltAt === buildBaselineBuiltAt
   }
 
-  /** `counterpartId`: the edition an unlinked book is matched with, so a read-along that pair already has is reported. */
-  async function fetchStatus(bookId: number, counterpartId?: number): Promise<void> {
+  // A running build is only found through the counterpart it was started with, so a read naming another
+  // one would lose it: no more polls, and a cancel aimed at a pair with nothing to stop.
+  function rememberCounterpart(bookId: number, counterpartId: number | null): void {
+    const running = counterpart?.bookId === bookId && isReadAlongInFlight(status.value)
+    if (running && counterpartId !== null && counterpartId !== counterpart?.counterpartId) return
+    counterpart = counterpartId === null ? null : { bookId, counterpartId }
+  }
+
+  function counterpartOf(bookId: number): number | undefined {
+    return counterpart?.bookId === bookId ? counterpart.counterpartId : undefined
+  }
+
+  function counterpartQuery(bookId: number): string {
+    const id = counterpartOf(bookId)
+    return id === undefined ? '' : `?counterpartId=${id}`
+  }
+
+  /**
+   * `counterpartId`: the edition an unlinked book is matched with, so a read-along that pair already has
+   * is reported. A number is remembered for the book, `null` forgets it (the pair is linked now) and
+   * leaving it out reuses the remembered one.
+   */
+  async function fetchStatus(bookId: number, counterpartId?: number | null): Promise<void> {
     // The per-book keep-copy choice does not follow the user to the next book. The popover and the
     // alignment control both keep one composable instance per mounted control, and a book detail
     // view can be reused for a different book, so the instance has to forget the choice with it.
@@ -241,10 +265,10 @@ export function useReadAlong() {
       lastBookId = bookId
       keepRemoteCopyTouched.value = false
     }
+    if (counterpartId !== undefined) rememberCounterpart(bookId, counterpartId)
     const requestId = ++statusRequestId
     try {
-      const query = counterpartId === undefined ? '' : `?counterpartId=${counterpartId}`
-      const res = await api(`/api/v1/storyteller/read-along/books/${bookId}/status${query}`)
+      const res = await api(`/api/v1/storyteller/read-along/books/${bookId}/status${counterpartQuery(bookId)}`)
       if (requestId !== statusRequestId) return
       if (!res.ok) {
         handleStatusFailure()
@@ -284,6 +308,7 @@ export function useReadAlong() {
     awaitingBuildRow = false
     awaitBuildRowPolls = 0
     consecutiveStatusFailures = 0
+    counterpart = null
     applyUnknown()
     error.value = null
     targetLibraryId.value = null
@@ -297,6 +322,7 @@ export function useReadAlong() {
   }
 
   function build(bookId: number, request: ReadAlongBuildRequest = {}): Promise<ReadAlongBuildOutcome> {
+    rememberCounterpart(bookId, request.counterpartId ?? null)
     const sent = requestBuild(bookId, request)
     pendingBuild = sent
     void sent.finally(() => {
@@ -372,7 +398,7 @@ export function useReadAlong() {
         // The build's own settle cleared it, and this cancel is still running.
         mutating.value = true
       }
-      const outcome = await cancelReadAlongBuild(bookId)
+      const outcome = await cancelReadAlongBuild(bookId, undefined, counterpartOf(bookId))
       if (outcome !== 'cancelled') return outcome
       // A build started in this session may still be awaiting its row. A cancelled build never gets
       // one, so waiting for it would hold Building for several more polls.
@@ -392,7 +418,7 @@ export function useReadAlong() {
   async function fetchExisting(bookId: number): Promise<void> {
     const requestId = ++existingRequestId
     try {
-      const res = await api(`/api/v1/storyteller/read-along/books/${bookId}/existing`)
+      const res = await api(`/api/v1/storyteller/read-along/books/${bookId}/existing${counterpartQuery(bookId)}`)
       if (requestId !== existingRequestId) return
       if (!res.ok) {
         existingMatches.value = []

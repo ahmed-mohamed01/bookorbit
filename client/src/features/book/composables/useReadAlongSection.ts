@@ -9,10 +9,10 @@ import { useReadAlong } from './useReadAlong'
 
 /**
  * What the sync chain panel needs on top of the raw read-along state: the permissions its build
- * actions are gated on, the destination choice, and the build runner that narrates the outcomes the
+ * actions are gated on, the destination choice, the counterpart an unlinked pair is built with, and the build runner that narrates the outcomes the
  * read-along step and the build options cannot show by themselves.
  */
-export function useReadAlongSection(bookId: () => number) {
+export function useReadAlongSection(bookId: () => number, counterpartId: () => number | null = () => null) {
   const { t } = useI18n()
   const { hasPermission } = usePermissions()
   const readAlong = useReadAlong()
@@ -55,7 +55,9 @@ export function useReadAlongSection(bookId: () => number) {
   // library's lowest-id folder, possibly outside the mapped read-aloud location.
   function withDestination(request: ReadAlongBuildRequest): ReadAlongBuildRequest {
     const chosen = chosenTargetLibraryId.value
-    return chosen === null ? request : { ...request, targetLibraryId: chosen }
+    const counterpart = counterpartId()
+    const withCounterpart = counterpart === null ? request : { ...request, counterpartId: counterpart }
+    return chosen === null ? withCounterpart : { ...withCounterpart, targetLibraryId: chosen }
   }
 
   // A build that starts is narrated by the section, and a refused one by its block message. The two

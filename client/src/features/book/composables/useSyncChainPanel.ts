@@ -5,6 +5,7 @@ import {
   Permission,
   type AlignmentStatus,
   type AudiobookshelfBookState,
+  type AudiobookshelfReconcileDirection,
   type BookDetail,
   type EditionLinkCandidate,
   type EditionLinkMember,
@@ -36,7 +37,6 @@ import { useReadingAlignment } from './useReadingAlignment'
 
 const EDITION_LINK = 'book.detail.editionLink.'
 const CHAIN = `${EDITION_LINK}chain.`
-const READ_ALONG_ROW_ID = 'available:readAlong'
 
 const ALIGNMENT_RUNNING = new Set<AlignmentStatus>(['pending', 'building'])
 
@@ -57,7 +57,14 @@ interface ChangePick {
 }
 
 function toCandidate(member: EditionLinkMember, score: number): EditionLinkCandidate {
-  return { bookId: member.id, title: member.title, authorName: member.authorName, coverVersion: member.coverVersion, score }
+  return {
+    bookId: member.id,
+    title: member.title,
+    authorName: member.authorName,
+    coverVersion: member.coverVersion,
+    score,
+    progress: member.progress?.percentage ?? null,
+  }
 }
 
 const EMPTY_SIDE: SyncChainSide = { book: null, isMember: false, isThisBook: false, match: null }
@@ -90,6 +97,8 @@ export function useSyncChainPanel(book: () => BookDetail) {
     proposed,
     role,
     members,
+    thisBookProgress,
+    pickedProgress,
     readAlongOutput,
     linkedCounterpart,
     candidates,
@@ -99,6 +108,7 @@ export function useSyncChainPanel(book: () => BookDetail) {
     error,
     searchError,
     loadForBook,
+    invalidateLoad,
     searchCandidates,
     linkBook,
     unlink: unlinkBook,
@@ -107,7 +117,10 @@ export function useSyncChainPanel(book: () => BookDetail) {
   } = useEditionLink(bookId)
 
   const alignment = useReadingAlignment()
-  const readAlongSection = useReadAlongSection(() => pairBookId.value)
+  const readAlongSection = useReadAlongSection(
+    () => pairBookId.value,
+    () => (link.value ? null : (selected.value?.bookId ?? null)),
+  )
   const { readAlong, canGenerate, canRebuild } = readAlongSection
 
   // Only the first load shows the skeleton. Later reloads (after a link, an unlink or a finished
@@ -115,16 +128,26 @@ export function useSyncChainPanel(book: () => BookDetail) {
   const loadedOnce = ref(false)
   const initialLoading = computed(() => loading.value && !loadedOnce.value)
 
+  // The audiobook the last for-book request named. Without one, the answer was computed for its own proposal.
+  let requestedCounterpartId: number | null = null
+
   async function load(): Promise<void> {
-    await loadForBook()
+    requestedCounterpartId = forBookCounterpartId()
+    await loadForBook(requestedCounterpartId)
     loadedOnce.value = true
+  }
+
+  // Without a link the server checks the audiobook it is told about, so a read-along that audiobook
+  // holds belongs to the pair on screen and not to whichever candidate the server would rank first.
+  function forBookCounterpartId(): number | null {
+    return !link.value && thisBook.value === 'ebook' ? (selected.value?.bookId ?? null) : null
   }
 
   const modality = computed(() => getBookLinkModality(book().files))
   const isReadAlongPage = computed(() => role.value === 'readAlong')
   // The server keys position sync and read-along builds to the pair, so a read-along page acts through
   // the pair's ebook.
-  const pairBookId = computed(() => (isReadAlongPage.value && members.value ? members.value.text.id : bookId))
+  const pairBookId = computed(() => (isReadAlongPage.value && members.value ? (members.value.text?.id ?? members.value.audio.id) : bookId))
   // A read-along whose pair this reader cannot relink gets no panel; the pair's own books relink it.
   const isEligible = computed(() => !readAlongOutput.value && (modality.value === 'text' || modality.value === 'audio' || isReadAlongPage.value))
   // A read-along detached from its pair stays matched to the pair it was built from, so its page offers
@@ -144,6 +167,7 @@ export function useSyncChainPanel(book: () => BookDetail) {
   const selected = computed(() => picked.value ?? (proposalDismissed.value ? null : proposed.value))
   const matchChip = computed<EditionMatchChip | null>(() => {
     if (picked.value) return { source: 'manual' }
+    if (selected.value?.fromBuild) return { source: 'build' }
     return selected.value ? { source: 'auto', score: selected.value.score } : null
   })
 
@@ -172,21 +196,40 @@ export function useSyncChainPanel(book: () => BookDetail) {
       title: current.title,
       authorName: current.authors.map((author) => author.name).join(', ') || null,
       coverVersion: current.coverVersion,
-      progress: null,
+      progress: thisBookProgress.value,
     }
   })
 
-  function counterpartSide(): SyncChainSide {
-    const summary = link.value ? linkedCounterpart.value : null
-    if (summary) return memberSide({ ...summary, progress: null, narrationPercentage: null }, true)
+  // The answer's own member knows the position first-hand; a pick is described by the server's pickedProgress.
+  function candidateProgress(candidate: EditionLinkCandidate): number | null {
+    const resolved = members.value
+    const member = resolved && [resolved.text, resolved.audio].find((entry) => entry?.id === candidate.bookId)
+    if (member) return member.progress?.percentage ?? null
+    if (candidate.progress != null) return candidate.progress
+    return picked.value?.bookId === candidate.bookId ? pickedProgress.value : null
+  }
+
+  function candidateSide(): SyncChainSide {
     const candidate = selected.value
     if (!candidate) return EMPTY_SIDE
     return {
-      book: { id: candidate.bookId, title: candidate.title, authorName: candidate.authorName, coverVersion: candidate.coverVersion, progress: null },
+      book: {
+        id: candidate.bookId,
+        title: candidate.title,
+        authorName: candidate.authorName,
+        coverVersion: candidate.coverVersion,
+        progress: candidateProgress(candidate),
+      },
       isMember: false,
       isThisBook: false,
       match: matchChip.value,
     }
+  }
+
+  function counterpartSide(): SyncChainSide {
+    const summary = link.value ? linkedCounterpart.value : null
+    if (summary) return memberSide({ ...summary, progress: null, narrationPercentage: null }, true)
+    return candidateSide()
   }
 
   // Ebook first, audiobook second, whichever page the panel is opened from.
@@ -194,7 +237,8 @@ export function useSyncChainPanel(book: () => BookDetail) {
     const resolved = members.value
     if (resolved && (link.value || detachedReadAlong.value)) {
       const linked = link.value !== null
-      return { ebook: memberSide(resolved.text, linked), audiobook: memberSide(resolved.audio, linked) }
+      // A link with no ebook yet still proposes one, so that slot reads as a candidate rather than empty.
+      return { ebook: resolved.text ? memberSide(resolved.text, linked) : candidateSide(), audiobook: memberSide(resolved.audio, linked) }
     }
     const current: SyncChainSide = { book: currentBook.value, isMember: link.value !== null, isThisBook: true, match: null }
     const counterpart = counterpartSide()
@@ -226,7 +270,14 @@ export function useSyncChainPanel(book: () => BookDetail) {
     }
   })
 
-  const readAlongMember = computed(() => (link.value ? (members.value?.readAlong ?? null) : null))
+  // Also set on an unlinked ebook page whose candidate audiobook already carries the read-along, but only
+  // while that audiobook is the one on screen: a read-along built for another audiobook is not this pair's.
+  const readAlongMember = computed(() => {
+    const resolved = members.value
+    if (!resolved) return null
+    if (link.value) return resolved.readAlong
+    return resolved.audio.id === sides.value.audiobook.book?.id ? resolved.readAlong : null
+  })
 
   // The server re-attaches a read-along to a relinked pair as part of the link, so its member is normally
   // there already. This is a safety net for a ready output that still lacks one, which onReady never
@@ -264,7 +315,6 @@ export function useSyncChainPanel(book: () => BookDetail) {
     error: readAlong.error.value,
     mutating: readAlong.mutating.value,
     memberPending: memberPending.value,
-    targetLibraryName: readAlongSection.targetLibraryName.value,
   }))
 
   const snapshot = computed<SyncChainSnapshot>(() => ({
@@ -276,8 +326,8 @@ export function useSyncChainPanel(book: () => BookDetail) {
     readAlong: readAlongSnapshot.value,
     // The book page only describes the read-along's fit with its audiobook on those two pages.
     readAloudIssue: thisBook.value !== 'ebook' && readAloudSyncIssue(book().readAloudSync) !== null ? book().readAloudSync : null,
-    abs: canSyncAbs.value ? { link: abs.link.value, live: abs.live.value, checking: abs.checking.value } : null,
-    can: { editLink: canEditLink.value, generate: canGenerate.value, rebuild: canRebuild.value },
+    abs: canSyncAbs.value ? { configured: abs.configured.value, link: abs.link.value, live: abs.live.value, checking: abs.checking.value } : null,
+    can: { editLink: canEditLink.value, generate: canGenerate.value, rebuild: canRebuild.value && link.value !== null },
   }))
 
   const chain = computed(() => buildSyncChain(snapshot.value))
@@ -313,18 +363,25 @@ export function useSyncChainPanel(book: () => BookDetail) {
     viewMode.value = mode
   }
 
-  /* Edition search: an Available row's search before a link, a card's Change once linked. */
+  /* Edition search: a slot's Search or Change, in place of the slot. */
 
-  const expandedRowId = ref<string | null>(null)
+  const optionsOpen = ref(false)
   const logOpen = ref(false)
   const changing = ref<EditionKey | null>(null)
   const query = ref('')
   const hasSearched = ref(false)
   const searchAutofocus = ref(false)
 
+  // The candidates are those of the pair member the pick joins, which on a read-along page is not the page's book.
+  function searchSourceId(): number {
+    if (changing.value === 'ebook') return sides.value.audiobook.book?.id ?? bookId
+    if (changing.value === 'audiobook') return sides.value.ebook.book?.id ?? bookId
+    return bookId
+  }
+
   function runSearch(): void {
     hasSearched.value = true
-    void searchCandidates(query.value)
+    void searchCandidates(query.value, searchSourceId())
   }
 
   function startSearch(): void {
@@ -339,7 +396,6 @@ export function useSyncChainPanel(book: () => BookDetail) {
   }
 
   function closeSearch(): void {
-    if (expandedRowId.value !== READ_ALONG_ROW_ID) expandedRowId.value = null
     changing.value = null
     query.value = ''
     hasSearched.value = false
@@ -352,7 +408,7 @@ export function useSyncChainPanel(book: () => BookDetail) {
 
   function pick(candidate: EditionLinkCandidate): void {
     const edition = changing.value
-    if (isPairEdition(edition)) {
+    if (isPairEdition(edition) && sides.value[edition].isMember) {
       changePick.value = { edition, candidate }
       dialogKind.value = 'change'
       return
@@ -367,7 +423,6 @@ export function useSyncChainPanel(book: () => BookDetail) {
   }
 
   function openChange(edition: EditionKey): void {
-    expandedRowId.value = null
     changing.value = edition
     if (edition === 'abs') {
       absActions.search.reset()
@@ -381,7 +436,8 @@ export function useSyncChainPanel(book: () => BookDetail) {
 
   function linkedCounterpartCandidate(): EditionLinkCandidate | null {
     const resolved = members.value
-    const counterpart = resolved ? (role.value === 'audio' ? resolved.text : resolved.audio) : null
+    // The ebook is the side that leaves on the read-along page too, so only the ebook page restores the audiobook.
+    const counterpart = resolved ? (role.value === 'text' ? resolved.audio : resolved.text) : null
     if (counterpart) return toCandidate(counterpart, 0)
     const summary = linkedCounterpart.value
     return summary ? { bookId: summary.id, title: summary.title, authorName: summary.authorName, coverVersion: summary.coverVersion, score: 0 } : null
@@ -405,7 +461,7 @@ export function useSyncChainPanel(book: () => BookDetail) {
     restoreSelection(candidate)
     readAlong.reset()
     void alignment.fetchStatus(pairBookId.value)
-    void readAlong.fetchStatus(pairBookId.value, selected.value?.bookId)
+    void readAlong.fetchStatus(pairBookId.value, selected.value?.bookId ?? null)
   }
 
   // A fresh pair gets its alignment straight away. The read-along is never started here: it is hours
@@ -416,7 +472,7 @@ export function useSyncChainPanel(book: () => BookDetail) {
     pendingStart.value = false
     // The pre-link read answered for a book without a pair ('no_pair'), which would keep Generate
     // disabled until the panel is reopened.
-    void readAlong.fetchStatus(pairId)
+    void readAlong.fetchStatus(pairId, null)
     if (canGenerate.value) void readAlong.fetchExisting(pairId)
   }
 
@@ -425,12 +481,16 @@ export function useSyncChainPanel(book: () => BookDetail) {
     // bare read-along afterwards, and pairBookId would then name the read-along itself.
     const pairId = pairBookId.value
     const resolved = members.value
+    // A page whose pair the server already knows links through the pair's own books: the detached
+    // read-along's ebook and audiobook, or a candidate ebook onto a link that has only the audiobook.
     const request =
-      detachedReadAlong.value && resolved
+      detachedReadAlong.value && resolved?.text
         ? { counterpartId: resolved.audio.id, sourceId: resolved.text.id }
-        : selected.value
-          ? { counterpartId: selected.value.bookId, sourceId: bookId }
-          : null
+        : resolved && !resolved.text && (detachedReadAlong.value || link.value) && selected.value
+          ? { counterpartId: selected.value.bookId, sourceId: resolved.audio.id }
+          : !detachedReadAlong.value && !link.value && selected.value
+            ? { counterpartId: selected.value.bookId, sourceId: bookId }
+            : null
     if (!request) return
     pendingStart.value = true
     const success = await linkBook(request.counterpartId, request.sourceId)
@@ -464,13 +524,16 @@ export function useSyncChainPanel(book: () => BookDetail) {
   // Only a cancel in flight locks the cancel buttons: a link or a build in flight is exactly what they stop.
   const cancelling = ref(false)
 
+  // Unlinked through the ebook where there is one: the server keeps the read-along on the audiobook for
+  // that side, while unlinking the audiobook dissolves the whole link, which this switch never confirmed.
   async function cancelLinking(): Promise<void> {
     const pairId = pairBookId.value
+    const leavingId = members.value?.text?.id ?? pairId
     const candidate = linkedCounterpartCandidate()
     cancelling.value = true
     try {
       if (!(await stopPairBuilds(pairId))) return
-      if (!(await unlinkBook(pairId))) {
+      if (!(await unlinkBook(leavingId))) {
         toast.error(t(`${EDITION_LINK}cancelFailed`))
         return
       }
@@ -493,7 +556,7 @@ export function useSyncChainPanel(book: () => BookDetail) {
 
   async function applyChange(change: ChangePick): Promise<void> {
     const resolved = members.value
-    const keptId = resolved ? (change.edition === 'audiobook' ? resolved.text.id : resolved.audio.id) : bookId
+    const keptId = resolved ? (change.edition === 'audiobook' ? (resolved.text?.id ?? bookId) : resolved.audio.id) : bookId
     const pairId = pairBookId.value
     if (alignmentRunning.value && !(await alignment.cancel(pairId))) toast.error(t(`${EDITION_LINK}syncCancelKeptRunning`))
     if (!(await unlinkBook(pairId))) {
@@ -529,10 +592,13 @@ export function useSyncChainPanel(book: () => BookDetail) {
 
   /* Read-along. */
 
+  // With no link yet the read-along attaches to the audiobook alone, which starts a link without an ebook.
+  // A detached read-along whose pair is not linked gets no output from the status read, but is the page's own book.
   async function attachReadAlong(): Promise<void> {
-    const output = readAlong.outputBook.value
-    if (!output) return
-    if (await attachReadAlongBook(pairBookId.value, output.id)) toast.success(t(`${CHAIN}toast.attached`))
+    const readAlongId = readAlong.outputBook.value?.id ?? (isReadAlongPage.value ? bookId : null)
+    const target = link.value ? pairBookId.value : snapshot.value.audiobook.book?.id
+    if (readAlongId === null || target === undefined) return
+    if (await attachReadAlongBook(target, readAlongId)) toast.success(t(`${CHAIN}toast.attached`))
     else toast.error(t(`${CHAIN}toast.attachFailed`))
   }
 
@@ -540,24 +606,28 @@ export function useSyncChainPanel(book: () => BookDetail) {
     const member = readAlongMember.value
     if (!member) return
     // The detached output is still ready on a linked pair, which is exactly what the heal watch reloads for.
+    // Set before the request because the detach's own reload fires that watch; a failed detach detached
+    // nothing, so the heal is owed again.
+    const healedBefore = reloadedForOutputId
     reloadedForOutputId = readAlong.outputBook.value?.id ?? member.id
     if (!(await unlinkBook(member.id))) {
+      reloadedForOutputId = healedBefore
       toast.error(t(`${CHAIN}toast.detachFailed`))
       return
     }
     toast.success(t(`${CHAIN}toast.detached`))
-    void readAlong.fetchStatus(pairBookId.value)
+    void readAlong.fetchStatus(pairBookId.value, link.value ? null : (selected.value?.bookId ?? null))
   }
 
-  function openGenerate(rowKey?: string): void {
-    expandedRowId.value = rowKey ?? READ_ALONG_ROW_ID
+  function openGenerate(): void {
+    optionsOpen.value = true
     readAlongSection.loadTargetLibraries()
     // An aligned Storyteller book that already covers this pair can be imported instead of rebuilt.
     void readAlong.fetchExisting(pairBookId.value)
   }
 
   function collapseGenerate(): void {
-    if (expandedRowId.value === READ_ALONG_ROW_ID) expandedRowId.value = null
+    optionsOpen.value = false
   }
 
   function generate(): void {
@@ -581,6 +651,12 @@ export function useSyncChainPanel(book: () => BookDetail) {
     return params ? { key, params } : { key }
   }
 
+  // Leaving from the audiobook dissolves the whole link; leaving from the ebook keeps the read-along on the audiobook.
+  const unlinkPairDescription = computed(() => {
+    if (!readAlongMember.value) return 'description'
+    return thisBook.value === 'audiobook' ? 'descriptionReadAlong' : 'descriptionReadAlongStays'
+  })
+
   const dialog = computed<SyncChainDialog | null>(() => {
     const kind = dialogKind.value
     switch (kind) {
@@ -588,7 +664,7 @@ export function useSyncChainPanel(book: () => BookDetail) {
         return {
           kind,
           title: chainMessage(`${CHAIN}confirm.unlinkPair.title`),
-          description: chainMessage(`${CHAIN}confirm.unlinkPair.${readAlongMember.value ? 'descriptionReadAlong' : 'description'}`),
+          description: chainMessage(`${CHAIN}confirm.unlinkPair.${unlinkPairDescription.value}`),
           confirmLabel: chainMessage(`${EDITION_LINK}unlink`),
         }
       case 'detachReadAlong':
@@ -697,18 +773,20 @@ export function useSyncChainPanel(book: () => BookDetail) {
 
   function rowEdition(rowKey: string | undefined): EditionKey | null {
     const row = chain.value.rows.find((candidate) => candidate.id === rowKey)
-    return row && (row.kind === 'card' || row.kind === 'available') ? row.edition : null
-  }
-
-  function openSearch(rowKey?: string): void {
-    changing.value = null
-    expandedRowId.value = rowKey ?? null
-    startSearch()
+    return row && (row.kind === 'card' || row.kind === 'ghost') ? row.edition : null
   }
 
   function openCardChange(rowKey?: string): void {
     const edition = rowEdition(rowKey)
     if (edition) openChange(edition)
+  }
+
+  // A reconcile moves positions on both sides, and the cards read theirs from the link data.
+  // A load already in flight was asked before the reconcile, so it would answer with the old positions.
+  async function reconcileAbs(direction: AudiobookshelfReconcileDirection): Promise<void> {
+    if (!(await absActions.reconcile(direction))) return
+    invalidateLoad()
+    await load()
   }
 
   const ACTIONS: Record<ChainActionId, (rowKey?: string) => void> = {
@@ -720,7 +798,6 @@ export function useSyncChainPanel(book: () => BookDetail) {
     rebuildAlignment: () => void buildAlignment(true),
     unlinkPair: () => openDialog('unlinkPair'),
     attachReadAlong: () => void attachReadAlong(),
-    detachReadAlong: () => openDialog('detachReadAlong'),
     openGenerate,
     generate,
     cancelGenerate: collapseGenerate,
@@ -731,14 +808,12 @@ export function useSyncChainPanel(book: () => BookDetail) {
     toggleLog: () => {
       logOpen.value = !logOpen.value
     },
-    openSearch,
     change: openCardChange,
     retryAbs: () => void absActions.retry(),
-    absPush: () => void absActions.reconcile('push'),
-    absPull: () => void absActions.reconcile('pull'),
+    absPush: () => void reconcileAbs('push'),
+    absPull: () => void reconcileAbs('pull'),
     confirmAbs: () => void absActions.confirm(),
     resumeAbs: () => void absActions.resume(),
-    pauseAbs: () => openDialog('pauseAbs'),
   }
 
   function runAction(id: ChainActionId, rowKey?: string): void {
@@ -751,7 +826,7 @@ export function useSyncChainPanel(book: () => BookDetail) {
   function switchConnector(key: ConnectorKey, next: boolean): void {
     const row = chain.value.rows.find((candidate): candidate is ChainConnectorRow => candidate.kind === 'connector' && candidate.key === key)
     const toggle = row?.switch
-    if (!row || !toggle) return
+    if (!row || !toggle || toggle.disabled) return
     if (next) {
       if (toggle.onAction) runAction(toggle.onAction, row.id)
       return
@@ -790,6 +865,7 @@ export function useSyncChainPanel(book: () => BookDetail) {
     if (readAlong.status.value === 'failed') return t(`${EDITION_LINK}tooltipReadAlongFailed`)
     if (alignment.status.value === 'ready') return t(`${EDITION_LINK}${alignment.stale.value ? 'tooltipAlignStale' : 'tooltipAligned'}`)
     if (alignment.status.value === 'failed') return t(`${EDITION_LINK}tooltipAlignFailed`)
+    if (members.value && !members.value.text) return t(`${EDITION_LINK}tooltipNeedsText`)
     return t(`${EDITION_LINK}tooltipLinked`)
   })
 
@@ -797,7 +873,7 @@ export function useSyncChainPanel(book: () => BookDetail) {
 
   function fetchBuildStatuses(): Promise<unknown> {
     if (!link.value) return Promise.resolve()
-    return Promise.allSettled([alignment.fetchStatus(pairBookId.value), readAlong.fetchStatus(pairBookId.value)])
+    return Promise.allSettled([alignment.fetchStatus(pairBookId.value), readAlong.fetchStatus(pairBookId.value, null)])
   }
 
   // Read up front so the trigger's hover title reflects the real state before the popover is opened.
@@ -815,18 +891,36 @@ export function useSyncChainPanel(book: () => BookDetail) {
   watch(
     () => selected.value?.bookId,
     (counterpartId, previous) => {
-      if (link.value || !canGenerate.value || counterpartId === previous) return
-      void readAlong.fetchStatus(pairBookId.value, counterpartId)
+      // A link or unlink reloads this book, and whatever runs it narrates the pair it leaves behind.
+      if (link.value || mutating.value || counterpartId === previous) return
+      const followed = forBookCounterpartId()
+      const answeredFor = requestedCounterpartId ?? proposed.value?.bookId ?? null
+      if (followed !== null && followed !== answeredFor) void load()
+      if (!canGenerate.value || isReadAlongInFlight(readAlong.status.value)) return
+      void readAlong.fetchStatus(pairBookId.value, counterpartId ?? null)
+      // Read after the status, which is what records the new counterpart for this lookup.
+      if (optionsOpen.value) void readAlong.fetchExisting(pairBookId.value)
     },
   )
 
+  // A build of an unlinked pair is only reachable through its pick, so a reopen during it, after it
+  // failed, or after it finished with its output attached to no link has to show that pair rather than the proposal.
+  const keepsPick = computed(
+    () =>
+      isReadAlongInFlight(readAlong.status.value) ||
+      readAlong.status.value === 'failed' ||
+      (readAlong.status.value === 'ready' && readAlong.outputBook.value !== null && readAlongMember.value === null),
+  )
+
   function resetUi(): void {
-    picked.value = null
-    proposalDismissed.value = false
+    if (!keepsPick.value) {
+      picked.value = null
+      proposalDismissed.value = false
+    }
     changing.value = null
     changePick.value = null
     dialogKind.value = null
-    expandedRowId.value = null
+    optionsOpen.value = false
     logOpen.value = false
     query.value = ''
     hasSearched.value = false
@@ -844,6 +938,7 @@ export function useSyncChainPanel(book: () => BookDetail) {
     absActions.clearError()
     viewMode.value = null
     promotedThisOpen = false
+    const absConfigured = abs.loadConfigured()
     await load()
     let statuses: Promise<unknown> = Promise.resolve()
     if (link.value) {
@@ -852,14 +947,15 @@ export function useSyncChainPanel(book: () => BookDetail) {
         void readAlong.fetchExisting(pairBookId.value)
         readAlongSection.loadTargetLibraries()
       }
-    } else if (canGenerate.value) {
+    } else if (canGenerate.value || selected.value) {
       // Read on an unlinked book too: the chain has to know whether Storyteller is usable at all, and
-      // whether the matched pair already has a read-along that the link would bring back.
-      statuses = Promise.allSettled([readAlong.fetchStatus(pairBookId.value, selected.value?.bookId)])
-      readAlongSection.loadTargetLibraries()
+      // whether the matched pair already has a read-along that the link would bring back. A reader who
+      // cannot generate still needs it to see a build someone else queued for the pair on screen.
+      statuses = Promise.allSettled([readAlong.fetchStatus(pairBookId.value, selected.value?.bookId ?? null)])
+      if (canGenerate.value) readAlongSection.loadTargetLibraries()
     }
     void abs.refreshLive()
-    await statuses
+    await Promise.allSettled([statuses, absConfigured])
     if (current === openId) decideView()
   }
 
@@ -874,7 +970,7 @@ export function useSyncChainPanel(book: () => BookDetail) {
     viewMode,
     setViewMode,
     prepareView,
-    expandedRowId,
+    optionsOpen,
     logOpen,
     changing,
     search: {

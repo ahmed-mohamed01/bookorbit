@@ -17,7 +17,6 @@ function mountSearch(props: Partial<SearchProps> = {}, attachTo?: HTMLElement) {
     attachTo,
     props: {
       format: 'audiobook',
-      canSearch: true,
       query: '',
       candidates,
       searching: false,
@@ -108,17 +107,8 @@ describe('EditionSlotSearch', () => {
     expect(mountSearch({ candidates: [], hasSearched: false }).text()).not.toContain('No matches found.')
   })
 
-  it('offers no search to a user who cannot link', () => {
-    const wrapper = mountSearch({ canSearch: false })
-
-    expect(wrapper.find('[data-testid="edition-search-input"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="edition-search-result"]').exists()).toBe(false)
-  })
-
-  it('offers a cancel only when cancellable, and emits it', async () => {
-    expect(mountSearch().find('[data-testid="edition-search-cancel"]').exists()).toBe(false)
-
-    const wrapper = mountSearch({ cancellable: true })
+  it('offers a cancel and emits it', async () => {
+    const wrapper = mountSearch()
     const cancel = wrapper.get('[data-testid="edition-search-cancel"]')
     expect(cancel.attributes('aria-label')).toBe('Cancel')
     await cancel.trigger('click')
@@ -130,5 +120,14 @@ describe('EditionSlotSearch', () => {
     const wrapper = mountSearch({ disabled: true })
 
     expect(wrapper.get('[data-testid="edition-search-result"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('keeps its dashed card on the spine and drops it inside the audio group, keeping its padding', () => {
+    const spine = mountSearch().get('[data-testid="edition-slot-search-audiobook"]')
+    expect(spine.classes()).toEqual(expect.arrayContaining(['rounded-xl', 'border', 'border-dashed', 'bg-card']))
+
+    const group = mountSearch({ frame: 'group' }).get('[data-testid="edition-slot-search-audiobook"]')
+    for (const dropped of ['rounded-xl', 'border', 'border-dashed', 'bg-card']) expect(group.classes()).not.toContain(dropped)
+    expect(group.classes()).toEqual(expect.arrayContaining(['px-3', 'pt-2.5', 'pb-2']))
   })
 })

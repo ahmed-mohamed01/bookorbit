@@ -46,15 +46,18 @@ export function useAudiobookshelfSyncActions(sync: AudiobookshelfSyncHandle, aud
     actionError.value = null
   }
 
-  async function reconcile(direction: AudiobookshelfReconcileDirection): Promise<void> {
+  async function reconcile(direction: AudiobookshelfReconcileDirection): Promise<boolean> {
     const link = sync.link.value
-    if (!link || busy.value) return
+    if (!link || busy.value) return false
     busy.value = direction
     actionError.value = null
     try {
-      sync.applyLive(await reconcileAudiobookshelfPosition(link.absLibraryItemId, direction))
+      const live = await reconcileAudiobookshelfPosition(link.absLibraryItemId, direction)
+      if (sync.link.value?.absLibraryItemId === link.absLibraryItemId) sync.applyLive(live)
+      return true
     } catch (error) {
       actionError.value = t(reconcileFailureKey(error))
+      return false
     } finally {
       busy.value = null
     }

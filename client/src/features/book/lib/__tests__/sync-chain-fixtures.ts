@@ -1,9 +1,10 @@
 import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive, EditionLinkMember } from '@bookorbit/types'
 import {
   buildSyncChain,
-  type ChainAvailableRow,
   type ChainCardRow,
   type ChainConnectorRow,
+  type ChainGhostRow,
+  type ChainReadAlongSlotRow,
   type ConnectorKey,
   type EditionKey,
   type SyncChain,
@@ -55,7 +56,6 @@ export function chainReadAlong(overrides: Partial<SyncChainReadAlong> = {}): Syn
     error: null,
     mutating: false,
     memberPending: false,
-    targetLibraryName: null,
     ...overrides,
   }
 }
@@ -84,7 +84,7 @@ export function chainAbs(
   live: AudiobookshelfBookSyncLive | null = absLive(),
   checking = false,
 ): SyncChainAbs {
-  return { link: absLink(link), live, checking }
+  return { configured: true, link: absLink(link), live, checking }
 }
 
 /** Ebook page, ebook and audiobook linked and aligned, no read-along, no Audiobookshelf. */
@@ -119,8 +119,14 @@ export function connectorRow(chain: SyncChain, key: ConnectorKey): ChainConnecto
   return row
 }
 
-export function availableRow(chain: SyncChain, edition: EditionKey): ChainAvailableRow {
-  const row = chain.rows.find((r): r is ChainAvailableRow => r.kind === 'available' && r.edition === edition)
-  if (!row) throw new Error(`no ${edition} row`)
+export function ghostRow(chain: SyncChain, edition: EditionKey): ChainGhostRow {
+  const row = chain.rows.find((r): r is ChainGhostRow => r.kind === 'ghost' && r.edition === edition)
+  if (!row) throw new Error(`no ${edition} ghost`)
+  return row
+}
+
+export function slotRow(chain: SyncChain): ChainReadAlongSlotRow {
+  const row = chain.rows.find((r): r is ChainReadAlongSlotRow => r.kind === 'readAlongSlot')
+  if (!row) throw new Error('no read-along slot')
   return row
 }

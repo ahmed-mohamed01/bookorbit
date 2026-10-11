@@ -7,18 +7,24 @@ import { ABS_RECONCILE_ACTIONS, absConnectorHint, isAbsReconcileAction } from '@
 import type { ChainActionId, ChainConnectorRow } from '@/features/book/lib/sync-chain'
 import { chainText } from '@/features/book/lib/sync-chain-messages'
 import SyncChainActionButton from './SyncChainActionButton.vue'
+import SyncChainSettingsLink from './SyncChainSettingsLink.vue'
 
 const props = withDefaults(
-  defineProps<{ row: ChainConnectorRow; live: AudiobookshelfBookSyncLive | null; busy?: AbsSyncBusy | null; actionError?: string | null }>(),
-  { busy: null, actionError: null },
+  defineProps<{
+    row: ChainConnectorRow
+    live: AudiobookshelfBookSyncLive | null
+    busy?: AbsSyncBusy | null
+    panelBusy?: boolean
+    actionError?: string | null
+  }>(),
+  { busy: null, panelBusy: false, actionError: null },
 )
 const emit = defineEmits<{ action: [id: ChainActionId] }>()
 
 const { t } = useI18n()
 
-const settingsRoute = { name: 'settings-audiobookshelf' }
-
 const hint = computed(() => absConnectorHint(props.row.state, props.live, props.row.note ? chainText(props.row.note, t) : null, t))
+const showSettings = computed(() => props.row.settingsLink && !props.row.explainer)
 
 function isBusy(id: ChainActionId): boolean {
   return isAbsReconcileAction(id) && props.busy === ABS_RECONCILE_ACTIONS[id]
@@ -31,25 +37,21 @@ function handleAction(id: ChainActionId) {
 
 <template>
   <div class="flex flex-col gap-1.5 text-xs text-pretty text-muted-foreground" :data-state="row.state" data-testid="sync-chain-abs-details">
-    <p v-if="hint" data-testid="sync-chain-abs-hint">{{ hint }}</p>
+    <p v-if="hint || showSettings" data-testid="sync-chain-abs-hint">
+      {{ hint }}
+      <SyncChainSettingsLink v-if="showSettings" :label="t('book.detail.editionLink.abs.changeInSettings')" data-testid="sync-chain-abs-settings" />
+    </p>
     <p v-if="actionError" class="text-destructive" role="status" data-testid="sync-chain-abs-error">{{ actionError }}</p>
-    <div v-if="row.actions.length || row.settingsLink" class="flex flex-wrap items-center gap-1.5">
+    <div v-if="row.actions.length" class="flex flex-wrap items-center gap-1.5">
       <SyncChainActionButton
         v-for="action in row.actions"
         :key="action.id"
         :action="action"
         :busy="isBusy(action.id)"
-        :disabled="busy !== null"
+        :disabled="busy !== null || panelBusy"
+        keep-focus
         @action="handleAction"
       />
-      <RouterLink
-        v-if="row.settingsLink"
-        :to="settingsRoute"
-        class="px-0.5 text-xs font-semibold text-info hover:underline"
-        data-testid="sync-chain-abs-settings"
-      >
-        {{ t('book.detail.editionLink.abs.settings') }}
-      </RouterLink>
     </div>
   </div>
 </template>

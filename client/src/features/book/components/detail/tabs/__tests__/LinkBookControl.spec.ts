@@ -43,6 +43,8 @@ vi.mock('@/features/book/composables/useAudiobookshelfSyncLink', async () => {
         link: ref(null),
         live: ref(null),
         checking: ref(false),
+        configured: ref(false),
+        loadConfigured: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
         refreshLive: absSyncLinkMocks.refreshLive,
         applyLive: absSyncLinkMocks.applyLive,
         reload: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
@@ -98,6 +100,8 @@ function createMockState() {
     error: ref<string | null>(null),
     searchError: ref<string | null>(null),
     loadForBook: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    thisBookProgress: ref<number | null>(null),
+    invalidateLoad: vi.fn<() => void>(),
     searchCandidates: vi.fn<() => Promise<EditionLinkCandidate[]>>().mockResolvedValue([]),
     linkBook: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
     unlink: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
@@ -184,7 +188,7 @@ vi.mock('@/features/library/composables/useLibraries', () => ({
 const stubs = {
   Popover: { name: 'Popover', props: ['open'], emits: ['update:open'], template: '<div><slot /></div>' },
   PopoverTrigger: { template: '<div><slot /></div>' },
-  PopoverContent: { template: '<div><slot /></div>' },
+  PopoverContent: { name: 'PopoverContent', template: '<div><slot /></div>' },
   RouterLink: { props: ['to'], template: '<a><slot /></a>' },
   SyncChainPanel: {
     name: 'SyncChainPanel',
@@ -306,6 +310,15 @@ describe('LinkBookControl', () => {
     permissionMocks.hasPermission.mockReturnValue(true)
   })
 
+  it('names the popover for view transitions with a class, not an inline style', async () => {
+    const wrapper = mountControl()
+    await openPopover(wrapper)
+
+    const content = wrapper.findComponent({ name: 'PopoverContent' })
+    expect(content.classes()).toContain('[view-transition-name:sync-chain-popover]')
+    expect(content.attributes('style')).toBeUndefined()
+  })
+
   it('does not render when the book has both formats or neither', () => {
     const both = mountControl({ files: [makeBook().files[0], { ...audioFile, id: 2 }] })
     expect(both.find('button').exists()).toBe(false)
@@ -323,9 +336,9 @@ describe('LinkBookControl', () => {
     await flushPromises()
 
     expect(wrapper.find('button').attributes('aria-label')).toBe('Link book')
-    expect(mockState.loadForBook).toHaveBeenCalledWith()
+    expect(mockState.loadForBook).toHaveBeenCalledWith(null)
     expect(mockAlignment.fetchStatus).toHaveBeenCalledWith(10)
-    expect(mockReadAlong.fetchStatus).toHaveBeenCalledWith(10)
+    expect(mockReadAlong.fetchStatus).toHaveBeenCalledWith(10, null)
   })
 
   it('names position sync in a modality-specific trigger title before a link exists', () => {

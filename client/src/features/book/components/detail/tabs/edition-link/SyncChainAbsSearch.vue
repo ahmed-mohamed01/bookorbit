@@ -4,8 +4,10 @@ import { useI18n } from 'vue-i18n'
 import { Library, Search, X } from '@lucide/vue'
 import type { AudiobookshelfBookState } from '@bookorbit/types'
 import { audiobookshelfCoverUrl } from '@/features/audiobookshelf/api/audiobookshelf.api'
+import type { ChainFrame } from '@/features/book/lib/sync-chain'
+import { frameChromeClass } from './chain-ui'
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     query: string
     results: AudiobookshelfBookState[]
@@ -13,9 +15,9 @@ const props = withDefaults(
     searchError: boolean
     hasSearched: boolean
     disabled: boolean
-    autofocus?: boolean
+    frame?: ChainFrame
   }>(),
-  { autofocus: true },
+  { frame: 'spine' },
 )
 
 const emit = defineEmits<{ 'update:query': [value: string]; pick: [item: AudiobookshelfBookState]; cancel: [] }>()
@@ -25,7 +27,7 @@ const inputEl = ref<HTMLInputElement | null>(null)
 const failedCovers = ref(new Set<string>())
 
 onMounted(() => {
-  if (props.autofocus) inputEl.value?.focus()
+  inputEl.value?.focus()
 })
 
 function coverUrl(item: AudiobookshelfBookState): string {
@@ -50,7 +52,7 @@ function handleCancel() {
 </script>
 
 <template>
-  <div class="relative z-[1] rounded-xl border border-dashed border-border bg-card px-3 pt-2.5 pb-2" data-testid="sync-chain-abs-search">
+  <div class="relative z-[1] px-3 pt-2.5 pb-2" :class="frameChromeClass(frame, 'dashedFilled')" data-testid="sync-chain-abs-search">
     <button
       type="button"
       class="absolute end-1.5 top-1.5 flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"

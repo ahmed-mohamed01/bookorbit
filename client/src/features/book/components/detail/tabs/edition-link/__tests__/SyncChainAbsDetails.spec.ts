@@ -50,6 +50,24 @@ describe('SyncChainAbsDetails', () => {
     expect(wrapper.emitted('action')?.[0]).toEqual(['absPull'])
   })
 
+  it('disables Send to ABS and Use ABS while the panel is busy', async () => {
+    const live = absLive({
+      status: 'diverged',
+      progress: { percentage: 52.4, isFinished: false, lastUpdate: 1 },
+      local: { percentage: 30, capturedAt: 'x' },
+      divergedReason: 'push_off',
+    })
+    const row = connectorRow(chainOf({ abs: chainAbs({ direction: 'two_way' }, live) }), 'audiobook-abs')
+    const wrapper = mount(SyncChainAbsDetails, { props: { row, live, panelBusy: true }, global: { stubs } })
+
+    for (const id of ['absPush', 'absPull']) {
+      expect(wrapper.get(`[data-action="${id}"]`).attributes('aria-disabled')).toBe('true')
+      expect(wrapper.get(`[data-action="${id}"]`).attributes('disabled')).toBeUndefined()
+      await wrapper.get(`[data-action="${id}"]`).trigger('click')
+    }
+    expect(wrapper.emitted('action')).toBeUndefined()
+  })
+
   it('says when a newer Audiobookshelf position landed and offers to use it now', () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-10-10T12:00:00Z'))
@@ -67,18 +85,18 @@ describe('SyncChainAbsDetails', () => {
     expect(actionIds(wrapper)).toEqual([])
   })
 
-  it('names the direction of a one-way match and points at Settings', () => {
+  it('leaves a one-way match to the connector explainer', () => {
     const wrapper = mountDetails(absLive(), 'from_abs')
 
-    expect(hint(wrapper).text()).toBe('One-way from Audiobookshelf. Turn on sending in Settings.')
-    expect(wrapper.find('[data-testid="sync-chain-abs-settings"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="sync-chain-abs-hint"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="sync-chain-abs-settings"]').exists()).toBe(false)
   })
 
   it('spins the running action, holds the others, and shows a failed reconcile', () => {
     const wrapper = mountDetails(absLive({ status: 'diverged', divergedReason: null }), 'two_way', 'push', 'Sync is busy, try again in a moment.')
 
     expect(wrapper.get('[data-action="absPush"]').attributes('aria-busy')).toBe('true')
-    expect(wrapper.get('[data-action="absPull"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('[data-action="absPull"]').attributes('aria-disabled')).toBe('true')
     expect(wrapper.get('[data-testid="sync-chain-abs-error"]').text()).toBe('Sync is busy, try again in a moment.')
   })
 
@@ -86,5 +104,17 @@ describe('SyncChainAbsDetails', () => {
     const wrapper = mountDetails(absLive({ status: 'unreachable', progress: null }), 'two_way', 'retry')
 
     expect(wrapper.get('[data-action="retryAbs"]').attributes('aria-busy')).toBe('true')
+  })
+
+  it('puts the Settings link on the hint line as "Change in settings", not among the buttons', () => {
+    const live = absLive({ status: 'diverged' })
+    const row = connectorRow(chainOf({ abs: chainAbs({ direction: 'from_abs' }, live) }), 'audiobook-abs')
+    const wrapper = mount(SyncChainAbsDetails, { props: { row, live }, global: { stubs } })
+
+    const hint = wrapper.get('[data-testid="sync-chain-abs-hint"]')
+    const link = hint.get('[data-testid="sync-chain-abs-settings"]')
+    expect(link.text()).toBe('Change in settings')
+    expect(wrapper.findAll('[data-action]').map((button) => button.attributes('data-action'))).toEqual(['absPush', 'absPull'])
+    expect(wrapper.find('.flex-wrap [data-testid="sync-chain-abs-settings"]').exists()).toBe(false)
   })
 })

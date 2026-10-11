@@ -1,11 +1,12 @@
 import { flushPromises } from '@vue/test-utils'
 import { nextTick, ref } from 'vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { Permission, type AudiobookshelfBookSyncLink, type AudiobookshelfBookSyncLive } from '@bookorbit/types'
+import { Permission, type AudiobookshelfBookSyncLink, type AudiobookshelfBookSyncLive, type AudiobookshelfSettings } from '@bookorbit/types'
 
 const apiMocks = vi.hoisted(() => ({
   fetchAudiobookshelfSyncLink: vi.fn<(bookId: number) => Promise<AudiobookshelfBookSyncLink | null>>(),
   fetchAudiobookshelfSyncLive: vi.fn<(absLibraryItemId: string) => Promise<AudiobookshelfBookSyncLive>>(),
+  fetchAudiobookshelfSettings: vi.fn<() => Promise<Pick<AudiobookshelfSettings, 'effectiveEnabled'>>>(),
 }))
 vi.mock('@/features/audiobookshelf/api/audiobookshelf.api', () => apiMocks)
 
@@ -52,6 +53,7 @@ describe('useAudiobookshelfSyncLink', () => {
   beforeEach(() => {
     apiMocks.fetchAudiobookshelfSyncLink.mockReset()
     apiMocks.fetchAudiobookshelfSyncLive.mockReset()
+    apiMocks.fetchAudiobookshelfSettings.mockReset()
     permissionMocks.hasPermission.mockReset()
     permissionMocks.hasPermission.mockReturnValue(true)
   })
@@ -298,5 +300,31 @@ describe('useAudiobookshelfSyncLink', () => {
     refreshLive()
     await flushPromises()
     expect(apiMocks.fetchAudiobookshelfSyncLive).not.toHaveBeenCalled()
+  })
+
+  it('reads whether the integration is effectively on, and keeps the last answer when the read fails', async () => {
+    apiMocks.fetchAudiobookshelfSyncLink.mockResolvedValue(null)
+    const { configured, loadConfigured } = useAudiobookshelfSyncLink(ref(20))
+    expect(configured.value).toBe(false)
+
+    apiMocks.fetchAudiobookshelfSettings.mockResolvedValueOnce({ effectiveEnabled: true })
+    await loadConfigured()
+    expect(configured.value).toBe(true)
+
+    apiMocks.fetchAudiobookshelfSettings.mockRejectedValueOnce(new Error('offline'))
+    await loadConfigured()
+    expect(configured.value).toBe(true)
+
+    apiMocks.fetchAudiobookshelfSettings.mockResolvedValueOnce({ effectiveEnabled: false })
+    await loadConfigured()
+    expect(configured.value).toBe(false)
+  })
+
+  it('never reads the settings without the sync permission', async () => {
+    permissionMocks.hasPermission.mockReturnValue(false)
+    const { configured, loadConfigured } = useAudiobookshelfSyncLink(ref(20))
+    await loadConfigured()
+    expect(configured.value).toBe(false)
+    expect(apiMocks.fetchAudiobookshelfSettings).not.toHaveBeenCalled()
   })
 })

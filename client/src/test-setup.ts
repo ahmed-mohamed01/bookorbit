@@ -30,3 +30,20 @@ if (!('IntersectionObserver' in globalThis)) {
   // Configurable so individual specs can still install their own spying observer.
   Object.defineProperty(globalThis, 'IntersectionObserver', { configurable: true, writable: true, value: IntersectionObserverStub })
 }
+
+// jsdom ships no matchMedia, and motion-aware helpers read prefers-reduced-motion when they load.
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  const matchMediaStub = (query: string): MediaQueryList =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener() {},
+      removeListener() {},
+      addEventListener() {},
+      removeEventListener() {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList
+  // Configurable so individual specs can still stub their own.
+  Object.defineProperty(window, 'matchMedia', { configurable: true, writable: true, value: matchMediaStub })
+}

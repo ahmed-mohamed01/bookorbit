@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AudiobookshelfBookSyncLive } from '@bookorbit/types'
 import { AudiobookshelfReconcileError } from '@/features/audiobookshelf/api/audiobookshelf.api'
-import { absConnectorHint, absStatusHint, displayPercentage, isAbsReconcileAction, reconcileFailureKey } from '../abs-sync-status'
+import { absConnectorHint, displayPercentage, isAbsReconcileAction, reconcileFailureKey } from '../abs-sync-status'
 
 const t = (key: string, params?: Record<string, unknown>) => (params ? `${key}${JSON.stringify(params)}` : key)
 const A = 'book.detail.editionLink.abs.'
@@ -26,12 +26,11 @@ describe('abs-sync-status', () => {
       local: { percentage: 30, capturedAt: 'x' },
       divergedReason: 'stale',
     })
-    expect(absStatusHint(diverged, t)).toBe(`${A}status.divergedHint{"abs":52,"local":30} ${A}status.divergedReason.stale`)
-    expect(absStatusHint(live({}), t)).toBeNull()
-    expect(absStatusHint(null, t)).toBeNull()
-    expect(absStatusHint(live({ status: 'unreachable' }), t)).toBeNull()
-    expect(absStatusHint(live({ status: 'sending' }), t)).toBeNull()
-    expect(absStatusHint(live({ status: 'receiving' }), t)).toBe(`${A}status.receivingHint`)
+    expect(absConnectorHint('absDiverged', diverged, null, t)).toBe(`${A}status.divergedHint{"abs":52,"local":30} ${A}status.divergedReason.stale`)
+    expect(absConnectorHint('absDiverged', live({}), null, t)).toBeNull()
+    expect(absConnectorHint('absReceiving', null, null, t)).toBeNull()
+    expect(absConnectorHint('absReceiving', live({ status: 'sending' }), null, t)).toBeNull()
+    expect(absConnectorHint('absReceiving', live({ status: 'receiving' }), null, t)).toBe(`${A}status.receivingHint`)
   })
 
   it("prefers the live hint only where it carries more than the chain's note", () => {

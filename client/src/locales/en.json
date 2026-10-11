@@ -6728,6 +6728,7 @@
         "abs": {
           "library": "{name} library",
           "settings": "Settings",
+          "changeInSettings": "Change in settings",
           "external": "External",
           "opensNewTab": "(opens Audiobookshelf in a new tab)",
           "checking": "Checking Audiobookshelf",
@@ -6745,11 +6746,9 @@
               "stale": "Neither side has moved since the last sync."
             }
           },
-          "fromAbs": "One-way from Audiobookshelf. Turn on sending in Settings.",
-          "toAbs": "One-way to Audiobookshelf. Turn on playback position in Settings.",
           "reconcile": {
-            "push": "Send BookOrbit position",
-            "pull": "Use Audiobookshelf position",
+            "push": "Send to ABS",
+            "pull": "Use ABS",
             "useNow": "Use it now",
             "retry": "Retry",
             "failed": "Could not update the position. Try again.",
@@ -6858,7 +6857,6 @@
         "chain": {
           "modify": "Modify",
           "done": "Done",
-          "availableHeader": "Available",
           "intro": {
             "linked": "Every linked edition keeps the same position.",
             "unlinked": "Link editions to keep them at the same position."
@@ -6879,7 +6877,11 @@
           "kind": {
             "abs": "Audiobookshelf"
           },
-          "connectorLabel": "{from} ↔ {to}",
+          "arrow": {
+            "both": "syncs both ways",
+            "left": "receives from",
+            "right": "sends to"
+          },
           "switchLabel": "Sync {from} and {to}",
           "cancelLinking": "Cancel linking",
           "cancelAlignment": "Cancel alignment rebuild",
@@ -6896,6 +6898,21 @@
             "cantReach": "Can't reach server",
             "oneWay": "Linked · one way"
           },
+          "qualifier": {
+            "viaWhisper": "via Whisper",
+            "direct": "direct",
+            "oneWay": "one way",
+            "twoWay": "two way"
+          },
+          "explainToggle": "Explain this link",
+          "reconcileToggle": "Show sync options",
+          "explain": {
+            "whisper": "Two-way. Whisper maps the audiobook's audio onto the ebook's text, so your position carries in both directions.",
+            "readAlongAudio": "Two-way. The read-along narrates the audiobook's own audio, so positions map directly between them.",
+            "absTwoWay": "Two-way. Listening progress is exchanged with your Audiobookshelf server through its API.",
+            "absFromAbs": "One-way. Listening progress comes from your Audiobookshelf server through its API and nothing is sent back.",
+            "absToAbs": "One-way. Listening progress is sent to your Audiobookshelf server through its API and nothing is read back."
+          },
           "note": {
             "linking": "Both editions keep their own progress until it finishes.",
             "alignmentFailed": "Whisper stopped while aligning, so these two aren't syncing.",
@@ -6903,48 +6920,64 @@
             "absUnreachable": "Progress catches up when Audiobookshelf is back."
           },
           "mini": {
-            "notLinked": "Not linked",
             "linking": "Linking…",
             "rebuilding": "Rebuilding alignment…",
-            "cantReach": "Can't reach Audiobookshelf"
+            "cantReach": "Can't reach Audiobookshelf",
+            "syncedWithAbs": "Synced with Audiobookshelf"
           },
           "action": {
-            "link": "Link",
             "retry": "Retry",
             "rebuildAlignment": "Rebuild alignment",
             "alignNow": "Align now",
             "search": "Search",
-            "notThisOne": "Not this one?",
+            "match": "Match",
             "viewLog": "View log",
             "hideLog": "Hide log",
             "confirm": "Confirm",
             "generate": "Generate",
             "cancel": "Cancel"
           },
-          "available": {
-            "candidateAuto": "{score}% match · {title}",
-            "candidatePicked": "Selected · {title}",
-            "candidatePair": "Generated from · {title}",
+          "ghost": {
             "noMatchEbook": "No matching ebook found yet",
             "noMatchAudiobook": "No matching audiobook found yet",
-            "readAlong": {
-              "notGenerated": "Not generated · Storyteller builds it from the ebook and audiobook",
-              "needsPair": "Link the ebook and audiobook first",
-              "generating": "Generating with Storyteller…",
-              "failed": "Storyteller stopped at the {step} step. Nothing was added to your library.",
-              "detached": "Generated · not syncing",
-              "waitingForPair": "Generated · rejoins when the ebook and audiobook are linked",
-              "optionsHint": "Storyteller can take an hour or more. Your editions keep syncing meanwhile."
-            },
-            "abs": {
-              "paused": "Sync paused · {library}",
-              "needsReview": "Match needs review · {library}",
-              "positionSyncOff": "Position sync is off in Settings",
-              "needsAudio": "Link the audiobook first"
-            }
+            "noMatchAbs": "No match in your libraries",
+            "absPositionSyncOff": "Position sync is off in Settings",
+            "absNeedsAudio": "Pick an audiobook first"
+          },
+          "chip": {
+            "match": "{score}% match",
+            "selected": "Selected",
+            "generatedFrom": "Generated from {title}",
+            "generated": "Generated",
+            "paused": "Paused",
+            "needsReview": "Needs review"
+          },
+          "off": {
+            "notLinked": "not linked",
+            "syncPaused": "sync paused",
+            "needsReview": "needs review",
+            "notMatched": "not matched",
+            "pickAudiobookFirst": "pick an audiobook first",
+            "syncOffInSettings": "sync off in Settings",
+            "notGenerated": "not generated"
+          },
+          "disabled": {
+            "nothingToLink": "There is nothing to link yet.",
+            "noPermission": "You don't have permission to change links."
+          },
+          "slot": {
+            "notGenerated": "Not generated. Storyteller builds it from the ebook and audiobook above.",
+            "needsEbook": "Not generated. Pick an ebook in the slot above first.",
+            "needsAudio": "Not generated. Pick an audiobook first.",
+            "generating": "Generating with Storyteller…",
+            "failed": "Storyteller stopped at the {step} step. Nothing was added to your library.",
+            "dismiss": "Dismiss",
+            "optionsHint": "Storyteller can take an hour or more. Your editions keep syncing meanwhile."
           },
           "change": {
-            "blocked": "Rebuild or detach the read-along first"
+            "blocked": "Rebuild or detach the read-along first",
+            "building": "Wait for the read-along build, or cancel it",
+            "failed": "Retry the read-along build first"
           },
           "absSearch": {
             "title": "Pick the Audiobookshelf item",
@@ -6954,7 +6987,8 @@
             "unlinkPair": {
               "title": "Unlink ebook and audiobook?",
               "description": "Their positions stop syncing with each other. The alignment map is kept, so linking again is instant.",
-              "descriptionReadAlong": "Their positions stop syncing with each other. The alignment map is kept, so linking again is instant. The read-along stops syncing too and stays in its library."
+              "descriptionReadAlong": "Their positions stop syncing with each other. The alignment map is kept, so linking again is instant. The read-along stops syncing too and stays in its library.",
+              "descriptionReadAlongStays": "Their positions stop syncing with each other. The alignment map is kept, so linking again is instant. The read-along keeps syncing with the audiobook."
             },
             "detach": {
               "title": "Stop syncing the read-along?",
