@@ -80,3 +80,20 @@ describe('fresh metadata lookup', () => {
     ).toBe(false)
   })
 })
+
+describe('monitor action', () => {
+  it('is hidden without the permission to monitor', () => {
+    expect(mount(AuthorHeader, { props: { author } }).find('[data-test="author-monitor"]').exists()).toBe(false)
+  })
+
+  it('asks to monitor the author, and ignores clicks while the lookup runs', async () => {
+    const wrapper = mount(AuthorHeader, { props: { author, canMonitor: true } })
+    await wrapper.get('[data-test="author-monitor"]').trigger('click')
+    expect(wrapper.emitted('monitor')).toHaveLength(1)
+
+    await wrapper.setProps({ monitoring: true })
+    expect(wrapper.get('[data-test="author-monitor"]').attributes('disabled')).toBeDefined()
+    await wrapper.get('[data-test="author-monitor"]').trigger('click')
+    expect(wrapper.emitted('monitor')).toHaveLength(1)
+  })
+})

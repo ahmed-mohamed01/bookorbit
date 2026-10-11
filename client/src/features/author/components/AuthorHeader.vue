@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatDate, formatNumber } from '@/i18n/formatters'
 import type { AuthorDetail, MetadataCandidateCacheInfo } from '@bookorbit/types'
-import { MoreHorizontal, Pencil, RefreshCcw, Trash2, UsersRound, X } from '@lucide/vue'
+import { Bell, Loader2, MoreHorizontal, Pencil, RefreshCcw, Trash2, UsersRound, X } from '@lucide/vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { toDisplayCoverUrl } from '@/features/book/lib/metadata-fetch'
 import MetadataCacheBadge from '@/features/metadata-cache/components/MetadataCacheBadge.vue'
@@ -26,6 +26,9 @@ const props = defineProps<{
   canMerge?: boolean
   canDelete?: boolean
   refreshing?: boolean
+  canMonitor?: boolean
+  /** Set while the monitor action looks the author up before its dialog opens. */
+  monitoring?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -34,6 +37,7 @@ const emit = defineEmits<{
   refresh: []
   searchFresh: []
   delete: []
+  monitor: []
 }>()
 
 const { t } = useI18n()
@@ -100,6 +104,10 @@ const previewProviderLabel = computed(() => {
 
 const showMenu = computed(() => props.canUpdate || props.canMerge || props.canDelete)
 
+function handleMonitor() {
+  if (props.canMonitor && !props.monitoring) emit('monitor')
+}
+
 const imageLightboxOpen = ref(false)
 const displayImageUrl = computed(() => {
   const display = toDisplayCoverUrl(props.imageUrl)
@@ -143,36 +151,50 @@ watch(resolvedBio, () => {
               <p v-if="author.sortName && author.sortName !== author.name" class="text-sm text-muted-foreground">{{ author.sortName }}</p>
             </div>
 
-            <DropdownMenu v-if="showMenu">
-              <DropdownMenuTrigger as-child>
-                <button
-                  class="mt-0.5 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-muted px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted/70"
-                >
-                  <MoreHorizontal :size="14" />
-                  {{ t('author.header.actions') }}
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" class="w-44">
-                <DropdownMenuItem v-if="canUpdate" @click="emit('edit')">
-                  <Pencil class="mr-2 h-4 w-4" />
-                  {{ t('author.header.editAuthor') }}
-                </DropdownMenuItem>
-                <DropdownMenuItem v-if="canMerge" @click="emit('merge')">
-                  <UsersRound class="mr-2 h-4 w-4" />
-                  {{ t('author.header.mergeAuthors') }}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator v-if="canUpdate" />
-                <DropdownMenuItem v-if="canUpdate" :disabled="refreshing" @click="emit('refresh')">
-                  <RefreshCcw class="mr-2 h-4 w-4" :class="refreshing ? 'animate-spin' : ''" />
-                  {{ refreshing ? t('author.header.refreshing') : t('author.header.refreshMetadata') }}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator v-if="canDelete && (canUpdate || canMerge)" />
-                <DropdownMenuItem v-if="canDelete" class="text-destructive focus:text-destructive" @click="emit('delete')">
-                  <Trash2 class="mr-2 h-4 w-4" />
-                  {{ t('author.header.deleteAuthor') }}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <div class="flex shrink-0 items-center gap-2">
+              <button
+                v-if="canMonitor"
+                type="button"
+                data-test="author-monitor"
+                class="mt-0.5 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+                :disabled="monitoring"
+                @click="handleMonitor"
+              >
+                <Loader2 v-if="monitoring" :size="14" class="animate-spin" />
+                <Bell v-else :size="14" />
+                {{ t('monitored.actions.monitorAuthor') }}
+              </button>
+              <DropdownMenu v-if="showMenu">
+                <DropdownMenuTrigger as-child>
+                  <button
+                    class="mt-0.5 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-muted px-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted/70"
+                  >
+                    <MoreHorizontal :size="14" />
+                    {{ t('author.header.actions') }}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" class="w-44">
+                  <DropdownMenuItem v-if="canUpdate" @click="emit('edit')">
+                    <Pencil class="mr-2 h-4 w-4" />
+                    {{ t('author.header.editAuthor') }}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem v-if="canMerge" @click="emit('merge')">
+                    <UsersRound class="mr-2 h-4 w-4" />
+                    {{ t('author.header.mergeAuthors') }}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator v-if="canUpdate" />
+                  <DropdownMenuItem v-if="canUpdate" :disabled="refreshing" @click="emit('refresh')">
+                    <RefreshCcw class="mr-2 h-4 w-4" :class="refreshing ? 'animate-spin' : ''" />
+                    {{ refreshing ? t('author.header.refreshing') : t('author.header.refreshMetadata') }}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator v-if="canDelete && (canUpdate || canMerge)" />
+                  <DropdownMenuItem v-if="canDelete" class="text-destructive focus:text-destructive" @click="emit('delete')">
+                    <Trash2 class="mr-2 h-4 w-4" />
+                    {{ t('author.header.deleteAuthor') }}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
 
           <div class="mt-3">

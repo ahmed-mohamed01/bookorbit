@@ -19,6 +19,8 @@ import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useDeleteBook } from '@/features/book/composables/useDeleteBook'
 import AuthorHeader from '../components/AuthorHeader.vue'
+import MonitorAuthorModal from '@/features/monitored/components/MonitorAuthorModal.vue'
+import { useMonitorAuthorAction } from '@/features/monitored/composables/useMonitorAuthorAction'
 import AuthorConfirmDialog from '../components/AuthorConfirmDialog.vue'
 import {
   deleteAuthorImage,
@@ -98,6 +100,20 @@ const {
 const canUpdate = computed(() => hasPermission('library_edit_metadata'))
 const canMerge = computed(() => isSuperuser.value)
 const canDelete = computed(() => isSuperuser.value)
+const canMonitor = computed(() => hasPermission('book_request_access'))
+const {
+  resolvingId: monitorResolvingId,
+  target: monitorTarget,
+  initialFormats: monitorInitialFormats,
+  beginMonitor,
+  closeModal: closeMonitorModal,
+  handleCreated: handleMonitoredAuthorCreated,
+} = useMonitorAuthorAction()
+const monitoringAuthor = computed(() => author.value !== null && monitorResolvingId.value === author.value.id)
+
+function handleMonitorAuthor() {
+  if (canMonitor.value && author.value) void beginMonitor(author.value)
+}
 
 const editOpen = ref(false)
 const mergeOpen = ref(false)
@@ -560,6 +576,9 @@ defineOptions({ name: 'AuthorDetailView' })
           :can-merge="canMerge"
           :can-delete="canDelete"
           :refreshing="refreshingMetadata"
+          :can-monitor="canMonitor"
+          :monitoring="monitoringAuthor"
+          @monitor="handleMonitorAuthor"
           @edit="toggleEdit"
           @merge="toggleMerge"
           @refresh="refreshMetadata"
@@ -863,5 +882,13 @@ defineOptions({ name: 'AuthorDetailView' })
     />
 
     <DeleteBookDialog :open="deleteBookId !== null" :deleting="deletingBook" @confirm="confirmDelete" @cancel="cancelDelete" />
+
+    <MonitorAuthorModal
+      :open="Boolean(monitorTarget)"
+      :result="monitorTarget"
+      :initial-formats="monitorInitialFormats"
+      @close="closeMonitorModal"
+      @created="handleMonitoredAuthorCreated"
+    />
   </div>
 </template>
