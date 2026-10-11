@@ -17,6 +17,7 @@ function resetDisplaySettings() {
   settings.authorCoverSize.value = 120
   settings.authorCoverShape.value = 'circle'
   settings.authorRowDensity.value = 'comfortable'
+  settings.monitoredReleaseRowDensity.value = 'comfortable'
   settings.authorCoverFallback.value = false
   settings.tableZebraStriping.value = false
   settings.tableDensity.value = 'comfortable'

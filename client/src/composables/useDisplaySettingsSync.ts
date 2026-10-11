@@ -114,6 +114,7 @@ export function initDisplaySettingsSync(): void {
         settings.authorCoverSize.value,
         settings.authorCoverShape.value,
         settings.authorRowDensity.value,
+        settings.monitoredReleaseRowDensity.value,
         settings.authorCoverFallback.value,
         settings.tableZebraStriping.value,
         settings.tableDensity.value,

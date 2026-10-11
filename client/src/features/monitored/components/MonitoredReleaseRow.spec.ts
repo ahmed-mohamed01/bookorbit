@@ -45,6 +45,22 @@ function item(overrides: Partial<MonitoredReleaseItem> = {}): MonitoredReleaseIt
 }
 
 describe('MonitoredReleaseRow', () => {
+  it('uses the comfortable layout by default', () => {
+    const wrapper = mount(MonitoredReleaseRow, { props: { item: item(), canManage: true } })
+
+    expect(wrapper.get('article').classes()).toContain('p-3')
+    expect(wrapper.find('.h-\\[63px\\]').exists()).toBe(true)
+  })
+
+  it('tightens padding and the cover in the compact density', () => {
+    const wrapper = mount(MonitoredReleaseRow, { props: { item: item(), canManage: true, density: 'compact' } })
+
+    expect(wrapper.get('article').classes()).toContain('p-1.5')
+    expect(wrapper.get('article').classes()).not.toContain('p-3')
+    expect(wrapper.find('.h-\\[42px\\]').exists()).toBe(true)
+    expect(wrapper.find('.h-\\[63px\\]').exists()).toBe(false)
+  })
+
   it('offers the request action to users who may request books', () => {
     const wrapper = mount(MonitoredReleaseRow, { props: { item: item(), canManage: true } })
 

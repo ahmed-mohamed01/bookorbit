@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { Download } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import type { MonitoredReleaseItem } from '@bookorbit/types'
+import type { MonitoredReleaseItem, TableDensity } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import { bookCoverStyle } from '@/features/book/lib/book-cover'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
@@ -10,11 +10,19 @@ import { parseMonitoredDate } from '../lib/release-date'
 import MonitoredFormatPill from './MonitoredFormatPill.vue'
 import MonitoredStatusChip from './MonitoredStatusChip.vue'
 
-const props = defineProps<{ item: MonitoredReleaseItem; canManage: boolean; requesting?: boolean }>()
+const props = withDefaults(defineProps<{ item: MonitoredReleaseItem; canManage: boolean; requesting?: boolean; density?: TableDensity }>(), {
+  density: 'comfortable',
+})
 const emit = defineEmits<{ request: [item: MonitoredReleaseItem] }>()
 const { t, d } = useI18n()
 const imageFailed = ref(false)
 
+const DENSITY_CLASSES: Record<TableDensity, { row: string; date: string; day: string; cover: string }> = {
+  compact: { row: 'gap-2 p-1.5 sm:gap-3 sm:px-3', date: 'w-9 pr-2', day: 'text-base', cover: 'h-[42px] w-[28px]' },
+  comfortable: { row: 'gap-3 p-3 sm:gap-4 sm:px-4', date: 'w-11 pr-3', day: 'text-xl', cover: 'h-[63px] w-[42px]' },
+  roomy: { row: 'gap-4 p-4 sm:gap-5 sm:px-5', date: 'w-12 pr-3', day: 'text-2xl', cover: 'h-[78px] w-[52px]' },
+}
+const classes = computed(() => DENSITY_CLASSES[props.density])
 const date = computed(() => parseMonitoredDate(props.item.releaseDate)?.date ?? null)
 const day = computed(() => (date.value ? String(date.value.getDate()).padStart(2, '0') : ''))
 const month = computed(() => (date.value ? d(date.value, { month: 'short' }).toUpperCase() : ''))
@@ -37,12 +45,16 @@ function handleImageError() {
 </script>
 
 <template>
-  <article class="flex items-center gap-3 rounded-xl border border-border bg-card/75 p-3 sm:gap-4 sm:px-4">
-    <div class="w-11 shrink-0 border-r border-border pr-3 text-center">
-      <div class="text-xl font-extrabold tabular-nums text-foreground">{{ day }}</div>
+  <article class="flex items-center rounded-xl border border-border bg-card/75" :class="classes.row">
+    <div class="shrink-0 border-r border-border text-center" :class="classes.date">
+      <div class="font-extrabold tabular-nums text-foreground" :class="classes.day">{{ day }}</div>
       <div class="text-[10px] font-bold tracking-wide text-muted-foreground">{{ month }}</div>
     </div>
-    <div class="relative h-[63px] w-[42px] shrink-0 overflow-hidden rounded shadow-sm" :style="coverUrl && !imageFailed ? undefined : fallbackStyle">
+    <div
+      class="relative shrink-0 overflow-hidden rounded shadow-sm"
+      :class="classes.cover"
+      :style="coverUrl && !imageFailed ? undefined : fallbackStyle"
+    >
       <img
         v-if="coverUrl && !imageFailed"
         :src="coverUrl"

@@ -53,6 +53,7 @@ const validDisplayPreferences: DisplayPreferences = {
   authorCoverSize: 140,
   authorCoverShape: 'circle',
   authorRowDensity: 'comfortable',
+  monitoredReleaseRowDensity: 'comfortable',
   authorCoverFallback: false,
   tableZebraStriping: false,
   tableDensity: 'comfortable',

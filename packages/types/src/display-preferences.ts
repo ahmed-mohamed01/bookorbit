@@ -51,6 +51,7 @@ export interface DisplayPreferences {
   authorCoverSize: number;
   authorCoverShape: AuthorCoverShape;
   authorRowDensity: TableDensity;
+  monitoredReleaseRowDensity: TableDensity;
   /** Stand a book's cover in for a missing author portrait. Off: monogram instead. */
   authorCoverFallback: boolean;
   tableZebraStriping: boolean;

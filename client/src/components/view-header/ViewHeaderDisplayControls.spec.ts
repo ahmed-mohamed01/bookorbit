@@ -44,4 +44,12 @@ describe('ViewHeaderDisplayControls', () => {
     expect(mountControls({ viewMode: 'list', showJumpRailToggle: true, showJumpRails: true }).find('input[type="checkbox"]').exists()).toBe(false)
     expect(mountControls({ viewMode: 'table', showJumpRailToggle: true, showJumpRails: true }).find('input[type="checkbox"]').exists()).toBe(false)
   })
+
+  it('shows only the row height for a list whose rows ignore the cover sliders', () => {
+    const wrapper = mountControls({ viewMode: 'list', rowDensity: 'comfortable', hideSizeControls: true })
+
+    expect(wrapper.text()).toContain('Row height')
+    expect(wrapper.find('input[type="range"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('column visibility')
+  })
 })

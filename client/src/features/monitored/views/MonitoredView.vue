@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Check, Loader2, RefreshCw } from '@lucide/vue'
+import { Check, Loader2, Plus, RefreshCw } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
@@ -22,6 +22,7 @@ import type {
   MonitoredReleaseStatus,
   MonitoredWork,
   MonitoredWorkPatch,
+  TableDensity,
 } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import { formatNumber } from '@/i18n/formatters'
@@ -51,6 +52,7 @@ import MonitoredEmptyState from '../components/MonitoredEmptyState.vue'
 import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
 import MonitoredAudibleNotice from '../components/MonitoredAudibleNotice.vue'
 import MonitoredHardcoverNotice from '../components/MonitoredHardcoverNotice.vue'
+import MonitoredReleaseFilterBar from '../components/MonitoredReleaseFilterBar.vue'
 import { isReleasedByUtcDate, releaseCount, releaseGroup, releasesView } from '../lib/release-view'
 import MonitoredReleaseRow from '../components/MonitoredReleaseRow.vue'
 import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
@@ -89,7 +91,7 @@ const {
   loadReleases,
 } = useMonitored()
 const { onRequestsChanged } = useBookRequestProgress()
-const { cardInfoMode } = useDisplaySettings()
+const { cardInfoMode, monitoredReleaseRowDensity } = useDisplaySettings()
 const { state: refreshState, run: runRefresh } = useRefreshFeedback()
 const {
   running: refreshAllRunning,
@@ -258,6 +260,17 @@ const activeTab = ref<MonitoredTab>(parseTab(route.query.tab))
 
 const DEFAULT_SORT = { authors: 'name', releases: 'date' } as const
 const DEFAULT_ORDER = { authors: 'asc', releases: 'asc' } as const
+// Adding an author is the page's main action, so its tab keeps the accent colour even when inactive.
+const TAB_CLASSES = {
+  default: { active: 'border-primary text-foreground', inactive: 'border-transparent text-muted-foreground hover:text-foreground' },
+  add: { active: 'border-primary text-primary', inactive: 'border-transparent text-primary' },
+}
+
+function tabClass(id: MonitoredTab): string {
+  const classes = id === 'add' ? TAB_CLASSES.add : TAB_CLASSES.default
+  return activeTab.value === id ? classes.active : classes.inactive
+}
+
 const tabs = computed(() => [
   { id: 'authors' as const, label: t('monitored.tabs.authors'), count: counts.value.authors },
   { id: 'releases' as const, label: t('monitored.tabs.releases'), count: releaseCount(counts.value.releases, summaryReleaseCards.value) },
@@ -307,7 +320,9 @@ const activeCardSize = computed({
     else workCardSize.value = next
   },
 })
-const showDisplayControls = computed(() => activeTab.value === 'authors' || (activeTab.value === 'releases' && releasesView.value === 'cards'))
+const showDisplayControls = computed(() => activeTab.value === 'authors' || activeTab.value === 'releases')
+const showReleaseRows = computed(() => activeTab.value === 'releases' && releasesView.value === 'table')
+const headerRowDensity = computed(() => (showReleaseRows.value ? monitoredReleaseRowDensity.value : undefined))
 const workCardExtraHeight = computed(() => (cardInfoMode.value === 'below-cover' ? 40 : 0))
 const sortedAuthors = computed(() => authors.value)
 
@@ -353,20 +368,13 @@ function handleHeaderViewMode(mode: BookViewMode) {
   releasesView.value = mode === 'grid' ? 'cards' : 'table'
 }
 
+function handleRowDensityUpdate(value: TableDensity) {
+  monitoredReleaseRowDensity.value = value
+}
+
 function handleSearchUpdate(value: string) {
   filterQuery.value = value
 }
-
-function selectReleaseFilter(filter: ReleaseFilter) {
-  releaseFilter.value = filter
-}
-
-const releaseFilters: { id: ReleaseFilter; label: string }[] = [
-  { id: 'all', label: 'monitored.controlsBar.filterAll' },
-  { id: 'recent', label: 'monitored.controlsBar.filterRecent' },
-  { id: 'soon', label: 'monitored.controlsBar.filterSoon' },
-  { id: 'year', label: 'monitored.controlsBar.filterYear' },
-]
 
 const sortedReleases = computed(() => releases.value)
 
@@ -822,6 +830,8 @@ defineOptions({ name: 'MonitoredView' })
           :show-view-mode-toggle="activeTab === 'releases'"
           :show-selection="false"
           :show-display-controls="showDisplayControls"
+          :row-density="headerRowDensity"
+          :hide-size-controls="showReleaseRows"
           v-model:coverSize="activeCardSize"
           v-model:gridGap="cardGap"
           :cover-size-min="activeCardSizeConfig.min"
@@ -829,7 +839,13 @@ defineOptions({ name: 'MonitoredView' })
           :cover-size-step="4"
           @update:search-query="handleSearchUpdate"
           @update:view-mode="handleHeaderViewMode"
+          @update:row-density="handleRowDensityUpdate"
         >
+          <template #filters>
+            <div v-if="activeTab === 'releases'" class="hidden md:block">
+              <MonitoredReleaseFilterBar v-model="releaseFilter" />
+            </div>
+          </template>
           <template #toolbar>
             <MonitoredSortMenu
               v-if="activeTab === 'releases'"
@@ -888,10 +904,11 @@ defineOptions({ name: 'MonitoredView' })
               type="button"
               role="tab"
               :aria-selected="activeTab === tab.id"
-              class="shrink-0 border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-reduce:transition-none"
-              :class="activeTab === tab.id ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'"
+              class="inline-flex shrink-0 items-center gap-1 border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-reduce:transition-none"
+              :class="tabClass(tab.id)"
               @click="selectTab(tab.id)"
             >
+              <Plus v-if="tab.id === 'add'" :size="14" aria-hidden="true" />
               {{ tab.label }}
               <template v-if="tab.count !== null">
                 <span
@@ -905,23 +922,9 @@ defineOptions({ name: 'MonitoredView' })
             </button>
           </div>
 
-          <div
-            v-if="activeTab === 'releases'"
-            class="no-scrollbar flex min-w-0 gap-1 overflow-x-auto rounded-lg bg-muted p-0.5"
-            role="group"
-            :aria-label="t('monitored.controlsBar.filter')"
-          >
-            <button
-              v-for="option in releaseFilters"
-              :key="option.id"
-              type="button"
-              class="h-7 shrink-0 rounded-md px-2.5 text-xs font-semibold transition-colors"
-              :class="releaseFilter === option.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'"
-              :aria-pressed="releaseFilter === option.id"
-              @click="selectReleaseFilter(option.id)"
-            >
-              {{ t(option.label) }}
-            </button>
+          <!-- The header row has no room for the filter on narrow screens, so it stays beside the tabs there. -->
+          <div v-if="activeTab === 'releases'" class="min-w-0 md:hidden">
+            <MonitoredReleaseFilterBar v-model="releaseFilter" />
           </div>
         </div>
       </div>
@@ -991,6 +994,7 @@ defineOptions({ name: 'MonitoredView' })
               v-for="item in group.items"
               :key="releaseKey(item)"
               :item="item"
+              :density="monitoredReleaseRowDensity"
               :can-manage="canManage && item.isOwner"
               :requesting="isReleaseRequesting(item)"
               @request="handleReleaseRequest"

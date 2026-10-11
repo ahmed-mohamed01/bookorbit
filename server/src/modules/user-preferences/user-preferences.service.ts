@@ -81,6 +81,7 @@ const DISPLAY_PREFERENCES_SCHEMA = z
     authorCoverSize: z.number().int().min(100).max(400),
     authorCoverShape: z.enum(AUTHOR_COVER_SHAPES),
     authorRowDensity: z.enum(TABLE_DENSITIES).default('comfortable'),
+    monitoredReleaseRowDensity: z.enum(TABLE_DENSITIES).default('comfortable'),
     authorCoverFallback: z.boolean().default(false),
     tableZebraStriping: z.boolean(),
     tableDensity: z.enum(TABLE_DENSITIES),

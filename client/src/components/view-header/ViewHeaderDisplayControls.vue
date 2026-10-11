@@ -18,6 +18,8 @@ withDefaults(
     coverShape?: 'square' | 'circle'
     /** Row height for list mode. Omitted by views whose list rows are not adjustable. */
     rowDensity?: TableDensity
+    /** For list views whose rows do not use the cover size and gap sliders. */
+    hideSizeControls?: boolean
     /**
      * Only the authors views offer this. A declared Boolean prop defaults to false
      * rather than undefined in Vue, so presence needs its own flag - the same shape
@@ -91,7 +93,7 @@ function handleShowJumpRailsChange(event: Event) {
       </div>
     </div>
 
-    <template v-if="viewMode !== 'table'">
+    <template v-if="viewMode !== 'table' && !hideSizeControls">
       <div class="space-y-1.5">
         <div class="flex items-center justify-between">
           <span class="text-xs text-muted-foreground">{{ t('components.viewHeader.displayControls.coverSize') }}</span>
@@ -151,7 +153,7 @@ function handleShowJumpRailsChange(event: Event) {
       </label>
     </template>
 
-    <template v-else>
+    <template v-else-if="viewMode === 'table'">
       <slot name="columns">
         <p class="text-xs text-muted-foreground">{{ t('components.viewHeader.displayControls.columnsHint') }}</p>
       </slot>

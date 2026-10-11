@@ -17,6 +17,7 @@ function validDisplayPreferences(overrides: Partial<DisplayPreferences> = {}): D
     authorCoverSize: 140,
     authorCoverShape: 'circle',
     authorRowDensity: 'comfortable',
+    monitoredReleaseRowDensity: 'comfortable',
     authorCoverFallback: false,
     tableZebraStriping: false,
     tableDensity: 'comfortable',
@@ -158,6 +159,7 @@ describe('useDisplaySettingsSync', () => {
     expect(JSON.parse(request.body as string)).toMatchObject({
       settings: {
         authorRowDensity: 'comfortable',
+        monitoredReleaseRowDensity: 'comfortable',
         authorCoverFallback: false,
         bookCoverDisplayMode: 'fill-crop',
       },
@@ -238,6 +240,24 @@ describe('useDisplaySettingsSync', () => {
       expect.objectContaining({
         method: 'PUT',
         body: expect.stringContaining('"authorRowDensity":"compact"'),
+      }),
+    )
+  })
+
+  it('syncs monitoredReleaseRowDensity changes to the server', async () => {
+    vi.useFakeTimers()
+    const { apiMock, displaySettings, sync } = await loadModules()
+    apiMock.mockResolvedValue({ ok: true })
+
+    sync.initDisplaySettingsSync()
+    displaySettings.useDisplaySettings().monitoredReleaseRowDensity.value = 'compact'
+    await vi.advanceTimersByTimeAsync(1500)
+
+    expect(apiMock).toHaveBeenCalledWith(
+      '/api/v1/user-preferences/display',
+      expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"monitoredReleaseRowDensity":"compact"'),
       }),
     )
   })

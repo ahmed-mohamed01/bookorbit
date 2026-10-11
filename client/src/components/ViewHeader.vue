@@ -27,6 +27,7 @@ withDefaults(
     showJumpRails?: boolean
     jumpRailModes?: BookViewMode[]
     rowDensity?: TableDensity
+    hideSizeControls?: boolean
     showCoverFallbackToggle?: boolean
     coverFallback?: boolean
     viewMode: BookViewMode
@@ -153,6 +154,7 @@ function handleMobileSearchOpenUpdate(value: boolean) {
     </div>
 
     <div class="flex shrink-0 items-center gap-2">
+      <slot name="filters" />
       <ViewHeaderDesktopSearch
         v-if="searchable"
         :search-query="searchQuery"
@@ -256,6 +258,7 @@ function handleMobileSearchOpenUpdate(value: boolean) {
               :show-jump-rails="showJumpRails"
               :jump-rail-modes="jumpRailModes"
               :row-density="rowDensity"
+              :hide-size-controls="hideSizeControls"
               :show-cover-fallback-toggle="showCoverFallbackToggle"
               :cover-fallback="coverFallback"
               :cover-shape="coverShape"
@@ -319,6 +322,7 @@ function handleMobileSearchOpenUpdate(value: boolean) {
           :show-jump-rails="showJumpRails"
           :jump-rail-modes="jumpRailModes"
           :row-density="rowDensity"
+          :hide-size-controls="hideSizeControls"
           :show-cover-fallback-toggle="showCoverFallbackToggle"
           :cover-fallback="coverFallback"
           :cover-shape="coverShape"

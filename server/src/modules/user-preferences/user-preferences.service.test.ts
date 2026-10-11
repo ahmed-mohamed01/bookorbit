@@ -100,6 +100,7 @@ const validDisplayPreferences: DisplayPreferences = {
   authorCoverSize: 140,
   authorCoverShape: 'circle',
   authorRowDensity: 'comfortable',
+  monitoredReleaseRowDensity: 'comfortable',
   authorCoverFallback: false,
   tableZebraStriping: false,
   tableDensity: 'comfortable',
@@ -564,17 +565,23 @@ describe('UserPreferencesService', () => {
   });
 
   it('upsertDisplayPreferences defaults author display preferences omitted by older clients', async () => {
-    const { authorRowDensity, authorCoverFallback, ...olderPreferences } = validDisplayPreferences;
+    const { authorRowDensity, monitoredReleaseRowDensity, authorCoverFallback, ...olderPreferences } = validDisplayPreferences;
     void authorRowDensity;
+    void monitoredReleaseRowDensity;
     void authorCoverFallback;
 
     await expect(service.upsertDisplayPreferences(11, olderPreferences)).resolves.toBeUndefined();
 
-    expect(repo.upsert).toHaveBeenCalledWith(11, 'display', expect.objectContaining({ authorRowDensity: 'comfortable', authorCoverFallback: false }));
+    expect(repo.upsert).toHaveBeenCalledWith(
+      11,
+      'display',
+      expect.objectContaining({ authorRowDensity: 'comfortable', monitoredReleaseRowDensity: 'comfortable', authorCoverFallback: false }),
+    );
   });
 
   it.each([
     ['authorRowDensity', 'dense'],
+    ['monitoredReleaseRowDensity', 'dense'],
     ['authorCoverFallback', 'yes'],
   ])('upsertDisplayPreferences rejects invalid %s values', async (field, value) => {
     await expect(service.upsertDisplayPreferences(11, { ...validDisplayPreferences, [field]: value })).rejects.toBeInstanceOf(BadRequestException);
