@@ -98,7 +98,6 @@ describe('CurrentlyReadingWidget linked editions', () => {
     const fan = wrapper.find('[role="img"]')
     expect(fan.attributes('aria-label')).toBe('3 editions')
     expect(fan.findAll('[data-testid="artwork"]')).toHaveLength(3)
-    expect(fan.findAll('[data-testid="edition-link-pill"]')).toHaveLength(1)
     expect(wrapper.find('[data-testid="surface"]').exists()).toBe(false)
   })
 

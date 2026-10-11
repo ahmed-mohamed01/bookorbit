@@ -72,9 +72,3 @@ export function editionStackLayout(count: number): EditionStackSlotStyle[] {
     zIndex: EDITION_STACK_MAX_VISIBLE - index,
   }))
 }
-
-// Pins the stack's own top-left corner, which is the rearmost card's, so it moves out with the spill.
-export function editionStackBadgeStyle(count: number): { left: string; top: string } {
-  const visible = Math.min(Math.max(count, 1), EDITION_STACK_MAX_VISIBLE)
-  return { left: `calc(${-EDITION_STACK_SHIFT_PCT * (visible - 1)}% + 1px)`, top: '1px' }
-}

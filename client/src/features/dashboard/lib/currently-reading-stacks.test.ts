@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CurrentlyReadingBook } from '@bookorbit/types'
-import { editionStackBadgeStyle, editionStackLayout, stackCurrentlyReading } from './currently-reading-stacks'
+import { editionStackLayout, stackCurrentlyReading } from './currently-reading-stacks'
 
 function book(bookId: number, overrides: Partial<CurrentlyReadingBook> = {}): CurrentlyReadingBook {
   return {
@@ -110,17 +110,5 @@ describe('editionStackLayout', () => {
   it('shows at most three covers and nothing for an empty stack', () => {
     expect(editionStackLayout(5)).toHaveLength(3)
     expect(editionStackLayout(0)).toEqual([])
-  })
-})
-
-describe('editionStackBadgeStyle', () => {
-  it("sits just inside the rearmost card's top-left corner", () => {
-    expect(editionStackBadgeStyle(3)).toEqual({ left: 'calc(-16% + 1px)', top: '1px' })
-    expect(editionStackBadgeStyle(2)).toEqual({ left: 'calc(-8% + 1px)', top: '1px' })
-  })
-
-  it('never reaches past the three visible cards', () => {
-    expect(editionStackBadgeStyle(6)).toEqual(editionStackBadgeStyle(3))
-    expect(editionStackBadgeStyle(0)).toEqual({ left: 'calc(0% + 1px)', top: '1px' })
   })
 })

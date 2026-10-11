@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { BookOpen, Link2, Play } from '@lucide/vue'
+import { BookOpen, Play } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { FORMAT_TO_GROUP } from '@bookorbit/types'
@@ -9,13 +9,7 @@ import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import BookCoverArtwork from '@/features/book/components/BookCoverArtwork.vue'
 import BookCoverSurface from '@/features/book/components/BookCoverSurface.vue'
 import { useCurrentlyReadingWidget } from '../../composables/useCurrentlyReadingWidget'
-import {
-  EDITION_STACK_MAX_VISIBLE,
-  editionStackBadgeStyle,
-  editionStackLayout,
-  stackCurrentlyReading,
-  type CurrentlyReadingStack,
-} from '../../lib/currently-reading-stacks'
+import { EDITION_STACK_MAX_VISIBLE, editionStackLayout, stackCurrentlyReading, type CurrentlyReadingStack } from '../../lib/currently-reading-stacks'
 
 const { data, loading, error } = useCurrentlyReadingWidget()
 const { t } = useI18n()
@@ -30,10 +24,6 @@ function stackedEditions(stack: CurrentlyReadingStack) {
 
 function stackedLayout(stack: CurrentlyReadingStack) {
   return editionStackLayout(stack.editions.length)
-}
-
-function stackedBadgeStyle(stack: CurrentlyReadingStack) {
-  return editionStackBadgeStyle(stack.editions.length)
 }
 
 function goToBook(bookId: number) {
@@ -115,14 +105,6 @@ function continueReading(bookId: number, fileId: number | null, fileFormat: stri
                 mode="fill-crop"
               />
             </div>
-            <span
-              class="absolute z-10 flex h-3.5 w-3.5 items-center justify-center rounded-sm bg-primary text-primary-foreground shadow ring-1 ring-background"
-              :style="stackedBadgeStyle(stack)"
-              :title="t('dashboard.widgets.currentlyReading.editions', { count: stack.editions.length })"
-              data-testid="edition-link-pill"
-            >
-              <Link2 :size="9" aria-hidden="true" />
-            </span>
           </div>
 
           <!-- Cover thumbnail -->
