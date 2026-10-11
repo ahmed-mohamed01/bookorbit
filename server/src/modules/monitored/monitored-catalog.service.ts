@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { and, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -397,6 +399,25 @@ export function resolvePreviousWorks(works: MergedWork[], previous: MonitoredCat
   return resolved;
 }
 
+// Matches the varchar(255) of author_catalog_works.id and every work_id column that references it.
+const MAX_WORK_ID_LENGTH = 255;
+
+/**
+ * Hardcover slugs for omnibus editions run past 200 characters, which overflows the column once the
+ * monitor id is in front. Only those ids are hashed, so every id that already fits stays the id
+ * existing catalogs were stored under.
+ */
+export function catalogWorkId(monitorId: string, source: string, seed: string): string {
+  const id = `${monitorId}:${source}:${seed}`;
+  if (id.length <= MAX_WORK_ID_LENGTH) return id;
+  return `${monitorId}:${source}:${createHash('sha256').update(seed).digest('hex')}`;
+}
+
+/** Trims the id rather than the suffix, so a renamed id stays unique and inside the column. */
+function withSuffix(id: string, suffix: string): string {
+  return `${id.slice(0, MAX_WORK_ID_LENGTH - suffix.length)}${suffix}`;
+}
+
 /**
  * Last line of defence for the catalog's primary key: renames any work id that still collides and
  * returns the colliding ids so the caller can warn. Losing one work's stable id is recoverable;
@@ -411,8 +432,12 @@ export function enforceUniqueWorkIds(works: MonitoredWork[]): string[] {
       return;
     }
     collisions.push(work.id);
-    let candidate = `${work.id}#${index}`;
-    while (seen.has(candidate)) candidate = `${candidate}#`;
+    let suffix = `#${index}`;
+    let candidate = withSuffix(work.id, suffix);
+    while (seen.has(candidate)) {
+      suffix = `${suffix}#`;
+      candidate = withSuffix(work.id, suffix);
+    }
     work.id = candidate;
     seen.add(candidate);
   });
@@ -651,7 +676,7 @@ export class MonitoredCatalogService {
     const seedSource = work.sources.find((source) => work.providerWorkIds[source]) ?? work.sources[0];
     const seedId = seedSource ? work.providerWorkIds[seedSource] : null;
     return {
-      id: old?.id ?? `${monitorId}:${seedSource ?? 'work'}:${seedId ?? normalizeMonitoredName(work.title)}`,
+      id: old?.id ?? catalogWorkId(monitorId, seedSource ?? 'work', seedId ?? normalizeMonitoredName(work.title)),
       title: work.title,
       subtitle: work.subtitle,
       seriesName: work.seriesName,

@@ -6,6 +6,7 @@ import type { MergedWork, Observation } from './reconcile/observation.types';
 import type { MonitoredCatalog } from './monitored-store.service';
 import {
   MonitoredCatalogService,
+  catalogWorkId,
   enforceUniqueWorkIds,
   normalizeMonitoredName,
   resolvePreviousWorks,
@@ -191,6 +192,34 @@ describe('enforceUniqueWorkIds', () => {
 
     expect(collisions).toEqual(['dup']);
     expect(new Set(works.map((work) => work.id)).size).toBe(3);
+  });
+
+  it('keeps a renamed id inside the column when the colliding id is already near its limit', () => {
+    const long = 'x'.repeat(254);
+    const works = [{ id: long }, { id: long }] as Parameters<typeof enforceUniqueWorkIds>[0];
+    enforceUniqueWorkIds(works);
+
+    expect(works[1]!.id).not.toBe(long);
+    expect(works[1]!.id.length).toBeLessThanOrEqual(255);
+  });
+});
+
+describe('catalogWorkId', () => {
+  const monitorId = 'a4807888-9349-4135-8935-39d0bea6b5b0';
+
+  it('keeps an id that fits the column unchanged', () => {
+    expect(catalogWorkId(monitorId, 'hardcover', 'a-study-in-scarlet')).toBe(`${monitorId}:hardcover:a-study-in-scarlet`);
+  });
+
+  it('hashes an omnibus slug that would overflow the column, the same way every refresh', () => {
+    const slug =
+      'aventuras-de-sherlock-holmes-adventure-of-shoscombe-old-place-adventure-of-the-dying-detective-adventure-of-the-red-circle-boscombe-valley-mystery-case-of-identity-five-orange-pips-problem-of-thor-bridge-scandal-in-bohemia';
+    const id = catalogWorkId(monitorId, 'hardcover', slug);
+
+    expect(id.length).toBeLessThanOrEqual(255);
+    expect(id).toMatch(new RegExp(`^${monitorId}:hardcover:[0-9a-f]{64}$`));
+    expect(catalogWorkId(monitorId, 'hardcover', slug)).toBe(id);
+    expect(catalogWorkId(monitorId, 'hardcover', `${slug}-2`)).not.toBe(id);
   });
 });
 
