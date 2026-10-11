@@ -96,19 +96,28 @@ const nextSmil = `<?xml version="1.0"?>
   </seq></body>
 </smil>`
 
-const smilFiles: Record<string, string> = { 'OPS/chapter.smil': smil, 'OPS/next.smil': nextSmil }
+const continuedSmil = `<?xml version="1.0"?>
+<smil xmlns="http://www.w3.org/ns/SMIL">
+  <body><seq>
+    <par><text src="continued.xhtml#first"/><audio src="audio.mp3" clipBegin="2" clipEnd="3"/></par>
+  </seq></body>
+</smil>`
 
-function makeOverlay(loadBlob: (src: string) => Promise<Blob>, getMediaUrl?: (src: string) => Promise<string | null>) {
+const smilFiles: Record<string, string> = { 'OPS/chapter.smil': smil, 'OPS/next.smil': nextSmil, 'OPS/continued.smil': continuedSmil }
+
+const defaultSections = [
+  { id: 'OPS/chapter.xhtml', mediaOverlay: { href: 'OPS/chapter.smil' } },
+  { id: 'OPS/next.xhtml', mediaOverlay: { href: 'OPS/next.smil' } },
+]
+
+function makeOverlay(loadBlob: (src: string) => Promise<Blob>, getMediaUrl?: (src: string) => Promise<string | null>, sections = defaultSections) {
   const book = new EPUB({
     loadText: async (src: string) => smilFiles[src] ?? null,
     loadBlob,
     getMediaUrl,
     getSize: () => 0,
   })
-  book.sections = [
-    { id: 'OPS/chapter.xhtml', mediaOverlay: { href: 'OPS/chapter.smil' } },
-    { id: 'OPS/next.xhtml', mediaOverlay: { href: 'OPS/next.smil' } },
-  ]
+  book.sections = sections
   return book.getMediaOverlay()
 }
 
@@ -215,9 +224,9 @@ describe('Foliate MediaOverlay concurrency', () => {
 
     type GetMediaUrl = (src: string) => Promise<string | null>
 
-    function makeStreamingOverlay(getMediaUrl = vi.fn<GetMediaUrl>(async (src) => streamUrl(src))) {
+    function makeStreamingOverlay(getMediaUrl = vi.fn<GetMediaUrl>(async (src) => streamUrl(src)), sections = defaultSections) {
       const loadBlob = vi.fn<(src: string) => Promise<Blob>>().mockResolvedValue(new Blob(['audio']))
-      const overlay = makeOverlay(loadBlob, getMediaUrl)
+      const overlay = makeOverlay(loadBlob, getMediaUrl, sections)
       const buffering: boolean[] = []
       overlay.addEventListener('buffering', (e: Event) => buffering.push((e as CustomEvent<boolean>).detail))
       return { overlay, loadBlob, getMediaUrl, buffering }
@@ -258,24 +267,8 @@ describe('Foliate MediaOverlay concurrency', () => {
       overlay.stop()
     })
 
-    it('leaves a stall right after a seek to the browser', async () => {
-      const { overlay } = makeStreamingOverlay()
-      await overlay.start(0)
-      const audio = latest()
-      audio.emitLoadedMetadata()
-      await flush()
-
-      audio.currentTime = 1
-      audio.emit('seeking')
-      audio.bufferedRanges = [[1, 1.2]]
-      audio.emit('waiting')
-
-      expect(audio.paused).toBe(false)
-      overlay.stop()
-    })
-
-    it('holds playback after a stall until the buffer refills', async () => {
-      const { overlay } = makeStreamingOverlay()
+    it('leaves a stall to the browser and reports buffering until audio plays again', async () => {
+      const { overlay, buffering } = makeStreamingOverlay()
       await overlay.start(0)
       const audio = latest()
       audio.emitLoadedMetadata()
@@ -283,16 +276,31 @@ describe('Foliate MediaOverlay concurrency', () => {
 
       audio.bufferedRanges = [[0, 0.2]]
       audio.emit('waiting')
-      expect(audio.paused).toBe(true)
-      audio.bufferedRanges = [[0, 0.8]]
-      audio.emit('progress')
       await flush()
+      expect(audio.paused).toBe(false)
       expect(audio.playCalls).toBe(1)
+      expect(buffering).toEqual([true, false, true])
 
-      audio.bufferedRanges = [[0, 10]]
-      audio.emit('progress')
+      audio.emit('playing')
+      expect(buffering).toEqual([true, false, true, false])
+      overlay.stop()
+    })
+
+    it('does not loop pause and play when the browser reports a stall with audio buffered', async () => {
+      const { overlay } = makeStreamingOverlay()
+      await overlay.start(0)
+      const audio = latest()
+      audio.emitLoadedMetadata()
       await flush()
-      expect(audio.playCalls).toBe(2)
+
+      audio.bufferedRanges = [[0, 17]]
+      for (let i = 0; i < 3; i++) {
+        audio.emit('waiting')
+        await flush()
+      }
+
+      expect(audio.paused).toBe(false)
+      expect(audio.playCalls).toBe(1)
       overlay.stop()
     })
 
@@ -350,6 +358,23 @@ describe('Foliate MediaOverlay concurrency', () => {
       expect(next.playCalls).toBe(1)
       overlay.stop()
       expect(next.src).toBe('')
+    })
+
+    it('does not warm a next section that continues the playing file', async () => {
+      const sections = [defaultSections[0]!, { id: 'OPS/continued.xhtml', mediaOverlay: { href: 'OPS/continued.smil' } }]
+      const { overlay, getMediaUrl } = makeStreamingOverlay(undefined, sections)
+      await overlay.start(0)
+      const current = latest()
+      current.emitLoadedMetadata()
+      await flush()
+
+      current.currentTime = 1.5
+      current.emit('timeupdate')
+      await flush()
+
+      expect(FakeAudio.instances).toHaveLength(1)
+      expect(getMediaUrl).toHaveBeenCalledOnce()
+      overlay.stop()
     })
 
     it('prepares the starting clip so play reuses it without new requests', async () => {

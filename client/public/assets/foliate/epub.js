@@ -407,13 +407,6 @@ const PRELOAD_LEAD_SECONDS = 45
 // Within this distance of the boundary the next clip is warmed even if the
 // current one is not fully buffered yet.
 const PRELOAD_FORCE_SECONDS = 15
-// After a stall, playback resumes once this much audio is buffered ahead, so a
-// slow link plays in longer runs instead of stuttering on every bit of data.
-// Starts and seeks play at once: right after a seek the browser is still
-// filling the media before the playhead, so waiting there only adds delay.
-const REBUFFER_SECONDS = 3
-const SEEK_SETTLE_MS = 5000
-const BUFFER_WAIT_MAX_MS = 8000
 const STREAM_RETRY_DELAYS_MS = [1000, 3000, 8000]
 // A stream that keeps failing after it played gets fresh retries, but only
 // this many within the window, so a dead link ends in an error, not a loop.
@@ -429,27 +422,6 @@ const bufferedAhead = (audio) => {
   }
   return 0
 }
-
-// Resolves once `seconds` of audio (or the rest of the file) is buffered, the
-// browser stops fetching, or BUFFER_WAIT_MAX_MS passes.
-const whenBuffered = (audio, seconds) =>
-  new Promise((resolve) => {
-    const remaining = Number.isFinite(audio.duration) ? audio.duration - audio.currentTime - 0.25 : Infinity
-    const target = Math.max(0, Math.min(seconds, remaining))
-    const events = ['progress', 'canplay', 'suspend', 'emptied', 'error']
-    let timer
-    const finish = () => {
-      clearTimeout(timer)
-      for (const type of events) audio.removeEventListener(type, check)
-      resolve()
-    }
-    const check = (e) => {
-      if (e?.type === 'suspend' || e?.type === 'emptied' || e?.type === 'error' || bufferedAhead(audio) >= target) finish()
-    }
-    timer = setTimeout(finish, BUFFER_WAIT_MAX_MS)
-    for (const type of events) audio.addEventListener(type, check)
-    check()
-  })
 
 const releaseAudio = (audio) => {
   audio.pause()
@@ -546,13 +518,6 @@ class MediaOverlay extends EventTarget {
     audio.play().catch((e) => {
       if (e?.name !== 'AbortError') this.#error(e)
     })
-  }
-  async #rebuffer(audio, isCurrent) {
-    audio.pause()
-    this.#setBuffering(true)
-    await whenBuffered(audio, REBUFFER_SECONDS)
-    if (!isCurrent() || this.#state === 'paused') return
-    this.#playAudio(audio)
   }
   // BookOrbit fork: chapter audio is streamed from a URL when the book can
   // provide one. getMediaUrl resolves null when streaming is not possible for
@@ -665,7 +630,8 @@ class MediaOverlay extends EventTarget {
   async #preloadNext(current) {
     const isStale = () => this.#audio !== current
     const clip = await this.#nextClip()
-    if (clip && !isStale()) await this.#warm(clip, 'auto', isStale)
+    // A next section that continues this file is reached by seeking the playing element.
+    if (clip && clip.src !== this.#audioSrc && !isStale()) await this.#warm(clip, 'auto', isStale)
   }
   // BookOrbit fork: lets the reader warm narration for where play would start,
   // so pressing play is instant. Fetches only the index and a little audio.
@@ -756,17 +722,12 @@ class MediaOverlay extends EventTarget {
       this.#setBuffering(false)
       this.#highlight()
     })
-    // The browser resumes after a stall as soon as any data arrives, which
-    // stutters on a slow link; hold playback until a few seconds are buffered.
-    // Stalls just after a seek are left to the browser, see REBUFFER_SECONDS.
-    let holdStallsFrom = 0
-    audio.addEventListener('seeking', () => {
-      holdStallsFrom = performance.now() + SEEK_SETTLE_MS
-    })
+    // A stall is left to the browser, which resumes once data arrives. Pausing
+    // here makes Android release the decoder of a hidden page, and resuming
+    // then replays a moment of audio and can stall again in a loop.
     audio.addEventListener('waiting', () => {
       if (!isCurrent() || this.#state !== 'playing') return
       this.#setBuffering(true)
-      if (hasPlayed && !audio.seeking && performance.now() >= holdStallsFrom) this.#rebuffer(audio, isCurrent)
     })
     audio.addEventListener('ended', () => {
       if (!isCurrent()) return
