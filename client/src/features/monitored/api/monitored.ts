@@ -7,8 +7,6 @@ import type {
   MonitoredAuthorDetail,
   MonitoredAuthorItem,
   MonitoredAuthorSearchResult,
-  MonitoredBookItem,
-  MonitoredBookListSort,
   MonitoredFormat,
   MonitoredListOrder,
   MonitoredPage,
@@ -28,12 +26,6 @@ import type {
 import { MonitoredApiError } from '../lib/api-error'
 
 const BASE_PATH = '/api/v1/monitored'
-
-export interface CreateMonitoredBookRequest {
-  monitorAuthorId: string
-  workId: string
-  formats: MonitoredFormat[]
-}
 
 async function readJson<T>(response: Response): Promise<T> {
   if (!response.ok) throw new MonitoredApiError(response.status, await readApiErrorDetail(response))
@@ -105,40 +97,6 @@ export async function deleteMonitoredAuthor(id: string): Promise<void> {
 
 export async function refreshMonitoredAuthor(id: string): Promise<MonitoredAuthorDetail> {
   return readJson(await api(`${BASE_PATH}/authors/${encodeURIComponent(id)}/refresh`, { method: 'POST' }))
-}
-
-export async function fetchMonitoredBooks(options: {
-  q?: string
-  page: number
-  size: number
-  sort: MonitoredBookListSort
-  order: MonitoredListOrder
-}): Promise<MonitoredPage<MonitoredBookItem>> {
-  return readJson(await api(`${BASE_PATH}/books?${pageQuery(options)}`))
-}
-
-export async function createMonitoredBook(payload: CreateMonitoredBookRequest): Promise<MonitoredBookItem> {
-  return readJson(
-    await api(`${BASE_PATH}/books`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }),
-  )
-}
-
-export async function updateMonitoredBook(id: string, payload: { paused?: boolean; formats?: MonitoredFormat[] }): Promise<void> {
-  await assertOk(
-    await api(`${BASE_PATH}/books/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    }),
-  )
-}
-
-export async function deleteMonitoredBook(id: string): Promise<void> {
-  await assertOk(await api(`${BASE_PATH}/books/${encodeURIComponent(id)}`, { method: 'DELETE' }))
 }
 
 export async function fetchMonitoredReleases(options: {

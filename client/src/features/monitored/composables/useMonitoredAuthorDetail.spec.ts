@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
-import type { MonitoredAuthorDetail, MonitoredBookItem, MonitoredWork } from '@bookorbit/types'
-import { createMonitoredBook, fetchMonitoredAuthorDetail, fetchMonitoredBooks, requestMonitoredWork, updateMonitoredWork } from '../api/monitored'
-import { onMonitoredBookCreated } from '../lib/monitored-book-state'
+import type { MonitoredAuthorDetail, MonitoredWork } from '@bookorbit/types'
+import { fetchMonitoredAuthorDetail, requestMonitoredWork, updateMonitoredWork } from '../api/monitored'
 import { storage } from '@/services/storage'
 import { useMonitoredAuthorDetail } from './useMonitoredAuthorDetail'
 
@@ -16,38 +15,14 @@ vi.mock('vue-router', () => ({
 
 vi.mock('../api/monitored', () => ({
   fetchMonitoredAuthorDetail: vi.fn<() => Promise<MonitoredAuthorDetail>>(),
-  fetchMonitoredBooks: vi.fn<() => Promise<{ items: MonitoredBookItem[]; total: number; page: number; size: number }>>(),
-  createMonitoredBook: vi.fn<() => Promise<MonitoredBookItem>>(),
   requestMonitoredWork: vi.fn<() => Promise<never>>(),
   updateMonitoredAuthor: vi.fn<() => Promise<never>>(),
   updateMonitoredWork: vi.fn<() => Promise<MonitoredWork>>(),
 }))
 
 const fetchDetailMock = vi.mocked(fetchMonitoredAuthorDetail)
-const fetchBooksMock = vi.mocked(fetchMonitoredBooks)
-const createBookMock = vi.mocked(createMonitoredBook)
 const requestWorkMock = vi.mocked(requestMonitoredWork)
 const updateWorkMock = vi.mocked(updateMonitoredWork)
-
-function emptyBooksPage() {
-  return { items: [], total: 0, page: 0, size: 200 }
-}
-
-function bookItem(overrides: Partial<MonitoredBookItem> = {}): MonitoredBookItem {
-  return {
-    id: 'book-1',
-    ownerUserId: 1,
-    monitorAuthorId: 'author-1',
-    workId: 'work-1',
-    formats: ['ebook'],
-    paused: false,
-    addedAt: '2026-01-01',
-    isOwner: true,
-    authorName: 'A Writer',
-    work: work(),
-    ...overrides,
-  }
-}
 
 function work(overrides: Partial<MonitoredWork> = {}): MonitoredWork {
   return {
@@ -116,12 +91,9 @@ function mountComposable() {
 describe('useMonitoredAuthorDetail', () => {
   beforeEach(() => {
     fetchDetailMock.mockReset()
-    fetchBooksMock.mockReset()
-    createBookMock.mockReset()
     requestWorkMock.mockReset()
     updateWorkMock.mockReset()
     fetchDetailMock.mockResolvedValue(detail())
-    fetchBooksMock.mockResolvedValue(emptyBooksPage())
   })
 
   it('persists a hide through the API and reflects the server copy of the work', async () => {
@@ -181,15 +153,10 @@ describe('useMonitoredAuthorDetail', () => {
   })
 })
 
-describe('useMonitoredAuthorDetail book monitoring', () => {
+describe('useMonitoredAuthorDetail formats', () => {
   beforeEach(() => {
     fetchDetailMock.mockReset()
-    fetchBooksMock.mockReset()
-    createBookMock.mockReset()
-    requestWorkMock.mockReset()
-    updateWorkMock.mockReset()
     fetchDetailMock.mockResolvedValue(detail())
-    fetchBooksMock.mockResolvedValue(emptyBooksPage())
   })
 
   it('derives the active author formats, skipping any format set to off', async () => {
@@ -197,108 +164,6 @@ describe('useMonitoredAuthorDetail book monitoring', () => {
     await composable.load()
 
     expect(composable.monitoredFormats.value).toEqual(['ebook'])
-    wrapper.unmount()
-  })
-
-  it('reports a work as not monitored until the books scan finds a matching entry', async () => {
-    const { composable, wrapper } = mountComposable()
-    await composable.load()
-
-    expect(composable.isBookMonitored('work-1')).toBe(false)
-
-    fetchBooksMock.mockResolvedValue({ items: [bookItem()], total: 1, page: 0, size: 200 })
-    await composable.loadMonitoredBooks()
-
-    expect(composable.isBookMonitored('work-1')).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('only matches a books entry for the same monitor author, not just the same work id', async () => {
-    fetchBooksMock.mockResolvedValue({ items: [bookItem({ monitorAuthorId: 'author-2' })], total: 1, page: 0, size: 200 })
-    const { composable, wrapper } = mountComposable()
-    await composable.load()
-    await composable.loadMonitoredBooks()
-
-    expect(composable.isBookMonitored('work-1')).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('scans every page of the books list up to the retention cap', async () => {
-    fetchBooksMock
-      .mockResolvedValueOnce({ items: [bookItem({ id: 'b1', workId: 'w1' })], total: 2, page: 0, size: 200 })
-      .mockResolvedValueOnce({ items: [bookItem({ id: 'b2', workId: 'w2' })], total: 2, page: 1, size: 200 })
-    const { composable, wrapper } = mountComposable()
-    await composable.load()
-    await composable.loadMonitoredBooks()
-
-    expect(fetchBooksMock).toHaveBeenCalledTimes(2)
-    expect(composable.isBookMonitored('w1')).toBe(true)
-    expect(composable.isBookMonitored('w2')).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('creates a monitored book with the author monitor id, work id, and active formats only', async () => {
-    createBookMock.mockResolvedValue(bookItem())
-    const { composable, wrapper } = mountComposable()
-    await composable.load()
-
-    await composable.monitorBook(work())
-
-    expect(createBookMock).toHaveBeenCalledWith({ monitorAuthorId: 'author-1', workId: 'work-1', formats: ['ebook'] })
-    expect(composable.isBookMonitored('work-1')).toBe(true)
-    wrapper.unmount()
-  })
-
-  it('notifies other views once a monitored book is created', async () => {
-    createBookMock.mockResolvedValue(bookItem())
-    const listener = vi.fn<() => void>()
-    const unsubscribe = onMonitoredBookCreated(listener)
-    const { composable, wrapper } = mountComposable()
-    await composable.load()
-
-    await composable.monitorBook(work())
-
-    expect(listener).toHaveBeenCalledTimes(1)
-    unsubscribe()
-    wrapper.unmount()
-  })
-
-  it('does not call the API again for a work that is already monitored', async () => {
-    fetchBooksMock.mockResolvedValue({ items: [bookItem()], total: 1, page: 0, size: 200 })
-    const { composable, wrapper } = mountComposable()
-    await composable.load()
-    await composable.loadMonitoredBooks()
-
-    await composable.monitorBook(work())
-
-    expect(createBookMock).not.toHaveBeenCalled()
-    wrapper.unmount()
-  })
-
-  it('marks a work as in-flight while the create call is pending and clears it after', async () => {
-    let resolveCreate!: (value: MonitoredBookItem) => void
-    createBookMock.mockReturnValue(new Promise<MonitoredBookItem>((resolve) => (resolveCreate = resolve)))
-    const { composable, wrapper } = mountComposable()
-    await composable.load()
-
-    const pending = composable.monitorBook(work())
-    expect(composable.isMonitoringBook('work-1')).toBe(true)
-
-    resolveCreate(bookItem())
-    await pending
-
-    expect(composable.isMonitoringBook('work-1')).toBe(false)
-    wrapper.unmount()
-  })
-
-  it('surfaces a failed create instead of pretending it stuck', async () => {
-    createBookMock.mockRejectedValue(new Error('nope'))
-    const { composable, wrapper } = mountComposable()
-    await composable.load()
-
-    await expect(composable.monitorBook(work())).rejects.toThrow('nope')
-    expect(composable.isBookMonitored('work-1')).toBe(false)
-    expect(composable.isMonitoringBook('work-1')).toBe(false)
     wrapper.unmount()
   })
 })
@@ -322,9 +187,7 @@ describe('useMonitoredAuthorDetail display options', () => {
   beforeEach(() => {
     storage.remove('monitored:authorDetail:display')
     fetchDetailMock.mockReset()
-    fetchBooksMock.mockReset()
     fetchDetailMock.mockResolvedValue(reviewDetail())
-    fetchBooksMock.mockResolvedValue(emptyBooksPage())
   })
 
   it('shows only the default class, while already knowing what the other switches would reveal', async () => {
@@ -439,9 +302,7 @@ describe('useMonitoredAuthorDetail release switches', () => {
   beforeEach(() => {
     storage.remove('monitored:authorDetail:display')
     fetchDetailMock.mockReset()
-    fetchBooksMock.mockReset()
     fetchDetailMock.mockResolvedValue(dated())
-    fetchBooksMock.mockResolvedValue(emptyBooksPage())
   })
 
   it('lists released and upcoming together by default', async () => {
@@ -481,9 +342,7 @@ describe('useMonitoredAuthorDetail group collapsing', () => {
     storage.remove('monitored:authorDetail:collapsed')
     storage.remove('monitored:authorDetail:group')
     fetchDetailMock.mockReset()
-    fetchBooksMock.mockReset()
     fetchDetailMock.mockResolvedValue(seriesDetail())
-    fetchBooksMock.mockResolvedValue(emptyBooksPage())
   })
 
   it('starts expanded and collapses one section without touching the others', async () => {

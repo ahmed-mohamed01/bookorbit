@@ -76,10 +76,6 @@ const {
   isQueued,
   applyWorkUpdate,
   updateWork,
-  loadMonitoredBooks,
-  isBookMonitored,
-  isMonitoringBook,
-  monitorBook,
 } = useMonitoredAuthorDetail()
 const { state: refreshState, run: runRefresh } = useRefreshFeedback()
 const { onRequestsChanged } = useBookRequestProgress()
@@ -291,16 +287,6 @@ async function handleStopWork(work: MonitoredWork) {
   }
 }
 
-async function handleMonitorBook(work: MonitoredWork) {
-  if (!canEdit.value) return
-  try {
-    await monitorBook(work)
-    toast.success(t('monitored.toast.bookMonitoring', { title: work.title }))
-  } catch (cause) {
-    toast.error(monitoredErrorText(cause, t('monitored.toast.bookMonitorFailed')))
-  }
-}
-
 function groupLabel(key: string, fallback: string): string {
   if (key === 'all') return t('monitored.detail.groups.all')
   if (key === 'standalone') return t('monitored.detail.groups.standalone')
@@ -309,10 +295,6 @@ function groupLabel(key: string, fallback: string): string {
   if (key === 'recent') return t('monitored.detail.groups.recent')
   if (key === 'backlist') return t('monitored.detail.groups.backlist')
   return fallback
-}
-
-async function loadPage(): Promise<void> {
-  await Promise.all([load(), loadMonitoredBooks()])
 }
 
 function flushRequestRefresh(): void {
@@ -345,7 +327,7 @@ watch(loading, (isLoading) => {
 })
 
 onMounted(async () => {
-  await loadPage()
+  await load()
   initialLoadComplete = true
   flushRequestRefresh()
 })
@@ -354,7 +336,7 @@ onActivated(() => {
   viewActive = true
   if (!reloadOnActivate) return
   reloadOnActivate = false
-  void loadPage()
+  void load()
 })
 
 onDeactivated(() => {
@@ -626,15 +608,11 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                     :series-membership="grouping === 'series' ? seriesMembershipForGroup(work, group.key) : undefined"
                     :monitored-formats="monitoredFormats"
                     :can-manage="canEdit"
-                    :allow-book-monitoring="true"
-                    :individually-monitored="isBookMonitored(work.id)"
-                    :monitoring-book="isMonitoringBook(work.id)"
                     @preview="handlePreview"
                     @quick-view="handleQuickView"
                     @download-ebook="handleDownloadEbook"
                     @download-audiobook="handleDownloadAudiobook"
                     @stop="handleStopWork"
-                    @monitor="handleMonitorBook"
                   />
                 </template>
               </MonitoredVirtualGrid>

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import type { BookRequestItem, MonitoredBookItem, MonitoredReleaseDateLookup } from '@bookorbit/types'
-import { createMonitoredBook, fetchWorkReleaseDateCandidates, grabWorkRelease, refreshWorkReleaseDates, setWorkReleaseDate } from './monitored'
+import { fetchWorkReleaseDateCandidates, grabWorkRelease, refreshWorkReleaseDates, setWorkReleaseDate } from './monitored'
 
 vi.mock('@/lib/api', () => ({ api: vi.fn<(...args: unknown[]) => unknown>() }))
 
@@ -54,43 +54,6 @@ function bookItem(): MonitoredBookItem {
 
 beforeEach(() => {
   vi.clearAllMocks()
-})
-
-describe('createMonitoredBook', () => {
-  it('POSTs exactly monitorAuthorId, workId, and formats to /monitored/books', async () => {
-    const data = bookItem()
-    mockedApi.mockResolvedValue(mockOkResponse(data))
-
-    const result = await createMonitoredBook({ monitorAuthorId: 'author-1', workId: 'work-1', formats: ['ebook', 'audiobook'] })
-
-    expect(mockedApi).toHaveBeenCalledWith(
-      '/api/v1/monitored/books',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ monitorAuthorId: 'author-1', workId: 'work-1', formats: ['ebook', 'audiobook'] }),
-      }),
-    )
-    expect(result).toEqual(data)
-  })
-
-  it('does not send any field beyond the DTO shape', async () => {
-    mockedApi.mockResolvedValue(mockOkResponse(bookItem()))
-
-    await createMonitoredBook({ monitorAuthorId: 'author-1', workId: 'work-1', formats: ['ebook'] })
-
-    const [, init] = mockedApi.mock.calls[0]
-    const body = JSON.parse((init as RequestInit).body as string) as Record<string, unknown>
-    expect(Object.keys(body).sort()).toEqual(['formats', 'monitorAuthorId', 'workId'])
-  })
-
-  it('throws with the server message on a non-ok response', async () => {
-    mockedApi.mockResolvedValue(mockErrorResponse(400, 'This author is already monitored'))
-
-    await expect(createMonitoredBook({ monitorAuthorId: 'author-1', workId: 'work-1', formats: ['ebook'] })).rejects.toThrow(
-      'This author is already monitored',
-    )
-  })
 })
 
 describe('grabWorkRelease', () => {

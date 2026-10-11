@@ -8,7 +8,6 @@ type PageResponse = { items: { id: string }[]; total: number; page: number; size
 
 const api = vi.hoisted(() => ({
   fetchMonitoredAuthors: vi.fn<(request: PageRequest) => Promise<PageResponse>>(),
-  fetchMonitoredBooks: vi.fn<(request: PageRequest) => Promise<PageResponse>>(),
   fetchMonitoredReleases: vi.fn<(request: PageRequest) => Promise<PageResponse>>(),
   fetchMonitoredSummary:
     vi.fn<() => Promise<{ authors: number; books: number; releases: number; hardcoverConfigured: boolean; audibleConfigured: boolean }>>(),
@@ -73,20 +72,20 @@ describe('useMonitored', () => {
   })
 
   it('resets the dropped offset when a fresh reset load replaces the list', async () => {
-    api.fetchMonitoredBooks
-      .mockResolvedValueOnce({ items: [{ id: 'b1' }], total: 100, page: 0, size: 50 })
-      .mockResolvedValueOnce({ items: [{ id: 'b2' }], total: 100, page: 1, size: 50 })
+    api.fetchMonitoredAuthors
+      .mockResolvedValueOnce({ items: [{ id: 'a1' }], total: 100, page: 0, size: 50 })
+      .mockResolvedValueOnce({ items: [{ id: 'a2' }], total: 100, page: 1, size: 50 })
     const monitored = useMonitored()
-    const options = { sort: 'added' as const, order: 'desc' as const }
-    await monitored.loadBooks(options, true)
-    await monitored.loadBooks(options)
-    expect(monitored.books.value.map((item) => item.id)).toEqual(['b1', 'b2'])
+    const options = { sort: 'name' as const, order: 'asc' as const }
+    await monitored.loadAuthors(options, true)
+    await monitored.loadAuthors(options)
+    expect(monitored.authors.value.map((item) => item.id)).toEqual(['a1', 'a2'])
 
-    api.fetchMonitoredBooks.mockResolvedValueOnce({ items: [{ id: 'fresh' }], total: 1, page: 0, size: 50 })
-    await monitored.loadBooks(options, true)
+    api.fetchMonitoredAuthors.mockResolvedValueOnce({ items: [{ id: 'fresh' }], total: 1, page: 0, size: 50 })
+    await monitored.loadAuthors(options, true)
 
-    expect(monitored.books.value.map((item) => item.id)).toEqual(['fresh'])
-    expect(monitored.bookDroppedOffset.value).toBe(0)
+    expect(monitored.authors.value.map((item) => item.id)).toEqual(['fresh'])
+    expect(monitored.authorDroppedOffset.value).toBe(0)
   })
 })
 

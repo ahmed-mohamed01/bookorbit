@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { BellPlus, BookOpen, Check, Download, Eye, Headphones, Loader2, MoreHorizontal, MoreVertical, PanelRight, Trash2 } from '@lucide/vue'
+import { BookOpen, Check, Download, Eye, Headphones, MoreHorizontal, MoreVertical, PanelRight, Trash2 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitoredFormat, MonitoredSeriesMembership, MonitoredWork } from '@bookorbit/types'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -28,9 +28,6 @@ const props = defineProps<{
   canManage: boolean
   seriesMembership?: MonitoredSeriesMembership | null
   monitoredFormats?: MonitoredFormat[]
-  allowBookMonitoring?: boolean
-  individuallyMonitored?: boolean
-  monitoringBook?: boolean
   /** Relative release label ("in 7 days", "80 days ago"), shown instead of the default badge. */
   timeBadge?: string | null
 }>()
@@ -40,7 +37,6 @@ const emit = defineEmits<{
   downloadEbook: [work: MonitoredWork]
   downloadAudiobook: [work: MonitoredWork]
   stop: [work: MonitoredWork]
-  monitor: [work: MonitoredWork]
 }>()
 const { t, d } = useI18n()
 const tooltipDate = useMonitoredDateLabel('short')
@@ -164,18 +160,6 @@ function handleDownloadAudiobook() {
 function handleStop() {
   if (props.canManage) emit('stop', props.work)
 }
-
-function handleMonitorBook() {
-  if (
-    props.canManage &&
-    props.allowBookMonitoring &&
-    !props.individuallyMonitored &&
-    !props.monitoringBook &&
-    (props.monitoredFormats?.length ?? 2) > 0
-  ) {
-    emit('monitor', props.work)
-  }
-}
 </script>
 
 <template>
@@ -257,16 +241,6 @@ function handleMonitorBook() {
             {{ t('monitored.detail.quickView') }}
           </DropdownMenuItem>
           <template v-if="canManage">
-            <DropdownMenuItem
-              v-if="allowBookMonitoring"
-              :disabled="individuallyMonitored || monitoringBook || monitoredFormats?.length === 0"
-              @click="handleMonitorBook"
-            >
-              <Loader2 v-if="monitoringBook" class="animate-spin" />
-              <Check v-else-if="individuallyMonitored" />
-              <BellPlus v-else />
-              {{ individuallyMonitored ? t('monitored.actions.alreadyMonitoringThisBook') : t('monitored.actions.monitorThisBook') }}
-            </DropdownMenuItem>
             <DropdownMenuItem :disabled="ebookOwned || ebookPending" @click="handleDownloadEbook">
               <BookOpen v-if="ebookOwned" />
               <Check v-else-if="ebookPending" />
@@ -319,16 +293,6 @@ function handleMonitorBook() {
               {{ t('monitored.detail.quickView') }}
             </DropdownMenuItem>
             <template v-if="canManage">
-              <DropdownMenuItem
-                v-if="allowBookMonitoring"
-                :disabled="individuallyMonitored || monitoringBook || monitoredFormats?.length === 0"
-                @click="handleMonitorBook"
-              >
-                <Loader2 v-if="monitoringBook" class="animate-spin" />
-                <Check v-else-if="individuallyMonitored" />
-                <BellPlus v-else />
-                {{ individuallyMonitored ? t('monitored.actions.alreadyMonitoringThisBook') : t('monitored.actions.monitorThisBook') }}
-              </DropdownMenuItem>
               <DropdownMenuItem :disabled="ebookOwned || ebookPending" @click="handleDownloadEbook">
                 <BookOpen v-if="ebookOwned" />
                 <Check v-else-if="ebookPending" />

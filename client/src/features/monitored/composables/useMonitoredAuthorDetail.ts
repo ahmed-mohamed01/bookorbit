@@ -1,28 +1,12 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import type {
-  MonitoredAuthorDetail,
-  MonitoredBookEntry,
-  MonitoredFormat,
-  MonitoredGrouping,
-  MonitoredSort,
-  MonitoredWork,
-  MonitoredWorkPatch,
-} from '@bookorbit/types'
+import type { MonitoredAuthorDetail, MonitoredFormat, MonitoredGrouping, MonitoredSort, MonitoredWork, MonitoredWorkPatch } from '@bookorbit/types'
 import { storage } from '@/services/storage'
-import {
-  createMonitoredBook,
-  fetchMonitoredAuthorDetail,
-  fetchMonitoredBooks,
-  requestMonitoredWork,
-  updateMonitoredAuthor,
-  updateMonitoredWork,
-} from '../api/monitored'
+import { fetchMonitoredAuthorDetail, requestMonitoredWork, updateMonitoredAuthor, updateMonitoredWork } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
 import { collapseEntryFor, emptyCollapseEntry, readCollapseStore, writeCollapseEntry, type MonitoredCollapseEntry } from '../lib/group-collapse'
 import { groupWorks, sortWorks } from '../lib/grouping'
-import { isMonitoredBookForWork, notifyMonitoredBookCreated } from '../lib/monitored-book-state'
 import {
   countReviewKinds,
   DEFAULT_MONITORED_DISPLAY,
@@ -31,9 +15,6 @@ import {
   workDisplayClass,
   type MonitoredDisplayOptions,
 } from '../lib/work-visibility'
-import { MONITORED_MAX_RETAINED_ITEMS } from './useMonitored'
-
-const BOOK_MEMBERSHIP_PAGE_SIZE = 200
 
 type SortOrder = 'asc' | 'desc'
 
@@ -71,8 +52,6 @@ export function useMonitoredAuthorDetail() {
   const display = ref<MonitoredDisplayOptions>(readDisplayOptions(storage.get<unknown>(DISPLAY_STORAGE_KEY, null)))
   const queued = ref(new Map<string, Set<MonitoredFormat>>())
   const hiddenWorkIds = ref(new Set<string>())
-  const bookEntries = ref<MonitoredBookEntry[]>([])
-  const monitoringWorkIds = ref(new Set<string>())
   const sort = ref<MonitoredSort>(parseSort(route.query.sort ?? storage.get<string | null>(SORT_STORAGE_KEY, null)))
   const order = ref<SortOrder>(parseOrder(route.query.order ?? storage.get<string | null>(ORDER_STORAGE_KEY, null)))
   const grouping = ref<MonitoredGrouping>(parseGrouping(route.query.group ?? storage.get<string | null>(GROUP_STORAGE_KEY, null)))
@@ -293,53 +272,6 @@ export function useMonitoredAuthorDetail() {
   }
 
   /**
-   * There is no server-side filter for "books individually monitored under this author", so this
-   * scans the owner's whole books list once per page load, capped the same as the Books tab itself
-   * so a large monitored-books collection cannot balloon this check into an unbounded fetch.
-   */
-  async function loadMonitoredBooks(): Promise<void> {
-    const collected: MonitoredBookEntry[] = []
-    let page = 0
-    try {
-      for (;;) {
-        const result = await fetchMonitoredBooks({ page, size: BOOK_MEMBERSHIP_PAGE_SIZE, sort: 'added', order: 'desc' })
-        collected.push(...result.items)
-        page += 1
-        if (result.items.length === 0 || collected.length >= result.total || collected.length >= MONITORED_MAX_RETAINED_ITEMS) break
-      }
-      bookEntries.value = collected
-    } catch {
-      // Best-effort: a failed membership scan just leaves "already monitored" state stale, not the page.
-    }
-  }
-
-  function isBookMonitored(workId: string): boolean {
-    return isMonitoredBookForWork(bookEntries.value, authorId.value, workId)
-  }
-
-  function isMonitoringBook(workId: string): boolean {
-    return monitoringWorkIds.value.has(workId)
-  }
-
-  async function monitorBook(work: MonitoredWork): Promise<void> {
-    if (isBookMonitored(work.id) || isMonitoringBook(work.id)) return
-    const formats = monitoredFormats.value
-    if (formats.length === 0) return
-    const next = new Set(monitoringWorkIds.value)
-    next.add(work.id)
-    monitoringWorkIds.value = next
-    try {
-      const created = await createMonitoredBook({ monitorAuthorId: authorId.value, workId: work.id, formats })
-      bookEntries.value = [...bookEntries.value, created]
-      notifyMonitoredBookCreated()
-    } finally {
-      const reverted = new Set(monitoringWorkIds.value)
-      reverted.delete(work.id)
-      monitoringWorkIds.value = reverted
-    }
-  }
-
-  /**
    * One work, one object. A work the server has already answered with replaces the one every list
    * renders from, so the cards and the open panel cannot drift apart before the next refetch.
    */
@@ -394,9 +326,5 @@ export function useMonitoredAuthorDetail() {
     isQueued,
     applyWorkUpdate,
     updateWork,
-    loadMonitoredBooks,
-    isBookMonitored,
-    isMonitoringBook,
-    monitorBook,
   }
 }

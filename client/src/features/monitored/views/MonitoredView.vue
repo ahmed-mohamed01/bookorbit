@@ -6,7 +6,6 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import {
   MONITORED_AUTHOR_LIST_SORTS,
-  MONITORED_BOOK_LIST_SORTS,
   MONITORED_LIST_ORDERS,
   MONITORED_RELEASE_FILTERS,
   MONITORED_RELEASE_LIST_SORTS,
@@ -16,8 +15,6 @@ import {
 import type {
   MonitoredAuthorItem,
   MonitoredAuthorListSort,
-  MonitoredBookItem,
-  MonitoredBookListSort,
   MonitoredFormat,
   MonitoredReleaseFilter,
   MonitoredReleaseItem,
@@ -36,16 +33,13 @@ import { useScrollRestoreOnActivate } from '@/features/book/composables/useScrol
 import { useBookRequestProgress } from '@/features/book-requests/composables/useBookRequestProgress'
 import {
   deleteMonitoredAuthor,
-  deleteMonitoredBook,
   fetchOwnedMonitoredAuthorIds,
   refreshMonitoredAuthor,
   requestMonitoredWork,
   updateMonitoredAuthor,
-  updateMonitoredBook,
   updateMonitoredWork,
 } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
-import { onMonitoredBookCreated } from '../lib/monitored-book-state'
 import { isMonitoredAcquisitionState } from '../lib/monitored-format-state'
 import { refreshAllAuthorsSequentially, type MonitoredRefreshSummary } from '../lib/refresh-summary'
 import { collapseReleaseItems, releaseDateMoved, type MonitoredReleaseEntry } from '../lib/grouping'
@@ -53,7 +47,6 @@ import { monitoredDateTime } from '../lib/release-date'
 import AddMonitoredPanel from '../components/AddMonitoredPanel.vue'
 import MonitoredAuthorCard from '../components/MonitoredAuthorCard.vue'
 import MonitoredBookPanel from '../components/MonitoredBookPanel.vue'
-import MonitoredBookRow from '../components/MonitoredBookRow.vue'
 import MonitoredEmptyState from '../components/MonitoredEmptyState.vue'
 import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
 import MonitoredAudibleNotice from '../components/MonitoredAudibleNotice.vue'
@@ -74,20 +67,15 @@ const router = useRouter()
 const { hasPermission } = usePermissions()
 const {
   authors,
-  books,
   releases,
   authorTotal,
-  bookTotal,
   releaseTotal,
   authorDroppedOffset,
-  bookDroppedOffset,
   releaseDroppedOffset,
   authorLoading,
-  bookLoading,
   releaseLoading,
   summaryLoading,
   authorHasMore,
-  bookHasMore,
   releaseHasMore,
   counts,
   hardcoverConfigured,
@@ -95,7 +83,6 @@ const {
   error,
   loadSummary,
   loadAuthors,
-  loadBooks,
   loadReleases,
 } = useMonitored()
 const { onRequestsChanged } = useBookRequestProgress()
@@ -122,7 +109,6 @@ let observer: IntersectionObserver | null = null
 let topObserver: IntersectionObserver | null = null
 let searchTimer: ReturnType<typeof setTimeout> | null = null
 let suppressSearchReload = false
-let unsubscribeMonitoredBookCreated: (() => void) | null = null
 // Deferred server reconciliation runs when this kept-alive view returns.
 let reloadOnActivate = false
 let viewActive = true
@@ -173,7 +159,7 @@ function handlePanelGrabbed(work: MonitoredWork, format: MonitoredFormat, reques
  */
 async function handlePanelFiled(work: MonitoredWork) {
   await Promise.all([loadSummary(), reloadActive(true)])
-  const reloaded = releases.value.find((item) => item.workId === work.id)?.work ?? books.value.find((item) => item.work.id === work.id)?.work
+  const reloaded = releases.value.find((item) => item.workId === work.id)?.work
   if (reloaded) panelWork.value = reloaded
 }
 
@@ -183,7 +169,6 @@ async function handlePanelFiled(work: MonitoredWork) {
  */
 function applyWorkUpdate(updated: MonitoredWork): void {
   for (const item of releases.value) if (item.workId === updated.id) item.work = updated
-  for (const item of books.value) if (item.work.id === updated.id) item.work = updated
   if (panelWork.value?.id === updated.id) panelWork.value = updated
 }
 
@@ -268,11 +253,10 @@ function parseTab(value: unknown): MonitoredTab {
 
 const activeTab = ref<MonitoredTab>(parseTab(route.query.tab))
 
-const DEFAULT_SORT = { authors: 'name', books: 'added', releases: 'date' } as const
-const DEFAULT_ORDER = { authors: 'asc', books: 'desc', releases: 'asc' } as const
+const DEFAULT_SORT = { authors: 'name', releases: 'date' } as const
+const DEFAULT_ORDER = { authors: 'asc', releases: 'asc' } as const
 const tabs = computed(() => [
   { id: 'authors' as const, label: t('monitored.tabs.authors'), count: counts.value.authors },
-  { id: 'books' as const, label: t('monitored.tabs.books'), count: counts.value.books },
   { id: 'releases' as const, label: t('monitored.tabs.releases'), count: counts.value.releases },
   ...(canManage.value ? [{ id: 'add' as const, label: t('monitored.tabs.add'), count: null }] : []),
 ])
@@ -281,7 +265,6 @@ type ListView = 'table' | 'cards'
 type ReleaseFilter = MonitoredReleaseFilter
 type ReleaseSort = MonitoredReleaseListSort
 type ReleaseGroup = MonitoredReleaseGroup
-type BookSort = MonitoredBookListSort
 
 function persisted<T extends string>(key: string, fallback: T, allowed: readonly T[]) {
   const value = ref<T>(
@@ -292,13 +275,10 @@ function persisted<T extends string>(key: string, fallback: T, allowed: readonly
 }
 
 const releasesView = persisted<ListView>('monitored:view:releases', 'table', ['table', 'cards'])
-const booksView = persisted<ListView>('monitored:view:books', 'table', ['table', 'cards'])
 const releaseFilter = persisted<ReleaseFilter>('monitored:releases:filter', 'all', MONITORED_RELEASE_FILTERS)
 const releaseSort = persisted<ReleaseSort>('monitored:releases:sort', 'date', MONITORED_RELEASE_LIST_SORTS)
 const releaseOrder = persisted<'asc' | 'desc'>('monitored:releases:order', 'asc', MONITORED_LIST_ORDERS)
 const releaseGroup = persisted<ReleaseGroup>('monitored:releases:group', 'status', MONITORED_RELEASE_GROUPS)
-const bookSort = persisted<BookSort>('monitored:books:sort', 'added', MONITORED_BOOK_LIST_SORTS)
-const bookOrder = persisted<'asc' | 'desc'>('monitored:books:order', 'desc', MONITORED_LIST_ORDERS)
 
 type AuthorSort = MonitoredAuthorListSort
 
@@ -327,17 +307,9 @@ const activeCardSize = computed({
     else workCardSize.value = next
   },
 })
-const showDisplayControls = computed(
-  () => activeTab.value === 'authors' || ((activeTab.value === 'books' || activeTab.value === 'releases') && activeView.value === 'cards'),
-)
+const showDisplayControls = computed(() => activeTab.value === 'authors' || (activeTab.value === 'releases' && releasesView.value === 'cards'))
 const workCardExtraHeight = computed(() => (cardInfoMode.value === 'below-cover' ? 40 : 0))
 const sortedAuthors = computed(() => authors.value)
-
-const activeView = computed(() => (activeTab.value === 'books' ? booksView.value : releasesView.value))
-function setActiveView(view: ListView) {
-  if (activeTab.value === 'books') booksView.value = view
-  else releasesView.value = view
-}
 
 const releaseSortOptions = computed<{ value: ReleaseSort; label: string }[]>(() => [
   { value: 'date', label: t('monitored.controlsBar.sortDate') },
@@ -347,11 +319,6 @@ const releaseSortOptions = computed<{ value: ReleaseSort; label: string }[]>(() 
 const releaseGroupOptions = computed<{ value: ReleaseGroup; label: string }[]>(() => [
   { value: 'status', label: t('monitored.controlsBar.groupStatus') },
   { value: 'none', label: t('monitored.controlsBar.groupNone') },
-])
-const bookSortOptions = computed<{ value: BookSort; label: string }[]>(() => [
-  { value: 'added', label: t('monitored.controlsBar.sortAdded') },
-  { value: 'title', label: t('monitored.controlsBar.sortTitle') },
-  { value: 'author', label: t('monitored.controlsBar.sortAuthor') },
 ])
 const authorSortOptions = computed<{ value: AuthorSort; label: string }[]>(() => [
   { value: 'name', label: t('monitored.controlsBar.sortName') },
@@ -372,14 +339,6 @@ function handleReleaseGroupChange(value: ReleaseGroup) {
   releaseGroup.value = value
 }
 
-function handleBookSortChange(value: BookSort) {
-  bookSort.value = value
-}
-
-function handleBookOrderChange(value: 'asc' | 'desc') {
-  bookOrder.value = value
-}
-
 function handleAuthorSortChange(value: AuthorSort) {
   authorSort.value = value
 }
@@ -388,10 +347,10 @@ function handleAuthorOrderChange(value: 'asc' | 'desc') {
   authorOrder.value = value
 }
 
-const headerViewMode = computed<BookViewMode>(() => (activeView.value === 'cards' ? 'grid' : 'list'))
+const headerViewMode = computed<BookViewMode>(() => (releasesView.value === 'cards' ? 'grid' : 'list'))
 
 function handleHeaderViewMode(mode: BookViewMode) {
-  setActiveView(mode === 'grid' ? 'cards' : 'table')
+  releasesView.value = mode === 'grid' ? 'cards' : 'table'
 }
 
 function handleSearchUpdate(value: string) {
@@ -439,12 +398,9 @@ const releaseSections = computed(() =>
 // silently ebook-only rather than empty. The notice belongs where that gap is visible.
 const showAudibleNotice = computed(() => activeTab.value === 'releases' && !audibleConfigured.value)
 
-const sortedBooks = computed(() => books.value)
-
 const activeTotal = computed(() => {
   if (activeTab.value === 'add') return 0
   if (activeTab.value === 'authors') return authorTotal.value
-  if (activeTab.value === 'books') return bookTotal.value
   return releaseTotal.value
 })
 
@@ -467,7 +423,6 @@ const refreshLabel = computed(() =>
 const allLoadedLabel = computed(() => {
   const total = formatNumber(activeTotal.value)
   if (activeTab.value === 'authors') return t('monitored.list.allLoadedAuthors', { total })
-  if (activeTab.value === 'books') return t('monitored.list.allLoadedBooks', { total })
   return t('monitored.list.allLoadedReleases', { total })
 })
 
@@ -477,7 +432,6 @@ const initialLoaded = computed(() => activeTab.value === 'add' || loadedTabs.val
 
 const loading = computed(() => {
   if (activeTab.value === 'authors') return authorLoading.value
-  if (activeTab.value === 'books') return bookLoading.value
   if (activeTab.value === 'releases') return releaseLoading.value
   return summaryLoading.value
 })
@@ -512,20 +466,17 @@ watch([loading, summaryLoading], ([isLoading, isSummaryLoading]) => {
 })
 const hasMore = computed(() => {
   if (activeTab.value === 'authors') return authorHasMore.value
-  if (activeTab.value === 'books') return bookHasMore.value
   if (activeTab.value === 'releases') return releaseHasMore.value
   return false
 })
 const activeItemsLength = computed(() => {
   if (activeTab.value === 'authors') return authors.value.length
-  if (activeTab.value === 'books') return books.value.length
   if (activeTab.value === 'releases') return releases.value.length
   return 0
 })
 /** > 0 once the retention cap has dropped the earliest pages of the active list from memory. */
 const activeDroppedOffset = computed(() => {
   if (activeTab.value === 'authors') return authorDroppedOffset.value
-  if (activeTab.value === 'books') return bookDroppedOffset.value
   if (activeTab.value === 'releases') return releaseDroppedOffset.value
   return 0
 })
@@ -538,8 +489,6 @@ async function reloadActive(reset = false): Promise<void> {
   const q = filterQuery.value.trim() || undefined
   if (tab === 'authors') {
     await loadAuthors({ q, sort: authorSort.value, order: authorOrder.value }, reset)
-  } else if (tab === 'books') {
-    await loadBooks({ q, sort: bookSort.value, order: bookOrder.value }, reset)
   } else if (tab === 'releases') {
     await loadReleases({ q, sort: releaseSort.value, order: releaseOrder.value, filter: releaseFilter.value }, reset)
   } else {
@@ -550,14 +499,12 @@ async function reloadActive(reset = false): Promise<void> {
 
 function activeSort(): string | null {
   if (activeTab.value === 'authors') return authorSort.value
-  if (activeTab.value === 'books') return bookSort.value
   if (activeTab.value === 'releases') return releaseSort.value
   return null
 }
 
 function activeOrder(): 'asc' | 'desc' | null {
   if (activeTab.value === 'authors') return authorOrder.value
-  if (activeTab.value === 'books') return bookOrder.value
   if (activeTab.value === 'releases') return releaseOrder.value
   return null
 }
@@ -587,14 +534,11 @@ function hydrateFromRoute() {
   const order = typeof query.order === 'string' ? query.order : null
   if (order === 'asc' || order === 'desc') {
     if (activeTab.value === 'authors') authorOrder.value = order
-    else if (activeTab.value === 'books') bookOrder.value = order
     else if (activeTab.value === 'releases') releaseOrder.value = order
   }
   if (sort) {
     if (activeTab.value === 'authors' && (MONITORED_AUTHOR_LIST_SORTS as readonly string[]).includes(sort)) {
       authorSort.value = sort as AuthorSort
-    } else if (activeTab.value === 'books' && (MONITORED_BOOK_LIST_SORTS as readonly string[]).includes(sort)) {
-      bookSort.value = sort as BookSort
     } else if (activeTab.value === 'releases' && (MONITORED_RELEASE_LIST_SORTS as readonly string[]).includes(sort)) {
       releaseSort.value = sort as ReleaseSort
     }
@@ -665,7 +609,6 @@ async function handleAuthorPause(author: MonitoredAuthorItem) {
 
 // Removing a monitored row is destructive and unrecoverable from the list, so it asks first.
 const pendingAuthorRemoval = ref<MonitoredAuthorItem | null>(null)
-const pendingBookRemoval = ref<MonitoredBookItem | null>(null)
 const removing = ref(false)
 
 function handleAuthorRemove(author: MonitoredAuthorItem) {
@@ -686,43 +629,6 @@ async function confirmAuthorRemove() {
     await Promise.all([loadSummary(), reloadActive(true)])
     toast.success(t('monitored.toast.stopped', { name: author.authorName }))
     pendingAuthorRemoval.value = null
-  } catch (cause) {
-    toast.error(monitoredErrorText(cause, t('monitored.toast.updateFailed')))
-  } finally {
-    removing.value = false
-  }
-}
-
-async function handleBookPause(item: MonitoredBookItem) {
-  const previous = item.paused
-  item.paused = !previous
-  try {
-    await updateMonitoredBook(item.id, { paused: item.paused })
-    toast.success(t(item.paused ? 'monitored.toast.bookPaused' : 'monitored.toast.bookResumed', { title: item.work.title }))
-  } catch (cause) {
-    item.paused = previous
-    toast.error(monitoredErrorText(cause, t('monitored.toast.updateFailed')))
-  }
-}
-
-function handleBookRemove(item: MonitoredBookItem) {
-  if (!removing.value) pendingBookRemoval.value = item
-}
-
-function cancelBookRemove() {
-  if (!removing.value) pendingBookRemoval.value = null
-}
-
-async function confirmBookRemove() {
-  const item = pendingBookRemoval.value
-  if (!item || removing.value) return
-  removing.value = true
-  try {
-    await deleteMonitoredBook(item.id)
-    books.value = books.value.filter((book) => book.id !== item.id)
-    await Promise.all([loadSummary(), reloadActive(true)])
-    toast.success(t('monitored.toast.bookStopped', { title: item.work.title }))
-    pendingBookRemoval.value = null
   } catch (cause) {
     toast.error(monitoredErrorText(cause, t('monitored.toast.updateFailed')))
   } finally {
@@ -795,14 +701,6 @@ function handleChanged() {
   void Promise.all([loadSummary(), reloadActive(true)])
 }
 
-// A book can be individually monitored from the author-detail page, a separate kept-alive
-// component with its own useMonitored() instance; this view's badge and Books tab only pick that
-// up via this cross-view signal.
-function handleMonitoredBookCreated() {
-  void loadSummary()
-  if (activeTab.value === 'books') void reloadActive(true)
-}
-
 async function loadMore(): Promise<void> {
   if (autoLoadBlocked.value || loading.value || !hasMore.value) return
   await reloadActive()
@@ -830,11 +728,6 @@ function handleScrolledToTop() {
 
 watch([authorSort, authorOrder], () => {
   if (hydrating || activeTab.value !== 'authors') return
-  syncRouteQuery()
-  void reloadActive(true)
-})
-watch([bookSort, bookOrder], () => {
-  if (hydrating || activeTab.value !== 'books') return
   syncRouteQuery()
   void reloadActive(true)
 })
@@ -887,7 +780,6 @@ onMounted(async () => {
     { root: mainRef.value, rootMargin: '280px 0px 0px 0px' },
   )
   if (topSentinel.value) topObserver.observe(topSentinel.value)
-  unsubscribeMonitoredBookCreated = onMonitoredBookCreated(handleMonitoredBookCreated)
 })
 
 onActivated(() => {
@@ -911,7 +803,6 @@ onUnmounted(() => {
   topObserver?.disconnect()
   if (searchTimer) clearTimeout(searchTimer)
   if (requestRefreshTimer) clearTimeout(requestRefreshTimer)
-  unsubscribeMonitoredBookCreated?.()
 })
 
 defineOptions({ name: 'MonitoredView' })
@@ -932,7 +823,7 @@ defineOptions({ name: 'MonitoredView' })
           :search-placeholder="t('monitored.searchPlaceholder')"
           :view-mode="headerViewMode"
           :allowed-view-modes="['grid', 'list']"
-          :show-view-mode-toggle="activeTab === 'books' || activeTab === 'releases'"
+          :show-view-mode-toggle="activeTab === 'releases'"
           :show-selection="false"
           :show-display-controls="showDisplayControls"
           v-model:coverSize="activeCardSize"
@@ -960,16 +851,6 @@ defineOptions({ name: 'MonitoredView' })
               :model-value="releaseGroup"
               default-value="status"
               @update:model-value="handleReleaseGroupChange"
-            />
-            <MonitoredSortMenu
-              v-else-if="activeTab === 'books'"
-              :options="bookSortOptions"
-              :model-value="bookSort"
-              :order="bookOrder"
-              default-value="added"
-              default-order="desc"
-              @update:model-value="handleBookSortChange"
-              @update:order="handleBookOrderChange"
             />
             <MonitoredSortMenu
               v-else-if="activeTab === 'authors'"
@@ -1064,7 +945,7 @@ defineOptions({ name: 'MonitoredView' })
       <div v-if="activeTab !== 'add'" ref="topSentinel" aria-hidden="true" />
       <!-- Skeleton only before a tab's first page lands; a refetch keeps the current rows on screen. -->
       <div v-if="showSkeleton" class="mt-4 px-1" aria-hidden="true">
-        <div v-if="activeTab === 'authors' || activeView === 'cards'" class="grid" :style="skeletonGridStyle">
+        <div v-if="activeTab === 'authors' || releasesView === 'cards'" class="grid" :style="skeletonGridStyle">
           <div v-for="index in INITIAL_SKELETON_COUNT" :key="`monitored-skeleton-${index}`" class="flex flex-col gap-1.5">
             <div class="aspect-2/3 w-full animate-pulse rounded-md bg-muted/60" />
           </div>
@@ -1098,37 +979,6 @@ defineOptions({ name: 'MonitoredView' })
           :action-label="canManage ? t('monitored.tabs.add') : undefined"
           @action="openAddTab"
         />
-      </section>
-
-      <section v-else-if="activeTab === 'books'" class="mt-4 px-1">
-        <div v-if="booksView === 'table'" class="space-y-3">
-          <MonitoredBookRow
-            v-for="item in sortedBooks"
-            :key="item.id"
-            :item="item"
-            :can-manage="canManage && item.isOwner"
-            @pause="handleBookPause"
-            @remove="handleBookRemove"
-          />
-        </div>
-        <MonitoredVirtualGrid v-else :items="sortedBooks" :card-size="workCardSize" :grid-gap="cardGap" :extra-height="workCardExtraHeight">
-          <template #default="{ item }">
-            <MonitoredWorkCard
-              :work="item.work"
-              :queued="false"
-              :ebook-queued="false"
-              :audiobook-queued="false"
-              :monitored-formats="item.formats"
-              :can-manage="canManage && item.isOwner"
-              @preview="openWorkPanel(item.work, item.authorName, item.formats, item.isOwner)"
-              @quick-view="handleCardQuickView"
-              @download-ebook="handleDownloadEbook"
-              @download-audiobook="handleDownloadAudiobook"
-              @stop="handleBookRemove(item)"
-            />
-          </template>
-        </MonitoredVirtualGrid>
-        <MonitoredEmptyState v-if="showEmpty" :title="t('monitored.empty.booksTitle')" :description="t('monitored.empty.booksDescription')" />
       </section>
 
       <section v-else-if="activeTab === 'releases'" class="mt-4 space-y-6 px-1">
@@ -1195,15 +1045,6 @@ defineOptions({ name: 'MonitoredView' })
       :busy="removing"
       @confirm="confirmAuthorRemove"
       @cancel="cancelAuthorRemove"
-    />
-    <ConfirmDialog
-      :open="pendingBookRemoval !== null"
-      :title="t('monitored.list.stopBookDialog.title')"
-      :description="t('monitored.list.stopBookDialog.description')"
-      :confirm-label="t('monitored.actions.stopMonitoring')"
-      :busy="removing"
-      @confirm="confirmBookRemove"
-      @cancel="cancelBookRemove"
     />
     <MonitoredBookPanel
       :work="panelWork"
