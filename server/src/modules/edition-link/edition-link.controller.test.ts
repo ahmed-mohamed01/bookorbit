@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PERMISSION_KEY } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
 import { AttachReadAlongDto } from './dto/attach-read-along.dto';
+import { ForBookQueryDto } from './dto/for-book-query.dto';
 import { EditionLinkController } from './edition-link.controller';
 import { EditionLinkService } from './edition-link.service';
 
@@ -53,7 +54,7 @@ describe('EditionLinkController', () => {
 
   it('says when the book is a detached read-along, and says nothing otherwise', async () => {
     service.getForBook.mockResolvedValueOnce({ link: null, proposed: null, counterpart: null, role: null, members: null, readAlongOutput: true });
-    await expect(controller.getForBook(user, 30)).resolves.toEqual({
+    await expect(controller.getForBook(user, 30, {})).resolves.toEqual({
       link: null,
       proposed: null,
       counterpart: null,
@@ -63,7 +64,7 @@ describe('EditionLinkController', () => {
     });
 
     service.getForBook.mockResolvedValueOnce({ link: null, proposed: null, counterpart: null, role: null, members: null });
-    await expect(controller.getForBook(user, 10)).resolves.not.toHaveProperty('readAlongOutput');
+    await expect(controller.getForBook(user, 10, {})).resolves.not.toHaveProperty('readAlongOutput');
   });
 
   it('carries a detached read-along matched to its pair without a link', async () => {
@@ -71,7 +72,7 @@ describe('EditionLinkController', () => {
     const members = { text: member(10), audio: member(20), readAlong: member(30) };
     service.getForBook.mockResolvedValueOnce({ link: null, proposed: null, counterpart: null, role: 'readAlong', members });
 
-    await expect(controller.getForBook(user, 30)).resolves.toEqual({ link: null, proposed: null, counterpart: null, role: 'readAlong', members });
+    await expect(controller.getForBook(user, 30, {})).resolves.toEqual({ link: null, proposed: null, counterpart: null, role: 'readAlong', members });
   });
 
   it('delegates all HTTP operations to the service', async () => {
@@ -82,13 +83,13 @@ describe('EditionLinkController', () => {
     service.attachReadAlongByUser.mockResolvedValue(link);
     service.unlink.mockResolvedValue(link);
 
-    await controller.getForBook(user, 10);
+    await controller.getForBook(user, 10, {});
     await controller.searchCandidates(user, 10, { q: 'Dune' });
     await controller.link(user, 10, { counterpartId: 20 });
     await controller.attachReadAlong(user, 10, { readAlongBookId: 30 });
     await controller.unlink(user, 10);
 
-    expect(service.getForBook).toHaveBeenCalledWith(user, 10);
+    expect(service.getForBook).toHaveBeenCalledWith(user, 10, undefined);
     expect(service.searchCandidates).toHaveBeenCalledWith(user, 10, 'Dune');
     expect(service.link).toHaveBeenCalledWith(user, 10, 20);
     expect(service.attachReadAlongByUser).toHaveBeenCalledWith(user, 10, 30);
@@ -119,7 +120,7 @@ describe('EditionLinkController', () => {
     expect(await controller.link(user, 10, { counterpartId: 20 })).toEqual(expected);
     expect(await controller.attachReadAlong(user, 10, { readAlongBookId: 30 })).toEqual(expected);
     expect(await controller.unlink(user, 10)).toEqual(expected);
-    expect(await controller.getForBook(user, 10)).toEqual({ link: expected, proposed: null, counterpart, role: 'text', members: null });
+    expect(await controller.getForBook(user, 10, {})).toEqual({ link: expected, proposed: null, counterpart, role: 'text', members: null });
   });
 
   it('carries the read-along member, role and member summaries through to the wire contract', async () => {
@@ -137,10 +138,36 @@ describe('EditionLinkController', () => {
     };
     service.getForBook.mockResolvedValue({ link: row, proposed: null, counterpart: null, role: 'readAlong', members });
 
-    const result = await controller.getForBook(user, 30);
+    const result = await controller.getForBook(user, 30, {});
 
     expect(result.link?.readAlongBookId).toBe(30);
     expect(result.role).toBe('readAlong');
     expect(result.members).toEqual(members);
+  });
+
+  it('passes the audiobook on screen to the service and validates it', async () => {
+    service.getForBook.mockResolvedValue({ link: null, proposed: null, counterpart: null, role: null, members: null, thisBookProgress: null });
+
+    await controller.getForBook(user, 10, plainToInstance(ForBookQueryDto, { counterpartId: '21' }));
+
+    expect(service.getForBook).toHaveBeenCalledWith(user, 10, 21);
+    await expect(validate(plainToInstance(ForBookQueryDto, {}))).resolves.toHaveLength(0);
+    await expect(validate(plainToInstance(ForBookQueryDto, { counterpartId: '21' }))).resolves.toHaveLength(0);
+    await expect(validate(plainToInstance(ForBookQueryDto, { counterpartId: '0' }))).resolves.toHaveLength(1);
+    await expect(validate(plainToInstance(ForBookQueryDto, { counterpartId: 'abc' }))).resolves.toHaveLength(1);
+  });
+
+  it("carries this book's and the proposal's progress to the wire", async () => {
+    const proposed = { bookId: 20, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null, score: 96, progress: 17 };
+    service.getForBook.mockResolvedValue({ link: null, proposed, counterpart: null, role: null, members: null, thisBookProgress: 42 });
+
+    await expect(controller.getForBook(user, 10, {})).resolves.toEqual({
+      link: null,
+      proposed,
+      counterpart: null,
+      role: null,
+      members: null,
+      thisBookProgress: 42,
+    });
   });
 });

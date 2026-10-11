@@ -9,11 +9,17 @@ import type {
   EditionLinkRole,
 } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
+import { isUniqueViolation } from '../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { BookService } from '../book/book.service';
 import { LibraryService } from '../library/library.service';
-import { type BookModality, EditionLinkRepository, type EditionLinkMemberProgressRow } from './edition-link.repository';
-import { READ_ALONG_OUTPUT_SOURCE, type ReadAlongAttachment, type ReadAlongOutputSource } from './read-along-output-source';
+import { type BookModality, EditionLinkRepository, type EditionLinkMemberProgressRow, type ReadingPercentageTarget } from './edition-link.repository';
+import {
+  READ_ALONG_OUTPUT_SOURCE,
+  type ReadAlongAttachment,
+  type ReadAlongBuildProposal,
+  type ReadAlongOutputSource,
+} from './read-along-output-source';
 import type { BookEditionLink } from './schema/edition-link.schema';
 
 export interface EditionLinkForBookResult {
@@ -22,14 +28,21 @@ export interface EditionLinkForBookResult {
   counterpart: EditionLinkCounterpartSummary | null;
   role: EditionLinkRole | null;
   members: EditionLinkMembers | null;
+  thisBookProgress: number | null;
+  /** See `EditionLinkForBook.pickedProgress`. */
+  pickedProgress?: number | null;
   /** See `EditionLinkForBook.readAlongOutput`. */
   readAlongOutput?: boolean;
 }
 
+type ForBookView = Omit<EditionLinkForBookResult, 'thisBookProgress' | 'pickedProgress'> & { pickedBookId?: number };
+
+const UNFINISHED_BUILD_STATUSES = new Set(['queued', 'building', 'failed']);
+
 const ATTACH_EVENT = 'edition_link.attach_read_along';
 const RESTORE_EVENT = 'edition_link.restore_read_along';
 
-function unlinked(proposed: EditionLinkCandidate | null = null): EditionLinkForBookResult {
+function unlinked(proposed: EditionLinkCandidate | null = null): ForBookView {
   return { link: null, proposed, counterpart: null, role: null, members: null };
 }
 
@@ -66,22 +79,128 @@ export class EditionLinkService {
     @Inject(READ_ALONG_OUTPUT_SOURCE) private readonly readAlongOutputs: ReadAlongOutputSource,
   ) {}
 
-  async getForBook(user: RequestUser, bookId: number): Promise<EditionLinkForBookResult> {
+  /**
+   * `counterpartId` is the audiobook an unlinked ebook page has on screen, which may differ from the
+   * proposal; the read-along it already carries is shown for it.
+   */
+  async getForBook(user: RequestUser, bookId: number, counterpartId?: number): Promise<EditionLinkForBookResult> {
     await this.bookService.verifyBookAccess(bookId, user);
 
     const link = await this.repo.findLinkForBook(bookId);
-    if (link) return this.linkedView(user, bookId, link);
+    // A proposal beside a link is always an ebook for its audiobook.
+    if (link) return this.withProgress(user, { bookId, audio: link.audioBookId === bookId }, false, await this.linkedView(user, bookId, link));
 
     const modality = await this.repo.getBookModality(bookId);
+    const page = { bookId, audio: modality === 'audio' };
     if (modality !== 'text' && modality !== 'audio') {
-      return unlinked();
+      return this.withProgress(user, page, false, unlinked());
     }
     if ((await this.readAlongOutputs.findReadAlongOutputs([bookId])).has(bookId)) {
-      return (await this.detachedReadAlong(user, bookId)) ?? { ...unlinked(), readAlongOutput: true };
+      return this.withProgress(user, page, false, (await this.detachedReadAlong(user, bookId)) ?? { ...unlinked(), readAlongOutput: true });
     }
+    if (modality === 'audio') {
+      return this.withProgress(user, page, false, unlinked(await this.proposeEbook(user, bookId)));
+    }
+    return this.withProgress(user, page, true, await this.unlinkedTextView(user, bookId, counterpartId));
+  }
 
-    const [proposed] = await this.findCandidates(user, bookId, modality);
-    return unlinked(proposed ?? null);
+  private async unlinkedTextView(user: RequestUser, bookId: number, counterpartId: number | undefined): Promise<ForBookView> {
+    const [candidates, build] = await Promise.all([this.findCandidates(user, bookId, 'text'), this.readAlongOutputs.findNewestBuildForText(bookId)]);
+    // A read-along built for this ebook names the audiobook the reader chose, so that pairing stays on
+    // screen across reloads ahead of the similarity guess.
+    const buildProposal = build && (await this.isProposable(build)) ? await this.buildProposal(user, build.audioBookId, candidates, 'audio') : null;
+    const proposed = buildProposal ?? candidates[0] ?? null;
+    const honoured = counterpartId !== undefined && (counterpartId === proposed?.bookId || (await this.canAccess(counterpartId, user)));
+    const pickedId = honoured ? counterpartId : proposed?.bookId;
+    const view = await this.pickedAudioView(user, bookId, proposed, pickedId);
+    return honoured ? { ...view, pickedBookId: pickedId } : view;
+  }
+
+  private async pickedAudioView(
+    user: RequestUser,
+    bookId: number,
+    proposed: EditionLinkCandidate | null,
+    pickedId: number | undefined,
+  ): Promise<ForBookView> {
+    if (pickedId === undefined) return unlinked(proposed);
+
+    // The audiobook may already carry a read-along on a link with no ebook: the ebook page shows that
+    // pair as it is, so the switch for the read-along reads linked rather than empty.
+    const audioLink = await this.repo.findLinkForBook(pickedId);
+    if (!audioLink || audioLink.audioBookId !== pickedId || audioLink.textBookId !== null || audioLink.readAlongBookId === null) {
+      return unlinked(proposed);
+    }
+    const readAlongBookId = await this.visibleReadAlongId(audioLink, bookId, user);
+    if (readAlongBookId === null) return unlinked(proposed);
+    const { members } = await this.resolveMembers(user, null, pickedId, readAlongBookId);
+    return { ...unlinked(proposed), members };
+  }
+
+  private async proposeEbook(user: RequestUser, audioBookId: number): Promise<EditionLinkCandidate | null> {
+    const [candidates, build] = await Promise.all([
+      this.findCandidates(user, audioBookId, 'audio'),
+      this.readAlongOutputs.findNewestBuildForAudio(audioBookId),
+    ]);
+    const buildProposal = build && (await this.isProposable(build)) ? await this.buildProposal(user, build.textBookId, candidates, 'text') : null;
+    return buildProposal ?? candidates[0] ?? null;
+  }
+
+  /**
+   * A build keeps its pair on screen while it is unfinished, and after it finished until its output
+   * sits on a link, so the reader can still attach what it made.
+   */
+  private async isProposable(build: ReadAlongBuildProposal): Promise<boolean> {
+    if (UNFINISHED_BUILD_STATUSES.has(build.status)) return true;
+    return build.status === 'ready' && build.outputBookId !== null && !(await this.repo.findLinkForBook(build.outputBookId));
+  }
+
+  private async buildProposal(
+    user: RequestUser,
+    counterpartId: number,
+    candidates: EditionLinkCandidate[],
+    counterpartSide: 'text' | 'audio',
+  ): Promise<EditionLinkCandidate | null> {
+    if (!(await this.canAccess(counterpartId, user))) return null;
+    const counterpartLink = await this.repo.findLinkForBook(counterpartId);
+    if (
+      counterpartSide === 'audio'
+        ? counterpartLink && (counterpartLink.audioBookId !== counterpartId || counterpartLink.textBookId !== null)
+        : counterpartLink
+    ) {
+      return null;
+    }
+    const candidate = candidates.find((entry) => entry.bookId === counterpartId);
+    if (candidate) return { ...candidate, fromBuild: true };
+    const summary = (await this.repo.findBookSummaries([counterpartId])).get(counterpartId);
+    if (!summary) return null;
+    if ((await this.readAlongOutputs.findReadAlongOutputs([counterpartId])).has(counterpartId)) return null;
+    return {
+      bookId: counterpartId,
+      title: summary.title,
+      authorName: summary.authorName,
+      coverVersion: summary.coverVersion,
+      score: 0,
+      fromBuild: true,
+    };
+  }
+
+  private async withProgress(
+    user: RequestUser,
+    page: ReadingPercentageTarget,
+    proposedAudio: boolean,
+    view: ForBookView,
+  ): Promise<EditionLinkForBookResult> {
+    const { proposed, pickedBookId, ...rest } = view;
+    const targets: ReadingPercentageTarget[] = [page];
+    if (proposed) targets.push({ bookId: proposed.bookId, audio: proposedAudio });
+    if (pickedBookId !== undefined && pickedBookId !== proposed?.bookId) targets.push({ bookId: pickedBookId, audio: true });
+    const percentages = await this.repo.findReadingPercentages(user.id, targets);
+    return {
+      ...rest,
+      proposed: proposed && { ...proposed, progress: percentages.get(proposed.bookId) ?? null },
+      thisBookProgress: percentages.get(page.bookId) ?? null,
+      ...(pickedBookId === undefined ? {} : { pickedProgress: percentages.get(pickedBookId) ?? null }),
+    };
   }
 
   async searchCandidates(user: RequestUser, bookId: number, query?: string): Promise<EditionLinkCandidate[]> {
@@ -116,18 +235,25 @@ export class EditionLinkService {
       if (outputs.size > 0 || bookLink?.readAlongBookId === bookId || counterpartLink?.readAlongBookId === counterpartId) {
         throw new BadRequestException('A generated read-along book cannot start an edition link');
       }
-      if (bookLink || counterpartLink) {
+      const textBookId = bookModality === 'text' ? bookId : counterpartId;
+      const audioBookId = bookModality === 'audio' ? bookId : counterpartId;
+      const textLink = textBookId === bookId ? bookLink : counterpartLink;
+      const audioLink = audioBookId === bookId ? bookLink : counterpartLink;
+      // An audiobook linked to a read-along alone takes the ebook onto that same row, which keeps the read-along.
+      const fillable = !textLink && audioLink?.textBookId === null ? audioLink : null;
+      if (!fillable && (bookLink || counterpartLink)) {
         throw new ConflictException('One or both books are already linked');
       }
 
-      const textBookId = bookModality === 'text' ? bookId : counterpartId;
-      const audioBookId = bookModality === 'audio' ? bookId : counterpartId;
-      const inserted = await this.repo.insertLink(textBookId, audioBookId, user.id);
+      // A fill whose row a concurrent detach just removed finds the audiobook free again.
+      const filled = fillable ? await this.repo.setTextBook(fillable.id, textBookId, null) : undefined;
+      const inserted = filled ?? (await this.repo.insertLink(textBookId, audioBookId, user.id));
       if (!inserted) {
         throw new ConflictException('One or both books are already linked');
       }
-      // A pair relinked after an unlink gets back the read-along it generated, in the same request.
-      const link = await this.attachLostReadAlong(inserted, user.id);
+      // A pair relinked after an unlink gets back the read-along it generated, in the same request. Not
+      // after a lost fill: that row went away with a detach, and the new one must not undo it.
+      const link = fillable && !filled ? inserted : await this.attachLostReadAlong(inserted, user.id);
       const readAlongBookId = await this.visibleReadAlongId(link, bookId, user);
 
       this.logger.log(
@@ -147,28 +273,42 @@ export class EditionLinkService {
     try {
       // Verify access to the requested book BEFORE probing the link, so an inaccessible book returns the
       // same 403 whether or not it is linked (closes a 403-vs-404 link-existence probe). The text/audio
-      // pair IS the link, so both sides gate the unlink; the read-along is not consulted, because
+      // pair IS the link, so both existing sides gate the unlink; the read-along is not consulted, because
       // dropping the row never touches that book and it normally lives in an admin-only library the
       // reader cannot open - demanding access to it would fail every unlink getForBook offers.
       await this.bookService.verifyBookAccess(bookId, user);
       const link = await this.repo.findLinkForBook(bookId);
-      if (!link) throw new NotFoundException('Edition link not found');
-      const pairIds = [link.textBookId, link.audioBookId].filter((id) => id !== bookId);
+      if (!link || (await this.isHiddenReadAlongOnly(link, bookId, user))) throw new NotFoundException('Edition link not found');
+      const pairIds = [link.textBookId, link.audioBookId].filter((id): id is number => id !== null && id !== bookId);
       await Promise.all(pairIds.map((id) => this.bookService.verifyBookAccess(id, user)));
 
-      // From the read-along's own page, unlinking means "this generated book is no longer part of that
-      // link" - the text/audio pair it was built from stays linked. The detach is recorded on the build
-      // first: a recorded detach on a link still carrying the book reads as attached, whereas an
-      // unrecorded one would be healed back on the next read.
-      const detaching = link.readAlongBookId === bookId;
-      if (detaching) await this.readAlongOutputs.recordDetach(bookId, link.id);
-      const updated = detaching ? await this.repo.setReadAlongBook(link.id, null) : await this.repo.deleteLink(link.id);
+      const role = this.resolveRole(link, bookId);
+      let updated: BookEditionLink | undefined;
+      let outcome: 'read_along_detached' | 'text_left' | 'link_deleted';
+      if (role === 'readAlong') {
+        // From the read-along's own page, unlinking means "this generated book is no longer part of that
+        // link" - the rest of the link stays. The detach is recorded on the build first: a recorded detach
+        // on a link still carrying the book reads as attached, whereas an unrecorded one would be healed
+        // back on the next read. The repository drops the row when no ebook is left on it.
+        await this.readAlongOutputs.recordDetach(bookId, link.id);
+        updated = await this.repo.setReadAlongBook(link.id, null, link.readAlongBookId);
+        outcome = updated?.textBookId === null ? 'link_deleted' : 'read_along_detached';
+      } else if (role === 'text') {
+        // Never a delete by id, even when the read showed no read-along: one attached in between would
+        // go with the row. The repository drops the row when no read-along is left on it.
+        updated = await this.repo.setTextBook(link.id, null, bookId);
+        outcome = updated?.readAlongBookId === null ? 'link_deleted' : 'text_left';
+      } else {
+        updated = await this.repo.deleteLink(link.id);
+        outcome = 'link_deleted';
+      }
       if (!updated) throw new NotFoundException('Edition link not found');
 
       this.logger.log(
-        `[edition_link.unlink] [end] bookId=${bookId} userId=${user.id} linkId=${updated.id} durationMs=${Date.now() - startedAt} outcome=${detaching ? 'read_along_detached' : 'link_deleted'} - edition unlink completed`,
+        `[edition_link.unlink] [end] bookId=${bookId} userId=${user.id} linkId=${updated.id} textBookId=${link.textBookId ?? 'none'} durationMs=${Date.now() - startedAt} outcome=${outcome} - edition unlink completed`,
       );
-      return updated;
+      const readAlongBookId = await this.visibleReadAlongId(updated, bookId, user);
+      return readAlongBookId === updated.readAlongBookId ? updated : { ...updated, readAlongBookId };
     } catch (err) {
       this.logFailure('edition_link.unlink', user.id, bookId, null, startedAt, err, 'edition unlink failed');
       throw err;
@@ -184,35 +324,67 @@ export class EditionLinkService {
     try {
       await this.bookService.verifyBookAccess(bookId, user);
       const link = await this.repo.findLinkForBook(bookId);
-      if (!link || (link.textBookId !== bookId && link.audioBookId !== bookId)) {
+      // Before any answer about the link's read-along or the build, so an inaccessible book answers
+      // the same whether it is the attached read-along, another one, or none at all.
+      await this.bookService.verifyBookAccess(readAlongBookId, user);
+      if (link && ((link.textBookId !== bookId && link.audioBookId !== bookId) || (await this.isHiddenReadAlongOnly(link, bookId, user)))) {
+        throw new NotFoundException('Edition link not found');
+      }
+      const textBookId = link?.textBookId ?? null;
+
+      const audioBookId = link ? link.audioBookId : bookId;
+      if (!link && (await this.repo.getBookModality(bookId)) !== 'audio') {
         throw new NotFoundException('Edition link not found');
       }
 
-      const otherBookId = link.textBookId === bookId ? link.audioBookId : link.textBookId;
-      await this.bookService.verifyBookAccess(otherBookId, user);
+      const otherBookId = link && link.textBookId === bookId ? link.audioBookId : link?.textBookId;
+      if (otherBookId != null) await this.bookService.verifyBookAccess(otherBookId, user);
 
-      if (link.readAlongBookId !== null && link.readAlongBookId !== readAlongBookId) {
-        throw new ConflictException('A different read-along is already attached');
+      if (link && link.readAlongBookId !== null && link.readAlongBookId !== readAlongBookId) {
+        // A read-along the reader cannot open answers like any other conflict, so its existence stays hidden.
+        const visible = (await this.visibleReadAlongId(link, bookId, user)) !== null;
+        throw new ConflictException(
+          visible ? 'A different read-along is already attached' : 'This read-along is already attached to another edition link',
+        );
       }
-      if (link.readAlongBookId === readAlongBookId) {
+      if (link && link.readAlongBookId === readAlongBookId) {
         this.logger.log(
-          `[${ATTACH_EVENT}] [end] bookId=${bookId} readAlongBookId=${readAlongBookId} userId=${user.id} linkId=${link.id} durationMs=${Date.now() - startedAt} outcome=already_attached - explicit read-along attach completed`,
+          `[${ATTACH_EVENT}] [end] bookId=${bookId} readAlongBookId=${readAlongBookId} userId=${user.id} linkId=${link.id} textBookId=${textBookId ?? 'none'} durationMs=${Date.now() - startedAt} outcome=already_attached - explicit read-along attach completed`,
         );
         return link;
       }
 
-      const readAlong = await this.readAlongOutputs.findReadAlongForPair(link);
-      if (!readAlong || readAlong.outputBookId !== readAlongBookId) {
+      const build = await this.readAlongOutputs.findBuildByReadAlong(readAlongBookId);
+      if (!build) {
         throw new NotFoundException('Generated read-along not found for this edition pair');
       }
+      if (build.audioBookId !== audioBookId) {
+        throw new BadRequestException('This read-along was not generated from this edition');
+      }
+      const attachedElsewhere = await this.repo.findLinkForBook(readAlongBookId);
+      if (attachedElsewhere && attachedElsewhere.id !== link?.id) {
+        throw new ConflictException('This read-along is already attached to another edition link');
+      }
 
-      const updated = await this.writeReadAlongAttachment(link, readAlong);
+      const attachment = { buildId: build.buildId, outputBookId: build.outputBookId };
+      let updated: BookEditionLink | undefined;
+      if (link) {
+        try {
+          updated = await this.writeReadAlongAttachment(link, attachment);
+        } catch (err) {
+          if (isUniqueViolation(err)) throw new ConflictException('This read-along is already attached to another edition link');
+          throw err;
+        }
+      } else {
+        updated = await this.repo.insertLink(null, audioBookId, user.id, readAlongBookId);
+        if (updated) await this.readAlongOutputs.recordAttachment(build.buildId, updated.id);
+      }
       if (!updated) {
         throw new ConflictException('Read-along could not be attached');
       }
 
       this.logger.log(
-        `[${ATTACH_EVENT}] [end] bookId=${bookId} readAlongBookId=${readAlongBookId} userId=${user.id} linkId=${updated.id} durationMs=${Date.now() - startedAt} outcome=attached - explicit read-along attach completed`,
+        `[${ATTACH_EVENT}] [end] bookId=${bookId} readAlongBookId=${readAlongBookId} userId=${user.id} linkId=${updated.id} textBookId=${textBookId ?? 'none'} durationMs=${Date.now() - startedAt} outcome=${link ? 'attached' : 'created'} - explicit read-along attach completed`,
       );
       return updated;
     } catch (err) {
@@ -281,58 +453,69 @@ export class EditionLinkService {
     );
   }
 
-  private async linkedView(user: RequestUser, bookId: number, found: BookEditionLink): Promise<EditionLinkForBookResult> {
+  private async linkedView(user: RequestUser, bookId: number, found: BookEditionLink): Promise<ForBookView> {
     // The text/audio pair IS the link: if either side is inaccessible the whole link is hidden. The
     // read-along is an optional extra member, so losing access to it only masks that member - its id
     // is stripped from the returned row so an inaccessible book is never leaked through it.
-    const pairIds = [found.textBookId, found.audioBookId].filter((id) => id !== bookId);
+    const pairIds = [found.textBookId, found.audioBookId].filter((id): id is number => id !== null && id !== bookId);
     const pairAccess = await Promise.all(pairIds.map((id) => this.canAccess(id, user)));
     if (pairAccess.some((allowed) => !allowed)) return unlinked();
 
     const link = await this.attachLostReadAlong(found, user.id);
     const readAlongBookId = await this.visibleReadAlongId(link, bookId, user);
+    // A link holding only the audiobook and its read-along still wants an ebook, so the page gets the same proposal an unlinked audiobook would.
+    const proposed = link.textBookId === null ? await this.proposeEbook(user, link.audioBookId) : null;
+    // With its read-along masked, an ebook-less link would read as a linked audiobook on its own.
+    if (link.textBookId === null && readAlongBookId === null) return unlinked(proposed);
     const role = this.resolveRole(link, bookId);
     const { members, summaries } = await this.resolveMembers(user, link.textBookId, link.audioBookId, readAlongBookId);
-    const counterpart = (role === 'audio' ? summaries.get(link.textBookId) : summaries.get(link.audioBookId)) ?? null;
+    const counterpartId = role === 'audio' ? link.textBookId : link.audioBookId;
+    const counterpart = (counterpartId === null ? null : summaries.get(counterpartId)) ?? null;
     const visibleLink = readAlongBookId === link.readAlongBookId ? link : { ...link, readAlongBookId };
-    return { link: visibleLink, proposed: null, counterpart, role, members };
+    return { link: visibleLink, proposed, counterpart, role, members };
   }
 
   /**
-   * A read-along detached from its pair stays matched to the pair it was built from, so its page can
-   * offer to link that pair again. Offered only while both sides are visible to the user and neither
-   * is linked elsewhere; the pair is linked through its own books, never through the read-along.
+   * A read-along detached from its pair stays matched to the audiobook it was built from, so its page
+   * can offer to take it back. While that audiobook is linked without a read-along, whatever ebook the
+   * link holds now, the page shows that link so the read-along can be attached again. While both
+   * sides of its pair are free, the page offers to link that pair; the pair is linked through its own
+   * books, never through the read-along.
    */
-  private async detachedReadAlong(user: RequestUser, bookId: number): Promise<EditionLinkForBookResult | null> {
+  private async detachedReadAlong(user: RequestUser, bookId: number): Promise<ForBookView | null> {
     const pair = await this.readAlongOutputs.findSourcePair(bookId);
     if (!pair) return null;
-    const access = await Promise.all([this.canAccess(pair.textBookId, user), this.canAccess(pair.audioBookId, user)]);
-    if (access.some((allowed) => !allowed)) return null;
+    if (!(await this.canAccess(pair.audioBookId, user))) return null;
     const [textLink, audioLink] = await Promise.all([this.repo.findLinkForBook(pair.textBookId), this.repo.findLinkForBook(pair.audioBookId)]);
-    if (textLink || audioLink) {
-      // Linked as it was built but without this read-along: it rejoins, unless it was detached on purpose.
-      const pairLink = textLink && textLink.textBookId === pair.textBookId && textLink.audioBookId === pair.audioBookId ? textLink : null;
-      if (!pairLink) return null;
-      const healed = await this.attachLostReadAlong(pairLink, user.id);
-      return healed.readAlongBookId === bookId ? this.linkedView(user, bookId, healed) : null;
+    if (audioLink) {
+      if (audioLink.audioBookId !== pair.audioBookId) return null;
+      if (audioLink.textBookId !== null && !(await this.canAccess(audioLink.textBookId, user))) return null;
+      const healed = await this.attachLostReadAlong(audioLink, user.id);
+      if (healed.readAlongBookId === bookId) return this.linkedView(user, bookId, healed);
+      // A slot holding another read-along leaves this one nothing to rejoin.
+      if (healed.readAlongBookId !== null) return null;
+      const { members, summaries } = await this.resolveMembers(user, healed.textBookId, healed.audioBookId, null);
+      return { link: healed, proposed: null, counterpart: summaries.get(healed.audioBookId) ?? null, role: 'readAlong', members };
     }
-
-    const { members } = await this.resolveMembers(user, pair.textBookId, pair.audioBookId, bookId);
+    // The page's own book is not a member here: it is the detached read-along the pair could take back.
+    // An ebook linked elsewhere or out of reach is left off, and the audiobook still shows.
+    const textFree = !textLink && (await this.canAccess(pair.textBookId, user));
+    const { members } = await this.resolveMembers(user, textFree ? pair.textBookId : null, pair.audioBookId, null);
     return { link: null, proposed: null, counterpart: null, role: 'readAlong', members };
   }
 
   private async resolveMembers(
     user: RequestUser,
-    textBookId: number,
+    textBookId: number | null,
     audioBookId: number,
     readAlongBookId: number | null,
   ): Promise<{ members: EditionLinkMembers; summaries: Map<number, EditionLinkCounterpartSummary> }> {
     const [summaries, progress] = await Promise.all([
-      this.repo.findBookSummaries(readAlongBookId === null ? [textBookId, audioBookId] : [textBookId, audioBookId, readAlongBookId]),
+      this.repo.findBookSummaries([textBookId, audioBookId, readAlongBookId].filter((id): id is number => id !== null)),
       this.repo.findMemberProgress(user.id, { textBookId, audioBookId, readAlongBookId }),
     ]);
     const members: EditionLinkMembers = {
-      text: toMember(textBookId, summaries.get(textBookId) ?? null, progress.text, null),
+      text: textBookId === null ? null : toMember(textBookId, summaries.get(textBookId) ?? null, progress.text, null),
       audio: toMember(audioBookId, summaries.get(audioBookId) ?? null, progress.audio, null),
       readAlong:
         readAlongBookId === null
@@ -340,6 +523,11 @@ export class EditionLinkService {
           : toMember(readAlongBookId, summaries.get(readAlongBookId) ?? null, progress.readAlong, progress.readAlongNarrationPercentage),
     };
     return { members, summaries };
+  }
+
+  /** A link holding no ebook whose read-along the reader cannot open reads as no link at all. */
+  private async isHiddenReadAlongOnly(link: BookEditionLink, bookId: number, user: RequestUser): Promise<boolean> {
+    return link.textBookId === null && link.readAlongBookId !== null && (await this.visibleReadAlongId(link, bookId, user)) === null;
   }
 
   private async visibleReadAlongId(link: BookEditionLink, bookId: number, user: RequestUser): Promise<number | null> {

@@ -108,6 +108,8 @@ export type ReadAlongBlockReason = (typeof READ_ALONG_BLOCK_REASONS)[number];
 
 export interface ReadAlongBuildRequest {
   force?: boolean;
+  /** The other edition of an unlinked pair, or the ebook for an audiobook whose link has no ebook yet; ignored once the link has both. */
+  counterpartId?: number;
   targetLibraryId?: number;
   targetFolderId?: number;
   /** Reuse an aligned book that already exists in Storyteller instead of registering and processing a new one. */

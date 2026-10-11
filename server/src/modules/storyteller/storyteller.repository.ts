@@ -1,5 +1,5 @@
 import { BadGatewayException, Inject, Injectable } from '@nestjs/common';
-import { and, asc, count, eq, inArray, isNotNull, isNull, lt, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import type { BookDockMetadata, StorytellerConnectionTestResult } from '@bookorbit/types';
@@ -143,6 +143,29 @@ export class StorytellerRepository {
       .select()
       .from(storytellerReadAlongBuilds)
       .where(and(eq(storytellerReadAlongBuilds.textBookId, textBookId), eq(storytellerReadAlongBuilds.audioBookId, audioBookId)))
+      .limit(1);
+    return row;
+  }
+
+  async findBuildById(id: number): Promise<StorytellerReadAlongBuild | undefined> {
+    const [row] = await this.db.select().from(storytellerReadAlongBuilds).where(eq(storytellerReadAlongBuilds.id, id)).limit(1);
+    return row;
+  }
+
+  async findNewestBuildForText(textBookId: number): Promise<StorytellerReadAlongBuild | undefined> {
+    return this.findNewestLiveBuild(eq(storytellerReadAlongBuilds.textBookId, textBookId));
+  }
+
+  async findNewestBuildForAudio(audioBookId: number): Promise<StorytellerReadAlongBuild | undefined> {
+    return this.findNewestLiveBuild(eq(storytellerReadAlongBuilds.audioBookId, audioBookId));
+  }
+
+  private async findNewestLiveBuild(side: SQL): Promise<StorytellerReadAlongBuild | undefined> {
+    const [row] = await this.db
+      .select()
+      .from(storytellerReadAlongBuilds)
+      .where(and(side, ne(storytellerReadAlongBuilds.status, 'cancelled')))
+      .orderBy(desc(storytellerReadAlongBuilds.updatedAt), desc(storytellerReadAlongBuilds.id))
       .limit(1);
     return row;
   }

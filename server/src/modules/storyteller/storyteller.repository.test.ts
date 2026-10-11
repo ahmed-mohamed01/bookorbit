@@ -162,11 +162,45 @@ describe('StorytellerRepository build lookups', () => {
     expect(rendered.params).toEqual([1, 2]);
   });
 
+  it.each([
+    ['findNewestBuildForText', '"text_book_id" = $1'],
+    ['findNewestBuildForAudio', '"audio_book_id" = $1'],
+  ] as const)('%s takes the newest build of any status but cancelled', async (method, side) => {
+    const build = { id: 8, textBookId: 1, audioBookId: 2, status: 'ready' };
+    const db = mockDb({ selectResults: [[build]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo[method](5)).resolves.toEqual(build);
+
+    const builder = builderFrom(db.select);
+    const where = renderSql(builder.where.mock.calls[0]![0]);
+    expect(where.sql).toContain(side);
+    expect(where.sql).toContain('"status" <> $2');
+    expect(where.params).toEqual([5, 'cancelled']);
+    expect(builder.orderBy.mock.calls[0]!.map((clause: unknown) => renderSql(clause).sql)).toEqual([
+      '"storyteller_read_along_builds"."updated_at" desc',
+      '"storyteller_read_along_builds"."id" desc',
+    ]);
+    expect(builder.limit).toHaveBeenCalledWith(1);
+  });
+
   it('findBuildByOutputBook returns undefined when nothing matches', async () => {
     const db = mockDb({ selectResults: [[]] });
     const repo = new StorytellerRepository(db as never);
 
     await expect(repo.findBuildByOutputBook(99)).resolves.toBeUndefined();
+  });
+
+  it('findBuildById filters on the build id', async () => {
+    const build = { id: 5, textBookId: 1, audioBookId: 2 };
+    const db = mockDb({ selectResults: [[build]] });
+    const repo = new StorytellerRepository(db as never);
+
+    await expect(repo.findBuildById(5)).resolves.toEqual(build);
+
+    const rendered = renderSql(builderFrom(db.select).where.mock.calls[0]![0]);
+    expect(rendered.sql).toContain('"id" = $1');
+    expect(rendered.params).toEqual([5]);
   });
 });
 

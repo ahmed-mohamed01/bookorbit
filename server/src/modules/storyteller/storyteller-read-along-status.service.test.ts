@@ -153,6 +153,8 @@ async function setup() {
     hasAudioContentFile: vi.fn().mockResolvedValue(true),
     sumContentBytes: vi.fn().mockResolvedValue(null),
     findBuildByOutputBook: vi.fn().mockResolvedValue(undefined),
+    findBuildById: vi.fn().mockResolvedValue(undefined),
+    findOutputBookIds: vi.fn().mockResolvedValue(new Set<number>()),
     startBuild: vi.fn().mockResolvedValue(buildRow({ status: 'building' })),
     updateBuild: vi.fn().mockResolvedValue({}),
     retireCancelledBuild: vi.fn().mockResolvedValue('deleted'),
@@ -603,11 +605,207 @@ describe('StorytellerReadAlongStatusService', () => {
     expect(buildService.runBuild).toHaveBeenCalledOnce();
   });
 
+  describe('for a link with no ebook', () => {
+    const NULL_TEXT_LINK = { ...LINK, textBookId: null, readAlongBookId: 99 };
+
+    it('resolves no pair, so a build request without counterpartId answers no_pair', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue(NULL_TEXT_LINK);
+
+      await expect(service.resolvePair(11)).resolves.toBeNull();
+      await expect(service.requestBuild(11, USER, {})).resolves.toEqual({ status: 'none', blocked: 'no_pair' });
+      expect(repo.startBuild).not.toHaveBeenCalled();
+    });
+
+    it('rebuilds the proposed pair whose own build produced the read-along the link holds', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue(NULL_TEXT_LINK);
+      editionLinks.getBookModality.mockImplementation((bookId: number) => Promise.resolve(bookId === 11 ? 'audio' : 'text'));
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed', outputBookId: 99 }));
+
+      await expect(service.requestBuild(11, USER, { counterpartId: 10 })).resolves.toEqual({ status: 'building', blocked: null });
+
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ textBookId: 10, audioBookId: 11 }));
+    });
+
+    it('builds the proposed pair when the link holds no read-along', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue({ ...NULL_TEXT_LINK, readAlongBookId: null });
+      editionLinks.getBookModality.mockImplementation((bookId: number) => Promise.resolve(bookId === 11 ? 'audio' : 'text'));
+
+      await expect(service.requestBuild(11, USER, { counterpartId: 10 })).resolves.toEqual({ status: 'building', blocked: null });
+
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ textBookId: 10, audioBookId: 11 }));
+    });
+
+    it('refuses a second read-along for an audiobook whose link already holds one from another pair', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockImplementation((bookId: number) => Promise.resolve(bookId === 11 ? NULL_TEXT_LINK : undefined));
+      editionLinks.getBookModality.mockImplementation((bookId: number) => Promise.resolve(bookId === 11 ? 'audio' : 'text'));
+
+      await expect(service.requestBuild(11, USER, { counterpartId: 12 })).resolves.toEqual({ status: 'none', blocked: 'no_pair' });
+
+      expect(repo.startBuild).not.toHaveBeenCalled();
+      expect(repo.queueBuild).not.toHaveBeenCalled();
+    });
+
+    it('still finds the build of its read-along from the read-along page', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue(NULL_TEXT_LINK);
+      repo.findBuildByOutputBook.mockResolvedValue(buildRow({ status: 'ready', outputBookId: 99, builtAt: new Date() }));
+      editionLinks.findBookSummary.mockResolvedValue({ id: 99, title: 'Dune (read-along)' });
+
+      const result = await service.getStatus(99, USER);
+
+      expect(repo.findBuildByOutputBook).toHaveBeenCalledWith(99);
+      expect(result.status).toBe('ready');
+    });
+  });
+
   describe('for a proposed pair', () => {
     function unlinked(editionLinks: Awaited<ReturnType<typeof setup>>['editionLinks']) {
       editionLinks.findLinkForBook.mockResolvedValue(undefined);
       editionLinks.getBookModality.mockImplementation((bookId: number) => Promise.resolve(bookId === 11 ? 'audio' : 'text'));
     }
+
+    it('builds the proposed pair for an unlinked ebook given its audiobook as counterpart', async () => {
+      const { service, repo, editionLinks, buildService } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue(undefined);
+      editionLinks.getBookModality.mockImplementation((bookId: number) => Promise.resolve(bookId === 10 ? 'text' : 'audio'));
+
+      await expect(service.requestBuild(10, USER, { counterpartId: 11 })).resolves.toEqual({ status: 'building', blocked: null });
+
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ textBookId: 10, audioBookId: 11 }));
+      expect(buildService.runBuild.mock.calls[0][1]).toMatchObject({ textBookId: 10, audioBookId: 11, linkId: null });
+    });
+
+    it('builds the proposed pair for an unlinked audiobook given its ebook as counterpart', async () => {
+      const { service, repo, editionLinks } = await setup();
+      unlinked(editionLinks);
+
+      await expect(service.requestBuild(11, USER, { counterpartId: 10 })).resolves.toEqual({ status: 'building', blocked: null });
+
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ textBookId: 10, audioBookId: 11 }));
+    });
+
+    it('answers no_pair for a counterpart of the same modality', async () => {
+      const { service, repo, editionLinks } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue(undefined);
+      editionLinks.getBookModality.mockResolvedValue('text');
+
+      await expect(service.requestBuild(10, USER, { counterpartId: 12 })).resolves.toEqual({ status: 'none', blocked: 'no_pair' });
+      expect(repo.startBuild).not.toHaveBeenCalled();
+    });
+
+    it('lets an existing link win over a different counterpartId', async () => {
+      const { service, repo, editionLinks, buildService } = await setup();
+      editionLinks.getBookModality.mockImplementation((bookId: number) => Promise.resolve(bookId === 10 ? 'text' : 'audio'));
+
+      await expect(service.requestBuild(10, USER, { counterpartId: 99 })).resolves.toEqual({ status: 'building', blocked: null });
+
+      expect(repo.startBuild).toHaveBeenCalledWith(expect.objectContaining({ textBookId: LINK.textBookId, audioBookId: LINK.audioBookId }));
+      expect(buildService.runBuild.mock.calls[0][1]).toMatchObject({ linkId: LINK.id });
+    });
+
+    it('logs the inputs on the start line and the pair source on the end line', async () => {
+      const { service, editionLinks } = await setup();
+      unlinked(editionLinks);
+      const lines: string[] = [];
+      const logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation((message: unknown) => {
+        lines.push(String(message));
+      });
+
+      try {
+        await service.requestBuild(10, USER, { counterpartId: 11 });
+
+        const start = lines.find((line) => line.startsWith('[storyteller.read_along.request] [start]'));
+        expect(start).toContain('bookId=10 userId=42 counterpartId=11 force=false -');
+        expect(start).not.toContain('pairSource');
+        const end = lines.find((line) => line.startsWith('[storyteller.read_along.request] [end]'));
+        expect(end).toContain('pairSource=proposed');
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('logs the start line before the access check and the pair lookup', async () => {
+      const { service, editionLinks, bookService } = await setup();
+      bookService.verifyBookAccess.mockRejectedValue(new NotFoundException('Book 10 not found'));
+      const lines: string[] = [];
+      const logSpy = vi.spyOn(Logger.prototype, 'log').mockImplementation((message: unknown) => {
+        lines.push(String(message));
+      });
+
+      try {
+        await expect(service.requestBuild(10, USER, { counterpartId: 11 })).rejects.toBeInstanceOf(NotFoundException);
+
+        expect(lines.some((line) => line.startsWith('[storyteller.read_along.request] [start] bookId=10'))).toBe(true);
+        expect(editionLinks.findLinkForBook).not.toHaveBeenCalled();
+      } finally {
+        logSpy.mockRestore();
+      }
+    });
+
+    it('logs the pair source on the fail line of a refused source epub', async () => {
+      const { service, editionLinks } = await setup();
+      unlinked(editionLinks);
+      vi.mocked(epubUtils.findSourceEpubProblem).mockResolvedValueOnce('unreadable_archive');
+      const lines: string[] = [];
+      const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation((message: unknown) => {
+        lines.push(String(message));
+      });
+
+      try {
+        await service.requestBuild(10, USER, { counterpartId: 11 });
+
+        const fail = lines.find((line) => line.startsWith('[storyteller.read_along.request] [fail]'));
+        expect(fail).toContain('pairSource=proposed');
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
+    it('answers no_pair when the counterpart audiobook is already linked to another ebook', async () => {
+      const { service, repo, editionLinks } = await setup();
+      unlinked(editionLinks);
+      editionLinks.findLinkForBook.mockImplementation((bookId: number) =>
+        Promise.resolve(bookId === 11 ? { ...OTHER_LINK, audioBookId: 11 } : undefined),
+      );
+
+      await expect(service.requestBuild(10, USER, { counterpartId: 11 })).resolves.toEqual({ status: 'none', blocked: 'no_pair' });
+      expect(repo.startBuild).not.toHaveBeenCalled();
+    });
+
+    it('answers no_pair when the counterpart ebook is already linked to another audiobook', async () => {
+      const { service, repo, editionLinks } = await setup();
+      unlinked(editionLinks);
+      editionLinks.findLinkForBook.mockImplementation((bookId: number) =>
+        Promise.resolve(bookId === 10 ? { ...OTHER_LINK, textBookId: 10 } : undefined),
+      );
+
+      await expect(service.requestBuild(11, USER, { counterpartId: 10 })).resolves.toEqual({ status: 'none', blocked: 'no_pair' });
+      expect(repo.startBuild).not.toHaveBeenCalled();
+    });
+
+    it('answers no_pair when the counterpart is a read-along output', async () => {
+      const { service, repo, editionLinks } = await setup();
+      unlinked(editionLinks);
+      repo.findOutputBookIds.mockResolvedValue(new Set([10]));
+
+      await expect(service.requestBuild(11, USER, { counterpartId: 10 })).resolves.toEqual({ status: 'none', blocked: 'no_pair' });
+      expect(repo.startBuild).not.toHaveBeenCalled();
+    });
+
+    it('answers no_pair when the counterpart is not accessible', async () => {
+      const { service, repo, editionLinks, bookService } = await setup();
+      unlinked(editionLinks);
+      bookService.verifyBookAccess.mockImplementation((bookId: number) =>
+        bookId === 11 ? Promise.reject(new NotFoundException('Book 11 not found')) : Promise.resolve(undefined),
+      );
+
+      await expect(service.requestBuild(10, USER, { counterpartId: 11 })).resolves.toEqual({ status: 'none', blocked: 'no_pair' });
+      expect(repo.startBuild).not.toHaveBeenCalled();
+    });
 
     it('reports the read-along an unlinked pair already has, so linking offers no second build', async () => {
       const { service, repo, editionLinks } = await setup();
@@ -631,6 +829,43 @@ describe('StorytellerReadAlongStatusService', () => {
       expect(repo.findBuildByPair).toHaveBeenCalledWith(10, 11);
       expect(result.status).toBe('none');
       expect(result.outputBook).toBeNull();
+    });
+
+    it('probes the proposed pair when it has no build', async () => {
+      const { service, repo, editionLinks } = await setup();
+      unlinked(editionLinks);
+      repo.hasAudioContentFile.mockResolvedValue(false);
+      repo.sumContentBytes.mockImplementation((bookId: number) => Promise.resolve(bookId === 10 ? 1000 : 2000));
+
+      const result = await service.getStatus(11, USER, 10);
+
+      expect(repo.hasAudioContentFile).toHaveBeenCalledWith(11);
+      expect(result.blocked).toBe('no_audio');
+      expect(result.remoteCopyBytes).toEqual({ epub: 1000, audio: 2000, readAlong: null });
+    });
+
+    it('does not probe a proposed pair with no build whose counterpart the caller cannot open', async () => {
+      const { service, repo, bookService, editionLinks } = await setup();
+      unlinked(editionLinks);
+      bookService.verifyBookAccess.mockImplementation((bookId: number) =>
+        bookId === 10 ? Promise.reject(new NotFoundException('hidden')) : Promise.resolve(undefined),
+      );
+
+      const result = await service.getStatus(11, USER, 10);
+
+      expect(result.blocked).toBe('no_pair');
+      expect(result.remoteCopyBytes).toEqual({ epub: null, audio: null, readAlong: null });
+      expect(repo.sumContentBytes).not.toHaveBeenCalled();
+    });
+
+    it('keeps reporting the running build of a proposed pair when the connection is no longer configured', async () => {
+      const { service, repo, editionLinks, settingsService } = await setup();
+      unlinked(editionLinks);
+      settingsService.getConnection.mockResolvedValue(null);
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building', phase: 'wait' }));
+
+      await expect(service.requestBuild(11, USER, { counterpartId: 10 })).resolves.toEqual({ status: 'building', blocked: 'not_configured' });
+      expect(repo.findBuildByPair).toHaveBeenCalledWith(10, 11);
     });
 
     it('ignores a counterpart of the same format', async () => {
@@ -938,6 +1173,43 @@ describe('StorytellerReadAlongStatusService', () => {
 
     await expect(service.findExisting(10, USER)).resolves.toEqual({ matches: [] });
     expect(session.listBooks).not.toHaveBeenCalled();
+  });
+
+  describe('existing matches for an unlinked pair named by its counterpart', () => {
+    function unlinked(editionLinks: Awaited<ReturnType<typeof setup>>['editionLinks']) {
+      editionLinks.findLinkForBook.mockResolvedValue(undefined);
+      editionLinks.getBookModality.mockImplementation((bookId: number) => Promise.resolve(bookId === 11 ? 'audio' : 'text'));
+    }
+
+    it('looks up the proposed pair by its ebook', async () => {
+      const { service, repo, editionLinks, session } = await setup();
+      unlinked(editionLinks);
+      session.listBooks.mockResolvedValue([]);
+
+      await service.findExisting(11, USER, 10);
+
+      expect(repo.findBookTitleAndAuthors).toHaveBeenCalledWith(10);
+      expect(session.listBooks).toHaveBeenCalledOnce();
+    });
+
+    it('answers no matches without the counterpart, without querying Storyteller', async () => {
+      const { service, editionLinks, session } = await setup();
+      unlinked(editionLinks);
+
+      await expect(service.findExisting(11, USER)).resolves.toEqual({ matches: [] });
+      expect(session.listBooks).not.toHaveBeenCalled();
+    });
+
+    it('answers no matches when the counterpart is hidden from the caller', async () => {
+      const { service, editionLinks, session, bookService } = await setup();
+      unlinked(editionLinks);
+      bookService.verifyBookAccess.mockImplementation((bookId: number) =>
+        bookId === 10 ? Promise.reject(new NotFoundException('hidden')) : Promise.resolve(undefined),
+      );
+
+      await expect(service.findExisting(11, USER, 10)).resolves.toEqual({ matches: [] });
+      expect(session.listBooks).not.toHaveBeenCalled();
+    });
   });
 
   // One title's lookup must not pull Storyteller's whole aligned library: the client has taken a
@@ -1371,15 +1643,31 @@ describe('StorytellerReadAlongStatusService', () => {
       expect(repo.retireCancelledBuild).not.toHaveBeenCalled();
     });
 
-    it.each(['ready', 'failed'])('asks the build service to cancel and leaves a %s row in place', async (status) => {
+    it('asks the build service to cancel and leaves a ready row in place', async () => {
       const { service, repo, buildService } = await setup();
-      repo.findBuildByPair.mockResolvedValue(buildRow({ status }));
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'ready' }));
 
       await service.cancelBuild(10, USER);
 
       expect(buildService.cancel).toHaveBeenCalledOnce();
       expect(buildService.cancel).toHaveReturnedWith(false);
       expect(repo.retireCancelledBuild).not.toHaveBeenCalled();
+      expect(repo.updateBuild).not.toHaveBeenCalled();
+    });
+
+    it('dismisses a failed row by retiring it as cancelled, without a cancelled notification', async () => {
+      const { service, repo, buildService, notifier } = await setup();
+      repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed' }));
+
+      await service.cancelBuild(10, USER);
+
+      expect(buildService.cancel).toHaveReturnedWith(false);
+      expect(repo.updateBuild).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({ status: 'cancelled', phase: null, error: null, queuedAt: null, queuedRequest: null }),
+      );
+      expect(repo.retireCancelledBuild).not.toHaveBeenCalled();
+      expect(notifier.cancelled).not.toHaveBeenCalled();
     });
 
     it.each(['collect', 'link'])('refuses to cancel a build in its %s phase', async (phase) => {
@@ -1424,6 +1712,17 @@ describe('StorytellerReadAlongStatusService', () => {
 
       await expect(service.cancelBuild(10, USER)).rejects.toBeInstanceOf(ConflictException);
       expect(repo.retireCancelledBuild).not.toHaveBeenCalled();
+    });
+
+    it("cancels the pair of the named build rather than the book's current link", async () => {
+      const { service, repo } = await setup();
+      repo.findBuildById.mockResolvedValue(buildRow({ textBookId: 12, audioBookId: 11, status: 'building', phase: 'register' }));
+      repo.findBuildByPair.mockResolvedValue(buildRow({ textBookId: 12, audioBookId: 11, status: 'building', phase: 'register' }));
+
+      await service.cancelBuild(11, USER, 7);
+
+      expect(repo.findBuildByPair).toHaveBeenCalledWith(12, 11);
+      expect(repo.retireCancelledBuild).toHaveBeenCalledWith(7);
     });
 
     it('aborts an in-flight build and deletes its row', async () => {
@@ -1513,6 +1812,89 @@ describe('StorytellerReadAlongStatusService', () => {
       editionLinks.findLinkForBook.mockResolvedValue(undefined);
 
       await expect(service.cancelBuild(10, USER)).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    describe('for an unlinked pair named by its counterpart', () => {
+      function unlinkedWithBuild(ctx: Awaited<ReturnType<typeof setup>>) {
+        ctx.editionLinks.findLinkForBook.mockResolvedValue(undefined);
+        ctx.editionLinks.getBookModality.mockImplementation((bookId: number) => Promise.resolve(bookId === 11 ? 'audio' : 'text'));
+        ctx.repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'building', phase: 'register' }));
+      }
+
+      it('finds the build of the proposed pair and cancels it', async () => {
+        const ctx = await setup();
+        unlinkedWithBuild(ctx);
+
+        await ctx.service.cancelBuild(11, USER, undefined, 10);
+
+        expect(ctx.repo.findBuildByPair).toHaveBeenCalledWith(10, 11);
+        expect(ctx.repo.retireCancelledBuild).toHaveBeenCalledWith(7);
+      });
+
+      it('finds the build named by its id without the counterpart and cancels it', async () => {
+        const ctx = await setup();
+        unlinkedWithBuild(ctx);
+        ctx.repo.findBuildById.mockResolvedValue(buildRow({ status: 'building', phase: 'register' }));
+
+        await ctx.service.cancelBuild(11, USER, 7);
+
+        expect(ctx.repo.findBuildById).toHaveBeenCalledWith(7);
+        expect(ctx.repo.findBuildByPair).toHaveBeenCalledWith(10, 11);
+        expect(ctx.repo.retireCancelledBuild).toHaveBeenCalledWith(7);
+      });
+
+      it('dismisses a failed build of the proposed pair', async () => {
+        const ctx = await setup();
+        unlinkedWithBuild(ctx);
+        ctx.repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed' }));
+
+        await ctx.service.cancelBuild(11, USER, undefined, 10);
+
+        expect(ctx.repo.updateBuild).toHaveBeenCalledWith(7, expect.objectContaining({ status: 'cancelled' }));
+      });
+
+      it('dismisses a failed build named by its id', async () => {
+        const ctx = await setup();
+        unlinkedWithBuild(ctx);
+        ctx.repo.findBuildById.mockResolvedValue(buildRow({ status: 'failed' }));
+        ctx.repo.findBuildByPair.mockResolvedValue(buildRow({ status: 'failed' }));
+
+        await ctx.service.cancelBuild(11, USER, 7);
+
+        expect(ctx.repo.updateBuild).toHaveBeenCalledWith(7, expect.objectContaining({ status: 'cancelled' }));
+      });
+
+      it('answers 404 for a build id whose build does not involve the book', async () => {
+        const ctx = await setup();
+        unlinkedWithBuild(ctx);
+        ctx.repo.findBuildById.mockResolvedValue(buildRow({ textBookId: 12, audioBookId: 13, status: 'building', phase: 'register' }));
+
+        await expect(ctx.service.cancelBuild(11, USER, 7)).rejects.toBeInstanceOf(NotFoundException);
+        expect(ctx.repo.retireCancelledBuild).not.toHaveBeenCalled();
+      });
+
+      it('answers 404 for a build id when the counterpart in the build is hidden from the caller', async () => {
+        const ctx = await setup();
+        unlinkedWithBuild(ctx);
+        ctx.repo.findBuildById.mockResolvedValue(buildRow({ status: 'building', phase: 'register' }));
+        ctx.bookService.verifyBookAccess.mockImplementation((bookId: number) =>
+          bookId === 10 ? Promise.reject(new NotFoundException('hidden')) : Promise.resolve(undefined),
+        );
+
+        await expect(ctx.service.cancelBuild(11, USER, 7)).rejects.toBeInstanceOf(NotFoundException);
+        expect(ctx.repo.retireCancelledBuild).not.toHaveBeenCalled();
+      });
+
+      it('answers 404 when the counterpart is hidden from the caller', async () => {
+        const ctx = await setup();
+        unlinkedWithBuild(ctx);
+        ctx.bookService.verifyBookAccess.mockImplementation((bookId: number) =>
+          bookId === 10 ? Promise.reject(new NotFoundException('hidden')) : Promise.resolve(undefined),
+        );
+
+        await expect(ctx.service.cancelBuild(11, USER, undefined, 10)).rejects.toBeInstanceOf(NotFoundException);
+        expect(ctx.repo.retireCancelledBuild).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -1636,8 +2018,51 @@ describe('StorytellerReadAlongStatusService', () => {
 
       await service.startNextQueuedBuild();
 
-      expect(repo.failQueuedBuild).toHaveBeenCalledWith(7, expect.stringContaining('no longer linked'));
+      expect(repo.failQueuedBuild).toHaveBeenCalledWith(7, 'This read-along can no longer be built for the editions it was queued with.');
       expect(repo.claimQueuedBuild).not.toHaveBeenCalled();
+    });
+
+    it('starts a queued build for an unlinked pair as the same proposed pair', async () => {
+      const { service, repo, buildService, editionLinks } = await setup();
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow());
+      editionLinks.findLinkForBook.mockResolvedValue(undefined);
+      editionLinks.getBookModality.mockImplementation((bookId: number) => Promise.resolve(bookId === 11 ? 'audio' : 'text'));
+
+      await service.startNextQueuedBuild();
+
+      expect(repo.failQueuedBuild).not.toHaveBeenCalled();
+      expect(buildService.runBuild.mock.calls[0][1]).toMatchObject({ textBookId: 10, audioBookId: 11, linkId: null });
+    });
+
+    // The audiobook kept the pair's read-along on a link after its ebook left: the ebook itself is
+    // unlinked, so the queued rebuild is still the proposed pair and is not refused as relinked.
+    it('starts a queued build whose audiobook sits on a link with no ebook', async () => {
+      const { service, repo, buildService, editionLinks } = await setup();
+      const nullTextLink = { ...LINK, textBookId: null, readAlongBookId: 99 };
+      const row = queuedRow({ outputBookId: 99 });
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(row);
+      repo.findBuildByPair.mockResolvedValue(row);
+      editionLinks.findLinkForBook.mockImplementation((bookId: number) => Promise.resolve(bookId === 11 || bookId === 99 ? nullTextLink : undefined));
+      editionLinks.getBookModality.mockImplementation((bookId: number) => Promise.resolve(bookId === 11 ? 'audio' : 'text'));
+
+      await service.startNextQueuedBuild();
+
+      expect(repo.failQueuedBuild).not.toHaveBeenCalled();
+      expect(buildService.runBuild.mock.calls[0][1]).toMatchObject({ textBookId: 10, audioBookId: 11, linkId: null });
+    });
+
+    it('refuses a queued unlinked pair whose audiobook was linked to another ebook meanwhile', async () => {
+      const { service, repo, buildService, editionLinks } = await setup();
+      repo.findOldestQueuedBuild.mockResolvedValueOnce(queuedRow());
+      editionLinks.findLinkForBook.mockImplementation((bookId: number) =>
+        Promise.resolve(bookId === 11 ? { ...OTHER_LINK, audioBookId: 11 } : undefined),
+      );
+      editionLinks.getBookModality.mockImplementation((bookId: number) => Promise.resolve(bookId === 11 ? 'audio' : 'text'));
+
+      await service.startNextQueuedBuild();
+
+      expect(repo.failQueuedBuild).toHaveBeenCalledWith(7, 'This read-along can no longer be built for the editions it was queued with.');
+      expect(buildService.runBuild).not.toHaveBeenCalled();
     });
 
     it('stops without touching the row while another build holds the slot', async () => {

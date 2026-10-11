@@ -8,6 +8,8 @@ describe('StorytellerReadAlongOutputService', () => {
     findOutputBookIds: ReturnType<typeof vi.fn>;
     findBuildByOutputBook: ReturnType<typeof vi.fn>;
     findBuildByPair: ReturnType<typeof vi.fn>;
+    findNewestBuildForText: ReturnType<typeof vi.fn>;
+    findNewestBuildForAudio: ReturnType<typeof vi.fn>;
     updateBuild: ReturnType<typeof vi.fn>;
   };
   const link = { id: 9, textBookId: 10, audioBookId: 20, readAlongBookId: null };
@@ -18,6 +20,8 @@ describe('StorytellerReadAlongOutputService', () => {
       findOutputBookIds: vi.fn().mockResolvedValue(new Set([30])),
       findBuildByOutputBook: vi.fn(),
       findBuildByPair: vi.fn(),
+      findNewestBuildForText: vi.fn().mockResolvedValue(undefined),
+      findNewestBuildForAudio: vi.fn().mockResolvedValue(undefined),
       updateBuild: vi.fn().mockResolvedValue(undefined),
     };
     service = new StorytellerReadAlongOutputService(repo as unknown as StorytellerRepository);
@@ -50,6 +54,47 @@ describe('StorytellerReadAlongOutputService', () => {
     await expect(service.findSourcePair(31)).resolves.toBeNull();
   });
 
+  it('names the ready build behind a read-along, and none for an unfinished or unknown one', async () => {
+    repo.findBuildByOutputBook
+      .mockResolvedValueOnce({ id: 4, status: 'ready', textBookId: 10, audioBookId: 20, outputBookId: 30 })
+      .mockResolvedValueOnce({ id: 5, status: 'building', textBookId: 10, audioBookId: 20, outputBookId: 31 })
+      .mockResolvedValueOnce(undefined);
+
+    await expect(service.findBuildByReadAlong(30)).resolves.toEqual({ buildId: 4, outputBookId: 30, textBookId: 10, audioBookId: 20 });
+    await expect(service.findBuildByReadAlong(31)).resolves.toBeNull();
+    await expect(service.findBuildByReadAlong(32)).resolves.toBeNull();
+  });
+
+  it('names the pair, status and output of the newest build for an ebook, whatever its status', async () => {
+    repo.findNewestBuildForText.mockResolvedValueOnce({ id: 6, status: 'ready', textBookId: 10, audioBookId: 22, outputBookId: 31 });
+
+    await expect(service.findNewestBuildForText(10)).resolves.toEqual({ textBookId: 10, audioBookId: 22, status: 'ready', outputBookId: 31 });
+    expect(repo.findNewestBuildForText).toHaveBeenCalledWith(10);
+  });
+
+  it('names no build for an ebook that has none', async () => {
+    await expect(service.findNewestBuildForText(10)).resolves.toBeNull();
+  });
+
+  it('names the pair, status and output of the newest build for an audiobook', async () => {
+    repo.findNewestBuildForAudio.mockResolvedValueOnce({ id: 7, status: 'failed', textBookId: 12, audioBookId: 20, outputBookId: null });
+
+    await expect(service.findNewestBuildForAudio(20)).resolves.toEqual({ textBookId: 12, audioBookId: 20, status: 'failed', outputBookId: null });
+    expect(repo.findNewestBuildForAudio).toHaveBeenCalledWith(20);
+  });
+
+  it('names no build for an audiobook that has none', async () => {
+    await expect(service.findNewestBuildForAudio(20)).resolves.toBeNull();
+  });
+
+  // Such a link only exists for its read-along; the pair a build is keyed on needs both sides.
+  it('looks up no lost read-along for a link with no ebook', async () => {
+    const nullText = { ...link, textBookId: null };
+
+    await expect(service.findLostReadAlong(nullText)).resolves.toBeNull();
+    expect(repo.findBuildByPair).not.toHaveBeenCalled();
+  });
+
   describe('a link that lost its read-along', () => {
     const ready = { id: 4, status: 'ready', outputBookId: 30, attachedLinkId: null as number | null };
 
@@ -57,13 +102,6 @@ describe('StorytellerReadAlongOutputService', () => {
       repo.findBuildByPair.mockResolvedValue({ ...ready, attachedLinkId: 5 });
 
       await expect(service.findLostReadAlong(link)).resolves.toEqual({ buildId: 4, outputBookId: 30 });
-      expect(repo.findBuildByPair).toHaveBeenCalledWith(10, 20);
-    });
-
-    it('finds a deliberately detached output for an explicit re-attach', async () => {
-      repo.findBuildByPair.mockResolvedValue({ ...ready, attachedLinkId: 9 });
-
-      await expect(service.findReadAlongForPair(link)).resolves.toEqual({ buildId: 4, outputBookId: 30 });
       expect(repo.findBuildByPair).toHaveBeenCalledWith(10, 20);
     });
 

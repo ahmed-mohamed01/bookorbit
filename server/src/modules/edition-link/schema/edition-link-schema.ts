@@ -1,6 +1,6 @@
 export const EDITION_LINK_SCHEMA_SQL = `CREATE TABLE IF NOT EXISTS "book_edition_links" (
 	"id" serial PRIMARY KEY NOT NULL,
-	"text_book_id" integer NOT NULL,
+	"text_book_id" integer,
 	"audio_book_id" integer NOT NULL,
 	"created_by" integer,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -69,6 +69,21 @@ DO $$ BEGIN
 END $$;
 --> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "book_edition_links_read_along_book_id_unique" ON "book_edition_links" USING btree ("read_along_book_id") WHERE "read_along_book_id" IS NOT NULL;
+--> statement-breakpoint
+DO $$
+DECLARE
+	col_notnull boolean;
+BEGIN
+	SELECT attnotnull INTO col_notnull
+	FROM pg_attribute
+	WHERE attrelid = 'book_edition_links'::regclass AND attname = 'text_book_id' AND NOT attisdropped;
+
+	IF col_notnull THEN
+		ALTER TABLE "book_edition_links" ALTER COLUMN "text_book_id" DROP NOT NULL;
+	END IF;
+END $$;
+--> statement-breakpoint
+DELETE FROM "book_edition_links" WHERE "text_book_id" IS NULL AND "read_along_book_id" IS NULL;
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "read_along_narration_offsets" (
 	"id" serial PRIMARY KEY NOT NULL,

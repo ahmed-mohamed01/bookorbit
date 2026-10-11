@@ -91,6 +91,15 @@ describe('EditionLinkProgressService', () => {
       ]);
     });
 
+    it('emits no text member for a link with no ebook', async () => {
+      const { service } = makeScopeService([{ textBookId: null, audioBookId: 20, readAlongBookId: 30 }]);
+
+      await expect(service.resolveScope(20)).resolves.toEqual([
+        { bookId: 20, role: 'audio' },
+        { bookId: 30, role: 'readAlong' },
+      ]);
+    });
+
     it('returns null when the book is not linked', async () => {
       const { service } = makeScopeService([]);
 

@@ -1,10 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, isNotNull, isNull, or, type SQL, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import type { ContentFilterRules, EditionLinkCandidate, EditionLinkCounterpartSummary } from '@bookorbit/types';
 import { AUDIO_FORMAT_LIST, isAudioFormat } from '@bookorbit/types';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
+import { isUniqueViolation } from '../../common/utils/db-error.utils';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { audiobookProgress, authors, bookAuthors, bookFiles, bookMetadata, books, readingProgress } from '../../db/schema';
@@ -29,9 +30,15 @@ export interface FindCounterpartCandidatesOptions {
 }
 
 export interface EditionLinkMemberIds {
-  textBookId: number;
+  textBookId: number | null;
   audioBookId: number;
   readAlongBookId: number | null;
+}
+
+export interface ReadingPercentageTarget {
+  bookId: number;
+  /** Audiobooks keep book-level progress; every other book reads its primary file's row. */
+  audio: boolean;
 }
 
 export interface EditionLinkMemberProgressRow {
@@ -119,7 +126,12 @@ export class EditionLinkRepository {
     const [row] = await this.db
       .select()
       .from(bookEditionLinks)
-      .where(or(eq(bookEditionLinks.textBookId, bookId), eq(bookEditionLinks.audioBookId, bookId), eq(bookEditionLinks.readAlongBookId, bookId)))
+      .where(
+        and(
+          or(eq(bookEditionLinks.textBookId, bookId), eq(bookEditionLinks.audioBookId, bookId), eq(bookEditionLinks.readAlongBookId, bookId)),
+          or(isNotNull(bookEditionLinks.textBookId), isNotNull(bookEditionLinks.readAlongBookId)),
+        ),
+      )
       .limit(1);
     return row;
   }
@@ -136,19 +148,10 @@ export class EditionLinkRepository {
   // Per-member reading progress for the link popover. Text and read-along read the book's primary
   // file row in `reading_progress`; the audiobook keeps its own book-level `audiobook_progress` row.
   async findMemberProgress(userId: number, ids: EditionLinkMemberIds): Promise<EditionLinkMemberProgressRows> {
-    const fileBookIds = ids.readAlongBookId === null ? [ids.textBookId] : [ids.textBookId, ids.readAlongBookId];
+    const fileBookIds = [ids.textBookId, ids.readAlongBookId].filter((id): id is number => id !== null);
 
     const [fileRows, audioRows] = await Promise.all([
-      this.db
-        .select({
-          bookId: books.id,
-          percentage: readingProgress.percentage,
-          lastReadAt: readingProgress.lastReadAt,
-          narrationPercentage: readingProgress.narrationPercentage,
-        })
-        .from(books)
-        .innerJoin(readingProgress, and(eq(readingProgress.bookFileId, books.primaryFileId), eq(readingProgress.userId, userId)))
-        .where(inArray(books.id, fileBookIds)),
+      this.findFileProgressRows(userId, fileBookIds),
       this.db
         .select({ percentage: audiobookProgress.percentage, updatedAt: audiobookProgress.updatedAt })
         .from(audiobookProgress)
@@ -157,7 +160,7 @@ export class EditionLinkRepository {
     ]);
 
     const byBookId = new Map(fileRows.map((row) => [row.bookId, row]));
-    const textRow = byBookId.get(ids.textBookId);
+    const textRow = ids.textBookId === null ? undefined : byBookId.get(ids.textBookId);
     const readAlongRow = ids.readAlongBookId === null ? undefined : byBookId.get(ids.readAlongBookId);
     const audioRow = audioRows[0];
 
@@ -169,9 +172,86 @@ export class EditionLinkRepository {
     };
   }
 
-  async insertLink(textBookId: number, audioBookId: number, createdBy: number): Promise<BookEditionLink | undefined> {
-    const [row] = await this.db.insert(bookEditionLinks).values({ textBookId, audioBookId, createdBy }).onConflictDoNothing().returning();
-    return row;
+  async findReadingPercentages(userId: number, targets: readonly ReadingPercentageTarget[]): Promise<Map<number, number>> {
+    if (targets.length === 0) return new Map();
+    const rows = await this.db
+      .select({ bookId: books.id, filePercentage: readingProgress.percentage, audioPercentage: audiobookProgress.percentage })
+      .from(books)
+      .leftJoin(readingProgress, and(eq(readingProgress.bookFileId, books.primaryFileId), eq(readingProgress.userId, userId)))
+      .leftJoin(audiobookProgress, and(eq(audiobookProgress.bookId, books.id), eq(audiobookProgress.userId, userId)))
+      .where(
+        inArray(
+          books.id,
+          targets.map((target) => target.bookId),
+        ),
+      );
+    const audioIds = new Set(targets.filter((target) => target.audio).map((target) => target.bookId));
+    const percentages = new Map<number, number>();
+    for (const row of rows) {
+      const percentage = audioIds.has(row.bookId) ? row.audioPercentage : row.filePercentage;
+      if (percentage !== null) percentages.set(row.bookId, percentage);
+    }
+    return percentages;
+  }
+
+  private async findFileProgressRows(userId: number, bookIds: number[]) {
+    if (bookIds.length === 0) return [];
+    return this.db
+      .select({
+        bookId: books.id,
+        percentage: readingProgress.percentage,
+        lastReadAt: readingProgress.lastReadAt,
+        narrationPercentage: readingProgress.narrationPercentage,
+      })
+      .from(books)
+      .innerJoin(readingProgress, and(eq(readingProgress.bookFileId, books.primaryFileId), eq(readingProgress.userId, userId)))
+      .where(inArray(books.id, bookIds));
+  }
+
+  // A row left holding the audiobook alone (its read-along hard-deleted through the SET NULL FK) is
+  // invisible to findLinkForBook, so the audiobook reads as unlinked: the insert claims that row
+  // instead of conflicting on it. A conflict on any other row, or on a text or read-along member,
+  // reads as nothing inserted.
+  async insertLink(
+    textBookId: number | null,
+    audioBookId: number,
+    createdBy: number,
+    readAlongBookId: number | null = null,
+  ): Promise<BookEditionLink | undefined> {
+    try {
+      const [row] = await this.db
+        .insert(bookEditionLinks)
+        .values({ textBookId, audioBookId, createdBy, readAlongBookId })
+        .onConflictDoUpdate({
+          target: bookEditionLinks.audioBookId,
+          set: { textBookId, readAlongBookId, createdBy, createdAt: sql`now()` },
+          setWhere: and(isNull(bookEditionLinks.textBookId), isNull(bookEditionLinks.readAlongBookId)),
+        })
+        .returning();
+      return row;
+    } catch (err) {
+      if (isUniqueViolation(err)) return undefined;
+      throw err;
+    }
+  }
+
+  // Compare-and-set on the text side, like setReadAlongBook: a caller acting on a stale read must not
+  // overwrite a text member set or cleared in between. A book that is already another link's text
+  // member trips the unique constraint, which reads as "nothing updated". Clearing it drops a row that
+  // is then left holding the audiobook alone.
+  async setTextBook(linkId: number, textBookId: number | null, expected: number | null = null): Promise<BookEditionLink | undefined> {
+    const where = and(
+      eq(bookEditionLinks.id, linkId),
+      expected === null ? isNull(bookEditionLinks.textBookId) : eq(bookEditionLinks.textBookId, expected),
+    );
+    if (textBookId === null) return this.clearMember({ textBookId: null }, where);
+    try {
+      const [row] = await this.db.update(bookEditionLinks).set({ textBookId }).where(where).returning();
+      return row;
+    } catch (err) {
+      if (isUniqueViolation(err)) return undefined;
+      throw err;
+    }
   }
 
   // Returns undefined when nothing was updated: the link is gone, the link already names another
@@ -181,8 +261,9 @@ export class EditionLinkRepository {
   // must not overwrite a detach or another read-along made in between, so only an empty slot, the
   // same book (a rebuild replaced in place) or the `replacing` book it read is taken over. A book that
   // is already another link's read-along member is rejected by the partial unique index as a 23505
-  // instead, which the caller maps to its own error.
-  async setReadAlongBook(linkId: number, bookId: number | null, replacing: number | null = null): Promise<BookEditionLink | undefined> {
+  // instead, which the caller maps to its own error. A detach is a compare-and-set too: it clears
+  // only while the slot still names the `expected` book the caller read.
+  async setReadAlongBook(linkId: number, bookId: number | null, expected: number | null = null): Promise<BookEditionLink | undefined> {
     const attachable =
       bookId === null
         ? undefined
@@ -190,7 +271,7 @@ export class EditionLinkRepository {
             or(
               isNull(bookEditionLinks.readAlongBookId),
               eq(bookEditionLinks.readAlongBookId, bookId),
-              replacing === null ? undefined : eq(bookEditionLinks.readAlongBookId, replacing),
+              expected === null ? undefined : eq(bookEditionLinks.readAlongBookId, expected),
             ),
             sql`NOT EXISTS (
               SELECT 1 FROM book_edition_links member_link
@@ -198,12 +279,29 @@ export class EditionLinkRepository {
                  OR member_link.audio_book_id = ${bookId}
             )`,
           );
+    if (bookId === null) {
+      const current = expected === null ? isNull(bookEditionLinks.readAlongBookId) : eq(bookEditionLinks.readAlongBookId, expected);
+      return this.clearMember({ readAlongBookId: null }, and(eq(bookEditionLinks.id, linkId), current));
+    }
     const [row] = await this.db
       .update(bookEditionLinks)
       .set({ readAlongBookId: bookId })
       .where(and(eq(bookEditionLinks.id, linkId), attachable))
       .returning();
     return row;
+  }
+
+  // The clear and the delete share one transaction so no audio-only row is ever committed. The
+  // update's row lock serializes a concurrent clear of the other optional member: whichever runs
+  // second sees both sides empty and drops the row. Returns the cleared row, deleted or not.
+  private async clearMember(set: { textBookId: null } | { readAlongBookId: null }, where: SQL | undefined): Promise<BookEditionLink | undefined> {
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx.update(bookEditionLinks).set(set).where(where).returning();
+      if (row && row.textBookId === null && row.readAlongBookId === null) {
+        await tx.delete(bookEditionLinks).where(eq(bookEditionLinks.id, row.id));
+      }
+      return row;
+    });
   }
 
   // Keyed by the resolved link id, never by a member book: an OR across the three member columns
@@ -258,10 +356,11 @@ export class EditionLinkRepository {
               AND candidate_file.role = 'content'
               AND lower(coalesce(candidate_file.format, '')) IN (${audioFormats})
           )`;
+    // An audiobook linked to a read-along alone is still open to an ebook: link() fills that row's text side.
     const notLinked = sql`NOT EXISTS (
       SELECT 1 FROM book_edition_links existing_link
       WHERE existing_link.text_book_id = ${books.id}
-         OR existing_link.audio_book_id = ${books.id}
+         OR (existing_link.audio_book_id = ${books.id} AND existing_link.text_book_id IS NOT NULL)
          OR existing_link.read_along_book_id = ${books.id}
     )`;
     const matchFilter = query

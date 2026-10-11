@@ -87,7 +87,7 @@ const QUEUE_REFUSAL_MESSAGES: Record<QueueRefusal, string> = {
   not_configured: "Storyteller isn't configured on this server.",
   unreachable: "The Storyteller server can't be reached.",
   busy: 'Storyteller is busy with another read-along.',
-  no_pair: 'This book is no longer linked to the edition it was queued with.',
+  no_pair: 'This read-along can no longer be built for the editions it was queued with.',
   no_epub: 'This pair has no EPUB to align.',
   source_epub_unreadable: "This book's EPUB file cannot be read, so Storyteller cannot align it.",
   no_audio: 'This pair has no audio to align.',
@@ -107,6 +107,22 @@ interface AdmittedBuild {
   previousOutputBookId: number | null;
   /** Whether a build that could not replace it in place may delete it once the new one is linked. */
   removePreviousOutput: boolean;
+}
+
+type PairSource = 'none' | 'link' | 'self' | 'proposed';
+
+/** What every [end] and [fail] line of one build request carries. */
+interface RequestLog {
+  bookId: number;
+  userId: number;
+  startedAt: number;
+  pairSource: PairSource;
+}
+
+function pairSourceOf(pair: StorytellerReadAlongPair | null): PairSource {
+  if (!pair) return 'none';
+  if (pair.linkId !== null) return 'link';
+  return pair.role === 'self' ? 'self' : 'proposed';
 }
 
 function normalizeReadAlongStatus(status: string | undefined): ReadAlongStatus {
@@ -155,8 +171,12 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
   /** `retried`: the row moved under a queue insert once already, and this is the one fresh look it gets. */
   private async requestBuildOnce(bookId: number, user: RequestUser, dto: BuildReadAlongDto, retried: boolean): Promise<ReadAlongBuildResponse> {
     const startedAt = Date.now();
-    this.logger.log(`[${REQUEST_EVENT}] [start] bookId=${bookId} userId=${user.id} force=${dto.force ?? false} - read-along build requested`);
+    this.logger.log(
+      `[${REQUEST_EVENT}] [start] bookId=${bookId} userId=${user.id} counterpartId=${dto.counterpartId ?? 'none'} force=${dto.force ?? false} - read-along build requested`,
+    );
     await this.bookService.verifyBookAccess(bookId, user);
+    const pair = await this.resolvePairWith(bookId, dto.counterpartId);
+    const log: RequestLog = { bookId, userId: user.id, startedAt, pairSource: pairSourceOf(pair) };
 
     const settings = await this.settingsService.getSettings();
     let connection: StorytellerConnection | null;
@@ -164,22 +184,21 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
       connection = await this.settingsService.getConnection();
     } catch (error) {
       if (error instanceof InternalServerErrorException) {
-        this.logConfigurationFailure(bookId, user.id, startedAt, error);
-        return { status: await this.statusOfExistingBuild(bookId, user), blocked: 'not_configured' };
+        this.logConfigurationFailure(log, error);
+        return { status: await this.statusOfExistingBuild(pair, bookId, user), blocked: 'not_configured' };
       }
       throw error;
     }
     // Reported against the build actually on the row: clearing the stored password on a host change
     // is what puts a running build here, and 'none' would blank it until the next poll.
     if (!connection) {
-      return this.blocked(await this.statusOfExistingBuild(bookId, user), 'not_configured', bookId, user.id, startedAt);
+      return this.blocked(await this.statusOfExistingBuild(pair, bookId, user), 'not_configured', log);
     }
-    const pair = await this.resolvePair(bookId);
-    if (!pair || !(await this.canAccessPair(pair, bookId, user))) return this.blocked('none', 'no_pair', bookId, user.id, startedAt);
+    if (!pair || !(await this.canAccessPair(pair, bookId, user))) return this.blocked('none', 'no_pair', log);
 
     const existing = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
-    const admission = await this.admit(bookId, pair, user, dto, settings, existing, startedAt);
-    if ('blocked' in admission) return this.blocked(existing?.status, admission.blocked, bookId, user.id, startedAt);
+    const admission = await this.admit(pair, user, dto, settings, existing, log);
+    if ('blocked' in admission) return this.blocked(existing?.status, admission.blocked, log);
     const { targetLibraryId, runTargetLibraryId, runTargetFolderId, previousOutputBookId, removePreviousOutput } = admission.admitted;
 
     const existingOutput = existing?.outputBookId ? await this.editionLinks.findBookSummary(existing.outputBookId) : null;
@@ -187,12 +206,12 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
       // Unlinking and relinking inserts a fresh link row with no read-along member, and nothing else
       // goes looking for the build that already produced one.
       await this.attachExistingOutput(pair, existing, existingOutput.id, user);
-      return this.blocked('ready', null, bookId, user.id, startedAt);
+      return this.blocked('ready', null, log);
     }
     // A second Generate keeps the pair's place in line rather than sending it to the back.
     if (existing?.status === 'queued') {
       this.kickQueue();
-      return this.blocked('queued', null, bookId, user.id, startedAt);
+      return this.blocked('queued', null, log);
     }
     await this.awaitCancelledBuildRelease(pair);
     // First come, first served: with anything already waiting, a free slot belongs to the oldest
@@ -204,25 +223,25 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     const slot = waiting ? null : this.buildService.tryReserve(pair);
     if (!slot) {
       if (dto.useExistingUuid !== undefined) {
-        await this.assertOfferedUuid(pair, dto.useExistingUuid, connection, bookId, user.id, startedAt);
+        await this.assertOfferedUuid(pair, dto.useExistingUuid, connection, log);
       }
-      const queued = await this.enqueue(pair, user, dto, admission.admitted, existing, bookId, startedAt);
+      const queued = await this.enqueue(pair, user, dto, admission.admitted, existing, log);
       if (queued !== 'moved') return queued;
       // The row changed between the read and the insert (a build finished, or another request got
       // there first): read it again and decide afresh, once.
       const current = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
       if (current?.status === 'queued') {
         this.kickQueue();
-        return this.blocked('queued', null, bookId, user.id, startedAt);
+        return this.blocked('queued', null, log);
       }
       if (!retried) return this.requestBuildOnce(bookId, user, dto, true);
-      return this.blocked(current?.status, null, bookId, user.id, startedAt);
+      return this.blocked(current?.status, null, log);
     }
 
     let handedOff = false;
     try {
       if (dto.useExistingUuid !== undefined) {
-        await this.assertOfferedUuid(pair, dto.useExistingUuid, connection, bookId, user.id, startedAt);
+        await this.assertOfferedUuid(pair, dto.useExistingUuid, connection, log);
       }
 
       const { storytellerBookUuid, transport } = this.resumeTarget(dto, existing?.status, existing);
@@ -243,15 +262,15 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
         const current = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
         if (current?.status === 'queued') {
           this.kickQueue();
-          return this.blocked('queued', null, bookId, user.id, startedAt);
+          return this.blocked('queued', null, log);
         }
-        return this.blocked(current?.status ?? existing?.status, 'busy', bookId, user.id, startedAt);
+        return this.blocked(current?.status ?? existing?.status, 'busy', log);
       }
       // Cancelled between the reservation and the claim: the aborted build would never touch this
       // row, which would then read building until a restart and answer busy to every Generate.
       if (slot.signal.aborted) {
         await this.repo.retireCancelledBuild(claimed.id);
-        return this.blocked('none', 'busy', bookId, user.id, startedAt);
+        return this.blocked('none', 'busy', log);
       }
 
       this.launch(
@@ -277,7 +296,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     }
 
     this.logger.log(
-      `[${REQUEST_EVENT}] [end] bookId=${bookId} userId=${user.id} durationMs=${Date.now() - startedAt} status=building blocked=none - read-along build accepted`,
+      `[${REQUEST_EVENT}] [end] bookId=${bookId} userId=${user.id} durationMs=${Date.now() - startedAt} pairSource=${log.pairSource} status=building blocked=none - read-along build accepted`,
     );
     return { status: 'building', blocked: null };
   }
@@ -288,13 +307,12 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
    * decisions read: for a queued row that is the status it had before it was queued.
    */
   private async admit(
-    bookId: number,
     pair: StorytellerReadAlongPair,
     user: RequestUser,
     dto: BuildReadAlongDto,
     settings: StorytellerSettings,
     existing: AdmissionRow | undefined,
-    startedAt: number,
+    log: RequestLog,
   ): Promise<{ blocked: ReadAlongBlockReason } | { admitted: AdmittedBuild }> {
     const [sourceEpub, hasAudio] = await Promise.all([
       this.repo.findSourceEpubFile(pair.textBookId),
@@ -311,7 +329,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     const epubProblem = await findSourceEpubProblem(sourceEpub.absolutePath);
     if (epubProblem) {
       this.logger.warn(
-        `[${REQUEST_EVENT}] [fail] bookId=${bookId} userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=UnreadableSourceEpub error="${sanitizeLogValue(epubProblem)}" path="${sanitizeLogValue(sourceEpub.absolutePath)}" - source epub cannot be read as an EPUB`,
+        `[${REQUEST_EVENT}] [fail] bookId=${log.bookId} userId=${log.userId} durationMs=${Date.now() - log.startedAt} pairSource=${log.pairSource} errorClass=UnreadableSourceEpub path="${sanitizeLogValue(sourceEpub.absolutePath)}" error="${sanitizeLogValue(epubProblem)}" - source epub cannot be read as an EPUB`,
       );
       return { blocked: 'source_epub_unreadable' };
     }
@@ -350,7 +368,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     // is filed, so the row names the previous output even for a failed or interrupted rebuild. The
     // link covers rows claimed before the column was kept.
     const previousOutput = existing?.outputBookId ?? pair.link?.readAlongBookId ?? null;
-    const previousOutputVisible = previousOutput !== null && (previousOutput === bookId || (await this.canAccessBook(previousOutput, user)));
+    const previousOutputVisible = previousOutput !== null && (previousOutput === log.bookId || (await this.canAccessBook(previousOutput, user)));
     // Any build replaces a previous output in place, which keeps the book and deletes nothing; without
     // one to replace it would file a second copy the dock refuses as a destination conflict. Only the
     // fallback that files a new book deletes the old one, through bookService.deleteBooks(), which
@@ -392,8 +410,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     dto: BuildReadAlongDto,
     admitted: AdmittedBuild,
     existing: StorytellerReadAlongBuild | undefined,
-    bookId: number,
-    startedAt: number,
+    log: RequestLog,
   ): Promise<ReadAlongBuildResponse | 'moved'> {
     const queued = await this.repo.queueBuild(
       {
@@ -410,7 +427,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     // The slot may have come free between the reservation that failed and this insert, with the
     // release that would have started this row already past.
     this.kickQueue();
-    return this.blocked('queued', null, bookId, user.id, startedAt);
+    return this.blocked('queued', null, log);
   }
 
   private attemptRequest(dto: BuildReadAlongDto, admitted: AdmittedBuild, previousStatus: string | null): StorytellerQueuedRequest {
@@ -616,7 +633,12 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
 
       if (dto.useExistingUuid !== undefined) {
         try {
-          await this.assertOfferedUuid(pair, dto.useExistingUuid, connection, row.textBookId, user.id, startedAt);
+          await this.assertOfferedUuid(pair, dto.useExistingUuid, connection, {
+            bookId: row.textBookId,
+            userId: user.id,
+            startedAt,
+            pairSource: pairSourceOf(pair),
+          });
         } catch (error) {
           if (!(error instanceof HttpException)) throw error;
           return await this.failQueued(row, user.id, error.message, startedAt, 'uuid_not_offered');
@@ -697,12 +719,13 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     }
     if (!connection) return { refused: 'not_configured' };
     // The pair may have been relinked while the row waited: a different counterpart is a different read-along.
-    const pair = await this.resolvePair(bookId);
+    const pair = await this.resolvePairWith(bookId, row.audioBookId);
     if (!pair || pair.textBookId !== row.textBookId || pair.audioBookId !== row.audioBookId || !(await this.canAccessPair(pair, bookId, user))) {
       return { refused: 'no_pair' };
     }
     const priorStatus = row.queuedRequest?.previousStatus ?? undefined;
-    const admission = await this.admit(bookId, pair, user, dto, settings, { ...row, status: priorStatus ?? 'none' }, startedAt);
+    const log: RequestLog = { bookId, userId: user.id, startedAt, pairSource: pairSourceOf(pair) };
+    const admission = await this.admit(pair, user, dto, settings, { ...row, status: priorStatus ?? 'none' }, log);
     if ('blocked' in admission) return { refused: admission.blocked };
     return { pair, connection, admitted: admission.admitted };
   }
@@ -725,12 +748,16 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
   /**
    * Stops a running build. It is not recorded as a failure to retry: a row that already holds a
    * Storyteller book is kept as cancelled, which status reads report as no build, and one that does
-   * not is deleted.
+   * not is deleted. A failed row is dismissed the same way, so the pair reads as having no build.
    */
-  /** `buildId` pins the cancel to one build: a notification's Cancel must not stop a later build of the pair. */
-  async cancelBuild(bookId: number, user: RequestUser, buildId?: number): Promise<void> {
+  /**
+   * `buildId` pins the cancel to one build: a notification's Cancel must not stop a later build of the
+   * pair. `counterpartId` finds a build started for an unlinked pair, as its build request named it.
+   */
+  async cancelBuild(bookId: number, user: RequestUser, buildId?: number, counterpartId?: number): Promise<void> {
     await this.bookService.verifyBookAccess(bookId, user);
-    const pair = await this.resolvePair(bookId);
+    const buildPair = buildId !== undefined ? await this.pairOfBuild(bookId, buildId) : null;
+    const pair = buildPair ?? (await this.resolvePairWith(bookId, counterpartId));
     if (!pair || !(await this.canAccessPair(pair, bookId, user))) throw new NotFoundException('This book has no read-along pair');
 
     const startedAt = Date.now();
@@ -764,11 +791,13 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
         }
       } else if (build?.status === 'building') {
         row = await this.retireBuildingRow(build, pair);
+      } else if (build?.status === 'failed' && !inFlight) {
+        row = await this.dismissFailedRow(build);
       }
       this.logger.log(
         `[${CANCEL_EVENT}] [end] bookId=${bookId} userId=${user.id} buildId=${build?.id ?? 'none'} durationMs=${Date.now() - startedAt} status=${retired?.status ?? 'none'} inFlight=${inFlight} row=${row} - read-along build cancel completed`,
       );
-      if (retired && row !== 'unchanged') {
+      if (retired && retired.status !== 'failed' && row !== 'unchanged') {
         const attempt = readAlongAttempt(retired);
         const requester = retired.requestedBy ?? user.id;
         void this.notifier.cancelled(requester, attempt);
@@ -796,11 +825,32 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     }
   }
 
+  // A notification's Cancel names its build but not the counterpart an unlinked pair was started with.
+  private async pairOfBuild(bookId: number, buildId: number): Promise<StorytellerReadAlongPair | null> {
+    const build = await this.repo.findBuildById(buildId);
+    if (!build || (build.textBookId !== bookId && build.audioBookId !== bookId)) return null;
+    const role = build.textBookId === bookId ? 'text' : 'audio';
+    return { textBookId: build.textBookId, audioBookId: build.audioBookId, linkId: null, role, link: null };
+  }
+
   /**
    * A row holding a Storyteller book is kept as cancelled rather than deleted, with the book left in
    * Storyteller: deleting a Storyteller book removes the source files a referenced book points at, and
    * the next Generate resumes that book instead of importing the same paths again.
    */
+  private async dismissFailedRow(build: StorytellerReadAlongBuild): Promise<'kept' | 'unchanged'> {
+    const updated = await this.repo.updateBuild(build.id, {
+      status: 'cancelled',
+      phase: null,
+      remoteTask: null,
+      remoteProgress: null,
+      error: null,
+      queuedAt: null,
+      queuedRequest: null,
+    });
+    return updated ? 'kept' : 'unchanged';
+  }
+
   private async retireBuildingRow(build: StorytellerReadAlongBuild, pair: StorytellerReadAlongPair): Promise<'kept' | 'deleted' | 'unchanged'> {
     // Collecting writes the read-along into a library and links it; stopping part way would strand a
     // book nothing points at.
@@ -858,8 +908,8 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
   /**
    * `counterpartId` names the edition an unlinked book is about to be linked with. A read-along built
    * for that pair before it was unlinked rejoins it on the next link, so it is reported as the pair's
-   * build rather than offering to generate a second copy. Without such a build the unlinked answer is
-   * unchanged.
+   * build rather than offering to generate a second copy. Without such a build the answer describes
+   * that pair, so the content blockers and the copy sizes are real before the first Generate.
    */
   async getStatus(bookId: number, user: RequestUser, counterpartId?: number): Promise<ReadAlongStatusResponse> {
     await this.bookService.verifyBookAccess(bookId, user);
@@ -868,12 +918,8 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     let pair = linkedPair;
     let build = pair ? await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId) : undefined;
     if (!pair && counterpartId !== undefined && counterpartId !== bookId) {
-      const proposed = await this.proposedPair(bookId, counterpartId);
-      const proposedBuild = proposed ? await this.repo.findBuildByPair(proposed.textBookId, proposed.audioBookId) : undefined;
-      if (proposed && proposedBuild) {
-        pair = proposed;
-        build = proposedBuild;
-      }
+      pair = await this.proposedPair(bookId, counterpartId);
+      build = pair ? await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId) : undefined;
     }
     if (!pair) {
       build = await this.repo.findBuildByOutputBook(bookId);
@@ -1009,10 +1055,10 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     }
   }
 
-  async findExisting(bookId: number, user: RequestUser): Promise<StorytellerExistingMatchesResponse> {
+  async findExisting(bookId: number, user: RequestUser, counterpartId?: number): Promise<StorytellerExistingMatchesResponse> {
     const startedAt = Date.now();
     await this.bookService.verifyBookAccess(bookId, user);
-    const pair = await this.resolvePair(bookId);
+    const pair = await this.resolvePairWith(bookId, counterpartId);
     if (!pair || !(await this.canAccessPair(pair, bookId, user))) return { matches: [] };
     const connection = await this.settingsService.getConnection();
     if (!connection) throw new BadRequestException('Storyteller is not configured');
@@ -1067,14 +1113,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
    * matching is presentational: any LibraryUpload holder could POST the uuid of an unrelated aligned
    * book and have its read-along attached as this pair's third member.
    */
-  private async assertOfferedUuid(
-    pair: StorytellerReadAlongPair,
-    uuid: string,
-    connection: StorytellerConnection,
-    bookId: number,
-    userId: number,
-    startedAt: number,
-  ): Promise<void> {
+  private async assertOfferedUuid(pair: StorytellerReadAlongPair, uuid: string, connection: StorytellerConnection, log: RequestLog): Promise<void> {
     const identity = await this.repo.findBookTitleAndAuthors(pair.textBookId);
     const matches = identity ? await this.matchRemoteBooks(identity, connection) : [];
     if (matches.some((match) => match.uuid === uuid && match.aligned)) return;
@@ -1082,7 +1121,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     const refusal = new BadRequestException('That Storyteller book is not a match for this pair');
     const { errorClass, message } = describeError(refusal);
     this.logger.warn(
-      `[${REQUEST_EVENT}] [fail] bookId=${bookId} userId=${userId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - unoffered Storyteller book refused`,
+      `[${REQUEST_EVENT}] [fail] bookId=${log.bookId} userId=${log.userId} durationMs=${Date.now() - log.startedAt} pairSource=${log.pairSource} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - unoffered Storyteller book refused`,
     );
     throw refusal;
   }
@@ -1099,18 +1138,42 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     await this.editionLinkService.attachReadAlong(pair.link, { buildId: build.id, outputBookId }, user.id);
   }
 
+  /** The book's own pair, or else the one it would form with `counterpartId` once linked. */
+  private async resolvePairWith(bookId: number, counterpartId: number | undefined): Promise<StorytellerReadAlongPair | null> {
+    const pair = await this.resolvePair(bookId);
+    if (pair || counterpartId === undefined || counterpartId === bookId) return pair;
+    return this.proposedPair(bookId, counterpartId);
+  }
+
   // The pair an unlinked book would form with `counterpartId`: one text and one audio edition, in
-  // either order. Anything else is no pair, the same as an unlinked book.
+  // either order, that a link could actually join. Anything else is no pair, the same as an unlinked book.
   private async proposedPair(bookId: number, counterpartId: number): Promise<StorytellerReadAlongPair | null> {
     const [own, other] = await Promise.all([this.editionLinks.getBookModality(bookId), this.editionLinks.getBookModality(counterpartId)]);
-    if (own === 'text' && other === 'audio') return { textBookId: bookId, audioBookId: counterpartId, linkId: null, role: 'text', link: null };
-    if (own === 'audio' && other === 'text') return { textBookId: counterpartId, audioBookId: bookId, linkId: null, role: 'audio', link: null };
-    return null;
+    let pair: StorytellerReadAlongPair;
+    if (own === 'text' && other === 'audio') pair = { textBookId: bookId, audioBookId: counterpartId, linkId: null, role: 'text', link: null };
+    else if (own === 'audio' && other === 'text') pair = { textBookId: counterpartId, audioBookId: bookId, linkId: null, role: 'audio', link: null };
+    else return null;
+    return (await this.isLinkablePair(pair)) ? pair : null;
+  }
+
+  // A read-along is never a text source, and a book already linked with a text side belongs to that
+  // link. The only link either may sit on is the audiobook's own link that has no ebook yet, and a
+  // read-along already held there blocks a second one unless this pair's own build produced it.
+  private async isLinkablePair(pair: StorytellerReadAlongPair): Promise<boolean> {
+    const ids = [pair.textBookId, pair.audioBookId];
+    const [outputs, ...links] = await Promise.all([this.repo.findOutputBookIds(ids), ...ids.map((id) => this.editionLinks.findLinkForBook(id))]);
+    if (ids.some((id) => outputs.has(id))) return false;
+    if (!links.every((link) => !link || (link.textBookId === null && link.audioBookId === pair.audioBookId))) return false;
+    const heldReadAlong = links[1]?.readAlongBookId ?? null;
+    if (heldReadAlong === null) return true;
+    const ownBuild = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
+    return ownBuild?.outputBookId === heldReadAlong;
   }
 
   async resolvePair(bookId: number): Promise<StorytellerReadAlongPair | null> {
     const link = await this.editionLinks.findLinkForBook(bookId);
     if (link) {
+      if (link.textBookId === null) return null;
       const role = link.textBookId === bookId ? 'text' : link.audioBookId === bookId ? 'audio' : 'readAlong';
       return { textBookId: link.textBookId, audioBookId: link.audioBookId, linkId: link.id, role, link };
     }
@@ -1184,8 +1247,7 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
   // The status a blocked answer reports when the refusal comes before the build row was read. A pair
   // member the caller cannot open answers as no pair, or this describes a build against a book they
   // were never shown.
-  private async statusOfExistingBuild(bookId: number, user: RequestUser): Promise<ReadAlongStatus> {
-    const pair = await this.resolvePair(bookId);
+  private async statusOfExistingBuild(pair: StorytellerReadAlongPair | null, bookId: number, user: RequestUser): Promise<ReadAlongStatus> {
     if (!pair || !(await this.canAccessPair(pair, bookId, user))) return 'none';
     const build = await this.repo.findBuildByPair(pair.textBookId, pair.audioBookId);
     return normalizeReadAlongStatus(build?.status);
@@ -1207,24 +1269,18 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
     return Number.isFinite(checkedAt) && Date.now() - checkedAt < FAILED_CHECK_TTL_MS;
   }
 
-  private blocked(
-    status: string | undefined,
-    blocked: ReadAlongBlockReason | null,
-    bookId: number,
-    userId: number,
-    startedAt: number,
-  ): ReadAlongBuildResponse {
+  private blocked(status: string | undefined, blocked: ReadAlongBlockReason | null, log: RequestLog): ReadAlongBuildResponse {
     const normalizedStatus = normalizeReadAlongStatus(status);
     this.logger.log(
-      `[${REQUEST_EVENT}] [end] bookId=${bookId} userId=${userId} durationMs=${Date.now() - startedAt} status=${normalizedStatus} blocked=${blocked ?? 'none'} - read-along build request completed`,
+      `[${REQUEST_EVENT}] [end] bookId=${log.bookId} userId=${log.userId} durationMs=${Date.now() - log.startedAt} pairSource=${log.pairSource} status=${normalizedStatus} blocked=${blocked ?? 'none'} - read-along build request completed`,
     );
     return { status: normalizedStatus, blocked };
   }
 
-  private logConfigurationFailure(bookId: number, userId: number, startedAt: number, error: Error): void {
+  private logConfigurationFailure(log: RequestLog, error: Error): void {
     const { errorClass, message } = describeError(error);
     this.logger.error(
-      `[${REQUEST_EVENT}] [fail] bookId=${bookId} userId=${userId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - stored Storyteller connection could not be read`,
+      `[${REQUEST_EVENT}] [fail] bookId=${log.bookId} userId=${log.userId} durationMs=${Date.now() - log.startedAt} pairSource=${log.pairSource} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - stored Storyteller connection could not be read`,
     );
   }
 

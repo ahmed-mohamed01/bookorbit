@@ -57,16 +57,20 @@ describe('StorytellerController', () => {
     await controller.requestBuild(10, dto, USER);
     await controller.getStatus(10, {}, USER);
     await controller.getStatus(10, { counterpartId: 11 }, USER);
-    await controller.findExisting(10, USER);
+    await controller.findExisting(10, USER, {});
+    await controller.findExisting(10, USER, { counterpartId: 11 });
     await expect(controller.cancelBuild(10, USER)).resolves.toBeUndefined();
     await expect(controller.cancelBuild(10, USER, { buildId: 7 })).resolves.toBeUndefined();
+    await expect(controller.cancelBuild(10, USER, { counterpartId: 11 })).resolves.toBeUndefined();
 
     expect(statusService.requestBuild).toHaveBeenCalledWith(10, USER, dto);
     expect(statusService.getStatus).toHaveBeenCalledWith(10, USER, undefined);
     expect(statusService.getStatus).toHaveBeenCalledWith(10, USER, 11);
-    expect(statusService.findExisting).toHaveBeenCalledWith(10, USER);
-    expect(statusService.cancelBuild).toHaveBeenCalledWith(10, USER, undefined);
-    expect(statusService.cancelBuild).toHaveBeenCalledWith(10, USER, 7);
+    expect(statusService.findExisting).toHaveBeenCalledWith(10, USER, undefined);
+    expect(statusService.findExisting).toHaveBeenCalledWith(10, USER, 11);
+    expect(statusService.cancelBuild).toHaveBeenCalledWith(10, USER, undefined, undefined);
+    expect(statusService.cancelBuild).toHaveBeenCalledWith(10, USER, 7, undefined);
+    expect(statusService.cancelBuild).toHaveBeenCalledWith(10, USER, undefined, 11);
   });
 
   it('declares the expected route paths and methods', () => {

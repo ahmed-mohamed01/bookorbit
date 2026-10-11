@@ -59,6 +59,32 @@ describe('EditionLinkSchemaBootstrapService', () => {
     expect(guard).toMatch(/conname = 'book_edition_links_read_along_book_id_books_id_fk' AND conrelid = 'book_edition_links'::regclass/);
   });
 
+  it('drops NOT NULL on text_book_id only when the catalog says it is still set', () => {
+    const guard = EDITION_LINK_SCHEMA_SQL.split('--> statement-breakpoint')
+      .map((statement) => statement.trim())
+      .find((statement) => statement.includes('ALTER COLUMN "text_book_id" DROP NOT NULL'))!;
+
+    expect(guard).toContain('pg_attribute');
+    expect(guard).toContain("attrelid = 'book_edition_links'::regclass AND attname = 'text_book_id'");
+    expect(guard).toContain('IF col_notnull THEN');
+  });
+
+  it('deletes rows holding only the audiobook after relaxing the column', () => {
+    const statements = EDITION_LINK_SCHEMA_SQL.split('--> statement-breakpoint').map((statement) => statement.trim());
+    const relax = statements.findIndex((statement) => statement.includes('ALTER COLUMN "text_book_id" DROP NOT NULL'));
+    const cleanup = statements.findIndex((statement) =>
+      statement.startsWith('DELETE FROM "book_edition_links" WHERE "text_book_id" IS NULL AND "read_along_book_id" IS NULL;'),
+    );
+
+    // A fresh table has no read_along_book_id until its ADD COLUMN runs, so the cleanup must follow it.
+    const readAlongColumn = statements.findIndex((statement) => statement.includes('ADD COLUMN IF NOT EXISTS "read_along_book_id"'));
+
+    expect(relax).toBeGreaterThanOrEqual(0);
+    expect(readAlongColumn).toBeGreaterThanOrEqual(0);
+    expect(cleanup).toBeGreaterThan(relax);
+    expect(cleanup).toBeGreaterThan(readAlongColumn);
+  });
+
   it('is silent when no tables are missing', async () => {
     const { service } = createService();
 

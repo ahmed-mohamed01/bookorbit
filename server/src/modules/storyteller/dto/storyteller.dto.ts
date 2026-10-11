@@ -28,7 +28,7 @@ const PATH_PREFIX_MAX_LENGTH = 500;
 const trimString = ({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value);
 
 export class ReadAlongStatusQueryDto {
-  @IsOptional()
+  @ValidateIf((o: ReadAlongStatusQueryDto) => o.counterpartId !== undefined)
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -133,6 +133,12 @@ export class BuildReadAlongDto implements ReadAlongBuildRequest {
   @Min(1)
   targetLibraryId?: number;
 
+  @ValidateIf((o: BuildReadAlongDto) => o.counterpartId !== undefined)
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  counterpartId?: number;
+
   @ValidateIf((o: BuildReadAlongDto) => o.targetFolderId !== undefined)
   @Type(() => Number)
   @IsInt()
@@ -149,11 +155,20 @@ export class BuildReadAlongDto implements ReadAlongBuildRequest {
   cleanUpRemote?: boolean;
 }
 
-/** Query of the cancel route: `buildId` pins the cancel to one build, as a notification names it. */
+/**
+ * Query of the cancel route: `buildId` pins the cancel to one build, as a notification names it, and
+ * `counterpartId` names the other edition of an unlinked pair, as the build request did.
+ */
 export class CancelReadAlongBuildQueryDto {
   @ValidateIf((o: CancelReadAlongBuildQueryDto) => o.buildId !== undefined)
   @Type(() => Number)
   @IsInt()
   @Min(1)
   buildId?: number;
+
+  @ValidateIf((o: CancelReadAlongBuildQueryDto) => o.counterpartId !== undefined)
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  counterpartId?: number;
 }

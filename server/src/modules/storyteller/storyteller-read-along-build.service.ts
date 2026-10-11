@@ -47,6 +47,11 @@ const TERMINAL_WRITE_RETRY_MS = 1_000;
 const STALE_ALIGNED_POLL_CAP = 4;
 const FOREIGN_KEY_VIOLATION = '23503';
 
+interface LinkSnapshot {
+  readAlongBookId: number | null;
+  relinked: boolean;
+}
+
 const BUILD_EVENT = 'storyteller.read_along.build';
 const WAIT_EVENT = 'storyteller.read_along.wait';
 const COLLECT_EVENT = 'storyteller.read_along.collect';
@@ -413,9 +418,9 @@ export class StorytellerReadAlongBuildService {
       void this.notifier.progress(user.id, attempt, readAlongNotifyStage(phase, null), null);
       const oldOutputBookId = options.oldOutputBookId ?? null;
       // Read fresh, before attachToLink overwrites the column: `pair.link` is a request-time snapshot.
-      const linkedReadAlongBookId = oldOutputBookId === null ? null : await this.findLinkedReadAlongBook(pair);
-      const replaceRefusal =
-        oldOutputBookId === null ? null : await this.previousOutputRefusal(buildId, pair, oldOutputBookId, linkedReadAlongBookId);
+      const linkSnapshot = oldOutputBookId === null ? { readAlongBookId: null, relinked: false } : await this.findLinkedReadAlongBook(pair);
+      const linkedReadAlongBookId = linkSnapshot.readAlongBookId;
+      const replaceRefusal = oldOutputBookId === null ? null : await this.previousOutputRefusal(buildId, pair, oldOutputBookId, linkSnapshot);
       const replaceBookId = oldOutputBookId !== null && replaceRefusal === null ? oldOutputBookId : null;
       const cleanUpRemote = options.cleanUpRemote ?? registered.settings.deleteRemoteAfterImport;
       const collected = await this.collect(buildId, pair, registered, remoteBook, user, replaceBookId, cleanUpRemote);
@@ -424,7 +429,7 @@ export class StorytellerReadAlongBuildService {
       if (collected.replaced) await this.reapplyMetadataBestEffort(buildId, pair, collected.outputBookId, user);
       // The read-along is imported by now, so a link that cannot take it leaves a ready build that the
       // edition link attaches the next time the pair is read.
-      const attached = await this.attachToLink(buildId, pair, collected.outputBookId, linkedReadAlongBookId);
+      const attached = linkSnapshot.relinked ? false : await this.attachToLink(buildId, pair, collected.outputBookId, linkedReadAlongBookId);
 
       await this.writeReady(buildId, attached ? pair.linkId : null, {
         status: 'ready',
@@ -1364,7 +1369,8 @@ export class StorytellerReadAlongBuildService {
         outputBookId === newOutputBookId
           ? 'the rebuild resolved to the same book'
           : (replaceRefusal ??
-            (pair.linkId !== null && linkedReadAlongBookId !== outputBookId ? 'the edition link does not name this read-along book' : null));
+            (pair.linkId !== null && linkedReadAlongBookId !== outputBookId ? 'the edition link does not name this read-along book' : null) ??
+            (pair.linkId === null ? await this.memberRefusal(outputBookId) : null));
       if (refusal !== null) {
         this.logger.warn(
           `[${CLEANUP_EVENT}] [end] buildId=${buildId} outputBookId=${outputBookId} target=previous_output durationMs=${Date.now() - startedAt} removed=false reason="${sanitizeLogValue(refusal)}" - previous read-along removal refused`,
@@ -1393,32 +1399,45 @@ export class StorytellerReadAlongBuildService {
     buildId: number,
     pair: StorytellerReadAlongPair,
     outputBookId: number,
-    linkedReadAlongBookId: number | null,
+    linkSnapshot: LinkSnapshot,
   ): Promise<string | null> {
+    if (linkSnapshot.relinked) return 'the edition link moved to another ebook';
     if (outputBookId === pair.textBookId || outputBookId === pair.audioBookId) {
       return 'the book is the pair own text or audio edition';
     }
     const owningBuild = await this.repo.findBuildByOutputBook(outputBookId);
     if (owningBuild && owningBuild.id !== buildId) return `the book is read-along build ${owningBuild.id} output`;
     if (owningBuild) return null;
-    // A self-pair has no link: nothing contradicts the request, and no other build owns the book.
-    if (pair.linkId !== null && linkedReadAlongBookId !== outputBookId) {
+    // A pair without a link (a self-pair or a proposed pair) has nothing to contradict the request,
+    // and no other build owns the book.
+    if (pair.linkId !== null && linkSnapshot.readAlongBookId !== outputBookId) {
       return 'the edition link does not name this read-along book';
     }
     return null;
   }
 
+  // A pair without a link attaches its new output nowhere, so an old output some link still holds
+  // would leave that link holding a deleted book.
+  private async memberRefusal(outputBookId: number): Promise<string | null> {
+    const link = await this.editionLinks.findLinkForBook(outputBookId);
+    return link ? `the book is a member of edition link ${link.id}` : null;
+  }
+
   /** Best effort: a failed read refuses the removal rather than failing a build that already produced its output. */
-  private async findLinkedReadAlongBook(pair: StorytellerReadAlongPair): Promise<number | null> {
-    if (pair.linkId === null) return null;
-    const link = await this.editionLinks.findLinkForBook(pair.textBookId).catch(() => undefined);
-    return link?.id === pair.linkId ? link.readAlongBookId : null;
+  private async findLinkedReadAlongBook(pair: StorytellerReadAlongPair): Promise<LinkSnapshot> {
+    if (pair.linkId === null) return { readAlongBookId: null, relinked: false };
+    const link = await this.editionLinks.findLinkForBook(pair.audioBookId).catch(() => undefined);
+    if (!link || link.id !== pair.linkId) return { readAlongBookId: null, relinked: false };
+    // A link whose ebook changed since the build started belongs to another pair now.
+    if (link.textBookId !== pair.textBookId && link.textBookId !== null) return { readAlongBookId: null, relinked: true };
+    return { readAlongBookId: link.readAlongBookId, relinked: false };
   }
 
   /**
    * Puts the imported read-along on the pair's link. Never fails the build: the book is already in the
    * library, so a link that cannot take it is logged and left for the edition link's own attach.
-   * Answers whether the read-along is where the build leaves it, which a self-pair always is.
+   * Answers whether the read-along is where the build leaves it, which a pair without a link (a
+   * self-pair or a proposed pair) always is.
    * `replacing` is the read-along the link named before the collect: a rebuild that filed a new book
    * takes the link over from it, and any other read-along the link gained since is left alone.
    */
@@ -1426,7 +1445,7 @@ export class StorytellerReadAlongBuildService {
     const startedAt = Date.now();
     this.logger.log(`[${LINK_EVENT}] [start] buildId=${buildId} linkId=${pair.linkId ?? 'none'} outputBookId=${outputBookId} - link update started`);
     if (pair.linkId === null) {
-      this.logger.log(`[${LINK_EVENT}] [end] buildId=${buildId} durationMs=${Date.now() - startedAt} linked=false - self-pair has no edition link`);
+      this.logger.log(`[${LINK_EVENT}] [end] buildId=${buildId} durationMs=${Date.now() - startedAt} linked=false - pair has no edition link`);
       return true;
     }
 

@@ -44,10 +44,8 @@ export class EditionLinkProgressService implements ExtraProgressSource, ReadAlon
       .limit(1);
     if (!row) return null;
 
-    const members: ReadingSessionScopeMember[] = [
-      { bookId: row.textBookId, role: 'text' },
-      { bookId: row.audioBookId, role: 'audio' },
-    ];
+    const members: ReadingSessionScopeMember[] = [{ bookId: row.audioBookId, role: 'audio' }];
+    if (row.textBookId != null) members.unshift({ bookId: row.textBookId, role: 'text' });
     if (row.readAlongBookId != null) members.push({ bookId: row.readAlongBookId, role: 'readAlong' });
     return members;
   }

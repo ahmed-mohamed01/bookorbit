@@ -10,6 +10,8 @@ import { EditionLinkRepository } from './edition-link.repository';
 import { EditionLinkService } from './edition-link.service';
 import { READ_ALONG_OUTPUT_SOURCE } from './read-along-output-source';
 
+type BuildProposal = { textBookId: number; audioBookId: number; status: string; outputBookId: number | null };
+
 describe('EditionLinkService', () => {
   let service: EditionLinkService;
   let repo: {
@@ -21,14 +23,18 @@ describe('EditionLinkService', () => {
     insertLink: ReturnType<typeof vi.fn>;
     setReadAlongBook: ReturnType<typeof vi.fn>;
     deleteLink: ReturnType<typeof vi.fn>;
+    setTextBook: ReturnType<typeof vi.fn>;
+    findReadingPercentages: ReturnType<typeof vi.fn>;
   };
   let bookService: { verifyBookAccess: ReturnType<typeof vi.fn> };
   let libraryService: { findAccessibleLibraryIds: ReturnType<typeof vi.fn> };
   let readAlongOutputs: {
     findReadAlongOutputs: Mock<(bookIds: readonly number[]) => Promise<Set<number>>>;
     findSourcePair: Mock<(bookId: number) => Promise<{ textBookId: number; audioBookId: number } | null>>;
-    findReadAlongForPair: Mock<(link: { id: number }) => Promise<{ buildId: number; outputBookId: number } | null>>;
+    findBuildByReadAlong: Mock<(id: number) => Promise<{ buildId: number; outputBookId: number; textBookId: number; audioBookId: number } | null>>;
     findLostReadAlong: Mock<(link: { id: number }) => Promise<{ buildId: number; outputBookId: number } | null>>;
+    findNewestBuildForText: Mock<(textBookId: number) => Promise<BuildProposal | null>>;
+    findNewestBuildForAudio: Mock<(audioBookId: number) => Promise<BuildProposal | null>>;
     recordAttachment: Mock<(buildId: number, linkId: number) => Promise<void>>;
     recordDetach: Mock<(readAlongBookId: number, linkId: number) => Promise<void>>;
   };
@@ -40,13 +46,22 @@ describe('EditionLinkService', () => {
   } as RequestUser;
   const linkRow = {
     id: 9,
-    textBookId: 10,
+    textBookId: 10 as number | null,
     audioBookId: 20,
     readAlongBookId: null as number | null,
     createdBy: 7,
     createdAt: new Date('2026-07-24T12:00:00.000Z'),
   };
+  const build = { buildId: 4, outputBookId: 30, textBookId: 10, audioBookId: 20 };
   const noProgress = { text: null, audio: null, readAlong: null, readAlongNarrationPercentage: null };
+  type LinkRow = typeof linkRow;
+
+  const hideBooks = (...hidden: number[]) =>
+    (bookService.verifyBookAccess as Mock<(id: number) => Promise<void>>).mockImplementation((id) =>
+      hidden.includes(id) ? Promise.reject(new NotFoundException()) : Promise.resolve(),
+    );
+  const linksBy = (lookup: (id: number) => LinkRow | undefined) =>
+    (repo.findLinkForBook as Mock<(id: number) => Promise<LinkRow | undefined>>).mockImplementation((id) => Promise.resolve(lookup(id)));
 
   beforeEach(async () => {
     repo = {
@@ -58,6 +73,8 @@ describe('EditionLinkService', () => {
       insertLink: vi.fn().mockResolvedValue(linkRow),
       setReadAlongBook: vi.fn().mockResolvedValue(linkRow),
       deleteLink: vi.fn().mockResolvedValue(linkRow),
+      setTextBook: vi.fn().mockResolvedValue(linkRow),
+      findReadingPercentages: vi.fn().mockResolvedValue(new Map()),
     };
     bookService = {
       verifyBookAccess: vi.fn().mockResolvedValue(undefined),
@@ -68,8 +85,10 @@ describe('EditionLinkService', () => {
     readAlongOutputs = {
       findReadAlongOutputs: vi.fn().mockResolvedValue(new Set()),
       findSourcePair: vi.fn().mockResolvedValue(null),
-      findReadAlongForPair: vi.fn().mockResolvedValue(null),
+      findBuildByReadAlong: vi.fn().mockResolvedValue(null),
       findLostReadAlong: vi.fn().mockResolvedValue(null),
+      findNewestBuildForText: vi.fn().mockResolvedValue(null),
+      findNewestBuildForAudio: vi.fn().mockResolvedValue(null),
       recordAttachment: vi.fn().mockResolvedValue(undefined),
       recordDetach: vi.fn().mockResolvedValue(undefined),
     };
@@ -94,19 +113,20 @@ describe('EditionLinkService', () => {
     it('attaches the pair output and records the attachment', async () => {
       const attached = { ...linkRow, readAlongBookId: 30 };
       repo.findLinkForBook.mockResolvedValue(linkRow);
-      readAlongOutputs.findReadAlongForPair.mockResolvedValue({ buildId: 4, outputBookId: 30 });
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue(build);
       repo.setReadAlongBook.mockResolvedValue(attached);
 
       await expect(service.attachReadAlongByUser(user, 10, 30)).resolves.toEqual(attached);
       expect(bookService.verifyBookAccess).toHaveBeenNthCalledWith(1, 10, user);
-      expect(bookService.verifyBookAccess).toHaveBeenNthCalledWith(2, 20, user);
+      expect(bookService.verifyBookAccess).toHaveBeenNthCalledWith(2, 30, user);
+      expect(bookService.verifyBookAccess).toHaveBeenNthCalledWith(3, 20, user);
       expect(repo.setReadAlongBook).toHaveBeenCalledWith(9, 30);
       expect(readAlongOutputs.recordAttachment).toHaveBeenCalledWith(4, 9);
     });
 
     it('rejects with a conflict when the slot was taken by a different read-along meanwhile', async () => {
       repo.findLinkForBook.mockResolvedValue(linkRow);
-      readAlongOutputs.findReadAlongForPair.mockResolvedValue({ buildId: 4, outputBookId: 30 });
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue(build);
       repo.setReadAlongBook.mockResolvedValue(undefined);
 
       await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBeInstanceOf(ConflictException);
@@ -117,7 +137,7 @@ describe('EditionLinkService', () => {
       const error = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
       const failure = new Error('connection lost');
       repo.findLinkForBook.mockResolvedValue(linkRow);
-      readAlongOutputs.findReadAlongForPair.mockResolvedValue({ buildId: 4, outputBookId: 30 });
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue(build);
       repo.setReadAlongBook.mockRejectedValue(failure);
 
       await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBe(failure);
@@ -133,27 +153,207 @@ describe('EditionLinkService', () => {
       repo.findLinkForBook.mockResolvedValue(attached);
 
       await expect(service.attachReadAlongByUser(user, 20, 30)).resolves.toBe(attached);
-      expect(readAlongOutputs.findReadAlongForPair).not.toHaveBeenCalled();
+      expect(readAlongOutputs.findBuildByReadAlong).not.toHaveBeenCalled();
       expect(repo.setReadAlongBook).not.toHaveBeenCalled();
+    });
+
+    // Otherwise "already attached" against "a different read-along" tells a caller who cannot open
+    // the attached book which id it is.
+    it('answers the access error for an inaccessible read-along even when it is the attached one', async () => {
+      const forbidden = new ForbiddenException('No access to this library');
+      repo.findLinkForBook.mockResolvedValue({ ...linkRow, readAlongBookId: 30 });
+      (bookService.verifyBookAccess as Mock<(id: number) => Promise<void>>).mockImplementation((id) =>
+        id === 30 ? Promise.reject(forbidden) : Promise.resolve(),
+      );
+
+      await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBe(forbidden);
+    });
+
+    it('answers the access error for an inaccessible read-along before a different attached one conflicts', async () => {
+      const forbidden = new ForbiddenException('No access to this library');
+      repo.findLinkForBook.mockResolvedValue({ ...linkRow, readAlongBookId: 31 });
+      (bookService.verifyBookAccess as Mock<(id: number) => Promise<void>>).mockImplementation((id) =>
+        id === 30 ? Promise.reject(forbidden) : Promise.resolve(),
+      );
+
+      await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBe(forbidden);
     });
 
     it('rejects a different attached read-along with a conflict', async () => {
       repo.findLinkForBook.mockResolvedValue({ ...linkRow, readAlongBookId: 31 });
 
       await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBeInstanceOf(ConflictException);
-      expect(readAlongOutputs.findReadAlongForPair).not.toHaveBeenCalled();
+      expect(readAlongOutputs.findBuildByReadAlong).not.toHaveBeenCalled();
+    });
+
+    it('answers the generic attach conflict when the attached read-along is hidden from the reader', async () => {
+      repo.findLinkForBook.mockResolvedValue({ ...linkRow, readAlongBookId: 31 });
+      hideBooks(31);
+
+      await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toThrow('This read-along is already attached to another edition link');
+      expect(readAlongOutputs.findBuildByReadAlong).not.toHaveBeenCalled();
     });
 
     it('returns not found when the requested book has no pair link', async () => {
       await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('returns not found when the requested output differs from the pair output', async () => {
+    it('returns not found when no build generated the requested read-along', async () => {
       repo.findLinkForBook.mockResolvedValue(linkRow);
-      readAlongOutputs.findReadAlongForPair.mockResolvedValue({ buildId: 4, outputBookId: 31 });
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue(null);
 
       await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBeInstanceOf(NotFoundException);
       expect(repo.setReadAlongBook).not.toHaveBeenCalled();
+    });
+
+    it('refuses a read-along built from another audiobook', async () => {
+      repo.findLinkForBook.mockResolvedValueOnce(linkRow).mockResolvedValue(undefined);
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue({ ...build, audioBookId: 99 });
+
+      await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBeInstanceOf(BadRequestException);
+      expect(repo.setReadAlongBook).not.toHaveBeenCalled();
+    });
+
+    it('refuses a read-along already attached to another link', async () => {
+      repo.findLinkForBook.mockResolvedValueOnce(linkRow).mockResolvedValue({ ...linkRow, id: 77, readAlongBookId: 30 });
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue(build);
+
+      await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBeInstanceOf(ConflictException);
+      expect(repo.setReadAlongBook).not.toHaveBeenCalled();
+    });
+
+    it('attaches to a link whose ebook side is empty', async () => {
+      const nullText = { ...linkRow, textBookId: null };
+      const attached = { ...nullText, readAlongBookId: 30 };
+      repo.findLinkForBook.mockResolvedValueOnce(nullText).mockResolvedValue(undefined);
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue(build);
+      repo.setReadAlongBook.mockResolvedValue(attached);
+
+      await expect(service.attachReadAlongByUser(user, 20, 30)).resolves.toEqual(attached);
+      expect(readAlongOutputs.recordAttachment).toHaveBeenCalledWith(4, 9);
+    });
+
+    it('creates the link for an audiobook that has none and records the attachment', async () => {
+      const created = { ...linkRow, textBookId: null, readAlongBookId: 30 };
+      repo.findLinkForBook.mockResolvedValue(undefined);
+      repo.getBookModality.mockResolvedValue('audio');
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue(build);
+      repo.insertLink.mockResolvedValue(created);
+
+      await expect(service.attachReadAlongByUser(user, 20, 30)).resolves.toEqual(created);
+      expect(repo.insertLink).toHaveBeenCalledWith(null, 20, 7, 30);
+      expect(readAlongOutputs.recordAttachment).toHaveBeenCalledWith(4, 9);
+      expect(bookService.verifyBookAccess).toHaveBeenCalledWith(20, user);
+      expect(bookService.verifyBookAccess).toHaveBeenCalledWith(30, user);
+    });
+
+    it('does not create a link from an unlinked ebook', async () => {
+      repo.findLinkForBook.mockResolvedValue(undefined);
+      repo.getBookModality.mockResolvedValue('text');
+
+      await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.insertLink).not.toHaveBeenCalled();
+    });
+
+    it('refuses a read-along built from another audiobook for an audiobook with no link', async () => {
+      repo.findLinkForBook.mockResolvedValue(undefined);
+      repo.getBookModality.mockResolvedValue('audio');
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue({ ...build, audioBookId: 99 });
+
+      await expect(service.attachReadAlongByUser(user, 20, 30)).rejects.toBeInstanceOf(BadRequestException);
+      expect(repo.insertLink).not.toHaveBeenCalled();
+      expect(readAlongOutputs.recordAttachment).not.toHaveBeenCalled();
+    });
+
+    // Filling an ebook-less row with another ebook keeps the read-along, so the audiobook alone
+    // decides whether it may come back after a detach.
+    it('attaches a read-along built from another ebook than the one now on the link', async () => {
+      const attached = { ...linkRow, readAlongBookId: 30 };
+      repo.findLinkForBook.mockResolvedValueOnce(linkRow).mockResolvedValue(undefined);
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue({ ...build, textBookId: 11 });
+      repo.setReadAlongBook.mockResolvedValue(attached);
+
+      await expect(service.attachReadAlongByUser(user, 20, 30)).resolves.toEqual(attached);
+      expect(repo.setReadAlongBook).toHaveBeenCalledWith(9, 30);
+    });
+
+    it('answers a conflict when a concurrent attach put the read-along on another link first', async () => {
+      repo.findLinkForBook.mockResolvedValueOnce(linkRow).mockResolvedValue(undefined);
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue(build);
+      repo.setReadAlongBook.mockRejectedValue(Object.assign(new Error('duplicate key'), { code: '23505' }));
+
+      await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBeInstanceOf(ConflictException);
+      expect(readAlongOutputs.recordAttachment).not.toHaveBeenCalled();
+    });
+
+    it('answers not found for an ebook-less link whose only read-along the reader cannot see', async () => {
+      repo.findLinkForBook.mockResolvedValue({ ...linkRow, textBookId: null, readAlongBookId: 30 });
+      hideBooks(30);
+
+      await expect(service.attachReadAlongByUser(user, 20, 31)).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.setReadAlongBook).not.toHaveBeenCalled();
+    });
+
+    it('lets the audiobook take back its read-along detached after another ebook filled the row', async () => {
+      let row: LinkRow = { ...linkRow, textBookId: null, readAlongBookId: 30 };
+      const linkOf = (id: number) =>
+        [row.textBookId, row.audioBookId, row.readAlongBookId].includes(id) && (row.textBookId !== null || row.readAlongBookId !== null)
+          ? row
+          : undefined;
+      linksBy(linkOf);
+      (repo.getBookModality as Mock<(id: number) => Promise<string>>).mockImplementation((id) => Promise.resolve(id === 20 ? 'audio' : 'text'));
+      readAlongOutputs.findReadAlongOutputs.mockImplementation((ids) => Promise.resolve(new Set(ids.filter((id) => id === 30))));
+      readAlongOutputs.findSourcePair.mockResolvedValue({ textBookId: 10, audioBookId: 20 });
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue(build);
+      (repo.setTextBook as Mock<(id: number, textBookId: number | null) => Promise<LinkRow>>).mockImplementation((_id, textBookId) =>
+        Promise.resolve((row = { ...row, textBookId })),
+      );
+      (repo.setReadAlongBook as Mock<(id: number, readAlongBookId: number | null) => Promise<LinkRow>>).mockImplementation((_id, readAlongBookId) =>
+        Promise.resolve((row = { ...row, readAlongBookId })),
+      );
+
+      await service.link(user, 11, 20);
+      await service.unlink(user, 30);
+
+      await expect(service.getForBook(user, 30)).resolves.toMatchObject({
+        link: { textBookId: 11, audioBookId: 20, readAlongBookId: null },
+        role: 'readAlong',
+        members: { text: { id: 11 }, audio: { id: 20 }, readAlong: null },
+      });
+      await expect(service.attachReadAlongByUser(user, 20, 30)).resolves.toMatchObject({ textBookId: 11, audioBookId: 20, readAlongBookId: 30 });
+    });
+
+    it('refuses a read-along attached elsewhere for an audiobook with no link', async () => {
+      repo.findLinkForBook.mockResolvedValueOnce(undefined).mockResolvedValue({ ...linkRow, id: 77, audioBookId: 21, readAlongBookId: 30 });
+      repo.getBookModality.mockResolvedValue('audio');
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue(build);
+
+      await expect(service.attachReadAlongByUser(user, 20, 30)).rejects.toBeInstanceOf(ConflictException);
+      expect(repo.insertLink).not.toHaveBeenCalled();
+    });
+
+    // Another user's read-along, or any book id the caller cannot open, answers the access error
+    // before the build lookup, so the attach cannot probe which books are read-alongs.
+    it('checks access to the read-along before looking up its build', async () => {
+      const forbidden = new ForbiddenException('No access to this library');
+      repo.findLinkForBook.mockResolvedValue(undefined);
+      repo.getBookModality.mockResolvedValue('audio');
+      bookService.verifyBookAccess.mockResolvedValueOnce(undefined).mockRejectedValueOnce(forbidden);
+
+      await expect(service.attachReadAlongByUser(user, 20, 30)).rejects.toBe(forbidden);
+      expect(bookService.verifyBookAccess).toHaveBeenLastCalledWith(30, user);
+      expect(readAlongOutputs.findBuildByReadAlong).not.toHaveBeenCalled();
+      expect(repo.insertLink).not.toHaveBeenCalled();
+    });
+
+    it('answers a conflict when another link took the audiobook meanwhile', async () => {
+      repo.findLinkForBook.mockResolvedValue(undefined);
+      repo.getBookModality.mockResolvedValue('audio');
+      readAlongOutputs.findBuildByReadAlong.mockResolvedValue(build);
+      repo.insertLink.mockResolvedValue(undefined);
+
+      await expect(service.attachReadAlongByUser(user, 20, 30)).rejects.toBeInstanceOf(ConflictException);
+      expect(readAlongOutputs.recordAttachment).not.toHaveBeenCalled();
     });
 
     it('propagates an access denial before changing the link', async () => {
@@ -162,7 +362,7 @@ describe('EditionLinkService', () => {
       bookService.verifyBookAccess.mockResolvedValueOnce(undefined).mockRejectedValueOnce(forbidden);
 
       await expect(service.attachReadAlongByUser(user, 10, 30)).rejects.toBe(forbidden);
-      expect(readAlongOutputs.findReadAlongForPair).not.toHaveBeenCalled();
+      expect(readAlongOutputs.findBuildByReadAlong).not.toHaveBeenCalled();
       expect(repo.setReadAlongBook).not.toHaveBeenCalled();
     });
   });
@@ -178,7 +378,7 @@ describe('EditionLinkService', () => {
       expect(repo.findCounterpartCandidates).not.toHaveBeenCalled();
     });
 
-    it('stays matched to its source pair, with both editions and itself as members and no link', async () => {
+    it('stays matched to its source pair, with both editions as members and no link', async () => {
       repo.getBookModality.mockResolvedValue('text');
       readAlongOutputs.findReadAlongOutputs.mockResolvedValue(new Set([30]));
       readAlongOutputs.findSourcePair.mockResolvedValue({ textBookId: 10, audioBookId: 20 });
@@ -200,39 +400,93 @@ describe('EditionLinkService', () => {
         members: {
           text: expect.objectContaining({ id: 10, title: 'Dune' }),
           audio: expect.objectContaining({ id: 20, title: 'Dune (audio)' }),
-          readAlong: expect.objectContaining({ id: 30, title: 'Dune (read-along)' }),
+          readAlong: null,
         },
+        thisBookProgress: null,
       });
-      expect(repo.findMemberProgress).toHaveBeenCalledWith(7, { textBookId: 10, audioBookId: 20, readAlongBookId: 30 });
+      expect(repo.findMemberProgress).toHaveBeenCalledWith(7, { textBookId: 10, audioBookId: 20, readAlongBookId: null });
       expect(repo.findCounterpartCandidates).not.toHaveBeenCalled();
     });
 
-    it('falls back to a bare read-along when either side of its pair is out of reach', async () => {
+    it('falls back to a bare read-along when the audiobook of its pair is out of reach', async () => {
       repo.getBookModality.mockResolvedValue('text');
       readAlongOutputs.findReadAlongOutputs.mockResolvedValue(new Set([30]));
       readAlongOutputs.findSourcePair.mockResolvedValue({ textBookId: 10, audioBookId: 20 });
-      // The read-along page itself, then its ebook, then its audiobook.
-      bookService.verifyBookAccess.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new ForbiddenException());
+      hideBooks(20);
 
       const result = await service.getForBook(user, 30);
 
-      expect(result).toEqual({ link: null, proposed: null, counterpart: null, role: null, members: null, readAlongOutput: true });
+      expect(result).toEqual({
+        link: null,
+        proposed: null,
+        counterpart: null,
+        role: null,
+        members: null,
+        thisBookProgress: null,
+        readAlongOutput: true,
+      });
       expect(repo.findBookSummaries).not.toHaveBeenCalled();
     });
 
-    it('falls back to a bare read-along when its pair is linked without it on purpose', async () => {
+    it('shows the audiobook alone when the ebook of its free pair is out of reach', async () => {
+      repo.getBookModality.mockResolvedValue('text');
+      readAlongOutputs.findReadAlongOutputs.mockResolvedValue(new Set([30]));
+      readAlongOutputs.findSourcePair.mockResolvedValue({ textBookId: 10, audioBookId: 20 });
+      hideBooks(10);
+
+      const result = await service.getForBook(user, 30);
+
+      expect(result).toMatchObject({ link: null, role: 'readAlong', members: { text: null, audio: { id: 20 }, readAlong: null } });
+      expect(result.readAlongOutput).toBeUndefined();
+      expect(repo.findMemberProgress).toHaveBeenCalledWith(7, { textBookId: null, audioBookId: 20, readAlongBookId: null });
+    });
+
+    it('shows the pair link it can rejoin when its pair is linked without it on purpose', async () => {
       repo.getBookModality.mockResolvedValue('text');
       readAlongOutputs.findReadAlongOutputs.mockResolvedValue(new Set([30]));
       readAlongOutputs.findSourcePair.mockResolvedValue({ textBookId: 10, audioBookId: 20 });
       // The read-along page has no link of its own; its pair is linked, and detached it deliberately.
       repo.findLinkForBook.mockResolvedValueOnce(undefined).mockResolvedValueOnce(linkRow).mockResolvedValueOnce(linkRow);
+      repo.findBookSummaries.mockResolvedValue(
+        new Map([
+          [10, { id: 10, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null }],
+          [20, { id: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', coverVersion: null }],
+        ]),
+      );
 
-      await expect(service.getForBook(user, 30)).resolves.toMatchObject({ role: null, members: null, readAlongOutput: true });
+      const result = await service.getForBook(user, 30);
+
+      expect(result).toEqual({
+        link: linkRow,
+        proposed: null,
+        counterpart: { id: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', coverVersion: null },
+        role: 'readAlong',
+        members: {
+          text: expect.objectContaining({ id: 10 }),
+          audio: expect.objectContaining({ id: 20 }),
+          readAlong: null,
+        },
+        thisBookProgress: null,
+      });
+      expect(result.readAlongOutput).toBeUndefined();
       expect(readAlongOutputs.findLostReadAlong).toHaveBeenCalledWith(linkRow);
+      expect(repo.findMemberProgress).toHaveBeenCalledWith(7, { textBookId: 10, audioBookId: 20, readAlongBookId: null });
       expect(repo.setReadAlongBook).not.toHaveBeenCalled();
     });
 
-    it('falls back to a bare read-along when a side of its pair is linked to another book', async () => {
+    it('falls back to a bare read-along when its pair link holds another read-along', async () => {
+      const other = { ...linkRow, readAlongBookId: 31 };
+      repo.getBookModality.mockResolvedValue('text');
+      readAlongOutputs.findReadAlongOutputs.mockResolvedValue(new Set([30]));
+      readAlongOutputs.findSourcePair.mockResolvedValue({ textBookId: 10, audioBookId: 20 });
+      repo.findLinkForBook.mockResolvedValueOnce(undefined).mockResolvedValueOnce(other).mockResolvedValueOnce(other);
+
+      await expect(service.getForBook(user, 30)).resolves.toMatchObject({ role: null, members: null, readAlongOutput: true });
+      expect(repo.setReadAlongBook).not.toHaveBeenCalled();
+      expect(repo.findBookSummaries).not.toHaveBeenCalled();
+    });
+
+    it('shows the audiobook alone when the ebook of its free pair is linked to another audiobook', async () => {
       repo.getBookModality.mockResolvedValue('text');
       readAlongOutputs.findReadAlongOutputs.mockResolvedValue(new Set([30]));
       readAlongOutputs.findSourcePair.mockResolvedValue({ textBookId: 10, audioBookId: 20 });
@@ -241,8 +495,24 @@ describe('EditionLinkService', () => {
         .mockResolvedValueOnce({ ...linkRow, audioBookId: 21 })
         .mockResolvedValueOnce(undefined);
 
-      await expect(service.getForBook(user, 30)).resolves.toMatchObject({ readAlongOutput: true });
+      await expect(service.getForBook(user, 30)).resolves.toMatchObject({
+        link: null,
+        role: 'readAlong',
+        members: { text: null, audio: { id: 20 }, readAlong: null },
+      });
       expect(readAlongOutputs.findLostReadAlong).not.toHaveBeenCalled();
+    });
+
+    it('falls back to a bare read-along when its audiobook is not the audio side of the link it sits on', async () => {
+      repo.getBookModality.mockResolvedValue('text');
+      readAlongOutputs.findReadAlongOutputs.mockResolvedValue(new Set([30]));
+      readAlongOutputs.findSourcePair.mockResolvedValue({ textBookId: 10, audioBookId: 20 });
+      repo.findLinkForBook
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce({ ...linkRow, textBookId: 11, audioBookId: 21 });
+
+      await expect(service.getForBook(user, 30)).resolves.toMatchObject({ role: null, members: null, readAlongOutput: true });
     });
 
     it('rejoins a pair relinked without it, and answers its page with the linked view', async () => {
@@ -272,6 +542,29 @@ describe('EditionLinkService', () => {
       expect(repo.insertLink).not.toHaveBeenCalled();
     });
 
+    it('tells an unlinked ebook about the read-along its candidate audiobook already carries', async () => {
+      const audio = { bookId: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', coverVersion: null, score: 96 };
+      repo.getBookModality.mockResolvedValue('text');
+      repo.findCounterpartCandidates.mockResolvedValue([audio]);
+      repo.findLinkForBook.mockResolvedValueOnce(undefined).mockResolvedValueOnce({ ...linkRow, textBookId: null, readAlongBookId: 30 });
+
+      await expect(service.getForBook(user, 10)).resolves.toMatchObject({
+        link: null,
+        proposed: audio,
+        role: null,
+        members: { text: null, audio: { id: 20 }, readAlong: { id: 30 } },
+      });
+    });
+
+    it('proposes an ebook for a link that holds only the audiobook and its read-along', async () => {
+      const ebook = { bookId: 10, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null, score: 96 };
+      repo.findLinkForBook.mockResolvedValue({ ...linkRow, textBookId: null, readAlongBookId: 30 });
+      repo.findCounterpartCandidates.mockResolvedValue([ebook]);
+
+      await expect(service.getForBook(user, 20)).resolves.toMatchObject({ proposed: ebook, role: 'audio', members: { text: null } });
+      expect(repo.findCounterpartCandidates).toHaveBeenCalledWith(expect.objectContaining({ bookId: 20, modality: 'audio' }));
+    });
+
     it("is left out of an audiobook's candidates", async () => {
       const readAlong = { bookId: 30, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null, score: 100 };
       const ebook = { bookId: 10, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null, score: 96 };
@@ -291,10 +584,11 @@ describe('EditionLinkService', () => {
 
     await expect(service.getForBook(user, 10)).resolves.toEqual({
       link: null,
-      proposed: candidate,
+      proposed: { ...candidate, progress: null },
       counterpart: null,
       role: null,
       members: null,
+      thisBookProgress: null,
     });
     expect(bookService.verifyBookAccess).toHaveBeenCalledWith(10, user);
     expect(repo.findCounterpartCandidates).toHaveBeenCalledWith({
@@ -333,6 +627,7 @@ describe('EditionLinkService', () => {
         audio: { id: 20, title: 'Dune (audiobook)', authorName: 'Frank Herbert', coverVersion: null, progress: null, narrationPercentage: null },
         readAlong: null,
       },
+      thisBookProgress: null,
     });
     expect(repo.findBookSummaries).toHaveBeenCalledWith([10, 20]);
     expect(repo.findMemberProgress).toHaveBeenCalledWith(7, { textBookId: 10, audioBookId: 20, readAlongBookId: null });
@@ -350,6 +645,7 @@ describe('EditionLinkService', () => {
       counterpart: null,
       role: null,
       members: null,
+      thisBookProgress: null,
     });
     expect(repo.findBookSummaries).not.toHaveBeenCalled();
   });
@@ -409,7 +705,7 @@ describe('EditionLinkService', () => {
       expect(result.link).toEqual({ ...threeWayRow, readAlongBookId: null });
       expect(result.role).toBe('text');
       expect(result.members?.readAlong).toBeNull();
-      expect(result.members?.text.id).toBe(10);
+      expect(result.members?.text?.id).toBe(10);
       expect(repo.findBookSummaries).toHaveBeenCalledWith([10, 20]);
       expect(repo.findMemberProgress).toHaveBeenCalledWith(7, { textBookId: 10, audioBookId: 20, readAlongBookId: null });
       // The stored row must not be mutated by the masking.
@@ -425,6 +721,7 @@ describe('EditionLinkService', () => {
         counterpart: null,
         role: null,
         members: null,
+        thisBookProgress: null,
       });
       expect(repo.findBookSummaries).not.toHaveBeenCalled();
     });
@@ -467,7 +764,7 @@ describe('EditionLinkService', () => {
       repo.setReadAlongBook.mockResolvedValue(detached);
 
       await expect(service.unlink(user, 30)).resolves.toEqual(detached);
-      expect(repo.setReadAlongBook).toHaveBeenCalledWith(9, null);
+      expect(repo.setReadAlongBook).toHaveBeenCalledWith(9, null, 30);
       expect(repo.deleteLink).not.toHaveBeenCalled();
       expect(bookService.verifyBookAccess).toHaveBeenCalledWith(10, user);
       expect(bookService.verifyBookAccess).toHaveBeenCalledWith(20, user);
@@ -492,7 +789,7 @@ describe('EditionLinkService', () => {
     });
 
     it('records nothing on the build when the whole link is removed', async () => {
-      await service.unlink(user, 10);
+      await service.unlink(user, 20);
 
       expect(readAlongOutputs.recordDetach).not.toHaveBeenCalled();
       expect(repo.deleteLink).toHaveBeenCalledWith(9);
@@ -511,16 +808,246 @@ describe('EditionLinkService', () => {
     // button. Demanding access to the masked book here made that button 404 - and name the book the
     // reader was never shown. Dropping the link row does not touch the read-along BOOK, so only the
     // text/audio pair gates it.
-    it('unlinks from the text page even when the read-along member is inaccessible', async () => {
+    it('unlinks from the audio page even when the read-along member is inaccessible', async () => {
       // Only a third access check can reject here, and the fixed unlink never makes one: the
       // requested book and the audio member are all it consults.
       const forbidden = new ForbiddenException('No access to this library');
       bookService.verifyBookAccess.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined).mockRejectedValueOnce(forbidden);
 
-      await expect(service.unlink(user, 10)).resolves.toEqual(linkRow);
+      await expect(service.unlink(user, 20)).resolves.toEqual(linkRow);
       expect(repo.deleteLink).toHaveBeenCalledWith(9);
-      expect(bookService.verifyBookAccess).toHaveBeenCalledWith(20, user);
+      expect(bookService.verifyBookAccess).toHaveBeenCalledWith(10, user);
       expect(bookService.verifyBookAccess).not.toHaveBeenCalledWith(30, user);
+    });
+
+    it('masks a read-along the reader cannot open in the unlink answer', async () => {
+      repo.deleteLink.mockResolvedValue(threeWayRow);
+      hideBooks(30);
+
+      await expect(service.unlink(user, 20)).resolves.toEqual({ ...threeWayRow, readAlongBookId: null });
+      expect(repo.deleteLink).toHaveBeenCalledWith(9);
+    });
+
+    it('keeps the audiobook and read-along linked when the ebook leaves', async () => {
+      const left = { ...threeWayRow, textBookId: null };
+      repo.setTextBook.mockResolvedValue(left);
+
+      await expect(service.unlink(user, 10)).resolves.toEqual(left);
+      expect(repo.setTextBook).toHaveBeenCalledWith(9, null, 10);
+      expect(repo.deleteLink).not.toHaveBeenCalled();
+      expect(readAlongOutputs.recordDetach).not.toHaveBeenCalled();
+    });
+
+    // Through the compare-and-set clear, never a delete by id: a read-along attached since the read
+    // would go with the row. The repository drops the row itself when nothing is left on it.
+    it('clears the ebook through the compare-and-set even when the link had no read-along', async () => {
+      const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      log.mockClear();
+      repo.findLinkForBook.mockResolvedValue(linkRow);
+      repo.setTextBook.mockResolvedValue({ ...linkRow, textBookId: null });
+
+      await service.unlink(user, 10);
+
+      expect(repo.setTextBook).toHaveBeenCalledWith(9, null, 10);
+      expect(repo.deleteLink).not.toHaveBeenCalled();
+      const lines = log.mock.calls.map(([line]) => String(line));
+      expect(lines.some((line) => line.includes('[edition_link.unlink] [end]') && line.includes('outcome=link_deleted'))).toBe(true);
+      log.mockRestore();
+    });
+
+    it('keeps a read-along attached between the read and the clear when the ebook leaves', async () => {
+      const left = { ...linkRow, textBookId: null, readAlongBookId: 30 };
+      repo.findLinkForBook.mockResolvedValue(linkRow);
+      repo.setTextBook.mockResolvedValue(left);
+
+      await expect(service.unlink(user, 10)).resolves.toEqual(left);
+      expect(repo.deleteLink).not.toHaveBeenCalled();
+    });
+
+    it('answers not found when the read-along changed between the read and the detach', async () => {
+      repo.setReadAlongBook.mockResolvedValue(undefined);
+
+      await expect(service.unlink(user, 30)).rejects.toBeInstanceOf(NotFoundException);
+      expect(repo.setReadAlongBook).toHaveBeenCalledWith(9, null, 30);
+    });
+
+    // One event per operation: the unlink's own end line carries the outcome.
+    it('logs the ebook leaving while the read-along stays on the unlink end line alone', async () => {
+      const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      log.mockClear();
+      repo.setTextBook.mockResolvedValue({ ...threeWayRow, textBookId: null });
+
+      await service.unlink(user, 10);
+
+      const lines = log.mock.calls.map(([line]) => String(line));
+      expect(lines.some((line) => line.startsWith('[edition_link.leave_text]'))).toBe(false);
+      expect(
+        lines.some((line) => line.includes('[edition_link.unlink] [end]') && line.includes('textBookId=10') && line.includes('outcome=text_left')),
+      ).toBe(true);
+      log.mockRestore();
+    });
+
+    // The read-along was detached between the read and the clear: the repository dropped the row.
+    it('reports the link deleted when the ebook was the last optional member', async () => {
+      const log = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      log.mockClear();
+      repo.setTextBook.mockResolvedValue({ ...threeWayRow, textBookId: null, readAlongBookId: null });
+
+      await service.unlink(user, 10);
+
+      const lines = log.mock.calls.map(([line]) => String(line));
+      expect(lines.some((line) => line.startsWith('[edition_link.leave_text]'))).toBe(false);
+      expect(lines.some((line) => line.includes('[edition_link.unlink] [end]') && line.includes('outcome=link_deleted'))).toBe(true);
+      log.mockRestore();
+    });
+
+    it('deletes an ebook-less link when the audiobook leaves', async () => {
+      repo.findLinkForBook.mockResolvedValue({ ...threeWayRow, textBookId: null });
+
+      await service.unlink(user, 20);
+
+      expect(repo.deleteLink).toHaveBeenCalledWith(9);
+      expect(repo.setTextBook).not.toHaveBeenCalled();
+      expect(repo.setReadAlongBook).not.toHaveBeenCalled();
+      // The read-along is checked only because it is all that makes the row visible.
+      expect(bookService.verifyBookAccess).toHaveBeenCalledTimes(2);
+      expect(bookService.verifyBookAccess).toHaveBeenCalledWith(30, user);
+    });
+
+    it('lets the repository drop the row when the read-along leaves an ebook-less link', async () => {
+      const nullText = { ...threeWayRow, textBookId: null };
+      repo.findLinkForBook.mockResolvedValue(nullText);
+      repo.setReadAlongBook.mockResolvedValue(nullText);
+
+      await service.unlink(user, 30);
+
+      expect(repo.setReadAlongBook).toHaveBeenCalledWith(9, null, 30);
+      expect(bookService.verifyBookAccess).toHaveBeenCalledWith(20, user);
+      expect(bookService.verifyBookAccess).toHaveBeenCalledTimes(2);
+      expect(repo.deleteLink).not.toHaveBeenCalled();
+    });
+
+    describe('with no ebook on the link', () => {
+      const nullText = { ...threeWayRow, textBookId: null };
+
+      beforeEach(() => {
+        repo.findLinkForBook.mockResolvedValue(nullText);
+      });
+
+      it('reports a null text member and no counterpart on the audiobook page', async () => {
+        const result = await service.getForBook(user, 20);
+
+        expect(result.role).toBe('audio');
+        expect(result.members?.text).toBeNull();
+        expect(result.members?.audio.id).toBe(20);
+        expect(result.members?.readAlong?.id).toBe(30);
+        expect(result.counterpart).toBeNull();
+        expect(repo.findBookSummaries).toHaveBeenCalledWith([20, 30]);
+        expect(repo.findMemberProgress).toHaveBeenCalledWith(7, { textBookId: null, audioBookId: 20, readAlongBookId: 30 });
+      });
+
+      // Stripping the read-along leaves nothing linked but the audiobook, which the client would show
+      // as a linked audio-only row whose switch deletes the owner's attachment.
+      it('answers like an unlinked audiobook when the reader cannot see the read-along', async () => {
+        const candidate = { bookId: 10, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null, score: 98 };
+        repo.findCounterpartCandidates.mockResolvedValue([candidate]);
+        bookService.verifyBookAccess.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new NotFoundException());
+
+        const result = await service.getForBook(user, 20);
+
+        expect(result).toEqual({
+          link: null,
+          proposed: { ...candidate, progress: null },
+          counterpart: null,
+          role: null,
+          members: null,
+          thisBookProgress: null,
+        });
+        expect(bookService.verifyBookAccess).toHaveBeenCalledWith(30, user);
+      });
+
+      it('reports the audiobook as the counterpart of the read-along page', async () => {
+        const result = await service.getForBook(user, 30);
+
+        expect(result.role).toBe('readAlong');
+        expect(result.members?.text).toBeNull();
+        expect(result.counterpart?.id).toBe(20);
+      });
+
+      it('checks access only on the members that exist', async () => {
+        await service.getForBook(user, 30);
+
+        expect(bookService.verifyBookAccess).toHaveBeenCalledTimes(2);
+        expect(bookService.verifyBookAccess).toHaveBeenCalledWith(30, user);
+        expect(bookService.verifyBookAccess).toHaveBeenCalledWith(20, user);
+      });
+
+      it('fills the ebook side of the row on link, keeping the read-along', async () => {
+        const filled = { ...nullText, textBookId: 10 };
+        repo.getBookModality.mockResolvedValueOnce('text').mockResolvedValueOnce('audio');
+        repo.findLinkForBook.mockResolvedValueOnce(undefined).mockResolvedValueOnce(nullText);
+        repo.setTextBook.mockResolvedValue(filled);
+
+        await expect(service.link(user, 10, 20)).resolves.toEqual(filled);
+        expect(repo.setTextBook).toHaveBeenCalledWith(9, 10, null);
+        expect(repo.insertLink).not.toHaveBeenCalled();
+      });
+
+      it('refuses to fill the row with an ebook linked elsewhere', async () => {
+        repo.getBookModality.mockResolvedValueOnce('text').mockResolvedValueOnce('audio');
+        repo.findLinkForBook.mockResolvedValueOnce({ ...linkRow, id: 77, audioBookId: 21 }).mockResolvedValueOnce(nullText);
+
+        await expect(service.link(user, 10, 20)).rejects.toBeInstanceOf(ConflictException);
+        expect(repo.setTextBook).not.toHaveBeenCalled();
+        expect(repo.insertLink).not.toHaveBeenCalled();
+      });
+
+      it('answers a conflict when the ebook side changed meanwhile', async () => {
+        repo.getBookModality.mockResolvedValueOnce('text').mockResolvedValueOnce('audio');
+        repo.findLinkForBook.mockResolvedValueOnce(undefined).mockResolvedValueOnce(nullText);
+        repo.setTextBook.mockResolvedValue(undefined);
+        repo.insertLink.mockResolvedValue(undefined);
+
+        await expect(service.link(user, 10, 20)).rejects.toBeInstanceOf(ConflictException);
+        expect(repo.insertLink).toHaveBeenCalledTimes(1);
+      });
+
+      it('inserts the pair when a concurrent detach removed the row it was filling', async () => {
+        repo.getBookModality.mockResolvedValueOnce('text').mockResolvedValueOnce('audio');
+        repo.findLinkForBook.mockResolvedValueOnce(undefined).mockResolvedValueOnce(nullText);
+        repo.setTextBook.mockResolvedValue(undefined);
+
+        await expect(service.link(user, 10, 20)).resolves.toEqual(linkRow);
+        expect(repo.insertLink).toHaveBeenCalledWith(10, 20, 7);
+      });
+
+      it('does not give a read-along back to the row inserted after a lost fill', async () => {
+        repo.getBookModality.mockResolvedValueOnce('text').mockResolvedValueOnce('audio');
+        repo.findLinkForBook.mockResolvedValueOnce(undefined).mockResolvedValueOnce(nullText);
+        repo.setTextBook.mockResolvedValue(undefined);
+        readAlongOutputs.findLostReadAlong.mockResolvedValue({ buildId: 4, outputBookId: 30 });
+
+        await expect(service.link(user, 10, 20)).resolves.toEqual(linkRow);
+        expect(readAlongOutputs.findLostReadAlong).not.toHaveBeenCalled();
+        expect(repo.setReadAlongBook).not.toHaveBeenCalled();
+      });
+
+      it('answers not found on unlink when the only read-along is hidden from the reader', async () => {
+        hideBooks(30);
+
+        await expect(service.unlink(user, 20)).rejects.toBeInstanceOf(NotFoundException);
+        expect(repo.deleteLink).not.toHaveBeenCalled();
+      });
+
+      it('answers like an unlinked ebook, with no members, when the proposal carries a hidden read-along', async () => {
+        const audio = { bookId: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', coverVersion: null, score: 96 };
+        repo.getBookModality.mockResolvedValue('text');
+        repo.findCounterpartCandidates.mockResolvedValue([audio]);
+        linksBy((id) => (id === 20 ? nullText : undefined));
+        hideBooks(30);
+
+        await expect(service.getForBook(user, 10)).resolves.toMatchObject({ proposed: { bookId: 20 }, members: null });
+      });
     });
   });
 
@@ -655,10 +1182,10 @@ describe('EditionLinkService', () => {
   it('unlinks an accessible book and returns the removed link', async () => {
     repo.findLinkForBook.mockResolvedValue(linkRow);
 
-    await expect(service.unlink(user, 10)).resolves.toEqual(linkRow);
-    // Access is verified on both sides of the pair (bookId 10 and its counterpart 20).
-    expect(bookService.verifyBookAccess).toHaveBeenCalledWith(10, user);
+    await expect(service.unlink(user, 20)).resolves.toEqual(linkRow);
+    // Access is verified on both sides of the pair (bookId 20 and its counterpart 10).
     expect(bookService.verifyBookAccess).toHaveBeenCalledWith(20, user);
+    expect(bookService.verifyBookAccess).toHaveBeenCalledWith(10, user);
     // Addressed by the resolved link id: a member-column delete would take out every link the book
     // appears in and report only one of them back.
     expect(repo.deleteLink).toHaveBeenCalledWith(9);
@@ -668,5 +1195,316 @@ describe('EditionLinkService', () => {
     repo.deleteLink.mockResolvedValue(undefined);
 
     await expect(service.unlink(user, 10)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  describe('an unlinked ebook page', () => {
+    const proposedAudio = { bookId: 20, title: 'Dune (audio)', authorName: 'Frank Herbert', coverVersion: null, score: 96 };
+    const links = new Map<number, LinkRow>();
+
+    beforeEach(() => {
+      links.clear();
+      repo.getBookModality.mockResolvedValue('text');
+      repo.findCounterpartCandidates.mockResolvedValue([proposedAudio]);
+      linksBy((id) => links.get(id));
+    });
+
+    describe('with the audiobook on screen named', () => {
+      it('shows the read-along the picked audiobook carries, not the proposal', async () => {
+        links.set(20, { ...linkRow, textBookId: null, readAlongBookId: 30 });
+        links.set(21, { ...linkRow, id: 12, textBookId: null, audioBookId: 21, readAlongBookId: 31 });
+
+        const result = await service.getForBook(user, 10, 21);
+
+        expect(result).toMatchObject({ link: null, proposed: { bookId: 20 }, role: null });
+        expect(result.members).toMatchObject({ text: null, audio: { id: 21 }, readAlong: { id: 31 } });
+        expect(repo.findMemberProgress).toHaveBeenCalledWith(7, { textBookId: null, audioBookId: 21, readAlongBookId: 31 });
+      });
+
+      it('shows no members when the picked audiobook carries no read-along', async () => {
+        links.set(20, { ...linkRow, textBookId: null, readAlongBookId: 30 });
+
+        const result = await service.getForBook(user, 10, 21);
+
+        expect(result).toMatchObject({ proposed: { bookId: 20 }, members: null });
+      });
+
+      it('ignores a picked audiobook the reader cannot open', async () => {
+        links.set(20, { ...linkRow, textBookId: null, readAlongBookId: 30 });
+        links.set(21, { ...linkRow, id: 12, textBookId: null, audioBookId: 21, readAlongBookId: 31 });
+        hideBooks(21);
+
+        const result = await service.getForBook(user, 10, 21);
+
+        expect(result.members).toMatchObject({ audio: { id: 20 }, readAlong: { id: 30 } });
+      });
+    });
+
+    describe('progress for the animation', () => {
+      it("carries this book's and the proposal's progress, read in one query", async () => {
+        repo.findReadingPercentages.mockResolvedValue(
+          new Map([
+            [10, 42],
+            [20, 17],
+          ]),
+        );
+
+        const result = await service.getForBook(user, 10);
+
+        expect(result.thisBookProgress).toBe(42);
+        expect(result.proposed).toEqual({ ...proposedAudio, progress: 17 });
+        expect(repo.findReadingPercentages).toHaveBeenCalledTimes(1);
+        expect(repo.findReadingPercentages).toHaveBeenCalledWith(7, [
+          { bookId: 10, audio: false },
+          { bookId: 20, audio: true },
+        ]);
+      });
+
+      it('reads null for books with no progress', async () => {
+        const result = await service.getForBook(user, 10);
+
+        expect(result.thisBookProgress).toBeNull();
+        expect(result.proposed?.progress).toBeNull();
+      });
+
+      it("reads an audiobook page's progress from the audiobook and its proposed ebook from the file", async () => {
+        const ebook = { bookId: 10, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null, score: 96 };
+        links.set(20, { ...linkRow, textBookId: null, readAlongBookId: 30 });
+        repo.findCounterpartCandidates.mockResolvedValue([ebook]);
+        repo.findReadingPercentages.mockResolvedValue(new Map([[20, 55]]));
+
+        const result = await service.getForBook(user, 20);
+
+        expect(result).toMatchObject({ role: 'audio', thisBookProgress: 55, proposed: { bookId: 10, progress: null } });
+        expect(repo.findReadingPercentages).toHaveBeenCalledWith(7, [
+          { bookId: 20, audio: true },
+          { bookId: 10, audio: false },
+        ]);
+      });
+
+      it('leaves search results without progress', async () => {
+        await expect(service.searchCandidates(user, 10)).resolves.toEqual([proposedAudio]);
+        expect(repo.findReadingPercentages).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('with a read-along build for the ebook', () => {
+      const build22 = { textBookId: 10, audioBookId: 22, status: 'building', outputBookId: null as number | null };
+      const dune22 = new Map([[22, { id: 22, title: 'Dune (unabridged)', authorName: 'Frank Herbert', coverVersion: null }]]);
+
+      it('proposes the audiobook the build pairs it with, marked as coming from the build', async () => {
+        readAlongOutputs.findNewestBuildForText.mockResolvedValue(build22);
+        repo.findBookSummaries.mockResolvedValue(dune22);
+        repo.findReadingPercentages.mockResolvedValue(new Map([[22, 8]]));
+
+        const result = await service.getForBook(user, 10);
+
+        expect(result.proposed).toEqual({
+          bookId: 22,
+          title: 'Dune (unabridged)',
+          authorName: 'Frank Herbert',
+          coverVersion: null,
+          score: 0,
+          progress: 8,
+          fromBuild: true,
+        });
+        expect(readAlongOutputs.findNewestBuildForText).toHaveBeenCalledWith(10);
+      });
+
+      it('keeps the match score when the paired audiobook is also a similarity candidate', async () => {
+        readAlongOutputs.findNewestBuildForText.mockResolvedValue({ ...build22, audioBookId: 20 });
+
+        await expect(service.getForBook(user, 10)).resolves.toMatchObject({ proposed: { bookId: 20, score: 96, fromBuild: true } });
+      });
+
+      it('marks only a proposal that comes from a build', async () => {
+        const result = await service.getForBook(user, 10);
+
+        expect(result.proposed).not.toHaveProperty('fromBuild');
+      });
+
+      it('falls back to the similarity candidate when the paired audiobook is linked to another ebook', async () => {
+        readAlongOutputs.findNewestBuildForText.mockResolvedValue(build22);
+        links.set(22, { ...linkRow, id: 13, textBookId: 15, audioBookId: 22 });
+
+        await expect(service.getForBook(user, 10)).resolves.toMatchObject({ proposed: { bookId: 20 } });
+      });
+
+      it('falls back to the similarity candidate when the reader cannot open the paired audiobook', async () => {
+        readAlongOutputs.findNewestBuildForText.mockResolvedValue(build22);
+        hideBooks(22);
+
+        await expect(service.getForBook(user, 10)).resolves.toMatchObject({ proposed: { bookId: 20 } });
+      });
+
+      it('falls back to the similarity candidate when the build names a missing book', async () => {
+        readAlongOutputs.findNewestBuildForText.mockResolvedValue(build22);
+        repo.findBookSummaries.mockResolvedValue(new Map());
+
+        await expect(service.getForBook(user, 10)).resolves.toMatchObject({ proposed: { bookId: 20 } });
+      });
+
+      it('falls back to the similarity candidate when the build names a generated read-along', async () => {
+        readAlongOutputs.findNewestBuildForText.mockResolvedValue(build22);
+        repo.findBookSummaries.mockResolvedValue(dune22);
+        readAlongOutputs.findReadAlongOutputs.mockImplementation((ids) => Promise.resolve(new Set(ids.filter((id) => id === 22))));
+
+        await expect(service.getForBook(user, 10)).resolves.toMatchObject({ proposed: { bookId: 20 } });
+      });
+
+      it('proposes the paired audiobook when it holds a read-along without an ebook', async () => {
+        readAlongOutputs.findNewestBuildForText.mockResolvedValue(build22);
+        links.set(22, { ...linkRow, id: 13, textBookId: null, audioBookId: 22, readAlongBookId: 32 });
+        repo.findBookSummaries.mockResolvedValue(new Map([[22, { id: 22, title: 'Dune (unabridged)', authorName: null, coverVersion: null }]]));
+
+        await expect(service.getForBook(user, 10)).resolves.toMatchObject({
+          proposed: { bookId: 22 },
+          members: { audio: { id: 22 }, readAlong: { id: 32 } },
+        });
+      });
+
+      it.each(['queued', 'building', 'failed'])('keeps proposing the audiobook of a %s build', async (status) => {
+        readAlongOutputs.findNewestBuildForText.mockResolvedValue({ ...build22, status });
+        repo.findBookSummaries.mockResolvedValue(dune22);
+
+        await expect(service.getForBook(user, 10)).resolves.toMatchObject({ proposed: { bookId: 22, fromBuild: true } });
+      });
+
+      describe('once the build is ready', () => {
+        const ready = { ...build22, status: 'ready', outputBookId: 31 };
+
+        beforeEach(() => {
+          repo.findBookSummaries.mockResolvedValue(dune22);
+        });
+
+        it('keeps proposing the audiobook while its output sits on no link', async () => {
+          readAlongOutputs.findNewestBuildForText.mockResolvedValue(ready);
+
+          await expect(service.getForBook(user, 10)).resolves.toMatchObject({ proposed: { bookId: 22, fromBuild: true } });
+          expect(repo.findLinkForBook).toHaveBeenCalledWith(31);
+        });
+
+        it('stops proposing it once the output is attached to a link', async () => {
+          readAlongOutputs.findNewestBuildForText.mockResolvedValue(ready);
+          links.set(31, { ...linkRow, id: 14, readAlongBookId: 31 });
+
+          await expect(service.getForBook(user, 10)).resolves.toMatchObject({ proposed: { bookId: 20 } });
+        });
+
+        it('proposes nothing from a ready build whose output was deleted', async () => {
+          readAlongOutputs.findNewestBuildForText.mockResolvedValue({ ...ready, outputBookId: null });
+
+          await expect(service.getForBook(user, 10)).resolves.toMatchObject({ proposed: { bookId: 20 } });
+        });
+      });
+    });
+
+    describe('on an audiobook page with a read-along build', () => {
+      const ebook12 = { id: 12, title: 'Dune', authorName: 'Frank Herbert', coverVersion: null };
+      const forAudio = { textBookId: 12, audioBookId: 20, status: 'building', outputBookId: null as number | null };
+
+      beforeEach(() => {
+        repo.getBookModality.mockResolvedValue('audio');
+        repo.findBookSummaries.mockResolvedValue(new Map([[12, ebook12]]));
+      });
+
+      it('proposes the ebook the build pairs it with, marked as coming from the build', async () => {
+        readAlongOutputs.findNewestBuildForAudio.mockResolvedValue(forAudio);
+        repo.findReadingPercentages.mockResolvedValue(new Map([[12, 30]]));
+
+        const result = await service.getForBook(user, 20);
+
+        expect(readAlongOutputs.findNewestBuildForAudio).toHaveBeenCalledWith(20);
+        expect(result.proposed).toEqual({
+          bookId: 12,
+          title: 'Dune',
+          authorName: 'Frank Herbert',
+          coverVersion: null,
+          score: 0,
+          progress: 30,
+          fromBuild: true,
+        });
+      });
+
+      it('keeps proposing the ebook of a ready build whose output sits on no link', async () => {
+        readAlongOutputs.findNewestBuildForAudio.mockResolvedValue({ ...forAudio, status: 'ready', outputBookId: 31 });
+
+        await expect(service.getForBook(user, 20)).resolves.toMatchObject({ proposed: { bookId: 12, fromBuild: true } });
+      });
+
+      it('falls back to the similarity candidate when the build ebook is linked elsewhere', async () => {
+        const similar = { bookId: 11, title: 'Dune', authorName: null, coverVersion: null, score: 90 };
+        repo.findCounterpartCandidates.mockResolvedValue([similar]);
+        readAlongOutputs.findNewestBuildForAudio.mockResolvedValue(forAudio);
+        links.set(12, { ...linkRow, id: 15, textBookId: 12, audioBookId: 21 });
+
+        await expect(service.getForBook(user, 20)).resolves.toMatchObject({ proposed: { bookId: 11 } });
+      });
+
+      it('proposes the build ebook on the page of an audiobook linked to a read-along alone', async () => {
+        readAlongOutputs.findNewestBuildForAudio.mockResolvedValue(forAudio);
+        links.set(20, { ...linkRow, textBookId: null, readAlongBookId: 30 });
+
+        await expect(service.getForBook(user, 20)).resolves.toMatchObject({ role: 'audio', proposed: { bookId: 12, fromBuild: true } });
+      });
+    });
+
+    describe('with the audiobook the page has on screen', () => {
+      it('reads the progress of the picked audiobook with the same percentages query', async () => {
+        repo.findReadingPercentages.mockResolvedValue(
+          new Map([
+            [20, 17],
+            [25, 61],
+          ]),
+        );
+        repo.findBookSummaries.mockResolvedValue(new Map());
+
+        const result = await service.getForBook(user, 10, 25);
+
+        expect(result.pickedProgress).toBe(61);
+        expect(repo.findReadingPercentages).toHaveBeenCalledTimes(1);
+        expect(repo.findReadingPercentages).toHaveBeenCalledWith(7, [
+          { bookId: 10, audio: false },
+          { bookId: 20, audio: true },
+          { bookId: 25, audio: true },
+        ]);
+      });
+
+      it('reuses the proposal progress when the picked audiobook is the proposal', async () => {
+        repo.findReadingPercentages.mockResolvedValue(new Map([[20, 17]]));
+
+        const result = await service.getForBook(user, 10, 20);
+
+        expect(result.pickedProgress).toBe(17);
+        expect(repo.findReadingPercentages).toHaveBeenCalledWith(7, [
+          { bookId: 10, audio: false },
+          { bookId: 20, audio: true },
+        ]);
+      });
+
+      it('answers null when the picked audiobook has no progress', async () => {
+        const result = await service.getForBook(user, 10, 25);
+
+        expect(result.pickedProgress).toBeNull();
+      });
+
+      it('answers no picked progress for a counterpart the reader cannot open', async () => {
+        hideBooks(25);
+        repo.findReadingPercentages.mockResolvedValue(new Map([[25, 61]]));
+
+        const result = await service.getForBook(user, 10, 25);
+
+        expect(result.pickedProgress).toBeUndefined();
+        expect(repo.findReadingPercentages).toHaveBeenCalledWith(7, [
+          { bookId: 10, audio: false },
+          { bookId: 20, audio: true },
+        ]);
+      });
+
+      it('answers no picked progress without a counterpart', async () => {
+        const result = await service.getForBook(user, 10);
+
+        expect(result.pickedProgress).toBeUndefined();
+      });
+    });
   });
 });

@@ -4,7 +4,7 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { describe, expect, it } from 'vitest';
 
-import { BuildReadAlongDto, CancelReadAlongBuildQueryDto, UpsertStorytellerSettingsDto } from './storyteller.dto';
+import { BuildReadAlongDto, CancelReadAlongBuildQueryDto, ReadAlongStatusQueryDto, UpsertStorytellerSettingsDto } from './storyteller.dto';
 
 // Mirrors the global ValidationPipe options so nested unknown keys are rejected here too.
 const PIPE_OPTIONS = { whitelist: true, forbidNonWhitelisted: true };
@@ -127,6 +127,14 @@ describe('BuildReadAlongDto', () => {
     await expect(buildErrorsFor({ force: 'yes' })).resolves.not.toHaveLength(0);
   });
 
+  it('accepts a counterpartId and rejects one below 1, null, a float or a non-number', async () => {
+    await expect(buildErrorsFor({ counterpartId: 7 })).resolves.toHaveLength(0);
+    await expect(buildErrorsFor({ counterpartId: 0 })).resolves.not.toHaveLength(0);
+    await expect(buildErrorsFor({ counterpartId: null })).resolves.not.toHaveLength(0);
+    await expect(buildErrorsFor({ counterpartId: 1.5 })).resolves.not.toHaveLength(0);
+    await expect(buildErrorsFor({ counterpartId: 'abc' })).resolves.not.toHaveLength(0);
+  });
+
   it('rejects targetLibraryId or targetFolderId below 1', async () => {
     await expect(buildErrorsFor({ targetLibraryId: 0 })).resolves.not.toHaveLength(0);
     await expect(buildErrorsFor({ targetFolderId: 0 })).resolves.not.toHaveLength(0);
@@ -171,5 +179,33 @@ describe('CancelReadAlongBuildQueryDto', () => {
 
   it('rejects any other query key', async () => {
     await expect(errorsFor({ bookId: '3' })).resolves.not.toHaveLength(0);
+  });
+
+  it('accepts a positive counterpart id from the query string', async () => {
+    const dto = plainToInstance(CancelReadAlongBuildQueryDto, { counterpartId: '11' });
+    await expect(validate(dto, PIPE_OPTIONS)).resolves.toHaveLength(0);
+    expect(dto.counterpartId).toBe(11);
+  });
+
+  it.each(['0', '-1', 'abc', '1.5'])('rejects counterpart id %s', async (counterpartId) => {
+    await expect(errorsFor({ counterpartId })).resolves.not.toHaveLength(0);
+  });
+
+  it('rejects a null counterpart id, as the build request does', async () => {
+    await expect(errorsFor({ counterpartId: null })).resolves.not.toHaveLength(0);
+    await expect(buildErrorsFor({ counterpartId: null })).resolves.not.toHaveLength(0);
+  });
+});
+
+describe('ReadAlongStatusQueryDto', () => {
+  const errorsFor = (query: Record<string, unknown>) => validate(plainToInstance(ReadAlongStatusQueryDto, query), PIPE_OPTIONS);
+
+  it('accepts no counterpart id or a positive one from the query string', async () => {
+    await expect(errorsFor({})).resolves.toHaveLength(0);
+    await expect(errorsFor({ counterpartId: '11' })).resolves.toHaveLength(0);
+  });
+
+  it('rejects a null counterpart id, as the build request does', async () => {
+    await expect(errorsFor({ counterpartId: null })).resolves.not.toHaveLength(0);
   });
 });

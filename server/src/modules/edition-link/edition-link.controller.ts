@@ -6,6 +6,7 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import type { RequestUser } from '../../common/types/request-user';
 import { AttachReadAlongDto } from './dto/attach-read-along.dto';
 import { CandidatesQueryDto } from './dto/candidates-query.dto';
+import { ForBookQueryDto } from './dto/for-book-query.dto';
 import { LinkEditionDto } from './dto/link-edition.dto';
 import { EditionLinkService } from './edition-link.service';
 import type { BookEditionLink } from './schema/edition-link.schema';
@@ -28,10 +29,18 @@ export class EditionLinkController {
   constructor(private readonly service: EditionLinkService) {}
 
   @Get('for-book/:bookId')
-  async getForBook(@CurrentUser() user: RequestUser, @Param('bookId', ParseIntPipe) bookId: number): Promise<EditionLinkForBook> {
-    const { link, proposed, counterpart, role, members, readAlongOutput } = await this.service.getForBook(user, bookId);
-    const result: EditionLinkForBook = { link: link ? toEditionLinkDto(link) : null, proposed, counterpart, role, members };
-    return readAlongOutput ? { ...result, readAlongOutput } : result;
+  async getForBook(
+    @CurrentUser() user: RequestUser,
+    @Param('bookId', ParseIntPipe) bookId: number,
+    @Query() query: ForBookQueryDto,
+  ): Promise<EditionLinkForBook> {
+    const { link, proposed, counterpart, role, members, thisBookProgress, pickedProgress, readAlongOutput } = await this.service.getForBook(
+      user,
+      bookId,
+      query.counterpartId,
+    );
+    const result: EditionLinkForBook = { link: link ? toEditionLinkDto(link) : null, proposed, counterpart, role, members, thisBookProgress };
+    return { ...result, ...(pickedProgress === undefined ? {} : { pickedProgress }), ...(readAlongOutput ? { readAlongOutput } : {}) };
   }
 
   @Get('candidates/:bookId')

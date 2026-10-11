@@ -1034,6 +1034,8 @@ describe('StorytellerReadAlongBuildService', () => {
 
     expect(importService.importReadAlong).toHaveBeenCalledWith(downloadImport({ replaceBookId: 88 }));
     expect(editionLinks.setReadAlongBook).toHaveBeenCalledWith(5, 88, 88);
+    // Read through the audiobook, the one member every link holds.
+    expect(editionLinks.findLinkForBook).toHaveBeenCalledWith(PAIR.audioBookId);
     expect(bookService.deleteBooks).not.toHaveBeenCalled();
     expect(repo.updateBuild).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ready', outputBookId: 88 }));
   });
@@ -1092,6 +1094,20 @@ describe('StorytellerReadAlongBuildService', () => {
     await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
 
     expect(importService.importReadAlong).toHaveBeenCalledWith(downloadImport({ replaceBookId: null }));
+    expect(bookService.deleteBooks).not.toHaveBeenCalled();
+  });
+
+  // A link that now holds another ebook belongs to another pair: the output stays off it and the
+  // read-along it holds is neither replaced in place nor removed.
+  it('does not touch a link relinked to another ebook mid-build', async () => {
+    const { service, importService, editionLinks, bookService } = await setup();
+    editionLinks.findLinkForBook.mockResolvedValue({ ...linkNaming(88), textBookId: 12 });
+    importService.importReadAlong.mockResolvedValue({ outputBookId: 99, replaced: false });
+
+    await runBuild(service, 1, pairWithPreviousOutput(88), USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
+
+    expect(importService.importReadAlong).toHaveBeenCalledWith(downloadImport({ replaceBookId: null }));
+    expect(editionLinks.setReadAlongBook).not.toHaveBeenCalled();
     expect(bookService.deleteBooks).not.toHaveBeenCalled();
   });
 
@@ -2271,6 +2287,46 @@ describe('StorytellerReadAlongBuildService rebuilds and staging', () => {
 
     expect(editionLinks.setReadAlongBook).toHaveBeenCalledWith(5, 99, 88);
     expect(bookService.deleteBooks).toHaveBeenCalledWith([88], USER);
+  });
+
+  describe('for a proposed pair', () => {
+    const PROPOSED: StorytellerReadAlongPair = { textBookId: 10, audioBookId: 11, linkId: null, role: 'text', link: null };
+
+    it('keeps a previous output that is a member of an edition link', async () => {
+      const { service, importService, editionLinks, repo, bookService } = await setup();
+      editionLinks.findLinkForBook.mockImplementation((bookId: number) =>
+        Promise.resolve(bookId === 88 ? { ...linkNaming(88), textBookId: null } : undefined),
+      );
+      repo.findBuildByOutputBook.mockResolvedValue({ id: 1, outputBookId: 88 });
+      importService.importReadAlong.mockResolvedValue({ outputBookId: 99, replaced: false });
+
+      await runBuild(service, 1, PROPOSED, USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
+
+      expect(editionLinks.findLinkForBook).toHaveBeenCalledWith(88);
+      expect(bookService.deleteBooks).not.toHaveBeenCalled();
+    });
+
+    it('says on the link line that the pair has no edition link', async () => {
+      const { service } = await setup();
+      const lines = captureLogs('log');
+
+      await runBuild(service, 1, PROPOSED, USER);
+
+      const end = lines.find((line) => line.startsWith('[storyteller.read_along.link] [end]'));
+      expect(end).toContain('linked=false - pair has no edition link');
+      vi.restoreAllMocks();
+    });
+
+    it('removes a previous output no edition link holds', async () => {
+      const { service, importService, editionLinks, repo, bookService } = await setup();
+      editionLinks.findLinkForBook.mockResolvedValue(undefined);
+      repo.findBuildByOutputBook.mockResolvedValue({ id: 1, outputBookId: 88 });
+      importService.importReadAlong.mockResolvedValue({ outputBookId: 99, replaced: false });
+
+      await runBuild(service, 1, PROPOSED, USER, { force: true, oldOutputBookId: 88, removePreviousOutput: true });
+
+      expect(bookService.deleteBooks).toHaveBeenCalledWith([88], USER);
+    });
   });
 
   it('never fails a build whose read-along is ready over a lookup made after the ready write', async () => {

@@ -66,7 +66,7 @@ export class StorytellerController {
     @CurrentUser() user: RequestUser,
     @Query() query: CancelReadAlongBuildQueryDto = {},
   ): Promise<void> {
-    return this.readAlongStatusService.cancelBuild(bookId, user, query.buildId);
+    return this.readAlongStatusService.cancelBuild(bookId, user, query.buildId, query.counterpartId);
   }
 
   /**
@@ -85,7 +85,11 @@ export class StorytellerController {
 
   @Get('read-along/books/:bookId/existing')
   @RequirePermission(Permission.LibraryUpload)
-  findExisting(@Param('bookId', ParseIntPipe) bookId: number, @CurrentUser() user: RequestUser): Promise<StorytellerExistingMatchesResponse> {
-    return this.readAlongStatusService.findExisting(bookId, user);
+  findExisting(
+    @Param('bookId', ParseIntPipe) bookId: number,
+    @CurrentUser() user: RequestUser,
+    @Query() query: ReadAlongStatusQueryDto = {},
+  ): Promise<StorytellerExistingMatchesResponse> {
+    return this.readAlongStatusService.findExisting(bookId, user, query.counterpartId);
   }
 }

@@ -1,4 +1,5 @@
 import { type SQL } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,10 +8,44 @@ import { bookEditionLinks } from './schema/edition-link.schema';
 
 function makeChain(result: unknown) {
   const chain: Record<string, ReturnType<typeof vi.fn>> & { then?: unknown } = {};
-  const methods = ['from', 'innerJoin', 'leftJoin', 'where', 'orderBy', 'groupBy', 'limit', 'values', 'set', 'onConflictDoNothing', 'returning'];
+  const methods = ['from', 'innerJoin', 'leftJoin', 'where', 'orderBy', 'groupBy', 'limit', 'values', 'set', 'returning'];
   for (const method of methods) chain[method] = vi.fn(() => chain);
   chain.then = (resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) => Promise.resolve(result).then(resolve, reject);
   return chain;
+}
+
+// An insert that builds the real drizzle statement, so its ON CONFLICT clause can be asserted on the
+// SQL it renders, and resolves to `result` (or rejects with it) instead of running.
+function renderingInsert(result: unknown, rejects = false) {
+  const real = drizzle.mock();
+  const rendered: { sql: string; params: unknown[] }[] = [];
+  const insert = vi.fn((table: typeof bookEditionLinks) => {
+    let builder: any = real.insert(table);
+    const chain = {
+      values: vi.fn((values: unknown) => {
+        builder = builder.values(values);
+        return chain;
+      }),
+      onConflictDoUpdate: vi.fn((config: unknown) => {
+        builder = builder.onConflictDoUpdate(config);
+        return chain;
+      }),
+      returning: vi.fn(() => {
+        rendered.push(builder.returning().toSQL());
+        return rejects ? Promise.reject(result as Error) : Promise.resolve(result);
+      }),
+    };
+    return chain;
+  });
+  return { db: { insert }, rendered };
+}
+
+// A db whose transaction runs its callback against the same mock, so a statement issued on `tx` is
+// asserted like one issued on the db.
+function withTransaction<T extends Record<string, unknown>>(db: T): T & { transaction: ReturnType<typeof vi.fn> } {
+  const withTx = db as T & { transaction: ReturnType<typeof vi.fn> };
+  withTx.transaction = vi.fn(async (callback: (tx: T) => Promise<unknown>) => callback(db));
+  return withTx;
 }
 
 // Walks a drizzle SQL tree and collects every referenced column name, so a `where` clause can be
@@ -213,22 +248,142 @@ describe('EditionLinkRepository', () => {
     });
   });
 
-  it('inserts a correctly oriented link and returns it', async () => {
-    const row = {
-      id: 5,
-      textBookId: 10,
-      audioBookId: 20,
-      createdBy: 7,
-      createdAt: new Date(),
-    };
-    const chain = makeChain([row]);
-    const db = { insert: vi.fn(() => chain) };
-    const repo = new EditionLinkRepository(db as never);
+  describe('insertLink', () => {
+    it('inserts a correctly oriented link and returns it', async () => {
+      const row = { id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 7, createdAt: new Date() };
+      const { db, rendered } = renderingInsert([row]);
+      const repo = new EditionLinkRepository(db as never);
 
-    await expect(repo.insertLink(10, 20, 7)).resolves.toEqual(row);
-    expect(db.insert).toHaveBeenCalledWith(bookEditionLinks);
-    expect(chain.values).toHaveBeenCalledWith({ textBookId: 10, audioBookId: 20, createdBy: 7 });
-    expect(chain.onConflictDoNothing).toHaveBeenCalledOnce();
+      await expect(repo.insertLink(10, 20, 7)).resolves.toEqual(row);
+      expect(db.insert).toHaveBeenCalledWith(bookEditionLinks);
+      expect(rendered[0]!.sql).toMatch(
+        /^insert into "book_edition_links" \("id", "text_book_id", "audio_book_id", "read_along_book_id", "created_by", "created_at"\)/,
+      );
+      expect(rendered[0]!.params.slice(0, 4)).toEqual([10, 20, null, 7]);
+    });
+
+    it('inserts a link with no ebook and a read-along in the same statement', async () => {
+      const row = { id: 5, textBookId: null, audioBookId: 20, readAlongBookId: 30, createdBy: 7, createdAt: new Date() };
+      const { db, rendered } = renderingInsert([row]);
+      const repo = new EditionLinkRepository(db as never);
+
+      await expect(repo.insertLink(null, 20, 7, 30)).resolves.toEqual(row);
+      expect(rendered[0]!.params.slice(0, 4)).toEqual([null, 20, 30, 7]);
+    });
+
+    // A read-along hard-deleted off (no ebook, A, R) leaves (no ebook, A, no read-along) behind through
+    // its SET NULL FK. That row is invisible, so the audiobook reads as unlinked; a plain DO NOTHING
+    // would then answer every link or attach for it with a conflict.
+    it('claims an audio-only row left on the audiobook instead of giving up', async () => {
+      const { db, rendered } = renderingInsert([]);
+      const repo = new EditionLinkRepository(db as never);
+
+      await repo.insertLink(10, 20, 7, 30);
+
+      const { sql: text, params } = rendered[0]!;
+      expect(text).toMatch(
+        /on conflict \("audio_book_id"\) do update set "text_book_id" = \$\d+, "read_along_book_id" = \$\d+, "created_by" = \$\d+, "created_at" = now\(\) where \("book_edition_links"\."text_book_id" is null and "book_edition_links"\."read_along_book_id" is null\)/,
+      );
+      expect(params.slice(4, 7)).toEqual([10, 30, 7]);
+    });
+
+    it('clears a stale read-along slot when claiming a row for an ebook alone', async () => {
+      const { db, rendered } = renderingInsert([]);
+      const repo = new EditionLinkRepository(db as never);
+
+      await repo.insertLink(10, 20, 7);
+
+      expect(rendered[0]!.params.slice(4, 7)).toEqual([10, null, 7]);
+    });
+
+    it('reads a unique violation on another member as nothing inserted', async () => {
+      const { db } = renderingInsert(Object.assign(new Error('duplicate key'), { code: '23505' }), true);
+      const repo = new EditionLinkRepository(db as never);
+
+      await expect(repo.insertLink(10, 20, 7)).resolves.toBeUndefined();
+    });
+
+    it('propagates any other insert failure', async () => {
+      const failure = new Error('connection lost');
+      const { db } = renderingInsert(failure, true);
+      const repo = new EditionLinkRepository(db as never);
+
+      await expect(repo.insertLink(10, 20, 7)).rejects.toBe(failure);
+    });
+  });
+
+  it('never returns an audio-only row from findLinkForBook', async () => {
+    const chain = makeChain([]);
+    const repo = new EditionLinkRepository({ select: vi.fn(() => chain) } as never);
+
+    await repo.findLinkForBook(20);
+
+    const { sql: text } = new PgDialect().sqlToQuery(chain.where.mock.calls[0]![0] as SQL);
+    expect(text).toContain('"text_book_id" is not null or "book_edition_links"."read_along_book_id" is not null');
+  });
+
+  describe('setTextBook', () => {
+    function renderWhere(chain: ReturnType<typeof makeChain>) {
+      return new PgDialect().sqlToQuery(chain.where.mock.calls[0]![0] as SQL);
+    }
+
+    it('fills an empty text side and returns the row', async () => {
+      const row = { id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: 30, createdBy: 7, createdAt: new Date() };
+      const chain = makeChain([row]);
+      const repo = new EditionLinkRepository({ update: vi.fn(() => chain) } as never);
+
+      await expect(repo.setTextBook(5, 10)).resolves.toEqual(row);
+      expect(chain.set).toHaveBeenCalledWith({ textBookId: 10 });
+      const { sql: text, params } = renderWhere(chain);
+      expect(text).toContain('"text_book_id" is null');
+      expect(params).toEqual([5]);
+    });
+
+    it('clears the text side only while it still names the expected book', async () => {
+      const chain = makeChain([]);
+      const db = withTransaction({ update: vi.fn(() => chain), delete: vi.fn() });
+      const repo = new EditionLinkRepository(db as never);
+
+      await expect(repo.setTextBook(5, null, 10)).resolves.toBeUndefined();
+      expect(db.transaction).toHaveBeenCalledOnce();
+      expect(chain.set).toHaveBeenCalledWith({ textBookId: null });
+      const { sql: text, params } = renderWhere(chain);
+      expect(text).toContain('"text_book_id" = $2');
+      expect(params).toEqual([5, 10]);
+      expect(db.delete).not.toHaveBeenCalled();
+    });
+
+    it('keeps the row when the ebook leaves a read-along behind', async () => {
+      const row = { id: 5, textBookId: null, audioBookId: 20, readAlongBookId: 30, createdBy: 7, createdAt: new Date() };
+      const db = withTransaction({ update: vi.fn(() => makeChain([row])), delete: vi.fn() });
+      const repo = new EditionLinkRepository(db as never);
+
+      await expect(repo.setTextBook(5, null, 10)).resolves.toEqual(row);
+      expect(db.delete).not.toHaveBeenCalled();
+    });
+
+    // The read-along was detached between the caller's read and this clear: the row would hold the
+    // audiobook alone, so it goes in the same transaction.
+    it('drops the row in the same transaction when no read-along is left either', async () => {
+      const row = { id: 5, textBookId: null, audioBookId: 20, readAlongBookId: null, createdBy: 7, createdAt: new Date() };
+      const deleteChain = makeChain([]);
+      const db = withTransaction({ update: vi.fn(() => makeChain([row])), delete: vi.fn(() => deleteChain) });
+      const repo = new EditionLinkRepository(db as never);
+
+      await expect(repo.setTextBook(5, null, 10)).resolves.toEqual(row);
+      expect(db.transaction).toHaveBeenCalledOnce();
+      expect(db.delete).toHaveBeenCalledWith(bookEditionLinks);
+      expect(boundValues(deleteChain.where.mock.calls[0]![0]).flat()).toEqual([5]);
+    });
+
+    it('reads a unique violation as nothing updated', async () => {
+      const chain = makeChain([]);
+      chain.then = (_resolve: unknown, reject: (error: unknown) => unknown) =>
+        Promise.reject(Object.assign(new Error('duplicate key'), { code: '23505' })).catch(reject as never);
+      const repo = new EditionLinkRepository({ update: vi.fn(() => chain) } as never);
+
+      await expect(repo.setTextBook(5, 10)).resolves.toBeUndefined();
+    });
   });
 
   it('deletes and returns the single link addressed by its id', async () => {
@@ -291,14 +446,37 @@ describe('EditionLinkRepository', () => {
       expect(referencedColumns(chain.where.mock.calls[0]![0])).toContain('id');
     });
 
+    it('drops the row when clearing the read-along leaves no ebook either', async () => {
+      const row = { id: 5, textBookId: null, audioBookId: 20, readAlongBookId: null, createdBy: 7, createdAt: new Date() };
+      const updateChain = makeChain([row]);
+      const deleteChain = makeChain([row]);
+      const db = withTransaction({ update: vi.fn(() => updateChain), delete: vi.fn(() => deleteChain) });
+      const repo = new EditionLinkRepository(db as never);
+
+      await expect(repo.setReadAlongBook(5, null, 30)).resolves.toEqual(row);
+      expect(db.transaction).toHaveBeenCalledOnce();
+      expect(db.delete).toHaveBeenCalledWith(bookEditionLinks);
+      expect(boundValues(deleteChain.where.mock.calls[0]![0]).flat()).toEqual([5]);
+    });
+
+    it('keeps the row when clearing the read-along leaves an ebook', async () => {
+      const row = { id: 5, textBookId: 10, audioBookId: 20, readAlongBookId: null, createdBy: 7, createdAt: new Date() };
+      const db = withTransaction({ update: vi.fn(() => makeChain([row])), delete: vi.fn() });
+      const repo = new EditionLinkRepository(db as never);
+
+      await repo.setReadAlongBook(5, null, 30);
+
+      expect(db.delete).not.toHaveBeenCalled();
+    });
+
     it('clears the read-along member when given null', async () => {
       const chain = makeChain([]);
-      const repo = new EditionLinkRepository({ update: vi.fn(() => chain) } as never);
+      const repo = new EditionLinkRepository(withTransaction({ update: vi.fn(() => chain) }) as never);
 
-      await expect(repo.setReadAlongBook(5, null)).resolves.toBeUndefined();
+      await expect(repo.setReadAlongBook(5, null, 30)).resolves.toBeUndefined();
       expect(chain.set).toHaveBeenCalledWith({ readAlongBookId: null });
-      // A detach has no member to exclude, so the predicate binds the link id alone.
-      expect(boundValues(chain.where.mock.calls[0]![0]).flat()).toEqual([5]);
+      // A detach has no member to exclude, so the predicate binds the link id and the expected book alone.
+      expect(boundValues(chain.where.mock.calls[0]![0]).flat()).toEqual([5, 30]);
     });
 
     // A row-scoped `ne(text) AND ne(audio)` under `eq(id, linkId)` only rejects a book that is a
@@ -350,12 +528,15 @@ describe('EditionLinkRepository', () => {
       expect(params.slice(0, 3)).toEqual([5, 30, 25]);
     });
 
-    it('detaches without a compare on the current read-along', async () => {
+    // A detach acting on a stale read must not wipe a read-along attached after it.
+    it('detaches only while the slot still names the read-along the caller read', async () => {
       const chain = makeChain([]);
-      const repo = new EditionLinkRepository({ update: vi.fn(() => chain) } as never);
+      const repo = new EditionLinkRepository(withTransaction({ update: vi.fn(() => chain) }) as never);
 
-      await repo.setReadAlongBook(5, null);
-      expect(renderWhere(chain).sql).not.toContain('read_along_book_id');
+      await repo.setReadAlongBook(5, null, 30);
+      const { sql: text, params } = renderWhere(chain);
+      expect(text).toMatch(/"book_edition_links"\."id" = \$1 and "book_edition_links"\."read_along_book_id" = \$2/);
+      expect(params).toEqual([5, 30]);
     });
   });
 
@@ -371,6 +552,24 @@ describe('EditionLinkRepository', () => {
     await repo.findCounterpartCandidates({ bookId: 1, modality: 'text', accessibleLibraryIds: [10] });
 
     expect(rawSqlText(candidatesChain.where.mock.calls[0]![0])).toContain('existing_link.read_along_book_id');
+  });
+
+  it('keeps an audiobook linked to a read-along alone open to an ebook', async () => {
+    const candidatesChain = makeChain([]);
+    const db = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(makeChain([{ title: 'Dune' }]))
+        .mockReturnValueOnce(makeChain([]))
+        .mockReturnValueOnce(candidatesChain),
+    };
+    const repo = new EditionLinkRepository(db as never);
+
+    await repo.findCounterpartCandidates({ bookId: 1, modality: 'text', accessibleLibraryIds: [10] });
+
+    const sqlText = rawSqlText(candidatesChain.where.mock.calls[0]![0]).replace(/\s+/g, ' ');
+    expect(sqlText).toContain('existing_link.audio_book_id = ');
+    expect(sqlText).toContain(' AND existing_link.text_book_id IS NOT NULL)');
   });
 
   describe('findMemberProgress', () => {
@@ -430,6 +629,42 @@ describe('EditionLinkRepository', () => {
       await repo.findMemberProgress(7, { textBookId: 10, audioBookId: 20, readAlongBookId: 30 });
 
       expect(boundValues(fileChain.where.mock.calls[0]![0]).flat()).toEqual([10, 30]);
+    });
+  });
+
+  describe('findReadingPercentages', () => {
+    it('reads each book from its own progress table in one query', async () => {
+      const chain = makeChain([
+        { bookId: 10, filePercentage: 42, audioPercentage: 99 },
+        { bookId: 20, filePercentage: 99, audioPercentage: 17 },
+        { bookId: 21, filePercentage: null, audioPercentage: null },
+      ]);
+      const db = { select: vi.fn().mockReturnValue(chain) };
+      const repo = new EditionLinkRepository(db as never);
+
+      const result = await repo.findReadingPercentages(7, [
+        { bookId: 10, audio: false },
+        { bookId: 20, audio: true },
+        { bookId: 21, audio: true },
+      ]);
+
+      expect(result).toEqual(
+        new Map([
+          [10, 42],
+          [20, 17],
+        ]),
+      );
+      expect(db.select).toHaveBeenCalledTimes(1);
+      expect(boundValues(chain.where.mock.calls[0]![0]).flat()).toEqual([10, 20, 21]);
+      expect(boundValues(chain.leftJoin.mock.calls.map((call) => call[1])).flat()).toEqual([7, 7]);
+    });
+
+    it('skips the query for no books', async () => {
+      const db = { select: vi.fn() };
+      const repo = new EditionLinkRepository(db as never);
+
+      await expect(repo.findReadingPercentages(7, [])).resolves.toEqual(new Map());
+      expect(db.select).not.toHaveBeenCalled();
     });
   });
 });

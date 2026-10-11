@@ -3,7 +3,7 @@
 // the wire. Both sides consume THIS type so `tsc` catches any drift between them.
 export interface EditionLink {
   id: number;
-  textBookId: number;
+  textBookId: number | null;
   audioBookId: number;
   readAlongBookId: number | null;
   createdBy: number | null;
@@ -33,7 +33,7 @@ export interface EditionLinkMember {
 }
 
 export interface EditionLinkMembers {
-  text: EditionLinkMember;
+  text: EditionLinkMember | null;
   audio: EditionLinkMember;
   readAlong: EditionLinkMember | null;
 }
@@ -44,6 +44,10 @@ export interface EditionLinkCandidate {
   authorName: string | null;
   coverVersion: string | null;
   score: number;
+  /** The requester's reading percentage for the candidate; set on the for-book proposal only. */
+  progress?: number | null;
+  /** Set when the proposal is the pair of a read-along build rather than a similarity match, whose score then means nothing. */
+  fromBuild?: boolean;
 }
 
 // Display-only summary of the book on the other side of a link. Resolved server-side so the client
@@ -62,6 +66,10 @@ export interface EditionLinkForBook {
   counterpart: EditionLinkCounterpartSummary | null;
   role: EditionLinkRole | null;
   members: EditionLinkMembers | null;
+  /** The requester's reading percentage for the page's own book, null when none is recorded. */
+  thisBookProgress: number | null;
+  /** The requester's reading percentage for the audiobook named by `counterpartId`; absent when none was honoured. */
+  pickedProgress?: number | null;
   /**
    * A generated read-along detached from a pair the requester cannot see or relink as it was built, so
    * nothing is offered for it. When the pair can be relinked the response instead has role 'readAlong',

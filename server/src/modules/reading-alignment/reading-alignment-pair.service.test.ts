@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ReadingAlignmentPairService } from './reading-alignment-pair.service';
 
 function build(options?: {
-  link?: { textBookId: number; audioBookId: number; readAlongBookId?: number | null };
+  link?: { textBookId: number | null; audioBookId: number; readAlongBookId?: number | null };
   modality?: 'text' | 'audio' | 'both' | 'none';
 }) {
   const editionLinkRepo = {
@@ -26,6 +26,13 @@ describe('ReadingAlignmentPairService.resolveAlignmentPair', () => {
     const { service, editionLinkRepo } = build({ link: { textBookId: 11, audioBookId: 22, readAlongBookId: 33 }, modality: 'both' });
 
     await expect(service.resolveAlignmentPair(33)).resolves.toBeNull();
+    expect(editionLinkRepo.getBookModality).not.toHaveBeenCalled();
+  });
+
+  it('resolves no pair for a link with no ebook, without falling back to a self-pair', async () => {
+    const { service, editionLinkRepo } = build({ link: { textBookId: null, audioBookId: 22, readAlongBookId: 33 }, modality: 'both' });
+
+    await expect(service.resolveAlignmentPair(22)).resolves.toBeNull();
     expect(editionLinkRepo.getBookModality).not.toHaveBeenCalled();
   });
 

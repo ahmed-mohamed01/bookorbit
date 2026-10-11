@@ -8,9 +8,7 @@ export const bookEditionLinks = pgTable(
   'book_edition_links',
   {
     id: serial('id').primaryKey(),
-    textBookId: integer('text_book_id')
-      .notNull()
-      .references(() => books.id, { onDelete: 'cascade' }),
+    textBookId: integer('text_book_id').references(() => books.id, { onDelete: 'cascade' }),
     audioBookId: integer('audio_book_id')
       .notNull()
       .references(() => books.id, { onDelete: 'cascade' }),
