@@ -1594,7 +1594,7 @@ watch(
           :primary="entry.primary"
           class="rounded-xs px-2 py-0.5 text-[10px] tracking-wider"
         />
-        <div v-if="providerLinks.length || unlinkedCommunityBadges.length" class="flex items-center flex-wrap gap-2 w-full sm:w-auto sm:shrink-0">
+        <div v-if="providerLinks.length || unlinkedCommunityBadges.length" class="contents">
           <div class="hidden sm:block w-px h-3.5 bg-border" />
           <a
             v-for="link in providerLinks"

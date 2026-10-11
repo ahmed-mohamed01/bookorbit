@@ -104,8 +104,8 @@ function dayLabel(day: string, minutes: number): string {
     </p>
 
     <template v-else>
-      <div class="mt-3 flex items-end gap-6">
-        <dl class="flex shrink-0 gap-6">
+      <div class="mt-3 flex flex-wrap items-end gap-x-6 gap-y-3">
+        <dl class="flex min-w-0 flex-wrap gap-x-6 gap-y-2">
           <div v-for="stat in summaryStats" :key="stat.key">
             <dt class="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{{ stat.label }}</dt>
             <dd class="mt-0.5 text-sm font-semibold tabular-nums">{{ stat.value }}</dd>
