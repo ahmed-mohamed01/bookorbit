@@ -348,7 +348,7 @@ function resultFormatEntries(result: GlobalSearchResult) {
 
 <template>
   <header
-    class="relative z-30 mx-(--shell-gap) mt-(--shell-gap) flex h-12 flex-none shrink-0 items-center gap-2 rounded-(--shell-radius) border border-(--shell-border) bg-(--shell-surface) px-3 shadow-(--shell-shadow) shell-backdrop"
+    class="relative z-50 mx-(--shell-gap) mt-(--shell-gap) flex h-12 flex-none shrink-0 items-center gap-2 rounded-(--shell-radius) border border-(--shell-border) bg-(--shell-surface) px-3 shadow-(--shell-shadow) shell-backdrop"
   >
     <!-- Mobile: search active overlay -->
     <template v-if="mobileSearchOpen">
