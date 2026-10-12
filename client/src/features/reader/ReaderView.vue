@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
@@ -31,6 +31,7 @@ import { useTtsPosition } from '@/features/tts/composables/useTtsPosition'
 import { useTtsKeyboard } from '@/features/tts/composables/useTtsKeyboard'
 import { getProviders, getVoices } from '@/features/tts/api/tts.api'
 import { useMediaOverlay } from './media-overlay/composables/useMediaOverlay'
+import { useReaderNarrationHandoff } from './media-overlay/composables/useReaderNarrationHandoff'
 import { resolveMediaOverlayResume, type MediaOverlayResumePosition } from './media-overlay/lib/media-overlay-resume'
 import { injectMediaOverlayHighlightCss, MEDIA_OVERLAY_DEFAULT_ACTIVE_CLASS } from './media-overlay/lib/media-overlay-highlight'
 import { startMediaOverlayWithFallback } from './media-overlay/lib/media-overlay-start'
@@ -271,7 +272,8 @@ const {
   clearHighlight,
 } = useFoliateTts()
 const { startPlayback, isActive, currentBook, currentBlockIndex, currentChapterIndex, playbackState, primeAudioContext } = useTtsPlayer()
-const { setExpanded: setMiniPlayerExpanded, setReaderFooterVisible } = useTtsMiniPlayerUi()
+const { setExpanded: setMiniPlayerExpanded, setReaderFooterVisible, setReaderOpen } = useTtsMiniPlayerUi()
+setReaderOpen(true)
 const { loadBookPreferences, loadUserPreferences, defaultProviderId, defaultVoiceId, defaultSpeed } = useTtsPreferences()
 const ttsPosition = useTtsPosition()
 const mediaOverlay = useMediaOverlay()
@@ -297,7 +299,7 @@ const isNarratingHere = computed(
 // only synthesized TTS locks navigation.
 const isNavigationLocked = computed(() => initialNavigationPending.value || (isTtsActive.value && playbackState.value === 'playing'))
 
-useTtsKeyboard(() => mediaOverlay.isActive.value, {
+useTtsKeyboard(() => isNarratingHere.value, {
   togglePlayPause: mediaOverlay.toggle,
   prevBlock: mediaOverlay.prevSentence,
   nextBlock: mediaOverlay.nextSentence,
@@ -673,11 +675,11 @@ async function beginNarration(sectionIdx: number, matches: ((item: { text: strin
   const startId = ++mediaOverlayStartId
   const mo = getMediaOverlay()
   if (!mo) {
-    toast.error('This book has no embedded narration')
+    toast.error(t('reader.narration.noEmbedded'))
     return
   }
   const book = await buildTtsBook()
-  if (!book) return
+  if (!book || startId !== mediaOverlayStartId) return
 
   clearResumeNarrationHighlight()
 
@@ -688,6 +690,7 @@ async function beginNarration(sectionIdx: number, matches: ((item: { text: strin
     const initialRate = bookRate ?? audiobookDefaults.effective.value.playbackSpeed
     narrationRate = initialRate
     mediaOverlay.setRate(initialRate)
+    if (startId !== mediaOverlayStartId) return
   }
   relocationSource = 'narration'
 
@@ -696,6 +699,7 @@ async function beginNarration(sectionIdx: number, matches: ((item: { text: strin
     () => startMediaOverlayWithFallback(mo, sectionIdx, matches, () => startId === mediaOverlayStartId && mediaOverlay.isActive.value),
     book,
     { narrateFromHere: handleNarrateFromHere, returnToNarration: handleReturnToNarration },
+    { trackingEnabled: trackingEnabled.value },
   )
 }
 
@@ -994,26 +998,30 @@ setAnnotationClickHandler(handleAnnotationClick)
 
 onUnmounted(clearFoliateSource)
 
-let bookMetaLoad: Promise<unknown> = Promise.resolve()
+let bookDetailsLoaded: Promise<void> = Promise.resolve()
 
-// Picks up narration this book left running in the background when its reader last closed,
-// from the sentence it had reached, so reopening the book carries on rather than starting over.
-async function resumeHandedOffNarration() {
-  const takeover = mediaOverlay.takeOver(fileId)
-  if (!takeover) return
-  progress.setMediaOverlayProgress(takeover.fragment, takeover.sectionIndex)
-  saveNarrationPos(takeover.sectionIndex, takeover.fragment)
-  if (!takeover.wasPlaying || !isMediaOverlayAvailable.value) return
-  narrationRate = mediaOverlay.rate.value
-  await bookMetaLoad
-  await beginNarration(takeover.sectionIndex, (item) => item.text === takeover.fragment)
-}
+const { resumeHandedOffNarration } = useReaderNarrationHandoff({
+  fileId,
+  trackingEnabled,
+  isNarratingHere,
+  isMediaOverlayAvailable,
+  chapters,
+  releaseNarration,
+  progress,
+  saveNarrationPos,
+  bookDetailsLoaded: () => bookDetailsLoaded,
+  buildTtsBook,
+  beginNarration,
+  adoptRate: (rate) => {
+    narrationRate = rate
+  },
+})
 
 onMounted(async () => {
   // Specialized readers own their own progress/settings/loading lifecycle.
   if (isAudioFormat || isPdfFormat || isComicFormat) return
 
-  bookMetaLoad = Promise.all([
+  bookDetailsLoaded = Promise.all([
     api(`/api/v1/books/${bookId}`)
       .then((r) => r.json() as Promise<BookDetail>)
       .then((b) => {
@@ -1021,7 +1029,7 @@ onMounted(async () => {
       })
       .catch(() => {}),
     ...(isTtsAvailable ? [loadUserPreferences().catch(() => {})] : []),
-  ])
+  ]).then(() => undefined)
 
   await customFonts.fetchAllFonts()
   await refreshFontFaces()
@@ -1405,28 +1413,11 @@ watch(
   },
 )
 
-// Runs before the foliate view is torn down, while its narration engine can still be released.
-onBeforeUnmount(() => {
-  if (!isNarratingHere.value) return
-  const released = releaseNarration()
-  if (!released) return
-  const unregisterChapters = registerNarrationChapters({
-    toc: chapters,
-    resolveSectionIndex: released.resolveSectionIndex,
-    hasNarration: released.hasNarration,
-    playSection: mediaOverlay.playSection,
-  })
-  mediaOverlay.handoff({
-    saveProgress: progress.setMediaOverlayProgress,
-    flush: progress.flush,
-    release: unregisterChapters,
-  })
-})
-
 onUnmounted(() => {
   mediaOverlayStartId++
   if (narrationPrepareTimer) clearTimeout(narrationPrepareTimer)
   setReaderFooterVisible(false)
+  setReaderOpen(false)
   if (isNarratingHere.value) mediaOverlay.stop()
 })
 </script>

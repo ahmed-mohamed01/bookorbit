@@ -1,12 +1,12 @@
 import { onUnmounted, ref } from 'vue'
-import { api, getAccessToken } from '@/lib/api'
+import { api } from '@/lib/api'
 import { i18n } from '@/i18n'
 import { useFoliateAnnotations } from './useFoliateAnnotations'
 import { useFoliateSelection } from './useFoliateSelection'
 import { useFoliateInput } from './useFoliateInput'
-import { ensureMediaOverlayActiveClass } from '../../media-overlay/lib/media-overlay-highlight'
 import { scalePublisherFontSizes } from '../lib/publisher-font-sizes'
-import type { EpubBookInfo, EpubReaderSettings } from '@bookorbit/types'
+import { loadFoliate, openStreamingEpub } from '../foliate-loader'
+import type { EpubReaderSettings } from '@bookorbit/types'
 import type { CrossFormatEbookResume } from '../../shared/composables/useCrossFormatResume'
 import { resumeCrossFormat } from './crossFormatResumeNav'
 
@@ -47,11 +47,6 @@ export interface EpubOpenOptions {
   fixedLayoutSpread?: EpubReaderSettings['fixedLayoutSpread']
 }
 
-type FoliateFetchFile = ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) & {
-  toString: () => string
-  [Symbol.toPrimitive]: () => string
-}
-
 function isResolvedNavigation(value: unknown): boolean {
   return Boolean(value && typeof value === 'object' && typeof (value as { index?: unknown }).index === 'number')
 }
@@ -70,14 +65,6 @@ function applyEpubOpenOptions(book: unknown, options: EpubOpenOptions | undefine
     ...epubBook.rendition,
     spread: 'none',
   }
-}
-
-function makeFoliateFetchFile(): FoliateFetchFile {
-  const fetchFile = ((input: RequestInfo | URL, init?: RequestInit) => api(input, init)) as FoliateFetchFile
-  const currentToken = () => getAccessToken() ?? ''
-  fetchFile.toString = currentToken
-  fetchFile[Symbol.toPrimitive] = currentToken
-  return fetchFile
 }
 
 export interface FoliateMediaOverlay extends EventTarget {
@@ -165,20 +152,6 @@ export function useFoliate(
     selection.handleInteractionEnd,
   )
 
-  async function loadScript() {
-    if (customElements.get('foliate-view')) return
-    const src = import.meta.env.DEV ? `/assets/foliate/view.js?v=${Date.now()}` : '/assets/foliate/view.js'
-    await new Promise<void>((resolve, reject) => {
-      const script = document.createElement('script')
-      script.type = 'module'
-      script.src = src
-      script.onload = () => setTimeout(resolve, 100)
-      script.onerror = () => reject(new Error('Failed to load foliate/view.js'))
-      document.head.appendChild(script)
-    })
-    await customElements.whenDefined('foliate-view')
-  }
-
   async function open(
     bookId: number,
     fileId: number,
@@ -201,7 +174,7 @@ export function useFoliate(
     let initialNavigationPending = true
 
     try {
-      await loadScript()
+      await loadFoliate()
 
       const view = document.createElement('foliate-view') as HTMLElement & {
         renderer: FoliateRenderer
@@ -327,25 +300,9 @@ export function useFoliate(
       let shouldRestoreByFraction = false
 
       if (format === 'epub') {
-        const infoRes = await api(`/api/v1/epub/${bookId}/info?fileId=${fileId}`)
-        if (!infoRes.ok) throw new Error(`Failed to fetch EPUB info: ${infoRes.status}`)
-        const bookInfo = await infoRes.json()
-        const rawLang = (bookInfo as EpubBookInfo)?.metadata?.language
+        const { book, info: bookInfo } = await openStreamingEpub(bookId, fileId)
+        const rawLang = bookInfo?.metadata?.language
         bookLanguage.value = typeof rawLang === 'string' && rawLang ? (rawLang.split('-')[0] ?? 'en').toLowerCase() : 'en'
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const makeStreamingBook = (window as any).makeStreamingBook as
-          | ((
-              id: number,
-              base: string,
-              info: unknown,
-              fetchFile: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
-              bookType: null,
-              fileId: number,
-            ) => Promise<unknown>)
-          | undefined
-        if (!makeStreamingBook) throw new Error('makeStreamingBook not available')
-        const book = await makeStreamingBook(bookId, '/api/v1/epub', bookInfo, makeFoliateFetchFile(), null, fileId)
-        ensureMediaOverlayActiveClass(book)
         applyEpubOpenOptions(book, options)
         shouldRestoreByFraction = isFixedLayoutBook(book)
         isFixedLayout.value = shouldRestoreByFraction

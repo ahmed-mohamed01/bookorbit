@@ -16,6 +16,7 @@ import CoverFill from '@/features/book/components/CoverFill.vue'
 import { useMediaOverlay } from '../composables/useMediaOverlay'
 import { useNarrationChapters } from '../composables/useNarrationChapters'
 import { useNarrationDockPosition } from '../composables/useNarrationDockPosition'
+import { useNarrationDockLayout } from '../composables/useNarrationDockLayout'
 import { useNarrationSleep } from '../composables/useNarrationSleep'
 import MediaOverlayDetachedChips from './MediaOverlayDetachedChips.vue'
 
@@ -24,26 +25,15 @@ const emit = defineEmits<{ minimise: [] }>()
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3].filter((speed) => speed >= EPUB_NARRATION_SPEED_MIN && speed <= EPUB_NARRATION_SPEED_MAX)
 
 const { t } = useI18n()
-const {
-  isPlaying,
-  isWaitingForAudio,
-  isDetached,
-  isBackground,
-  rate,
-  currentBook,
-  error,
-  toggle,
-  nextSentence,
-  prevSentence,
-  setRate,
-  stop,
-} = useMediaOverlay()
+const { isPlaying, isWaitingForAudio, isDetached, isBackground, rate, currentBook, error, toggle, nextSentence, prevSentence, setRate, stop } =
+  useMediaOverlay()
 const router = useRouter()
 const { chapters, currentIndex, currentChapter, playChapter } = useNarrationChapters()
 const sleep = useNarrationSleep()
 const { mode: sleepMode, badge: sleepBadge, isActive: isSleepActive, options: sleepOptions } = sleep
 
 const positionClass = useNarrationDockPosition()
+const { anchorClass } = useNarrationDockLayout()
 
 const speedLabel = computed(() => t('reader.narration.speedValue', { speed: rate.value }))
 const toggleLabel = computed(() => {
@@ -67,7 +57,6 @@ function handleStop() {
   stop()
 }
 
-// Reopening the book hands narration back to its reader, which carries on from the current sentence.
 function handleOpenBook() {
   const book = currentBook.value
   if (!book) return
@@ -98,7 +87,7 @@ function handleSleepSelect(value: unknown) {
 </script>
 
 <template>
-  <div class="fixed z-50 left-1/2 -translate-x-1/2 w-[min(380px,calc(100vw-16px))] transition-[bottom] duration-300" :class="positionClass">
+  <div class="fixed z-50 w-[min(380px,calc(100vw-16px))] transition-[bottom] duration-300" :class="[anchorClass, positionClass]">
     <div v-if="isDetached" class="mb-2 flex justify-center gap-2">
       <MediaOverlayDetachedChips side="back" />
       <MediaOverlayDetachedChips side="from-here" />

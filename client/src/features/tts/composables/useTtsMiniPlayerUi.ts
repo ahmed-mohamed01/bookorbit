@@ -4,6 +4,7 @@ export type TtsMiniPlayerMode = 'micro' | 'mini' | 'expanded'
 
 const mode = ref<TtsMiniPlayerMode>('mini')
 const isReaderFooterVisible = ref(false)
+const isReaderOpen = ref(false)
 
 export function useTtsMiniPlayerUi() {
   const isExpanded = computed(() => mode.value === 'expanded')
@@ -24,13 +25,19 @@ export function useTtsMiniPlayerUi() {
     isReaderFooterVisible.value = visible
   }
 
+  function setReaderOpen(open: boolean) {
+    isReaderOpen.value = open
+  }
+
   return {
     mode,
     isExpanded,
     isReaderFooterVisible,
+    isReaderOpen,
     setMode,
     setExpanded,
     toggleExpanded,
     setReaderFooterVisible,
+    setReaderOpen,
   }
 }

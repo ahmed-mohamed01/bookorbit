@@ -31,7 +31,7 @@ import LegalNotices from '@/components/legal/LegalNotices.vue'
 const TOASTER_OFFSET = {
   right: '16px',
   bottom:
-    'max(16px, var(--podcast-mini-player-clearance, 0px), var(--tts-mini-player-clearance, 0px), var(--podcast-download-widget-clearance, 0px))',
+    'max(16px, var(--podcast-mini-player-clearance, 0px), var(--tts-mini-player-clearance, 0px), var(--podcast-download-widget-clearance, 0px), var(--narration-dock-right-clearance, 0px))',
 }
 const TOASTER_MOBILE_OFFSET = {
   left: '16px',
@@ -57,7 +57,7 @@ watch(
   () => user.value,
   async (current, previous) => {
     // Narration can outlive its reader, so it must not carry on into another session.
-    if (!current || (previous && current.id !== previous.id)) narration.stop()
+    if (previous && (!current || current.id !== previous.id)) narration.stop()
     if (previous && current?.id !== previous.id) {
       await podcastPlayer?.resetForUserChange()
       podcastDownloads?.resetForUserChange()
@@ -71,6 +71,7 @@ watch(
       }
       return
     }
+    narration.restoreBackground(current.id)
     await podcastPlayer?.loadPreferences()
     await evaluate()
     syncPopup(route.name as string | undefined)

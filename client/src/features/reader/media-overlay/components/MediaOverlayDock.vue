@@ -1,18 +1,22 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { AudioLines, LoaderCircle, Pause, Play } from '@lucide/vue'
+import { AudioLines, ChevronDown, Headphones, LoaderCircle, Pause, Play } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useMediaOverlay } from '../composables/useMediaOverlay'
 import { installNarrationSleepWatchers } from '../composables/useNarrationSleep'
 import { useNarrationDockPosition } from '../composables/useNarrationDockPosition'
+import { useNarrationDockLayout } from '../composables/useNarrationDockLayout'
+import { useNarrationDockClearance } from '../composables/useNarrationDockClearance'
+import { useNarrationOutsideReader } from '../composables/useNarrationOutsideReader'
 import { useTtsMiniPlayerUi } from '@/features/tts/composables/useTtsMiniPlayerUi'
+import CoverFill from '@/features/book/components/CoverFill.vue'
 import MediaOverlayDetachedChips from './MediaOverlayDetachedChips.vue'
 import MediaOverlayFullPlayer from './MediaOverlayFullPlayer.vue'
 
 const collapsed = ref(true)
 
 const { t } = useI18n()
-const { isActive, isPlaying, isWaitingForAudio, isDetached, isBackground, error, toggle } = useMediaOverlay()
+const { isActive, isPlaying, isWaitingForAudio, isDetached, isBackground, isAwaitingPlay, currentBook, error, toggle } = useMediaOverlay()
 const toggleLabel = computed(() => {
   if (isWaitingForAudio.value) return t('reader.narration.buffering')
   return isPlaying.value ? t('reader.narration.pause') : t('reader.narration.play')
@@ -24,39 +28,49 @@ const expandedRoot = ref<HTMLElement | null>(null)
 const openButton = ref<HTMLButtonElement | null>(null)
 
 const positionClass = useNarrationDockPosition()
+const isOutsideReader = useNarrationOutsideReader()
+const {
+  side,
+  canDrag,
+  canMinimise,
+  isMini,
+  anchorClass,
+  transformOrigin,
+  dragStyle,
+  frameCursorClass,
+  setMini,
+  handlePointerDown,
+  handleClickCapture,
+} = useNarrationDockLayout()
 
-// While the reader's toolbars are hidden the pill stays off the page so nothing covers the text;
-// it comes back with the toolbars, and on its own when the reader has moved away from the narrated
-// sentence or playback failed, since those need acting on. Once the reader has closed there is no
-// text to cover, so the pill stays up while narration carries on in the background.
+// Inside a reader the pill stays off the page while the toolbars are hidden, so nothing covers the
+// text. It comes back with the toolbars, and on its own when the reader has moved away from the
+// narrated sentence, playback failed, or a reloaded reader is waiting for play, since those need
+// acting on.
 const surface = computed(() => {
   if (!isActive.value) return null
   if (!collapsed.value) return 'full'
-  return isBackground.value || isReaderFooterVisible.value || isDetached.value || error.value ? 'pill' : null
+  if (isMini.value && !error.value) return 'mini'
+  return isOutsideReader.value || isAwaitingPlay.value || isReaderFooterVisible.value || isDetached.value || error.value ? 'pill' : null
 })
 
 watch(isActive, (active) => {
   if (active) collapsed.value = true
 })
 
-// Leaving the reader shrinks the player back to the pill rather than keeping it open over the page.
 watch(isBackground, (background) => {
   if (background) collapsed.value = true
 })
 
-// Bottom-edge UI outside the reader (toasts, the selection bar) reads this to sit above the pill.
-const CLEARANCE_CSS_VAR = '--narration-dock-clearance'
-const PILL_CLEARANCE = 'calc(max(1.5rem, var(--podcast-mini-player-clearance, 0px)) + 3.75rem)'
+useNarrationDockClearance(surface, side, canDrag)
 
-watch(
-  () => isBackground.value && surface.value === 'pill',
-  (clear) => {
-    if (typeof document === 'undefined') return
-    if (clear) document.documentElement.style.setProperty(CLEARANCE_CSS_VAR, PILL_CLEARANCE)
-    else document.documentElement.style.removeProperty(CLEARANCE_CSS_VAR)
-  },
-  { immediate: true },
-)
+function handleCollapseToMini() {
+  setMini(true)
+}
+
+function handleExpandFromMini() {
+  setMini(false)
+}
 
 async function expand() {
   collapsed.value = false
@@ -121,8 +135,9 @@ watch(
 
 onBeforeUnmount(removeOutsideListeners)
 
-// Both surfaces are anchored at the bottom centre, so scaling each from that point while they
-// cross-fade reads as the pill stretching into the player and the player shrinking back into the pill.
+// Both surfaces are anchored at the same bottom point (centre, or the side the pill was moved to),
+// so scaling each from there while they cross-fade reads as the pill stretching into the player and
+// the player shrinking back into the pill.
 const PILL_SCALE = '0.25 0.15'
 const PLAYER_SCALE = '2.5 2'
 const EASING = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
@@ -133,7 +148,7 @@ function animationTarget(el: Element): HTMLElement | null {
   const target = (el as HTMLElement).dataset.dock === 'full' ? el.firstElementChild : el
   if (!(target instanceof HTMLElement) || typeof target.animate !== 'function') return null
   if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return null
-  target.style.transformOrigin = 'bottom center'
+  target.style.transformOrigin = transformOrigin.value
   return target
 }
 
@@ -179,15 +194,43 @@ function handleLeave(el: Element, done: () => void) {
       v-else-if="surface === 'pill'"
       key="pill"
       data-dock="pill"
-      class="fixed z-50 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 transition-[bottom] duration-300"
-      :class="positionClass"
+      class="fixed z-50 flex flex-col items-center gap-1.5 transition-[bottom] duration-300"
+      :class="[anchorClass, positionClass]"
+      :style="dragStyle"
     >
       <div class="flex items-center gap-2">
         <MediaOverlayDetachedChips side="back" />
-        <div class="flex items-center gap-1 rounded-full border border-border bg-card p-1.5 shadow-2xl">
+        <div
+          class="flex items-center gap-1 rounded-full border p-1.5 shadow-2xl"
+          :class="[
+            isOutsideReader ? 'border-primary/50 bg-popover/95 ring-4 ring-primary/15 backdrop-blur-md' : 'border-border bg-card',
+            frameCursorClass,
+          ]"
+          @pointerdown="handlePointerDown"
+          @click.capture="handleClickCapture"
+        >
+          <button
+            v-if="isBackground"
+            ref="openButton"
+            type="button"
+            data-test="background-now-playing"
+            class="flex min-w-0 items-center gap-2.5 rounded-full py-0.5 pr-2 pl-0.5 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+            :aria-label="t('reader.narration.openControls')"
+            @click="expand"
+          >
+            <span class="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted">
+              <CoverFill v-if="currentBook?.coverUrl" :src="currentBook.coverUrl" />
+              <Headphones v-else class="h-4 w-4 text-muted-foreground" />
+            </span>
+            <span class="flex min-w-0 max-w-[min(14rem,calc(100vw-10rem))] flex-col leading-tight">
+              <span class="truncate text-sm font-semibold text-foreground">{{ currentBook?.title ?? t('reader.narration.fallbackTitle') }}</span>
+              <span v-if="currentBook?.author" class="truncate text-xs text-muted-foreground">{{ currentBook.author }}</span>
+            </span>
+            <AudioLines class="h-4 w-4 shrink-0 text-primary" :class="{ 'animate-pulse': isPlaying }" />
+          </button>
           <button
             type="button"
-            class="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
             :aria-label="toggleLabel"
             :title="toggleLabel"
             @click="toggle"
@@ -197,6 +240,7 @@ function handleLeave(el: Element, done: () => void) {
             <Play v-else class="h-4 w-4" />
           </button>
           <button
+            v-if="!isBackground"
             ref="openButton"
             type="button"
             class="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
@@ -204,6 +248,17 @@ function handleLeave(el: Element, done: () => void) {
             @click="expand"
           >
             <AudioLines class="h-4 w-4" :class="{ 'animate-pulse': isPlaying }" />
+          </button>
+          <button
+            v-if="canMinimise"
+            type="button"
+            data-test="collapse-to-mini"
+            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+            :aria-label="t('reader.narration.collapseToMini')"
+            :title="t('reader.narration.collapseToMini')"
+            @click="handleCollapseToMini"
+          >
+            <ChevronDown class="h-4 w-4" />
           </button>
         </div>
         <MediaOverlayDetachedChips side="from-here" />
@@ -215,6 +270,37 @@ function handleLeave(el: Element, done: () => void) {
       >
         {{ error }}
       </div>
+    </div>
+    <div
+      v-else-if="surface === 'mini'"
+      key="mini"
+      data-dock="mini"
+      class="fixed z-50 right-4 transition-[bottom] duration-300"
+      :class="positionClass"
+    >
+      <button
+        type="button"
+        data-test="mini-expand"
+        class="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-muted shadow-2xl ring-2 ring-primary focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/55"
+        :aria-label="t('reader.narration.expandFromMini')"
+        :title="t('reader.narration.expandFromMini')"
+        @click="handleExpandFromMini"
+      >
+        <CoverFill v-if="currentBook?.coverUrl" :src="currentBook.coverUrl" />
+        <Headphones v-else class="h-5 w-5 text-muted-foreground" />
+      </button>
+      <button
+        type="button"
+        data-test="mini-toggle"
+        class="absolute -right-1.5 -bottom-1.5 flex h-7 w-7 items-center justify-center rounded-full border-2 border-background bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+        :aria-label="toggleLabel"
+        :title="toggleLabel"
+        @click="toggle"
+      >
+        <LoaderCircle v-if="isWaitingForAudio" class="h-3.5 w-3.5 animate-spin" />
+        <Pause v-else-if="isPlaying" class="h-3.5 w-3.5" />
+        <Play v-else class="h-3.5 w-3.5" />
+      </button>
     </div>
   </Transition>
 </template>
