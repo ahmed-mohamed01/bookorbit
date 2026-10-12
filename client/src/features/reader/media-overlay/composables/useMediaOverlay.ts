@@ -34,9 +34,27 @@ export interface MediaOverlayDetachedActions {
   returnToNarration: () => void | Promise<void>
 }
 const currentSectionIndex = ref<number | null>(null)
+// True once the reader that started narration has closed and handed it over, so it keeps
+// playing while the rest of the app is browsed.
+const isBackground = ref(false)
+
+// Supplied by the reader at hand-over: its progress writer stays usable after it unmounts, so
+// background narration saves through the same path the reader would.
+export interface MediaOverlayBackgroundSink {
+  saveProgress: (fragment: string, sectionIndex: number) => void
+  flush: () => void
+  release: () => void
+}
+
+export interface MediaOverlayTakeover {
+  fragment: string
+  sectionIndex: number
+  wasPlaying: boolean
+}
 
 let instance: FoliateMediaOverlay | null = null
 let detachedActions: MediaOverlayDetachedActions | null = null
+let backgroundSink: MediaOverlayBackgroundSink | null = null
 let highlightListener: ((e: Event) => void) | null = null
 let errorListener: ((e: Event) => void) | null = null
 let bufferingListener: ((e: Event) => void) | null = null
@@ -59,6 +77,7 @@ function pause() {
   instance.pause()
   isPlaying.value = false
   mediaSession.setPlaybackState('paused')
+  backgroundSink?.flush()
 }
 
 function resume() {
@@ -69,11 +88,20 @@ function resume() {
   mediaSession.setPlaybackState('playing')
 }
 
+function endBackground() {
+  const sink = backgroundSink
+  backgroundSink = null
+  isBackground.value = false
+  sink?.flush()
+  sink?.release()
+}
+
 function stop() {
   if (instance) {
     instance.stop()
     detachListeners()
   }
+  endBackground()
   instance = null
   detachedActions = null
   isActive.value = false
@@ -127,6 +155,9 @@ export function useMediaOverlay() {
       const section = (e as CustomEvent).detail?.sectionIndex
       currentSectionIndex.value = Number.isInteger(section) && section >= 0 ? section : null
       if (typeof text === 'string') currentFragment.value = text
+      if (backgroundSink && typeof text === 'string' && currentSectionIndex.value !== null) {
+        backgroundSink.saveProgress(text, currentSectionIndex.value)
+      }
       mediaSession.setPlaybackState('playing')
     }
     errorListener = (e: Event) => {
@@ -189,6 +220,47 @@ export function useMediaOverlay() {
     void detachedActions.returnToNarration()
   }
 
+  // Keeps the running narration going once its reader closes. The reader-only actions go with
+  // the reader, so nothing is left detached.
+  function handoff(sink: MediaOverlayBackgroundSink): boolean {
+    if (!isActive.value || !instance) {
+      sink.release()
+      return false
+    }
+    endBackground()
+    detachedActions = null
+    isDetached.value = false
+    backgroundSink = sink
+    isBackground.value = true
+    return true
+  }
+
+  // A reader opening the book that is narrating in the background takes narration back: the
+  // background engine belongs to a view that no longer exists, so it is stopped and the reader
+  // restarts from the returned sentence in its own view.
+  function takeOver(bookFileId: number): MediaOverlayTakeover | null {
+    if (!isBackground.value || currentBook.value?.bookFileId !== bookFileId) return null
+    const fragment = currentFragment.value
+    const sectionIndex = currentSectionIndex.value
+    const wasPlaying = isPlaying.value
+    stop()
+    if (!fragment || sectionIndex === null) return null
+    return { fragment, sectionIndex, wasPlaying }
+  }
+
+  // Plays a section from its first sentence; used by the chapter list while no reader is open.
+  function playSection(sectionIndex: number) {
+    if (!instance) return
+    requestAudioFocus('media-overlay')
+    currentFragment.value = null
+    isPlaying.value = true
+    error.value = null
+    mediaSession.setPlaybackState('playing')
+    void instance.start(sectionIndex).catch((e: unknown) => {
+      error.value = e instanceof Error ? e.message : i18n.global.t('reader.narration.error')
+    })
+  }
+
   function increaseRate() {
     setRate(Math.round((rate.value + RATE_STEP) * 100) / 100)
   }
@@ -208,6 +280,7 @@ export function useMediaOverlay() {
     isBuffering,
     isWaitingForAudio,
     currentSectionIndex,
+    isBackground,
     error,
     sleepTimer,
     start,
@@ -219,6 +292,9 @@ export function useMediaOverlay() {
     pause,
     resume,
     stop,
+    handoff,
+    takeOver,
+    playSection,
     nextSentence,
     prevSentence,
     setRate,

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, RotateCw, Headphones, ListOrdered, LoaderCircle, Moon, Pause, Play, RotateCcw, X } from '@lucide/vue'
+import { useRouter } from 'vue-router'
+import { BookOpen, Check, ChevronDown, RotateCw, Headphones, ListOrdered, LoaderCircle, Moon, Pause, Play, RotateCcw, X } from '@lucide/vue'
 import { EPUB_NARRATION_SPEED_MAX, EPUB_NARRATION_SPEED_MIN } from '@bookorbit/types'
 import {
   DropdownMenu,
@@ -23,7 +24,21 @@ const emit = defineEmits<{ minimise: [] }>()
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3].filter((speed) => speed >= EPUB_NARRATION_SPEED_MIN && speed <= EPUB_NARRATION_SPEED_MAX)
 
 const { t } = useI18n()
-const { isPlaying, isWaitingForAudio, isDetached, rate, currentBook, error, toggle, nextSentence, prevSentence, setRate, stop } = useMediaOverlay()
+const {
+  isPlaying,
+  isWaitingForAudio,
+  isDetached,
+  isBackground,
+  rate,
+  currentBook,
+  error,
+  toggle,
+  nextSentence,
+  prevSentence,
+  setRate,
+  stop,
+} = useMediaOverlay()
+const router = useRouter()
 const { chapters, currentIndex, currentChapter, playChapter } = useNarrationChapters()
 const sleep = useNarrationSleep()
 const { mode: sleepMode, badge: sleepBadge, isActive: isSleepActive, options: sleepOptions } = sleep
@@ -50,6 +65,14 @@ function handleMinimise() {
 
 function handleStop() {
   stop()
+}
+
+// Reopening the book hands narration back to its reader, which carries on from the current sentence.
+function handleOpenBook() {
+  const book = currentBook.value
+  if (!book) return
+  emit('minimise')
+  void router.push({ name: 'reader', params: { bookId: String(book.bookId), fileId: String(book.bookFileId) } })
 }
 
 // Long books have hundreds of entries, so the list opens on the chapter being narrated.
@@ -97,6 +120,16 @@ function handleSleepSelect(value: unknown) {
           <div v-if="currentBook?.author" class="truncate text-sm text-muted-foreground max-w-full">{{ currentBook.author }}</div>
         </div>
         <div class="flex shrink-0 items-center gap-0.5 self-start">
+          <button
+            v-if="isBackground"
+            type="button"
+            class="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+            :aria-label="t('reader.narration.openBook')"
+            :title="t('reader.narration.openBook')"
+            @click="handleOpenBook"
+          >
+            <BookOpen class="h-5 w-5" />
+          </button>
           <button
             type="button"
             class="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"

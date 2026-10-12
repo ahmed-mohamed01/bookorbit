@@ -97,6 +97,25 @@ export interface FoliateMediaOverlay extends EventTarget {
 // on the media overlay highlight handler in public/assets/foliate/view.js.
 export type MediaOverlayFollowDecider = (el: Element | null) => boolean
 
+export interface ReleasedNarration {
+  mediaOverlay: FoliateMediaOverlay
+  resolveSectionIndex: (target: string) => number | null
+  hasNarration: (sectionIndex: number) => boolean
+}
+
+function resolveSectionIndexIn(
+  view: { resolveNavigation?: (target: string | number) => { index?: number } | Promise<{ index?: number }> } | null,
+  target: string,
+): number | null {
+  try {
+    const resolved = view?.resolveNavigation?.(target)
+    if (!resolved || resolved instanceof Promise) return null
+    return typeof resolved.index === 'number' ? resolved.index : null
+  } catch {
+    return null
+  }
+}
+
 // Chapter documents live in an iframe, so `instanceof Element` from this realm fails.
 function isElementNode(value: unknown): value is Element {
   return !!value && typeof value === 'object' && (value as Node).nodeType === 1
@@ -413,8 +432,22 @@ export function useFoliate(
           destroy?: () => void
           mediaOverlay?: FoliateMediaOverlay | null
           startMediaOverlay?: () => unknown
+          releaseMediaOverlay?: () => FoliateMediaOverlay | null
         })
       | null
+  }
+
+  // The view is torn down with the reader, so the lookups narration still needs afterwards are
+  // bound to its book now rather than read through the view ref later.
+  function releaseNarration(): ReleasedNarration | null {
+    const view = getViewEl()
+    const mediaOverlay = view?.releaseMediaOverlay?.()
+    if (!view || !mediaOverlay) return null
+    return {
+      mediaOverlay,
+      resolveSectionIndex: (target: string) => resolveSectionIndexIn(view, target),
+      hasNarration: (index: number) => !!view.book?.sections?.[index]?.mediaOverlay,
+    }
   }
 
   async function getLocationContext(target: string): Promise<FoliateLocationContext> {
@@ -469,15 +502,8 @@ export function useFoliate(
     setMediaOverlayFollow: (decider: MediaOverlayFollowDecider | null) => {
       mediaOverlayFollow = decider
     },
-    resolveSectionIndex: (target: string): number | null => {
-      try {
-        const resolved = getViewEl()?.resolveNavigation?.(target)
-        if (!resolved || resolved instanceof Promise) return null
-        return typeof resolved.index === 'number' ? resolved.index : null
-      } catch {
-        return null
-      }
-    },
+    resolveSectionIndex: (target: string): number | null => resolveSectionIndexIn(getViewEl(), target),
+    releaseNarration,
     view: viewRef,
     open,
     prev: () => getViewEl()?.prev?.(),

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
@@ -288,6 +288,11 @@ let narrationRate: number | null = null
 
 const isMediaOverlayAvailable = computed(() => isTtsAvailable && hasMediaOverlay.value)
 const isTtsActive = computed(() => isActive.value && currentBook.value?.bookFileId === fileId)
+// Narration started in this reader. Another book can still be narrating in the background, and
+// that must not drive this reader's controls or progress.
+const isNarratingHere = computed(
+  () => mediaOverlay.isActive.value && !mediaOverlay.isBackground.value && mediaOverlay.currentBook.value?.bookFileId === fileId,
+)
 // Embedded narration keeps playing while the reader scrolls or turns pages, so
 // only synthesized TTS locks navigation.
 const isNavigationLocked = computed(() => initialNavigationPending.value || (isTtsActive.value && playbackState.value === 'playing'))
@@ -301,7 +306,7 @@ useTtsKeyboard(() => mediaOverlay.isActive.value, {
 })
 const isOverlayFooterVisible = computed(() => footerVisible.value && !showTapZones.value)
 const showNarrationStart = computed(
-  () => isOverlayFooterVisible.value && isMediaOverlayAvailable.value && !mediaOverlay.isActive.value && !isTtsActive.value,
+  () => isOverlayFooterVisible.value && isMediaOverlayAvailable.value && !isNarratingHere.value && !isTtsActive.value,
 )
 const showTtsResumePrompt = ref(false)
 const clearingSavedTtsPosition = ref(false)
@@ -313,7 +318,7 @@ let mediaOverlayPlaylistPromise: Promise<EpubMediaOverlayPlaylist | null> | null
 let relocationSource: 'text' | 'narration' = 'text'
 
 watch(mediaOverlay.isPlaying, (playing) => {
-  if (playing) relocationSource = 'narration'
+  if (playing && isNarratingHere.value) relocationSource = 'narration'
 })
 
 function ensureTtsAvailable(): boolean {
@@ -360,7 +365,7 @@ function clearResumeNarrationHighlight() {
 // foliate owns the highlight then.
 function showResumeNarrationHighlight(doc: Document) {
   clearResumeNarrationHighlight()
-  if (mediaOverlay.isActive.value) return
+  if (isNarratingHere.value) return
   const saved = getCurrentNarrationPos()
   const id = saved?.fragment.split('#')[1]
   if (!id) return
@@ -399,10 +404,10 @@ function scheduleNarrationPrepare() {
 
 async function prepareNarration() {
   const mo = getMediaOverlay()
-  if (!mo?.prepare || !isMediaOverlayAvailable.value || mediaOverlay.isActive.value) return
+  if (!mo?.prepare || !isMediaOverlayAvailable.value || isNarratingHere.value) return
   void loadAudiobookDefaults()
   const saved = await resolveSavedNarrationPos()
-  if (mediaOverlay.isActive.value) return
+  if (isNarratingHere.value) return
   if (saved) {
     await mo.prepare(saved.section, (item) => item.text === saved.fragment)
     return
@@ -623,7 +628,7 @@ async function resolveSavedNarrationPos(): Promise<MediaOverlayResumePosition | 
 watch(
   () => mediaOverlay.currentFragment.value,
   (fragment) => {
-    if (!mediaOverlay.isActive.value || !fragment) return
+    if (!isNarratingHere.value || !fragment) return
     if (!mediaOverlay.isDetached.value) relocationSource = 'narration'
     const section = mediaOverlay.currentSectionIndex.value ?? resolveSectionIndex(fragment) ?? sectionIndex.value
     saveNarrationPos(section, fragment)
@@ -735,7 +740,7 @@ async function handleStartMediaOverlay() {
   showTapZones.value = false
   hideOverlays(true)
 
-  if (mediaOverlay.isActive.value) {
+  if (isNarratingHere.value) {
     mediaOverlay.toggle()
     return
   }
@@ -881,7 +886,7 @@ function onMiddleTapHandler() {
 function canRunManualNavigation(): boolean {
   if (initialNavigationPending.value) return false
 
-  if (mediaOverlay.isActive.value) {
+  if (isNarratingHere.value) {
     mediaOverlay.detach()
     relocationSource = 'text'
     return true
@@ -932,6 +937,7 @@ const {
   setMediaOverlayFollow,
   resolveSectionIndex,
   sectionHasMediaOverlay,
+  releaseNarration,
 } = useFoliate(() => containerRef.value, onRelocateHandler, onApplyStylesHandler, onMiddleTapHandler, onChapterLoadHandler, canRunManualNavigation)
 
 setMediaOverlayFollow((el) => {
@@ -955,7 +961,7 @@ onUnmounted(
 )
 
 const narrationFollow = useMediaOverlayFollow({
-  isNarrating: () => mediaOverlay.isActive.value,
+  isNarrating: () => isNarratingHere.value,
   isScrolledFlow: () => getRenderer()?.getAttribute?.('flow') === 'scrolled',
   onScrollIntent: mediaOverlay.detach,
   onRelocate: trackNarrationInView,
@@ -988,11 +994,26 @@ setAnnotationClickHandler(handleAnnotationClick)
 
 onUnmounted(clearFoliateSource)
 
+let bookMetaLoad: Promise<unknown> = Promise.resolve()
+
+// Picks up narration this book left running in the background when its reader last closed,
+// from the sentence it had reached, so reopening the book carries on rather than starting over.
+async function resumeHandedOffNarration() {
+  const takeover = mediaOverlay.takeOver(fileId)
+  if (!takeover) return
+  progress.setMediaOverlayProgress(takeover.fragment, takeover.sectionIndex)
+  saveNarrationPos(takeover.sectionIndex, takeover.fragment)
+  if (!takeover.wasPlaying || !isMediaOverlayAvailable.value) return
+  narrationRate = mediaOverlay.rate.value
+  await bookMetaLoad
+  await beginNarration(takeover.sectionIndex, (item) => item.text === takeover.fragment)
+}
+
 onMounted(async () => {
   // Specialized readers own their own progress/settings/loading lifecycle.
   if (isAudioFormat || isPdfFormat || isComicFormat) return
 
-  void Promise.all([
+  bookMetaLoad = Promise.all([
     api(`/api/v1/books/${bookId}`)
       .then((r) => r.json() as Promise<BookDetail>)
       .then((b) => {
@@ -1066,6 +1087,7 @@ onMounted(async () => {
   }
 
   initialNavigationPending.value = error.value !== null
+  if (!error.value) void resumeHandedOffNarration()
 
   if (crossFormatResumed) {
     toast.info(t('reader.toast.crossFormatResumed'), {
@@ -1383,11 +1405,29 @@ watch(
   },
 )
 
+// Runs before the foliate view is torn down, while its narration engine can still be released.
+onBeforeUnmount(() => {
+  if (!isNarratingHere.value) return
+  const released = releaseNarration()
+  if (!released) return
+  const unregisterChapters = registerNarrationChapters({
+    toc: chapters,
+    resolveSectionIndex: released.resolveSectionIndex,
+    hasNarration: released.hasNarration,
+    playSection: mediaOverlay.playSection,
+  })
+  mediaOverlay.handoff({
+    saveProgress: progress.setMediaOverlayProgress,
+    flush: progress.flush,
+    release: unregisterChapters,
+  })
+})
+
 onUnmounted(() => {
   mediaOverlayStartId++
   if (narrationPrepareTimer) clearTimeout(narrationPrepareTimer)
   setReaderFooterVisible(false)
-  mediaOverlay.stop()
+  if (isNarratingHere.value) mediaOverlay.stop()
 })
 </script>
 
@@ -1408,7 +1448,7 @@ onUnmounted(() => {
       :settings-open="showSettings"
       :footerMode="footerMode"
       :peek-mode="isPeekMode"
-      :isTtsActive="isTtsActive || (mediaOverlay.isActive.value && mediaOverlay.isPlaying.value)"
+      :isTtsActive="isTtsActive || (isNarratingHere && mediaOverlay.isPlaying.value)"
       :isTtsAvailable="isTtsAvailable"
       :isMediaOverlay="isMediaOverlayAvailable"
       :isPinned="isPinned"

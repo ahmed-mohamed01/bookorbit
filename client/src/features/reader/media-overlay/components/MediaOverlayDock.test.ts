@@ -12,6 +12,7 @@ vi.mock('../composables/useMediaOverlay', async () => {
     isPlaying: ref(false),
     isWaitingForAudio: ref(false),
     isDetached: ref(false),
+    isBackground: ref(false),
     error: ref<string | null>(null),
     currentFragment: ref<string | null>(null),
     toggle: vi.fn<() => void>(),
@@ -54,6 +55,7 @@ describe('MediaOverlayDock', () => {
     state.isPlaying.value = true
     waitingForAudio(state).value = false
     state.isDetached.value = false
+    state.isBackground.value = false
     state.error.value = null
     vi.mocked(state.toggle).mockClear()
     useTtsMiniPlayerUi().setReaderFooterVisible(true)
@@ -94,6 +96,35 @@ describe('MediaOverlayDock', () => {
     useMediaOverlay().error.value = 'Failed to load clip'
     await wrapper.vm.$nextTick()
     expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+  })
+
+  it('keeps the pill up after the reader closes and lifts other bottom-edge UI above it', async () => {
+    const wrapper = await startNarration()
+    useTtsMiniPlayerUi().setReaderFooterVisible(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('[data-dock]').exists()).toBe(false)
+
+    useMediaOverlay().isBackground.value = true
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-dock="pill"]').exists()).toBe(true)
+    expect(document.documentElement.style.getPropertyValue('--narration-dock-clearance')).not.toBe('')
+
+    useMediaOverlay().isBackground.value = false
+    await wrapper.vm.$nextTick()
+    expect(document.documentElement.style.getPropertyValue('--narration-dock-clearance')).toBe('')
+  })
+
+  it('shrinks the open full player back to the pill when narration moves to the background', async () => {
+    const wrapper = await startNarration()
+    await wrapper.find('[aria-label="Open narration controls"]').trigger('click')
+    expect(wrapper.find('[data-test="full-player"]').exists()).toBe(true)
+
+    useMediaOverlay().isBackground.value = true
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('[data-test="full-player"]').exists()).toBe(false)
+    expect(wrapper.find('[data-dock="pill"]').exists()).toBe(true)
   })
 
   it('starts as a pill that toggles playback without opening the full player', async () => {

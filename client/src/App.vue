@@ -12,6 +12,7 @@ import { useWhatsNew } from '@/features/whats-new/composables/useWhatsNew'
 import { useAuth } from '@/features/auth/composables/useAuth'
 import TtsMiniPlayer from '@/features/tts/components/TtsMiniPlayer.vue'
 import MediaOverlayDock from '@/features/reader/media-overlay/components/MediaOverlayDock.vue'
+import { useMediaOverlay } from '@/features/reader/media-overlay/composables/useMediaOverlay'
 import PodcastMiniPlayer from '@/features/podcast/components/PodcastMiniPlayer.vue'
 import PodcastLiveRegion from '@/features/podcast/components/PodcastLiveRegion.vue'
 import PodcastDownloadWidget from '@/features/podcast/components/PodcastDownloadWidget.vue'
@@ -36,7 +37,7 @@ const TOASTER_MOBILE_OFFSET = {
   left: '16px',
   right: '16px',
   bottom:
-    'max(16px, var(--podcast-mini-player-clearance, 0px), var(--tts-mini-player-clearance, 0px), var(--podcast-download-widget-clearance, 0px))',
+    'max(16px, var(--podcast-mini-player-clearance, 0px), var(--tts-mini-player-clearance, 0px), var(--podcast-download-widget-clearance, 0px), var(--narration-dock-clearance, 0px))',
 }
 
 const { isOpen } = useChangePasswordDialog()
@@ -48,12 +49,15 @@ const { popupOpen, evaluate, syncPopup } = useWhatsNew()
 const podcastPlayer = APP_FEATURES.podcasts ? usePodcastPlayer() : null
 const podcastDownloads = APP_FEATURES.podcasts ? usePodcastDownloadBatches() : null
 const podcastEvents = APP_FEATURES.podcasts ? usePodcastEvents() : null
+const narration = useMediaOverlay()
 
 if (APP_FEATURES.podcasts) usePodcastKeyboardShortcuts()
 
 watch(
   () => user.value,
   async (current, previous) => {
+    // Narration can outlive its reader, so it must not carry on into another session.
+    if (!current || (previous && current.id !== previous.id)) narration.stop()
     if (previous && current?.id !== previous.id) {
       await podcastPlayer?.resetForUserChange()
       podcastDownloads?.resetForUserChange()

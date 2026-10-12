@@ -11376,7 +11376,8 @@
       "sleepRemaining": "{count} min",
       "sleepRemainingShort": "{count}m",
       "sleepChapterBadge": "Ch",
-      "endOfChapter": "End of chapter"
+      "endOfChapter": "End of chapter",
+      "openBook": "Open book"
     }
   },
   "scanner": {

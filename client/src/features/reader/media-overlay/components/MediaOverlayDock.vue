@@ -12,7 +12,7 @@ import MediaOverlayFullPlayer from './MediaOverlayFullPlayer.vue'
 const collapsed = ref(true)
 
 const { t } = useI18n()
-const { isActive, isPlaying, isWaitingForAudio, isDetached, error, toggle } = useMediaOverlay()
+const { isActive, isPlaying, isWaitingForAudio, isDetached, isBackground, error, toggle } = useMediaOverlay()
 const toggleLabel = computed(() => {
   if (isWaitingForAudio.value) return t('reader.narration.buffering')
   return isPlaying.value ? t('reader.narration.pause') : t('reader.narration.play')
@@ -27,16 +27,36 @@ const positionClass = useNarrationDockPosition()
 
 // While the reader's toolbars are hidden the pill stays off the page so nothing covers the text;
 // it comes back with the toolbars, and on its own when the reader has moved away from the narrated
-// sentence or playback failed, since those need acting on.
+// sentence or playback failed, since those need acting on. Once the reader has closed there is no
+// text to cover, so the pill stays up while narration carries on in the background.
 const surface = computed(() => {
   if (!isActive.value) return null
   if (!collapsed.value) return 'full'
-  return isReaderFooterVisible.value || isDetached.value || error.value ? 'pill' : null
+  return isBackground.value || isReaderFooterVisible.value || isDetached.value || error.value ? 'pill' : null
 })
 
 watch(isActive, (active) => {
   if (active) collapsed.value = true
 })
+
+// Leaving the reader shrinks the player back to the pill rather than keeping it open over the page.
+watch(isBackground, (background) => {
+  if (background) collapsed.value = true
+})
+
+// Bottom-edge UI outside the reader (toasts, the selection bar) reads this to sit above the pill.
+const CLEARANCE_CSS_VAR = '--narration-dock-clearance'
+const PILL_CLEARANCE = 'calc(max(1.5rem, var(--podcast-mini-player-clearance, 0px)) + 3.75rem)'
+
+watch(
+  () => isBackground.value && surface.value === 'pill',
+  (clear) => {
+    if (typeof document === 'undefined') return
+    if (clear) document.documentElement.style.setProperty(CLEARANCE_CSS_VAR, PILL_CLEARANCE)
+    else document.documentElement.style.removeProperty(CLEARANCE_CSS_VAR)
+  },
+  { immediate: true },
+)
 
 async function expand() {
   collapsed.value = false

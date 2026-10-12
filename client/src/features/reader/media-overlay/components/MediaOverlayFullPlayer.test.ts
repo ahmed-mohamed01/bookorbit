@@ -7,6 +7,9 @@ import { useMediaOverlay } from '../composables/useMediaOverlay'
 import { registerNarrationChapters } from '../composables/useNarrationChapters'
 import { useNarrationSleep } from '../composables/useNarrationSleep'
 
+const push = vi.fn<(to: unknown) => Promise<void>>().mockResolvedValue(undefined)
+vi.mock('vue-router', () => ({ useRouter: () => ({ push }) }))
+
 vi.mock('../composables/useMediaOverlay', async () => {
   const { ref } = await import('vue')
   const state = {
@@ -14,8 +17,9 @@ vi.mock('../composables/useMediaOverlay', async () => {
     isPlaying: ref(true),
     isWaitingForAudio: ref(false),
     isDetached: ref(false),
+    isBackground: ref(false),
     rate: ref(1),
-    currentBook: ref({ title: 'Book', author: 'Author' }),
+    currentBook: ref({ bookId: 7, bookFileId: 9, title: 'Book', author: 'Author' }),
     error: ref<string | null>(null),
     currentFragment: ref<string | null>('c1.xhtml#s1'),
     toggle: vi.fn<() => void>(),
@@ -166,6 +170,21 @@ describe('MediaOverlayFullPlayer', () => {
     expect(button.exists()).toBe(true)
     expect(button.find('.animate-spin').exists()).toBe(true)
     waiting.value = false
+  })
+
+  it('offers to open the book only while narrating in the background', async () => {
+    const background = useMediaOverlay().isBackground as Ref<boolean>
+    push.mockClear()
+    const wrapper = mount(MediaOverlayFullPlayer)
+    expect(wrapper.find('[aria-label="Open book"]').exists()).toBe(false)
+
+    background.value = true
+    await wrapper.vm.$nextTick()
+    await wrapper.find('[aria-label="Open book"]').trigger('click')
+
+    expect(push).toHaveBeenCalledWith({ name: 'reader', params: { bookId: '7', fileId: '9' } })
+    expect(wrapper.emitted('minimise')).toHaveLength(1)
+    background.value = false
   })
 
   it('asks to be minimised', async () => {

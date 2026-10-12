@@ -320,6 +320,7 @@ export class View extends HTMLElement {
   #pageProgress
   #searchResults = new Map()
   #cursorAutohider = new CursorAutohider(this, () => this.hasAttribute('autohide-cursor'))
+  #mediaOverlayListeners = null
   isFixedLayout = false
   lastLocation
   history = new History()
@@ -377,6 +378,8 @@ export class View extends HTMLElement {
       const activeClass = book.media.activeClass
       const playbackActiveClass = book.media.playbackActiveClass
       this.mediaOverlay = book.getMediaOverlay()
+      this.#mediaOverlayListeners = new AbortController()
+      const { signal } = this.#mediaOverlayListeners
       let lastActive
       this.mediaOverlay.addEventListener('highlight', (e) => {
         const resolved = this.resolveNavigation(e.detail.text)
@@ -396,15 +399,26 @@ export class View extends HTMLElement {
           if (playbackActiveClass) el.ownerDocument.documentElement.classList.add(playbackActiveClass)
           lastActive = new WeakRef(el)
         })
-      })
+      }, { signal })
       this.mediaOverlay.addEventListener('unhighlight', () => {
         const el = lastActive?.deref()
         if (el) {
           el.classList.remove(activeClass)
           if (playbackActiveClass) el.ownerDocument.documentElement.classList.remove(playbackActiveClass)
         }
-      })
+      }, { signal })
     }
+  }
+
+  // BookOrbit fork: hands the narration engine to the host so it can keep playing after this
+  // view is gone. The engine only needs the book, but the view's own listeners drive a renderer
+  // that is about to be torn down, so they are detached first.
+  releaseMediaOverlay() {
+    this.#mediaOverlayListeners?.abort()
+    this.#mediaOverlayListeners = null
+    const mediaOverlay = this.mediaOverlay
+    this.mediaOverlay = null
+    return mediaOverlay
   }
 
   close() {
@@ -417,6 +431,8 @@ export class View extends HTMLElement {
     this.lastLocation = null
     this.history.clear()
     this.tts = null
+    this.#mediaOverlayListeners?.abort()
+    this.#mediaOverlayListeners = null
     this.mediaOverlay = null
   }
 

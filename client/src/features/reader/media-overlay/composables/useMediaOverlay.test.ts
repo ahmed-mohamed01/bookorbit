@@ -196,4 +196,123 @@ describe('useMediaOverlay', () => {
     expect(player.isDetached.value).toBe(false)
     expect(player.isActive.value).toBe(true)
   })
+
+  describe('background narration', () => {
+    function makeSink() {
+      return {
+        saveProgress: vi.fn<(fragment: string, section: number) => void>(),
+        flush: vi.fn<() => void>(),
+        release: vi.fn<() => void>(),
+      }
+    }
+
+    function highlight(mo: EventTarget, text: string, sectionIndex: number) {
+      mo.dispatchEvent(new CustomEvent('highlight', { detail: { text, sectionIndex } }))
+    }
+
+    it('keeps playing after hand-off, dropping the reader-only detached state', () => {
+      const mo = makeFakeMediaOverlay()
+      const player = useMediaOverlay()
+      const narrateFromHere = vi.fn<() => void>()
+      player.start(mo, vi.fn<() => void>(), book, { narrateFromHere, returnToNarration: vi.fn<() => void>() })
+      player.detach()
+
+      expect(player.handoff(makeSink())).toBe(true)
+
+      expect(player.isBackground.value).toBe(true)
+      expect(player.isActive.value).toBe(true)
+      expect(player.isDetached.value).toBe(false)
+      expect(mo.stop).not.toHaveBeenCalled()
+      player.narrateFromHere()
+      expect(narrateFromHere).not.toHaveBeenCalled()
+    })
+
+    it('refuses a hand-off with nothing playing and releases the sink', () => {
+      const sink = makeSink()
+
+      expect(useMediaOverlay().handoff(sink)).toBe(false)
+
+      expect(useMediaOverlay().isBackground.value).toBe(false)
+      expect(sink.release).toHaveBeenCalledOnce()
+    })
+
+    it('saves each narrated sentence through the sink and flushes on pause', () => {
+      const mo = makeFakeMediaOverlay()
+      const player = useMediaOverlay()
+      player.start(mo, vi.fn<() => void>(), book)
+      highlight(mo, 'c1.xhtml#s1', 1)
+      const sink = makeSink()
+      player.handoff(sink)
+
+      highlight(mo, 'c1.xhtml#s2', 1)
+      expect(sink.saveProgress).toHaveBeenCalledExactlyOnceWith('c1.xhtml#s2', 1)
+
+      player.pause()
+      expect(sink.flush).toHaveBeenCalledOnce()
+    })
+
+    it('flushes and releases the sink when stopped', () => {
+      const mo = makeFakeMediaOverlay()
+      const player = useMediaOverlay()
+      player.start(mo, vi.fn<() => void>(), book)
+      const sink = makeSink()
+      player.handoff(sink)
+
+      player.stop()
+
+      expect(sink.flush).toHaveBeenCalled()
+      expect(sink.release).toHaveBeenCalledOnce()
+      expect(player.isBackground.value).toBe(false)
+    })
+
+    it('ends the background session when another book starts narrating', () => {
+      const player = useMediaOverlay()
+      player.start(makeFakeMediaOverlay(), vi.fn<() => void>(), book)
+      const sink = makeSink()
+      player.handoff(sink)
+
+      player.start(makeFakeMediaOverlay(), vi.fn<() => void>(), { ...book, bookFileId: 3 })
+
+      expect(sink.release).toHaveBeenCalledOnce()
+      expect(player.isBackground.value).toBe(false)
+    })
+
+    it('hands narration back to a reader opening the same file, from the current sentence', () => {
+      const mo = makeFakeMediaOverlay()
+      const player = useMediaOverlay()
+      player.start(mo, vi.fn<() => void>(), book)
+      highlight(mo, 'c2.xhtml#s9', 2)
+      player.handoff(makeSink())
+
+      expect(player.takeOver(book.bookFileId + 1)).toBeNull()
+      expect(player.isActive.value).toBe(true)
+
+      expect(player.takeOver(book.bookFileId)).toEqual({ fragment: 'c2.xhtml#s9', sectionIndex: 2, wasPlaying: true })
+      expect(player.isActive.value).toBe(false)
+      expect(mo.stop).toHaveBeenCalled()
+    })
+
+    it('does not take over narration that is still owned by its reader', () => {
+      const player = useMediaOverlay()
+      player.start(makeFakeMediaOverlay(), vi.fn<() => void>(), book)
+
+      expect(player.takeOver(book.bookFileId)).toBeNull()
+      expect(player.isActive.value).toBe(true)
+    })
+
+    it('plays a picked section from its start without a reader', () => {
+      const mo = makeFakeMediaOverlay()
+      const player = useMediaOverlay()
+      player.start(mo, vi.fn<() => void>(), book)
+      highlight(mo, 'c1.xhtml#s1', 1)
+      player.pause()
+      player.handoff(makeSink())
+
+      player.playSection(4)
+
+      expect(mo.start).toHaveBeenCalledWith(4)
+      expect(player.currentFragment.value).toBeNull()
+      expect(player.isPlaying.value).toBe(true)
+    })
+  })
 })
