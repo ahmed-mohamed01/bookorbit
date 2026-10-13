@@ -30,6 +30,7 @@ function release(patch: Partial<MonitoredDueRelease> = {}): MonitoredDueRelease 
   return {
     workId: 'work-1',
     title: 'Test Work',
+    identityKeys: [],
     seriesName: 'Test Series',
     seriesIndex: '2',
     format: 'ebook',

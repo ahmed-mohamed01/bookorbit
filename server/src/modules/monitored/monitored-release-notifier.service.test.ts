@@ -28,6 +28,7 @@ function release(patch: Partial<MonitoredDueRelease> = {}): MonitoredDueRelease 
   return {
     workId: 'work-1',
     title: 'Children of Memory',
+    identityKeys: [],
     seriesName: 'Children of Time',
     seriesIndex: '3',
     format: 'ebook',

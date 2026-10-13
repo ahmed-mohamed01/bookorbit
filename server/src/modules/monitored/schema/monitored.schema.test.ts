@@ -16,6 +16,7 @@ import {
   monitoredAuthorWorks,
   monitoredBooks,
   monitoredReleaseEvents,
+  monitoredRequestLedger,
   monitoredSettings,
 } from './monitored.schema';
 import { MONITORED_SCHEMA_SQL } from './monitored-schema';
@@ -88,6 +89,35 @@ describe('monitored_release_events ledger', () => {
     expect(MONITORED_SCHEMA_SQL).not.toContain('ADD CONSTRAINT "monitored_release_events_work_id_author_catalog_works_id_fk"');
     expect(MONITORED_SCHEMA_SQL).toContain(
       'ALTER TABLE "monitored_release_events" DROP CONSTRAINT IF EXISTS "monitored_release_events_work_id_author_catalog_works_id_fk";',
+    );
+  });
+});
+
+describe('monitored_request_ledger', () => {
+  it('keys a request by monitor, format and identity, not by work id', () => {
+    const config = getTableConfig(monitoredRequestLedger);
+    expect(config.primaryKeys[0].columns.map((column) => column.name)).toEqual(['monitor_author_id', 'format', 'identity_key']);
+    expect(config.columns.some((column) => column.name === 'work_id')).toBe(false);
+    expect(checkValues(monitoredRequestLedger, 'monitored_request_ledger_format_chk').sort()).toEqual([...MONITORED_FORMATS].sort());
+  });
+
+  it('forgets a request when the request itself is deleted, on both schema copies', () => {
+    const requestKey = getTableConfig(monitoredRequestLedger).foreignKeys.find((foreignKey) =>
+      foreignKey.reference().columns.some((column) => column.name === 'request_id'),
+    );
+    expect(requestKey?.onDelete).toBe('cascade');
+    expect(MONITORED_SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS "monitored_request_ledger"');
+    expect(MONITORED_SCHEMA_SQL).toContain(
+      'FOREIGN KEY ("request_id") REFERENCES "public"."book_requests"("id") ON DELETE cascade ON UPDATE no action;',
+    );
+    expect(MONITORED_SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS "monitored_request_ledger_request_id_idx"');
+  });
+
+  it('adds release event identity keys to fresh and existing databases', () => {
+    expect(getTableConfig(monitoredReleaseEvents).columns.find((column) => column.name === 'identity_keys')?.notNull).toBe(true);
+    expect(MONITORED_SCHEMA_SQL).toContain(`"identity_keys" text[] DEFAULT '{}'::text[] NOT NULL,`);
+    expect(MONITORED_SCHEMA_SQL).toContain(
+      `ALTER TABLE "monitored_release_events" ADD COLUMN IF NOT EXISTS "identity_keys" text[] DEFAULT '{}'::text[] NOT NULL;`,
     );
   });
 });

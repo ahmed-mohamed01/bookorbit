@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS "monitored_release_events" (
 	"owner_user_id" integer NOT NULL,
 	"format" varchar(10) NOT NULL,
 	"title" varchar(1000),
+	"identity_keys" text[] DEFAULT '{}'::text[] NOT NULL,
 	"release_date" varchar(10) NOT NULL,
 	"detected_at" timestamp with time zone NOT NULL,
 	"notified_at" timestamp with time zone,
@@ -614,4 +615,44 @@ DO $$ BEGIN
 		ALTER TABLE "monitored_books" DROP COLUMN IF EXISTS "is_shared";
 	END IF;
 END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public'
+			AND table_name = 'monitored_release_events'
+			AND column_name = 'identity_keys'
+	) THEN
+		ALTER TABLE "monitored_release_events" ADD COLUMN IF NOT EXISTS "identity_keys" text[] DEFAULT '{}'::text[] NOT NULL;
+	END IF;
+END $$;
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "monitored_request_ledger" (
+	"monitor_author_id" varchar(36) NOT NULL,
+	"format" varchar(10) NOT NULL,
+	"identity_key" varchar(300) NOT NULL,
+	"request_id" integer NOT NULL,
+	CONSTRAINT "monitored_request_ledger_monitor_author_id_format_identity_key_pk" PRIMARY KEY("monitor_author_id","format","identity_key"),
+	CONSTRAINT "monitored_request_ledger_format_chk" CHECK ("monitored_request_ledger"."format" in ('ebook', 'audiobook'))
+);
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'monitored_request_ledger_monitor_author_id_monitored_authors_id_fk'
+	) THEN
+		ALTER TABLE "monitored_request_ledger" ADD CONSTRAINT "monitored_request_ledger_monitor_author_id_monitored_authors_id_fk" FOREIGN KEY ("monitor_author_id") REFERENCES "public"."monitored_authors"("id") ON DELETE cascade ON UPDATE no action;
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'monitored_request_ledger_request_id_book_requests_id_fk'
+	) THEN
+		ALTER TABLE "monitored_request_ledger" ADD CONSTRAINT "monitored_request_ledger_request_id_book_requests_id_fk" FOREIGN KEY ("request_id") REFERENCES "public"."book_requests"("id") ON DELETE cascade ON UPDATE no action;
+	END IF;
+END $$;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "monitored_request_ledger_request_id_idx" ON "monitored_request_ledger" USING btree ("request_id");
 `;
