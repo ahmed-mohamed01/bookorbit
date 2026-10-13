@@ -26,6 +26,7 @@ import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { normalizeMonitoredName } from './monitored-text.utils';
 import { enrolReleaseProbes, reapplyReleaseOverlay } from './monitored-release-probe-store.service';
+import { recordRequestLedger, restoreRequestLedger, workProviderKeysSql } from './monitored-request-ledger';
 import { activeWorkCondition, releaseRangeOverlapsSql, visibleWorkCondition } from './monitored-work-conditions';
 export { releaseRangeOverlapsSql } from './monitored-work-conditions';
 import { DB } from '../../db';
@@ -57,6 +58,7 @@ export interface MonitoredWorkEntry {
 export interface MonitoredDueRelease extends Record<string, unknown> {
   workId: string;
   title: string;
+  identityKeys: string[];
   seriesName: string | null;
   seriesIndex: string | null;
   format: MonitoredFormat;
@@ -796,6 +798,7 @@ export class MonitoredStoreService {
 
   async saveCatalog(monitorId: string, catalog: MonitoredCatalog | null, options: { enrolReleaseProbes?: boolean } = {}): Promise<void> {
     await this.db.transaction(async (tx) => {
+      await recordRequestLedger(tx, monitorId);
       if (catalog === null) {
         await tx.delete(schema.authorCatalogState).where(eq(schema.authorCatalogState.monitorAuthorId, monitorId));
         await tx.delete(schema.authorCatalogWorks).where(eq(schema.authorCatalogWorks.monitorAuthorId, monitorId));
@@ -852,6 +855,7 @@ export class MonitoredStoreService {
       await tx.delete(schema.authorCatalogSourceWorks).where(inArray(schema.authorCatalogSourceWorks.workId, ids));
       const sources = catalog.works.flatMap((work) => this.sourceValues(work));
       for (const batch of batches(sources)) await tx.insert(schema.authorCatalogSourceWorks).values(batch);
+      await restoreRequestLedger(tx, monitorId);
       await reapplyReleaseOverlay(tx, monitorId);
       if (options.enrolReleaseProbes) await enrolReleaseProbes(tx, monitorId, catalog.fetchedAt.slice(0, 10));
     });
@@ -968,8 +972,11 @@ export class MonitoredStoreService {
           where prior_release.monitor_author_id = ${monitor.id}
             and prior_release.format = ${format}
             and prior_release.notified_at is not null
-            and prior_release.title is not null
-            and lower(public.bookorbit_unaccent(prior_release.title)) = lower(public.bookorbit_unaccent(${schema.authorCatalogWorks.title}))
+            and (
+              (prior_release.title is not null
+                and lower(public.bookorbit_unaccent(prior_release.title)) = lower(public.bookorbit_unaccent(${schema.authorCatalogWorks.title})))
+              or prior_release.identity_keys && ${workProviderKeysSql(sql`${schema.authorCatalogWorks.id}`)}
+            )
         )`,
       );
       return sql`
@@ -979,6 +986,7 @@ export class MonitoredStoreService {
           ${schema.authorCatalogWorks.seriesName} as "seriesName",
           ${schema.authorCatalogWorks.seriesIndex} as "seriesIndex",
           ${format}::text as format,
+          ${workProviderKeysSql(sql`${schema.authorCatalogWorks.id}`)} as "identityKeys",
           ${releaseRangeStartSql(date, precision)} as "releaseDate",
           ${date} as "storedDate",
           (${schema.monitoredReleaseEvents.workId} is not null) as "claimed"
@@ -1018,6 +1026,7 @@ export class MonitoredStoreService {
             ownerUserId: monitor.ownerUserId,
             format: release.format,
             title: release.title,
+            identityKeys: release.identityKeys,
             releaseDate: release.releaseDate,
             detectedAt,
             // A seeding pass records the release without announcing it, so the row is born notified.

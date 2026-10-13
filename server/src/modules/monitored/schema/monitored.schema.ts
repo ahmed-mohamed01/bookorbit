@@ -230,6 +230,11 @@ export const monitoredReleaseEvents = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     format: varchar('format', { length: 10 }).$type<MonitoredFormat>().notNull(),
     title: varchar('title', { length: 1000 }),
+    // The work's provider ids as `source:id`, so a later work id for the same book still finds this row.
+    identityKeys: text('identity_keys')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     releaseDate: varchar('release_date', { length: 10 }).notNull(),
     detectedAt: timestamp('detected_at', { withTimezone: true }).notNull(),
     notifiedAt: timestamp('notified_at', { withTimezone: true }),
@@ -239,6 +244,30 @@ export const monitoredReleaseEvents = pgTable(
     index('monitored_release_events_owner_user_id_idx').on(t.ownerUserId),
     index('monitored_release_events_monitor_author_id_idx').on(t.monitorAuthorId),
     check('monitored_release_events_format_chk', sql`${t.format} in ('ebook', 'audiobook')`),
+  ],
+);
+
+/**
+ * Every request a monitor's works have filed, keyed by what identifies the book rather than by the
+ * work id. A catalog refresh deletes the works it no longer sees, and their overlay with them, so the
+ * request id is copied here first and handed back to whichever work turns up with the same identity.
+ */
+export const monitoredRequestLedger = pgTable(
+  'monitored_request_ledger',
+  {
+    monitorAuthorId: varchar('monitor_author_id', { length: 36 })
+      .notNull()
+      .references(() => monitoredAuthors.id, { onDelete: 'cascade' }),
+    format: varchar('format', { length: 10 }).$type<MonitoredFormat>().notNull(),
+    identityKey: varchar('identity_key', { length: 300 }).notNull(),
+    requestId: integer('request_id')
+      .notNull()
+      .references(() => bookRequests.id, { onDelete: 'cascade' }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.monitorAuthorId, t.format, t.identityKey] }),
+    index('monitored_request_ledger_request_id_idx').on(t.requestId),
+    check('monitored_request_ledger_format_chk', sql`${t.format} in ('ebook', 'audiobook')`),
   ],
 );
 

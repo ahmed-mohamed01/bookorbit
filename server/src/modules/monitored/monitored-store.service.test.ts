@@ -445,9 +445,30 @@ describe('MonitoredStoreService catalog overlay', () => {
       ],
     });
 
-    expect(tracked.tx.execute).toHaveBeenCalledTimes(7);
-    expect(tracked.operations.slice(-7)).toEqual(['overlay', 'overlay', 'overlay', 'overlay', 'overlay', 'overlay', 'overlay']);
-    expect(tracked.operations.indexOf('overlay')).toBeGreaterThan(tracked.operations.lastIndexOf('insert'));
+    expect(tracked.tx.execute).toHaveBeenCalledTimes(10);
+    expect(tracked.operations.slice(-9)).toEqual(['overlay', 'overlay', 'overlay', 'overlay', 'overlay', 'overlay', 'overlay', 'overlay', 'overlay']);
+    expect(tracked.operations.indexOf('insert')).toBeLessThan(tracked.operations.lastIndexOf('overlay'));
+  });
+
+  it('records request ids before pruning works and restores them after the source-work rewrite', async () => {
+    const tracked = catalogDb();
+    const store = new MonitoredStoreService(tracked.db as never, {} as never);
+    const row = workRow({ matchedBookId: null, matchedEbookBookId: null, matchedAudioBookId: null, ownedFormats: [] });
+
+    await store.saveCatalog('monitor-1', {
+      fetchedAt: '2026-09-18T00:00:00.000Z',
+      works: [
+        { ...row, providerWorkIds: { hardcover: 'the-work' }, monitorState: 'monitoring', matchedBookIds: {}, monitorFormats: {}, requestIds: {} },
+      ],
+    });
+
+    const statements = tracked.tx.execute.mock.calls.map(([statement]) => rendered(statement as SQL));
+    expect(tracked.operations[0]).toBe('overlay');
+    expect(tracked.operations[1]).toBe('insert');
+    expect(statements[0]).toContain('insert into "monitored_request_ledger"');
+    expect(statements[1]).toContain('insert into "monitored_author_works" (work_id, monitor_author_id, "ebook_request_id")');
+    expect(statements[2]).toContain('insert into "monitored_author_works" (work_id, monitor_author_id, "audiobook_request_id")');
+    expect(tracked.operations.indexOf('overlay', 1)).toBeGreaterThan(tracked.operations.lastIndexOf('insert'));
   });
 
   it('enrols release probes after reapplying the overlay in the catalog transaction', async () => {
@@ -473,23 +494,24 @@ describe('MonitoredStoreService catalog overlay', () => {
       { enrolReleaseProbes: true },
     );
 
-    expect(tracked.tx.execute).toHaveBeenCalledTimes(11);
+    expect(tracked.tx.execute).toHaveBeenCalledTimes(14);
     const statements = tracked.tx.execute.mock.calls.map(([statement]) => rendered(statement as SQL));
-    expect(statements[5]).toContain('set auto_release_date = work.audio_release_date');
-    expect(statements[6]).toContain("probe.status = 'dated'");
-    expect(statements[7]).toContain('insert into "author_catalog_work_releases"');
-    expect(statements[8]).toContain('insert into "author_catalog_work_releases"');
-    expect(statements[9]).toContain('set ebook_release_date = null');
-    expect(statements[10]).toContain('set audio_release_date = null');
+    expect(statements[8]).toContain('set auto_release_date = work.audio_release_date');
+    expect(statements[9]).toContain("probe.status = 'dated'");
+    expect(statements[10]).toContain('insert into "author_catalog_work_releases"');
+    expect(statements[11]).toContain('insert into "author_catalog_work_releases"');
+    expect(statements[12]).toContain('set ebook_release_date = null');
+    expect(statements[13]).toContain('set audio_release_date = null');
   });
 
-  it('does not reapply the release overlay when clearing a null catalog', async () => {
+  it('only records request ids when clearing a null catalog', async () => {
     const tracked = catalogDb();
     const store = new MonitoredStoreService(tracked.db as never, {} as never);
 
     await store.saveCatalog('monitor-1', null);
 
-    expect(tracked.tx.execute).not.toHaveBeenCalled();
+    expect(tracked.tx.execute).toHaveBeenCalledOnce();
+    expect(rendered(tracked.tx.execute.mock.calls[0][0] as SQL)).toContain('insert into "monitored_request_ledger"');
   });
 });
 
@@ -769,6 +791,7 @@ describe('MonitoredStoreService release detection', () => {
   const dueRelease: MonitoredDueRelease = {
     workId: 'work-1',
     title: 'Test Work',
+    identityKeys: ['hardcover:the-work'],
     seriesName: null,
     seriesIndex: null,
     format: 'ebook',
@@ -803,6 +826,8 @@ describe('MonitoredStoreService release detection', () => {
     expect(statement).toContain('prior_release.notified_at is not null');
     expect(statement).toContain('lower(public.bookorbit_unaccent(prior_release.title))');
     expect(statement).toContain('lower(public.bookorbit_unaccent("author_catalog_works"."title"))');
+    expect(statement).toContain('or prior_release.identity_keys && array( select identity.source');
+    expect(statement).toContain('as "identityKeys"');
   });
 
   it.each([
