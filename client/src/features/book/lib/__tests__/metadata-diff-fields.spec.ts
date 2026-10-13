@@ -8,10 +8,14 @@ import {
   classifyLanguage,
   classifyList,
   classifyNumber,
+  classifyOtherSeries,
   classifyRating,
   classifyText,
   descriptionPlainText,
+  getCandidateList,
+  otherSeriesAdditions,
   summarizeDifferences,
+  withOtherSeries,
 } from '../metadata-diff-fields'
 
 describe('difference kinds', () => {
@@ -107,5 +111,54 @@ describe('summarizeDifferences', () => {
     }
 
     expect(summarizeDifferences(current, candidate, { amazon: 'B002KP6DXQ' })).toEqual({ fills: 1, changes: 2 })
+  })
+})
+
+describe('other series', () => {
+  const book = {
+    seriesName: 'Mistborn: The Original Trilogy',
+    seriesMemberships: [
+      { seriesName: 'Mistborn: The Original Trilogy', seriesIndex: '1' },
+      { seriesName: 'The Cosmere', seriesIndex: null },
+    ],
+  } as MetadataSource
+  const hardcover = {
+    seriesName: 'The Mistborn Saga',
+    seriesIndex: '1',
+    seriesMemberships: [
+      { seriesName: 'The Mistborn Saga', seriesIndex: '1' },
+      { seriesName: 'Mistborn - The Original Trilogy', seriesIndex: '1' },
+      { seriesName: 'the cosmere', seriesIndex: '4' },
+      { seriesName: 'Cosmere Universe', seriesIndex: null },
+    ],
+  } as MetadataCandidate
+
+  it("offers only series the book has under no spelling, leaving the result's own primary to its row", () => {
+    expect(otherSeriesAdditions(book, hardcover)).toEqual([{ seriesName: 'Cosmere Universe', seriesIndex: null }])
+    expect(classifyOtherSeries(book, hardcover)).toEqual({ kind: 'change' })
+  })
+
+  it('reads a book with no other series as a fill and a result with nothing new as the same', () => {
+    expect(classifyOtherSeries({ seriesName: 'Mistborn: The Original Trilogy' } as MetadataSource, hardcover)).toEqual({ kind: 'fill' })
+    expect(classifyOtherSeries({ ...book, seriesMemberships: [...book.seriesMemberships!, { seriesName: 'Cosmere Universe' }] }, hardcover)).toEqual({
+      kind: 'same',
+    })
+    expect(classifyOtherSeries(book, { seriesName: 'The Mistborn Saga' } as MetadataCandidate)).toEqual({ kind: 'missing' })
+  })
+
+  it('shows a new series with its number and a shared one by name', () => {
+    expect(getCandidateList(hardcover, 'otherSeries', book)).toEqual(['Mistborn - The Original Trilogy', 'the cosmere', 'Cosmere Universe'])
+  })
+
+  it('appends additions after the existing list without duplicates', () => {
+    const merged = withOtherSeries(
+      book.seriesMemberships!,
+      [
+        { seriesName: 'Cosmere Universe', seriesIndex: null },
+        { seriesName: 'THE COSMERE', seriesIndex: '4' },
+      ],
+      { seriesName: 'Mistborn: The Original Trilogy', seriesIndex: '1' },
+    )
+    expect(merged.map((membership) => membership.seriesName)).toEqual(['Mistborn: The Original Trilogy', 'The Cosmere', 'Cosmere Universe'])
   })
 })

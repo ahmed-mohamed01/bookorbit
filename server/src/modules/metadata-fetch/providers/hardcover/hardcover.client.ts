@@ -41,6 +41,7 @@ const BOOK_FIELDS = `
   cached_contributors
   cached_tags
   featured_book_series { series { name books_count } position }
+  book_series { position series { name } }
   rating
   ratings_count
   pages

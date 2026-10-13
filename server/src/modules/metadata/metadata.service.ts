@@ -623,6 +623,15 @@ export class MetadataService {
     await this.comicMetadataRepository.upsert(bookId, fields);
   }
 
+  async findSeriesMemberships(bookId: number): Promise<{ seriesName: string; seriesIndex: string | null }[]> {
+    const memberships = (await this.seriesMemberships?.findByBookId(bookId)) ?? [];
+    return memberships.map(({ seriesName, seriesIndex }) => ({ seriesName, seriesIndex }));
+  }
+
+  async replaceSeriesMemberships(bookId: number, memberships: { seriesName: string; seriesIndex?: string | null }[]): Promise<void> {
+    await this.seriesMemberships?.replaceForBook(bookId, memberships);
+  }
+
   async replaceGenres(bookId: number, parsedGenres: string[], options: RelationMutationOptions = {}) {
     const uniqueGenres = this.normalizeUniqueRelationNames(parsedGenres);
 

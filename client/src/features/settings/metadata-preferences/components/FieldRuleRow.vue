@@ -130,7 +130,7 @@ function collapse() {
       <MergeStrategySegmented
         :model-value="preference.mergeStrategy"
         :disabled="!preference.enabled || saving"
-        :allow-merge-existing="field === 'genres'"
+        :field="field"
         @update:model-value="onMergeChange"
       />
 

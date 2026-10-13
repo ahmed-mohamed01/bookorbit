@@ -207,6 +207,8 @@ export interface MetadataSource {
   pageCount: number | null;
   seriesName: string | null;
   seriesIndex: SeriesIndex | null;
+  /** The book's series, primary first. Absent where the caller has no series list. */
+  seriesMemberships?: MetadataSeriesMembership[];
   isbn10: string | null;
   isbn13: string | null;
   authors: string[];

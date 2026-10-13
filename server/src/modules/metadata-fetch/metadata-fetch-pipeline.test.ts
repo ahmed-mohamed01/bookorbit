@@ -1703,123 +1703,309 @@ describe('MetadataFetchPipeline', () => {
     expect(resolved.description).toBe('The whole blurb, all the way to the end.');
   });
 
-  it('passes through series memberships when series name and index resolve from the same provider', async () => {
-    const prefs = createPreferences((fields) => {
-      fields.seriesName = {
-        enabled: true,
-        providers: [MetadataProviderKey.AUDIBLE],
-        mergeStrategy: 'overwriteIfProvided',
-      };
-      fields.seriesIndex = {
-        enabled: true,
-        providers: [MetadataProviderKey.AUDIBLE],
-        mergeStrategy: 'overwriteIfProvided',
-      };
+  describe('other series', () => {
+    function otherSeriesPreferences(mutate?: (fields: Record<MetadataField, FieldPreference>) => void) {
+      const prefs = createPreferences((fields) => {
+        fields.seriesName = { enabled: true, providers: [MetadataProviderKey.GOODREADS], mergeStrategy: 'overwriteIfProvided' };
+        fields.seriesIndex = { enabled: true, providers: [MetadataProviderKey.GOODREADS], mergeStrategy: 'overwriteIfProvided' };
+        fields.otherSeries = {
+          enabled: true,
+          providers: [MetadataProviderKey.AUDIBLE, MetadataProviderKey.HARDCOVER],
+          mergeStrategy: 'mergeExisting',
+        };
+        mutate?.(fields);
+      });
+      preferencesService.getGlobal.mockResolvedValue(prefs);
+      resolver.resolve.mockReturnValue(prefs);
+      resolver.withForwardCompatibility.mockReturnValue(prefs);
+      registry.all.mockReturnValue([
+        { key: MetadataProviderKey.GOODREADS },
+        { key: MetadataProviderKey.AUDIBLE },
+        { key: MetadataProviderKey.HARDCOVER },
+      ] as never);
+    }
+
+    const finalEmpire = (provider: MetadataProviderKey, id: string, overrides: Partial<MetadataCandidate> = {}) =>
+      candidate(provider, id, { title: 'The Final Empire', authors: ['Brandon Sanderson'], ...overrides });
+
+    it("adds a provider's other series after the primary series and the series the book already has", async () => {
+      otherSeriesPreferences();
+      fetchService.searchCandidates.mockReturnValue(
+        of(
+          finalEmpire(MetadataProviderKey.GOODREADS, 'gr1', { seriesName: 'Mistborn', seriesIndex: '1' }),
+          finalEmpire(MetadataProviderKey.HARDCOVER, 'mistborn', {
+            seriesName: 'The Mistborn Saga: The Original Trilogy',
+            seriesIndex: '1',
+            seriesMemberships: [
+              { seriesName: 'The Mistborn Saga: The Original Trilogy', seriesIndex: '1' },
+              { seriesName: 'the cosmere', seriesIndex: '4' },
+              { seriesName: 'Mistborn', seriesIndex: '1' },
+              { seriesName: '  The   Mistborn Saga ', seriesIndex: '1' },
+            ],
+          }),
+        ),
+      );
+
+      const resolved = await pipeline.runWithSources(
+        { title: 'The Final Empire' },
+        {
+          seriesName: 'Mistborn',
+          seriesIndex: '1',
+          seriesMemberships: [
+            { seriesName: 'Mistborn', seriesIndex: '1' },
+            { seriesName: 'The Cosmere', seriesIndex: null },
+          ],
+        },
+      );
+
+      expect(resolved.resolved.seriesMemberships).toEqual([
+        { seriesName: 'Mistborn', seriesIndex: '1' },
+        { seriesName: 'The Cosmere', seriesIndex: null },
+        { seriesName: 'The Mistborn Saga', seriesIndex: '1' },
+      ]);
+      expect(resolved.sources.otherSeries).toBe(MetadataProviderKey.HARDCOVER);
     });
 
-    preferencesService.getGlobal.mockResolvedValue(prefs);
-    resolver.resolve.mockReturnValue(prefs);
-    resolver.withForwardCompatibility.mockReturnValue(prefs);
-    registry.all.mockReturnValue([{ key: MetadataProviderKey.AUDIBLE }] as never);
-    fetchService.searchCandidates.mockReturnValue(
-      of(
-        candidate(MetadataProviderKey.AUDIBLE, 'B002V1NSN2', {
-          seriesName: 'Sword of Truth',
-          seriesIndex: '11',
-          seriesMemberships: [
-            { seriesName: '  Sword   of Truth ', seriesIndex: '11' },
-            { seriesName: 'sword of truth', seriesIndex: '12' },
-            { seriesName: 'Chainfire\tTrilogy', seriesIndex: '3' },
-          ],
-        }),
-      ),
-    );
+    it('lets a provider brought in only for other series add series but not pick ids or other fields', async () => {
+      otherSeriesPreferences((fields) => {
+        fields.publisher = { enabled: true, providers: [MetadataProviderKey.GOODREADS], mergeStrategy: 'overwrite' };
+        fields.otherSeries = { enabled: true, providers: [MetadataProviderKey.HARDCOVER], mergeStrategy: 'mergeExisting' };
+      });
+      fetchService.searchCandidates.mockReturnValue(
+        of(
+          finalEmpire(MetadataProviderKey.GOODREADS, 'gr1', { seriesName: 'Mistborn', seriesIndex: '1', publisher: 'Tor' }),
+          finalEmpire(MetadataProviderKey.HARDCOVER, 'hc1', {
+            seriesName: 'Mistborn',
+            publisher: 'Gollancz',
+            seriesMemberships: [
+              { seriesName: 'Mistborn', seriesIndex: '1' },
+              { seriesName: 'The Cosmere', seriesIndex: null },
+            ],
+          }),
+        ),
+      );
 
-    const resolved = await pipeline.run({ title: 'Confessor', isAudiobook: true }, {});
+      const result = await pipeline.runWithSources({ title: 'The Final Empire' }, {});
 
-    expect(resolved.seriesName).toBe('Sword of Truth');
-    expect(resolved.seriesIndex).toBe('11');
-    expect(resolved.seriesMemberships).toEqual([
-      { seriesName: 'Sword of Truth', seriesIndex: '11' },
-      { seriesName: 'Chainfire Trilogy', seriesIndex: '3' },
-    ]);
-  });
-
-  it('does not pass series memberships when series name and index resolve from different providers', async () => {
-    const prefs = createPreferences((fields) => {
-      fields.seriesName = {
-        enabled: true,
-        providers: [MetadataProviderKey.AUDIBLE],
-        mergeStrategy: 'overwriteIfProvided',
-      };
-      fields.seriesIndex = {
-        enabled: true,
-        providers: [MetadataProviderKey.GOOGLE],
-        mergeStrategy: 'overwriteIfProvided',
-      };
+      expect(result.resolved.seriesMemberships).toEqual([
+        { seriesName: 'Mistborn', seriesIndex: '1' },
+        { seriesName: 'The Cosmere', seriesIndex: null },
+      ]);
+      expect(result.resolved.publisher).toBe('Tor');
+      expect(result.providerIds[MetadataProviderKey.HARDCOVER]).toBeUndefined();
     });
 
-    preferencesService.getGlobal.mockResolvedValue(prefs);
-    resolver.resolve.mockReturnValue(prefs);
-    resolver.withForwardCompatibility.mockReturnValue(prefs);
-    registry.all.mockReturnValue([{ key: MetadataProviderKey.AUDIBLE }, { key: MetadataProviderKey.GOOGLE }] as never);
-    fetchService.searchCandidates.mockReturnValue(
-      of(
-        candidate(MetadataProviderKey.AUDIBLE, 'B002V1NSN2', {
-          seriesName: 'Sword of Truth',
-          seriesIndex: '11',
+    it('keeps an existing series that differs from the primary only by punctuation', async () => {
+      otherSeriesPreferences();
+      fetchService.searchCandidates.mockReturnValue(
+        of(
+          finalEmpire(MetadataProviderKey.GOODREADS, 'gr1', { seriesName: 'Star Wars: Legends', seriesIndex: '1' }),
+          finalEmpire(MetadataProviderKey.HARDCOVER, 'hc1', {
+            seriesName: 'Star Wars: Legends',
+            seriesMemberships: [
+              { seriesName: 'Star Wars: Legends', seriesIndex: '1' },
+              { seriesName: 'Thrawn Trilogy', seriesIndex: '1' },
+            ],
+          }),
+        ),
+      );
+
+      const result = await pipeline.runWithSources(
+        { title: 'The Final Empire' },
+        {
+          seriesName: 'Star Wars: Legends',
+          seriesIndex: '1',
           seriesMemberships: [
-            { seriesName: 'Sword of Truth', seriesIndex: '11' },
-            { seriesName: 'Chainfire Trilogy', seriesIndex: '3' },
+            { seriesName: 'Star Wars: Legends', seriesIndex: '1' },
+            { seriesName: 'Star Wars Legends', seriesIndex: '7' },
           ],
-        }),
-        candidate(MetadataProviderKey.GOOGLE, 'g1', { seriesIndex: '12' }),
-      ),
-    );
+        },
+      );
 
-    const resolved = await pipeline.run({ title: 'Confessor', isAudiobook: true }, {});
-
-    expect(resolved.seriesName).toBe('Sword of Truth');
-    expect(resolved.seriesIndex).toBe('12');
-    expect(resolved.seriesMemberships).toBeUndefined();
-  });
-
-  it('does not pass series memberships when only the series name resolves', async () => {
-    const prefs = createPreferences((fields) => {
-      fields.seriesName = {
-        enabled: true,
-        providers: [MetadataProviderKey.AUDIBLE],
-        mergeStrategy: 'overwriteIfProvided',
-      };
-      fields.seriesIndex = {
-        enabled: false,
-        providers: [MetadataProviderKey.AUDIBLE],
-        mergeStrategy: 'overwriteIfProvided',
-      };
+      expect(result.resolved.seriesMemberships).toEqual([
+        { seriesName: 'Star Wars: Legends', seriesIndex: '1' },
+        { seriesName: 'Star Wars Legends', seriesIndex: '7' },
+        { seriesName: 'Thrawn Trilogy', seriesIndex: '1' },
+      ]);
     });
 
-    preferencesService.getGlobal.mockResolvedValue(prefs);
-    resolver.resolve.mockReturnValue(prefs);
-    resolver.withForwardCompatibility.mockReturnValue(prefs);
-    registry.all.mockReturnValue([{ key: MetadataProviderKey.AUDIBLE }] as never);
-    fetchService.searchCandidates.mockReturnValue(
-      of(
-        candidate(MetadataProviderKey.AUDIBLE, 'B002V1NSN2', {
-          seriesName: 'Sword of Truth',
-          seriesIndex: '11',
+    it("keeps the resolved primary series first, with the book's other series after it", async () => {
+      otherSeriesPreferences();
+      fetchService.searchCandidates.mockReturnValue(
+        of(
+          finalEmpire(MetadataProviderKey.GOODREADS, 'gr1', { seriesName: 'Mistborn', seriesIndex: '1' }),
+          finalEmpire(MetadataProviderKey.AUDIBLE, 'B01', {
+            seriesName: 'Mistborn',
+            seriesIndex: '1',
+            seriesMemberships: [
+              { seriesName: 'Mistborn', seriesIndex: '1' },
+              { seriesName: 'The Cosmere', seriesIndex: null },
+            ],
+          }),
+        ),
+      );
+
+      const resolved = await pipeline.run(
+        { title: 'The Final Empire' },
+        { seriesName: 'Old Primary', seriesIndex: '3', seriesMemberships: [{ seriesName: 'Old Primary', seriesIndex: '3' }] },
+      );
+
+      expect(resolved.seriesName).toBe('Mistborn');
+      expect(resolved.seriesMemberships).toEqual([
+        { seriesName: 'Mistborn', seriesIndex: '1' },
+        { seriesName: 'The Cosmere', seriesIndex: null },
+      ]);
+    });
+
+    it('takes the first provider in the rule that has something to add', async () => {
+      otherSeriesPreferences();
+      fetchService.searchCandidates.mockReturnValue(
+        of(
+          finalEmpire(MetadataProviderKey.AUDIBLE, 'B01', {
+            seriesName: 'Mistborn',
+            seriesMemberships: [
+              { seriesName: 'Mistborn', seriesIndex: '1' },
+              { seriesName: 'The Cosmere', seriesIndex: null },
+            ],
+          }),
+          finalEmpire(MetadataProviderKey.HARDCOVER, 'mistborn', {
+            seriesName: 'Mistborn',
+            seriesMemberships: [
+              { seriesName: 'Mistborn', seriesIndex: '1' },
+              { seriesName: 'The Mistborn Saga', seriesIndex: '1' },
+            ],
+          }),
+        ),
+      );
+
+      const resolved = await pipeline.runWithSources(
+        { title: 'The Final Empire' },
+        {
+          seriesName: 'Mistborn',
+          seriesIndex: '1',
           seriesMemberships: [
-            { seriesName: 'Sword of Truth', seriesIndex: '11' },
-            { seriesName: 'Chainfire Trilogy', seriesIndex: '3' },
+            { seriesName: 'Mistborn', seriesIndex: '1' },
+            { seriesName: 'The Cosmere', seriesIndex: null },
           ],
-        }),
-      ),
-    );
+        },
+      );
 
-    const resolved = await pipeline.run({ title: 'Confessor', isAudiobook: true }, { seriesIndex: '99' });
+      expect(resolved.resolved.seriesMemberships).toEqual([
+        { seriesName: 'Mistborn', seriesIndex: '1' },
+        { seriesName: 'The Cosmere', seriesIndex: null },
+        { seriesName: 'The Mistborn Saga', seriesIndex: '1' },
+      ]);
+      expect(resolved.sources.otherSeries).toBe(MetadataProviderKey.HARDCOVER);
+    });
 
-    expect(resolved.seriesName).toBe('Sword of Truth');
-    expect(resolved.seriesIndex).toBeUndefined();
-    expect(resolved.seriesMemberships).toBeUndefined();
+    it('adds nothing when every offered series is already on the book', async () => {
+      otherSeriesPreferences();
+      fetchService.searchCandidates.mockReturnValue(
+        of(
+          finalEmpire(MetadataProviderKey.HARDCOVER, 'mistborn', {
+            seriesName: 'Mistborn',
+            seriesMemberships: [
+              { seriesName: 'Mistborn', seriesIndex: '1' },
+              { seriesName: 'The Cosmere!', seriesIndex: null },
+            ],
+          }),
+        ),
+      );
+
+      const resolved = await pipeline.run(
+        { title: 'The Final Empire' },
+        {
+          seriesName: 'Mistborn',
+          seriesMemberships: [
+            { seriesName: 'Mistborn', seriesIndex: '1' },
+            { seriesName: 'The Cosmere', seriesIndex: null },
+          ],
+        },
+      );
+
+      expect(resolved.seriesMemberships).toBeUndefined();
+    });
+
+    it('adds nothing to a book without a primary series', async () => {
+      otherSeriesPreferences((fields) => {
+        fields.seriesName.enabled = false;
+      });
+      fetchService.searchCandidates.mockReturnValue(
+        of(
+          finalEmpire(MetadataProviderKey.HARDCOVER, 'mistborn', {
+            seriesName: 'Mistborn',
+            seriesMemberships: [
+              { seriesName: 'Mistborn', seriesIndex: '1' },
+              { seriesName: 'The Cosmere', seriesIndex: null },
+            ],
+          }),
+        ),
+      );
+
+      const resolved = await pipeline.run({ title: 'The Final Empire' }, {});
+
+      expect(resolved.seriesMemberships).toBeUndefined();
+    });
+
+    it('fills only a book without other series under fill-missing and preserve-existing', async () => {
+      const offered = () =>
+        of(
+          finalEmpire(MetadataProviderKey.HARDCOVER, 'mistborn', {
+            seriesName: 'Mistborn',
+            seriesMemberships: [
+              { seriesName: 'Mistborn', seriesIndex: '1' },
+              { seriesName: 'The Mistborn Saga', seriesIndex: '1' },
+            ],
+          }),
+        );
+      const withOther = {
+        seriesName: 'Mistborn',
+        seriesMemberships: [
+          { seriesName: 'Mistborn', seriesIndex: '1' },
+          { seriesName: 'The Cosmere', seriesIndex: null },
+        ],
+      };
+
+      otherSeriesPreferences((fields) => {
+        fields.otherSeries.mergeStrategy = 'fillMissing';
+      });
+      fetchService.searchCandidates.mockReturnValue(offered());
+      expect((await pipeline.run({ title: 'The Final Empire' }, withOther)).seriesMemberships).toBeUndefined();
+
+      otherSeriesPreferences();
+      fetchService.searchCandidates.mockReturnValue(offered());
+      expect((await pipeline.run({ title: 'The Final Empire' }, withOther, undefined, { preserveExisting: true })).seriesMemberships).toBeUndefined();
+
+      fetchService.searchCandidates.mockReturnValue(offered());
+      expect(
+        (await pipeline.run({ title: 'The Final Empire' }, { seriesName: 'Mistborn', seriesIndex: '1' }, undefined, { preserveExisting: true }))
+          .seriesMemberships,
+      ).toEqual([
+        { seriesName: 'Mistborn', seriesIndex: '1' },
+        { seriesName: 'The Mistborn Saga', seriesIndex: '1' },
+      ]);
+    });
+
+    it('adds nothing when the rule is off', async () => {
+      otherSeriesPreferences((fields) => {
+        fields.otherSeries.enabled = false;
+      });
+      fetchService.searchCandidates.mockReturnValue(
+        of(
+          finalEmpire(MetadataProviderKey.HARDCOVER, 'mistborn', {
+            seriesName: 'Mistborn',
+            seriesMemberships: [
+              { seriesName: 'Mistborn', seriesIndex: '1' },
+              { seriesName: 'The Cosmere', seriesIndex: null },
+            ],
+          }),
+        ),
+      );
+
+      const resolved = await pipeline.run({ title: 'The Final Empire' }, { seriesName: 'Mistborn' });
+
+      expect(resolved.seriesMemberships).toBeUndefined();
+    });
   });
 
   it('loads and applies library overrides when libraryId is provided', async () => {
@@ -2086,9 +2272,9 @@ describe('MetadataFetchPipeline', () => {
 
     it('takes nothing but art from a provider only a cover rule brought in, apart from an audiobook id', async () => {
       usePreferences((preferences) => {
-        // Community ratings and the audiobook fields name Audible by default, which would make it a full provider.
-        preferences.fields.communityRating.providers = [MetadataProviderKey.GOOGLE];
-        for (const field of ['narrators', 'duration', 'abridged'] as const) preferences.fields[field].providers = [MetadataProviderKey.GOOGLE];
+        // Community ratings, other series and the audiobook fields name Audible by default, which would make it a full provider.
+        for (const field of ['communityRating', 'otherSeries', 'narrators', 'duration', 'abridged'] as const)
+          preferences.fields[field].providers = [MetadataProviderKey.GOOGLE];
         preferences.fields.audioCover.providers = [MetadataProviderKey.AUDIBLE, MetadataProviderKey.HARDCOVER];
       });
       register(MetadataProviderKey.GOOGLE, MetadataProviderKey.AUDIBLE, MetadataProviderKey.HARDCOVER);
@@ -2121,8 +2307,8 @@ describe('MetadataFetchPipeline', () => {
 
     it('lets a cover-only provider be checked against the anchor without choosing it', async () => {
       usePreferences((preferences) => {
-        preferences.fields.communityRating.providers = [MetadataProviderKey.GOOGLE];
-        for (const field of ['narrators', 'duration', 'abridged'] as const) preferences.fields[field].providers = [MetadataProviderKey.GOOGLE];
+        for (const field of ['communityRating', 'otherSeries', 'narrators', 'duration', 'abridged'] as const)
+          preferences.fields[field].providers = [MetadataProviderKey.GOOGLE];
         preferences.fields.audioCover.providers = [MetadataProviderKey.AUDIBLE, MetadataProviderKey.GOOGLE];
       });
       register(MetadataProviderKey.GOOGLE, MetadataProviderKey.AUDIBLE);

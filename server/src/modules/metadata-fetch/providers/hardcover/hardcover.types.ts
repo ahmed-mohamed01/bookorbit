@@ -36,6 +36,7 @@ export interface HardcoverSearchDocument {
     };
     position?: number | null;
   };
+  series_names?: string[];
   image?: HardcoverImage;
 }
 
@@ -174,6 +175,10 @@ export interface HardcoverBookWithEditions {
     };
     position?: number | null;
   };
+  book_series?: Array<{
+    position?: number | null;
+    series?: { name?: string | null } | null;
+  }> | null;
   rating?: number;
   ratings_count?: number;
   pages?: number;

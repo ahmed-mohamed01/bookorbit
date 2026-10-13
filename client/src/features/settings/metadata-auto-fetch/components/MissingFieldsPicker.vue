@@ -11,6 +11,9 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:modelValue': [MetadataField[]] }>()
 
+// Other series only adds to a book that already has a series, so it never counts as missing.
+const PICKABLE_FIELDS = ALL_METADATA_FIELDS.filter((field) => field !== 'otherSeries')
+
 function fieldLabel(field: MetadataField): string {
   return t(`settings.metadata.fields.${field}`)
 }
@@ -30,7 +33,7 @@ function toggle(field: MetadataField) {
 <template>
   <div class="flex flex-wrap gap-1.5">
     <button
-      v-for="field in ALL_METADATA_FIELDS"
+      v-for="field in PICKABLE_FIELDS"
       :key="field"
       type="button"
       @click="toggle(field)"

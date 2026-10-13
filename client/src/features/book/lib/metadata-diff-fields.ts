@@ -49,6 +49,7 @@ export type DiffFieldKey =
   | 'pageCount'
   | 'communityRating'
   | 'seriesName'
+  | 'otherSeries'
   | 'seriesIndex'
   | 'isbn13'
   | 'isbn10'
@@ -77,6 +78,7 @@ export const FIELD_DEFS: { key: DiffFieldKey; labelKey: string }[] = (
     'pageCount',
     'communityRating',
     'seriesName',
+    'otherSeries',
     'seriesIndex',
     'isbn13',
     'isbn10',
@@ -165,6 +167,7 @@ export const LIST_FIELD_KEYS = new Set<DiffFieldKey>([
   'comicTeams',
   'comicLocations',
   'comicStoryArcs',
+  'otherSeries',
 ])
 
 export function mergeGenreLists(existing: readonly string[], incoming: readonly string[]): string[] {
@@ -201,6 +204,68 @@ export function normalizeSeriesMemberships(values: readonly MetadataSeriesMember
   return out
 }
 
+/** Series names compared without case, accents or punctuation, as the automatic fetch compares them. */
+function seriesKey(name: string | null | undefined): string {
+  return normalizeForMatch(name ?? '')
+}
+
+function formatSeriesMembership(membership: MetadataSeriesMembership): string {
+  return membership.seriesIndex != null && membership.seriesIndex !== ''
+    ? `${membership.seriesName} #${membership.seriesIndex}`
+    : membership.seriesName
+}
+
+/** The book's series after its primary one. */
+export function currentOtherSeries(current: MetadataSource): MetadataSeriesMembership[] {
+  const primaryKey = seriesKey(current.seriesName)
+  return normalizeSeriesMemberships(current.seriesMemberships?.slice(1)).filter((membership) => seriesKey(membership.seriesName) !== primaryKey)
+}
+
+/** A result's series other than its own primary one, which the primary series row offers. */
+export function candidateOtherSeries(candidate: MetadataCandidate): MetadataSeriesMembership[] {
+  const primaryKey = seriesKey(candidate.seriesName)
+  return normalizeSeriesMemberships(candidate.seriesMemberships).filter((membership) => seriesKey(membership.seriesName) !== primaryKey)
+}
+
+/** A result's other series that the book has under no name yet, primary series included. */
+export function otherSeriesAdditions(current: MetadataSource, candidate: MetadataCandidate): MetadataSeriesMembership[] {
+  const known = new Set(
+    [current.seriesName, ...currentOtherSeries(current).map((membership) => membership.seriesName)].map(seriesKey).filter(Boolean),
+  )
+  return candidateOtherSeries(candidate).filter((membership) => !known.has(seriesKey(membership.seriesName)))
+}
+
+/**
+ * A series list with other series added after it. `primary` replaces the list's first entry when given,
+ * and an addition the list already holds under any spelling is dropped.
+ */
+export function withOtherSeries(
+  memberships: readonly MetadataSeriesMembership[],
+  additions: readonly MetadataSeriesMembership[],
+  primary?: MetadataSeriesMembership | null,
+): MetadataSeriesMembership[] {
+  const base = primary ? [primary, ...memberships.slice(1)] : [...memberships]
+  const known = new Set(base.map((membership) => seriesKey(membership.seriesName)))
+  const added = additions.filter((membership) => {
+    const key = seriesKey(membership.seriesName)
+    if (!key || known.has(key)) return false
+    known.add(key)
+    return true
+  })
+  return [...base, ...added]
+}
+
+/**
+ * A result's other series as chips. One the book already has shows under its bare name so it reads as
+ * shared with the book's chip; one it would add shows its number too.
+ */
+function candidateOtherSeriesList(candidate: MetadataCandidate, current: MetadataSource | undefined): string[] {
+  const additions = new Set(current ? otherSeriesAdditions(current, candidate).map((membership) => seriesKey(membership.seriesName)) : [])
+  return candidateOtherSeries(candidate).map((membership) =>
+    additions.has(seriesKey(membership.seriesName)) ? formatSeriesMembership(membership) : membership.seriesName,
+  )
+}
+
 export function getCandidateValueFrom(candidate: MetadataCandidate, key: DiffFieldKey): string {
   if (isComicDiffFieldKey(key)) {
     const comicKey = COMIC_KEY_MAP[key]
@@ -212,18 +277,20 @@ export function getCandidateValueFrom(candidate: MetadataCandidate, key: DiffFie
   if (key === 'authors') return (candidate.authors ?? []).join(', ')
   if (key === 'genres') return (candidate.genres ?? []).join(', ')
   if (key === 'narrators') return (candidate.narrators ?? []).join(', ')
+  if (key === 'otherSeries') return candidateOtherSeries(candidate).map(formatSeriesMembership).join(', ')
   if (key === 'communityRating') return formatCommunityRatingValue(candidate.communityRating, candidate.communityRatingCount)
   if (key === 'publishedDate') return candidate.publishedDate ?? (candidate.publishedYear != null ? String(candidate.publishedYear) : '')
   const val = candidate[key as keyof MetadataCandidate]
   return val != null ? String(val) : ''
 }
 
-/** A list field's items on a candidate. */
-export function getCandidateList(candidate: MetadataCandidate, key: DiffFieldKey): string[] {
+/** A list field's items on a candidate. Other series read against the book when it is given. */
+export function getCandidateList(candidate: MetadataCandidate, key: DiffFieldKey, current?: MetadataSource): string[] {
   if (isComicDiffFieldKey(key)) {
     const val = candidate.comicMetadata?.[COMIC_KEY_MAP[key]]
     return Array.isArray(val) ? val : []
   }
+  if (key === 'otherSeries') return candidateOtherSeriesList(candidate, current)
   if (key === 'authors') return candidate.authors ?? []
   if (key === 'genres') return candidate.genres ?? []
   if (key === 'narrators') return candidate.narrators ?? []
@@ -235,6 +302,7 @@ export function getSourceList(current: MetadataSource, key: DiffFieldKey): strin
   if (key === 'authors') return current.authors
   if (key === 'genres') return current.genres
   if (key === 'narrators') return current.narrators ?? []
+  if (key === 'otherSeries') return currentOtherSeries(current).map((membership) => membership.seriesName)
   return []
 }
 
@@ -418,7 +486,15 @@ const TEXT_KEYS = new Set<DiffFieldKey>(['title', 'subtitle', 'publisher', 'seri
 const IDENTIFIER_KEYS = new Set<DiffFieldKey>(['isbn13', 'isbn10', 'hardcoverEditionId'])
 
 /** How a candidate's value for one field relates to the book's. Provider id rows go through `classifyIdentifier`. */
+/** Other series only ever add to the book's list, so the difference is what a result would add. */
+export function classifyOtherSeries(current: MetadataSource, candidate: MetadataCandidate): DiffClass {
+  if (!candidateOtherSeries(candidate).length) return { kind: 'missing' }
+  if (!otherSeriesAdditions(current, candidate).length) return SAME
+  return currentOtherSeries(current).length ? CHANGE : { kind: 'fill' }
+}
+
 export function classifyField(key: DiffFieldKey, current: MetadataSource, candidate: MetadataCandidate): DiffClass {
+  if (key === 'otherSeries') return classifyOtherSeries(current, candidate)
   if (LIST_FIELD_KEYS.has(key)) return classifyList(getSourceList(current, key), getCandidateList(candidate, key))
   if (TEXT_KEYS.has(key)) return classifyText(getSourceValue(current, key, candidate.provider), getCandidateValueFrom(candidate, key))
   if (IDENTIFIER_KEYS.has(key)) return classifyIdentifier(getSourceValue(current, key, candidate.provider), getCandidateValueFrom(candidate, key))

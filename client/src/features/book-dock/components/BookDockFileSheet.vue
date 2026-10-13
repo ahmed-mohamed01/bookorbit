@@ -26,6 +26,7 @@ import { useMetadataSearch } from '@/features/book/composables/useMetadataSearch
 import type { MetadataDiffApply } from '@/features/book/composables/useMetadataDiff'
 import { formatBytes } from '@/lib/formatting'
 import { toDisplayCoverUrl } from '@/features/book/lib/metadata-fetch'
+import { withOtherSeries } from '@/features/book/lib/metadata-diff-fields'
 
 const { t } = useI18n()
 
@@ -112,6 +113,13 @@ onUnmounted(() => {
   if (debounceTimer) clearTimeout(debounceTimer)
 })
 
+// The series list leads with the primary series, so it follows whatever the form's primary now says.
+function seriesMembershipsFromForm(): BookDockMetadata['seriesMemberships'] {
+  const memberships = passthroughMetadata.value.seriesMemberships
+  if (!memberships?.length || !form.seriesName) return memberships
+  return withOtherSeries([], memberships.slice(1), { seriesName: form.seriesName, seriesIndex: normalizedSeriesIndex() })
+}
+
 function buildMetadataPatchFromForm(): Partial<BookDockMetadata> {
   return {
     ...passthroughMetadata.value,
@@ -132,6 +140,7 @@ function buildMetadataPatchFromForm(): Partial<BookDockMetadata> {
     isbn10: form.isbn10 || undefined,
     seriesName: form.seriesName || undefined,
     seriesIndex: normalizedSeriesIndex() ?? undefined,
+    seriesMemberships: seriesMembershipsFromForm(),
     genres: form.genres
       ? form.genres
           .split(',')
@@ -242,6 +251,7 @@ const currentSource = computed<MetadataSource>(() => ({
   pageCount: passthroughMetadata.value.pageCount ?? null,
   seriesName: form.seriesName || null,
   seriesIndex: normalizedSeriesIndex(),
+  seriesMemberships: passthroughMetadata.value.seriesMemberships ?? undefined,
   isbn10: form.isbn10 || null,
   isbn13: form.isbn13 || null,
   authors: form.authors
@@ -348,6 +358,7 @@ async function handleApply(patch: MetadataDiffApply) {
   const p = patch.formPatch
   const bookDockPatch = { ...p }
   delete bookDockPatch.customMetadata
+  delete bookDockPatch.otherSeries
   passthroughMetadata.value = { ...passthroughMetadata.value, ...bookDockPatch }
   if ('title' in p) form.title = p.title ?? ''
   if ('subtitle' in p) form.subtitle = p.subtitle ?? ''
@@ -360,6 +371,10 @@ async function handleApply(patch: MetadataDiffApply) {
   if ('isbn10' in p) form.isbn10 = p.isbn10 ?? ''
   if ('seriesName' in p) form.seriesName = p.seriesName ?? ''
   if ('seriesIndex' in p) form.seriesIndex = p.seriesIndex == null ? '' : String(p.seriesIndex)
+  if (p.otherSeries?.length && form.seriesName) {
+    const primary = { seriesName: form.seriesName, seriesIndex: normalizedSeriesIndex() }
+    passthroughMetadata.value.seriesMemberships = withOtherSeries(passthroughMetadata.value.seriesMemberships ?? [], p.otherSeries, primary)
+  }
   if ('authors' in p) form.authors = (p.authors ?? []).join(', ')
   if ('genres' in p) form.genres = (p.genres ?? []).join(', ')
 

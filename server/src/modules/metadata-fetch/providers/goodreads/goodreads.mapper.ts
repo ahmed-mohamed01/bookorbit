@@ -1,4 +1,4 @@
-import { MetadataCandidate, MetadataProviderKey, parseSeriesIndex as parseSeriesIndexLabel } from '@bookorbit/types';
+import { MetadataCandidate, MetadataProviderKey, parseSeriesIndex as parseSeriesIndexLabel, type MetadataSeriesMembership } from '@bookorbit/types';
 
 import {
   GoodreadsApolloBook,
@@ -33,6 +33,7 @@ export function mapGoodreadsApolloState(state: Record<string, unknown>, bookId: 
   const publishedYear = publishedDate ? publishedYearFromDateKey(publishedDate) : undefined;
   const pageCount = parsePositiveInt(details?.numPages);
   const seriesIndex = parseSeriesIndex(firstSeries?.userPosition);
+  const seriesMemberships = mapSeriesMemberships(state, book, normalize(series?.title));
   const communityRating = normalizeCommunityRating(work?.stats?.averageRating);
   const communityRatingCount = normalizeCommunityRatingCount(work?.stats?.ratingsCount);
 
@@ -55,6 +56,7 @@ export function mapGoodreadsApolloState(state: Record<string, unknown>, bookId: 
     sourceUrl: `https://www.goodreads.com/book/show/${bookId}`,
     seriesName: normalize(series?.title),
     seriesIndex,
+    ...(seriesMemberships ? { seriesMemberships } : {}),
     ...(communityRating !== undefined ? { communityRating } : {}),
     ...(communityRatingCount !== undefined ? { communityRatingCount } : {}),
   };
@@ -157,6 +159,27 @@ function findContributor(state: Record<string, unknown>, ref: string | undefined
   }
   const key = Object.keys(state).find((k) => k.startsWith('Contributor:kca') && !!(state[k] as GoodreadsApolloContributor)?.name);
   return key ? (state[key] as GoodreadsApolloContributor) : undefined;
+}
+
+/** Every series the book page lists, the primary first, when it lists more than one. The primary name comes from the caller. */
+function mapSeriesMemberships(
+  state: Record<string, unknown>,
+  book: GoodreadsApolloBook,
+  primaryName: string | undefined,
+): MetadataSeriesMembership[] | undefined {
+  const memberships: MetadataSeriesMembership[] = [];
+  const seen = new Set<string>();
+  (book.bookSeries ?? []).forEach((entry, position) => {
+    const ref = entry.series?.__ref;
+    const linked = ref ? (state[ref] as GoodreadsApolloSeries | undefined) : undefined;
+    const seriesName = position === 0 ? primaryName : normalize(linked?.title ?? entry.series?.title);
+    const key = seriesName?.toLowerCase();
+    if (!seriesName || !key || seen.has(key)) return;
+    seen.add(key);
+    const seriesIndex = parseSeriesIndex(entry.userPosition);
+    memberships.push({ seriesName, ...(seriesIndex !== undefined ? { seriesIndex } : {}) });
+  });
+  return memberships.length > 1 ? memberships : undefined;
 }
 
 function findSeries(state: Record<string, unknown>, ref: string | undefined): GoodreadsApolloSeries | undefined {

@@ -55,6 +55,16 @@ describe('UpdateGlobalPreferencesDto', () => {
     expect(titleResult.errors).not.toHaveLength(0);
   });
 
+  it('accepts only fill-missing and merge-with-existing for other series', async () => {
+    const otherSeries = (mergeStrategy: string) =>
+      validateInput({ fields: { otherSeries: { enabled: true, providers: [MetadataProviderKey.HARDCOVER], mergeStrategy } } });
+
+    expect((await otherSeries('mergeExisting')).errors).toHaveLength(0);
+    expect((await otherSeries('fillMissing')).errors).toHaveLength(0);
+    expect((await otherSeries('overwrite')).errors).not.toHaveLength(0);
+    expect((await otherSeries('overwriteIfProvided')).errors).not.toHaveLength(0);
+  });
+
   it('rejects non-object fields payloads', async () => {
     const { errors } = await validateInput({ fields: [] as unknown[] });
 

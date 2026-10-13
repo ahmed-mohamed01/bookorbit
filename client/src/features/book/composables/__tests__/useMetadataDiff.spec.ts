@@ -352,34 +352,37 @@ describe('useMetadataDiff', () => {
     ],
   }
 
-  it('builds series memberships when series name and index are picked from the same result', () => {
+  it('leaves the series list alone when only the primary series is picked', () => {
     const diff = setup(audible)
 
     diff.toggleField('seriesName')
     diff.toggleField('seriesIndex')
 
-    expect(diff.buildPatch().formPatch.seriesMemberships).toEqual([
-      { seriesName: 'Sword of Truth', seriesIndex: '11' },
-      { seriesName: 'Chainfire Trilogy', seriesIndex: '3' },
-    ])
+    expect(diff.buildPatch().formPatch).toMatchObject({ seriesName: 'Sword of Truth', seriesIndex: '11' })
+    expect(diff.buildPatch().formPatch.seriesMemberships).toBeUndefined()
+    expect(diff.buildPatch().formPatch.otherSeries).toBeUndefined()
   })
 
-  it('does not replace series memberships when only the series name is picked', () => {
+  it("adds a result's other series without its primary one", () => {
     const diff = setup(audible)
 
-    diff.toggleField('seriesName')
+    diff.toggleField('otherSeries')
 
-    expect(diff.buildPatch().formPatch.seriesMemberships).toBeUndefined()
+    expect(diff.buildPatch().formPatch.otherSeries).toEqual([{ seriesName: 'Chainfire Trilogy', seriesIndex: '3' }])
   })
 
-  it('does not build memberships from a name and an index of different results', () => {
-    const other: MetadataCandidate = { ...audible, providerId: 'B00OTHER', seriesIndex: '12' }
-    const diff = setup(audible)
+  it('skips other series when the series field is locked', () => {
+    const diff = setup(audible, { lockedFields: ['seriesName'] })
 
-    diff.setField('seriesName', 'use')
-    diff.setField('seriesIndex', 'use', other)
+    diff.toggleField('otherSeries')
 
-    expect(diff.buildPatch().formPatch.seriesMemberships).toBeUndefined()
+    expect(diff.buildPatch().formPatch.otherSeries).toBeUndefined()
+  })
+
+  it('holds other series under a series index lock too', () => {
+    const diff = setup(audible, { lockedFields: ['seriesIndex'] })
+
+    expect(field(diff, 'otherSeries')?.isLocked).toBe(true)
   })
 
   it('takes every difference from the active result', () => {

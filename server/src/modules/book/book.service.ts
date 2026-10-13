@@ -3070,6 +3070,7 @@ export class BookService {
         // and chapters, which the queued fetch never did because it always passed them.
         narrators: narratorRows.map((narrator) => narrator.name),
         chapters: meta?.chapters,
+        seriesMemberships: (await this.seriesMemberships?.findByBookId(id))?.map(({ seriesName, seriesIndex }) => ({ seriesName, seriesIndex })),
       };
       if (meta?.lockedFields?.length) existingFields.lockedFields = meta.lockedFields;
       const coverState = await this.coverStore.fetchState(id);

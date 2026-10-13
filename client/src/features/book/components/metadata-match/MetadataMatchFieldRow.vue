@@ -63,7 +63,10 @@ const shown = computed<FieldDecision>(() => {
   return props.field.mergeable ? 'merge' : 'use'
 })
 const using = computed(() => shown.value !== 'keep' && props.field.pickedFromActive)
-const currentReplaced = computed(() => using.value && (shown.value === 'use' || shown.value === 'replace') && props.field.kind !== 'fill')
+// Other series only add to the book's list, so taking a result never greys out what the book has.
+const currentReplaced = computed(
+  () => using.value && (shown.value === 'use' || shown.value === 'replace') && props.field.kind !== 'fill' && props.field.key !== 'otherSeries',
+)
 const activeLabel = computed(() => getProviderLabel(props.candidate.provider, props.providers))
 
 function providerLabel(candidate: MetadataCandidate): string {

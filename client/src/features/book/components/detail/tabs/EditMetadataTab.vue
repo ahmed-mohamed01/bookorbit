@@ -38,6 +38,7 @@ import RichDescriptionEditor from './RichDescriptionEditor.vue'
 import SeriesMembershipEditor from './SeriesMembershipEditor.vue'
 import WriteAndRenameResultPanel from '../WriteAndRenameResultPanel.vue'
 import type { MetadataDiffApply, MetadataPatch } from '../../../composables/useMetadataDiff'
+import { normalizeForMatch } from '../../../lib/metadata-diff-fields'
 import { type EditableSeriesMembership, normalizeSeriesMemberships, useMetadataEditor } from '../../../composables/useMetadataEditor'
 import { type MetadataRefreshPreview, type MetadataRefreshPreviewResult, useRefreshMetadata } from '../../../composables/useRefreshMetadata'
 import { type FileMetadata, useFileMetadata } from '../../../composables/useFileMetadata'
@@ -489,6 +490,34 @@ function applySeriesMembershipPatch(formPatch: MetadataPatch, skippedFields: Boo
   return 1
 }
 
+function applyOtherSeriesPatch(formPatch: MetadataPatch, skippedFields: BookMetadataLockField[]): number {
+  // Other series only extend a book's series; without a primary the first addition would become it.
+  if (!formPatch.otherSeries?.length || !form.seriesName?.trim()) return 0
+  if (isSeriesLocked.value) {
+    if (isLocked('seriesName')) trackLockedField('seriesName', skippedFields)
+    if (isLocked('seriesIndex')) trackLockedField('seriesIndex', skippedFields)
+    return 0
+  }
+
+  const known = new Set(form.seriesMemberships.map((membership) => normalizeForMatch(membership.seriesName)))
+  const additions = formPatch.otherSeries.filter((membership) => {
+    const key = normalizeForMatch(membership.seriesName)
+    if (!key || known.has(key)) return false
+    known.add(key)
+    return true
+  })
+  if (additions.length === 0) return 0
+
+  setSeriesMemberships([
+    ...form.seriesMemberships,
+    ...additions.map((membership) => ({
+      seriesName: membership.seriesName.trim(),
+      seriesIndex: normalizeSeriesIndex(membership.seriesIndex),
+    })),
+  ])
+  return 1
+}
+
 function normalizeCommunityRatingPatchItem(rating: NonNullable<MetadataPatch['communityRatings']>[number]): BookCommunityRating | null {
   if (!Number.isFinite(rating.rating) || rating.rating < 0 || rating.rating > 5) return null
   const ratingCount =
@@ -618,6 +647,8 @@ function applyPatchToForm(formPatch: MetadataPatch, covers: FetchedCovers): { sk
     if (hasSeriesMembershipPatch && (field === 'seriesName' || field === 'seriesIndex')) continue
     if (applyDirectPatchField(field, formPatch[field], skippedFields)) updatedCount++
   }
+  // After the primary series patch, so additions are checked against the primary they will follow.
+  updatedCount += applyOtherSeriesPatch(formPatch, skippedFields)
   updatedCount += applyComicPatch(formPatch, skippedFields)
   updatedCount += applyAudioPatch(formPatch, skippedFields)
   updatedCount += applyCustomMetadataPatch(formPatch)

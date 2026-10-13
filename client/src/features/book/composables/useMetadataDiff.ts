@@ -34,7 +34,7 @@ import {
   isProviderIdPatchField,
   mergeGenreLists,
   normalizeForMatch,
-  normalizeSeriesMemberships,
+  otherSeriesAdditions,
   providerIdLabelKey,
   type DiffFieldKey,
   type DiffKind,
@@ -146,6 +146,8 @@ export interface MetadataPatch {
   seriesName?: string | null
   seriesIndex?: string | null
   seriesMemberships?: MetadataSeriesMembership[] | null
+  /** Series to add after the book's own, never in place of them. */
+  otherSeries?: MetadataSeriesMembership[]
   isbn10?: string | null
   isbn13?: string | null
   authors?: string[]
@@ -243,10 +245,13 @@ export function useMetadataDiff(input: MetadataDiffInput) {
     if (key === 'coverUrl') return coverLockField(coverMedium.value)
     if (key === 'sourceUrl') return null
     if (key === 'publishedDate') return 'publishedYear'
+    if (key === 'otherSeries') return 'seriesName'
     return key as BookMetadataLockField
   }
 
   function isLocked(key: DiffFieldKey): boolean {
+    // The series list is one unit, so a lock on either part of the primary series holds it.
+    if (key === 'otherSeries') return lockedFieldSet.value.has('seriesName') || lockedFieldSet.value.has('seriesIndex')
     const lock = resolveLockField(key)
     return lock ? lockedFieldSet.value.has(lock) : false
   }
@@ -255,14 +260,14 @@ export function useMetadataDiff(input: MetadataDiffInput) {
     return (key === 'communityRating' ? ratingPicks.get(provider) : picks.get(key)) ?? null
   }
 
-  function comparable(key: DiffFieldKey, candidate: MetadataCandidate): string {
-    if (LIST_FIELD_KEYS.has(key)) return getCandidateList(candidate, key).map(normalizeForMatch).sort().join('\u0000')
+  function comparable(key: DiffFieldKey, candidate: MetadataCandidate, current: MetadataSource): string {
+    if (LIST_FIELD_KEYS.has(key)) return getCandidateList(candidate, key, current).map(normalizeForMatch).sort().join('\u0000')
     if (key === 'description') return normalizeForMatch(descriptionPlainText(candidate.description))
     return normalizeForMatch(getCandidateValueFrom(candidate, key))
   }
 
   function otherValuesFor(key: DiffFieldKey, active: MetadataCandidate, current: MetadataSource, picked: MetadataCandidate | null): OtherValue[] {
-    const own = comparable(key, active)
+    const own = comparable(key, active, current)
     const currentComparable = LIST_FIELD_KEYS.has(key)
       ? getSourceList(current, key).map(normalizeForMatch).sort().join('\u0000')
       : key === 'description'
@@ -273,13 +278,13 @@ export function useMetadataDiff(input: MetadataDiffInput) {
       if (sameCandidate(candidate, active)) continue
       const display = key === 'description' ? descriptionPlainText(candidate.description) : getCandidateValueFrom(candidate, key)
       if (!display) continue
-      const value = comparable(key, candidate)
+      const value = comparable(key, candidate, current)
       if (!value || value === own) continue
       let group = groups.get(value)
       if (!group) {
         group = {
           display,
-          list: LIST_FIELD_KEYS.has(key) ? getCandidateList(candidate, key) : null,
+          list: LIST_FIELD_KEYS.has(key) ? getCandidateList(candidate, key, current) : null,
           candidates: [],
           matchesCurrent: value === currentComparable,
           isPicked: false,
@@ -306,7 +311,7 @@ export function useMetadataDiff(input: MetadataDiffInput) {
       bookValue,
       candidateDisplay,
       bookList: isList ? getSourceList(current, key) : null,
-      candidateList: isList ? getCandidateList(active, key) : null,
+      candidateList: isList ? getCandidateList(active, key, current) : null,
       kind: cls.kind,
       ...(cls.reason ? { minorReason: cls.reason } : {}),
       hasDiff: isActionable(cls.kind),
@@ -518,6 +523,21 @@ export function useMetadataDiff(input: MetadataDiffInput) {
         })
         continue
       }
+      if (key === 'otherSeries') {
+        const before = getSourceList(current, key)
+        const added = otherSeriesAdditions(current, candidate).map((membership) => membership.seriesName)
+        out.push({
+          key,
+          field: key,
+          labelKey: FIELD_LABELS.get(key) ?? key,
+          candidate,
+          before: before.join(', '),
+          after: [...before, ...added].join(', '),
+          merged: true,
+          isCover: false,
+        })
+        continue
+      }
       const merged = key === 'genres' && genreWriteMode.value === 'merge'
       const describe = (value: string) => (key === 'description' ? descriptionPlainText(value) : value)
       out.push({
@@ -616,6 +636,11 @@ export function useMetadataDiff(input: MetadataDiffInput) {
         formPatch.seriesIndex = candidate.seriesIndex ?? null
         continue
       }
+      if (key === 'otherSeries') {
+        const additions = otherSeriesAdditions(current, candidate)
+        if (additions.length > 0) formPatch.otherSeries = additions
+        continue
+      }
       if (isProviderIdPatchField(key)) {
         formPatch[key] = candidate.providerId
         continue
@@ -636,12 +661,6 @@ export function useMetadataDiff(input: MetadataDiffInput) {
           ratingCount: candidate.communityRatingCount ?? null,
         })
       }
-    }
-
-    const seriesName = picks.get('seriesName')
-    if (seriesName && sameCandidate(seriesName, picks.get('seriesIndex')) && !isLocked('seriesName')) {
-      const memberships = normalizeSeriesMemberships(seriesName.seriesMemberships)
-      if (memberships.length > 0) formPatch.seriesMemberships = memberships
     }
 
     if (Object.keys(comicPatch).length > 0) {

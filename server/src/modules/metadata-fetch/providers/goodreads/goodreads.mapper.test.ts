@@ -109,7 +109,7 @@ describe('GoodreadsMapper', () => {
     expect(result?.communityRatingCount).toBeUndefined();
   });
 
-  it('uses only the first Goodreads Apollo bookSeries entry', () => {
+  it('takes the first Goodreads Apollo bookSeries entry as the primary and lists every entry as a membership', () => {
     const bookId = '604803';
     const mockState: Record<string, any> = {
       'Book:kca:604803': {
@@ -131,6 +131,22 @@ describe('GoodreadsMapper', () => {
 
     expect(result?.seriesName).toBe('Sword of Truth');
     expect(result?.seriesIndex).toBe('11');
+    expect(result?.seriesMemberships).toEqual([
+      { seriesName: 'Sword of Truth', seriesIndex: '11' },
+      { seriesName: 'Chainfire Trilogy', seriesIndex: '3' },
+    ]);
+  });
+
+  it('lists no memberships for a book in a single series', () => {
+    const result = mapGoodreadsApolloState(
+      {
+        'Book:kca:1': { title: 'Confessor', bookSeries: [{ userPosition: '11', series: { __ref: 'Series:kca:1' } }] },
+        'Series:kca:1': { title: 'Sword of Truth' },
+      },
+      '1',
+    );
+
+    expect(result?.seriesName).toBe('Sword of Truth');
     expect(result?.seriesMemberships).toBeUndefined();
   });
 

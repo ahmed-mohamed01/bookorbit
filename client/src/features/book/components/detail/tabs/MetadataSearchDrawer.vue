@@ -65,6 +65,7 @@ const currentSource = computed<MetadataSource>(() => ({
   communityRatings: props.book.communityRatings,
   seriesName: props.book.seriesName,
   seriesIndex: props.book.seriesIndex,
+  seriesMemberships: props.book.seriesMemberships?.map(({ seriesName, seriesIndex }) => ({ seriesName, seriesIndex })),
   isbn10: props.book.isbn10,
   isbn13: props.book.isbn13,
   authors: props.book.authors.map((a) => a.name),

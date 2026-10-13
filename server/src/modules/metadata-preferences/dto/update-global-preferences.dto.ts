@@ -22,6 +22,7 @@ import {
   GENRE_MERGE_STRATEGIES,
   MAX_METADATA_GENRE_COUNT,
   MetadataProviderKey,
+  mergeStrategiesForField,
   PROVIDER_ID_FETCH_MODES,
 } from '@bookorbit/types';
 import type { GenreMergeMode, MetadataField, MetadataMergeStrategy, ProviderIdFetchMode } from '@bookorbit/types';
@@ -79,7 +80,7 @@ export class IsFieldPreferencesMapConstraint implements ValidatorConstraintInter
       if (!knownFields.has(field)) return false;
       const instance = plainToInstance(FieldPreferenceDto, v);
       if (validateSync(instance).length > 0) return false;
-      if (field !== 'genres' && instance.mergeStrategy === 'mergeExisting') return false;
+      if (!mergeStrategiesForField(field as MetadataField).includes(instance.mergeStrategy)) return false;
     }
     return true;
   }

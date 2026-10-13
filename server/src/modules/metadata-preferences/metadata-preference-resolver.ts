@@ -4,7 +4,6 @@ import {
   COMMUNITY_RATING_PROVIDER_KEYS,
   FieldPreference,
   FieldPreferenceOverrides,
-  GENRE_MERGE_STRATEGIES,
   GENRE_MERGE_MODES,
   MAX_METADATA_GENRE_COUNT,
   MetadataFetchPreferences,
@@ -12,8 +11,8 @@ import {
   MetadataField,
   MetadataMergeStrategy,
   MetadataProviderKey,
-  MERGE_STRATEGIES,
   MergeStrategy,
+  mergeStrategiesForField,
   PROVIDER_ID_FETCH_MODES,
   ProviderIdFetchMode,
 } from '@bookorbit/types';
@@ -29,8 +28,6 @@ const DEFAULT_PROVIDER_ORDER: MetadataProviderKey[] = [
 ];
 
 const DEFAULT_MERGE_STRATEGY: MergeStrategy = 'overwriteIfProvided';
-const MERGE_STRATEGY_SET = new Set<MetadataMergeStrategy>(MERGE_STRATEGIES);
-const GENRE_MERGE_STRATEGY_SET = new Set<MetadataMergeStrategy>(GENRE_MERGE_STRATEGIES);
 const GENRE_MERGE_MODE_SET = new Set(GENRE_MERGE_MODES);
 const PROVIDER_ID_FETCH_MODE_SET = new Set(PROVIDER_ID_FETCH_MODES);
 const AUDIOBOOK_ONLY_PROVIDERS = new Set<MetadataProviderKey>([
@@ -89,6 +86,11 @@ const FIELD_DEFAULTS: Partial<Record<MetadataField, Partial<FieldPreference>>> =
   // Google and Open Library carry no series.
   seriesName: { providers: [MetadataProviderKey.GOODREADS, MetadataProviderKey.AMAZON, MetadataProviderKey.KOBO] },
   seriesIndex: { providers: [MetadataProviderKey.GOODREADS, MetadataProviderKey.AMAZON, MetadataProviderKey.KOBO] },
+  // Only these list more than one series for a book. Extra series are added to the book's list, never swapped in.
+  otherSeries: {
+    mergeStrategy: 'mergeExisting',
+    providers: [MetadataProviderKey.HARDCOVER, MetadataProviderKey.GOODREADS, MetadataProviderKey.AUDIBLE],
+  },
   // Only audiobook sources carry these, so the base order could never fill them. Audnexus stays out
   // for the reason it stays out of the audio cover: chapters follow the narrators order, and it would
   // bring Audible's timings in over the book's own. Duration only fills a gap, because the one
@@ -195,8 +197,7 @@ export class MetadataPreferenceResolver {
       Array.isArray(candidate.providers) && candidate.providers.every((p) => typeof p === 'string')
         ? [...candidate.providers]
         : [...fallback.providers];
-    const mergeStrategySet = field === 'genres' ? GENRE_MERGE_STRATEGY_SET : MERGE_STRATEGY_SET;
-    const mergeStrategy = mergeStrategySet.has(candidate.mergeStrategy as MetadataMergeStrategy)
+    const mergeStrategy = mergeStrategiesForField(field).includes(candidate.mergeStrategy as MetadataMergeStrategy)
       ? (candidate.mergeStrategy as MetadataMergeStrategy)
       : fallback.mergeStrategy;
 

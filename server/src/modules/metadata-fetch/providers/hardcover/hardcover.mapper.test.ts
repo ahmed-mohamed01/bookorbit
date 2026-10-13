@@ -135,6 +135,24 @@ describe('mapSearchDocument', () => {
     expect(mapSearchDocument(doc).seriesIndex).toBeUndefined();
   });
 
+  it('lists the featured series first, then every other series name, as memberships', () => {
+    const doc: HardcoverSearchDocument = {
+      ...baseDocument,
+      featured_series: { series: { name: 'The Mistborn Saga: The Original Trilogy' }, position: 1 },
+      series_names: ['The Mistborn Saga: The Original Trilogy', 'The Cosmere', 'The Mistborn Saga'],
+    };
+    expect(mapSearchDocument(doc).seriesMemberships).toEqual([
+      { seriesName: 'The Mistborn Saga: The Original Trilogy', seriesIndex: '1' },
+      { seriesName: 'The Cosmere' },
+      { seriesName: 'The Mistborn Saga' },
+    ]);
+  });
+
+  it('lists no memberships for a document with one series', () => {
+    const doc: HardcoverSearchDocument = { ...baseDocument, series_names: ['The Kingkiller Chronicle'] };
+    expect(mapSearchDocument(doc).seriesMemberships).toBeUndefined();
+  });
+
   it('returns undefined seriesName and seriesIndex when series is absent', () => {
     const doc: HardcoverSearchDocument = { ...baseDocument, featured_series: undefined };
     const result = mapSearchDocument(doc);
@@ -560,6 +578,26 @@ describe('mapBookWithEditions', () => {
       featured_book_series: { series: { name: 'Some Series' }, position: null },
     };
     expect(mapBookWithEditions(book)[0].seriesIndex).toBeUndefined();
+  });
+
+  it('lists every book series as a membership, featured first, without adaptation rows or repeats', () => {
+    const book: HardcoverBookWithEditions = {
+      ...baseBook,
+      featured_book_series: { series: { name: 'The Mistborn Saga: The Original Trilogy', books_count: 3 }, position: 1 },
+      book_series: [
+        { position: 4, series: { name: 'The Cosmere' } },
+        { position: 1, series: { name: 'The Mistborn Saga: The Original Trilogy' } },
+        { position: null, series: { name: 'The Mistborn Saga' } },
+        { position: 1, series: { name: 'the mistborn saga' } },
+        { position: 1, series: { name: 'Mistborn [Dramatized Adaptation]' } },
+        { position: 2, series: null },
+      ],
+    };
+    expect(mapBookWithEditions(book)[0].seriesMemberships).toEqual([
+      { seriesName: 'The Mistborn Saga: The Original Trilogy', seriesIndex: '1' },
+      { seriesName: 'The Cosmere', seriesIndex: '4' },
+      { seriesName: 'The Mistborn Saga', seriesIndex: '1' },
+    ]);
   });
 
   it('emits no page count for audiobook editions (reading_format_id = 2)', () => {

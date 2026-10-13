@@ -285,6 +285,7 @@ export class BookMetadataFetchOrchestratorService implements OnApplicationBootst
         narrators: narratorRows.map((n) => n.name),
         chapters: meta?.chapters,
         hardcoverEditionId: meta?.hardcoverEditionId,
+        seriesMemberships: await this.metadataService.findSeriesMemberships(bookId),
       };
       if (meta?.lockedFields?.length) existingFields.lockedFields = meta.lockedFields;
       const coverInputs = coverFetchInputs(coverState);
@@ -409,6 +410,10 @@ export class BookMetadataFetchOrchestratorService implements OnApplicationBootst
     scalarFields.lastMetadataFetchAt = new Date();
     scalarFields.updatedAt = new Date();
     await this.bookReadService.updateMetadataFields(bookId, scalarFields);
+    // After the scalar write, which re-syncs the primary series; the list keeps that primary first.
+    if (filteredResolved.seriesMemberships !== undefined) {
+      await this.metadataService.replaceSeriesMemberships(bookId, filteredResolved.seriesMemberships);
+    }
 
     if (filteredResolved.communityRatings !== undefined) {
       await this.bookReadService.replaceCommunityRatings(

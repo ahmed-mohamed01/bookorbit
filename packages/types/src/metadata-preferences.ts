@@ -15,6 +15,7 @@ export type MetadataField =
   | "communityRating"
   | "seriesName"
   | "seriesIndex"
+  | "otherSeries"
   | "genres"
   | "narrators"
   | "duration"
@@ -35,6 +36,7 @@ export const ALL_METADATA_FIELDS: MetadataField[] = [
   "communityRating",
   "seriesName",
   "seriesIndex",
+  "otherSeries",
   "genres",
   "narrators",
   "duration",
@@ -47,9 +49,18 @@ export type GenreMergeMode = "firstProvider" | "merge";
 export type ProviderIdFetchMode = "preferExisting" | "existingOnly";
 export const MERGE_STRATEGIES: MergeStrategy[] = ["fillMissing", "overwrite", "overwriteIfProvided"];
 export const GENRE_MERGE_STRATEGIES: MetadataMergeStrategy[] = ["fillMissing", "mergeExisting", "overwriteIfProvided", "overwrite"];
+// Other series only ever adds to the book's list, so the overwrite strategies have no meaning there.
+export const OTHER_SERIES_MERGE_STRATEGIES: MetadataMergeStrategy[] = ["fillMissing", "mergeExisting"];
 export const GENRE_MERGE_MODES: GenreMergeMode[] = ["firstProvider", "merge"];
 export const PROVIDER_ID_FETCH_MODES: ProviderIdFetchMode[] = ["preferExisting", "existingOnly"];
 export const MAX_METADATA_GENRE_COUNT = 50;
+
+/** The merge strategies a field rule may use. */
+export function mergeStrategiesForField(field: MetadataField): MetadataMergeStrategy[] {
+  if (field === "genres") return GENRE_MERGE_STRATEGIES;
+  if (field === "otherSeries") return OTHER_SERIES_MERGE_STRATEGIES;
+  return MERGE_STRATEGIES;
+}
 
 export interface FieldPreference {
   enabled: boolean;
@@ -168,7 +179,8 @@ export interface ProviderConnectionTestResult {
 }
 
 /**
- * The field-rule fields each provider can ever fill, read from its mapper on 2026-10-08. The rule
+ * The field-rule fields each provider can ever fill, read from its mapper on 2026-10-08 (other series
+ * on 2026-10-13: only providers that can list more than one series for a book). The rule
  * editor uses it to say a provider will never answer a field; nothing fetches by it, so an entry
  * that drifts costs a wrong hint, never a value. A field filled only on some paths (Goodreads'
  * publisher, which its fallback search lacks) counts as filled.
@@ -205,6 +217,7 @@ export const METADATA_PROVIDER_SUPPORTED_FIELDS: Record<MetadataProviderKey, rea
     "communityRating",
     "seriesName",
     "seriesIndex",
+    "otherSeries",
     "genres",
   ],
   [MetadataProviderKey.AMAZON]: [
@@ -239,6 +252,7 @@ export const METADATA_PROVIDER_SUPPORTED_FIELDS: Record<MetadataProviderKey, rea
     "communityRating",
     "seriesName",
     "seriesIndex",
+    "otherSeries",
     "genres",
   ],
   [MetadataProviderKey.OPEN_LIBRARY]: [
@@ -278,6 +292,7 @@ export const METADATA_PROVIDER_SUPPORTED_FIELDS: Record<MetadataProviderKey, rea
     "communityRating",
     "seriesName",
     "seriesIndex",
+    "otherSeries",
     "genres",
     "narrators",
     "duration",
@@ -294,6 +309,7 @@ export const METADATA_PROVIDER_SUPPORTED_FIELDS: Record<MetadataProviderKey, rea
     "language",
     "seriesName",
     "seriesIndex",
+    "otherSeries",
     "narrators",
     "duration",
     "abridged",

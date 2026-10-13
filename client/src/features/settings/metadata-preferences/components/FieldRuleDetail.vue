@@ -6,7 +6,7 @@ import type { FieldPreference, MetadataField, MetadataMergeStrategy, MetadataPro
 import { Button } from '@/components/ui/button'
 import { providerChipStyle, PROVIDER_SHORT_LABELS } from '@/lib/provider-colors'
 import ProviderAddMenu from './ProviderAddMenu.vue'
-import { providerHasOtherShape, resolvedProviders, skippedProviders, skipReasonFor } from '../lib/field-rules'
+import { mergeStrategyOrder, providerHasOtherShape, resolvedProviders, skippedProviders, skipReasonFor } from '../lib/field-rules'
 
 const { t } = useI18n()
 
@@ -27,9 +27,6 @@ const emit = defineEmits<{
   close: []
 }>()
 
-const STANDARD_MERGE_ORDER: MetadataMergeStrategy[] = ['fillMissing', 'overwriteIfProvided', 'overwrite']
-const GENRE_MERGE_ORDER: MetadataMergeStrategy[] = ['fillMissing', 'mergeExisting', 'overwriteIfProvided', 'overwrite']
-
 const rows = computed(() =>
   props.preference.providers.map((key, index) => {
     const status = props.statuses.find((entry) => entry.key === key)
@@ -49,7 +46,7 @@ const skipped = computed(() => skippedProviders(props.preference.providers, prop
 const providerLabel = (key: MetadataProviderKey) => props.statuses.find((entry) => entry.key === key)?.label ?? key
 
 const mergeOptions = computed(() =>
-  (props.field === 'genres' ? GENRE_MERGE_ORDER : STANDARD_MERGE_ORDER).map((value) => ({
+  mergeStrategyOrder(props.field).map((value) => ({
     value,
     label: t(`settings.metadata.mergeStrategy.${value}.label`),
     description: t(`settings.metadata.mergeStrategy.${value}.description`),

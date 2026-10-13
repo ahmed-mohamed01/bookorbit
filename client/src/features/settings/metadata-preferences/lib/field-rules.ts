@@ -1,12 +1,12 @@
-import { ALL_METADATA_FIELDS, providerFieldSupport } from '@bookorbit/types'
-import type { FieldPreference, MetadataField, MetadataProviderKey, ProviderStatus } from '@bookorbit/types'
+import { ALL_METADATA_FIELDS, mergeStrategiesForField, providerFieldSupport } from '@bookorbit/types'
+import type { FieldPreference, MetadataField, MetadataMergeStrategy, MetadataProviderKey, ProviderStatus } from '@bookorbit/types'
 
 /** Display grouping for the rule table. Every metadata field belongs to exactly one group. */
 export const FIELD_GROUPS: { id: string; fields: MetadataField[] }[] = [
   { id: 'core', fields: ['title', 'subtitle', 'description', 'cover', 'audioCover'] },
   { id: 'contributors', fields: ['authors'] },
   { id: 'publication', fields: ['publisher', 'isbn', 'publishedYear', 'language', 'pageCount', 'communityRating'] },
-  { id: 'series', fields: ['seriesName', 'seriesIndex'] },
+  { id: 'series', fields: ['seriesName', 'seriesIndex', 'otherSeries'] },
   { id: 'classification', fields: ['genres'] },
   { id: 'audiobook', fields: ['narrators', 'duration', 'abridged'] },
 ]
@@ -16,6 +16,14 @@ export const FIELD_GROUPS: { id: string; fields: MetadataField[] }[] = [
  * purpose, and "make first everywhere" would quietly undo that.
  */
 export const BULK_REORDER_EXEMPT_FIELDS: ReadonlySet<MetadataField> = new Set<MetadataField>(['audioCover'])
+
+const MERGE_STRATEGY_DIAL: MetadataMergeStrategy[] = ['fillMissing', 'mergeExisting', 'overwriteIfProvided', 'overwrite']
+
+/** The field's allowed strategies, least to most destructive so the control reads as a dial. */
+export function mergeStrategyOrder(field: MetadataField): MetadataMergeStrategy[] {
+  const allowed = mergeStrategiesForField(field)
+  return MERGE_STRATEGY_DIAL.filter((strategy) => allowed.includes(strategy))
+}
 
 /**
  * The rule editor names the ebook cover rule "Book cover" to tell it from the Audiobook cover

@@ -1763,6 +1763,7 @@
         "communityRating": "Community rating",
         "seriesName": "Series name",
         "seriesIndex": "Series index",
+        "otherSeries": "Other series",
         "genres": "Genres",
         "narrators": "Narrators",
         "duration": "Duration",
@@ -1787,7 +1788,7 @@
         },
         "mergeExisting": {
           "label": "Merge with existing",
-          "description": "Keep stored genres and append new provider genres",
+          "description": "Keep stored values and append new ones from the provider",
           "short": "Merge"
         },
         "overwriteIfProvided": {
@@ -6068,8 +6069,9 @@
             "language": "Language",
             "pageCount": "Page count",
             "communityRating": "Community rating",
-            "seriesName": "Series",
+            "seriesName": "Primary series",
             "seriesIndex": "Series index",
+            "otherSeries": "Other series",
             "isbn13": "ISBN-13",
             "isbn10": "ISBN-10",
             "genres": "Genres",

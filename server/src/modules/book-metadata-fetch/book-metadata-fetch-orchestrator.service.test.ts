@@ -54,6 +54,8 @@ function makeService(withGateway = true) {
     replaceNarrators: vi.fn().mockResolvedValue(undefined),
     upsertComicMetadata: vi.fn().mockResolvedValue(undefined),
     downloadAndSaveCover: vi.fn().mockResolvedValue(true),
+    findSeriesMemberships: vi.fn().mockResolvedValue([]),
+    replaceSeriesMemberships: vi.fn().mockResolvedValue(undefined),
   };
   const comicMetadataRepository = {
     findByBookId: vi.fn().mockResolvedValue(null),
@@ -333,6 +335,35 @@ describe('BookMetadataFetchOrchestratorService', () => {
     expect(metadataService.replaceNarrators).toHaveBeenCalledWith(88, [{ name: 'Narrator A', sortName: null }]);
     expect(metadataService.upsertComicMetadata).toHaveBeenCalledWith(88, { issueNumber: '12' });
     expect(metadataService.downloadAndSaveCover).toHaveBeenCalledWith([{ url: 'https://cover' }], 88, 'ebook');
+  });
+
+  it('persists resolved series memberships after the scalar series write', async () => {
+    const { service, bookMetadataLockService, bookReadService, metadataService } = makeService();
+    const memberships = [
+      { seriesName: 'The Mistborn Saga: The Original Trilogy', seriesIndex: '1' },
+      { seriesName: 'The Cosmere', seriesIndex: null },
+    ];
+    bookMetadataLockService.filterResolvedMetadata.mockResolvedValue({
+      resolved: { seriesName: 'The Mistborn Saga: The Original Trilogy', seriesMemberships: memberships },
+      providerIds: {},
+      skippedFields: [],
+    });
+
+    await (service as any).persistResolved(88, {}, {}, [], [], []);
+
+    expect(metadataService.replaceSeriesMemberships).toHaveBeenCalledWith(88, memberships);
+    expect(bookReadService.updateMetadataFields.mock.invocationCallOrder[0]).toBeLessThan(
+      metadataService.replaceSeriesMemberships.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('leaves series memberships alone when none resolved', async () => {
+    const { service, bookMetadataLockService, metadataService } = makeService();
+    bookMetadataLockService.filterResolvedMetadata.mockResolvedValue({ resolved: { seriesName: 'Series' }, providerIds: {}, skippedFields: [] });
+
+    await (service as any).persistResolved(88, {}, {}, [], [], []);
+
+    expect(metadataService.replaceSeriesMemberships).not.toHaveBeenCalled();
   });
 
   it('processOne marks failures with extracted http status', async () => {

@@ -71,6 +71,8 @@ export interface ExistingMetadataFields extends Partial<Record<MetadataField, un
   chapters?: unknown;
   comicMetadata?: Partial<Record<keyof ComicMetadataFields, unknown>> | null;
   hardcoverEditionId?: unknown;
+  /** The book's series, primary first. Other series are added after these, never in their place. */
+  seriesMemberships?: readonly MetadataSeriesMembership[];
 }
 
 export interface MetadataFetchRunOptions {
@@ -360,9 +362,9 @@ export class MetadataFetchPipeline {
   }
 
   /**
-   * Providers that only a cover rule put in play. They help decide which book this is and supply
-   * that slot's art, but nothing else: an audiobook source brought in for its square art must not
-   * replace a book's chapters, ids or comic data.
+   * Providers that only a cover or other series rule put in play. They help decide which book this
+   * is and supply that art or those extra series, but nothing else: an audiobook source brought in
+   * for its square art must not replace a book's chapters, ids or comic data.
    */
   private coverOnlyProviders(
     preferences: MetadataFetchPreferences,
@@ -371,7 +373,7 @@ export class MetadataFetchPipeline {
   ): Set<MetadataProviderKey> {
     const fullRole = new Set<MetadataProviderKey>();
     for (const [field, fieldPreference] of Object.entries(preferences.fields) as [MetadataField, FieldPreference][]) {
-      if (!fieldPreference.enabled || field === 'cover' || field === 'audioCover' || !this.fieldApplies(field, media)) continue;
+      if (!fieldPreference.enabled || ADDITIVE_ROLE_FIELDS.has(field) || !this.fieldApplies(field, media)) continue;
       for (const provider of fieldPreference.providers) fullRole.add(provider);
     }
     return new Set(activeProviders.filter((provider) => !fullRole.has(provider)));
@@ -740,6 +742,8 @@ export class MetadataFetchPipeline {
       if (!fieldPreference.enabled) continue;
       // Each cover slot resolves separately, with its own shape preference and fallbacks.
       if (field === 'cover' || field === 'audioCover') continue;
+      // Other series depend on where the primary series lands, so they resolve after every field.
+      if (field === 'otherSeries') continue;
       const mergeStrategy = options?.preserveExisting ? 'fillMissing' : fieldPreference.mergeStrategy;
 
       if (field === 'isbn') {
@@ -822,8 +826,11 @@ export class MetadataFetchPipeline {
       }
     }
 
-    const seriesMemberships = this.resolveSeriesMemberships(byProvider, result, sources);
-    if (seriesMemberships) result.seriesMemberships = seriesMemberships;
+    const otherSeries = this.resolveOtherSeries(preferences.fields.otherSeries, byProvider, existing, result, options);
+    if (otherSeries) {
+      result.seriesMemberships = otherSeries.memberships;
+      sources.otherSeries = otherSeries.provider;
+    }
 
     const providerIds: ResolvedProviderIds = {};
     if (preferences.options?.saveProviderIds) {
@@ -962,20 +969,52 @@ export class MetadataFetchPipeline {
     return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : undefined;
   }
 
-  private resolveSeriesMemberships(
-    byProvider: Map<string, MetadataCandidate>,
+  /**
+   * The book's series with the first listed provider's other series added after them. A provider's
+   * own primary, and any series matching one the book already has, are dropped, so the primary
+   * series field keeps deciding the primary and nothing the book lists is removed or reordered.
+   */
+  private resolveOtherSeries(
+    preference: FieldPreference | undefined,
+    candidates: CandidatesByProvider,
+    existing: ExistingMetadataFields,
     resolved: ResolvedMetadataFields,
-    sources: Record<string, string>,
-  ): MetadataSeriesMembership[] | undefined {
-    const seriesProvider = sources.seriesName as MetadataProviderKey | undefined;
-    if (!seriesProvider || resolved.seriesName === undefined) return undefined;
+    options: MetadataFetchRunOptions | undefined,
+  ): { memberships: MetadataSeriesMembership[]; provider: MetadataProviderKey } | undefined {
+    if (!preference?.enabled) return undefined;
 
-    const memberships = this.normalizeSeriesMemberships(byProvider.get(seriesProvider)?.seriesMemberships);
-    if (!memberships.length) return undefined;
+    const resolvedName = typeof resolved.seriesName === 'string' ? resolved.seriesName : undefined;
+    const primaryName = normalizeMetadataText(resolvedName ?? (typeof existing.seriesName === 'string' ? existing.seriesName : undefined));
+    const primaryKey = seriesMatchKey(primaryName);
+    if (!primaryName || !primaryKey) return undefined;
 
-    const indexProvider = sources.seriesIndex as MetadataProviderKey | undefined;
-    if (indexProvider !== seriesProvider || resolved.seriesIndex === undefined) return undefined;
-    return memberships;
+    const resolvedIndex = resolved.seriesIndex === undefined ? existing.seriesIndex : resolved.seriesIndex;
+    const primary: MetadataSeriesMembership = { seriesName: primaryName, seriesIndex: parseSeriesIndex(resolvedIndex) };
+    // Existing rows are dropped only when the database would treat them as the primary, so a row
+    // that differs from it by punctuation alone survives the rebuilt list.
+    const primaryRowKey = normalizeMetadataTextKey(primaryName);
+    const existingOthers = this.normalizeSeriesMemberships(existing.seriesMemberships?.slice(1)).filter(
+      (membership) => normalizeMetadataTextKey(membership.seriesName) !== primaryRowKey,
+    );
+    const fillMissing = options?.preserveExisting === true || preference.mergeStrategy === 'fillMissing';
+    if (fillMissing && existingOthers.length > 0) return undefined;
+
+    const known = new Set([primaryKey, ...existingOthers.map((membership) => seriesMatchKey(membership.seriesName))]);
+    for (const provider of preference.providers) {
+      const candidate = candidates.get(provider);
+      if (!candidate?.seriesMemberships?.length) continue;
+      // The provider's own primary series is the primary series field's to offer, not an extra one.
+      const candidatePrimaryKey = seriesMatchKey(candidate.seriesName);
+      const additions = this.normalizeSeriesMemberships(candidate.seriesMemberships).filter((membership) => {
+        const key = seriesMatchKey(membership.seriesName);
+        if (!key || key === candidatePrimaryKey || known.has(key)) return false;
+        known.add(key);
+        return true;
+      });
+      if (additions.length === 0) continue;
+      return { memberships: [primary, ...existingOthers, ...additions], provider: provider as MetadataProviderKey };
+    }
+    return undefined;
   }
 
   private normalizeSeriesMemberships(memberships: readonly MetadataSeriesMembership[] | undefined): MetadataSeriesMembership[] {
@@ -1104,6 +1143,20 @@ export class MetadataFetchPipeline {
     }
     return false;
   }
+}
+
+/** Rules whose providers only add art or extra series, so they never decide the book's other fields. */
+const ADDITIVE_ROLE_FIELDS: ReadonlySet<MetadataField> = new Set<MetadataField>(['cover', 'audioCover', 'otherSeries']);
+
+/** Series names compared without case, accents or punctuation, so "Mistborn: Saga" and "Mistborn Saga" are one series. */
+function seriesMatchKey(name: string | null | undefined): string | null {
+  const key = name
+    ?.normalize('NFKD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+  return key ? key : null;
 }
 
 /** One entry per provider across both passes; a fallback or stale answer outranks a fresh one. */

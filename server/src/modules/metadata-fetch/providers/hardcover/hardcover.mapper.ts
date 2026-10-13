@@ -1,5 +1,13 @@
-import { coverShapeFromSize, MetadataCandidate, MetadataProviderKey, parseSeriesIndex, type CoverMedium } from '@bookorbit/types';
+import {
+  coverShapeFromSize,
+  MetadataCandidate,
+  MetadataProviderKey,
+  parseSeriesIndex,
+  type CoverMedium,
+  type MetadataSeriesMembership,
+} from '@bookorbit/types';
 
+import { normalizeMetadataText, normalizeMetadataTextKey } from '../../../../common/utils/metadata-text-normalize.utils';
 import { parsePublishedDateKey, parsePublishedYear, publishedYearFromDateKey } from '../../../../common/utils/published-date.utils';
 import { normalizeSeriesTotalBooks } from '../../../../common/utils/series-total-books.utils';
 import {
@@ -103,6 +111,34 @@ function splitEmbeddedSubtitle(title: string, subtitle: string | undefined): { t
   return { title, subtitle };
 }
 
+// Hardcover lists adaptations and editions as extra book_series rows (e.g. "... [Dramatized adaptation]"),
+// which are not reading series and would only add noise to a book's series list.
+const NON_READING_SERIES_PATTERN = /\[|\bdramatized\b|graphic ?audio|adaptation|box(?:ed)? ?set|collection|omnibus/i;
+
+/** Every series Hardcover places the book in, the featured one first, without adaptation rows. Only set when there is more than one. */
+function mapSeriesMemberships(
+  featured: { name?: string | null; position?: number | string | null } | undefined,
+  others: ReadonlyArray<{ name?: string | null; position?: number | string | null }>,
+): MetadataSeriesMembership[] | undefined {
+  const memberships: MetadataSeriesMembership[] = [];
+  const byKey = new Map<string, MetadataSeriesMembership>();
+  for (const entry of [...(featured ? [featured] : []), ...others]) {
+    const seriesName = normalizeMetadataText(entry.name);
+    const key = normalizeMetadataTextKey(seriesName);
+    if (!seriesName || !key || NON_READING_SERIES_PATTERN.test(seriesName)) continue;
+    const seriesIndex = parseSeriesIndex(entry.position) ?? undefined;
+    const existing = byKey.get(key);
+    if (existing) {
+      if (existing.seriesIndex == null && seriesIndex !== undefined) existing.seriesIndex = seriesIndex;
+      continue;
+    }
+    const membership: MetadataSeriesMembership = { seriesName, ...(seriesIndex !== undefined ? { seriesIndex } : {}) };
+    byKey.set(key, membership);
+    memberships.push(membership);
+  }
+  return memberships.length > 1 ? memberships : undefined;
+}
+
 function normalizeCommunityRating(value: number | undefined): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 5 ? value : undefined;
 }
@@ -133,6 +169,10 @@ export function mapSearchDocument(doc: HardcoverSearchDocument): MetadataCandida
     genres: doc.genres,
     seriesName: doc.featured_series?.series?.name,
     seriesIndex: parseSeriesIndex(doc.featured_series?.position) ?? undefined,
+    seriesMemberships: mapSeriesMemberships(
+      doc.featured_series ? { name: doc.featured_series.series?.name, position: doc.featured_series.position } : undefined,
+      (doc.series_names ?? []).map((name) => ({ name })),
+    ),
     coverUrl: doc.image?.url,
     ...coverFromImage(doc.image, 'unknown'),
     sourceUrl: `https://hardcover.app/books/${doc.slug}`,
@@ -198,6 +238,10 @@ function mapEdition(edition: HardcoverEdition, book: HardcoverBookWithEditions):
     seriesName: book.featured_book_series?.series?.name,
     seriesIndex: parseSeriesIndex(book.featured_book_series?.position) ?? undefined,
     seriesTotalBooks: normalizeSeriesTotalBooks(book.featured_book_series?.series?.books_count),
+    seriesMemberships: mapSeriesMemberships(
+      book.featured_book_series ? { name: book.featured_book_series.series?.name, position: book.featured_book_series.position } : undefined,
+      (book.book_series ?? []).map((entry) => ({ name: entry.series?.name, position: entry.position })),
+    ),
     coverUrl: edition.image?.url ?? book.image?.url,
     ...editionCover(edition, book),
     sourceUrl: `https://hardcover.app/books/${book.slug}`,

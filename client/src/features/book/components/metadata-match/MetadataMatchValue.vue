@@ -62,7 +62,8 @@ const chips = computed(() => {
   const theirs = props.side === 'current' ? props.field.candidateList : props.field.bookList
   const showDifference = props.field.kind === 'change' && !!theirs?.length
   const theirSet = new Set((theirs ?? []).map(normalizeForMatch))
-  const replaced = props.decision === 'use' || props.decision === 'replace'
+  // Other series are only ever added to, so using a result never removes the book's own.
+  const replaced = (props.decision === 'use' || props.decision === 'replace') && props.field.key !== 'otherSeries'
   return mine.map((value) => {
     const shared = theirSet.has(normalizeForMatch(value))
     const state = !showDifference || shared ? 'same' : props.side === 'incoming' ? 'added' : replaced ? 'removed' : 'same'

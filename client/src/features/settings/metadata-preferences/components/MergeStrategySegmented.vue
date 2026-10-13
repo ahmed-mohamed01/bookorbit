@@ -2,29 +2,25 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronsDown, CircleDashed, Download, ListPlus } from '@lucide/vue'
-import type { MetadataMergeStrategy } from '@bookorbit/types'
+import type { MetadataField, MetadataMergeStrategy } from '@bookorbit/types'
+import { mergeStrategyOrder } from '../lib/field-rules'
 
 const { t } = useI18n()
 
-const props = defineProps<{ modelValue: MetadataMergeStrategy; disabled?: boolean; allowMergeExisting?: boolean }>()
+const props = defineProps<{ modelValue: MetadataMergeStrategy; disabled?: boolean; field: MetadataField }>()
 const emit = defineEmits<{ 'update:modelValue': [value: MetadataMergeStrategy] }>()
 
 const ICONS = { fillMissing: CircleDashed, mergeExisting: ListPlus, overwriteIfProvided: Download, overwrite: ChevronsDown } as const
 
-// Order the segments least to most destructive so the control reads as a dial.
-const options = computed(() => {
-  const order: MetadataMergeStrategy[] = props.allowMergeExisting
-    ? ['fillMissing', 'mergeExisting', 'overwriteIfProvided', 'overwrite']
-    : ['fillMissing', 'overwriteIfProvided', 'overwrite']
-
-  return order.map((value) => ({
+const options = computed(() =>
+  mergeStrategyOrder(props.field).map((value) => ({
     value,
     icon: ICONS[value],
     short: t(`settings.metadata.mergeStrategy.${value}.short`),
     label: t(`settings.metadata.mergeStrategy.${value}.label`),
     description: t(`settings.metadata.mergeStrategy.${value}.description`),
-  }))
-})
+  })),
+)
 
 function select(value: MetadataMergeStrategy) {
   emit('update:modelValue', value)

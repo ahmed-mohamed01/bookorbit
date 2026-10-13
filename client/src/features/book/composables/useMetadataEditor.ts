@@ -14,8 +14,11 @@ import {
 export type EditableSeriesMembership = {
   seriesName: string
   seriesIndex: string | null
-  /** Series-level: saving it changes the total for every book in the series and every user. */
-  expectedBookCount: number | null
+  /**
+   * Series-level: saving it changes the total for every book in the series and every user. Left out
+   * for a series added by a metadata fetch, so the series keeps whatever total it already has.
+   */
+  expectedBookCount?: number | null
 }
 
 const ROOT_FIELDS = [
@@ -82,7 +85,11 @@ export function normalizeSeriesMemberships(values: readonly EditableSeriesMember
     const key = seriesName.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
-    out.push({ seriesName, seriesIndex: value.seriesIndex ?? null, expectedBookCount: value.expectedBookCount ?? null })
+    out.push({
+      seriesName,
+      seriesIndex: value.seriesIndex ?? null,
+      ...(value.expectedBookCount !== undefined && { expectedBookCount: value.expectedBookCount }),
+    })
   }
   return out
 }

@@ -53,6 +53,7 @@ const SECTION_OF: Partial<Record<DiffFieldKey, SectionId>> = {
   abridged: 'publication',
   seriesName: 'series',
   seriesIndex: 'series',
+  otherSeries: 'series',
   genres: 'genres',
   isbn13: 'identifiers',
   isbn10: 'identifiers',
