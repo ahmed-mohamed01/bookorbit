@@ -14,9 +14,10 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
   }
 
   canActivate(context: ExecutionContext) {
-    // NestJS 12 runs global guards on WebSocket messages too. Gateways verify the token at the handshake,
-    // and a socket message carries no HTTP headers for passport to read.
-    if (context.getType() !== 'http') return true;
+    // Since Nest 12, global guards also run on gateway messages. A socket.io message carries no
+    // Authorization header for passport to read; gateways authenticate the socket once, in
+    // handleConnection, and their handlers read that user through resolveSocketUser.
+    if (context.getType() === 'ws') return true;
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [context.getHandler(), context.getClass()]);
     if (isPublic) return true;
     return super.canActivate(context);

@@ -1871,6 +1871,24 @@ export class ScannerService implements OnApplicationBootstrap {
     return true;
   }
 
+  /** Never throws: the files are registered either way, and the next scan of the book realigns them. */
+  private async realignAudioTrackOrder(bookId: number): Promise<void> {
+    const event = 'scanner.realign_track_order';
+    const startedAt = Date.now();
+    try {
+      const renumbered = await this.scannerRepo.realignAudioTrackOrder(bookId);
+      if (renumbered > 0) {
+        this.logger.log(
+          `[${event}] [end] bookId=${bookId} durationMs=${Date.now() - startedAt} renumbered=${renumbered} - track order realigned with file paths`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `[${event}] [fail] bookId=${bookId} durationMs=${Date.now() - startedAt} errorClass=${err instanceof Error ? err.name : 'Error'} error="${sanitizeLogValue(err instanceof Error ? err.message : String(err))}" - track order realignment failed`,
+      );
+    }
+  }
+
   private async processCandidate(
     candidate: BookCandidate,
     libraryId: number,
@@ -1911,6 +1929,7 @@ export class ScannerService implements OnApplicationBootstrap {
     const registeredFiles: RegisteredFile[] = [];
     const formerOwnerBookIds = new Set<number>();
     let mediaOverlayChanged = false;
+    let numberedTracks = false;
 
     for (let sortOrder = 0; sortOrder < candidate.files.length; sortOrder++) {
       const fileStat = candidate.files[sortOrder];
@@ -1956,6 +1975,9 @@ export class ScannerService implements OnApplicationBootstrap {
       if (processResult.mediaOverlayChanged) mediaOverlayChanged = true;
 
       if (processResult.fileId !== null) {
+        if (format !== null && isAudioFormat(format) && (processResult.isNew || processResult.reassigned || previousSortOrder !== sortOrder)) {
+          numberedTracks = true;
+        }
         // reextractMetadata forces content/metadata files through extraction even when nothing on
         // disk changed. Cover/supplement files keep their real change state - re-importing covers
         // stays the job of Refresh covers and its clobber guards.
@@ -1977,6 +1999,10 @@ export class ScannerService implements OnApplicationBootstrap {
         retainedFileIds.add(processResult.fileId);
       }
     }
+
+    // Each track above was numbered from this scan's own listing of the folder. A scan that listed
+    // the folder before newer files arrived can finish after one that saw them, mixing the two.
+    if (numberedTracks) await this.realignAudioTrackOrder(book.id);
 
     // Phase 2: Pick winner (primary file) from all registered content files.
     const contentFiles = registeredFiles.filter((f) => f.role === 'content');

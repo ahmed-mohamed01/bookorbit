@@ -760,6 +760,47 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
     expect(payload).toHaveProperty('seedTimeMinutes', 90);
   });
 
+  it.each([
+    { transport: 'torrent', inspected: false },
+    { transport: 'torrent', inspected: true },
+    { transport: 'magnet', inspected: false },
+    { transport: 'magnet', inspected: true },
+  ])('omits both tracker limits for a disabled source ($transport, inspected=$inspected)', async ({ transport, inspected }) => {
+    const fetchTorrentFile = vi.fn().mockResolvedValue(torrentBytes());
+    const resolveSeedPolicy = vi.fn().mockResolvedValue({
+      id: 9,
+      adapterType: 'torznab',
+      seedsBack: true,
+      applyTrackerSeedGoals: true,
+      seedRatioGoal: null,
+      seedTimeMinutes: null,
+    });
+    const { service, adapter } = makeService({
+      releases: {
+        find: vi.fn().mockReturnValue({ ...RELEASE, seedRatioGoal: 1, seedTimeMinutes: 4320, ...(transport === 'magnet' ? { magnet: MAGNET } : {}) }),
+      },
+      indexers: { resolveSeedPolicy },
+      indexerAdapter: { fetchTorrentFile },
+    });
+
+    if (inspected) await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' });
+    resolveSeedPolicy.mockResolvedValue({
+      id: 9,
+      adapterType: 'torznab',
+      seedsBack: true,
+      applyTrackerSeedGoals: false,
+      seedRatioGoal: null,
+      seedTimeMinutes: null,
+    });
+    await service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+
+    expect(resolveSeedPolicy).toHaveBeenCalledExactlyOnceWith(9);
+    expect(adapter.add).toHaveBeenCalledTimes(1);
+    expect(adapter.add.mock.calls[0]?.[0]).not.toHaveProperty('seedRatioGoal');
+    expect(adapter.add.mock.calls[0]?.[0]).not.toHaveProperty('seedTimeMinutes');
+    expect(fetchTorrentFile).toHaveBeenCalledTimes(transport === 'torrent' ? 1 : 0);
+  });
+
   it('uses current policy after an inspection cache hit without fetching bytes again', async () => {
     const fetchTorrentFile = vi.fn().mockResolvedValue(torrentBytes());
     const resolveSeedPolicy = vi.fn().mockResolvedValue({

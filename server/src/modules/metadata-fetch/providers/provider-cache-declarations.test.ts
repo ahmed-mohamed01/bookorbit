@@ -104,6 +104,7 @@ const BASE: MetadataSearchParams = {
   isAudiobook: true,
   includeAudiobookProviders: true,
   maxCandidatesPerProvider: 2,
+  requireUnambiguousMatch: false,
   validateCoverPlaceholders: true,
 };
 const WITHOUT_ISBN: MetadataSearchParams = { ...BASE, isbn: undefined };
@@ -117,6 +118,7 @@ type Mutation =
   | 'titleIsExplicitQuery'
   | 'validateCoverPlaceholders'
   | 'maxCandidatesPerProvider'
+  | 'requireUnambiguousMatch'
   | 'hardcoverEditionId'
   | 'isAudiobook'
   | 'existingProviderIds';
@@ -131,6 +133,7 @@ const MUTATIONS: Record<Mutation, (params: MetadataSearchParams) => MetadataSear
   titleIsExplicitQuery: (params) => ({ ...params, titleIsExplicitQuery: true }),
   validateCoverPlaceholders: (params) => ({ ...params, validateCoverPlaceholders: false }),
   maxCandidatesPerProvider: (params) => ({ ...params, maxCandidatesPerProvider: 1 }),
+  requireUnambiguousMatch: (params) => ({ ...params, requireUnambiguousMatch: true }),
   hardcoverEditionId: (params) => ({ ...params, hardcoverEditionId: '99' }),
   // Leaves the audiobook gate on, since includeAudiobookProviders is set.
   isAudiobook: (params) => ({ ...params, isAudiobook: false }),
@@ -253,9 +256,9 @@ const CASES: DeclarationCase[] = [
   },
   {
     key: MetadataProviderKey.COMICVINE,
-    withIsbn: { title: 'Dune', seriesName: 'Dune Chronicles', seriesIndex: '1', titleIsExplicitQuery: false },
-    withoutIsbn: { title: 'Dune', seriesName: 'Dune Chronicles', seriesIndex: '1', titleIsExplicitQuery: false },
-    searchReads: ['seriesName', 'seriesIndex', 'titleIsExplicitQuery', 'maxCandidatesPerProvider'],
+    withIsbn: { title: 'Dune', seriesName: 'Dune Chronicles', seriesIndex: '1', titleIsExplicitQuery: false, requireUnambiguousMatch: false },
+    withoutIsbn: { title: 'Dune', seriesName: 'Dune Chronicles', seriesIndex: '1', titleIsExplicitQuery: false, requireUnambiguousMatch: false },
+    searchReads: ['seriesName', 'seriesIndex', 'titleIsExplicitQuery', 'maxCandidatesPerProvider', 'requireUnambiguousMatch'],
     honoursMax: true,
     lookup: LOOKUP_ID,
     fingerprint: {},
@@ -322,8 +325,8 @@ describe('provider cache declarations', () => {
   });
 
   describe.each(CASES)('$key', (testCase) => {
-    it('declares version 1', () => {
-      expect(specOf(testCase.key).version).toBe(1);
+    it('declares the current mapping version', () => {
+      expect(specOf(testCase.key).version).toBe(testCase.key === MetadataProviderKey.COMICVINE ? 2 : 1);
     });
 
     it('keys a search on the fields it reads', () => {

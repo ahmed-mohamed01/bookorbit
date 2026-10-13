@@ -878,7 +878,12 @@ defineExpose({
                 @click="focusTableCell(vItem.index, colIdx, $event, rowBook(vItem.index).id, col.id)"
               >
                 <template v-if="rowBook(vItem.index).collapsedSeries">
-                  <BookTableCollapsedSeriesCell :book="rowBook(vItem.index)" :col-id="col.id" @open-series="handleOpenSeries(rowBook(vItem.index))" />
+                  <BookTableCollapsedSeriesCell
+                    :book="rowBook(vItem.index)"
+                    :col-id="col.id"
+                    :link-fn="getChipsLinkFn(col.id)"
+                    @open-series="handleOpenSeries(rowBook(vItem.index))"
+                  />
                 </template>
                 <template v-else>
                   <BookTableCellDispatcher

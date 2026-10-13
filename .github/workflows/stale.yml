@@ -24,7 +24,7 @@ jobs:
           stale-issue-label: stale
           stale-pr-label: stale
           remove-pr-stale-when-updated: false
-          exempt-issue-labels: "pinned,security"
+          exempt-issue-labels: "pinned,security,discussion"
           stale-issue-message: >
             This issue has been inactive for 60 days. It will be closed in 14 days
             unless there is new activity. If this is still relevant, please leave a

@@ -1113,19 +1113,16 @@ function BookOrbit:openCatalogBrowser(prefer_cached_dashboard)
     UIManager:show(self.catalog_browser)
 end
 
-function BookOrbit:browseCatalog(allow_offline)
+-- Opening never waits for a connection: the catalog shows the cached dashboard
+-- at once and asks for one itself when it refreshes. An offline-tolerant open
+-- (the auto-open) does not ask at all.
+function BookOrbit:browseCatalog(prefer_cached_dashboard)
     if not self:isLoggedIn() then
         promptLogin()
         return
     end
 
-    if allow_offline then
-        self:openCatalogBrowser(true)
-    else
-        NetworkMgr:runWhenConnected(function()
-            self:openCatalogBrowser(false)
-        end)
-    end
+    self:openCatalogBrowser(prefer_cached_dashboard == true)
 end
 
 -- Manual sync triggers

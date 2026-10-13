@@ -12,7 +12,8 @@ export function providerCacheContext(available: boolean, fingerprint: Record<str
   return { available, fingerprint: canonicalJson(fingerprint) };
 }
 
-type SearchField = 'title' | 'author' | 'isbn' | 'seriesName' | 'seriesIndex' | 'titleIsExplicitQuery' | 'hardcoverEditionId';
+type SearchField =
+  'title' | 'author' | 'isbn' | 'seriesName' | 'seriesIndex' | 'titleIsExplicitQuery' | 'hardcoverEditionId' | 'requireUnambiguousMatch';
 
 export function pickSearchInputs(params: MetadataSearchParams, fields: readonly SearchField[]): Record<string, unknown> {
   const inputs: Record<string, unknown> = {};

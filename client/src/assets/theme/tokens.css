@@ -150,7 +150,7 @@
   --shell-backdrop: blur(24px) saturate(150%);
   --shell-shadow: var(--elevation-lg);
 
-  /* Accent glow behind the top of the shell (.glow-wrapper). --glow-band is the style's own reach and
+  /* Accent glow behind the top of the main column (.shell-glow). --glow-band is the style's own reach and
      --glow-reach the user's multiplier on it, written on <html>. A texture keeps its tile size at any reach;
      only the fade that reveals it follows the band. */
   --glow-reach: 0.8;

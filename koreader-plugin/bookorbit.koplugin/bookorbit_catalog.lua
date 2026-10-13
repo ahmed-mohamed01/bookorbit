@@ -307,9 +307,7 @@ function BookOrbitCatalog:init()
     self.paths = self.stack
     UIManager:nextTick(function()
         self:hydrateOnDeviceMaps()
-        if self:shouldRefreshDashboardOnOpen() then
-            self:loadDashboardRoot(true, { invisible = true })
-        end
+        self:refreshDashboardOnOpen()
         -- One-off cache migration, queued behind the refresh so its directory
         -- walk cannot delay the first dashboard request.
         UIManager:scheduleIn(1.0, function()
@@ -475,10 +473,15 @@ function BookOrbitCatalog:markStackDirty()
     end
 end
 
+-- Going home shows the cached dashboard at once and refreshes it behind the
+-- redraw, like opening the catalog does, so it never waits on a connection.
 function BookOrbitCatalog:goDashboard()
     self.stack = {}
-    self:updateReturnPath()
-    self:loadDashboardRoot(true)
+    local items, context = self:initialDashboardContext()
+    self:switchTo(context.title or self.title, items, context, false)
+    UIManager:nextTick(function()
+        self:refreshDashboardOnOpen()
+    end)
 end
 
 function BookOrbitCatalog:sectionSubtitle(page, q, has_next)
@@ -2421,11 +2424,9 @@ function BookOrbitCatalog:onReturn()
         if self.current_context.kind == "dashboard" then
             self:scheduleThumbnailDownloads(self.dashboardBooks(self.current_context.dashboard))
         end
-        if self:shouldRefreshDashboardOnOpen() then
-            UIManager:nextTick(function()
-                self:loadDashboardRoot(true, { invisible = true })
-            end)
-        end
+        UIManager:nextTick(function()
+            self:refreshDashboardOnOpen()
+        end)
     end
     self:updateLeftIcon()
     if dirty then

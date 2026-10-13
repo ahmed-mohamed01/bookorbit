@@ -54,6 +54,8 @@ function makeService(
     findAssignedColors: vi.fn().mockResolvedValue([null]),
     findById: vi.fn().mockResolvedValue(indexerRow()),
     findSeedPolicyById: vi.fn().mockResolvedValue({
+      managerId: null,
+      inheritSeedLimits: null,
       id: 9,
       adapterType: 'torznab',
       applyTrackerSeedGoals: true,
@@ -287,6 +289,102 @@ describe('IndexerConfigService', () => {
     });
     expect(repo.findSeedPolicyById).toHaveBeenCalledWith(9);
     expect(credentials.decrypt).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'disabled manager with stale inherited values',
+      managerId: 3,
+      inheritSeedLimits: false,
+      applyTrackerSeedGoals: true,
+      expectedTracker: false,
+      expectedRatio: null,
+      expectedTime: null,
+    },
+    {
+      name: 'enabled manager with a stale disabled source',
+      managerId: 3,
+      inheritSeedLimits: true,
+      applyTrackerSeedGoals: false,
+      expectedTracker: true,
+      expectedRatio: 1,
+      expectedTime: 4320,
+    },
+    {
+      name: 'missing manager',
+      managerId: 3,
+      inheritSeedLimits: null,
+      applyTrackerSeedGoals: true,
+      expectedTracker: false,
+      expectedRatio: null,
+      expectedTime: null,
+    },
+    {
+      name: 'standalone source with tracker fallback',
+      managerId: null,
+      inheritSeedLimits: null,
+      applyTrackerSeedGoals: true,
+      expectedTracker: true,
+      expectedRatio: 1,
+      expectedTime: 4320,
+    },
+    {
+      name: 'standalone source with manual overrides only',
+      managerId: null,
+      inheritSeedLimits: null,
+      applyTrackerSeedGoals: false,
+      expectedTracker: false,
+      expectedRatio: 1,
+      expectedTime: 4320,
+    },
+  ])(
+    'resolves seed policy for a $name',
+    async ({ managerId, inheritSeedLimits, applyTrackerSeedGoals, expectedTracker, expectedRatio, expectedTime }) => {
+      const { service, credentials, managers } = makeService({
+        repo: {
+          findSeedPolicyById: vi.fn().mockResolvedValue({
+            id: 9,
+            adapterType: 'torznab',
+            managerId,
+            inheritSeedLimits,
+            applyTrackerSeedGoals,
+            seedRatioGoal: 1,
+            seedTimeMinutes: 4320,
+          }),
+        },
+      });
+
+      await expect(service.resolveSeedPolicy(9)).resolves.toEqual({
+        id: 9,
+        adapterType: 'torznab',
+        seedsBack: true,
+        applyTrackerSeedGoals: expectedTracker,
+        seedRatioGoal: expectedRatio,
+        seedTimeMinutes: expectedTime,
+      });
+      expect(credentials.decrypt).not.toHaveBeenCalled();
+      expect(managers.findById).not.toHaveBeenCalled();
+      expect(managers.findRowById).not.toHaveBeenCalled();
+    },
+  );
+
+  it('uses the current manager toggle on each grab without waiting for a source synchronization', async () => {
+    const row = {
+      id: 9,
+      adapterType: 'torznab',
+      managerId: 3,
+      inheritSeedLimits: true,
+      applyTrackerSeedGoals: true,
+      seedRatioGoal: 1,
+      seedTimeMinutes: 4320,
+    };
+    const { service } = makeService({ repo: { findSeedPolicyById: vi.fn().mockImplementation(() => Promise.resolve({ ...row })) } });
+
+    await expect(service.resolveSeedPolicy(9)).resolves.toMatchObject({ applyTrackerSeedGoals: true, seedRatioGoal: 1, seedTimeMinutes: 4320 });
+    row.inheritSeedLimits = false;
+    await expect(service.resolveSeedPolicy(9)).resolves.toMatchObject({ applyTrackerSeedGoals: false, seedRatioGoal: null, seedTimeMinutes: null });
+    row.inheritSeedLimits = true;
+    await expect(service.resolveSeedPolicy(9)).resolves.toMatchObject({ applyTrackerSeedGoals: true, seedRatioGoal: 1, seedTimeMinutes: 4320 });
   });
 
   it('assigns a random unused color when a new indexer does not name one', async () => {

@@ -127,6 +127,7 @@ function makeRepo(overrides: Record<string, unknown> = {}) {
     findBookFilesByBookIds: vi.fn().mockResolvedValue([]),
     findBookFileFormats: vi.fn().mockResolvedValue([]),
     remapAudioPositions: vi.fn().mockResolvedValue({ bookmarks: 0, progress: 0 }),
+    realignAudioTrackOrder: vi.fn().mockResolvedValue(0),
     findBookById: vi.fn().mockResolvedValue(null),
     findBooksByIds: vi.fn().mockResolvedValue([]),
     findBookCardData: vi.fn().mockResolvedValue({ rows: [], authorRows: [], fileRows: [], genreRows: [] }),
@@ -1810,6 +1811,140 @@ describe('audio multi-file audiobook', () => {
     expect(mockMetadata.extractAndSave).not.toHaveBeenCalled();
     expect(mockMetadata.extractMergedAudioChapters).toHaveBeenCalledWith(expect.any(Number), ['/library/Book/01.m4b', '/library/Book/02.m4b'], {
       filesChanged: false,
+    });
+  });
+
+  describe('stored track order', () => {
+    const tracks = [
+      makeFileStat({ absolutePath: '/library/Book/Part 01.mp3', relPath: 'Book/Part 01.mp3', ino: 1001n }),
+      makeFileStat({ absolutePath: '/library/Book/Part 02.mp3', relPath: 'Book/Part 02.mp3', ino: 1002n }),
+    ];
+
+    async function scan(repo: ReturnType<typeof makeRepo>, files: FileStat[]) {
+      mockFindCandidates.mockResolvedValue({
+        candidates: [makeCandidate('/library/Book', files)],
+        skippedDirs: new Set(),
+        unchangedDirs: new Set(),
+        dirMtimes: new Map(),
+      });
+      const done = awaitScan(repo);
+      const { service } = makeService(repo);
+      await service.startScan(1, 'manual');
+      await done;
+    }
+
+    it('realigns the stored track order once every file of the book is registered', async () => {
+      const repo = makeRepo();
+
+      await scan(repo, tracks);
+
+      expect(repo.realignAudioTrackOrder).toHaveBeenCalledTimes(1);
+      expect(repo.realignAudioTrackOrder).toHaveBeenCalledWith(1);
+      // Numbering written by another scan in the meantime is only seen after this one is done writing.
+      const realignedAt = repo.realignAudioTrackOrder.mock.invocationCallOrder[0]!;
+      expect(Math.max(...repo.createBookFile.mock.invocationCallOrder)).toBeLessThan(realignedAt);
+      expect(realignedAt).toBeLessThan(repo.updateBookPrimaryFile.mock.invocationCallOrder[0]!);
+    });
+
+    it('realigns after a rescan that renumbered existing tracks, without disturbing the bookmark remap', async () => {
+      const repo = makeRepo({
+        findBooksByLibraryFolder: vi
+          .fn()
+          .mockResolvedValue([{ id: 1, libraryId: 1, libraryFolderId: 1, folderPath: '/library/Book', status: 'present' }]),
+        findBookFilesByLibraryFolder: vi.fn().mockResolvedValue(
+          tracks.map((track, index) =>
+            makeBookFile({
+              id: 11 + index,
+              bookId: 1,
+              absolutePath: track.absolutePath,
+              relPath: track.relPath,
+              ino: track.ino,
+              format: 'mp3',
+              sortOrder: 1 - index,
+              durationSeconds: 60,
+            }),
+          ),
+        ),
+        findBookFileFormats: vi.fn().mockResolvedValue([
+          { id: 11, format: 'mp3' },
+          { id: 12, format: 'mp3' },
+        ]),
+      });
+
+      await scan(repo, tracks);
+
+      expect(repo.updateBookFile).toHaveBeenCalledWith(11, { sortOrder: 0 });
+      expect(repo.updateBookFile).toHaveBeenCalledWith(12, { sortOrder: 1 });
+      expect(repo.realignAudioTrackOrder).toHaveBeenCalledWith(1);
+      expect(repo.remapAudioPositions).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves a book alone when the scan did not renumber any of its tracks', async () => {
+      const repo = makeRepo({
+        findBooksByLibraryFolder: vi
+          .fn()
+          .mockResolvedValue([{ id: 1, libraryId: 1, libraryFolderId: 1, folderPath: '/library/Book', status: 'present' }]),
+        findBookFilesByLibraryFolder: vi.fn().mockResolvedValue(
+          tracks.map((track, index) =>
+            makeBookFile({
+              id: 11 + index,
+              bookId: 1,
+              absolutePath: track.absolutePath,
+              relPath: track.relPath,
+              ino: track.ino,
+              format: 'mp3',
+              sortOrder: index,
+              durationSeconds: 60,
+            }),
+          ),
+        ),
+      });
+
+      await scan(repo, tracks);
+
+      expect(repo.updateBookFile).not.toHaveBeenCalled();
+      expect(repo.realignAudioTrackOrder).not.toHaveBeenCalled();
+    });
+
+    it('leaves the order of a book without audio alone', async () => {
+      const repo = makeRepo();
+
+      await scan(repo, [makeFileStat(), makeFileStat({ absolutePath: '/library/Book/book.pdf', relPath: 'Book/book.pdf', ino: 1003n })]);
+
+      expect(repo.realignAudioTrackOrder).not.toHaveBeenCalled();
+    });
+
+    it('logs how many tracks it renumbered', async () => {
+      const repo = makeRepo({ realignAudioTrackOrder: vi.fn().mockResolvedValue(2) });
+
+      await scan(repo, tracks);
+
+      expect(Logger.prototype.log).toHaveBeenCalledWith(
+        expect.stringMatching(/^\[scanner\.realign_track_order\] \[end\] bookId=1 durationMs=\d+ renumbered=2 - /),
+      );
+    });
+
+    it('still finishes the scan when the realignment fails', async () => {
+      const repo = makeRepo({ realignAudioTrackOrder: vi.fn().mockRejectedValue(new Error('deadlock detected')) });
+
+      await scan(repo, tracks);
+
+      expect(repo.updateBookPrimaryFile).toHaveBeenCalled();
+      expect(repo.completeScanJob).toHaveBeenCalled();
+      expect(repo.failScanJob).not.toHaveBeenCalled();
+      expect(Logger.prototype.warn).toHaveBeenCalledWith(
+        expect.stringMatching(/^\[scanner\.realign_track_order\] \[fail\] bookId=1 durationMs=\d+ errorClass=Error error="deadlock detected" - /),
+      );
+    });
+
+    it('realigns after a targeted scan of a book folder, the scan the watcher runs for each new file', async () => {
+      mockBuildSingleCandidate.mockResolvedValue(makeCandidate('/library/Book', tracks));
+      const repo = makeRepo();
+      const { service } = makeService(repo);
+
+      await (service as any).scanBookFolder('/library/Book/Part 02.mp3', 1);
+
+      expect(repo.realignAudioTrackOrder).toHaveBeenCalledWith(1);
     });
   });
 
