@@ -11,6 +11,19 @@ export interface EmailRecipient {
   defaultTemplateId: number | null;
   createdAt: string;
   readAloudDelivery?: ReadAloudDeliveryPreference;
+  /** The newest send to this recipient; only the list endpoint fills it. */
+  lastSend?: EmailRecipientLastSend | null;
+}
+
+export interface EmailRecipientLastSend {
+  bookId: number | null;
+  bookTitle: string | null;
+  status: "pending" | "sent" | "failed";
+  createdAt: string;
+  /** With failureCode and errorMessage, tells a retry or an unconfirmed send from a plain failure. */
+  attemptCount?: number;
+  failureCode?: string | null;
+  errorMessage?: string | null;
 }
 
 export interface EmailRecipientForm {
@@ -46,4 +59,20 @@ export interface EmailSendLogEntry {
   failureCode?: string | null;
   dispatchPhase?: string | null;
   deliveryMetadata?: DeliveryArtifactMetadata | null;
+  /** When a pending send will be tried again; null once it has settled. */
+  nextRetryAt?: string | null;
+  /** The book's title at read time; null when the book has since been deleted. */
+  bookTitle?: string | null;
+  /** The book's authors at read time, comma separated; null when it has none or was deleted. */
+  bookAuthors?: string | null;
+  /** The file that went out, read through bookFileId. */
+  fileFormat?: string | null;
+  fileSizeBytes?: number | null;
+}
+
+/** GET /email/log/summary: counts across the caller's whole log. */
+export interface EmailSendLogSummary {
+  total: number;
+  failed: number;
+  pending: number;
 }

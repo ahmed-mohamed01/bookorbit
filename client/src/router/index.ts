@@ -452,7 +452,7 @@ export const routes: RouteRecordRaw[] = [
             path: 'email',
             name: 'settings-email',
             component: () => import('@/features/email/components/EmailSettings.vue'),
-            meta: { maxWidth: 'max-w-3xl', title: resolveEmailTitle },
+            meta: { maxWidth: 'max-w-[72rem]', title: resolveEmailTitle },
           },
           {
             path: 'hardcover',

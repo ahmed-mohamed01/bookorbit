@@ -466,6 +466,7 @@ function handleRowClick(event: MouseEvent) {
     :selected-count="1"
     :book-files="book.files"
     :book-title="book.title ?? undefined"
+    :book-authors="authorLine ?? undefined"
     @update:open="showSendDialog = $event"
   />
 </template>

@@ -4,7 +4,7 @@ import { NotificationType, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, WORKER_WRIT
 import type { RequestUser } from '../../../common/types/request-user';
 import type { BookRequestDownloadRow, BookRequestRow } from '../../../db/schema';
 import { newznabClientKey } from '../indexers/adapters/newznab.adapter';
-import { IndexerSearchException } from '../indexers/indexer-adapter';
+import { IndexerRetryExhaustedException, IndexerSearchException } from '../indexers/indexer-adapter';
 import { RequestFulfillmentService } from './request-fulfillment.service';
 
 const INFO_HASH = 'c9e15763f722f23e98a29decdfae341b98d53056';
@@ -466,6 +466,24 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       expect.objectContaining({ nzbFile: nzb, nzbFileName: 'Dune - Frank Herbert [EPUB].nzb', clientKey }),
       expect.anything(),
     );
+  });
+
+  it.each([true, false])('does not restart an exhausted NZB retry budget (automated=%s)', async (automated) => {
+    const exhausted = new IndexerRetryExhaustedException('throttled', 'The indexer is still rate limiting us');
+    const fetchNzbFile = vi.fn().mockRejectedValue(exhausted);
+    const { service, downloads, adapter } = makeService({
+      releases: { find: vi.fn().mockReturnValue(RELEASE) },
+      indexers: { resolveConfig: vi.fn().mockResolvedValue({ id: 9, name: 'usenet', adapterType: 'newznab' }) },
+      indexerAdapter: { fetchNzbFile },
+    });
+
+    await expect(service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, automated ? null : user())).rejects.toMatchObject({
+      response: { errorCode: 'GRAB_SOURCE_UNAVAILABLE', statusCode: 503 },
+      cause: exhausted,
+    });
+    expect(fetchNzbFile).toHaveBeenCalledTimes(1);
+    expect(downloads.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ source: 'nzb_file', status: 'failed', automated }));
+    expect(adapter.add).not.toHaveBeenCalled();
   });
 
   it('inspects the torrent without creating an attempt and reuses it for the following grab', async () => {

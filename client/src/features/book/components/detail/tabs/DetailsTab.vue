@@ -2127,6 +2127,7 @@ watch(
     :selection-payload="{ bookIds: [book.id] }"
     :selected-count="1"
     :book-title="book.title ?? undefined"
+    :book-authors="authorLinks.map((a) => a.name).join(', ') || undefined"
     :book-files="book.files"
   />
 

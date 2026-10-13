@@ -62,6 +62,18 @@
   {
     "file": "server/src/modules/email/email-template.controller.ts",
     "className": "EmailTemplateController",
+    "methodName": "previewText",
+    "httpMethod": "POST",
+    "path": "/email/templates/preview",
+    "permissions": ["Permission.EmailSend"],
+    "libraryAccess": [],
+    "isPublic": false,
+    "allowDefault": false,
+    "useGuards": []
+  },
+  {
+    "file": "server/src/modules/email/email-template.controller.ts",
+    "className": "EmailTemplateController",
     "methodName": "preview",
     "httpMethod": "POST",
     "path": "/email/templates/:id/preview",

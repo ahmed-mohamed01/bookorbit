@@ -213,6 +213,9 @@ onBeforeUnmount(() => {
     v-if="book && showSendDialog"
     :selection-payload="{ bookIds: [book.id] }"
     :selected-count="1"
+    :book-files="book.files"
+    :book-title="book.title ?? undefined"
+    :book-authors="book.authors.join(', ') || undefined"
     :open="showSendDialog"
     @update:open="showSendDialog = $event"
   />
