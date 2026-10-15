@@ -391,6 +391,19 @@ DO $$ BEGIN
 	IF NOT EXISTS (
 		SELECT 1 FROM information_schema.columns
 		WHERE table_schema = 'public'
+			AND table_name = 'author_catalog_source_works'
+			AND column_name = 'rating_count'
+	) THEN
+		ALTER TABLE "author_catalog_source_works"
+			ADD COLUMN IF NOT EXISTS "rating_average" real,
+			ADD COLUMN IF NOT EXISTS "rating_count" integer;
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public'
 			AND table_name = 'monitored_settings'
 			AND column_name = 'release_probe_enabled'
 	) THEN

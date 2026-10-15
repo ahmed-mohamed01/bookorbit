@@ -25,6 +25,7 @@ import { GoodreadsBibliographyProvider } from './providers/goodreads-bibliograph
 import { HardcoverBibliographyProvider } from './providers/hardcover-bibliography.provider';
 import { mergeCluster } from './reconcile/cluster-merger';
 import { matchObservations, normalizeCore } from './reconcile/observation-matcher';
+import { ratingsField } from './reconcile/observation-rating';
 import type { MergedWork, Observation } from './reconcile/observation.types';
 import { resolveSlots, slotReasonKind } from './reconcile/slot-resolution';
 import { assignVerdict, computePopularityFloor, type VerdictResult } from './reconcile/verdict';
@@ -694,6 +695,7 @@ export class MonitoredCatalogService {
       ...(kind ? { kind } : {}),
       sources: work.sources,
       providerWorkIds: work.providerWorkIds,
+      ...ratingsField(work),
       monitorState: 'monitoring',
       monitorFormats: {},
       matchedBookId: null,

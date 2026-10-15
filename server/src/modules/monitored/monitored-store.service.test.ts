@@ -114,6 +114,53 @@ function releaseRow(patch: Partial<ReleaseRow> = {}) {
   };
 }
 
+describe('MonitoredStoreService ratings', () => {
+  const store = new MonitoredStoreService({} as never, {} as never);
+  const sourceRow = (source: string, ratingAverage: number | null, ratingCount: number | null) => ({
+    workId: 'work-1',
+    source,
+    providerWorkId: `${source}-id`,
+    ratingAverage,
+    ratingCount,
+  });
+  const compose = (sources: unknown[]) =>
+    Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [
+      workRow(),
+      sources,
+      undefined,
+      null,
+      true,
+    ]) as { ratings?: unknown };
+
+  it('maps rated source rows onto the work and skips unrated ones', () => {
+    const work = compose([sourceRow('goodreads', 4.5, 1200), sourceRow('audible', 4.1, null), sourceRow('hardcover', null, null)]);
+
+    expect(work.ratings).toEqual([
+      { source: 'goodreads', average: 4.5, count: 1200 },
+      { source: 'audible', average: 4.1, count: null },
+    ]);
+  });
+
+  it('leaves ratings off a work with no rated source', () => {
+    expect(compose([sourceRow('hardcover', null, null)])).not.toHaveProperty('ratings');
+  });
+
+  it('writes each source rating beside its provider id', () => {
+    const values = Reflect.apply((store as unknown as { sourceValues: (...args: unknown[]) => unknown }).sourceValues, store, [
+      {
+        id: 'work-1',
+        providerWorkIds: { goodreads: 'g1', hardcover: 'h1' },
+        ratings: [{ source: 'goodreads', average: 4.2, count: 90 }],
+      },
+    ]);
+
+    expect(values).toEqual([
+      { workId: 'work-1', source: 'goodreads', providerWorkId: 'g1', ratingAverage: 4.2, ratingCount: 90 },
+      { workId: 'work-1', source: 'hardcover', providerWorkId: 'h1', ratingAverage: null, ratingCount: null },
+    ]);
+  });
+});
+
 describe('MonitoredStoreService work composition', () => {
   const store = new MonitoredStoreService({} as never, {} as never);
   const composed = (releases: Array<ReturnType<typeof releaseRow>>) =>

@@ -8,6 +8,7 @@ import { GoodreadsProvider } from '../../metadata-fetch/providers/goodreads/good
 import { PROVIDER_BUDGETS_MS, PROVIDER_DELAYS_MS, PROVIDER_TIMEOUT_MS } from '../../metadata-fetch/providers/provider-constants';
 import { buildRequestSignal, createSearchDeadline, sleep, stripHtml } from '../../metadata-fetch/providers/provider-utils';
 import { normalizeText } from '../reconcile/observation-matcher';
+import { toObservationRating } from '../reconcile/observation-rating';
 import type { Observation } from '../reconcile/observation.types';
 import type { AuthorBibliographyProvider, BibliographyAuthorRef } from './author-bibliography-provider';
 import { authorKey, nameVariants } from './provider-author-name.utils';
@@ -53,6 +54,7 @@ export function mapGoodreadsObservations(rawRows: unknown[]): Observation[] {
         seriesMemberships: seriesName ? [{ name: seriesName, index: seriesIndex }] : [],
         popularity: row.ratings ?? 0,
         popularityKind: 'ratings' as const,
+        rating: toObservationRating(row.avgRating, row.ratings),
         format: 'unknown' as const,
         language: null,
         role: null,

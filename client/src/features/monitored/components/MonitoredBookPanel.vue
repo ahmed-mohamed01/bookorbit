@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { EyeOff, MoreVertical, RefreshCw, RotateCcw, X } from '@lucide/vue'
+import { EyeOff, MoreVertical, RefreshCw, RotateCcw, Star, X } from '@lucide/vue'
 import {
   MONITORED_FORMATS,
   type BookDetail,
@@ -13,9 +13,11 @@ import {
 import { Sheet, SheetClose, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { useRoute } from 'vue-router'
 import BookDetailSection from '@/features/book/components/detail/details/BookDetailSection.vue'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { bookCoverStyle } from '@/features/book/lib/book-cover'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
+import { formatNumber } from '@/i18n/formatters'
 import { useBookDetail } from '@/features/book/composables/useBookDetail'
 import { useSafeHtml } from '@/features/book/composables/useSafeHtml'
 import { useMonitoredReleases } from '../composables/useMonitoredReleases'
@@ -109,6 +111,20 @@ const secondaryBookId = computed(() => {
   const primary = props.work?.matchedBookId
   return [ids.ebook, ids.audiobook].find((id) => id != null && id !== primary) ?? null
 })
+const ratingLines = computed(() =>
+  (props.work?.ratings ?? []).map((rating) => ({
+    source: rating.source,
+    name: t(`monitored.panel.ratings.sources.${rating.source}`),
+    average: formatNumber(rating.average, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+    count:
+      rating.count == null
+        ? null
+        : t('monitored.panel.ratings.count', {
+            count: rating.count,
+            formatted: formatNumber(rating.count, { notation: 'compact', maximumFractionDigits: 1 }),
+          }),
+  })),
+)
 const workTags = computed(() => {
   for (const book of [detail.value, secondaryDetail.value]) {
     if (!book) continue
@@ -425,6 +441,24 @@ function handleResumeAuthor() {
                 }}</span>
               </p>
               <MonitoredTagPills :tags="workTags" />
+              <p v-if="ratingLines.length" class="mt-2 flex items-center gap-1.5 overflow-hidden text-xs text-muted-foreground" data-testid="ratings">
+                <Tooltip v-for="rating in ratingLines" :key="rating.source">
+                  <TooltipTrigger as-child>
+                    <span
+                      class="inline-flex h-6 items-center gap-1 rounded-md border border-border px-1.5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                      tabindex="0"
+                      role="img"
+                      :aria-label="rating.count ? `${rating.name} ${rating.average}, ${rating.count}` : `${rating.name} ${rating.average}`"
+                      data-testid="rating"
+                    >
+                      <Star class="size-3 fill-[var(--pill-warning)] text-[var(--pill-warning)]" aria-hidden="true" />
+                      <span class="font-medium text-foreground">{{ rating.average }}</span>
+                      <span>{{ rating.name }}</span>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent v-if="rating.count">{{ rating.name }} · {{ rating.count }}</TooltipContent>
+                </Tooltip>
+              </p>
             </div>
 
             <div class="-mt-1.5 -mr-1.5 flex shrink-0 items-center gap-1">

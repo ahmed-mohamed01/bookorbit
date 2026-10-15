@@ -4,6 +4,11 @@ export type ObservationSource = 'hardcover' | 'goodreads' | 'audible';
 export type ObservationFormat = 'ebook' | 'audiobook' | 'unknown';
 export type PopularityKind = 'users' | 'ratings';
 
+export interface ObservationRating {
+  average: number;
+  count: number | null;
+}
+
 export interface SeriesMembership {
   name: string;
   index: string | null;
@@ -26,6 +31,7 @@ export interface Observation {
   seriesMemberships: SeriesMembership[];
   popularity: number;
   popularityKind: PopularityKind;
+  rating?: ObservationRating | null;
   format: ObservationFormat;
   language: string | null;
   role: string | null;
@@ -61,6 +67,7 @@ export interface MergedWork {
   sources: ObservationSource[];
   providerWorkIds: Partial<Record<ObservationSource, string>>;
   popularity: Partial<Record<ObservationSource, number>>;
+  ratings?: Partial<Record<ObservationSource, ObservationRating>>;
   unreleased: boolean;
   compilationFlag: boolean;
   allRolesNonAuthor: boolean;

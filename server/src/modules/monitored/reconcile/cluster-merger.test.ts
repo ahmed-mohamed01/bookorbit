@@ -278,4 +278,17 @@ describe('mergeSeriesMemberships alias collapse', () => {
       'The Mistborn Saga: The Original Trilogy#1',
     ]);
   });
+
+  it('keeps one rating per source from the most popular rated observation', () => {
+    const merged = mergeCluster(
+      cluster(
+        observation('goodreads', { id: 'gr:1', popularity: 10, rating: { average: 3.9, count: 10 } }),
+        observation('goodreads', { id: 'gr:2', popularity: 900, rating: { average: 4.4, count: 900 } }),
+        observation('audible', { rating: null }),
+      ),
+      '2026-10-08',
+    );
+
+    expect(merged.ratings).toEqual({ goodreads: { average: 4.4, count: 900 } });
+  });
 });

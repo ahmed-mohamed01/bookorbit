@@ -11,6 +11,7 @@ import {
 
 import {
   authorCatalogWorks,
+  authorCatalogSourceWorks,
   authorCatalogWorkReleases,
   monitoredAuthors,
   monitoredAuthorWorks,
@@ -336,6 +337,16 @@ describe('bootstrap SQL carries the columns the table declares', () => {
     const authorColumns = getTableConfig(monitoredAuthors).columns.map((column) => column.name);
     expect(authorColumns).toContain('last_release_check_at');
     expect(authorColumns).toContain('last_sync_attempted_at');
+  });
+
+  it('adds the per-source rating columns on fresh and existing databases', () => {
+    const block = MONITORED_SCHEMA_SQL.slice(MONITORED_SCHEMA_SQL.indexOf(`column_name = 'rating_count'`));
+
+    expect(block).toContain('ADD COLUMN IF NOT EXISTS "rating_average" real');
+    expect(block).toContain('ADD COLUMN IF NOT EXISTS "rating_count" integer');
+    expect(getTableConfig(authorCatalogSourceWorks).columns.map((column) => column.name)).toEqual(
+      expect.arrayContaining(['rating_average', 'rating_count']),
+    );
   });
 
   it('creates the release probe table and settings flag on fresh and existing databases', () => {

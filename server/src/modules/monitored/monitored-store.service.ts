@@ -18,6 +18,7 @@ import type {
   MonitoredSummary,
   MonitoredWork,
   MonitoredWorkPatch,
+  MonitoredWorkRating,
   BookRequestStatus,
 } from '@bookorbit/types';
 import { MONITORED_ACQUISITION_STATE_BY_REQUEST_STATUS } from '@bookorbit/types';
@@ -44,6 +45,15 @@ function batches<T>(values: T[]): T[][] {
   const result: T[][] = [];
   for (let index = 0; index < values.length; index += WRITE_BATCH_SIZE) result.push(values.slice(index, index + WRITE_BATCH_SIZE));
   return result;
+}
+
+function storedRatings(sources: Array<typeof schema.authorCatalogSourceWorks.$inferSelect>): { ratings?: MonitoredWorkRating[] } {
+  const ratings = sources.flatMap((source) =>
+    source.ratingAverage != null
+      ? [{ source: source.source as MonitoredWorkRating['source'], average: source.ratingAverage, count: source.ratingCount }]
+      : [],
+  );
+  return ratings.length > 0 ? { ratings } : {};
 }
 
 export interface MonitoredCatalog {
@@ -1557,6 +1567,7 @@ export class MonitoredStoreService {
       ...(row.kind ? { kind: row.kind } : {}),
       sources: row.sources,
       providerWorkIds: Object.fromEntries(sources.map((source) => [source.source, source.providerWorkId])),
+      ...storedRatings(sources),
       monitorState: overlay?.monitorState ?? 'monitoring',
       matchedBookId,
       matchedBookIds: { ...(ebookId ? { ebook: ebookId } : {}), ...(audioId ? { audiobook: audioId } : {}) },
@@ -1689,8 +1700,19 @@ export class MonitoredStoreService {
   }
 
   private sourceValues(work: MonitoredWork) {
+    const ratings = new Map((work.ratings ?? []).map((rating) => [rating.source, rating]));
     return Object.entries(work.providerWorkIds).flatMap(([source, providerWorkId]) =>
-      providerWorkId ? [{ workId: work.id, source, providerWorkId }] : [],
+      providerWorkId
+        ? [
+            {
+              workId: work.id,
+              source,
+              providerWorkId,
+              ratingAverage: ratings.get(source as MonitoredWorkRating['source'])?.average ?? null,
+              ratingCount: ratings.get(source as MonitoredWorkRating['source'])?.count ?? null,
+            },
+          ]
+        : [],
     );
   }
 

@@ -297,6 +297,12 @@ export interface MonitoredSeriesMembership {
   index: string | null;
 }
 
+export interface MonitoredWorkRating {
+  source: 'goodreads' | 'audible' | 'hardcover';
+  average: number;
+  count: number | null;
+}
+
 export interface MonitoredWork {
   id: string;
   title: string;
@@ -319,6 +325,8 @@ export interface MonitoredWork {
   kind?: MonitoredWorkKind;
   sources: string[];
   providerWorkIds: { hardcover?: string; goodreads?: string; audible?: string };
+  /** Community rating per source, as last seen by the catalog refresh; absent when no source reported one. */
+  ratings?: MonitoredWorkRating[];
   monitorState: MonitoredWorkState;
   matchedBookId: number | null;
   /**

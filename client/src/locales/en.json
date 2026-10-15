@@ -13473,6 +13473,14 @@
       "sectionUpcoming": "Upcoming"
     },
     "panel": {
+      "ratings": {
+        "count": "{count, plural, one {{formatted} rating} other {{formatted} ratings}}",
+        "sources": {
+          "goodreads": "Goodreads",
+          "audible": "Audible",
+          "hardcover": "Hardcover"
+        }
+      },
       "title": "Watchlist book",
       "titleFor": "Details for {title}",
       "description": "Cover, metadata, files and release search for a watchlist book.",

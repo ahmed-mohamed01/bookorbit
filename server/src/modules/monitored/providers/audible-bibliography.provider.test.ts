@@ -129,3 +129,25 @@ describe('mapAudibleObservations', () => {
     });
   });
 });
+
+describe('mapAudibleObservations ratings', () => {
+  it('keeps the overall average and rating count', () => {
+    const [mapped] = mapAudibleObservations([
+      { ...product(1), rating: { overall_distribution: { display_average_rating: '4.6', average_rating: 4.63, num_ratings: 8123 } } },
+    ]);
+
+    expect(mapped.rating).toEqual({ average: 4.63, count: 8123 });
+  });
+
+  it('falls back to the display average and tolerates a missing count', () => {
+    const [mapped] = mapAudibleObservations([{ ...product(2), rating: { overall_distribution: { display_average_rating: '4.1' } } }]);
+
+    expect(mapped.rating).toEqual({ average: 4.1, count: null });
+  });
+
+  it('reports no rating when the product has none', () => {
+    const [mapped] = mapAudibleObservations([{ ...product(3), rating: { overall_distribution: { average_rating: 0, num_ratings: 0 } } }]);
+
+    expect(mapped.rating).toBeNull();
+  });
+});

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, check, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
+import { boolean, check, index, integer, jsonb, pgTable, primaryKey, real, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
 import type {
   MonitoredDatePrecision,
   MonitoredFormat,
@@ -140,6 +140,8 @@ export const authorCatalogSourceWorks = pgTable(
       .references(() => authorCatalogWorks.id, { onDelete: 'cascade' }),
     source: varchar('source', { length: 20 }).notNull(),
     providerWorkId: varchar('provider_work_id', { length: 255 }).notNull(),
+    ratingAverage: real('rating_average'),
+    ratingCount: integer('rating_count'),
   },
   (t) => [primaryKey({ columns: [t.workId, t.source] }), index('author_catalog_source_works_provider_work_id_idx').on(t.providerWorkId)],
 );

@@ -6,6 +6,7 @@ import { HardcoverClient } from '../../metadata-fetch/providers/hardcover/hardco
 import { HardcoverAuthorGoneError } from '../../metadata-fetch/providers/hardcover/hardcover.errors';
 import type { HardcoverAuthorContribution, HardcoverContributionBook } from '../../metadata-fetch/providers/hardcover/hardcover.types';
 import { normalizeText } from '../reconcile/observation-matcher';
+import { toObservationRating } from '../reconcile/observation-rating';
 import type { Observation, SeriesMembership } from '../reconcile/observation.types';
 import type { AuthorBibliographyProvider, BibliographyAuthorRef } from './author-bibliography-provider';
 
@@ -100,6 +101,7 @@ export function mapHardcoverObservations(rawRows: unknown[]): Observation[] {
         seriesMemberships: mapSeriesMemberships(book),
         popularity: book.users_count ?? 0,
         popularityKind: 'users' as const,
+        rating: toObservationRating(book.rating, book.ratings_count),
         format: 'unknown' as const,
         language,
         role,

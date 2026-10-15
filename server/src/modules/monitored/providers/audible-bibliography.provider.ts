@@ -10,6 +10,7 @@ import type { AudibleProduct, AudibleSearchResponse } from '../../metadata-fetch
 import { normalizeAudibleDomain } from '../../metadata-fetch/providers/audible/normalize-audible-domain';
 import { PROVIDER_TIMEOUT_MS } from '../../metadata-fetch/providers/provider-constants';
 import { buildRequestSignal, sleep, stripHtml } from '../../metadata-fetch/providers/provider-utils';
+import { toObservationRating } from '../reconcile/observation-rating';
 import type { Observation } from '../reconcile/observation.types';
 import type { AuthorBibliographyProvider, BibliographyAuthorRef } from './author-bibliography-provider';
 import { authorKey, nameVariants } from './provider-author-name.utils';
@@ -68,6 +69,10 @@ export function mapAudibleObservations(rawRows: unknown[]): Observation[] {
         seriesMemberships,
         popularity: product.rating?.overall_distribution?.num_ratings ?? 0,
         popularityKind: 'ratings' as const,
+        rating: toObservationRating(
+          product.rating?.overall_distribution?.average_rating ?? product.rating?.overall_distribution?.display_average_rating,
+          product.rating?.overall_distribution?.num_ratings,
+        ),
         format: 'audiobook' as const,
         language: product.language?.toLowerCase() || null,
         role: null,

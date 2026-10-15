@@ -25,6 +25,19 @@ describe('GoodreadsBibliographyProvider', () => {
     expect(fetchHtml).toHaveBeenCalledWith(expect.stringContaining('/author/list/42'), 'lookup', expect.objectContaining({ providerId: '42' }));
   });
 
+  it('keeps the average rating and count from the author-list row', async () => {
+    fetchHtml.mockResolvedValue({
+      html: '<a class="bookTitle"><span itemprop="name">A Book</span></a><span class="minirating">4.57 avg rating &mdash; 12,345 ratings</span><a class="bookTitle"><span itemprop="name">Unrated</span></a>',
+      outcome: 'ok',
+    });
+    const provider = new GoodreadsBibliographyProvider(goodreads);
+
+    const rows = await provider.fetchObservations({ id: '42', name: 'Author', bookCount: null, imageUrl: null }, config);
+
+    expect(rows[0].rating).toEqual({ average: 4.57, count: 12345 });
+    expect(rows[1].rating).toBeNull();
+  });
+
   it('surfaces a durable block as a provider throttle failure', async () => {
     fetchHtml.mockResolvedValue({ html: null, outcome: 'blocked' });
     const provider = new GoodreadsBibliographyProvider(goodreads);

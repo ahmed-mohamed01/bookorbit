@@ -260,6 +260,34 @@ describe('MonitoredBookPanel layout', () => {
   })
 })
 
+describe('MonitoredBookPanel ratings', () => {
+  beforeEach(resetPanelMocks)
+
+  it('shows one chip per rated source with the count on hover', async () => {
+    const wrapper = await mountPanel({
+      ...baseWork,
+      ratings: [
+        { source: 'goodreads', average: 4.57, count: 12345 },
+        { source: 'audible', average: 4.1, count: null },
+      ],
+    })
+
+    const lines = wrapper.findAll('[data-testid="rating"]').map((line) => line.text())
+    expect(lines).toEqual(['4.6Goodreads', '4.1Audible'])
+    const labels = wrapper.findAll('[data-testid="rating"]').map((line) => line.attributes('aria-label'))
+    expect(labels).toEqual(['Goodreads 4.6, 12.3K ratings', 'Audible 4.1'])
+    expect(wrapper.text()).toContain('Goodreads · 12.3K ratings')
+    wrapper.unmount()
+  })
+
+  it('hides the ratings line when no source reported one', async () => {
+    const wrapper = await mountPanel(baseWork)
+
+    expect(wrapper.find('[data-testid="ratings"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
 describe('MonitoredBookPanel synopsis card', () => {
   beforeEach(() => {
     resetPanelMocks()

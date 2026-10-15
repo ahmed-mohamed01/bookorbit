@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ProviderConfigurations } from '@bookorbit/types';
 
 import { HardcoverAuthorGoneError, HardcoverRequestError } from '../../metadata-fetch/providers/hardcover/hardcover.errors';
-import { HardcoverBibliographyProvider, isHardcoverConfigured } from './hardcover-bibliography.provider';
+import { HardcoverBibliographyProvider, isHardcoverConfigured, mapHardcoverObservations } from './hardcover-bibliography.provider';
 
 describe('isHardcoverConfigured', () => {
   it('returns true when Hardcover is enabled with an API key', () => {
@@ -51,5 +51,17 @@ describe('HardcoverBibliographyProvider failure reporting', () => {
 
     await expect(provider.fetchObservations(authorRef, config)).rejects.toBeInstanceOf(HardcoverAuthorGoneError);
     expect(fetchAuthorContributions).toHaveBeenCalledWith(685771, 0, 'key', undefined, { surfaceFailures: true });
+  });
+});
+
+describe('mapHardcoverObservations ratings', () => {
+  it('keeps the rating Hardcover already returned with the book', () => {
+    const [mapped] = mapHardcoverObservations([
+      { id: 1, title: 'Rated', rating: 4.07, ratings_count: 1143 },
+      { id: 2, title: 'Bare' },
+    ]);
+
+    expect(mapped.rating).toEqual({ average: 4.07, count: 1143 });
+    expect(mapHardcoverObservations([{ id: 2, title: 'Bare', rating: null, ratings_count: 0 }])[0].rating).toBeNull();
   });
 });

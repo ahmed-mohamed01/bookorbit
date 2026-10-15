@@ -1,7 +1,7 @@
 import type { MonitoredDatePrecision } from '@bookorbit/types';
 
 import { isEditionTail, normalizeCore, normalizeText, stripEditionTail } from './observation-matcher';
-import type { MergedWork, Observation, ObservationSource, SeriesMembership, WorkCluster } from './observation.types';
+import type { MergedWork, Observation, ObservationRating, ObservationSource, SeriesMembership, WorkCluster } from './observation.types';
 
 type DateChoice = {
   value: string | null;
@@ -240,10 +240,13 @@ export function mergeCluster(cluster: WorkCluster, today: string): MergedWork {
   const sources = [...new Set(observations.map((observation) => observation.source))];
   const popularity: Partial<Record<ObservationSource, number>> = {};
   const providerWorkIds: Partial<Record<ObservationSource, string>> = {};
+  const ratings: Partial<Record<ObservationSource, ObservationRating>> = {};
   for (const source of sources) {
     const ranked = bySource(observations, source);
     popularity[source] = Math.max(...ranked.map((observation) => observation.popularity || 0));
     if (ranked[0]) providerWorkIds[source] = providerId(ranked[0]);
+    const rated = ranked.find((observation) => observation.rating);
+    if (rated?.rating) ratings[source] = rated.rating;
   }
 
   // A work is unreleased when its OWN earliest release is still ahead. Deriving this from the latest
@@ -286,6 +289,7 @@ export function mergeCluster(cluster: WorkCluster, today: string): MergedWork {
     sources,
     providerWorkIds,
     popularity,
+    ratings,
     unreleased,
     // Reflect the DOMINANT edition, not any edition: a real book with one box-set edition folded in
     // (or a stray mis-canonical'd omnibus) must not be flagged a compilation. The winning hardcover

@@ -21,6 +21,7 @@ export interface AudibleProduct {
   rating?: {
     overall_distribution?: {
       average_rating?: number;
+      display_average_rating?: string;
       num_ratings?: number;
     };
   };
