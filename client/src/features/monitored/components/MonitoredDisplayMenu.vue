@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { SlidersHorizontal } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import type { MonitoredStatusFilter } from '@bookorbit/types'
 import MonitoredDisplayOptionsPanel from './MonitoredDisplayOptionsPanel.vue'
+import { defaultAuthorStatusFilters, isSameStatusSelection } from '../lib/status-filter'
 import {
   isDefaultDisplay,
   type MonitoredDisplayClassCounts,
@@ -16,24 +18,58 @@ const props = defineProps<{
   counts: MonitoredDisplayClassCounts
   reviewKindCounts: MonitoredReviewKindCounts
   canCurate: boolean
+  statusFilters?: MonitoredStatusFilter[]
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: MonitoredDisplayOptions]; reset: [] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: MonitoredDisplayOptions]
+  'update:statusFilters': [value: MonitoredStatusFilter[]]
+  reset: []
+}>()
 
 const { t } = useI18n()
 
-const isDefault = computed(() => isDefaultDisplay(props.modelValue))
+/** Ticks edit a draft, and the list reloads once when the menu closes rather than on every box. */
+const statusDraft = ref<MonitoredStatusFilter[] | undefined>(props.statusFilters && [...props.statusFilters])
+const menuOpen = ref(false)
+
+watch(
+  () => props.statusFilters,
+  (value) => {
+    if (!menuOpen.value) statusDraft.value = value && [...value]
+  },
+)
+
+const isDefault = computed(
+  () => isDefaultDisplay(props.modelValue) && (!statusDraft.value || isSameStatusSelection(statusDraft.value, defaultAuthorStatusFilters())),
+)
+
+function handleOpenChange(open: boolean) {
+  menuOpen.value = open
+  if (open) {
+    statusDraft.value = props.statusFilters && [...props.statusFilters]
+    return
+  }
+  if (statusDraft.value && props.statusFilters && !isSameStatusSelection(statusDraft.value, props.statusFilters)) {
+    emit('update:statusFilters', [...statusDraft.value])
+  }
+}
+
+function updateStatus(value: MonitoredStatusFilter[]) {
+  statusDraft.value = value
+}
 
 function update(value: MonitoredDisplayOptions) {
   emit('update:modelValue', value)
 }
 
 function reset() {
+  if (statusDraft.value) statusDraft.value = defaultAuthorStatusFilters()
   emit('reset')
 }
 </script>
 
 <template>
-  <Popover>
+  <Popover @update:open="handleOpenChange">
     <PopoverTrigger as-child>
       <button
         type="button"
@@ -56,6 +92,8 @@ function reset() {
         :counts="counts"
         :review-kind-counts="reviewKindCounts"
         :can-curate="canCurate"
+        :status-filters="statusDraft"
+        @update:status-filters="updateStatus"
         @update:model-value="update"
         @reset="reset"
       />

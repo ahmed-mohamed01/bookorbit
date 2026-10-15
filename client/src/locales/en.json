@@ -3358,28 +3358,28 @@
       "tabs": {
         "file-naming": "File Naming",
         "book-dock": "Book Dock",
-        "monitored": "Monitored",
+        "monitored": "Watchlist",
         "requests": "Requests",
         "maintenance": "Maintenance",
         "audit-log": "Audit Log"
       },
       "monitored": {
-        "title": "Monitored",
-        "subtitle": "Control how BookOrbit refreshes monitored author catalogs.",
+        "title": "Watchlist",
+        "subtitle": "Control how BookOrbit refreshes the author catalogs on your watchlist.",
         "refreshGroup": "Refresh",
         "refreshCooldown": "Author refresh cooldown",
-        "refreshCooldownHint": "How long each monitored author must wait after a successful catalog fetch before it can be refreshed again.",
+        "refreshCooldownHint": "How long each watched author must wait after a successful catalog fetch before it can be refreshed again.",
         "minutes": "minutes",
         "save": "Save",
-        "saved": "Monitored settings saved",
-        "loadFailed": "Could not load monitored settings",
-        "saveFailed": "Could not save monitored settings",
+        "saved": "Watchlist settings saved",
+        "loadFailed": "Could not load watchlist settings",
+        "saveFailed": "Could not save watchlist settings",
         "invalidCooldown": "Refresh cooldown must be a whole number from 1 to 1440 minutes",
         "syncGroup": "Background sync",
         "syncEnabled": "Refresh catalogs automatically",
-        "syncEnabledHint": "Re-fetch monitored author catalogs on a schedule so newly announced books and changed release dates are picked up without anyone clicking Refresh.",
+        "syncEnabledHint": "Re-fetch watched author catalogs on a schedule so newly announced books and changed release dates are picked up without anyone clicking Refresh.",
         "syncInterval": "Sync interval",
-        "syncIntervalHint": "How stale a monitored author's catalog must be before the background sweep refreshes it.",
+        "syncIntervalHint": "How stale a watched author's catalog must be before the background sweep refreshes it.",
         "hours": "hours",
         "invalidInterval": "Sync interval must be a whole number from 1 to 168 hours",
         "releaseProbe": "Check release dates per format",
@@ -3989,7 +3989,7 @@
         "oidc": "Single sign-on provider, claims, and provisioning.",
         "serverFonts": "Fonts installed for every reader on this server.",
         "bookDock": "Quick actions shown on book pages.",
-        "monitored": "Refresh timing and automation for monitored authors.",
+        "monitored": "Refresh timing and automation for watched authors.",
         "auditLog": "Who changed what, and when.",
         "requests": "Sources, download clients, and what happens to a book once it downloads."
       },
@@ -5242,7 +5242,7 @@
       "actionsFor": "Actions for {name}",
       "refreshing": "Refreshing metadata for {name}",
       "deleting": "Deleting {name}",
-      "monitoring": "Preparing to monitor {name}"
+      "monitoring": "Preparing to add {name} to your watchlist"
     }
   },
   "book": {
@@ -8513,7 +8513,13 @@
       "open": "Open",
       "viewRequest": "View request",
       "submittedAudiobook": "Requested. The audiobook will join this book when it arrives",
-      "submittedEbook": "Requested. The e-book will join this book when it arrives"
+      "submittedEbook": "Requested. The e-book will join this book when it arrives",
+      "upcoming": "{format} out {date}",
+      "upcomingYear": "{format} out in {year}",
+      "notAnnounced": "{format} not announced yet",
+      "onWatchlist": "On your watchlist",
+      "onWatchlistAuto": "On your watchlist · requested automatically on release",
+      "onWatchlistNotify": "On your watchlist · you get a notification on release"
     }
   },
   "collection": {
@@ -8701,7 +8707,7 @@
         "cancelled": "Reorder cancelled. {name} returned to position {position} of {total}.",
         "filteredHint": "Clear the filter to reorder"
       },
-      "monitored": "Monitored",
+      "monitored": "Watchlist",
       "monitoredBadge": "{count, plural, one {# release in the window} other {# releases in the window}}",
       "podcastImportProgress": "{processed} / {total} files",
       "podcastImportCounting": "Counting files…",
@@ -10964,8 +10970,8 @@
           "description": "When a book request is submitted, decided, or the book becomes available."
         },
         "monitored": {
-          "label": "Monitored releases",
-          "description": "When a book by an author you monitor reaches its release date."
+          "label": "Watchlist releases",
+          "description": "When a book by an author on your watchlist reaches its release date."
         }
       }
     }
@@ -13426,7 +13432,7 @@
     "system": {
       "file-naming": "File Naming",
       "book-dock": "Book Dock",
-      "monitored": "Monitored",
+      "monitored": "Watchlist",
       "requests": "Requests",
       "maintenance": "Maintenance",
       "audit-log": "Audit Log"
@@ -13443,8 +13449,8 @@
     "bookRequests": "Requests",
     "bookRequestDetail": "Request",
     "bookRequestReleases": "Pick a release",
-    "monitored": "Monitored",
-    "monitoredAuthor": "Monitored Author",
+    "monitored": "Watchlist",
+    "monitoredAuthor": "Watchlist Author",
     "tts": "Text-to-Speech"
   },
   "monitored": {
@@ -13467,20 +13473,11 @@
       "sectionUpcoming": "Upcoming"
     },
     "panel": {
-      "title": "Monitored book",
+      "title": "Watchlist book",
       "titleFor": "Details for {title}",
-      "description": "Cover, metadata, files and release search for a monitored book.",
-      "notInLibrary": "Not in your library yet.",
-      "availableLabel": "Available:",
-      "monitoringLabel": "Monitoring:",
-      "hidePill": "Hide",
-      "hiddenPill": "Hidden",
+      "description": "Cover, metadata, files and release search for a watchlist book.",
       "grab": "Grab",
-      "autoDownload": "Auto-download",
       "notReleasedYet": "Not released yet",
-      "requestEbook": "Request ebook",
-      "requestAudiobook": "Request audiobook",
-      "series": "Series",
       "ebookRelease": "Ebook release",
       "audioRelease": "Audiobook release",
       "formatNotAnnounced": "Not announced yet",
@@ -13542,19 +13539,9 @@
         "refreshDisabled": "Release date checking is switched off in settings",
         "refreshFailed": "Could not check release dates."
       },
-      "noDescription": "No description available.",
       "searchReleases": "Search for releases",
       "searching": "Searching for releases...",
-      "releaseSearchIntro": "Search indexers for a release to grab.",
-      "releaseCount": "{count, plural, one {# release} other {# releases}}",
       "noReleases": "No releases found",
-      "noReleasesHint": "Try again later or adjust this book's monitored formats.",
-      "tabs": {
-        "details": "Details",
-        "files": "Files",
-        "ebookReleases": "Ebook releases",
-        "audiobookReleases": "Audiobook releases"
-      },
       "verdict": {
         "verified": "Verified",
         "probable": "Probable",
@@ -13567,30 +13554,44 @@
         "foreign_language": "Foreign language",
         "wrong_contributor": "Wrong contributor"
       },
-      "releaseSearchIdle": "No releases searched yet",
-      "releaseSearchIdleHint": "Search the indexers to see what is available for this book.",
-      "progress": {
-        "label": "Download progress",
-        "openInRequests": "Open in Requests",
-        "noTransfer": "No release has been taken for this request yet.",
-        "notFound": "This request is no longer there.",
-        "forbidden": "This request belongs to someone else.",
-        "loadFailed": "Could not load progress for this request."
+      "moreActions": "More actions",
+      "close": "Close",
+      "hide": "Hide",
+      "unhide": "Unhide",
+      "backToAutomatic": "Back to automatic",
+      "moreSeries": "+{count}",
+      "openBook": "Open book",
+      "openBookFormat": "Open the {format} in your library",
+      "retry": "Retry",
+      "request": "Request",
+      "requestFormat": "Request {format}",
+      "banner": {
+        "review": "In review: {reasons}. It is not searched until you keep it.",
+        "reviewUnverified": "not confirmed by a second source",
+        "verdict": {
+          "probable": "probable match",
+          "suspect": "doubtful match"
+        },
+        "keep": "Keep and watch",
+        "hidden": "You hid this book, so it is not searched or listed.",
+        "kept": "You kept this book, so it is on your watchlist even though it is in review.",
+        "authorPaused": "Watching {author} is paused.",
+        "workPaused": "Watching this book is paused.",
+        "workStopped": "Watching this book is stopped.",
+        "resumeAuthor": "Resume author",
+        "openAuthor": "Open author"
       }
     },
     "card": {
-      "formatReleased": "{format}: out {date}",
-      "formatUpcoming": "{format}: due {date}",
-      "formatExpected": "{format}: expected {date}",
-      "formatNotAnnounced": "{format}: not announced yet"
+      "hidden": "Hidden by you"
     },
-    "title": "Monitored",
-    "searchPlaceholder": "Filter monitored items...",
+    "title": "Watchlist",
+    "searchPlaceholder": "Filter watchlist...",
     "tabs": {
-      "label": "Monitored sections",
+      "label": "Watchlist sections",
       "authors": "Authors",
       "releases": "Releases",
-      "add": "Add Monitored"
+      "add": "Add author"
     },
     "formats": {
       "ebook": "Ebook",
@@ -13601,7 +13602,7 @@
       "both": "Both"
     },
     "status": {
-      "monitoring": "Monitoring",
+      "monitoring": "Watching",
       "paused": "Paused",
       "stopped": "Stopped",
       "upcoming": "Upcoming",
@@ -13616,7 +13617,7 @@
       "notify": "Notify Upcoming",
       "auto-upcoming": "Autodownload Upcoming",
       "auto-all": "Autodownload All",
-      "off": "Unmonitor"
+      "off": "Not watching"
     },
     "modeHelp": {
       "notify": "Alert on new releases. Nothing is downloaded.",
@@ -13630,21 +13631,21 @@
       "bookCount": "{count, plural, =0 {No books} one {# book} other {# books}}"
     },
     "actions": {
-      "monitor": "Monitor",
-      "monitorAuthor": "Monitor Author",
+      "monitor": "Add to watchlist",
+      "monitorAuthor": "Add author to watchlist",
       "pause": "Pause",
       "resume": "Resume",
       "refresh": "Refresh",
       "actions": "Actions",
-      "stopMonitoring": "Stop monitoring",
-      "alreadyMonitoring": "Already monitoring {name}",
-      "stopMonitoringNamed": "Stop monitoring {name}",
+      "stopMonitoring": "Remove from watchlist",
+      "alreadyMonitoring": "{name} is already on your watchlist",
+      "stopMonitoringNamed": "Remove {name} from watchlist",
       "refreshProgress": "Refreshing authors: {processed} of {total}",
-      "quickMonitor": "Monitor {name} and get notified about new ebook releases"
+      "quickMonitor": "Add {name} to your watchlist and get notified about new ebook releases"
     },
     "errors": {
-      "load": "Failed to load monitored items.",
-      "loadAuthor": "Failed to load this monitored author.",
+      "load": "Failed to load your watchlist.",
+      "loadAuthor": "Failed to load this author.",
       "unsupportedFormat": "This release format is not supported.",
       "noIndexers": "No indexers are enabled. Configure one under request settings.",
       "searchFailed": "Release search failed.",
@@ -13653,7 +13654,7 @@
     },
     "authorCard": {
       "portraitAlt": "Portrait of {name}",
-      "menu": "Monitoring options for {name}",
+      "menu": "Watchlist options for {name}",
       "open": "{name}, {count, plural, =0 {no books} one {# book} other {# books}}"
     },
     "releases": {
@@ -13664,22 +13665,22 @@
     },
     "add": {
       "placeholder": "Search by author name",
-      "monitorFormats": "Monitor formats:",
+      "monitorFormats": "Watch formats:",
       "results": "Results",
       "noResults": "No authors matched your search.",
       "searchFailed": "Failed to search authors."
     },
     "modal": {
-      "title": "Monitor {name}",
+      "title": "Add {name} to your watchlist",
       "description": "Choose how BookOrbit should watch this author's catalog and handle new releases.",
       "targetLibrary": "Target library",
-      "monitoringMode": "Monitoring mode",
+      "monitoringMode": "Watch mode",
       "noLibrary": "No target library",
-      "start": "Start monitoring",
-      "failed": "Failed to monitor author."
+      "start": "Add to watchlist",
+      "failed": "Failed to add author to watchlist."
     },
     "hardcoverNotice": {
-      "title": "Monitoring needs Hardcover.",
+      "title": "The watchlist needs Hardcover.",
       "connect": "Connect your Hardcover account so authors can be added and their catalogs and release dates refreshed.",
       "connectHardcover": "Connect Hardcover",
       "hint": "Enable the Hardcover metadata source with an API key so authors can be added and their catalogs and release dates refreshed.",
@@ -13693,20 +13694,20 @@
       "openSettings": "Open metadata sources"
     },
     "empty": {
-      "authorsTitle": "No monitored authors",
+      "authorsTitle": "No authors on your watchlist",
       "authorsDescription": "Add an author to watch their catalog and hear about new releases.",
-      "releasesTitle": "No monitored releases",
+      "releasesTitle": "No releases yet",
       "releasesDescription": "Upcoming and recently available releases will appear here."
     },
     "toast": {
-      "monitoring": "Now monitoring {name}.",
-      "stopped": "Stopped monitoring {name}.",
-      "paused": "Paused monitoring for {name}.",
-      "resumed": "Resumed monitoring for {name}.",
-      "workStopped": "Stopped monitoring {title}.",
-      "updateFailed": "Failed to update monitoring.",
+      "monitoring": "Added {name} to your watchlist.",
+      "stopped": "Removed {name} from your watchlist.",
+      "paused": "Paused watching {name}.",
+      "resumed": "Resumed watching {name}.",
+      "workStopped": "Removed {title} from your watchlist.",
+      "updateFailed": "Failed to update your watchlist.",
       "authorRefreshed": "Refreshed releases for {name}.",
-      "refreshFailed": "Failed to refresh monitored releases.",
+      "refreshFailed": "Failed to refresh releases.",
       "queued": "{title} ({format}) was sent to Requests.",
       "sendingToRequests": "{title} ({format}) sent to Requests. Searching indexers...",
       "queueFailed": "Failed to send this release to Requests.",
@@ -13720,6 +13721,7 @@
       "hidden": "Show hidden",
       "placeholders": "Show placeholders",
       "review": "Show under review",
+      "status": "Status",
       "reset": "Reset to defaults"
     },
     "review": {
@@ -13743,9 +13745,9 @@
       }
     },
     "detail": {
-      "back": "Back to Monitored",
-      "headerDescription": "Monitored catalog and release activity",
-      "booksHeading": "Books · {shown} of {total} monitored releases shown",
+      "back": "Back to Watchlist",
+      "headerDescription": "Watchlist catalog and release activity",
+      "booksHeading": "Books · {shown} of {total} books shown",
       "booksHeadingShort": "Books · {shown}/{total}",
       "bookMenu": "Actions for {title}",
       "quickView": "Quick view",
@@ -13790,17 +13792,123 @@
         "backlist": "Backlist"
       },
       "stopDialog": {
-        "title": "Stop monitoring this author?",
+        "title": "Remove this author from your watchlist?",
         "description": "BookOrbit will stop checking this author's catalog for releases."
       },
       "showDetails": "Show details",
-      "hideDetails": "Hide details",
-      "ebookWanted": "Ebook wanted",
-      "audiobookWanted": "Audiobook wanted"
+      "hideDetails": "Hide details"
     },
     "list": {
       "allLoadedAuthors": "All {total} authors loaded",
       "allLoadedReleases": "All {total} releases loaded"
+    },
+    "formatStatus": {
+      "owned": "In your library",
+      "downloading": "Downloading",
+      "downloadingPercent": "Downloading {percent}",
+      "importing": "Importing",
+      "queued": "Queued",
+      "needsChoice": "Needs your choice",
+      "failed": "Last attempt failed",
+      "notWatching": "Not watching",
+      "missingEbook": "No ebook yet",
+      "missingAudiobook": "No audiobook yet",
+      "releasedOn": "Released {date}",
+      "outOn": "Out {date}",
+      "upcoming": "Coming soon",
+      "unannouncedEbook": "No ebook announced",
+      "unannouncedAudiobook": "No audiobook announced",
+      "autoGrab": "Grabbed automatically on release",
+      "notifyOnly": "You get a notification on release",
+      "tooltip": "{format}: {status}",
+      "short": {
+        "owned": "In library",
+        "downloading": "Downloading",
+        "importing": "Importing",
+        "queued": "Queued",
+        "needsChoice": "Choose",
+        "failed": "Failed",
+        "notWatching": "Off",
+        "missing": "Missing",
+        "upcoming": "Soon",
+        "unannounced": "?"
+      }
+    },
+    "statusFilter": {
+      "label": "Filter",
+      "title": "Show books that are",
+      "reset": "Reset to default",
+      "options": {
+        "missing": "Missing",
+        "in_progress": "In progress",
+        "needs_attention": "Needs attention",
+        "upcoming": "Upcoming",
+        "in_library": "In library",
+        "not_watched": "Not watched",
+        "hidden": "Hidden or in review"
+      },
+      "hints": {
+        "missing": "Released, not in your library",
+        "in_progress": "Queued, downloading or importing",
+        "needs_attention": "Needs your choice or failed",
+        "upcoming": "Announced or still to come",
+        "in_library": "Already in your library",
+        "not_watched": "Formats you switched off",
+        "hidden": "Hidden by you or kept out for review"
+      }
+    },
+    "slot": {
+      "inLibrary": "In library",
+      "released": "Released {date}",
+      "releasedIn": "Released in {date}",
+      "availableSince": "Available since {date}",
+      "notAnnounced": "Not announced",
+      "watching": "Watching",
+      "notWatching": "Not watching",
+      "watchingAutoHint": "Requested automatically once it is released",
+      "watchingNotifyHint": "You get a notification once it is released",
+      "requestUnannouncedHint": "No release date known. Requesting searches now; if nothing is found it waits in Requests.",
+      "watchingHint": "Searched automatically",
+      "notWatchingHint": "Never searched",
+      "notInLibrary": "Not in your library",
+      "retryFormat": "Retry the {format}",
+      "findAnotherRelease": "Find another release",
+      "ownedReleasesNote": "You already have this {format}. A grab is imported next to it in Book Dock.",
+      "request": {
+        "requested": "Requested",
+        "searching": "Searching",
+        "downloading": "Downloading",
+        "importing": "Importing",
+        "review": "Needs review",
+        "failed": "Failed"
+      },
+      "releases": {
+        "title": "Releases",
+        "indexers": "{count, plural, one {# indexer} other {# indexers}}",
+        "showAll": "{count, plural, one {Show all # result} other {Show all # results}}",
+        "askApproval": "Request without picking a release",
+        "close": "Hide releases"
+      },
+      "releasesButton": "Releases",
+      "hideReleases": "Hide releases",
+      "downloadInProgress": "A download is already in progress",
+      "waitingForApproval": "Waiting for approval before a release can be picked",
+      "resolveDownloadFirst": "Resolve the current download first",
+      "ownedLoadFailed": "Could not load the library files",
+      "ownedNoFile": "No file found for this format",
+      "moreFiles": "{count, plural, one {+# more file} other {+# more files}}",
+      "fullPath": "Full path",
+      "hidePath": "Hide path",
+      "ownedRetry": "Retry",
+      "notWatched": "Not watched",
+      "notWatchedTurnOn": "Not watched; turn on Watching to search for it",
+      "authorNotWatchingEbook": "This author's ebooks are not watched",
+      "authorNotWatchingAudiobook": "This author's audiobooks are not watched",
+      "openAuthor": "Open author",
+      "watchFormat": "Watch {format}",
+      "searchReleasesFormat": "Search {format} releases",
+      "hideReleasesFormat": "Hide {format} releases",
+      "requestStatus": "{format} request:"
     }
   },
   "tts": {

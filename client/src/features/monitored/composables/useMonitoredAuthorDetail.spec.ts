@@ -2,25 +2,32 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 import type { MonitoredAuthorDetail, MonitoredWork } from '@bookorbit/types'
-import { fetchMonitoredAuthorDetail, requestMonitoredWork, updateMonitoredWork } from '../api/monitored'
+import { fetchMonitoredAuthorDetail, refreshMonitoredAuthor, requestMonitoredWork, updateMonitoredWork } from '../api/monitored'
 import { storage } from '@/services/storage'
 import { useMonitoredAuthorDetail } from './useMonitoredAuthorDetail'
 
-const routeState = vi.hoisted(() => ({ authorId: 'author-1' }))
+const routeState = vi.hoisted(() => ({
+  authorId: 'author-1',
+  name: 'monitored-author',
+  query: {} as Record<string, string>,
+  replace: vi.fn<(location: unknown) => Promise<void>>(),
+}))
 
 vi.mock('vue-router', () => ({
-  useRoute: () => ({ params: { id: routeState.authorId }, query: {} }),
-  useRouter: () => ({ replace: vi.fn<() => Promise<void>>() }),
+  useRoute: () => ({ name: routeState.name, params: { id: routeState.authorId }, query: routeState.query }),
+  useRouter: () => ({ replace: routeState.replace }),
 }))
 
 vi.mock('../api/monitored', () => ({
   fetchMonitoredAuthorDetail: vi.fn<() => Promise<MonitoredAuthorDetail>>(),
+  refreshMonitoredAuthor: vi.fn<() => Promise<MonitoredAuthorDetail>>(),
   requestMonitoredWork: vi.fn<() => Promise<never>>(),
   updateMonitoredAuthor: vi.fn<() => Promise<never>>(),
   updateMonitoredWork: vi.fn<() => Promise<MonitoredWork>>(),
 }))
 
 const fetchDetailMock = vi.mocked(fetchMonitoredAuthorDetail)
+const refreshMock = vi.mocked(refreshMonitoredAuthor)
 const requestWorkMock = vi.mocked(requestMonitoredWork)
 const updateWorkMock = vi.mocked(updateMonitoredWork)
 
@@ -92,8 +99,51 @@ describe('useMonitoredAuthorDetail', () => {
   beforeEach(() => {
     fetchDetailMock.mockReset()
     requestWorkMock.mockReset()
+    refreshMock.mockReset()
     updateWorkMock.mockReset()
     fetchDetailMock.mockResolvedValue(detail())
+    routeState.name = 'monitored-author'
+    routeState.query = {}
+    routeState.replace.mockReset()
+  })
+
+  it('defaults the status filter to every status except hidden, including owned and not watched', async () => {
+    storage.remove('monitored:authorDetail:status')
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+
+    expect(composable.statusFilters.value).toEqual(['missing', 'in_progress', 'needs_attention', 'upcoming', 'in_library', 'not_watched'])
+    expect(fetchDetailMock).toHaveBeenCalledWith(
+      'author-1',
+      expect.objectContaining({ status: ['missing', 'in_progress', 'needs_attention', 'upcoming', 'in_library', 'not_watched', 'hidden'] }),
+    )
+    wrapper.unmount()
+  })
+
+  it('ignores a selection stored under the old key', () => {
+    storage.set('monitored:authorDetail:status', ['missing'])
+    const { composable, wrapper } = mountComposable()
+
+    expect(composable.statusFilters.value).toContain('in_library')
+    storage.remove('monitored:authorDetail:status')
+    wrapper.unmount()
+  })
+
+  it('shows the same works after a refresh as a reload would', async () => {
+    const filtered = detail()
+    fetchDetailMock.mockResolvedValue(filtered)
+    refreshMock.mockResolvedValue({ ...filtered, works: [work({ id: 'unfiltered-extra' })] })
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+    const before = composable.detail.value?.works.map((entry) => entry.id)
+    fetchDetailMock.mockClear()
+
+    await composable.refreshAuthor()
+
+    expect(refreshMock).toHaveBeenCalledWith('author-1')
+    expect(fetchDetailMock).toHaveBeenCalledTimes(1)
+    expect(composable.detail.value?.works.map((entry) => entry.id)).toEqual(before)
+    wrapper.unmount()
   })
 
   it('persists a hide through the API and reflects the server copy of the work', async () => {

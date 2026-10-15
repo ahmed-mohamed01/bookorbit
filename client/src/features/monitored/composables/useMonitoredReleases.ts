@@ -18,7 +18,10 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
   const indexers = ref<IndexerSearchStatus[]>([])
   const loading = ref(false)
   const searched = ref(false)
+  const searchedAt = ref<Date | null>(null)
   const error = ref<string | null>(null)
+  // A failed grab says so beside the results; only a failed search may replace them.
+  const grabError = ref<string | null>(null)
   const grabbing = ref(new Set<string>())
   // Survives the grab so the row it was clicked on stays settled until the next search. A grab that
   // failed, or whose request was deleted, must not leave its row settled for the life of the panel.
@@ -38,12 +41,14 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
     const token = ++generation
     loading.value = true
     error.value = null
+    grabError.value = null
     try {
       const result = await searchWorkReleases(requestedWorkId, format)
       if (token !== generation || workId.value !== requestedWorkId) return
       releases.value = result.releases
       indexers.value = result.indexers
       searched.value = true
+      searchedAt.value = new Date()
       forgetGrabs(requestedWorkId)
       // An empty list with zero enabled indexers is a configuration state, not a search result.
       if (result.enabledIndexerCount === 0) {
@@ -104,7 +109,7 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
   async function grab(release: ReleaseCandidateItem): Promise<number | null> {
     const releaseGuid = release.guid
     if (!releaseGuid) {
-      error.value = t('monitored.errors.missingReleaseId')
+      grabError.value = t('monitored.errors.missingReleaseId')
       return null
     }
     const requestedWorkId = workId.value
@@ -115,14 +120,14 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
     if (grabbing.value.has(key)) return null
 
     grabbing.value = new Set([...grabbing.value, key])
-    error.value = null
+    grabError.value = null
     try {
       const request = await grabWorkRelease(requestedWorkId, { format, indexerId: release.indexerId, releaseGuid })
       grabbed.value = new Set([...grabbed.value, key])
       return request.id
     } catch (cause) {
       // The panel may have moved on; a stale failure must not land on the work now on screen.
-      if (workId.value === requestedWorkId) error.value = monitoredErrorText(cause, t('monitored.errors.grabFailed'))
+      if (workId.value === requestedWorkId) grabError.value = monitoredErrorText(cause, t('monitored.errors.grabFailed'))
       return null
     } finally {
       const next = new Set(grabbing.value)
@@ -131,5 +136,5 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
     }
   }
 
-  return { releases, loading, searched, error, isGrabbing, isGrabbed, deliveryFor, search, grab }
+  return { releases, indexers, loading, searched, searchedAt, error, grabError, isGrabbing, isGrabbed, deliveryFor, search, grab }
 }

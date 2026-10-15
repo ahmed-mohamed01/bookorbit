@@ -85,7 +85,7 @@ function isSubset(inner: Set<string>, outer: Set<string>): boolean {
   return true
 }
 
-function normalizeSeriesName(name: string): string {
+export function normalizeSeriesName(name: string): string {
   return name
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '')

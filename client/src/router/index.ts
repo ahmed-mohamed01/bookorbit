@@ -717,12 +717,20 @@ export const routes: RouteRecordRaw[] = [
       },
       {
         path: '/monitored',
+        redirect: (to) => ({ path: '/watchlist', query: to.query, hash: to.hash }),
+      },
+      {
+        path: '/monitored/authors/:id',
+        redirect: (to) => ({ path: `/watchlist/authors/${String(to.params.id)}`, query: to.query, hash: to.hash }),
+      },
+      {
+        path: '/watchlist',
         name: 'monitored',
         component: () => import('@/features/monitored/views/MonitoredView.vue'),
         meta: { title: () => t('titles.monitored') },
       },
       {
-        path: '/monitored/authors/:id',
+        path: '/watchlist/authors/:id',
         name: 'monitored-author',
         component: () => import('@/features/monitored/views/MonitoredAuthorDetailView.vue'),
         meta: { title: () => t('titles.monitoredAuthor') },

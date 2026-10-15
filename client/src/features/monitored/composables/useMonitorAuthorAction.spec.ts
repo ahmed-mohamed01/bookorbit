@@ -122,7 +122,7 @@ describe('useMonitorAuthorAction', () => {
 
     await composable.beginMonitor(localAuthor)
 
-    expect(toast.info).toHaveBeenCalledWith('Already monitoring Blake Crouch')
+    expect(toast.info).toHaveBeenCalledWith('Blake Crouch is already on your watchlist')
     expect(composable.target.value).toBeNull()
     wrapper.unmount()
   })
@@ -185,7 +185,7 @@ describe('useMonitorAuthorAction', () => {
     composable.handleCreated(detail('Blake Crouch'))
 
     expect(composable.target.value).toBeNull()
-    expect(toast.success).toHaveBeenCalledWith('Now monitoring Blake Crouch.')
+    expect(toast.success).toHaveBeenCalledWith('Added Blake Crouch to your watchlist.')
     wrapper.unmount()
   })
 })

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ExternalLink, Loader2, Pencil } from '@lucide/vue'
+import { ExternalLink, Loader2, Pencil, RefreshCw } from '@lucide/vue'
 import type { MonitoredFormat, MonitoredReleaseDateCandidate, MonitoredReleaseDateSource, MonitoredReleaseLookupSource } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,12 +29,18 @@ const props = defineProps<{
   /** A listing that disagrees with the owner's own date; answering it either way settles the alert. */
   suggestion: MonitoredReleaseDateSuggestion | null
   state: MonitoredReleaseDateState
+  /** Draws the trigger as the boxed dashed date chip of a format slot instead of an inline value. */
+  chip?: boolean
+  /** Offers a re-check of every source from the popover header; absent for viewers who may not run one. */
+  canRefresh?: boolean
+  refreshing?: boolean
 }>()
 
 const emit = defineEmits<{
   openChange: [format: MonitoredFormat, open: boolean]
   set: [format: MonitoredFormat, releaseDate: string]
   clear: [format: MonitoredFormat]
+  refresh: []
 }>()
 
 const { t } = useI18n()
@@ -128,6 +134,10 @@ function handleKeepMine() {
   emit('set', props.format, props.currentDate)
 }
 
+function handleRefresh() {
+  if (!props.refreshing) emit('refresh')
+}
+
 function handleClear() {
   if (props.state.saving) return
   emit('clear', props.format)
@@ -142,19 +152,39 @@ function handleClear() {
           <PopoverTrigger as-child>
             <button
               type="button"
-              class="-mx-1 inline-flex max-w-full items-center gap-1 rounded-md border border-dashed border-border px-1.5 py-0.5 text-left text-sm transition-colors hover:border-primary/60 hover:bg-muted"
-              :class="muted ? 'text-muted-foreground' : 'text-foreground'"
+              class="group/date inline-flex max-w-full items-center gap-1.5 text-left text-[13px] font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              :class="[
+                muted ? 'text-muted-foreground' : 'text-foreground',
+                chip
+                  ? 'h-8 rounded-md border border-dashed border-border px-2.5 text-[13px] [@media(pointer:coarse)]:min-h-11'
+                  : 'text-[13px] rounded-xs',
+              ]"
               :aria-label="triggerLabel"
             >
               <span class="truncate">{{ label }}</span>
-              <Pencil :size="11" class="shrink-0 text-muted-foreground" aria-hidden="true" />
+              <Pencil class="size-3 shrink-0 text-muted-foreground transition-colors group-hover/date:text-foreground" aria-hidden="true" />
             </button>
           </PopoverTrigger>
         </TooltipTrigger>
 
         <PopoverContent align="start" class="w-80 max-w-[calc(100vw-2rem)] p-0">
           <div class="border-b border-border px-3 py-2.5">
-            <p class="text-sm font-semibold text-foreground">{{ title }}</p>
+            <div class="flex items-start justify-between gap-2">
+              <p class="text-sm font-semibold text-foreground">{{ title }}</p>
+              <button
+                v-if="canRefresh"
+                type="button"
+                class="-mt-1 -mr-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50 [@media(pointer:coarse)]:size-11"
+                :disabled="refreshing"
+                :aria-label="t('monitored.panel.releaseDates.refresh')"
+                :title="t('monitored.panel.releaseDates.refresh')"
+                data-testid="popover-refresh"
+                @click="handleRefresh"
+              >
+                <Loader2 v-if="refreshing" :size="13" class="animate-spin" aria-hidden="true" />
+                <RefreshCw v-else :size="13" aria-hidden="true" />
+              </button>
+            </div>
             <p v-if="details.length" data-testid="release-date-details" class="mt-0.5 text-xs text-foreground">
               <span v-for="line in details" :key="line" class="block">{{ line }}</span>
             </p>

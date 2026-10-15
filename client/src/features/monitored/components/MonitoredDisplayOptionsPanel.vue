@@ -2,6 +2,8 @@
 import { computed } from 'vue'
 import { Check, ChevronDown, ChevronRight, RotateCcw } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import type { MonitoredStatusFilter } from '@bookorbit/types'
+import { AUTHOR_STATUS_OPTIONS, defaultAuthorStatusFilters, isSameStatusSelection, toggleStatusFilter } from '../lib/status-filter'
 import {
   isDefaultDisplay,
   isEveryReviewKindSelected,
@@ -19,8 +21,13 @@ const props = defineProps<{
   counts: MonitoredDisplayClassCounts
   reviewKindCounts: MonitoredReviewKindCounts
   canCurate: boolean
+  statusFilters?: MonitoredStatusFilter[]
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: MonitoredDisplayOptions]; reset: [] }>()
+const emit = defineEmits<{
+  'update:modelValue': [value: MonitoredDisplayOptions]
+  'update:statusFilters': [value: MonitoredStatusFilter[]]
+  reset: []
+}>()
 
 const { t } = useI18n()
 
@@ -49,7 +56,12 @@ const reviewKinds = computed(() =>
 
 const allKindsSelected = computed(() => isEveryReviewKindSelected(props.modelValue.reviewKinds, presentKinds.value))
 
-const isDefault = computed(() => isDefaultDisplay(props.modelValue))
+const isStatusDefault = computed(() => !props.statusFilters || isSameStatusSelection(props.statusFilters, defaultAuthorStatusFilters()))
+const isDefault = computed(() => isDefaultDisplay(props.modelValue) && isStatusDefault.value)
+
+function toggleStatus(filter: MonitoredStatusFilter) {
+  if (props.statusFilters) emit('update:statusFilters', toggleStatusFilter(props.statusFilters, filter))
+}
 
 function toggle(key: ToggleKey) {
   emit('update:modelValue', { ...props.modelValue, [key]: !props.modelValue[key] })
@@ -83,6 +95,28 @@ function toggleKind(kind: MonitoredReviewKind) {
 <template>
   <div>
     <div class="mb-2 px-1 text-xs font-medium text-muted-foreground">{{ t('monitored.display.title') }}</div>
+
+    <template v-if="statusFilters">
+      <div class="mb-1 px-1 text-xs font-medium text-muted-foreground">{{ t('monitored.display.status') }}</div>
+      <div class="flex flex-col gap-0.5" role="group" :aria-label="t('monitored.display.status')">
+        <button
+          v-for="filter in AUTHOR_STATUS_OPTIONS"
+          :key="filter"
+          type="button"
+          role="checkbox"
+          :aria-checked="statusFilters.includes(filter)"
+          :disabled="statusFilters.includes(filter) && statusFilters.length === 1"
+          class="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors hover:bg-muted disabled:cursor-not-allowed"
+          :class="statusFilters.includes(filter) ? 'font-medium text-foreground' : 'text-muted-foreground'"
+          :data-testid="`status-${filter}`"
+          @click="toggleStatus(filter)"
+        >
+          <Check :size="14" :class="statusFilters.includes(filter) ? 'text-primary' : 'invisible'" aria-hidden="true" />
+          <span class="flex-1 text-left">{{ t(`monitored.statusFilter.options.${filter}`) }}</span>
+        </button>
+      </div>
+      <div class="my-2 border-t border-border" />
+    </template>
 
     <div class="flex flex-col gap-0.5">
       <button

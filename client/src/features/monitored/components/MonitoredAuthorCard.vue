@@ -103,14 +103,14 @@ function stopCardClick(event: MouseEvent) {
 
       <div class="pointer-events-none absolute bottom-11 right-1.5 z-20 flex flex-col items-end gap-1">
         <span
-          class="inline-flex items-center gap-1 rounded bg-background/85 px-2 py-0.5 text-[10px] font-bold tabular-nums text-[var(--pill-info)] shadow-sm ring-1 ring-border backdrop-blur-[2px]"
+          class="inline-flex items-center gap-1 rounded bg-background/85 px-2 py-0.5 text-[10px] font-bold tabular-nums text-[var(--pill-media-ebook)] shadow-sm ring-1 ring-border backdrop-blur-[2px]"
         >
           <BookOpen :size="10" aria-hidden="true" />
           <span class="sr-only">{{ t('monitored.formats.ebooks') }}</span>
           {{ author.counts.ebookOwned }}/{{ author.counts.total }}
         </span>
         <span
-          class="inline-flex items-center gap-1 rounded bg-background/85 px-2 py-0.5 text-[10px] font-bold tabular-nums text-[var(--pill-koreader)] shadow-sm ring-1 ring-border backdrop-blur-[2px]"
+          class="inline-flex items-center gap-1 rounded bg-background/85 px-2 py-0.5 text-[10px] font-bold tabular-nums text-[var(--pill-media-audiobook)] shadow-sm ring-1 ring-border backdrop-blur-[2px]"
         >
           <Headphones :size="10" aria-hidden="true" />
           <span class="sr-only">{{ t('monitored.formats.audiobooks') }}</span>

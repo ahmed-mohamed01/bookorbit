@@ -7,6 +7,7 @@ import type {
   MonitoredAuthorDetail,
   MonitoredAuthorItem,
   MonitoredAuthorSearchResult,
+  MonitoredBookWork,
   MonitoredFormat,
   MonitoredListOrder,
   MonitoredPage,
@@ -15,6 +16,7 @@ import type {
   MonitoredReleasePage,
   MonitoredReleaseListSort,
   MonitoredSort,
+  MonitoredStatusFilter,
   MonitoredWork,
   MonitoredWorkPatch,
   MonitoredWorkReleasesResponse,
@@ -24,6 +26,7 @@ import type {
   UpdateMonitoredAuthorRequest,
 } from '@bookorbit/types'
 import { MonitoredApiError } from '../lib/api-error'
+import { statusFilterQuery } from '../lib/status-filter'
 
 const BASE_PATH = '/api/v1/monitored'
 
@@ -38,6 +41,13 @@ async function assertOk(response: Response): Promise<void> {
 
 export async function fetchMonitoredSummary(): Promise<MonitoredSummary> {
   return readJson(await api(BASE_PATH))
+}
+
+/** The viewer's watchlist entry for a library book, or null when the book is not on it. */
+export async function fetchMonitoredBookWork(bookId: number): Promise<MonitoredBookWork | null> {
+  const response = await api(`${BASE_PATH}/works/by-book/${bookId}`)
+  if (response.status === 404) return null
+  return readJson(response)
 }
 
 function pageQuery(params: Record<string, string | number | undefined>): string {
@@ -74,10 +84,11 @@ export async function monitorAuthor(payload: MonitorAuthorRequest): Promise<Moni
 
 export async function fetchMonitoredAuthorDetail(
   id: string,
-  options: { sort: MonitoredSort; order: 'asc' | 'desc'; includeHidden?: boolean },
+  options: { sort: MonitoredSort; order: 'asc' | 'desc'; includeHidden?: boolean; status?: MonitoredStatusFilter[] },
 ): Promise<MonitoredAuthorDetail> {
   const query = new URLSearchParams({ sort: options.sort, order: options.order })
   if (options.includeHidden) query.set('includeHidden', 'true')
+  if (options.status?.length) query.set('status', statusFilterQuery(options.status))
   return readJson(await api(`${BASE_PATH}/authors/${encodeURIComponent(id)}?${query}`))
 }
 
@@ -106,8 +117,11 @@ export async function fetchMonitoredReleases(options: {
   sort: MonitoredReleaseListSort
   order: MonitoredListOrder
   filter: MonitoredReleaseFilter
+  /** Absent lists every visible, watched release. */
+  status?: MonitoredStatusFilter[]
 }): Promise<MonitoredReleasePage> {
-  return readJson(await api(`${BASE_PATH}/releases?${pageQuery(options)}`))
+  const { status, ...rest } = options
+  return readJson(await api(`${BASE_PATH}/releases?${pageQuery({ ...rest, status: status?.length ? statusFilterQuery(status) : undefined })}`))
 }
 
 export async function searchMonitoredAuthors(query: string): Promise<MonitoredAuthorSearchResult[]> {

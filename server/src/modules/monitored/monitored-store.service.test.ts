@@ -4,10 +4,15 @@ import type { SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgDialect } from 'drizzle-orm/pg-core';
 
+import { MONITORED_STATUS_FILTER_BY_FORMAT_STATUS, monitoredFormatStatus } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
 import { MonitoredStoreService, releaseEventKey, releaseRangeOverlapsSql, type MonitoredDueRelease } from './monitored-store.service';
 import * as schema from './schema/monitored.schema';
 import { authorCatalogWorks, type AuthorCatalogWorkRow } from './schema/monitored.schema';
+
+function probe(status: 'dated' | 'unlisted' | 'expected', releaseDate: string | null) {
+  return { status, releaseDate, precision: releaseDate ? ('day' as const) : null };
+}
 
 type OverlayRow = typeof schema.monitoredAuthorWorks.$inferSelect;
 
@@ -770,6 +775,127 @@ describe('MonitoredStoreService paged lists', () => {
     expect(total?.params).toEqual(expect.arrayContaining(['2026-09-05']));
     expect(result).toEqual({ items: [], total: 456, cards: { byStatus: 300, byWork: 240 }, page: 4, size: 25 });
   });
+
+  function releaseStatusStatements(status: Parameters<MonitoredStoreService['findReleasePage']>[0]['status']) {
+    const dialect = new PgDialect();
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    const execute = vi.fn((statement: SQL) => {
+      const compiled = dialect.sqlToQuery(statement);
+      statements.push(compiled);
+      return Promise.resolve(compiled.sql.includes('count(*)::int') ? { rows: [{ total: 0, byStatus: 0, byWork: 0 }] } : { rows: [] });
+    });
+    const findAccessibleLibraryIds = vi.fn().mockResolvedValue([3]);
+    const store = new MonitoredStoreService({ execute } as never, { findAccessibleLibraryIds } as never);
+    const run = store.findReleasePage({
+      viewer: { id: 1, isSuperuser: false } as RequestUser,
+      page: 0,
+      size: 25,
+      sort: 'date',
+      order: 'asc',
+      filter: 'all',
+      status,
+      earliest: '2026-06-07',
+      latest: '2027-09-05',
+      today: '2026-09-05',
+      soonLatest: '2026-10-05',
+      currentYear: '2026',
+    });
+    return { run, statements, findAccessibleLibraryIds };
+  }
+
+  it('keeps the old visible-and-watched release list when no status filter is sent', async () => {
+    const { run, statements, findAccessibleLibraryIds } = releaseStatusStatements(undefined);
+    await run;
+
+    const data = statements.find((statement) => statement.sql.includes('limit'));
+    expect(data?.sql).toContain('"monitored_author_works"."monitor_ebook" <> $');
+    expect(data?.sql).not.toContain("then 'in_library'");
+    expect(findAccessibleLibraryIds).not.toHaveBeenCalled();
+  });
+
+  it('filters release rows by format status in SQL rather than over a loaded page', async () => {
+    const { run, statements, findAccessibleLibraryIds } = releaseStatusStatements(['missing', 'needs_attention']);
+    await run;
+
+    for (const statement of statements) {
+      expect(statement.sql).toContain("then 'in_library'");
+      expect(statement.sql).toContain("then 'not_watched'");
+      // The switched-off format is classified, not dropped, so it can never fall through to missing.
+      expect(statement.sql).not.toContain('"monitored_author_works"."monitor_ebook" <> $');
+      expect(statement.params).toEqual(expect.arrayContaining(['missing', 'needs_attention', 'needs_review', 'failed']));
+      expect(statement.params).not.toContain('in_library');
+    }
+    expect(findAccessibleLibraryIds).toHaveBeenCalledTimes(1);
+  });
+
+  it('buckets a release by the same date the client reads, probe row first', async () => {
+    const { run, statements } = releaseStatusStatements(['missing', 'upcoming']);
+    await run;
+
+    for (const [index, statement] of statements.entries()) {
+      const format = index % 2 === 0 ? 'ebook' : 'audiobook';
+      expect(statement.sql).toContain(`left join "author_catalog_work_releases" as "ebook_probe"`);
+      expect(statement.sql).toContain(`left join "author_catalog_work_releases" as "audiobook_probe"`);
+      // An unlisted probe voids the catalog date; a probe date wins over it and brings its own precision.
+      expect(statement.sql).toContain(`"${format}_probe"."status" = 'unlisted'`);
+      expect(statement.sql).toContain(`nullif("${format}_probe"."release_date", '')`);
+      expect(statement.sql).toContain(`"${format}_probe"."date_precision"`);
+      // The same shape guard monitoredReleaseStarted applies, bound as a parameter like every other value.
+      expect(statement.sql).toContain('length(btrim(');
+      expect(statement.params).toContain('^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?$');
+    }
+  });
+
+  it.each([
+    ['probe later than the catalog', { ebookReleaseDate: '2020-01-01', formatReleases: { ebook: probe('dated', '2099-06-01') } }, 'upcoming'],
+    ['probe earlier than the catalog', { ebookReleaseDate: '2099-01-01', formatReleases: { ebook: probe('dated', '2020-06-01') } }, 'missing'],
+    ['probe that lists no edition', { ebookReleaseDate: '2020-01-01', formatReleases: { ebook: probe('unlisted', null) } }, 'upcoming'],
+    ['probe with no date of its own', { ebookReleaseDate: '2020-01-01', formatReleases: { ebook: probe('expected', null) } }, 'missing'],
+    ['day value shorter than its precision', { ebookReleaseDate: '2020-01', ebookDatePrecision: 'day' as const }, 'upcoming'],
+  ])('the client puts a %s in the %s bucket the SQL cases above encode', (_name, patch, bucket) => {
+    const work = {
+      ownedFormats: [],
+      matchedBookIds: {},
+      ebookReleaseDate: null,
+      ebookDatePrecision: null,
+      audioReleaseDate: null,
+      audioDatePrecision: null,
+      ...patch,
+    };
+    const status = monitoredFormatStatus(work as never, 'ebook', '2026-10-15');
+    expect(MONITORED_STATUS_FILTER_BY_FORMAT_STATUS[status]).toBe(bucket);
+  });
+
+  it('clears the visibility override when a work goes back to automatic', async () => {
+    const values = vi.fn();
+    const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
+    const limit = vi.fn().mockResolvedValue([workRow()]);
+    const db = {
+      select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn(() => ({ limit })) })) })),
+      insert: vi.fn(() => ({ values: values.mockReturnValue({ onConflictDoUpdate }) })),
+    };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    const internals = store as unknown as { assertWorkWritable: () => Promise<void>; composeWorks: () => Promise<unknown[]> };
+    vi.spyOn(internals, 'assertWorkWritable').mockResolvedValue(undefined);
+    vi.spyOn(internals, 'composeWorks').mockResolvedValue([{ monitorAuthorId: 'monitor-1', work: { id: 'monitor-1:hardcover:1' } }]);
+
+    await store.updateWorkUserState('monitor-1:hardcover:1', { automaticVisibility: true }, { id: 1, isSuperuser: false } as RequestUser);
+
+    expect(values).toHaveBeenCalledWith(expect.objectContaining({ userVisibility: null }));
+    expect(onConflictDoUpdate).toHaveBeenCalledWith(expect.objectContaining({ set: expect.objectContaining({ userVisibility: null }) }));
+  });
+
+  it('reaches works outside the default list only when hidden is selected', async () => {
+    const without = releaseStatusStatements(['upcoming']);
+    await without.run;
+    const withHidden = releaseStatusStatements(['upcoming', 'hidden']);
+    await withHidden.run;
+
+    const plain = without.statements.find((statement) => statement.sql.includes('limit'))?.sql ?? '';
+    const widened = withHidden.statements.find((statement) => statement.sql.includes('limit'))?.sql ?? '';
+    expect(plain).toContain('or false)');
+    expect(widened).toContain('or (not coalesce(');
+  });
 });
 
 describe('MonitoredStoreService release detection', () => {
@@ -935,5 +1061,36 @@ describe('MonitoredStoreService release detection', () => {
     expect(captured?.sql).toContain('"monitored_release_events"."format" = $2');
     expect(captured?.sql).toContain('"monitored_release_events"."owner_user_id" = $3');
     expect(captured?.params).toEqual(['work-1', 'ebook', 4]);
+  });
+});
+
+describe('MonitoredStoreService work by library book', () => {
+  function lookupDb(rows: unknown[]) {
+    const builder = {} as Record<string, ReturnType<typeof vi.fn>>;
+    for (const method of ['from', 'innerJoin', 'where', 'orderBy']) builder[method] = vi.fn(() => builder);
+    builder.limit = vi.fn(() => Promise.resolve(rows));
+    return { db: { select: vi.fn(() => builder) }, builder };
+  }
+
+  it('looks the book up through the three indexed match columns, scoped to the viewer and bounded to one row', async () => {
+    const { db, builder } = lookupDb([{ id: 'monitor-1:hardcover:1' }]);
+    const store = new MonitoredStoreService(db as never, {} as never);
+
+    await expect(store.findWorkIdByMatchedBook(42, { id: 5, isSuperuser: true } as RequestUser)).resolves.toBe('monitor-1:hardcover:1');
+
+    const query = new PgDialect().sqlToQuery(builder.where.mock.calls[0]?.[0] as SQL);
+    expect(query.sql).toContain('"monitored_authors"."owner_user_id" = $1');
+    expect(query.sql).toContain('"author_catalog_works"."matched_book_id" = $2');
+    expect(query.sql).toContain('"author_catalog_works"."matched_ebook_book_id" = $3');
+    expect(query.sql).toContain('"author_catalog_works"."matched_audio_book_id" = $4');
+    expect(query.params).toEqual([5, 42, 42, 42]);
+    expect(builder.limit).toHaveBeenCalledWith(1);
+  });
+
+  it('returns null when nothing of the viewer matches the book', async () => {
+    const { db } = lookupDb([]);
+    const store = new MonitoredStoreService(db as never, {} as never);
+
+    await expect(store.findWorkIdByMatchedBook(42, { id: 5, isSuperuser: false } as RequestUser)).resolves.toBeNull();
   });
 });

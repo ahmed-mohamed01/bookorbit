@@ -57,6 +57,117 @@ export function monitoredAcquisitionState(status: BookRequestStatus | null | und
   return status ? MONITORED_ACQUISITION_STATE_BY_REQUEST_STATUS[status] : null;
 }
 
+/**
+ * The one thing a format of a work is doing, as every monitored surface states it. Ordered by
+ * precedence: the first that applies wins, so an owned format never also reads as missing and a
+ * format the owner switched off never reads as missing either.
+ */
+export const MONITORED_FORMAT_STATUSES = [
+  "owned",
+  "downloading",
+  "importing",
+  "queued",
+  "needs_choice",
+  "failed",
+  "not_watching",
+  "missing",
+  "upcoming",
+  "unannounced",
+] as const;
+export type MonitoredFormatStatus = (typeof MONITORED_FORMAT_STATUSES)[number];
+
+const PARTIAL_RELEASE_DATE = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/;
+
+/**
+ * Whether a release window has opened on the given UTC day. Year and month precision open on their
+ * first day; a value shorter than its stated precision claims more than it carries and never opens.
+ */
+export function monitoredReleaseStarted(
+  value: string | null | undefined,
+  precision: MonitoredDatePrecision | null | undefined,
+  todayUtc: string,
+): boolean {
+  const trimmed = value?.trim() ?? "";
+  const match = PARTIAL_RELEASE_DATE.exec(trimmed);
+  if (!match) return false;
+  const effective: MonitoredDatePrecision = precision ?? (match[3] ? "day" : match[2] ? "month" : "year");
+  if (effective === "day" && trimmed.length !== 10) return false;
+  if (effective === "month" && trimmed.length < 7) return false;
+  const start = effective === "year" ? `${trimmed.slice(0, 4)}-01-01` : effective === "month" ? `${trimmed.slice(0, 7)}-01` : trimmed;
+  return start <= todayUtc;
+}
+
+export interface MonitoredFormatStatusOptions {
+  /** False when the author does not monitor this format at all. */
+  authorWatches?: boolean;
+}
+
+export function monitoredFormatStatus(
+  work: MonitoredWork,
+  format: MonitoredFormat,
+  todayUtc: string,
+  options: MonitoredFormatStatusOptions = {},
+): MonitoredFormatStatus {
+  if (work.ownedFormats.includes(format) || work.matchedBookIds?.[format] != null) return "owned";
+  const requestStatus = work.requestStatuses?.[format];
+  const acquisition = monitoredAcquisitionState(requestStatus);
+  if (acquisition === "downloading") return "downloading";
+  if (acquisition === "moving") return "importing";
+  if (acquisition === "queued") return "queued";
+  if (acquisition === "needs_review") return "needs_choice";
+  if (requestStatus === "failed") return "failed";
+  if (work.monitorFormats?.[format] === false || options.authorWatches === false) return "not_watching";
+  const { date, precision } = monitoredFormatReleaseDate(work, format);
+  if (!date || !PARTIAL_RELEASE_DATE.test(date.trim())) return "unannounced";
+  return monitoredReleaseStarted(date, precision, todayUtc) ? "missing" : "upcoming";
+}
+
+/**
+ * The date a format is expected on. The release probe speaks first: a source saying the format is
+ * not listed beats a catalog date, and enrolment can move a date off the column onto the probe row.
+ */
+export function monitoredFormatReleaseDate(
+  work: MonitoredWork,
+  format: MonitoredFormat,
+): { date: string | null; precision: MonitoredDatePrecision | null } {
+  const probe = work.formatReleases?.[format];
+  if (probe?.status === "unlisted") return { date: null, precision: null };
+  if (probe?.releaseDate) return { date: probe.releaseDate, precision: probe.precision };
+  return format === "ebook"
+    ? { date: work.ebookReleaseDate, precision: work.ebookDatePrecision }
+    : { date: work.audioReleaseDate, precision: work.audioDatePrecision };
+}
+
+/**
+ * The status filter on monitored lists. `hidden` covers every work outside the default list: hidden
+ * by the owner, or still in review. The others read a format's status.
+ */
+export const MONITORED_STATUS_FILTERS = ["missing", "in_progress", "needs_attention", "upcoming", "in_library", "not_watched", "hidden"] as const;
+export type MonitoredStatusFilter = (typeof MONITORED_STATUS_FILTERS)[number];
+
+export const DEFAULT_MONITORED_STATUS_FILTERS: readonly MonitoredStatusFilter[] = ["missing", "in_progress", "needs_attention", "upcoming"];
+
+/** An unannounced format is grouped with upcoming: both are a book still to come. */
+export const MONITORED_STATUS_FILTER_BY_FORMAT_STATUS: Record<MonitoredFormatStatus, Exclude<MonitoredStatusFilter, "hidden">> = {
+  owned: "in_library",
+  downloading: "in_progress",
+  importing: "in_progress",
+  queued: "in_progress",
+  needs_choice: "needs_attention",
+  failed: "needs_attention",
+  not_watching: "not_watched",
+  missing: "missing",
+  upcoming: "upcoming",
+  unannounced: "upcoming",
+};
+
+/** Known filters in canonical order; anything unrecognised is dropped rather than trusted. */
+export function parseMonitoredStatusFilters(value: unknown): MonitoredStatusFilter[] | null {
+  const raw = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : null;
+  if (!raw) return null;
+  return MONITORED_STATUS_FILTERS.filter((filter) => raw.includes(filter));
+}
+
 export const MONITORED_GROUPINGS = ["none", "series", "year", "status"] as const;
 export type MonitoredGrouping = (typeof MONITORED_GROUPINGS)[number];
 
@@ -287,6 +398,15 @@ export interface MonitoredReleaseItem {
   releaseDate: string;
   status: MonitoredReleaseStatus;
   requestId: number | null;
+  /** The author's mode per format, so a surface can say whether a release is grabbed or only announced. */
+  authorModes?: Record<MonitoredFormat, MonitorMode>;
+}
+
+/** The watchlist entry behind a library book: the work, its monitor and how the author handles each format. */
+export interface MonitoredBookWork {
+  work: MonitoredWork;
+  monitorAuthorId: string;
+  authorModes: Record<MonitoredFormat, MonitorMode>;
 }
 
 /**
@@ -350,6 +470,8 @@ export interface MonitoredWorkPatch {
   monitorEbook?: boolean;
   monitorAudiobook?: boolean;
   hidden?: boolean;
+  /** True hands visibility back to the verdict, dropping a hidden or kept choice. Never sent with `hidden`. */
+  automaticVisibility?: true;
 }
 
 /**

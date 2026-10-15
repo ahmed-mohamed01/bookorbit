@@ -14,11 +14,13 @@ import type {
   MonitoredReleaseFilter,
   MonitoredReleaseListSort,
   MonitoredReleaseCardCounts,
+  MonitoredStatusFilter,
   MonitoredSummary,
   MonitoredWork,
   MonitoredWorkPatch,
   BookRequestStatus,
 } from '@bookorbit/types';
+import { MONITORED_ACQUISITION_STATE_BY_REQUEST_STATUS } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { accentInsensitiveIlike, buildSearchPattern } from '../../common/utils/accent-insensitive-search.utils';
@@ -118,6 +120,20 @@ interface RequestProjection {
   matchedBookId: number | null;
 }
 
+/** A per-format alias of the release probe table, so one query can read both formats' probes. */
+function releaseProbeAlias(name: string) {
+  const column = (field: string) => sql<string>`${sql.identifier(name)}.${sql.identifier(field)}`;
+  return {
+    status: column('status'),
+    releaseDate: column('release_date'),
+    datePrecision: column('date_precision'),
+    join: (format: MonitoredFormat) => sql`left join ${schema.authorCatalogWorkReleases} as ${sql.identifier(name)}
+        on ${column('work_id')} = ${schema.authorCatalogWorks.id}
+        and ${column('format')} = ${format}`,
+  };
+}
+type ReleaseProbeAlias = ReturnType<typeof releaseProbeAlias>;
+
 type AuthorWrite = Omit<MonitoredAuthorConfig, 'id'> & { id?: string; lastReleaseCheckAt?: string | null };
 type AuthorFields = Partial<Omit<MonitoredAuthorConfig, 'id'>>;
 type BookWrite = Omit<MonitoredBookEntry, 'id'> & { id?: string };
@@ -143,6 +159,43 @@ function releasedBySql(date: AnyPgColumn | SQL, today: string): SQL {
 function releaseRangeStartSql(date: AnyPgColumn, precision: AnyPgColumn) {
   const effective = sql`case when ${precision} is not null then ${precision} when length(${date}) = 4 then 'year' when length(${date}) = 7 then 'month' else 'day' end`;
   return sql<string>`case ${effective} when 'year' then ${date} || '-01-01' when 'month' then ${date} || '-01' else ${date} end`;
+}
+
+const PARTIAL_RELEASE_DATE_PATTERN = '^[0-9]{4}(-[0-9]{2}(-[0-9]{2})?)?$';
+
+/**
+ * The SQL twin of `monitoredReleaseStarted`: true only for a well-formed value whose window has
+ * opened, so a malformed or too-short value is never "released" and reads as still to come.
+ */
+function releaseStartedSql(date: SQL, precision: SQL, today: string): SQL<boolean> {
+  const value = sql`btrim(${date})`;
+  const effective = sql`coalesce(${precision}, case when length(${value}) = 4 then 'year' when length(${value}) = 7 then 'month' else 'day' end)`;
+  return sql<boolean>`coalesce(
+    ${value} ~ ${PARTIAL_RELEASE_DATE_PATTERN}
+    and case ${effective}
+      when 'year' then left(${value}, 4) || '-01-01' <= ${today}
+      when 'month' then length(${value}) >= 7 and left(${value}, 7) || '-01' <= ${today}
+      else length(${value}) = 10 and ${value} <= ${today}
+    end,
+    false
+  )`;
+}
+
+const REQUEST_STATUSES = Object.keys(MONITORED_ACQUISITION_STATE_BY_REQUEST_STATUS) as BookRequestStatus[];
+const IN_PROGRESS_REQUEST_STATUSES = REQUEST_STATUSES.filter((status) => {
+  const state = MONITORED_ACQUISITION_STATE_BY_REQUEST_STATUS[status];
+  return state !== null && state !== 'needs_review';
+});
+const ATTENTION_REQUEST_STATUSES: BookRequestStatus[] = [
+  ...REQUEST_STATUSES.filter((status) => MONITORED_ACQUISITION_STATE_BY_REQUEST_STATUS[status] === 'needs_review'),
+  'failed',
+];
+
+function sqlList(values: readonly string[]): SQL {
+  return sql.join(
+    values.map((value) => sql`${value}`),
+    sql`, `,
+  );
 }
 
 function releaseDueSql(date: AnyPgColumn, precision: AnyPgColumn, addedDay: string, today: string) {
@@ -367,13 +420,15 @@ export class MonitoredStoreService {
     sort: MonitoredReleaseListSort;
     order: MonitoredListOrder;
     filter: MonitoredReleaseFilter;
+    status?: MonitoredStatusFilter[];
     earliest: string;
     latest: string;
     today: string;
     soonLatest: string;
     currentYear: string;
   }): Promise<{ items: MonitoredReleasePageEntry[]; total: number; cards: MonitoredReleaseCardCounts; page: number; size: number }> {
-    const releaseRows = this.releaseRowsSql(params);
+    const libraryIds = params.status && !params.viewer.isSuperuser ? await this.libraries.findAccessibleLibraryIds(params.viewer) : null;
+    const releaseRows = this.releaseRowsSql({ ...params, libraryIds });
     const direction = sql.raw(params.order === 'asc' ? 'asc' : 'desc');
     const orderExpression =
       params.sort === 'title' ? sql.raw('title') : params.sort === 'author' ? sql.raw('"authorName"') : sql.raw('"releaseDate"');
@@ -746,6 +801,27 @@ export class MonitoredStoreService {
     return { monitor, work: composed.work };
   }
 
+  /**
+   * The viewer's own work whose stored match is the given library book. The three match columns each
+   * carry an index, so this is a bitmap-or over them filtered by the owner, never a catalog scan.
+   */
+  async findWorkIdByMatchedBook(bookId: number, viewer: RequestUser): Promise<string | null> {
+    const works = schema.authorCatalogWorks;
+    const [row] = await this.db
+      .select({ id: works.id })
+      .from(works)
+      .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, works.monitorAuthorId))
+      .where(
+        and(
+          this.readScope(viewer, schema.monitoredAuthors.ownerUserId),
+          or(eq(works.matchedBookId, bookId), eq(works.matchedEbookBookId, bookId), eq(works.matchedAudioBookId, bookId)),
+        ),
+      )
+      .orderBy(asc(works.id))
+      .limit(1);
+    return row?.id ?? null;
+  }
+
   async updateWorkUserState(workId: string, patch: WorkStatePatch, actor: RequestUser): Promise<MonitoredWork> {
     await this.assertWorkWritable(workId, actor);
     const [work] = await this.db.select().from(schema.authorCatalogWorks).where(eq(schema.authorCatalogWorks.id, workId)).limit(1);
@@ -757,6 +833,7 @@ export class MonitoredStoreService {
       ...(patch.monitorEbook !== undefined ? { monitorEbook: patch.monitorEbook } : {}),
       ...(patch.monitorAudiobook !== undefined ? { monitorAudiobook: patch.monitorAudiobook } : {}),
       ...(patch.hidden !== undefined ? { userVisibility: patch.hidden ? ('hidden' as const) : ('visible' as const) } : {}),
+      ...(patch.automaticVisibility === true ? { userVisibility: null } : {}),
       ...(patch.requestIds?.ebook !== undefined ? { ebookRequestId: patch.requestIds.ebook } : {}),
       ...(patch.requestIds?.audiobook !== undefined ? { audiobookRequestId: patch.requestIds.audiobook } : {}),
     };
@@ -1086,17 +1163,34 @@ export class MonitoredStoreService {
     today: string;
     soonLatest: string;
     currentYear: string;
+    status?: MonitoredStatusFilter[];
+    libraryIds?: number[] | null;
   }): SQL {
     const authorScope = this.readScope(params.viewer, schema.monitoredAuthors.ownerUserId);
     const visible = visibleWorkCondition();
-    const active = activeWorkCondition(visible);
+    // A status filter reaches past the default list on its own terms, so it owns visibility and the
+    // per-work format switch; the author's own pause and format modes still apply to every row.
+    const statusFilters = params.status ?? null;
+    const active = statusFilters ? activeWorkCondition(sql<boolean>`true`) : activeWorkCondition(visible);
+    const probes: Record<MonitoredFormat, ReleaseProbeAlias> = {
+      ebook: releaseProbeAlias('ebook_probe'),
+      audiobook: releaseProbeAlias('audiobook_probe'),
+    };
+    const statusMatch = (format: MonitoredFormat) =>
+      statusFilters ? this.releaseStatusMatchSql(format, probes[format], statusFilters, visible, params.today, params.libraryIds ?? null) : undefined;
+    const ebookWatched = statusFilters
+      ? undefined
+      : or(ne(schema.monitoredAuthorWorks.monitorEbook, false), sql`${schema.monitoredAuthorWorks.monitorEbook} is null`);
+    const audiobookWatched = statusFilters
+      ? undefined
+      : or(ne(schema.monitoredAuthorWorks.monitorAudiobook, false), sql`${schema.monitoredAuthorWorks.monitorAudiobook} is null`);
     const qPattern = params.q ? buildSearchPattern(params.q) : null;
     const search = qPattern
       ? or(accentInsensitiveIlike(schema.authorCatalogWorks.title, qPattern), accentInsensitiveIlike(schema.monitoredAuthors.authorName, qPattern))
       : undefined;
     const ebook = and(
       ne(schema.monitoredAuthors.ebookMode, 'off'),
-      or(ne(schema.monitoredAuthorWorks.monitorEbook, false), sql`${schema.monitoredAuthorWorks.monitorEbook} is null`),
+      ebookWatched,
       releaseRangeOverlapsSql(
         schema.authorCatalogWorks.ebookReleaseDate,
         schema.authorCatalogWorks.ebookDatePrecision,
@@ -1104,10 +1198,11 @@ export class MonitoredStoreService {
         params.latest,
       ),
       this.releaseTimeFilterSql(schema.authorCatalogWorks.ebookReleaseDate, schema.authorCatalogWorks.ebookDatePrecision, params),
+      statusMatch('ebook'),
     );
     const audiobook = and(
       ne(schema.monitoredAuthors.audiobookMode, 'off'),
-      or(ne(schema.monitoredAuthorWorks.monitorAudiobook, false), sql`${schema.monitoredAuthorWorks.monitorAudiobook} is null`),
+      audiobookWatched,
       releaseRangeOverlapsSql(
         schema.authorCatalogWorks.audioReleaseDate,
         schema.authorCatalogWorks.audioDatePrecision,
@@ -1115,8 +1210,9 @@ export class MonitoredStoreService {
         params.latest,
       ),
       this.releaseTimeFilterSql(schema.authorCatalogWorks.audioReleaseDate, schema.authorCatalogWorks.audioDatePrecision, params),
+      statusMatch('audiobook'),
     );
-    const joins = sql`
+    const joins = (format: MonitoredFormat) => sql`
       from ${schema.authorCatalogWorks}
       inner join ${schema.monitoredAuthors}
         on ${schema.monitoredAuthors.id} = ${schema.authorCatalogWorks.monitorAuthorId}
@@ -1124,6 +1220,7 @@ export class MonitoredStoreService {
         on ${schema.authorCatalogState.monitorAuthorId} = ${schema.monitoredAuthors.id}
       left join ${schema.monitoredAuthorWorks}
         on ${schema.monitoredAuthorWorks.workId} = ${schema.authorCatalogWorks.id}
+      ${statusFilters ? probes[format].join(format) : sql``}
     `;
     return sql`
       select
@@ -1133,7 +1230,7 @@ export class MonitoredStoreService {
         ${schema.authorCatalogWorks.ebookReleaseDate} as "releaseDate",
         ${schema.authorCatalogWorks.title} as title,
         ${schema.monitoredAuthors.authorName} as "authorName"
-      ${joins}
+      ${joins('ebook')}
       where ${and(authorScope, active, search, ebook)}
       union all
       select
@@ -1143,9 +1240,61 @@ export class MonitoredStoreService {
         ${schema.authorCatalogWorks.audioReleaseDate} as "releaseDate",
         ${schema.authorCatalogWorks.title} as title,
         ${schema.monitoredAuthors.authorName} as "authorName"
-      ${joins}
+      ${joins('audiobook')}
       where ${and(authorScope, active, search, audiobook)}
     `;
+  }
+
+  /**
+   * The SQL twin of `workMatchesStatusFilters` for one format of a release row: a work outside the
+   * default list answers only to `hidden`, any other one to the bucket its format status falls in.
+   * The precedence mirrors `monitoredFormatStatus`; a release row always carries a date, so the
+   * unannounced state never arises here.
+   */
+  private releaseStatusMatchSql(
+    format: MonitoredFormat,
+    probe: ReleaseProbeAlias,
+    filters: readonly MonitoredStatusFilter[],
+    visible: SQL<boolean>,
+    today: string,
+    libraryIds: number[] | null,
+  ): SQL<boolean> {
+    const isEbook = format === 'ebook';
+    const requestId = isEbook ? schema.monitoredAuthorWorks.ebookRequestId : schema.monitoredAuthorWorks.audiobookRequestId;
+    const monitorFormat = isEbook ? schema.monitoredAuthorWorks.monitorEbook : schema.monitoredAuthorWorks.monitorAudiobook;
+    const catalogDate = isEbook ? schema.authorCatalogWorks.ebookReleaseDate : schema.authorCatalogWorks.audioReleaseDate;
+    const catalogPrecision = isEbook ? schema.authorCatalogWorks.ebookDatePrecision : schema.authorCatalogWorks.audioDatePrecision;
+    const { date, precision } = this.effectiveReleaseSql(probe, catalogDate, catalogPrecision);
+    const requestStatus = sql`(select ${dbSchema.bookRequests.status} from ${dbSchema.bookRequests} where ${dbSchema.bookRequests.id} = ${requestId})`;
+    const category = sql<string>`case
+      when ${this.ownedFormatCondition(format, libraryIds)} then 'in_library'
+      when ${requestStatus} in (${sqlList(IN_PROGRESS_REQUEST_STATUSES)}) then 'in_progress'
+      when ${requestStatus} in (${sqlList(ATTENTION_REQUEST_STATUSES)}) then 'needs_attention'
+      when ${monitorFormat} = false then 'not_watched'
+      when ${releaseStartedSql(date, precision, today)} then 'missing'
+      else 'upcoming'
+    end`;
+    const buckets = filters.filter((filter) => filter !== 'hidden');
+    const visibleMatch = buckets.length ? sql`(${visible} and ${category} in (${sqlList(buckets)}))` : sql`false`;
+    const hiddenMatch = filters.includes('hidden') ? sql`(not ${visible})` : sql`false`;
+    return sql<boolean>`(${visibleMatch} or ${hiddenMatch})`;
+  }
+
+  /**
+   * The date a format is expected on, as `monitoredFormatReleaseDate` reads it: a probe row that
+   * says the format is unlisted means no date, a probe row with a date beats the catalog column
+   * and brings its own precision, and anything else falls back to the catalog column.
+   */
+  private effectiveReleaseSql(
+    probe: ReleaseProbeAlias,
+    catalogDate: AnyPgColumn,
+    catalogPrecision: AnyPgColumn,
+  ): { date: SQL<string>; precision: SQL<string> } {
+    const probeDate = sql`nullif(${probe.releaseDate}, '')`;
+    return {
+      date: sql<string>`case when ${probe.status} = 'unlisted' then null when ${probeDate} is not null then ${probeDate} else ${catalogDate} end`,
+      precision: sql<string>`case when ${probe.status} = 'unlisted' then null when ${probeDate} is not null then ${probe.datePrecision} else ${catalogPrecision} end`,
+    };
   }
 
   private releaseTimeFilterSql(

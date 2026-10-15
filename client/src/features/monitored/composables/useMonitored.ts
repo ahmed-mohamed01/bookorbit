@@ -8,6 +8,7 @@ import type {
   MonitoredReleaseFilter,
   MonitoredReleaseItem,
   MonitoredReleaseListSort,
+  MonitoredStatusFilter,
   MonitoredSummary,
 } from '@bookorbit/types'
 import { fetchMonitoredAuthors, fetchMonitoredReleases, fetchMonitoredSummary } from '../api/monitored'
@@ -155,7 +156,13 @@ export function useMonitored() {
   }
 
   async function loadReleases(
-    options: { q?: string; sort: MonitoredReleaseListSort; order: MonitoredListOrder; filter: MonitoredReleaseFilter },
+    options: {
+      q?: string
+      sort: MonitoredReleaseListSort
+      order: MonitoredListOrder
+      filter: MonitoredReleaseFilter
+      status?: MonitoredStatusFilter[]
+    },
     reset = false,
   ): Promise<void> {
     if (!reset && (releaseLoading.value || !releaseHasMore.value)) return

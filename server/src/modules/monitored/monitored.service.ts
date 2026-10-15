@@ -11,15 +11,24 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { isWorkVisible, MONITORED_FORMATS, monitoredAcquisitionState } from '@bookorbit/types';
+import {
+  isWorkVisible,
+  MONITORED_FORMATS,
+  MONITORED_STATUS_FILTER_BY_FORMAT_STATUS,
+  monitoredAcquisitionState,
+  monitoredFormatStatus,
+} from '@bookorbit/types';
 import type {
+  MonitoredStatusFilter,
   MonitorAuthorRequest,
+  MonitorMode,
   MonitorFormatConfig,
   MonitoredAuthorConfig,
   MonitoredAuthorDetail,
   MonitoredAuthorItem,
   MonitoredAuthorSearchResult,
   MonitoredBookItem,
+  MonitoredBookWork,
   MonitoredFormat,
   MonitoredPage,
   MonitoredReleaseDateLookup,
@@ -80,6 +89,10 @@ const HARDCOVER_REQUIRED_MESSAGE =
 
 type AuthorProfileMetadata = { description: string | null; website: string | null; genres: string[]; portraitAuthorId: number | null };
 
+function authorFormatModes(monitor: MonitoredAuthorConfig): Record<MonitoredFormat, MonitorMode> {
+  return { ebook: monitor.formats.ebook.mode, audiobook: monitor.formats.audiobook.mode };
+}
+
 function isOwnerView(ownerUserId: number, user: RequestUser): boolean {
   return ownerUserId === user.id;
 }
@@ -87,6 +100,23 @@ function isOwnerView(ownerUserId: number, user: RequestUser): boolean {
 function monitoredReleaseStatus(work: MonitoredWork, format: MonitoredFormat, releaseDate: string, today: string): MonitoredReleaseStatus {
   if (work.matchedBookIds?.[format] != null || work.ownedFormats.includes(format)) return 'grabbed';
   return monitoredAcquisitionState(work.requestStatuses?.[format]) ?? (releaseDate <= today ? 'available' : 'upcoming');
+}
+
+/**
+ * A work outside the default list answers only to `hidden`; any other work matches when one of its
+ * formats is in a selected state. Kept beside the SQL twin in the store so both lists agree.
+ */
+export function workMatchesStatusFilters(
+  monitor: MonitoredAuthorConfig,
+  work: MonitoredWork,
+  filters: readonly MonitoredStatusFilter[],
+  today: string,
+): boolean {
+  if (!isWorkVisible(work)) return filters.includes('hidden');
+  return MONITORED_FORMATS.some((format) => {
+    const status = monitoredFormatStatus(work, format, today, { authorWatches: monitor.formats[format]?.mode !== 'off' });
+    return filters.includes(MONITORED_STATUS_FILTER_BY_FORMAT_STATUS[status]);
+  });
 }
 
 /**
@@ -509,6 +539,7 @@ export class MonitoredService {
       sort: query.sort ?? 'date',
       order: query.order ?? 'asc',
       filter: query.filter ?? 'all',
+      status: query.status,
       earliest,
       latest,
       today,
@@ -532,6 +563,7 @@ export class MonitoredService {
           releaseDate,
           status: monitoredReleaseStatus(work, format, releaseDate, today),
           requestId,
+          authorModes: authorFormatModes(monitor),
         };
       }),
     };
@@ -676,6 +708,17 @@ export class MonitoredService {
     return this.readWork(workId, user);
   }
 
+  async getWorkByBook(user: RequestUser, bookId: number): Promise<MonitoredBookWork> {
+    const workId = await this.store.findWorkIdByMatchedBook(bookId, user);
+    const entry = workId ? await this.store.getWorkWithMonitor(workId, user) : null;
+    if (!entry) throw new NotFoundException('No monitored work for this book');
+    return {
+      work: entry.work,
+      monitorAuthorId: entry.monitor.id,
+      authorModes: authorFormatModes(entry.monitor),
+    };
+  }
+
   private async readWork(workId: string, user: RequestUser): Promise<MonitoredWork> {
     const refreshed = await this.store.getWorkWithMonitor(workId, user);
     if (!refreshed) throw new NotFoundException('Monitored work not found');
@@ -691,6 +734,9 @@ export class MonitoredService {
 
   /** Per-work monitor/hide toggles, persisted on the catalog work and preserved across refreshes. */
   async updateWork(user: RequestUser, workId: string, patch: MonitoredWorkPatch): Promise<MonitoredWork> {
+    if (patch.automaticVisibility === true && patch.hidden !== undefined) {
+      throw new BadRequestException('Choose either hidden or automatic visibility, not both');
+    }
     const entry = await this.getWritableWork(workId, user);
     await this.healWorkAvailability([{ monitor: entry.monitor, works: [entry.work] }], user);
     const changes = Object.values(patch).filter((value) => value !== undefined);
@@ -1008,8 +1054,10 @@ export class MonitoredService {
     const direction = query.order === 'asc' ? 1 : -1;
     // Showing hidden works is the owner reviewing their own curation, not a viewer opting out of it.
     const isOwner = isOwnerView(monitor.ownerUserId, user);
+    const today = new Date().toISOString().slice(0, 10);
     const works = allWorks
       .filter((work) => (isOwner && query.includeHidden) || isWorkVisible(work))
+      .filter((work) => !query.status || workMatchesStatusFilters(monitor, work, query.status, today))
       .sort((left, right) => {
         if (query.sort === 'releaseDate') {
           const leftDate = this.earliestReleaseDate(left);

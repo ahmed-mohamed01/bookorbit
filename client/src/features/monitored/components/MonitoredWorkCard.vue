@@ -1,24 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { BookOpen, Check, Download, Eye, Headphones, MoreHorizontal, MoreVertical, PanelRight, Trash2 } from '@lucide/vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { BookOpen, Download, EyeOff, Headphones, MoreVertical, PanelRight } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
-import type { MonitoredFormat, MonitoredSeriesMembership, MonitoredWork } from '@bookorbit/types'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { MONITORED_FORMATS, type MonitorMode, type MonitoredFormat, type MonitoredSeriesMembership, type MonitoredWork } from '@bookorbit/types'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import { bookCoverStyle } from '@/features/book/lib/book-cover'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
-import {
-  isMonitoredAcquisitionState,
-  monitoredFormatState,
-  monitoredPendingLabelKey,
-  type MonitoredAcquisitionState,
-  type MonitoredFormatState,
-} from '../lib/monitored-format-state'
-import { formatReleaseState } from '../lib/format-release'
+import { cardBadgeKind, cardBadgeTone, type CardBadgeKind } from '../lib/card-badge'
+import { ACTIVE_REQUEST_STATUSES, workFormatStatus, type MonitoredFormatStatus } from '../lib/format-status'
 import { releaseDateForWork } from '../lib/grouping'
+import { releaseTimeBadge, type TimeBadge } from '../lib/time-badge'
 import { reviewKindOf, workDisplayClass } from '../lib/work-visibility'
-import { useMonitoredDateLabel } from '../composables/useMonitoredDateLabel'
-import { parseMonitoredDate } from '../lib/release-date'
+import { useFormatStatusText } from '../composables/useFormatStatusText'
+import MonitoredCardMenu, { type CardFormatMenu } from './MonitoredCardMenu.vue'
 
 const props = defineProps<{
   work: MonitoredWork
@@ -28,8 +22,12 @@ const props = defineProps<{
   canManage: boolean
   seriesMembership?: MonitoredSeriesMembership | null
   monitoredFormats?: MonitoredFormat[]
-  /** Relative release label ("in 7 days", "80 days ago"), shown instead of the default badge. */
-  timeBadge?: string | null
+  /** The author's mode per format, so a badge can say what happens on release. */
+  formatModes?: Partial<Record<MonitoredFormat, MonitorMode>>
+  /** Shown on hover when the card stands outside its author's page. */
+  authorName?: string | null
+  /** Relative release label and whether it points forward; worked out from the work's own date when absent. */
+  timeBadge?: TimeBadge | null
 }>()
 const emit = defineEmits<{
   preview: [work: MonitoredWork]
@@ -38,123 +36,138 @@ const emit = defineEmits<{
   downloadAudiobook: [work: MonitoredWork]
   stop: [work: MonitoredWork]
 }>()
-const { t, d } = useI18n()
-const tooltipDate = useMonitoredDateLabel('short')
+const { t } = useI18n()
+const { sentence } = useFormatStatusText()
 const { cardInfoMode } = useDisplaySettings()
 const imageFailed = ref(false)
+const showMobileOverlay = ref(false)
+const root = ref<HTMLElement | null>(null)
+
+const isTouch = computed(
+  () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches,
+)
+const showBelowCoverLabel = computed(() => cardInfoMode.value === 'below-cover')
 
 const coverUrl = computed(() => toMonitoredCoverUrl(props.work.coverUrl))
 const fallbackStyle = computed(() => bookCoverStyle(props.work.title))
-const releaseDate = computed(() => releaseDateForWork(props.work))
-const parsedRelease = computed(() => parseMonitoredDate(releaseDate.value))
-const isUpcoming = computed(() => parsedRelease.value !== null && parsedRelease.value.date.getTime() > Date.now())
-const year = computed(() => String(props.work.releaseYear ?? releaseDate.value?.slice(0, 4) ?? t('monitored.common.tba')))
 
-// The series name lives in the group header, so the card overlay shows only the position within it.
+const badgeTime = computed<TimeBadge | null>(() =>
+  props.timeBadge !== undefined ? props.timeBadge : releaseTimeBadge(releaseDateForWork(props.work), t),
+)
+const timeTone = computed(() => (badgeTime.value?.upcoming ? 'bg-[var(--pill-warning)]' : 'bg-[var(--pill-info)]'))
+
 const seriesIndex = computed(() => (props.seriesMembership === undefined ? props.work.seriesIndex : props.seriesMembership?.index))
+// Grouped by series, the group heading names the series and the number alone is enough. Anywhere
+// else the number means nothing without the name, so the card names the series instead.
+const seriesLabel = computed(() => (props.seriesMembership !== undefined && seriesIndex.value ? `#${seriesIndex.value}` : ''))
+const seriesLine = computed(() => {
+  if (props.seriesMembership !== undefined) return ''
+  const membership = props.work.seriesMemberships?.[0]
+  if (!membership?.name) return ''
+  const number = membership.index ? `#${membership.index}` : ''
+  return number ? `${number} · ${membership.name}` : membership.name
+})
 
 // Only the review class carries a kind worth naming. A work the owner hid, or a placeholder, has
 // its own switch and its own meaning, and labelling either of them from the review vocabulary reads
 // as a verdict the reconciler never reached.
-const kindLabel = computed(() => (workDisplayClass(props.work) === 'review' ? t(`monitored.review.badges.${reviewKindOf(props.work)}`) : null))
+const displayClass = computed(() => workDisplayClass(props.work))
+const kindLabel = computed(() => (displayClass.value === 'review' ? t(`monitored.review.badges.${reviewKindOf(props.work)}`) : null))
+const isHidden = computed(() => displayClass.value === 'hidden')
 
-const showBelowCoverLabel = computed(() => cardInfoMode.value === 'below-cover')
-const showHoverTitle = computed(() => cardInfoMode.value === 'hover-overlay')
-
-function isFormatMonitored(format: MonitoredFormat): boolean {
+function authorWatches(format: MonitoredFormat): boolean {
   return props.monitoredFormats == null || props.monitoredFormats.includes(format)
 }
 
-const ebookState = computed(() =>
-  monitoredFormatState(props.work, 'ebook', { monitored: isFormatMonitored('ebook'), optimisticQueued: props.ebookQueued }),
+const statuses = computed<Record<MonitoredFormat, MonitoredFormatStatus>>(() => ({
+  ebook: workFormatStatus(props.work, 'ebook', { authorWatches: authorWatches('ebook'), optimisticQueued: props.ebookQueued }),
+  audiobook: workFormatStatus(props.work, 'audiobook', { authorWatches: authorWatches('audiobook'), optimisticQueued: props.audiobookQueued }),
+}))
+
+const fullyOwned = computed(() => MONITORED_FORMATS.every((format) => statuses.value[format] === 'owned'))
+const notWatched = computed(() => MONITORED_FORMATS.every((format) => statuses.value[format] === 'not_watching'))
+
+interface FormatBadge {
+  format: MonitoredFormat
+  kind: CardBadgeKind
+  tone: string
+  title: string
+}
+
+const badges = computed<FormatBadge[]>(() =>
+  MONITORED_FORMATS.flatMap((format) => {
+    const status = statuses.value[format]
+    const kind = cardBadgeKind(status)
+    if (!kind) return []
+    return [
+      {
+        format,
+        kind,
+        tone: cardBadgeTone(kind, format),
+        title: sentence(props.work, format, status, { mode: props.formatModes?.[format] ?? null }),
+      },
+    ]
+  }),
 )
-const audiobookState = computed(() =>
-  monitoredFormatState(props.work, 'audiobook', { monitored: isFormatMonitored('audiobook'), optimisticQueued: props.audiobookQueued }),
-)
-const ebookOwned = computed(() => ebookState.value === 'available')
-const audiobookOwned = computed(() => audiobookState.value === 'available')
-const ebookPending = computed(() => isMonitoredAcquisitionState(ebookState.value))
-const audiobookPending = computed(() => isMonitoredAcquisitionState(audiobookState.value))
 
-const acquisitionBadge = computed(() => {
-  const states = [ebookState.value, audiobookState.value]
-  const state = (['needs_review', 'moving', 'downloading', 'queued'] as const).find((candidate) => states.includes(candidate))
-  if (!state) return null
-  const classes: Record<MonitoredAcquisitionState, string> = {
-    queued: 'bg-primary text-primary-foreground',
-    downloading: 'bg-[var(--pill-info)] text-background',
-    moving: 'bg-[var(--pill-koreader)] text-background',
-    needs_review: 'bg-[var(--pill-warning)] text-background',
-  }
-  return { label: t(`monitored.detail.badges.${state}`), class: classes[state] }
-})
-
-const badge = computed(() => {
-  // A download that is on its way is newer news than the release date, so it takes the badge.
-  if (acquisitionBadge.value) return acquisitionBadge.value
-  if (props.timeBadge) {
-    return {
-      label: props.timeBadge,
-      class: isUpcoming.value ? 'bg-[var(--pill-warning)] text-background' : 'bg-primary text-primary-foreground',
-    }
-  }
-  const release = parsedRelease.value
-  if (isUpcoming.value && release) {
-    return {
-      label: release.precision === 'year' ? String(release.date.getFullYear()) : d(release.date, { month: 'short', year: 'numeric' }),
-      class: 'bg-[var(--pill-warning)] text-background',
-    }
-  }
-  return null
-})
-
-// Same colour language as the release rows: success = have it, warning = wanted.
-function availabilityIconClass(state: MonitoredFormatState): string {
-  return state === 'available' ? 'text-success' : 'text-warning'
+function menuState(format: MonitoredFormat): CardFormatMenu {
+  const status = statuses.value[format]
+  const owned = status === 'owned'
+  const pending = ACTIVE_REQUEST_STATUSES.has(status)
+  const label = owned
+    ? t(`monitored.detail.${format}Owned`)
+    : pending
+      ? sentence(props.work, format, status)
+      : t(format === 'ebook' ? 'monitored.detail.downloadEbook' : 'monitored.detail.downloadAudiobook')
+  return { disabled: owned || pending, label, owned, pending }
 }
 
-/**
- * The lights say whether a format is in the library; the tooltip says what is known about the one
- * that is not, so "no ebook light" reads as "no ebook announced" rather than as a missed download.
- */
-function availabilityTooltip(format: MonitoredFormat, state: MonitoredFormatState): string {
-  if (state === 'available') return t(`monitored.detail.${format}Owned`)
-  const name = t(`monitored.formats.${format}`)
-  const release = formatReleaseState(props.work, format)
-  if (release.kind === 'unlisted') return t('monitored.card.formatNotAnnounced', { format: name })
-  const date = tooltipDate(release.date, release.precision)
-  if (!date) return name
-  if (release.kind === 'expected') return t('monitored.card.formatExpected', { format: name, date })
-  if (release.kind === 'upcoming') return t('monitored.card.formatUpcoming', { format: name, date })
-  if (release.kind === 'released') return t('monitored.card.formatReleased', { format: name, date })
-  return name
-}
+const canQuickView = computed(() => props.work.matchedBookId !== null)
+const subline = computed(() => props.authorName ?? (props.work.releaseYear ? String(props.work.releaseYear) : ''))
 
-const ebookTooltip = computed(() => availabilityTooltip('ebook', ebookState.value))
-const audiobookTooltip = computed(() => availabilityTooltip('audiobook', audiobookState.value))
-
-function pendingLabel(format: MonitoredFormat): string {
-  return t(monitoredPendingLabelKey(format === 'ebook' ? ebookState.value : audiobookState.value, format))
-}
+const ebookMenu = computed(() => menuState('ebook'))
+const audiobookMenu = computed(() => menuState('audiobook'))
 
 function handleImageError() {
   imageFailed.value = true
 }
 
 function handlePreview() {
+  showMobileOverlay.value = false
   emit('preview', props.work)
 }
+
+function handleCoverClick() {
+  if (isTouch.value && !showBelowCoverLabel.value) {
+    showMobileOverlay.value = !showMobileOverlay.value
+    return
+  }
+  handlePreview()
+}
+
+function handleClickOutside(event: MouseEvent) {
+  if (!showMobileOverlay.value) return
+  if (!root.value?.contains(event.target as Node)) showMobileOverlay.value = false
+}
+
+onMounted(() => {
+  window.addEventListener('click', handleClickOutside)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('click', handleClickOutside)
+})
 
 function handleQuickView() {
   emit('quickView', props.work)
 }
 
 function handleDownloadEbook() {
-  if (props.canManage && !ebookOwned.value && !ebookPending.value) emit('downloadEbook', props.work)
+  if (props.canManage && !ebookMenu.value.disabled) emit('downloadEbook', props.work)
 }
 
 function handleDownloadAudiobook() {
-  if (props.canManage && !audiobookOwned.value && !audiobookPending.value) emit('downloadAudiobook', props.work)
+  if (props.canManage && !audiobookMenu.value.disabled) emit('downloadAudiobook', props.work)
 }
 
 function handleStop() {
@@ -163,9 +176,16 @@ function handleStop() {
 </script>
 
 <template>
-  <article class="group min-w-0">
+  <article
+    ref="root"
+    class="group min-w-0"
+    :class="{ 'opacity-45': isHidden }"
+    :data-owned="fullyOwned || undefined"
+    :data-not-watched="notWatched || undefined"
+  >
     <div
-      class="relative aspect-2/3 overflow-hidden rounded-md shadow-md transition-[box-shadow,transform] duration-150 group-hover:scale-[1.02] group-hover:shadow-xl"
+      class="relative aspect-2/3 overflow-hidden rounded-sm shadow-md transition-[box-shadow,transform,filter] duration-150 group-hover:scale-[1.02] group-hover:shadow-xl motion-reduce:group-hover:scale-100"
+      :class="{ 'brightness-75 saturate-50 group-hover:brightness-100 group-hover:saturate-100': notWatched }"
       :style="coverUrl && !imageFailed ? undefined : fallbackStyle"
     >
       <img
@@ -181,146 +201,145 @@ function handleStop() {
         {{ work.title }}
       </div>
 
-      <!-- Cover click opens the quick-look panel; sits under the availability lights and kebab menu. -->
-      <button type="button" :aria-label="t('monitored.detail.quickLook')" class="absolute inset-0 z-0 cursor-pointer" @click="handlePreview" />
+      <button
+        type="button"
+        :aria-label="t('monitored.detail.quickLook')"
+        class="absolute inset-0 z-0 cursor-pointer"
+        data-testid="cover-button"
+        @click="handleCoverClick"
+      />
 
-      <!-- Top-left: persistent availability lights (matches the library read-state indicators) + status -->
-      <div class="absolute left-1.5 top-1.5 z-10 flex flex-col items-start gap-1">
-        <div class="flex items-center gap-1">
-          <span v-if="ebookState !== 'off'" class="flex items-center justify-center rounded-full bg-black/60 p-1" :title="ebookTooltip">
-            <BookOpen :size="12" :class="availabilityIconClass(ebookState)" aria-hidden="true" />
-            <span class="sr-only">{{ ebookState === 'available' ? t('monitored.detail.ebookOwned') : t('monitored.detail.ebookWanted') }}</span>
-            <span v-if="ebookState !== 'available'" class="sr-only">{{ ebookTooltip }}</span>
+      <div class="pointer-events-none absolute left-1.5 top-1.5 z-20 flex flex-col items-start gap-1">
+        <span
+          v-if="isHidden"
+          class="flex items-center justify-center rounded-sm bg-black/60 p-1 text-white"
+          :title="t('monitored.card.hidden')"
+          data-testid="hidden-mark"
+        >
+          <EyeOff :size="12" aria-hidden="true" />
+          <span class="sr-only">{{ t('monitored.card.hidden') }}</span>
+        </span>
+        <span
+          v-else-if="badgeTime"
+          class="rounded-sm px-2 py-1 text-[11px] font-semibold leading-none text-background shadow-sm"
+          :class="timeTone"
+          :data-tone="badgeTime.upcoming ? 'upcoming' : 'released'"
+          data-testid="time-badge"
+          >{{ badgeTime.label }}</span
+        >
+        <span v-if="kindLabel" class="rounded-sm bg-black/60 px-1.5 py-0.5 text-[9px] font-bold leading-none text-white">{{ kindLabel }}</span>
+        <span v-if="badges.length" class="flex items-center gap-1">
+          <span
+            v-for="badge in badges"
+            :key="badge.format"
+            class="relative inline-flex size-6 items-center justify-center rounded-sm border shadow-[0_1px_3px_rgb(0_0_0/0.6)]"
+            :class="badge.tone"
+            :data-badge="badge.kind"
+            :data-format="badge.format"
+            :title="badge.title"
+          >
+            <BookOpen v-if="badge.format === 'ebook'" class="size-3.5" aria-hidden="true" />
+            <Headphones v-else class="size-3.5" aria-hidden="true" />
+            <Download
+              v-if="badge.kind === 'downloading'"
+              class="absolute -bottom-1 -right-1 size-3 rounded-full bg-background p-px text-[var(--pill-info)]"
+              aria-hidden="true"
+            />
+            <span class="sr-only">{{ badge.title }}</span>
           </span>
-          <span v-if="audiobookState !== 'off'" class="flex items-center justify-center rounded-full bg-black/60 p-1" :title="audiobookTooltip">
-            <Headphones :size="12" :class="availabilityIconClass(audiobookState)" aria-hidden="true" />
-            <span class="sr-only">{{
-              audiobookState === 'available' ? t('monitored.detail.audiobookOwned') : t('monitored.detail.audiobookWanted')
-            }}</span>
-            <span v-if="audiobookState !== 'available'" class="sr-only">{{ audiobookTooltip }}</span>
-          </span>
-        </div>
-        <span v-if="badge" class="rounded px-2 py-0.5 text-[10px] font-bold shadow-sm" :class="badge.class">{{ badge.label }}</span>
-        <span v-if="kindLabel" class="rounded bg-black/65 px-2 py-0.5 text-[10px] font-semibold text-white shadow-sm">{{ kindLabel }}</span>
+        </span>
       </div>
 
-      <!-- Top-right: series position -->
       <span
-        v-if="seriesIndex"
-        class="absolute right-1.5 top-1.5 z-10 flex items-center rounded-full bg-black/60 px-2 py-0.5 text-[11px] font-bold leading-none text-white"
-        >{{ seriesIndex }}</span
+        v-if="seriesLabel"
+        class="pointer-events-none absolute right-1.5 top-1.5 z-20 flex items-center rounded-sm bg-black/60 px-1.5 py-0.5 text-[9px] font-bold leading-none text-white"
+        data-testid="series-badge"
+        >{{ seriesLabel }}</span
       >
 
-      <!-- Title overlay (on-hover mode): fades in over the cover, like the library grid cards -->
-      <div
-        v-if="showHoverTitle"
-        class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-black/85 via-black/40 to-transparent px-2 pb-2 pt-9 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+      <span
+        v-if="seriesLine && !showBelowCoverLabel"
+        class="pointer-events-none absolute bottom-1.5 left-1.5 z-10 max-w-[calc(100%-2.75rem)] truncate rounded-sm bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-white transition-opacity duration-150 group-focus-within:opacity-0 group-hover:opacity-0"
+        :class="{ 'opacity-0': showMobileOverlay }"
+        :title="seriesLine"
+        data-testid="series-line"
+        >{{ seriesLine }}</span
       >
-        <h3 class="line-clamp-2 pr-8 text-xs font-semibold leading-tight text-white">{{ work.title }}</h3>
-        <p class="mt-0.5 truncate pr-8 text-[10px] text-white/75">{{ year }}</p>
+      <div
+        v-if="!showBelowCoverLabel"
+        class="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col justify-end bg-gradient-to-t from-black/85 via-black/55 to-transparent p-2 pt-12 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100"
+        :class="showMobileOverlay ? 'opacity-100' : 'opacity-0'"
+        data-testid="info-overlay"
+      >
+        <div class="min-w-0">
+          <p class="line-clamp-2 pr-8 text-xs font-semibold leading-tight text-white" data-testid="hover-title">{{ work.title }}</p>
+          <p v-if="authorName" class="truncate text-[10px] text-white/70" data-testid="hover-author">{{ authorName }}</p>
+          <p v-if="seriesLine" class="truncate text-[10px] text-white/70" data-testid="hover-series">{{ seriesLine }}</p>
+          <button
+            v-if="showMobileOverlay"
+            type="button"
+            class="pointer-events-auto mt-1.5 inline-flex min-h-8 items-center gap-1 rounded-md bg-black/50 px-2 text-[11px] font-medium text-white hover:bg-black/30"
+            data-testid="overlay-open"
+            @click.stop="handlePreview"
+          >
+            <PanelRight :size="12" aria-hidden="true" />
+            {{ t('monitored.detail.quickLook') }}
+          </button>
+        </div>
       </div>
 
-      <!-- Kebab menu on the cover (on-hover and off modes); below-cover mode carries it in the label row -->
-      <DropdownMenu v-if="!showBelowCoverLabel">
-        <DropdownMenuTrigger as-child>
+      <div
+        v-if="!showBelowCoverLabel"
+        class="absolute bottom-2 right-2 z-20 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
+        :class="showMobileOverlay ? 'opacity-100' : 'opacity-0'"
+      >
+        <MonitoredCardMenu
+          :can-manage="canManage"
+          :can-quick-view="canQuickView"
+          :ebook="ebookMenu"
+          :audiobook="audiobookMenu"
+          @preview="handlePreview"
+          @quick-view="handleQuickView"
+          @download-ebook="handleDownloadEbook"
+          @download-audiobook="handleDownloadAudiobook"
+          @stop="handleStop"
+        >
           <button
             type="button"
             :aria-label="t('monitored.detail.bookMenu', { title: work.title })"
-            class="absolute bottom-1.5 right-1.5 z-20 flex size-6 items-center justify-center rounded-md bg-black/55 text-white opacity-0 transition-opacity hover:bg-black/75 focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100"
+            class="shrink-0 rounded-md bg-black/40 px-0.75 py-1.5 text-white transition-colors hover:bg-white/30 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-8"
           >
-            <MoreHorizontal :size="14" />
+            <MoreVertical class="size-3.5" />
           </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" class="w-56">
-          <DropdownMenuItem @click="handlePreview">
-            <PanelRight />
-            {{ t('monitored.detail.quickLook') }}
-          </DropdownMenuItem>
-          <DropdownMenuItem :disabled="work.matchedBookId === null" @click="handleQuickView">
-            <Eye />
-            {{ t('monitored.detail.quickView') }}
-          </DropdownMenuItem>
-          <template v-if="canManage">
-            <DropdownMenuItem :disabled="ebookOwned || ebookPending" @click="handleDownloadEbook">
-              <BookOpen v-if="ebookOwned" />
-              <Check v-else-if="ebookPending" />
-              <Download v-else />
-              {{ ebookOwned ? t('monitored.detail.ebookOwned') : ebookPending ? pendingLabel('ebook') : t('monitored.detail.downloadEbook') }}
-            </DropdownMenuItem>
-            <DropdownMenuItem :disabled="audiobookOwned || audiobookPending" @click="handleDownloadAudiobook">
-              <Headphones v-if="audiobookOwned" />
-              <Check v-else-if="audiobookPending" />
-              <Download v-else />
-              {{
-                audiobookOwned
-                  ? t('monitored.detail.audiobookOwned')
-                  : audiobookPending
-                    ? pendingLabel('audiobook')
-                    : t('monitored.detail.downloadAudiobook')
-              }}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" @click="handleStop">
-              <Trash2 />
-              {{ t('monitored.actions.stopMonitoring') }}
-            </DropdownMenuItem>
-          </template>
-        </DropdownMenuContent>
-      </DropdownMenu>
+        </MonitoredCardMenu>
+      </div>
     </div>
 
-    <!-- Below-cover label row (below-cover mode only), mirroring the library grid card layout -->
-    <div v-if="showBelowCoverLabel" class="pt-1">
+    <div v-if="showBelowCoverLabel" class="pt-1" data-testid="below-cover-label">
       <div class="flex min-w-0 items-center gap-0.5">
         <p class="min-w-0 flex-1 truncate text-xs font-medium leading-5 text-foreground">{{ work.title }}</p>
-        <DropdownMenu>
-          <DropdownMenuTrigger as-child>
-            <button
-              type="button"
-              :aria-label="t('monitored.detail.bookMenu', { title: work.title })"
-              class="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
-            >
-              <MoreVertical class="size-3.5" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" class="w-56">
-            <DropdownMenuItem @click="handlePreview">
-              <PanelRight />
-              {{ t('monitored.detail.quickLook') }}
-            </DropdownMenuItem>
-            <DropdownMenuItem :disabled="work.matchedBookId === null" @click="handleQuickView">
-              <Eye />
-              {{ t('monitored.detail.quickView') }}
-            </DropdownMenuItem>
-            <template v-if="canManage">
-              <DropdownMenuItem :disabled="ebookOwned || ebookPending" @click="handleDownloadEbook">
-                <BookOpen v-if="ebookOwned" />
-                <Check v-else-if="ebookPending" />
-                <Download v-else />
-                {{ ebookOwned ? t('monitored.detail.ebookOwned') : ebookPending ? pendingLabel('ebook') : t('monitored.detail.downloadEbook') }}
-              </DropdownMenuItem>
-              <DropdownMenuItem :disabled="audiobookOwned || audiobookPending" @click="handleDownloadAudiobook">
-                <Headphones v-if="audiobookOwned" />
-                <Check v-else-if="audiobookPending" />
-                <Download v-else />
-                {{
-                  audiobookOwned
-                    ? t('monitored.detail.audiobookOwned')
-                    : audiobookPending
-                      ? pendingLabel('audiobook')
-                      : t('monitored.detail.downloadAudiobook')
-                }}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" @click="handleStop">
-                <Trash2 />
-                {{ t('monitored.actions.stopMonitoring') }}
-              </DropdownMenuItem>
-            </template>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <MonitoredCardMenu
+          :can-manage="canManage"
+          :can-quick-view="canQuickView"
+          :ebook="ebookMenu"
+          :audiobook="audiobookMenu"
+          @preview="handlePreview"
+          @quick-view="handleQuickView"
+          @download-ebook="handleDownloadEbook"
+          @download-audiobook="handleDownloadAudiobook"
+          @stop="handleStop"
+        >
+          <button
+            type="button"
+            :aria-label="t('monitored.detail.bookMenu', { title: work.title })"
+            class="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-8"
+          >
+            <MoreVertical class="size-3.5" />
+          </button>
+        </MonitoredCardMenu>
       </div>
-      <p class="truncate text-[0.675rem] leading-3.5 text-muted-foreground">{{ year }}</p>
+      <p v-if="subline" class="truncate text-[0.675rem] leading-3.5 text-muted-foreground">{{ subline }}</p>
+      <p v-if="seriesLine" class="truncate text-[0.675rem] leading-3.5 text-muted-foreground" data-testid="below-series">{{ seriesLine }}</p>
     </div>
   </article>
 </template>

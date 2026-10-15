@@ -1344,6 +1344,67 @@ describe('MonitoredService', () => {
     expect(getCatalog).toHaveBeenNthCalledWith(2, 'monitor-1', viewer);
   });
 
+  it('hands a work back to automatic visibility through the owner-checked write', async () => {
+    const existing = work({ userVisibility: 'visible' });
+    const updateWorkUserState = vi.fn().mockResolvedValue(work());
+    const store = {
+      getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author(), work: existing }),
+      getAuthor: vi.fn().mockResolvedValue(author()),
+      updateWorkUserState,
+    };
+
+    await service(store).updateWork(viewer, existing.id, { automaticVisibility: true });
+
+    expect(updateWorkUserState).toHaveBeenCalledWith(existing.id, { automaticVisibility: true }, viewer);
+  });
+
+  it('refuses a patch that both hides a work and hands it back to automatic', async () => {
+    const updateWorkUserState = vi.fn();
+    const store = { getWorkWithMonitor: vi.fn(), updateWorkUserState };
+
+    await expect(service(store).updateWork(viewer, work().id, { hidden: true, automaticVisibility: true })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(updateWorkUserState).not.toHaveBeenCalled();
+    expect(store.getWorkWithMonitor).not.toHaveBeenCalled();
+  });
+
+  it('narrows the author detail to works in the selected states on the server', async () => {
+    const monitoredAuthor = author({ localAuthorId: 7 });
+    const owned = work({ id: 'owned', ownedFormats: ['ebook', 'audiobook'], matchedBookId: 1, matchedBookIds: { ebook: 1, audiobook: 2 } });
+    const missing = work({ id: 'missing', ebookReleaseDate: '2020-01-01', audioReleaseDate: '2020-01-01' });
+    const switchedOff = work({
+      id: 'switched-off',
+      ebookReleaseDate: '2020-01-01',
+      audioReleaseDate: '2020-01-01',
+      monitorFormats: { ebook: false, audiobook: false },
+    });
+    const hidden = work({ id: 'hidden', userVisibility: 'hidden', ebookReleaseDate: '2020-01-01' });
+    const store = {
+      getAuthor: vi.fn().mockResolvedValue(monitoredAuthor),
+      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [owned, missing, switchedOff, hidden] }),
+    };
+    const instance = service(store, {}, { authorsRepository: { findByIdForEnrichment: vi.fn().mockResolvedValue(null) } });
+
+    const defaults = await instance.getAuthor(monitoredAuthor.id, viewer, {
+      sort: 'title',
+      order: 'asc',
+      includeHidden: true,
+      status: ['missing', 'in_progress', 'needs_attention', 'upcoming'],
+    });
+    const everything = await instance.getAuthor(monitoredAuthor.id, viewer, {
+      sort: 'title',
+      order: 'asc',
+      includeHidden: true,
+      status: ['in_library', 'not_watched', 'hidden'],
+    });
+
+    expect(defaults.works.map((entry) => entry.id)).toEqual(['missing']);
+    expect(everything.works.map((entry) => entry.id).sort()).toEqual(['hidden', 'owned', 'switched-off']);
+    // The counts describe the author, not the filtered page.
+    expect(defaults.author.counts.total).toBe(3);
+  });
+
   it.each([{}, { hidden: undefined }])('does not write an overlay row for the empty work patch %j', async (patch) => {
     const updateWorkUserState = vi.fn();
     const existing = work();
@@ -1830,5 +1891,45 @@ describe('MonitoredService availability healing', () => {
 
     expect(recomputeWorkAvailability).toHaveBeenCalledWith([{ monitor, works: [stale] }]);
     expect(updated.ownedFormats).toEqual(['ebook']);
+  });
+});
+
+describe('MonitoredService work by library book', () => {
+  it('returns the matched work with its monitor id and the author modes', async () => {
+    const matched = work({ matchedBookIds: { ebook: 11 } });
+    const monitor = author({
+      formats: {
+        ebook: { mode: 'auto-all', libraryId: null, folderId: null },
+        audiobook: { mode: 'notify', libraryId: null, folderId: null },
+      },
+    });
+    const store = {
+      findWorkIdByMatchedBook: vi.fn().mockResolvedValue(matched.id),
+      getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor, work: matched }),
+    };
+
+    await expect(service(store).getWorkByBook(viewer, 11)).resolves.toEqual({
+      work: matched,
+      monitorAuthorId: 'monitor-1',
+      authorModes: { ebook: 'auto-all', audiobook: 'notify' },
+    });
+    expect(store.findWorkIdByMatchedBook).toHaveBeenCalledWith(11, viewer);
+    expect(store.getWorkWithMonitor).toHaveBeenCalledWith(matched.id, viewer);
+  });
+
+  it('answers 404 when no work matches the book', async () => {
+    const store = { findWorkIdByMatchedBook: vi.fn().mockResolvedValue(null), getWorkWithMonitor: vi.fn() };
+
+    await expect(service(store).getWorkByBook(viewer, 11)).rejects.toBeInstanceOf(NotFoundException);
+    expect(store.getWorkWithMonitor).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 when the viewer cannot read the matched work, so another user monitor data never leaks', async () => {
+    const store = {
+      findWorkIdByMatchedBook: vi.fn().mockResolvedValue('monitor-9:hardcover:1'),
+      getWorkWithMonitor: vi.fn().mockResolvedValue(null),
+    };
+
+    await expect(service(store).getWorkByBook(viewer, 11)).rejects.toBeInstanceOf(NotFoundException);
   });
 });

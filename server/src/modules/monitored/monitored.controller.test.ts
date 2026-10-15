@@ -88,6 +88,17 @@ describe('MonitoredController', () => {
     expect(setMonitoredSettings).toHaveBeenCalledWith(update);
   });
 
+  it('reads the work behind a library book for the caller without a permission gate', async () => {
+    const entry = { work: { id: 'w1' }, monitorAuthorId: 'm1', authorModes: { ebook: 'notify', audiobook: 'off' } };
+    const getWorkByBook = vi.fn().mockResolvedValue(entry);
+    const controller = await makeController({ getWorkByBook });
+    const user = { id: 3 } as RequestUser;
+
+    await expect(controller.getWorkByBook({ bookId: 11 }, user)).resolves.toBe(entry);
+    expect(getWorkByBook).toHaveBeenCalledWith(user, 11);
+    expect(Reflect.getMetadata(PERMISSION_KEY, MonitoredController.prototype.getWorkByBook)).toBeUndefined();
+  });
+
   it('returns 404 when an author is not visible to the caller', async () => {
     const service = {
       getAuthor: vi.fn().mockRejectedValue(new NotFoundException('Monitored author not found')),

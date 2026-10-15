@@ -47,6 +47,21 @@ function mountPopover(props: Partial<InstanceType<typeof MonitoredReleaseDatePop
 }
 
 describe('MonitoredReleaseDatePopover', () => {
+  it('re-checks every source from a small header button, only for a viewer who can run one', async () => {
+    const allowed = mountPopover({ canRefresh: true })
+    await allowed.get('[data-testid="popover-refresh"]').trigger('click')
+    expect(allowed.emitted('refresh')).toHaveLength(1)
+    allowed.unmount()
+
+    const busy = mountPopover({ canRefresh: true, refreshing: true })
+    expect(busy.get('[data-testid="popover-refresh"]').attributes('disabled')).toBeDefined()
+    busy.unmount()
+
+    const readOnly = mountPopover()
+    expect(readOnly.find('[data-testid="popover-refresh"]').exists()).toBe(false)
+    readOnly.unmount()
+  })
+
   it('titles itself for the format and shows what the row already says', () => {
     const wrapper = mountPopover()
 

@@ -13,9 +13,11 @@ import {
   Permission,
 } from '@bookorbit/types'
 import type {
+  MonitorMode,
   MonitoredAuthorItem,
   MonitoredAuthorListSort,
   MonitoredFormat,
+  MonitoredStatusFilter,
   MonitoredReleaseFilter,
   MonitoredReleaseItem,
   MonitoredReleaseListSort,
@@ -44,7 +46,6 @@ import { monitoredErrorText } from '../lib/api-error'
 import { isMonitoredAcquisitionState } from '../lib/monitored-format-state'
 import { refreshAllAuthorsSequentially, type MonitoredRefreshSummary } from '../lib/refresh-summary'
 import { collapseReleaseItems, releaseDateMoved, type MonitoredReleaseEntry } from '../lib/grouping'
-import { monitoredDateTime } from '../lib/release-date'
 import AddMonitoredPanel from '../components/AddMonitoredPanel.vue'
 import MonitoredAuthorCard from '../components/MonitoredAuthorCard.vue'
 import MonitoredBookPanel from '../components/MonitoredBookPanel.vue'
@@ -58,6 +59,9 @@ import MonitoredReleaseRow from '../components/MonitoredReleaseRow.vue'
 import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
 import MonitoredVirtualGrid from '../components/MonitoredVirtualGrid.vue'
 import MonitoredWorkCard from '../components/MonitoredWorkCard.vue'
+import MonitoredStatusFilterMenu from '../components/MonitoredStatusFilterMenu.vue'
+import { readStatusFilters } from '../lib/status-filter'
+import { releaseTimeBadge, type TimeBadge } from '../lib/time-badge'
 import { MONITORED_RELEASE_GROUPS, MONITORED_TABS, type MonitoredReleaseGroup, type MonitoredTab, useMonitored } from '../composables/useMonitored'
 import { useMonitoredRefreshAll } from '../composables/useMonitoredRefreshAll'
 import { usePageRetryGuard } from '../composables/usePageRetryGuard'
@@ -91,7 +95,7 @@ const {
   loadReleases,
 } = useMonitored()
 const { onRequestsChanged } = useBookRequestProgress()
-const { cardInfoMode, monitoredReleaseRowDensity } = useDisplaySettings()
+const { monitoredReleaseRowDensity } = useDisplaySettings()
 const { state: refreshState, run: runRefresh } = useRefreshFeedback()
 const {
   running: refreshAllRunning,
@@ -128,12 +132,31 @@ const panelAuthorName = ref('')
 const panelFormats = ref<MonitoredFormat[] | undefined>(undefined)
 const panelOwned = ref(true)
 const panelOpen = ref(false)
+const panelAuthorId = ref<string | null>(null)
+const panelModes = ref<Partial<Record<MonitoredFormat, MonitorMode>>>({})
 
-function openWorkPanel(work: MonitoredWork, authorName: string, formats?: MonitoredFormat[], owned = true) {
-  panelOwned.value = owned
-  panelWork.value = work
-  panelAuthorName.value = authorName
-  panelFormats.value = formats
+function entryModes(entry: MonitoredReleaseEntry): Partial<Record<MonitoredFormat, MonitorMode>> {
+  return entry.items[0]?.authorModes ?? {}
+}
+
+function entryFormats(entry: MonitoredReleaseEntry): MonitoredFormat[] | undefined {
+  const modes = entry.items[0]?.authorModes
+  if (!modes) return undefined
+  return (Object.keys(modes) as MonitoredFormat[]).filter((format) => modes[format] !== 'off')
+}
+
+function openItemPanel(item: MonitoredReleaseItem) {
+  const entry = releaseSections.value.flatMap((section) => section.entries).find((candidate) => candidate.items.includes(item))
+  if (entry) openEntryPanel(entry)
+}
+
+function openEntryPanel(entry: MonitoredReleaseEntry) {
+  panelOwned.value = entryCanManage(entry)
+  panelWork.value = entry.work
+  panelAuthorName.value = entry.authorName
+  panelFormats.value = entryFormats(entry)
+  panelAuthorId.value = entry.items[0]?.monitorAuthorId ?? null
+  panelModes.value = entryModes(entry)
   panelOpen.value = true
 }
 
@@ -234,16 +257,12 @@ function handleToggleMonitor(work: MonitoredWork, format: MonitoredFormat, value
   void patchWork(work, format === 'ebook' ? { monitorEbook: value } : { monitorAudiobook: value })
 }
 
-function handleToggleHidden(work: MonitoredWork, value: boolean) {
-  void patchWork(work, { hidden: value })
+function handleSetAutomatic(work: MonitoredWork) {
+  void patchWork(work, { automaticVisibility: true })
 }
 
-function releaseTimeBadge(item: MonitoredReleaseItem): string | null {
-  const time = monitoredDateTime(item.releaseDate)
-  if (time === null) return null
-  const days = Math.round((time - Date.now()) / 86_400_000)
-  if (days === 0) return t('monitored.releases.today')
-  return days > 0 ? t('monitored.releases.inDays', { count: days }) : t('monitored.releases.daysAgo', { count: Math.abs(days) })
+function handleToggleHidden(work: MonitoredWork, value: boolean) {
+  void patchWork(work, { hidden: value })
 }
 
 function handleCardQuickView(work: MonitoredWork) {
@@ -292,6 +311,13 @@ function persisted<T extends string>(key: string, fallback: T, allowed: readonly
 const releaseFilter = persisted<ReleaseFilter>('monitored:releases:filter', 'all', MONITORED_RELEASE_FILTERS)
 const releaseSort = persisted<ReleaseSort>('monitored:releases:sort', 'date', MONITORED_RELEASE_LIST_SORTS)
 const releaseOrder = persisted<'asc' | 'desc'>('monitored:releases:order', 'asc', MONITORED_LIST_ORDERS)
+const RELEASE_STATUS_STORAGE_KEY = 'monitored:releases:status'
+const releaseStatus = ref<MonitoredStatusFilter[]>(readStatusFilters(storage.get<unknown>(RELEASE_STATUS_STORAGE_KEY, null)))
+watch(releaseStatus, (next) => storage.set(RELEASE_STATUS_STORAGE_KEY, next))
+
+function handleReleaseStatusChange(value: MonitoredStatusFilter[]) {
+  releaseStatus.value = value
+}
 
 type AuthorSort = MonitoredAuthorListSort
 
@@ -323,7 +349,6 @@ const activeCardSize = computed({
 const showDisplayControls = computed(() => activeTab.value === 'authors' || activeTab.value === 'releases')
 const showReleaseRows = computed(() => activeTab.value === 'releases' && releasesView.value === 'table')
 const headerRowDensity = computed(() => (showReleaseRows.value ? monitoredReleaseRowDensity.value : undefined))
-const workCardExtraHeight = computed(() => (cardInfoMode.value === 'below-cover' ? 40 : 0))
 const sortedAuthors = computed(() => authors.value)
 
 const releaseSortOptions = computed<{ value: ReleaseSort; label: string }[]>(() => [
@@ -494,7 +519,7 @@ async function reloadActive(reset = false): Promise<void> {
   if (tab === 'authors') {
     await loadAuthors({ q, sort: authorSort.value, order: authorOrder.value }, reset)
   } else if (tab === 'releases') {
-    await loadReleases({ q, sort: releaseSort.value, order: releaseOrder.value, filter: releaseFilter.value }, reset)
+    await loadReleases({ q, sort: releaseSort.value, order: releaseOrder.value, filter: releaseFilter.value, status: releaseStatus.value }, reset)
   } else {
     return
   }
@@ -670,9 +695,9 @@ function entryCanManage(entry: MonitoredReleaseEntry): boolean {
   return canManage.value && (entry.items[0]?.isOwner ?? false)
 }
 
-function entryTimeBadge(entry: MonitoredReleaseEntry): string | null {
+function entryTimeBadge(entry: MonitoredReleaseEntry): TimeBadge | null {
   const first = entry.items[0]
-  return first ? releaseTimeBadge(first) : null
+  return first ? releaseTimeBadge(first.releaseDate, t) : null
 }
 
 async function handleReleaseRequest(item: MonitoredReleaseItem) {
@@ -735,7 +760,7 @@ watch([authorSort, authorOrder], () => {
   syncRouteQuery()
   void reloadActive(true)
 })
-watch([releaseSort, releaseOrder, releaseFilter], () => {
+watch([releaseSort, releaseOrder, releaseFilter, releaseStatus], () => {
   if (hydrating || activeTab.value !== 'releases') return
   syncRouteQuery()
   void reloadActive(true)
@@ -857,6 +882,7 @@ defineOptions({ name: 'MonitoredView' })
               @update:model-value="handleReleaseSortChange"
               @update:order="handleReleaseOrderChange"
             />
+            <MonitoredStatusFilterMenu v-if="activeTab === 'releases'" :model-value="releaseStatus" @update:model-value="handleReleaseStatusChange" />
             <MonitoredGroupMenu
               v-if="activeTab === 'releases'"
               :options="releaseGroupOptions"
@@ -998,16 +1024,10 @@ defineOptions({ name: 'MonitoredView' })
               :can-manage="canManage && item.isOwner"
               :requesting="isReleaseRequesting(item)"
               @request="handleReleaseRequest"
+              @preview="openItemPanel"
             />
           </div>
-          <MonitoredVirtualGrid
-            v-else
-            :virtualized="releaseGroup === 'none'"
-            :items="group.entries"
-            :card-size="workCardSize"
-            :grid-gap="cardGap"
-            :extra-height="workCardExtraHeight"
-          >
+          <MonitoredVirtualGrid v-else :virtualized="releaseGroup === 'none'" :items="group.entries" :card-size="workCardSize" :grid-gap="cardGap">
             <template #default="{ item: entry }">
               <MonitoredWorkCard
                 :work="entry.work"
@@ -1015,8 +1035,11 @@ defineOptions({ name: 'MonitoredView' })
                 :ebook-queued="entryFormatQueued(entry, 'ebook')"
                 :audiobook-queued="entryFormatQueued(entry, 'audiobook')"
                 :time-badge="entryTimeBadge(entry)"
+                :author-name="entry.authorName"
+                :monitored-formats="entryFormats(entry)"
+                :format-modes="entryModes(entry)"
                 :can-manage="entryCanManage(entry)"
-                @preview="openWorkPanel(entry.work, entry.authorName, undefined, entryCanManage(entry))"
+                @preview="openEntryPanel(entry)"
                 @quick-view="handleCardQuickView"
                 @download-ebook="handleDownloadEbook"
                 @download-audiobook="handleDownloadAudiobook"
@@ -1050,6 +1073,8 @@ defineOptions({ name: 'MonitoredView' })
       :work="panelWork"
       :author-name="panelAuthorName"
       :monitored-formats="panelFormats"
+      :author-id="panelAuthorId"
+      :format-modes="panelModes"
       :can-manage="canManage && panelOwned"
       :open="panelOpen"
       @update:open="handlePanelOpen"
@@ -1058,6 +1083,7 @@ defineOptions({ name: 'MonitoredView' })
       @filed="handlePanelFiled"
       @toggle-monitor="handleToggleMonitor"
       @toggle-hidden="handleToggleHidden"
+      @set-automatic="handleSetAutomatic"
       @work-updated="handleWorkUpdated"
     />
   </main>

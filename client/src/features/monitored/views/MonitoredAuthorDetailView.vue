@@ -19,16 +19,15 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { Permission } from '@bookorbit/types'
-import type { MonitoredFormat, MonitoredGrouping, MonitoredSort, MonitoredWork } from '@bookorbit/types'
+import type { MonitoredFormat, MonitoredGrouping, MonitoredSort, MonitoredStatusFilter, MonitoredWork } from '@bookorbit/types'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { bookCoverStyle } from '@/features/book/lib/book-cover'
-import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useScrollRestoreOnActivate } from '@/features/book/composables/useScrollRestoreOnActivate'
 import { useBookRequestProgress } from '@/features/book-requests/composables/useBookRequestProgress'
-import { deleteMonitoredAuthor, refreshMonitoredAuthor } from '../api/monitored'
+import { deleteMonitoredAuthor } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
 import { monitoredPortraitUrl } from '../lib/portrait-url'
 import MonitoredWorkCard from '../components/MonitoredWorkCard.vue'
@@ -45,7 +44,6 @@ const { t, d } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { hasPermission } = usePermissions()
-const { cardInfoMode } = useDisplaySettings()
 const {
   detail,
   loading,
@@ -64,7 +62,11 @@ const {
   displayCounts,
   reviewKindCounts,
   monitoredFormats,
+  formatModes,
+  statusFilters,
+  setStatusFilters,
   load,
+  refreshAuthor,
   setSort,
   setOrder,
   setGrouping,
@@ -96,7 +98,6 @@ let requestRefreshTimer: ReturnType<typeof setTimeout> | null = null
 const REQUEST_CHANGE_DEBOUNCE_MS = 1500
 const DETAIL_WORK_CARD_SIZE = 122
 const DETAIL_WORK_GRID_GAP = 12
-const detailWorkExtraHeight = computed(() => (cardInfoMode.value === 'below-cover' ? 40 : 0))
 
 const canManage = computed(() => hasPermission(Permission.BookRequestAccess))
 const canEdit = computed(() => canManage.value && (detail.value?.author.isOwner ?? false))
@@ -144,7 +145,7 @@ function toggleDetails() {
 
 function goBack() {
   const from = typeof route.query.from === 'string' ? route.query.from : ''
-  if (from.startsWith('/monitored')) {
+  if (from.startsWith('/watchlist') || from.startsWith('/monitored')) {
     void router.push(from)
     return
   }
@@ -168,10 +169,10 @@ async function handleToggleMonitoring() {
 
 async function handleRefresh() {
   if (!author.value) return
-  const { id, authorName } = author.value
+  const { authorName } = author.value
   try {
     await runRefresh(async () => {
-      detail.value = await refreshMonitoredAuthor(id)
+      await refreshAuthor()
     })
     toast.success(t('monitored.toast.authorRefreshed', { name: authorName }))
   } catch (cause) {
@@ -248,6 +249,24 @@ async function handleToggleMonitor(work: MonitoredWork, format: MonitoredFormat,
   } catch (cause) {
     toast.error(monitoredErrorText(cause, t('monitored.toast.updateFailed')))
   }
+}
+
+async function handleSetAutomatic(work: MonitoredWork) {
+  try {
+    await updateWork(work.id, { automaticVisibility: true })
+    panelWork.value = detail.value?.works.find((candidate) => candidate.id === work.id) ?? panelWork.value
+  } catch (cause) {
+    toast.error(monitoredErrorText(cause, t('monitored.toast.updateFailed')))
+  }
+}
+
+async function handleResumeAuthor() {
+  if (!author.value?.paused) return
+  await handleToggleMonitoring()
+}
+
+function handleStatusFiltersChange(value: MonitoredStatusFilter[]) {
+  void setStatusFilters(value)
 }
 
 async function handleToggleHidden(work: MonitoredWork, value: boolean) {
@@ -435,12 +454,12 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                   <span class="flex items-center gap-1 font-semibold text-foreground">
                     <BookCopy :size="14" role="img" :aria-label="t('monitored.detail.stats.books')" />{{ author.counts.total }}
                   </span>
-                  <span class="flex items-center gap-1 font-semibold text-[var(--pill-info)]">
+                  <span class="flex items-center gap-1 font-semibold text-[var(--pill-media-ebook)]">
                     <BookOpen :size="14" role="img" :aria-label="t('monitored.formats.ebooks')" />{{ author.counts.ebookOwned }}/{{
                       author.counts.total
                     }}
                   </span>
-                  <span class="flex items-center gap-1 font-semibold text-[var(--pill-koreader)]">
+                  <span class="flex items-center gap-1 font-semibold text-[var(--pill-media-audiobook)]">
                     <Headphones :size="14" role="img" :aria-label="t('monitored.formats.audiobooks')" />{{ author.counts.audioOwned }}/{{
                       author.counts.total
                     }}
@@ -497,13 +516,13 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                     <p class="text-xs text-muted-foreground">{{ t('monitored.detail.stats.books') }}</p>
                   </div>
                   <div class="rounded-lg border border-border bg-background/40 px-3 py-2.5">
-                    <p class="flex items-center gap-1.5 text-base font-semibold text-[var(--pill-info)]">
+                    <p class="flex items-center gap-1.5 text-base font-semibold text-[var(--pill-media-ebook)]">
                       <BookOpen :size="15" />{{ author.counts.ebookOwned }}/{{ author.counts.total }}
                     </p>
                     <p class="text-xs text-muted-foreground">{{ t('monitored.formats.ebooks') }}</p>
                   </div>
                   <div class="rounded-lg border border-border bg-background/40 px-3 py-2.5">
-                    <p class="flex items-center gap-1.5 text-base font-semibold text-[var(--pill-koreader)]">
+                    <p class="flex items-center gap-1.5 text-base font-semibold text-[var(--pill-media-audiobook)]">
                       <Headphones :size="15" />{{ author.counts.audioOwned }}/{{ author.counts.total }}
                     </p>
                     <p class="text-xs text-muted-foreground">{{ t('monitored.formats.audiobooks') }}</p>
@@ -561,6 +580,8 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                 :counts="displayCounts"
                 :review-kind-counts="reviewKindCounts"
                 :can-curate="canEdit"
+                :status-filters="statusFilters"
+                @update:status-filters="handleStatusFiltersChange"
                 @update:model-value="setDisplay"
                 @reset="resetDisplay"
               />
@@ -597,7 +618,6 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                 :items="group.works"
                 :card-size="DETAIL_WORK_CARD_SIZE"
                 :grid-gap="DETAIL_WORK_GRID_GAP"
-                :extra-height="detailWorkExtraHeight"
               >
                 <template #default="{ item: work }">
                   <MonitoredWorkCard
@@ -607,6 +627,7 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                     :audiobook-queued="isQueued(work.id, 'audiobook')"
                     :series-membership="grouping === 'series' ? seriesMembershipForGroup(work, group.key) : undefined"
                     :monitored-formats="monitoredFormats"
+                    :format-modes="formatModes"
                     :can-manage="canEdit"
                     @preview="handlePreview"
                     @quick-view="handleQuickView"
@@ -635,6 +656,12 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
       :work="panelWork"
       :author-name="author?.authorName ?? ''"
       :monitored-formats="monitoredFormats"
+      :author-id="author?.id ?? null"
+      :author-genres="author?.genres"
+      :link-author="false"
+      :format-modes="formatModes"
+      :author-paused="author?.paused ?? false"
+      :can-resume-author="canEdit"
       :can-manage="canEdit"
       :open="panelOpen"
       @update:open="handlePanelOpen"
@@ -643,6 +670,8 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
       @filed="handlePanelFiled"
       @toggle-monitor="handleToggleMonitor"
       @toggle-hidden="handleToggleHidden"
+      @set-automatic="handleSetAutomatic"
+      @resume-author="handleResumeAuthor"
       @work-updated="handleWorkUpdated"
     />
   </main>

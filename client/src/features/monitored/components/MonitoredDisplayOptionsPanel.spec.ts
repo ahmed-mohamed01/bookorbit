@@ -160,4 +160,33 @@ describe('MonitoredDisplayOptionsPanel', () => {
     expect(wrapper.emitted('update:modelValue')?.[0][0]).toMatchObject({ review: false, reviewKinds: 'all' })
     wrapper.unmount()
   })
+
+  it('offers a Status section above Show hidden when given status filters', async () => {
+    const all = ['missing', 'in_progress', 'needs_attention', 'upcoming', 'in_library', 'not_watched'] as const
+    const wrapper = mount(MonitoredDisplayOptionsPanel, {
+      props: {
+        modelValue: { ...DEFAULT_MONITORED_DISPLAY },
+        counts: { hidden: 1, placeholder: 2, review: 0 },
+        reviewKindCounts: kindCounts(),
+        canCurate: true,
+        statusFilters: [...all],
+      },
+    })
+    const text = wrapper.text()
+
+    expect(text).toContain('Status')
+    expect(text.indexOf('Status')).toBeLessThan(text.indexOf('Show hidden'))
+    expect(rowByText(wrapper, 'In library').attributes('aria-checked')).toBe('true')
+    expect(rowByText(wrapper, 'Not watched').attributes('aria-checked')).toBe('true')
+    await rowByText(wrapper, 'In library').trigger('click')
+    expect(wrapper.emitted('update:statusFilters')?.[0][0]).not.toContain('in_library')
+    wrapper.unmount()
+  })
+
+  it('has no Status section without status filters', () => {
+    const wrapper = mountPanel()
+
+    expect(wrapper.text()).not.toContain('Status')
+    wrapper.unmount()
+  })
 })

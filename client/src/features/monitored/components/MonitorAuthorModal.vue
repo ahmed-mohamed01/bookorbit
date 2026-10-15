@@ -187,7 +187,7 @@ async function handleSubmit() {
           <section class="rounded-xl border border-border bg-background/40 p-4">
             <div class="flex items-center justify-between gap-3">
               <div class="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <span class="flex size-7 items-center justify-center rounded-lg bg-[var(--pill-info)]/10 text-[var(--pill-info)]"
+                <span class="flex size-7 items-center justify-center rounded-lg bg-[var(--pill-media-ebook)]/10 text-[var(--pill-media-ebook)]"
                   ><BookOpen :size="15"
                 /></span>
                 {{ t('monitored.formats.ebooks') }}
@@ -219,7 +219,8 @@ async function handleSubmit() {
           <section class="rounded-xl border border-border bg-background/40 p-4">
             <div class="flex items-center justify-between gap-3">
               <div class="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <span class="flex size-7 items-center justify-center rounded-lg bg-[var(--pill-koreader)]/10 text-[var(--pill-koreader)]"
+                <span
+                  class="flex size-7 items-center justify-center rounded-lg bg-[var(--pill-media-audiobook)]/10 text-[var(--pill-media-audiobook)]"
                   ><Headphones :size="15"
                 /></span>
                 {{ t('monitored.formats.audiobooks') }}

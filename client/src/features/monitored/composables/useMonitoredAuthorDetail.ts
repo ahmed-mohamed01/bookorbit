@@ -1,12 +1,28 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import type { MonitoredAuthorDetail, MonitoredFormat, MonitoredGrouping, MonitoredSort, MonitoredWork, MonitoredWorkPatch } from '@bookorbit/types'
+import type {
+  MonitorMode,
+  MonitoredAuthorDetail,
+  MonitoredFormat,
+  MonitoredGrouping,
+  MonitoredSort,
+  MonitoredStatusFilter,
+  MonitoredWork,
+  MonitoredWorkPatch,
+} from '@bookorbit/types'
 import { storage } from '@/services/storage'
-import { fetchMonitoredAuthorDetail, requestMonitoredWork, updateMonitoredAuthor, updateMonitoredWork } from '../api/monitored'
+import {
+  fetchMonitoredAuthorDetail,
+  refreshMonitoredAuthor,
+  requestMonitoredWork,
+  updateMonitoredAuthor,
+  updateMonitoredWork,
+} from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
 import { collapseEntryFor, emptyCollapseEntry, readCollapseStore, writeCollapseEntry, type MonitoredCollapseEntry } from '../lib/group-collapse'
 import { groupWorks, sortWorks } from '../lib/grouping'
+import { readAuthorStatusFilters } from '../lib/status-filter'
 import {
   countReviewKinds,
   DEFAULT_MONITORED_DISPLAY,
@@ -23,6 +39,7 @@ const ORDER_STORAGE_KEY = 'monitored:authorDetail:order'
 const GROUP_STORAGE_KEY = 'monitored:authorDetail:group'
 const DISPLAY_STORAGE_KEY = 'monitored:authorDetail:display'
 const COLLAPSE_STORAGE_KEY = 'monitored:authorDetail:collapsed'
+const STATUS_STORAGE_KEY = 'monitored:authorDetail:status:v2'
 
 function firstQueryValue(value: unknown): string | undefined {
   return Array.isArray(value) ? value[0] : typeof value === 'string' ? value : undefined
@@ -56,6 +73,7 @@ export function useMonitoredAuthorDetail() {
   const order = ref<SortOrder>(parseOrder(route.query.order ?? storage.get<string | null>(ORDER_STORAGE_KEY, null)))
   const grouping = ref<MonitoredGrouping>(parseGrouping(route.query.group ?? storage.get<string | null>(GROUP_STORAGE_KEY, null)))
   const collapse = ref<MonitoredCollapseEntry>(emptyCollapseEntry())
+  const statusFilters = ref<MonitoredStatusFilter[]>(readAuthorStatusFilters(storage.get<unknown>(STATUS_STORAGE_KEY, null)))
 
   const authorId = computed(() => String(route.params.id ?? ''))
   // Collapsed sections are remembered per author, so returning to one finds the catalog as it was
@@ -86,6 +104,11 @@ export function useMonitoredAuthorDetail() {
     if (!formats) return ['ebook', 'audiobook']
     return (Object.keys(formats) as MonitoredFormat[]).filter((format) => formats[format]?.mode !== 'off')
   })
+  const formatModes = computed<Partial<Record<MonitoredFormat, MonitorMode>>>(() => {
+    const formats = detail.value?.author.formats
+    if (!formats) return {}
+    return Object.fromEntries((Object.keys(formats) as MonitoredFormat[]).map((format) => [format, formats[format].mode]))
+  })
 
   function syncRouteQuery() {
     void router.replace({
@@ -112,6 +135,9 @@ export function useMonitoredAuthorDetail() {
         // opens. The withheld classes measured 13-59 kB of extra text on the largest catalogs here,
         // which buys instant switches and counts that are never a guess.
         includeHidden: true,
+        // The status filter narrows on the server. Works outside the default list always come back,
+        // because the Display menu already decides which of those classes this page shows.
+        status: [...statusFilters.value, 'hidden'],
       })
       detail.value = loaded
       // Another author, or a promotion that emptied the kind, leaves no row to click back out of:
@@ -128,6 +154,13 @@ export function useMonitoredAuthorDetail() {
     } finally {
       loading.value = false
     }
+  }
+
+  /** The refresh response is not applied: a normal load keeps the page's filter, so it shows what a reload would. */
+  async function refreshAuthor(): Promise<void> {
+    if (!authorId.value) return
+    await refreshMonitoredAuthor(authorId.value)
+    await load()
   }
 
   function setSort(value: MonitoredSort) {
@@ -204,6 +237,12 @@ export function useMonitoredAuthorDetail() {
 
   function resetDisplay(): void {
     setDisplay({ ...DEFAULT_MONITORED_DISPLAY })
+  }
+
+  async function setStatusFilters(value: MonitoredStatusFilter[]): Promise<void> {
+    statusFilters.value = value
+    storage.set(STATUS_STORAGE_KEY, value)
+    await load()
   }
 
   async function setPaused(paused: boolean): Promise<void> {
@@ -288,7 +327,7 @@ export function useMonitoredAuthorDetail() {
     if (!works || index < 0) return
     const updated = await updateMonitoredWork(workId, patch)
     works.splice(index, 1, updated)
-    if (patch.hidden !== undefined) {
+    if (patch.hidden !== undefined || patch.automaticVisibility) {
       const next = new Set(hiddenWorkIds.value)
       if (patch.hidden) next.add(workId)
       else next.delete(workId)
@@ -314,7 +353,11 @@ export function useMonitoredAuthorDetail() {
     displayCounts,
     reviewKindCounts,
     monitoredFormats,
+    formatModes,
+    statusFilters,
+    setStatusFilters,
     load,
+    refreshAuthor,
     setSort,
     setOrder,
     setGrouping,

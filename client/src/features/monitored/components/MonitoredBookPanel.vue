@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BellDot, BookOpen, Check, Headphones, Loader2, RefreshCw, Search, Eye, EyeOff, TriangleAlert, X } from '@lucide/vue'
-import type { MonitoredFormat, MonitoredWork, ReleaseCandidateItem } from '@bookorbit/types'
-import { Sheet, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { EyeOff, MoreVertical, RefreshCw, RotateCcw, X } from '@lucide/vue'
+import {
+  MONITORED_FORMATS,
+  type BookDetail,
+  type MonitorMode,
+  type MonitoredFormat,
+  type MonitoredWork,
+  type ReleaseCandidateItem,
+} from '@bookorbit/types'
+import { Sheet, SheetClose, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet'
+import { useRoute } from 'vue-router'
+import BookDetailSection from '@/features/book/components/detail/details/BookDetailSection.vue'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { bookCoverStyle } from '@/features/book/lib/book-cover'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { useBookDetail } from '@/features/book/composables/useBookDetail'
@@ -15,24 +21,36 @@ import { useSafeHtml } from '@/features/book/composables/useSafeHtml'
 import { useMonitoredReleases } from '../composables/useMonitoredReleases'
 import { useReleaseRows } from '../composables/useReleaseRows'
 import { useWorkReleaseDates } from '../composables/useWorkReleaseDates'
-import { isMonitoredAcquisitionState, monitoredFormatState, monitoredPendingLabelKey } from '../lib/monitored-format-state'
-import { monitoredReleaseWindowStarted } from '../lib/release-date'
-import { isWorkVisible } from '../lib/work-visibility'
-import MonitoredFormatPill from './MonitoredFormatPill.vue'
-import MonitoredReleaseDatePopover from './MonitoredReleaseDatePopover.vue'
-import MonitoredRequestProgress from './MonitoredRequestProgress.vue'
-import MonitoredWorkFiles from './MonitoredWorkFiles.vue'
-import ReleaseResultRow from './ReleaseResultRow.vue'
+import { normalizeSeriesName } from '../lib/grouping'
+import { subtitleRepeatsSeries } from '../lib/subtitle'
+import { workFormatStatus, type MonitoredFormatStatus } from '../lib/format-status'
+import MonitoredFormatSlot from './MonitoredFormatSlot.vue'
+import MonitoredSlotReleases from './MonitoredSlotReleases.vue'
+import MonitoredSynopsis from './MonitoredSynopsis.vue'
+import MonitoredTagPills from './MonitoredTagPills.vue'
+import MonitoredVisibilityBanner from './MonitoredVisibilityBanner.vue'
 
-type PanelTab = 'details' | 'files' | 'ebook' | 'audiobook'
-
-const props = defineProps<{
-  work: MonitoredWork | null
-  authorName: string
-  canManage: boolean
-  monitoredFormats?: MonitoredFormat[]
-  open: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    work: MonitoredWork | null
+    authorName: string
+    canManage: boolean
+    monitoredFormats?: MonitoredFormat[]
+    /** The monitored author this work belongs to, so the byline can link to its page. */
+    authorId?: string | null
+    /** False on that author's own page, where the byline would link to where the reader already is. */
+    linkAuthor?: boolean
+    /** The author's mode per format: whether a release is grabbed or only announced. */
+    formatModes?: Partial<Record<MonitoredFormat, MonitorMode>>
+    /** The monitored author's genres, shown as tags when no owned library book has any. */
+    authorGenres?: string[]
+    authorPaused?: boolean
+    /** The page behind the panel can resume the author without leaving. */
+    canResumeAuthor?: boolean
+    open: boolean
+  }>(),
+  { linkAuthor: true },
+)
 const emit = defineEmits<{
   'update:open': [value: boolean]
   request: [work: MonitoredWork, format: MonitoredFormat, autoDownload: boolean]
@@ -40,176 +58,146 @@ const emit = defineEmits<{
   filed: [work: MonitoredWork, requestId: number]
   'toggle-monitor': [work: MonitoredWork, format: MonitoredFormat, value: boolean]
   'toggle-hidden': [work: MonitoredWork, value: boolean]
+  /** Drops the owner's hidden or kept choice, so the verdict decides again. */
+  'set-automatic': [work: MonitoredWork]
+  'resume-author': []
   /** A release date change answers with the whole work, for every list showing it to read from. */
   'work-updated': [work: MonitoredWork]
 }>()
 
+const SERIES_IN_HEADER = 2
+const visibleSeries = computed(() => seriesLinks.value.slice(0, SERIES_IN_HEADER))
+const moreSeries = computed(() => seriesLinks.value.slice(SERIES_IN_HEADER).map((series) => series.label))
+const showSubtitle = computed(() => !!props.work?.subtitle && !subtitleRepeatsSeries(props.work.subtitle, props.work.seriesMemberships ?? []))
+
 const { t } = useI18n()
 
-const activeTab = ref<PanelTab>('details')
 const imageFailed = ref(false)
-const autoDownload = ref(true)
 
 const workIdRef = computed<string | null>(() => props.work?.id ?? null)
 const coverUrl = computed(() => toMonitoredCoverUrl(props.work?.coverUrl))
 const fallbackStyle = computed(() => bookCoverStyle(props.work?.title ?? ''))
+const authorRoute = computed(() => (props.authorId ? { name: 'monitored-author', params: { id: props.authorId } } : null))
+const bylineRoute = computed(() => (props.linkAuthor === false ? null : authorRoute.value))
 
-const seriesLine = computed(() => {
-  const work = props.work
-  if (!work?.seriesName) return null
-  return work.seriesIndex != null ? `${work.seriesName} #${work.seriesIndex}` : work.seriesName
-})
-
-const headerMeta = computed(() => {
-  const parts: string[] = [props.authorName]
-  if (seriesLine.value) parts.push(seriesLine.value)
-  if (props.work?.releaseYear != null) parts.push(String(props.work.releaseYear))
-  return parts.filter(Boolean).join(' · ')
+const seriesLinks = computed(() => {
+  const libraryIds = new Map<string, number>()
+  for (const book of [detail.value, secondaryDetail.value]) {
+    for (const membership of book?.seriesMemberships ?? []) libraryIds.set(normalizeSeriesName(membership.seriesName), membership.seriesId)
+    if (book?.seriesId != null && book.seriesName) libraryIds.set(normalizeSeriesName(book.seriesName), book.seriesId)
+  }
+  return (props.work?.seriesMemberships ?? []).map((membership) => {
+    const libraryId = libraryIds.get(normalizeSeriesName(membership.name))
+    const to =
+      libraryId != null
+        ? { name: 'series-detail', params: { seriesId: libraryId } }
+        : bylineRoute.value
+          ? { ...bylineRoute.value, query: { group: 'series' } }
+          : null
+    return { label: membership.index != null ? `${membership.name} #${membership.index}` : membership.name, to }
+  })
 })
 
 const safeDescription = useSafeHtml(() => props.work?.description)
 
-const flagLabels = computed(() => (props.work?.flags ?? []).map((flag) => t(`monitored.panel.flags.${flag}`)))
-const showVerdict = computed(() => props.work != null && props.work.verdict !== 'verified')
-
-const { detail, loading: detailLoading, fetch: fetchDetail } = useBookDetail()
-// The ebook and the audiobook are separate library rows; matchedBookIds carries each format's
-// row so the Files tab can show both file trees, not just the primary match's.
-const { detail: secondaryDetail, fetch: fetchSecondaryDetail } = useBookDetail()
+// The ebook and the audiobook are separate library rows; matchedBookIds carries each format's row.
+const { detail, error: detailError, notFound: detailNotFound, fetch: fetchDetail } = useBookDetail()
+const { detail: secondaryDetail, error: secondaryError, notFound: secondaryNotFound, fetch: fetchSecondaryDetail } = useBookDetail()
 const secondaryBookId = computed(() => {
   const ids = props.work?.matchedBookIds
   if (!ids) return null
   const primary = props.work?.matchedBookId
   return [ids.ebook, ids.audiobook].find((id) => id != null && id !== primary) ?? null
 })
+const workTags = computed(() => {
+  for (const book of [detail.value, secondaryDetail.value]) {
+    if (!book) continue
+    const own = book.genres.length ? book.genres : book.tags
+    if (own.length) return own
+  }
+  return props.authorGenres ?? []
+})
+const loadedBooks = computed<Array<BookDetail | null>>(() => [detail.value, secondaryDetail.value])
+
+function bookFor(id: number | null | undefined): BookDetail | null {
+  if (id == null) return null
+  return loadedBooks.value.find((book) => book?.id === id) ?? null
+}
+
+function bookIdForFormat(format: MonitoredFormat): number | null {
+  const work = props.work
+  if (!work) return null
+  return work.matchedBookIds?.[format] ?? (statuses.value[format] === 'owned' ? work.matchedBookId : null) ?? null
+}
+
+/** A lookup that failed, or found no book, says so; a book still on its way does not. */
+function bookFailedFor(id: number | null): boolean {
+  if (id == null) return false
+  if (id === props.work?.matchedBookId) return detailError.value !== null || detailNotFound.value
+  if (id === secondaryBookId.value) return secondaryError.value !== null || secondaryNotFound.value
+  return false
+}
+
+function handleRetryBook(format: MonitoredFormat) {
+  const id = bookIdForFormat(format)
+  if (id == null) return
+  if (id === props.work?.matchedBookId) void fetchDetail(id)
+  else if (id === secondaryBookId.value) void fetchSecondaryDetail(id)
+}
 
 const ebookReleases = useMonitoredReleases(workIdRef, 'ebook')
 const audioReleases = useMonitoredReleases(workIdRef, 'audiobook')
 const releaseDates = useWorkReleaseDates(workIdRef)
 /** Only one lookup is open at a time, and a saved date closes the one that saved it. */
 const openDatesFormat = ref<MonitoredFormat | null>(null)
-const activeReleases = computed(() => (activeTab.value === 'audiobook' ? audioReleases : ebookReleases))
-const activeFormat = computed<MonitoredFormat>(() => (activeTab.value === 'audiobook' ? 'audiobook' : 'ebook'))
+const openReleases = ref<Record<MonitoredFormat, boolean>>({ ebook: false, audiobook: false })
 
-/**
- * Which row a grab made in this panel session came from, per work and format, so the request that
- * grab created can report itself under the release it was taken from rather than somewhere else on
- * the tab. Keyed rather than a single slot because the two format tabs each have their own request.
- */
-const grabbedRows = ref<Record<string, { releaseKey: string; requestId: number }>>({})
+function releasesFor(format: MonitoredFormat) {
+  return format === 'audiobook' ? audioReleases : ebookReleases
+}
 
-/**
- * The download this panel is watching has landed in the library. The panel itself holds no owned
- * state - the work it renders belongs to the page behind it - so this only reports the moment, and
- * the page refetches the work it is now wrong about.
- */
-function handleProgressFiled(requestId: number) {
-  if (!props.work) return
-  grabbedRows.value = Object.fromEntries(Object.entries(grabbedRows.value).filter(([, grabbed]) => grabbed.requestId !== requestId))
+/** Requests this panel already reported as filed; the slots watch their own request each. */
+const announcedFiled = new Set<number>()
+
+function handleSlotFiled(requestId: number) {
+  if (!props.work || announcedFiled.has(requestId)) return
+  announcedFiled.add(requestId)
   emit('filed', props.work, requestId)
 }
-
-function releaseKey(release: ReleaseCandidateItem): string {
-  return `${release.indexerId}:${release.guid}`
-}
-
-const activeGrabKey = computed(() => (props.work ? `${props.work.id}:${activeFormat.value}` : null))
-const activeGrab = computed(() => (activeGrabKey.value ? (grabbedRows.value[activeGrabKey.value] ?? null) : null))
-
-const tabs = computed<{ key: PanelTab; label: string }[]>(() => [
-  { key: 'details', label: t('monitored.panel.tabs.details') },
-  { key: 'files', label: t('monitored.panel.tabs.files') },
-  { key: 'ebook', label: t('monitored.panel.tabs.ebookReleases') },
-  { key: 'audiobook', label: t('monitored.panel.tabs.audiobookReleases') },
-])
 
 function isFormatMonitored(format: MonitoredFormat): boolean {
   return props.monitoredFormats == null || props.monitoredFormats.includes(format)
 }
 
-const ebookState = computed(() => (props.work ? monitoredFormatState(props.work, 'ebook') : 'wanted'))
-const audiobookState = computed(() => (props.work ? monitoredFormatState(props.work, 'audiobook') : 'wanted'))
-const ebookOwned = computed(() => ebookState.value === 'available')
-const audiobookOwned = computed(() => audiobookState.value === 'available')
-const ebookQueued = computed(() => isMonitoredAcquisitionState(ebookState.value))
-const audiobookQueued = computed(() => isMonitoredAcquisitionState(audiobookState.value))
+/** Formats a request was just sent for from this panel, until the page answers with the work. */
+const requestingFormats = ref(new Set<MonitoredFormat>())
 
-/**
- * The request this work and format is downloading under. The local marker leads so a fresh grab
- * reports immediately whatever the parent does with the work. A server request stays for as long as
- * it has acquisition work left, and one more beat after it fails: a download that died is the one
- * outcome the user cannot see anywhere else on this panel, and the block names the reason. The
- * request buttons are enabled again beside it, because fulfilment will take a fresh attempt.
- */
-const activeRequestId = computed<number | null>(() => {
-  if (activeGrab.value) return activeGrab.value.requestId
+const statuses = computed<Record<MonitoredFormat, MonitoredFormatStatus>>(() => {
   const work = props.work
-  if (!work) return null
-  const state = activeFormat.value === 'ebook' ? ebookState.value : audiobookState.value
-  if (state === 'available') return null
-  if (!isMonitoredAcquisitionState(state) && work.requestStatuses?.[activeFormat.value] !== 'failed') return null
-  return work.requestIds?.[activeFormat.value] ?? null
+  const fallback: Record<MonitoredFormat, MonitoredFormatStatus> = { ebook: 'unannounced', audiobook: 'unannounced' }
+  if (!work) return fallback
+  return Object.fromEntries(
+    MONITORED_FORMATS.map((format) => [
+      format,
+      workFormatStatus(work, format, { authorWatches: isFormatMonitored(format), optimisticQueued: requestingFormats.value.has(format) }),
+    ]),
+  ) as Record<MonitoredFormat, MonitoredFormatStatus>
 })
 
-/** Only a row grabbed here can be named, so only that one expands. */
-const expandedReleaseKey = computed(() => (activeRequestId.value === null ? null : (activeGrab.value?.releaseKey ?? null)))
-const expandedRowOnScreen = computed(
-  () => expandedReleaseKey.value !== null && activeReleases.value.releases.value.some((release) => releaseKey(release) === expandedReleaseKey.value),
-)
+const hiddenByUser = computed(() => props.work?.userVisibility === 'hidden')
 
-/**
- * Where the block goes when no row owns it: a request that predates this panel session, or one
- * whose row has been searched away. Above the list, because it is the first thing to read.
- */
-const topProgressRequestId = computed(() => (expandedRowOnScreen.value ? null : activeRequestId.value))
-const monitorEbookOn = computed(() => props.work?.monitorFormats?.ebook !== false)
-const monitorAudiobookOn = computed(() => props.work?.monitorFormats?.audiobook !== false)
-const ebookReleaseStarted = computed(() => monitoredReleaseWindowStarted(props.work?.ebookReleaseDate, props.work?.ebookDatePrecision))
-const audiobookReleaseStarted = computed(() => monitoredReleaseWindowStarted(props.work?.audioReleaseDate, props.work?.audioDatePrecision))
-const isHidden = computed(() => props.work != null && !isWorkVisible(props.work))
-const pillBase = 'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors'
-const pillMuted = 'border-border bg-muted text-muted-foreground hover:text-foreground'
-
-function pendingLabel(format: MonitoredFormat): string {
-  return t(monitoredPendingLabelKey(format === 'ebook' ? ebookState.value : audiobookState.value, format))
-}
-
-function toggleMonitor(format: MonitoredFormat) {
-  if (!props.work) return
-  const next = format === 'ebook' ? !monitorEbookOn.value : !monitorAudiobookOn.value
-  emit('toggle-monitor', props.work, format, next)
-}
-
-function handleToggleEbookMonitor() {
-  toggleMonitor('ebook')
-}
-
-function handleToggleAudiobookMonitor() {
-  toggleMonitor('audiobook')
-}
-
-function toggleHidden() {
-  if (props.work) emit('toggle-hidden', props.work, !isHidden.value)
-}
 /** The same rule that decides whether this viewer may act on a format at all. */
 function canEditFormat(format: MonitoredFormat): boolean {
   return props.canManage && isFormatMonitored(format)
 }
 
-const showEbookRequest = computed(() => canEditFormat('ebook'))
-const showAudiobookRequest = computed(() => canEditFormat('audiobook'))
-const showAutoDownload = computed(
-  () =>
-    (showEbookRequest.value && !ebookOwned.value && !ebookQueued.value) ||
-    (showAudiobookRequest.value && !audiobookOwned.value && !audiobookQueued.value),
-)
-
 function resetReleaseState() {
-  grabbedRows.value = {}
+  openReleases.value = { ebook: false, audiobook: false }
   for (const source of [ebookReleases, audioReleases]) {
     source.releases.value = []
     source.searched.value = false
     source.error.value = null
+    source.grabError.value = null
     source.loading.value = false
   }
 }
@@ -217,13 +205,21 @@ function resetReleaseState() {
 watch(
   () => props.work?.id ?? null,
   () => {
-    activeTab.value = 'details'
     imageFailed.value = false
-    autoDownload.value = true
     openDatesFormat.value = null
+    requestingFormats.value = new Set()
+    announcedFiled.clear()
     resetReleaseState()
   },
   { immediate: true },
+)
+
+// A fresh work from the page is the server's answer to whatever was sent, so the local marker goes.
+watch(
+  () => props.work,
+  () => {
+    requestingFormats.value = new Set()
+  },
 )
 
 watch(
@@ -247,6 +243,10 @@ const releaseRows = useReleaseRows(
   computed(() => props.canManage),
   (format) => releaseDates.stateFor(format),
 )
+
+function rowFor(format: MonitoredFormat) {
+  return releaseRows.value.find((row) => row.format === format)!
+}
 
 function handleReleaseDatesOpen(format: MonitoredFormat, open: boolean) {
   openDatesFormat.value = open ? format : null
@@ -278,63 +278,95 @@ function handleRefreshReleaseDates() {
   void refreshReleaseDates()
 }
 
-function selectTab(tab: PanelTab) {
-  activeTab.value = tab
-}
-
 function handleOpenChange(value: boolean) {
   emit('update:open', value)
 }
+
+// The panel is mounted by the page it was opened from, so a link out of it would otherwise leave it
+// open over the destination.
+const route = useRoute()
+watch(
+  () => route.path,
+  () => {
+    if (props.open) emit('update:open', false)
+  },
+)
 
 function handleImageError() {
   imageFailed.value = true
 }
 
-function handleSearchReleases() {
-  void activeReleases.value.search()
+function openReleaseList(format: MonitoredFormat) {
+  openReleases.value = { ...openReleases.value, [format]: true }
+  const source = releasesFor(format)
+  if (props.canManage && !source.searched.value && !source.loading.value) void source.search()
+}
+
+function closeReleaseList(format: MonitoredFormat) {
+  openReleases.value = { ...openReleases.value, [format]: false }
+}
+
+function handleToggleReleases(format: MonitoredFormat) {
+  if (openReleases.value[format]) closeReleaseList(format)
+  else openReleaseList(format)
 }
 
 /**
- * A grab hands the work over to the Requests pipeline, and the row it was taken from opens to show
- * that pipeline running. The panel stays where it is: being thrown onto another page to watch a
- * download start is the opposite of what clicking Grab asks for, and the Requests drawer is still
- * one link away inside the block. The parent hears `grabbed` so the list behind reads as queued.
+ * A grab hands the work over to the Requests pipeline. The panel stays where it is: being thrown
+ * onto another page to watch a download start is the opposite of what clicking Grab asks for, and
+ * the format's request button turns into a link to the request as soon as the page answers.
  */
-async function handleRowGrab(release: ReleaseCandidateItem) {
+async function handleGrab(format: MonitoredFormat, release: ReleaseCandidateItem) {
   const work = props.work
   if (!work) return
-  const format = activeFormat.value
-  const requestId = await activeReleases.value.grab(release)
+  const requestId = await releasesFor(format).grab(release)
   if (requestId === null) return
-  grabbedRows.value = { ...grabbedRows.value, [`${work.id}:${format}`]: { releaseKey: releaseKey(release), requestId } }
   emit('grabbed', work, format, requestId)
 }
 
-function handleRequestEbook() {
-  if (props.work && !ebookOwned.value && !ebookQueued.value && ebookReleaseStarted.value) {
-    emit('request', props.work, 'ebook', autoDownload.value)
-  }
+function handleRequest(format: MonitoredFormat, autoDownload: boolean) {
+  const work = props.work
+  if (!work || !canEditFormat(format) || requestingFormats.value.has(format)) return
+  requestingFormats.value = new Set([...requestingFormats.value, format])
+  emit('request', work, format, autoDownload)
 }
 
-function handleRequestAudiobook() {
-  if (props.work && !audiobookOwned.value && !audiobookQueued.value && audiobookReleaseStarted.value) {
-    emit('request', props.work, 'audiobook', autoDownload.value)
-  }
+function handleAskApproval(format: MonitoredFormat) {
+  handleRequest(format, false)
+}
+
+function handleToggleMonitor(format: MonitoredFormat, value: boolean) {
+  if (props.work) emit('toggle-monitor', props.work, format, value)
+}
+
+function handleHide() {
+  if (props.work) emit('toggle-hidden', props.work, true)
+}
+
+function handleKeep() {
+  if (props.work) emit('toggle-hidden', props.work, false)
+}
+
+function handleAutomatic() {
+  if (props.work) emit('set-automatic', props.work)
+}
+
+function handleResumeAuthor() {
+  emit('resume-author')
 }
 </script>
 
 <template>
   <Sheet :open="props.open" @update:open="handleOpenChange">
-    <SheetContent side="right" class="w-full p-0 sm:max-w-xl">
+    <SheetContent side="right" hide-close class="w-full gap-0 bg-background p-0 sm:max-w-xl">
       <SheetTitle class="sr-only">{{ work?.title ? t('monitored.panel.titleFor', { title: work.title }) : t('monitored.panel.title') }}</SheetTitle>
       <SheetDescription class="sr-only">{{ t('monitored.panel.description') }}</SheetDescription>
 
-      <div v-if="work" class="flex h-full flex-col">
-        <!-- Header -->
-        <div class="shrink-0 border-b border-border p-5 pt-10">
-          <div class="flex items-start gap-4">
+      <div v-if="work" class="flex h-full min-w-0 flex-col bg-background">
+        <div class="min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-auto p-4 sm:p-5">
+          <div class="flex items-start gap-3 sm:gap-4">
             <div
-              class="relative aspect-2/3 w-24 shrink-0 overflow-hidden rounded shadow-sm"
+              class="relative aspect-2/3 w-28 shrink-0 overflow-hidden rounded-sm shadow-md"
               :style="coverUrl && !imageFailed ? undefined : fallbackStyle"
             >
               <img
@@ -354,309 +386,150 @@ function handleRequestAudiobook() {
               </div>
             </div>
 
-            <div class="min-w-0 flex-1 pr-2">
-              <h2 class="text-sm font-bold leading-snug text-foreground line-clamp-3">{{ work.title }}</h2>
-              <p v-if="work.subtitle" class="mt-0.5 text-xs text-muted-foreground line-clamp-2">{{ work.subtitle }}</p>
-              <p class="mt-2 text-xs text-muted-foreground">{{ headerMeta }}</p>
-              <div class="mt-2 flex flex-wrap items-center gap-1.5">
-                <Badge v-if="showVerdict" variant="outline">{{ t(`monitored.panel.verdict.${work.verdict}`) }}</Badge>
-              </div>
-              <div class="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px]">
-                <span class="text-muted-foreground">{{ t('monitored.panel.availableLabel') }}</span>
-                <MonitoredFormatPill format="ebook" :muted="!ebookOwned" />
-                <MonitoredFormatPill format="audiobook" :muted="!audiobookOwned" />
-                <template v-if="canManage">
-                  <span class="ml-1.5 text-muted-foreground">{{ t('monitored.panel.monitoringLabel') }}</span>
-                  <button
-                    type="button"
-                    :class="[pillBase, monitorEbookOn ? 'border-[var(--pill-info)]/40 bg-[var(--pill-info)]/10 text-[var(--pill-info)]' : pillMuted]"
-                    :aria-pressed="monitorEbookOn"
-                    @click="handleToggleEbookMonitor"
+            <div class="min-w-0 flex-1">
+              <h2 class="line-clamp-3 text-[17px] leading-snug font-bold break-words text-foreground">{{ work.title }}</h2>
+              <p v-if="showSubtitle" class="mt-0.5 line-clamp-2 text-xs leading-snug break-words text-muted-foreground">{{ work.subtitle }}</p>
+              <p class="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground" data-testid="byline">
+                <template v-if="authorName">
+                  <RouterLink
+                    v-if="bylineRoute"
+                    :to="bylineRoute"
+                    class="font-semibold text-foreground transition-colors hover:text-primary hover:underline underline-offset-2"
+                    >{{ authorName }}</RouterLink
                   >
-                    <Check v-if="monitorEbookOn" :size="11" aria-hidden="true" />
-                    <X v-else :size="11" aria-hidden="true" />
-                    {{ t('monitored.formats.ebook') }}
-                  </button>
-                  <button
-                    type="button"
-                    :class="[
-                      pillBase,
-                      monitorAudiobookOn ? 'border-[var(--pill-koreader)]/40 bg-[var(--pill-koreader)]/10 text-[var(--pill-koreader)]' : pillMuted,
-                    ]"
-                    :aria-pressed="monitorAudiobookOn"
-                    @click="handleToggleAudiobookMonitor"
-                  >
-                    <Check v-if="monitorAudiobookOn" :size="11" aria-hidden="true" />
-                    <X v-else :size="11" aria-hidden="true" />
-                    {{ t('monitored.formats.audiobook') }}
-                  </button>
-                  <button
-                    type="button"
-                    :class="[
-                      pillBase,
-                      isHidden ? 'border-[var(--pill-warning)]/40 bg-[var(--pill-warning)]/10 text-[var(--pill-warning)]' : pillMuted,
-                    ]"
-                    :aria-pressed="isHidden"
-                    @click="toggleHidden"
-                  >
-                    <EyeOff v-if="isHidden" :size="11" aria-hidden="true" />
-                    <Eye v-else :size="11" aria-hidden="true" />
-                    {{ isHidden ? t('monitored.panel.hiddenPill') : t('monitored.panel.hidePill') }}
-                  </button>
+                  <span v-else class="font-semibold text-foreground">{{ authorName }}</span>
                 </template>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Tab strip -->
-        <div class="shrink-0 border-b border-border px-3">
-          <div class="no-scrollbar flex items-stretch gap-0 overflow-x-auto">
-            <button
-              v-for="tab in tabs"
-              :key="tab.key"
-              class="h-11 whitespace-nowrap border-b-2 px-3 text-sm font-medium transition-colors"
-              :class="activeTab === tab.key ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'"
-              @click="selectTab(tab.key)"
-            >
-              {{ tab.label }}
-            </button>
-          </div>
-        </div>
-
-        <!-- Body -->
-        <div class="min-h-0 flex-1 overflow-y-auto p-5">
-          <!-- Details -->
-          <div v-if="activeTab === 'details'" class="space-y-4">
-            <div v-if="flagLabels.length" class="flex flex-wrap gap-1.5">
-              <span
-                v-for="flag in flagLabels"
-                :key="flag"
-                class="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
+                <template v-if="work.releaseYear">
+                  <span v-if="authorName" aria-hidden="true">&middot;</span>
+                  <span>{{ work.releaseYear }}</span>
+                </template>
+              </p>
+              <p
+                v-if="seriesLinks.length"
+                class="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground"
+                data-testid="series-row"
               >
-                {{ flag }}
-              </span>
+                <template v-for="(series, index) in visibleSeries" :key="series.label">
+                  <span v-if="index > 0" aria-hidden="true">&middot;</span>
+                  <RouterLink
+                    v-if="series.to"
+                    :to="series.to"
+                    class="max-w-full truncate transition-colors hover:text-primary hover:underline underline-offset-2"
+                    data-testid="series-link"
+                    >{{ series.label }}</RouterLink
+                  >
+                  <span v-else class="max-w-full truncate">{{ series.label }}</span>
+                </template>
+                <span v-if="moreSeries.length" :title="moreSeries.join(', ')" data-testid="series-more">{{
+                  t('monitored.panel.moreSeries', { count: moreSeries.length })
+                }}</span>
+              </p>
+              <MonitoredTagPills :tags="workTags" />
             </div>
 
-            <dl v-if="work.seriesMemberships.length">
-              <dt class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{{ t('monitored.panel.series') }}</dt>
-              <dd class="mt-0.5 text-sm text-foreground">
-                <span v-for="(membership, index) in work.seriesMemberships" :key="`${membership.name}-${index}`">
-                  <span v-if="index > 0" class="text-muted-foreground"> &middot; </span>
-                  {{ membership.index != null ? `${membership.name} #${membership.index}` : membership.name }}
-                </span>
-              </dd>
-            </dl>
-
-            <section>
-              <div class="flex min-h-8 items-center justify-between gap-2">
-                <h3 class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                  {{ t('monitored.panel.releaseDates.heading') }}
-                </h3>
-                <TooltipProvider v-if="canManage">
-                  <Tooltip>
-                    <TooltipTrigger as-child>
-                      <button
-                        type="button"
-                        class="-mr-1.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60"
-                        :disabled="releaseDates.refreshing.value"
-                        :aria-label="t('monitored.panel.releaseDates.refresh')"
-                        @click="handleRefreshReleaseDates"
-                      >
-                        <RefreshCw :size="14" :class="releaseDates.refreshing.value ? 'animate-spin' : undefined" aria-hidden="true" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>{{ t('monitored.panel.releaseDates.refresh') }}</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-
-              <dl class="mt-1 space-y-3">
-                <div v-for="row in releaseRows" :key="row.format">
-                  <dt class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{{ row.label }}</dt>
-                  <dd
-                    class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm"
-                    :class="row.muted ? 'text-muted-foreground' : 'text-foreground'"
+            <div class="-mt-1.5 -mr-1.5 flex shrink-0 items-center gap-1">
+              <button
+                v-if="canManage && !hiddenByUser"
+                type="button"
+                class="hidden h-7 items-center gap-1 rounded-md border border-border px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted sm:inline-flex [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11 [@media(pointer:coarse)]:justify-center"
+                @click="handleHide"
+              >
+                <EyeOff :size="13" aria-hidden="true" />
+                {{ t('monitored.panel.hide') }}
+              </button>
+              <DropdownMenu v-if="canManage">
+                <DropdownMenuTrigger as-child>
+                  <button
+                    type="button"
+                    class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+                    :aria-label="t('monitored.panel.moreActions')"
                   >
-                    <MonitoredReleaseDatePopover
-                      v-if="row.editable"
-                      :format="row.format"
-                      :open="openDatesFormat === row.format"
-                      :label="row.value"
-                      :muted="row.muted"
-                      :current-date="row.date"
-                      :source="row.source"
-                      :details="row.details"
-                      :suggestion="row.suggestion"
-                      :state="row.dates"
-                      @open-change="handleReleaseDatesOpen"
-                      @set="handleReleaseDateSet"
-                      @clear="handleReleaseDateClear"
-                    />
-                    <TooltipProvider v-else-if="row.details.length">
-                      <Tooltip>
-                        <TooltipTrigger as-child>
-                          <span tabindex="0" class="rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring">{{
-                            row.value
-                          }}</span>
-                        </TooltipTrigger>
-                        <TooltipContent class="max-w-64">
-                          <span v-for="line in row.details" :key="line" class="block">{{ line }}</span>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                    <span v-else>{{ row.value }}</span>
-                    <TooltipProvider v-if="row.suggestion && row.editable">
-                      <Tooltip>
-                        <TooltipTrigger as-child>
-                          <span
-                            tabindex="0"
-                            data-testid="release-date-suggestion"
-                            class="inline-flex items-center rounded-sm text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                          >
-                            <BellDot :size="14" aria-hidden="true" />
-                            <span class="sr-only">{{ t('monitored.panel.releaseDates.suggestedLabel') }}</span>
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent class="max-w-64">
-                          <span class="block">{{ row.suggestion.text }}</span>
-                          <span class="block">{{ row.suggestionHint }}</span>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                    <TooltipProvider v-if="row.unconfirmed">
-                      <Tooltip>
-                        <TooltipTrigger as-child>
-                          <span tabindex="0" class="inline-flex items-center rounded-sm text-warning">
-                            <TriangleAlert :size="14" aria-hidden="true" />
-                            <span class="sr-only">{{ t('monitored.panel.releaseDates.notConfirmed') }}</span>
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent class="max-w-64">{{ row.unconfirmedHint }}</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </dd>
-                </div>
-              </dl>
-            </section>
-
-            <div class="border-t border-border pt-4">
-              <div v-if="work.description" class="text-sm leading-relaxed text-foreground" v-html="safeDescription" />
-              <p v-else class="text-xs italic text-muted-foreground">{{ t('monitored.panel.noDescription') }}</p>
+                    <MoreVertical :size="16" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" class="w-56">
+                  <DropdownMenuItem v-if="!hiddenByUser" class="sm:hidden" @click="handleHide">
+                    <EyeOff />
+                    {{ t('monitored.panel.hide') }}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem :disabled="releaseDates.refreshing.value" @click="handleRefreshReleaseDates">
+                    <RefreshCw />
+                    {{ t('monitored.panel.releaseDates.refresh') }}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem v-if="work.userVisibility != null" @click="handleAutomatic">
+                    <RotateCcw />
+                    {{ t('monitored.panel.backToAutomatic') }}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <SheetClose
+                class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11"
+                :aria-label="t('monitored.panel.close')"
+              >
+                <X :size="16" />
+              </SheetClose>
             </div>
           </div>
 
-          <!-- Files -->
-          <div v-else-if="activeTab === 'files'">
-            <template v-if="work.matchedBookId != null">
-              <div v-if="detailLoading && !detail" class="space-y-2">
-                <Skeleton class="h-12 w-full rounded-lg" />
-                <Skeleton class="h-12 w-full rounded-lg" />
-                <Skeleton class="h-12 w-full rounded-lg" />
-              </div>
-              <template v-else-if="detail">
-                <MonitoredWorkFiles :book="detail" />
-                <div v-if="secondaryBookId != null && secondaryDetail" class="mt-3">
-                  <MonitoredWorkFiles :book="secondaryDetail" />
-                </div>
+          <MonitoredVisibilityBanner
+            :work="work"
+            :author-name="authorName"
+            :author-paused="authorPaused"
+            :author-route="authorRoute"
+            :can-manage="canManage"
+            :can-resume-author="canResumeAuthor"
+            @keep="handleKeep"
+            @hide="handleHide"
+            @unhide="handleAutomatic"
+            @automatic="handleAutomatic"
+            @resume-author="handleResumeAuthor"
+          />
+
+          <MonitoredSynopsis :html="work.description ? safeDescription : null" :content-id="`monitored-${work.id}-synopsis`" />
+
+          <BookDetailSection class="px-3.5 py-3" :title="t('book.detail.details.editions')">
+            <MonitoredFormatSlot
+              v-for="format in MONITORED_FORMATS"
+              :key="format"
+              :work="work"
+              :format="format"
+              :status="statuses[format]"
+              :can-edit="canEditFormat(format)"
+              :author-watches="isFormatMonitored(format)"
+              :author-route="bylineRoute"
+              :can-manage="canManage"
+              :mode="formatModes?.[format] ?? null"
+              :book="bookFor(bookIdForFormat(format))"
+              :book-error="bookFailedFor(bookIdForFormat(format))"
+              :row="rowFor(format)"
+              :dates-open="openDatesFormat === format"
+              :refreshing="releaseDates.refreshing.value"
+              :requesting="requestingFormats.has(format)"
+              :releases-open="openReleases[format]"
+              @request="handleRequest"
+              @toggle-releases="handleToggleReleases"
+              @toggle-monitor="handleToggleMonitor"
+              @dates-open-change="handleReleaseDatesOpen"
+              @date-set="handleReleaseDateSet"
+              @date-clear="handleReleaseDateClear"
+              @refresh-dates="handleRefreshReleaseDates"
+              @retry-book="handleRetryBook"
+              @filed="handleSlotFiled"
+            >
+              <template #releases="{ canRequest }">
+                <MonitoredSlotReleases
+                  :format="format"
+                  :source="releasesFor(format)"
+                  :can-search="canManage"
+                  :can-ask-approval="canRequest"
+                  :closable="statuses[format] === 'owned'"
+                  @grab="handleGrab"
+                  @ask-approval="handleAskApproval"
+                  @close="closeReleaseList"
+                />
               </template>
-            </template>
-            <div v-else class="flex flex-col items-center justify-center rounded-xl border border-border bg-card px-4 py-16 text-center">
-              <BookOpen class="size-5 text-muted-foreground" aria-hidden="true" />
-              <p class="mt-3 text-sm text-muted-foreground">{{ t('monitored.panel.notInLibrary') }}</p>
-            </div>
-          </div>
-
-          <!-- E-book / Audiobook releases -->
-          <div v-else class="space-y-4">
-            <MonitoredRequestProgress v-if="topProgressRequestId !== null" :request-id="topProgressRequestId" @filed="handleProgressFiled" />
-
-            <div class="flex items-center justify-between gap-3">
-              <p class="text-xs text-muted-foreground">
-                {{
-                  activeReleases.releases.value.length
-                    ? t('monitored.panel.releaseCount', { count: activeReleases.releases.value.length })
-                    : t('monitored.panel.releaseSearchIntro')
-                }}
-              </p>
-              <Button v-if="canManage" size="sm" variant="outline" :disabled="activeReleases.loading.value" @click="handleSearchReleases">
-                <Loader2 v-if="activeReleases.loading.value" class="size-3.5 animate-spin" aria-hidden="true" />
-                <Search v-else :size="14" aria-hidden="true" />
-                {{ t('monitored.panel.searchReleases') }}
-              </Button>
-            </div>
-
-            <p v-if="activeReleases.loading.value" role="status" class="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 class="size-4 animate-spin" aria-hidden="true" />
-              {{ t('monitored.panel.searching') }}
-            </p>
-            <p v-else-if="activeReleases.error.value" role="alert" class="text-sm text-destructive">{{ activeReleases.error.value }}</p>
-            <ul v-else-if="activeReleases.releases.value.length" class="space-y-2">
-              <ReleaseResultRow
-                v-for="release in activeReleases.releases.value"
-                :key="`${release.indexerId}:${release.guid}`"
-                :release="release"
-                :delivery="activeReleases.deliveryFor(release)"
-                :busy="activeReleases.loading.value || activeReleases.isGrabbing(release)"
-                :grabbed="activeReleases.isGrabbed(release)"
-                :expanded="releaseKey(release) === expandedReleaseKey"
-                @grab="handleRowGrab"
-              >
-                <template #expansion>
-                  <MonitoredRequestProgress v-if="activeRequestId !== null" :request-id="activeRequestId" @filed="handleProgressFiled" />
-                </template>
-              </ReleaseResultRow>
-            </ul>
-            <div
-              v-else
-              class="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card px-4 py-14 text-center"
-            >
-              <Search class="size-5 text-muted-foreground" aria-hidden="true" />
-              <p class="mt-3 text-sm font-medium text-foreground">
-                {{ activeReleases.searched.value ? t('monitored.panel.noReleases') : t('monitored.panel.releaseSearchIdle') }}
-              </p>
-              <p class="mt-1 text-xs text-muted-foreground">
-                {{ activeReleases.searched.value ? t('monitored.panel.noReleasesHint') : t('monitored.panel.releaseSearchIdleHint') }}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <!-- Footer: request actions -->
-        <div v-if="showEbookRequest || showAudiobookRequest" class="flex shrink-0 flex-wrap items-center gap-2 border-t border-border p-4">
-          <Button
-            v-if="showEbookRequest"
-            class="min-w-36 flex-1"
-            :disabled="ebookOwned || ebookQueued || !ebookReleaseStarted"
-            :title="!ebookReleaseStarted ? t('monitored.panel.notReleasedYet') : undefined"
-            @click="handleRequestEbook"
-          >
-            <Check v-if="ebookOwned || ebookQueued" :size="16" aria-hidden="true" />
-            <BookOpen v-else :size="16" aria-hidden="true" />
-            {{ ebookOwned ? t('monitored.detail.ebookOwned') : ebookQueued ? pendingLabel('ebook') : t('monitored.panel.requestEbook') }}
-          </Button>
-          <Button
-            v-if="showAudiobookRequest"
-            variant="outline"
-            class="min-w-36 flex-1"
-            :disabled="audiobookOwned || audiobookQueued || !audiobookReleaseStarted"
-            :title="!audiobookReleaseStarted ? t('monitored.panel.notReleasedYet') : undefined"
-            @click="handleRequestAudiobook"
-          >
-            <Check v-if="audiobookOwned || audiobookQueued" :size="16" aria-hidden="true" />
-            <Headphones v-else :size="16" aria-hidden="true" />
-            {{
-              audiobookOwned
-                ? t('monitored.detail.audiobookOwned')
-                : audiobookQueued
-                  ? pendingLabel('audiobook')
-                  : t('monitored.panel.requestAudiobook')
-            }}
-          </Button>
-          <label v-if="showAutoDownload" class="inline-flex w-full items-center justify-end gap-1.5 text-xs text-muted-foreground sm:w-auto">
-            <input v-model="autoDownload" type="checkbox" class="size-3.5 rounded border-border accent-primary" />
-            {{ t('monitored.panel.autoDownload') }}
-          </label>
+            </MonitoredFormatSlot>
+          </BookDetailSection>
         </div>
       </div>
     </SheetContent>

@@ -274,7 +274,7 @@ describe('AuthorsView', () => {
 
       const modal = (await mountGalleryAndMonitor()).findComponent(MonitorAuthorModal)
 
-      expect(toast.info).toHaveBeenCalledWith('Already monitoring Blake Crouch')
+      expect(toast.info).toHaveBeenCalledWith('Blake Crouch is already on your watchlist')
       expect(modal.props('open')).toBe(false)
       expect(modal.props('result')).toBeNull()
     })

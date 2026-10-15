@@ -26,7 +26,12 @@ import {
   UpdateMonitoredAuthorDto,
   UpdateMonitoredBookDto,
 } from './dto/monitored.dto';
-import { MonitoredWorkFormatParamsDto, MonitoredWorkParamsDto, SetMonitoredReleaseDateDto } from './dto/monitored-release-date.dto';
+import {
+  MonitoredBookParamsDto,
+  MonitoredWorkFormatParamsDto,
+  MonitoredWorkParamsDto,
+  SetMonitoredReleaseDateDto,
+} from './dto/monitored-release-date.dto';
 import { MonitoredCoverService } from './monitored-cover.service';
 import { MonitoredExceptionFilter } from './monitored-exception.filter';
 import { MonitoredService } from './monitored.service';
@@ -170,6 +175,11 @@ export class MonitoredController {
   @Get('search')
   searchAuthors(@Query() query: MonitoredSearchQueryDto, @CurrentUser() user: RequestUser) {
     return this.service.searchAuthors(query.q, user);
+  }
+
+  @Get('works/by-book/:bookId')
+  getWorkByBook(@Param() params: MonitoredBookParamsDto, @CurrentUser() user: RequestUser) {
+    return this.service.getWorkByBook(user, params.bookId);
   }
 
   @Post('works/:workId/request')

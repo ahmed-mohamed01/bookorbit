@@ -63,6 +63,23 @@ describe('useMonitoredReleases grab', () => {
     wrapper.unmount()
   })
 
+  it('keeps the searched list when a grab fails and clears the failure on the next search', async () => {
+    searchMock.mockResolvedValue(searchResult([indexerStatus(7, 'torrent')]))
+    grabMock.mockRejectedValueOnce(new Error('nope'))
+    const { composable, wrapper } = mountComposable()
+
+    await composable.search()
+    await composable.grab(release)
+
+    expect(composable.grabError.value).toBe('Failed to grab this release.')
+    expect(composable.error.value).toBeNull()
+    expect(composable.releases.value).toHaveLength(1)
+
+    await composable.search()
+    expect(composable.grabError.value).toBeNull()
+    wrapper.unmount()
+  })
+
   it('ignores a second click while the first grab is still in flight', async () => {
     let settle = () => {}
     grabMock.mockImplementation(() => new Promise<BookRequestItem>((resolve) => (settle = () => resolve(request(1)))))
@@ -128,7 +145,8 @@ describe('useMonitoredReleases grab', () => {
 
     await composable.grab(release)
     expect(composable.isGrabbing(release)).toBe(false)
-    expect(composable.error.value).toBe('Failed to grab this release.')
+    expect(composable.grabError.value).toBe('Failed to grab this release.')
+    expect(composable.error.value).toBeNull()
 
     await composable.grab(release)
     expect(grabMock).toHaveBeenCalledTimes(2)

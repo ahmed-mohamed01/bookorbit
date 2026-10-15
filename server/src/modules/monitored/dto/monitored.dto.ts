@@ -1,6 +1,7 @@
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
+  Equals,
   IsArray,
   IsBoolean,
   IsIn,
@@ -23,6 +24,7 @@ import {
   MONITORED_RELEASE_FILTERS,
   MONITORED_RELEASE_LIST_SORTS,
   MONITORED_SORTS,
+  MONITORED_STATUS_FILTERS,
   MONITOR_MODES,
 } from '@bookorbit/types';
 import type {
@@ -34,11 +36,25 @@ import type {
   MonitoredReleaseFilter,
   MonitoredReleaseListSort,
   MonitoredSort,
+  MonitoredStatusFilter,
   MonitoredWorkPatch,
 } from '@bookorbit/types';
 
 // Postgres integer columns are int4; anything larger overflows in the driver rather than the DTO.
 const MAX_INT4 = 2147483647;
+
+/** A comma-separated query value, as `status=missing,upcoming`, read as a de-duplicated list. */
+function commaList({ value }: { value: unknown }): unknown {
+  if (typeof value !== 'string') return value;
+  return [
+    ...new Set(
+      value
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
 
 class MonitorFormatConfigDto {
   @IsIn(MONITOR_MODES)
@@ -136,6 +152,14 @@ export class MonitoredAuthorDetailQueryDto {
   @Transform(({ value }) => (value === 'true' ? true : value === 'false' ? false : value))
   @IsBoolean()
   includeHidden?: boolean = false;
+
+  /** Absent keeps every work the other options allow; present keeps only works matching one of these. */
+  @IsOptional()
+  @Transform(commaList)
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsIn(MONITORED_STATUS_FILTERS, { each: true })
+  status?: MonitoredStatusFilter[];
 }
 
 class MonitoredPageQueryDto {
@@ -189,6 +213,14 @@ export class ListMonitoredReleasesDto extends MonitoredPageQueryDto {
   @IsOptional()
   @IsIn(MONITORED_RELEASE_FILTERS)
   filter?: MonitoredReleaseFilter = 'all';
+
+  /** Absent lists every visible, watched release as before; present lists the rows in these states. */
+  @IsOptional()
+  @Transform(commaList)
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsIn(MONITORED_STATUS_FILTERS, { each: true })
+  status?: MonitoredStatusFilter[];
 }
 
 export class ListOwnedMonitoredAuthorIdsDto {
@@ -256,6 +288,10 @@ export class UpdateMonitoredWorkDto implements MonitoredWorkPatch {
   @IsOptional()
   @IsBoolean()
   hidden?: boolean;
+
+  @IsOptional()
+  @Equals(true)
+  automaticVisibility?: true;
 }
 
 export class GrabWorkReleaseDto {

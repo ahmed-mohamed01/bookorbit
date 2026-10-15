@@ -1,4 +1,17 @@
-import { IsIn, IsString, Matches, MaxLength, Validate, ValidateIf, ValidatorConstraint, type ValidatorConstraintInterface } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsIn,
+  IsInt,
+  IsString,
+  Max,
+  Min,
+  Matches,
+  MaxLength,
+  Validate,
+  ValidateIf,
+  ValidatorConstraint,
+  type ValidatorConstraintInterface,
+} from 'class-validator';
 import { MONITORED_FORMATS } from '@bookorbit/types';
 import type { MonitoredFormat, SetMonitoredReleaseDatePayload } from '@bookorbit/types';
 
@@ -19,6 +32,14 @@ export class MonitoredWorkParamsDto {
   @IsString()
   @MaxLength(200)
   workId!: string;
+}
+
+export class MonitoredBookParamsDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(2147483647)
+  bookId!: number;
 }
 
 export class MonitoredWorkFormatParamsDto extends MonitoredWorkParamsDto {

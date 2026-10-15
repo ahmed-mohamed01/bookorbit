@@ -1,7 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import type { BookRequestItem, MonitoredBookItem, MonitoredReleaseDateLookup } from '@bookorbit/types'
-import { fetchWorkReleaseDateCandidates, grabWorkRelease, refreshWorkReleaseDates, setWorkReleaseDate } from './monitored'
+import {
+  fetchMonitoredAuthorDetail,
+  fetchMonitoredReleases,
+  fetchWorkReleaseDateCandidates,
+  grabWorkRelease,
+  refreshWorkReleaseDates,
+  setWorkReleaseDate,
+} from './monitored'
 
 vi.mock('@/lib/api', () => ({ api: vi.fn<(...args: unknown[]) => unknown>() }))
 
@@ -146,5 +153,31 @@ describe('release date lookup and choice', () => {
     mockedApi.mockResolvedValue(mockErrorResponse(400, 'releaseDate must be a valid date'))
 
     await expect(setWorkReleaseDate('work-1', 'ebook', 'nope')).rejects.toThrow('releaseDate must be a valid date')
+  })
+})
+
+describe('status filters', () => {
+  it('joins a typed selection into the canonical query value for the release list', async () => {
+    mockedApi.mockResolvedValue(mockOkResponse({}))
+
+    await fetchMonitoredReleases({ page: 0, size: 24, sort: 'date', order: 'asc', filter: 'all', status: ['upcoming', 'missing'] })
+
+    expect(String(mockedApi.mock.calls[0]?.[0])).toContain('status=missing%2Cupcoming')
+  })
+
+  it('leaves the status out when no selection is sent', async () => {
+    mockedApi.mockResolvedValue(mockOkResponse({}))
+
+    await fetchMonitoredReleases({ page: 0, size: 24, sort: 'date', order: 'asc', filter: 'all' })
+
+    expect(String(mockedApi.mock.calls[0]?.[0])).not.toContain('status=')
+  })
+
+  it('joins the selection for an author page too', async () => {
+    mockedApi.mockResolvedValue(mockOkResponse({}))
+
+    await fetchMonitoredAuthorDetail('author-1', { sort: 'releaseDate', order: 'asc', status: ['upcoming', 'hidden'] })
+
+    expect(String(mockedApi.mock.calls[0]?.[0])).toContain('status=upcoming%2Chidden')
   })
 })

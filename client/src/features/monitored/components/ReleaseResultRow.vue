@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Check, Download, Globe, Loader2, Magnet, Newspaper } from '@lucide/vue'
+import { Check, Download, Files, Globe, Loader2, Magnet, Newspaper } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { DownloadDelivery, ReleaseCandidateItem } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,10 @@ const props = defineProps<{
   grabbed?: boolean
   /** Renders the `expansion` slot under the row, for the request this release is downloading under. */
   expanded?: boolean
+  /** The tighter row an inline list uses inside a format slot. */
+  compact?: boolean
+  /** The top-ranked row: tinted, with the solid Grab. */
+  best?: boolean
 }>()
 const emit = defineEmits<{ grab: [release: ReleaseCandidateItem] }>()
 const { t } = useI18n()
@@ -56,7 +60,6 @@ const metaFacts = computed<string[]>(() => {
   if (props.release.language) facts.push(formatLanguageName(props.release.language))
   if (props.release.formats.length > 0) facts.push(props.release.formats.map((value) => value.toUpperCase()).join(' + '))
   if (props.release.sizeBytes) facts.push(formatBytes(props.release.sizeBytes))
-  if (props.release.fileCount !== null) facts.push(t('bookRequests.releases.fileCount', { count: props.release.fileCount }))
   if (showsSeeders.value) facts.push(seederText.value)
   if (props.release.publishedAt) facts.push(formatDate(new Date(props.release.publishedAt)))
   return facts
@@ -69,21 +72,25 @@ function handleGrab() {
 
 <template>
   <li
-    class="rounded-xl border bg-card p-3 transition-colors motion-reduce:transition-none"
-    :class="expanded ? 'border-primary/45 bg-primary/5' : 'border-border hover:bg-accent/50'"
+    class="transition-colors motion-reduce:transition-none"
+    :class="[
+      compact ? 'rounded-lg px-2.5 py-2' : 'rounded-xl border bg-card p-3',
+      compact ? (best ? 'bg-muted' : 'hover:bg-muted/50') : expanded ? 'border-primary/45 bg-primary/5' : 'border-border hover:bg-accent/50',
+    ]"
+    :data-best="best || undefined"
   >
     <div class="flex flex-wrap items-center gap-x-3 gap-y-3">
       <div class="flex min-w-0 flex-1 basis-64 items-center gap-3">
         <span
-          class="flex size-11 shrink-0 items-center justify-center rounded-lg border text-[15px] font-semibold tabular-nums"
-          :class="[scoreClass, scoreSurfaceClass]"
+          class="flex shrink-0 items-center justify-center rounded-lg border font-semibold tabular-nums"
+          :class="[compact ? 'size-8 text-[13px]' : 'size-11 text-[15px]', scoreClass, scoreSurfaceClass]"
         >
           <span aria-hidden="true">{{ release.score }}</span>
           <span class="sr-only">{{ t('bookRequests.releases.scoreLabel', { score: release.score }) }}</span>
         </span>
 
         <div class="min-w-0 flex-1">
-          <p class="line-clamp-2 text-sm font-medium text-foreground">{{ release.title }}</p>
+          <p class="text-sm font-medium text-foreground" :class="compact ? 'line-clamp-1' : 'line-clamp-2'">{{ release.title }}</p>
 
           <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
             <span class="inline-flex items-center gap-1 rounded-full border px-1.5 py-px font-medium" :class="protocolClass">
@@ -93,6 +100,14 @@ function handleGrab() {
               {{ protocolText }}
             </span>
             <span class="rounded-full border border-border px-1.5 py-px font-medium text-muted-foreground">{{ release.indexerName }}</span>
+            <span
+              v-if="release.fileCount !== null"
+              class="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-1.5 py-px font-medium text-muted-foreground tabular-nums"
+              data-testid="file-count"
+            >
+              <Files :size="11" aria-hidden="true" />
+              {{ t('bookRequests.releases.fileCount', { count: release.fileCount }) }}
+            </span>
             <span v-if="release.tierName" class="rounded-full border border-primary/45 bg-primary/10 px-1.5 py-px font-medium text-primary">
               {{ release.tierName }}
             </span>
@@ -117,7 +132,13 @@ function handleGrab() {
       </div>
 
       <div class="ms-auto flex items-center gap-1.5">
-        <Button size="sm" :variant="grabbed ? 'outline' : 'default'" :disabled="busy || grabbed" @click="handleGrab">
+        <Button
+          size="sm"
+          class="[@media(pointer:coarse)]:min-h-11"
+          :variant="grabbed || (compact && !best) ? 'outline' : 'default'"
+          :disabled="busy || grabbed"
+          @click="handleGrab"
+        >
           <Loader2 v-if="busy" class="size-3.5 animate-spin" aria-hidden="true" />
           <Check v-else-if="grabbed" :size="14" aria-hidden="true" />
           <Download v-else :size="14" aria-hidden="true" />

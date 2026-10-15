@@ -25,7 +25,7 @@ function mountTile(props: Record<string, unknown> = {}) {
 }
 
 function findMonitorItem(wrapper: ReturnType<typeof mountTile>) {
-  return wrapper.findAll('div').find((node) => node.text() === 'Monitor Author')
+  return wrapper.findAll('div').find((node) => node.text() === 'Add author to watchlist')
 }
 
 describe('AuthorTile', () => {

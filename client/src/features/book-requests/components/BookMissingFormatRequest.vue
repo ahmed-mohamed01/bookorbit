@@ -3,8 +3,13 @@ import { computed, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import { BookOpen, Check, Headphones, Library, Loader2, Users, WandSparkles } from '@lucide/vue'
-import { Permission, type BookDetail } from '@bookorbit/types'
+import { monitoredReleaseStarted, Permission, type BookDetail } from '@bookorbit/types'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
+import { useBookMonitoredWork } from '@/features/monitored/composables/useBookMonitoredWork'
+import { useMonitoredDateLabel } from '@/features/monitored/composables/useMonitoredDateLabel'
+import { todayUtc } from '@/features/monitored/lib/format-status'
+import { parseMonitoredDate } from '@/features/monitored/lib/release-date'
+import BookWatchlistBell from './BookWatchlistBell.vue'
 import { useBookRequestVisibility } from '../composables/useBookRequestVisibility'
 import { useMissingFormatRequest } from '../composables/useMissingFormatRequest'
 import { submitFailureText } from '../composables/useRequestSubmission'
@@ -24,6 +29,37 @@ const enabled = computed(() => hasPermission(Permission.BookRequestAccess) && sh
 const { missing, state, requestId, ownedBookId, submitting, request } = useMissingFormatRequest(toRef(props, 'book'), enabled)
 
 const visible = computed(() => enabled.value && missing.value !== null)
+const bookId = computed(() => props.book.id)
+const {
+  entry: watchEntry,
+  mode: watchMode,
+  release: watchRelease,
+  hasRequest: watchHasRequest,
+  refresh: refreshWatch,
+} = useBookMonitoredWork(bookId, missing, visible)
+const dateLabel = useMonitoredDateLabel('short')
+
+const watchActive = computed(() => watchEntry.value !== null && watchMode.value !== 'off' && state.value !== 'owned' && state.value !== 'checking')
+const requested = computed(() => watchHasRequest.value || state.value === 'following' || state.value === 'joinable')
+const formatName = computed(() => t(`monitored.formats.${missing.value ?? 'ebook'}`))
+
+const watchDateText = computed(() => {
+  if (!watchActive.value) return null
+  const release = watchRelease.value
+  const label = release?.date ? dateLabel(release.date, release.precision) : ''
+  if (!release?.date || !label) return t('bookRequests.missingFormat.notAnnounced', { format: formatName.value })
+  if (monitoredReleaseStarted(release.date, release.precision, todayUtc())) return t('monitored.formatStatus.releasedOn', { date: label })
+  const parsed = parseMonitoredDate(release.date, release.precision)
+  if (parsed?.precision === 'year') return t('bookRequests.missingFormat.upcomingYear', { format: formatName.value, year: label })
+  return t('bookRequests.missingFormat.upcoming', { format: formatName.value, date: label })
+})
+
+const watchTip = computed(() => {
+  const mode = watchMode.value
+  if (mode === 'auto-upcoming' || mode === 'auto-all') return t('bookRequests.missingFormat.onWatchlistAuto')
+  if (mode === 'notify') return t('bookRequests.missingFormat.onWatchlistNotify')
+  return t('bookRequests.missingFormat.onWatchlist')
+})
 const icon = computed(() => (missing.value === 'audiobook' ? Headphones : BookOpen))
 const groupLabel = computed(() =>
   missing.value === 'audiobook' ? t('bookRequests.missingFormat.labelAudiobook') : t('bookRequests.missingFormat.labelEbook'),
@@ -54,6 +90,7 @@ async function handleRequest() {
     toast.error(t('bookRequests.search.submitFailed'), { description: submitFailureText(failure, t) ?? undefined })
     return
   }
+  void refreshWatch()
   if (result.subscribed) toast.success(t('bookRequests.search.joinedExisting'))
   else
     toast.success(missing.value === 'audiobook' ? t('bookRequests.missingFormat.submittedAudiobook') : t('bookRequests.missingFormat.submittedEbook'))
@@ -74,11 +111,19 @@ async function handleRequest() {
     </span>
 
     <span class="min-w-0 flex-1 text-[11px] text-muted-foreground" role="status">
-      <Loader2 v-if="state === 'checking'" :size="11" class="me-1 inline animate-spin align-[-1px]" aria-hidden="true" />
+      <span v-if="watchDateText && !requested" class="inline-flex items-center gap-1 whitespace-nowrap" data-test="watch-line">
+        {{ watchDateText }}
+        <BookWatchlistBell :label="watchTip" />
+      </span>
+      <Loader2 v-else-if="state === 'checking'" :size="11" class="me-1 inline animate-spin align-[-1px]" aria-hidden="true" />
       <span v-else-if="state === 'owned'" class="inline-flex items-center gap-1"><Library :size="11" aria-hidden="true" />{{ statusText }}</span>
       <span v-else-if="state === 'following'" class="inline-flex items-center gap-1"><Check :size="11" aria-hidden="true" />{{ statusText }}</span>
       <span v-else-if="state === 'joinable'" class="inline-flex items-center gap-1"><Users :size="11" aria-hidden="true" />{{ statusText }}</span>
       <template v-else>{{ statusText }}</template>
+      <span v-if="watchDateText && requested" class="mt-0.5 flex items-center gap-1 whitespace-nowrap" data-test="watch-line">
+        {{ watchDateText }}
+        <BookWatchlistBell :label="watchTip" />
+      </span>
     </span>
 
     <RouterLink

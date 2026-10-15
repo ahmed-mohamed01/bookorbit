@@ -535,7 +535,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         labelKey: 'settings.system.tabs.monitored',
         descriptionKey: 'settings.nav.descriptions.monitored',
         icon: RefreshCw,
-        keywords: 'monitored authors refresh cooldown provider throttle',
+        keywords: 'monitored watchlist authors refresh cooldown provider throttle',
         isVisible: anyPermission(Permission.ManageAppSettings),
       },
       {

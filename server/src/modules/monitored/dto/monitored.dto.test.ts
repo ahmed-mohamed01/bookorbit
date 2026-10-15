@@ -3,7 +3,15 @@ import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 
-import { GrabWorkReleaseDto, ListMonitoredAuthorsDto, ListMonitoredBooksDto, ListMonitoredReleasesDto, MonitorAuthorDto } from './monitored.dto';
+import {
+  GrabWorkReleaseDto,
+  ListMonitoredAuthorsDto,
+  ListMonitoredBooksDto,
+  ListMonitoredReleasesDto,
+  MonitorAuthorDto,
+  MonitoredAuthorDetailQueryDto,
+  UpdateMonitoredWorkDto,
+} from './monitored.dto';
 
 const MAX_INT4 = 2147483647;
 
@@ -53,6 +61,14 @@ describe('GrabWorkReleaseDto', () => {
   });
 });
 
+describe('UpdateMonitoredWorkDto', () => {
+  it('accepts the automatic visibility flag as true only', async () => {
+    await expect(validate(plainToInstance(UpdateMonitoredWorkDto, { automaticVisibility: true }))).resolves.toHaveLength(0);
+    await expect(validate(plainToInstance(UpdateMonitoredWorkDto, { automaticVisibility: 'yes' }))).resolves.not.toHaveLength(0);
+    await expect(validate(plainToInstance(UpdateMonitoredWorkDto, { automaticVisibility: false }))).resolves.not.toHaveLength(0);
+  });
+});
+
 describe('monitored list query DTOs', () => {
   it.each([ListMonitoredAuthorsDto, ListMonitoredBooksDto, ListMonitoredReleasesDto])(
     '%s uses the zero-based page and size defaults and enforces the hard cap',
@@ -65,6 +81,16 @@ describe('monitored list query DTOs', () => {
       await expect(validate(oversized)).resolves.not.toHaveLength(0);
     },
   );
+
+  it.each([ListMonitoredReleasesDto, MonitoredAuthorDetailQueryDto])('%s reads a comma-separated status filter', async (Dto) => {
+    const dto = plainToInstance(Dto, { status: 'missing,upcoming,missing' });
+
+    await expect(validate(dto)).resolves.toHaveLength(0);
+    expect(dto.status).toEqual(['missing', 'upcoming']);
+    await expect(validate(plainToInstance(Dto, {}))).resolves.toHaveLength(0);
+    await expect(validate(plainToInstance(Dto, { status: 'missing,bogus' }))).resolves.not.toHaveLength(0);
+    await expect(validate(plainToInstance(Dto, { status: ',' }))).resolves.not.toHaveLength(0);
+  });
 
   it('accepts the sort and filter values exposed by the monitored view', async () => {
     await expect(validate(plainToInstance(ListMonitoredAuthorsDto, { sort: 'progress', order: 'desc', q: '  Le Guin  ' }))).resolves.toHaveLength(0);

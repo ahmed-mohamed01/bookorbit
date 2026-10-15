@@ -61,8 +61,8 @@ describe('useMonitorGroupAction', () => {
     })
     expect(composable.isGroupMonitored(group)).toBe(true)
     expect(composable.isGroupMonitoring(group)).toBe(false)
-    expect(composable.monitorAuthorLabel(group)).toBe('Already monitoring Blake Crouch')
-    expect(toast.success).toHaveBeenCalledWith('Now monitoring Blake Crouch.')
+    expect(composable.monitorAuthorLabel(group)).toBe('Blake Crouch is already on your watchlist')
+    expect(toast.success).toHaveBeenCalledWith('Added Blake Crouch to your watchlist.')
     wrapper.unmount()
   })
 
@@ -99,9 +99,9 @@ describe('useMonitorGroupAction', () => {
 
     await composable.monitorGroupAuthor(group)
 
-    expect(toast.error).toHaveBeenCalledWith('Failed to monitor author.')
+    expect(toast.error).toHaveBeenCalledWith('Failed to add author to watchlist.')
     expect(composable.isGroupMonitored(group)).toBe(false)
-    expect(composable.monitorAuthorLabel(group)).toBe('Monitor Blake Crouch and get notified about new ebook releases')
+    expect(composable.monitorAuthorLabel(group)).toBe('Add Blake Crouch to your watchlist and get notified about new ebook releases')
     wrapper.unmount()
   })
 
@@ -143,7 +143,7 @@ describe('useMonitorGroupAction', () => {
     await composable.monitorGroupAuthor({ key: 'group-3', authors: [] })
 
     expect(monitorMock).not.toHaveBeenCalled()
-    expect(composable.monitorAuthorLabel({ key: 'group-3', authors: [] })).toBe('Monitor  and get notified about new ebook releases')
+    expect(composable.monitorAuthorLabel({ key: 'group-3', authors: [] })).toBe('Add  to your watchlist and get notified about new ebook releases')
     wrapper.unmount()
   })
 })
