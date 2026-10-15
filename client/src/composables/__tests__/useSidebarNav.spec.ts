@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Permission, type BrowseCounts } from '@bookorbit/types'
 import type { RouteLocationNormalizedLoaded } from 'vue-router'
+import { i18n } from '@/i18n'
 import { SIDEBAR_NAV_REGISTRY, entryVisibleInMode, isNavEntryAllowed, resolveNavEntry, useSidebarNav } from '../useSidebarNav'
 
 const mocks = vi.hoisted(() => ({ permissions: new Set<string>() }))
@@ -78,10 +79,10 @@ describe('sidebar nav registry', () => {
     expect(allowedIds(makeContext())).toEqual(['dashboard', 'authors', 'series', 'annotations'])
   })
 
-  it('places Dashboard, Book Dock, Requests, Monitored, Tools and the podcast Queue in the primary zone, above the entity sections', () => {
+  it('places Dashboard, Book Dock, Requests, Monitored, Web Serials, Tools and the podcast Queue in the primary zone, above the entity sections', () => {
     const primary = SIDEBAR_NAV_REGISTRY.filter((candidate) => candidate.zone === 'primary').map((candidate) => candidate.id)
 
-    expect(primary).toEqual(['dashboard', 'book-dock', 'book-requests', 'monitored', 'tools', 'podcast-queue'])
+    expect(primary).toEqual(['dashboard', 'book-dock', 'book-requests', 'monitored', 'web-serials', 'tools', 'podcast-queue'])
   })
 
   it('leaves Statistics and Achievements to the header', () => {
@@ -105,6 +106,27 @@ describe('sidebar nav registry', () => {
 
   it('shows Monitored once the user holds book_request_access', () => {
     expect(allowedIds(makeContext({ permissions: ['book_request_access'] }))).toContain('monitored')
+  })
+
+  it('shows Web Serials only to a user holding web_serial_access', () => {
+    expect(allowedIds(makeContext())).not.toContain('web-serials')
+    expect(allowedIds(makeContext({ permissions: ['book_request_access'] }))).not.toContain('web-serials')
+    expect(allowedIds(makeContext({ permissions: ['web_serial_access'] }))).toContain('web-serials')
+  })
+
+  it('names the Web Serials entry after the page it opens', () => {
+    const labelKey = entry('web-serials').labelKey
+    expect(i18n.global.t(labelKey)).toBe(i18n.global.t('webSerials.title'))
+  })
+
+  it('keeps Web Serials lit on the queue route', () => {
+    const resolved = resolveNavEntry(
+      entry('web-serials'),
+      makeContext({ permissions: ['web_serial_access'] }),
+      makeRoute('web-serials-queue'),
+      'Web Serials',
+    )
+    expect(resolved.isActive).toBe(true)
   })
 
   it('hides Requests from a user without book_request_access', () => {
@@ -238,7 +260,7 @@ describe('sidebar nav registry', () => {
     const booksModeIds = SIDEBAR_NAV_REGISTRY.filter((candidate) => entryVisibleInMode(candidate, 'books')).map((candidate) => candidate.id)
 
     expect(podcastModeIds).toEqual(['dashboard', 'podcast-queue'])
-    expect(booksModeIds).toEqual(['dashboard', 'book-dock', 'book-requests', 'monitored', 'tools', 'authors', 'series', 'annotations'])
+    expect(booksModeIds).toEqual(['dashboard', 'book-dock', 'book-requests', 'monitored', 'web-serials', 'tools', 'authors', 'series', 'annotations'])
   })
 })
 

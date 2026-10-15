@@ -1,0 +1,29 @@
+{
+  "updated_at": 1791924347849,
+  "user_id": "aabd2c72-d63e-4863-aab2-7f365315efd6",
+  "depends_on": null,
+  "domain": null,
+  "status": 2,
+  "error": null,
+  "finished_at": 1791924351698,
+  "failed": 0,
+  "created_at": 1791924347849,
+  "extra": {
+    "volume_id": "83daeca7-0c88-4291-bbd7-80d2119b158e",
+    "volume_serial": 2,
+    "novel_id": "39a44bd3-ad95-4c24-a122-affaaa663c72",
+    "novel_title": "Mother Of Learning"
+  },
+  "id": "f8a24d01-6f86-402e-abb6-a5e9b8cf6546",
+  "parent_job_id": null,
+  "type": 20,
+  "priority": 2,
+  "is_done": true,
+  "started_at": 1791924347994,
+  "done": 10,
+  "total": 10,
+  "is_running": 0,
+  "is_pending": 0,
+  "progress": 100,
+  "job_title": "\"Mother Of Learning\" · Volume 2"
+}

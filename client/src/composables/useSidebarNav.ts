@@ -1,7 +1,7 @@
 import { computed, type Component } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, type RouteLocationNormalizedLoaded, type RouteLocationRaw } from 'vue-router'
-import { Bell, BookPlus, Highlighter, LayoutDashboard, Library, ListMusic, PackageOpen, Users, Wrench } from '@lucide/vue'
+import { Bell, BookPlus, Globe, Highlighter, LayoutDashboard, Library, ListMusic, PackageOpen, Users, Wrench } from '@lucide/vue'
 import { Permission, type BrowseCounts, type LibraryType, type SidebarSectionId } from '@bookorbit/types'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useBookDockSummary } from '@/features/book-dock/composables/useBookDockSummary'
@@ -134,6 +134,16 @@ export const SIDEBAR_NAV_REGISTRY: readonly SidebarNavEntry[] = [
     modes: ['books'],
     badge: (context) =>
       context.monitoredReleaseTotal > 0 ? { value: context.monitoredReleaseTotal, label: context.monitoredReleaseLabel, tone: 'accent' } : null,
+  },
+  {
+    id: 'web-serials',
+    labelKey: 'webSerials.navLabel',
+    icon: Globe,
+    zone: 'primary',
+    modes: ['books'],
+    to: { name: 'web-serials' },
+    isActive: (route) => routeNameStartsWith(route, 'web-serials'),
+    permission: Permission.WebSerialAccess,
   },
   {
     id: 'tools',

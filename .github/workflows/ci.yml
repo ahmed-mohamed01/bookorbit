@@ -236,6 +236,7 @@ jobs:
     outputs:
       server: ${{ steps.manual.outputs.server || steps.changes.outputs.server }}
       client: ${{ steps.manual.outputs.client || steps.changes.outputs.client }}
+      novel_sources: ${{ steps.manual.outputs.novel_sources || steps.changes.outputs.novel_sources }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -249,6 +250,7 @@ jobs:
         run: |
           echo "server=true" >> "$GITHUB_OUTPUT"
           echo "client=true" >> "$GITHUB_OUTPUT"
+          echo "novel_sources=true" >> "$GITHUB_OUTPUT"
 
       # For push events dorny/paths-filter diffs github.event.before..github.sha.
       # New-branch pushes (before = 0000...) are handled by treating all files as changed.
@@ -279,12 +281,20 @@ jobs:
               - '.github/actions/setup-node-pnpm/action.yml'
               - '.github/workflows/ci.yml'
               - '.github/workflows/crowdin-translations.yml'
+            novel_sources:
+              - 'services/novel-sources/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.github/actions/setup-node-pnpm/action.yml'
+              - '.github/workflows/ci.yml'
 
       - name: Print change scope
         shell: bash
         run: |
           echo "server=${{ steps.manual.outputs.server || steps.changes.outputs.server }}"
           echo "client=${{ steps.manual.outputs.client || steps.changes.outputs.client }}"
+          echo "novel_sources=${{ steps.manual.outputs.novel_sources || steps.changes.outputs.novel_sources }}"
 
   lint:
     name: Lint (${{ matrix.package_label }})
@@ -537,6 +547,39 @@ jobs:
           path: test-results/${{ matrix.package }}
           retention-days: 7
 
+  # The plugin sandbox and isolation tests guard untrusted code, so they run whenever the service changes.
+  novel-sources:
+    name: Novel Sources (typecheck and tests)
+    runs-on: ubuntu-latest
+    needs: [dependency-review, detect-changes]
+    timeout-minutes: 10
+    if: >
+      always() &&
+      (needs.dependency-review.result == 'success' || needs.dependency-review.result == 'skipped') &&
+      needs.detect-changes.result == 'success' &&
+      needs.detect-changes.outputs.novel_sources == 'true'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          pnpm-version: ${{ env.PNPM_VERSION }}
+          prefetch: "true"
+
+      - name: Format check
+        run: pnpm --filter @bookorbit/novel-sources lint:check
+
+      - name: Typecheck
+        run: pnpm --filter @bookorbit/novel-sources typecheck
+
+      - name: Run tests
+        run: pnpm --filter @bookorbit/novel-sources test
+
   quality-gate:
     name: Quality Gate
     runs-on: ubuntu-latest
@@ -547,6 +590,7 @@ jobs:
       - lint
       - typecheck
       - tests
+      - novel-sources
     timeout-minutes: 5
     if: always()
     steps:
@@ -564,6 +608,7 @@ jobs:
           echo "lint=${{ needs.lint.result }}"
           echo "typecheck=${{ needs.typecheck.result }}"
           echo "tests=${{ needs.tests.result }}"
+          echo "novel-sources=${{ needs.novel-sources.result }}"
 
   e2e-setup:
     name: Detect E2E Suites

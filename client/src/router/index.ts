@@ -566,6 +566,18 @@ export const routes: RouteRecordRaw[] = [
             meta: { maxWidth: 'max-w-5xl', title: () => t('titles.system.requests') },
           },
           {
+            path: 'admin/web-serials',
+            name: 'settings-admin-web-serials',
+            component: () => import('@/features/web-serials/components/WebSerialsSettings.vue'),
+            props: { embedded: true },
+            meta: {
+              maxWidth: 'max-w-3xl',
+              requiredPermission: Permission.ManageAppSettings,
+              permissionFallback: 'settings-account-profile',
+              title: () => t('webSerials.admin.title'),
+            },
+          },
+          {
             path: 'admin/audit-log',
             name: 'settings-admin-audit-log',
             component: () => import('@/features/audit/AuditLogPage.vue'),
@@ -734,6 +746,17 @@ export const routes: RouteRecordRaw[] = [
         name: 'monitored-author',
         component: () => import('@/features/monitored/views/MonitoredAuthorDetailView.vue'),
         meta: { title: () => t('titles.monitoredAuthor') },
+      },
+      {
+        path: '/web-serials',
+        name: 'web-serials',
+        component: () => import('@/features/web-serials/WebSerialsPage.vue'),
+        meta: { requiredPermission: Permission.WebSerialAccess, title: () => t('titles.webSerials') },
+      },
+      {
+        path: '/web-serials/queue',
+        name: 'web-serials-queue',
+        redirect: { name: 'web-serials', query: { tab: 'queue' } },
       },
       {
         path: '/series',

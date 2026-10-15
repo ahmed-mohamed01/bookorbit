@@ -2,6 +2,7 @@ packages:
   - "client"
   - "server"
   - "packages/*"
+  - "services/*"
 overrides:
   "@fastify/busboy": ^3.2.1
   "@xhmikosr/decompress": ^11.1.4
@@ -52,6 +53,7 @@ allowBuilds:
   "@scarf/scarf": false
   "@swc/core": true
   esbuild: true
+  protobufjs: false
   sharp: true
   unrs-resolver: true
   vue-demi: false

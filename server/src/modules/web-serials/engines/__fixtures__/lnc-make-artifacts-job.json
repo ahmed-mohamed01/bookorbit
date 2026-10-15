@@ -1,0 +1,30 @@
+{
+  "updated_at": 1791924354468,
+  "user_id": "aabd2c72-d63e-4863-aab2-7f365315efd6",
+  "depends_on": null,
+  "domain": null,
+  "status": 2,
+  "error": null,
+  "finished_at": 1791924355797,
+  "failed": 0,
+  "created_at": 1791924354468,
+  "extra": {
+    "novel_id": "39a44bd3-ad95-4c24-a122-affaaa663c72",
+    "formats": ["epub"],
+    "language": null,
+    "volume": 2,
+    "novel_title": "Mother Of Learning"
+  },
+  "id": "b0bdaea0-4e16-4c0d-843b-d073403b6e4b",
+  "parent_job_id": null,
+  "type": 41,
+  "priority": 2,
+  "is_done": true,
+  "started_at": 1791924354738,
+  "done": 2,
+  "total": 2,
+  "is_running": 0,
+  "is_pending": 0,
+  "progress": 100,
+  "job_title": "\"Mother Of Learning\" · epub"
+}

@@ -18,24 +18,27 @@
     "dev": "concurrently --names \"types,server,client\" --prefix-colors \"cyan,blue,green\" \"pnpm --filter @bookorbit/types dev\" \"pnpm run dev:server\" \"pnpm run dev:client\"",
     "dev:client": "cd client && pnpm dev -- --host",
     "dev:server": "cd server && pnpm start:dev",
-    "verify:fast": "pnpm run lint:check && pnpm run typecheck",
+    "verify:fast": "pnpm run lint:check && pnpm run typecheck && pnpm run test:novel-sources",
     "verify": "pnpm run lint:check && pnpm run typecheck && pnpm run test",
     "verify:strict": "pnpm run format:check && pnpm run lint:check && pnpm run typecheck:full && pnpm run test",
     "build:client": "pnpm --filter client build",
     "build:server": "pnpm --filter server build",
-    "typecheck": "pnpm run typecheck:server && pnpm run typecheck:client",
-    "typecheck:full": "pnpm run typecheck:server && pnpm run typecheck:client",
+    "typecheck": "pnpm run typecheck:server && pnpm run typecheck:client && pnpm run typecheck:novel-sources",
+    "typecheck:full": "pnpm run typecheck:server && pnpm run typecheck:client && pnpm run typecheck:novel-sources",
     "typecheck:server": "pnpm --filter server type-check",
     "typecheck:client": "pnpm --filter client type-check",
-    "lint:check": "pnpm --filter server lint:check && pnpm --filter client lint:check",
+    "typecheck:novel-sources": "pnpm --filter @bookorbit/novel-sources typecheck",
+    "lint:check": "pnpm --filter server lint:check && pnpm --filter client lint:check && pnpm run lint:novel-sources",
+    "lint:novel-sources": "pnpm --filter @bookorbit/novel-sources lint:check",
     "lint:fix": "pnpm --filter server lint:fix && pnpm --filter client lint:fix",
     "format": "pnpm --filter server format && pnpm --filter client format",
     "format:check": "pnpm --filter server format:check && pnpm --filter client format:check",
-    "test": "pnpm run test:charts && pnpm run test:pr-policy && pnpm run test:server && pnpm run test:client",
+    "test": "pnpm run test:charts && pnpm run test:pr-policy && pnpm run test:server && pnpm run test:client && pnpm run test:novel-sources",
     "test:charts": "node --test scripts/star-history/generate.test.mjs scripts/crowdin-stats/generate.test.mjs",
     "test:pr-policy": "node --test scripts/validate-locale-pr.test.mjs scripts/stale-prs/*.test.mjs",
     "test:server": "pnpm --filter server test",
     "test:client": "pnpm --filter client test:unit --run",
+    "test:novel-sources": "pnpm --filter @bookorbit/novel-sources test",
     "e2e:run": "node ./scripts/e2e/run-suite.mjs",
     "e2e:all": "node ./scripts/e2e/run-suite.mjs all",
     "e2e:list": "node ./scripts/e2e/run-suite.mjs --list",
@@ -81,6 +84,9 @@
     ],
     "server/{src,test}/**/*.ts": [
       "pnpm --dir server exec eslint --fix",
+      "pnpm exec prettier --write"
+    ],
+    "services/novel-sources/{src,test}/**/*.ts": [
       "pnpm exec prettier --write"
     ]
   }

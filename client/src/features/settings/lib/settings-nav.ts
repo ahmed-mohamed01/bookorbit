@@ -548,6 +548,15 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         isVisible: (context) => context.showBookRequests !== false && anyPermission(Permission.ManageAppSettings)(context),
       },
       {
+        id: 'web-serials',
+        routeName: 'settings-admin-web-serials',
+        labelKey: 'webSerials.admin.title',
+        descriptionKey: 'settings.nav.descriptions.webSerials',
+        icon: Globe,
+        keywords: 'web serials manga novel suwayomi lightnovel crawler lncrawl chapters volumes download',
+        isVisible: anyPermission(Permission.ManageAppSettings),
+      },
+      {
         id: 'admin-tts',
         routeName: 'settings-admin-tts',
         labelKey: 'settings.admin.tabs.tts',

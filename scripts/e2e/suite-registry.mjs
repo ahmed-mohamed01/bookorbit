@@ -1092,6 +1092,33 @@ export const E2E_SUITES = Object.freeze({
       ...SHARED_DB_AND_HELPER_PATHS,
     ],
   },
+  "web-serials": {
+    id: "web-serials",
+    name: "Web Serials",
+    timeout: 45,
+    lane: "full",
+    description: "Manga and light novel downloads against in-process fakes of Suwayomi, lightnovel-crawler, MangaBaka and MangaDex",
+    // A vitest file filter: runs web-serials.e2e-spec.ts and web-serials-data.e2e-spec.ts; the scale spec skips itself without WEB_SERIALS_SCALE=1.
+    vitestTarget: "test/web-serials",
+    junitOutput: `${TEST_RESULTS_DIR}/web-serials-e2e-junit.xml`,
+    prepareDedicatedDatabase: true,
+    useDedicatedDatabase: true,
+    changedPaths: [
+      "server/src/modules/web-serials/**",
+      "server/src/modules/book-dock/**",
+      "server/src/modules/library/**",
+      "server/src/modules/notification/**",
+      "server/test/web-serials.e2e-spec.ts",
+      "server/test/web-serials-data.e2e-spec.ts",
+      "server/test/web-serials-scale.e2e-spec.ts",
+      "server/test/e2e/web-serials/**",
+      "server/test/support/**",
+      ".github/workflows/e2e-runner.yml",
+      "packages/types/src/web-serials.ts",
+      "packages/types/src/web-serials-title.ts",
+      ...SHARED_DB_AND_HELPER_PATHS,
+    ],
+  },
 });
 
 export function listE2ESuites() {

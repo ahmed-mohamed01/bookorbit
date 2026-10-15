@@ -33,6 +33,9 @@ export const NotificationType = {
   MonitoredReleaseAvailable: "monitored_release_available",
   ReadAlongBuild: "read_along_build",
   ReadAlongBuildFailed: "read_along_build_failed",
+  WebSerialCompleted: "web_serial_completed",
+  WebSerialCompletedWithGaps: "web_serial_completed_with_gaps",
+  WebSerialFailed: "web_serial_failed",
 } as const;
 
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
@@ -64,6 +67,7 @@ export const NOTIFICATION_CATEGORY_IDS = [
   "achievements",
   "podcasts",
   "monitored",
+  "webSerials",
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORY_IDS)[number];
@@ -113,6 +117,9 @@ export const NOTIFICATION_TYPE_META: Record<NotificationType, NotificationTypeMe
   [NotificationType.MonitoredReleaseAvailable]: { category: "monitored", severity: "success" },
   [NotificationType.ReadAlongBuild]: { category: "bulkRename", severity: "success" },
   [NotificationType.ReadAlongBuildFailed]: { category: "bulkRename", severity: "error" },
+  [NotificationType.WebSerialCompleted]: { category: "webSerials", severity: "success" },
+  [NotificationType.WebSerialCompletedWithGaps]: { category: "webSerials", severity: "warning" },
+  [NotificationType.WebSerialFailed]: { category: "webSerials", severity: "error" },
 };
 
 export const NOTIFICATION_CATEGORIES: Record<NotificationCategory, readonly NotificationType[]> = NOTIFICATION_CATEGORY_IDS.reduce(

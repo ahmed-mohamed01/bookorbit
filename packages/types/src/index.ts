@@ -92,5 +92,7 @@ export * from "./podcast";
 export * from "./monitored";
 export * from "./monitored-settings";
 export * from "./storyteller";
+export * from "./web-serials";
+export * from "./web-serials-title";
 export * from "./delivery";
 export * from "./email";

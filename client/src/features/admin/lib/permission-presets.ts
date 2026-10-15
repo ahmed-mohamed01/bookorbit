@@ -23,6 +23,11 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     use: [Permission.BookRequestAccess, Permission.BookRequestAutoApprove, Permission.BookRequestSelfFulfill],
     manage: [Permission.ManageBookRequests],
   },
+  {
+    id: 'webSerials',
+    use: [Permission.WebSerialAccess],
+    manage: [],
+  },
   ...(APP_FEATURES.podcasts
     ? [
         {

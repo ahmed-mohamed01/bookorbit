@@ -279,3 +279,247 @@ jobs:
           IMAGE: ${{ env.IMAGE_NAME }}
           SHA_SHORT: ${{ needs.prepare.outputs.source_sha_short }}
         run: docker buildx imagetools inspect "${REGISTRY}/${IMAGE}:sha-${SHA_SHORT}"
+
+  # Builds the novel-sources image only when its inputs changed since the previous successful run of this workflow.
+  novel-sources-scope:
+    name: Novel Sources Build Scope
+    needs: [prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    outputs:
+      build: ${{ steps.scope.outputs.build }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Decide whether the image needs a build
+        id: scope
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          IMAGE_NAME: ${{ github.repository }}-novel-sources
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          SOURCE_SHA_SHORT: ${{ needs.prepare.outputs.source_sha_short }}
+          BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+          FORCE_REBUILD: ${{ inputs.force_rebuild }}
+        run: |
+          emit() { echo "build=$1" >> "$GITHUB_OUTPUT"; echo "$2"; }
+          if [[ "${FORCE_REBUILD}" == "true" ]]; then
+            emit true "Forced rebuild."; exit 0
+          fi
+          IMAGE_LOWER=$(echo "${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.oci.image.index.v1+json" \
+            "https://ghcr.io/v2/${IMAGE_LOWER}/manifests/sha-${SOURCE_SHA_SHORT}")
+          if [[ "$HTTP_STATUS" == "200" ]]; then
+            emit false "Image sha-${SOURCE_SHA_SHORT} already exists in GHCR, skipping."; exit 0
+          fi
+          BASE_SHA=$(gh run list --workflow container-image.yml --branch "${BRANCH}" --status success --limit 1 --json headSha --jq '.[0].headSha // empty' || true)
+          if [[ -z "$BASE_SHA" ]] || ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            emit true "No previous successful build to compare with, building."; exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE_SHA" "$SOURCE_SHA" -- services/novel-sources pnpm-lock.yaml pnpm-workspace.yaml package.json .github/workflows/container-image.yml)
+          if [[ -z "$CHANGED" ]]; then
+            emit false "Nothing relevant changed since ${BASE_SHA:0:12}, skipping."
+          else
+            echo "$CHANGED"
+            emit true "Relevant files changed since ${BASE_SHA:0:12}, building."
+          fi
+
+  novel-sources-build-amd64:
+    name: Novel Sources Build and Push amd64
+    needs: [prepare, novel-sources-scope]
+    if: needs.novel-sources-scope.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}-novel-sources
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_TOKEN != '' && secrets.GHCR_TOKEN || github.token }}
+
+      - name: Build image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./services/novel-sources/Dockerfile
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          platforms: linux/amd64
+          cache-from: type=gha,scope=container-image-yml-novel-sources-amd64
+          cache-to: type=gha,mode=max,scope=container-image-yml-novel-sources-amd64
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: table
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+  novel-sources-build-arm64:
+    name: Novel Sources Build and Push arm64
+    needs: [prepare, novel-sources-scope]
+    if: needs.novel-sources-scope.outputs.build == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}-novel-sources
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_TOKEN != '' && secrets.GHCR_TOKEN || github.token }}
+
+      - name: Build image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./services/novel-sources/Dockerfile
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          platforms: linux/arm64
+          cache-from: type=gha,scope=container-image-yml-novel-sources-arm64
+          cache-to: type=gha,mode=max,scope=container-image-yml-novel-sources-arm64
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          format: table
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+  novel-sources-merge-manifest:
+    name: Novel Sources Merge and Push Multi-Arch Manifest
+    needs:
+      [
+        prepare,
+        novel-sources-scope,
+        novel-sources-build-amd64,
+        novel-sources-build-arm64,
+      ]
+    if: needs.novel-sources-scope.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}-novel-sources
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_TOKEN != '' && secrets.GHCR_TOKEN || github.token }}
+
+      - name: Create SHA manifest
+        shell: bash
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE_NAME }}
+          SHA_SHORT: ${{ needs.prepare.outputs.source_sha_short }}
+          AMD64_DIGEST: ${{ needs.novel-sources-build-amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ needs.novel-sources-build-arm64.outputs.digest }}
+        run: |
+          FULL_IMAGE="${REGISTRY}/${IMAGE}"
+          docker buildx imagetools create \
+            --tag "${FULL_IMAGE}:sha-${SHA_SHORT}" \
+            "${FULL_IMAGE}@${AMD64_DIGEST}" \
+            "${FULL_IMAGE}@${ARM64_DIGEST}"
+
+      - name: Update main tag
+        if: needs.prepare.outputs.update_main == 'true'
+        shell: bash
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE_NAME }}
+          AMD64_DIGEST: ${{ needs.novel-sources-build-amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ needs.novel-sources-build-arm64.outputs.digest }}
+        run: |
+          FULL_IMAGE="${REGISTRY}/${IMAGE}"
+          docker buildx imagetools create \
+            --tag "${FULL_IMAGE}:main" \
+            "${FULL_IMAGE}@${AMD64_DIGEST}" \
+            "${FULL_IMAGE}@${ARM64_DIGEST}"
+
+      - name: Update branch tag
+        if: needs.prepare.outputs.branch_tag != ''
+        shell: bash
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE_NAME }}
+          BRANCH_TAG: ${{ needs.prepare.outputs.branch_tag }}
+          AMD64_DIGEST: ${{ needs.novel-sources-build-amd64.outputs.digest }}
+          ARM64_DIGEST: ${{ needs.novel-sources-build-arm64.outputs.digest }}
+        run: |
+          FULL_IMAGE="${REGISTRY}/${IMAGE}"
+          docker buildx imagetools create \
+            --tag "${FULL_IMAGE}:${BRANCH_TAG}" \
+            "${FULL_IMAGE}@${AMD64_DIGEST}" \
+            "${FULL_IMAGE}@${ARM64_DIGEST}"
+
+      - name: Inspect SHA manifest
+        shell: bash
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE_NAME }}
+          SHA_SHORT: ${{ needs.prepare.outputs.source_sha_short }}
+        run: docker buildx imagetools inspect "${REGISTRY}/${IMAGE}:sha-${SHA_SHORT}"

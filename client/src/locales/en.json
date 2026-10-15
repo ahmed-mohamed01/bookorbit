@@ -3991,7 +3991,8 @@
         "bookDock": "Quick actions shown on book pages.",
         "monitored": "Refresh timing and automation for watched authors.",
         "auditLog": "Who changed what, and when.",
-        "requests": "Sources, download clients, and what happens to a book once it downloads."
+        "requests": "Sources, download clients, and what happens to a book once it downloads.",
+        "webSerials": "Manga and web novel download connections, sources, and destinations."
       },
       "backToApp": "Back to library"
     },
@@ -4209,7 +4210,8 @@
         "emailNotifications": "Email & Notifications",
         "libraryConfiguration": "Library Configuration",
         "usersSecurity": "Users & Security",
-        "system": "System"
+        "system": "System",
+        "webSerials": "Manga & Light Novels"
       },
       "permissionLevels": {
         "use": "Use",
@@ -9648,7 +9650,61 @@
       "PODCAST_LOCAL_FILE_NOT_REMOVABLE": "This episode is one of your own files, so BookOrbit will not delete it. Remove it from the folder yourself.",
       "PODCAST_LOCAL_MEDIA_MISSING": "The only copy of this episode is no longer on disk, so it cannot be played.",
       "PODCAST_LOCAL_FOLDER_EMPTY": "This folder holds no audio BookOrbit can import, so it cannot become a show.",
-      "PODCAST_STORAGE_FULL": "This podcast library is out of storage. Free some space or raise its quota, then try again. Files that belong to local shows are never removed to make room."
+      "PODCAST_STORAGE_FULL": "This podcast library is out of storage. Free some space or raise its quota, then try again. Files that belong to local shows are never removed to make room.",
+      "WEB_SERIAL_LINKS_NOVEL_ONLY": "Links work for web novels. For manga, search by title.",
+      "WEB_SERIAL_KIND_UNAVAILABLE": "This kind of series is not available on this server. Ask an admin to set up its download engine.",
+      "WEB_SERIAL_NOVEL_SOURCES_ALL_DISABLED": "You switched off every light novel site, so novel search is skipped. Turn some back on from the info button next to the page description.",
+      "WEB_SERIAL_NOVEL_SOURCE_UNSUPPORTED": "No installed light novel source supports that link.",
+      "WEB_SERIAL_ENGINE_UNREACHABLE": "The download service could not be reached. Try again in a moment, or ask an admin to check that it is running.",
+      "WEB_SERIAL_ENGINE_TIMEOUT": "The download service took too long to answer. Try again in a moment.",
+      "WEB_SERIAL_ENGINE_ERROR": "The download service could not complete the request. Try again in a moment, or ask an admin to check it.",
+      "WEB_SERIAL_ENGINE_CREDENTIALS_REJECTED": "The download service refused the saved credentials. An admin needs to update them in the Manga & Light Novels settings.",
+      "WEB_SERIAL_ENGINE_NOT_CONFIGURED": "This download service is not set up on this server. An admin can set it up in the Manga & Light Novels settings.",
+      "WEB_SERIAL_ENGINE_URL_INVALID": "The service address must be a valid http or https URL.",
+      "WEB_SERIAL_SOURCE_FAILED": "{source} could not complete the request. Try again later, or pick another source.",
+      "WEB_SERIAL_LOOKUP_FAILED": "{service} could not answer right now. Try again in a moment.",
+      "WEB_SERIAL_SEARCH_UNAVAILABLE": "Search is unavailable right now. Try again in a moment.",
+      "WEB_SERIAL_SEARCH_NOT_CONFIGURED": "Search is not available on this server. Ask an admin to set up a download engine.",
+      "WEB_SERIAL_SERIES_UNAVAILABLE": "This series could not be loaded right now. Try again in a moment.",
+      "WEB_SERIAL_SERIES_NOT_FOUND": "That series could not be found.",
+      "WEB_SERIAL_SERIES_SOURCE_DISABLED": "This series comes from a source that is switched off on this server.",
+      "WEB_SERIAL_LINK_INVALID": "That link is not valid. Check it and try again.",
+      "WEB_SERIAL_LINK_UNAVAILABLE": "That link could not be opened. Check it and try again.",
+      "WEB_SERIAL_JOB_NOT_FOUND": "That download no longer exists.",
+      "WEB_SERIAL_JOB_FORBIDDEN": "This download belongs to another user.",
+      "WEB_SERIAL_ADMIN_ONLY": "Only an admin can see every download.",
+      "WEB_SERIAL_JOB_RETRY_NOT_ALLOWED": "Only downloads that failed or finished with gaps can be retried.",
+      "WEB_SERIAL_JOB_PAUSE_NOT_ALLOWED": "Only waiting or running downloads can be paused.",
+      "WEB_SERIAL_JOB_RESUME_NOT_ALLOWED": "Only paused downloads can be resumed.",
+      "WEB_SERIAL_JOB_MOVE_UP_NOT_ALLOWED": "Only waiting downloads can be moved up the queue.",
+      "WEB_SERIAL_JOB_CANCEL_FIRST": "Cancel this download before you remove it.",
+      "WEB_SERIAL_JOB_CANCELLED": "This download was cancelled. Start it again to download the chapters.",
+      "WEB_SERIAL_ITEM_RETRY_NOT_ALLOWED": "Only failed items can be retried.",
+      "WEB_SERIAL_TOO_MANY_JOBS": "You already have {limit} downloads waiting, running or paused. Wait for some to finish, or cancel one.",
+      "WEB_SERIAL_PACKAGING_UNAVAILABLE": "That packaging is not available for this series.",
+      "WEB_SERIAL_RANGE_NEEDS_VOLUMES": "A range works with one book per volume. Choose all volumes to get one book for the series.",
+      "WEB_SERIAL_NOTHING_TO_DOWNLOAD": "Nothing to download in that selection.",
+      "WEB_SERIAL_VOLUMES_UNAVAILABLE": "Volume information is not available for this series.",
+      "WEB_SERIAL_SELECTION_INVALID": "The selected chapters are not valid. Choose them again.",
+      "WEB_SERIAL_LIBRARY_NOT_FOUND": "That library no longer exists.",
+      "WEB_SERIAL_LIBRARY_FORMAT_REFUSED": "This library does not accept {format} files.",
+      "WEB_SERIAL_FOLDER_NOT_IN_LIBRARY": "That folder does not belong to the chosen library.",
+      "WEB_SERIAL_LIBRARY_HAS_NO_FOLDER": "This library has no folder to add books to.",
+      "WEB_SERIAL_TARGET_FOLDER_NEEDS_LIBRARY": "Choose a target library before a target folder.",
+      "WEB_SERIAL_MOVE_NOTHING_LEFT": "Nothing is left to move.",
+      "WEB_SERIAL_MOVE_BUSY": "The download is busy. Try again in a moment.",
+      "WEB_SERIAL_MOVE_CHANGED": "The download changed while it was being moved. Check it and try again.",
+      "WEB_SERIAL_MOVE_NO_CHAPTERS": "That source does not have any of the remaining chapters.",
+      "WEB_SERIAL_MOVE_TARGET_NOT_MANGA": "The target must be a manga series.",
+      "WEB_SERIAL_MOVE_SAME_SOURCE": "Choose a different source.",
+      "WEB_SERIAL_MOVE_NOVEL_UNSUPPORTED": "Moving novels between sites is not supported yet.",
+      "WEB_SERIAL_MOVE_TOO_MANY": "More than {limit} chapters are left, too many to move at once.",
+      "WEB_SERIAL_NOVEL_INDEX_BUSY": "This source is being indexed right now. Try again when it finishes.",
+      "WEB_SERIAL_NOVEL_SOURCE_NOT_INSTALLED": "That light novel source is not installed.",
+      "WEB_SERIAL_EXTENSION_REPO_INVALID": "The extension repository URL is not valid.",
+      "WEB_SERIAL_SERIES_LOADING": "The full chapter list from {source} is still loading. Long series can take several minutes.",
+      "WEB_SERIAL_SERIES_KEY_TOO_LONG": "This series cannot be added: its address on the site is too long.",
+      "WEB_SERIAL_SOURCE_DISABLED": "This site is not enabled for downloads. Ask an admin to enable it."
     }
   },
   "hardcover": {
@@ -10972,6 +11028,10 @@
         "monitored": {
           "label": "Watchlist releases",
           "description": "When a book by an author on your watchlist reaches its release date."
+        },
+        "webSerials": {
+          "label": "Manga & Light Novels",
+          "description": "When a manga or light novel download finishes, finishes with gaps, or fails."
         }
       }
     }
@@ -13451,7 +13511,8 @@
     "bookRequestReleases": "Pick a release",
     "monitored": "Watchlist",
     "monitoredAuthor": "Watchlist Author",
-    "tts": "Text-to-Speech"
+    "tts": "Text-to-Speech",
+    "webSerials": "Manga & Light Novels"
   },
   "monitored": {
     "controlsBar": {
@@ -14033,6 +14094,789 @@
       "koreaderUseDefault": "Use credential default",
       "koreaderSaveFailed": "Could not save the KOReader EPUB delivery setting. Try again.",
       "koreaderSaved": "KOReader EPUB delivery setting saved."
+    }
+  },
+  "webSerials": {
+    "title": "Manga & Light Novels",
+    "sources": {
+      "disclaimer": "Some sources publish works without the rights holder's permission. Admins choose which sources to enable, and users are responsible for making sure what they download is not licensed or that they have the right to it.",
+      "disclaimerLabel": "About these sources"
+    },
+    "navLabel": "Manga & Light Novels",
+    "subtitle": "Search for a series or paste a link, then add its chapters or volumes to your library.",
+    "novelProviders": {
+      "open": "About light novel sources",
+      "title": "Light novel sources",
+      "description": "Choose which of the sites your admin enabled are searched for you.",
+      "loading": "Loading light novel sources",
+      "loadErrorTitle": "Light novel sources could not be loaded",
+      "searchTitle": "Search these sites",
+      "searchHint": "Only sites your admin enabled are listed. Switching one off only affects your own searches.",
+      "searchEmpty": "Your admin has not enabled any sites for search. You can still paste a series link.",
+      "toggle": "Search {name}",
+      "linksTitle": "Works with links",
+      "linksAdvice": "Paste a series link from any of these sites into the search box to open it.",
+      "linksUnavailable": "The list of supported sites could not be loaded right now.",
+      "filterLabel": "Filter supported sites",
+      "filterPlaceholder": "Filter {count} sites",
+      "filterEmpty": "No supported site matches that."
+    },
+    "tabs": {
+      "discover": "Discover",
+      "queue": "Queue"
+    },
+    "kind": {
+      "manga": "Manga",
+      "novel": "Novel"
+    },
+    "seriesStatus": {
+      "ongoing": "Ongoing",
+      "completed": "Completed",
+      "hiatus": "On hiatus",
+      "cancelled": "Cancelled",
+      "unknown": "Unknown"
+    },
+    "chapters": "{count, plural, one {# chapter} other {# chapters}}",
+    "packaging": {
+      "chapter": "One book per chapter",
+      "volume": "One book per volume",
+      "series": "One book for the series"
+    },
+    "status": {
+      "queued": "Queued",
+      "paused": "Paused",
+      "running": "Downloading",
+      "importing": "Adding to library",
+      "completed": "Added",
+      "completed_with_gaps": "Added with gaps",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "search": {
+      "label": "Search manga and light novels",
+      "placeholder": "Search by title, or paste a link",
+      "placeholderLinksOnly": "Search manga by title, or paste a link",
+      "novelLinksHint": "Novels are added by link. Paste one to open it.",
+      "submit": "Search",
+      "openLink": "Open link",
+      "scopeLabel": "What to search",
+      "scope": {
+        "all": "All",
+        "manga": "Manga",
+        "novel": "Novels"
+      },
+      "intro": "Type a title to search, or paste the address of a series to open it."
+    },
+    "results": {
+      "label": "Search results",
+      "sort": {
+        "label": "Sort by",
+        "relevance": "Relevance",
+        "title": "Title A to Z",
+        "source": "Source"
+      },
+      "density": {
+        "label": "Row density",
+        "comfortable": "Comfortable",
+        "compact": "Compact"
+      },
+      "opening": "Opening series",
+      "emptyTitle": "No results",
+      "emptyBody": "Try a different title, or paste a link to the series.",
+      "failedSources": "{count, plural, one {# source could not be searched. The other results are still shown.} other {# sources could not be searched. The other results are still shown.}}",
+      "retryFailed": "Retry failed sources",
+      "refresh": "Refresh",
+      "refreshing": "Refreshing...",
+      "refreshFailed": "Could not refresh. Showing the earlier results.",
+      "fromMinutesAgo": "{count, plural, =0 {Results from just now} one {Results from # minute ago} other {Results from # minutes ago}}",
+      "mtl": "MTL",
+      "mtlTitle": "Machine translation",
+      "showMachineTranslations": "Show machine translations"
+    },
+    "notReady": {
+      "title": "Manga & Light Novels is not set up yet",
+      "body": "Ask an administrator to connect a download source.",
+      "adminBody": "Connect a download source in the settings to start getting manga and light novels.",
+      "adminAction": "Open settings"
+    },
+    "discover": {
+      "linkHint": "Paste a link from a supported site to open it directly",
+      "pendingHeading": {
+        "manga": "Manga sources",
+        "novel": "Novel sites"
+      },
+      "stillSearching": {
+        "manga": "Still searching manga sources...",
+        "novel": "Still searching novel sites..."
+      },
+      "open": "Open",
+      "sourceFilterLabel": "Filter results by source",
+      "sourceAll": "All",
+      "capabilitiesErrorTitle": "Manga & Light Novels is unavailable",
+      "searchErrorTitle": "Search could not be completed",
+      "series": {
+        "heading": "Series",
+        "stillSearching": "Searching the series database...",
+        "inLibrary": "In library",
+        "inLibraryLabel": "Already in your library",
+        "searchSitesLead": "Not in the list?",
+        "searchSites": "Search the sites directly",
+        "backToSeries": "Back to series results",
+        "fallback": {
+          "disabled": "Showing results from your sources because the series database is turned off.",
+          "unavailable": "Showing results from your sources because the series database is unavailable.",
+          "empty": "Showing results from your sources because the series database has nothing for this search."
+        }
+      }
+    },
+    "errors": {
+      "capabilities": "Could not check what Manga & Light Novels can do right now. Reload the page to try again."
+    },
+    "preview": {
+      "title": "Series",
+      "titleFor": "Series: {title}",
+      "description": "Choose what to add to your library and where it should go.",
+      "loading": "Loading series details",
+      "seriesLoading": "Loading the full chapter list from {source}. Long series can take several minutes.",
+      "seriesLoadingLink": "Loading the full chapter list. Long series can take several minutes.",
+      "sources": {
+        "title": "Download from",
+        "loading": "Looking for other sources",
+        "chapters": "{count, plural, one {# chapter} other {# chapters}}",
+        "updated": "updated {time}",
+        "chaptersUnknown": "Chapters not counted yet",
+        "mostComplete": "Most complete",
+        "sameSeries": "Same series",
+        "titleMatch": "Title match",
+        "wholeSeries": "Whole series",
+        "wholeSeriesNote": "This site has the whole series, not just this part. Its volumes are blocks of 100 chapters.",
+        "switchError": "Could not switch to that source.",
+        "finding": "Finding it on your sources...",
+        "opening": "Opening the most complete source...",
+        "none": "Not available from your sources",
+        "noneHint": "None of your enabled sources has this series.",
+        "failedNote": "{count, plural, one {# source could not be checked.} other {# sources could not be checked.}}",
+        "retryFailed": "Retry failed sources",
+        "searchSites": "Search the sites directly",
+        "checkError": "Could not check your sources."
+      },
+      "loadError": "Could not open this series.",
+      "loadErrorTitle": "This series could not be opened",
+      "more": "More",
+      "less": "Less",
+      "synopsis": "Synopsis",
+      "tags": "Tags",
+      "tagsMore": "Show {count} more tags",
+      "tagsLess": "Show fewer tags",
+      "kind": {
+        "manga": "Manga",
+        "novel": "Web novel"
+      },
+      "updated": "Updated {time}",
+      "alreadyInLibrary": "{count} already in your library",
+      "units": {
+        "manga": "Chapters",
+        "novel": "Volumes"
+      },
+      "available": {
+        "manga": "{count} available",
+        "novel": "{count} available"
+      },
+      "noUnits": "Nothing to download was found for this series.",
+      "rangeLabel": "Which to get",
+      "rangeAll": "All",
+      "rangeSome": "Choose range",
+      "rangeHint": {
+        "idle": {
+          "manga": "Tap the first chapter of the range",
+          "novel": "Tap the first volume of the range"
+        },
+        "anchor": {
+          "manga": "Now tap the last chapter",
+          "novel": "Now tap the last volume"
+        }
+      },
+      "allSummary": {
+        "manga": "All {count, plural, one {# chapter} other {# chapters}}",
+        "novel": "All {count, plural, one {# volume} other {# volumes}} · {chapters, plural, one {# chapter} other {# chapters}}"
+      },
+      "showList": {
+        "manga": "Show chapters",
+        "novel": "Show volumes"
+      },
+      "hideList": "Hide",
+      "markStart": "Start",
+      "markEnd": "End",
+      "sort": {
+        "toggle": "Change the sort order",
+        "manga": {
+          "newest": "Newest first",
+          "oldest": "Oldest first"
+        },
+        "novel": {
+          "newest": "Last volume first",
+          "oldest": "First volume first"
+        }
+      },
+      "clearRange": "Clear",
+      "quick": {
+        "latest": "Latest 10",
+        "first": "First 10",
+        "notInLibrary": "Not in library"
+      },
+      "rangeSummary": {
+        "manga": "Chapters {from} to {to} · {count, plural, one {# chapter} other {# chapters}}",
+        "novel": "Volumes {from} to {to} · {count, plural, one {# volume} other {# volumes}}",
+        "includesOwned": "includes items already in your library"
+      },
+      "listLabel": {
+        "manga": "Available chapters",
+        "novel": "Available volumes"
+      },
+      "unitChapters": "{count, plural, one {# chapter} other {# chapters}}",
+      "inLibrary": "In library",
+      "landing": "How it lands in your library",
+      "volumeUnavailable": "Volume information isn't available for this series.",
+      "published": {
+        "title": "Published volumes",
+        "alsoInPrint": "Also published in print: request volumes",
+        "hintLicensed": "This series is licensed in print. Ask for the published volumes through Book Requests.",
+        "hintUnavailable": "None of your sources carry this series. You can ask for the published volumes through Book Requests.",
+        "publishers": "Published by {names}",
+        "knownCount": "{count, plural, one {# volume} other {# volumes}}",
+        "countLabel": "How many volumes?",
+        "countHint": "The series database does not list a final volume. Enter how many volumes you want to see, up to {max}.",
+        "listLabel": "Published volumes of {title}",
+        "volume": "Volume {volume}",
+        "notRequested": "Not requested",
+        "openRequest": "Open the request for volume {volume}",
+        "request": "Request",
+        "requestAgain": "Request again",
+        "requestVolume": "Request volume {volume}",
+        "requestAll": "Request all missing ({count})",
+        "allRequested": "Every volume has a request.",
+        "requesting": "Requesting {done} of {total}",
+        "stop": "Stop",
+        "stopping": "Stopping after this volume",
+        "loading": "Checking your requests",
+        "loadError": "Your requests could not be checked.",
+        "findReleases": "Find releases",
+        "findReleasesFor": "Find releases for volume {volume}",
+        "hideReleases": "Hide releases",
+        "searching": "Searching your indexers",
+        "noReleases": "No releases found. Open the request to search with other terms.",
+        "releasesLabel": "Releases for volume {volume}",
+        "releasesTop": "Showing the top {shown} of {total}. Open the request for the full list.",
+        "seeders": "{count, plural, one {# seeder} other {# seeders}}",
+        "grab": "Grab",
+        "grabRelease": "Grab {title}",
+        "matching": "Finding the published book",
+        "noMatch": "No published match found.",
+        "noMatchSearch": "Search in Book Requests",
+        "requestAnyway": "Request anyway",
+        "rematch": "Re-match",
+        "rematchFor": "Match volume {volume} to a published book",
+        "rematchTitle": "Request the matched book instead?",
+        "rematchDescription": "Your request \"{request}\" would be cancelled and replaced by one for \"{title}\".",
+        "rematchConfirm": "Cancel and request the matched book"
+      },
+      "volumePlan": {
+        "summary": "{volumes, plural, one {# volume} other {# volumes}}, {chapters, plural, one {# single chapter} other {# single chapters}}",
+        "outside": "{count, plural, one {# chapter is not in a volume yet and will download as a separate chapter} other {# chapters are not in a volume yet and will download as separate chapters}}",
+        "more": "and {count} more",
+        "partial": "Volume {volume} is only partly selected; its chapters will download separately.",
+        "snapped": "The range was extended to chapters {from} to {to} so that whole volumes are downloaded."
+      },
+      "volumeChip": "Vol. {volume}",
+      "noVolume": "No volume",
+      "packaging": {
+        "manga": {
+          "chapter": {
+            "label": "Per chapter",
+            "hint": "One book for each chapter."
+          },
+          "volume": {
+            "label": "Per volume",
+            "hint": "One book for each volume."
+          },
+          "series": {
+            "label": "One book",
+            "hint": "Every selected chapter in a single book."
+          }
+        },
+        "volume": {
+          "label": "Per volume",
+          "hint": "One book for each volume, light on e-readers."
+        },
+        "series": {
+          "label": "One book for the series",
+          "hint": "Every volume in a single EPUB."
+        }
+      },
+      "library": "Library",
+      "libraryPlaceholder": "Choose a library",
+      "folder": "Folder",
+      "savedTo": "Saved to",
+      "unknownAuthorHint": "Books will be filed under Unknown author.",
+      "credits": "Credits",
+      "authors": "Authors",
+      "artists": "Artists",
+      "authorsPlaceholder": "Add an author",
+      "artistsPlaceholder": "Add an artist",
+      "lookup": {
+        "loading": "Looking up details...",
+        "matched": "Details from MangaBaka: {title} ({year})",
+        "matchedNoYear": "Details from MangaBaka: {title}",
+        "matchedFirstPart": "Details from MangaBaka: {title} (first part of the series)",
+        "notThisSeries": "Not this series",
+        "rejected": "Not using the MangaBaka match.",
+        "useMatch": "Use it again",
+        "noMatch": "No match found in the series database. Add the author yourself."
+      },
+      "noLibraries": "You do not have a library you can add books to.",
+      "summary": {
+        "nothing": "Nothing new to download"
+      },
+      "footer": {
+        "manga": "{units, plural, one {# chapter} other {# chapters}} · {books, plural, one {# book} other {# books}} · {source}",
+        "novel": "{units, plural, one {# volume} other {# volumes}} · {books, plural, one {# book} other {# books}} · {source}"
+      },
+      "cancel": "Cancel",
+      "get": "Get",
+      "entry": {
+        "footerFinding": "Finding it on your sources...",
+        "footerNone": "Not available from your sources"
+      }
+    },
+    "queue": {
+      "loading": "Loading your downloads",
+      "loadErrorTitle": "The queue could not be loaded",
+      "reload": "Try again",
+      "loadMore": "Show more",
+      "emptyTitle": "Nothing downloading",
+      "emptyBody": "Series you get will show up here while they download and land in your library.",
+      "emptyAction": "Find a series",
+      "preparing": "Getting ready",
+      "progress": {
+        "chapter": "Chapter {done} of {total}",
+        "volume": "Volume {done} of {total}",
+        "series": "Book {done} of {total}"
+      },
+      "progressLabel": "Progress for {title}",
+      "current": {
+        "chapters": "Chapter {done} of {total}",
+        "fetching": "Fetching chapters...",
+        "downloading": "Downloading...",
+        "building": "Building the book...",
+        "importing": "Adding to your library...",
+        "now": "Now: {label} · {detail}"
+      },
+      "failedUnits": "{count, plural, one {# item could not be downloaded.} other {# items could not be downloaded.}}",
+      "retry": "Retry",
+      "open": "Open",
+      "problemFallback": "Some items could not be added. Try this download again.",
+      "groups": {
+        "inProgress": "In progress",
+        "waiting": "Waiting",
+        "paused": "Paused",
+        "recent": "Recent"
+      },
+      "inLine": "#{position} in line",
+      "pausedNotice": "Paused. Resume to continue where it left off.",
+      "queuePausedBanner": "Downloads are paused by an admin. Running downloads finish; new ones wait.",
+      "cleared": "{count, plural, =0 {Nothing to clear} one {Removed # finished download} other {Removed # finished downloads}}",
+      "toolbar": {
+        "scopeLabel": "Whose downloads to show",
+        "scope": {
+          "mine": "Mine",
+          "all": "Everyone"
+        },
+        "pauseQueue": "Pause queue",
+        "resumeQueue": "Resume queue",
+        "clearFinished": "Clear finished"
+      },
+      "clearDialog": {
+        "title": "Clear finished downloads?",
+        "description": "This removes your finished downloads from the list. Books they added stay in your library.",
+        "descriptionAll": "This removes everyone's finished downloads from the list. Books they added stay in the library."
+      },
+      "cancelDialog": {
+        "title": "Cancel this download?",
+        "description": "{title} stops downloading. A cancelled download cannot be resumed: to get the rest, start it again from the series. Books already added stay in your library.",
+        "descriptionOther": "{title}, downloaded for {owner}, stops downloading. A cancelled download cannot be resumed. Books already added stay in the library.",
+        "confirm": "Cancel download"
+      },
+      "removeDialog": {
+        "title": "Remove this download?",
+        "description": "{title} is removed from the list. Books it added stay in your library.",
+        "descriptionOther": "{title} belongs to {owner}. It is removed from their list too. Books it added stay in the library."
+      },
+      "actions": {
+        "pause": "Pause",
+        "pauseLabel": "Pause {title}",
+        "resume": "Resume",
+        "resumeLabel": "Resume {title}",
+        "moveToTop": "Move to top",
+        "moveToTopLabel": "Move {title} to the top",
+        "move": "Move to another source",
+        "cancel": "Cancel",
+        "cancelLabel": "Cancel {title}",
+        "retry": "Retry",
+        "retryLabel": "Retry {title}",
+        "remove": "Remove",
+        "removeLabel": "Remove {title}",
+        "openLabel": "Open {title} in its library",
+        "more": "More actions for {title}"
+      },
+      "move": {
+        "title": "Move to another source",
+        "subtitle": "{count, plural, one {# chapter left to download} other {# chapters left to download}}",
+        "subtitleLoading": "Looking for another source",
+        "searching": "Searching your other sources...",
+        "loadErrorTitle": "Could not look for other sources",
+        "emptyTitle": "No other source has this series.",
+        "emptyHint": "Install or enable more manga sources in the settings, then try again.",
+        "failedSources": "Could not search: {sources}",
+        "full": "Has {available} of {total} remaining chapters",
+        "partial": "Has {available} of {total}: {missing} will stay failed",
+        "confidence": {
+          "same_series": "Same series",
+          "title_match": "Title match"
+        },
+        "confirm": "{count, plural, one {Move # chapter} other {Move # chapters}}",
+        "moving": "Moving...",
+        "done": "Moved to {source}"
+      },
+      "details": {
+        "show": "Details",
+        "hide": "Hide details",
+        "loading": "Loading details",
+        "empty": "Nothing to show yet."
+      },
+      "item": {
+        "pending": "Pending",
+        "fetching": "Fetching",
+        "importing": "Importing",
+        "imported": "Imported",
+        "skipped": "Skipped",
+        "failed": "Failed",
+        "retryLabel": "Retry {label}",
+        "openLabel": "Open {label}"
+      }
+    },
+    "toast": {
+      "started": "Getting {title}"
+    },
+    "admin": {
+      "title": "Manga & Light Novels"
+    },
+    "settings": {
+      "title": "Manga & Light Novels",
+      "subtitle": "The download engines behind Manga & Light Novels. People using BookOrbit only see search and Get.",
+      "loading": "Loading Manga & Light Novels settings",
+      "noPermission": "You do not have permission to manage Manga & Light Novels.",
+      "engines": "Download engines",
+      "saved": "Manga & Light Novels settings saved",
+      "saveFailed": "Could not save Manga & Light Novels settings",
+      "card": {
+        "manga": {
+          "title": "Manga",
+          "engine": "Suwayomi",
+          "empty": "Connect a Suwayomi server to search and download manga."
+        },
+        "novel": {
+          "title": "Web novels",
+          "engine": "lightnovel-crawler",
+          "empty": "Connect a light novel source service to search and download web novels.",
+          "engines": {
+            "lnreader": "LNReader sources",
+            "lncrawl": "lightnovel-crawler"
+          }
+        },
+        "test": "Test",
+        "edit": "Edit",
+        "connect": "Connect",
+        "failedFallback": "The last connection check failed.",
+        "failedHint": "Check the container is running and reachable from BookOrbit.",
+        "sources": {
+          "manga": "{count, plural, one {# source} other {# sources}}",
+          "novel": "{count, plural, one {# site} other {# sites}}"
+        },
+        "manageSources": "Manage sources",
+        "solver": "FlareSolverr detected",
+        "solverHint": "The last check found a Cloudflare solver, so sites behind a challenge can be searched. Those searches take longer."
+      },
+      "lookup": {
+        "title": "Series details",
+        "subtitle": "Looks up each manga and light novel in MangaBaka to fill in real authors, artists and titles.",
+        "howTitle": "How this works",
+        "how": {
+          "does": {
+            "title": "What it does",
+            "body": "BookOrbit looks each manga and light novel up in MangaBaka, a public series database, to fill in the real authors and artists and the official title. For manga it also uses MangaDex to learn which chapters belong to which volume, so downloads per volume work."
+          },
+          "sends": {
+            "title": "What it sends",
+            "body": "Only the series title and author. No user data leaves BookOrbit."
+          },
+          "off": {
+            "title": "When it is off or failing",
+            "body": "Books keep the names the source site gives, which are often missing or wrong. Per-volume manga downloads only work when chapter titles carry volume numbers. Downloads never stop."
+          }
+        },
+        "toggle": "Look up series details",
+        "checked": "checked {time}",
+        "paused": "Paused until {time}",
+        "status": {
+          "ok": "Working",
+          "failed": "Failing",
+          "untested": "Not checked",
+          "off": "Off",
+          "paused": "Paused"
+        },
+        "failedFallback": "The last check failed.",
+        "failedHint": "Downloads still work and books keep the source site's names until this recovers. After 3 failed lookups in a row, lookups pause for 5 minutes.",
+        "pausedHint": "Lookups paused after 3 failures in a row. They resume on their own after 5 minutes, and downloads keep working in the meantime."
+      },
+      "sheet": {
+        "description": "Connection details for this download engine.",
+        "manga": {
+          "title": "Manga connection",
+          "urlPlaceholder": "http://suwayomi:4567"
+        },
+        "novel": {
+          "title": "Web novel connection",
+          "engineLabel": "Engine",
+          "urlPlaceholder": {
+            "lnreader": "http://novel-sources:8282",
+            "lncrawl": "http://lncrawl:8181"
+          }
+        },
+        "url": "Server URL",
+        "username": "Username",
+        "password": "Password",
+        "token": "Token",
+        "showPassword": "Show password",
+        "hidePassword": "Hide password",
+        "passwordSaved": "A password is saved.",
+        "passwordKeep": "Leave blank to keep the saved password",
+        "passwordUnset": "Password",
+        "passwordNewServer": "Enter the password for the new server",
+        "clearedOnServerChange": "Changing the server URL clears the saved password. Enter the password again before saving.",
+        "blockedByPassword": "Enter the password for the new server URL first.",
+        "testing": "Testing...",
+        "testFailed": "The connection test failed."
+      },
+      "sources": {
+        "loading": "Loading sources...",
+        "mangaTitle": "Sources",
+        "mangaMeta": "{selected} of {total} sources searched",
+        "groupCount": "{selected} of {total}",
+        "selectAll": "All",
+        "selectNone": "None",
+        "mangaEmpty": "No sources are installed yet. Use Manage sources to install extensions.",
+        "mangaHint": "Only selected sources are searched. Sources you install later start off.",
+        "novelTitle": "Sites searched by title",
+        "novelMeta": "{selected} of {total} selected",
+        "novelEmpty": "No searchable sites were reported by lightnovel-crawler.",
+        "novelFilter": "Filter {count} sites",
+        "novelFilterLabel": "Filter sites",
+        "novelNoMatch": "No sites match.",
+        "novelHint": "Links from any supported site work even if the site is not selected here.",
+        "showAll": "Show all {count}"
+      },
+      "defaults": {
+        "title": "Defaults",
+        "manga": {
+          "label": "Manga goes to"
+        },
+        "novel": {
+          "label": "Web novels go to"
+        },
+        "libraryHint": "Where finished books land when a user does not choose.",
+        "noLibrary": "No default",
+        "folder": "Folder",
+        "folderDefault": "Library default",
+        "packaging": {
+          "label": "Web novel books",
+          "hint": "Users can still pick per series.",
+          "volume": "Per volume",
+          "series": "One book for the series"
+        },
+        "maxJobs": {
+          "label": "Downloads at once",
+          "hint": "How many series download at the same time across all users."
+        }
+      },
+      "saveBar": {
+        "unsaved": "Unsaved changes",
+        "invalid": "Fix the highlighted setting to save",
+        "discard": "Discard",
+        "save": "Save changes"
+      },
+      "extensions": {
+        "title": "Manga sources",
+        "description": "Install and remove the extensions that provide manga sources.",
+        "tabs": {
+          "installed": "Installed",
+          "available": "Available",
+          "repositories": "Repositories"
+        },
+        "loading": "Loading extensions...",
+        "multiLanguage": "Multi-language",
+        "adult": "Adult",
+        "updateAvailable": "Update available",
+        "version": "Version {version}",
+        "update": "Update",
+        "uninstall": "Uninstall",
+        "install": "Install",
+        "installing": "Installing...",
+        "installedLabel": "Installed",
+        "installedEmpty": "No extensions are installed yet. Open the Available tab to add some.",
+        "installedShowing": "Showing {shown} of {total} installed extensions",
+        "uninstallTitle": "Uninstall {name}?",
+        "uninstallDescription": "Its sources stop being searched. Books already downloaded stay in your library.",
+        "noRepos": "Add a repository first. Extensions are listed from your repositories.",
+        "goToRepositories": "Open Repositories",
+        "searchLabel": "Search extensions",
+        "searchPlaceholder": "Search extensions",
+        "languageLabel": "Language",
+        "allLanguages": "All languages",
+        "showAdult": "Show adult sources",
+        "count": "{count, plural, one {# extension} other {# extensions}}",
+        "refresh": "Refresh list",
+        "refreshing": "Refreshing...",
+        "noMatch": "No extensions match.",
+        "loadMore": "Load more",
+        "reposEmpty": "No repositories are set up.",
+        "removeRepo": "Remove",
+        "removeRepoTitle": "Remove this repository?",
+        "removeRepoDescription": "{url} will no longer provide extensions. Installed extensions stay installed.",
+        "addRepoLabel": "Add a repository",
+        "addRepoPlaceholder": "https://example.com/index.min.json",
+        "addRepo": "Add",
+        "repoInvalid": "Enter a web address starting with http:// or https://.",
+        "repoNote": "Extensions come from these repositories. BookOrbit does not check them; only add repositories you trust."
+      },
+      "novelSources": {
+        "title": "Light novel sources",
+        "description": "Install LNReader sources and choose which installed sources BookOrbit searches.",
+        "search": "Search sources",
+        "loading": "Loading sources...",
+        "empty": "No sources match.",
+        "installed": "Installed",
+        "updateAvailable": "Update available",
+        "enabled": "Enabled",
+        "disabled": "Disabled",
+        "install": "Install",
+        "update": "Update",
+        "remove": "Remove",
+        "language": "Source language",
+        "searchSource": "Search {name}",
+        "installSource": "Install {name}",
+        "updateSource": "Update {name}",
+        "removeSource": "Remove {name}",
+        "removeTitle": "Remove {name}?",
+        "removeDescription": "BookOrbit stops searching {name} and drops its titles from the light novel index. Installing it again lists its catalogue from the start.",
+        "broken": "Broken",
+        "brokenHint": "This source failed to load, so it answers nothing. Reinstall it or remove it.",
+        "reinstall": "Reinstall",
+        "reinstallSource": "Reinstall {name}"
+      },
+      "novelIndex": {
+        "title": "Light novel index",
+        "subtitle": "BookOrbit lists each enabled source's catalogue once, then checks for new titles every few hours, so novel search and suggestions answer at once instead of asking every site.",
+        "reload": "Refresh",
+        "budget": {
+          "label": "Daily page budget per source",
+          "hint": "Catalogue pages the index may load from each source per day, from {min} to {max}. Filling stops for the day when a source reaches it."
+        },
+        "state": {
+          "pending": "Waiting",
+          "filling": "Filling",
+          "done": "Indexed",
+          "paused": "Paused until tomorrow",
+          "running": "Indexing now"
+        },
+        "entries": "{count, plural, =0 {No titles yet} one {# title} other {# titles}}",
+        "lastTopup": "Checked for new titles {time}",
+        "noTopup": "Not checked for new titles yet",
+        "requests": "{used} of {budget} pages today",
+        "disabled": "Turned off",
+        "fillNow": "Fill now",
+        "rebuild": "Rebuild",
+        "empty": "No light novel sources are installed yet.",
+        "unavailable": "The novel sources service did not answer, so only sources the index already knows are listed.",
+        "fillNowFor": "Fill now: {name}",
+        "rebuildFor": "Rebuild: {name}",
+        "rebuildConfirm": {
+          "title": "Rebuild the {name} index?",
+          "description": "{count, plural, =0 {The {name} index is listed again from the first page.} one {This drops the # title indexed for {name} and lists the source again from the first page.} other {This drops the {entries} titles indexed for {name} and lists the source again from the first page.}} Until it refills, within the daily page budget, novel search and suggestions find nothing from this source."
+        }
+      }
+    },
+    "suggest": {
+      "label": "Suggestions",
+      "matched": "Known series"
+    },
+    "api": {
+      "addRepo": "Could not add this repository.",
+      "cancelJob": "Could not cancel this download.",
+      "cancelRequest": "Could not cancel your request.",
+      "novelSourceAction": "Could not change this novel source.",
+      "requestSourceStatus": "Could not check Book Requests.",
+      "clearFinished": "Could not clear the finished downloads.",
+      "installExtension": "Could not install this extension.",
+      "loadSettings": "Could not load Manga & Light Novels settings.",
+      "capabilities": "Could not load Manga & Light Novels.",
+      "availableNovelSources": "Could not load the available novel sources.",
+      "jobDetail": "Could not load the details.",
+      "installedNovelSources": "Could not load the installed novel sources.",
+      "novelIndex": "Could not load the light novel index.",
+      "novelProviders": "Could not load the light novel sources.",
+      "mangaExtensions": "Could not load the manga extensions.",
+      "mangaSources": "Could not load the manga sources.",
+      "novelSources": "Could not load the novel sources.",
+      "queue": "Could not load the queue.",
+      "repos": "Could not load the repositories.",
+      "series": "Could not load this series.",
+      "request": "Could not load your request.",
+      "requests": "Could not load your requests.",
+      "otherSources": "Could not look for other sources.",
+      "discoverSources": "Could not look for this series on your sources.",
+      "moveJob": "Could not move this download.",
+      "pauseQueue": "Could not pause the queue.",
+      "pauseJob": "Could not pause this download.",
+      "rebuildIndex": "Could not rebuild the index for this source.",
+      "recordRequest": "Could not record this request.",
+      "refreshExtensions": "Could not refresh the extension list.",
+      "removeJob": "Could not remove this download.",
+      "removeRepo": "Could not remove this repository.",
+      "requestVolume": "Could not request this volume.",
+      "resumeQueue": "Could not resume the queue.",
+      "resumeJob": "Could not resume this download.",
+      "retryJob": "Could not retry this download.",
+      "retryItem": "Could not retry this item.",
+      "saveSettings": "Could not save Manga & Light Novels settings.",
+      "saveNovelProviders": "Could not save your light novel sources.",
+      "releases": "Could not search for releases.",
+      "grab": "Could not send this release.",
+      "fillIndex": "Could not start indexing this source.",
+      "createJob": "Could not start the download.",
+      "uninstallExtension": "Could not uninstall this extension.",
+      "updateExtension": "Could not update this extension.",
+      "search": "Search failed.",
+      "lookup": "Series details could not be looked up right now.",
+      "suggest": "Suggestions are unavailable.",
+      "resolve": "That link could not be opened.",
+      "testEngine": "The connection test failed.",
+      "testLookup": "The series details check failed.",
+      "openSeries": "Could not open this series.",
+      "extensionChange": "The extension change failed.",
+      "indexAction": "Could not change the index for this source.",
+      "matchVolume": "Could not match this volume.",
+      "requestMatched": "Could not request the matched book.",
+      "searchUnavailable": "Search is not set up right now. Paste a link to open a series."
     }
   }
 }

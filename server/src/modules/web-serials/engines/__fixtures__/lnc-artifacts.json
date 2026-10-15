@@ -1,0 +1,39 @@
+{
+  "total": 2,
+  "offset": 0,
+  "limit": 100,
+  "items": [
+    {
+      "id": "58719ece-bc63-426e-b36a-837a233b023b",
+      "extra": {},
+      "job_id": "cb82a4c7-3ec4-4e53-9276-7dd703e8a7ac",
+      "language": null,
+      "format": "epub",
+      "file_size": 153453,
+      "novel_id": "39a44bd3-ad95-4c24-a122-affaaa663c72",
+      "created_at": 1791924355748,
+      "updated_at": 1791924355748,
+      "user_id": "aabd2c72-d63e-4863-aab2-7f365315efd6",
+      "volume": 2,
+      "file_name": "Mother Of Learning.Vol_002.epub",
+      "output_file": "novels/39a44bd3-ad95-4c24-a122-affaaa663c72/artifacts/Mother Of Learning.Vol_002.epub",
+      "is_available": true
+    },
+    {
+      "id": "older",
+      "extra": {},
+      "job_id": "x",
+      "language": null,
+      "format": "epub",
+      "file_size": 10,
+      "novel_id": "39a44bd3-ad95-4c24-a122-affaaa663c72",
+      "created_at": 1791924000000,
+      "updated_at": 1791924000000,
+      "user_id": "u",
+      "volume": 2,
+      "file_name": "old.epub",
+      "output_file": "novels/x/artifacts/old.epub",
+      "is_available": true
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "created_at": 1791924302224,
+    "updated_at": 1791924302224,
+    "novel_id": "39a44bd3-ad95-4c24-a122-affaaa663c72",
+    "title": "Volume 1",
+    "extra": {},
+    "id": "b974dc81-e718-4c95-912f-3c0749c52c2e",
+    "serial": 1,
+    "chapter_count": 100
+  },
+  {
+    "created_at": 1791924302224,
+    "updated_at": 1791924302224,
+    "novel_id": "39a44bd3-ad95-4c24-a122-affaaa663c72",
+    "title": "Volume 2",
+    "extra": {},
+    "id": "83daeca7-0c88-4291-bbd7-80d2119b158e",
+    "serial": 2,
+    "chapter_count": 9
+  }
+]
