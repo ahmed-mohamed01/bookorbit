@@ -1155,7 +1155,7 @@ describe('Web Serials (e2e)', () => {
       const novel = seedNovel(3, 12, 'Epic Saga');
       await configure({ manga: false });
 
-      const done = await runToEnd(ctx.user.token, novelJobBody(novel));
+      const done = await runToEnd(ctx.user.token, novelJobBody(novel, { metadata: { artists: ['Novel Illustrator'] } }));
       expect(done).toMatchObject({ status: 'completed', unitsTotal: 3, unitsDone: 3, packaging: 'volume' });
       const books = await listBooks(ctx, library.libraryId);
       expect(books.map((book) => [book.title, book.seriesName, book.seriesIndex])).toEqual([
@@ -1165,6 +1165,7 @@ describe('Web Serials (e2e)', () => {
       ]);
       for (const book of books) {
         expect(book.authors).toEqual(['Writer One', 'Writer Two']);
+        expect(book.pencillers).toEqual(['Novel Illustrator']);
         expect(book.files[0]!.format).toBe('epub');
         expect(await zipEntryNames(book.files[0]!.path)).toEqual(expect.arrayContaining(['mimetype', 'META-INF/container.xml', 'OEBPS/content.opf']));
       }

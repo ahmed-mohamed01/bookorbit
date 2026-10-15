@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
 import { BookDockModule } from '../book-dock/book-dock.module';
+import { BookMetadataLockModule } from '../book-metadata-lock/book-metadata-lock.module';
 import { LibraryModule } from '../library/library.module';
+import { MetadataModule } from '../metadata/metadata.module';
 import { NotificationModule } from '../notification/notification.module';
 import { LncrawlClient } from './engines/lncrawl.client';
 import { NovelSourcesClient } from './engines/novel-sources.client';
@@ -19,6 +21,7 @@ import { WebSerialsEngineRegistry } from './web-serials-engine-registry.service'
 import { WebSerialsExtensionsService } from './web-serials-extensions.service';
 import { WebSerialsCleanupService } from './web-serials-cleanup.service';
 import { WebSerialJobMoveService } from './web-serials-job-move.service';
+import { WebSerialsIllustratorBackfillService } from './web-serials-illustrator-backfill.service';
 import { WebSerialsImportService } from './web-serials-import.service';
 import { WebSerialsJobRunnerService } from './web-serials-job-runner.service';
 import { WebSerialJobsService } from './web-serials-jobs.service';
@@ -38,7 +41,7 @@ import { WebSerialsNovelIndexRepository } from './web-serials-novel-index.reposi
 import { WebSerialsRepository } from './web-serials.repository';
 
 @Module({
-  imports: [ConfigModule.forFeature(webSerialsConfig), LibraryModule, BookDockModule, NotificationModule],
+  imports: [ConfigModule.forFeature(webSerialsConfig), LibraryModule, BookDockModule, NotificationModule, MetadataModule, BookMetadataLockModule],
   controllers: [WebSerialsAdminController, WebSerialsController],
   providers: [
     WebSerialsRepository,
@@ -70,6 +73,7 @@ import { WebSerialsRepository } from './web-serials.repository';
     WebSerialsNovelIndexFillerService,
     WebSerialJobsService,
     WebSerialJobMoveService,
+    WebSerialsIllustratorBackfillService,
   ],
 })
 export class WebSerialsModule {}

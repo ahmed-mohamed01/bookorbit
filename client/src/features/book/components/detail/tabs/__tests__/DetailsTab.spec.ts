@@ -375,6 +375,35 @@ describe('DetailsTab cover surface', () => {
     expect(wrapper.text()).toContain('Author One, Author Two')
   })
 
+  it('credits the artist as art for a comic and as illustration for an ebook', async () => {
+    const pencillers = { pencillers: ['Ken Akamatsu', 'Kei Ito'] }
+    const comic = mountDetails(
+      makeBook({
+        comicMetadata: pencillers,
+        files: [{ ...makeBook().files[0]!, format: 'cbz', filename: 'vol-1.cbz' }],
+      }),
+    )
+    const ebook = mountDetails(makeBook({ comicMetadata: pencillers }))
+    await flushPromises()
+
+    expect(comic.text()).toContain('art by')
+    expect(comic.text()).toContain('Ken Akamatsu, Kei Ito')
+    expect(comic.text()).not.toContain('illustrated by')
+    expect(ebook.text()).toContain('illustrated by')
+    expect(ebook.text()).toContain('Ken Akamatsu, Kei Ito')
+  })
+
+  it('shows no artist line without pencillers', async () => {
+    const empty = mountDetails(makeBook({ comicMetadata: { pencillers: [] } }))
+    const missing = mountDetails(makeBook({ comicMetadata: null }))
+    await flushPromises()
+
+    for (const wrapper of [empty, missing]) {
+      expect(wrapper.text()).not.toContain('illustrated by')
+      expect(wrapper.text()).not.toContain('art by')
+    }
+  })
+
   it('keeps genres on one line and moves genres that do not fit into the overflow popover', async () => {
     const wrapper = mountDetails(
       makeBook({

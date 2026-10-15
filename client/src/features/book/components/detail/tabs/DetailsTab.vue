@@ -371,6 +371,8 @@ const openableFiles = computed(() =>
 const hasMultipleFiles = computed(() => openableFiles.value.length > 1)
 const authorLinks = computed(() => props.book.authors.filter((author) => author.name.trim().length > 0))
 const narratorLine = computed(() => props.book.audioMetadata?.narrators?.map((n) => n.name).join(', ') || null)
+const artistLine = computed(() => props.book.comicMetadata?.pencillers?.join(', ') || null)
+const artistLabel = computed(() => t(isPrimaryComic.value ? 'book.detail.details.artBy' : 'book.detail.details.illustratedBy'))
 function formatDuration(seconds: number | null | undefined): string {
   if (seconds == null) return '-'
   const hours = Math.floor(seconds / 3600)
@@ -1258,6 +1260,10 @@ watch(
             <span class="text-muted-foreground">{{ t('book.detail.details.narratedBy') }}</span>
             <span class="ml-1 font-semibold">{{ narratorLine }}</span>
           </p>
+          <p v-if="artistLine" class="mt-1 text-[13px] break-words">
+            <span class="text-muted-foreground">{{ artistLabel }}</span>
+            <span class="ml-1 font-semibold">{{ artistLine }}</span>
+          </p>
           <div v-if="seriesLinks.length" class="mt-2 flex flex-wrap gap-1.5">
             <template v-for="series in seriesLinks" :key="`m-${series.key}`">
               <RouterLink
@@ -1496,6 +1502,10 @@ watch(
           <p v-if="narratorLine" class="text-sm">
             <span class="text-muted-foreground">{{ t('book.detail.details.narratedBy') }}</span>
             <span class="ml-1 font-medium text-foreground">{{ narratorLine }}</span>
+          </p>
+          <p v-if="artistLine" class="text-sm">
+            <span class="text-muted-foreground">{{ artistLabel }}</span>
+            <span class="ml-1 font-medium text-foreground">{{ artistLine }}</span>
           </p>
           <template v-if="seriesLinks.length">
             <span class="text-muted-foreground text-xs">·</span>

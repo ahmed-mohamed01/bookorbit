@@ -5766,6 +5766,8 @@
       "details": {
         "by": "by",
         "narratedBy": "narrated by",
+        "artBy": "art by",
+        "illustratedBy": "illustrated by",
         "ratingLocked": "Rating is locked",
         "rateStar": "Rate {star}",
         "listen": "Listen",

@@ -67,6 +67,7 @@ export const webSerialSettings = pgTable(
     lookupLastCheck: jsonb('lookup_last_check').$type<WebSerialLookupHealth>(),
     maxConcurrentJobs: integer('max_concurrent_jobs').notNull().default(2),
     queuePaused: boolean('queue_paused').notNull().default(false),
+    illustratorBackfillDoneAt: timestamp('illustrator_backfill_done_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true })
       .defaultNow()

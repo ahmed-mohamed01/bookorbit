@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, count, desc, eq, getTableColumns, inArray, lt, notInArray, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, getTableColumns, gt, inArray, isNotNull, like, lt, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { alias } from 'drizzle-orm/pg-core';
 
@@ -28,7 +28,7 @@ import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import type { EngineUnitSpec } from './engines/web-serial-engine';
 import { volumeKeyBase } from './web-serials-metadata.utils';
-import { bookMetadata, books, libraries, libraryFolders, users } from '../../db/schema';
+import { bookMetadata, books, comicMetadata, libraries, libraryFolders, users } from '../../db/schema';
 import {
   webSerialImports,
   webSerialNovelPrefs,
@@ -140,6 +140,13 @@ export function compactSerialTitle(title: string): string {
   return normalizeSerialTitle(title).replace(/\s+/g, '');
 }
 
+export interface WebSerialIllustratorBackfillBook {
+  bookId: number;
+  matchKey: string;
+  kind: WebSerialKind;
+  hasPencillers: boolean;
+}
+
 export interface WebSerialInterruptedJobs {
   requeued: number[];
 }
@@ -249,6 +256,46 @@ export class WebSerialsRepository {
 
   async setQueuePaused(paused: boolean): Promise<void> {
     await this.upsertSettings({ queuePaused: paused });
+  }
+
+  async isIllustratorBackfillDone(): Promise<boolean> {
+    const [row] = await this.db
+      .select({ doneAt: webSerialSettings.illustratorBackfillDoneAt })
+      .from(webSerialSettings)
+      .where(eq(webSerialSettings.id, 1))
+      .limit(1);
+    return row?.doneAt != null;
+  }
+
+  async markIllustratorBackfillDone(): Promise<void> {
+    await this.upsertSettings({ illustratorBackfillDoneAt: new Date() });
+  }
+
+  /** The next books after `afterBookId` that the ledger ties to a MangaBaka series, one row per book with its latest match. */
+  async findIllustratorBackfillBooks(afterBookId: number, limit: number): Promise<WebSerialIllustratorBackfillBook[]> {
+    const rows = await this.db
+      .selectDistinctOn([webSerialImports.bookId], {
+        bookId: webSerialImports.bookId,
+        matchKey: webSerialImports.matchKey,
+        kind: webSerialImports.kind,
+        hasPencillers: sql<boolean>`coalesce(cardinality(${comicMetadata.pencillers}), 0) > 0`,
+      })
+      .from(webSerialImports)
+      .innerJoin(books, eq(books.id, webSerialImports.bookId))
+      .leftJoin(comicMetadata, eq(comicMetadata.bookId, webSerialImports.bookId))
+      .where(and(isNotNull(webSerialImports.bookId), gt(webSerialImports.bookId, afterBookId), like(webSerialImports.matchKey, 'mb:%')))
+      .orderBy(asc(webSerialImports.bookId), desc(webSerialImports.id))
+      .limit(limit);
+    return rows.map((row) => ({ bookId: row.bookId!, matchKey: row.matchKey!, kind: row.kind, hasPencillers: row.hasPencillers }));
+  }
+
+  async bookHasPencillers(bookId: number): Promise<boolean> {
+    const [row] = await this.db
+      .select({ has: sql<boolean>`coalesce(cardinality(${comicMetadata.pencillers}), 0) > 0` })
+      .from(comicMetadata)
+      .where(eq(comicMetadata.bookId, bookId))
+      .limit(1);
+    return row?.has ?? false;
   }
 
   async getDisabledNovelDomains(userId: number): Promise<string[]> {

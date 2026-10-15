@@ -66,7 +66,7 @@ export function buildDockMetadata(
     genres: uniqueCaseInsensitive([...series.tags, ...(metadata.match?.genres ?? [])]),
     language: series.language,
     publishedDate: publishedDate(unit.publishedAt),
-    ...(series.kind === 'manga' && artists.length > 0 ? { comicMetadata: { pencillers: artists } } : {}),
+    ...(artists.length > 0 ? { comicMetadata: { pencillers: artists } } : {}),
   };
   const label = unit.label.trim();
 

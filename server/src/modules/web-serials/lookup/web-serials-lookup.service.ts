@@ -375,7 +375,8 @@ export class WebSerialsLookupService {
     await this.repo.recordLookupCheck(health).catch(() => undefined);
   }
 
-  private isPaused(): boolean {
+  /** True while the breaker holds MangaBaka calls back after repeated failures. */
+  isPaused(): boolean {
     if (this.pausedUntil <= Date.now()) {
       this.pausedUntil = 0;
       return false;

@@ -89,7 +89,7 @@ describe('buildDockMetadata', () => {
     });
   });
 
-  it('does not put artists into novel metadata', () => {
+  it('credits the matched illustrators of a light novel', () => {
     const novel = { ...series, kind: 'novel' as const };
     const metadata = buildDockMetadata(novel, { label: 'Volume 1', sequence: '1' }, 'volume', {
       match: {
@@ -106,7 +106,7 @@ describe('buildDockMetadata', () => {
     });
 
     expect(metadata.authors).toEqual(['Writer']);
-    expect(metadata.comicMetadata).toBeUndefined();
+    expect(metadata.comicMetadata).toEqual({ pencillers: ['Illustrator'] });
   });
 
   it('falls back to source authors when a match has no author credits', () => {
