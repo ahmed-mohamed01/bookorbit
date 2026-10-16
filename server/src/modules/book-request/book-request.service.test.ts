@@ -63,6 +63,7 @@ function row(overrides: Record<string, unknown> = {}) {
     bookDockFileId: null,
     selfServe: false,
     autoGrab: null,
+    sourceIds: null,
     fulfillerUserId: null,
     statusReason: null,
     dedupeKey: 'work:dune:frankherbert:ebook',
@@ -91,6 +92,7 @@ function makeService(
     automationSettings?: Record<string, unknown>;
     libraryService?: Record<string, unknown>;
     companions?: Record<string, unknown>;
+    requestSources?: Record<string, unknown>;
     /** The user a delegated submission names, as `AuthService` would resolve them. */
     actingUser?: RequestUser | null;
   } = {},
@@ -124,6 +126,7 @@ function makeService(
     createPair: vi.fn().mockResolvedValue([]),
     linkCompanions: vi.fn().mockResolvedValue(true),
     setTargetBookIfUnset: vi.fn().mockResolvedValue(true),
+    setSourceIds: vi.fn().mockResolvedValue(undefined),
     findByIds: vi.fn().mockResolvedValue([]),
     findBookPlacement: vi.fn().mockResolvedValue(undefined),
     findBookMediaKinds: vi.fn().mockResolvedValue(new Set()),
@@ -166,17 +169,16 @@ function makeService(
     ...overrides.removal,
   };
   // The summary caches on the broadcast count, so the stub has to move it the way the real one does.
-  const gateway: { changeVersion: number; emitChanged: ReturnType<typeof vi.fn> } = {
-    changeVersion: 0,
-    emitChanged: vi.fn(() => {
-      gateway.changeVersion++;
-    }),
-  };
+  const gateway = { changeVersion: 0, emitChanged: vi.fn() };
+  gateway.emitChanged.mockImplementation(() => {
+    gateway.changeVersion++;
+  });
   // The real one: delegation is a security rule, so a stub here would assert nothing.
   const auth = { findActingUser: vi.fn().mockResolvedValue(overrides.actingUser ?? null) };
   const attribution = new BookRequestAttributionService(auth as never);
 
   const companions = { handOn: vi.fn().mockResolvedValue(false), ...overrides.companions };
+  const requestSources = { assertRequestable: vi.fn().mockResolvedValue(undefined), ...overrides.requestSources };
 
   const service = new BookRequestService(
     repo as never,
@@ -190,10 +192,25 @@ function makeService(
     gateway as never,
     attribution,
     {} as never,
+    requestSources as never,
     companions as never,
   );
 
-  return { service, repo, dedupe, libraryService, notifications, downloads, automation, automationSettings, removal, gateway, auth, companions };
+  return {
+    service,
+    repo,
+    dedupe,
+    libraryService,
+    notifications,
+    downloads,
+    automation,
+    automationSettings,
+    removal,
+    gateway,
+    auth,
+    companions,
+    requestSources,
+  };
 }
 
 const dto = { title: 'Dune', mediaKind: 'ebook' as const, authors: ['Frank Herbert'] };
@@ -231,6 +248,57 @@ describe('BookRequestService.submit', () => {
     const [insert, , override] = repo.create.mock.calls[0] as [Record<string, unknown>, string[], boolean | undefined];
     expect(insert).not.toHaveProperty('autoGrab');
     expect(override).toBe(expected);
+  });
+
+  it('stores sourceIds on a new request', async () => {
+    const { service, repo } = makeService({
+      requestSources: { assertRequestable: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    await service.submit({ ...dto, sourceIds: [4] }, user());
+
+    expect(repo.create).toHaveBeenCalledWith(expect.any(Object), expect.any(Array), undefined, [4]);
+  });
+
+  it.each([
+    ['replaces a same-user request list', [4], [4]],
+    ['clears a same-user request list with null', null, null],
+  ])('%s when joining', async (_label, sourceIds, expected) => {
+    const existing = row({ id: 7, userId: 1 });
+    const { service, repo } = makeService({
+      dedupe: { findActiveRequestFor: vi.fn().mockResolvedValue(existing) },
+      repo: { findById: vi.fn().mockResolvedValue(joined({ id: 7, userId: 1 })) },
+      requestSources: { assertRequestable: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    await service.submit({ ...dto, sourceIds }, user());
+
+    expect(repo.setSourceIds).toHaveBeenCalledWith(7, expected);
+  });
+
+  it('does not replace another user request source list when joining', async () => {
+    const existing = row({ id: 7, userId: 2 });
+    const { service, repo } = makeService({
+      dedupe: { findActiveRequestFor: vi.fn().mockResolvedValue(existing) },
+      repo: { findById: vi.fn().mockResolvedValue(joined({ id: 7, userId: 2 })) },
+      requestSources: { assertRequestable: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    await service.submit({ ...dto, sourceIds: [4] }, user());
+
+    expect(repo.setSourceIds).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an id that does not exist', [9]],
+    ['a source that does not carry the medium', [4]],
+  ])('refuses %s', async (_label, sourceIds) => {
+    const assertRequestable = vi.fn().mockRejectedValue(new BadRequestException('Choose sources that search for ebooks'));
+    const { service, repo } = makeService({ requestSources: { assertRequestable } });
+
+    await expect(service.submit({ ...dto, sourceIds }, user())).rejects.toThrow('Choose sources that search for ebooks');
+    expect(assertRequestable).toHaveBeenCalledWith(sourceIds, 'ebook');
+    expect(repo.create).not.toHaveBeenCalled();
   });
 
   it('rejects a blank title rather than storing one', async () => {
@@ -2205,6 +2273,19 @@ describe('BookRequestService.submitPair', () => {
     expect(result.ebook.request.companionRequestId).toBe(11);
     expect(result.audiobook.request.companionRequestId).toBe(10);
     expect(result.ebook.subscribed).toBe(false);
+  });
+
+  it('stores sourceIds on both halves of a pair', async () => {
+    const { ebook, audiobook } = pairRows();
+    const { service, repo } = makeService({
+      repo: { createPair: vi.fn().mockResolvedValue([ebook, audiobook]), findById: findByIdFor([ebook, audiobook]) },
+      requestSources: { assertRequestable: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    await service.submitPair({ ...pairDto, sourceIds: [4] }, user());
+
+    const [entries] = repo.createPair.mock.calls[0] as [Array<{ sourceIds?: number[] }>];
+    expect(entries.map((entry) => entry.sourceIds)).toEqual([[4], [4]]);
   });
 
   it('tells the approvers once, naming both media, rather than once per half', async () => {

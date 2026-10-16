@@ -1,6 +1,10 @@
+import { applyDecorators } from '@nestjs/common';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
   ArrayNotEmpty,
+  ArrayUnique,
   Equals,
   IsArray,
   IsBoolean,
@@ -17,6 +21,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import {
+  MONITORED_BULK_REQUEST_FORMATS,
   MONITORED_AUTHOR_LIST_SORTS,
   MONITORED_BOOK_LIST_SORTS,
   MONITORED_FORMATS,
@@ -26,10 +31,15 @@ import {
   MONITORED_SORTS,
   MONITORED_STATUS_FILTERS,
   MONITOR_MODES,
+  MONITORED_WORK_BULK_LIMIT,
 } from '@bookorbit/types';
 import type {
   MonitorMode,
   MonitoredAuthorListSort,
+  MonitoredBulkRequestFormat,
+  MonitoredBulkRequestPayload,
+  MonitoredBulkUpdatePayload,
+  MonitoredBulkWorkPatch,
   MonitoredBookListSort,
   MonitoredFormat,
   MonitoredListOrder,
@@ -39,6 +49,8 @@ import type {
   MonitoredStatusFilter,
   MonitoredWorkPatch,
 } from '@bookorbit/types';
+
+import { IsRequestSourceIds } from '../../../common/validation/request-source-ids.validation';
 
 // Postgres integer columns are int4; anything larger overflows in the driver rather than the DTO.
 const MAX_INT4 = 2147483647;
@@ -292,6 +304,73 @@ export class UpdateMonitoredWorkDto implements MonitoredWorkPatch {
   @IsOptional()
   @Equals(true)
   automaticVisibility?: true;
+}
+
+class BulkRequestSourcesDto {
+  @IsOptional()
+  @IsRequestSourceIds()
+  ebook?: number[] | null;
+
+  @IsOptional()
+  @IsRequestSourceIds()
+  audiobook?: number[] | null;
+}
+
+function IsBulkWorkIds(): PropertyDecorator {
+  return applyDecorators(
+    IsArray(),
+    ArrayMinSize(1),
+    ArrayMaxSize(MONITORED_WORK_BULK_LIMIT),
+    ArrayUnique(),
+    IsString({ each: true }),
+    MaxLength(200, { each: true }),
+  );
+}
+
+export class BulkRequestWorksDto implements MonitoredBulkRequestPayload {
+  @IsBulkWorkIds()
+  workIds!: string[];
+
+  @IsIn(MONITORED_BULK_REQUEST_FORMATS)
+  format!: MonitoredBulkRequestFormat;
+
+  @IsOptional()
+  @IsBoolean()
+  autoDownload?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => BulkRequestSourcesDto)
+  sources?: BulkRequestSourcesDto;
+}
+
+export class BulkWorkPatchDto implements MonitoredBulkWorkPatch {
+  @IsOptional()
+  @IsBoolean()
+  monitorEbook?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  monitorAudiobook?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  hidden?: boolean;
+
+  @IsOptional()
+  @Equals(true)
+  automaticVisibility?: true;
+}
+
+export class BulkUpdateWorksDto implements MonitoredBulkUpdatePayload {
+  @IsBulkWorkIds()
+  workIds!: string[];
+
+  @IsObject()
+  @ValidateNested()
+  @Type(() => BulkWorkPatchDto)
+  patch!: BulkWorkPatchDto;
 }
 
 export class GrabWorkReleaseDto {

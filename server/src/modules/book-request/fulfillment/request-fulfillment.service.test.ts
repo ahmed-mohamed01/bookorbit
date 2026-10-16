@@ -95,9 +95,12 @@ function makeService(
     }),
     ...overrides.indexers,
   };
-  const indexerAdapter = { fetchTorrentFile: vi.fn(), ...overrides.indexerAdapter };
+  const indexerAdapter = { fetchTorrentFile: vi.fn(), ...overrides.indexerAdapter } as Record<string, ReturnType<typeof vi.fn>>;
   const indexerRegistry = { require: vi.fn().mockReturnValue(indexerAdapter) };
-  const releases = { find: vi.fn().mockReturnValue(undefined), search: vi.fn(), forget: vi.fn(), ...overrides.releases };
+  const releases = { find: vi.fn().mockReturnValue(undefined), search: vi.fn(), forget: vi.fn(), ...overrides.releases } as Record<
+    string,
+    ReturnType<typeof vi.fn>
+  >;
   const notifier = {
     notifyApprovers: vi.fn().mockResolvedValue(undefined),
     notifyInterested: vi.fn().mockResolvedValue(undefined),
@@ -1109,6 +1112,17 @@ describe('RequestFulfillmentService.listReleases', () => {
     const { service } = makeService({ requests: { findById: vi.fn().mockResolvedValue(undefined) } });
 
     await expect(service.listReleases(7)).rejects.toThrow(NotFoundException);
+  });
+
+  it('does not apply an automatic source limit to the manual release picker', async () => {
+    const { service, releases } = makeService({
+      requests: { findById: vi.fn().mockResolvedValue(joined({ sourceIds: [4] } as never)) },
+    });
+
+    await service.listReleases(7);
+
+    const options = releases.search.mock.calls[0]![1] as Record<string, unknown>;
+    expect(options).not.toHaveProperty('sourceIds');
   });
 
   it('normalizes manual search fields and canonicalizes the selected ISBNs', async () => {

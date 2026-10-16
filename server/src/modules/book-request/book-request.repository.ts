@@ -69,7 +69,7 @@ type Db = NodePgDatabase<typeof schema>;
 /** What the write helpers below need, so they take a transaction as readily as the pool. */
 type RequestWriteExecutor = Pick<Db, 'insert' | 'update'>;
 type RequestReadExecutor = Pick<Db, 'select'>;
-export type BookRequestWithAutoGrab = BookRequestRow & Pick<typeof bookRequestAutoGrab.$inferSelect, 'autoGrab'>;
+export type BookRequestWithAutoGrab = BookRequestRow & Pick<typeof bookRequestAutoGrab.$inferSelect, 'autoGrab' | 'sourceIds'>;
 
 /**
  * A new `statusReason` clears the classified fields unless the caller supplies them, so a stale
@@ -353,6 +353,7 @@ export class BookRequestRepository {
       .select({
         request: bookRequests,
         autoGrab: bookRequestAutoGrab.autoGrab,
+        sourceIds: bookRequestAutoGrab.sourceIds,
         requesterUsername: users.username,
         requesterName: users.name,
         targetLibraryName: libraries.name,
@@ -368,7 +369,7 @@ export class BookRequestRepository {
     const names = await this.findUsernames([row.request.decidedByUserId]);
     return {
       ...row,
-      request: { ...row.request, autoGrab: row.autoGrab },
+      request: { ...row.request, autoGrab: row.autoGrab, sourceIds: row.sourceIds },
       decidedByUsername: row.request.decidedByUserId != null ? (names.get(row.request.decidedByUserId) ?? null) : null,
     };
   }
@@ -384,8 +385,8 @@ export class BookRequestRepository {
    * The aliases go in with the row rather than after it: a request that exists without them is one
    * the next requester will not collide with, and nothing would ever notice.
    */
-  async create(data: NewBookRequestRow, aliasKeys: string[] = [], autoGrab?: boolean | null): Promise<BookRequestRow> {
-    return this.db.transaction(async (tx) => this.insertWithAliases(tx, data, aliasKeys, autoGrab));
+  async create(data: NewBookRequestRow, aliasKeys: string[] = [], autoGrab?: boolean | null, sourceIds?: number[] | null): Promise<BookRequestRow> {
+    return this.db.transaction(async (tx) => this.insertWithAliases(tx, data, aliasKeys, autoGrab, sourceIds));
   }
 
   /**
@@ -401,11 +402,12 @@ export class BookRequestRepository {
     aliasKeys: string[],
     maxLive: number,
     autoGrab?: boolean | null,
+    sourceIds?: number[] | null,
   ): Promise<BookRequestRow | null> {
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(${SELF_SERVE_CAP_LOCK_NAMESPACE}, ${data.userId})`);
       if ((await countLiveSelfServe(tx, data.userId)) >= maxLive) return null;
-      return this.insertWithAliases(tx, data, aliasKeys, autoGrab);
+      return this.insertWithAliases(tx, data, aliasKeys, autoGrab, sourceIds);
     });
   }
 
@@ -418,7 +420,7 @@ export class BookRequestRepository {
    * Rolling both back makes the retry see the world exactly as it was. Null means the cap refused.
    */
   async createPair(
-    entries: Array<{ data: NewBookRequestRow; aliasKeys: string[]; autoGrab?: boolean | null }>,
+    entries: Array<{ data: NewBookRequestRow; aliasKeys: string[]; autoGrab?: boolean | null; sourceIds?: number[] | null }>,
     selfServeCap: { userId: number; maxLive: number; newRows: number } | null,
   ): Promise<BookRequestRow[] | null> {
     return this.db.transaction(async (tx) => {
@@ -428,7 +430,7 @@ export class BookRequestRepository {
       }
 
       const rows: BookRequestRow[] = [];
-      for (const entry of entries) rows.push(await this.insertWithAliases(tx, entry.data, entry.aliasKeys, entry.autoGrab));
+      for (const entry of entries) rows.push(await this.insertWithAliases(tx, entry.data, entry.aliasKeys, entry.autoGrab, entry.sourceIds));
 
       if (rows.length === 2) {
         const [first, second] = rows as [BookRequestRow, BookRequestRow];
@@ -529,10 +531,17 @@ export class BookRequestRepository {
     data: NewBookRequestRow,
     aliasKeys: string[],
     autoGrab?: boolean | null,
+    sourceIds?: number[] | null,
   ): Promise<BookRequestRow> {
     const [row] = await tx.insert(bookRequests).values(data).returning();
 
-    if (autoGrab != null) await this.setAutoGrab(row.id, autoGrab, tx);
+    const forkColumns = {
+      ...(autoGrab == null ? {} : { autoGrab }),
+      ...(sourceIds === undefined ? {} : { sourceIds }),
+    };
+    if (Object.keys(forkColumns).length > 0) {
+      await tx.update(bookRequestAutoGrab).set(forkColumns).where(eq(bookRequestAutoGrab.id, row.id));
+    }
 
     const keys = [...new Set(aliasKeys)].filter((key) => key !== row.dedupeKey);
     if (keys.length > 0) {
@@ -541,8 +550,8 @@ export class BookRequestRepository {
     return row;
   }
 
-  private async setAutoGrab(id: number, autoGrab: boolean, executor: RequestWriteExecutor): Promise<void> {
-    await executor.update(bookRequestAutoGrab).set({ autoGrab }).where(eq(bookRequestAutoGrab.id, id));
+  async setSourceIds(id: number, sourceIds: number[] | null): Promise<void> {
+    await this.db.update(bookRequestAutoGrab).set({ sourceIds }).where(eq(bookRequestAutoGrab.id, id));
   }
 
   /**

@@ -13,6 +13,8 @@ import {
 } from '@nestjs/common';
 import {
   isWorkVisible,
+  monitoredBulkFormats,
+  monitoredBulkSkipReason,
   MONITORED_FORMATS,
   MONITORED_STATUS_FILTER_BY_FORMAT_STATUS,
   monitoredAcquisitionState,
@@ -29,6 +31,11 @@ import type {
   MonitoredAuthorSearchResult,
   MonitoredBookItem,
   MonitoredBookWork,
+  MonitoredBulkRequestPayload,
+  MonitoredBulkRequestResponse,
+  MonitoredBulkRequestResult,
+  MonitoredBulkUpdatePayload,
+  MonitoredBulkUpdateResponse,
   MonitoredFormat,
   MonitoredPage,
   MonitoredReleaseDateLookup,
@@ -51,6 +58,7 @@ import { AuthorImageStorageService } from '../authors/author-image-storage.servi
 import { AuthorMetadataPreferencesService } from '../authors/author-metadata-preferences.service';
 import { AuthorsRepository } from '../authors/authors.repository';
 import { BookRequestService } from '../book-request/book-request.service';
+import { BookRequestSourcesService } from '../book-request/book-request-sources.service';
 import { RequestFulfillmentService } from '../book-request/fulfillment/request-fulfillment.service';
 import { IndexerSearchService } from '../book-request/indexers/indexer-search.service';
 import type { IndexerSearchRequest } from '../book-request/indexers/indexer-search.service';
@@ -58,7 +66,7 @@ import { HardcoverClient } from '../metadata-fetch/providers/hardcover/hardcover
 import type { HardcoverAuthorSearchDocument } from '../metadata-fetch/providers/hardcover/hardcover.types';
 import { LibraryService } from '../library/library.service';
 import { MonitoredCatalogService, normalizeMonitoredName, type WorkAvailabilityGroup } from './monitored-catalog.service';
-import { MonitoredAutoRequestService } from './monitored-autorequest.service';
+import { MonitoredAutoRequestService, submitThrottled } from './monitored-autorequest.service';
 import { MonitoredProviderConfigService } from './monitored-provider-config.service';
 import { MonitoredReleaseWatcher } from './monitored-release-watcher.service';
 import { MonitoredStoreService } from './monitored-store.service';
@@ -88,6 +96,13 @@ const HARDCOVER_REQUIRED_MESSAGE =
   'Monitoring needs a Hardcover token. Connect your Hardcover account under Settings > Integrations > Hardcover, or ask an administrator to enable the Hardcover metadata source.';
 
 type AuthorProfileMetadata = { description: string | null; website: string | null; genres: string[]; portraitAuthorId: number | null };
+type BulkRequestCandidate = {
+  resultIndex: number;
+  workId: string;
+  format: MonitoredFormat;
+  monitor: MonitoredAuthorConfig;
+  work: MonitoredWork;
+};
 
 function authorFormatModes(monitor: MonitoredAuthorConfig): Record<MonitoredFormat, MonitorMode> {
   return { ebook: monitor.formats.ebook.mode, audiobook: monitor.formats.audiobook.mode };
@@ -95,6 +110,11 @@ function authorFormatModes(monitor: MonitoredAuthorConfig): Record<MonitoredForm
 
 function isOwnerView(ownerUserId: number, user: RequestUser): boolean {
   return ownerUserId === user.id;
+}
+
+function sourceCount(sourceIds: number[] | null | undefined): number | 'all' | 'keep' {
+  if (sourceIds === undefined) return 'keep';
+  return sourceIds === null ? 'all' : sourceIds.length;
 }
 
 function monitoredReleaseStatus(work: MonitoredWork, format: MonitoredFormat, releaseDate: string, today: string): MonitoredReleaseStatus {
@@ -166,6 +186,7 @@ export class MonitoredService {
     private readonly enrichmentExecutor: AuthorEnrichmentExecutorService,
     private readonly libraryService: LibraryService,
     private readonly bookRequests: BookRequestService,
+    private readonly requestSources: BookRequestSourcesService,
     private readonly fulfillment: RequestFulfillmentService,
     private readonly indexerSearch: IndexerSearchService,
     private readonly authorImageStorage: AuthorImageStorageService,
@@ -845,6 +866,138 @@ export class MonitoredService {
     );
   }
 
+  async bulkRequestWorks(user: RequestUser, payload: MonitoredBulkRequestPayload): Promise<MonitoredBulkRequestResponse> {
+    const startedAt = Date.now();
+    this.logger.log(
+      `[monitored.work.bulk_request] [start] userId=${user.id} works=${payload.workIds.length} format=${payload.format} autoDownload=${payload.autoDownload ?? 'default'} ebookSources=${sourceCount(payload.sources?.ebook)} audiobookSources=${sourceCount(payload.sources?.audiobook)} - monitored work bulk request started`,
+    );
+    try {
+      const formats = monitoredBulkFormats(payload.format);
+      await this.assertBulkRequestSources(payload.sources, formats);
+      const entries = await this.store.getWorksWithMonitors(payload.workIds, user);
+      const ownedEntries = payload.workIds.flatMap((workId) => {
+        const entry = entries.get(workId);
+        return entry?.monitor.ownerUserId === user.id ? [entry] : [];
+      });
+      const groups = new Map<string, WorkAvailabilityGroup>();
+      for (const entry of ownedEntries) {
+        const group = groups.get(entry.monitor.id);
+        if (group) group.works.push(entry.work);
+        else groups.set(entry.monitor.id, { monitor: entry.monitor, works: [entry.work] });
+      }
+      await this.healWorkAvailability([...groups.values()], user);
+
+      const results = new Array<MonitoredBulkRequestResult | undefined>(payload.workIds.length * formats.length);
+      const candidates: BulkRequestCandidate[] = [];
+      const today = new Date().toISOString().slice(0, 10);
+      let resultIndex = 0;
+      for (const workId of payload.workIds) {
+        const entry = entries.get(workId);
+        for (const format of formats) {
+          if (!entry) {
+            results[resultIndex] = { workId, format, outcome: 'failed', reason: 'not_found', message: 'Monitored work not found' };
+          } else if (entry.monitor.ownerUserId !== user.id) {
+            results[resultIndex] = { workId, format, outcome: 'failed', reason: 'forbidden', message: 'No access to this monitored work' };
+          } else {
+            const reason = monitoredBulkSkipReason(entry.work, format, today);
+            if (reason) results[resultIndex] = { workId, format, outcome: 'skipped', reason };
+            else candidates.push({ resultIndex, workId, format, monitor: entry.monitor, work: entry.work });
+          }
+          resultIndex++;
+        }
+      }
+
+      const outcomes = await submitThrottled(candidates, (candidate, deferred) =>
+        this.autoRequests.submitWorkRequest(user, candidate.monitor, candidate.work, candidate.format, {
+          ...(payload.autoDownload !== undefined ? { autoGrab: payload.autoDownload } : {}),
+          sourceIds: payload.sources?.[candidate.format],
+          ...(deferred ? { deferAutomation: true } : {}),
+        }),
+      );
+      const requestedWorks = new Map<string, MonitoredWork>();
+      const refusalLogged = new Set<MonitoredFormat>();
+      for (const outcome of outcomes) {
+        const { candidate } = outcome;
+        if (outcome.status === 'fulfilled') {
+          results[candidate.resultIndex] = {
+            workId: candidate.workId,
+            format: candidate.format,
+            outcome: 'requested',
+            requestId: outcome.value.requestIds[candidate.format]!,
+          };
+          requestedWorks.set(candidate.workId, outcome.value);
+          continue;
+        }
+        if (outcome.status === 'stopped') {
+          results[candidate.resultIndex] = {
+            workId: candidate.workId,
+            format: candidate.format,
+            outcome: 'failed',
+            reason: 'destination',
+            message: 'Request destination is unavailable',
+          };
+          continue;
+        }
+        const reason = outcome.destinationRefusal ? 'destination' : 'error';
+        const message = outcome.reason instanceof HttpException ? outcome.reason.message : 'Request failed';
+        results[candidate.resultIndex] = { workId: candidate.workId, format: candidate.format, outcome: 'failed', reason, message };
+        if (outcome.destinationRefusal && refusalLogged.has(candidate.format)) continue;
+        if (outcome.destinationRefusal) refusalLogged.add(candidate.format);
+        this.logBulkRequestFailure(candidate, user.id, startedAt, outcome.reason);
+      }
+
+      const completed = results.filter((result): result is MonitoredBulkRequestResult => result !== undefined);
+      const requested = completed.filter((result) => result.outcome === 'requested').length;
+      const skipped = completed.filter((result) => result.outcome === 'skipped').length;
+      const failed = completed.length - requested - skipped;
+      this.logger.log(
+        `[monitored.work.bulk_request] [end] userId=${user.id} durationMs=${Date.now() - startedAt} requested=${requested} skipped=${skipped} failed=${failed} - monitored work bulk request completed`,
+      );
+      return { results: completed, works: [...requestedWorks.values()] };
+    } catch (error) {
+      this.logBulkFailure('monitored.work.bulk_request', user.id, startedAt, error);
+      throw error;
+    }
+  }
+
+  private async assertBulkRequestSources(sources: MonitoredBulkRequestPayload['sources'], formats: readonly MonitoredFormat[]): Promise<void> {
+    if (!sources) return;
+    for (const format of formats) await this.requestSources.assertRequestable(sources[format], format);
+  }
+
+  async bulkUpdateWorks(user: RequestUser, payload: MonitoredBulkUpdatePayload): Promise<MonitoredBulkUpdateResponse> {
+    const startedAt = Date.now();
+    const fields = (['monitorEbook', 'monitorAudiobook', 'hidden', 'automaticVisibility'] as const).filter(
+      (field) => payload.patch[field] !== undefined,
+    );
+    this.logger.log(
+      `[monitored.work.bulk_update] [start] userId=${user.id} works=${payload.workIds.length} fields=${fields.join(',') || 'none'} - monitored work bulk update started`,
+    );
+    try {
+      if (payload.patch.automaticVisibility === true && payload.patch.hidden !== undefined) {
+        throw new BadRequestException('Choose either hidden or automatic visibility, not both');
+      }
+      if (fields.length === 0) throw new BadRequestException('At least one work field is required');
+      const entries = await this.store.getWorksWithMonitors(payload.workIds, user);
+      const ownedIds: string[] = [];
+      const failed: MonitoredBulkUpdateResponse['failed'] = [];
+      for (const workId of payload.workIds) {
+        const entry = entries.get(workId);
+        if (!entry) failed.push({ workId, reason: 'not_found' });
+        else if (entry.monitor.ownerUserId !== user.id) failed.push({ workId, reason: 'forbidden' });
+        else ownedIds.push(workId);
+      }
+      const works = ownedIds.length ? await this.store.updateWorksUserState(ownedIds, payload.patch, user) : [];
+      this.logger.log(
+        `[monitored.work.bulk_update] [end] userId=${user.id} durationMs=${Date.now() - startedAt} updated=${works.length} failed=${failed.length} - monitored work bulk update completed`,
+      );
+      return { works, failed };
+    } catch (error) {
+      this.logBulkFailure('monitored.work.bulk_update', user.id, startedAt, error);
+      throw error;
+    }
+  }
+
   /**
    * Auto-download destinations are written once and acted on later by the fulfilment pipeline, so a
    * library the caller cannot reach, or a folder from a different library, has to be refused here
@@ -1143,6 +1296,27 @@ export class MonitoredService {
     const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
     this.logger.warn(
       `[${event}] [fail] ${idKey}="${sanitizeLogValue(id)}" userId=${userId} ${context ? `${context} ` : ''}durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${message}" - monitored operation failed`,
+    );
+  }
+
+  private logBulkRequestFailure(candidate: BulkRequestCandidate, userId: number, startedAt: number, error: unknown): void {
+    const errorClass = error instanceof Error ? error.name : 'Error';
+    const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
+    this.logger.warn(
+      `[monitored.work.bulk_request] [fail] workId="${sanitizeLogValue(candidate.workId)}" userId=${userId} format=${candidate.format} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${message}" - monitored work request failed`,
+    );
+  }
+
+  private logBulkFailure(
+    event: 'monitored.work.bulk_request' | 'monitored.work.bulk_update',
+    userId: number,
+    startedAt: number,
+    error: unknown,
+  ): void {
+    const errorClass = error instanceof Error ? error.name : 'Error';
+    const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
+    this.logger.warn(
+      `[${event}] [fail] userId=${userId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${message}" - monitored work bulk operation failed`,
     );
   }
 

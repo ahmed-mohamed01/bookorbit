@@ -5,6 +5,7 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgDialect } from 'drizzle-orm/pg-core';
 
 import { MONITORED_STATUS_FILTER_BY_FORMAT_STATUS, monitoredFormatStatus } from '@bookorbit/types';
+import type { MonitoredWork } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
 import { MonitoredStoreService, releaseEventKey, releaseRangeOverlapsSql, type MonitoredDueRelease } from './monitored-store.service';
 import * as schema from './schema/monitored.schema';
@@ -72,6 +73,7 @@ function workRow(patch: Partial<AuthorCatalogWorkRow> = {}): AuthorCatalogWorkRo
     audioDatePrecision: 'day',
     coverUrl: null,
     description: null,
+    kind: null,
     verdict: 'verified',
     flags: [],
     sources: ['hardcover'],
@@ -488,6 +490,7 @@ describe('MonitoredStoreService catalog overlay', () => {
       works: [
         {
           ...row,
+          kind: row.kind ?? undefined,
           providerWorkIds: { hardcover: 'the-work' },
           monitorState: 'monitoring',
           matchedBookIds: {},
@@ -510,7 +513,15 @@ describe('MonitoredStoreService catalog overlay', () => {
     await store.saveCatalog('monitor-1', {
       fetchedAt: '2026-09-18T00:00:00.000Z',
       works: [
-        { ...row, providerWorkIds: { hardcover: 'the-work' }, monitorState: 'monitoring', matchedBookIds: {}, monitorFormats: {}, requestIds: {} },
+        {
+          ...row,
+          kind: row.kind ?? undefined,
+          providerWorkIds: { hardcover: 'the-work' },
+          monitorState: 'monitoring',
+          matchedBookIds: {},
+          monitorFormats: {},
+          requestIds: {},
+        },
       ],
     });
 
@@ -535,6 +546,7 @@ describe('MonitoredStoreService catalog overlay', () => {
         works: [
           {
             ...row,
+            kind: row.kind ?? undefined,
             providerWorkIds: { hardcover: 'the-work' },
             monitorState: 'monitoring',
             matchedBookIds: {},
@@ -900,15 +912,15 @@ describe('MonitoredStoreService paged lists', () => {
     ['probe with no date of its own', { ebookReleaseDate: '2020-01-01', formatReleases: { ebook: probe('expected', null) } }, 'missing'],
     ['day value shorter than its precision', { ebookReleaseDate: '2020-01', ebookDatePrecision: 'day' as const }, 'upcoming'],
   ])('the client puts a %s in the %s bucket the SQL cases above encode', (_name, patch, bucket) => {
-    const work = {
+    const defaults = {
       ownedFormats: [],
       matchedBookIds: {},
       ebookReleaseDate: null,
       ebookDatePrecision: null,
       audioReleaseDate: null,
       audioDatePrecision: null,
-      ...patch,
     };
+    const work = { ...defaults, ...patch };
     const status = monitoredFormatStatus(work as never, 'ebook', '2026-10-15');
     expect(MONITORED_STATUS_FILTER_BY_FORMAT_STATUS[status]).toBe(bucket);
   });
@@ -930,6 +942,75 @@ describe('MonitoredStoreService paged lists', () => {
 
     expect(values).toHaveBeenCalledWith(expect.objectContaining({ userVisibility: null }));
     expect(onConflictDoUpdate).toHaveBeenCalledWith(expect.objectContaining({ set: expect.objectContaining({ userVisibility: null }) }));
+  });
+
+  it('loads works and their distinct monitors in one joined read before composing the batch', async () => {
+    const first = workRow({ id: 'work-1' });
+    const second = workRow({ id: 'work-2' });
+    const monitorRow = {
+      id: 'monitor-1',
+      ownerUserId: 1,
+      authorName: 'Test Author',
+    };
+    const rows = [
+      { work: first, monitor: monitorRow },
+      { work: second, monitor: monitorRow },
+    ];
+    const builder: Record<string, unknown> = {};
+    builder.from = vi.fn(() => builder);
+    builder.innerJoin = vi.fn(() => builder);
+    builder.where = vi.fn().mockResolvedValue(rows);
+    const db = { select: vi.fn(() => builder) };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    const composedMonitor = { id: 'monitor-1', ownerUserId: 1 };
+    const composedWorks = [
+      { monitorAuthorId: 'monitor-1', work: { id: 'work-1' } },
+      { monitorAuthorId: 'monitor-1', work: { id: 'work-2' } },
+    ];
+    const internals = store as unknown as {
+      composeAuthors: (rows: unknown[]) => Promise<unknown[]>;
+      composeWorks: (rows: unknown[], viewer: RequestUser, retainHidden: boolean) => Promise<unknown[]>;
+    };
+    vi.spyOn(internals, 'composeAuthors').mockResolvedValue([composedMonitor]);
+    const composeWorksSpy = vi.spyOn(internals, 'composeWorks').mockResolvedValue(composedWorks);
+    const actor = { id: 1, isSuperuser: false } as RequestUser;
+
+    const result = await store.getWorksWithMonitors(['work-1', 'work-2'], actor);
+
+    expect(db.select).toHaveBeenCalledOnce();
+    expect(internals.composeAuthors).toHaveBeenCalledWith([monitorRow]);
+    expect(composeWorksSpy).toHaveBeenCalledWith([first, second], actor, true);
+    expect(result.get('work-2')).toEqual({ monitor: composedMonitor, work: { id: 'work-2' } });
+  });
+
+  it('bulk upserts only patch columns once and composes all updated works once', async () => {
+    const rows = [workRow({ id: 'work-1' }), workRow({ id: 'work-2' })];
+    const where = vi.fn().mockResolvedValue(rows);
+    const select = vi.fn(() => ({ from: vi.fn(() => ({ where })) }));
+    const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
+    const values = vi.fn(() => ({ onConflictDoUpdate }));
+    const insert = vi.fn(() => ({ values }));
+    const transaction = vi.fn((run: (tx: unknown) => Promise<unknown>) => run({ select, insert }));
+    const store = new MonitoredStoreService({ transaction } as never, {} as never);
+    const internals = store as unknown as { composeWorks: (...args: unknown[]) => Promise<Array<{ work: MonitoredWork }>> };
+    const composed = rows.map((row) => ({ monitorAuthorId: row.monitorAuthorId, work: { id: row.id } as MonitoredWork }));
+    const composeWorksSpy = vi.spyOn(internals, 'composeWorks').mockResolvedValue(composed);
+    const actor = { id: 1, isSuperuser: false } as RequestUser;
+
+    await store.updateWorksUserState(['work-1', 'work-2'], { monitorEbook: false, hidden: true }, actor);
+
+    expect(transaction).toHaveBeenCalledOnce();
+    expect(values).toHaveBeenCalledOnce();
+    expect(values).toHaveBeenCalledWith([
+      { workId: 'work-1', monitorAuthorId: 'monitor-1', monitorEbook: false, userVisibility: 'hidden' },
+      { workId: 'work-2', monitorAuthorId: 'monitor-1', monitorEbook: false, userVisibility: 'hidden' },
+    ]);
+    const set = onConflictDoUpdate.mock.calls[0]?.[0]?.set;
+    expect(Object.keys(set)).toEqual(['monitorEbook', 'userVisibility']);
+    expect(set).not.toHaveProperty('ebookRequestId');
+    expect(set).not.toHaveProperty('monitorState');
+    expect(composeWorksSpy).toHaveBeenCalledOnce();
+    expect(composeWorksSpy).toHaveBeenCalledWith(rows, actor);
   });
 
   it('reaches works outside the default list only when hidden is selected', async () => {

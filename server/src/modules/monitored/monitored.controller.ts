@@ -10,6 +10,8 @@ import { RequirePermission } from '../../common/decorators/require-permission.de
 import { imageContentTypeFromPath } from '../../common/image-content-type';
 import type { RequestUser } from '../../common/types/request-user';
 import {
+  BulkRequestWorksDto,
+  BulkUpdateWorksDto,
   CreateMonitoredBookDto,
   ListMonitoredAuthorsDto,
   ListMonitoredBooksDto,
@@ -180,6 +182,19 @@ export class MonitoredController {
   @Get('works/by-book/:bookId')
   getWorkByBook(@Param() params: MonitoredBookParamsDto, @CurrentUser() user: RequestUser) {
     return this.service.getWorkByBook(user, params.bookId);
+  }
+
+  @Post('works/bulk-request')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(Permission.BookRequestAccess)
+  bulkRequestWorks(@CurrentUser() user: RequestUser, @Body() dto: BulkRequestWorksDto) {
+    return this.service.bulkRequestWorks(user, dto);
+  }
+
+  @Patch('works/bulk')
+  @RequirePermission(Permission.BookRequestAccess)
+  bulkUpdateWorks(@CurrentUser() user: RequestUser, @Body() dto: BulkUpdateWorksDto) {
+    return this.service.bulkUpdateWorks(user, dto);
   }
 
   @Post('works/:workId/request')

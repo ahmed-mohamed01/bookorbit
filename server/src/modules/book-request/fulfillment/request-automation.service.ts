@@ -23,7 +23,6 @@ import type {
 
 import { SystemCron } from '../../../common/decorators/system-cron.decorator';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
-import type { BookRequestRow } from '../../../db/schema';
 import { BOOK_REQUEST_DOWNLOAD_FAILED, BookRequestEventsService } from '../book-request-events.service';
 import { BookRequestNotifier } from '../book-request-notifier.service';
 import { BookRequestRepository, type BookRequestWithAutoGrab } from '../book-request.repository';
@@ -318,7 +317,7 @@ export class RequestAutomationService implements OnModuleInit {
             };
       const handback = this.nothingSearched(pick) ?? scoredNothing;
       this.logger.log(
-        `[book_request.auto_grab] [end] requestId=${requestId} trigger=${trigger} attempt=${spent + 1} picked=none code=${handback.code} enabled=${pick.enabledIndexerCount} allTried=${pick.allTried} floor=${settings.autoGrabMinScore} - nothing left to grab`,
+        `[book_request.auto_grab] [end] requestId=${requestId} trigger=${trigger} attempt=${spent + 1} sources=${pick.sourceCount} picked=none code=${handback.code} enabled=${pick.enabledIndexerCount} allTried=${pick.allTried} floor=${settings.autoGrabMinScore} - nothing left to grab`,
       );
       await this.decline(requestId, trigger, CLAIMED_BY_THIS_PASS, handback);
       return;
@@ -364,7 +363,7 @@ export class RequestAutomationService implements OnModuleInit {
       try {
         await this.fulfillment.grab(requestId, { indexerId: release.indexerId, releaseGuid: release.guid }, null);
         this.logger.log(
-          `[book_request.auto_grab] [end] requestId=${requestId} trigger=${trigger} attempt=${spent}/${limit} indexerId=${release.indexerId} indexer="${sanitizeLogValue(release.indexerName)}" score=${release.score} skipped=${skipped} refused=${failures.length} floor=${settings.autoGrabMinScore} - grabbed unattended`,
+          `[book_request.auto_grab] [end] requestId=${requestId} trigger=${trigger} attempt=${spent}/${limit} sources=${pick.sourceCount} indexerId=${release.indexerId} indexer="${sanitizeLogValue(release.indexerName)}" score=${release.score} skipped=${skipped} refused=${failures.length} floor=${settings.autoGrabMinScore} - grabbed unattended`,
         );
         return;
       } catch (error: unknown) {
@@ -388,7 +387,7 @@ export class RequestAutomationService implements OnModuleInit {
     }
 
     this.logger.log(
-      `[book_request.auto_grab] [end] requestId=${requestId} trigger=${trigger} attempts=${spent}/${limit} refused=${failures.length} skipped=${skipped} candidates=${pick.candidates.length} - no release could be started`,
+      `[book_request.auto_grab] [end] requestId=${requestId} trigger=${trigger} attempts=${spent}/${limit} sources=${pick.sourceCount} refused=${failures.length} skipped=${skipped} candidates=${pick.candidates.length} - no release could be started`,
     );
 
     // Something was handed over and refused, so the request failed whatever set it off: `failed`
@@ -444,7 +443,7 @@ export class RequestAutomationService implements OnModuleInit {
    * `allTried` separates the two ways of coming back empty, because they read very differently to
    * whoever picks up the request: nothing was good enough, or nothing new is left.
    */
-  private async pickReleases(request: BookRequestRow, settings: BookRequestAutomationSettings): Promise<ReleasePicks> {
+  private async pickReleases(request: BookRequestWithAutoGrab, settings: BookRequestAutomationSettings): Promise<ReleasePicks> {
     const profiled = releaseProfileIsActive(settings.profiles[request.mediaKind]);
     const tried = await this.downloads.findTriedReleaseKeys(request.id);
     const releases = new Map<string, ReleaseCandidateItem>();
@@ -467,6 +466,7 @@ export class RequestAutomationService implements OnModuleInit {
       enabledIndexerCount: 0,
       configuredIndexerCount: 0,
       uncoveredIndexerCount: 0,
+      sourceCount: request.sourceIds?.length ?? 'all',
     };
 
     for (const [index, variant] of variants.entries()) {
@@ -474,6 +474,7 @@ export class RequestAutomationService implements OnModuleInit {
 
       const result = await this.releases.search(request, {
         indexerMode: variant.indexerMode,
+        sourceIds: request.sourceIds,
         ...(variant.isbn !== undefined ? { overrides: { isbn: variant.isbn } } : {}),
       });
       for (const status of result.indexers) indexers.set(status.indexerId, status);
@@ -506,6 +507,7 @@ export class RequestAutomationService implements OnModuleInit {
         // From whichever variant ran last. The medium filter runs before the ISBN-capable
         // narrowing, so every variant of one pass reports the same number.
         uncoveredIndexerCount: result.uncoveredIndexerCount,
+        sourceCount: picks.sourceCount,
       };
       if (candidates.length > 0) return picks;
     }
@@ -583,6 +585,7 @@ interface ReleasePicks {
   enabledIndexerCount: number;
   configuredIndexerCount: number;
   uncoveredIndexerCount: number;
+  sourceCount: number | 'all';
 }
 
 interface AutomationSearchVariant {

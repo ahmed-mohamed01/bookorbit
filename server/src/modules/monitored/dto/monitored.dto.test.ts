@@ -4,6 +4,8 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 
 import {
+  BulkRequestWorksDto,
+  BulkUpdateWorksDto,
   GrabWorkReleaseDto,
   ListMonitoredAuthorsDto,
   ListMonitoredBooksDto,
@@ -69,10 +71,58 @@ describe('UpdateMonitoredWorkDto', () => {
   });
 });
 
+describe('monitored bulk DTOs', () => {
+  const validationOptions = { whitelist: true, forbidNonWhitelisted: true } as const;
+
+  it('accepts valid bulk request and update payloads', async () => {
+    const request = plainToInstance(BulkRequestWorksDto, {
+      workIds: ['work-1', 'work-2'],
+      format: 'both',
+      autoDownload: false,
+      sources: { ebook: [1, 2], audiobook: null },
+    });
+    const update = plainToInstance(BulkUpdateWorksDto, { workIds: ['work-1'], patch: { monitorEbook: false, automaticVisibility: true } });
+
+    await expect(validate(request, validationOptions)).resolves.toHaveLength(0);
+    await expect(validate(update, validationOptions)).resolves.toHaveLength(0);
+  });
+
+  it.each([
+    ['empty ids', { workIds: [], format: 'ebook' }],
+    ['more than 100 ids', { workIds: Array.from({ length: 101 }, (_, index) => `work-${index}`), format: 'ebook' }],
+    ['duplicate ids', { workIds: ['work-1', 'work-1'], format: 'ebook' }],
+    ['an unsupported format', { workIds: ['work-1'], format: 'paperback' }],
+  ])('rejects bulk requests with %s', async (_label, payload) => {
+    await expect(validate(plainToInstance(BulkRequestWorksDto, payload), validationOptions)).resolves.not.toHaveLength(0);
+  });
+
+  it.each([
+    ['an empty list', { ebook: [] }],
+    ['duplicate ids', { ebook: [1, 1] }],
+    ['a non-integer id', { audiobook: [1.5] }],
+    ['too many ids', { ebook: Array.from({ length: 51 }, (_, index) => index + 1) }],
+    ['an unknown format', { ebook: [1], comic: [2] }],
+  ])('rejects bulk request sources with %s', async (_label, sources) => {
+    const request = plainToInstance(BulkRequestWorksDto, { workIds: ['work-1'], format: 'both', sources });
+
+    await expect(validate(request, validationOptions)).resolves.not.toHaveLength(0);
+  });
+
+  it.each([
+    ['empty ids', { workIds: [], patch: { hidden: true } }],
+    ['more than 100 ids', { workIds: Array.from({ length: 101 }, (_, index) => `work-${index}`), patch: { hidden: true } }],
+    ['duplicate ids', { workIds: ['work-1', 'work-1'], patch: { hidden: true } }],
+    ['an unknown patch field', { workIds: ['work-1'], patch: { title: 'Changed' } }],
+  ])('rejects bulk updates with %s', async (_label, payload) => {
+    await expect(validate(plainToInstance(BulkUpdateWorksDto, payload), validationOptions)).resolves.not.toHaveLength(0);
+  });
+});
+
 describe('monitored list query DTOs', () => {
   it.each([ListMonitoredAuthorsDto, ListMonitoredBooksDto, ListMonitoredReleasesDto])(
     '%s uses the zero-based page and size defaults and enforces the hard cap',
-    async (Dto) => {
+    async (RawDto) => {
+      const Dto = RawDto as typeof ListMonitoredAuthorsDto;
       const defaults = plainToInstance(Dto, {});
       const oversized = plainToInstance(Dto, { page: 0, size: 201 });
 
@@ -82,7 +132,8 @@ describe('monitored list query DTOs', () => {
     },
   );
 
-  it.each([ListMonitoredReleasesDto, MonitoredAuthorDetailQueryDto])('%s reads a comma-separated status filter', async (Dto) => {
+  it.each([ListMonitoredReleasesDto, MonitoredAuthorDetailQueryDto])('%s reads a comma-separated status filter', async (RawDto) => {
+    const Dto = RawDto as typeof ListMonitoredReleasesDto;
     const dto = plainToInstance(Dto, { status: 'missing,upcoming,missing' });
 
     await expect(validate(dto)).resolves.toHaveLength(0);

@@ -9,6 +9,7 @@ import type {
   MonitoredAuthorListSort,
   MonitoredBookEntry,
   MonitoredBookListSort,
+  MonitoredBulkWorkPatch,
   MonitoredFormat,
   MonitoredListOrder,
   MonitoredReleaseFilter,
@@ -811,6 +812,34 @@ export class MonitoredStoreService {
     return { monitor, work: composed.work };
   }
 
+  async getWorksWithMonitors(workIds: string[], viewer: RequestUser): Promise<Map<string, MonitoredWorkEntry>> {
+    if (!workIds.length) return new Map();
+    const rows = await this.db
+      .select({ work: schema.authorCatalogWorks, monitor: schema.monitoredAuthors })
+      .from(schema.authorCatalogWorks)
+      .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, schema.authorCatalogWorks.monitorAuthorId))
+      .where(inArray(schema.authorCatalogWorks.id, workIds));
+    const monitorRows = [...new Map(rows.map((row) => [row.monitor.id, row.monitor])).values()];
+    const [monitors, works] = await Promise.all([
+      this.composeAuthors(monitorRows),
+      // Retain hidden foreign rows only long enough for the service to report forbidden instead of not_found.
+      this.composeWorks(
+        rows.map((row) => row.work),
+        viewer,
+        true,
+      ),
+    ]);
+    const monitorMap = new Map(monitors.map((monitor) => [monitor.id, monitor]));
+    const workMap = new Map(works.map((item) => [item.work.id, item.work]));
+    const result = new Map<string, MonitoredWorkEntry>();
+    for (const row of rows) {
+      const monitor = monitorMap.get(row.monitor.id);
+      const work = workMap.get(row.work.id);
+      if (monitor && work) result.set(row.work.id, { monitor, work });
+    }
+    return result;
+  }
+
   /**
    * The viewer's own work whose stored match is the given library book. The three match columns each
    * carry an index, so this is a bitmap-or over them filtered by the owner, never a catalog scan.
@@ -851,6 +880,34 @@ export class MonitoredStoreService {
     const [composed] = await this.composeWorks([work], actor);
     if (!composed) throw new NotFoundException('Monitored work not found');
     return composed.work;
+  }
+
+  async updateWorksUserState(workIds: string[], patch: MonitoredBulkWorkPatch, actor: RequestUser): Promise<MonitoredWork[]> {
+    if (!workIds.length) return [];
+    const works = await this.db.transaction(async (tx) => {
+      const rows = await tx.select().from(schema.authorCatalogWorks).where(inArray(schema.authorCatalogWorks.id, workIds));
+      if (!rows.length) return [];
+      const values = rows.map((work) => ({
+        workId: work.id,
+        monitorAuthorId: work.monitorAuthorId,
+        ...(patch.monitorEbook !== undefined ? { monitorEbook: patch.monitorEbook } : {}),
+        ...(patch.monitorAudiobook !== undefined ? { monitorAudiobook: patch.monitorAudiobook } : {}),
+        ...(patch.hidden !== undefined ? { userVisibility: patch.hidden ? ('hidden' as const) : ('visible' as const) } : {}),
+        ...(patch.automaticVisibility === true ? { userVisibility: null } : {}),
+      }));
+      const set: Record<string, SQL> = {};
+      if (patch.monitorEbook !== undefined) set.monitorEbook = sql`excluded.monitor_ebook`;
+      if (patch.monitorAudiobook !== undefined) set.monitorAudiobook = sql`excluded.monitor_audiobook`;
+      if (patch.hidden !== undefined || patch.automaticVisibility === true) set.userVisibility = sql`excluded.user_visibility`;
+      await tx.insert(schema.monitoredAuthorWorks).values(values).onConflictDoUpdate({ target: schema.monitoredAuthorWorks.workId, set });
+      return rows;
+    });
+    const composed = await this.composeWorks(works, actor);
+    const byId = new Map(composed.map((item) => [item.work.id, item.work]));
+    return workIds.flatMap((workId) => {
+      const work = byId.get(workId);
+      return work ? [work] : [];
+    });
   }
 
   /**
@@ -1440,7 +1497,11 @@ export class MonitoredStoreService {
     }));
   }
 
-  private async composeWorks(rows: AuthorCatalogWorkRow[], viewer?: RequestUser): Promise<Array<{ monitorAuthorId: string; work: MonitoredWork }>> {
+  private async composeWorks(
+    rows: AuthorCatalogWorkRow[],
+    viewer?: RequestUser,
+    retainHiddenForOwnershipCheck = false,
+  ): Promise<Array<{ monitorAuthorId: string; work: MonitoredWork }>> {
     if (!rows.length) return [];
     const ids = rows.map((row) => row.id);
     const [sources, overlays, releases] = await Promise.all([
@@ -1465,7 +1526,7 @@ export class MonitoredStoreService {
     return rows.flatMap((row) => {
       const overlay = overlayMap.get(row.id);
       const isOwner = ownedMonitorIds === null || ownedMonitorIds.has(row.monitorAuthorId);
-      if (!isOwner && overlay?.userVisibility === 'hidden') return [];
+      if (!retainHiddenForOwnershipCheck && !isOwner && overlay?.userVisibility === 'hidden') return [];
       return [
         {
           monitorAuthorId: row.monitorAuthorId,

@@ -2,8 +2,9 @@ import { BadRequestException } from '@nestjs/common';
 import { DEFAULT_BOOK_REQUEST_AUTOMATION_SETTINGS } from '@bookorbit/types';
 import type { BookRequestAutomationSettings, GrabFailureCode, IndexerSearchStatus, ReleaseCandidateItem } from '@bookorbit/types';
 
-import type { BookRequestDownloadRow, BookRequestRow } from '../../../db/schema';
+import type { BookRequestDownloadRow } from '../../../db/schema';
 import { BOOK_REQUEST_DOWNLOAD_FAILED } from '../book-request-events.service';
+import type { BookRequestWithAutoGrab } from '../book-request.repository';
 import { RequestAlreadyClaimedException } from './request-fulfillment.service';
 import { RequestAutomationService } from './request-automation.service';
 
@@ -40,10 +41,19 @@ function refusal(errorCode: GrabFailureCode, message: string): BadRequestExcepti
 }
 
 function indexerStatus(indexerId: number, delivery: IndexerSearchStatus['delivery']): IndexerSearchStatus {
-  return { indexerId, indexerName: `indexer-${indexerId}`, ok: true, count: 1, filtered: 0, seedsBack: delivery === 'torrent', delivery };
+  return {
+    indexerId,
+    indexerName: `indexer-${indexerId}`,
+    color: null,
+    ok: true,
+    count: 1,
+    filtered: 0,
+    seedsBack: delivery === 'torrent',
+    delivery,
+  };
 }
 
-function joined(overrides: Partial<BookRequestRow> = {}) {
+function joined(overrides: Partial<BookRequestWithAutoGrab> = {}) {
   return {
     request: {
       id: 7,
@@ -53,8 +63,9 @@ function joined(overrides: Partial<BookRequestRow> = {}) {
       mediaKind: 'ebook',
       authors: ['Frank Herbert'],
       autoGrab: null,
+      sourceIds: null,
       ...overrides,
-    } as BookRequestRow,
+    } as BookRequestWithAutoGrab,
     requesterUsername: 'bob',
     requesterName: 'Bob',
     decidedByUsername: null,
@@ -65,7 +76,7 @@ function joined(overrides: Partial<BookRequestRow> = {}) {
 function makeService(
   options: {
     settings?: Partial<BookRequestAutomationSettings>;
-    request?: Partial<BookRequestRow>;
+    request?: Partial<BookRequestWithAutoGrab>;
     releases?: ReleaseCandidateItem[];
     indexers?: IndexerSearchStatus[];
     /** What the instance had to search with. Defaults to one working source, as every case assumes. */
@@ -337,8 +348,20 @@ describe('RequestAutomationService.considerRequest', () => {
     await settle();
 
     expect(releases.search).toHaveBeenCalledTimes(1);
-    expect(releases.search).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), { indexerMode: 'all' });
+    expect(releases.search).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), { indexerMode: 'all', sourceIds: null });
     expect(searchDelay.wait).not.toHaveBeenCalled();
+  });
+
+  it('passes the request source limit to automatic searches', async () => {
+    const { service, releases } = makeService({ request: { sourceIds: [3, 8] } });
+
+    service.considerRequest(7);
+    await settle();
+
+    expect(releases.search).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), {
+      indexerMode: 'all',
+      sourceIds: [3, 8],
+    });
   });
 
   it('waits once and searches one alternate ISBN when the recommended ISBN is not good enough', async () => {
@@ -366,6 +389,7 @@ describe('RequestAutomationService.considerRequest', () => {
     expect(searchDelay.wait).toHaveBeenCalledTimes(1);
     expect(releases.search).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: 7 }), {
       indexerMode: 'isbn-capable',
+      sourceIds: null,
       overrides: { isbn: '9780593098233' },
     });
     expect(fulfillment.grab).toHaveBeenCalledWith(7, { indexerId: 9, releaseGuid: 'alternate' }, null);
@@ -397,6 +421,7 @@ describe('RequestAutomationService.considerRequest', () => {
     expect(searchDelay.wait).toHaveBeenCalledTimes(2);
     expect(releases.search).toHaveBeenNthCalledWith(3, expect.objectContaining({ id: 7 }), {
       indexerMode: 'isbn-capable',
+      sourceIds: null,
       overrides: { isbn: null },
     });
     expect(fulfillment.grab).toHaveBeenCalledWith(7, { indexerId: 9, releaseGuid: 'title-match' }, null);
@@ -414,6 +439,7 @@ describe('RequestAutomationService.considerRequest', () => {
     expect(searchDelay.wait).toHaveBeenCalledTimes(1);
     expect(releases.search).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: 7 }), {
       indexerMode: 'isbn-capable',
+      sourceIds: null,
       overrides: { isbn: null },
     });
     expect(fulfillment.grab).toHaveBeenCalledWith(7, { indexerId: 9, releaseGuid: 'same-release' }, null);
@@ -426,7 +452,7 @@ describe('RequestAutomationService.considerRequest', () => {
     await settle();
 
     expect(releases.search).toHaveBeenCalledTimes(1);
-    expect(releases.search).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), { indexerMode: 'all' });
+    expect(releases.search).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), { indexerMode: 'all', sourceIds: null });
     expect(searchDelay.wait).not.toHaveBeenCalled();
   });
 

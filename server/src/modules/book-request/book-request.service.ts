@@ -54,6 +54,7 @@ import { BookRequestAttributionService } from './book-request-attribution.servic
 import { BookRequestDedupeService, dedupeKeyCandidates, primaryDedupeKey, type WorkIdentity } from './book-request-dedupe.service';
 import { BookRequestGateway } from './book-request.gateway';
 import { BookRequestNotifier } from './book-request-notifier.service';
+import { BookRequestSourcesService } from './book-request-sources.service';
 import { mapBookRequestRow } from './book-request.mapper';
 import { BookRequestDownloadRepository } from './fulfillment/book-request-download.repository';
 import { DownloadRemovalService } from './fulfillment/download-removal.service';
@@ -161,6 +162,7 @@ interface SubmitHalf {
 interface PlanBase {
   work: WorkIdentity;
   selfServe: boolean;
+  sourceIds?: number[] | null;
   /** The book this half's files should join when they arrive, when there is one to join. */
   joinsBook: BookPlacement | null;
 }
@@ -223,6 +225,7 @@ export class BookRequestService {
     private readonly gateway: BookRequestGateway,
     private readonly attribution: BookRequestAttributionService,
     private readonly indexers: IndexerConfigService,
+    private readonly requestSources: BookRequestSourcesService,
     private readonly companions: RequestCompanionService,
   ) {}
 
@@ -304,7 +307,7 @@ export class BookRequestService {
     for (let attempt = 0; row === undefined; attempt++) {
       const lastAttempt = attempt >= SUBMIT_INSERT_ATTEMPTS - 1;
       try {
-        row = await this.createRequest(plan.selfServe && !plan.availableOnCreate, plan.insert, plan.aliasKeys, plan.autoGrab);
+        row = await this.createRequest(plan.selfServe && !plan.availableOnCreate, plan.insert, plan.aliasKeys, plan.autoGrab, plan.sourceIds);
       } catch (error: unknown) {
         if (!isUniqueViolation(error)) throw error;
         const winner = await this.dedupe.findActiveRequestFor(plan.work);
@@ -314,7 +317,14 @@ export class BookRequestService {
         }
         try {
           return await this.joinPlanned(
-            { kind: 'join', existing: winner, work: plan.work, selfServe: plan.selfServe, joinsBook: plan.joinsBook },
+            {
+              kind: 'join',
+              existing: winner,
+              work: plan.work,
+              selfServe: plan.selfServe,
+              joinsBook: plan.joinsBook,
+              sourceIds: plan.sourceIds,
+            },
             subject,
           );
         } catch (joinError: unknown) {
@@ -384,6 +394,7 @@ export class BookRequestService {
               data: plan.insert,
               aliasKeys: plan.aliasKeys,
               ...(plan.autoGrab === undefined ? {} : { autoGrab: plan.autoGrab }),
+              ...(plan.sourceIds === undefined ? {} : { sourceIds: plan.sourceIds }),
             })),
             newSelfServe > 0 ? { userId: subject.id, maxLive: MAX_LIVE_SELF_SERVE_REQUESTS, newRows: newSelfServe } : null,
           );
@@ -492,6 +503,7 @@ export class BookRequestService {
     };
 
     if (!work.title) throw submitRefusal('SUBMIT_TITLE_REQUIRED', 'A title is required');
+    await this.requestSources.assertRequestable(dto.sourceIds, half.mediaKind);
 
     // A book that can hold another format pins where this one lands: next to the format it has.
     // A loose-file library cannot hold two formats as one book, so there the request lands the way
@@ -502,7 +514,7 @@ export class BookRequestService {
     // same torrent is exactly what the dedupe claim exists to prevent, so even a self-server is
     // folded - but folded as the person who is going to fulfil it, not as a bystander.
     const existing = await this.dedupe.findActiveRequestFor(work);
-    if (existing) return { kind: 'join', existing, selfServe, work, joinsBook };
+    if (existing) return { kind: 'join', existing, selfServe, work, joinsBook, sourceIds: dto.sourceIds };
 
     const maySeeRequestedBooks = subject.contentFilters.exemptRequestsFromUserId === subject.id;
     const existingBookId = maySeeRequestedBooks ? await this.dedupe.findOwnedBookFor(work, await this.reachableLibraryIds(subject)) : null;
@@ -603,6 +615,7 @@ export class BookRequestService {
       settledOnCreate,
       joinsBook,
       autoGrab: dto.autoGrab,
+      sourceIds: dto.sourceIds,
       deferAutomation: dto.deferAutomation,
     };
   }
@@ -614,6 +627,9 @@ export class BookRequestService {
    */
   private async joinPlanned(plan: JoinPlan, subject: RequestUser): Promise<BookRequestSubmitResult> {
     const result = plan.selfServe ? await this.takeOnOrAttach(plan.existing, subject) : await this.attachTo(plan.existing.id, subject);
+    if (plan.sourceIds !== undefined && plan.existing.userId === subject.id) {
+      await this.repo.setSourceIds(plan.existing.id, plan.sourceIds);
+    }
     if (plan.joinsBook && plan.existing.targetLibraryId === plan.joinsBook.libraryId) {
       await this.repo.setTargetBookIfUnset(plan.existing.id, plan.joinsBook.bookId);
     }
@@ -692,14 +708,23 @@ export class BookRequestService {
    * transaction, because counting first and inserting after is not a cap - two submissions for
    * different works each see nine and both proceed.
    */
-  private async createRequest(selfServe: boolean, data: Parameters<BookRequestRepository['create']>[0], aliasKeys: string[], autoGrab?: boolean) {
+  private async createRequest(
+    selfServe: boolean,
+    data: Parameters<BookRequestRepository['create']>[0],
+    aliasKeys: string[],
+    autoGrab?: boolean,
+    sourceIds?: number[] | null,
+  ) {
     // This shape keeps upstream's tests asserting the two-argument call passing without editing upstream test files.
-    if (!selfServe) return autoGrab === undefined ? this.repo.create(data, aliasKeys) : this.repo.create(data, aliasKeys, autoGrab);
+    if (!selfServe) {
+      if (autoGrab === undefined && sourceIds === undefined) return this.repo.create(data, aliasKeys);
+      return this.repo.create(data, aliasKeys, autoGrab, sourceIds);
+    }
 
     const row =
-      autoGrab === undefined
+      autoGrab === undefined && sourceIds === undefined
         ? await this.repo.createWithinSelfServeCap(data, aliasKeys, MAX_LIVE_SELF_SERVE_REQUESTS)
-        : await this.repo.createWithinSelfServeCap(data, aliasKeys, MAX_LIVE_SELF_SERVE_REQUESTS, autoGrab);
+        : await this.repo.createWithinSelfServeCap(data, aliasKeys, MAX_LIVE_SELF_SERVE_REQUESTS, autoGrab, sourceIds);
     if (!row) throw this.selfServeLimitRefusal();
     return row;
   }

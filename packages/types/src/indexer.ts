@@ -661,3 +661,18 @@ export interface ReleaseFileInspection {
   /** Archives found in the release. Non-zero with no units is what `contents_unknown` means. */
   containerCount: number;
 }
+
+/**
+ * A release source as a requester may see it: enough to choose which sources automation searches
+ * for a request, nothing of its configuration. The full indexer list stays admin-only.
+ */
+export interface RequestSourceOption {
+  id: number;
+  name: string;
+  delivery: DownloadDelivery;
+  /** The media this source is searched for, after its adapter, categories and opt-outs. */
+  mediaKinds: BookRequestMediaKind[];
+}
+
+/** The most sources one request may be limited to. */
+export const REQUEST_SOURCE_LIMIT = 50;

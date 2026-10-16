@@ -8,7 +8,7 @@ import { BookRequestService } from '../book-request/book-request.service';
 import { MonitoredStoreService } from './monitored-store.service';
 import { releaseDateRange } from './release-window';
 
-type AutoRequestOptions = { autoGrab?: boolean; deferAutomation?: boolean };
+type AutoRequestOptions = { autoGrab?: boolean; deferAutomation?: boolean; sourceIds?: number[] | null };
 type FanOutResult = { created: number; skipped: number; failed: number };
 type Candidate = { work: MonitoredWork; format: MonitoredFormat; releaseStart: string };
 
@@ -128,6 +128,7 @@ export class MonitoredAutoRequestService {
         ...(formatConfig.libraryId ? { targetLibraryId: formatConfig.libraryId } : {}),
         ...(formatConfig.folderId ? { targetFolderId: formatConfig.folderId } : {}),
         ...(opts.autoGrab !== undefined ? { autoGrab: opts.autoGrab } : {}),
+        ...(opts.sourceIds !== undefined ? { sourceIds: opts.sourceIds } : {}),
         ...(opts.deferAutomation !== undefined ? { deferAutomation: opts.deferAutomation } : {}),
       },
       user,

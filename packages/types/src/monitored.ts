@@ -139,6 +139,81 @@ export function monitoredFormatReleaseDate(
 }
 
 /**
+ * A request exists for the format and is not finished: it is being fetched, filed, or waiting on the
+ * owner, so a new one is not offered. Wider than the server in_progress filter bucket, which leaves
+ * out needs_choice.
+ */
+export const MONITORED_ACTIVE_REQUEST_STATUSES: ReadonlySet<MonitoredFormatStatus> = new Set(["downloading", "importing", "queued", "needs_choice"]);
+
+/** The most works one bulk call takes, the same cap as bulk book requests. */
+export const MONITORED_WORK_BULK_LIMIT = 100;
+
+export const MONITORED_BULK_REQUEST_FORMATS = ["ebook", "audiobook", "both"] as const;
+export type MonitoredBulkRequestFormat = (typeof MONITORED_BULK_REQUEST_FORMATS)[number];
+
+export function monitoredBulkFormats(format: MonitoredBulkRequestFormat): MonitoredFormat[] {
+  return format === "both" ? [...MONITORED_FORMATS] : [format];
+}
+
+/** Why a bulk request leaves one format of a work alone without trying it. */
+export const MONITORED_BULK_SKIP_REASONS = ["owned", "requested", "no_ebook"] as const;
+export type MonitoredBulkSkipReason = (typeof MONITORED_BULK_SKIP_REASONS)[number];
+
+/**
+ * The one rule both the selection bar's preview and the bulk endpoint apply, so the bar never
+ * promises a request the server then skips. An audiobook-only work has no ebook to ask for, the
+ * same refusal the single request endpoint makes.
+ */
+export function monitoredBulkSkipReason(work: MonitoredWork, format: MonitoredFormat, todayUtc: string): MonitoredBulkSkipReason | null {
+  const status = monitoredFormatStatus(work, format, todayUtc);
+  if (status === "owned") return "owned";
+  if (MONITORED_ACTIVE_REQUEST_STATUSES.has(status)) return "requested";
+  if (format === "ebook" && work.ebookReleaseDate == null && work.audioReleaseDate != null) return "no_ebook";
+  return null;
+}
+
+export interface MonitoredBulkRequestPayload {
+  workIds: string[];
+  format: MonitoredBulkRequestFormat;
+  autoDownload?: boolean;
+  /**
+   * The sources automatic search may use, per format. An id list limits it to those sources;
+   * null means every source. Either replaces the sources of a request that already exists for
+   * the work. A format left out keeps whatever its request already has (every source when new).
+   */
+  sources?: Partial<Record<MonitoredFormat, number[] | null>>;
+}
+
+/** Why one (work, format) of a bulk request was not filed after being tried. */
+export const MONITORED_BULK_FAILURE_REASONS = ["not_found", "forbidden", "destination", "error"] as const;
+export type MonitoredBulkFailureReason = (typeof MONITORED_BULK_FAILURE_REASONS)[number];
+
+export type MonitoredBulkRequestResult =
+  | { workId: string; format: MonitoredFormat; outcome: "requested"; requestId: number }
+  | { workId: string; format: MonitoredFormat; outcome: "skipped"; reason: MonitoredBulkSkipReason }
+  | { workId: string; format: MonitoredFormat; outcome: "failed"; reason: MonitoredBulkFailureReason; message: string };
+
+export interface MonitoredBulkRequestResponse {
+  /** One entry per (work, format) asked for, in request order. */
+  results: MonitoredBulkRequestResult[];
+  /** The works that now carry a new request id, composed for the caller, so a page can apply them. */
+  works: MonitoredWork[];
+}
+
+/** The subset of the per-work patch that applies to many works at once. */
+export type MonitoredBulkWorkPatch = Pick<MonitoredWorkPatch, "monitorEbook" | "monitorAudiobook" | "hidden" | "automaticVisibility">;
+
+export interface MonitoredBulkUpdatePayload {
+  workIds: string[];
+  patch: MonitoredBulkWorkPatch;
+}
+
+export interface MonitoredBulkUpdateResponse {
+  works: MonitoredWork[];
+  failed: Array<{ workId: string; reason: Extract<MonitoredBulkFailureReason, "not_found" | "forbidden"> }>;
+}
+
+/**
  * The status filter on monitored lists. `hidden` covers every work outside the default list: hidden
  * by the owner, or still in review. The others read a format's status.
  */

@@ -185,10 +185,11 @@ describe('BookRequestRepository.findDueForResearch', () => {
 });
 
 describe('BookRequestRepository.findById', () => {
-  it('reads the auto-grab override through the fork overlay', async () => {
+  it('reads the automation overrides through the fork overlay', async () => {
     const result = {
       request: { id: 7, decidedByUserId: null },
       autoGrab: false,
+      sourceIds: [2, 5],
       requesterUsername: 'reader',
       requesterName: 'Reader',
       targetLibraryName: null,
@@ -198,9 +199,13 @@ describe('BookRequestRepository.findById', () => {
     builder.limit = vi.fn().mockResolvedValue([result]);
     const db = { select: vi.fn(() => builder) };
 
-    await expect(new BookRequestRepository(db as never).findById(7)).resolves.toMatchObject({ request: { id: 7, autoGrab: false } });
+    await expect(new BookRequestRepository(db as never).findById(7)).resolves.toMatchObject({
+      request: { id: 7, autoGrab: false, sourceIds: [2, 5] },
+    });
 
-    expect(db.select.mock.calls[0]![0]).toHaveProperty('autoGrab');
+    const [selection] = db.select.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(selection).toHaveProperty('autoGrab');
+    expect(selection).toHaveProperty('sourceIds');
   });
 });
 
@@ -296,6 +301,16 @@ describe('BookRequestRepository.create', () => {
     expect(insertValues).toHaveBeenCalledWith({ title: 'Dune' });
     expect(tx.update).toHaveBeenCalledTimes(1);
     expect(updateSet).toHaveBeenCalledWith({ autoGrab: false });
+  });
+
+  it('writes auto-grab and source overrides in one overlay update', async () => {
+    const { db, tx, updateSet } = makeInsertingDb();
+    const repo = new BookRequestRepository(db as never);
+
+    await repo.create({ title: 'Dune' } as never, [], true, [2, 5]);
+
+    expect(tx.update).toHaveBeenCalledTimes(1);
+    expect(updateSet).toHaveBeenCalledWith({ autoGrab: true, sourceIds: [2, 5] });
   });
 });
 

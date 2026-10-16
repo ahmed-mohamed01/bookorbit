@@ -3,6 +3,8 @@ import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Is
 import { BOOK_REQUEST_MEDIA_KINDS } from '@bookorbit/types';
 import type { BookRequestMediaKind } from '@bookorbit/types';
 
+import { IsRequestSourceIds } from '../../../common/validation/request-source-ids.validation';
+
 /**
  * One provider's record of the same work, as the shared `BookRequestMetadataSource` describes it.
  *
@@ -121,6 +123,14 @@ export class BookRequestWorkDto {
   @IsOptional()
   @IsBoolean()
   autoGrab?: boolean;
+
+  /**
+   * Limits automatic searches for this request to these source ids. Null restores every source;
+   * omission leaves an existing request unchanged and gives a new request every source.
+   */
+  @IsOptional()
+  @IsRequestSourceIds()
+  sourceIds?: number[] | null;
 
   @IsOptional()
   @IsBoolean()

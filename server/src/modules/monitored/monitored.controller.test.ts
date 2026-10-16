@@ -63,6 +63,8 @@ describe('MonitoredController', () => {
     'updateBook',
     'deleteBook',
     'updateWork',
+    'bulkRequestWorks',
+    'bulkUpdateWorks',
     'requestFromWork',
     'searchWorkReleases',
     'grabWorkRelease',
@@ -97,6 +99,20 @@ describe('MonitoredController', () => {
     await expect(controller.getWorkByBook({ bookId: 11 }, user)).resolves.toBe(entry);
     expect(getWorkByBook).toHaveBeenCalledWith(user, 11);
     expect(Reflect.getMetadata(PERMISSION_KEY, MonitoredController.prototype.getWorkByBook)).toBeUndefined();
+  });
+
+  it('delegates bulk work requests and updates with the current user and dto', async () => {
+    const bulkRequestWorks = vi.fn().mockResolvedValue({ results: [], works: [] });
+    const bulkUpdateWorks = vi.fn().mockResolvedValue({ works: [], failed: [] });
+    const controller = await makeController({ bulkRequestWorks, bulkUpdateWorks });
+    const user = { id: 3 } as RequestUser;
+    const request = { workIds: ['work-1'], format: 'both' as const, autoDownload: false };
+    const update = { workIds: ['work-1'], patch: { hidden: true } };
+
+    await expect(controller.bulkRequestWorks(user, request)).resolves.toEqual({ results: [], works: [] });
+    await expect(controller.bulkUpdateWorks(user, update)).resolves.toEqual({ works: [], failed: [] });
+    expect(bulkRequestWorks).toHaveBeenCalledWith(user, request);
+    expect(bulkUpdateWorks).toHaveBeenCalledWith(user, update);
   });
 
   it('returns 404 when an author is not visible to the caller', async () => {

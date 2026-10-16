@@ -34,21 +34,24 @@ describe('BookRequestAutoGrabBootstrapService', () => {
 
     await service.onModuleInit();
 
-    expect(repo.findMissingColumns).toHaveBeenCalledWith('book_requests', ['auto_grab']);
-    expect(repo.applySchemaStatements).toHaveBeenCalledWith(['ALTER TABLE "book_requests" ADD COLUMN IF NOT EXISTS "auto_grab" boolean;']);
+    expect(repo.findMissingColumns).toHaveBeenCalledWith('book_requests', ['auto_grab', 'source_ids']);
+    expect(repo.applySchemaStatements).toHaveBeenCalledWith([
+      'ALTER TABLE "book_requests" ADD COLUMN IF NOT EXISTS "auto_grab" boolean;',
+      'ALTER TABLE "book_requests" ADD COLUMN IF NOT EXISTS "source_ids" integer[];',
+    ]);
     expect(repo.findMissingColumns.mock.invocationCallOrder[0]).toBeLessThan(repo.applySchemaStatements.mock.invocationCallOrder[0]!);
     expect(logSpy).not.toHaveBeenCalled();
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
-  it('logs columnsAdded=1 when the column was missing', async () => {
+  it('logs columnsAdded=1 when a column was missing', async () => {
     const { service } = createService(['auto_grab']);
 
     await service.onModuleInit();
 
     expect(logSpy).toHaveBeenCalledTimes(1);
     expect(logSpy.mock.calls[0]![0]).toMatch(
-      /^\[book_request\.auto_grab_bootstrap\] \[end\] durationMs=\d+ columnsAdded=1 - auto_grab column added$/,
+      /^\[book_request\.auto_grab_bootstrap\] \[end\] durationMs=\d+ columnsAdded=1 - book request columns added$/,
     );
     expect(errorSpy).not.toHaveBeenCalled();
   });

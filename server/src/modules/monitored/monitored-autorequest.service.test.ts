@@ -112,6 +112,15 @@ describe('MonitoredAutoRequestService', () => {
     expect(updateWorkUserState).toHaveBeenCalledWith('work-1', { requestIds: { ebook: 100 } }, user);
   });
 
+  it('forwards a per-request source list to the book request submission', async () => {
+    const works = [work()];
+    const { service, submit } = harness(works);
+
+    await service.submitWorkRequest(user, monitor(), works[0]!, 'ebook', { sourceIds: [4, 7] });
+
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ sourceIds: [4, 7] }), user);
+  });
+
   it('is idempotent once a request id has been recorded', async () => {
     const works = [work()];
     const { service, submit } = harness(works);

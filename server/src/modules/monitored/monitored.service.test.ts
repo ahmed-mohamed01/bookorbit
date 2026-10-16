@@ -16,6 +16,11 @@ import { MonitoredService } from './monitored.service';
 
 const viewer = { id: 1, isSuperuser: false } as RequestUser;
 
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
 function author(patch: Partial<MonitoredAuthorConfig> = {}): MonitoredAuthorConfig {
   return {
     id: 'monitor-1',
@@ -74,6 +79,7 @@ type ServiceDeps = {
   providerConfigs?: Record<string, unknown>;
   libraryService?: Record<string, unknown>;
   indexerSearch?: Record<string, unknown>;
+  requestSources?: Record<string, unknown>;
   fulfillment?: Record<string, unknown>;
   autoRequests?: Record<string, unknown>;
   appSettings?: Record<string, unknown>;
@@ -100,6 +106,7 @@ function service(store: Record<string, unknown>, bookRequests: Record<string, un
     (deps.enrichmentExecutor ?? {}) as never,
     (deps.libraryService ?? {}) as never,
     bookRequests as never,
+    (deps.requestSources ?? { assertRequestable: vi.fn().mockResolvedValue(undefined) }) as never,
     (deps.fulfillment ?? {}) as never,
     (deps.indexerSearch ?? {}) as never,
     (deps.authorImageStorage ?? {}) as never,
@@ -312,6 +319,217 @@ describe('MonitoredService', () => {
     await service(store, {}, { autoRequests: { submitWorkRequest } }).requestFromWork(viewer, monitoredWork.id, { format: 'ebook' });
 
     expect(submitWorkRequest).toHaveBeenCalledWith(viewer, monitoredAuthor, monitoredWork, 'ebook', undefined);
+  });
+
+  it('classifies skipped, missing, and forbidden works without submitting them', async () => {
+    const owned = work({ id: 'owned', ownedFormats: ['ebook'] });
+    const active = work({ id: 'active', requestStatuses: { ebook: 'downloading' } });
+    const audioOnly = work({ id: 'audio-only', ebookReleaseDate: null, ebookDatePrecision: null });
+    const foreign = work({ id: 'foreign' });
+    const getWorksWithMonitors = vi.fn().mockResolvedValue(
+      new Map([
+        ['owned', { monitor: author(), work: owned }],
+        ['active', { monitor: author(), work: active }],
+        ['audio-only', { monitor: author(), work: audioOnly }],
+        ['foreign', { monitor: author({ ownerUserId: 2 }), work: foreign }],
+      ]),
+    );
+    const submitWorkRequest = vi.fn();
+
+    const result = await service({ getWorksWithMonitors }, {}, { autoRequests: { submitWorkRequest } }).bulkRequestWorks(viewer, {
+      workIds: ['owned', 'active', 'audio-only', 'missing', 'foreign'],
+      format: 'ebook',
+    });
+
+    expect(result.results).toEqual([
+      { workId: 'owned', format: 'ebook', outcome: 'skipped', reason: 'owned' },
+      { workId: 'active', format: 'ebook', outcome: 'skipped', reason: 'requested' },
+      { workId: 'audio-only', format: 'ebook', outcome: 'skipped', reason: 'no_ebook' },
+      { workId: 'missing', format: 'ebook', outcome: 'failed', reason: 'not_found', message: 'Monitored work not found' },
+      { workId: 'foreign', format: 'ebook', outcome: 'failed', reason: 'forbidden', message: 'No access to this monitored work' },
+    ]);
+    expect(submitWorkRequest).not.toHaveBeenCalled();
+  });
+
+  it('expands both formats in order, passes autoDownload, defers after the first chunk, and keeps the latest returned work', async () => {
+    const monitoredAuthor = author();
+    const first = work({ id: 'work-1' });
+    const second = work({ id: 'work-2' });
+    const getWorksWithMonitors = vi.fn().mockResolvedValue(
+      new Map([
+        [first.id, { monitor: monitoredAuthor, work: first }],
+        [second.id, { monitor: monitoredAuthor, work: second }],
+      ]),
+    );
+    let requestId = 10;
+    const submitWorkRequest = vi.fn((_user, _monitor, candidate: MonitoredWork, format: 'ebook' | 'audiobook', _options?: unknown) => {
+      void _options;
+      requestId++;
+      return Promise.resolve(work({ ...candidate, requestIds: { ...candidate.requestIds, [format]: requestId } }));
+    });
+
+    const result = await service({ getWorksWithMonitors }, {}, { autoRequests: { submitWorkRequest } }).bulkRequestWorks(viewer, {
+      workIds: [first.id, second.id],
+      format: 'both',
+      autoDownload: false,
+    });
+
+    expect(result.results.map(({ workId, format, outcome }) => ({ workId, format, outcome }))).toEqual([
+      { workId: first.id, format: 'ebook', outcome: 'requested' },
+      { workId: first.id, format: 'audiobook', outcome: 'requested' },
+      { workId: second.id, format: 'ebook', outcome: 'requested' },
+      { workId: second.id, format: 'audiobook', outcome: 'requested' },
+    ]);
+    expect(submitWorkRequest).toHaveBeenCalledTimes(4);
+    expect(submitWorkRequest.mock.calls.slice(0, 3).map((call) => call[4])).toEqual([{ autoGrab: false }, { autoGrab: false }, { autoGrab: false }]);
+    expect(submitWorkRequest.mock.calls[3]?.[4]).toEqual({ autoGrab: false, deferAutomation: true });
+    expect(result.works).toHaveLength(2);
+    expect(result.works[0]?.requestIds).toEqual({ audiobook: 12 });
+  });
+
+  it('validates bulk sources once and forwards each format selection, including undefined when omitted', async () => {
+    const monitoredAuthor = author();
+    const monitoredWork = work({ id: 'work-1' });
+    const getWorksWithMonitors = vi.fn().mockResolvedValue(new Map([[monitoredWork.id, { monitor: monitoredAuthor, work: monitoredWork }]]));
+    const assertRequestable = vi.fn().mockResolvedValue(undefined);
+    const submitWorkRequest = vi
+      .fn()
+      .mockImplementation((_user, _monitor, candidate: MonitoredWork, format: 'ebook' | 'audiobook') =>
+        Promise.resolve(work({ ...candidate, requestIds: { [format]: format === 'ebook' ? 11 : 12 } })),
+      );
+
+    await service({ getWorksWithMonitors }, {}, { autoRequests: { submitWorkRequest }, requestSources: { assertRequestable } }).bulkRequestWorks(
+      viewer,
+      {
+        workIds: [monitoredWork.id],
+        format: 'both',
+        sources: { ebook: [1] },
+      },
+    );
+
+    expect(assertRequestable.mock.calls).toEqual([
+      [[1], 'ebook'],
+      [undefined, 'audiobook'],
+    ]);
+    expect(submitWorkRequest).toHaveBeenNthCalledWith(1, viewer, monitoredAuthor, monitoredWork, 'ebook', { sourceIds: [1] });
+    expect(submitWorkRequest).toHaveBeenNthCalledWith(2, viewer, monitoredAuthor, monitoredWork, 'audiobook', { sourceIds: undefined });
+  });
+
+  it('refuses a bulk source that does not carry the selected format before reading works', async () => {
+    const getWorksWithMonitors = vi.fn();
+    const assertRequestable = vi.fn().mockRejectedValue(new BadRequestException('Choose sources that search for audiobooks'));
+    const instance = service({ getWorksWithMonitors }, {}, { requestSources: { assertRequestable } });
+
+    await expect(instance.bulkRequestWorks(viewer, { workIds: ['work-1'], format: 'audiobook', sources: { audiobook: [1] } })).rejects.toThrow(
+      'Choose sources that search for audiobooks',
+    );
+    expect(assertRequestable).toHaveBeenCalledWith([1], 'audiobook');
+    expect(getWorksWithMonitors).not.toHaveBeenCalled();
+  });
+
+  it('ignores sources for a format the bulk request does not include', async () => {
+    const monitoredAuthor = author();
+    const monitoredWork = work({ id: 'work-1' });
+    const getWorksWithMonitors = vi.fn().mockResolvedValue(new Map([[monitoredWork.id, { monitor: monitoredAuthor, work: monitoredWork }]]));
+    const assertRequestable = vi.fn().mockResolvedValue(undefined);
+    const submitWorkRequest = vi.fn().mockResolvedValue(work({ ...monitoredWork, requestIds: { ebook: 11 } }));
+
+    await expect(
+      service({ getWorksWithMonitors }, {}, { autoRequests: { submitWorkRequest }, requestSources: { assertRequestable } }).bulkRequestWorks(viewer, {
+        workIds: [monitoredWork.id],
+        format: 'ebook',
+        sources: { ebook: [1], audiobook: [999] },
+      }),
+    ).resolves.toMatchObject({ results: [{ format: 'ebook', outcome: 'requested' }] });
+
+    expect(assertRequestable.mock.calls).toEqual([[[1], 'ebook']]);
+    expect(submitWorkRequest).toHaveBeenCalledWith(viewer, monitoredAuthor, monitoredWork, 'ebook', { sourceIds: [1] });
+  });
+
+  it('logs candidate bulk request failures with work, user, format, duration, class, and sanitized error', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const monitoredAuthor = author();
+    const monitoredWork = work({ id: 'work-1' });
+    const getWorksWithMonitors = vi.fn().mockResolvedValue(new Map([[monitoredWork.id, { monitor: monitoredAuthor, work: monitoredWork }]]));
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    await service(
+      { getWorksWithMonitors },
+      {},
+      { autoRequests: { submitWorkRequest: vi.fn().mockRejectedValue(new Error('bad "source"')) } },
+    ).bulkRequestWorks(viewer, { workIds: [monitoredWork.id], format: 'ebook' });
+
+    expect(warn).toHaveBeenCalledWith(
+      '[monitored.work.bulk_request] [fail] workId="work-1" userId=1 format=ebook durationMs=0 errorClass=Error error="bad \\"source\\"" - monitored work request failed',
+    );
+  });
+
+  it('reports a destination refusal and stops later candidates of that format', async () => {
+    const monitoredAuthor = author();
+    const works = Array.from({ length: 4 }, (_, index) => work({ id: `work-${index + 1}` }));
+    const getWorksWithMonitors = vi.fn().mockResolvedValue(new Map(works.map((item) => [item.id, { monitor: monitoredAuthor, work: item }])));
+    const refusal = new BadRequestException({ message: 'Choose a request destination', errorCode: 'SUBMIT_DESTINATION_REQUIRED' });
+    const submitWorkRequest = vi
+      .fn()
+      .mockRejectedValueOnce(refusal)
+      .mockImplementation((_user, _monitor, candidate: MonitoredWork) =>
+        Promise.resolve(work({ ...candidate, requestIds: { ebook: Number(candidate.id.slice(-1)) } })),
+      );
+
+    const result = await service({ getWorksWithMonitors }, {}, { autoRequests: { submitWorkRequest } }).bulkRequestWorks(viewer, {
+      workIds: works.map((item) => item.id),
+      format: 'ebook',
+    });
+
+    expect(submitWorkRequest).toHaveBeenCalledTimes(3);
+    expect(result.results[0]).toMatchObject({ outcome: 'failed', reason: 'destination' });
+    expect(result.results[3]).toEqual({
+      workId: 'work-4',
+      format: 'ebook',
+      outcome: 'failed',
+      reason: 'destination',
+      message: 'Request destination is unavailable',
+    });
+  });
+
+  it('rejects invalid bulk patches before reading works', async () => {
+    const getWorksWithMonitors = vi.fn();
+    const instance = service({ getWorksWithMonitors });
+
+    await expect(instance.bulkUpdateWorks(viewer, { workIds: ['work-1'], patch: {} })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      instance.bulkUpdateWorks(viewer, { workIds: ['work-1'], patch: { hidden: true, automaticVisibility: true } }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(getWorksWithMonitors).not.toHaveBeenCalled();
+  });
+
+  it('reports missing and forbidden bulk updates and writes owned works once', async () => {
+    const owned = work({ id: 'owned' });
+    const foreign = work({ id: 'foreign' });
+    const getWorksWithMonitors = vi.fn().mockResolvedValue(
+      new Map([
+        ['owned', { monitor: author(), work: owned }],
+        ['foreign', { monitor: author({ ownerUserId: 2 }), work: foreign }],
+      ]),
+    );
+    const updated = work({ id: 'owned', monitorFormats: { ebook: false } });
+    const updateWorksUserState = vi.fn().mockResolvedValue([updated]);
+
+    const result = await service({ getWorksWithMonitors, updateWorksUserState }).bulkUpdateWorks(viewer, {
+      workIds: ['owned', 'missing', 'foreign'],
+      patch: { monitorEbook: false },
+    });
+
+    expect(updateWorksUserState).toHaveBeenCalledOnce();
+    expect(updateWorksUserState).toHaveBeenCalledWith(['owned'], { monitorEbook: false }, viewer);
+    expect(result).toEqual({
+      works: [updated],
+      failed: [
+        { workId: 'missing', reason: 'not_found' },
+        { workId: 'foreign', reason: 'forbidden' },
+      ],
+    });
   });
 
   it('asks the lookup service with the work, its monitor and its provider ids', async () => {
@@ -1762,7 +1980,7 @@ describe('MonitoredService release picker', () => {
     await instance.searchWorkReleases(viewer, 'work-a', 'audiobook');
     await instance.searchWorkReleases(viewer, 'work-b', 'ebook');
 
-    const ids = search.mock.calls.map(([request]: [{ id: number }]) => request.id);
+    const ids = search.mock.calls.map((call) => (call[0] as { id: number }).id);
     // Negative keeps it clear of every real request id, so a browse can never read or evict one.
     expect(ids.every((id) => id < 0)).toBe(true);
     expect(ids[0]).toBe(ids[1]);

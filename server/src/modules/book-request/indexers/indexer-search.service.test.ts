@@ -2,6 +2,7 @@ import type { BookRequestRow } from '../../../db/schema';
 import { emptyReleaseProfiles } from '@bookorbit/types';
 import type { IndexerAdapterType } from '@bookorbit/types';
 
+import { BookRequestSourcesService } from '../book-request-sources.service';
 import { IndexerSearchException, type ReleaseCandidate, type ResolvedIndexerConfig } from './indexer-adapter';
 import { IndexerOperationLock } from './indexer-operation-lock';
 import { IndexerSearchService } from './indexer-search.service';
@@ -105,8 +106,9 @@ function makeService(
   };
   // No profile, which is the shipped default and keeps these cases about search and scoring.
   const automationSettings = { get: vi.fn(() => Promise.resolve({ profiles: emptyReleaseProfiles() })) };
+  const requestSources = new BookRequestSourcesService(indexers as never, registry as never);
   return {
-    service: new IndexerSearchService(indexers as never, registry as never, automationSettings as never, new IndexerOperationLock()),
+    service: new IndexerSearchService(indexers as never, registry as never, automationSettings as never, new IndexerOperationLock(), requestSources),
     indexers,
     adapters,
     automationSettings,
@@ -155,7 +157,7 @@ describe('IndexerSearchService', () => {
     const { service } = makeService(
       [
         indexer({ credentialError: 'BOOK_REQUEST_ENCRYPTION_KEY may have changed' }),
-        indexer({ id: 2, name: 'archive', adapterType: 'internet-archive' }),
+        indexer({ id: 2, name: 'archive', adapterType: pluginType('internet-archive') }),
       ],
       { torznab, 'internet-archive': archive },
     );
@@ -192,7 +194,7 @@ describe('IndexerSearchService', () => {
   it('keeps the same guid from two different indexers apart', async () => {
     const torznab = { search: vi.fn().mockResolvedValue([release()]) };
     const archive = { search: vi.fn().mockResolvedValue([release({ indexerId: 2 })]) };
-    const { service } = makeService([indexer(), indexer({ id: 2, name: 'archive', adapterType: 'internet-archive' })], {
+    const { service } = makeService([indexer(), indexer({ id: 2, name: 'archive', adapterType: pluginType('internet-archive') })], {
       torznab,
       'internet-archive': archive,
     });
@@ -205,7 +207,7 @@ describe('IndexerSearchService', () => {
   it('merges every enabled indexer into one list ranked by score', async () => {
     const torznab = { search: vi.fn().mockResolvedValue([release({ title: 'Something Else [EPUB]', seeders: 400 })]) };
     const archive = { search: vi.fn().mockResolvedValue([release({ indexerId: 2, guid: 'g2', seeders: 5 })]) };
-    const { service } = makeService([indexer(), indexer({ id: 2, name: 'archive', adapterType: 'internet-archive' })], {
+    const { service } = makeService([indexer(), indexer({ id: 2, name: 'archive', adapterType: pluginType('internet-archive') })], {
       torznab,
       'internet-archive': archive,
     });
@@ -216,10 +218,41 @@ describe('IndexerSearchService', () => {
     expect(result.releases[0].score).toBeGreaterThan(result.releases[1].score);
   });
 
+  it('limits a search to the selected source ids', async () => {
+    const torznab = { search: vi.fn().mockResolvedValue([release()]) };
+    const archive = { search: vi.fn().mockResolvedValue([release({ indexerId: 2, guid: 'g2' })]) };
+    const { service } = makeService([indexer(), indexer({ id: 2, adapterType: pluginType('internet-archive') })], {
+      torznab,
+      'internet-archive': archive,
+    });
+
+    const result = await service.search(request(), { sourceIds: [2] });
+
+    expect(torznab.search).not.toHaveBeenCalled();
+    expect(archive.search).toHaveBeenCalledTimes(1);
+    expect(result.indexers.map((status) => status.indexerId)).toEqual([2]);
+  });
+
+  it('keeps limited and unlimited searches in separate cache entries', async () => {
+    const torznab = { search: vi.fn().mockResolvedValue([release()]) };
+    const archive = { search: vi.fn().mockResolvedValue([release({ indexerId: 2, guid: 'g2' })]) };
+    const { service } = makeService([indexer(), indexer({ id: 2, adapterType: pluginType('internet-archive') })], {
+      torznab,
+      'internet-archive': archive,
+    });
+
+    await service.search(request(), { sourceIds: [1] });
+    const unlimited = await service.search(request());
+
+    expect(torznab.search).toHaveBeenCalledTimes(2);
+    expect(archive.search).toHaveBeenCalledTimes(1);
+    expect(unlimited.cached).toBe(false);
+  });
+
   it('records the outcome of every source that took part in a real search', async () => {
     const torznab = { search: vi.fn().mockResolvedValue([release()]) };
     const archive = { search: vi.fn().mockRejectedValue(new Error('tracker is offline')) };
-    const { service, indexers } = makeService([indexer(), indexer({ id: 2, name: 'archive', adapterType: 'internet-archive' })], {
+    const { service, indexers } = makeService([indexer(), indexer({ id: 2, name: 'archive', adapterType: pluginType('internet-archive') })], {
       torznab,
       'internet-archive': archive,
     });
@@ -440,7 +473,7 @@ describe('IndexerSearchService', () => {
   it('reports a failing indexer beside the results the others returned', async () => {
     const torznab = { search: vi.fn().mockRejectedValue(new IndexerSearchException('unauthorized', 'bad key')) };
     const archive = { search: vi.fn().mockResolvedValue([release({ indexerId: 2, guid: 'g2' })]) };
-    const { service } = makeService([indexer(), indexer({ id: 2, name: 'archive', adapterType: 'internet-archive' })], {
+    const { service } = makeService([indexer(), indexer({ id: 2, name: 'archive', adapterType: pluginType('internet-archive') })], {
       torznab,
       'internet-archive': archive,
     });
@@ -484,7 +517,7 @@ describe('IndexerSearchService', () => {
   it('reports whether each source joins a swarm', async () => {
     const torznab = { search: vi.fn().mockResolvedValue([release()]) };
     const libgen = { search: vi.fn().mockResolvedValue([release({ indexerId: 2, guid: 'g2', seeders: null })]), seedsBack: false };
-    const { service } = makeService([indexer(), indexer({ id: 2, name: 'libgen', adapterType: 'libgen' })], { torznab, libgen });
+    const { service } = makeService([indexer(), indexer({ id: 2, name: 'libgen', adapterType: pluginType('libgen') })], { torznab, libgen });
 
     const result = await service.search(request());
 
@@ -705,7 +738,7 @@ describe('IndexerSearchService', () => {
   });
 
   it('reports an indexer whose adapter is not built rather than silently skipping it', async () => {
-    const { service } = makeService([indexer({ adapterType: 'internet-archive' })], {});
+    const { service } = makeService([indexer({ adapterType: pluginType('internet-archive') })], {});
 
     const result = await service.search(request());
 

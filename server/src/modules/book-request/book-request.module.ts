@@ -17,6 +17,8 @@ import { BookRequestAttributionService } from './book-request-attribution.servic
 import { BookRequestAutoGrabBootstrapService } from './book-request-auto-grab-bootstrap.service';
 import { BookRequestController } from './book-request.controller';
 import { BookRequestSelfFulfilController } from './book-request-self-fulfil.controller';
+import { BookRequestSourcesController } from './book-request-sources.controller';
+import { BookRequestSourcesService } from './book-request-sources.service';
 import { BookRequestDedupeService } from './book-request-dedupe.service';
 import { BookRequestEventsService } from './book-request-events.service';
 import { BookRequestGateway } from './book-request.gateway';
@@ -94,6 +96,7 @@ import { RequestWatchdogService } from './fulfillment/request-watchdog.service';
   controllers: [
     BookRequestController,
     BookRequestSelfFulfilController,
+    BookRequestSourcesController,
     BookRequestAdminController,
     BookRequestAutomationController,
     DownloadClientController,
@@ -102,6 +105,7 @@ import { RequestWatchdogService } from './fulfillment/request-watchdog.service';
   ],
   providers: [
     BookRequestService,
+    BookRequestSourcesService,
     BookRequestRepository,
     BookRequestAutoGrabBootstrapService,
     BookRequestAttributionService,
@@ -169,6 +173,6 @@ import { RequestWatchdogService } from './fulfillment/request-watchdog.service';
     DownloadMonitorService,
     RequestWatchdogService,
   ],
-  exports: [BookRequestService, RequestFulfillmentService, IndexerSearchService],
+  exports: [BookRequestService, BookRequestSourcesService, RequestFulfillmentService, IndexerSearchService],
 })
 export class BookRequestModule {}
