@@ -15,14 +15,13 @@ export function releaseRangeOverlapsSql(date: AnyPgColumn, precision: AnyPgColum
 
 export function visibleWorkCondition() {
   const overlayVisibility = schema.monitoredAuthorWorks.userVisibility;
-  return sql<boolean>`coalesce(${or(
-    sql`${overlayVisibility} = 'visible'`,
-    and(
-      sql`${overlayVisibility} is null`,
-      eq(schema.authorCatalogWorks.verdict, 'verified'),
-      sql`jsonb_array_length(${schema.authorCatalogWorks.flags}) = 0`,
-    ),
-  )}, false)`;
+  const overlayKind = schema.monitoredAuthorWorks.userKind;
+  return sql<boolean>`coalesce(case
+    when ${overlayVisibility} = 'hidden' then false
+    when ${overlayKind} is not null then ${overlayKind} = 'book'
+    when ${overlayVisibility} = 'visible' then true
+    else ${and(eq(schema.authorCatalogWorks.verdict, 'verified'), sql`jsonb_array_length(${schema.authorCatalogWorks.flags}) = 0`)}
+  end, false)`;
 }
 
 export function activeWorkCondition(visible: ReturnType<typeof visibleWorkCondition>) {

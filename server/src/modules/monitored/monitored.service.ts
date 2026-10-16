@@ -585,6 +585,7 @@ export class MonitoredService {
           status: monitoredReleaseStatus(work, format, releaseDate, today),
           requestId,
           authorModes: authorFormatModes(monitor),
+          authorLastRefreshedAt: monitor.lastRefreshedAt,
         };
       }),
     };
@@ -757,6 +758,9 @@ export class MonitoredService {
   async updateWork(user: RequestUser, workId: string, patch: MonitoredWorkPatch): Promise<MonitoredWork> {
     if (patch.automaticVisibility === true && patch.hidden !== undefined) {
       throw new BadRequestException('Choose either hidden or automatic visibility, not both');
+    }
+    if (patch.automaticVisibility === true && patch.kind !== undefined) {
+      throw new BadRequestException('Choose either kind or automatic visibility, not both');
     }
     const entry = await this.getWritableWork(workId, user);
     await this.healWorkAvailability([{ monitor: entry.monitor, works: [entry.work] }], user);
@@ -967,7 +971,7 @@ export class MonitoredService {
 
   async bulkUpdateWorks(user: RequestUser, payload: MonitoredBulkUpdatePayload): Promise<MonitoredBulkUpdateResponse> {
     const startedAt = Date.now();
-    const fields = (['monitorEbook', 'monitorAudiobook', 'hidden', 'automaticVisibility'] as const).filter(
+    const fields = (['monitorEbook', 'monitorAudiobook', 'hidden', 'automaticVisibility', 'kind'] as const).filter(
       (field) => payload.patch[field] !== undefined,
     );
     this.logger.log(
@@ -976,6 +980,9 @@ export class MonitoredService {
     try {
       if (payload.patch.automaticVisibility === true && payload.patch.hidden !== undefined) {
         throw new BadRequestException('Choose either hidden or automatic visibility, not both');
+      }
+      if (payload.patch.automaticVisibility === true && payload.patch.kind !== undefined) {
+        throw new BadRequestException('Choose either kind or automatic visibility, not both');
       }
       if (fields.length === 0) throw new BadRequestException('At least one work field is required');
       const entries = await this.store.getWorksWithMonitors(payload.workIds, user);

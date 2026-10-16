@@ -8,6 +8,7 @@ import { MONITORED_STATUS_FILTER_BY_FORMAT_STATUS, monitoredFormatStatus } from 
 import type { MonitoredWork } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
 import { MonitoredStoreService, releaseEventKey, releaseRangeOverlapsSql, type MonitoredDueRelease } from './monitored-store.service';
+import { visibleWorkCondition } from './monitored-work-conditions';
 import * as schema from './schema/monitored.schema';
 import { authorCatalogWorks, type AuthorCatalogWorkRow } from './schema/monitored.schema';
 
@@ -28,6 +29,7 @@ function overlayRow(patch: Partial<OverlayRow> & { workId: string }): OverlayRow
     monitorEbook: null,
     monitorAudiobook: null,
     userVisibility: null,
+    userKind: null,
     ebookRequestId: null,
     audiobookRequestId: null,
     ...patch,
@@ -427,6 +429,32 @@ describe('MonitoredStoreService viewer-aware composition', () => {
     expect(composed[1].work.userVisibility).toBe('hidden');
   });
 
+  it.each([
+    ['book', undefined],
+    ['collection', 'collection'],
+    ['split_part', 'split_part'],
+  ] as const)('uses the owner %s mark as the effective kind', async (userKind, effectiveKind) => {
+    const marked = workRow({ id: 'w-marked', kind: 'duplicate' });
+    const db = queuedSelectDb([[], [overlayRow({ workId: 'w-marked', userKind })], [], [{ id: 'monitor-1' }]]);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    const [composed] = await composeWorks(store, [marked], { id: 1, isSuperuser: false } as RequestUser);
+
+    expect(composed.work.userKind).toBe(userKind);
+    expect(composed.work.kind).toBe(effectiveKind);
+  });
+
+  it('withholds the owner mark and keeps the catalog kind for a non-owner', async () => {
+    const marked = workRow({ id: 'w-marked', kind: 'duplicate' });
+    const db = queuedSelectDb([[], [overlayRow({ workId: 'w-marked', userKind: 'collection' })], [], []]);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    const [composed] = await composeWorks(store, [marked], { id: 2, isSuperuser: false } as RequestUser);
+
+    expect(composed.work).not.toHaveProperty('userKind');
+    expect(composed.work.kind).toBe('duplicate');
+  });
+
   it('keeps the whole overlay for an internal caller that passes no viewer', async () => {
     const db = queuedSelectDb([[], overlays, [], requests]);
     const store = new MonitoredStoreService(db as never, libraries as never);
@@ -457,6 +485,7 @@ describe('MonitoredStoreService catalog overlay', () => {
   function catalogDb() {
     const operations: string[] = [];
     const tx = {
+      select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn().mockResolvedValue([]) })) })),
       delete: vi.fn(() => ({
         where: vi.fn().mockImplementation(() => {
           operations.push('delete');
@@ -500,8 +529,8 @@ describe('MonitoredStoreService catalog overlay', () => {
       ],
     });
 
-    expect(tracked.tx.execute).toHaveBeenCalledTimes(10);
-    expect(tracked.operations.slice(-9)).toEqual(['overlay', 'overlay', 'overlay', 'overlay', 'overlay', 'overlay', 'overlay', 'overlay', 'overlay']);
+    expect(tracked.tx.execute).toHaveBeenCalledTimes(13);
+    expect(tracked.operations.slice(-10)).toEqual(Array(10).fill('overlay'));
     expect(tracked.operations.indexOf('insert')).toBeLessThan(tracked.operations.lastIndexOf('overlay'));
   });
 
@@ -526,12 +555,14 @@ describe('MonitoredStoreService catalog overlay', () => {
     });
 
     const statements = tracked.tx.execute.mock.calls.map(([statement]) => rendered(statement as SQL));
-    expect(tracked.operations[0]).toBe('overlay');
-    expect(tracked.operations[1]).toBe('insert');
+    expect(tracked.operations.slice(0, 4)).toEqual(['overlay', 'overlay', 'overlay', 'insert']);
     expect(statements[0]).toContain('insert into "monitored_request_ledger"');
-    expect(statements[1]).toContain('insert into "monitored_author_works" (work_id, monitor_author_id, "ebook_request_id")');
-    expect(statements[2]).toContain('insert into "monitored_author_works" (work_id, monitor_author_id, "audiobook_request_id")');
-    expect(tracked.operations.indexOf('overlay', 1)).toBeGreaterThan(tracked.operations.lastIndexOf('insert'));
+    expect(statements[1]).toContain('insert into "monitored_choice_ledger"');
+    expect(statements[2]).toContain('delete from "monitored_choice_ledger"');
+    expect(statements[3]).toContain('insert into "monitored_author_works" (work_id, monitor_author_id, "ebook_request_id")');
+    expect(statements[4]).toContain('insert into "monitored_author_works" (work_id, monitor_author_id, "audiobook_request_id")');
+    expect(statements[5]).toContain('insert into "monitored_author_works" (work_id, monitor_author_id, monitor_state');
+    expect(tracked.operations.indexOf('overlay', 3)).toBeGreaterThan(tracked.operations.lastIndexOf('insert'));
   });
 
   it('enrols release probes after reapplying the overlay in the catalog transaction', async () => {
@@ -558,24 +589,25 @@ describe('MonitoredStoreService catalog overlay', () => {
       { enrolReleaseProbes: true },
     );
 
-    expect(tracked.tx.execute).toHaveBeenCalledTimes(14);
+    expect(tracked.tx.execute).toHaveBeenCalledTimes(17);
     const statements = tracked.tx.execute.mock.calls.map(([statement]) => rendered(statement as SQL));
-    expect(statements[8]).toContain('set auto_release_date = work.audio_release_date');
-    expect(statements[9]).toContain("probe.status = 'dated'");
-    expect(statements[10]).toContain('insert into "author_catalog_work_releases"');
-    expect(statements[11]).toContain('insert into "author_catalog_work_releases"');
-    expect(statements[12]).toContain('set ebook_release_date = null');
-    expect(statements[13]).toContain('set audio_release_date = null');
+    expect(statements[11]).toContain('set auto_release_date = work.audio_release_date');
+    expect(statements[12]).toContain("probe.status = 'dated'");
+    expect(statements[13]).toContain('insert into "author_catalog_work_releases"');
+    expect(statements[14]).toContain('insert into "author_catalog_work_releases"');
+    expect(statements[15]).toContain('set ebook_release_date = null');
+    expect(statements[16]).toContain('set audio_release_date = null');
   });
 
-  it('only records request ids when clearing a null catalog', async () => {
+  it('only records request ids and choices when clearing a null catalog', async () => {
     const tracked = catalogDb();
     const store = new MonitoredStoreService(tracked.db as never, {} as never);
 
     await store.saveCatalog('monitor-1', null);
 
-    expect(tracked.tx.execute).toHaveBeenCalledOnce();
+    expect(tracked.tx.execute).toHaveBeenCalledTimes(3);
     expect(rendered(tracked.tx.execute.mock.calls[0][0] as SQL)).toContain('insert into "monitored_request_ledger"');
+    expect(rendered(tracked.tx.execute.mock.calls[1][0] as SQL)).toContain('insert into "monitored_choice_ledger"');
   });
 });
 
@@ -618,8 +650,20 @@ describe('MonitoredStoreService author aggregate counting', () => {
     expect(hidden).toContain('not coalesce(');
     expect(total).toContain('"monitored_author_works"."user_visibility"');
     expect(hidden).toContain('"monitored_author_works"."user_visibility"');
+    expect(total).toContain('"monitored_author_works"."user_kind"');
+    expect(hidden).toContain('"monitored_author_works"."user_kind"');
     // Same predicate on both sides, so no row can satisfy both or neither.
     expect(hidden.replace('not coalesce(', 'coalesce(')).toContain(total.slice(total.indexOf('coalesce('), total.lastIndexOf(')::int')));
+  });
+
+  it('matches the shared visibility precedence for hidden, marked, kept and automatic works', () => {
+    const condition = rendered(visibleWorkCondition()).replace(/\s+/g, ' ');
+
+    expect(condition).toContain(`when "monitored_author_works"."user_visibility" = 'hidden' then false`);
+    expect(condition).toContain('when "monitored_author_works"."user_kind" is not null then "monitored_author_works"."user_kind" =');
+    expect(condition).toContain(`when "monitored_author_works"."user_visibility" = 'visible' then true`);
+    expect(condition).toContain('else ("author_catalog_works"."verdict" =');
+    expect(condition).toMatch(/^coalesce\(case .* end, false\)$/);
   });
 
   it("uses the scoped owner's curation directly when evaluating aggregate visibility", async () => {
@@ -925,7 +969,7 @@ describe('MonitoredStoreService paged lists', () => {
     expect(MONITORED_STATUS_FILTER_BY_FORMAT_STATUS[status]).toBe(bucket);
   });
 
-  it('clears the visibility override when a work goes back to automatic', async () => {
+  it('clears the visibility override on back to automatic, and the mark too unless the work was hidden', async () => {
     const values = vi.fn();
     const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
     const limit = vi.fn().mockResolvedValue([workRow()]);
@@ -940,8 +984,72 @@ describe('MonitoredStoreService paged lists', () => {
 
     await store.updateWorkUserState('monitor-1:hardcover:1', { automaticVisibility: true }, { id: 1, isSuperuser: false } as RequestUser);
 
-    expect(values).toHaveBeenCalledWith(expect.objectContaining({ userVisibility: null }));
-    expect(onConflictDoUpdate).toHaveBeenCalledWith(expect.objectContaining({ set: expect.objectContaining({ userVisibility: null }) }));
+    expect(values).toHaveBeenCalledWith(expect.objectContaining({ userVisibility: null, userKind: null }));
+    const set = onConflictDoUpdate.mock.calls[0]?.[0]?.set as { userVisibility: SQL; userKind: SQL };
+    expect(rendered(set.userVisibility)).toBe('excluded.user_visibility');
+    expect(rendered(set.userKind)).toBe(
+      'case when "monitored_author_works"."user_visibility" = \'hidden\' then "monitored_author_works"."user_kind" else null end',
+    );
+  });
+
+  it('stores a review mark and clears only a visible override', async () => {
+    const values = vi.fn();
+    const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
+    const limit = vi.fn().mockResolvedValue([workRow()]);
+    const db = {
+      select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn(() => ({ limit })) })) })),
+      insert: vi.fn(() => ({ values: values.mockReturnValue({ onConflictDoUpdate }) })),
+    };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    const internals = store as unknown as { assertWorkWritable: () => Promise<void>; composeWorks: () => Promise<unknown[]> };
+    vi.spyOn(internals, 'assertWorkWritable').mockResolvedValue(undefined);
+    vi.spyOn(internals, 'composeWorks').mockResolvedValue([{ monitorAuthorId: 'monitor-1', work: { id: 'monitor-1:hardcover:1' } }]);
+
+    await store.updateWorkUserState('monitor-1:hardcover:1', { kind: 'collection' }, { id: 1, isSuperuser: false } as RequestUser);
+
+    expect(values).toHaveBeenCalledWith(expect.objectContaining({ userKind: 'collection', userVisibility: null }));
+    const set = onConflictDoUpdate.mock.calls[0]?.[0]?.set;
+    expect(rendered(set.userVisibility)).toContain('case when "monitored_author_works"."user_visibility" = \'visible\' then null else');
+  });
+
+  it('keeps visibility unchanged when marking a work as a book', async () => {
+    const values = vi.fn();
+    const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
+    const limit = vi.fn().mockResolvedValue([workRow()]);
+    const db = {
+      select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn(() => ({ limit })) })) })),
+      insert: vi.fn(() => ({ values: values.mockReturnValue({ onConflictDoUpdate }) })),
+    };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    const internals = store as unknown as { assertWorkWritable: () => Promise<void>; composeWorks: () => Promise<unknown[]> };
+    vi.spyOn(internals, 'assertWorkWritable').mockResolvedValue(undefined);
+    vi.spyOn(internals, 'composeWorks').mockResolvedValue([{ monitorAuthorId: 'monitor-1', work: { id: 'monitor-1:hardcover:1' } }]);
+
+    await store.updateWorkUserState('monitor-1:hardcover:1', { kind: 'book' }, { id: 1, isSuperuser: false } as RequestUser);
+
+    expect(values).toHaveBeenCalledWith(expect.objectContaining({ userKind: 'book' }));
+    expect(values.mock.calls[0]?.[0]).not.toHaveProperty('userVisibility');
+    expect(onConflictDoUpdate.mock.calls[0]?.[0]?.set).not.toHaveProperty('userVisibility');
+  });
+
+  it('keeps a book mark but clears any non-book mark when keeping a work', async () => {
+    const values = vi.fn();
+    const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
+    const limit = vi.fn().mockResolvedValue([workRow()]);
+    const db = {
+      select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn(() => ({ limit })) })) })),
+      insert: vi.fn(() => ({ values: values.mockReturnValue({ onConflictDoUpdate }) })),
+    };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    const internals = store as unknown as { assertWorkWritable: () => Promise<void>; composeWorks: () => Promise<unknown[]> };
+    vi.spyOn(internals, 'assertWorkWritable').mockResolvedValue(undefined);
+    vi.spyOn(internals, 'composeWorks').mockResolvedValue([{ monitorAuthorId: 'monitor-1', work: { id: 'monitor-1:hardcover:1' } }]);
+
+    await store.updateWorkUserState('monitor-1:hardcover:1', { hidden: false }, { id: 1, isSuperuser: false } as RequestUser);
+
+    expect(values).toHaveBeenCalledWith(expect.objectContaining({ userVisibility: 'visible', userKind: null }));
+    const set = onConflictDoUpdate.mock.calls[0]?.[0]?.set;
+    expect(rendered(set.userKind)).toContain('case when "monitored_author_works"."user_kind" = \'book\'');
   });
 
   it('loads works and their distinct monitors in one joined read before composing the batch', async () => {
@@ -1006,11 +1114,55 @@ describe('MonitoredStoreService paged lists', () => {
       { workId: 'work-2', monitorAuthorId: 'monitor-1', monitorEbook: false, userVisibility: 'hidden' },
     ]);
     const set = onConflictDoUpdate.mock.calls[0]?.[0]?.set;
-    expect(Object.keys(set)).toEqual(['monitorEbook', 'userVisibility']);
+    expect(Object.keys(set).sort()).toEqual(['monitorEbook', 'userVisibility']);
     expect(set).not.toHaveProperty('ebookRequestId');
     expect(set).not.toHaveProperty('monitorState');
     expect(composeWorksSpy).toHaveBeenCalledOnce();
     expect(composeWorksSpy).toHaveBeenCalledWith(rows, actor);
+  });
+
+  it.each([
+    [{ hidden: false }, { userVisibility: 'visible', userKind: null }],
+    [{ automaticVisibility: true as const }, { userVisibility: null, userKind: null }],
+  ])('bulk %o also drops the owner mark that would keep the work in review', async (patch, expected) => {
+    const rows = [workRow({ id: 'work-1' })];
+    const where = vi.fn().mockResolvedValue(rows);
+    const select = vi.fn(() => ({ from: vi.fn(() => ({ where })) }));
+    const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
+    const values = vi.fn(() => ({ onConflictDoUpdate }));
+    const insert = vi.fn(() => ({ values }));
+    const transaction = vi.fn((run: (tx: unknown) => Promise<unknown>) => run({ select, insert }));
+    const store = new MonitoredStoreService({ transaction } as never, {} as never);
+    const internals = store as unknown as { composeWorks: (...args: unknown[]) => Promise<Array<{ work: MonitoredWork }>> };
+    vi.spyOn(internals, 'composeWorks').mockResolvedValue([]);
+
+    await store.updateWorksUserState(['work-1'], patch, { id: 1, isSuperuser: false } as RequestUser);
+
+    expect(values).toHaveBeenCalledWith([{ workId: 'work-1', monitorAuthorId: 'monitor-1', ...expected }]);
+    const set = onConflictDoUpdate.mock.calls[0]?.[0]?.set as { userKind: SQL };
+    expect(rendered(set.userKind)).toBe(
+      'hidden' in patch
+        ? 'case when "monitored_author_works"."user_kind" = \'book\' then "monitored_author_works"."user_kind" else null end'
+        : 'case when "monitored_author_works"."user_visibility" = \'hidden\' then "monitored_author_works"."user_kind" else null end',
+    );
+  });
+
+  it('bulk marks a kind and drops a kept choice so the works go to review', async () => {
+    const rows = [workRow({ id: 'work-1' })];
+    const where = vi.fn().mockResolvedValue(rows);
+    const select = vi.fn(() => ({ from: vi.fn(() => ({ where })) }));
+    const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
+    const values = vi.fn(() => ({ onConflictDoUpdate }));
+    const insert = vi.fn(() => ({ values }));
+    const transaction = vi.fn((run: (tx: unknown) => Promise<unknown>) => run({ select, insert }));
+    const store = new MonitoredStoreService({ transaction } as never, {} as never);
+    const internals = store as unknown as { composeWorks: (...args: unknown[]) => Promise<Array<{ work: MonitoredWork }>> };
+    vi.spyOn(internals, 'composeWorks').mockResolvedValue([]);
+
+    await store.updateWorksUserState(['work-1'], { kind: 'split_part' }, { id: 1, isSuperuser: false } as RequestUser);
+
+    expect(values).toHaveBeenCalledWith([{ workId: 'work-1', monitorAuthorId: 'monitor-1', userKind: 'split_part', userVisibility: null }]);
+    expect(Object.keys(onConflictDoUpdate.mock.calls[0]?.[0]?.set).sort()).toEqual(['userKind', 'userVisibility']);
   });
 
   it('reaches works outside the default list only when hidden is selected', async () => {

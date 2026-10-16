@@ -3,6 +3,7 @@ import { boolean, check, index, integer, jsonb, pgTable, primaryKey, real, text,
 import type {
   MonitoredDatePrecision,
   MonitoredFormat,
+  MonitoredMarkKind,
   MonitoredReleaseDateSource,
   MonitoredReleaseProbeStatus,
   MonitoredSeriesMembership,
@@ -204,6 +205,7 @@ export const monitoredAuthorWorks = pgTable(
     monitorEbook: boolean('monitor_ebook'),
     monitorAudiobook: boolean('monitor_audiobook'),
     userVisibility: varchar('user_visibility', { length: 10 }).$type<'hidden' | 'visible'>(),
+    userKind: varchar('user_kind', { length: 16 }).$type<MonitoredMarkKind>(),
     ebookRequestId: integer('ebook_request_id').references(() => bookRequests.id, { onDelete: 'set null' }),
     audiobookRequestId: integer('audiobook_request_id').references(() => bookRequests.id, { onDelete: 'set null' }),
   },
@@ -211,6 +213,10 @@ export const monitoredAuthorWorks = pgTable(
     index('monitored_author_works_monitor_author_id_idx').on(t.monitorAuthorId),
     check('monitored_author_works_monitor_state_chk', sql`${t.monitorState} in ('monitoring', 'paused', 'stopped')`),
     check('monitored_author_works_user_visibility_chk', sql`${t.userVisibility} is null or ${t.userVisibility} in ('hidden', 'visible')`),
+    check(
+      'monitored_author_works_user_kind_chk',
+      sql`${t.userKind} is null or ${t.userKind} in ('book', 'collection', 'split_part', 'anthology', 'graphic_novel', 'format_variant', 'duplicate')`,
+    ),
   ],
 );
 
@@ -247,6 +253,31 @@ export const monitoredReleaseEvents = pgTable(
     index('monitored_release_events_monitor_author_id_idx').on(t.monitorAuthorId),
     check('monitored_release_events_format_chk', sql`${t.format} in ('ebook', 'audiobook')`),
   ],
+);
+
+/**
+ * The owner's choices on a monitor's works (watch state and toggles, hidden or kept, the Mark as kind),
+ * keyed by what identifies the book rather than by the work id. A catalog refresh deletes the works it
+ * no longer sees, and their overlay with them, so the choices are copied here first and handed back to
+ * whichever work turns up with the same identity.
+ */
+export const monitoredChoiceLedger = pgTable(
+  'monitored_choice_ledger',
+  {
+    monitorAuthorId: varchar('monitor_author_id', { length: 36 })
+      .notNull()
+      .references(() => monitoredAuthors.id, { onDelete: 'cascade' }),
+    identityKey: varchar('identity_key', { length: 300 }).notNull(),
+    /** The work the choice was recorded from, so it is only handed on once that work is gone. */
+    workId: varchar('work_id', { length: 255 }),
+    // Null where the work had the default, so a ledger row only carries what the owner chose.
+    monitorState: varchar('monitor_state', { length: 12 }).$type<MonitoredWorkState>(),
+    monitorEbook: boolean('monitor_ebook'),
+    monitorAudiobook: boolean('monitor_audiobook'),
+    userVisibility: varchar('user_visibility', { length: 10 }).$type<'hidden' | 'visible'>(),
+    userKind: varchar('user_kind', { length: 16 }).$type<MonitoredMarkKind>(),
+  },
+  (t) => [primaryKey({ columns: [t.monitorAuthorId, t.identityKey] })],
 );
 
 /**

@@ -21,6 +21,16 @@ export type MonitoredWorkFlag = (typeof MONITORED_WORK_FLAGS)[number];
 export const MONITORED_WORK_KINDS = ["collection", "anthology", "graphic_novel", "format_variant", "duplicate"] as const;
 export type MonitoredWorkKind = (typeof MONITORED_WORK_KINDS)[number];
 
+/**
+ * What the owner says a work is, overriding the reconciler's kind. `book` is a plain title in the
+ * series and keeps the work in the list; every other mark sends it to review. `split_part` is only
+ * ever set by the owner.
+ */
+export const MONITORED_MARK_KINDS = ["book", "collection", "split_part", "anthology", "graphic_novel", "format_variant", "duplicate"] as const;
+export type MonitoredMarkKind = (typeof MONITORED_MARK_KINDS)[number];
+/** A kind that keeps a work in review: the reconciler's, or the owner's mark other than `book`. */
+export type MonitoredReviewWorkKind = Exclude<MonitoredMarkKind, "book">;
+
 export const MONITORED_WORK_STATES = ["monitoring", "paused", "stopped"] as const;
 export type MonitoredWorkState = (typeof MONITORED_WORK_STATES)[number];
 
@@ -201,7 +211,7 @@ export interface MonitoredBulkRequestResponse {
 }
 
 /** The subset of the per-work patch that applies to many works at once. */
-export type MonitoredBulkWorkPatch = Pick<MonitoredWorkPatch, "monitorEbook" | "monitorAudiobook" | "hidden" | "automaticVisibility">;
+export type MonitoredBulkWorkPatch = Pick<MonitoredWorkPatch, "monitorEbook" | "monitorAudiobook" | "hidden" | "automaticVisibility" | "kind">;
 
 export interface MonitoredBulkUpdatePayload {
   workIds: string[];
@@ -396,8 +406,10 @@ export interface MonitoredWork {
   description: string | null;
   verdict: MonitoredWorkVerdict;
   flags: MonitoredWorkFlag[];
-  /** What kind of thing kept this work out of the default list, when the reconciler could tell. */
-  kind?: MonitoredWorkKind;
+  /** What kind of thing keeps this work out of the default list: the owner's mark, else the reconciler's when it could tell. */
+  kind?: MonitoredReviewWorkKind;
+  /** The owner's mark, absent when the reconciler decides. Only sent to the owner. */
+  userKind?: MonitoredMarkKind;
   sources: string[];
   providerWorkIds: { hardcover?: string; goodreads?: string; audible?: string };
   /** Community rating per source, as last seen by the catalog refresh; absent when no source reported one. */
@@ -426,6 +438,7 @@ export interface MonitoredWork {
 
 export function isWorkVisible(work: MonitoredWork): boolean {
   if (work.userVisibility === "hidden") return false;
+  if (work.userKind) return work.userKind === "book";
   if (work.userVisibility === "visible") return true;
   return work.verdict === "verified" && work.flags.length === 0;
 }
@@ -483,6 +496,8 @@ export interface MonitoredReleaseItem {
   requestId: number | null;
   /** The author's mode per format, so a surface can say whether a release is grabbed or only announced. */
   authorModes?: Record<MonitoredFormat, MonitorMode>;
+  /** When the author's catalog and library matches were last refreshed, for the panel's "Checked" line. */
+  authorLastRefreshedAt?: string | null;
 }
 
 /** The watchlist entry behind a library book: the work, its monitor and how the author handles each format. */
@@ -555,6 +570,8 @@ export interface MonitoredWorkPatch {
   hidden?: boolean;
   /** True hands visibility back to the verdict, dropping a hidden or kept choice. Never sent with `hidden`. */
   automaticVisibility?: true;
+  /** The owner's mark; `automaticVisibility` drops it along with the hidden or kept choice. */
+  kind?: MonitoredMarkKind;
 }
 
 /**

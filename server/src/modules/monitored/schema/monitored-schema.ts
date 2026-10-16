@@ -90,10 +90,12 @@ CREATE TABLE IF NOT EXISTS "monitored_author_works" (
 	"monitor_ebook" boolean,
 	"monitor_audiobook" boolean,
 	"user_visibility" varchar(10),
+	"user_kind" varchar(16),
 	"ebook_request_id" integer,
 	"audiobook_request_id" integer,
 	CONSTRAINT "monitored_author_works_monitor_state_chk" CHECK ("monitored_author_works"."monitor_state" in ('monitoring', 'paused', 'stopped')),
-	CONSTRAINT "monitored_author_works_user_visibility_chk" CHECK ("monitored_author_works"."user_visibility" is null or "monitored_author_works"."user_visibility" in ('hidden', 'visible'))
+	CONSTRAINT "monitored_author_works_user_visibility_chk" CHECK ("monitored_author_works"."user_visibility" is null or "monitored_author_works"."user_visibility" in ('hidden', 'visible')),
+	CONSTRAINT "monitored_author_works_user_kind_chk" CHECK ("monitored_author_works"."user_kind" is null or "monitored_author_works"."user_kind" in ('book', 'collection', 'split_part', 'anthology', 'graphic_novel', 'format_variant', 'duplicate'))
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "monitored_authors" (
@@ -528,6 +530,17 @@ DO $$ BEGIN
 	IF NOT EXISTS (
 		SELECT 1 FROM information_schema.columns
 		WHERE table_schema = 'public'
+			AND table_name = 'monitored_author_works'
+			AND column_name = 'user_kind'
+	) THEN
+		ALTER TABLE "monitored_author_works" ADD COLUMN IF NOT EXISTS "user_kind" varchar(16);
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_schema = 'public'
 			AND table_name = 'monitored_authors'
 			AND column_name = 'last_release_check_at'
 	) THEN
@@ -563,6 +576,15 @@ DO $$ BEGIN
 		WHERE conname = 'author_catalog_works_kind_chk'
 	) THEN
 		ALTER TABLE "author_catalog_works" ADD CONSTRAINT "author_catalog_works_kind_chk" CHECK ("author_catalog_works"."kind" is null or "author_catalog_works"."kind" in ('collection', 'anthology', 'graphic_novel', 'format_variant', 'duplicate'));
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'monitored_author_works_user_kind_chk'
+	) THEN
+		ALTER TABLE "monitored_author_works" ADD CONSTRAINT "monitored_author_works_user_kind_chk" CHECK ("monitored_author_works"."user_kind" is null or "monitored_author_works"."user_kind" in ('book', 'collection', 'split_part', 'anthology', 'graphic_novel', 'format_variant', 'duplicate'));
 	END IF;
 END $$;
 --> statement-breakpoint
@@ -668,4 +690,27 @@ DO $$ BEGIN
 END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "monitored_request_ledger_request_id_idx" ON "monitored_request_ledger" USING btree ("request_id");
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "monitored_choice_ledger" (
+	"monitor_author_id" varchar(36) NOT NULL,
+	"identity_key" varchar(300) NOT NULL,
+	"work_id" varchar(255),
+	"monitor_state" varchar(12),
+	"monitor_ebook" boolean,
+	"monitor_audiobook" boolean,
+	"user_visibility" varchar(10),
+	"user_kind" varchar(16),
+	CONSTRAINT "monitored_choice_ledger_monitor_author_id_identity_key_pk" PRIMARY KEY("monitor_author_id","identity_key")
+);
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'monitored_choice_ledger_monitor_author_id_monitored_authors_id_fk'
+	) THEN
+		ALTER TABLE "monitored_choice_ledger" ADD CONSTRAINT "monitored_choice_ledger_monitor_author_id_monitored_authors_id_fk" FOREIGN KEY ("monitor_author_id") REFERENCES "public"."monitored_authors"("id") ON DELETE cascade ON UPDATE no action;
+	END IF;
+END $$;
+--> statement-breakpoint
+ALTER TABLE "monitored_choice_ledger" ADD COLUMN IF NOT EXISTS "work_id" varchar(255);
 `;

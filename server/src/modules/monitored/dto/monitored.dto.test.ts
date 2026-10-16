@@ -2,6 +2,7 @@ import 'reflect-metadata';
 
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
+import { MONITORED_MARK_KINDS } from '@bookorbit/types';
 
 import {
   BulkRequestWorksDto,
@@ -69,6 +70,18 @@ describe('UpdateMonitoredWorkDto', () => {
     await expect(validate(plainToInstance(UpdateMonitoredWorkDto, { automaticVisibility: 'yes' }))).resolves.not.toHaveLength(0);
     await expect(validate(plainToInstance(UpdateMonitoredWorkDto, { automaticVisibility: false }))).resolves.not.toHaveLength(0);
   });
+
+  it.each(MONITORED_MARK_KINDS)('accepts the %s mark kind', async (kind) => {
+    await expect(validate(plainToInstance(UpdateMonitoredWorkDto, { kind }))).resolves.toHaveLength(0);
+  });
+
+  it('rejects a null mark kind instead of reading it as a mark', async () => {
+    await expect(validate(plainToInstance(UpdateMonitoredWorkDto, { kind: null }))).resolves.not.toHaveLength(0);
+  });
+
+  it('rejects an unknown mark kind', async () => {
+    await expect(validate(plainToInstance(UpdateMonitoredWorkDto, { kind: 'magazine' }))).resolves.not.toHaveLength(0);
+  });
 });
 
 describe('monitored bulk DTOs', () => {
@@ -113,8 +126,18 @@ describe('monitored bulk DTOs', () => {
     ['more than 100 ids', { workIds: Array.from({ length: 101 }, (_, index) => `work-${index}`), patch: { hidden: true } }],
     ['duplicate ids', { workIds: ['work-1', 'work-1'], patch: { hidden: true } }],
     ['an unknown patch field', { workIds: ['work-1'], patch: { title: 'Changed' } }],
+    ['an unknown mark kind', { workIds: ['work-1'], patch: { kind: 'magazine' } }],
+    ['a null mark kind', { workIds: ['work-1'], patch: { kind: null } }],
   ])('rejects bulk updates with %s', async (_label, payload) => {
     await expect(validate(plainToInstance(BulkUpdateWorksDto, payload), validationOptions)).resolves.not.toHaveLength(0);
+  });
+});
+
+describe('bulk mark kinds', () => {
+  const validationOptions = { whitelist: true, forbidNonWhitelisted: true } as const;
+
+  it.each(MONITORED_MARK_KINDS)('accepts the %s mark kind in a bulk update', async (kind) => {
+    await expect(validate(plainToInstance(BulkUpdateWorksDto, { workIds: ['work-1'], patch: { kind } }), validationOptions)).resolves.toHaveLength(0);
   });
 });
 

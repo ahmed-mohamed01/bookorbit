@@ -26,6 +26,7 @@ import {
   MONITORED_BOOK_LIST_SORTS,
   MONITORED_FORMATS,
   MONITORED_LIST_ORDERS,
+  MONITORED_MARK_KINDS,
   MONITORED_RELEASE_FILTERS,
   MONITORED_RELEASE_LIST_SORTS,
   MONITORED_SORTS,
@@ -43,6 +44,7 @@ import type {
   MonitoredBookListSort,
   MonitoredFormat,
   MonitoredListOrder,
+  MonitoredMarkKind,
   MonitoredReleaseFilter,
   MonitoredReleaseListSort,
   MonitoredSort,
@@ -304,6 +306,11 @@ export class UpdateMonitoredWorkDto implements MonitoredWorkPatch {
   @IsOptional()
   @Equals(true)
   automaticVisibility?: true;
+
+  // IsOptional would let an explicit null through, which the store reads as a mark.
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(MONITORED_MARK_KINDS)
+  kind?: MonitoredMarkKind;
 }
 
 class BulkRequestSourcesDto {
@@ -361,6 +368,11 @@ export class BulkWorkPatchDto implements MonitoredBulkWorkPatch {
   @IsOptional()
   @Equals(true)
   automaticVisibility?: true;
+
+  // IsOptional would let an explicit null through, which the store reads as a mark.
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(MONITORED_MARK_KINDS)
+  kind?: MonitoredMarkKind;
 }
 
 export class BulkUpdateWorksDto implements MonitoredBulkUpdatePayload {

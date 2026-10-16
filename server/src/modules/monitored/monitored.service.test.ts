@@ -177,7 +177,7 @@ describe('MonitoredService', () => {
     const store = {
       findReleasePage: vi.fn().mockResolvedValue({
         items: [
-          { monitor: author(), work: monitoredWork, format: 'ebook', releaseDate: '2026-09-10' },
+          { monitor: author({ lastRefreshedAt: '2026-09-01T10:00:00.000Z' }), work: monitoredWork, format: 'ebook', releaseDate: '2026-09-10' },
           { monitor: author(), work: monitoredWork, format: 'audiobook', releaseDate: '2026-09-20' },
         ],
         total: 2,
@@ -191,7 +191,7 @@ describe('MonitoredService', () => {
     expect(result.items).toHaveLength(2);
     expect(result.items).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ format: 'ebook', status: 'grabbed', requestId: null }),
+        expect.objectContaining({ format: 'ebook', status: 'grabbed', requestId: null, authorLastRefreshedAt: '2026-09-01T10:00:00.000Z' }),
         expect.objectContaining({ format: 'audiobook', status: 'queued', requestId: 22 }),
       ]),
     );
@@ -501,6 +501,9 @@ describe('MonitoredService', () => {
     await expect(
       instance.bulkUpdateWorks(viewer, { workIds: ['work-1'], patch: { hidden: true, automaticVisibility: true } }),
     ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      instance.bulkUpdateWorks(viewer, { workIds: ['work-1'], patch: { kind: 'collection', automaticVisibility: true } }),
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(getWorksWithMonitors).not.toHaveBeenCalled();
   });
 
@@ -694,7 +697,10 @@ describe('MonitoredService', () => {
     expect(forget).not.toHaveBeenCalled();
   });
 
-  it('rejects an overlay update for a monitor owned by another user', async () => {
+  it.each([
+    ['visibility', { hidden: true }],
+    ['kind', { kind: 'collection' as const }],
+  ])('rejects a %s overlay update for a monitor owned by another user', async (_field, patch) => {
     const updateWorkUserState = vi.fn();
     const foreign = author({ ownerUserId: 2 });
     const store = {
@@ -703,7 +709,7 @@ describe('MonitoredService', () => {
       updateWorkUserState,
     };
 
-    await expect(service(store).updateWork(viewer, work().id, { hidden: true })).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service(store).updateWork(viewer, work().id, patch)).rejects.toBeInstanceOf(ForbiddenException);
     expect(updateWorkUserState).not.toHaveBeenCalled();
   });
 
@@ -1581,6 +1587,17 @@ describe('MonitoredService', () => {
     const store = { getWorkWithMonitor: vi.fn(), updateWorkUserState };
 
     await expect(service(store).updateWork(viewer, work().id, { hidden: true, automaticVisibility: true })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(updateWorkUserState).not.toHaveBeenCalled();
+    expect(store.getWorkWithMonitor).not.toHaveBeenCalled();
+  });
+
+  it('refuses a patch that both marks a work and hands it back to automatic', async () => {
+    const updateWorkUserState = vi.fn();
+    const store = { getWorkWithMonitor: vi.fn(), updateWorkUserState };
+
+    await expect(service(store).updateWork(viewer, work().id, { kind: 'collection', automaticVisibility: true })).rejects.toBeInstanceOf(
       BadRequestException,
     );
     expect(updateWorkUserState).not.toHaveBeenCalled();

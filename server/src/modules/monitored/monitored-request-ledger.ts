@@ -17,7 +17,7 @@ export function workProviderKeysSql(workId: SQL): SQL {
 }
 
 // Hashed so a long title cannot push the key past what a btree index entry can hold.
-function workIdentityKeysSql(work: SQL): SQL {
+export function workIdentityKeysSql(work: SQL): SQL {
   return sql`array_append(${workProviderKeysSql(sql`${work}.id`)}, 'title:' || md5(lower(public.bookorbit_unaccent(${work}.title))))`;
 }
 

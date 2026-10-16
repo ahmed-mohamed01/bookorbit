@@ -30,6 +30,7 @@ import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { normalizeMonitoredName } from './monitored-text.utils';
 import { enrolReleaseProbes, reapplyReleaseOverlay } from './monitored-release-probe-store.service';
+import { recordChoiceLedger, restoreChoiceLedger } from './monitored-choice-ledger';
 import { recordRequestLedger, restoreRequestLedger, workProviderKeysSql } from './monitored-request-ledger';
 import { activeWorkCondition, releaseRangeOverlapsSql, visibleWorkCondition } from './monitored-work-conditions';
 export { releaseRangeOverlapsSql } from './monitored-work-conditions';
@@ -157,6 +158,40 @@ type WorkStatePatch = MonitoredWorkPatch & {
 
 /** What owned-matching decides about a work: system truth, never the owner's overlay. */
 type WorkMatchUpdate = Pick<MonitoredWork, 'matchedBookId' | 'matchedBookIds' | 'ownedFormats'>;
+
+type OverlayStatePatch = Pick<MonitoredWorkPatch, 'hidden' | 'automaticVisibility' | 'kind'>;
+
+/**
+ * The visibility and mark columns one patch writes, shared by the single and bulk routes. `values`
+ * is what a fresh overlay row gets; `conflictSet` overrides the columns an existing row must decide
+ * from what it already holds:
+ * - a mark other than Book drops a kept choice, so the work really goes to review, but never a hidden one;
+ * - Keep drops a mark other than Book, so the kept work shows;
+ * - back to automatic drops the mark too, except on unhide, where the work was hidden and its mark stays.
+ */
+function overlayStateWrite(patch: OverlayStatePatch) {
+  const overlay = schema.monitoredAuthorWorks;
+  const marksForReview = patch.kind !== undefined && patch.kind !== 'book' && patch.hidden === undefined;
+  const keeps = patch.hidden === false && patch.kind === undefined;
+  const values = {
+    ...(patch.hidden !== undefined ? { userVisibility: patch.hidden ? ('hidden' as const) : ('visible' as const) } : {}),
+    ...(patch.kind !== undefined ? { userKind: patch.kind } : {}),
+    ...(marksForReview ? { userVisibility: null } : {}),
+    ...(keeps ? { userKind: null } : {}),
+    ...(patch.automaticVisibility === true ? { userVisibility: null, userKind: null } : {}),
+  };
+  const conflictSet: Partial<Record<'userVisibility' | 'userKind', SQL>> = {};
+  if (patch.hidden !== undefined || patch.automaticVisibility === true) conflictSet.userVisibility = sql`excluded.user_visibility`;
+  if (marksForReview) {
+    conflictSet.userVisibility = sql`case when ${overlay.userVisibility} = 'visible' then null else ${overlay.userVisibility} end`;
+  }
+  if (patch.kind !== undefined) conflictSet.userKind = sql`excluded.user_kind`;
+  if (keeps) conflictSet.userKind = sql`case when ${overlay.userKind} = 'book' then ${overlay.userKind} else null end`;
+  if (patch.automaticVisibility === true) {
+    conflictSet.userKind = sql`case when ${overlay.userVisibility} = 'hidden' then ${overlay.userKind} else null end`;
+  }
+  return { values, conflictSet };
+}
 
 export function releaseEventKey(workId: string, format: MonitoredFormat): string {
   return `${workId}:${format}`;
@@ -865,18 +900,21 @@ export class MonitoredStoreService {
     await this.assertWorkWritable(workId, actor);
     const [work] = await this.db.select().from(schema.authorCatalogWorks).where(eq(schema.authorCatalogWorks.id, workId)).limit(1);
     if (!work) throw new NotFoundException('Monitored work not found');
+    const overlayState = overlayStateWrite(patch);
     const values = {
       workId,
       monitorAuthorId: work.monitorAuthorId,
       ...(patch.monitorState !== undefined ? { monitorState: patch.monitorState } : {}),
       ...(patch.monitorEbook !== undefined ? { monitorEbook: patch.monitorEbook } : {}),
       ...(patch.monitorAudiobook !== undefined ? { monitorAudiobook: patch.monitorAudiobook } : {}),
-      ...(patch.hidden !== undefined ? { userVisibility: patch.hidden ? ('hidden' as const) : ('visible' as const) } : {}),
-      ...(patch.automaticVisibility === true ? { userVisibility: null } : {}),
+      ...overlayState.values,
       ...(patch.requestIds?.ebook !== undefined ? { ebookRequestId: patch.requestIds.ebook } : {}),
       ...(patch.requestIds?.audiobook !== undefined ? { audiobookRequestId: patch.requestIds.audiobook } : {}),
     };
-    await this.db.insert(schema.monitoredAuthorWorks).values(values).onConflictDoUpdate({ target: schema.monitoredAuthorWorks.workId, set: values });
+    const set: {
+      [K in keyof typeof schema.monitoredAuthorWorks.$inferInsert]?: (typeof schema.monitoredAuthorWorks.$inferInsert)[K] | SQL;
+    } = { ...values, ...overlayState.conflictSet };
+    await this.db.insert(schema.monitoredAuthorWorks).values(values).onConflictDoUpdate({ target: schema.monitoredAuthorWorks.workId, set });
     const [composed] = await this.composeWorks([work], actor);
     if (!composed) throw new NotFoundException('Monitored work not found');
     return composed.work;
@@ -887,18 +925,17 @@ export class MonitoredStoreService {
     const works = await this.db.transaction(async (tx) => {
       const rows = await tx.select().from(schema.authorCatalogWorks).where(inArray(schema.authorCatalogWorks.id, workIds));
       if (!rows.length) return [];
+      const overlayState = overlayStateWrite(patch);
       const values = rows.map((work) => ({
         workId: work.id,
         monitorAuthorId: work.monitorAuthorId,
         ...(patch.monitorEbook !== undefined ? { monitorEbook: patch.monitorEbook } : {}),
         ...(patch.monitorAudiobook !== undefined ? { monitorAudiobook: patch.monitorAudiobook } : {}),
-        ...(patch.hidden !== undefined ? { userVisibility: patch.hidden ? ('hidden' as const) : ('visible' as const) } : {}),
-        ...(patch.automaticVisibility === true ? { userVisibility: null } : {}),
+        ...overlayState.values,
       }));
-      const set: Record<string, SQL> = {};
+      const set: Record<string, SQL> = { ...overlayState.conflictSet };
       if (patch.monitorEbook !== undefined) set.monitorEbook = sql`excluded.monitor_ebook`;
       if (patch.monitorAudiobook !== undefined) set.monitorAudiobook = sql`excluded.monitor_audiobook`;
-      if (patch.hidden !== undefined || patch.automaticVisibility === true) set.userVisibility = sql`excluded.user_visibility`;
       await tx.insert(schema.monitoredAuthorWorks).values(values).onConflictDoUpdate({ target: schema.monitoredAuthorWorks.workId, set });
       return rows;
     });
@@ -943,6 +980,7 @@ export class MonitoredStoreService {
   async saveCatalog(monitorId: string, catalog: MonitoredCatalog | null, options: { enrolReleaseProbes?: boolean } = {}): Promise<void> {
     await this.db.transaction(async (tx) => {
       await recordRequestLedger(tx, monitorId);
+      await recordChoiceLedger(tx, monitorId);
       if (catalog === null) {
         await tx.delete(schema.authorCatalogState).where(eq(schema.authorCatalogState.monitorAuthorId, monitorId));
         await tx.delete(schema.authorCatalogWorks).where(eq(schema.authorCatalogWorks.monitorAuthorId, monitorId));
@@ -953,6 +991,13 @@ export class MonitoredStoreService {
         .values({ monitorAuthorId: monitorId, fetchedAt: new Date(catalog.fetchedAt) })
         .onConflictDoUpdate({ target: schema.authorCatalogState.monitorAuthorId, set: { fetchedAt: new Date(catalog.fetchedAt) } });
       const ids = catalog.works.map((work) => work.id);
+      // Only works this save adds may take recorded choices; the ones already here keep their own.
+      const previousWorkIds = (
+        await tx
+          .select({ id: schema.authorCatalogWorks.id })
+          .from(schema.authorCatalogWorks)
+          .where(eq(schema.authorCatalogWorks.monitorAuthorId, monitorId))
+      ).map((row) => row.id);
       await tx
         .delete(schema.authorCatalogWorks)
         .where(
@@ -1000,6 +1045,7 @@ export class MonitoredStoreService {
       const sources = catalog.works.flatMap((work) => this.sourceValues(work));
       for (const batch of batches(sources)) await tx.insert(schema.authorCatalogSourceWorks).values(batch);
       await restoreRequestLedger(tx, monitorId);
+      await restoreChoiceLedger(tx, monitorId, previousWorkIds);
       await reapplyReleaseOverlay(tx, monitorId);
       if (options.enrolReleaseProbes) await enrolReleaseProbes(tx, monitorId, catalog.fetchedAt.slice(0, 10));
     });
@@ -1572,6 +1618,8 @@ export class MonitoredStoreService {
     const ownedFormats = row.ownedFormats.filter((format) => (format === 'ebook' ? storedEbookId != null : storedAudioId != null));
     if (filedEbookId != null && !ownedFormats.includes('ebook')) ownedFormats.push('ebook');
     if (filedAudioId != null && !ownedFormats.includes('audiobook')) ownedFormats.push('audiobook');
+    const userKind = isOwner ? overlay?.userKind : null;
+    const effectiveKind = userKind === 'book' ? undefined : (userKind ?? row.kind ?? undefined);
     return {
       id: row.id,
       title: row.title,
@@ -1625,7 +1673,8 @@ export class MonitoredStoreService {
       description: row.description,
       verdict: row.verdict,
       flags: row.flags,
-      ...(row.kind ? { kind: row.kind } : {}),
+      ...(effectiveKind ? { kind: effectiveKind } : {}),
+      ...(userKind ? { userKind } : {}),
       sources: row.sources,
       providerWorkIds: Object.fromEntries(sources.map((source) => [source.source, source.providerWorkId])),
       ...storedRatings(sources),
@@ -1754,7 +1803,7 @@ export class MonitoredStoreService {
       description: work.description,
       verdict: work.verdict,
       flags: work.flags,
-      kind: work.kind ?? null,
+      kind: work.kind === 'split_part' ? null : (work.kind ?? null),
       sources: work.sources,
       ...this.matchValues(work),
     };

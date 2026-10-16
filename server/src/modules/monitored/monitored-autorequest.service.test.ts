@@ -290,6 +290,11 @@ describe('auto-request helpers', () => {
     expect(isRequestable(work({ monitorState: 'stopped' }), 'ebook')).toBe(false);
   });
 
+  it('follows the owner mark: a review mark blocks a kept work, Book requests an unverified one', () => {
+    expect(isRequestable(work({ userVisibility: 'visible', userKind: 'collection' }), 'ebook')).toBe(false);
+    expect(isRequestable(work({ verdict: 'suspect', userKind: 'book' }), 'ebook')).toBe(true);
+  });
+
   it('recognises only the destination error codes as a refusal', () => {
     expect(isDestinationRefusal(refusal())).toBe(true);
     expect(isDestinationRefusal(new BadRequestException({ message: 'nope', errorCode: 'OTHER' }))).toBe(false);

@@ -1,6 +1,7 @@
 import { PgDialect, getTableConfig } from 'drizzle-orm/pg-core';
 import {
   MONITORED_FORMATS,
+  MONITORED_MARK_KINDS,
   MONITORED_RELEASE_DATE_SOURCES,
   MONITORED_RELEASE_PROBE_STATUSES,
   MONITORED_WORK_KINDS,
@@ -18,6 +19,7 @@ import {
   monitoredBooks,
   monitoredReleaseEvents,
   monitoredRequestLedger,
+  monitoredChoiceLedger,
   monitoredSettings,
 } from './monitored.schema';
 import { MONITORED_SCHEMA_SQL } from './monitored-schema';
@@ -52,6 +54,10 @@ describe('monitored CHECK SQL matches shared constants', () => {
 
   it('accepts exactly the declared work monitor states', () => {
     expect(checkValues(monitoredAuthorWorks, 'monitored_author_works_monitor_state_chk').sort()).toEqual([...MONITORED_WORK_STATES].sort());
+  });
+
+  it('accepts exactly the declared owner mark kinds', () => {
+    expect(checkValues(monitoredAuthorWorks, 'monitored_author_works_user_kind_chk').sort()).toEqual([...MONITORED_MARK_KINDS].sort());
   });
 
   it('accepts exactly the declared formats on a release event', () => {
@@ -90,6 +96,20 @@ describe('monitored_release_events ledger', () => {
     expect(MONITORED_SCHEMA_SQL).not.toContain('ADD CONSTRAINT "monitored_release_events_work_id_author_catalog_works_id_fk"');
     expect(MONITORED_SCHEMA_SQL).toContain(
       'ALTER TABLE "monitored_release_events" DROP CONSTRAINT IF EXISTS "monitored_release_events_work_id_author_catalog_works_id_fk";',
+    );
+  });
+});
+
+describe('monitored_choice_ledger', () => {
+  it('keys the owner choices by monitor and identity, keeps the recording work beside them, and goes with the monitor', () => {
+    const config = getTableConfig(monitoredChoiceLedger);
+    expect(config.primaryKeys[0].columns.map((column) => column.name)).toEqual(['monitor_author_id', 'identity_key']);
+    expect(config.columns.find((column) => column.name === 'work_id')?.notNull).toBe(false);
+    expect(MONITORED_SCHEMA_SQL).toContain('ALTER TABLE "monitored_choice_ledger" ADD COLUMN IF NOT EXISTS "work_id" varchar(255);');
+    expect(config.foreignKeys[0]?.onDelete).toBe('cascade');
+    expect(MONITORED_SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS "monitored_choice_ledger"');
+    expect(MONITORED_SCHEMA_SQL).toContain(
+      'ADD CONSTRAINT "monitored_choice_ledger_monitor_author_id_monitored_authors_id_fk" FOREIGN KEY ("monitor_author_id") REFERENCES "public"."monitored_authors"("id") ON DELETE cascade',
     );
   });
 });
@@ -323,6 +343,12 @@ describe('bootstrap SQL carries the columns the table declares', () => {
     expect(MONITORED_SCHEMA_SQL).toContain('ALTER TABLE "author_catalog_works" ADD COLUMN IF NOT EXISTS "kind" varchar(20);');
   });
 
+  it('creates the user kind column on a fresh database and adds it to an existing one', () => {
+    expect(MONITORED_SCHEMA_SQL).toContain('"user_kind" varchar(16)');
+    expect(MONITORED_SCHEMA_SQL).toContain('ALTER TABLE "monitored_author_works" ADD COLUMN IF NOT EXISTS "user_kind" varchar(16);');
+    expect(getTableConfig(monitoredAuthorWorks).columns.find((column) => column.name === 'user_kind')?.notNull).toBe(false);
+  });
+
   it('creates the release ledger and scheduler stamps on a fresh database and adds them to an existing one', () => {
     expect(MONITORED_SCHEMA_SQL).toContain('CREATE TABLE IF NOT EXISTS "monitored_release_events"');
     expect(MONITORED_SCHEMA_SQL).toContain('"title" varchar(1000)');
@@ -408,6 +434,15 @@ describe('bootstrap SQL carries the columns the table declares', () => {
     expect(constraints).toHaveLength(2);
     for (const constraint of constraints) {
       expect([...constraint.matchAll(/'([a-z_-]+)'/g)].map((match) => match[1]).sort()).toEqual([...MONITORED_WORK_KINDS].sort());
+    }
+  });
+
+  it('constrains user kind to the shared mark vocabulary on both paths', () => {
+    const constraints = [...MONITORED_SCHEMA_SQL.matchAll(/"monitored_author_works"\."user_kind" is null or[^)]+\)/g)].map((match) => match[0]);
+
+    expect(constraints).toHaveLength(2);
+    for (const constraint of constraints) {
+      expect([...constraint.matchAll(/'([a-z_-]+)'/g)].map((match) => match[1]).sort()).toEqual([...MONITORED_MARK_KINDS].sort());
     }
   });
 });
