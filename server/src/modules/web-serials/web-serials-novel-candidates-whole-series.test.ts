@@ -68,6 +68,7 @@ function setup(engine: 'lnreader' | 'lncrawl' = 'lncrawl') {
   const config = { connection: CONN, allowedSources: ['novelfire', 'other', 'lnpub'], engine };
   const engines = {
     getConfig: vi.fn().mockResolvedValue(config),
+    fileIndexConfig: vi.fn().mockResolvedValue(null),
     requireConfig: vi.fn().mockResolvedValue(config),
     client: vi.fn().mockReturnValue(client),
   };

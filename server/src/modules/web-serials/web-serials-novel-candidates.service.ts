@@ -61,8 +61,40 @@ export class WebSerialsNovelCandidatesService {
   ) {}
 
   async find(input: NovelCandidateInput): Promise<SourceCandidates> {
+    const [engine, files] = await Promise.all([this.findOnEngine(input), this.findInFileIndexes(input)]);
+    if (!engine || !files) return engine ?? files ?? { candidates: [], failedSources: ['novel'] };
+    const candidates = [...files.candidates, ...engine.candidates];
+    const order = new Map(rankDiscoverOptions(candidates).map((option, position) => [option.seriesKey, position]));
+    candidates.sort((left, right) => order.get(left.seriesKey)! - order.get(right.seriesKey)!);
+    const failedSources = engine.failedSources.filter(
+      (source) => source !== WebSerialErrorCode.NovelSourcesAllDisabled || files.candidates.length === 0,
+    );
+    return { candidates: candidates.slice(0, MAX_SOURCE_CANDIDATES), failedSources: [...new Set([...files.failedSources, ...failedSources])] };
+  }
+
+  /** File index series titled exactly like the novel; they come from BookOrbit's own tables, so they never time out a site. */
+  private async findInFileIndexes(input: NovelCandidateInput): Promise<SourceCandidates | null> {
+    const config = await this.engines.fileIndexConfig();
+    if (!config) return null;
+    const allowed = config.allowedSources.filter((id) => !input.disabledDomains.includes(id));
+    if (allowed.length === 0) return { candidates: [], failedSources: [] };
+    try {
+      const hits = await this.engines.fileIndexClient().candidates([input.title, ...input.altTitles], input.matchId, allowed, MAX_SOURCE_CANDIDATES);
+      const loaded = await mapWithConcurrency(hits, CONCURRENCY, async (hit): Promise<LoadedSourceCandidate | null> => {
+        if (!hit.remoteId) return null;
+        const seriesKey = makeSeriesKey('novel', hit.remoteId);
+        const series = await this.catalog.loadSeries('novel', hit.remoteId, seriesKey);
+        return series.units.length > 0 ? { hit: { ...hit, remoteId: hit.remoteId }, seriesKey, confidence: 'title_match', series } : null;
+      });
+      return { candidates: loaded.filter((candidate) => candidate !== null), failedSources: [] };
+    } catch {
+      return { candidates: [], failedSources: ['novel'] };
+    }
+  }
+
+  private async findOnEngine(input: NovelCandidateInput): Promise<SourceCandidates | null> {
     const config = await this.engines.getConfig('novel');
-    if (!config) return { candidates: [], failedSources: ['novel'] };
+    if (!config) return null;
     const lnreader = config.engine === 'lnreader';
     const disabled = new Set(input.disabledDomains.map((domain) => (lnreader ? domain : domain.toLowerCase())));
     const allowed = config.allowedSources.filter((domain) => !disabled.has(lnreader ? domain : domain.toLowerCase()));
@@ -194,7 +226,7 @@ export class WebSerialsNovelCandidatesService {
 
   private async searchHits(
     connection: EngineConnection,
-    engine: 'suwayomi' | 'lnreader' | 'lncrawl',
+    engine: WebSerialEngineConfig['engine'],
     allowed: string[],
     queries: string[],
     wanted: Set<string>,

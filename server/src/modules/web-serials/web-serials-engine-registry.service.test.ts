@@ -149,3 +149,49 @@ describe('isSeriesSourceAllowed', () => {
     expect(isSeriesSourceAllowed({ sourceId: null, language: null }, ['source:11'])).toBe(true);
   });
 });
+
+describe('WebSerialsEngineRegistry file indexes', () => {
+  function buildWithFiles(enabled: string[]) {
+    const settings = {
+      catalogVersion: 1,
+      getEngineConfig: vi.fn().mockResolvedValue(null),
+      getNovelEngineConfig: vi.fn().mockResolvedValue(null),
+      getNovelTargets: vi.fn().mockResolvedValue({ targetLibraryId: 4, targetFolderId: 40 }),
+    };
+    const fileIndex = {
+      enabledSourceIds: vi.fn().mockResolvedValue(enabled),
+      getSeries: vi.fn().mockResolvedValue({ title: 'Series', units: [], sourceId: 'fi-3', language: null }),
+    };
+    const registry = new WebSerialsEngineRegistry(settings as never, {} as never, {} as never, undefined, fileIndex as never);
+    return { registry, fileIndex };
+  }
+
+  it('routes a file index series to the file index client whatever the novel engine is', async () => {
+    const { registry, fileIndex } = buildWithFiles(['fi-3']);
+    expect(registry.client('novel', 'fi-3-42', 'lnreader')).toBe(fileIndex);
+    expect(registry.client('novel', undefined, 'fileindex')).toBe(fileIndex);
+    await expect(registry.loadSeries('novel', 'fi-3-42')).resolves.toMatchObject({ title: 'Series' });
+  });
+
+  it('gives file indexes a config of their own, with the novel targets, even without a novel engine', async () => {
+    const { registry } = buildWithFiles(['fi-3', 'fi-5']);
+    await expect(registry.fileIndexConfig()).resolves.toMatchObject({
+      allowedSources: ['fi-3', 'fi-5'],
+      targetLibraryId: 4,
+      targetFolderId: 40,
+      engine: 'fileindex',
+    });
+    await expect(registry.requireConfigForSeries('novel', 'fi-5-1')).resolves.toMatchObject({ engine: 'fileindex' });
+  });
+
+  it('refuses a series of an index that is not enabled', async () => {
+    const { registry, fileIndex } = buildWithFiles(['fi-3']);
+    await expect(registry.requireConfigForSeries('novel', 'fi-9-1')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(registry.loadSeries('novel', 'fi-9-1')).rejects.toBeInstanceOf(NotFoundException);
+    expect(fileIndex.getSeries).not.toHaveBeenCalled();
+
+    const none = buildWithFiles([]);
+    await expect(none.registry.fileIndexConfig()).resolves.toBeNull();
+    await expect(none.registry.requireConfigForSeries('novel', 'fi-3-1')).rejects.toBeInstanceOf(NotFoundException);
+  });
+});

@@ -98,9 +98,10 @@ export class WebSerialsCatalogService {
   ) {}
 
   async getCapabilities(user: RequestUser): Promise<WebSerialCapabilities> {
-    const settings = await this.settings.getSettings();
+    const [settings, fileIndex] = await Promise.all([this.settings.getSettings(), this.engines.fileIndexConfig()]);
     const mangaAvailable = this.isAvailable(settings.manga);
-    const novelAvailable = this.isAvailable(settings.novel);
+    const novelEngineAvailable = this.isAvailable(settings.novel);
+    const novelAvailable = novelEngineAvailable || fileIndex !== null;
     const [mangaLibrary, novelLibrary] = await Promise.all([
       mangaAvailable ? this.usableLibraryId(user, settings.manga.targetLibraryId) : null,
       novelAvailable ? this.usableLibraryId(user, settings.novel.targetLibraryId) : null,
@@ -115,7 +116,7 @@ export class WebSerialsCatalogService {
       },
       novel: {
         available: novelAvailable,
-        searchable: novelAvailable && novelHasDomains && this.hasSearchableSources(settings.novel),
+        searchable: (novelEngineAvailable && novelHasDomains && this.hasSearchableSources(settings.novel)) || fileIndex !== null,
         acceptsLinks: novelAvailable,
         defaultLibraryId: novelLibrary,
         targetFolderId: novelLibrary === null ? null : settings.novel.targetFolderId,
@@ -174,6 +175,9 @@ export class WebSerialsCatalogService {
   }
 
   async resolve(url: string, user: RequestUser): Promise<WebSerialSeriesDetail> {
+    const fileIndex = await this.engines.fileIndexConfig();
+    const fileRef = fileIndex ? await this.engines.fileIndexClient().resolveUrl(fileIndex.connection, url) : null;
+    if (fileRef) return this.getSeriesDetail(makeSeriesKey(fileRef.kind, fileRef.remoteId), user);
     const config = await this.engines.getConfig('novel');
     if (!config) throw linksOnlyException();
     let ref;
@@ -321,6 +325,46 @@ export class WebSerialsCatalogService {
   }
 
   private async searchKind(
+    kind: WebSerialKind,
+    query: string,
+    disabledNovelDomains: string[],
+    refresh: boolean,
+    indexOnly: boolean,
+  ): Promise<KindSearch | null> {
+    if (kind !== 'novel') return this.searchEngine(kind, query, disabledNovelDomains, refresh, indexOnly);
+    const [engine, files] = await Promise.all([
+      this.searchEngine(kind, query, disabledNovelDomains, refresh, indexOnly),
+      this.searchFileIndexes(query, disabledNovelDomains),
+    ]);
+    if (!engine || !files) return engine ?? files;
+    return {
+      hits: [...files.hits, ...engine.hits],
+      failedSources: [...files.failedSources, ...engine.failedSources],
+      failed: engine.failed && files.failed,
+      ...(engine.livePending ? { livePending: true } : {}),
+    };
+  }
+
+  /** File indexes answer from BookOrbit's own tables, so they join every novel search, the index phase included. */
+  private async searchFileIndexes(query: string, disabledNovelDomains: string[]): Promise<KindSearch | null> {
+    const config = await this.engines.fileIndexConfig();
+    if (!config) return null;
+    const allowed = config.allowedSources.filter((id) => !disabledNovelDomains.includes(id));
+    if (allowed.length === 0) return { hits: [], failedSources: [], failed: false };
+    const startedAt = Date.now();
+    try {
+      const result = await this.engines.fileIndexClient().search(config.connection, query, allowed);
+      return { hits: this.toHits('novel', result.hits), failedSources: [], failed: false };
+    } catch (err) {
+      const { errorClass, message } = describeError(err);
+      this.logger.warn(
+        `[${SEARCH_EVENT}] [fail] kind=novel step=file_index durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - file index search failed`,
+      );
+      return { hits: [], failedSources: ['novel'], failed: true };
+    }
+  }
+
+  private async searchEngine(
     kind: WebSerialKind,
     query: string,
     disabledNovelDomains: string[],

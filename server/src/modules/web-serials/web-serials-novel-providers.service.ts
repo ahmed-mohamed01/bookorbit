@@ -4,6 +4,7 @@ import type { UpdateWebSerialNovelProvidersInput, WebSerialNovelLinkSite, WebSer
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { BoundedTtlCache } from './web-serials-cache.utils';
+import { WebSerialsEngineRegistry } from './web-serials-engine-registry.service';
 import { describeError } from './web-serials-log.utils';
 import { WebSerialsSettingsService } from './web-serials-settings.service';
 import { WebSerialsRepository } from './web-serials.repository';
@@ -19,6 +20,8 @@ interface LinkSites {
 interface AdminSelection {
   keys: string[];
   sourceIds: boolean;
+  /** Display names for keys that are not a domain: the enabled file indexes. */
+  names: Map<string, string>;
 }
 
 @Injectable()
@@ -29,11 +32,12 @@ export class WebSerialsNovelProvidersService {
   constructor(
     private readonly repo: WebSerialsRepository,
     private readonly settings: WebSerialsSettingsService,
+    private readonly engines?: WebSerialsEngineRegistry,
   ) {}
 
   async getProviders(user: RequestUser): Promise<WebSerialNovelProviders> {
     const [selection, disabled, link] = await Promise.all([this.adminSelection(), this.repo.getDisabledNovelDomains(user.id), this.linkSites()]);
-    return toProviders(selection.keys, new Set(disabled), link);
+    return toProviders(selection, new Set(disabled), link);
   }
 
   async updateProviders(user: RequestUser, input: UpdateWebSerialNovelProvidersInput): Promise<WebSerialNovelProviders> {
@@ -43,13 +47,17 @@ export class WebSerialsNovelProvidersService {
       allowed.has(key),
     );
     await this.repo.setDisabledNovelDomains(user.id, disabled);
-    return toProviders(selection.keys, new Set(disabled), await this.linkSites());
+    return toProviders(selection, new Set(disabled), await this.linkSites());
   }
 
   private async adminSelection(): Promise<AdminSelection> {
-    const novel = (await this.settings.getSettings()).novel;
+    const [novel, fileIndexes] = await Promise.all([
+      this.settings.getSettings().then((settings) => settings.novel),
+      this.engines ? this.engines.fileIndexClient().enabledSources() : Promise.resolve([]),
+    ]);
     const sourceIds = novel.engine === 'lnreader';
-    return { keys: sourceIds ? novel.sourceIds : novel.searchDomains, sourceIds };
+    const keys = [...(sourceIds ? novel.sourceIds : novel.searchDomains), ...fileIndexes.map((index) => index.id)];
+    return { keys, sourceIds, names: new Map(fileIndexes.map((index) => [index.id, index.name])) };
   }
 
   private async linkSites(): Promise<LinkSites> {
@@ -73,9 +81,9 @@ export class WebSerialsNovelProvidersService {
   }
 }
 
-function toProviders(adminDomains: string[], disabled: Set<string>, link: LinkSites): WebSerialNovelProviders {
+function toProviders(selection: AdminSelection, disabled: Set<string>, link: LinkSites): WebSerialNovelProviders {
   return {
-    search: adminDomains.map((domain) => ({ domain, name: domain, enabled: !disabled.has(domain) })),
+    search: selection.keys.map((domain) => ({ domain, name: selection.names.get(domain) ?? domain, enabled: !disabled.has(domain) })),
     linkSites: link.sites,
     linkSitesTotal: link.sites.length,
     unavailable: link.unavailable,

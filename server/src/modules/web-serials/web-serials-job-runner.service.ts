@@ -30,6 +30,7 @@ import {
 } from './web-serials-runner.shared';
 import { WebSerialsSchemaBootstrapService } from './web-serials-schema-bootstrap.service';
 import { selectUnits } from './web-serials-selection.utils';
+import { parseSeriesKey } from './web-serials-series-key.utils';
 import { WebSerialsSettingsService } from './web-serials-settings.service';
 import { fixApostropheCase } from './web-serials-title.utils';
 import type { NewWebSerialImportRow, WebSerialJobItemRow, WebSerialJobRow } from './schema/web-serials.schema';
@@ -234,7 +235,7 @@ export class WebSerialsJobRunnerService implements OnModuleDestroy {
   }
 
   private async prepare(job: WebSerialJobRow): Promise<JobContext | null> {
-    const remoteId = job.seriesKey.slice(job.seriesKey.indexOf(':') + 1);
+    const { remoteId } = parseSeriesKey(job.seriesKey);
     const config = this.engines.configForSeries ? await this.engines.configForSeries(job.kind, remoteId) : await this.engines.getConfig(job.kind);
     if (!config) {
       const message = 'This download source is not available right now.';

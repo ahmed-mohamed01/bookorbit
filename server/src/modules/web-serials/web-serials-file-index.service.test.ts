@@ -75,8 +75,9 @@ function build(rows: WebSerialFileIndexRow[] = [row()]) {
     })),
   };
   const secrets = { encrypt: vi.fn((value: string) => `enc:${value}`), decrypt: vi.fn((value: string) => value.replace(/^enc:/, '')) };
-  const service = new WebSerialsFileIndexService(repo as never, secrets as never);
-  return { service, repo, secrets, store };
+  const settings = { bumpCatalogVersion: vi.fn() };
+  const service = new WebSerialsFileIndexService(repo as never, secrets as never, settings as never);
+  return { service, repo, secrets, store, settings };
 }
 
 describe('WebSerialsFileIndexService', () => {

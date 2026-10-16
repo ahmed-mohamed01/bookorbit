@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 
-import { makeSeriesKey, parseSeriesKey, seriesCoverPath } from './web-serials-series-key.utils';
+import { isFileIndexRemoteId, makeSeriesKey, parseSeriesKey, SERIES_KEY_FORMAT, seriesCoverPath } from './web-serials-series-key.utils';
 
 describe('series keys', () => {
   it('round trips both kinds', () => {
@@ -16,7 +16,17 @@ describe('series keys', () => {
     expect(parseSeriesKey(key)).toEqual({ kind: 'novel', remoteId });
   });
 
-  it.each(['x:1', 'm:', 'm:../etc', 'm:1/2', 'm:1 2', '123'])('rejects %s', (key) => {
+  it('round trips file index series without a colon in the remote id', () => {
+    const key = makeSeriesKey('novel', 'fi-3-42');
+    expect(key).toBe('nf:3-42');
+    expect(parseSeriesKey(key)).toEqual({ kind: 'novel', remoteId: 'fi-3-42' });
+    expect(SERIES_KEY_FORMAT.test(key)).toBe(true);
+    expect(isFileIndexRemoteId('fi-3-42')).toBe(true);
+    expect(isFileIndexRemoteId('3-42')).toBe(false);
+    expect(isFileIndexRemoteId(undefined)).toBe(false);
+  });
+
+  it.each(['x:1', 'm:', 'nf:3', 'nf:a-1', 'nf:3:42', 'm:../etc', 'm:1/2', 'm:1 2', '123'])('rejects %s', (key) => {
     expect(() => parseSeriesKey(key)).toThrow(BadRequestException);
   });
 

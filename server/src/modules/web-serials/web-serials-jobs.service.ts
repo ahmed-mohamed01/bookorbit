@@ -89,7 +89,7 @@ export class WebSerialJobsService {
 
     await this.libraryService.verifyUserAccess(user.id, input.libraryId, user.isSuperuser);
     await this.assertLibraryAcceptsKind(kind, input.libraryId);
-    const config = await this.engines.requireConfig(kind);
+    const config = await this.engines.requireConfigForSeries(kind, remoteId);
     // lightnovel-crawler builds one book from every volume it has fetched, so a part of the novel cannot be one book.
     if (input.seriesKey.startsWith('n:') && input.packaging === 'series' && input.selection.mode !== 'all') {
       throw new BadRequestException(
@@ -104,6 +104,8 @@ export class WebSerialJobsService {
     if ((await this.repo.countCappedJobsForUser(user.id)) >= MAX_ACTIVE_JOBS_PER_USER) throw tooManyJobs();
 
     const series = await this.catalog.loadSeries(kind, remoteId, input.seriesKey);
+    if (!series.packagingOptions.includes(input.packaging))
+      throw new BadRequestException(codedError('That packaging is not available for this series', WebSerialErrorCode.PackagingUnavailable));
     const lookup =
       kind === 'manga' && input.packaging === 'volume'
         ? await this.lookupService.lookup(kind, series.title, series.author, series.units, input.seriesKey)

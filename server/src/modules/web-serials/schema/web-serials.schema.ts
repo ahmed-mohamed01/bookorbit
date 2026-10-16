@@ -332,6 +332,8 @@ export const webSerialFileIndexSeries = pgTable(
     title: varchar('title', { length: 1000 }).notNull(),
     titleKey: varchar('title_key', { length: 1000 }).notNull(),
     volumeCount: integer('volume_count').notNull().default(0),
+    /** An image named like a cover (`cover.jpg`, `folder.png`) in the series folder, as a listing path. */
+    coverPath: varchar('cover_path', { length: 2048 }),
     matchId: varchar('match_id', { length: 16 }),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow().notNull(),
   },

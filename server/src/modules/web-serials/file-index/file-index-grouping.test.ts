@@ -41,6 +41,7 @@ describe('groupListing', () => {
       { path: '!Yaoi/S/S - Volume 01 [Kindle_LNWNCentral].pdf', name: 'S - Volume 01 [Kindle_LNWNCentral].pdf', size: 4 },
       { path: 'loose.epub', name: 'loose.epub', size: 1 },
       { path: 'Other/cover.jpg', name: 'cover.jpg', size: 1 },
+      { path: '!Yaoi/S/cover.jpg', name: 'cover.jpg', size: 1 },
     ]);
     expect(grouped.skippedFiles).toBe(1);
     expect(grouped.fileCount).toBe(2);
@@ -49,6 +50,7 @@ describe('groupListing', () => {
         folderPath: '!Yaoi/S',
         title: 'S',
         titleKey: 's',
+        coverPath: '!Yaoi/S/cover.jpg',
         files: [
           expect.objectContaining({ name: 'S - Volume 01 - Spy Sensation [June][Kindle].epub', volume: 1 }),
           expect.objectContaining({ name: 'S - Volume 02 - A Love Bite [June][Kindle].epub', volume: 2 }),

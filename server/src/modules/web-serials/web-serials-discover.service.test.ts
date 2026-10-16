@@ -81,7 +81,7 @@ function setup(configs: Record<string, unknown> = { manga: { allowedSources: ['e
     getDisabledNovelDomains: vi.fn().mockResolvedValue([]),
   };
   const settings = { catalogVersion: 1 };
-  const engines = { getConfig: vi.fn(async (kind: string) => configs[kind] ?? null) };
+  const engines = { getConfig: vi.fn(async (kind: string) => configs[kind] ?? null), fileIndexConfig: vi.fn(async () => null) };
   const catalog = { findMangaSourceCandidates: vi.fn().mockResolvedValue({ candidates: [], failedSources: [] }) };
   const novels = { find: vi.fn().mockResolvedValue({ candidates: [], failedSources: [] }) };
   const lookup = {

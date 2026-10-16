@@ -50,7 +50,7 @@ export interface WebSerialEngineConfig {
   allowedSources: string[];
   targetLibraryId: number | null;
   targetFolderId: number | null;
-  engine: 'suwayomi' | WebSerialNovelEngine;
+  engine: 'suwayomi' | WebSerialNovelEngine | 'fileindex';
 }
 
 function selectedNovelEngine(row: WebSerialSettingsRow | undefined): WebSerialNovelEngine {
@@ -246,7 +246,7 @@ export class WebSerialsSettingsService {
     try {
       const config = await this.getEngineConfig(kind);
       if (!config) return;
-      const health = await this.clientFor(kind, config.engine === 'suwayomi' ? undefined : config.engine).health(
+      const health = await this.clientFor(kind, config.engine === 'suwayomi' || config.engine === 'fileindex' ? undefined : config.engine).health(
         config.connection,
         config.allowedSources,
       );
@@ -294,6 +294,12 @@ export class WebSerialsSettingsService {
       targetFolderId: fields.folderId,
       engine,
     };
+  }
+
+  /** Where light novels land by default, whichever engine (or file index) provides them. */
+  async getNovelTargets(): Promise<Pick<WebSerialEngineConfig, 'targetLibraryId' | 'targetFolderId'>> {
+    const row = await this.repo.getSettings();
+    return { targetLibraryId: row?.novelTargetLibraryId ?? null, targetFolderId: row?.novelTargetFolderId ?? null };
   }
 
   async getNovelEngineConfig(engine: WebSerialNovelEngine): Promise<WebSerialEngineConfig | null> {

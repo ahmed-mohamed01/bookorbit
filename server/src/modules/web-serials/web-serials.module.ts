@@ -6,6 +6,7 @@ import { BookMetadataLockModule } from '../book-metadata-lock/book-metadata-lock
 import { LibraryModule } from '../library/library.module';
 import { MetadataModule } from '../metadata/metadata.module';
 import { NotificationModule } from '../notification/notification.module';
+import { FileIndexClient } from './engines/file-index.client';
 import { LncrawlClient } from './engines/lncrawl.client';
 import { NovelSourcesClient } from './engines/novel-sources.client';
 import { SuwayomiClient } from './engines/suwayomi.client';
@@ -58,6 +59,7 @@ import { WebSerialsRepository } from './web-serials.repository';
     SuwayomiExtensionsClient,
     LncrawlClient,
     NovelSourcesClient,
+    FileIndexClient,
     WebSerialsEpubBuilder,
     MangaBakaClient,
     MangaDexClient,

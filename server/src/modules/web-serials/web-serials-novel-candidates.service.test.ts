@@ -27,6 +27,7 @@ function setup(allowedSources = ['royalroad.com', 'scribblehub.com'], connection
   };
   const engines = {
     getConfig: vi.fn().mockResolvedValue({ connection, allowedSources }),
+    fileIndexConfig: vi.fn().mockResolvedValue(null),
     requireConfig: vi.fn().mockResolvedValue({ connection, allowedSources }),
     client: vi.fn().mockReturnValue(client),
   };
@@ -214,5 +215,41 @@ describe('WebSerialsNovelCandidatesService', () => {
       const result = await slowFind({ ...CONN, solver: undefined }, 20_000);
       expect(result.candidates).toHaveLength(0);
     });
+  });
+});
+
+describe('WebSerialsNovelCandidatesService with file indexes', () => {
+  function withFiles(engineConfig: unknown) {
+    const ctx = setup();
+    const fileClient = {
+      candidates: vi.fn().mockResolvedValue([{ ...hit('', 'Mother of Learning', 'NAS'), url: null, remoteId: 'fi-3-42' }]),
+    };
+    Object.assign(ctx.engines, {
+      getConfig: vi.fn().mockResolvedValue(engineConfig),
+      fileIndexConfig: vi.fn().mockResolvedValue({ connection: CONN, allowedSources: ['fi-3', 'fi-4'], engine: 'fileindex' }),
+      fileIndexClient: vi.fn().mockReturnValue(fileClient),
+    });
+    ctx.catalog.loadSeries.mockImplementation(async (_kind: string, remoteId: string) => ({
+      title: 'Mother of Learning',
+      sourceName: remoteId,
+      chapterCount: 3,
+      units: remoteId.startsWith('fi-') ? [{ unitKey: 'volume-1' }] : [],
+    }));
+    return { ...ctx, fileClient };
+  }
+
+  it('offers file index series on a server with no novel engine, skipping indexes the user switched off', async () => {
+    const { service, fileClient } = withFiles(null);
+    const result = await service.find({ ...input, disabledDomains: ['fi-4'] });
+    expect(fileClient.candidates).toHaveBeenCalledWith(['Mother of Learning', ...input.altTitles], '77', ['fi-3'], expect.any(Number));
+    expect(result).toEqual({ candidates: [expect.objectContaining({ seriesKey: 'nf:3-42', confidence: 'title_match' })], failedSources: [] });
+  });
+
+  it('merges file index series with the engine candidates', async () => {
+    const { service, client, lookup } = withFiles({ connection: CONN, allowedSources: ['royalroad.com'] });
+    client.search.mockResolvedValue({ hits: [hit('https://rr/big', 'Mother of Learning', 'royalroad.com')], failedSources: [] });
+    lookup.findMatch.mockResolvedValue({ id: '77' });
+    const result = await service.find(input);
+    expect(result.candidates.map((entry) => entry.seriesKey).sort()).toEqual(['n:id-big', 'nf:3-42']);
   });
 });

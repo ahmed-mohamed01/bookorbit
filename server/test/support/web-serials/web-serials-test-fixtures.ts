@@ -87,6 +87,8 @@ export function setupServices(options: { settings?: Record<string, unknown>; lib
     loadSeries: vi.fn(async (_kind: string, remoteId: string) => client.getSeries(CONN, remoteId)),
     getConfig: vi.fn(async (kind: string) => configs[kind] ?? null),
     requireConfig: vi.fn(async (kind: string) => configs[kind]),
+    requireConfigForSeries: vi.fn(async (kind: string) => configs[kind]),
+    fileIndexConfig: vi.fn(async () => null),
   };
   const repo = {
     getDisabledNovelDomains: vi.fn().mockResolvedValue([]),

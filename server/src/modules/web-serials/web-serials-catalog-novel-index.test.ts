@@ -33,6 +33,7 @@ function build(states: Record<string, string> = {}) {
   };
   const engines = {
     getConfig: vi.fn().mockResolvedValue({ connection: CONN, allowedSources: ['a', 'b', 'off'], engine: 'lnreader' }),
+    fileIndexConfig: vi.fn().mockResolvedValue(null),
     client: vi.fn().mockReturnValue(client),
     loadSeries: vi.fn(),
     requireEnabledSource: vi.fn().mockResolvedValue(undefined),

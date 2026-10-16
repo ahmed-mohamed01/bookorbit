@@ -1,17 +1,21 @@
 import { Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 
 import { WebSerialErrorCode, type WebSerialKind } from '@bookorbit/types';
+import { FileIndexClient, fileIndexSourceId } from './engines/file-index.client';
 import { LncrawlClient } from './engines/lncrawl.client';
 import { decodeNovelRemoteId, NovelSourcesClient } from './engines/novel-sources.client';
 import { SuwayomiClient } from './engines/suwayomi.client';
-import { SOURCE_ID_PREFIX, type EngineSeries, type WebSerialEngineClient } from './engines/web-serial-engine';
+import { SOURCE_ID_PREFIX, type EngineConnection, type EngineSeries, type WebSerialEngineClient } from './engines/web-serial-engine';
 import { fixApostropheCase } from './web-serials-title.utils';
 import { BoundedTtlCache } from './web-serials-cache.utils';
 import { WebSerialsSettingsService, type WebSerialEngineConfig } from './web-serials-settings.service';
 import { codedError } from './web-serials-error.utils';
+import { isFileIndexRemoteId, parseFileIndexRemoteId } from './web-serials-series-key.utils';
 
 const SERIES_CACHE_ENTRIES = 30;
 const SERIES_CACHE_TTL_MS = 45_000;
+/** File indexes carry their own addresses and credentials; the engine connection of their config is a placeholder. */
+const FILE_INDEX_CONNECTION: EngineConnection = { url: '', username: null, password: null };
 
 @Injectable()
 export class WebSerialsEngineRegistry {
@@ -23,16 +27,32 @@ export class WebSerialsEngineRegistry {
     private readonly suwayomi: SuwayomiClient,
     private readonly lncrawl: LncrawlClient,
     private readonly novelSources?: NovelSourcesClient,
+    private readonly fileIndex?: FileIndexClient,
   ) {}
 
   client(kind: WebSerialKind, remoteId?: string, engine?: WebSerialEngineConfig['engine']): WebSerialEngineClient {
     if (kind === 'manga') return this.suwayomi;
+    if (isFileIndexRemoteId(remoteId) || engine === 'fileindex') return this.fileIndexClient();
     if (remoteId?.includes(':') || engine === 'lnreader') {
       if (!this.novelSources)
         throw new ServiceUnavailableException(codedError('The LNReader client is unavailable', WebSerialErrorCode.EngineNotConfigured));
       return this.novelSources;
     }
     return this.lncrawl;
+  }
+
+  fileIndexClient(): FileIndexClient {
+    if (!this.fileIndex)
+      throw new ServiceUnavailableException(codedError('The file index client is unavailable', WebSerialErrorCode.EngineNotConfigured));
+    return this.fileIndex;
+  }
+
+  /** The enabled file indexes as one light novel source; null when none is enabled. */
+  async fileIndexConfig(): Promise<WebSerialEngineConfig | null> {
+    if (!this.fileIndex) return null;
+    const allowedSources = await this.fileIndex.enabledSourceIds();
+    if (allowedSources.length === 0) return null;
+    return { connection: FILE_INDEX_CONNECTION, allowedSources, ...(await this.settings.getNovelTargets()), engine: 'fileindex' };
   }
 
   getConfig(kind: WebSerialKind): Promise<WebSerialEngineConfig | null> {
@@ -51,8 +71,18 @@ export class WebSerialsEngineRegistry {
     return config;
   }
 
+  /** The kind's engine config, or for a file index series the file index config, refusing a series whose index is off. */
+  async requireConfigForSeries(kind: WebSerialKind, remoteId: string): Promise<WebSerialEngineConfig> {
+    if (kind !== 'novel' || !isFileIndexRemoteId(remoteId)) return this.requireConfig(kind);
+    const config = await this.fileIndexConfig();
+    if (!config) throw new NotFoundException(codedError('That file index is not enabled', WebSerialErrorCode.SourceDisabled));
+    assertNovelSourceEnabled(kind, remoteId, config);
+    return config;
+  }
+
   async configForSeries(kind: WebSerialKind, remoteId: string): Promise<WebSerialEngineConfig | null> {
     if (kind !== 'novel') return this.settings.getEngineConfig(kind);
+    if (isFileIndexRemoteId(remoteId)) return this.fileIndexConfig();
     if (!this.settings.getNovelEngineConfig) return this.settings.getEngineConfig(kind);
     return this.settings.getNovelEngineConfig(remoteId.includes(':') ? 'lnreader' : 'lncrawl');
   }
@@ -97,6 +127,10 @@ export class WebSerialsEngineRegistry {
 }
 
 function assertNovelSourceEnabled(kind: WebSerialKind, remoteId: string, config: WebSerialEngineConfig): void {
+  const fileIndex = kind === 'novel' ? parseFileIndexRemoteId(remoteId) : null;
+  if (fileIndex && !config.allowedSources.includes(fileIndexSourceId(fileIndex.indexId))) {
+    throw new NotFoundException(codedError('That file index is not enabled', WebSerialErrorCode.SourceDisabled));
+  }
   if (kind === 'novel' && remoteId.includes(':') && !isNovelSourceAllowed(remoteId, config.allowedSources)) {
     throw new NotFoundException(codedError('That site is not enabled for downloads', WebSerialErrorCode.SourceDisabled));
   }

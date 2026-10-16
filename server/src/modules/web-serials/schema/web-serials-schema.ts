@@ -371,6 +371,7 @@ const CREATE_STATEMENTS = [
 	"title" varchar(1000) NOT NULL,
 	"title_key" varchar(1000) NOT NULL,
 	"volume_count" integer DEFAULT 0 NOT NULL,
+	"cover_path" varchar(2048),
 	"match_id" varchar(16),
 	"last_seen_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "web_serial_file_index_series_path_unique" UNIQUE ("index_id", "folder_path"),

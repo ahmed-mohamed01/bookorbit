@@ -11,6 +11,7 @@ const VOLUME_MARKER = /(?:^|[^a-z])(?:volume|vol\.?|v)\s*[-_.]?\s*0*(\d{1,4}(?:\
 const PART_MARKER = /(?:^|[^a-z])part\s*[-_.]?\s*0*(\d{1,3}(?:\.\d+)?)(?![\d])/i;
 const TRAILING_NUMBER = /(?:^|[\s_-])0*(\d{1,3}(?:\.\d+)?)$/;
 const BRACKET_GROUPS = /\s*[[({][^\])}]*[\])}]/g;
+const COVER_FILE = /^(?:cover|folder|poster)\.(?:jpe?g|png|webp)$/i;
 
 export interface GroupedFile extends ListingFile {
   volume: number | null;
@@ -20,6 +21,7 @@ export interface GroupedSeries {
   folderPath: string;
   title: string;
   titleKey: string;
+  coverPath: string | null;
   files: GroupedFile[];
 }
 
@@ -36,9 +38,15 @@ export interface GroupedListing {
  */
 export function groupListing(files: readonly ListingFile[]): GroupedListing {
   const folders = new Map<string, Map<string, GroupedFile>>();
+  const covers = new Map<string, string>();
   let skippedFiles = 0;
 
   for (const file of files) {
+    if (COVER_FILE.test(file.name)) {
+      const folder = file.path.slice(0, Math.max(file.path.lastIndexOf('/'), 0));
+      if (folder && !covers.has(folder)) covers.set(folder, file.path);
+      continue;
+    }
     const extension = extensionOf(file.name);
     if (extension !== 'epub') {
       if (OTHER_BOOK_EXTENSIONS.has(extension)) skippedFiles += 1;
@@ -63,7 +71,7 @@ export function groupListing(files: readonly ListingFile[]): GroupedListing {
     if (!titleKey) continue;
     const grouped = [...entries.values()].sort(compareFiles);
     fileCount += grouped.length;
-    series.push({ folderPath, title, titleKey, files: grouped });
+    series.push({ folderPath, title, titleKey, coverPath: covers.get(folderPath) ?? null, files: grouped });
   }
   series.sort((left, right) => left.folderPath.localeCompare(right.folderPath));
   return { series, skippedFiles, fileCount };

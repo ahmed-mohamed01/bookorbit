@@ -213,8 +213,11 @@ export class WebSerialsDiscoverService {
 
   private async searchableKinds(kind: WebSerialKind | 'all'): Promise<WebSerialKind[]> {
     const wanted = kind === 'all' ? KINDS : [kind];
-    const configs = await Promise.all(wanted.map((entry) => this.engines.getConfig(entry)));
-    return wanted.filter((_entry, index) => (configs[index]?.allowedSources.length ?? 0) > 0);
+    const [configs, fileIndex] = await Promise.all([
+      Promise.all(wanted.map((entry) => this.engines.getConfig(entry))),
+      this.engines.fileIndexConfig(),
+    ]);
+    return wanted.filter((entry, index) => (configs[index]?.allowedSources.length ?? 0) > 0 || (entry === 'novel' && fileIndex !== null));
   }
 }
 

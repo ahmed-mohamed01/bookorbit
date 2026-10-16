@@ -19,6 +19,7 @@ import { codedError } from './web-serials-error.utils';
 import { WebSerialsFileIndexRepository } from './web-serials-file-index.repository';
 import { describeError } from './web-serials-log.utils';
 import { WebSerialsSecretService } from './web-serials-secret.service';
+import { WebSerialsSettingsService } from './web-serials-settings.service';
 import { ensureSafeEngineUrl } from './web-serials-url.utils';
 
 const REFRESH_EVENT = 'web_serials.file_index_refresh';
@@ -45,6 +46,7 @@ export class WebSerialsFileIndexService implements OnModuleDestroy {
   constructor(
     private readonly repo: WebSerialsFileIndexRepository,
     private readonly secrets: WebSerialsSecretService,
+    private readonly settings: WebSerialsSettingsService,
   ) {}
 
   onModuleDestroy(): void {
@@ -76,6 +78,7 @@ export class WebSerialsFileIndexService implements OnModuleDestroy {
     this.logger.log(
       `[${ADMIN_EVENT}] [end] indexId=${row.id} userId=${user.id} action=create format=${row.format} durationMs=${Date.now() - startedAt} - file index created`,
     );
+    this.settings.bumpCatalogVersion();
     if (row.enabled) this.queue(row.id);
     return this.view(row);
   }
@@ -110,6 +113,7 @@ export class WebSerialsFileIndexService implements OnModuleDestroy {
     this.logger.log(
       `[${ADMIN_EVENT}] [end] indexId=${id} userId=${user.id} action=update sourceChanged=${sourceChanged} enabled=${row.enabled} durationMs=${Date.now() - startedAt} - file index updated`,
     );
+    this.settings.bumpCatalogVersion();
     if (sourceChanged && row.enabled) this.queue(id);
     return this.view(row);
   }
@@ -119,6 +123,7 @@ export class WebSerialsFileIndexService implements OnModuleDestroy {
     this.stopIfRunning(id);
     if (!(await this.repo.deleteIndex(id))) throw notFound();
     this.requested.delete(id);
+    this.settings.bumpCatalogVersion();
     this.logger.log(`[${ADMIN_EVENT}] [end] indexId=${id} userId=${user.id} action=remove durationMs=${Date.now() - startedAt} - file index removed`);
   }
 
@@ -240,6 +245,7 @@ export class WebSerialsFileIndexService implements OnModuleDestroy {
       if (controller.signal.aborted)
         throw new ConflictException(codedError('The file index changed during the refresh', WebSerialErrorCode.FileIndexBusy));
       const written = await this.repo.writeListing(row.id, grouped.series, refreshedAt);
+      this.settings.bumpCatalogVersion();
       await this.repo.updateIndex(row.id, {
         lastRefreshAt: refreshedAt,
         lastEtag: read.etag?.slice(0, 512) ?? null,
