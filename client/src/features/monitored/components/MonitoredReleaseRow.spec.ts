@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import type { MonitoredReleaseItem, MonitoredWork } from '@bookorbit/types'
 import MonitoredReleaseRow from './MonitoredReleaseRow.vue'
@@ -61,6 +61,28 @@ describe('MonitoredReleaseRow', () => {
     expect(wrapper.find('.h-\\[63px\\]').exists()).toBe(false)
   })
 
+  it('toggles the selection instead of opening the panel in select mode, with the Get button hidden', async () => {
+    const wrapper = mount(MonitoredReleaseRow, { props: { item: item(), canManage: true, selectionMode: true, selected: true } })
+
+    expect(wrapper.find('[data-testid="release-row-check"]').exists()).toBe(true)
+    expect(wrapper.get('article').attributes('data-selected')).toBe('true')
+    expect(wrapper.get('article').classes()).toContain('bg-primary/10')
+    expect(wrapper.text()).not.toContain('Get automatically')
+    await wrapper.get('[data-testid="release-row-open"]').trigger('click')
+    expect(wrapper.emitted('select')).toHaveLength(1)
+    expect(wrapper.emitted('preview')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('dims a row with nothing left to act on and keeps it out of the selection', async () => {
+    const wrapper = mount(MonitoredReleaseRow, { props: { item: item(), canManage: true, selectionMode: true, selectable: false } })
+
+    expect(wrapper.get('article').classes()).toContain('opacity-50')
+    expect(wrapper.get('[data-testid="release-row-check"]').classes()).toContain('border-dashed')
+    expect(wrapper.get('[data-testid="release-row-open"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
   it('offers the request action to users who may request books', () => {
     const wrapper = mount(MonitoredReleaseRow, { props: { item: item(), canManage: true } })
 
@@ -118,5 +140,44 @@ describe('MonitoredReleaseRow opening the panel', () => {
     await wrapper.get('[data-testid="release-row-open"]').trigger('click')
     expect(wrapper.emitted('preview')).toHaveLength(1)
     expect(wrapper.emitted('request')).toBeUndefined()
+  })
+})
+
+describe('MonitoredReleaseRow long press select', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function pressAndRelease(wrapper: ReturnType<typeof mount>, holdMs: number) {
+    // onLongPress attaches its pointer listeners in a post-flush watcher, so the mount must flush first.
+    await wrapper.vm.$nextTick()
+    const open = wrapper.get('[data-testid="release-row-open"]')
+    await open.trigger('pointerdown')
+    vi.advanceTimersByTime(holdMs)
+    await open.trigger('pointerup')
+    await open.trigger('click')
+  }
+
+  it('starts select mode on a 500ms press and swallows the click the release produces', async () => {
+    const wrapper = mount(MonitoredReleaseRow, { props: { item: item(), canManage: true, longPressSelect: true } })
+
+    await pressAndRelease(wrapper, 500)
+
+    expect(wrapper.emitted('longPress')).toHaveLength(1)
+    expect(wrapper.emitted('preview')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('ignores a long press on a row that cannot be picked', async () => {
+    const wrapper = mount(MonitoredReleaseRow, { props: { item: item(), canManage: true, longPressSelect: true, selectable: false } })
+
+    await pressAndRelease(wrapper, 500)
+
+    expect(wrapper.emitted('longPress')).toBeUndefined()
+    wrapper.unmount()
   })
 })

@@ -182,6 +182,9 @@ describe('monitoredVisibilityState', () => {
     [work({ userVisibility: 'visible' }), false, null],
     [work({ verdict: 'probable' }), false, 'review'],
     [work({ flags: ['placeholder'] }), false, 'review'],
+    [work({ verdict: 'suspect', userKind: 'book' }), false, 'kept'],
+    [work({ userKind: 'book' }), false, null],
+    [work({ userVisibility: 'visible', userKind: 'collection' }), false, 'review'],
   ] as const)('reads %o (author paused: %s) as %s', (subject, authorPaused, expected) => {
     expect(monitoredVisibilityState(subject, authorPaused)).toBe(expected)
   })

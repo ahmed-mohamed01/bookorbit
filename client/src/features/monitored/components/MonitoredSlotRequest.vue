@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, type Component } from 'vue'
-import { AlertCircle, Clock, Download, Loader2, Package, RotateCw, Search, WandSparkles } from '@lucide/vue'
+import { computed } from 'vue'
+import { ArrowUpRight, Loader2, RotateCw, WandSparkles } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitoredFormat } from '@bookorbit/types'
-import type { SlotRequestKind } from '../lib/slot-request'
+import { SLOT_REQUEST_ICONS, type SlotRequestKind } from '../lib/slot-request'
 
 /**
  * The request button of a format slot. With no request, or after a failed one, it sends a
@@ -29,15 +29,6 @@ const formatLabel = computed(() => t(`monitored.formats.${props.format}`))
 const formatName = computed(() => formatLabel.value.toLowerCase())
 const requestPrefix = computed(() => t('monitored.slot.requestStatus', { format: formatLabel.value }))
 
-const FOLLOW_ICONS: Record<SlotRequestKind, Component> = {
-  requested: Clock,
-  searching: Search,
-  downloading: Download,
-  importing: Package,
-  review: AlertCircle,
-  failed: RotateCw,
-}
-
 const FOLLOW_TONES: Record<SlotRequestKind, string> = {
   requested: 'border-border text-muted-foreground',
   searching: 'border-[var(--pill-info)]/40 bg-[var(--pill-info)]/10 text-[var(--pill-info)]',
@@ -52,7 +43,7 @@ const following = computed(() => (split.value ? null : props.kind))
 const failed = computed(() => props.kind === 'failed')
 
 const baseClass =
-  'inline-flex h-7 shrink-0 items-center gap-1 border px-2 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-60 [@media(pointer:coarse)]:min-h-11'
+  'inline-flex h-8 w-full shrink-0 items-center justify-center gap-1 border px-2 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:opacity-60 [@media(pointer:coarse)]:min-h-11'
 
 function handleRequest() {
   emit('request', props.format)
@@ -85,12 +76,13 @@ function handleRequest() {
     :class="[baseClass, 'rounded-md', FOLLOW_TONES[following]]"
     :data-request-kind="following"
   >
-    <component :is="FOLLOW_ICONS[following]" :size="13" aria-hidden="true" />
+    <component :is="SLOT_REQUEST_ICONS[following]" :size="13" aria-hidden="true" />
     <span class="sr-only">{{ requestPrefix }}</span>
     {{ t(`monitored.slot.request.${following}`) }}
+    <ArrowUpRight :size="12" aria-hidden="true" />
   </RouterLink>
   <span v-else-if="following" :class="[baseClass, 'rounded-md', FOLLOW_TONES[following]]" :data-request-kind="following">
-    <component :is="FOLLOW_ICONS[following]" :size="13" aria-hidden="true" />
+    <component :is="SLOT_REQUEST_ICONS[following]" :size="13" aria-hidden="true" />
     <span class="sr-only">{{ requestPrefix }}</span>
     {{ t(`monitored.slot.request.${following}`) }}
   </span>

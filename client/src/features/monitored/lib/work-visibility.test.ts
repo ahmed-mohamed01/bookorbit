@@ -52,6 +52,13 @@ describe('isWorkVisible', () => {
     expect(isWorkVisible(work({ verdict: 'suspect', userVisibility: 'visible' }))).toBe(true)
     expect(isWorkVisible(work({ userVisibility: 'hidden' }))).toBe(false)
   })
+
+  it('lets the owner mark decide below hidden and above a kept choice', () => {
+    expect(isWorkVisible(work({ userVisibility: 'hidden', userKind: 'book' }))).toBe(false)
+    expect(isWorkVisible(work({ userVisibility: 'visible', userKind: 'collection' }))).toBe(false)
+    expect(isWorkVisible(work({ verdict: 'suspect', userKind: 'book' }))).toBe(true)
+    expect(isWorkVisible(work({ userKind: 'duplicate' }))).toBe(false)
+  })
 })
 
 describe('reviewKindOf', () => {
@@ -67,9 +74,24 @@ describe('reviewKindOf', () => {
 
 describe('countReviewKinds', () => {
   it('counts every kind present and totals them under all', () => {
-    const counts = countReviewKinds([work({ kind: 'collection' }), work({ kind: 'collection' }), work({ kind: 'duplicate' }), work()])
+    const counts = countReviewKinds([
+      work({ kind: 'collection' }),
+      work({ kind: 'collection' }),
+      work({ kind: 'split_part' }),
+      work({ kind: 'duplicate' }),
+      work(),
+    ])
 
-    expect(counts).toEqual({ all: 4, collection: 2, anthology: 0, graphic_novel: 0, format_variant: 0, duplicate: 1, other: 1 })
+    expect(counts).toEqual({
+      all: 5,
+      collection: 2,
+      split_part: 1,
+      anthology: 0,
+      graphic_novel: 0,
+      format_variant: 0,
+      duplicate: 1,
+      other: 1,
+    })
   })
 })
 

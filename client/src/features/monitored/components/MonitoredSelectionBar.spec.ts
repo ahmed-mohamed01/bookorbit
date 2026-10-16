@@ -37,6 +37,7 @@ function mountBar(props: { works?: MonitoredWork[]; format?: MonitoredBulkReques
         DropdownMenuContent: passthrough,
         DropdownMenuItem: { template: '<button><slot /></button>' },
         DropdownMenuSeparator: true,
+        DropdownMenuLabel: passthrough,
         Popover: passthrough,
         PopoverTrigger: passthrough,
         PopoverContent: passthrough,
@@ -97,6 +98,24 @@ describe('MonitoredSelectionBar', () => {
     await wrapper.get('[data-testid="bulk-request"]').trigger('click')
 
     expect(wrapper.emitted('request')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('marks every selected book as the picked kind, without checking any choice', async () => {
+    const wrapper = mountBar()
+    const count = wrapper.props('works').length
+    expect(wrapper.text()).toContain(`Mark ${count} books as`)
+    expect(wrapper.text()).toContain('Anything other than Book moves them to Review and stops searching. Book brings them back.')
+    expect(wrapper.find('[data-testid="mark-as-book"] svg.lucide-check').exists()).toBe(false)
+
+    await wrapper.get('[data-testid="mark-as-split_part"]').trigger('click')
+    expect(wrapper.emitted('patch')?.[0]).toEqual([{ kind: 'split_part' }])
+    wrapper.unmount()
+  })
+
+  it('disables Mark as while a bulk request runs', () => {
+    const wrapper = mountBar({ running: true })
+    expect(wrapper.get('[data-testid="bulk-mark-as"]').attributes('disabled')).toBeDefined()
     wrapper.unmount()
   })
 

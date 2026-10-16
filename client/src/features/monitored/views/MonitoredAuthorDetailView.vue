@@ -22,7 +22,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { Permission } from '@bookorbit/types'
-import type { MonitoredFormat, MonitoredGrouping, MonitoredSort, MonitoredStatusFilter, MonitoredWork } from '@bookorbit/types'
+import type { MonitoredFormat, MonitoredGrouping, MonitoredMarkKind, MonitoredSort, MonitoredStatusFilter, MonitoredWork } from '@bookorbit/types'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -346,6 +346,22 @@ async function handleToggleHidden(work: MonitoredWork, value: boolean) {
   } catch (cause) {
     toast.error(monitoredErrorText(cause, t('monitored.toast.updateFailed')))
   }
+}
+
+async function handleSetKind(work: MonitoredWork, kind: MonitoredMarkKind) {
+  try {
+    await updateWork(work.id, { kind })
+    panelWork.value = detail.value?.works.find((candidate) => candidate.id === work.id) ?? panelWork.value
+  } catch (cause) {
+    toast.error(monitoredErrorText(cause, t('monitored.toast.updateFailed')))
+  }
+}
+
+/** The panel's Check reuses the page refresh: the author scan is what re-reads the files on disk. */
+async function handleCheckLibrary() {
+  await handleRefresh()
+  const workId = panelWork.value?.id
+  if (workId) panelWork.value = detail.value?.works.find((candidate) => candidate.id === workId) ?? panelWork.value
 }
 
 async function queue(work: MonitoredWork, format: MonitoredFormat, autoDownload?: boolean) {
@@ -807,6 +823,8 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
       :author-paused="author?.paused ?? false"
       :can-resume-author="canEdit"
       :can-manage="canEdit"
+      :checked-at="author?.lastRefreshedAt ?? null"
+      :checking="refreshState === 'loading'"
       :open="panelOpen"
       @update:open="handlePanelOpen"
       @request="handlePanelRequest"
@@ -815,6 +833,8 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
       @toggle-monitor="handleToggleMonitor"
       @toggle-hidden="handleToggleHidden"
       @set-automatic="handleSetAutomatic"
+      @set-kind="handleSetKind"
+      @check-library="handleCheckLibrary"
       @resume-author="handleResumeAuthor"
       @work-updated="handleWorkUpdated"
     />

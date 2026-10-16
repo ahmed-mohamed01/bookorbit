@@ -4,7 +4,7 @@ import MonitoredDisplayOptionsPanel from './MonitoredDisplayOptionsPanel.vue'
 import { DEFAULT_MONITORED_DISPLAY, type MonitoredDisplayOptions as DisplayOptions, type MonitoredReviewKindCounts } from '../lib/work-visibility'
 
 function kindCounts(overrides: Partial<MonitoredReviewKindCounts> = {}): MonitoredReviewKindCounts {
-  return { all: 0, collection: 0, anthology: 0, graphic_novel: 0, format_variant: 0, duplicate: 0, other: 0, ...overrides }
+  return { all: 0, collection: 0, split_part: 0, anthology: 0, graphic_novel: 0, format_variant: 0, duplicate: 0, other: 0, ...overrides }
 }
 
 function mountPanel(display: Partial<DisplayOptions> = {}, counts: MonitoredReviewKindCounts = kindCounts(), canCurate = true) {

@@ -11,8 +11,9 @@ export function monitoredVisibilityState(work: MonitoredWork, authorPaused = fal
   if (work.monitorState === 'paused') return 'work-paused'
   if (work.monitorState === 'stopped') return 'work-stopped'
   if (work.userVisibility === 'hidden') return 'hidden'
+  if (work.userKind && work.userKind !== 'book') return 'review'
   const verdictShows = work.verdict === 'verified' && work.flags.length === 0
-  // A "kept" choice on a work the verdict already shows changes nothing, so it is not news.
-  if (work.userVisibility === 'visible') return verdictShows ? null : 'kept'
+  // Keeping a work, by the Keep button or by marking it Book, changes nothing when the verdict already shows it.
+  if (work.userVisibility === 'visible' || work.userKind === 'book') return verdictShows ? null : 'kept'
   return isWorkVisible(work) ? null : 'review'
 }

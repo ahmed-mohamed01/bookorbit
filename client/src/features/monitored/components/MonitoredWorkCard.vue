@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { onLongPress } from '@vueuse/core'
-import { BookOpen, Check, Download, EyeOff, Headphones, MoreVertical, PanelRight } from '@lucide/vue'
+import { BookOpen, Check, Download, EyeOff, Headphones, MoreVertical } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { MONITORED_FORMATS, type MonitorMode, type MonitoredFormat, type MonitoredSeriesMembership, type MonitoredWork } from '@bookorbit/types'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
@@ -52,12 +52,6 @@ const { t } = useI18n()
 const { sentence } = useFormatStatusText()
 const { cardInfoMode } = useDisplaySettings()
 const imageFailed = ref(false)
-const showMobileOverlay = ref(false)
-const root = ref<HTMLElement | null>(null)
-
-const isTouch = computed(
-  () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches,
-)
 const showBelowCoverLabel = computed(() => cardInfoMode.value === 'below-cover')
 const inSelectMode = computed(() => props.selectionMode === true)
 const isSelectable = computed(() => props.selectable)
@@ -151,7 +145,6 @@ function handleImageError() {
 }
 
 function handlePreview() {
-  showMobileOverlay.value = false
   emit('preview', props.work)
 }
 
@@ -183,10 +176,8 @@ function handleCoverClick(event: MouseEvent) {
     if (isSelectable.value) emit('select', props.work, event)
     return
   }
-  if (isTouch.value && !showBelowCoverLabel.value) {
-    showMobileOverlay.value = !showMobileOverlay.value
-    return
-  }
+  // A tap opens the panel on touch screens too: a first tap that only revealed a Quick look button made
+  // every book take two.
   handlePreview()
 }
 
@@ -195,19 +186,6 @@ function handleCoverContextmenu(event: MouseEvent) {
 }
 
 onLongPress(coverButton, handleLongPress, { delay: 500, onMouseUp: handleLongPressRelease })
-
-function handleClickOutside(event: MouseEvent) {
-  if (!showMobileOverlay.value) return
-  if (!root.value?.contains(event.target as Node)) showMobileOverlay.value = false
-}
-
-onMounted(() => {
-  window.addEventListener('click', handleClickOutside)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('click', handleClickOutside)
-})
 
 function handleQuickView() {
   emit('quickView', props.work)
@@ -228,7 +206,6 @@ function handleStop() {
 
 <template>
   <article
-    ref="root"
     class="group min-w-0"
     :class="{ 'opacity-45': isHidden, 'opacity-50': inSelectMode && !isSelectable }"
     :data-owned="fullyOwned || undefined"
@@ -337,38 +314,25 @@ function handleStop() {
       <span
         v-if="seriesLine && !showBelowCoverLabel"
         class="pointer-events-none absolute bottom-1.5 left-1.5 z-10 max-w-[calc(100%-2.75rem)] truncate rounded-sm bg-black/60 px-1.5 py-0.5 text-[10px] font-semibold leading-tight text-white transition-opacity duration-150 group-focus-within:opacity-0 group-hover:opacity-0"
-        :class="{ 'opacity-0': showMobileOverlay }"
         :title="seriesLine"
         data-testid="series-line"
         >{{ seriesLine }}</span
       >
       <div
         v-if="!showBelowCoverLabel && !inSelectMode"
-        class="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col justify-end bg-gradient-to-t from-black/85 via-black/55 to-transparent p-2 pt-12 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100"
-        :class="showMobileOverlay ? 'opacity-100' : 'opacity-0'"
+        class="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col justify-end bg-gradient-to-t from-black/85 via-black/55 to-transparent p-2 pt-12 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100"
         data-testid="info-overlay"
       >
         <div class="min-w-0">
           <p class="line-clamp-2 pr-8 text-xs font-semibold leading-tight text-white" data-testid="hover-title">{{ work.title }}</p>
           <p v-if="authorName" class="truncate text-[10px] text-white/70" data-testid="hover-author">{{ authorName }}</p>
           <p v-if="seriesLine" class="truncate text-[10px] text-white/70" data-testid="hover-series">{{ seriesLine }}</p>
-          <button
-            v-if="showMobileOverlay"
-            type="button"
-            class="pointer-events-auto mt-1.5 inline-flex min-h-8 items-center gap-1 rounded-md bg-black/50 px-2 text-[11px] font-medium text-white hover:bg-black/30"
-            data-testid="overlay-open"
-            @click.stop="handlePreview"
-          >
-            <PanelRight :size="12" aria-hidden="true" />
-            {{ t('monitored.detail.quickLook') }}
-          </button>
         </div>
       </div>
 
       <div
         v-if="!showBelowCoverLabel && !inSelectMode"
-        class="absolute bottom-2 right-2 z-20 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
-        :class="showMobileOverlay ? 'opacity-100' : 'opacity-0'"
+        class="absolute bottom-2 right-2 z-20 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
       >
         <MonitoredCardMenu
           :can-manage="canManage"
@@ -381,10 +345,11 @@ function handleStop() {
           @download-audiobook="handleDownloadAudiobook"
           @stop="handleStop"
         >
+          <!-- The invisible ring around the round button keeps the tap target past 44px. -->
           <button
             type="button"
             :aria-label="t('monitored.detail.bookMenu', { title: work.title })"
-            class="shrink-0 rounded-md bg-black/40 px-0.75 py-1.5 text-white transition-colors hover:bg-white/30 [@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-8"
+            class="relative inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-black/45 text-white transition-colors after:absolute after:-inset-2 after:content-[''] hover:bg-white/30 [@media(pointer:coarse)]:size-8"
           >
             <MoreVertical class="size-3.5" />
           </button>

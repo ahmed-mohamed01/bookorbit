@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { CirclePause, EyeOff, ShieldQuestion, UserCheck } from '@lucide/vue'
+import { computed, watch } from 'vue'
+import { CirclePause, EyeOff, ShieldQuestion, UserCheck, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitoredWork } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import { formatList } from '@/i18n/formatters'
+import { useDismissedBanners } from '../composables/useDismissedBanners'
 import { monitoredVisibilityState } from '../lib/visibility-state'
 
 /** Shown only while a work is out of its normal state, with the way back beside the reason. */
@@ -28,7 +29,17 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const state = computed(() => monitoredVisibilityState(props.work, props.authorPaused))
+const { isDismissed, dismiss, forget } = useDismissedBanners()
+const rawState = computed(() => monitoredVisibilityState(props.work, props.authorPaused))
+/** Notices that only restate the reader's own choice may be closed; the rest ask for a decision. */
+const dismissible = computed(() => rawState.value === 'kept' || rawState.value === 'hidden')
+const dismissKey = computed(() => `${props.work.id}:${rawState.value}`)
+const state = computed(() => (dismissible.value && isDismissed(dismissKey.value) ? null : rawState.value))
+
+// Leaving a choice clears its dismissal, so making that choice again later shows its notice again.
+watch([() => props.work.id, rawState], ([workId, next], [previousId, previous]) => {
+  if (workId === previousId && previous !== next && (previous === 'kept' || previous === 'hidden')) forget(`${workId}:${previous}`)
+})
 
 const reasons = computed(() => {
   const parts: string[] = []
@@ -51,6 +62,9 @@ const message = computed(() => {
     case 'kept':
       return t('monitored.panel.banner.kept')
     case 'review':
+      if (props.work.userKind && props.work.userKind !== 'book') {
+        return t('monitored.panel.banner.marked', { kind: t(`monitored.panel.markAsKinds.${props.work.userKind}.title`).toLowerCase() })
+      }
       return t('monitored.panel.banner.review', { reasons: reasons.value })
     default:
       return ''
@@ -87,6 +101,10 @@ function handleAutomatic() {
 function handleResume() {
   emit('resume-author')
 }
+
+function handleDismiss() {
+  dismiss(dismissKey.value)
+}
 </script>
 
 <template>
@@ -98,7 +116,7 @@ function handleResume() {
   >
     <component :is="icon" :size="14" class="shrink-0 text-[var(--pill-warning)]" aria-hidden="true" />
     <p class="min-w-0 flex-1 basis-48 text-xs text-foreground">{{ message }}</p>
-    <div class="flex shrink-0 flex-wrap items-center gap-2">
+    <div class="flex shrink-0 flex-wrap items-center gap-2 max-sm:order-last">
       <template v-if="state === 'review' && canManage">
         <Button size="sm" variant="outline" class="h-7 text-xs" @click="handleHide">{{ t('monitored.panel.hide') }}</Button>
         <Button size="sm" class="h-7 text-xs" @click="handleKeep">{{ t('monitored.panel.banner.keep') }}</Button>
@@ -114,5 +132,16 @@ function handleResume() {
         <RouterLink :to="authorRoute!">{{ t('monitored.panel.banner.openAuthor') }}</RouterLink>
       </Button>
     </div>
+    <button
+      v-if="dismissible"
+      type="button"
+      class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [@media(pointer:coarse)]:size-11"
+      :aria-label="t('monitored.panel.banner.dismiss')"
+      :title="t('monitored.panel.banner.dismiss')"
+      data-testid="banner-dismiss"
+      @click="handleDismiss"
+    >
+      <X :size="14" aria-hidden="true" />
+    </button>
   </div>
 </template>

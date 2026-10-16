@@ -9,9 +9,9 @@ import {
   type MonitoredFormat,
   type MonitoredWork,
 } from '@bookorbit/types'
-import { bookFormatEntries } from '@/features/book/lib/book-formats'
+import { bookFormatEntries, formatKeyCode } from '@/features/book/lib/book-formats'
 import { editionRowAction, ACTIVE_REQUEST_STATUSES, type MonitoredFormatStatus } from '../lib/format-status'
-import { slotRequestKind } from '../lib/slot-request'
+import { slotRequestKind, type SlotRequestKind } from '../lib/slot-request'
 import { useFormatStatusText } from './useFormatStatusText'
 import { useMonitoredDateLabel } from './useMonitoredDateLabel'
 import { useMonitoredRequestProgress } from './useMonitoredRequestProgress'
@@ -61,7 +61,7 @@ export function useFormatSlotState(props: FormatSlotInput, onFiled: (requestId: 
   const requestRoute = computed(() => (requestId.value === null ? null : { name: 'book-request-detail', params: { id: requestId.value } }))
 
   const watchedRequestId = computed(() => (ACTIVE_REQUEST_STATUSES.has(props.status) ? requestId.value : null))
-  useMonitoredRequestProgress(watchedRequestId, { onFiled })
+  const progress = useMonitoredRequestProgress(watchedRequestId, { onFiled })
 
   const edition = computed(() => {
     const book = props.book
@@ -98,7 +98,8 @@ export function useFormatSlotState(props: FormatSlotInput, onFiled: (requestId: 
     return { date: d(new Date(added), { year: 'numeric', month: 'short', day: 'numeric' }) }
   })
 
-  const watching = computed(() => props.work.monitorFormats?.[props.format] !== false && props.status !== 'not_watching')
+  // An owned or requested format reports its own status, so the author's own choice is checked here too.
+  const watching = computed(() => props.authorWatches && props.work.monitorFormats?.[props.format] !== false && props.status !== 'not_watching')
   const watchTooltip = computed(() => {
     if (!watching.value) return t('monitored.slot.notWatchingHint')
     if (props.status === 'unannounced' || props.status === 'upcoming') {
@@ -128,14 +129,47 @@ export function useFormatSlotState(props: FormatSlotInput, onFiled: (requestId: 
 
   const chipLabel = computed(() => releaseLine(props.work, props.format) ?? t('monitored.slot.notAnnounced'))
 
+  const statKind = computed(() => (edition.value ? formatKeyCode(edition.value.key) : null))
+  const fileCount = computed(() => edition.value?.files.length ?? 0)
+  const contentPaths = computed(() => edition.value?.files.map((file) => file.absolutePath) ?? [])
+  const editionSizeBytes = computed(() => edition.value?.sizeBytes ?? null)
+
+  const MOVING_KINDS: ReadonlySet<SlotRequestKind> = new Set(['requested', 'searching', 'downloading', 'importing', 'review'])
+  const requestMoving = computed(() => requestKind.value !== null && MOVING_KINDS.has(requestKind.value))
+
+  /** The release a moving request is fetching, which is all the "On its way" block can name. */
+  const requestRelease = computed(() => {
+    const download = progress.request.value?.download
+    if (!download) return null
+    return { title: download.releaseTitle, sizeBytes: download.releaseSizeBytes ?? progress.live.value?.totalBytes ?? null }
+  })
+
+  /** The live transfer behind a download, preferring the socket tick over the persisted row. */
+  const download = computed(() => {
+    const live = progress.live.value
+    const persisted = progress.request.value?.download
+    if (!live && !persisted) return null
+    return {
+      percent: Math.max(0, Math.min(100, live?.progressPercent ?? persisted?.progressPercent ?? 0)),
+      downloadedBytes: live?.downloadedBytes ?? persisted?.downloadedBytes ?? null,
+      totalBytes: live?.totalBytes ?? persisted?.totalBytes ?? null,
+    }
+  })
+
   const statusLine = computed<{ text: string; tone: string; authorLink: boolean } | null>(() => {
     if (props.status !== 'not_watching') return null
     if (!props.authorWatches) {
       const key = props.format === 'ebook' ? 'monitored.slot.authorNotWatchingEbook' : 'monitored.slot.authorNotWatchingAudiobook'
       return { text: t(key), tone: 'text-muted-foreground', authorLink: true }
     }
-    const text = props.canEdit ? t('monitored.slot.notWatchedTurnOn') : t('monitored.slot.notWatched')
-    return { text, tone: 'text-muted-foreground', authorLink: false }
+    return { text: t('monitored.slot.notWatched'), tone: 'text-muted-foreground', authorLink: false }
+  })
+
+  /** An owned format's release date, which its footer states next to when it joined the library. */
+  const releasedLabel = computed(() => {
+    const released = releasedOn.value
+    if (!owned.value || !released) return null
+    return released.yearOnly ? t('monitored.slot.releasedIn', { date: released.date }) : t('monitored.slot.released', { date: released.date })
   })
 
   return {
@@ -146,7 +180,6 @@ export function useFormatSlotState(props: FormatSlotInput, onFiled: (requestId: 
     fileName,
     filePath,
     ownedBody,
-    releasedOn,
     availableSince,
     watching,
     watchTooltip,
@@ -157,6 +190,14 @@ export function useFormatSlotState(props: FormatSlotInput, onFiled: (requestId: 
     canRequest,
     requestOffered,
     chipLabel,
+    statKind,
+    fileCount,
+    contentPaths,
+    editionSizeBytes,
+    requestMoving,
+    requestRelease,
+    download,
+    releasedLabel,
     statusLine,
   }
 }

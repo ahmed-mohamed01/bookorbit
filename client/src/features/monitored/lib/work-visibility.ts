@@ -4,7 +4,7 @@ import { parseMonitoredDate } from './release-date'
 
 export { isWorkVisible }
 
-export const MONITORED_REVIEW_KINDS = ['collection', 'anthology', 'graphic_novel', 'format_variant', 'duplicate', 'other'] as const
+export const MONITORED_REVIEW_KINDS = ['collection', 'split_part', 'anthology', 'graphic_novel', 'format_variant', 'duplicate', 'other'] as const
 export type MonitoredReviewKind = (typeof MONITORED_REVIEW_KINDS)[number]
 
 export type MonitoredReviewKindFilter = 'all' | MonitoredReviewKind
@@ -78,7 +78,16 @@ export function reviewKindOf(work: MonitoredWork): MonitoredReviewKind {
 }
 
 export function countReviewKinds(works: MonitoredWork[]): MonitoredReviewKindCounts {
-  const counts: MonitoredReviewKindCounts = { all: 0, collection: 0, anthology: 0, graphic_novel: 0, format_variant: 0, duplicate: 0, other: 0 }
+  const counts: MonitoredReviewKindCounts = {
+    all: 0,
+    collection: 0,
+    split_part: 0,
+    anthology: 0,
+    graphic_novel: 0,
+    format_variant: 0,
+    duplicate: 0,
+    other: 0,
+  }
   for (const work of works) {
     counts.all += 1
     counts[reviewKindOf(work)] += 1

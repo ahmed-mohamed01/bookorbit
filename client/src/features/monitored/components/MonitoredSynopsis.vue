@@ -10,7 +10,12 @@ defineProps<{
 </script>
 
 <template>
-  <section v-if="html" class="rounded-xl border border-border bg-card px-4 py-3.5" data-testid="synopsis-card">
+  <!-- Two lines are enough in the panel; the shared clamp grows with the window, which pushes the editions off screen. -->
+  <section
+    v-if="html"
+    class="rounded-xl border border-border bg-card px-3.5 py-2.5 [&_.synopsis-copy--clamped]:[-webkit-line-clamp:2]! [&_[data-test=synopsis-copy]]:text-[13px]"
+    data-testid="synopsis-card"
+  >
     <BookSynopsis :html="html" :content-id="contentId" />
   </section>
 </template>

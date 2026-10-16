@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Download } from '@lucide/vue'
+import { onLongPress } from '@vueuse/core'
+import { Check, Download } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitoredFormat, MonitoredReleaseItem, TableDensity } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
@@ -10,10 +11,27 @@ import { parseMonitoredDate } from '../lib/release-date'
 import { daysUntil, workFormatStatus } from '../lib/format-status'
 import MonitoredFormatStatusChip from './MonitoredFormatStatusChip.vue'
 
-const props = withDefaults(defineProps<{ item: MonitoredReleaseItem; canManage: boolean; requesting?: boolean; density?: TableDensity }>(), {
-  density: 'comfortable',
-})
-const emit = defineEmits<{ request: [item: MonitoredReleaseItem]; preview: [item: MonitoredReleaseItem] }>()
+const props = withDefaults(
+  defineProps<{
+    item: MonitoredReleaseItem
+    canManage: boolean
+    requesting?: boolean
+    density?: TableDensity
+    selectionMode?: boolean
+    selected?: boolean
+    /** Has something left to act on; a row that does not is dimmed and cannot be picked. */
+    selectable?: boolean
+    /** A long press starts select mode with this row picked. */
+    longPressSelect?: boolean
+  }>(),
+  { density: 'comfortable', selectable: true },
+)
+const emit = defineEmits<{
+  request: [item: MonitoredReleaseItem]
+  preview: [item: MonitoredReleaseItem]
+  select: [item: MonitoredReleaseItem, event: MouseEvent]
+  longPress: [item: MonitoredReleaseItem]
+}>()
 const { t, d } = useI18n()
 const imageFailed = ref(false)
 
@@ -47,14 +65,46 @@ function statusOf(format: MonitoredFormat) {
 }
 
 const rowStatus = computed(() => statusOf(props.item.format))
-const canRequest = computed(() => props.canManage && rowStatus.value === 'missing')
+const canRequest = computed(() => props.canManage && rowStatus.value === 'missing' && !props.selectionMode)
+const openLabel = computed(() => {
+  if (!props.selectionMode) return undefined
+  return t(props.selected ? 'monitored.selection.card.deselect' : 'monitored.selection.card.select', { title: props.item.title })
+})
 
 function handleRequest() {
   emit('request', props.item)
 }
 
-function handlePreview() {
-  emit('preview', props.item)
+const openButton = ref<HTMLButtonElement | null>(null)
+// The release of a long press lands on the row as a click, which must not also toggle the row it just
+// picked. Touch browsers often send no click at all, so the swallow only holds briefly.
+const LONG_PRESS_SWALLOW_WINDOW_MS = 300
+let longPressPendingRelease = false
+let longPressReleasedAt: number | null = null
+
+function handleLongPress() {
+  if (!props.longPressSelect || props.selectionMode || !props.selectable) return
+  longPressPendingRelease = true
+  emit('longPress', props.item)
+}
+
+function handleLongPressRelease(_duration: number, _distance: number, isLongPress: boolean) {
+  if (isLongPress && longPressPendingRelease) longPressReleasedAt = Date.now()
+  longPressPendingRelease = false
+}
+
+onLongPress(openButton, handleLongPress, { delay: 500, onMouseUp: handleLongPressRelease })
+
+function handlePreview(event: MouseEvent) {
+  const swallowReleaseClick = longPressReleasedAt !== null && Date.now() - longPressReleasedAt <= LONG_PRESS_SWALLOW_WINDOW_MS
+  longPressReleasedAt = null
+  if (swallowReleaseClick) return
+  if (!props.selectionMode) emit('preview', props.item)
+  else if (props.selectable) emit('select', props.item, event)
+}
+
+function handleContextmenu(event: MouseEvent) {
+  if (props.longPressSelect) event.preventDefault()
 }
 
 function handleImageError() {
@@ -64,9 +114,25 @@ function handleImageError() {
 
 <template>
   <article
-    class="relative flex items-center rounded-xl border border-border bg-card/75 focus-within:ring-2 focus-within:ring-ring"
-    :class="classes.row"
+    class="relative flex items-center rounded-xl border focus-within:ring-2 focus-within:ring-ring"
+    :class="[
+      classes.row,
+      selectionMode && selected ? 'border-primary/60 bg-primary/10' : 'border-border bg-card/75',
+      selectionMode && !selectable ? 'opacity-50' : '',
+    ]"
+    :data-selected="selectionMode ? Boolean(selected) : undefined"
   >
+    <span
+      v-if="selectionMode"
+      class="flex size-5 shrink-0 items-center justify-center rounded-xs border"
+      :class="
+        selected ? 'border-primary bg-primary text-primary-foreground' : selectable ? 'border-border bg-background' : 'border-dashed border-border'
+      "
+      aria-hidden="true"
+      data-testid="release-row-check"
+    >
+      <Check v-if="selected" :size="12" />
+    </span>
     <div class="shrink-0 border-r border-border text-center" :class="classes.date">
       <div class="font-extrabold tabular-nums text-foreground" :class="classes.day">{{ day }}</div>
       <div class="text-[10px] font-bold tracking-wide text-muted-foreground">{{ month }}</div>
@@ -93,8 +159,14 @@ function handleImageError() {
         <button
           type="button"
           class="max-w-full truncate text-start after:absolute after:inset-0 after:content-[''] hover:text-primary focus-visible:outline-none"
+          :disabled="selectionMode && !selectable"
+          :aria-pressed="selectionMode ? Boolean(selected) : undefined"
+          :aria-label="openLabel"
+          ref="openButton"
           data-testid="release-row-open"
+          :class="longPressSelect ? '[-webkit-touch-callout:none] select-none' : undefined"
           @click="handlePreview"
+          @contextmenu="handleContextmenu"
         >
           {{ item.title }}
         </button>

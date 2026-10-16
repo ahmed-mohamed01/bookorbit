@@ -335,37 +335,14 @@ describe('MonitoredWorkCard card info mode', () => {
     wrapper.unmount()
   })
 
-  it('shows the title on a first tap with a finger and opens the panel from the overlay', async () => {
+  it('opens the panel on a single tap with a finger, with no overlay step in between', async () => {
     stubPointer(true)
     const wrapper = mountInfo()
 
     await wrapper.get('[data-testid="cover-button"]').trigger('click')
-    expect(wrapper.emitted('preview')).toBeUndefined()
-    expect(wrapper.get('[data-testid="info-overlay"]').classes()).toContain('opacity-100')
 
-    await wrapper.get('[data-testid="overlay-open"]').trigger('click')
     expect(wrapper.emitted('preview')).toHaveLength(1)
-    wrapper.unmount()
-  })
-
-  it('hides the overlay again on a second tap or a tap outside the card', async () => {
-    stubPointer(true)
-    const wrapper = mount(MonitoredWorkCard, {
-      attachTo: document.body,
-      props: { work: work(), queued: false, ebookQueued: false, audiobookQueued: false, canManage: true },
-      global: {
-        stubs: { DropdownMenu: passthrough, DropdownMenuTrigger: passthrough, DropdownMenuContent: passthrough, DropdownMenuItem: passthrough },
-      },
-    })
-
-    await wrapper.get('[data-testid="cover-button"]').trigger('click')
-    await wrapper.get('[data-testid="cover-button"]').trigger('click')
-    expect(wrapper.get('[data-testid="info-overlay"]').classes()).toContain('opacity-0')
-
-    await wrapper.get('[data-testid="cover-button"]').trigger('click')
-    document.body.click()
-    await wrapper.vm.$nextTick()
-    expect(wrapper.get('[data-testid="info-overlay"]').classes()).toContain('opacity-0')
+    expect(wrapper.find('[data-testid="overlay-open"]').exists()).toBe(false)
     wrapper.unmount()
   })
 

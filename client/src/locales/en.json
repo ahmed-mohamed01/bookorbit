@@ -13650,6 +13650,38 @@
       "hide": "Hide",
       "unhide": "Unhide",
       "backToAutomatic": "Back to automatic",
+      "markAs": "Mark as",
+      "markAsNote": "Anything other than Book moves to Review and is no longer searched.",
+      "markAsKinds": {
+        "book": {
+          "title": "Book",
+          "description": "One title in the series"
+        },
+        "collection": {
+          "title": "Collection",
+          "description": "Omnibus or box set of other books"
+        },
+        "split_part": {
+          "title": "Part of a book",
+          "description": "A split release, like Part 1 of 2"
+        },
+        "anthology": {
+          "title": "Anthology",
+          "description": "Stories by several authors"
+        },
+        "graphic_novel": {
+          "title": "Comic",
+          "description": "Graphic novel or manga"
+        },
+        "format_variant": {
+          "title": "Alternate edition",
+          "description": "Another edition of a book you watch"
+        },
+        "duplicate": {
+          "title": "Duplicate",
+          "description": "Same book listed twice"
+        }
+      },
       "moreSeries": "+{count}",
       "openBook": "Open book",
       "openBookFormat": "Open the {format} in your library",
@@ -13658,6 +13690,7 @@
       "requestFormat": "Request {format}",
       "banner": {
         "review": "In review: {reasons}. It is not searched until you keep it.",
+        "marked": "You marked this as {kind}, so it is in review and not searched.",
         "reviewUnverified": "not confirmed by a second source",
         "verdict": {
           "probable": "probable match",
@@ -13670,7 +13703,8 @@
         "workPaused": "Watching this book is paused.",
         "workStopped": "Watching this book is stopped.",
         "resumeAuthor": "Resume author",
-        "openAuthor": "Open author"
+        "openAuthor": "Open author",
+        "dismiss": "Dismiss"
       }
     },
     "card": {
@@ -13820,6 +13854,7 @@
       "kinds": {
         "all": "All",
         "collection": "Collections",
+        "split_part": "Parts of a book",
         "anthology": "Anthologies",
         "graphic_novel": "Comics",
         "format_variant": "Alternate editions",
@@ -13828,6 +13863,7 @@
       },
       "badges": {
         "collection": "Collection",
+        "split_part": "Part of a book",
         "anthology": "Anthology",
         "graphic_novel": "Comic",
         "format_variant": "Alt edition",
@@ -14004,6 +14040,9 @@
         "skippedNoEbook": "{count, plural, one {# has no ebook edition} other {# have no ebook edition}}, skipped",
         "autoGrab": "Grab best match automatically",
         "monitor": "Monitor",
+        "markAs": "Mark as",
+        "markAsLabel": "{count, plural, one {Mark # book as} other {Mark # books as}}",
+        "markAsNote": "Anything other than Book moves them to Review and stops searching. Book brings them back.",
         "watchEbooks": "Watch ebooks",
         "watchAudiobooks": "Watch audiobooks",
         "unwatchEbooks": "Stop watching ebooks",
@@ -14031,9 +14070,10 @@
       "requestUnannouncedHint": "No release date known. Requesting searches now; if nothing is found it waits in Requests.",
       "watchingHint": "Searched automatically",
       "notWatchingHint": "Never searched",
-      "notInLibrary": "Not in your library",
+      "notInLibrary": "Not in library",
+      "fileCount": "{count, plural, one {# file} other {# files}}",
       "retryFormat": "Retry the {format}",
-      "findAnotherRelease": "Find another release",
+      "searchReplacement": "Search replacement",
       "ownedReleasesNote": "You already have this {format}. A grab is imported next to it in Book Dock.",
       "request": {
         "requested": "Requested",
@@ -14050,26 +14090,40 @@
         "askApproval": "Request without picking a release",
         "close": "Hide releases"
       },
-      "releasesButton": "Releases",
+      "releasesButton": "Search",
       "hideReleases": "Hide releases",
       "downloadInProgress": "A download is already in progress",
       "waitingForApproval": "Waiting for approval before a release can be picked",
       "resolveDownloadFirst": "Resolve the current download first",
       "ownedLoadFailed": "Could not load the library files",
       "ownedNoFile": "No file found for this format",
-      "moreFiles": "{count, plural, one {+# more file} other {+# more files}}",
       "fullPath": "Full path",
       "hidePath": "Hide path",
       "ownedRetry": "Retry",
+      "emptyTitle": "No file for this format yet",
+      "emptyHintWatching": "Request it, or pick a release yourself.",
+      "emptyHintNotWatching": "Turn on Watching to search for it.",
+      "onItsWay": "On its way",
+      "noFileOnDisk": "No file found on disk",
+      "check": "Check",
+      "recheckFiles": "Re-check files on disk",
+      "showAllFiles": "{count, plural, one {Show all # file} other {Show all # files}}",
+      "showMoreFiles": "{count, plural, one {Show # more file} other {Show # more files}}",
+      "hideAllFiles": "Show fewer files",
+      "durationHm": "{hours} h {minutes} min",
+      "durationM": "{minutes} min",
+      "downloadingPercent": "Downloading · {percent}",
+      "transferred": "{done} of {total}",
       "notWatched": "Not watched",
-      "notWatchedTurnOn": "Not watched; turn on Watching to search for it",
       "authorNotWatchingEbook": "This author's ebooks are not watched",
       "authorNotWatchingAudiobook": "This author's audiobooks are not watched",
       "openAuthor": "Open author",
       "watchFormat": "Watch {format}",
       "searchReleasesFormat": "Search {format} releases",
       "hideReleasesFormat": "Hide {format} releases",
-      "requestStatus": "{format} request:"
+      "requestStatus": "{format} request:",
+      "collapse": "Collapse",
+      "expand": "Expand"
     }
   },
   "tts": {

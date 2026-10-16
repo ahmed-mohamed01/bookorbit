@@ -6,7 +6,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import type { MonitoredReleaseRow } from '../composables/useReleaseRows'
 import MonitoredReleaseDatePopover from './MonitoredReleaseDatePopover.vue'
 
-/** The release date chip of a format slot, with the alerts that sit next to it. */
+/** The release date of a format card's stat line, with the alerts that sit next to it. */
 defineProps<{
   format: MonitoredFormat
   row: MonitoredReleaseRow
@@ -45,7 +45,6 @@ function handleRefresh() {
 <template>
   <MonitoredReleaseDatePopover
     v-if="row.editable"
-    chip
     :format="format"
     :open="open"
     :label="label"
@@ -67,7 +66,7 @@ function handleRefresh() {
       <TooltipTrigger as-child>
         <span
           tabindex="0"
-          class="inline-flex items-center rounded-xs text-xs focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          class="inline-flex items-center rounded-xs text-[14px] font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           :class="row.muted ? 'text-muted-foreground' : 'text-foreground'"
           >{{ label }}</span
         >

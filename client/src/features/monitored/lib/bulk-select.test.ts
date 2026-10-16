@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { chunk, bulkRequestPreview, isMissing, isReleased } from './bulk-select'
+import type { MonitoredReleaseItem, MonitoredWork } from '@bookorbit/types'
+import { chunk, bulkRequestPreview, isMissing, isReleased, releaseItemHasFormatToGet, sweptRowWorkIds } from './bulk-select'
 import { TODAY, workFixture } from '../testing/work-fixture'
 
 const missing = workFixture({ id: 'missing' })
@@ -62,5 +63,59 @@ describe('chunk', () => {
   it('defaults to the bulk limit and returns nothing for nothing', () => {
     expect(chunk(Array.from({ length: 101 }, (_, index) => index)).map((group) => group.length)).toEqual([100, 1])
     expect(chunk([])).toEqual([])
+  })
+})
+
+function releaseItem(work: MonitoredWork, overrides: Partial<MonitoredReleaseItem> = {}): MonitoredReleaseItem {
+  return {
+    workId: work.id,
+    work,
+    monitorAuthorId: 'm-1',
+    isOwner: true,
+    title: work.title,
+    authorName: 'An Author',
+    coverUrl: null,
+    format: 'ebook',
+    releaseDate: '2020-01-01',
+    status: 'available',
+    requestId: null,
+    ...overrides,
+  }
+}
+
+describe('releaseItemHasFormatToGet', () => {
+  it('has something to get while a watched format is not in the library', () => {
+    expect(releaseItemHasFormatToGet(releaseItem(workFixture()))).toBe(true)
+    expect(releaseItemHasFormatToGet(releaseItem(workFixture({ ownedFormats: ['ebook'] })))).toBe(true)
+  })
+
+  it('has nothing left once every watched format is owned', () => {
+    expect(releaseItemHasFormatToGet(releaseItem(workFixture({ ownedFormats: ['ebook', 'audiobook'] })))).toBe(false)
+    const ebookOnly = releaseItem(workFixture({ ownedFormats: ['ebook'] }), { authorModes: { ebook: 'notify', audiobook: 'off' } })
+    expect(releaseItemHasFormatToGet(ebookOnly)).toBe(false)
+  })
+})
+
+describe('sweptRowWorkIds', () => {
+  const rows = [
+    { key: 'a:ebook', workId: 'a' },
+    { key: 'b:ebook', workId: 'b' },
+    { key: 'c:ebook', workId: 'c' },
+    { key: 'd:ebook', workId: 'd' },
+    { key: 'a:audiobook', workId: 'a' },
+  ]
+  const keyOf = (row: { key: string }) => row.key
+  const any = () => true
+
+  it('sweeps the rows between anchor and click, not from the first row of the same work', () => {
+    expect(sweptRowWorkIds(rows, 'd:ebook', 'a:audiobook', keyOf, any)).toEqual(['d', 'a'])
+  })
+
+  it('sweeps upward too and skips rows that cannot be picked', () => {
+    expect(sweptRowWorkIds(rows, 'd:ebook', 'b:ebook', keyOf, (row) => row.workId !== 'c')).toEqual(['b', 'd'])
+  })
+
+  it('gives up when either row is gone', () => {
+    expect(sweptRowWorkIds(rows, 'gone', 'b:ebook', keyOf, any)).toBeNull()
   })
 })

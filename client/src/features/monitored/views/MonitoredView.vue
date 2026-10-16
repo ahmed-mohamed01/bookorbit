@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
-import { Check, Loader2, Plus, RefreshCw } from '@lucide/vue'
+import { Check, Loader2, Minus, Plus, RefreshCw } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
@@ -17,6 +17,7 @@ import type {
   MonitoredAuthorItem,
   MonitoredAuthorListSort,
   MonitoredFormat,
+  MonitoredMarkKind,
   MonitoredStatusFilter,
   MonitoredReleaseFilter,
   MonitoredReleaseItem,
@@ -45,6 +46,7 @@ import {
 import { monitoredErrorText } from '../lib/api-error'
 import { isMonitoredAcquisitionState } from '../lib/monitored-format-state'
 import { refreshAllAuthorsSequentially, type MonitoredRefreshSummary } from '../lib/refresh-summary'
+import { releaseItemHasFormatToGet, sweptRowWorkIds } from '../lib/bulk-select'
 import { collapseReleaseItems, releaseDateMoved, type MonitoredReleaseEntry } from '../lib/grouping'
 import AddMonitoredPanel from '../components/AddMonitoredPanel.vue'
 import MonitoredAuthorCard from '../components/MonitoredAuthorCard.vue'
@@ -137,6 +139,10 @@ const panelOwned = ref(true)
 const panelOpen = ref(false)
 const panelAuthorId = ref<string | null>(null)
 const panelModes = ref<Partial<Record<MonitoredFormat, MonitorMode>>>({})
+const panelCheckedAt = ref<string | null>(null)
+/** Authors whose refresh this page started and is still waiting on; the panel follows whichever one it shows. */
+const checkingAuthorIds = ref(new Set<string>())
+const panelChecking = computed(() => refreshAllRunning.value || (panelAuthorId.value !== null && checkingAuthorIds.value.has(panelAuthorId.value)))
 
 function entryModes(entry: MonitoredReleaseEntry): Partial<Record<MonitoredFormat, MonitorMode>> {
   return entry.items[0]?.authorModes ?? {}
@@ -160,6 +166,7 @@ function openEntryPanel(entry: MonitoredReleaseEntry) {
   panelFormats.value = entryFormats(entry)
   panelAuthorId.value = entry.items[0]?.monitorAuthorId ?? null
   panelModes.value = entryModes(entry)
+  panelCheckedAt.value = entry.items[0]?.authorLastRefreshedAt ?? null
   panelOpen.value = true
 }
 
@@ -262,6 +269,36 @@ function handleToggleMonitor(work: MonitoredWork, format: MonitoredFormat, value
 
 function handleSetAutomatic(work: MonitoredWork) {
   void patchWork(work, { automaticVisibility: true })
+}
+
+function handleSetKind(work: MonitoredWork, kind: MonitoredMarkKind) {
+  void patchWork(work, { kind })
+}
+
+/**
+ * The panel's Check is the author refresh: the scan that re-reads every format's files on disk.
+ * The refreshed author answers with its works, so the open panel re-points at the one that came back.
+ */
+async function handleCheckLibrary() {
+  const authorId = panelAuthorId.value
+  if (!authorId || panelChecking.value) return
+  checkingAuthorIds.value = new Set([...checkingAuthorIds.value, authorId])
+  try {
+    const detail = await refreshMonitoredAuthor(authorId)
+    // The reader may have moved to another author's book while the refresh ran; that panel is not ours to rewrite.
+    if (panelAuthorId.value === authorId) {
+      panelCheckedAt.value = detail.author.lastRefreshedAt
+      const reloaded = detail.works.find((work) => work.id === panelWork.value?.id)
+      if (reloaded) panelWork.value = reloaded
+    }
+    void reloadActive(true)
+  } catch (cause) {
+    toast.error(monitoredErrorText(cause, t('monitored.toast.refreshFailed')))
+  } finally {
+    const next = new Set(checkingAuthorIds.value)
+    next.delete(authorId)
+    checkingAuthorIds.value = next
+  }
 }
 
 function handleToggleHidden(work: MonitoredWork, value: boolean) {
@@ -426,10 +463,47 @@ const releaseSections = computed(() =>
   }),
 )
 
-const selectionAvailable = computed(() => activeTab.value === 'releases' && releasesView.value === 'cards' && canManage.value)
+const selectionAvailable = computed(() => activeTab.value === 'releases' && canManage.value)
+
+/**
+ * Works a list row may be picked for: yours to manage, with a watched format still to get. Decided once
+ * per work so both of its rows agree, and once per list change rather than per row on every render.
+ */
+const selectableRowWorkIds = computed(() => {
+  const ids = new Set<string>()
+  if (!canManage.value) return ids
+  for (const section of releaseSections.value) {
+    for (const item of section.items) {
+      if (!ids.has(item.workId) && item.isOwner && releaseItemHasFormatToGet(item)) ids.add(item.workId)
+    }
+  }
+  return ids
+})
+
+function rowSelectable(item: MonitoredReleaseItem): boolean {
+  return selectableRowWorkIds.value.has(item.workId)
+}
+
+/** The works each group offers to the selection, once each: list rows that have something left, or manageable cards. */
+const groupSelectableIds = computed(
+  () =>
+    new Map(
+      releaseSections.value.map((group) => {
+        const ids =
+          releasesView.value === 'table'
+            ? group.items.filter(rowSelectable).map((item) => item.workId)
+            : group.entries.filter(entryCanManage).map((entry) => entry.work.id)
+        return [group.key, [...new Set(ids)]]
+      }),
+    ),
+)
 // One work can sit in both the released and the upcoming section, so it is listed once, by first appearance.
 const selectableWorks = computed(() => {
   if (!selectionAvailable.value) return []
+  if (releasesView.value === 'table') {
+    const items = releaseSections.value.flatMap((section) => section.items).filter(rowSelectable)
+    return [...new Map(items.map((item) => [item.workId, item.work])).values()]
+  }
   const entries = releaseSections.value.flatMap((section) => section.entries).filter(entryCanManage)
   return [...new Map(entries.map((entry) => [entry.work.id, entry.work])).values()]
 })
@@ -449,6 +523,9 @@ const {
   exitSelectionMode,
   replaceSelection,
   addMany,
+  selectMany,
+  deselectMany,
+  toggleBook,
   requestSelected,
   updateSelected,
 } = useMonitoredBulkSelection({
@@ -457,6 +534,57 @@ const {
   onChanged: () => void reloadActive(true),
 })
 
+type ReleaseSection = (typeof releaseSections.value)[number]
+interface GroupSelection {
+  ids: string[]
+  selected: number
+  state: 'none' | 'some' | 'all'
+  ariaChecked: 'true' | 'false' | 'mixed'
+}
+
+const NO_GROUP_SELECTION: GroupSelection = { ids: [], selected: 0, state: 'none', ariaChecked: 'false' }
+
+const groupSelections = computed(() => {
+  const byGroup = new Map<string, GroupSelection>()
+  for (const [key, ids] of groupSelectableIds.value) {
+    const selected = ids.filter((id) => selectedIds.value.has(id)).length
+    const state = selected === 0 ? 'none' : selected === ids.length ? 'all' : 'some'
+    byGroup.set(key, { ids, selected, state, ariaChecked: state === 'all' ? 'true' : state === 'some' ? 'mixed' : 'false' })
+  }
+  return byGroup
+})
+
+function groupSelection(group: ReleaseSection): GroupSelection {
+  return groupSelections.value.get(group.key) ?? NO_GROUP_SELECTION
+}
+
+function handleGroupSelect(group: ReleaseSection) {
+  const { ids, state } = groupSelection(group)
+  if (state === 'all') deselectMany(ids)
+  else selectMany(ids)
+}
+
+/** The list row a shift-click sweeps from. Rows, not works: one work has a row per format, often far apart. */
+const rowAnchor = ref<string | null>(null)
+
+function handleRowSelect(item: MonitoredReleaseItem, event: MouseEvent) {
+  const key = releaseKey(item)
+  const anchor = rowAnchor.value
+  rowAnchor.value = key
+  const rows = releaseSections.value.flatMap((section) => section.items)
+  const swept = event.shiftKey && anchor !== null ? sweptRowWorkIds(rows, anchor, key, releaseKey, rowSelectable) : null
+  if (swept) selectMany(swept)
+  else toggleBook(item.workId)
+}
+
+function handleRowLongPress(item: MonitoredReleaseItem) {
+  rowAnchor.value = releaseKey(item)
+  startSelectingWith(item.work)
+}
+
+watch(selectionMode, (on) => {
+  if (!on) rowAnchor.value = null
+})
 watch([activeTab, releasesView, filterQuery, releaseSort, releaseOrder, releaseFilter, releaseStatus, releaseGroup], exitSelectionMode)
 watch(selectionAvailable, (available) => {
   if (!available) exitSelectionMode()
@@ -1057,12 +1185,36 @@ defineOptions({ name: 'MonitoredView' })
           @keep="replaceSelection"
         />
         <section v-for="group in releaseSections" :key="group.key">
-          <div v-if="group.label" class="mb-3 flex items-center gap-2">
-            <h3 class="text-xs font-semibold text-foreground">{{ group.label }}</h3>
-            <span v-if="group.count !== null" class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{{
-              formatNumber(group.count)
-            }}</span>
+          <div v-if="group.label || (selectionMode && groupSelection(group).ids.length)" class="mb-3 flex items-center gap-2">
+            <template v-if="group.label">
+              <h3 class="text-xs font-semibold text-foreground">{{ group.label }}</h3>
+              <span v-if="group.count !== null" class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{{
+                formatNumber(group.count)
+              }}</span>
+            </template>
             <div class="h-px flex-1 bg-border" />
+            <div v-if="selectionMode && groupSelection(group).ids.length" class="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+              <button
+                type="button"
+                role="checkbox"
+                :aria-checked="groupSelection(group).ariaChecked"
+                :aria-label="t('monitored.selection.group.selectAll', { name: group.label ?? t('monitored.tabs.releases') })"
+                class="flex size-5 shrink-0 items-center justify-center rounded-xs border transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                :class="
+                  groupSelection(group).state === 'none'
+                    ? 'border-border bg-background hover:border-primary'
+                    : 'border-primary bg-primary text-primary-foreground'
+                "
+                data-testid="group-select"
+                @click="handleGroupSelect(group)"
+              >
+                <Check v-if="groupSelection(group).state === 'all'" :size="12" aria-hidden="true" />
+                <Minus v-else-if="groupSelection(group).state === 'some'" :size="12" aria-hidden="true" />
+              </button>
+              <span class="tabular-nums" data-testid="group-progress">{{
+                t('monitored.selection.group.progress', { selected: groupSelection(group).selected, total: groupSelection(group).ids.length })
+              }}</span>
+            </div>
           </div>
           <div v-if="releasesView === 'table'" class="space-y-3">
             <MonitoredReleaseRow
@@ -1072,8 +1224,14 @@ defineOptions({ name: 'MonitoredView' })
               :density="monitoredReleaseRowDensity"
               :can-manage="canManage && item.isOwner"
               :requesting="isReleaseRequesting(item)"
+              :selection-mode="selectionMode"
+              :selected="selectedIds.has(item.workId)"
+              :selectable="rowSelectable(item)"
               @request="handleReleaseRequest"
               @preview="openItemPanel"
+              :long-press-select="selectionAvailable"
+              @select="handleRowSelect"
+              @long-press="handleRowLongPress"
             />
           </div>
           <MonitoredVirtualGrid v-else :virtualized="releaseGroup === 'none'" :items="group.entries" :card-size="workCardSize" :grid-gap="cardGap">
@@ -1144,6 +1302,8 @@ defineOptions({ name: 'MonitoredView' })
       :author-id="panelAuthorId"
       :format-modes="panelModes"
       :can-manage="canManage && panelOwned"
+      :checked-at="panelCheckedAt"
+      :checking="panelChecking"
       :open="panelOpen"
       @update:open="handlePanelOpen"
       @request="handlePanelRequest"
@@ -1152,6 +1312,8 @@ defineOptions({ name: 'MonitoredView' })
       @toggle-monitor="handleToggleMonitor"
       @toggle-hidden="handleToggleHidden"
       @set-automatic="handleSetAutomatic"
+      @set-kind="handleSetKind"
+      @check-library="handleCheckLibrary"
       @work-updated="handleWorkUpdated"
     />
   </main>

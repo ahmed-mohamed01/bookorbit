@@ -8,6 +8,7 @@ import {
   type MonitoredBulkRequestFormat,
   type MonitoredFormat,
   type MonitoredBulkWorkPatch,
+  type MonitoredMarkKind,
   type MonitoredWork,
 } from '@bookorbit/types'
 import SelectionActionBar from '@/components/SelectionActionBar.vue'
@@ -18,6 +19,7 @@ import { formatList, formatNumber } from '@/i18n/formatters'
 import type { SourceGroup } from '../composables/useRequestSources'
 import { bulkRequestPreview } from '../lib/bulk-select'
 import { todayUtc } from '../lib/format-status'
+import MonitoredMarkAsItems from './MonitoredMarkAsItems.vue'
 import { workDisplayClass } from '../lib/work-visibility'
 
 const props = defineProps<{
@@ -126,6 +128,10 @@ function handleUnwatchEbooks() {
 
 function handleUnwatchAudiobooks() {
   emit('patch', { monitorAudiobook: false })
+}
+
+function handleMarkAs(kind: MonitoredMarkKind) {
+  emit('patch', { kind })
 }
 
 function handleHide() {
@@ -264,6 +270,22 @@ function handleExit() {
           <DropdownMenuItem data-testid="bulk-unwatch-audiobooks" @click="handleUnwatchAudiobooks">
             <EyeOff :size="14" />{{ t('monitored.selection.bar.unwatchAudiobooks') }}
           </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger as-child>
+          <button type="button" :class="BUTTON_GHOST" :disabled="running || count === 0" data-testid="bulk-mark-as">
+            {{ t('monitored.selection.bar.markAs') }}
+            <ChevronDown :size="14" aria-hidden="true" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="top" align="center" :collision-padding="16" class="w-[calc(100vw-2rem)] sm:w-72">
+          <MonitoredMarkAsItems
+            :label="t('monitored.selection.bar.markAsLabel', { count: formatNumber(count) })"
+            :note="t('monitored.selection.bar.markAsNote')"
+            @select="handleMarkAs"
+          />
         </DropdownMenuContent>
       </DropdownMenu>
 

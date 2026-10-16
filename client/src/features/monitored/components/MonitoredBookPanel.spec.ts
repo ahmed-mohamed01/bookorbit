@@ -361,14 +361,28 @@ describe('MonitoredBookPanel owned slot', () => {
     const ebook = slot(wrapper, 'ebook')
 
     expect(ebook.get('[data-testid="owned-library"]').text()).toBe('Fiction/')
+    expect(ebook.get('[data-testid="slot-kind"]').text()).toBe('EPUB')
+    expect(ebook.get('[data-testid="slot-stat"]').text()).toContain('1 file')
+    expect(ebook.get('[data-testid="slot-library"]').text()).toBe('Fiction')
     expect(ebook.get('[data-testid="owned-file"]').text()).toBe('The Long Wait.epub')
+    expect(ebook.find('[data-testid="not-in-library"]').exists()).toBe(false)
     expect(ebook.text()).toContain('In library')
     expect(ebook.text()).toContain('Released Jan 2, 2020')
     expect(ebook.text()).toContain('Available since Mar 4, 2025')
-    expect(ebook.find('[data-testid="watch-toggle"]').exists()).toBe(false)
+    expect(ebook.find('[data-testid="watch-toggle"]').exists()).toBe(true)
     expect(ebook.find('[data-testid="releases-toggle"]').exists()).toBe(false)
     const link = ebook.findAllComponents(RouterLinkStub).find((candidate) => JSON.stringify(candidate.props('to')).includes('"bookId":5'))
     expect(link).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('holds the stat line back until the library book has loaded, rather than saying "0 files"', async () => {
+    bookDetailState.books = []
+    const wrapper = await mountPanel(ownedEbook)
+    const ebook = slot(wrapper, 'ebook')
+
+    expect(ebook.find('.animate-pulse').exists()).toBe(true)
+    expect(ebook.text()).not.toContain('0 files')
     wrapper.unmount()
   })
 
@@ -381,7 +395,7 @@ describe('MonitoredBookPanel owned slot', () => {
   })
 })
 
-describe('MonitoredBookPanel find another release', () => {
+describe('MonitoredBookPanel search replacement', () => {
   beforeEach(() => {
     resetPanelMocks()
     bookDetailState.books = [ebookBook()]
@@ -392,7 +406,7 @@ describe('MonitoredBookPanel find another release', () => {
     const ebook = slot(wrapper, 'ebook')
     const toggle = ebook.get('[data-testid="owned-releases-toggle"]')
 
-    expect(toggle.text()).toBe('Find another release')
+    expect(toggle.text()).toBe('Search replacement')
     expect(ebook.find('[data-testid="slot-releases"]').exists()).toBe(false)
     await toggle.trigger('click')
 
@@ -431,7 +445,7 @@ describe('MonitoredBookPanel not-owned slot', () => {
 
     expect(slot(wrapper, 'ebook').text()).toContain('Out Apr 10, 2099')
     expect(slot(wrapper, 'audiobook').text()).toContain('Released Jan 3, 2020')
-    expect(slot(wrapper, 'audiobook').text()).toContain('Not in your library')
+    expect(slot(wrapper, 'audiobook').text()).toContain('Not in library')
     wrapper.unmount()
 
     const empty = await mountPanel(baseWork)
@@ -439,15 +453,28 @@ describe('MonitoredBookPanel not-owned slot', () => {
     empty.unmount()
   })
 
-  it('draws an editable date as the boxed dashed trigger that opens the popover', async () => {
+  it('draws an editable date as the dashed-underline stat value that opens the popover', async () => {
     const wrapper = await mountPanel(baseWork)
     const trigger = slot(wrapper, 'ebook').get('button.border-dashed')
 
-    expect(trigger.classes()).toEqual(expect.arrayContaining(['h-8', 'rounded-md', 'border', 'px-2.5']))
+    expect(trigger.classes()).toEqual(expect.arrayContaining(['text-[14px]', 'border-b', 'border-dashed']))
+    // Flush with the card's content edge, so the underline lines up with the boxes beneath it.
+    expect(trigger.classes().some((name) => /^-?m[xs]-|^px-/.test(name))).toBe(false)
     expect(trigger.find('.underline').exists()).toBe(false)
     expect(slot(wrapper, 'ebook').find('[data-testid="not-available-yet"]').exists()).toBe(false)
     await trigger.trigger('click')
     expect(slot(wrapper, 'ebook').findComponent(MonitoredReleaseDatePopover).props('open')).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('greys out the colour of a format that is not watched', async () => {
+    const off: MonitoredWork = { ...releasedWork, monitorFormats: { audiobook: false } }
+    const wrapper = await mountPanel(off)
+    const bar = (format: 'ebook' | 'audiobook') => slot(wrapper, format).get('section > span').classes()
+
+    expect(bar('ebook')).toContain('bg-[var(--pill-media-ebook)]/70')
+    expect(bar('audiobook')).toContain('bg-muted-foreground/40')
+    expect(slot(wrapper, 'audiobook').html()).not.toContain('--pill-media-audiobook')
     wrapper.unmount()
   })
 
@@ -465,7 +492,7 @@ describe('MonitoredBookPanel not-owned slot', () => {
     expect(audioPill.attributes('aria-checked')).toBe('false')
     expect(audioPill.attributes('aria-label')).toBe('Watch audiobook')
     expect(audioPill.text()).toBe('Not watching')
-    expect(slot(wrapper, 'audiobook').text()).toContain('Not watched; turn on Watching to search for it')
+    expect(slot(wrapper, 'audiobook').text()).toContain('Never searched')
 
     await ebookPill.trigger('click')
     await audioPill.trigger('click')
@@ -533,6 +560,7 @@ describe('MonitoredBookPanel not-owned slot', () => {
     expect(wrapper.find('[data-testid="watch-toggle"]').exists()).toBe(false)
     expect(wrapper.find('button[aria-label="Request ebook"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="popover-refresh"]').exists()).toBe(false)
+    expect(slot(wrapper, 'ebook').get('[data-testid="slot-empty"]').text()).toBe('No file for this format yet')
     wrapper.unmount()
   })
 
@@ -575,6 +603,44 @@ describe('MonitoredBookPanel inline releases', () => {
     source.searched.value = true
     await nextTick()
     expect(list.get('[data-testid="releases-heading"]').text()).toMatch(/^Releases \u00b7 2 indexers \u00b7 \S/)
+    wrapper.unmount()
+  })
+
+  it('folds the other card while results are open, and a hand fold or unfold wins', async () => {
+    const wrapper = await mountPanel(releasedWork, releaseList(2))
+    const isFolded = (format: 'ebook' | 'audiobook') =>
+      slot(wrapper, format).get('[data-testid="slot-collapse"]').attributes('aria-expanded') === 'false'
+
+    await slot(wrapper, 'ebook').get('[data-testid="releases-toggle"]').trigger('click')
+    expect(isFolded('audiobook')).toBe(true)
+    expect(slot(wrapper, 'audiobook').find('[data-testid="slot-footer"]').exists()).toBe(false)
+    expect(slot(wrapper, 'audiobook').get('[data-testid="slot-collapse"]').attributes('aria-label')).toBe('Expand')
+
+    await slot(wrapper, 'ebook').get('[data-testid="releases-toggle"]').trigger('click')
+    expect(isFolded('audiobook')).toBe(false)
+
+    await slot(wrapper, 'audiobook').get('[data-testid="slot-collapse"]').trigger('click')
+    expect(isFolded('audiobook')).toBe(true)
+    await slot(wrapper, 'ebook').get('[data-testid="releases-toggle"]').trigger('click')
+    await slot(wrapper, 'ebook').get('[data-testid="releases-toggle"]').trigger('click')
+    expect(isFolded('audiobook')).toBe(true)
+
+    await slot(wrapper, 'ebook').get('[data-testid="slot-collapse"]').trigger('click')
+    expect(isFolded('ebook')).toBe(true)
+    expect(slot(wrapper, 'ebook').find('[data-testid="slot-footer"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('unfolds the other card when the results card is folded by hand', async () => {
+    const wrapper = await mountPanel(releasedWork, releaseList(2))
+    const isFolded = (format: 'ebook' | 'audiobook') =>
+      slot(wrapper, format).get('[data-testid="slot-collapse"]').attributes('aria-expanded') === 'false'
+
+    await slot(wrapper, 'ebook').get('[data-testid="releases-toggle"]').trigger('click')
+    expect(isFolded('audiobook')).toBe(true)
+    await slot(wrapper, 'ebook').get('[data-testid="slot-collapse"]').trigger('click')
+    expect(isFolded('ebook')).toBe(true)
+    expect(isFolded('audiobook')).toBe(false)
     wrapper.unmount()
   })
 
@@ -722,7 +788,7 @@ describe('MonitoredBookPanel header', () => {
     wrapper.unmount()
   })
 
-  it('hides from the kebab and offers the way back once hidden', async () => {
+  it('hides from the toolbar and offers the way back once hidden', async () => {
     const shown = await mountPanel(baseWork, [])
     await clickButton(shown, 'Hide')
     expect(shown.emitted('toggle-hidden')).toEqual([[baseWork, true]])
@@ -752,6 +818,52 @@ describe('MonitoredBookPanel visibility banner', () => {
     const wrapper = await mountPanel(baseWork, [])
 
     expect(wrapper.findComponent(MonitoredVisibilityBanner).find('[role="status"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('lets the reader close a notice that only restates their own choice, and remembers it', async () => {
+    localStorage.clear()
+    const kept: MonitoredWork = { ...baseWork, verdict: 'suspect', userVisibility: 'visible' }
+    const wrapper = await mountPanel(kept, [])
+    const banner = () => wrapper.findComponent(MonitoredVisibilityBanner)
+
+    expect(banner().text()).toContain('You kept this book')
+    await banner().get('[data-testid="banner-dismiss"]').trigger('click')
+    expect(banner().find('[role="status"]').exists()).toBe(false)
+    wrapper.unmount()
+
+    const again = await mountPanel(kept, [])
+    expect(again.findComponent(MonitoredVisibilityBanner).find('[role="status"]').exists()).toBe(false)
+    again.unmount()
+
+    const review = await mountPanel({ ...baseWork, verdict: 'probable' }, [])
+    expect(review.findComponent(MonitoredVisibilityBanner).find('[data-testid="banner-dismiss"]').exists()).toBe(false)
+    review.unmount()
+    localStorage.clear()
+  })
+
+  it('shows a closed notice again once the reader leaves that choice and makes it again', async () => {
+    localStorage.clear()
+    const kept: MonitoredWork = { ...baseWork, verdict: 'suspect', userVisibility: 'visible' }
+    const wrapper = await mountPanel(kept, [])
+    const banner = () => wrapper.findComponent(MonitoredVisibilityBanner)
+    await banner().get('[data-testid="banner-dismiss"]').trigger('click')
+
+    await wrapper.setProps({ work: { ...kept, userVisibility: undefined } })
+    await wrapper.setProps({ work: kept })
+
+    expect(banner().text()).toContain('You kept this book')
+    wrapper.unmount()
+    localStorage.clear()
+  })
+
+  it('names the owner mark instead of the verdict when the owner sent the work to review', async () => {
+    const marked: MonitoredWork = { ...baseWork, verdict: 'probable', userKind: 'split_part', kind: 'split_part' }
+    const wrapper = await mountPanel(marked, [])
+
+    const banner = wrapper.findComponent(MonitoredVisibilityBanner)
+    expect(banner.text()).toContain('You marked this as part of a book')
+    expect(banner.text()).not.toContain('probable match')
     wrapper.unmount()
   })
 
@@ -1278,7 +1390,7 @@ describe('MonitoredBookPanel release date refresh', () => {
   beforeEach(resetPanelMocks)
 
   async function clickRefresh(wrapper: Awaited<ReturnType<typeof mountPanel>>) {
-    await clickButton(wrapper, 'Check release dates now')
+    wrapper.findComponent(MonitoredReleaseDatePopover).vm.$emit('refresh')
     await nextTick()
     await nextTick()
   }
@@ -1351,6 +1463,18 @@ describe('MonitoredBookPanel owned slot failure states', () => {
     const wrapper = await mountPanel(ownedEbook)
 
     expect(slot(wrapper, 'ebook').get('[data-testid="owned-no-file"]').text()).toBe('No file found for this format')
+    await slot(wrapper, 'ebook').get('[data-testid="owned-check"]').trigger('click')
+    expect(wrapper.emitted('check-library')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('reads an owned format the author does not watch as not watched, and greys it', async () => {
+    bookDetailState.books = [ebookBook()]
+    const wrapper = await mountPanel(ownedEbook, [], true, { monitoredFormats: ['audiobook'] })
+    const ebook = slot(wrapper, 'ebook')
+
+    expect(ebook.text()).toContain('Not watching')
+    expect(ebook.get('section > span').classes()).toContain('bg-muted-foreground/40')
     wrapper.unmount()
   })
 
@@ -1420,11 +1544,11 @@ describe('MonitoredBookPanel owned slot failure states', () => {
     wrapper.unmount()
   })
 
-  it('lays an unowned format out in two columns with an editable date', async () => {
+  it('lays an unowned format out with an editable date', async () => {
     const wrapper = await mountPanel(ownedEbook)
     const audiobook = slot(wrapper, 'audiobook')
 
-    expect(audiobook.get('[data-testid="not-in-library"]').text()).toBe('Not in your library')
+    expect(audiobook.get('[data-testid="not-in-library"]').text()).toBe('Not in library')
     expect(audiobook.find('[data-testid="not-available-yet"]').exists()).toBe(false)
     expect(audiobook.findComponent(MonitoredReleaseDatePopover).exists()).toBe(true)
     expect(audiobook.text()).not.toContain('Not in your library yet')
@@ -1450,11 +1574,13 @@ describe('MonitoredBookPanel slot accessibility and reasons', () => {
     wrapper.unmount()
   })
 
-  it('writes the reason a disabled Releases button gives into the slot body for touch', async () => {
+  it('titles a disabled Search button with the reason it is blocked', async () => {
     const wrapper = await mountPanel({ ...releasedWork, requestIds: { ebook: 11 }, requestStatuses: { ebook: 'pending' } })
 
-    expect(slot(wrapper, 'ebook').get('[data-testid="releases-blocked"]').text()).toBe('Waiting for approval before a release can be picked')
-    expect(slot(wrapper, 'audiobook').find('[data-testid="releases-blocked"]').exists()).toBe(false)
+    expect(slot(wrapper, 'ebook').get('[data-testid="releases-toggle"]').attributes('title')).toBe(
+      'Waiting for approval before a release can be picked',
+    )
+    expect(slot(wrapper, 'audiobook').get('[data-testid="releases-toggle"]').attributes('title')).toBe('Search audiobook releases')
     wrapper.unmount()
   })
 
@@ -1490,10 +1616,10 @@ describe('MonitoredBookPanel slot accessibility and reasons', () => {
     wrapper.unmount()
   })
 
-  it('keeps one refresh-dates control per drawer, in the menu', async () => {
+  it('offers the date refresh from the popovers only, not from the header', async () => {
     const wrapper = await mountPanel(releasedWork)
 
-    expect(wrapper.findAll('button').filter((button) => button.text() === 'Check release dates now')).toHaveLength(1)
+    expect(wrapper.findAll('button').filter((button) => button.text() === 'Check release dates now')).toHaveLength(0)
     expect(wrapper.find('[data-testid="refresh-dates"]').exists()).toBe(false)
     wrapper.unmount()
   })
@@ -1559,18 +1685,50 @@ describe('MonitoredBookPanel inline release actions', () => {
 describe('MonitoredBookPanel drawer header', () => {
   beforeEach(resetPanelMocks)
 
-  it('shows Hide as a button from sm up and as a menu item below it, with touch-sized targets', async () => {
+  it('puts Hide, the mark-as menu and close together in the corner, Hide labelled only in the wide drawer', async () => {
     const wrapper = await mountPanel(baseWork, [])
-    const buttons = wrapper.findAll('button')
-    const visible = buttons.find((button) => button.text() === 'Hide' && button.classes().includes('sm:inline-flex'))
-    const menuItem = wrapper.findAll('button').find((button) => button.text() === 'Hide' && button.classes().includes('sm:hidden'))
 
-    expect(visible?.classes()).toContain('hidden')
-    expect(menuItem).toBeDefined()
-    for (const control of [visible, wrapper.get('[aria-label="More actions"]'), wrapper.get('[aria-label="Close"]')]) {
-      expect(control?.classes()).toContain('[@media(pointer:coarse)]:min-h-11')
-      expect(control?.classes()).toContain('[@media(pointer:coarse)]:min-w-11')
+    const corner = wrapper.get('[data-testid="panel-corner"]')
+    const hide = corner.get('[data-testid="visibility-toggle"]')
+    expect(hide.attributes('aria-label')).toBe('Hide')
+    expect(hide.get('span').classes()).toEqual(expect.arrayContaining(['hidden', '@lg:inline']))
+    expect(corner.find('[data-testid="mark-as-trigger"]').exists()).toBe(true)
+    expect(corner.find('[aria-label="Close"]').exists()).toBe(true)
+    const menu = wrapper.get('[data-testid="mark-as-trigger"]')
+    expect(menu.classes()).toContain('size-8')
+    expect(menu.classes()).not.toContain('border')
+    for (const target of [hide, menu, wrapper.get('[aria-label="Close"]')]) {
+      expect(target.classes()).toContain('[@media(pointer:coarse)]:min-h-11')
+      expect(target.classes()).toContain('[@media(pointer:coarse)]:min-w-11')
     }
+    wrapper.unmount()
+  })
+
+  it('leaves Hide and the mark-as menu out for a viewer who cannot manage the work', async () => {
+    const wrapper = await mountPanel(baseWork, [], false)
+
+    expect(wrapper.find('[data-testid="visibility-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="mark-as-trigger"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('marks the work as another kind through the overflow menu', async () => {
+    const wrapper = await mountPanel(baseWork, [])
+
+    await wrapper.get('[data-testid="mark-as-duplicate"]').trigger('click')
+
+    expect(wrapper.emitted('set-kind')).toEqual([[baseWork, 'duplicate']])
+    wrapper.unmount()
+  })
+
+  it('re-checks the author behind the check button and says when the author was last checked', async () => {
+    const checkedAt = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+    const wrapper = await mountPanel(releasedWork, [], true, { checkedAt })
+    const ebook = slot(wrapper, 'ebook')
+
+    expect(ebook.text()).toContain('Checked 3 hours ago')
+    await wrapper.getComponent(MonitoredFormatSlot).vm.$emit('check-library', 'ebook')
+    expect(wrapper.emitted('check-library')).toHaveLength(1)
     wrapper.unmount()
   })
 })

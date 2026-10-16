@@ -1,3 +1,5 @@
+import type { Component } from 'vue'
+import { AlertCircle, Clock, Download, Package, RotateCw, Search } from '@lucide/vue'
 import { monitoredAcquisitionState, type BookRequestStatus } from '@bookorbit/types'
 
 export const SLOT_REQUEST_KINDS = ['requested', 'searching', 'downloading', 'importing', 'review', 'failed'] as const
@@ -18,4 +20,14 @@ export function slotRequestKind(status: BookRequestStatus | null | undefined, op
   }
   if (status === 'failed') return 'failed'
   return optimistic ? 'requested' : null
+}
+
+/** The icon a format's request state wears wherever a slot names it. */
+export const SLOT_REQUEST_ICONS: Record<SlotRequestKind, Component> = {
+  requested: Clock,
+  searching: Search,
+  downloading: Download,
+  importing: Package,
+  review: AlertCircle,
+  failed: RotateCw,
 }

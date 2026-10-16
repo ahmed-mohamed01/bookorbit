@@ -29,8 +29,6 @@ const props = defineProps<{
   /** A listing that disagrees with the owner's own date; answering it either way settles the alert. */
   suggestion: MonitoredReleaseDateSuggestion | null
   state: MonitoredReleaseDateState
-  /** Draws the trigger as the boxed dashed date chip of a format slot instead of an inline value. */
-  chip?: boolean
   /** Offers a re-check of every source from the popover header; absent for viewers who may not run one. */
   canRefresh?: boolean
   refreshing?: boolean
@@ -152,13 +150,8 @@ function handleClear() {
           <PopoverTrigger as-child>
             <button
               type="button"
-              class="group/date inline-flex max-w-full items-center gap-1.5 text-left text-[13px] font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-              :class="[
-                muted ? 'text-muted-foreground' : 'text-foreground',
-                chip
-                  ? 'h-8 rounded-md border border-dashed border-border px-2.5 text-[13px] [@media(pointer:coarse)]:min-h-11'
-                  : 'text-[13px] rounded-xs',
-              ]"
+              class="group/date inline-flex max-w-full items-center gap-1.5 rounded-xs border-b border-dashed border-muted-foreground/60 text-left text-[14px] font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              :class="muted ? 'text-muted-foreground' : 'text-foreground'"
               :aria-label="triggerLabel"
             >
               <span class="truncate">{{ label }}</span>

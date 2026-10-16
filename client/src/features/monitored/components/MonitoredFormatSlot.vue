@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { ArrowUpRight, Bell, BellOff, BookOpen, ChevronUp, Folder, Headphones, Search } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { ArrowUpRight, Bell, BellOff, BookCopy, BookOpen, ChevronUp, Folder, Headphones, RefreshCw } from '@lucide/vue'
 import type { BookDetail, MonitorMode, MonitoredFormat, MonitoredWork } from '@bookorbit/types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { formatBytes } from '@/lib/formatting'
 import { useFormatSlotState } from '../composables/useFormatSlotState'
 import type { MonitoredReleaseRow } from '../composables/useReleaseRows'
 import type { MonitoredFormatStatus } from '../lib/format-status'
 import MonitoredOwnedTree from './MonitoredOwnedTree.vue'
 import MonitoredSlotDates from './MonitoredSlotDates.vue'
-import MonitoredSlotRequest from './MonitoredSlotRequest.vue'
+import MonitoredSlotFooter from './MonitoredSlotFooter.vue'
 
-/** One format of a monitored work: what is in the library for it, or what is being done to get it. */
+/** One format of a monitored work as its own card: identity, stat line, status, body, footer. */
 const props = defineProps<{
   work: MonitoredWork
   format: MonitoredFormat
@@ -20,7 +21,7 @@ const props = defineProps<{
   canEdit: boolean
   /** The author monitors this format at all. */
   authorWatches: boolean
-  /** May look release dates up and change them. */
+  /** May look release dates up, change them, and run a disk check. */
   canManage: boolean
   /** Where the author's monitored page is, when the panel is not already on it. */
   authorRoute?: { name: string; params: { id: string } } | null
@@ -34,6 +35,11 @@ const props = defineProps<{
   refreshing: boolean
   requesting: boolean
   releasesOpen: boolean
+  /** When the author's files were last checked; null before the first check. */
+  checkedAt?: string | null
+  checking?: boolean
+  /** Shows the identity row only. */
+  collapsed?: boolean
 }>()
 const emit = defineEmits<{
   request: [format: MonitoredFormat, autoDownload: boolean]
@@ -44,6 +50,8 @@ const emit = defineEmits<{
   'date-clear': [format: MonitoredFormat]
   'refresh-dates': []
   'retry-book': [format: MonitoredFormat]
+  'check-library': [format: MonitoredFormat]
+  'toggle-collapsed': [format: MonitoredFormat]
   filed: [requestId: number]
 }>()
 
@@ -53,10 +61,44 @@ const { t } = useI18n()
 
 const state = useFormatSlotState(props, (id) => emit('filed', id))
 const icon = computed(() => (props.format === 'audiobook' ? Headphones : BookOpen))
-const iconTone = computed(() => (props.format === 'audiobook' ? 'text-[var(--pill-media-audiobook)]' : 'text-[var(--pill-media-ebook)]'))
+/** Each format's colour, and grey for a format that is not watched, so a switched-off card reads as off. */
+const TONES = {
+  ebook: {
+    text: 'text-[var(--pill-media-ebook)]',
+    bar: 'bg-[var(--pill-media-ebook)]/70',
+    tile: 'bg-[var(--pill-media-ebook)]/14',
+    pill: 'border-[var(--pill-media-ebook)]/40 bg-[var(--pill-media-ebook)]/10 text-[var(--pill-media-ebook)]',
+  },
+  audiobook: {
+    text: 'text-[var(--pill-media-audiobook)]',
+    bar: 'bg-[var(--pill-media-audiobook)]/70',
+    tile: 'bg-[var(--pill-media-audiobook)]/14',
+    pill: 'border-[var(--pill-media-audiobook)]/40 bg-[var(--pill-media-audiobook)]/10 text-[var(--pill-media-audiobook)]',
+  },
+  off: {
+    text: 'text-muted-foreground',
+    bar: 'bg-muted-foreground/40',
+    tile: 'bg-muted',
+    pill: 'border-border bg-muted text-muted-foreground',
+  },
+} as const
+const tone = computed(() => TONES[state.watching.value ? props.format : 'off'])
+const toneText = computed(() => tone.value.text)
+const toneBg = computed(() => tone.value.bar)
+const tileBg = computed(() => tone.value.tile)
+const kindPill = computed(() => tone.value.pill)
 const formatLower = computed(() => state.formatName.value.toLowerCase())
-const ownedReleasesLabel = computed(() => (props.releasesOpen ? t('monitored.slot.hideReleases') : t('monitored.slot.findAnotherRelease')))
+const collapseLabel = computed(() => t(props.collapsed ? 'monitored.slot.expand' : 'monitored.slot.collapse'))
+const watchHintId = computed(() => `${props.work.id}-${props.format}-watch-hint`)
 const watchLabel = computed(() => t('monitored.slot.watchFormat', { format: formatLower.value }))
+
+/** The empty state's second line: the release on its way, or what this viewer can do about the gap. */
+const emptyHint = computed(() => {
+  const release = state.requestRelease.value
+  if (release) return release.sizeBytes != null ? `${release.title} · ${formatBytes(release.sizeBytes)}` : release.title
+  if (!props.canEdit) return null
+  return state.watching.value ? t('monitored.slot.emptyHintWatching') : t('monitored.slot.emptyHintNotWatching')
+})
 
 function handleToggleWatch() {
   emit('toggle-monitor', props.format, !state.watching.value)
@@ -66,8 +108,8 @@ function handleRequest(format: MonitoredFormat) {
   emit('request', format, true)
 }
 
-function handleToggleReleases() {
-  emit('toggle-releases', props.format)
+function handleToggleReleases(format: MonitoredFormat) {
+  emit('toggle-releases', format)
 }
 
 function handleDatesOpenChange(format: MonitoredFormat, open: boolean) {
@@ -89,133 +131,174 @@ function handleRefreshDates() {
 function handleRetryBook() {
   emit('retry-book', props.format)
 }
+
+function handleToggleCollapsed() {
+  emit('toggle-collapsed', props.format)
+}
+
+function handleCheckLibrary() {
+  emit('check-library', props.format)
+}
 </script>
 
 <template>
-  <section
-    class="border-t border-border py-2.5 first-of-type:border-t-0 first-of-type:pt-1 last-of-type:pb-0"
-    :data-format="format"
-    :data-status="status"
-  >
-    <div class="flex flex-wrap items-center justify-between gap-2">
+  <section class="relative overflow-hidden rounded-[10px] border border-border bg-card shadow-sm" :data-format="format" :data-status="status">
+    <span class="absolute inset-y-0 left-0 w-[3px]" :class="toneBg" aria-hidden="true" />
+    <div class="flex flex-col gap-2 p-2.5 ps-3">
       <div class="flex items-center gap-2">
-        <component :is="icon" :size="15" :class="iconTone" aria-hidden="true" />
-        <h3 class="text-[13px] font-semibold text-foreground">{{ state.formatName.value }}</h3>
-      </div>
-
-      <div v-if="state.owned.value" class="flex items-center gap-1.5">
-        <span class="text-xs text-[var(--pill-success)]">{{ t('monitored.slot.inLibrary') }}</span>
+        <div class="flex size-7 shrink-0 items-center justify-center rounded-md" :class="tileBg">
+          <component :is="icon" :size="15" :class="toneText" aria-hidden="true" />
+        </div>
+        <div class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+          <h3 class="text-sm leading-tight font-semibold text-foreground">{{ state.formatName.value }}</h3>
+          <span
+            v-if="state.owned.value"
+            class="inline-flex items-center gap-1 rounded-md border border-[var(--pill-success)]/40 bg-[var(--pill-success)]/12 px-1.5 py-px text-[11px] font-medium whitespace-nowrap text-[var(--pill-success)]"
+          >
+            {{ t('monitored.slot.inLibrary') }}
+          </span>
+          <span
+            v-else
+            class="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-px text-[11px] font-medium whitespace-nowrap text-muted-foreground"
+            data-testid="not-in-library"
+          >
+            {{ t('monitored.slot.notInLibrary') }}
+          </span>
+        </div>
         <RouterLink
-          v-if="state.bookRoute.value"
+          v-if="state.owned.value && state.bookRoute.value"
           :to="state.bookRoute.value"
-          class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          class="ms-auto inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           :aria-label="t('monitored.panel.openBookFormat', { format: formatLower })"
           :title="t('monitored.panel.openBook')"
           data-testid="library-link"
         >
-          <ArrowUpRight :size="14" aria-hidden="true" />
+          <ArrowUpRight :size="15" aria-hidden="true" />
         </RouterLink>
-        <button
-          v-if="canEdit"
-          type="button"
-          class="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none max-sm:w-6 max-sm:justify-center max-sm:px-0 [@media(pointer:coarse)]:min-h-11"
-          :aria-expanded="releasesOpen"
-          :aria-label="ownedReleasesLabel"
-          :title="ownedReleasesLabel"
-          data-testid="owned-releases-toggle"
-          @click="handleToggleReleases"
-        >
-          <ChevronUp v-if="releasesOpen" :size="12" aria-hidden="true" />
-          <Search v-else :size="12" aria-hidden="true" />
-          <span class="max-sm:hidden">{{ ownedReleasesLabel }}</span>
-        </button>
-      </div>
-
-      <div v-else class="flex flex-wrap items-center justify-end gap-x-2 gap-y-1">
-        <TooltipProvider v-if="canEdit">
+        <TooltipProvider>
           <Tooltip>
             <TooltipTrigger as-child>
               <button
                 type="button"
-                role="switch"
-                class="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs font-medium transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [@media(pointer:coarse)]:min-h-11"
-                :class="state.watching.value ? 'text-primary' : 'text-muted-foreground'"
-                :aria-checked="state.watching.value"
-                :aria-label="watchLabel"
-                data-testid="watch-toggle"
-                @click="handleToggleWatch"
+                class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [@media(pointer:coarse)]:size-11"
+                :class="state.owned.value && state.bookRoute.value ? undefined : 'ms-auto'"
+                :aria-expanded="!collapsed"
+                :aria-label="collapseLabel"
+                data-testid="slot-collapse"
+                @click="handleToggleCollapsed"
               >
-                <Bell v-if="state.watching.value" :size="13" aria-hidden="true" />
-                <BellOff v-else :size="13" aria-hidden="true" />
-                {{ state.watching.value ? t('monitored.slot.watching') : t('monitored.slot.notWatching') }}
+                <ChevronUp :size="15" class="transition-transform" :class="collapsed ? 'rotate-180' : undefined" aria-hidden="true" />
               </button>
             </TooltipTrigger>
-            <TooltipContent>{{ state.watchTooltip.value }}</TooltipContent>
+            <TooltipContent>{{ collapseLabel }}</TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <div
-          class="flex items-center [&>*]:rounded-none [&>*+*]:-ms-px [&>:first-child]:rounded-s-md [&>:last-child]:rounded-e-md"
-          data-testid="slot-actions"
-        >
-          <button
-            v-if="canEdit"
-            type="button"
-            :disabled="state.releasesBlockedHint.value !== null"
-            class="inline-flex h-7 shrink-0 items-center gap-1 border border-border px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [@media(pointer:coarse)]:min-h-11"
-            :aria-expanded="releasesOpen"
-            :aria-label="state.releasesToggleLabel.value"
-            :title="state.releasesBlockedHint.value ?? state.releasesToggleLabel.value"
-            data-testid="releases-toggle"
-            @click="handleToggleReleases"
-          >
-            <ChevronUp v-if="releasesOpen" :size="13" aria-hidden="true" />
-            <Search v-else :size="13" aria-hidden="true" />
-            <span class="hidden sm:inline">{{ releasesOpen ? t('monitored.slot.hideReleases') : t('monitored.slot.releasesButton') }}</span>
-          </button>
-          <MonitoredSlotRequest
-            :format="format"
-            :kind="state.requestKind.value"
-            :request-route="state.requestRoute.value"
-            :can-request="state.canRequest.value"
-            :busy="requesting"
-            :hint="state.requestHint.value"
-            @request="handleRequest"
-          />
-        </div>
       </div>
-    </div>
 
-    <div class="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1.5 pt-2">
-      <!-- The dates float so a long path or file name can run under them once the tree opens. -->
-      <div v-if="state.owned.value" class="col-span-2 flow-root">
-        <div class="float-end ms-4 mb-1 flex flex-col items-end gap-0.5 text-end text-xs text-muted-foreground">
-          <i18n-t
-            v-if="state.releasedOn.value"
-            :keypath="state.releasedOn.value.yearOnly ? 'monitored.slot.releasedIn' : 'monitored.slot.released'"
-            tag="span"
+      <template v-if="!collapsed">
+        <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <p
+            v-if="state.owned.value && state.ownedBody.value === 'file'"
+            class="flex min-w-0 flex-wrap items-center gap-1.5 text-[12.5px] text-foreground"
+            data-testid="slot-stat"
           >
-            <template #date
-              ><span class="text-foreground">{{ state.releasedOn.value.date }}</span></template
+            <span
+              v-if="state.statKind.value"
+              class="inline-flex items-center rounded-md border px-1.5 py-px text-[11px] font-semibold tracking-wider"
+              :class="kindPill"
+              data-testid="slot-kind"
+              >{{ state.statKind.value }}</span
             >
-          </i18n-t>
-          <i18n-t v-if="state.availableSince.value" keypath="monitored.slot.availableSince" tag="span">
-            <template #date
-              ><span class="text-foreground">{{ state.availableSince.value.date }}</span></template
+            <span class="tabular-nums">
+              {{ t('monitored.slot.fileCount', { count: state.fileCount.value })
+              }}<template v-if="state.editionSizeBytes.value != null"> &middot; {{ formatBytes(state.editionSizeBytes.value) }}</template>
+            </span>
+            <span
+              v-if="book?.libraryName"
+              class="inline-flex min-w-0 items-center gap-1 rounded-md border border-border px-1.5 py-px text-[11px] font-medium text-muted-foreground"
+              data-testid="slot-library"
             >
-          </i18n-t>
+              <BookCopy :size="11" class="shrink-0" aria-hidden="true" />
+              <span class="truncate">{{ book.libraryName }}</span>
+            </span>
+          </p>
+          <div v-else-if="!state.owned.value" class="flex max-w-full shrink-0 flex-wrap items-center gap-1.5">
+            <MonitoredSlotDates
+              :format="format"
+              :row="row"
+              :label="state.chipLabel.value"
+              :open="datesOpen"
+              :can-manage="canManage"
+              :refreshing="refreshing"
+              @open-change="handleDatesOpenChange"
+              @set="handleDateSet"
+              @clear="handleDateClear"
+              @refresh="handleRefreshDates"
+            />
+          </div>
+
+          <!-- What the switch means ("Searched automatically", "Never searched") lives in its tooltip, keeping this one row. -->
+          <TooltipProvider v-if="canEdit">
+            <Tooltip>
+              <TooltipTrigger as-child>
+                <button
+                  type="button"
+                  role="switch"
+                  class="ms-auto -me-1.5 inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[12.5px] font-medium transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  :class="state.watching.value ? 'text-primary' : 'text-muted-foreground'"
+                  :aria-checked="state.watching.value"
+                  :aria-label="watchLabel"
+                  :aria-describedby="watchHintId"
+                  data-testid="watch-toggle"
+                  @click="handleToggleWatch"
+                >
+                  <Bell v-if="state.watching.value" :size="12" aria-hidden="true" />
+                  <BellOff v-else :size="12" aria-hidden="true" />
+                  {{ state.watching.value ? t('monitored.slot.watching') : t('monitored.slot.notWatching') }}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>{{ state.watchTooltip.value }}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <span v-if="canEdit" :id="watchHintId" class="sr-only">{{ state.watchTooltip.value }}</span>
+          <span
+            v-else-if="!state.statusLine.value"
+            class="ms-auto inline-flex shrink-0 items-center gap-1 text-[12.5px] font-medium"
+            :class="state.watching.value ? 'text-primary' : 'text-muted-foreground'"
+          >
+            <Bell v-if="state.watching.value" :size="12" aria-hidden="true" />
+            <BellOff v-else :size="12" aria-hidden="true" />
+            {{ state.watching.value ? t('monitored.slot.watching') : t('monitored.slot.notWatching') }}
+          </span>
         </div>
+
+        <p v-if="!canEdit && state.statusLine.value" class="text-[12.5px]">
+          <span :class="state.statusLine.value.tone" data-testid="slot-status">{{ state.statusLine.value.text }}</span>
+          <RouterLink
+            v-if="state.statusLine.value.authorLink && authorRoute"
+            :to="authorRoute"
+            class="ms-1.5 font-medium text-foreground underline-offset-2 hover:underline"
+            data-testid="slot-author-link"
+            >{{ t('monitored.slot.openAuthor') }}</RouterLink
+          >
+        </p>
+
         <MonitoredOwnedTree
-          v-if="state.ownedBody.value === 'file' && state.fileName.value"
-          class="min-w-0"
+          v-if="state.owned.value && state.ownedBody.value === 'file' && state.fileName.value"
+          class="rounded-md border border-dashed border-muted-foreground/35 px-2.5 py-1.5"
           :format="format"
           :library-name="book?.libraryName ?? ''"
           :library-id="book?.libraryId"
           :file-name="state.fileName.value"
           :file-path="state.filePath.value"
           :files="book?.files"
+          :content-paths="state.contentPaths.value"
+          :recheckable="canManage"
+          :checking="checking"
+          @recheck="handleCheckLibrary"
         />
         <div
-          v-else-if="state.ownedBody.value === 'error'"
+          v-else-if="state.owned.value && state.ownedBody.value === 'error'"
           class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
           role="alert"
           data-testid="owned-error"
@@ -230,52 +313,73 @@ function handleRetryBook() {
             {{ t('monitored.slot.ownedRetry') }}
           </button>
         </div>
-        <div v-else-if="state.ownedBody.value === 'loading'" class="h-10 min-w-0 animate-pulse rounded-md bg-muted" aria-hidden="true" />
-        <p v-else class="flex min-w-0 items-center text-xs text-muted-foreground" data-testid="owned-no-file">
-          {{ t('monitored.slot.ownedNoFile') }}
-        </p>
-      </div>
-      <template v-else>
-        <p class="flex min-w-0 items-center gap-1.5 text-muted-foreground" data-testid="not-in-library">
-          <Folder :size="12" class="shrink-0" aria-hidden="true" />
-          <span class="truncate font-mono text-[11.5px]">{{ t('monitored.slot.notInLibrary') }}</span>
-        </p>
-        <div class="flex flex-col items-end gap-0.5 text-end text-xs text-muted-foreground">
-          <div class="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1">
-            <MonitoredSlotDates
-              :format="format"
-              :row="row"
-              :label="state.chipLabel.value"
-              :open="datesOpen"
-              :can-manage="canManage"
-              :refreshing="refreshing"
-              @open-change="handleDatesOpenChange"
-              @set="handleDateSet"
-              @clear="handleDateClear"
-              @refresh="handleRefreshDates"
-            />
-          </div>
+        <div
+          v-else-if="state.owned.value && state.ownedBody.value === 'loading'"
+          class="h-10 min-w-0 animate-pulse rounded-md bg-muted"
+          aria-hidden="true"
+        />
+        <div v-else-if="state.owned.value" class="flex min-w-0 flex-wrap items-center justify-between gap-2">
+          <p class="text-xs text-muted-foreground" data-testid="owned-no-file">{{ t('monitored.slot.ownedNoFile') }}</p>
+          <button
+            v-if="canManage"
+            type="button"
+            class="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [@media(pointer:coarse)]:min-h-11"
+            :disabled="checking"
+            data-testid="owned-check"
+            @click="handleCheckLibrary"
+          >
+            <RefreshCw :size="13" :class="checking ? 'motion-safe:animate-spin' : undefined" aria-hidden="true" />
+            {{ t('monitored.slot.check') }}
+          </button>
+        </div>
+        <div
+          v-else
+          class="flex min-w-0 items-center gap-2 rounded-md border border-dashed border-muted-foreground/35 px-2.5 py-1.5 text-xs text-muted-foreground"
+          data-testid="slot-empty"
+        >
+          <RefreshCw
+            v-if="state.requestMoving.value"
+            :size="13"
+            class="shrink-0"
+            :class="state.requestKind.value === 'downloading' ? 'motion-safe:animate-spin' : undefined"
+            aria-hidden="true"
+          />
+          <Folder v-else :size="13" class="shrink-0" aria-hidden="true" />
+          <p class="min-w-0">
+            <span class="font-medium text-foreground">{{
+              state.requestMoving.value ? t('monitored.slot.onItsWay') : t('monitored.slot.emptyTitle')
+            }}</span>
+            <template v-if="emptyHint"> &middot; {{ emptyHint }}</template>
+          </p>
         </div>
       </template>
-
-      <div v-if="!state.owned.value && (state.statusLine.value || state.releasesBlockedHint.value)" class="col-span-2 space-y-0.5">
-        <p v-if="state.statusLine.value" class="text-xs" :class="state.statusLine.value.tone" data-testid="slot-status">
-          {{ state.statusLine.value.text }}
-          <RouterLink
-            v-if="state.statusLine.value.authorLink && authorRoute"
-            :to="authorRoute"
-            class="font-medium text-foreground underline-offset-2 hover:underline"
-            data-testid="slot-author-link"
-            >{{ t('monitored.slot.openAuthor') }}</RouterLink
-          >
-        </p>
-        <p v-if="state.releasesBlockedHint.value" class="text-xs text-muted-foreground" data-testid="releases-blocked">
-          {{ state.releasesBlockedHint.value }}
-        </p>
-      </div>
     </div>
 
-    <div v-if="releasesOpen" class="mt-2.5 border-t border-border pt-2.5" data-testid="slot-releases">
+    <MonitoredSlotFooter
+      v-if="!collapsed"
+      :format="format"
+      :owned="state.owned.value"
+      :available-since="state.availableSince.value"
+      :released-label="state.releasedLabel.value"
+      :releases-open="releasesOpen"
+      :can-edit="canEdit"
+      :can-manage="canManage"
+      :checked-at="checkedAt"
+      :checking="checking"
+      :request-kind="state.requestKind.value"
+      :request-route="state.requestRoute.value"
+      :can-request="state.canRequest.value"
+      :busy="requesting"
+      :hint="state.requestHint.value"
+      :releases-blocked-hint="state.releasesBlockedHint.value"
+      :releases-toggle-label="state.releasesToggleLabel.value"
+      :download="state.download.value"
+      @check="handleCheckLibrary"
+      @toggle-releases="handleToggleReleases"
+      @request="handleRequest"
+    />
+
+    <div v-if="releasesOpen && !collapsed" class="border-t border-border p-3 ps-3.5" data-testid="slot-releases">
       <p v-if="state.owned.value" class="mb-2 text-xs text-muted-foreground" data-testid="owned-releases-note">
         {{ t('monitored.slot.ownedReleasesNote', { format: formatLower }) }}
       </p>
