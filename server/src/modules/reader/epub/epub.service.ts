@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { stat } from 'fs/promises';
 import { Readable } from 'stream';
 import * as unzipper from 'unzipper';
@@ -8,7 +8,9 @@ import type { EpubBookInfo, EpubManifestItem, EpubMediaOverlayPlaylist, EpubSpin
 import { BookReadService } from '../../book/book-read.service';
 import { LibraryService } from '../../library/library.service';
 import type { RequestUser } from '../../../common/types/request-user';
-import { buildEpubMediaOverlayPlaylist, findEpubZipEntry, normalizeEpubZipPath } from './epub-media-overlay';
+import { buildEpubMediaOverlayPlaylist, cleanEpubZipPath, findEpubZipEntry } from './epub-media-overlay';
+import { parseEpubPackage } from './epub-package';
+import { openEpubZipEntryRange } from './epub-zip-entry-stream';
 import type { ByteRange } from './epub-zip-range';
 import { EpubMediaStreamService } from './epub-media-stream.service';
 
@@ -56,6 +58,8 @@ interface CacheEntry {
   size: number;
   validPaths: Set<string>;
   lastAccessed: number;
+  /** Narration playlists built from this copy of the file, by `bookId:fileId`. */
+  playlists?: Map<string, Promise<EpubMediaOverlayPlaylist>>;
 }
 
 interface EpubFileResolution {
@@ -77,7 +81,7 @@ interface EpubFileStream {
   openBody: () => NodeJS.ReadableStream;
   contentType: string;
   size: number;
-  status: 200 | 206 | 304;
+  status: 200 | 206 | 304 | 416;
   contentRange: string | null;
   etag: string | null;
   acceptsRanges: boolean;
@@ -88,7 +92,9 @@ function formatContentRange(range: ByteRange, size: number): string {
 }
 
 interface MediaOverlayFileResponse {
-  data: Buffer;
+  body: Readable | Buffer;
+  /** Bytes in `body`, for Content-Length. */
+  length: number;
   contentType: string;
   size: number;
   status: number;
@@ -115,18 +121,6 @@ function getText(v: unknown): string | null {
     if (typeof text === 'number') return String(text);
   }
   return null;
-}
-
-function findInZip(files: unzipper.File[], path: string): unzipper.File | undefined {
-  const clean = normalizeZipPath(path);
-  const cleanLower = clean.toLowerCase();
-  let ciMatch: unzipper.File | undefined;
-  for (const file of files) {
-    const fp = normalizeZipPath(file.path);
-    if (fp === clean) return file;
-    if (!ciMatch && fp.toLowerCase() === cleanLower) ciMatch = file;
-  }
-  return ciMatch;
 }
 
 function safeDecodeURI(path: string): string {
@@ -230,7 +224,7 @@ function parseNcxNavPoints(parent: Record<string, unknown>, basePath: string): E
 async function parseEpub(epubPath: string): Promise<EpubBookInfo> {
   const zip = await unzipper.Open.file(epubPath);
 
-  const containerEntry = findInZip(zip.files, 'META-INF/container.xml');
+  const containerEntry = findEpubZipEntry(zip.files, 'META-INF/container.xml');
   if (!containerEntry) throw new Error('Missing META-INF/container.xml');
   const containerDoc = xmlParser.parse(await containerEntry.buffer()) as Record<string, unknown>;
 
@@ -242,10 +236,9 @@ async function parseEpub(epubPath: string): Promise<EpubBookInfo> {
 
   const rootPath = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : '';
 
-  const opfEntry = findInZip(zip.files, opfPath);
+  const opfEntry = findEpubZipEntry(zip.files, opfPath);
   if (!opfEntry) throw new Error(`OPF not found: ${opfPath}`);
-  const opfDoc = xmlParser.parse(await opfEntry.buffer()) as Record<string, unknown>;
-  const pkg = (opfDoc['package'] ?? opfDoc) as Record<string, unknown>;
+  const pkg = parseEpubPackage(await opfEntry.buffer());
   const manifestEl = pkg['manifest'] as Record<string, unknown> | undefined;
   const spineEl = pkg['spine'] as Record<string, unknown> | undefined;
   const metadataEl = pkg['metadata'] as Record<string, unknown> | undefined;
@@ -259,7 +252,7 @@ async function parseEpub(epubPath: string): Promise<EpubBookInfo> {
     const properties = propertiesStr ? propertiesStr.split(/\s+/) : undefined;
     const mediaOverlay = item['@_media-overlay'];
     const fullHref = normalizeZipPath(resolveHref(relHref, rootPath).split('#')[0]);
-    const size = findInZip(zip.files, fullHref)?.uncompressedSize ?? 0;
+    const size = findEpubZipEntry(zip.files, fullHref)?.uncompressedSize ?? 0;
     const manifestItem: EpubManifestItem = {
       id,
       href: fullHref,
@@ -306,7 +299,7 @@ async function parseEpub(epubPath: string): Promise<EpubBookInfo> {
   const navItem = manifest.find((m) => m.properties?.includes('nav'));
   if (navItem) {
     try {
-      const navEntry = findInZip(zip.files, navItem.href);
+      const navEntry = findEpubZipEntry(zip.files, navItem.href);
       if (navEntry) {
         const navDoc = xmlParser.parse(await navEntry.buffer()) as Record<string, unknown>;
         const navDir = navItem.href.includes('/') ? navItem.href.slice(0, navItem.href.lastIndexOf('/') + 1) : rootPath;
@@ -331,7 +324,7 @@ async function parseEpub(epubPath: string): Promise<EpubBookInfo> {
     const ncxItem = manifest.find((m) => m.mediaType === 'application/x-dtbncx+xml');
     if (ncxItem) {
       try {
-        const ncxEntry = findInZip(zip.files, ncxItem.href);
+        const ncxEntry = findEpubZipEntry(zip.files, ncxItem.href);
         if (ncxEntry) {
           const ncxDoc = xmlParser.parse(await ncxEntry.buffer()) as Record<string, unknown>;
           const ncxDir = ncxItem.href.includes('/') ? ncxItem.href.slice(0, ncxItem.href.lastIndexOf('/') + 1) : rootPath;
@@ -345,7 +338,7 @@ async function parseEpub(epubPath: string): Promise<EpubBookInfo> {
     }
   }
 
-  const optionalFiles = OPTIONAL_META_INF_FILES.filter((path) => findInZip(zip.files, path));
+  const optionalFiles = OPTIONAL_META_INF_FILES.filter((path) => findEpubZipEntry(zip.files, path));
 
   return { containerPath: opfPath, rootPath, spine, manifest, optionalFiles, toc, metadata, coverPath };
 }
@@ -373,7 +366,7 @@ export class EpubService {
     const result: Array<{ spineIndex: number; text: string }> = [];
 
     for (const [spineIndex, item] of cached.info.spine.entries()) {
-      const entry = findInZip(zip.files, item.href);
+      const entry = findEpubZipEntry(zip.files, item.href);
       if (!entry) {
         result.push({ spineIndex, text: '' });
         continue;
@@ -398,7 +391,7 @@ export class EpubService {
     const zip = await unzipper.Open.file(epubPath);
 
     for (const item of cached.info.spine) {
-      const entry = findInZip(zip.files, item.href);
+      const entry = findEpubZipEntry(zip.files, item.href);
       if (!entry) continue;
       try {
         xmlParser.parse(await entry.buffer());
@@ -413,9 +406,33 @@ export class EpubService {
   async getMediaOverlayPlaylist(bookId: number, fileId: number | undefined, user: RequestUser): Promise<EpubMediaOverlayPlaylist> {
     const resolved = await this.resolveEpubFile(bookId, fileId, user);
     const cached = await this.getCachedEntry(resolved.absolutePath);
-    return buildEpubMediaOverlayPlaylist(resolved.absolutePath, cached.info, bookId, resolved.fileId);
+    return this.cachedPlaylist(cached, resolved.absolutePath, bookId, resolved.fileId);
   }
 
+  /**
+   * The playlist, built once per copy of the file. Every audio request needs it to check its
+   * resource, and a player asks for many ranges of one clip, each of which used to parse every
+   * SMIL in the book again.
+   */
+  private cachedPlaylist(entry: CacheEntry, absolutePath: string, bookId: number, fileId: number | null): Promise<EpubMediaOverlayPlaylist> {
+    const playlists = (entry.playlists ??= new Map());
+    const key = `${bookId}:${fileId ?? ''}`;
+    const existing = playlists.get(key);
+    if (existing) return existing;
+    const built = buildEpubMediaOverlayPlaylist(absolutePath, entry.info, bookId, fileId);
+    playlists.set(key, built);
+    // A failure is not kept, so the next request tries again.
+    built.catch(() => {
+      if (playlists.get(key) === built) playlists.delete(key);
+    });
+    return built;
+  }
+
+  /**
+   * `filePath` is a playlist resource href as the router decoded it, or as a Watch ticket holds it.
+   * It is compared with the playlist's hrefs as it is, never decoded again, so a name holding a
+   * literal `%` still names its own entry.
+   */
   async streamMediaOverlayFile(
     bookId: number,
     filePath: string,
@@ -424,28 +441,41 @@ export class EpubService {
     user: RequestUser,
   ): Promise<MediaOverlayFileResponse> {
     if (filePath.includes('..')) throw new ForbiddenException('Invalid path');
-    const normalizedPath = normalizeEpubZipPath(filePath);
-    if (!normalizedPath) throw new ForbiddenException('Invalid path');
+    const requestedPath = cleanEpubZipPath(filePath);
+    if (!requestedPath) throw new ForbiddenException('Invalid path');
 
     const resolved = await this.resolveEpubFile(bookId, fileId, user);
     const cached = await this.getCachedEntry(resolved.absolutePath);
-    const playlist = await buildEpubMediaOverlayPlaylist(resolved.absolutePath, cached.info, bookId, resolved.fileId);
-    const resource = playlist.resources.find((item) => item.href === normalizedPath);
-    if (!resource) throw new NotFoundException(`Media-overlay resource not in playlist: ${normalizedPath}`);
+    const playlist = await this.cachedPlaylist(cached, resolved.absolutePath, bookId, resolved.fileId);
+    const resource = playlist.resources.find((item) => item.href === requestedPath);
+    if (!resource) throw new NotFoundException(`Media-overlay resource not in playlist: ${requestedPath}`);
 
     const zip = await unzipper.Open.file(resolved.absolutePath);
-    const entry = findEpubZipEntry(zip.files, normalizedPath);
-    if (!entry) throw new NotFoundException(`Entry not in archive: ${normalizedPath}`);
+    const entry = findEpubZipEntry(zip.files, resource.href);
+    if (!entry) throw new NotFoundException(`Entry not in archive: ${requestedPath}`);
 
-    const full = await entry.buffer();
-    const range = this.parseRange(rangeHeader, full.length);
-    const data = range ? full.subarray(range.start, range.end + 1) : full;
+    const size = entry.uncompressedSize;
+    const range = this.parseRange(rangeHeader, size);
+    if (range === 'unsatisfiable') {
+      return {
+        body: Buffer.alloc(0),
+        length: 0,
+        contentType: resource.mediaType,
+        size,
+        status: 416,
+        contentRange: `bytes */${size}`,
+      };
+    }
+    const start = range?.start ?? 0;
+    const end = range?.end ?? size - 1;
+    const length = end - start + 1;
     return {
-      data,
+      body: length > 0 ? await openEpubZipEntryRange(resolved.absolutePath, entry, start, end) : Buffer.alloc(0),
+      length,
       contentType: resource.mediaType,
-      size: full.length,
+      size,
       status: range ? 206 : 200,
-      contentRange: range ? formatContentRange(range, full.length) : null,
+      contentRange: range ? formatContentRange(range, size) : null,
     };
   }
 
@@ -472,7 +502,7 @@ export class EpubService {
     let stored = this.mediaStream.knownEntry(archive, normalizedPath);
     if (!stored) {
       const zip = await unzipper.Open.file(epubPath);
-      const entry = findInZip(zip.files, normalizedPath);
+      const entry = findEpubZipEntry(zip.files, normalizedPath);
       if (!entry) throw new NotFoundException(`Entry not in archive: ${normalizedPath}`);
       stored = await this.mediaStream.storedEntry(bookId, archive, normalizedPath, entry);
       if (!stored) {
@@ -484,8 +514,20 @@ export class EpubService {
     const playable = stored;
     const { size } = playable.layout;
 
-    const requested = this.parseRange(conditions.range, size);
-    const range = requested && (!conditions.ifRange || conditions.ifRange === playable.etag) ? requested : null;
+    const parsed = this.parseRange(conditions.range, size);
+    const requested = parsed && (!conditions.ifRange || conditions.ifRange === playable.etag) ? parsed : null;
+    if (requested === 'unsatisfiable') {
+      return {
+        openBody: () => Readable.from([]),
+        contentType,
+        size: 0,
+        status: 416,
+        contentRange: `bytes */${size}`,
+        etag: playable.etag,
+        acceptsRanges: true,
+      };
+    }
+    const range = requested;
     if (!range && conditions.ifNoneMatch === playable.etag) {
       return { openBody: () => Readable.from([]), contentType, size: 0, status: 304, contentRange: null, etag: playable.etag, acceptsRanges: true };
     }
@@ -525,27 +567,32 @@ export class EpubService {
     return { fileId: null, absolutePath: file.absolutePath, readerPath: file.absolutePath, sizeBytes: file.sizeBytes };
   }
 
-  private parseRange(rangeHeader: string | undefined, size: number): ByteRange | null {
+  /**
+   * The bytes a Range header asks for. A header this cannot read is ignored and the whole file
+   * sent, as HTTP has it; a range that reads but lies outside the file is a 416.
+   */
+  private parseRange(rangeHeader: string | undefined, size: number): ByteRange | 'unsatisfiable' | null {
     if (!rangeHeader) return null;
     const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/);
-    if (!match) throw new BadRequestException('Invalid Range header');
+    if (!match) return null;
     const [, startRaw, endRaw] = match;
-    if (!startRaw && !endRaw) throw new BadRequestException('Invalid Range header');
+    if (!startRaw && !endRaw) return null;
 
     let start: number;
     let end: number;
     if (!startRaw) {
       const suffixLength = Number(endRaw);
-      if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) throw new BadRequestException('Invalid Range header');
+      if (!Number.isSafeInteger(suffixLength)) return null;
+      if (suffixLength <= 0 || size === 0) return 'unsatisfiable';
       start = Math.max(0, size - suffixLength);
       end = size - 1;
     } else {
       start = Number(startRaw);
-      end = endRaw ? Number(endRaw) : size - 1;
+      // An open range takes its end from the size, so it can only be past the end, not malformed.
+      end = endRaw ? Number(endRaw) : Math.max(start, size - 1);
     }
-    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= size) {
-      throw new BadRequestException('Invalid Range header');
-    }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || end < start) return null;
+    if (start >= size) return 'unsatisfiable';
     return { start, end: Math.min(end, size - 1) };
   }
 

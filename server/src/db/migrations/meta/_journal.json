@@ -782,15 +782,57 @@
     {
       "idx": 111,
       "version": "7",
-      "when": 1792108286216,
-      "tag": "0111_add_shelfmark_download_client",
+      "when": 1791853301183,
+      "tag": "0111_add_koreader_session_tombstones",
       "breakpoints": true
     },
     {
       "idx": 112,
       "version": "7",
-      "when": 1792125604848,
-      "tag": "0112_add_download_content_file_count",
+      "when": 1791941743914,
+      "tag": "0112_add_server_connection_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1792002996105,
+      "tag": "0113_add_djvu_email_format",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1792163623360,
+      "tag": "0114_add_book_metadata_page_count_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1792168359342,
+      "tag": "0115_add_audit_resource_label",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1792185442568,
+      "tag": "0116_regex_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1792190402061,
+      "tag": "0117_add_shelfmark_download_client",
+      "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1792190408400,
+      "tag": "0118_add_download_content_file_count",
       "breakpoints": true
     }
   ]

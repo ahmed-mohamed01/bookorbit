@@ -110,6 +110,7 @@ export class ScannerRepository {
         allowedFormats: libraries.allowedFormats,
         formatPriority: libraries.formatPriority,
         metadataPrecedence: libraries.metadataPrecedence,
+        regexMetadata: libraries.regexMetadata,
         excludePatterns: libraries.excludePatterns,
         organizationMode: libraries.organizationMode,
         addedAtSource: libraries.addedAtSource,
@@ -660,6 +661,7 @@ export class ScannerRepository {
       this.db
         .select({
           id: books.id,
+          libraryId: books.libraryId,
           status: books.status,
           coverAspectRatio: libraries.coverAspectRatio,
           formatPriority: libraries.formatPriority,

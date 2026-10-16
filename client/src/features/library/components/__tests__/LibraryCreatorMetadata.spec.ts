@@ -79,29 +79,29 @@ describe('LibraryCreatorMetadata', () => {
     expect(wrapper.findAll('ol[aria-labelledby="primary-file-title"] > li')[1]!.text()).toContain('Not imported')
   })
 
-  it('swaps which source is read first', async () => {
+  it('moves a source earlier in the precedence list', async () => {
     const wrapper = mountMetadata({ formatPriority: ['epub'] })
 
-    await wrapper.get('button[aria-label="Swap Tags in the book file and metadata.opf file"]').trigger('click')
+    await wrapper.get('button[aria-label="Move metadata.opf file up"]').trigger('click')
 
-    expect(wrapper.emitted('update:metadataPrecedence')).toEqual([[['opfFile', 'embedded', 'sidecar']]])
+    expect(wrapper.emitted('update:metadataPrecedence')).toEqual([[['opfFile', 'embedded', 'sidecar', 'regex']]])
   })
 
-  it('swaps the Audiobookshelf metadata.json source with its neighbour', async () => {
+  it('moves the Audiobookshelf metadata.json source above its neighbour', async () => {
     const wrapper = mountMetadata({ formatPriority: ['epub'] })
 
     expect(wrapper.text()).toContain('Audiobookshelf metadata.json')
-    await wrapper.get('button[aria-label="Swap metadata.opf file and Audiobookshelf metadata.json"]').trigger('click')
+    await wrapper.get('button[aria-label="Move Audiobookshelf metadata.json up"]').trigger('click')
 
-    expect(wrapper.emitted('update:metadataPrecedence')).toEqual([[['embedded', 'sidecar', 'opfFile']]])
+    expect(wrapper.emitted('update:metadataPrecedence')).toEqual([[['embedded', 'sidecar', 'opfFile', 'regex']]])
   })
 
-  it('fills in a source missing from an older saved list before swapping', async () => {
+  it('fills in a source missing from an older saved list before reordering', async () => {
     const wrapper = mountMetadata({ formatPriority: ['epub'], metadataPrecedence: ['embedded'] })
 
     expect(wrapper.text()).toContain('metadata.opf file')
-    await wrapper.get('button[aria-label="Swap Tags in the book file and metadata.opf file"]').trigger('click')
+    await wrapper.get('button[aria-label="Move metadata.opf file up"]').trigger('click')
 
-    expect(wrapper.emitted('update:metadataPrecedence')).toEqual([[['opfFile', 'embedded', 'sidecar']]])
+    expect(wrapper.emitted('update:metadataPrecedence')).toEqual([[['opfFile', 'embedded', 'sidecar', 'regex']]])
   })
 })

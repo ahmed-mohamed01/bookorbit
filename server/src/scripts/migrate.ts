@@ -7,7 +7,8 @@ import { Pool } from 'pg';
 
 import { createPostgresClientConfig } from '../db/postgres-connection-config';
 import { parkRowsBlockingPendingCheckConstraints } from './check-constraint-row-parking';
-import { reconcileMigrationLedgerTimestamps } from './migration-ledger-compatibility';
+import { applyMigrationsHiddenByRenumberedForkRows } from './hidden-migration-recovery';
+import { dropUnreleasedMigrationRows, reconcileMigrationLedgerTimestamps } from './migration-ledger-compatibility';
 import { installPostgresExtensions } from './postgres-extensions';
 import { prepareLegacySeriesIndexColumns } from './series-index-migration-compatibility';
 
@@ -43,9 +44,12 @@ async function runMigrations() {
   try {
     await installPostgresExtensions(pool);
     const migrationsFolder = resolveMigrationsFolder();
-    await reconcileMigrationLedgerTimestamps(pool, readMigrationFiles({ migrationsFolder }));
+    const migrationFiles = readMigrationFiles({ migrationsFolder });
+    await dropUnreleasedMigrationRows(pool, migrationFiles);
+    await reconcileMigrationLedgerTimestamps(pool, migrationFiles);
     await prepareLegacySeriesIndexColumns(pool);
-    await parkRowsBlockingPendingCheckConstraints(pool, readMigrationFiles({ migrationsFolder }));
+    await applyMigrationsHiddenByRenumberedForkRows(pool, migrationFiles);
+    await parkRowsBlockingPendingCheckConstraints(pool, migrationFiles);
 
     await migrate(drizzle(pool), { migrationsFolder });
 

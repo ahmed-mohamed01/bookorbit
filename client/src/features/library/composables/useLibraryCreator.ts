@@ -12,15 +12,16 @@ import { coveringFolderPath, normalizeFolderPath } from './folder-paths'
 
 export { DEFAULT_FORMAT_PRIORITY }
 
-// Mirrors the server's precedence order (embedded < opfFile < sidecar). `sidecar` is the Audiobookshelf
-// metadata.json source; it is included so the option and its import stay available, at lowest precedence
-// by default. Users can drag it higher (e.g. for audiobooks, to make metadata.json authoritative).
-export const DEFAULT_METADATA_PRECEDENCE = ['embedded', 'opfFile', 'sidecar']
+// Mirrors the server's precedence order. `sidecar` is the Audiobookshelf metadata.json source; it is
+// included so the option and its import stay available. Users can move it higher (e.g. for audiobooks,
+// to make metadata.json authoritative).
+export const DEFAULT_METADATA_PRECEDENCE = ['embedded', 'opfFile', 'sidecar', 'regex']
 
 export const METADATA_LABELS: Record<string, string> = {
   sidecar: 'Sidecar metadata (metadata.json)',
   embedded: 'Embedded metadata',
   opfFile: 'OPF files',
+  regex: 'Regex metadata',
 }
 
 export type LibraryCreatorSectionId = 'details' | 'folders' | 'scanner' | 'metadata' | 'reading' | 'schedule' | 'fileWrite' | 'access'
@@ -45,6 +46,7 @@ function blankForm() {
     watchLocalFolders: true,
     autoScanCronExpression: null as string | null,
     metadataPrecedence: [...DEFAULT_METADATA_PRECEDENCE],
+    regexMetadata: null as Library['regexMetadata'],
     formatPriority: withReadAlongFormatPriority(DEFAULT_FORMAT_PRIORITY),
     allowedFormats: [] as string[],
     organizationMode: 'book_per_folder' as OrganizationMode,
@@ -169,6 +171,7 @@ export function useLibraryCreator() {
     // import when saved, instead of silently keeping a precedence that predates the source.
     const missingMetadataSources = DEFAULT_METADATA_PRECEDENCE.filter((source) => !library.metadataPrecedence.includes(source))
     form.metadataPrecedence = [...library.metadataPrecedence, ...missingMetadataSources]
+    form.regexMetadata = library.regexMetadata ? { rules: library.regexMetadata.rules.map((rule) => ({ ...rule })) } : null
     const missing = DEFAULT_FORMAT_PRIORITY.filter((f) => !library.formatPriority.includes(f))
     form.formatPriority = withReadAlongFormatPriority([...library.formatPriority, ...missing])
     form.allowedFormats = [...library.allowedFormats]

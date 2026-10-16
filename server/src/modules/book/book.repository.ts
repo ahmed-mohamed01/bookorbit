@@ -74,6 +74,7 @@ type BookRepositoryTx = Parameters<Parameters<NodePgDatabase<typeof schema>['tra
 
 type CollapsedRawRow = {
   id: number | null;
+  library_id: number;
   status: string;
   cover_aspect_ratio: string;
   primary_file_id: number | null;
@@ -556,6 +557,7 @@ export class BookRepository {
     const rows = await this.db
       .select({
         id: books.id,
+        libraryId: books.libraryId,
         status: books.status,
         coverAspectRatio: libraries.coverAspectRatio,
         primaryFileId: books.primaryFileId,
@@ -1062,6 +1064,7 @@ export class BookRepository {
       representatives AS (
         SELECT DISTINCT ON (${sql.raw(COLLAPSE_GROUP_KEY_SQL)})
           base.id,
+          base.library_id,
           base.status,
           base.cover_aspect_ratio,
           base.primary_file_id,
@@ -1142,6 +1145,7 @@ export class BookRepository {
 
     const mappedRows = rawRows.map((r) => ({
       id: r.id,
+      libraryId: r.library_id,
       status: r.status,
       coverAspectRatio: r.cover_aspect_ratio,
       primaryFileId: r.primary_file_id,
@@ -1943,6 +1947,28 @@ export class BookRepository {
     return Number(total);
   }
 
+  /**
+   * Books matching `where` per file format, counting a book under every format it holds a file in,
+   * the way the `format` filter matches. The joined files are aliased so a `format` rule's correlated
+   * `book_files` subquery inside `where` visibly binds to its own rows, never to this join.
+   */
+  async countFormatFacets<F extends string>(where: SQL | undefined, formats: readonly F[]): Promise<Array<{ format: F; count: number }>> {
+    if (formats.length === 0) return [];
+    const result = await this.db.execute<{ format: F; count: string | number }>(sql`
+      SELECT facet_file.format AS format, count(DISTINCT ${books.id}) AS count
+      FROM ${books}
+      LEFT JOIN ${bookMetadata} ON ${bookMetadata.bookId} = ${books.id}
+      INNER JOIN ${bookFiles} AS facet_file ON facet_file.book_id = ${books.id}
+      WHERE ${this.visibleWhere(where)}
+        AND facet_file.format IN (${sql.join(
+          formats.map((format) => sql`${format}`),
+          sql`, `,
+        )})
+      GROUP BY facet_file.format
+    `);
+    return result.rows.map((row) => ({ format: row.format, count: Number(row.count) }));
+  }
+
   async findLibraryIdsByBookIds(bookIds: number[]): Promise<{ id: number; libraryId: number }[]> {
     if (bookIds.length === 0) return [];
     return this.db.select({ id: books.id, libraryId: books.libraryId }).from(books).where(inArray(books.id, bookIds));
@@ -2070,6 +2096,15 @@ export class BookRepository {
       .leftJoin(bookMetadata, eq(bookMetadata.bookId, books.id))
       .where(this.visibleWhere(where));
     return rows.map((r) => r.id);
+  }
+
+  async findDistinctLibraryIdsByWhere(where: SQL | undefined): Promise<number[]> {
+    const rows = await this.db
+      .selectDistinct({ libraryId: books.libraryId })
+      .from(books)
+      .leftJoin(bookMetadata, eq(bookMetadata.bookId, books.id))
+      .where(this.visibleWhere(where));
+    return rows.map((r) => r.libraryId);
   }
 
   async findPrimaryFile(bookId: number): Promise<{ absolutePath: string; format: string | null } | null> {
@@ -2427,6 +2462,13 @@ export class BookRepository {
       ? { narrationPercentage: this.clampProgressPercentage(narration.percentage), narrationUpdatedAt: narration.updatedAt }
       : {};
     const textColumns = textUpdatedAt ? { textUpdatedAt } : {};
+    // A write that leaves out the narration marker keeps the one stored: a client that saves only
+    // its text position used to erase the marker another client had left. An explicit null clears.
+    const markerColumns = {
+      ...(positionSeconds !== undefined ? { positionSeconds } : {}),
+      ...(mediaOverlayFragment !== undefined ? { mediaOverlayFragment } : {}),
+      ...(mediaOverlaySectionIndex !== undefined ? { mediaOverlaySectionIndex } : {}),
+    };
     await this.db
       .insert(readingProgress)
       .values({
@@ -2453,9 +2495,7 @@ export class BookRepository {
           cfi,
           pageNumber,
           percentage,
-          positionSeconds: positionSeconds ?? null,
-          mediaOverlayFragment: mediaOverlayFragment ?? null,
-          mediaOverlaySectionIndex: mediaOverlaySectionIndex ?? null,
+          ...markerColumns,
           koboLocationSource: normalizedKoboLocationSource,
           koboLocationType: normalizedKoboLocationType,
           koboLocationValue: normalizedKoboLocationValue,
@@ -2486,6 +2526,12 @@ export class BookRepository {
     koreaderProgress: string | null;
     sourceUpdatedAt: Date;
   }): Promise<boolean> {
+    // A marker moved here moves the narration's stamp with it, or a comparison of stamps would
+    // prefer the text position over a newer marker.
+    const narrationColumns =
+      params.positionSeconds != null
+        ? { narrationPercentage: this.clampProgressPercentage(params.percentage), narrationUpdatedAt: params.sourceUpdatedAt }
+        : {};
     const rows = await this.db
       .insert(readingProgress)
       .values({
@@ -2501,6 +2547,7 @@ export class BookRepository {
         updatedAt: params.sourceUpdatedAt,
         lastReadAt: params.sourceUpdatedAt,
         textUpdatedAt: params.sourceUpdatedAt,
+        ...narrationColumns,
       })
       .onConflictDoUpdate({
         target: [readingProgress.bookFileId, readingProgress.userId],
@@ -2515,6 +2562,7 @@ export class BookRepository {
           updatedAt: params.sourceUpdatedAt,
           lastReadAt: params.sourceUpdatedAt,
           textUpdatedAt: params.sourceUpdatedAt,
+          ...narrationColumns,
         },
         setWhere: lte(readingProgress.updatedAt, params.sourceUpdatedAt),
       })

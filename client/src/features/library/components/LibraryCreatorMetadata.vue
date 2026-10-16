@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowDown, ArrowLeftRight, ArrowUp, Braces, FileCode, FileText, GripVertical, Headphones, RotateCcw } from '@lucide/vue'
+import { ArrowDown, ArrowUp, Braces, FileCode, FileText, GripVertical, Headphones, RotateCcw } from '@lucide/vue'
+import type { RegexMetadataConfig } from '@bookorbit/types'
+import { Button } from '@/components/ui/button'
+import RegexMetadataDialog from './RegexMetadataDialog.vue'
 import { DEFAULT_FORMAT_PRIORITY, isReadAlongFormatKey, withReadAlongFormatPriority } from '@bookorbit/types'
 import { formatNumber } from '@/i18n/formatters'
 import { formatColorVar } from '@/features/book/lib/format-colors'
@@ -18,6 +21,8 @@ const PREVIEW_ROWS = 6
 const props = withDefaults(
   defineProps<{
     metadataPrecedence: string[]
+    regexMetadata?: RegexMetadataConfig | null
+    libraryId?: number
     formatPriority: string[]
     allowedFormats?: string[]
     formatCounts?: Record<string, number> | null
@@ -26,10 +31,13 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
+  'update:regexMetadata': [value: RegexMetadataConfig | null]
+  'update:regexOpen': [value: boolean]
   'update:metadataPrecedence': [value: string[]]
   'update:formatPriority': [value: string[]]
 }>()
 
+const regexOpen = ref(false)
 const showAll = ref(false)
 const dragKey = ref<string | null>(null)
 const overKey = ref<string | null>(null)
@@ -146,24 +154,50 @@ function onDragEnd() {
   overKey.value = null
 }
 
+function moveSourceUp(key: string) {
+  const next = [...sources.value]
+  const index = next.indexOf(key)
+  if (index <= 0) return
+  next.splice(index, 1)
+  next.splice(index - 1, 0, key)
+  emit('update:metadataPrecedence', next)
+}
+
+function moveSourceDown(key: string) {
+  const next = [...sources.value]
+  const index = next.indexOf(key)
+  if (index < 0 || index === next.length - 1) return
+  next.splice(index, 1)
+  next.splice(index + 1, 0, key)
+  emit('update:metadataPrecedence', next)
+}
+
+function openRegex() {
+  regexOpen.value = true
+  emit('update:regexOpen', true)
+}
+function closeRegex() {
+  regexOpen.value = false
+  emit('update:regexOpen', false)
+}
+function applyRegex(config: RegexMetadataConfig | null) {
+  emit('update:regexMetadata', config)
+  closeRegex()
+}
+
 const SOURCE_ICONS: Record<string, typeof FileText> = { embedded: FileText, opfFile: FileCode, sidecar: Braces }
 
-function sourceTitle(source: string): string {
+function sourceTitle(source: string) {
+  if (source === 'regex') return t('library.creator.metadata.regex.sourceTitle')
   if (source === 'embedded') return t('library.creator.metadata.source.embeddedTitle')
   if (source === 'sidecar') return t('library.creator.metadata.source.sidecarTitle')
   return t('library.creator.metadata.source.opfTitle')
 }
-
-function sourceHint(source: string): string {
+function sourceHint(source: string) {
+  if (source === 'regex') return t(props.regexMetadata ? 'library.creator.metadata.regex.enabledHint' : 'library.creator.metadata.regex.disabledHint')
   if (source === 'embedded') return t('library.creator.metadata.source.embeddedHint')
   if (source === 'sidecar') return t('library.creator.metadata.source.sidecarHint')
   return t('library.creator.metadata.source.opfHint')
-}
-
-function swapWithNext(index: number) {
-  const next = [...sources.value]
-  ;[next[index], next[index + 1]] = [next[index + 1]!, next[index]!]
-  emit('update:metadataPrecedence', next)
 }
 </script>
 
@@ -262,42 +296,43 @@ function swapWithNext(index: number) {
     </LibraryCreatorCard>
 
     <LibraryCreatorCard :label="t('library.creator.metadata.source.title')" label-id="metadata-source-title">
-      <ol aria-labelledby="metadata-source-title" class="flex flex-col items-stretch gap-2 @lg:flex-row @lg:items-center">
-        <template v-for="(source, index) in sources" :key="source">
-          <li
-            class="flex min-w-0 flex-1 items-center gap-3 rounded-xl border px-3 py-2.5"
-            :class="index === 0 ? 'border-primary/55 bg-primary/7' : 'border-border bg-background'"
-          >
-            <span
-              class="flex size-5.5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
-              :class="index === 0 ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'"
-            >
-              {{ formatNumber(index + 1) }}
-            </span>
-            <component :is="SOURCE_ICONS[source] ?? FileCode" :size="16" class="shrink-0 text-foreground" aria-hidden="true" />
-            <span class="min-w-0">
-              <span class="block text-[13px] font-semibold text-foreground">
-                {{ sourceTitle(source) }}
-              </span>
-              <span class="block text-xs text-muted-foreground">
-                {{ sourceHint(source) }}
-              </span>
-            </span>
-          </li>
-          <li v-if="index < sources.length - 1" class="flex justify-center">
-            <button
-              type="button"
-              class="flex size-8 items-center justify-center rounded-full border border-border bg-card text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              :aria-label="t('library.creator.metadata.source.swapPair', { first: sourceTitle(source), second: sourceTitle(sources[index + 1]!) })"
-              :title="t('library.creator.metadata.source.swapPair', { first: sourceTitle(source), second: sourceTitle(sources[index + 1]!) })"
-              @click="swapWithNext(index)"
-            >
-              <ArrowLeftRight :size="14" class="rotate-90 @lg:rotate-0" aria-hidden="true" />
-            </button>
-          </li>
-        </template>
+      <ol aria-labelledby="metadata-source-title" class="flex flex-col gap-2">
+        <li
+          v-for="(source, index) in sources"
+          :key="source"
+          class="flex min-w-0 flex-wrap items-center gap-3 rounded-xl border border-border bg-background px-3 py-2.5"
+        >
+          <span class="text-xs font-bold text-muted-foreground">{{ formatNumber(index + 1) }}</span>
+          <component :is="SOURCE_ICONS[source] ?? FileCode" :size="16" class="shrink-0" aria-hidden="true" />
+          <span class="min-w-0 flex-1">
+            <span class="block text-sm font-semibold">{{ sourceTitle(source) }}</span>
+            <span class="block text-xs text-muted-foreground">{{ sourceHint(source) }}</span>
+          </span>
+          <Button v-if="source === 'regex'" variant="outline" size="sm" @click="openRegex">{{
+            t('library.creator.metadata.regex.configure')
+          }}</Button>
+          <div class="flex gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              :disabled="index === 0"
+              :aria-label="t('library.creator.metadata.regex.moveSourceUp', { source: sourceTitle(source) })"
+              @click="moveSourceUp(source)"
+              ><ArrowUp
+            /></Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              :disabled="index === sources.length - 1"
+              :aria-label="t('library.creator.metadata.regex.moveSourceDown', { source: sourceTitle(source) })"
+              @click="moveSourceDown(source)"
+              ><ArrowDown
+            /></Button>
+          </div>
+        </li>
       </ol>
-      <p class="mt-2.5 text-xs text-muted-foreground">{{ t('library.creator.metadata.source.hint') }}</p>
+      <p class="mt-2.5 text-xs text-muted-foreground">{{ t('library.creator.metadata.regex.precedenceHint') }}</p>
     </LibraryCreatorCard>
+    <RegexMetadataDialog v-if="regexOpen" :config="regexMetadata ?? null" :library-id="libraryId" @close="closeRegex" @apply="applyRegex" />
   </div>
 </template>

@@ -72,6 +72,10 @@ jobs:
           pnpm-version: ${{ env.PNPM_VERSION }}
           prefetch: "true"
 
+      - name: Install DjVuLibre tools
+        if: inputs.suite-id == 'djvu-reader' || inputs.suite-id == 'all'
+        run: sudo apt-get update && sudo apt-get install -y djvulibre-bin util-linux
+
       - name: Run e2e suite
         shell: bash
         run: |

@@ -1,3 +1,5 @@
+import type { RegexMetadataFields } from '@bookorbit/types';
+import { mergeRegexMetadata } from './regex/merge-regex-metadata';
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { and, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -139,6 +141,53 @@ export class MetadataService {
       const errorMessage = sanitizeLogValue(error instanceof Error ? error.message : String(error));
       this.logger.warn(
         `[${event}] [fail] bookId=${bookId} format=${format} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${errorMessage}" - metadata extraction failed`,
+      );
+      throw error;
+    }
+  }
+
+  async extractAndSaveWithRegex(
+    bookId: number,
+    sources: { key: string; absolutePath: string; format: string }[],
+    regex: RegexMetadataFields,
+    precedence: string[],
+  ): Promise<void> {
+    const startedAt = Date.now();
+    this.logger.debug(`[metadata.extract_with_regex] [start] bookId=${bookId} sourceCount=${sources.length} - metadata extraction started`);
+    try {
+      let base: ParsedBookData | null = null;
+      let selected: (typeof sources)[number] | undefined;
+      for (const source of sources) {
+        const sourceStartedAt = Date.now();
+        try {
+          base = await this.extractionService.extract(source.absolutePath, source.format);
+        } catch (error) {
+          this.logger.warn(
+            `[metadata.extract_source] [fail] bookId=${bookId} source="${sanitizeLogValue(source.key)}" format="${sanitizeLogValue(source.format)}" durationMs=${Date.now() - sourceStartedAt} errorClass=${error instanceof Error ? error.name : 'Error'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - file metadata extraction failed; continuing with remaining sources and regex`,
+          );
+          continue;
+        }
+        if (base) {
+          selected = source;
+          break;
+        }
+      }
+      const regexIndex = precedence.indexOf('regex');
+      const baseIndex = selected ? precedence.indexOf(selected.key) : -1;
+      const preferRegex = !selected || (regexIndex !== -1 && (baseIndex === -1 || regexIndex < baseIndex));
+      const data = mergeRegexMetadata(base, regex, preferRegex);
+      await this.persistMetadata(bookId, data, selected?.format ?? 'regex', true);
+      if (selected) {
+        if (base?.cover) await this.persistSourceCover(bookId, selected.format, base.cover);
+        await this.persistFixedLayout(bookId, selected.absolutePath, base?.isFixedLayout);
+      }
+      await this.scoreService.calculateAndSave(bookId);
+      this.logger.debug(
+        `[metadata.extract_with_regex] [end] bookId=${bookId} durationMs=${Date.now() - startedAt} fileSourceFound=${selected !== undefined} - metadata extraction completed`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `[metadata.extract_with_regex] [fail] bookId=${bookId} durationMs=${Date.now() - startedAt} errorClass=${error instanceof Error ? error.name : 'Error'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - metadata extraction failed`,
       );
       throw error;
     }
@@ -838,11 +887,11 @@ export class MetadataService {
 
   // ── Persistence ──────────────────────────────────────────────────────────────
 
-  private async persistMetadata(bookId: number, data: ParsedBookData, format: string): Promise<void> {
+  private async persistMetadata(bookId: number, data: ParsedBookData, format: string, preserveAbsentRelations = false): Promise<void> {
     if (isAudioFormat(format) || format === 'json') {
-      await this.persistAudioMetadata(bookId, data);
+      await this.persistAudioMetadata(bookId, data, preserveAbsentRelations);
     } else {
-      await this.persistBookMetadata(bookId, data, format);
+      await this.persistBookMetadata(bookId, data, format, preserveAbsentRelations);
     }
     this.embedder?.embedBook(bookId).catch((error: Error) => {
       this.logger.warn(
@@ -851,7 +900,7 @@ export class MetadataService {
     });
   }
 
-  private async persistAudioMetadata(bookId: number, data: ParsedBookData): Promise<void> {
+  private async persistAudioMetadata(bookId: number, data: ParsedBookData, preserveAbsentRelations = false): Promise<void> {
     const useMemberships = data.seriesMemberships !== undefined && this.seriesMemberships != null;
 
     const { dto: filtered, skippedFields } = await this.bookMetadataLockService.filterAutomatedBookUpdate(bookId, {
@@ -867,8 +916,8 @@ export class MetadataService {
       ...(useMemberships
         ? { seriesMemberships: data.seriesMemberships }
         : { seriesName: normalizeMetadataText(data.seriesName), seriesIndex: data.seriesIndex }),
-      authors: data.authors.map((author) => author.name),
-      genres: data.genres,
+      authors: preserveAbsentRelations && !data.authors.length ? undefined : data.authors.map((author) => author.name),
+      genres: preserveAbsentRelations && !data.genres.length ? undefined : data.genres,
       ...(data.tags === undefined ? {} : { tags: data.tags }),
       audibleId: boundProviderId('audibleId', data.audibleId),
       librofmId: boundProviderId('librofmId', data.librofmId),
@@ -981,7 +1030,7 @@ export class MetadataService {
     return trimmed.length > 0 ? trimmed : null;
   }
 
-  private async persistBookMetadata(bookId: number, data: ParsedBookData, format: string): Promise<void> {
+  private async persistBookMetadata(bookId: number, data: ParsedBookData, format: string, preserveAbsentRelations = false): Promise<void> {
     const { dto: filtered } = await this.bookMetadataLockService.filterAutomatedBookUpdate(bookId, {
       title: data.title,
       subtitle: data.subtitle,
@@ -994,8 +1043,8 @@ export class MetadataService {
       language: data.language,
       seriesName: normalizeMetadataText(data.seriesName),
       seriesIndex: data.seriesIndex,
-      authors: data.authors.map((author) => author.name),
-      genres: data.genres,
+      authors: preserveAbsentRelations && !data.authors.length ? undefined : data.authors.map((author) => author.name),
+      genres: preserveAbsentRelations && !data.genres.length ? undefined : data.genres,
       tags: data.tags,
       rating: normalizeImportedRating(data.rating),
       pageCount: data.pageCount,
