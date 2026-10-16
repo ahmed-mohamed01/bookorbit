@@ -44,6 +44,7 @@ describe('groupListing', () => {
       { path: '!Yaoi/S/cover.jpg', name: 'cover.jpg', size: 1 },
     ]);
     expect(grouped.skippedFiles).toBe(1);
+    expect(grouped.unnumberedFiles).toBe(0);
     expect(grouped.fileCount).toBe(2);
     expect(grouped.series).toEqual([
       {
@@ -59,14 +60,15 @@ describe('groupListing', () => {
     ]);
   });
 
-  it('keeps the larger copy of a repeated volume but both parts of a split series', () => {
+  it('keeps the larger copy of a repeated volume, both parts of a split series, and skips unnumbered files', () => {
     const grouped = groupListing([
       { path: 'A/A Vol 1 [small].epub', name: 'A Vol 1 [small].epub', size: 10 },
       { path: 'A/A Vol 1 [big].epub', name: 'A Vol 1 [big].epub', size: 20 },
       { path: 'A/A Part 2 Vol 1.epub', name: 'A Part 2 Vol 1.epub', size: 5 },
       { path: 'A/A Extra.epub', name: 'A Extra.epub', size: 5 },
     ]);
-    expect(grouped.series[0]!.files.map((file) => file.name)).toEqual(['A Vol 1 [big].epub', 'A Part 2 Vol 1.epub', 'A Extra.epub']);
+    expect(grouped.series[0]!.files.map((file) => file.name)).toEqual(['A Vol 1 [big].epub', 'A Part 2 Vol 1.epub']);
+    expect(grouped.unnumberedFiles).toBe(1);
   });
 
   it('orders by part before volume', () => {

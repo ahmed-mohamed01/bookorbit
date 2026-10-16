@@ -138,7 +138,7 @@ describe('web serials schema SQL', () => {
     expect(WEB_SERIALS_SCHEMA_SQL).toMatch(/"web_serial_file_index_files_series_fk" FOREIGN KEY \("series_id"\)[^;]*ON DELETE cascade/);
     expect(WEB_SERIALS_SCHEMA_SQL).toContain('ON "web_serial_file_index_series" USING gist ("title_key" gist_trgm_ops)');
     expect(webSerialFileIndexes.refreshHours.default).toBe(24);
-    expect(webSerialFileIndexFiles.volume.notNull).toBe(false);
+    expect(webSerialFileIndexFiles.volume.notNull).toBe(true);
   });
 
   it('backfills the ledger once from imported job items, idempotently', () => {

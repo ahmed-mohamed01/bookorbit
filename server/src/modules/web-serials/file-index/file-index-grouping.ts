@@ -14,7 +14,7 @@ const BRACKET_GROUPS = /\s*[[({][^\])}]*[\])}]/g;
 const COVER_FILE = /^(?:cover|folder|poster)\.(?:jpe?g|png|webp)$/i;
 
 export interface GroupedFile extends ListingFile {
-  volume: number | null;
+  volume: number;
 }
 
 export interface GroupedSeries {
@@ -29,17 +29,21 @@ export interface GroupedListing {
   series: GroupedSeries[];
   /** Book files in a format BookOrbit does not file from an index. */
   skippedFiles: number;
+  /** EPUBs whose name states no volume number; they are left out rather than given a made-up one. */
+  unnumberedFiles: number;
   fileCount: number;
 }
 
 /**
- * A folder that holds EPUBs directly is one series. When a folder holds the same volume more than once, the larger copy
- * is kept: two releases of one volume usually differ by their illustrations. Files at the listing root have no series.
+ * A folder that holds numbered EPUBs directly is one series. When a folder holds the same volume more than once, the
+ * larger copy is kept: two releases of one volume usually differ by their illustrations. Files at the listing root have
+ * no series, and an EPUB without a volume number is skipped.
  */
 export function groupListing(files: readonly ListingFile[]): GroupedListing {
   const folders = new Map<string, Map<string, GroupedFile>>();
   const covers = new Map<string, string>();
   let skippedFiles = 0;
+  let unnumberedFiles = 0;
 
   for (const file of files) {
     if (COVER_FILE.test(file.name)) {
@@ -56,7 +60,11 @@ export function groupListing(files: readonly ListingFile[]): GroupedListing {
     if (slash <= 0) continue;
     const folderPath = file.path.slice(0, slash);
     const volume = parseVolumeNumber(file.name);
-    const slot = volume === null ? `name:${file.path}` : `vol:${parsePartNumber(file.name) ?? 0}:${volume}`;
+    if (volume === null) {
+      unnumberedFiles += 1;
+      continue;
+    }
+    const slot = `${parsePartNumber(file.name) ?? 0}:${volume}`;
     let entries = folders.get(folderPath);
     if (!entries) folders.set(folderPath, (entries = new Map()));
     const existing = entries.get(slot);
@@ -74,7 +82,7 @@ export function groupListing(files: readonly ListingFile[]): GroupedListing {
     series.push({ folderPath, title, titleKey, coverPath: covers.get(folderPath) ?? null, files: grouped });
   }
   series.sort((left, right) => left.folderPath.localeCompare(right.folderPath));
-  return { series, skippedFiles, fileCount };
+  return { series, skippedFiles, unnumberedFiles, fileCount };
 }
 
 /** The volume a file name states (`Volume 01`, `Vol. 3`, `v03`), else a short trailing number; null when it states none. */
@@ -92,15 +100,11 @@ export function parsePartNumber(fileName: string): number | null {
   return marked ? Number(marked[1]) : null;
 }
 
-/** Orders files by part, then volume, then name; files without a volume go last. */
+/** Orders files by part, then volume, then name. */
 export function compareFiles(left: Pick<GroupedFile, 'name' | 'volume'>, right: Pick<GroupedFile, 'name' | 'volume'>): number {
-  if (left.volume === null && right.volume !== null) return 1;
-  if (left.volume !== null && right.volume === null) return -1;
-  if (left.volume !== null && right.volume !== null) {
-    const partDelta = (parsePartNumber(left.name) ?? 0) - (parsePartNumber(right.name) ?? 0);
-    if (partDelta !== 0) return partDelta;
-    if (left.volume !== right.volume) return left.volume - right.volume;
-  }
+  const partDelta = (parsePartNumber(left.name) ?? 0) - (parsePartNumber(right.name) ?? 0);
+  if (partDelta !== 0) return partDelta;
+  if (left.volume !== right.volume) return left.volume - right.volume;
   return left.name.localeCompare(right.name, undefined, { numeric: true });
 }
 

@@ -172,6 +172,7 @@ export class WebSerialsFileIndexService implements OnModuleDestroy {
         series: grouped.series.length,
         files: grouped.fileCount,
         skippedFiles: grouped.skippedFiles,
+        unnumberedFiles: grouped.unnumberedFiles,
         truncated: read.listing.truncated,
         sample: grouped.series.slice(0, PREVIEW_SERIES).map((series) => ({
           folderPath: series.folderPath,
@@ -255,7 +256,7 @@ export class WebSerialsFileIndexService implements OnModuleDestroy {
         lastError: read.listing.truncated ? 'The listing is larger than BookOrbit reads; only part of it was indexed' : null,
       });
       this.logger.log(
-        `[${REFRESH_EVENT}] [end] indexId=${row.id} durationMs=${Date.now() - startedAt} notModified=false pages=${read.pages} series=${written.series} files=${written.files} removedSeries=${written.removedSeries} removedFiles=${written.removedFiles} skippedFiles=${grouped.skippedFiles} truncated=${read.listing.truncated} - file index refreshed`,
+        `[${REFRESH_EVENT}] [end] indexId=${row.id} durationMs=${Date.now() - startedAt} notModified=false pages=${read.pages} series=${written.series} files=${written.files} removedSeries=${written.removedSeries} removedFiles=${written.removedFiles} skippedFiles=${grouped.skippedFiles} unnumberedFiles=${grouped.unnumberedFiles} truncated=${read.listing.truncated} - file index refreshed`,
       );
     } catch (error) {
       const { errorClass, message } = describeError(error);

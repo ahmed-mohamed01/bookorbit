@@ -356,7 +356,7 @@ export const webSerialFileIndexFiles = pgTable(
     path: varchar('path', { length: 2048 }).notNull(),
     name: varchar('name', { length: 1000 }).notNull(),
     size: bigint('size', { mode: 'number' }),
-    volume: doublePrecision('volume'),
+    volume: doublePrecision('volume').notNull(),
     lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [unique('web_serial_file_index_files_path_unique').on(t.seriesId, t.path)],

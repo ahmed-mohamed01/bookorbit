@@ -883,7 +883,7 @@ export interface WebSerialFileIndexInput {
 export interface WebSerialFileIndexPreviewSeries {
   folderPath: string;
   title: string;
-  volumes: Array<{ name: string; volume: number | null }>;
+  volumes: Array<{ name: string; volume: number }>;
 }
 
 /** `POST web-serials/admin/file-indexes/test`: what a refresh would store, without storing it. */
@@ -893,6 +893,8 @@ export interface WebSerialFileIndexPreview {
   files: number;
   /** Book files the listing holds that are not EPUB; they are left out. */
   skippedFiles: number;
+  /** EPUBs whose name states no volume number; they are left out too. */
+  unnumberedFiles: number;
   truncated: boolean;
   sample: WebSerialFileIndexPreviewSeries[];
 }

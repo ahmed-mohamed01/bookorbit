@@ -195,6 +195,7 @@ describe('WebSerialsFileIndexService', () => {
       series: 1,
       files: 1,
       skippedFiles: 1,
+      unnumberedFiles: 0,
       truncated: false,
       sample: [{ folderPath: 'Series A', title: 'Series A', volumes: [{ name: 'Series A Vol 1.epub', volume: 1 }] }],
     });

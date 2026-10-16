@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { fileIndexUnits, unitLabel } from './file-index-units';
 
-const file = (id: number, name: string, volume: number | null) => ({ id, path: `S/${name}`, name, size: 1, volume });
+const file = (id: number, name: string, volume: number) => ({ id, path: `S/${name}`, name, size: 1, volume });
 
 describe('fileIndexUnits', () => {
   it('files numbered volumes as those volumes, in order, with stable keys', () => {
@@ -17,12 +17,12 @@ describe('fileIndexUnits', () => {
     expect(units[0]!.remote).toEqual({ fileId: 1, path: 'S/S - Volume 01 - Spy Sensation [June][Kindle].epub' });
   });
 
-  it('numbers by position when parts or unnumbered files would make volume numbers ambiguous', () => {
-    const units = fileIndexUnits([file(1, 'A Part 1 Vol 1.epub', 1), file(2, 'A Part 2 Vol 1.epub', 1), file(3, 'A Side Stories.epub', null)]);
+  it('numbers by position when parts restart their volume numbers', () => {
+    const units = fileIndexUnits([file(2, 'A Part 2 Vol 1.epub', 1), file(1, 'A Part 1 Vol 1.epub', 1), file(3, 'A Part 1 Vol 2.epub', 2)]);
     expect(units.map((unit) => [unit.unitKey, unit.sequence, unit.label])).toEqual([
       ['part-1-volume-1', '1', 'Part 1 Volume 1'],
-      ['part-2-volume-1', '2', 'Part 2 Volume 1'],
-      ['file-3', '3', 'A Side Stories'],
+      ['part-1-volume-2', '2', 'Part 1 Volume 2'],
+      ['part-2-volume-1', '3', 'Part 2 Volume 1'],
     ]);
   });
 });

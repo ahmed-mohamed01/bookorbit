@@ -383,7 +383,7 @@ const CREATE_STATEMENTS = [
 	"path" varchar(2048) NOT NULL,
 	"name" varchar(1000) NOT NULL,
 	"size" bigint,
-	"volume" double precision,
+	"volume" double precision NOT NULL,
 	"last_seen_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "web_serial_file_index_files_path_unique" UNIQUE ("series_id", "path"),
 	CONSTRAINT "web_serial_file_index_files_series_fk" FOREIGN KEY ("series_id") REFERENCES "public"."web_serial_file_index_series"("id") ON DELETE cascade ON UPDATE no action
