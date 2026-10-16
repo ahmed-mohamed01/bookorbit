@@ -57,7 +57,7 @@ function selectOrder(value: SortOrder) {
       >
         <ArrowUpDown :size="13" />
         <span class="hidden lg:inline">{{ selectedLabel }}</span>
-        <span class="lg:hidden">{{ t('monitored.detail.controls.sort') }}</span>
+        <span class="hidden sm:inline lg:hidden">{{ t('monitored.detail.controls.sort') }}</span>
       </button>
     </PopoverTrigger>
     <PopoverContent align="end" class="w-56 p-2">

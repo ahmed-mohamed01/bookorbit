@@ -29,7 +29,11 @@ import type {
 } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import { formatNumber } from '@/i18n/formatters'
-import ViewHeader from '@/components/ViewHeader.vue'
+import BrowseHeader from '@/components/browse-header/BrowseHeader.vue'
+import BrowseSearchField from '@/components/browse-header/BrowseSearchField.vue'
+import BrowseViewControls from '@/components/browse-header/BrowseViewControls.vue'
+import { barDivider, outlineButton } from '@/components/browse-header/browse-header'
+import ViewHeaderDisplayControls from '@/components/view-header/ViewHeaderDisplayControls.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { useDisplaySettings, type BookViewMode } from '@/composables/useDisplaySettings'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
@@ -441,6 +445,18 @@ function handleSearchUpdate(value: string) {
   filterQuery.value = value
 }
 
+function handleSearchClear() {
+  filterQuery.value = ''
+}
+
+function handleCardSizeUpdate(value: number) {
+  activeCardSize.value = value
+}
+
+function handleCardGapUpdate(value: number) {
+  cardGap.value = value
+}
+
 const sortedReleases = computed(() => releases.value)
 
 const releaseGroups = computed<{ key: string; label: string | null; items: MonitoredReleaseItem[] }[]>(() => {
@@ -599,6 +615,13 @@ const activeTotal = computed(() => {
   if (activeTab.value === 'authors') return authorTotal.value
   return releaseCount(releaseTotal.value, releaseCardTotal.value)
 })
+
+const foldedCount = computed(() => (activeTab.value === 'add' ? undefined : formatNumber(activeTotal.value)))
+const factsLabel = computed(() =>
+  activeTab.value === 'authors'
+    ? t('components.browseHeader.facts.authors', { count: activeTotal.value })
+    : t('monitored.facts.releases', { count: activeTotal.value }),
+)
 
 const showSkeleton = computed(() => activeTab.value !== 'add' && !initialLoaded.value && loading.value)
 const showEmpty = computed(() => initialLoaded.value && !loading.value && activeItemsLength.value === 0)
@@ -1005,318 +1028,338 @@ defineOptions({ name: 'MonitoredView' })
 </script>
 
 <template>
-  <main ref="mainRef" class="h-full overflow-y-auto pr-0 sm:pr-2">
-    <div class="mx-auto w-full max-w-7xl pb-8">
-      <!-- The app's shared view header, pinned like the library and series pages. -->
-      <div class="sticky top-0 z-40 mb-3 border-b border-border bg-background/85 pb-2.5 pt-0.5 backdrop-blur-md">
-        <ViewHeader
-          :title="t('monitored.title')"
-          icon="Bell"
-          fallback-icon="Bell"
-          :total="activeTotal"
-          :searchable="activeTab !== 'add'"
-          :search-query="filterQuery"
-          :search-placeholder="t('monitored.searchPlaceholder')"
-          :view-mode="headerViewMode"
-          :allowed-view-modes="['grid', 'list']"
-          :show-view-mode-toggle="activeTab === 'releases'"
-          :show-selection="selectionAvailable"
-          :selection-mode="selectionMode"
-          :show-display-controls="showDisplayControls"
-          :row-density="headerRowDensity"
-          :hide-size-controls="showReleaseRows"
-          v-model:coverSize="activeCardSize"
-          v-model:gridGap="cardGap"
-          :cover-size-min="activeCardSizeConfig.min"
-          :cover-size-max="activeCardSizeConfig.max"
-          :cover-size-step="4"
-          @update:search-query="handleSearchUpdate"
-          @update:view-mode="handleHeaderViewMode"
-          @update:row-density="handleRowDensityUpdate"
-          @toggle-selection="toggleSelectionMode"
+  <section class="flex h-full flex-col">
+    <BrowseHeader
+      :eyebrow="t('components.browseHeader.eyebrow.browse')"
+      :title="t('monitored.title')"
+      icon="Bell"
+      fallback-icon="Bell"
+      :folded-count="foldedCount"
+      :scroll-container="mainRef"
+    >
+      <template v-if="activeTab !== 'add'" #facts>
+        <span class="truncate">{{ factsLabel }}</span>
+      </template>
+
+      <template v-if="canManage" #actions>
+        <button
+          type="button"
+          :class="outlineButton"
+          :disabled="refreshState === 'loading' || refreshAllRunning"
+          :aria-label="refreshLabel"
+          :title="refreshLabel"
+          @click="handleRefresh"
         >
-          <template #filters>
-            <div v-if="activeTab === 'releases'" class="hidden md:block">
-              <MonitoredReleaseFilterBar v-model="releaseFilter" />
-            </div>
-          </template>
-          <template #toolbar>
-            <MonitoredSortMenu
-              v-if="activeTab === 'releases'"
-              :options="releaseSortOptions"
-              :model-value="releaseSort"
-              :order="releaseOrder"
-              default-value="date"
-              default-order="asc"
-              @update:model-value="handleReleaseSortChange"
-              @update:order="handleReleaseOrderChange"
-            />
-            <MonitoredStatusFilterMenu v-if="activeTab === 'releases'" :model-value="releaseStatus" @update:model-value="handleReleaseStatusChange" />
-            <MonitoredGroupMenu
-              v-if="activeTab === 'releases'"
-              :options="releaseGroupOptions"
-              :model-value="releaseGroup"
-              default-value="status"
-              @update:model-value="handleReleaseGroupChange"
-            />
-            <MonitoredSortMenu
-              v-else-if="activeTab === 'authors'"
-              :options="authorSortOptions"
-              :model-value="authorSort"
-              :order="authorOrder"
-              default-value="name"
-              default-order="asc"
-              @update:model-value="handleAuthorSortChange"
-              @update:order="handleAuthorOrderChange"
-            />
-          </template>
-          <template #actions>
-            <Button
-              v-if="canManage"
-              variant="ghost"
-              size="icon"
-              class="size-8 rounded-lg text-muted-foreground hover:text-foreground"
-              :disabled="refreshState === 'loading' || refreshAllRunning"
-              :aria-label="refreshLabel"
-              :title="refreshLabel"
-              @click="handleRefresh"
-            >
-              <Loader2 v-if="refreshState === 'loading'" class="animate-spin" :size="14" />
-              <Check v-else-if="refreshState === 'done'" class="text-[var(--pill-success)]" :size="14" />
-              <RefreshCw v-else :size="14" />
-            </Button>
-            <span v-if="refreshAllProgress" class="text-[11px] tabular-nums text-muted-foreground" aria-hidden="true">
-              {{ formatNumber(refreshAllProgress.processed) }}/{{ formatNumber(refreshAllProgress.total) }}
-            </span>
-          </template>
-        </ViewHeader>
+          <Loader2 v-if="refreshState === 'loading'" class="animate-spin" :size="14" aria-hidden="true" />
+          <Check v-else-if="refreshState === 'done'" class="text-[var(--pill-success)]" :size="14" aria-hidden="true" />
+          <RefreshCw v-else :size="14" aria-hidden="true" />
+          <span v-if="refreshAllProgress" class="text-[12px] tabular-nums text-muted-foreground" aria-hidden="true">
+            {{ formatNumber(refreshAllProgress.processed) }}/{{ formatNumber(refreshAllProgress.total) }}
+          </span>
+        </button>
+      </template>
 
-        <div class="flex min-w-0 flex-wrap items-center gap-2 px-1">
-          <div class="monitored-tabs no-scrollbar flex max-w-full gap-1 overflow-x-auto" role="tablist" :aria-label="t('monitored.tabs.label')">
-            <button
-              v-for="tab in tabs"
-              :key="tab.id"
-              type="button"
-              role="tab"
-              :aria-selected="activeTab === tab.id"
-              class="inline-flex shrink-0 items-center gap-1 border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-reduce:transition-none"
-              :class="tabClass(tab.id)"
-              @click="selectTab(tab.id)"
-            >
-              <Plus v-if="tab.id === 'add'" :size="14" aria-hidden="true" />
-              {{ tab.label }}
-              <template v-if="tab.count !== null">
-                <span
-                  class="ms-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/15 px-1.5 text-xs font-semibold text-primary tabular-nums"
-                  aria-hidden="true"
-                >
-                  {{ formatNumber(tab.count) }}
-                </span>
-                <span class="sr-only">{{ formatNumber(tab.count) }}</span>
-              </template>
-            </button>
-          </div>
-
-          <!-- The header row has no room for the filter on narrow screens, so it stays beside the tabs there. -->
-          <div v-if="activeTab === 'releases'" class="min-w-0 md:hidden">
+      <template #bar>
+        <BrowseSearchField
+          v-if="activeTab !== 'add'"
+          :model-value="filterQuery"
+          :placeholder="t('monitored.searchPlaceholder')"
+          :active="filterQuery.trim().length > 0"
+          @update:model-value="handleSearchUpdate"
+          @clear="handleSearchClear"
+        />
+        <template v-if="activeTab === 'releases'">
+          <span :class="barDivider" aria-hidden="true" />
+          <MonitoredSortMenu
+            :options="releaseSortOptions"
+            :model-value="releaseSort"
+            :order="releaseOrder"
+            default-value="date"
+            default-order="asc"
+            @update:model-value="handleReleaseSortChange"
+            @update:order="handleReleaseOrderChange"
+          />
+          <MonitoredStatusFilterMenu :model-value="releaseStatus" @update:model-value="handleReleaseStatusChange" />
+          <MonitoredGroupMenu
+            :options="releaseGroupOptions"
+            :model-value="releaseGroup"
+            default-value="status"
+            @update:model-value="handleReleaseGroupChange"
+          />
+          <div class="hidden min-w-0 md:block">
             <MonitoredReleaseFilterBar v-model="releaseFilter" />
           </div>
-        </div>
-      </div>
-
-      <div
-        v-if="error"
-        role="alert"
-        class="mx-1 mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
-      >
-        <span class="min-w-0">{{ error }}</span>
-        <Button variant="outline" size="sm" @click="handleRetry">{{ t('common.retry') }}</Button>
-      </div>
-      <MonitoredHardcoverNotice v-if="!hardcoverConfigured" class="mx-1 mt-4" />
-      <MonitoredAudibleNotice v-if="showAudibleNotice" class="mx-1 mt-4" />
-      <!-- Retention drops the earliest pages once a list passes the cap; scrolling back to this edge
-           means the top of the render is no longer page 0, so a reset is the only way back to it. -->
-      <div v-if="activeTab !== 'add'" ref="topSentinel" aria-hidden="true" />
-      <!-- Skeleton only before a tab's first page lands; a refetch keeps the current rows on screen. -->
-      <div v-if="showSkeleton" class="mt-4 px-1" aria-hidden="true">
-        <div v-if="activeTab === 'authors' || releasesView === 'cards'" class="grid" :style="skeletonGridStyle">
-          <div v-for="index in INITIAL_SKELETON_COUNT" :key="`monitored-skeleton-${index}`" class="flex flex-col gap-1.5">
-            <div class="aspect-2/3 w-full animate-pulse rounded-md bg-muted/60" />
-          </div>
-        </div>
-        <div v-else class="space-y-3">
-          <div
-            v-for="index in INITIAL_SKELETON_COUNT"
-            :key="`monitored-skeleton-row-${index}`"
-            class="h-[104px] animate-pulse rounded-xl bg-muted/50"
+        </template>
+        <template v-else-if="activeTab === 'authors'">
+          <span :class="barDivider" aria-hidden="true" />
+          <MonitoredSortMenu
+            :options="authorSortOptions"
+            :model-value="authorSort"
+            :order="authorOrder"
+            default-value="name"
+            default-order="asc"
+            @update:model-value="handleAuthorSortChange"
+            @update:order="handleAuthorOrderChange"
           />
-        </div>
+        </template>
+        <template v-if="showDisplayControls">
+          <span class="flex-1" aria-hidden="true" />
+          <BrowseViewControls
+            :view-mode="headerViewMode"
+            :allowed-view-modes="activeTab === 'releases' ? ['grid', 'list'] : ['grid']"
+            :show-selection="selectionAvailable"
+            :selection-mode="selectionMode"
+            @update:view-mode="handleHeaderViewMode"
+            @toggle-selection="toggleSelectionMode"
+          >
+            <template #display>
+              <ViewHeaderDisplayControls
+                :view-mode="headerViewMode"
+                :cover-size="activeCardSize"
+                :grid-gap="cardGap"
+                :row-density="headerRowDensity"
+                :hide-size-controls="showReleaseRows"
+                :cover-size-min="activeCardSizeConfig.min"
+                :cover-size-max="activeCardSizeConfig.max"
+                :cover-size-step="4"
+                @update:cover-size="handleCardSizeUpdate"
+                @update:grid-gap="handleCardGapUpdate"
+                @update:row-density="handleRowDensityUpdate"
+              />
+            </template>
+          </BrowseViewControls>
+        </template>
+      </template>
+    </BrowseHeader>
+
+    <div class="mb-3 flex min-w-0 flex-wrap items-center gap-2 border-b border-border px-1">
+      <div class="monitored-tabs no-scrollbar flex max-w-full gap-1 overflow-x-auto" role="tablist" :aria-label="t('monitored.tabs.label')">
+        <button
+          v-for="tab in tabs"
+          :key="tab.id"
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === tab.id"
+          class="inline-flex shrink-0 items-center gap-1 border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-reduce:transition-none"
+          :class="tabClass(tab.id)"
+          @click="selectTab(tab.id)"
+        >
+          <Plus v-if="tab.id === 'add'" :size="14" aria-hidden="true" />
+          {{ tab.label }}
+          <template v-if="tab.count !== null">
+            <span
+              class="ms-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/15 px-1.5 text-xs font-semibold text-primary tabular-nums"
+              aria-hidden="true"
+            >
+              {{ formatNumber(tab.count) }}
+            </span>
+            <span class="sr-only">{{ formatNumber(tab.count) }}</span>
+          </template>
+        </button>
       </div>
 
-      <section v-else-if="activeTab === 'authors'" class="mt-4 px-1">
-        <MonitoredVirtualGrid v-if="sortedAuthors.length > 0" :items="sortedAuthors" :card-size="authorCardSize" :grid-gap="cardGap">
-          <template #default="{ item: author }">
-            <MonitoredAuthorCard
-              :author="author"
-              :can-manage="canManage && author.isOwner"
-              @open="openAuthor"
-              @pause="handleAuthorPause"
-              @remove="handleAuthorRemove"
-              @updated="handleAuthorUpdated"
-            />
-          </template>
-        </MonitoredVirtualGrid>
-        <MonitoredEmptyState
-          v-else-if="showEmpty"
-          :title="t('monitored.empty.authorsTitle')"
-          :description="t('monitored.empty.authorsDescription')"
-          :action-label="canManage ? t('monitored.tabs.add') : undefined"
-          @action="openAddTab"
-        />
-      </section>
+      <!-- The header row has no room for the filter on narrow screens, so it stays beside the tabs there. -->
+      <div v-if="activeTab === 'releases'" class="min-w-0 md:hidden">
+        <MonitoredReleaseFilterBar v-model="releaseFilter" />
+      </div>
+    </div>
 
-      <section v-else-if="activeTab === 'releases'" class="mt-4 space-y-6 px-1" :class="selectionMode ? 'pb-28' : ''">
-        <MonitoredQuickSelect
-          v-if="selectionMode"
-          :works="selectableWorks"
-          :selected-ids="selectedIds"
-          :format="bulkFormat"
-          @add="addMany"
-          @keep="replaceSelection"
-        />
-        <section v-for="group in releaseSections" :key="group.key">
-          <div v-if="group.label || (selectionMode && groupSelection(group).ids.length)" class="mb-3 flex items-center gap-2">
-            <template v-if="group.label">
-              <h3 class="text-xs font-semibold text-foreground">{{ group.label }}</h3>
-              <span v-if="group.count !== null" class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{{
-                formatNumber(group.count)
-              }}</span>
-            </template>
-            <div class="h-px flex-1 bg-border" />
-            <div v-if="selectionMode && groupSelection(group).ids.length" class="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-              <button
-                type="button"
-                role="checkbox"
-                :aria-checked="groupSelection(group).ariaChecked"
-                :aria-label="t('monitored.selection.group.selectAll', { name: group.label ?? t('monitored.tabs.releases') })"
-                class="flex size-5 shrink-0 items-center justify-center rounded-xs border transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                :class="
-                  groupSelection(group).state === 'none'
-                    ? 'border-border bg-background hover:border-primary'
-                    : 'border-primary bg-primary text-primary-foreground'
-                "
-                data-testid="group-select"
-                @click="handleGroupSelect(group)"
-              >
-                <Check v-if="groupSelection(group).state === 'all'" :size="12" aria-hidden="true" />
-                <Minus v-else-if="groupSelection(group).state === 'some'" :size="12" aria-hidden="true" />
-              </button>
-              <span class="tabular-nums" data-testid="group-progress">{{
-                t('monitored.selection.group.progress', { selected: groupSelection(group).selected, total: groupSelection(group).ids.length })
-              }}</span>
+    <main ref="mainRef" class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pr-0 sm:pr-2">
+      <div class="mx-auto w-full max-w-7xl pb-8">
+        <div
+          v-if="error"
+          role="alert"
+          class="mx-1 mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+        >
+          <span class="min-w-0">{{ error }}</span>
+          <Button variant="outline" size="sm" @click="handleRetry">{{ t('common.retry') }}</Button>
+        </div>
+        <MonitoredHardcoverNotice v-if="!hardcoverConfigured" class="mx-1 mt-4" />
+        <MonitoredAudibleNotice v-if="showAudibleNotice" class="mx-1 mt-4" />
+        <!-- Retention drops the earliest pages once a list passes the cap; scrolling back to this edge
+           means the top of the render is no longer page 0, so a reset is the only way back to it. -->
+        <div v-if="activeTab !== 'add'" ref="topSentinel" aria-hidden="true" />
+        <!-- Skeleton only before a tab's first page lands; a refetch keeps the current rows on screen. -->
+        <div v-if="showSkeleton" class="mt-4 px-1" aria-hidden="true">
+          <div v-if="activeTab === 'authors' || releasesView === 'cards'" class="grid" :style="skeletonGridStyle">
+            <div v-for="index in INITIAL_SKELETON_COUNT" :key="`monitored-skeleton-${index}`" class="flex flex-col gap-1.5">
+              <div class="aspect-2/3 w-full animate-pulse rounded-md bg-muted/60" />
             </div>
           </div>
-          <div v-if="releasesView === 'table'" class="space-y-3">
-            <MonitoredReleaseRow
-              v-for="item in group.items"
-              :key="releaseKey(item)"
-              :item="item"
-              :density="monitoredReleaseRowDensity"
-              :can-manage="canManage && item.isOwner"
-              :requesting="isReleaseRequesting(item)"
-              :selection-mode="selectionMode"
-              :selected="selectedIds.has(item.workId)"
-              :selectable="rowSelectable(item)"
-              @request="handleReleaseRequest"
-              @preview="openItemPanel"
-              :long-press-select="selectionAvailable"
-              @select="handleRowSelect"
-              @long-press="handleRowLongPress"
+          <div v-else class="space-y-3">
+            <div
+              v-for="index in INITIAL_SKELETON_COUNT"
+              :key="`monitored-skeleton-row-${index}`"
+              class="h-[104px] animate-pulse rounded-xl bg-muted/50"
             />
           </div>
-          <MonitoredVirtualGrid v-else :virtualized="releaseGroup === 'none'" :items="group.entries" :card-size="workCardSize" :grid-gap="cardGap">
-            <template #default="{ item: entry }">
-              <MonitoredWorkCard
-                :work="entry.work"
-                :queued="entryQueued(entry)"
-                :ebook-queued="entryFormatQueued(entry, 'ebook')"
-                :audiobook-queued="entryFormatQueued(entry, 'audiobook')"
-                :time-badge="entryTimeBadge(entry)"
-                :author-name="entry.authorName"
-                :monitored-formats="entryFormats(entry)"
-                :format-modes="entryModes(entry)"
-                :can-manage="entryCanManage(entry)"
-                :selection-mode="selectionMode"
-                :selectable="entryCanManage(entry)"
-                :selected="selectedIds.has(entry.work.id)"
-                :long-press-select="selectionAvailable && entryCanManage(entry)"
-                @select="handleSelectWork"
-                @long-press="startSelectingWith"
-                @preview="openEntryPanel(entry)"
-                @quick-view="handleCardQuickView"
-                @download-ebook="handleDownloadEbook"
-                @download-audiobook="handleDownloadAudiobook"
-                @stop="handleHideWork"
+        </div>
+
+        <section v-else-if="activeTab === 'authors'" class="mt-4 px-1">
+          <MonitoredVirtualGrid v-if="sortedAuthors.length > 0" :items="sortedAuthors" :card-size="authorCardSize" :grid-gap="cardGap">
+            <template #default="{ item: author }">
+              <MonitoredAuthorCard
+                :author="author"
+                :can-manage="canManage && author.isOwner"
+                @open="openAuthor"
+                @pause="handleAuthorPause"
+                @remove="handleAuthorRemove"
+                @updated="handleAuthorUpdated"
               />
             </template>
           </MonitoredVirtualGrid>
+          <MonitoredEmptyState
+            v-else-if="showEmpty"
+            :title="t('monitored.empty.authorsTitle')"
+            :description="t('monitored.empty.authorsDescription')"
+            :action-label="canManage ? t('monitored.tabs.add') : undefined"
+            @action="openAddTab"
+          />
         </section>
-        <MonitoredEmptyState v-if="showEmpty" :title="t('monitored.empty.releasesTitle')" :description="t('monitored.empty.releasesDescription')" />
-      </section>
 
-      <div v-else class="mt-4 px-1">
-        <AddMonitoredPanel @changed="handleChanged" />
-      </div>
+        <section v-else-if="activeTab === 'releases'" class="mt-4 space-y-6 px-1" :class="selectionMode ? 'pb-28' : ''">
+          <MonitoredQuickSelect
+            v-if="selectionMode"
+            :works="selectableWorks"
+            :selected-ids="selectedIds"
+            :format="bulkFormat"
+            @add="addMany"
+            @keep="replaceSelection"
+          />
+          <section v-for="group in releaseSections" :key="group.key">
+            <div v-if="group.label || (selectionMode && groupSelection(group).ids.length)" class="mb-3 flex items-center gap-2">
+              <template v-if="group.label">
+                <h3 class="text-xs font-semibold text-foreground">{{ group.label }}</h3>
+                <span v-if="group.count !== null" class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{{
+                  formatNumber(group.count)
+                }}</span>
+              </template>
+              <div class="h-px flex-1 bg-border" />
+              <div v-if="selectionMode && groupSelection(group).ids.length" class="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                <button
+                  type="button"
+                  role="checkbox"
+                  :aria-checked="groupSelection(group).ariaChecked"
+                  :aria-label="t('monitored.selection.group.selectAll', { name: group.label ?? t('monitored.tabs.releases') })"
+                  class="flex size-5 shrink-0 items-center justify-center rounded-xs border transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  :class="
+                    groupSelection(group).state === 'none'
+                      ? 'border-border bg-background hover:border-primary'
+                      : 'border-primary bg-primary text-primary-foreground'
+                  "
+                  data-testid="group-select"
+                  @click="handleGroupSelect(group)"
+                >
+                  <Check v-if="groupSelection(group).state === 'all'" :size="12" aria-hidden="true" />
+                  <Minus v-else-if="groupSelection(group).state === 'some'" :size="12" aria-hidden="true" />
+                </button>
+                <span class="tabular-nums" data-testid="group-progress">{{
+                  t('monitored.selection.group.progress', { selected: groupSelection(group).selected, total: groupSelection(group).ids.length })
+                }}</span>
+              </div>
+            </div>
+            <div v-if="releasesView === 'table'" class="space-y-3">
+              <MonitoredReleaseRow
+                v-for="item in group.items"
+                :key="releaseKey(item)"
+                :item="item"
+                :density="monitoredReleaseRowDensity"
+                :can-manage="canManage && item.isOwner"
+                :requesting="isReleaseRequesting(item)"
+                :selection-mode="selectionMode"
+                :selected="selectedIds.has(item.workId)"
+                :selectable="rowSelectable(item)"
+                @request="handleReleaseRequest"
+                @preview="openItemPanel"
+                :long-press-select="selectionAvailable"
+                @select="handleRowSelect"
+                @long-press="handleRowLongPress"
+              />
+            </div>
+            <MonitoredVirtualGrid v-else :virtualized="releaseGroup === 'none'" :items="group.entries" :card-size="workCardSize" :grid-gap="cardGap">
+              <template #default="{ item: entry }">
+                <MonitoredWorkCard
+                  :work="entry.work"
+                  :queued="entryQueued(entry)"
+                  :ebook-queued="entryFormatQueued(entry, 'ebook')"
+                  :audiobook-queued="entryFormatQueued(entry, 'audiobook')"
+                  :time-badge="entryTimeBadge(entry)"
+                  :author-name="entry.authorName"
+                  :monitored-formats="entryFormats(entry)"
+                  :format-modes="entryModes(entry)"
+                  :can-manage="entryCanManage(entry)"
+                  :selection-mode="selectionMode"
+                  :selectable="entryCanManage(entry)"
+                  :selected="selectedIds.has(entry.work.id)"
+                  :long-press-select="selectionAvailable && entryCanManage(entry)"
+                  @select="handleSelectWork"
+                  @long-press="startSelectingWith"
+                  @preview="openEntryPanel(entry)"
+                  @quick-view="handleCardQuickView"
+                  @download-ebook="handleDownloadEbook"
+                  @download-audiobook="handleDownloadAudiobook"
+                  @stop="handleHideWork"
+                />
+              </template>
+            </MonitoredVirtualGrid>
+          </section>
+          <MonitoredEmptyState v-if="showEmpty" :title="t('monitored.empty.releasesTitle')" :description="t('monitored.empty.releasesDescription')" />
+        </section>
 
-      <div v-if="activeTab !== 'add'" ref="sentinel" class="flex h-8 items-center justify-center">
-        <span v-if="loading && activeItemsLength > 0" class="text-xs text-muted-foreground">{{ t('common.loading') }}</span>
-        <span v-else-if="initialLoaded && !hasMore && activeItemsLength > 0" class="text-xs text-muted-foreground">{{ allLoadedLabel }}</span>
+        <div v-else class="mt-4 px-1">
+          <AddMonitoredPanel @changed="handleChanged" />
+        </div>
+
+        <div v-if="activeTab !== 'add'" ref="sentinel" class="flex h-8 items-center justify-center">
+          <span v-if="loading && activeItemsLength > 0" class="text-xs text-muted-foreground">{{ t('common.loading') }}</span>
+          <span v-else-if="initialLoaded && !hasMore && activeItemsLength > 0" class="text-xs text-muted-foreground">{{ allLoadedLabel }}</span>
+        </div>
       </div>
-    </div>
-    <MonitoredSelectionBar
-      :visible="selectionMode"
-      :works="selectedWorks"
-      v-model:format="bulkFormat"
-      v-model:auto-download="bulkAutoDownload"
-      :running="bulkRunning"
-      :source-groups="sourceGroups"
-      @toggle-source="toggleSource"
-      @use-all-sources="useAllSources"
-      @patch="updateSelected"
-      @request="requestSelected"
-      @exit="exitSelectionMode"
-    />
-    <ConfirmDialog
-      :open="pendingAuthorRemoval !== null"
-      :title="t('monitored.detail.stopDialog.title')"
-      :description="t('monitored.detail.stopDialog.description')"
-      :confirm-label="t('monitored.actions.stopMonitoring')"
-      :busy="removing"
-      @confirm="confirmAuthorRemove"
-      @cancel="cancelAuthorRemove"
-    />
-    <MonitoredBookPanel
-      :work="panelWork"
-      :author-name="panelAuthorName"
-      :monitored-formats="panelFormats"
-      :author-id="panelAuthorId"
-      :format-modes="panelModes"
-      :can-manage="canManage && panelOwned"
-      :checked-at="panelCheckedAt"
-      :checking="panelChecking"
-      :open="panelOpen"
-      @update:open="handlePanelOpen"
-      @request="handlePanelRequest"
-      @grabbed="handlePanelGrabbed"
-      @filed="handlePanelFiled"
-      @toggle-monitor="handleToggleMonitor"
-      @toggle-hidden="handleToggleHidden"
-      @set-automatic="handleSetAutomatic"
-      @set-kind="handleSetKind"
-      @check-library="handleCheckLibrary"
-      @work-updated="handleWorkUpdated"
-    />
-  </main>
+      <MonitoredSelectionBar
+        :visible="selectionMode"
+        :works="selectedWorks"
+        v-model:format="bulkFormat"
+        v-model:auto-download="bulkAutoDownload"
+        :running="bulkRunning"
+        :source-groups="sourceGroups"
+        @toggle-source="toggleSource"
+        @use-all-sources="useAllSources"
+        @patch="updateSelected"
+        @request="requestSelected"
+        @exit="exitSelectionMode"
+      />
+      <ConfirmDialog
+        :open="pendingAuthorRemoval !== null"
+        :title="t('monitored.detail.stopDialog.title')"
+        :description="t('monitored.detail.stopDialog.description')"
+        :confirm-label="t('monitored.actions.stopMonitoring')"
+        :busy="removing"
+        @confirm="confirmAuthorRemove"
+        @cancel="cancelAuthorRemove"
+      />
+      <MonitoredBookPanel
+        :work="panelWork"
+        :author-name="panelAuthorName"
+        :monitored-formats="panelFormats"
+        :author-id="panelAuthorId"
+        :format-modes="panelModes"
+        :can-manage="canManage && panelOwned"
+        :checked-at="panelCheckedAt"
+        :checking="panelChecking"
+        :open="panelOpen"
+        @update:open="handlePanelOpen"
+        @request="handlePanelRequest"
+        @grabbed="handlePanelGrabbed"
+        @filed="handlePanelFiled"
+        @toggle-monitor="handleToggleMonitor"
+        @toggle-hidden="handleToggleHidden"
+        @set-automatic="handleSetAutomatic"
+        @set-kind="handleSetKind"
+        @check-library="handleCheckLibrary"
+        @work-updated="handleWorkUpdated"
+      />
+    </main>
+  </section>
 </template>
 
 <style scoped>

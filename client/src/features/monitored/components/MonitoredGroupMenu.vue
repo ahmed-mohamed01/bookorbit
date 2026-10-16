@@ -43,7 +43,7 @@ function selectGroup(value: T) {
       >
         <Layers :size="13" />
         <span class="hidden lg:inline">{{ selectedLabel }}</span>
-        <span class="lg:hidden">{{ t('monitored.detail.controls.group') }}</span>
+        <span class="hidden sm:inline lg:hidden">{{ t('monitored.detail.controls.group') }}</span>
       </button>
     </PopoverTrigger>
     <PopoverContent align="end" class="w-56 p-2">

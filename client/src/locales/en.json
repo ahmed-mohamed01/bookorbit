@@ -14677,6 +14677,9 @@
     },
     "title": "Watchlist",
     "searchPlaceholder": "Filter watchlist...",
+    "facts": {
+      "releases": "{count, plural, one {# release} other {# releases}}"
+    },
     "tabs": {
       "label": "Watchlist sections",
       "authors": "Authors",
