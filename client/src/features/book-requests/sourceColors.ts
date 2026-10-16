@@ -58,5 +58,6 @@ export function sourceDotClass(color: IndexerColor | null | undefined): string {
 }
 
 export function protocolChipClass(delivery: DownloadDelivery): string {
-  return delivery === 'file' ? PROTOCOL_CLASSES.direct : PROTOCOL_CLASSES[delivery]
+  // A Shelfmark grab ends as a file Shelfmark fetched, so it reads as a direct download.
+  return delivery === 'file' || delivery === 'shelfmark' ? PROTOCOL_CLASSES.direct : PROTOCOL_CLASSES[delivery]
 }

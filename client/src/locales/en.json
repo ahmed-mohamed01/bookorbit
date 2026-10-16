@@ -3401,7 +3401,7 @@
         "clientsEmpty": {
           "title": "No download client yet",
           "body": "A direct HTTP download needs no client. Connect one so BookOrbit can fetch releases delivered by torrent or Usenet too.",
-          "note": "qBittorrent, Transmission, Deluge, NZBGet and SABnzbd are supported."
+          "note": "qBittorrent, Transmission, Deluge, NZBGet, SABnzbd and Shelfmark are supported."
         },
         "summary": "{type} - category {category}, priority {priority}",
         "disabled": "Disabled",
@@ -3418,7 +3418,8 @@
           "transmission": "Transmission",
           "deluge": "Deluge",
           "nzbget": "NZBGet",
-          "sabnzbd": "SABnzbd"
+          "sabnzbd": "SABnzbd",
+          "shelfmark": "Shelfmark"
         },
         "color": {
           "label": "Color",
@@ -3447,6 +3448,7 @@
           "allowPrivateAddressHint": "Needed when the client runs on your local network or the same machine.",
           "passwordBrief": "Stored encrypted.",
           "apiKeyBrief": "Found in SABnzbd under Config > General. Stored encrypted.",
+          "apiKeyBriefShelfmark": "The value of SHELFMARK_API_KEY on your Shelfmark (v1.4.0 or later). Stored encrypted.",
           "useHardlinksBrief": "Imports without using the disk twice. Falls back to a copy across filesystems."
         },
         "mappings": {
@@ -3501,7 +3503,8 @@
           "nameRequired": "Give this client a name.",
           "urlRequired": "Enter the address BookOrbit should reach this client at.",
           "mappingRequired": "Add at least one path mapping, so BookOrbit knows which directory it may import from.",
-          "apiKeyRequired": "Enter the SABnzbd API key from Config > General."
+          "apiKeyRequired": "Enter the SABnzbd API key from Config > General.",
+          "apiKeyRequiredShelfmark": "Enter the SHELFMARK_API_KEY value your Shelfmark runs with."
         },
         "encryptionKeyMissing": "BOOK_REQUEST_ENCRYPTION_KEY is not set, so a client credential cannot be saved. Generate one with: openssl rand -hex 32",
         "confirmDelete": {
@@ -3570,7 +3573,16 @@
           },
           "types": {
             "torznab": "Torznab (Jackett, Prowlarr, NZBHydra)",
-            "newznab": "Newznab"
+            "newznab": "Newznab",
+            "shelfmark": "Shelfmark"
+          },
+          "options": {
+            "shelfmarkSources": {
+              "direct_download": "Anna's Archive",
+              "libgen": "Library Genesis",
+              "audiobookbay": "AudiobookBay",
+              "irc": "IRC"
+            }
           },
           "fields": {
             "name": "Name",
@@ -3578,7 +3590,8 @@
             "baseUrl": "Base URL",
             "baseUrlHint": {
               "torznab": "The Torznab feed URL, without the query string. Jackett shows it on each indexer as \"Torznab Feed\".",
-              "newznab": "The Newznab site URL or API endpoint, without a search query."
+              "newznab": "The Newznab site URL or API endpoint, without a search query.",
+              "shelfmark": "The address of your Shelfmark, for example http://shelfmark:8084."
             },
             "credential": {
               "apiKey": "API key",
@@ -3593,7 +3606,8 @@
             "credentialBrief": "Stored encrypted.",
             "allowPrivateAddressBrief": "Off by default. Only needed when the source is on your local network.",
             "searchByIsbn": "Search by ISBN",
-            "searchByIsbnBrief": "On by default. Turn it off if this source returns the wrong book for an exact ISBN, and it will be searched by title and author instead."
+            "searchByIsbnBrief": "On by default. Turn it off if this source returns the wrong book for an exact ISBN, and it will be searched by title and author instead.",
+            "shelfmarkSources": "Shelfmark sources"
           },
           "color": {
             "label": "Color",
@@ -3674,7 +3688,8 @@
           "plugin": "Plugin",
           "typeDescriptions": {
             "torznab": "Your own Jackett, Prowlarr or NZBHydra. Uses categories and seed goals.",
-            "newznab": "A Newznab-compatible Usenet indexer. Uses categories and requires an API key."
+            "newznab": "A Newznab-compatible Usenet indexer. Uses categories and requires an API key.",
+            "shelfmark": "Searches your Shelfmark for Anna's Archive, Library Genesis, AudiobookBay or IRC. Grabs go to a Shelfmark download client."
           },
           "plugins": {
             "title": "Plugins",
@@ -3931,7 +3946,8 @@
           "transmission": "Your own Transmission. It has no categories, so the category becomes a subfolder of its download directory.",
           "deluge": "Your own Deluge. Sign in with the Web UI password; the category needs the Label plugin switched on.",
           "nzbget": "Your own NZBGet. BookOrbit sends NZB files over its JSON-RPC API.",
-          "sabnzbd": "Your own SABnzbd. BookOrbit sends NZB files using its API key."
+          "sabnzbd": "Your own SABnzbd. BookOrbit sends NZB files using its API key.",
+          "shelfmark": "Your own Shelfmark. Downloads the releases a Shelfmark indexer finds, into a folder BookOrbit can read."
         },
         "searchHealth": {
           "failingOnce": "Last search failed",
@@ -8168,6 +8184,7 @@
         "multiPartBook": "{count, plural, one {This release is one book made of # file.} other {This release is one book made of # files, imported together as a single book.}}",
         "metadataUnavailable": "This is a magnet link. Its file list is unavailable until a torrent client fetches the metadata from the swarm.",
         "usenetMetadataUnavailable": "This is a Usenet release. Its final file list is unavailable until NZBGet downloads and post-processes it.",
+        "shelfmarkMetadataUnavailable": "Shelfmark downloads this release. Its files are known once Shelfmark has fetched them.",
         "bookFile": "Book file",
         "extraFile": "Extra",
         "truncated": "Showing {shown} of {total} files.",
@@ -8284,7 +8301,8 @@
         "torrent": "Torrent",
         "usenet": "Usenet",
         "direct": "Direct download",
-        "directPill": "Direct"
+        "directPill": "Direct",
+        "shelfmark": "Shelfmark"
       }
     },
     "seed": {

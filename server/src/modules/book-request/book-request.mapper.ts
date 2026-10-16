@@ -11,6 +11,7 @@ import type {
 
 import type { BookRequestJoinedRow } from './book-request.repository';
 import type { BookRequestDownloadJoinedRow } from './fulfillment/book-request-download.repository';
+import { shelfmarkOriginFromGuid } from './shelfmark/shelfmark-release';
 
 /**
  * Shared by the request service and the fulfilment pipeline, both of which hand a request back
@@ -87,6 +88,7 @@ export function mapBookRequestDownload({
     indexerId: download.indexerId,
     indexerName,
     indexerColor,
+    ...(download.source === 'shelfmark' ? { origin: shelfmarkOriginFromGuid(download.releaseGuid) } : {}),
     automated: download.automated,
     releaseTitle: download.releaseTitle,
     releaseSizeBytes: download.releaseSizeBytes,

@@ -4,7 +4,7 @@ import { AuditAction, AuditResource, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, W
 import type { ReleaseUnitChoice } from '@bookorbit/types';
 import { randomUUID } from 'crypto';
 import { constants } from 'fs';
-import { copyFile, link, mkdir, readdir, realpath, rmdir, stat, unlink } from 'fs/promises';
+import { copyFile, link, mkdir, opendir, readdir, realpath, rmdir, stat, unlink } from 'fs/promises';
 import { basename, dirname, extname, join, relative, sep } from 'path';
 
 import { isUniqueViolation } from '../../../common/utils/db-error.utils';
@@ -198,8 +198,14 @@ export class RequestImportService implements OnApplicationBootstrap {
     const started = Date.now();
     if (!download.contentPath) throw new Error('The download did not report where the finished files are');
 
-    const { localPath, containmentRoot } = await this.resolveLocalPath(download, download.contentPath);
-    const { root, plan, containmentRoot: contentContainmentRoot } = await this.resolveReleasePlan(localPath, containmentRoot, extractionDirectory);
+    const resolved = await this.resolveLocalPath(download, download.contentPath);
+    const localPath = await this.spannedContentPath(download, request, resolved.localPath);
+    if (localPath === null) return;
+    const {
+      root,
+      plan,
+      containmentRoot: contentContainmentRoot,
+    } = await this.resolveReleasePlan(localPath, resolved.containmentRoot, extractionDirectory);
 
     // Part of the release was never read, so what looks like a whole book may be the half of one
     // that fitted inside the bounds. Importing it would mark the request available on a book with
@@ -403,6 +409,39 @@ export class RequestImportService implements OnApplicationBootstrap {
     await this.fulfillment.holdForReview(download, request, `this release contains ${choices.length} separate books, so one has to be chosen`, {
       releaseUnits: choices,
     });
+  }
+
+  /**
+   * A client that wrote several files but named only the first, as Shelfmark does, leaves the rest
+   * to be found beside it. Its folder is only taken when it holds exactly those files: in most of
+   * Shelfmark's layouts the files land in a folder shared with other books, where nothing says
+   * which belong to this one. An ebook then falls back to the file it was named, which is a whole
+   * book on its own; an audiobook missing its other parts is not, so it is held. Null when held.
+   */
+  private async spannedContentPath(download: BookRequestDownloadRow, request: BookRequestRow, localPath: string): Promise<string | null> {
+    const expected = download.contentFileCount ?? 1;
+    if (expected <= 1) return localPath;
+    const info = await stat(localPath).catch(() => null);
+    if (info?.isDirectory()) return localPath;
+
+    const folder = dirname(localPath);
+    if (await holdsExactlyFiles(folder, expected)) return folder;
+    if (request.mediaKind !== 'audiobook') {
+      this.logger.log(
+        `[book_request.import] [end] requestId=${request.id} downloadId=${download.id} expectedFiles=${expected} - the files share a folder with others, importing the named file alone`,
+      );
+      return localPath;
+    }
+
+    this.logger.warn(
+      `[book_request.import] [end] requestId=${request.id} downloadId=${download.id} expectedFiles=${expected} - the files of a multi-file audiobook share a folder with others, holding rather than guessing`,
+    );
+    await this.fulfillment.holdForReview(
+      download,
+      request,
+      `the download client wrote ${expected} files for this audiobook into a folder that holds other files too, so BookOrbit cannot tell which ones belong to it. In Shelfmark, setting the audiobook file organization to "Rename and group" gives each such download its own folder`,
+    );
+    return null;
   }
 
   private async holdForTruncatedRelease(download: BookRequestDownloadRow, request: BookRequestRow): Promise<void> {
@@ -678,6 +717,20 @@ function isContinuationVolume(path: string): boolean {
  * padding files too, because what a release *is* depends on what is beside the content as much as
  * on the content itself.
  */
+/**
+ * Whether `folder` holds `expected` files and nothing else. Stops at the first subfolder or the
+ * first file past the count, so a shared download folder costs a few entries rather than a walk.
+ */
+async function holdsExactlyFiles(folder: string, expected: number): Promise<boolean> {
+  const dir = await opendir(folder).catch(() => null);
+  if (!dir) return false;
+  let files = 0;
+  for await (const entry of dir) {
+    if (!entry.isFile() || ++files > expected) return false;
+  }
+  return files === expected;
+}
+
 async function collectReleaseFiles(root: string): Promise<ReleaseWalk> {
   const found: ReleaseFileInput[] = [];
   let visited = 0;

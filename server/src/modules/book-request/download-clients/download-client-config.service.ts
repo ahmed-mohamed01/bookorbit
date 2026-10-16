@@ -276,6 +276,9 @@ export class DownloadClientConfigService {
     if (adapterType === 'sabnzbd' && !hasCredential) {
       throw downloadClientError('DOWNLOAD_CLIENT_CREDENTIAL_REQUIRED', 'SABnzbd needs an API key');
     }
+    if (adapterType === 'shelfmark' && !hasCredential) {
+      throw downloadClientError('DOWNLOAD_CLIENT_CREDENTIAL_REQUIRED', 'Shelfmark needs an API key');
+    }
   }
 }
 

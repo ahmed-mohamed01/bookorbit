@@ -100,6 +100,9 @@ function handleGrab() {
               {{ protocolText }}
             </span>
             <span class="rounded-full border border-border px-1.5 py-px font-medium text-muted-foreground">{{ release.indexerName }}</span>
+            <span v-if="release.origin" class="rounded-full border border-border px-1.5 py-px font-medium text-muted-foreground">{{
+              release.origin
+            }}</span>
             <span
               v-if="release.fileCount !== null"
               class="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-1.5 py-px font-medium text-muted-foreground tabular-nums"

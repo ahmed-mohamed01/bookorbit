@@ -38,6 +38,7 @@ import { TransmissionAdapter } from './download-clients/adapters/transmission.ad
 import { DelugeAdapter } from './download-clients/adapters/deluge.adapter';
 import { NzbgetAdapter } from './download-clients/adapters/nzbget.adapter';
 import { SabnzbdAdapter } from './download-clients/adapters/sabnzbd.adapter';
+import { ShelfmarkDownloadClientAdapter } from './download-clients/adapters/shelfmark.adapter';
 import { INDEXER_ADAPTERS } from './indexers/indexer-adapter';
 import { IndexerConfigService } from './indexers/indexer-config.service';
 import { IndexerController } from './indexers/indexer.controller';
@@ -56,6 +57,7 @@ import { IndexerRepository } from './indexers/indexer.repository';
 import { IndexerSearchService } from './indexers/indexer-search.service';
 import { TorznabAdapter } from './indexers/adapters/torznab.adapter';
 import { NewznabAdapter } from './indexers/adapters/newznab.adapter';
+import { ShelfmarkIndexerAdapter } from './indexers/adapters/shelfmark.adapter';
 import { BookRequestDownloadRepository } from './fulfillment/book-request-download.repository';
 import { DirectDownloadService } from './fulfillment/direct-download.service';
 import { DownloadMonitorService } from './fulfillment/download-monitor.service';
@@ -125,6 +127,7 @@ import { RequestWatchdogService } from './fulfillment/request-watchdog.service';
     DelugeAdapter,
     NzbgetAdapter,
     SabnzbdAdapter,
+    ShelfmarkDownloadClientAdapter,
     {
       provide: DOWNLOAD_CLIENT_ADAPTERS,
       useFactory: (
@@ -133,8 +136,9 @@ import { RequestWatchdogService } from './fulfillment/request-watchdog.service';
         deluge: DelugeAdapter,
         nzbget: NzbgetAdapter,
         sabnzbd: SabnzbdAdapter,
-      ) => [qbittorrent, transmission, deluge, nzbget, sabnzbd],
-      inject: [QbittorrentAdapter, TransmissionAdapter, DelugeAdapter, NzbgetAdapter, SabnzbdAdapter],
+        shelfmark: ShelfmarkDownloadClientAdapter,
+      ) => [qbittorrent, transmission, deluge, nzbget, sabnzbd, shelfmark],
+      inject: [QbittorrentAdapter, TransmissionAdapter, DelugeAdapter, NzbgetAdapter, SabnzbdAdapter, ShelfmarkDownloadClientAdapter],
     },
 
     IndexerRepository,
@@ -152,10 +156,11 @@ import { RequestWatchdogService } from './fulfillment/request-watchdog.service';
     IndexerOperationLock,
     TorznabAdapter,
     NewznabAdapter,
+    ShelfmarkIndexerAdapter,
     {
       provide: INDEXER_ADAPTERS,
-      useFactory: (torznab: TorznabAdapter, newznab: NewznabAdapter) => [torznab, newznab],
-      inject: [TorznabAdapter, NewznabAdapter],
+      useFactory: (torznab: TorznabAdapter, newznab: NewznabAdapter, shelfmark: ShelfmarkIndexerAdapter) => [torznab, newznab, shelfmark],
+      inject: [TorznabAdapter, NewznabAdapter, ShelfmarkIndexerAdapter],
     },
 
     BookRequestDownloadRepository,

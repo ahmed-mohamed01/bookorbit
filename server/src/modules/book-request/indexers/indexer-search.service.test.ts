@@ -82,6 +82,10 @@ function makeService(
       seedsBack?: boolean;
       supportsIsbnSearch?: boolean;
       delivery?: 'torrent' | 'usenet' | 'file';
+      selfHosted?: boolean;
+      keepalive?: ReturnType<typeof vi.fn>;
+      searchesConcurrently?: boolean;
+      skipsTitleOnlyRetry?: boolean;
     }
   >,
 ) {
@@ -116,6 +120,28 @@ function makeService(
 }
 
 describe('IndexerSearchService', () => {
+  it('starts a self-hosted source at once instead of queueing it behind the tracker slots', async () => {
+    const pending: Array<() => void> = [];
+    const blocked = () => new Promise<ReleaseCandidate[]>((resolve) => pending.push(() => resolve([])));
+    const trackers = { search: vi.fn(blocked) };
+    const shelf = { search: vi.fn(blocked), selfHosted: true };
+    const configs = [
+      ...[1, 2, 3, 4].map((id) => indexer({ id, name: `tracker ${id}` })),
+      indexer({ id: 5, name: 'shelf', adapterType: pluginType('shelf') }),
+    ];
+    const { service } = makeService(configs, { torznab: trackers, shelf });
+
+    const searching = service.search(request());
+
+    await vi.waitFor(() => expect(shelf.search).toHaveBeenCalledTimes(1));
+    expect(trackers.search).toHaveBeenCalledTimes(3);
+    while (pending.length > 0) {
+      pending.shift()!();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await searching;
+  });
+
   it('keeps books and comic archives in the same non-audio search without returning audiobooks', async () => {
     const adapter = {
       mediaKinds: ['ebook', 'audiobook'],
@@ -779,7 +805,7 @@ describe('IndexerSearchService', () => {
     expect(result.releases).toHaveLength(1);
   });
 
-  it('serializes work for one source and resolves its latest credential inside the lock', async () => {
+  it('serializes work for a source whose session a keepalive rotates, and resolves its latest credential inside the lock', async () => {
     let releaseFirst!: () => void;
     const firstHeld = new Promise<void>((resolve) => (releaseFirst = resolve));
     let calls = 0;
@@ -796,6 +822,7 @@ describe('IndexerSearchService', () => {
         active--;
         return [release()];
       }),
+      keepalive: vi.fn(),
     };
     const { service, indexers } = makeService([indexer({ credential: 'session-1' })], { torznab });
     indexers.resolveConfig.mockResolvedValueOnce(indexer({ credential: 'session-1' })).mockResolvedValueOnce(indexer({ credential: 'session-2' }));
@@ -811,6 +838,127 @@ describe('IndexerSearchService', () => {
 
     expect(maxActive).toBe(1);
     expect(credentialsSeen).toEqual(['session-1', 'session-2']);
+  });
+
+  it('lets two searches share a source with no session to protect, and holds a third', async () => {
+    const pending: Array<() => void> = [];
+    let active = 0;
+    let maxActive = 0;
+    const torznab = {
+      searchesConcurrently: true,
+      search: vi.fn(async () => {
+        maxActive = Math.max(maxActive, ++active);
+        await new Promise<void>((resolve) => pending.push(resolve));
+        active--;
+        return [release()];
+      }),
+    };
+    const { service } = makeService([indexer()], { torznab });
+
+    const searches = [7, 8, 9].map((id) => service.search(request({ id }), { refresh: true }));
+    await vi.waitFor(() => expect(torznab.search).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(torznab.search).toHaveBeenCalledTimes(2);
+
+    while (pending.length > 0 || torznab.search.mock.calls.length < 3) {
+      pending.shift()?.();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await Promise.all(searches);
+    expect(maxActive).toBe(2);
+  });
+
+  it('keeps a source that has not declared concurrent searches, such as a plugin, to one search at a time', async () => {
+    const pending: Array<() => void> = [];
+    const plugin = {
+      search: vi.fn(async () => {
+        await new Promise<void>((resolve) => pending.push(resolve));
+        return [release()];
+      }),
+    };
+    const { service } = makeService([indexer({ adapterType: pluginType('session-plugin') })], { 'session-plugin': plugin });
+
+    const searches = [7, 8].map((id) => service.search(request({ id }), { refresh: true }));
+    await vi.waitFor(() => expect(plugin.search).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(plugin.search).toHaveBeenCalledTimes(1);
+
+    while (pending.length > 0 || plugin.search.mock.calls.length < 2) {
+      pending.shift()?.();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await Promise.all(searches);
+  });
+
+  it('counts time queued for a slot against the search, so a waiter times out instead of starting late', async () => {
+    const pending: Array<() => void> = [];
+    const torznab = {
+      searchesConcurrently: true,
+      search: vi.fn(async () => {
+        await new Promise<void>((resolve) => pending.push(resolve));
+        return [release()];
+      }),
+    };
+    const { service } = makeService([indexer({ perIndexerTimeoutSeconds: 1 })], { torznab });
+
+    const searches = [7, 8, 9].map((id) => service.search(request({ id }), { refresh: true }));
+    const third = await searches[2]!;
+
+    expect(third.indexers[0]).toMatchObject({ ok: false, failure: 'timeout' });
+    expect(torznab.search).toHaveBeenCalledTimes(2);
+    pending.forEach((resolve) => resolve());
+    await Promise.all(searches);
+  });
+
+  it('takes an empty answer as final from a source that skips the title-only retry', async () => {
+    const shelf = { search: vi.fn().mockResolvedValue([]), skipsTitleOnlyRetry: true };
+    const { service } = makeService([indexer({ adapterType: pluginType('shelf') })], { shelf });
+
+    await service.search(request());
+
+    expect(shelf.search).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the releases a picker was showing grabbable after another search replaces the cache entry', async () => {
+    let round = 0;
+    const torznab = {
+      search: vi.fn(() => {
+        round++;
+        return Promise.resolve([release({ guid: `round-${round}`, infoHash: `round-${round}` })]);
+      }),
+    };
+    const { service } = makeService([indexer()], { torznab });
+
+    const first = await service.search(request(), { refresh: true });
+    await service.search(request(), { refresh: true });
+
+    expect(service.find(7, first.releases[0]!.indexerId, first.releases[0]!.guid)).toBeDefined();
+  });
+
+  it('keeps only the listed releases grabbable once the merged list is cut', async () => {
+    const guids = (indexerId: number) => Array.from({ length: 50 }, (_, index) => `${indexerId}-${index}`);
+    const torznab = {
+      search: vi.fn((_query: unknown, config: ResolvedIndexerConfig) =>
+        Promise.resolve(
+          guids(config.id).map((guid, index) =>
+            release({ indexerId: config.id, guid, infoHash: guid, sizeBytes: (config.id * 100 + index + 1) * 1024 * 1024 }),
+          ),
+        ),
+      ),
+    };
+    const configs = [1, 2, 3].map((id) => indexer({ id, name: `tracker ${id}` }));
+    const { service } = makeService(configs, { torznab });
+
+    const result = await service.search(request());
+
+    expect(result.releases).toHaveLength(100);
+    expect(service.find(7, result.releases[0]!.indexerId, result.releases[0]!.guid)).toBeDefined();
+    const listed = new Set(result.releases.map((item) => `${item.indexerId}:${item.guid}`));
+    const unlisted = configs.find((config) => guids(config.id).some((guid) => !listed.has(`${config.id}:${guid}`)))!;
+    const unlistedGuid = guids(unlisted.id).find((guid) => !listed.has(`${unlisted.id}:${guid}`))!;
+    expect(service.find(7, unlisted.id, unlistedGuid)).toBeUndefined();
+    const [first] = result.releases;
+    expect(service.find(7, first!.indexerId, first!.guid)).toBeDefined();
   });
 
   /**

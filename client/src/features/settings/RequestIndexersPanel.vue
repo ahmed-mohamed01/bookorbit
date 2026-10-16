@@ -257,6 +257,12 @@ function settingLabel(field: IndexerSettingsField): string {
   return te(key) ? t(key) : field.label
 }
 
+/** A built-in's option values are identifiers; its message key, when it has one, is the readable name. */
+function settingOptionLabel(field: IndexerSettingsField, option: string): string {
+  const key = `settings.system.requests.indexers.options.${field.key}.${option}`
+  return te(key) ? t(key) : option
+}
+
 /** Deleting the last source built on a plugin is deleting the plugin; the sheet says so first. */
 async function handleDelete() {
   const indexer = editingIndexer.value
@@ -1013,7 +1019,7 @@ function handleTestCurrent() {
                       :disabled="isSettingOptionLocked(field, option)"
                       @click="toggleSettingOption(field, option)"
                     >
-                      {{ option }}
+                      {{ settingOptionLabel(field, option) }}
                     </button>
                   </div>
                   <button

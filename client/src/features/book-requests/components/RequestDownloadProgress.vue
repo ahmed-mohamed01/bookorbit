@@ -48,8 +48,12 @@ const showCancel = computed(() => showBar.value && props.canCancel)
  * the release that worked is often not the one the request started with.
  */
 const delivery = computed(() => DELIVERY_BY_DOWNLOAD_SOURCE[props.download.source])
-const sourceName = computed(() => props.download.indexerName ?? t('bookRequests.download.source.pasted'))
+const sourceName = computed(() => props.download.origin ?? props.download.indexerName ?? t('bookRequests.download.source.pasted'))
 const protocolName = computed(() => t(`bookRequests.releases.protocol.${delivery.value === 'file' ? 'direct' : delivery.value}`))
+// A Shelfmark grab's protocol and its client are both Shelfmark, and operators tend to name the
+// indexer the same, so each chip shows only when it says something the one before it did not.
+const showProtocol = computed(() => delivery.value !== 'shelfmark')
+const showClient = computed(() => Boolean(props.download.downloadClientName) && props.download.downloadClientName !== sourceName.value)
 const selectionName = computed(() => t(props.download.automated ? 'bookRequests.download.source.automatic' : 'bookRequests.download.source.manual'))
 
 const sizeLine = computed(() => {
@@ -106,14 +110,10 @@ function handleCancel() {
       <span class="rounded-full border px-1.5 py-px font-medium" :class="sourceChipClass(download.indexerColor)">
         {{ sourceName }}
       </span>
-      <span class="rounded-full border px-1.5 py-px font-medium" :class="protocolChipClass(delivery)">
+      <span v-if="showProtocol" class="rounded-full border px-1.5 py-px font-medium" :class="protocolChipClass(delivery)">
         {{ protocolName }}
       </span>
-      <span
-        v-if="download.downloadClientName"
-        class="rounded-full border px-1.5 py-px font-medium"
-        :class="sourceChipClass(download.downloadClientColor)"
-      >
+      <span v-if="showClient" class="rounded-full border px-1.5 py-px font-medium" :class="sourceChipClass(download.downloadClientColor)">
         {{ download.downloadClientName }}
       </span>
       <span class="text-muted-foreground">{{ selectionName }}</span>

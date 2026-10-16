@@ -56,6 +56,7 @@ export class NewznabAdapter implements IndexerAdapter {
   readonly mediaKinds: readonly BookRequestMediaKind[] = ['ebook', 'audiobook'];
   readonly supportsIsbnSearch = true;
   readonly requiresCredential = true;
+  readonly searchesConcurrently = true;
 
   private readonly logger = new Logger(NewznabAdapter.name);
 

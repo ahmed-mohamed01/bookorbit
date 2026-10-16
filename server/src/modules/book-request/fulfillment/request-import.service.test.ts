@@ -355,6 +355,51 @@ describe('RequestImportService.importDownload', () => {
     expect((await readdir(unitDirectory)).sort()).toEqual(['cover.jpg', 'dune.epub', 'release.nfo']);
   });
 
+  it('imports every file of a download whose client named only the first, from its own folder', async () => {
+    const harness = await makeHarness();
+    const folder = join(harness.downloadsPath, 'audiobook');
+    const first = await makeFile(folder, 'track-01.mp3');
+    await makeFile(folder, 'track-02.mp3');
+
+    await expect(harness.service.importDownload(download(first, { contentFileCount: 2 }))).resolves.toBe(true);
+
+    expect(harness.dockRepo.createUnit).toHaveBeenCalledWith(expect.objectContaining({ fileName: 'track-01.mp3' }), [
+      expect.objectContaining({ fileName: 'track-01.mp3' }),
+      expect.objectContaining({ fileName: 'track-02.mp3' }),
+    ]);
+  });
+
+  it('holds a multi-file download whose files share a folder with others, rather than guessing', async () => {
+    const harness = await makeHarness();
+    const first = await makeFile(harness.downloadsPath, 'track-01.mp3');
+    await makeFile(harness.downloadsPath, 'track-02.mp3');
+    await makeFile(harness.downloadsPath, 'Another Book.epub');
+
+    harness.requests.findById.mockResolvedValue({ request: request({ mediaKind: 'audiobook' }) });
+
+    await harness.service.importDownload(download(first, { contentFileCount: 2 }));
+
+    expect(harness.fulfillment.holdForReview).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 11 }),
+      expect.objectContaining({ id: 7 }),
+      expect.stringContaining('wrote 2 files for this audiobook into a folder that holds other files too'),
+    );
+    expect(harness.dockRepo.createUnit).not.toHaveBeenCalled();
+  });
+
+  it('imports the named file of a multi-file ebook whose files share a folder, since it is a whole book', async () => {
+    const harness = await makeHarness();
+    harness.requests.findById.mockResolvedValue({ request: request({ mediaKind: 'ebook' }) });
+    const named = await makeFile(harness.downloadsPath, 'Dune.epub');
+    await makeFile(harness.downloadsPath, 'Dune.mobi');
+    await makeFile(harness.downloadsPath, 'Another Book.epub');
+
+    await expect(harness.service.importDownload(download(named, { contentFileCount: 2 }))).resolves.toBe(true);
+
+    expect(harness.fulfillment.holdForReview).not.toHaveBeenCalled();
+    expect(harness.dockRepo.createUnit).toHaveBeenCalledWith(expect.objectContaining({ fileName: 'request-7-Dune.epub', format: 'epub' }), []);
+  });
+
   it('imports a multipart audiobook as one ordered unit', async () => {
     const harness = await makeHarness();
     const folder = join(harness.bookDockPath, '..', 'downloads', 'audiobook');

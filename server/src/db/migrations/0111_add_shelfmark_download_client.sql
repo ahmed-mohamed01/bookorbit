@@ -1,0 +1,4 @@
+ALTER TABLE "book_request_downloads" DROP CONSTRAINT "book_request_downloads_source_chk";--> statement-breakpoint
+ALTER TABLE "download_clients" DROP CONSTRAINT "download_clients_adapter_type_chk";--> statement-breakpoint
+ALTER TABLE "book_request_downloads" ADD CONSTRAINT "book_request_downloads_source_chk" CHECK ("book_request_downloads"."source" in ('magnet', 'torrent_file', 'direct_url', 'nzb_file', 'shelfmark'));--> statement-breakpoint
+ALTER TABLE "download_clients" ADD CONSTRAINT "download_clients_adapter_type_chk" CHECK ("download_clients"."adapter_type" in ('qbittorrent', 'transmission', 'deluge', 'nzbget', 'sabnzbd', 'shelfmark'));

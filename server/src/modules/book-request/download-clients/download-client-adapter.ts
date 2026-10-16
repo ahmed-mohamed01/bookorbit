@@ -1,5 +1,7 @@
 import type { DownloadClientTestResult, DownloadClientType, DownloadDelivery } from '@bookorbit/types';
 
+import type { ShelfmarkRelease } from '../shelfmark/shelfmark-release';
+
 /** A client row with its credentials already decrypted. Never logged, never returned over HTTP. */
 export interface ResolvedClientConfig {
   id: number;
@@ -23,6 +25,8 @@ export interface GrabPayload {
   /** A source that serves the file itself, resolved by the indexer adapter to one direct URL. */
   fileUrl?: string;
   fileName?: string;
+  /** A release found by a Shelfmark indexer, which only that Shelfmark instance can download. */
+  shelfmarkRelease?: ShelfmarkRelease;
   /**
    * How the client and poll loop identify this download. It is an infohash for a torrent and a
    * stable digest for other deliveries, keeping duplicate-grab protection client-independent.
@@ -63,6 +67,16 @@ export interface DownloadStatus {
   totalBytes: number | null;
   /** Where the finished content sits, in the client's own filesystem namespace. */
   contentPath: string | null;
+  /**
+   * How many files the finished content spans, for a client that names only the first of several.
+   * Absent means `contentPath` is the whole of it.
+   */
+  contentFileCount?: number;
+  /**
+   * When the client created this item, for a client that keeps a finished item under the same key
+   * across attempts, so the previous attempt's outcome can be told apart from this one's.
+   */
+  startedAt?: Date;
   /** Only meaningful once the bytes are down; the poll loop ignores it. */
   seed?: SeedInfo;
   errorMessage?: string;

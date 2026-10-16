@@ -25,7 +25,7 @@ import { RequestAutomationSettingsService } from '../fulfillment/request-automat
 import { RETIRED_MEDIUM_REFUSAL } from '../retired-media';
 import { IndexerSearchException, type ReleaseCandidate, type ReleaseQuery, type ResolvedIndexerConfig } from './indexer-adapter';
 import { IndexerConfigService } from './indexer-config.service';
-import { IndexerOperationLock } from './indexer-operation-lock';
+import { IndexerOperationLock, SlotWaitAbortedError } from './indexer-operation-lock';
 import { IndexerRegistry } from './indexer-registry';
 import { rejectRelease, scoreRelease, toReleaseItem, type ScoredRelease, type ScoringRequest } from './release-scoring';
 import { buildSearchText } from './search-text';
@@ -36,6 +36,11 @@ import { buildSearchText } from './search-text';
  * and a repeat open of the picker is served from the cache instead of hitting the trackers again.
  */
 const MAX_CONCURRENT_SEARCHES = 3;
+/**
+ * Searches one indexer may run at once when nothing on it needs exclusive access: a request and its
+ * other-medium companion together, without letting a burst of pickers pile onto one source.
+ */
+const MAX_SEARCHES_PER_INDEXER = 2;
 const RESULT_LIMIT_PER_INDEXER = 50;
 const CACHE_TTL_MS = 3 * 60 * 1000;
 const ACTIONABLE_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -43,10 +48,17 @@ const MAX_CACHE_ENTRIES_PER_REQUEST = 10;
 const MAX_CACHE_ENTRIES = 500;
 /** A ceiling on the merged list. The picker shows a ranked shortlist, not a tracker browser. */
 const MAX_MERGED_RELEASES = 100;
+/**
+ * Grabbable releases one cache entry keeps across searches that replace it. A list someone is
+ * still looking at stays grabbable after another tab or an automation pass searches again and
+ * ranks its rows lower, without the entry growing with every search.
+ */
+const MAX_GRABBABLE_PER_ENTRY = 3 * MAX_MERGED_RELEASES;
 
 interface CacheEntry {
   requestId: number;
-  result: ReleaseSearchResult;
+  /** Dropped once it stops being served, so an entry kept for its candidates costs only those. */
+  result: ReleaseSearchResult | null;
   resultExpiresAt: number;
   candidatesExpireAt: number;
   query: ReleaseQuery;
@@ -93,7 +105,7 @@ export class IndexerSearchService {
     });
     const cacheKey = `${request.id}:${searchKey}`;
     const cached = this.cache.get(cacheKey);
-    if (!options.refresh && cached && cached.resultExpiresAt > Date.now()) {
+    if (!options.refresh && cached?.result && cached.resultExpiresAt > Date.now()) {
       return { ...(await this.withCurrentColors(cached.result)), cached: true };
     }
 
@@ -219,6 +231,14 @@ export class IndexerSearchService {
         (a.managerPriority ?? Number.MAX_SAFE_INTEGER) - (b.managerPriority ?? Number.MAX_SAFE_INTEGER),
     );
     const releases = items.slice(0, MAX_MERGED_RELEASES).map(({ item }) => item);
+    // Only a listed release can be grabbed, so only those are kept for the hour a grab may take to come.
+    const grabbable = new Map(
+      releases.flatMap((release) => {
+        const key = `${release.indexerId}:${release.guid}`;
+        const candidate = candidates.get(key);
+        return candidate ? [[key, candidate] as const] : [];
+      }),
+    );
 
     const result: ReleaseSearchResult = {
       releases,
@@ -231,6 +251,13 @@ export class IndexerSearchService {
       searchedAt: new Date().toISOString(),
       cached: false,
     };
+    const previous = this.cache.get(cacheKey);
+    if (previous && previous.candidatesExpireAt > Date.now()) {
+      for (const [key, candidate] of previous.candidates) {
+        if (grabbable.size >= MAX_GRABBABLE_PER_ENTRY) break;
+        if (!grabbable.has(key)) grabbable.set(key, candidate);
+      }
+    }
     this.cache.delete(cacheKey);
     const cachedAt = Date.now();
     this.cache.set(cacheKey, {
@@ -239,7 +266,7 @@ export class IndexerSearchService {
       resultExpiresAt: cachedAt + CACHE_TTL_MS,
       candidatesExpireAt: cachedAt + ACTIONABLE_CACHE_TTL_MS,
       query,
-      candidates,
+      candidates: grabbable,
     });
     this.prune(request.id);
 
@@ -324,7 +351,9 @@ export class IndexerSearchService {
 
   private async searchAll(configs: ResolvedIndexerConfig[], query: ReleaseQuery): Promise<SearchOutcome[]> {
     const outcomes: SearchOutcome[] = [];
-    const queue = [...configs];
+    // The cap protects tracker accounts, so a self-hosted source neither waits for a slot nor takes one.
+    const selfHosted = configs.filter((config) => this.registry.find(config.adapterType)?.selfHosted === true);
+    const queue = configs.filter((config) => !selfHosted.includes(config));
     const managerDeadlines = new Map<number, number>();
     const now = Date.now();
     for (const config of configs) {
@@ -333,13 +362,14 @@ export class IndexerSearchService {
       }
     }
 
+    const run = async (config: ResolvedIndexerConfig): Promise<void> => {
+      outcomes.push(await this.searchOne(config, query, config.managerId == null ? undefined : managerDeadlines.get(config.managerId)));
+    };
     const worker = async (): Promise<void> => {
-      for (let config = queue.shift(); config !== undefined; config = queue.shift()) {
-        outcomes.push(await this.searchOne(config, query, config.managerId == null ? undefined : managerDeadlines.get(config.managerId)));
-      }
+      for (let config = queue.shift(); config !== undefined; config = queue.shift()) await run(config);
     };
 
-    await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_SEARCHES, configs.length) }, worker));
+    await Promise.all([...selfHosted.map(run), ...Array.from({ length: Math.min(MAX_CONCURRENT_SEARCHES, queue.length) }, worker)]);
     // Workers drain a shared queue, so completion order is arbitrary; the UI wants pick order.
     const order = new Map(configs.map((config, index) => [config.id, index]));
     return outcomes.sort((a, b) => (order.get(a.config.id) ?? 0) - (order.get(b.config.id) ?? 0));
@@ -357,17 +387,39 @@ export class IndexerSearchService {
       return { config, releases: [], failure: 'timeout', error: `${config.name} was not started before the Prowlarr search budget expired` };
     }
 
-    return this.operationLock.run(config.id, async () => {
+    // Counted from now rather than from when a slot frees, so time spent queued behind other
+    // searches of the same source comes out of this search's own budget instead of adding to it.
+    const deadlineAt = Math.min(Date.now() + (config.perIndexerTimeoutSeconds ?? 20) * 1000, managerDeadlineAt ?? Infinity);
+    const timedOut = (): SearchOutcome => ({ config, releases: [], failure: 'timeout', error: `${config.name} did not answer in time` });
+    const search = async (): Promise<SearchOutcome> => {
+      if (Date.now() >= deadlineAt) return timedOut();
       try {
-        return await this.searchResolved(await this.indexers.resolveConfig(config.id), query, managerDeadlineAt);
+        return await this.searchResolved(await this.indexers.resolveConfig(config.id), query, deadlineAt);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return { config, releases: [], failure: 'error', error: message };
       }
-    });
+    };
+
+    const adapter = this.registry.find(config.adapterType);
+    // Shared only where the adapter says a search never changes the session another one would
+    // use. A plugin may rotate its credential mid-search, and two searches holding the same
+    // session would then send a stale one.
+    if (!adapter?.searchesConcurrently || adapter.keepalive) return this.operationLock.run(config.id, search);
+    try {
+      return await this.operationLock.runShared(
+        config.id,
+        MAX_SEARCHES_PER_INDEXER,
+        search,
+        AbortSignal.timeout(Math.max(1, deadlineAt - Date.now())),
+      );
+    } catch (error) {
+      if (error instanceof SlotWaitAbortedError) return timedOut();
+      throw error;
+    }
   }
 
-  private async searchResolved(config: ResolvedIndexerConfig, query: ReleaseQuery, managerDeadlineAt?: number): Promise<SearchOutcome> {
+  private async searchResolved(config: ResolvedIndexerConfig, query: ReleaseQuery, deadlineAt: number): Promise<SearchOutcome> {
     const adapter = this.registry.find(config.adapterType);
     if (!adapter) {
       // A row whose adapter is no longer part of the build. It is kept rather than deleted, so
@@ -385,9 +437,7 @@ export class IndexerSearchService {
       this.searchesIsbn(config) && query.isbn13 ? { kind: 'isbn', value: query.isbn13 } : { kind: 'titleAuthor', value: buildSearchText(query) };
     let indexerScopedQuery: ReleaseQuery = indexerQuery.kind === 'isbn' ? query : { ...query, isbn13: null, isbn13s: [] };
 
-    const configuredTimeoutMs = (config.perIndexerTimeoutSeconds ?? 20) * 1000;
-    const managerRemainingMs = managerDeadlineAt === undefined ? configuredTimeoutMs : Math.max(1, managerDeadlineAt - Date.now());
-    const deadline = AbortSignal.timeout(Math.min(configuredTimeoutMs, managerRemainingMs));
+    const deadline = AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()));
     try {
       // Raced against the deadline rather than merely handed it. An adapter that never settles -
       // a plugin awaiting a dead promise, an HTTP client that loses its own timeout - holds one of
@@ -407,7 +457,7 @@ export class IndexerSearchService {
           () => new IndexerSearchException('timeout', `${config.name} did not answer in time`),
         );
       }
-      if (releases.length === 0 && indexerQuery.kind === 'titleAuthor' && query.author?.trim()) {
+      if (releases.length === 0 && indexerQuery.kind === 'titleAuthor' && query.author?.trim() && !adapter.skipsTitleOnlyRetry) {
         const titleOnlyQuery = { ...indexerScopedQuery, author: null };
         releases = await withDeadline(
           adapter.search(titleOnlyQuery, config, deadline),
@@ -445,6 +495,7 @@ export class IndexerSearchService {
     const now = Date.now();
     for (const [key, entry] of this.cache) {
       if (entry.candidatesExpireAt <= now) this.cache.delete(key);
+      else if (entry.resultExpiresAt <= now) entry.result = null;
     }
 
     const requestEntries = [...this.cache.entries()].filter(([, entry]) => entry.requestId === requestId);

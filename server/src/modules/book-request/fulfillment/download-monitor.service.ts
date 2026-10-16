@@ -28,6 +28,12 @@ const MISSING_CLIENT_ITEM_GRACE_MS = 2 * 60 * 1000;
  * Transport failures and unknown tracker errors stay recoverable until the stalled watchdog.
  */
 const TRACKER_ERROR_GRACE_MS = 5 * 60 * 1000;
+/**
+ * How long after a grab a failure the client dates from before it is put down to the previous
+ * attempt, still listed under the same key while this one is handed over. Bounded, because the
+ * client's clock is not BookOrbit's and must not be able to hide a real failure for long.
+ */
+const STALE_FAILURE_WINDOW_MS = 60 * 1000;
 const DIRECT_PROGRESS_INTERVAL_MS = 1_000;
 const TORRENT_PROGRESS_INTERVAL_MS = 5_000;
 /**
@@ -281,6 +287,8 @@ export class DownloadMonitorService implements OnModuleDestroy {
 
   private async applyStatus(row: BookRequestDownloadRow, status: DownloadStatus, viewerUserIds: readonly number[]): Promise<void> {
     if (status.state === 'failed') {
+      const previousAttempt = status.startedAt !== undefined && row.grabbedAt !== null && status.startedAt < row.grabbedAt;
+      if (previousAttempt && !this.olderThan(row, STALE_FAILURE_WINDOW_MS)) return;
       await this.fulfillment.failDownload(row, status.errorMessage ?? 'The download client reported an error');
       return;
     }
@@ -315,6 +323,7 @@ export class DownloadMonitorService implements OnModuleDestroy {
       downloadedBytes: status.downloadedBytes,
       totalBytes: status.totalBytes,
       contentPath: status.contentPath ?? row.contentPath,
+      contentFileCount: status.contentFileCount ?? row.contentFileCount,
       ...(movedBytes ? { lastProgressAt: new Date() } : {}),
       ...(status.state === 'completed' ? { completedAt: row.completedAt ?? new Date() } : {}),
       ...(row.source === 'direct_url' && status.state === 'completed' ? { directUrl: null, directEtag: null, directLastModified: null } : {}),

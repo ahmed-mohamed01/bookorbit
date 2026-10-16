@@ -192,6 +192,7 @@ export function toReleaseItem(scored: ScoredRelease, indexerName: string, reques
   const base = {
     indexerId: candidate.indexerId,
     indexerName,
+    ...(candidate.origin ? { origin: candidate.origin } : {}),
     guid: candidate.guid,
     title: candidate.title,
     sizeBytes: candidate.sizeBytes,

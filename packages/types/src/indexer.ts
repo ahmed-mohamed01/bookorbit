@@ -12,7 +12,7 @@ import { REQUEST_CREDENTIAL_ERROR_CODES } from "./request-credential";
  * Only generic protocols are built in. Every named source, open library or otherwise, is a
  * plugin loaded from disk and maintained outside this repository.
  */
-export const INDEXER_ADAPTER_TYPES = ["torznab", "newznab"] as const;
+export const INDEXER_ADAPTER_TYPES = ["torznab", "newznab", "shelfmark"] as const;
 export type IndexerAdapterType = (typeof INDEXER_ADAPTER_TYPES)[number];
 
 /** Maximum size of an opaque release identifier accepted from an indexer feed and grab request. */
@@ -55,18 +55,21 @@ export type IndexerCategoryMap = Record<BookRequestMediaKind, number[]>;
 export const DEFAULT_INDEXER_CATEGORIES: Record<IndexerAdapterType, IndexerCategoryMap> = {
   torznab: { ebook: [7020], audiobook: [3030] },
   newznab: { ebook: [7020], audiobook: [3030] },
+  shelfmark: { ebook: [], audiobook: [] },
 };
 
 /** What the credential field holds. Null where the source needs none, as an open library does. */
 export const INDEXER_CREDENTIAL_KINDS: Record<IndexerAdapterType, "apiKey" | "sessionId" | null> = {
   torznab: "apiKey",
   newznab: "apiKey",
+  shelfmark: "apiKey",
 };
 
 /** Whether the adapter searches by numeric category at all, which decides if the editor shows. */
 export const INDEXER_USES_CATEGORIES: Record<IndexerAdapterType, boolean> = {
   torznab: true,
   newznab: true,
+  shelfmark: false,
 };
 
 /**
@@ -77,6 +80,7 @@ export const INDEXER_USES_CATEGORIES: Record<IndexerAdapterType, boolean> = {
 export const INDEXER_SEEDS_BACK: Record<IndexerAdapterType, boolean> = {
   torznab: true,
   newznab: false,
+  shelfmark: false,
 };
 
 /** Largest whole-minute seed goal that can be stored in PostgreSQL's integer type. */
@@ -86,6 +90,7 @@ export const MAX_INDEXER_SEED_TIME_MINUTES = 2_147_483_647;
 export const INDEXER_DELIVERY: Record<IndexerAdapterType, DownloadDelivery> = {
   torznab: "torrent",
   newznab: "usenet",
+  shelfmark: "shelfmark",
 };
 
 /**
@@ -95,6 +100,7 @@ export const INDEXER_DELIVERY: Record<IndexerAdapterType, DownloadDelivery> = {
 export const INDEXER_MEDIA_KINDS: Record<IndexerAdapterType, readonly BookRequestMediaKind[]> = {
   torznab: ["ebook", "audiobook"],
   newznab: ["ebook", "audiobook"],
+  shelfmark: ["ebook", "audiobook"],
 };
 
 /**
@@ -409,6 +415,11 @@ export interface ReleaseAudioInfo {
 export interface ReleaseCandidateItem {
   indexerId: number;
   indexerName: string;
+  /**
+   * Where inside the indexer the release came from, for an indexer that fronts several sites
+   * (Shelfmark's Anna's Archive or AudiobookBay). Absent for an indexer that is one site.
+   */
+  origin?: string;
   guid: string;
   title: string;
   sizeBytes: number | null;

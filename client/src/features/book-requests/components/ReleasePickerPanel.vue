@@ -1365,6 +1365,10 @@ function showEverySource(): void {
                         <span v-if="!sharedIndexer" class="rounded-full border px-1.5 py-px font-medium" :class="indexerChipClass(release)">
                           {{ release.indexerName }}
                         </span>
+                        <!-- Varies per row even when one indexer found them all, so it is never hoisted to the summary. -->
+                        <span v-if="release.origin" class="rounded-full border border-border px-1.5 py-px font-medium text-muted-foreground">{{
+                          release.origin
+                        }}</span>
                         <!--
                           The operator's own words for why this release ranks where it does. It
                           leads the flags because it is the axis the list is ordered on, and a row

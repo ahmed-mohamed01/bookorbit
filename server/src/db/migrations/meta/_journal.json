@@ -778,6 +778,20 @@
       "when": 1791838145626,
       "tag": "0110_add_email_provider_test_result",
       "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1792108286216,
+      "tag": "0111_add_shelfmark_download_client",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1792125604848,
+      "tag": "0112_add_download_content_file_count",
+      "breakpoints": true
     }
   ]
 }

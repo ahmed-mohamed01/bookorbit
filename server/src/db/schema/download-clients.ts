@@ -49,7 +49,7 @@ export const downloadClients = pgTable(
   (t) => [
     uniqueIndex('download_clients_name_lower_uidx').on(sql`lower(${t.name})`),
     index('download_clients_enabled_priority_idx').on(t.enabled, t.priority),
-    check('download_clients_adapter_type_chk', sql`${t.adapterType} in ('qbittorrent', 'transmission', 'deluge', 'nzbget', 'sabnzbd')`),
+    check('download_clients_adapter_type_chk', sql`${t.adapterType} in ('qbittorrent', 'transmission', 'deluge', 'nzbget', 'sabnzbd', 'shelfmark')`),
 
     check('download_clients_priority_range_chk', sql`${t.priority} >= 1 and ${t.priority} <= 100`),
   ],
@@ -122,6 +122,8 @@ export const bookRequestDownloads = pgTable(
 
     /** What the client reported, in its own namespace, and what that mapped to locally. */
     contentPath: text('content_path'),
+    /** Set when the client named only the first of several files it wrote, as Shelfmark does. */
+    contentFileCount: integer('content_file_count'),
     localPath: text('local_path'),
     bookDockFileId: integer('book_dock_file_id').references(() => bookDockFiles.id, { onDelete: 'set null' }),
 
@@ -166,7 +168,7 @@ export const bookRequestDownloads = pgTable(
       .on(sql`coalesce(${t.downloadClientId}, 0)`, t.clientKey)
 
       .where(sql`${t.status} in ('queued', 'downloading', 'completed', 'importing', 'needs_review')`),
-    check('book_request_downloads_source_chk', sql`${t.source} in ('magnet', 'torrent_file', 'direct_url', 'nzb_file')`),
+    check('book_request_downloads_source_chk', sql`${t.source} in ('magnet', 'torrent_file', 'direct_url', 'nzb_file', 'shelfmark')`),
     check(
       'book_request_downloads_status_chk',
       sql`${t.status} in ('queued', 'downloading', 'completed', 'importing', 'needs_review', 'imported', 'failed')`,

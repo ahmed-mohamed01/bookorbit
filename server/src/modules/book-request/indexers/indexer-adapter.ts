@@ -11,6 +11,8 @@ import type {
   ReleaseAudioInfo,
 } from '@bookorbit/types';
 
+import type { ShelfmarkRelease } from '../shelfmark/shelfmark-release';
+
 /** An indexer row with its credential already decrypted. Never logged, never returned over HTTP. */
 export interface ResolvedIndexerConfig {
   id: number;
@@ -137,6 +139,10 @@ export interface ReleaseCandidate {
    */
   seedRatioGoal?: number;
   seedTimeMinutes?: number;
+  /** The site behind an indexer that fronts several, shown beside the indexer's name. */
+  origin?: string;
+  /** Set only by the Shelfmark indexer: the release as Shelfmark returned it, queued back to it on a grab. */
+  shelfmarkRelease?: ShelfmarkRelease;
 }
 
 /**
@@ -189,6 +195,23 @@ export interface IndexerAdapter {
    * the picker.
    */
   readonly requiresCredential: boolean;
+  /**
+   * A source the operator runs themselves, such as Shelfmark, which no tracker account stands
+   * behind. It starts at once rather than waiting for one of the slots that protect trackers.
+   */
+  readonly selfHosted?: boolean;
+  /**
+   * Two searches may run against one row at once: nothing a search does changes the session or
+   * credential another one would use. Off unless declared, because a plugin may rotate its
+   * credential in the middle of a search.
+   */
+  readonly searchesConcurrently?: boolean;
+  /**
+   * A source whose every search fans out across slow upstream sites, where a second pass without
+   * the author costs as much as the first and, sharing its deadline, mostly times out instead of
+   * finding more. An empty first answer is then the answer.
+   */
+  readonly skipsTitleOnlyRetry?: boolean;
 
   /** The signal carries the per-indexer timeout, so one slow tracker cannot hold up the merge. */
   search(query: ReleaseQuery, config: ResolvedIndexerConfig, signal: AbortSignal): Promise<ReleaseCandidate[]>;

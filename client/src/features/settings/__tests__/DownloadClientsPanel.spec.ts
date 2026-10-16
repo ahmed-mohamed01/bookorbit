@@ -130,6 +130,7 @@ describe('DownloadClientsPanel', () => {
       'deluge',
       'nzbget',
       'sabnzbd',
+      'shelfmark',
     ])
     expect(sheet().querySelector('#download-client-name')).toBeNull()
 
@@ -166,6 +167,34 @@ describe('DownloadClientsPanel', () => {
     await flushPromises()
     const saveCall = apiMock.mock.calls.find(([, init]) => init?.method === 'POST')
     expect(JSON.parse(String(saveCall?.[1]?.body))).toMatchObject({ adapterType: 'sabnzbd', password: 'secret-key', username: '' })
+  })
+
+  it('asks Shelfmark for its API key and no category', async () => {
+    const wrapper = await mountPanel()
+    await clickInPanel(wrapper, 'Add client')
+
+    const shelfmark = sheet().querySelector<HTMLInputElement>('input[name="download-client-type"][value="shelfmark"]')
+    if (shelfmark === null) throw new Error('no Shelfmark client option')
+    shelfmark.click()
+    clickInSheet('Continue')
+    await flushPromises()
+
+    expect(sheet().querySelector('#download-client-username')).toBeNull()
+    expect(sheet().querySelector('#download-client-category')).toBeNull()
+
+    typeInto('#download-client-name', 'Shelfmark')
+    typeInto('#download-client-url', 'http://shelfmark:8084')
+    fillMapping()
+    clickInSheet('Save')
+    await flushPromises()
+    expect(sheet().textContent).toContain('Enter the SHELFMARK_API_KEY value your Shelfmark runs with')
+    expect(apiMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false)
+
+    typeInto('#download-client-password', 'shelf-key')
+    clickInSheet('Save')
+    await flushPromises()
+    const saveCall = apiMock.mock.calls.find(([, init]) => init?.method === 'POST')
+    expect(JSON.parse(String(saveCall?.[1]?.body))).toMatchObject({ adapterType: 'shelfmark', password: 'shelf-key' })
   })
 
   it('keeps the stored SABnzbd API key when saving an unrelated edit', async () => {

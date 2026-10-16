@@ -266,6 +266,40 @@ describe('DownloadMonitorService.tick', () => {
     expect(imports.importDownload).not.toHaveBeenCalled();
   });
 
+  it("ignores the previous attempt's failure while a just-grabbed retry is handed over", async () => {
+    const grabbedAt = new Date();
+    const { service, fulfillment } = makeService({
+      active: [row({ grabbedAt })],
+      statuses: [status({ state: 'failed', errorMessage: 'old failure', startedAt: new Date(grabbedAt.getTime() - 30_000) })],
+    });
+
+    await polled(service);
+
+    expect(fulfillment.failDownload).not.toHaveBeenCalled();
+  });
+
+  it('fails a retry on an old-looking failure once the hand-over window is over', async () => {
+    const grabbedAt = new Date(Date.now() - 5 * 60 * 1000);
+    const { service, fulfillment } = makeService({
+      active: [row({ grabbedAt })],
+      statuses: [status({ state: 'failed', errorMessage: 'still failing', startedAt: new Date(grabbedAt.getTime() - 30_000) })],
+    });
+
+    await polled(service);
+
+    expect(fulfillment.failDownload).toHaveBeenCalledWith(expect.objectContaining({ id: 11 }), 'still failing');
+  });
+
+  it('keeps how many files a finished download spans', async () => {
+    const { service, downloads } = makeService({
+      statuses: [status({ state: 'completed', progressPercent: 100, contentPath: '/audiobooks/Book/01.mp3', contentFileCount: 12 })],
+    });
+
+    await polled(service);
+
+    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), expect.objectContaining({ contentFileCount: 12 }));
+  });
+
   /**
    * A client that is down, misconfigured or restarting must not fail every download it holds.
    * That is the watchdog's job, on a much longer clock.

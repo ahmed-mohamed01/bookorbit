@@ -68,6 +68,7 @@ export class TorznabAdapter implements IndexerAdapter {
   readonly supportsIsbnSearch = false;
   /** Jackett and Prowlarr want an API key, but a self-hosted proxy may be left open. */
   readonly requiresCredential = false;
+  readonly searchesConcurrently = true;
 
   private readonly logger = new Logger(TorznabAdapter.name);
 

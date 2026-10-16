@@ -72,6 +72,7 @@ import { interpretRelease, type ReleaseFileInput, type ReleasePlan } from '../..
 import { resolveFormat } from '../indexers/release-scoring';
 import { BookRequestDownloadRepository } from './book-request-download.repository';
 import { DirectDownloadService, stagedDirectFileName } from './direct-download.service';
+import { shelfmarkClientKey, type ShelfmarkRelease } from '../shelfmark/shelfmark-release';
 import { infoHashFromMagnet, magnetDisplayName, MAX_TORRENT_FILE_BYTES, torrentMetadataFromFile, type TorrentFileMetadata } from './torrent.utils';
 import { newznabClientKey } from '../indexers/adapters/newznab.adapter';
 import type { InspectBookRequestReleaseDto } from '../dto/inspect-book-request-release.dto';
@@ -301,6 +302,7 @@ export class RequestFulfillmentService {
               torrentFileName: grab.torrentFileName ?? dto.torrentFileName,
               nzbFile: grab.nzbFile,
               nzbFileName: grab.nzbFileName,
+              shelfmarkRelease: grab.shelfmarkRelease,
               clientKey: grab.clientKey,
               // The indexer's goals, enforced by the client: BookOrbit never stops a seed itself.
               ...(grab.seedRatioGoal !== null && grab.seedRatioGoal !== undefined ? { seedRatioGoal: grab.seedRatioGoal } : {}),
@@ -321,10 +323,12 @@ export class RequestFulfillmentService {
         `[book_request.grab] [fail] requestId=${requestId} downloadId=${download.id} clientId=${client?.id ?? 'direct'} error="${sanitizeLogValue(message)}" - the download could not be started`,
       );
       // Which half refused decides what another attempt should do: a client that is down refuses
-      // every torrent alike, while a file BookOrbit fetches itself was refused by the source.
+      // every torrent alike, while a file BookOrbit fetches itself was refused by the source. A
+      // client that already said the refusal is about this release alone is taken at its word.
       throw withGrabCode(
         error,
-        client === null ? 'GRAB_SOURCE_REFUSED' : isServiceUnavailable(error) ? 'GRAB_CLIENT_UNAVAILABLE' : 'GRAB_CLIENT_REFUSED',
+        grabFailureCode(error) ??
+          (client === null ? 'GRAB_SOURCE_REFUSED' : isServiceUnavailable(error) ? 'GRAB_CLIENT_UNAVAILABLE' : 'GRAB_CLIENT_REFUSED'),
       );
     }
 
@@ -409,6 +413,7 @@ export class RequestFulfillmentService {
    */
   private async attemptedSource(release: ReleaseCandidate): Promise<BookRequestDownloadSource> {
     if (release.magnet) return 'magnet';
+    if (release.shelfmarkRelease) return 'shelfmark';
     try {
       const indexer = await this.indexers.resolveConfig(release.indexerId);
       const adapter = this.indexerRegistry.require(indexer.adapterType);
@@ -665,6 +670,20 @@ export class RequestFulfillmentService {
       };
     }
 
+    // Only the Shelfmark instance that found it can download it, and it says nothing about the
+    // files until it has them.
+    if (release.shelfmarkRelease) {
+      return {
+        ...snapshot,
+        source: 'shelfmark',
+        shelfmarkRelease: release.shelfmarkRelease,
+        clientKey: shelfmarkClientKey(release.shelfmarkRelease.source_id),
+        seedRatioGoal: null,
+        seedTimeMinutes: null,
+        inspection: metadataUnavailableInspection('shelfmark'),
+      };
+    }
+
     const adapter = this.indexerRegistry.require(indexer.adapterType);
 
     // A source that serves the file itself. Resolved here rather than at search time because it
@@ -809,7 +828,9 @@ export class RequestFulfillmentService {
         ? `Download client "${client.name}" cannot fetch a direct file`
         : expected === 'usenet'
           ? `Download client "${client.name}" cannot accept an NZB file`
-          : `Download client "${client.name}" cannot accept a magnet link or .torrent file`,
+          : expected === 'shelfmark'
+            ? `Download client "${client.name}" cannot download a Shelfmark release. Pick a Shelfmark download client.`
+            : `Download client "${client.name}" cannot accept a magnet link or .torrent file`,
     );
   }
 }
@@ -947,6 +968,7 @@ interface ParsedGrab {
   nzbFileName?: string;
   fileUrl?: string;
   fileName?: string;
+  shelfmarkRelease?: ShelfmarkRelease;
   releaseTitle: string;
   /** The size of what the release carries, which a magnet does not state. */
   releaseSizeBytes: number | null;
@@ -1085,7 +1107,7 @@ function directFileInspection(fileName: string, sizeBytes: number | null | undef
   };
 }
 
-function metadataUnavailableInspection(source: 'magnet' | 'nzb_file'): ReleaseFileInspection {
+function metadataUnavailableInspection(source: 'magnet' | 'nzb_file' | 'shelfmark'): ReleaseFileInspection {
   return {
     source,
     status: 'metadata_unavailable',

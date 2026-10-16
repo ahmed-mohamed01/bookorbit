@@ -910,7 +910,11 @@ describe('RequestIndexersPanel', () => {
 
     await clickInPanel(wrapper, 'Add indexer')
 
-    expect([...sheet().querySelectorAll<HTMLOptionElement>('#indexer-type option')].map((option) => option.value)).toEqual(['torznab', 'newznab'])
+    expect([...sheet().querySelectorAll<HTMLOptionElement>('#indexer-type option')].map((option) => option.value)).toEqual([
+      'torznab',
+      'newznab',
+      'shelfmark',
+    ])
     expect(sheet().querySelector('#indexer-name')).not.toBeNull()
     expect(sheet().textContent).toContain('torznab')
 

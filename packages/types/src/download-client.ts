@@ -6,7 +6,7 @@ import type { IndexerColor, ReleaseUnitChoice } from "./indexer";
  * deliberately absent: it has no address, no credentials and nothing to choose, so making it a
  * configurable client type would only ask an operator to create a record of nothing.
  */
-export const DOWNLOAD_CLIENT_TYPES = ["qbittorrent", "transmission", "deluge", "nzbget", "sabnzbd"] as const;
+export const DOWNLOAD_CLIENT_TYPES = ["qbittorrent", "transmission", "deluge", "nzbget", "sabnzbd", "shelfmark"] as const;
 export type DownloadClientType = (typeof DOWNLOAD_CLIENT_TYPES)[number];
 
 /**
@@ -14,7 +14,12 @@ export type DownloadClientType = (typeof DOWNLOAD_CLIENT_TYPES)[number];
  * join a swarm, so this is what decides which configured client a given grab goes to rather than
  * simply taking the highest-priority enabled row.
  */
-export type DownloadDelivery = "torrent" | "file" | "usenet";
+/**
+ * `shelfmark` is its own delivery because a Shelfmark release is only meaningful to the Shelfmark
+ * instance that found it: it names a task in that queue, not a file or a swarm any other client
+ * could fetch.
+ */
+export type DownloadDelivery = "torrent" | "file" | "usenet" | "shelfmark";
 
 export const DOWNLOAD_CLIENT_DELIVERY: Record<DownloadClientType, DownloadDelivery> = {
   qbittorrent: "torrent",
@@ -22,6 +27,7 @@ export const DOWNLOAD_CLIENT_DELIVERY: Record<DownloadClientType, DownloadDelive
   deluge: "torrent",
   nzbget: "usenet",
   sabnzbd: "usenet",
+  shelfmark: "shelfmark",
 };
 
 export type DownloadClientCredentialKind = "usernamePassword" | "apiKey";
@@ -33,6 +39,7 @@ export const DOWNLOAD_CLIENT_CREDENTIAL_KIND: Record<DownloadClientType, Downloa
   deluge: "usernamePassword",
   nzbget: "usernamePassword",
   sabnzbd: "apiKey",
+  shelfmark: "apiKey",
 };
 
 export interface DownloadClientPathMapping {
@@ -223,7 +230,7 @@ export const UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES: readonly BookRequestDownl
   "needs_review",
 ];
 
-export const BOOK_REQUEST_DOWNLOAD_SOURCES = ["magnet", "torrent_file", "direct_url", "nzb_file"] as const;
+export const BOOK_REQUEST_DOWNLOAD_SOURCES = ["magnet", "torrent_file", "direct_url", "nzb_file", "shelfmark"] as const;
 export type BookRequestDownloadSource = (typeof BOOK_REQUEST_DOWNLOAD_SOURCES)[number];
 
 /** Which kind of client can carry out a grab of each source. */
@@ -232,6 +239,7 @@ export const DELIVERY_BY_DOWNLOAD_SOURCE: Record<BookRequestDownloadSource, Down
   torrent_file: "torrent",
   direct_url: "file",
   nzb_file: "usenet",
+  shelfmark: "shelfmark",
 };
 
 export interface BookRequestDownloadItem {
@@ -245,6 +253,8 @@ export interface BookRequestDownloadItem {
   indexerId: number | null;
   indexerName: string | null;
   indexerColor: IndexerColor | null;
+  /** The site behind an indexer that fronts several, such as Shelfmark's Anna's Archive. */
+  origin?: string;
   /** True when the automation picked this release, which is also what makes it eligible to retry. */
   automated: boolean;
   releaseTitle: string;

@@ -121,6 +121,7 @@ const SAVE_ERROR_FIELDS: Record<string, FieldKey> = {
 }
 
 function describeFailure(failure: DownloadClientFailure): string {
+  if (failure.errorCode === 'DOWNLOAD_CLIENT_CREDENTIAL_REQUIRED') return apiKeyRequiredMessage.value
   const key = failure.errorCode ? SAVE_ERROR_KEYS[failure.errorCode] : undefined
   if (key) return t(key)
   return failure.message ?? t('settings.system.requests.errors.saveFailed')
@@ -212,7 +213,14 @@ const usesApiKey = computed(() => credentialKind.value === 'apiKey')
 const hasStoredCredential = computed(() => editingClient.value?.hasPassword === true)
 const canClearPassword = computed(() => hasStoredCredential.value && !usesApiKey.value)
 const credentialLabel = computed(() => t(`settings.system.requests.fields.${usesApiKey.value ? 'apiKey' : 'password'}`))
-const credentialBrief = computed(() => t(`settings.system.requests.fields.${usesApiKey.value ? 'apiKeyBrief' : 'passwordBrief'}`))
+const isShelfmark = computed(() => draft.value?.adapterType === 'shelfmark')
+const requiresApiKey = computed(() => draft.value?.adapterType === 'sabnzbd' || isShelfmark.value)
+const credentialBrief = computed(() =>
+  t(`settings.system.requests.fields.${isShelfmark.value ? 'apiKeyBriefShelfmark' : usesApiKey.value ? 'apiKeyBrief' : 'passwordBrief'}`),
+)
+const apiKeyRequiredMessage = computed(() =>
+  t(isShelfmark.value ? 'settings.system.requests.errors.apiKeyRequiredShelfmark' : 'settings.system.requests.errors.apiKeyRequired'),
+)
 const credentialKeep = computed(() => t(`settings.system.requests.fields.${usesApiKey.value ? 'apiKeyKeep' : 'passwordKeep'}`))
 const credentialWillClear = computed(() => t(`settings.system.requests.fields.${usesApiKey.value ? 'apiKeyWillClear' : 'passwordWillClear'}`))
 
@@ -314,11 +322,8 @@ async function handleSave() {
   clearFieldErrors()
   if (!current.name.trim()) fieldErrors.name = t('settings.system.requests.errors.nameRequired')
   if (!current.baseUrl.trim()) fieldErrors.baseUrl = t('settings.system.requests.errors.urlRequired')
-  if (current.adapterType === 'sabnzbd' && current.id === null && !current.password.trim()) {
-    fieldErrors.password = t('settings.system.requests.errors.apiKeyRequired')
-  }
-  if (current.adapterType === 'sabnzbd' && current.id !== null && !hasStoredCredential.value && !current.password.trim()) {
-    fieldErrors.password = t('settings.system.requests.errors.apiKeyRequired')
+  if (requiresApiKey.value && (current.id === null || !hasStoredCredential.value) && !current.password.trim()) {
+    fieldErrors.password = apiKeyRequiredMessage.value
   }
   if (filledMappings(current).length === 0) fieldErrors.mappings = t('settings.system.requests.errors.mappingRequired')
   if (Object.keys(fieldErrors).length > 0) return
@@ -784,6 +789,7 @@ async function confirmOrphanRemoval() {
                fraction is left over. -->
           <div class="flex flex-wrap gap-x-8 gap-y-4">
             <SettingsField
+              v-if="!isShelfmark"
               class="basis-full sm:basis-80"
               :label="t('settings.system.requests.fields.category')"
               input-id="download-client-category"
