@@ -40,6 +40,9 @@ describe('WebSerialsSchemaBootstrapService', () => {
       'web_serial_novel_index',
       'web_serial_novel_index_sources',
       'web_serial_volume_requests',
+      'web_serial_file_indexes',
+      'web_serial_file_index_series',
+      'web_serial_file_index_files',
     ]);
     const statements = repo.applySchemaStatements.mock.calls[0]![0] as string[];
     expect(statements.length).toBeGreaterThan(3);

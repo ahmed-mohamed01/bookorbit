@@ -1,8 +1,10 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Optional, Param, Post, Put, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Optional, Param, Patch, Post, Put, Query, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 
 import type {
   WebSerialEngineHealth,
+  WebSerialFileIndex,
+  WebSerialFileIndexPreview,
   WebSerialLookupHealth,
   WebSerialMangaExtension,
   WebSerialMangaExtensionPage,
@@ -18,16 +20,21 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
 import {
+  CreateFileIndexDto,
+  FileIndexParamsDto,
   MangaExtensionParamsDto,
   MangaExtensionQueryDto,
   NovelSourceParamsDto,
   NovelSourceQueryDto,
+  TestFileIndexDto,
   TestWebSerialEngineDto,
+  UpdateFileIndexDto,
   UpdateWebSerialSettingsDto,
   WebSerialExtensionRepoDto,
 } from './dto';
 import { WebSerialsLookupService } from './lookup/web-serials-lookup.service';
 import { WebSerialsExtensionsService } from './web-serials-extensions.service';
+import { WebSerialsFileIndexService } from './web-serials-file-index.service';
 import { WebSerialsSettingsService } from './web-serials-settings.service';
 import { WebSerialsNovelSourcesService } from './web-serials-novel-sources.service';
 import { WebSerialsNovelIndexFillerService } from './web-serials-novel-index-filler.service';
@@ -38,6 +45,7 @@ export class WebSerialsAdminController {
     private readonly settingsService: WebSerialsSettingsService,
     private readonly lookupService: WebSerialsLookupService,
     private readonly extensionsService: WebSerialsExtensionsService,
+    private readonly fileIndexService: WebSerialsFileIndexService,
     @Optional() private readonly novelSourcesService?: WebSerialsNovelSourcesService,
     @Optional() private readonly novelIndexFiller?: WebSerialsNovelIndexFillerService,
   ) {}
@@ -125,6 +133,49 @@ export class WebSerialsAdminController {
   @RequirePermission(Permission.ManageAppSettings)
   rebuildNovelIndex(@Param() params: NovelSourceParamsDto, @CurrentUser() user: RequestUser): Promise<WebSerialNovelIndexStatus> {
     return this.novelIndexFiller!.rebuild(params.id, user);
+  }
+
+  @Get('file-indexes')
+  @RequirePermission(Permission.ManageAppSettings)
+  listFileIndexes(): Promise<WebSerialFileIndex[]> {
+    return this.fileIndexService.list();
+  }
+
+  @Post('file-indexes')
+  @RequirePermission(Permission.ManageAppSettings)
+  createFileIndex(@Body() dto: CreateFileIndexDto, @CurrentUser() user: RequestUser): Promise<WebSerialFileIndex> {
+    return this.fileIndexService.create(dto, user);
+  }
+
+  @Post('file-indexes/test')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(Permission.ManageAppSettings)
+  testFileIndex(@Body() dto: TestFileIndexDto, @CurrentUser() user: RequestUser): Promise<WebSerialFileIndexPreview> {
+    return this.fileIndexService.test(dto, user);
+  }
+
+  @Patch('file-indexes/:id')
+  @RequirePermission(Permission.ManageAppSettings)
+  updateFileIndex(
+    @Param() params: FileIndexParamsDto,
+    @Body() dto: UpdateFileIndexDto,
+    @CurrentUser() user: RequestUser,
+  ): Promise<WebSerialFileIndex> {
+    return this.fileIndexService.update(params.id, dto, user);
+  }
+
+  @Delete('file-indexes/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission(Permission.ManageAppSettings)
+  removeFileIndex(@Param() params: FileIndexParamsDto, @CurrentUser() user: RequestUser): Promise<void> {
+    return this.fileIndexService.remove(params.id, user);
+  }
+
+  @Post('file-indexes/:id/refresh')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(Permission.ManageAppSettings)
+  refreshFileIndex(@Param() params: FileIndexParamsDto, @CurrentUser() user: RequestUser): Promise<WebSerialFileIndex> {
+    return this.fileIndexService.refreshNow(params.id, user);
   }
 
   @Get('manga-sources')

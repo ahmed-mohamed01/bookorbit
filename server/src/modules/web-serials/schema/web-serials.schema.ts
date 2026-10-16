@@ -17,6 +17,8 @@ import {
 
 import type {
   WebSerialEngineHealth,
+  WebSerialFileIndexFormat,
+  WebSerialFileIndexKeyMap,
   WebSerialJobCurrentUnit,
   WebSerialJobItemStatus,
   WebSerialJobStatus,
@@ -286,6 +288,78 @@ export const webSerialVolumeRequests = pgTable(
   ],
 );
 
+/** An admin-configured listing of downloadable books, refreshed on a schedule into the two tables below. */
+export const webSerialFileIndexes = pgTable(
+  'web_serial_file_indexes',
+  {
+    id: serial('id').primaryKey(),
+    name: varchar('name', { length: 100 }).notNull(),
+    listingUrl: varchar('listing_url', { length: 2048 }).notNull(),
+    baseUrl: varchar('base_url', { length: 2048 }).notNull(),
+    format: varchar('format', { length: 10 }).$type<WebSerialFileIndexFormat>().notNull(),
+    keyMap: jsonb('key_map').$type<WebSerialFileIndexKeyMap>().notNull().default({}),
+    username: varchar('username', { length: 255 }),
+    passwordEnc: text('password_enc'),
+    enabled: boolean('enabled').notNull().default(true),
+    refreshHours: integer('refresh_hours').notNull().default(24),
+    lastRefreshAt: timestamp('last_refresh_at', { withTimezone: true }),
+    lastEtag: varchar('last_etag', { length: 512 }),
+    lastModified: varchar('last_modified', { length: 100 }),
+    seriesCount: integer('series_count').notNull().default(0),
+    fileCount: integer('file_count').notNull().default(0),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .defaultNow()
+      .notNull()
+      .$onUpdateFn(() => new Date()),
+  },
+  (t) => [
+    check('web_serial_file_indexes_format_chk', sql`${t.format} in ('json', 'html')`),
+    check('web_serial_file_indexes_refresh_chk', sql`${t.refreshHours} between 1 and 720`),
+  ],
+);
+
+/** One folder of book files in a file index; the folder name is the series title. */
+export const webSerialFileIndexSeries = pgTable(
+  'web_serial_file_index_series',
+  {
+    id: serial('id').primaryKey(),
+    indexId: integer('index_id')
+      .notNull()
+      .references(() => webSerialFileIndexes.id, { onDelete: 'cascade' }),
+    folderPath: varchar('folder_path', { length: 2048 }).notNull(),
+    title: varchar('title', { length: 1000 }).notNull(),
+    titleKey: varchar('title_key', { length: 1000 }).notNull(),
+    volumeCount: integer('volume_count').notNull().default(0),
+    matchId: varchar('match_id', { length: 16 }),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    unique('web_serial_file_index_series_path_unique').on(t.indexId, t.folderPath),
+    index('web_serial_file_index_series_title_gist_idx').using('gist', sql`${t.titleKey} gist_trgm_ops`),
+    index('web_serial_file_index_series_match_idx')
+      .on(t.matchId)
+      .where(sql`${t.matchId} is not null`),
+  ],
+);
+
+export const webSerialFileIndexFiles = pgTable(
+  'web_serial_file_index_files',
+  {
+    id: serial('id').primaryKey(),
+    seriesId: integer('series_id')
+      .notNull()
+      .references(() => webSerialFileIndexSeries.id, { onDelete: 'cascade' }),
+    path: varchar('path', { length: 2048 }).notNull(),
+    name: varchar('name', { length: 1000 }).notNull(),
+    size: bigint('size', { mode: 'number' }),
+    volume: doublePrecision('volume'),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [unique('web_serial_file_index_files_path_unique').on(t.seriesId, t.path)],
+);
+
 export type WebSerialSettingsRow = typeof webSerialSettings.$inferSelect;
 export type NewWebSerialSettingsRow = typeof webSerialSettings.$inferInsert;
 export type WebSerialJobRow = typeof webSerialJobs.$inferSelect;
@@ -296,3 +370,7 @@ export type NewWebSerialImportRow = typeof webSerialImports.$inferInsert;
 export type WebSerialNovelIndexRow = typeof webSerialNovelIndex.$inferSelect;
 export type WebSerialNovelIndexSourceRow = typeof webSerialNovelIndexSources.$inferSelect;
 export type NewWebSerialNovelIndexSourceRow = typeof webSerialNovelIndexSources.$inferInsert;
+export type WebSerialFileIndexRow = typeof webSerialFileIndexes.$inferSelect;
+export type NewWebSerialFileIndexRow = typeof webSerialFileIndexes.$inferInsert;
+export type WebSerialFileIndexSeriesRow = typeof webSerialFileIndexSeries.$inferSelect;
+export type WebSerialFileIndexFileRow = typeof webSerialFileIndexFiles.$inferSelect;

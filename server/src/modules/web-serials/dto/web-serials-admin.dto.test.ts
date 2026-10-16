@@ -5,9 +5,13 @@ import { validate } from 'class-validator';
 import { describe, expect, it } from 'vitest';
 
 import {
+  CreateFileIndexDto,
+  FileIndexParamsDto,
   MangaExtensionParamsDto,
   MangaExtensionQueryDto,
+  TestFileIndexDto,
   TestWebSerialEngineDto,
+  UpdateFileIndexDto,
   UpdateWebSerialSettingsDto,
   WebSerialExtensionRepoDto,
 } from './web-serials-admin.dto';
@@ -113,5 +117,41 @@ describe('manga extension DTOs', () => {
     expect(await errorsFor(WebSerialExtensionRepoDto, { url: 'ftp://example.com/index.pb' })).toEqual(['url']);
     expect(await errorsFor(WebSerialExtensionRepoDto, { url: 'not a url' })).toEqual(['url']);
     expect(await errorsFor(WebSerialExtensionRepoDto, { url: `https://example.com/${'x'.repeat(2049)}` })).toEqual(['url']);
+  });
+});
+
+describe('file index DTOs', () => {
+  it('requires a name and an http listing URL to create', async () => {
+    expect(await errorsFor(CreateFileIndexDto, { name: 'NAS', listingUrl: 'http://nas.local/books/' })).toEqual([]);
+    expect(await errorsFor(CreateFileIndexDto, {})).toEqual(['name', 'listingUrl']);
+    expect(await errorsFor(CreateFileIndexDto, { name: 'NAS', listingUrl: 'ftp://nas/books' })).toEqual(['listingUrl']);
+  });
+
+  it('accepts a partial update with a key map and clears with null', async () => {
+    expect(
+      await errorsFor(UpdateFileIndexDto, {
+        format: 'json',
+        keyMap: { name: 'title', folders: 'dirs' },
+        baseUrl: null,
+        username: null,
+        password: null,
+        enabled: false,
+        refreshHours: 720,
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejects unknown formats, odd keys, refresh intervals out of range and extra fields', async () => {
+    expect(await errorsFor(UpdateFileIndexDto, { format: 'xml' })).toEqual(['format']);
+    expect(await errorsFor(UpdateFileIndexDto, { keyMap: { name: 'a b' } })).toEqual(['keyMap.name']);
+    expect(await errorsFor(UpdateFileIndexDto, { refreshHours: 0 })).toEqual(['refreshHours']);
+    expect(await errorsFor(UpdateFileIndexDto, { refreshHours: 721 })).toEqual(['refreshHours']);
+    expect(await errorsFor(UpdateFileIndexDto, { seriesCount: 3 })).toEqual(['seriesCount']);
+  });
+
+  it('lets a test name a saved index and checks ids', async () => {
+    expect(await errorsFor(TestFileIndexDto, { id: '4' })).toEqual([]);
+    expect(await errorsFor(FileIndexParamsDto, { id: '0' })).toEqual(['id']);
+    expect(await errorsFor(FileIndexParamsDto, { id: 'abc' })).toEqual(['id']);
   });
 });

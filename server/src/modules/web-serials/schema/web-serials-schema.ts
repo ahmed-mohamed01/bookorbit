@@ -44,6 +44,9 @@ const NOVEL_PREFS = 'web_serial_novel_prefs';
 const NOVEL_INDEX = 'web_serial_novel_index';
 const NOVEL_INDEX_SOURCES = 'web_serial_novel_index_sources';
 const VOLUME_REQUESTS = 'web_serial_volume_requests';
+const FILE_INDEXES = 'web_serial_file_indexes';
+const FILE_INDEX_SERIES = 'web_serial_file_index_series';
+const FILE_INDEX_FILES = 'web_serial_file_index_files';
 
 const JOB_STATUSES = `'queued', 'paused', 'running', 'importing', 'completed', 'completed_with_gaps', 'failed', 'cancelled'`;
 const ITEM_STATUSES = `'pending', 'fetching', 'importing', 'imported', 'skipped', 'failed'`;
@@ -145,6 +148,23 @@ const NOVEL_INDEX_CONSTRAINTS: { table: string; name: string; definition: string
     table: NOVEL_INDEX_SOURCES,
     name: 'web_serial_novel_index_sources_state_chk',
     definition: `CHECK ("fill_state" in (${NOVEL_INDEX_FILL_STATES}))`,
+  },
+];
+
+const FILE_INDEX_CONSTRAINTS: { table: string; name: string; definition: string }[] = [
+  { table: FILE_INDEXES, name: 'web_serial_file_indexes_format_chk', definition: `CHECK ("format" in ('json', 'html'))` },
+  { table: FILE_INDEXES, name: 'web_serial_file_indexes_refresh_chk', definition: 'CHECK ("refresh_hours" between 1 and 720)' },
+  { table: FILE_INDEX_SERIES, name: 'web_serial_file_index_series_path_unique', definition: 'UNIQUE ("index_id", "folder_path")' },
+  {
+    table: FILE_INDEX_SERIES,
+    name: 'web_serial_file_index_series_index_fk',
+    definition: 'FOREIGN KEY ("index_id") REFERENCES "public"."web_serial_file_indexes"("id") ON DELETE cascade ON UPDATE no action',
+  },
+  { table: FILE_INDEX_FILES, name: 'web_serial_file_index_files_path_unique', definition: 'UNIQUE ("series_id", "path")' },
+  {
+    table: FILE_INDEX_FILES,
+    name: 'web_serial_file_index_files_series_fk',
+    definition: 'FOREIGN KEY ("series_id") REFERENCES "public"."web_serial_file_index_series"("id") ON DELETE cascade ON UPDATE no action',
   },
 ];
 
@@ -322,6 +342,51 @@ const CREATE_STATEMENTS = [
 	CONSTRAINT "web_serial_volume_requests_kind_chk" CHECK ("kind" in ('manga', 'novel')),
 	CONSTRAINT "web_serial_volume_requests_unique" UNIQUE ("user_id", "kind", "match_id", "volume")
 );`,
+  `CREATE TABLE IF NOT EXISTS "${FILE_INDEXES}" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"name" varchar(100) NOT NULL,
+	"listing_url" varchar(2048) NOT NULL,
+	"base_url" varchar(2048) NOT NULL,
+	"format" varchar(10) NOT NULL,
+	"key_map" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"username" varchar(255),
+	"password_enc" text,
+	"enabled" boolean DEFAULT true NOT NULL,
+	"refresh_hours" integer DEFAULT 24 NOT NULL,
+	"last_refresh_at" timestamp with time zone,
+	"last_etag" varchar(512),
+	"last_modified" varchar(100),
+	"series_count" integer DEFAULT 0 NOT NULL,
+	"file_count" integer DEFAULT 0 NOT NULL,
+	"last_error" text,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "web_serial_file_indexes_format_chk" CHECK ("format" in ('json', 'html')),
+	CONSTRAINT "web_serial_file_indexes_refresh_chk" CHECK ("refresh_hours" between 1 and 720)
+);`,
+  `CREATE TABLE IF NOT EXISTS "${FILE_INDEX_SERIES}" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"index_id" integer NOT NULL,
+	"folder_path" varchar(2048) NOT NULL,
+	"title" varchar(1000) NOT NULL,
+	"title_key" varchar(1000) NOT NULL,
+	"volume_count" integer DEFAULT 0 NOT NULL,
+	"match_id" varchar(16),
+	"last_seen_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "web_serial_file_index_series_path_unique" UNIQUE ("index_id", "folder_path"),
+	CONSTRAINT "web_serial_file_index_series_index_fk" FOREIGN KEY ("index_id") REFERENCES "public"."web_serial_file_indexes"("id") ON DELETE cascade ON UPDATE no action
+);`,
+  `CREATE TABLE IF NOT EXISTS "${FILE_INDEX_FILES}" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"series_id" integer NOT NULL,
+	"path" varchar(2048) NOT NULL,
+	"name" varchar(1000) NOT NULL,
+	"size" bigint,
+	"volume" double precision,
+	"last_seen_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "web_serial_file_index_files_path_unique" UNIQUE ("series_id", "path"),
+	CONSTRAINT "web_serial_file_index_files_series_fk" FOREIGN KEY ("series_id") REFERENCES "public"."web_serial_file_index_series"("id") ON DELETE cascade ON UPDATE no action
+);`,
 ];
 
 const COLUMN_STATEMENTS = [
@@ -372,6 +437,8 @@ const INDEX_STATEMENTS = [
   `DROP INDEX IF EXISTS "web_serial_novel_index_title_trgm_idx";`,
   `CREATE INDEX IF NOT EXISTS "web_serial_novel_index_title_prefix_idx" ON "${NOVEL_INDEX}" ("title_key" varchar_pattern_ops);`,
   `CREATE INDEX IF NOT EXISTS "web_serial_novel_index_match_idx" ON "${NOVEL_INDEX}" ("match_id") WHERE "match_id" is not null;`,
+  `CREATE INDEX IF NOT EXISTS "web_serial_file_index_series_title_gist_idx" ON "${FILE_INDEX_SERIES}" USING gist ("title_key" gist_trgm_ops);`,
+  `CREATE INDEX IF NOT EXISTS "web_serial_file_index_series_match_idx" ON "${FILE_INDEX_SERIES}" ("match_id") WHERE "match_id" is not null;`,
 ];
 
 /**
@@ -408,14 +475,31 @@ WHERE NOT EXISTS (SELECT 1 FROM "${IMPORTS}")
 ORDER BY "item_id", "member"
 ON CONFLICT ("user_id", "series_key", "unit_key", "packaging") DO NOTHING;`;
 
-export const WEB_SERIALS_TABLE_NAMES = [SETTINGS, JOBS, ITEMS, IMPORTS, NOVEL_PREFS, NOVEL_INDEX, NOVEL_INDEX_SOURCES, VOLUME_REQUESTS] as const;
+export const WEB_SERIALS_TABLE_NAMES = [
+  SETTINGS,
+  JOBS,
+  ITEMS,
+  IMPORTS,
+  NOVEL_PREFS,
+  NOVEL_INDEX,
+  NOVEL_INDEX_SOURCES,
+  VOLUME_REQUESTS,
+  FILE_INDEXES,
+  FILE_INDEX_SERIES,
+  FILE_INDEX_FILES,
+] as const;
 
 export const WEB_SERIALS_SCHEMA_SQL = [
   ...CREATE_STATEMENTS,
   ...COLUMN_STATEMENTS,
-  ...[...CONSTRAINTS, ...IMPORT_CONSTRAINTS, ...NOVEL_PREFS_CONSTRAINTS, ...NOVEL_INDEX_CONSTRAINTS, ...VOLUME_REQUEST_CONSTRAINTS].map(
-    ({ table, name, definition }) => guardedConstraint(table, name, definition),
-  ),
+  ...[
+    ...CONSTRAINTS,
+    ...IMPORT_CONSTRAINTS,
+    ...NOVEL_PREFS_CONSTRAINTS,
+    ...NOVEL_INDEX_CONSTRAINTS,
+    ...VOLUME_REQUEST_CONSTRAINTS,
+    ...FILE_INDEX_CONSTRAINTS,
+  ].map(({ table, name, definition }) => guardedConstraint(table, name, definition)),
   replacedConstraint(JOBS, 'web_serial_jobs_status_chk', `CHECK ("status" in (${JOB_STATUSES}))`, 'paused'),
   ...INDEX_STATEMENTS,
   BACKFILL_STATEMENT,

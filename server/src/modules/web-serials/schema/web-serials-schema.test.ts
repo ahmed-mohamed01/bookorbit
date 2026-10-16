@@ -10,6 +10,8 @@ import {
   webSerialJobs,
   webSerialSettings,
   webSerialVolumeRequests,
+  webSerialFileIndexes,
+  webSerialFileIndexFiles,
 } from './web-serials.schema';
 import { WEB_SERIALS_SCHEMA_SQL, WEB_SERIALS_TABLE_NAMES } from './web-serials-schema';
 
@@ -35,6 +37,12 @@ describe('web serials schema SQL', () => {
     'web_serial_novel_index_sources_state_chk',
     'web_serial_volume_requests_kind_chk',
     'web_serial_volume_requests_unique',
+    'web_serial_file_indexes_format_chk',
+    'web_serial_file_indexes_refresh_chk',
+    'web_serial_file_index_series_path_unique',
+    'web_serial_file_index_series_index_fk',
+    'web_serial_file_index_files_path_unique',
+    'web_serial_file_index_files_series_fk',
   ];
 
   it.each(inlineConstraints)('declares %s inline for a fresh database', (name) => {
@@ -120,6 +128,17 @@ describe('web serials schema SQL', () => {
     expect(create).toContain('CONSTRAINT "web_serial_volume_requests_unique" UNIQUE ("user_id", "kind", "match_id", "volume")');
     expect(WEB_SERIALS_SCHEMA_SQL).toMatch(/"web_serial_volume_requests_user_id_fk" FOREIGN KEY \("user_id"\)[^;]*ON DELETE cascade/);
     expect(webSerialVolumeRequests.bookRequestId.notNull).toBe(true);
+  });
+
+  it('keeps file index series and files only as long as their index', () => {
+    for (const table of ['web_serial_file_indexes', 'web_serial_file_index_series', 'web_serial_file_index_files']) {
+      expect(WEB_SERIALS_TABLE_NAMES).toContain(table);
+    }
+    expect(WEB_SERIALS_SCHEMA_SQL).toMatch(/"web_serial_file_index_series_index_fk" FOREIGN KEY \("index_id"\)[^;]*ON DELETE cascade/);
+    expect(WEB_SERIALS_SCHEMA_SQL).toMatch(/"web_serial_file_index_files_series_fk" FOREIGN KEY \("series_id"\)[^;]*ON DELETE cascade/);
+    expect(WEB_SERIALS_SCHEMA_SQL).toContain('ON "web_serial_file_index_series" USING gist ("title_key" gist_trgm_ops)');
+    expect(webSerialFileIndexes.refreshHours.default).toBe(24);
+    expect(webSerialFileIndexFiles.volume.notNull).toBe(false);
   });
 
   it('backfills the ledger once from imported job items, idempotently', () => {

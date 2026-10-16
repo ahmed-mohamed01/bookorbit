@@ -13,12 +13,14 @@ import { WebSerialsLookupService } from './lookup/web-serials-lookup.service';
 import { WebSerialsSettingsService } from './web-serials-settings.service';
 import { WebSerialsNovelSourcesService } from './web-serials-novel-sources.service';
 import { WebSerialsNovelIndexFillerService } from './web-serials-novel-index-filler.service';
+import { WebSerialsFileIndexService } from './web-serials-file-index.service';
 
 vi.mock('./web-serials-settings.service', () => ({ WebSerialsSettingsService: class {} }));
 vi.mock('./lookup/web-serials-lookup.service', () => ({ WebSerialsLookupService: class {} }));
 vi.mock('./web-serials-extensions.service', () => ({ WebSerialsExtensionsService: class {} }));
 vi.mock('./web-serials-novel-sources.service', () => ({ WebSerialsNovelSourcesService: class {} }));
 vi.mock('./web-serials-novel-index-filler.service', () => ({ WebSerialsNovelIndexFillerService: class {} }));
+vi.mock('./web-serials-file-index.service', () => ({ WebSerialsFileIndexService: class {} }));
 
 const USER = { id: 42 } as RequestUser;
 
@@ -50,6 +52,14 @@ async function setup() {
     fillNow: vi.fn().mockResolvedValue({ dailyBudget: 1500, sources: [], unavailable: false }),
     rebuild: vi.fn().mockResolvedValue({ dailyBudget: 1500, sources: [], unavailable: false }),
   };
+  const fileIndexService = {
+    list: vi.fn().mockResolvedValue([]),
+    create: vi.fn().mockResolvedValue({ id: 1 }),
+    test: vi.fn().mockResolvedValue({ series: 0 }),
+    update: vi.fn().mockResolvedValue({ id: 1 }),
+    remove: vi.fn().mockResolvedValue(undefined),
+    refreshNow: vi.fn().mockResolvedValue({ id: 1 }),
+  };
   const module = await Test.createTestingModule({
     controllers: [WebSerialsAdminController],
     providers: [
@@ -58,9 +68,18 @@ async function setup() {
       { provide: WebSerialsExtensionsService, useValue: extensionsService },
       { provide: WebSerialsNovelSourcesService, useValue: novelSourcesService },
       { provide: WebSerialsNovelIndexFillerService, useValue: indexFiller },
+      { provide: WebSerialsFileIndexService, useValue: fileIndexService },
     ],
   }).compile();
-  return { controller: module.get(WebSerialsAdminController), settingsService, lookupService, extensionsService, novelSourcesService, indexFiller };
+  return {
+    controller: module.get(WebSerialsAdminController),
+    settingsService,
+    lookupService,
+    extensionsService,
+    novelSourcesService,
+    indexFiller,
+    fileIndexService,
+  };
 }
 
 describe('WebSerialsAdminController', () => {
@@ -132,6 +151,24 @@ describe('WebSerialsAdminController', () => {
     expect(indexFiller.rebuild).toHaveBeenCalledWith('novelbuddy', USER);
   });
 
+  it('passes the file index actions through with the id and the current user', async () => {
+    const { controller, fileIndexService } = await setup();
+
+    await controller.listFileIndexes();
+    await controller.createFileIndex({ name: 'NAS', listingUrl: 'http://nas/index.json' }, USER);
+    await controller.testFileIndex({ id: 3 }, USER);
+    await controller.updateFileIndex({ id: 3 }, { enabled: false }, USER);
+    await controller.removeFileIndex({ id: 3 }, USER);
+    await controller.refreshFileIndex({ id: 3 }, USER);
+
+    expect(fileIndexService.list).toHaveBeenCalledOnce();
+    expect(fileIndexService.create).toHaveBeenCalledWith({ name: 'NAS', listingUrl: 'http://nas/index.json' }, USER);
+    expect(fileIndexService.test).toHaveBeenCalledWith({ id: 3 }, USER);
+    expect(fileIndexService.update).toHaveBeenCalledWith(3, { enabled: false }, USER);
+    expect(fileIndexService.remove).toHaveBeenCalledWith(3, USER);
+    expect(fileIndexService.refreshNow).toHaveBeenCalledWith(3, USER);
+  });
+
   it('mounts under web-serials/admin', () => {
     expect(Reflect.getMetadata(PATH_METADATA, WebSerialsAdminController)).toBe('web-serials/admin');
   });
@@ -150,6 +187,12 @@ describe('WebSerialsAdminController', () => {
     ['getNovelIndex', RequestMethod.GET, 'novel-index'],
     ['fillNovelIndex', RequestMethod.POST, 'novel-index/:id/fill'],
     ['rebuildNovelIndex', RequestMethod.POST, 'novel-index/:id/rebuild'],
+    ['listFileIndexes', RequestMethod.GET, 'file-indexes'],
+    ['createFileIndex', RequestMethod.POST, 'file-indexes'],
+    ['testFileIndex', RequestMethod.POST, 'file-indexes/test'],
+    ['updateFileIndex', RequestMethod.PATCH, 'file-indexes/:id'],
+    ['removeFileIndex', RequestMethod.DELETE, 'file-indexes/:id'],
+    ['refreshFileIndex', RequestMethod.POST, 'file-indexes/:id/refresh'],
     ['listMangaSources', RequestMethod.GET, 'manga-sources'],
     ['listMangaExtensions', RequestMethod.GET, 'manga-extensions'],
     ['refreshMangaExtensions', RequestMethod.POST, 'manga-extensions/refresh'],
@@ -180,5 +223,8 @@ describe('WebSerialsAdminController', () => {
     expect(Reflect.getMetadata(HTTP_CODE_METADATA, WebSerialsAdminController.prototype.installNovelSource)).toBe(204);
     expect(Reflect.getMetadata(HTTP_CODE_METADATA, WebSerialsAdminController.prototype.updateNovelSource)).toBe(204);
     expect(Reflect.getMetadata(HTTP_CODE_METADATA, WebSerialsAdminController.prototype.removeNovelSource)).toBe(204);
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, WebSerialsAdminController.prototype.testFileIndex)).toBe(200);
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, WebSerialsAdminController.prototype.refreshFileIndex)).toBe(200);
+    expect(Reflect.getMetadata(HTTP_CODE_METADATA, WebSerialsAdminController.prototype.removeFileIndex)).toBe(204);
   });
 });

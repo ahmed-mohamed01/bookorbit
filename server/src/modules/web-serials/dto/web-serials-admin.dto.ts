@@ -20,6 +20,9 @@ import type {
   UpdateWebSerialSettingsInput,
   WebSerialEngineConnectionInput,
   WebSerialExtensionRepoInput,
+  WebSerialFileIndexFormat,
+  WebSerialFileIndexInput,
+  WebSerialFileIndexKeyMap,
   WebSerialKind,
   WebSerialMangaExtensionQuery,
   WebSerialNovelEngine,
@@ -226,4 +229,118 @@ export class WebSerialExtensionRepoDto implements WebSerialExtensionRepoInput {
   @MaxLength(2048)
   @IsUrl({ protocols: ['http', 'https'], require_protocol: true, require_tld: false })
   url!: string;
+}
+
+const FILE_INDEX_FORMATS: WebSerialFileIndexFormat[] = ['json', 'html'];
+const JSON_KEY_PATTERN = /^[A-Za-z0-9_$.-]{1,64}$/;
+
+export class FileIndexKeyMapDto implements WebSerialFileIndexKeyMap {
+  @IsOptional()
+  @IsString()
+  @Matches(JSON_KEY_PATTERN)
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(JSON_KEY_PATTERN)
+  path?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(JSON_KEY_PATTERN)
+  folders?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(JSON_KEY_PATTERN)
+  files?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(JSON_KEY_PATTERN)
+  size?: string;
+}
+
+class FileIndexFieldsDto {
+  // Nullable by design: null or "" goes back to the listing's own folder.
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(2048)
+  baseUrl?: string | null;
+
+  @IsOptional()
+  @IsIn(FILE_INDEX_FORMATS)
+  format?: WebSerialFileIndexFormat;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => FileIndexKeyMapDto)
+  keyMap?: FileIndexKeyMapDto;
+
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(255)
+  username?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1024)
+  password?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(720)
+  refreshHours?: number;
+}
+
+export class UpdateFileIndexDto extends FileIndexFieldsDto implements WebSerialFileIndexInput {
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(100)
+  name?: string;
+
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(2048)
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true, require_tld: false })
+  listingUrl?: string;
+}
+
+export class CreateFileIndexDto extends FileIndexFieldsDto implements WebSerialFileIndexInput {
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(100)
+  name!: string;
+
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(2048)
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true, require_tld: false })
+  listingUrl!: string;
+}
+
+export class TestFileIndexDto extends UpdateFileIndexDto {
+  /** A saved index whose stored values (the password above all) fill in what the request leaves out. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  id?: number;
+}
+
+export class FileIndexParamsDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  id!: number;
 }

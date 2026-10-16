@@ -19,6 +19,8 @@ import { WebSerialsDiscoverService } from './web-serials-discover.service';
 import { WebSerialsCoverService } from './web-serials-cover.service';
 import { WebSerialsEngineRegistry } from './web-serials-engine-registry.service';
 import { WebSerialsExtensionsService } from './web-serials-extensions.service';
+import { WebSerialsFileIndexRepository } from './web-serials-file-index.repository';
+import { WebSerialsFileIndexService } from './web-serials-file-index.service';
 import { WebSerialsCleanupService } from './web-serials-cleanup.service';
 import { WebSerialJobMoveService } from './web-serials-job-move.service';
 import { WebSerialsIllustratorBackfillService } from './web-serials-illustrator-backfill.service';
@@ -46,6 +48,8 @@ import { WebSerialsRepository } from './web-serials.repository';
   providers: [
     WebSerialsRepository,
     WebSerialsNovelIndexRepository,
+    WebSerialsFileIndexRepository,
+    WebSerialsFileIndexService,
     WebSerialsSecretService,
     WebSerialsSchemaBootstrapService,
     WebSerialsSettingsService,

@@ -66,6 +66,9 @@ export const WebSerialErrorCode = {
   SeriesLoading: "WEB_SERIAL_SERIES_LOADING",
   SeriesKeyTooLong: "WEB_SERIAL_SERIES_KEY_TOO_LONG",
   SourceDisabled: "WEB_SERIAL_SOURCE_DISABLED",
+  FileIndexNotFound: "WEB_SERIAL_FILE_INDEX_NOT_FOUND",
+  FileIndexBusy: "WEB_SERIAL_FILE_INDEX_BUSY",
+  FileIndexUnreadable: "WEB_SERIAL_FILE_INDEX_UNREADABLE",
 } as const;
 
 export type WebSerialErrorCode = (typeof WebSerialErrorCode)[keyof typeof WebSerialErrorCode];
@@ -829,4 +832,67 @@ export interface WebSerialSuggestion {
 export interface WebSerialSuggestResult {
   query: string;
   suggestions: WebSerialSuggestion[];
+}
+
+/** How a file index lists its files: a JSON tree, or HTML directory pages (nginx, Apache, h5ai). */
+export type WebSerialFileIndexFormat = "json" | "html";
+
+/** The JSON keys a listing uses for a folder's name, path, sub-folders and files; unset keys use the defaults. */
+export interface WebSerialFileIndexKeyMap {
+  name?: string;
+  path?: string;
+  folders?: string;
+  files?: string;
+  size?: string;
+}
+
+/** `GET web-serials/admin/file-indexes`: one admin-configured listing of downloadable books. */
+export interface WebSerialFileIndex {
+  id: number;
+  name: string;
+  listingUrl: string;
+  baseUrl: string;
+  format: WebSerialFileIndexFormat;
+  keyMap: WebSerialFileIndexKeyMap;
+  username: string | null;
+  hasPassword: boolean;
+  enabled: boolean;
+  refreshHours: number;
+  lastRefreshAt: string | null;
+  series: number;
+  files: number;
+  lastError: string | null;
+  /** The index is being refreshed right now. */
+  running: boolean;
+}
+
+export interface WebSerialFileIndexInput {
+  name?: string;
+  listingUrl?: string;
+  /** Defaults to the folder that holds the listing. */
+  baseUrl?: string | null;
+  format?: WebSerialFileIndexFormat;
+  keyMap?: WebSerialFileIndexKeyMap;
+  /** null or "" clears the stored value. */
+  username?: string | null;
+  password?: string | null;
+  enabled?: boolean;
+  refreshHours?: number;
+}
+
+export interface WebSerialFileIndexPreviewSeries {
+  folderPath: string;
+  title: string;
+  volumes: Array<{ name: string; volume: number | null }>;
+}
+
+/** `POST web-serials/admin/file-indexes/test`: what a refresh would store, without storing it. */
+export interface WebSerialFileIndexPreview {
+  format: WebSerialFileIndexFormat;
+  series: number;
+  files: number;
+  /** Book files the listing holds that are not EPUB; they are left out. */
+  skippedFiles: number;
+  truncated: boolean;
+  sample: WebSerialFileIndexPreviewSeries[];
 }
