@@ -13928,6 +13928,76 @@
         "hidden": "Hidden by you or kept out for review"
       }
     },
+    "selection": {
+      "select": "Select",
+      "done": "Done selecting",
+      "selectedCount": "{count} selected",
+      "exit": "Exit selection",
+      "card": {
+        "select": "Select {title}",
+        "deselect": "Deselect {title}"
+      },
+      "group": {
+        "selectAll": "Select all in {name}",
+        "progress": "{selected} of {total} selected"
+      },
+      "quick": {
+        "label": "Quick select",
+        "missingEbooks": "All missing ebooks",
+        "missingAudiobooks": "All missing audiobooks",
+        "releasedOnly": "Released only",
+        "releasedOnlyHint": "Keep only the selected books whose chosen format is already out",
+        "rangeHint": "Shift-click selects a range"
+      },
+      "sources": {
+        "labelAll": "Sources: All",
+        "labelSome": "Sources: {on} of {total}",
+        "dialogLabel": "Sources to search",
+        "title": "Search these sources",
+        "useAll": "Use all",
+        "group": {
+          "ebook": "Ebooks",
+          "audiobook": "Audiobooks"
+        },
+        "delivery": {
+          "torrent": "Torrent",
+          "file": "Direct",
+          "usenet": "Usenet"
+        },
+        "footnote": "Only sources that carry the format are listed. Each request keeps its sources for automatic searches and retries; picking a release by hand still shows every source.",
+        "from": {
+          "ebook": "Ebooks from {names}",
+          "audiobook": "Audiobooks from {names}"
+        }
+      },
+      "bar": {
+        "formatLabel": "Format to get",
+        "ebook": "Ebook",
+        "audiobook": "Audiobook",
+        "both": "Both",
+        "getEbooks": "Get {count, plural, one {# ebook} other {# ebooks}}",
+        "getAudiobooks": "Get {count, plural, one {# audiobook} other {# audiobooks}}",
+        "getBoth": "Get {ebooks, plural, one {# ebook} other {# ebooks}} and {audiobooks, plural, one {# audiobook} other {# audiobooks}}",
+        "willBeRequested": "{count} will be requested",
+        "skippedOwned": "{count} already in library, skipped",
+        "skippedRequested": "{count} already requested, skipped",
+        "skippedNoEbook": "{count, plural, one {# has no ebook edition} other {# have no ebook edition}}, skipped",
+        "autoGrab": "Grab best match automatically",
+        "monitor": "Monitor",
+        "watchEbooks": "Watch ebooks",
+        "watchAudiobooks": "Watch audiobooks",
+        "unwatchEbooks": "Stop watching ebooks",
+        "unwatchAudiobooks": "Stop watching audiobooks",
+        "hide": "Hide",
+        "unhide": "Unhide"
+      },
+      "toast": {
+        "requested": "{requested, plural, one {# request} other {# requests}} sent, {skipped} skipped",
+        "requestPartial": "{requested, plural, one {# request} other {# requests}} sent, {failed, plural, one {# book} other {# books}} failed",
+        "updated": "{count, plural, one {# book} other {# books}} updated",
+        "updatePartial": "{updated, plural, one {# book} other {# books}} updated, {failed, plural, one {# book} other {# books}} failed"
+      }
+    },
     "slot": {
       "inLibrary": "In library",
       "released": "Released {date}",

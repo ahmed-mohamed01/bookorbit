@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { BookOpen, Download, EyeOff, Headphones, MoreVertical, PanelRight } from '@lucide/vue'
+import { onLongPress } from '@vueuse/core'
+import { BookOpen, Check, Download, EyeOff, Headphones, MoreVertical, PanelRight } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { MONITORED_FORMATS, type MonitorMode, type MonitoredFormat, type MonitoredSeriesMembership, type MonitoredWork } from '@bookorbit/types'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
@@ -14,27 +15,38 @@ import { reviewKindOf, workDisplayClass } from '../lib/work-visibility'
 import { useFormatStatusText } from '../composables/useFormatStatusText'
 import MonitoredCardMenu, { type CardFormatMenu } from './MonitoredCardMenu.vue'
 
-const props = defineProps<{
-  work: MonitoredWork
-  queued: boolean
-  ebookQueued: boolean
-  audiobookQueued: boolean
-  canManage: boolean
-  seriesMembership?: MonitoredSeriesMembership | null
-  monitoredFormats?: MonitoredFormat[]
-  /** The author's mode per format, so a badge can say what happens on release. */
-  formatModes?: Partial<Record<MonitoredFormat, MonitorMode>>
-  /** Shown on hover when the card stands outside its author's page. */
-  authorName?: string | null
-  /** Relative release label and whether it points forward; worked out from the work's own date when absent. */
-  timeBadge?: TimeBadge | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    work: MonitoredWork
+    queued: boolean
+    ebookQueued: boolean
+    audiobookQueued: boolean
+    canManage: boolean
+    seriesMembership?: MonitoredSeriesMembership | null
+    monitoredFormats?: MonitoredFormat[]
+    /** The author's mode per format, so a badge can say what happens on release. */
+    formatModes?: Partial<Record<MonitoredFormat, MonitorMode>>
+    /** Shown on hover when the card stands outside its author's page. */
+    authorName?: string | null
+    /** Relative release label and whether it points forward; worked out from the work's own date when absent. */
+    timeBadge?: TimeBadge | null
+    selectionMode?: boolean
+    selected?: boolean
+    /** False for a card the viewer cannot act on; it stays visible but cannot be picked. */
+    selectable?: boolean
+    /** Lets a long press on the cover enter select mode with this card picked. */
+    longPressSelect?: boolean
+  }>(),
+  { selectable: true },
+)
 const emit = defineEmits<{
   preview: [work: MonitoredWork]
   quickView: [work: MonitoredWork]
   downloadEbook: [work: MonitoredWork]
   downloadAudiobook: [work: MonitoredWork]
   stop: [work: MonitoredWork]
+  select: [work: MonitoredWork, event: MouseEvent]
+  longPress: [work: MonitoredWork]
 }>()
 const { t } = useI18n()
 const { sentence } = useFormatStatusText()
@@ -47,6 +59,12 @@ const isTouch = computed(
   () => typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches,
 )
 const showBelowCoverLabel = computed(() => cardInfoMode.value === 'below-cover')
+const inSelectMode = computed(() => props.selectionMode === true)
+const isSelectable = computed(() => props.selectable)
+const coverLabel = computed(() => {
+  if (!inSelectMode.value) return t('monitored.detail.quickLook')
+  return t(props.selected ? 'monitored.selection.card.deselect' : 'monitored.selection.card.select', { title: props.work.title })
+})
 
 const coverUrl = computed(() => toMonitoredCoverUrl(props.work.coverUrl))
 const fallbackStyle = computed(() => bookCoverStyle(props.work.title))
@@ -137,13 +155,46 @@ function handlePreview() {
   emit('preview', props.work)
 }
 
-function handleCoverClick() {
+const coverButton = ref<HTMLButtonElement | null>(null)
+// The release of a long press usually lands on the cover as a click, which must not also open the
+// preview or toggle the freshly selected card. Touch browsers often send no click at all, so the
+// swallow is tied to the release itself and only holds briefly, never eating a later genuine tap.
+const LONG_PRESS_SWALLOW_WINDOW_MS = 300
+let longPressPendingRelease = false
+let longPressReleasedAt: number | null = null
+
+function handleLongPress() {
+  if (!props.longPressSelect || inSelectMode.value) return
+  longPressPendingRelease = true
+  emit('longPress', props.work)
+}
+
+function handleLongPressRelease(duration: number, distance: number, isLongPress: boolean) {
+  const fromLongPress = isLongPress && longPressPendingRelease
+  longPressPendingRelease = false
+  if (fromLongPress) longPressReleasedAt = Date.now()
+}
+
+function handleCoverClick(event: MouseEvent) {
+  const swallowReleaseClick = longPressReleasedAt !== null && Date.now() - longPressReleasedAt <= LONG_PRESS_SWALLOW_WINDOW_MS
+  longPressReleasedAt = null
+  if (swallowReleaseClick) return
+  if (inSelectMode.value) {
+    if (isSelectable.value) emit('select', props.work, event)
+    return
+  }
   if (isTouch.value && !showBelowCoverLabel.value) {
     showMobileOverlay.value = !showMobileOverlay.value
     return
   }
   handlePreview()
 }
+
+function handleCoverContextmenu(event: MouseEvent) {
+  if (props.longPressSelect) event.preventDefault()
+}
+
+onLongPress(coverButton, handleLongPress, { delay: 500, onMouseUp: handleLongPressRelease })
 
 function handleClickOutside(event: MouseEvent) {
   if (!showMobileOverlay.value) return
@@ -179,7 +230,7 @@ function handleStop() {
   <article
     ref="root"
     class="group min-w-0"
-    :class="{ 'opacity-45': isHidden }"
+    :class="{ 'opacity-45': isHidden, 'opacity-50': inSelectMode && !isSelectable }"
     :data-owned="fullyOwned || undefined"
     :data-not-watched="notWatched || undefined"
   >
@@ -193,6 +244,7 @@ function handleStop() {
         :src="coverUrl"
         :alt="work.title"
         class="size-full object-cover"
+        :class="longPressSelect ? '[-webkit-touch-callout:none] select-none' : ''"
         loading="lazy"
         decoding="async"
         @error="handleImageError"
@@ -202,14 +254,37 @@ function handleStop() {
       </div>
 
       <button
+        ref="coverButton"
         type="button"
-        :aria-label="t('monitored.detail.quickLook')"
-        class="absolute inset-0 z-0 cursor-pointer"
+        :aria-label="coverLabel"
+        :aria-pressed="inSelectMode ? Boolean(selected) : undefined"
+        :disabled="inSelectMode && !isSelectable"
+        class="absolute inset-0 z-0"
+        :class="[
+          inSelectMode && !isSelectable ? 'cursor-not-allowed' : 'cursor-pointer',
+          longPressSelect ? '[-webkit-touch-callout:none] select-none' : '',
+        ]"
         data-testid="cover-button"
         @click="handleCoverClick"
+        @contextmenu="handleCoverContextmenu"
       />
 
-      <div class="pointer-events-none absolute left-1.5 top-1.5 z-20 flex flex-col items-start gap-1">
+      <div
+        v-if="inSelectMode"
+        class="pointer-events-none absolute inset-0 z-30 rounded-sm"
+        :class="selected ? 'bg-primary/20 ring-2 ring-inset ring-primary' : ''"
+        data-testid="select-overlay"
+      >
+        <div
+          class="absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-xs transition-colors"
+          :class="selected ? 'bg-primary' : isSelectable ? 'border border-white/50 bg-black/40' : 'border border-white/30 bg-black/20'"
+          data-testid="select-box"
+        >
+          <Check v-if="selected" class="text-primary-foreground" :size="12" aria-hidden="true" />
+        </div>
+      </div>
+
+      <div class="pointer-events-none absolute left-1.5 flex flex-col items-start gap-1" :class="inSelectMode ? 'top-8 z-40' : 'top-1.5 z-20'">
         <span
           v-if="isHidden"
           class="flex items-center justify-center rounded-sm bg-black/60 p-1 text-white"
@@ -220,14 +295,16 @@ function handleStop() {
           <span class="sr-only">{{ t('monitored.card.hidden') }}</span>
         </span>
         <span
-          v-else-if="badgeTime"
+          v-else-if="badgeTime && !inSelectMode"
           class="rounded-sm px-2 py-1 text-[11px] font-semibold leading-none text-background shadow-sm"
           :class="timeTone"
           :data-tone="badgeTime.upcoming ? 'upcoming' : 'released'"
           data-testid="time-badge"
           >{{ badgeTime.label }}</span
         >
-        <span v-if="kindLabel" class="rounded-sm bg-black/60 px-1.5 py-0.5 text-[9px] font-bold leading-none text-white">{{ kindLabel }}</span>
+        <span v-if="kindLabel && !inSelectMode" class="rounded-sm bg-black/60 px-1.5 py-0.5 text-[9px] font-bold leading-none text-white">{{
+          kindLabel
+        }}</span>
         <span v-if="badges.length" class="flex items-center gap-1">
           <span
             v-for="badge in badges"
@@ -266,7 +343,7 @@ function handleStop() {
         >{{ seriesLine }}</span
       >
       <div
-        v-if="!showBelowCoverLabel"
+        v-if="!showBelowCoverLabel && !inSelectMode"
         class="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col justify-end bg-gradient-to-t from-black/85 via-black/55 to-transparent p-2 pt-12 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100"
         :class="showMobileOverlay ? 'opacity-100' : 'opacity-0'"
         data-testid="info-overlay"
@@ -289,7 +366,7 @@ function handleStop() {
       </div>
 
       <div
-        v-if="!showBelowCoverLabel"
+        v-if="!showBelowCoverLabel && !inSelectMode"
         class="absolute bottom-2 right-2 z-20 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
         :class="showMobileOverlay ? 'opacity-100' : 'opacity-0'"
       >
@@ -319,6 +396,7 @@ function handleStop() {
       <div class="flex min-w-0 items-center gap-0.5">
         <p class="min-w-0 flex-1 truncate text-xs font-medium leading-5 text-foreground">{{ work.title }}</p>
         <MonitoredCardMenu
+          v-if="!inSelectMode"
           :can-manage="canManage"
           :can-quick-view="canQuickView"
           :ebook="ebookMenu"

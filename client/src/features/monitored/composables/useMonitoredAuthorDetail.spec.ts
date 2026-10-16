@@ -170,6 +170,54 @@ describe('useMonitoredAuthorDetail', () => {
     wrapper.unmount()
   })
 
+  it('clears the hidden mark again when updateWork unhides', async () => {
+    updateWorkMock.mockResolvedValue(work({ userVisibility: 'hidden' }))
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+    await composable.updateWork('work-1', { hidden: true })
+
+    updateWorkMock.mockResolvedValue(work())
+    await composable.updateWork('work-1', { hidden: false })
+
+    expect(composable.visibleWorks.value).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('records a bulk hide without waiting for a refetch', async () => {
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+
+    composable.recordVisibilityChange(['work-1'], { hidden: true })
+
+    expect(composable.visibleWorks.value).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('records a bulk unhide and a bulk return to the automatic verdict', async () => {
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+    composable.recordVisibilityChange(['work-1'], { hidden: true })
+    expect(composable.visibleWorks.value).toHaveLength(0)
+
+    composable.recordVisibilityChange(['work-1'], { hidden: false })
+    expect(composable.visibleWorks.value).toHaveLength(1)
+
+    composable.recordVisibilityChange(['work-1'], { hidden: true })
+    composable.recordVisibilityChange(['work-1'], { automaticVisibility: true })
+    expect(composable.visibleWorks.value).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('leaves the hidden set alone for a monitor-only patch', async () => {
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+
+    composable.recordVisibilityChange(['work-1'], { monitorEbook: true })
+
+    expect(composable.visibleWorks.value).toHaveLength(1)
+    wrapper.unmount()
+  })
+
   it('offers no local-only stop path that skips the server', () => {
     const { composable, wrapper } = mountComposable()
 

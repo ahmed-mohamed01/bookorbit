@@ -60,6 +60,9 @@ import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
 import MonitoredVirtualGrid from '../components/MonitoredVirtualGrid.vue'
 import MonitoredWorkCard from '../components/MonitoredWorkCard.vue'
 import MonitoredStatusFilterMenu from '../components/MonitoredStatusFilterMenu.vue'
+import MonitoredQuickSelect from '../components/MonitoredQuickSelect.vue'
+import MonitoredSelectionBar from '../components/MonitoredSelectionBar.vue'
+import { useMonitoredBulkSelection } from '../composables/useMonitoredBulkSelection'
 import { readStatusFilters } from '../lib/status-filter'
 import { releaseTimeBadge, type TimeBadge } from '../lib/time-badge'
 import { MONITORED_RELEASE_GROUPS, MONITORED_TABS, type MonitoredReleaseGroup, type MonitoredTab, useMonitored } from '../composables/useMonitored'
@@ -422,6 +425,42 @@ const releaseSections = computed(() =>
     return { ...group, entries, count: releaseHasMore.value ? null : count }
   }),
 )
+
+const selectionAvailable = computed(() => activeTab.value === 'releases' && releasesView.value === 'cards' && canManage.value)
+// One work can sit in both the released and the upcoming section, so it is listed once, by first appearance.
+const selectableWorks = computed(() => {
+  if (!selectionAvailable.value) return []
+  const entries = releaseSections.value.flatMap((section) => section.entries).filter(entryCanManage)
+  return [...new Map(entries.map((entry) => [entry.work.id, entry.work])).values()]
+})
+const {
+  selectionMode,
+  selectedIds,
+  selectedWorks,
+  format: bulkFormat,
+  autoDownload: bulkAutoDownload,
+  running: bulkRunning,
+  sourceGroups,
+  toggleSource,
+  useAllSources,
+  handleSelectWork,
+  startSelectingWith,
+  toggleSelectionMode,
+  exitSelectionMode,
+  replaceSelection,
+  addMany,
+  requestSelected,
+  updateSelected,
+} = useMonitoredBulkSelection({
+  works: selectableWorks,
+  applyWork: applyWorkUpdate,
+  onChanged: () => void reloadActive(true),
+})
+
+watch([activeTab, releasesView, filterQuery, releaseSort, releaseOrder, releaseFilter, releaseStatus, releaseGroup], exitSelectionMode)
+watch(selectionAvailable, (available) => {
+  if (!available) exitSelectionMode()
+})
 
 // Audiobook release dates are sourced from Audible alone, so with that provider off the feed is
 // silently ebook-only rather than empty. The notice belongs where that gap is visible.
@@ -853,7 +892,8 @@ defineOptions({ name: 'MonitoredView' })
           :view-mode="headerViewMode"
           :allowed-view-modes="['grid', 'list']"
           :show-view-mode-toggle="activeTab === 'releases'"
-          :show-selection="false"
+          :show-selection="selectionAvailable"
+          :selection-mode="selectionMode"
           :show-display-controls="showDisplayControls"
           :row-density="headerRowDensity"
           :hide-size-controls="showReleaseRows"
@@ -865,6 +905,7 @@ defineOptions({ name: 'MonitoredView' })
           @update:search-query="handleSearchUpdate"
           @update:view-mode="handleHeaderViewMode"
           @update:row-density="handleRowDensityUpdate"
+          @toggle-selection="toggleSelectionMode"
         >
           <template #filters>
             <div v-if="activeTab === 'releases'" class="hidden md:block">
@@ -1006,7 +1047,15 @@ defineOptions({ name: 'MonitoredView' })
         />
       </section>
 
-      <section v-else-if="activeTab === 'releases'" class="mt-4 space-y-6 px-1">
+      <section v-else-if="activeTab === 'releases'" class="mt-4 space-y-6 px-1" :class="selectionMode ? 'pb-28' : ''">
+        <MonitoredQuickSelect
+          v-if="selectionMode"
+          :works="selectableWorks"
+          :selected-ids="selectedIds"
+          :format="bulkFormat"
+          @add="addMany"
+          @keep="replaceSelection"
+        />
         <section v-for="group in releaseSections" :key="group.key">
           <div v-if="group.label" class="mb-3 flex items-center gap-2">
             <h3 class="text-xs font-semibold text-foreground">{{ group.label }}</h3>
@@ -1039,6 +1088,12 @@ defineOptions({ name: 'MonitoredView' })
                 :monitored-formats="entryFormats(entry)"
                 :format-modes="entryModes(entry)"
                 :can-manage="entryCanManage(entry)"
+                :selection-mode="selectionMode"
+                :selectable="entryCanManage(entry)"
+                :selected="selectedIds.has(entry.work.id)"
+                :long-press-select="selectionAvailable && entryCanManage(entry)"
+                @select="handleSelectWork"
+                @long-press="startSelectingWith"
                 @preview="openEntryPanel(entry)"
                 @quick-view="handleCardQuickView"
                 @download-ebook="handleDownloadEbook"
@@ -1060,6 +1115,19 @@ defineOptions({ name: 'MonitoredView' })
         <span v-else-if="initialLoaded && !hasMore && activeItemsLength > 0" class="text-xs text-muted-foreground">{{ allLoadedLabel }}</span>
       </div>
     </div>
+    <MonitoredSelectionBar
+      :visible="selectionMode"
+      :works="selectedWorks"
+      v-model:format="bulkFormat"
+      v-model:auto-download="bulkAutoDownload"
+      :running="bulkRunning"
+      :source-groups="sourceGroups"
+      @toggle-source="toggleSource"
+      @use-all-sources="useAllSources"
+      @patch="updateSelected"
+      @request="requestSelected"
+      @exit="exitSelectionMode"
+    />
     <ConfirmDialog
       :open="pendingAuthorRemoval !== null"
       :title="t('monitored.detail.stopDialog.title')"

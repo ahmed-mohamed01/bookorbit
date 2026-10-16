@@ -1,9 +1,9 @@
 import { computed, ref, type Ref } from 'vue'
 
-export function useBookSelection(selectionMode: Ref<boolean> = ref(false)) {
-  const selectedIds = ref<Set<number>>(new Set())
+export function useBookSelection<TId extends string | number = number>(selectionMode: Ref<boolean> = ref(false)) {
+  const selectedIds = ref(new Set<TId>()) as Ref<Set<TId>>
   const selectedCount = computed(() => selectedIds.value.size)
-  const anchorId = ref<number | null>(null)
+  const anchorId = ref<TId | null>(null) as Ref<TId | null>
   const anchorSelected = ref(false)
 
   function enterSelectionMode() {
@@ -16,7 +16,7 @@ export function useBookSelection(selectionMode: Ref<boolean> = ref(false)) {
     anchorId.value = null
   }
 
-  function toggleBook(id: number) {
+  function toggleBook(id: TId) {
     const next = new Set(selectedIds.value)
     if (next.has(id)) {
       next.delete(id)
@@ -29,7 +29,7 @@ export function useBookSelection(selectionMode: Ref<boolean> = ref(false)) {
     anchorId.value = id
   }
 
-  function rangeSelectTo(targetId: number, allIds: number[]) {
+  function rangeSelectTo(targetId: TId, allIds: TId[]) {
     if (anchorId.value === null) {
       toggleBook(targetId)
       return
@@ -50,11 +50,11 @@ export function useBookSelection(selectionMode: Ref<boolean> = ref(false)) {
     selectedIds.value = next
   }
 
-  function selectAll(ids: number[]) {
+  function selectAll(ids: TId[]) {
     selectedIds.value = new Set(ids)
   }
 
-  function deselectAll(ids: number[]) {
+  function deselectAll(ids: TId[]) {
     if (ids.length === 0) return
     const remove = new Set(ids)
     selectedIds.value = new Set([...selectedIds.value].filter((id) => !remove.has(id)))
@@ -64,7 +64,7 @@ export function useBookSelection(selectionMode: Ref<boolean> = ref(false)) {
     }
   }
 
-  function isSelected(id: number) {
+  function isSelected(id: TId) {
     return selectedIds.value.has(id)
   }
 

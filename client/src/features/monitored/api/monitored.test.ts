@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import type { BookRequestItem, MonitoredBookItem, MonitoredReleaseDateLookup } from '@bookorbit/types'
 import {
+  bulkRequestMonitoredWorks,
+  bulkUpdateMonitoredWorks,
   fetchMonitoredAuthorDetail,
   fetchMonitoredReleases,
   fetchWorkReleaseDateCandidates,
@@ -179,5 +181,41 @@ describe('status filters', () => {
     await fetchMonitoredAuthorDetail('author-1', { sort: 'releaseDate', order: 'asc', status: ['upcoming', 'hidden'] })
 
     expect(String(mockedApi.mock.calls[0]?.[0])).toContain('status=upcoming%2Chidden')
+  })
+})
+
+describe('bulk work calls', () => {
+  it('POSTs the ids, format and auto-grab choice to the bulk request route', async () => {
+    const response = { results: [], works: [] }
+    mockedApi.mockResolvedValue(mockOkResponse(response))
+
+    const result = await bulkRequestMonitoredWorks({ workIds: ['w1', 'w2'], format: 'both', autoDownload: true })
+
+    expect(mockedApi).toHaveBeenCalledWith(
+      '/api/v1/monitored/works/bulk-request',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workIds: ['w1', 'w2'], format: 'both', autoDownload: true }),
+      }),
+    )
+    expect(result).toEqual(response)
+  })
+
+  it('PATCHes one patch over many works', async () => {
+    mockedApi.mockResolvedValue(mockOkResponse({ works: [], failed: [] }))
+
+    await bulkUpdateMonitoredWorks({ workIds: ['w1'], patch: { hidden: true } })
+
+    expect(mockedApi).toHaveBeenCalledWith(
+      '/api/v1/monitored/works/bulk',
+      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ workIds: ['w1'], patch: { hidden: true } }) }),
+    )
+  })
+
+  it('throws with the server message on a refused bulk request', async () => {
+    mockedApi.mockResolvedValue(mockErrorResponse(400, 'too many works'))
+
+    await expect(bulkRequestMonitoredWorks({ workIds: [], format: 'ebook' })).rejects.toThrow('too many works')
   })
 })

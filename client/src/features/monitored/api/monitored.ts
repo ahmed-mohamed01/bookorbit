@@ -8,6 +8,10 @@ import type {
   MonitoredAuthorItem,
   MonitoredAuthorSearchResult,
   MonitoredBookWork,
+  MonitoredBulkRequestPayload,
+  MonitoredBulkRequestResponse,
+  MonitoredBulkUpdatePayload,
+  MonitoredBulkUpdateResponse,
   MonitoredFormat,
   MonitoredListOrder,
   MonitoredPage,
@@ -22,6 +26,7 @@ import type {
   MonitoredWorkReleasesResponse,
   MonitoredSummary,
   RequestFromWorkPayload,
+  RequestSourceOption,
   SetMonitoredReleaseDatePayload,
   UpdateMonitoredAuthorRequest,
 } from '@bookorbit/types'
@@ -193,4 +198,28 @@ export async function updateMonitoredWork(workId: string, patch: MonitoredWorkPa
       body: JSON.stringify(patch),
     }),
   )
+}
+
+export async function bulkRequestMonitoredWorks(payload: MonitoredBulkRequestPayload): Promise<MonitoredBulkRequestResponse> {
+  return readJson(
+    await api(`${BASE_PATH}/works/bulk-request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  )
+}
+
+export async function bulkUpdateMonitoredWorks(payload: MonitoredBulkUpdatePayload): Promise<MonitoredBulkUpdateResponse> {
+  return readJson(
+    await api(`${BASE_PATH}/works/bulk`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  )
+}
+
+export async function fetchRequestSources(): Promise<RequestSourceOption[]> {
+  return readJson(await api('/api/v1/book-request-sources'))
 }

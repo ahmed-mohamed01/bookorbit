@@ -9,10 +9,13 @@ import {
   ChevronLeft,
   ChevronsDownUp,
   ChevronsUpDown,
+  CheckSquare,
   Headphones,
   Loader2,
+  Minus,
   MoreHorizontal,
   RefreshCw,
+  Square,
   Trash2,
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
@@ -36,6 +39,10 @@ import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
 import MonitoredDisplayMenu from '../components/MonitoredDisplayMenu.vue'
 import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
 import MonitoredVirtualGrid from '../components/MonitoredVirtualGrid.vue'
+import MonitoredQuickSelect from '../components/MonitoredQuickSelect.vue'
+import MonitoredSelectionBar from '../components/MonitoredSelectionBar.vue'
+import { useMonitoredBulkSelection } from '../composables/useMonitoredBulkSelection'
+import type { MonitoredWorkGroup } from '../lib/grouping'
 import { useMonitoredAuthorDetail } from '../composables/useMonitoredAuthorDetail'
 import { useRefreshFeedback } from '../composables/useRefreshFeedback'
 import { seriesMembershipForGroup } from '../lib/grouping'
@@ -78,6 +85,7 @@ const {
   isQueued,
   applyWorkUpdate,
   updateWork,
+  recordVisibilityChange,
 } = useMonitoredAuthorDetail()
 const { state: refreshState, run: runRefresh } = useRefreshFeedback()
 const { onRequestsChanged } = useBookRequestProgress()
@@ -242,6 +250,68 @@ function handleWorkUpdated(updated: MonitoredWork) {
   if (panelWork.value?.id === updated.id) panelWork.value = updated
 }
 
+// A series grouping can list one work under several series, so ids are deduplicated by first appearance.
+const selectableWorks = computed(() => [...new Map(visibleWorks.value.map((work) => [work.id, work])).values()])
+const expandedWorkIds = computed(() => [
+  ...new Set(groups.value.filter((group) => !isGroupCollapsed(group.key)).flatMap((group) => group.works.map((work) => work.id))),
+])
+const {
+  selectionMode,
+  selectedIds,
+  selectedWorks,
+  format: bulkFormat,
+  autoDownload: bulkAutoDownload,
+  running: bulkRunning,
+  sourceGroups,
+  toggleSource,
+  useAllSources,
+  handleSelectWork,
+  startSelectingWith,
+  toggleSelectionMode,
+  exitSelectionMode,
+  selectMany,
+  deselectMany,
+  replaceSelection,
+  addMany,
+  requestSelected,
+  updateSelected,
+} = useMonitoredBulkSelection({
+  works: selectableWorks,
+  rangeIds: expandedWorkIds,
+  applyWork: handleWorkUpdated,
+  onPatched: recordVisibilityChange,
+})
+
+function groupSelectedCount(group: MonitoredWorkGroup): number {
+  return group.works.filter((work) => selectedIds.value.has(work.id)).length
+}
+
+function groupCheckState(group: MonitoredWorkGroup): 'none' | 'some' | 'all' {
+  const selected = groupSelectedCount(group)
+  if (selected === 0) return 'none'
+  return selected === group.works.length ? 'all' : 'some'
+}
+
+function groupAriaChecked(group: MonitoredWorkGroup): 'true' | 'false' | 'mixed' {
+  const state = groupCheckState(group)
+  return state === 'all' ? 'true' : state === 'some' ? 'mixed' : 'false'
+}
+
+function handleGroupSelect(group: MonitoredWorkGroup) {
+  const ids = group.works.map((work) => work.id)
+  if (groupCheckState(group) === 'all') deselectMany(ids)
+  else selectMany(ids)
+}
+
+function handleSelectionKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && selectionMode.value && !panelOpen.value && !event.defaultPrevented) exitSelectionMode()
+}
+
+watch(selectionMode, (on) => {
+  if (on) window.addEventListener('keydown', handleSelectionKeydown)
+  else window.removeEventListener('keydown', handleSelectionKeydown)
+})
+
 async function handleToggleMonitor(work: MonitoredWork, format: MonitoredFormat, value: boolean) {
   try {
     await updateWork(work.id, format === 'ebook' ? { monitorEbook: value } : { monitorAudiobook: value })
@@ -360,10 +430,13 @@ onActivated(() => {
 
 onDeactivated(() => {
   viewActive = false
+  exitSelectionMode()
 })
 
 onUnmounted(() => {
   viewActive = false
+  window.removeEventListener('keydown', handleSelectionKeydown)
+  exitSelectionMode()
   if (requestRefreshTimer) clearTimeout(requestRefreshTimer)
 })
 
@@ -575,6 +648,24 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                 <ChevronsDownUp v-else :size="13" />
                 <span class="hidden lg:inline">{{ collapseAllLabel }}</span>
               </button>
+              <button
+                v-if="canEdit"
+                type="button"
+                class="flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors"
+                :class="
+                  selectionMode
+                    ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
+                    : 'border-input bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                "
+                :aria-pressed="selectionMode"
+                data-testid="toggle-selection"
+                @click="toggleSelectionMode"
+              >
+                <CheckSquare v-if="selectionMode" :size="13" aria-hidden="true" />
+                <Square v-else :size="13" aria-hidden="true" />
+                <span class="hidden sm:inline">{{ selectionMode ? t('monitored.selection.done') : t('monitored.selection.select') }}</span>
+                <span class="sr-only sm:hidden">{{ selectionMode ? t('monitored.selection.done') : t('monitored.selection.select') }}</span>
+              </button>
               <MonitoredDisplayMenu
                 :model-value="display"
                 :counts="displayCounts"
@@ -588,9 +679,37 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
             </div>
           </div>
 
-          <div class="mt-5 space-y-6">
+          <MonitoredQuickSelect
+            v-if="selectionMode"
+            class="mt-3"
+            :works="selectableWorks"
+            :selected-ids="selectedIds"
+            :format="bulkFormat"
+            @add="addMany"
+            @keep="replaceSelection"
+          />
+
+          <div class="mt-5 space-y-6" :class="selectionMode ? 'pb-28' : ''">
             <section v-for="group in groups" :key="group.key">
               <div class="mb-3 flex items-center gap-2">
+                <button
+                  v-if="selectionMode"
+                  type="button"
+                  role="checkbox"
+                  :aria-checked="groupAriaChecked(group)"
+                  :aria-label="t('monitored.selection.group.selectAll', { name: groupLabel(group.key, group.label) })"
+                  class="flex size-5 shrink-0 items-center justify-center rounded-xs border transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  :class="
+                    groupCheckState(group) === 'none'
+                      ? 'border-border bg-background hover:border-primary'
+                      : 'border-primary bg-primary text-primary-foreground'
+                  "
+                  data-testid="group-select"
+                  @click="handleGroupSelect(group)"
+                >
+                  <Check v-if="groupCheckState(group) === 'all'" :size="12" aria-hidden="true" />
+                  <Minus v-else-if="groupCheckState(group) === 'some'" :size="12" aria-hidden="true" />
+                </button>
                 <h3 class="min-w-0">
                   <button
                     type="button"
@@ -605,9 +724,15 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                       aria-hidden="true"
                     />
                     <span class="truncate text-xs font-semibold text-foreground">{{ groupLabel(group.key, group.label) }}</span>
-                    <span class="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{{
-                      group.works.length
-                    }}</span>
+                    <span
+                      class="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"
+                      :data-testid="selectionMode ? 'group-progress' : undefined"
+                      >{{
+                        selectionMode
+                          ? t('monitored.selection.group.progress', { selected: groupSelectedCount(group), total: group.works.length })
+                          : group.works.length
+                      }}</span
+                    >
                   </button>
                 </h3>
                 <div class="h-px flex-1 bg-border" />
@@ -629,6 +754,11 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                     :monitored-formats="monitoredFormats"
                     :format-modes="formatModes"
                     :can-manage="canEdit"
+                    :selection-mode="selectionMode"
+                    :selected="selectedIds.has(work.id)"
+                    :long-press-select="canEdit"
+                    @select="handleSelectWork"
+                    @long-press="startSelectingWith"
                     @preview="handlePreview"
                     @quick-view="handleQuickView"
                     @download-ebook="handleDownloadEbook"
@@ -642,6 +772,20 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
         </section>
       </template>
     </div>
+
+    <MonitoredSelectionBar
+      :visible="selectionMode && canEdit"
+      :works="selectedWorks"
+      v-model:format="bulkFormat"
+      v-model:auto-download="bulkAutoDownload"
+      :running="bulkRunning"
+      :source-groups="sourceGroups"
+      @toggle-source="toggleSource"
+      @use-all-sources="useAllSources"
+      @patch="updateSelected"
+      @request="requestSelected"
+      @exit="exitSelectionMode"
+    />
 
     <ConfirmDialog
       :open="confirmStopOpen"

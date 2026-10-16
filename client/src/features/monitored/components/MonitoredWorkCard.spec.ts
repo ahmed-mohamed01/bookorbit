@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import type { MonitoredWork } from '@bookorbit/types'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
@@ -378,5 +378,212 @@ describe('MonitoredWorkCard card info mode', () => {
 
     expect(wrapper.emitted('preview')).toHaveLength(1)
     wrapper.unmount()
+  })
+})
+
+describe('MonitoredWorkCard select mode', () => {
+  function mountSelectable(props: { selected?: boolean; selectable?: boolean } = {}) {
+    const wrapper = mountCard(work({ title: 'Revenger', seriesMemberships: [], seriesIndex: '2' }))
+    return wrapper.setProps({ selectionMode: true, ...props }).then(() => wrapper)
+  }
+
+  it('emits select with the click event from anywhere on the cover', async () => {
+    const wrapper = await mountSelectable()
+
+    await wrapper.get('[data-testid="cover-button"]').trigger('click', { shiftKey: true })
+
+    const emitted = wrapper.emitted('select') ?? []
+    const [picked, event] = emitted[0] as [MonitoredWork, MouseEvent]
+    expect(picked.id).toBe('work-1')
+    expect(event.shiftKey).toBe(true)
+    expect(wrapper.emitted('preview')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('labels the cover for select mode and reflects the state', async () => {
+    const wrapper = await mountSelectable()
+    const cover = wrapper.get('[data-testid="cover-button"]')
+    expect(cover.attributes('aria-label')).toBe('Select Revenger')
+    expect(cover.attributes('aria-pressed')).toBe('false')
+
+    await wrapper.setProps({ selected: true })
+
+    expect(cover.attributes('aria-label')).toBe('Deselect Revenger')
+    expect(cover.attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[data-testid="select-box"] svg').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('swaps the time pill and menus for the checkbox overlay and keeps the series pill', async () => {
+    const wrapper = mountCard(work({ ebookReleaseDate: '2999-01-01' }))
+    await wrapper.setProps({ seriesMembership: { name: 'Series', index: '2' } })
+    expect(wrapper.find('[data-testid="time-badge"]').exists()).toBe(true)
+
+    await wrapper.setProps({ selectionMode: true })
+
+    expect(wrapper.find('[data-testid="time-badge"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="select-overlay"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="series-badge"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="info-overlay"]').exists()).toBe(false)
+    expect(wrapper.find('[aria-label^="Actions for"], [aria-label*="menu"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the format badges in select mode and drops only the time pill and kind label', async () => {
+    const wrapper = mountCard(work({ ebookReleaseDate: '2099-04-10', ebookDatePrecision: 'day', verdict: 'probable' }))
+    expect(wrapper.find('[data-testid="time-badge"]').exists()).toBe(true)
+    expect(wrapper.find('[data-badge]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Unverified')
+
+    await wrapper.setProps({ selectionMode: true })
+
+    expect(wrapper.find('[data-testid="time-badge"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Unverified')
+    expect(wrapper.find('[data-badge]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('keeps the hidden mark in select mode', async () => {
+    const wrapper = mountCard(work({ userVisibility: 'hidden' }))
+
+    await wrapper.setProps({ selectionMode: true })
+
+    expect(wrapper.find('[data-testid="hidden-mark"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('ignores clicks on a card the viewer cannot select', async () => {
+    const wrapper = await mountSelectable({ selectable: false })
+    const cover = wrapper.get('[data-testid="cover-button"]')
+
+    expect(cover.attributes('disabled')).toBeDefined()
+    await cover.trigger('click')
+
+    expect(wrapper.emitted('select')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('still opens the preview outside select mode', async () => {
+    const wrapper = mountCard(work())
+
+    await wrapper.get('[data-testid="cover-button"]').trigger('click')
+
+    expect(wrapper.emitted('preview')).toHaveLength(1)
+    expect(wrapper.get('[data-testid="cover-button"]').attributes('aria-pressed')).toBeUndefined()
+    wrapper.unmount()
+  })
+})
+
+describe('MonitoredWorkCard long press select', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function mountLongPress(props: { longPressSelect?: boolean; selectionMode?: boolean } = {}) {
+    return mount(MonitoredWorkCard, {
+      props: {
+        work: work(),
+        queued: false,
+        ebookQueued: false,
+        audiobookQueued: false,
+        canManage: true,
+        longPressSelect: true,
+        ...props,
+      },
+      global: {
+        stubs: { DropdownMenu: passthrough, DropdownMenuTrigger: passthrough, DropdownMenuContent: passthrough, DropdownMenuItem: passthrough },
+      },
+    })
+  }
+
+  async function pressAndRelease(wrapper: ReturnType<typeof mountLongPress>, holdMs: number) {
+    // onLongPress attaches its pointer listeners in a post-flush watcher, so the mount must flush first.
+    await wrapper.vm.$nextTick()
+    const cover = wrapper.get('[data-testid="cover-button"]')
+    await cover.trigger('pointerdown')
+    vi.advanceTimersByTime(holdMs)
+    await cover.trigger('pointerup')
+    await cover.trigger('click')
+  }
+
+  it('emits longPress on a 500ms press and swallows the click the release produces', async () => {
+    const wrapper = mountLongPress()
+
+    await pressAndRelease(wrapper, 500)
+
+    expect(wrapper.emitted('longPress')).toHaveLength(1)
+    expect(wrapper.emitted('preview')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('keeps working in select mode when a touch long press ends without a click', async () => {
+    const wrapper = mountLongPress()
+    await wrapper.vm.$nextTick()
+    const cover = wrapper.get('[data-testid="cover-button"]')
+
+    await cover.trigger('pointerdown')
+    vi.advanceTimersByTime(500)
+    await cover.trigger('pointerup')
+    expect(wrapper.emitted('longPress')).toHaveLength(1)
+
+    // The long press entered select mode with this card picked; a click straight after the release
+    // is still the same gesture and must not toggle the card back off.
+    await wrapper.setProps({ selectionMode: true, selected: true })
+    await cover.trigger('click')
+    expect(wrapper.emitted('select')).toBeUndefined()
+
+    vi.advanceTimersByTime(301)
+    await cover.trigger('click')
+
+    expect(wrapper.emitted('select')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('keeps a short click opening the preview', async () => {
+    const wrapper = mountLongPress()
+
+    await pressAndRelease(wrapper, 100)
+
+    expect(wrapper.emitted('longPress')).toBeUndefined()
+    expect(wrapper.emitted('preview')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('stays inert on a long press when the prop is off, and the release still opens the preview', async () => {
+    const wrapper = mountLongPress({ longPressSelect: false })
+
+    await pressAndRelease(wrapper, 500)
+
+    expect(wrapper.emitted('longPress')).toBeUndefined()
+    expect(wrapper.emitted('preview')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('does not emit longPress in select mode', async () => {
+    const wrapper = mountLongPress({ selectionMode: true })
+
+    await pressAndRelease(wrapper, 500)
+
+    expect(wrapper.emitted('longPress')).toBeUndefined()
+    expect(wrapper.emitted('select')).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('keeps the browser callout off the cover only while the prop is on', () => {
+    const on = mountLongPress()
+    const prevented = new MouseEvent('contextmenu', { cancelable: true })
+    on.get('[data-testid="cover-button"]').element.dispatchEvent(prevented)
+    expect(prevented.defaultPrevented).toBe(true)
+    on.unmount()
+
+    const off = mountLongPress({ longPressSelect: false })
+    const untouched = new MouseEvent('contextmenu', { cancelable: true })
+    off.get('[data-testid="cover-button"]').element.dispatchEvent(untouched)
+    expect(untouched.defaultPrevented).toBe(false)
+    off.unmount()
   })
 })

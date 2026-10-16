@@ -320,6 +320,20 @@ export function useMonitoredAuthorDetail() {
     if (works && index >= 0) works.splice(index, 1, updated)
   }
 
+  /**
+   * Hiding takes a work off the page the moment the server confirms it, instead of leaving it dimmed
+   * until the next refetch. An unhide or a return to the automatic verdict brings it straight back.
+   */
+  function recordVisibilityChange(workIds: string[], patch: MonitoredWorkPatch): void {
+    if (patch.hidden === undefined && !patch.automaticVisibility) return
+    const next = new Set(hiddenWorkIds.value)
+    for (const workId of workIds) {
+      if (patch.hidden) next.add(workId)
+      else next.delete(workId)
+    }
+    hiddenWorkIds.value = next
+  }
+
   /** Persist per-work monitor/hide toggles and reflect them in the loaded detail. */
   async function updateWork(workId: string, patch: MonitoredWorkPatch): Promise<void> {
     const works = detail.value?.works
@@ -327,12 +341,7 @@ export function useMonitoredAuthorDetail() {
     if (!works || index < 0) return
     const updated = await updateMonitoredWork(workId, patch)
     works.splice(index, 1, updated)
-    if (patch.hidden !== undefined || patch.automaticVisibility) {
-      const next = new Set(hiddenWorkIds.value)
-      if (patch.hidden) next.add(workId)
-      else next.delete(workId)
-      hiddenWorkIds.value = next
-    }
+    recordVisibilityChange([workId], patch)
   }
 
   return {
@@ -369,5 +378,6 @@ export function useMonitoredAuthorDetail() {
     isQueued,
     applyWorkUpdate,
     updateWork,
+    recordVisibilityChange,
   }
 }

@@ -1,6 +1,7 @@
 import type { Component } from 'vue'
 import { BookCheck, CircleAlert, CircleDashed, CircleHelp, Clock3, Download, EyeOff, FolderInput, Hourglass, TriangleAlert } from '@lucide/vue'
 import {
+  MONITORED_ACTIVE_REQUEST_STATUSES,
   monitoredFormatReleaseDate,
   monitoredFormatStatus,
   monitoredReleaseStarted,
@@ -15,8 +16,7 @@ export function todayUtc(now: Date = new Date()): string {
   return now.toISOString().slice(0, 10)
 }
 
-/** A request exists for the format and is not finished: it is being fetched, filed, or waiting on the owner, so a new one is not offered. Wider than the server in_progress filter bucket, which leaves out needs_choice. */
-export const ACTIVE_REQUEST_STATUSES: ReadonlySet<MonitoredFormatStatus> = new Set(['downloading', 'importing', 'queued', 'needs_choice'])
+export const ACTIVE_REQUEST_STATUSES = MONITORED_ACTIVE_REQUEST_STATUSES
 
 export interface WorkFormatStatusOptions {
   /** False when the author does not monitor this format at all. */
