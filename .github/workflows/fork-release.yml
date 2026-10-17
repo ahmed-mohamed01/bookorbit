@@ -142,6 +142,8 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          # gh otherwise resolves a fork to its parent repository.
+          GH_REPO: ${{ github.repository }}
           LATEST: ${{ needs.plan.outputs.latest }}
         run: |
           set -euo pipefail

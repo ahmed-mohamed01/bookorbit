@@ -326,7 +326,7 @@ Only the highest fork tag moves `:latest` and is marked the latest release. A lo
 backfill) gets a notes-only release: no image tag, not latest, and its changelog entry is read
 from `monitored` when the tagged commit predates it. Releases before `v3.4.0-m2` were backfilled
 this way: one per upstream base, each tagged at the last `monitored` commit before the next base
-came in, plus `v3.4.0-m1` at `bbd8890b`. Push at most three tags at once: GitHub sends no push events for larger tag pushes.
+came in, plus `v3.4.0-m1` at `bbd8890b`. A tag push runs the workflow file as it was at the tagged commit, so a backfill tag on a commit older than this workflow runs the old one: publish backfills from a local checkout with `gh release create <tag> -R ahmed-mohamed01/bookorbit --verify-tag --latest=false --notes-file <file>`, building the notes with `release-notes.mjs <tag> --release-body --to <tag commit>`. Push at most three tags at once: GitHub sends no push events for larger tag pushes.
 
 Rollback is deploying the previous version tag. Version tags are never rebuilt, so each one is
 exactly the image that ran from `monitored`.
