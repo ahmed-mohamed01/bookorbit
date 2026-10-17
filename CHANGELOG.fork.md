@@ -2,6 +2,22 @@
 
 Releases of the ahmed-mohamed01/bookorbit fork. Versions are `v<upstream base>-m<N>`; see [FORK_MAINTENANCE.md](FORK_MAINTENANCE.md). Upstream changes are in the [upstream releases](https://github.com/bookorbit/bookorbit/releases).
 
+## v3.4.0-m3 - 2026-10-17
+
+Upstream base: v3.4.0 · Previous: v3.4.0-m2
+
+### Highlights
+
+- **Universal search**: Search your library, Watchlist, manga, light novels and Hardcover from one place with Cmd+K, and request or follow books you don't have yet straight from the results.
+
+### Features
+
+- **client:** search beyond the library in the command palette (4cc97f3d)
+
+### Maintenance
+
+- **release:** publish fork releases to the fork, not its parent (17e7b33e)
+
 ## v3.4.0-m2 - 2026-10-17
 
 Upstream base: v3.4.0 · Previous: v3.4.0-m1
