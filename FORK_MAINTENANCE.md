@@ -285,37 +285,48 @@ Fork versions are `v<upstream base>-m<N>`, e.g. `v3.1.0-m2`.
 
 ### Changelog
 
-`CHANGELOG.fork.md` holds fork changes only, newest first. Draft an entry from the commits that
-are on the fork but not upstream (grouped by type, `Closes #n` references carried over, upstream
-syncs listed), then edit it by hand:
+`CHANGELOG.fork.md` holds fork changes only, newest first. Each entry opens with a hand-written
+`### Highlights` list in upstream's style (`- **Title**: one to three user-facing sentences`),
+followed by the drafted commit sections: commits on the fork but not upstream, grouped by type,
+`Closes #n` references carried over, upstream syncs listed.
 
-```
-git fetch upstream
-node scripts/fork/release-notes.mjs v3.1.0-m2
-```
+The GitHub Release for a fork version reads top to bottom:
 
-The GitHub Release for a fork version reads top to bottom as upstream first, then fork:
-
-1. **Upstream BookOrbit `<base>`**: upstream's own release notes for the base, verbatim (or every
+1. **Highlights in `<version>`**: the entry's highlights.
+2. **Upstream BookOrbit `<base>`**: upstream's own release notes for the base, verbatim (or every
    upstream release the fork release newly brings in, newest first, when the base moved).
-2. **Upstream changes after `<base>`**: upstream `main` commits merged but not yet in an upstream
+3. **Upstream changes after `<base>`**: upstream `main` commits merged but not yet in an upstream
    release, features and fixes listed, maintenance counted.
-3. **Fork additions in `<version>`**: the `CHANGELOG.fork.md` entry.
+4. **Fork additions in `<version>`**: the rest of the `CHANGELOG.fork.md` entry.
+5. **Docker**: the `docker pull` line, for releases that tag an image.
 
 Upstream `#123` references are rewritten to `bookorbit/bookorbit#123` so they do not link to fork
-issues. Preview the body locally with `--release-body` (add `--changelog CHANGELOG.fork.md` to use
-the working-tree changelog).
+issues.
 
-### Cutting a release
+### Cutting a release (every push of `monitored`)
 
-1. `git fetch upstream`; `monitored` clean and pushed; `pnpm run verify:fast`.
-2. Add the drafted entry to the top of `CHANGELOG.fork.md`, commit `docs(release): v3.1.0-m2`.
-3. Push `monitored` so the Container Image workflow builds `sha-<12>` for that commit.
-4. `git tag -s v3.1.0-m2 -m "BookOrbit 3.1.0-m2"` and `git push origin v3.1.0-m2`.
-5. `.github/workflows/fork-release.yml` waits for the commit image, tags it
-   `ghcr.io/ahmed-mohamed01/bookorbit:3.1.0-m2` and `:latest` without rebuilding, and publishes
-   the GitHub Release (upstream notes, then fork additions) with `--release-body`.
-6. Close any issues the release finished.
+Every push of `monitored` is a release. `scripts/fork/release.mjs` runs it from the `monitored`
+checkout with a clean tree:
+
+1. `node scripts/fork/release.mjs prepare` fetches upstream and tags, picks the next version
+   (`v<base>-m<N>`), drafts its entry at the top of `CHANGELOG.fork.md` from the commits since the
+   previous fork tag, and prints the exact GitHub Release body. It stops with "nothing new" when
+   there is nothing to release.
+2. Replace the highlights placeholder, edit the entry, and re-check it with
+   `node scripts/fork/release.mjs preview`. **The notes are approved before anything is pushed.**
+3. `node scripts/fork/release.mjs publish v3.4.0-m2` commits `docs(release): v3.4.0-m2` (signed),
+   pushes `monitored` through the pre-push gate, then creates and pushes the signed tag. It refuses
+   a missing entry or a placeholder still in place.
+4. `.github/workflows/fork-release.yml` waits for the Container Image build of that commit, tags it
+   `ghcr.io/ahmed-mohamed01/bookorbit:3.4.0-m2` and `:latest` without rebuilding, and publishes the
+   GitHub Release.
+5. Close any issues the release finished.
+
+Only the highest fork tag moves `:latest` and is marked the latest release. A lower tag (a
+backfill) gets a notes-only release: no image tag, not latest, and its changelog entry is read
+from `monitored` when the tagged commit predates it. Releases before `v3.4.0-m2` were backfilled
+this way: one per upstream base, each tagged at the last `monitored` commit before the next base
+came in, plus `v3.4.0-m1` at `bbd8890b`. Push at most three tags at once: GitHub sends no push events for larger tag pushes.
 
 Rollback is deploying the previous version tag. Version tags are never rebuilt, so each one is
 exactly the image that ran from `monitored`.

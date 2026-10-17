@@ -3,6 +3,7 @@ run-name: Fork release - ${{ github.ref_name }}
 
 # Fork-only. A pushed v*-m* tag reuses the image the monitored push already built for that
 # commit (ghcr sha-<12>) instead of rebuilding, then publishes the GitHub Release.
+# Only the highest fork tag moves :latest; a lower (backfilled) tag gets a notes-only release.
 on:
   push:
     tags: ["v*.*.*-m*"]
@@ -19,13 +20,12 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  image:
-    name: Tag Release Image
+  plan:
+    name: Check Release Tag
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    permissions:
-      contents: read
-      packages: write
+    timeout-minutes: 5
+    outputs:
+      latest: ${{ steps.latest.outputs.latest }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,6 +42,30 @@ jobs:
             exit 1
           fi
 
+      - name: Decide whether this is the latest release
+        id: latest
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          highest="$(git tag --list 'v*.*.*-m*' --sort=-v:refname | head -n 1)"
+          if [ "$highest" = "$GITHUB_REF_NAME" ]; then
+            echo "latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "${GITHUB_REF_NAME} is below ${highest}: notes-only release, :latest stays"
+            echo "latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  image:
+    name: Tag Release Image
+    needs: plan
+    if: needs.plan.outputs.latest == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+    steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
 
@@ -80,7 +104,8 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: image
+    needs: [plan, image]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && (needs.image.result == 'success' || needs.image.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -98,26 +123,30 @@ jobs:
           git remote add upstream https://github.com/bookorbit/bookorbit.git
           git fetch --no-tags upstream main
           git fetch --no-tags upstream 'refs/tags/v*:refs/tags/v*'
+          git fetch --no-tags origin monitored:refs/remotes/origin/monitored
 
-      - name: Build notes (upstream release notes, then fork additions)
+      - name: Build notes (fork highlights, upstream release notes, then fork additions)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ needs.plan.outputs.latest }}
         run: |
           set -euo pipefail
-          {
-            printf '**Image:** `%s/%s:%s`\n\n' "$REGISTRY" "$IMAGE_NAME" "${GITHUB_REF_NAME#v}"
-            node scripts/fork/release-notes.mjs "$GITHUB_REF_NAME" --release-body --to "$GITHUB_SHA"
-          } > notes.md
+          image=()
+          if [ "$LATEST" = "true" ]; then
+            image=(--image "${REGISTRY}/${IMAGE_NAME}:${GITHUB_REF_NAME#v}")
+          fi
+          node scripts/fork/release-notes.mjs "$GITHUB_REF_NAME" --release-body --to "$GITHUB_SHA" "${image[@]}" > notes.md
 
       - name: Publish release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          LATEST: ${{ needs.plan.outputs.latest }}
         run: |
           set -euo pipefail
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release edit "$GITHUB_REF_NAME" --notes-file notes.md
           else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --latest --title "BookOrbit ${GITHUB_REF_NAME#v}" --notes-file notes.md
+            gh release create "$GITHUB_REF_NAME" --verify-tag "--latest=${LATEST}" --title "BookOrbit ${GITHUB_REF_NAME#v}" --notes-file notes.md
           fi

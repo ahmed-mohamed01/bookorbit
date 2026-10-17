@@ -2,8 +2,8 @@
 // Fork release notes.
 //   Draft a CHANGELOG.fork.md entry from commits that are on the fork but not upstream:
 //     node scripts/fork/release-notes.mjs vX.Y.Z-mN [--from <ref>] [--to <ref>] [--upstream <ref>]
-//   Build the GitHub Release body (upstream notes for the base, then the fork's changelog entry):
-//     node scripts/fork/release-notes.mjs vX.Y.Z-mN --release-body [--to <ref>] [--changelog <file>]
+//   Build the GitHub Release body (fork highlights, upstream notes for the base, then the fork's changelog entry):
+//     node scripts/fork/release-notes.mjs vX.Y.Z-mN --release-body [--to <ref>] [--changelog <file>] [--image <ref>] [--allow-draft]
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
@@ -35,6 +35,7 @@ const upstream = opt("upstream", "upstream/main");
 const from = opt("from", tryGit("describe", "--tags", "--abbrev=0", "--match", "v*-m*", "--exclude", version, to));
 const base = git("describe", "--tags", "--abbrev=0", "--exclude", "*-m*", to);
 const range = from ? [`${from}..${to}`] : [to];
+const HIGHLIGHTS_TODO = "<!-- highlights: write these before publishing -->";
 
 if (!version.startsWith(`${base}-m`)) {
   console.error(`warning: ${version} does not match the upstream base ${base} reachable from ${to}`);
@@ -81,6 +82,7 @@ function draftEntry() {
 
   const date = tryGit("log", "-1", "--format=%cs", version) ?? new Date().toISOString().slice(0, 10);
   const out = [`## ${version} - ${date}`, "", `Upstream base: ${base}${from ? ` · Previous: ${from}` : ""}`, ""];
+  out.push("### Highlights", "", HIGHLIGHTS_TODO, "");
   for (const [title, types] of SECTIONS) {
     const items = commits.filter((c) => types.includes(c.type));
     if (!items.length) continue;
@@ -141,23 +143,32 @@ function unreleasedUpstream() {
   return out;
 }
 
-function forkChangelogSection() {
+// A backfilled tag points at a commit older than its changelog entry, so fall back to monitored.
+function readChangelogSection() {
   const file = opt("changelog", null);
-  const changelog = file ? readFileSync(file, "utf8") : tryGit("show", `${to}:CHANGELOG.fork.md`);
-  if (!changelog) throw new Error(`CHANGELOG.fork.md not found at ${to} (pass --changelog <file>)`);
-  const lines = changelog.split("\n");
-  const start = lines.findIndex((l) => new RegExp(`^## ${version.replace(/\./g, "\\.")}( |$)`).test(l));
-  if (start === -1) throw new Error(`CHANGELOG.fork.md has no '## ${version}' section at ${to}`);
-  const end = lines.findIndex((l, i) => i > start && /^## /.test(l));
-  return lines
-    .slice(start + 1, end === -1 ? undefined : end)
-    .join("\n")
-    .trim()
-    .replace(/^### /gm, "## ");
+  const sources = file ? [readFileSync(file, "utf8")] : [tryGit("show", `${to}:CHANGELOG.fork.md`), tryGit("show", "origin/monitored:CHANGELOG.fork.md")];
+  const heading = new RegExp(`^## ${version.replace(/\./g, "\\.")}( |$)`);
+  for (const changelog of sources.filter(Boolean)) {
+    const lines = changelog.split("\n");
+    const start = lines.findIndex((l) => heading.test(l));
+    if (start === -1) continue;
+    const end = lines.findIndex((l, i) => i > start && /^## /.test(l));
+    return lines.slice(start + 1, end === -1 ? undefined : end).join("\n");
+  }
+  throw new Error(`CHANGELOG.fork.md has no '## ${version}' section at ${to}${file ? ` or in ${file}` : " or origin/monitored"}`);
+}
+
+function splitHighlights(section) {
+  const match = section.match(/^### Highlights[ \t]*\n([\s\S]*?)(?=^### |(?![\s\S]))/m);
+  if (!match) return { highlights: null, rest: section.trim() };
+  if (match[1].includes(HIGHLIGHTS_TODO) && !args.includes("--allow-draft")) throw new Error(`the ${version} highlights are still the placeholder`);
+  return { highlights: match[1].trim() || null, rest: section.replace(match[0], "").trim() };
 }
 
 function releaseBody() {
+  const { highlights, rest } = splitHighlights(readChangelogSection());
   const out = [];
+  if (highlights) out.push(`# Highlights in ${version.replace(/^v/, "")}`, "", highlights, "");
   for (const tag of upstreamReleaseTags()) {
     const body = upstreamReleaseBody(tag);
     out.push(`# Upstream BookOrbit ${tag.replace(/^v/, "")}`, "");
@@ -165,7 +176,9 @@ function releaseBody() {
     out.push("");
   }
   out.push(...unreleasedUpstream());
-  out.push(`# Fork additions in ${version.replace(/^v/, "")}`, "", forkChangelogSection(), "");
+  out.push(`# Fork additions in ${version.replace(/^v/, "")}`, "", rest.replace(/^### /gm, "## "), "");
+  const image = opt("image", null);
+  if (image) out.push("---", "", "**Docker**", "", "```bash", `docker pull ${image}`, "```", "");
   return out.join("\n");
 }
 
