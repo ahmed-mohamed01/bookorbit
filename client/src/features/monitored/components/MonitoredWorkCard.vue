@@ -5,7 +5,7 @@ import { BookOpen, Check, Download, EyeOff, Headphones, MoreVertical } from '@lu
 import { useI18n } from 'vue-i18n'
 import { MONITORED_FORMATS, type MonitorMode, type MonitoredFormat, type MonitoredSeriesMembership, type MonitoredWork } from '@bookorbit/types'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
-import { bookCoverStyle } from '@/features/book/lib/book-cover'
+import BookCoverPlaceholder from '@/features/book/components/BookCoverPlaceholder.vue'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { cardBadgeKind, cardBadgeTone, type CardBadgeKind } from '../lib/card-badge'
 import { ACTIVE_REQUEST_STATUSES, workFormatStatus, type MonitoredFormatStatus } from '../lib/format-status'
@@ -28,6 +28,8 @@ const props = withDefaults(
     formatModes?: Partial<Record<MonitoredFormat, MonitorMode>>
     /** Shown on hover when the card stands outside its author's page. */
     authorName?: string | null
+    /** Credits the placeholder cover on the author's own page, where the hover byline stays hidden. */
+    coverAuthorName?: string | null
     /** Relative release label and whether it points forward; worked out from the work's own date when absent. */
     timeBadge?: TimeBadge | null
     selectionMode?: boolean
@@ -61,7 +63,10 @@ const coverLabel = computed(() => {
 })
 
 const coverUrl = computed(() => toMonitoredCoverUrl(props.work.coverUrl))
-const fallbackStyle = computed(() => bookCoverStyle(props.work.title))
+const placeholderAuthors = computed(() => {
+  const name = props.authorName ?? props.coverAuthorName
+  return name ? [name] : null
+})
 
 const badgeTime = computed<TimeBadge | null>(() =>
   props.timeBadge !== undefined ? props.timeBadge : releaseTimeBadge(releaseDateForWork(props.work), t),
@@ -215,7 +220,6 @@ function handleStop() {
     <div
       class="relative aspect-2/3 overflow-hidden rounded-sm shadow-md transition-[box-shadow,transform,filter] duration-150 group-hover:scale-[1.02] group-hover:shadow-xl motion-reduce:group-hover:scale-100"
       :class="{ 'brightness-75 saturate-50 group-hover:brightness-100 group-hover:saturate-100': notWatched }"
-      :style="coverUrl && !imageFailed ? undefined : fallbackStyle"
     >
       <img
         v-if="coverUrl && !imageFailed"
@@ -227,9 +231,15 @@ function handleStop() {
         decoding="async"
         @error="handleImageError"
       />
-      <div v-else class="flex size-full items-center justify-center p-3 text-center text-xs font-bold" :style="{ color: fallbackStyle.color }">
-        {{ work.title }}
-      </div>
+      <BookCoverPlaceholder
+        v-else
+        :title="work.title"
+        :subtitle="work.subtitle"
+        :authors="placeholderAuthors"
+        :series-name="work.seriesName"
+        :series-index="work.seriesIndex"
+        :seed="work.title"
+      />
 
       <button
         ref="coverButton"

@@ -5,7 +5,7 @@ import { Check, Download } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import type { MonitoredFormat, MonitoredReleaseItem, TableDensity } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
-import { bookCoverStyle } from '@/features/book/lib/book-cover'
+import BookCoverPlaceholder from '@/features/book/components/BookCoverPlaceholder.vue'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { parseMonitoredDate } from '../lib/release-date'
 import { daysUntil, workFormatStatus } from '../lib/format-status'
@@ -45,7 +45,7 @@ const date = computed(() => parseMonitoredDate(props.item.releaseDate)?.date ?? 
 const day = computed(() => (date.value ? String(date.value.getDate()).padStart(2, '0') : ''))
 const month = computed(() => (date.value ? d(date.value, { month: 'short' }).toUpperCase() : ''))
 const coverUrl = computed(() => toMonitoredCoverUrl(props.item.coverUrl))
-const fallbackStyle = computed(() => bookCoverStyle(props.item.title))
+const placeholderAuthors = computed(() => [props.item.authorName])
 const relativeTime = computed(() => {
   if (!date.value) return null
   const days = daysUntil(date.value)
@@ -137,11 +137,7 @@ function handleImageError() {
       <div class="font-extrabold tabular-nums text-foreground" :class="classes.day">{{ day }}</div>
       <div class="text-[10px] font-bold tracking-wide text-muted-foreground">{{ month }}</div>
     </div>
-    <div
-      class="relative shrink-0 overflow-hidden rounded shadow-sm"
-      :class="classes.cover"
-      :style="coverUrl && !imageFailed ? undefined : fallbackStyle"
-    >
+    <div class="relative shrink-0 overflow-hidden rounded shadow-sm" :class="classes.cover">
       <img
         v-if="coverUrl && !imageFailed"
         :src="coverUrl"
@@ -150,9 +146,16 @@ function handleImageError() {
         loading="lazy"
         @error="handleImageError"
       />
-      <span v-else class="flex size-full items-center justify-center p-1 text-center text-[8px] font-bold" :style="{ color: fallbackStyle.color }">{{
-        item.title
-      }}</span>
+      <BookCoverPlaceholder
+        v-else
+        :title="item.title"
+        :subtitle="item.work.subtitle"
+        :authors="placeholderAuthors"
+        :series-name="item.work.seriesName"
+        :series-index="item.work.seriesIndex"
+        :is-audio="item.format === 'audiobook'"
+        :seed="item.title"
+      />
     </div>
     <div class="min-w-0 flex-1">
       <h3 class="truncate text-sm font-semibold text-foreground">

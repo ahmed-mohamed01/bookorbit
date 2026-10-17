@@ -792,6 +792,7 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                 <template #default="{ item: work }">
                   <MonitoredWorkCard
                     :work="work"
+                    :cover-author-name="author?.authorName"
                     :queued="isQueued(work.id)"
                     :ebook-queued="isQueued(work.id, 'ebook')"
                     :audiobook-queued="isQueued(work.id, 'audiobook')"

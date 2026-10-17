@@ -15,7 +15,7 @@ import { Sheet, SheetClose, SheetContent, SheetTitle, SheetDescription } from '@
 import { useRoute } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { bookCoverStyle } from '@/features/book/lib/book-cover'
+import BookCoverPlaceholder from '@/features/book/components/BookCoverPlaceholder.vue'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { formatNumber } from '@/i18n/formatters'
 import { useBookDetail } from '@/features/book/composables/useBookDetail'
@@ -87,7 +87,7 @@ const imageFailed = ref(false)
 
 const workIdRef = computed<string | null>(() => props.work?.id ?? null)
 const coverUrl = computed(() => toMonitoredCoverUrl(props.work?.coverUrl))
-const fallbackStyle = computed(() => bookCoverStyle(props.work?.title ?? ''))
+const placeholderAuthors = computed(() => (props.authorName ? [props.authorName] : null))
 const authorRoute = computed(() => (props.authorId ? { name: 'monitored-author', params: { id: props.authorId } } : null))
 const bylineRoute = computed(() => (props.linkAuthor === false ? null : authorRoute.value))
 
@@ -438,10 +438,7 @@ function handleResumeAuthor() {
         <div class="min-h-0 flex-1 space-y-2.5 overflow-x-hidden overflow-y-auto p-4 sm:p-5">
           <div class="@container">
             <div class="relative grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 sm:gap-x-4 @lg:grid-rows-[auto_1fr]">
-              <div
-                class="relative aspect-2/3 w-20 shrink-0 @lg:row-span-2 overflow-hidden rounded-sm shadow-md"
-                :style="coverUrl && !imageFailed ? undefined : fallbackStyle"
-              >
+              <div class="relative aspect-2/3 w-20 shrink-0 @lg:row-span-2 overflow-hidden rounded-sm shadow-md">
                 <img
                   v-if="coverUrl && !imageFailed"
                   :src="coverUrl"
@@ -450,13 +447,15 @@ function handleResumeAuthor() {
                   loading="eager"
                   @error="handleImageError"
                 />
-                <div
+                <BookCoverPlaceholder
                   v-else
-                  class="flex size-full items-center justify-center p-2 text-center text-xs font-bold"
-                  :style="{ color: fallbackStyle.color }"
-                >
-                  {{ work.title }}
-                </div>
+                  :title="work.title"
+                  :subtitle="work.subtitle"
+                  :authors="placeholderAuthors"
+                  :series-name="work.seriesName"
+                  :series-index="work.seriesIndex"
+                  :seed="work.title"
+                />
               </div>
 
               <div class="min-w-0 flex-1">
