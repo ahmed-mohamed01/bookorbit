@@ -2,6 +2,42 @@
 
 Releases of the ahmed-mohamed01/bookorbit fork. Versions are `v<upstream base>-m<N>`; see [FORK_MAINTENANCE.md](FORK_MAINTENANCE.md). Upstream changes are in the [upstream releases](https://github.com/bookorbit/bookorbit/releases).
 
+## v3.4.0-m2 - 2026-10-17
+
+Upstream base: v3.4.0 · Previous: v3.4.0-m1
+
+### Highlights
+
+- **Watchlist**: The Monitored feature, revamped with a book panel that is easier to navigate and follow. Mark a book as a comic, anthology, collection and more, and the choice persists across refreshes.
+- **Bulk downloads**: Select multiple books on the Watchlist and request their ebooks, audiobooks or both in one go.
+- **Shelfmark integration**: Allow a self-hosted Shelfmark instance to be connected to BookOrbit as an indexer and download provider.
+- **More series from metadata**: Books that belong in multiple series can fetch multiple-series membership from metadata sources that offer multiple-series.
+
+### Features
+
+- **server:** add Elscione as a Shelfmark source (a2d9d6f5)
+- **client:** redesign the watchlist book panel around format cards (dc0bdc3e)
+- **server:** add watchlist Mark as and keep owner choices across refreshes (3dfe54f0)
+- **metadata:** fetch other series from providers that list several (bd41d2d7)
+- **server:** add Shelfmark as an indexer and download client (3ef6a6c8)
+- **client:** add watchlist select mode, bulk bar and sources picker (3bd7dcb6)
+- **server:** add watchlist bulk requests and per-request release sources (9b83cd1e)
+- **books:** show the artist on the book page (002ff467)
+
+### Fixes
+
+- **docker:** clear the novel-sources image scan findings (f70d82fa)
+
+### Maintenance
+
+- **release:** backfill fork releases and introduce the fork in the README (7c735d3e)
+- **release:** cut a fork release on every monitored push (a0d8fb51)
+- **client:** move the watchlist onto the shared browse header (84865384)
+
+### Upstream syncs
+
+- Merge upstream/main (428aefe8) into monitored (248f6bb4)
+
 ## v3.4.0-m1 - 2026-10-16
 
 Upstream base: v3.4.0 · Previous: v3.3.0-m1
