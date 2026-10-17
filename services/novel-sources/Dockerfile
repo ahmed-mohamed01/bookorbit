@@ -24,6 +24,12 @@ ENV NODE_ENV=production
 ENV PORT=8282
 WORKDIR /app
 
+# Mirrors the root Dockerfile: pick up Debian security fixes the base tag has not been rebuilt with yet, and drop the
+# bundled npm, which the service never runs but which carries its own vulnerable dependencies into the image scan.
+RUN apt-get update \
+  && apt-get upgrade -y --no-install-recommends \
+  && rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
 # A fixed uid/gid, so an admin who bind-mounts /data can chown the host directory to 10001:10001 before the first start.
 RUN groupadd --gid 10001 novel-sources \
   && useradd --uid 10001 --gid 10001 --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin novel-sources \
