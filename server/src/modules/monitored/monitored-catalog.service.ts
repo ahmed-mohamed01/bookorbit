@@ -16,6 +16,7 @@ import {
 } from '@bookorbit/types';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { seriesVolumeConflict } from '../../common/utils/series-volume.utils';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { bookAuthors, bookFiles, bookMetadata, books } from '../../db/schema';
@@ -70,6 +71,7 @@ function formatWorkIds(works: MonitoredWork[]): string {
 /** One owned book of the monitored author, with every signal that can tell it from a namesake. */
 export interface OwnedCandidate {
   bookId: number;
+  title: string;
   titleKey: string;
   seriesName: string | null;
   seriesIndex: string | null;
@@ -170,20 +172,56 @@ function foldedTitleKey(title: string): string {
   );
 }
 
-export function titleMatchKeys(title: string): string[] {
+const FORMAT_LABEL_PATTERN = /\b(?:manga|light novel|web novel|graphic novel|comic|webtoon)\b/i;
+
+/** The one spelling each format label folds to, so "Comics" and "comic" name the same format. */
+const FORMAT_LABELS = ['manga', 'light novel', 'web novel', 'graphic novel', 'comic', 'webtoon'] as const;
+
+/** The formats a title names by label: "(Manga)" reads as manga, an unlabelled title as none. */
+function formatLabelsIn(title: string): Set<string> {
+  const folded = title.toLowerCase();
+  return new Set(FORMAT_LABELS.filter((label) => new RegExp(`\\b${label}s?\\b`).test(folded)));
+}
+
+/** True when two titles name the same formats, so neither is another edition of the other. */
+function sameFormatLabels(left: string, right: string): boolean {
+  const leftLabels = formatLabelsIn(left);
+  const rightLabels = formatLabelsIn(right);
+  return leftLabels.size === rightLabels.size && [...leftLabels].every((label) => rightLabels.has(label));
+}
+
+export function titleMatchKeys(title: string, { withColonFront = true } = {}): string[] {
   const folded = title
     .toLowerCase()
     .replace(/\bversus\b/g, 'vs')
     .replace(/&/g, ' and ');
   const keys = [normalizeToken(title), foldedTitleKey(title)];
-  const coreSources = [folded.split(':')[0], folded.replace(/\s*\([^)]*\)?\s*$/, '')];
+  // A trailing format label is the edition, not noise: "(Manga)" and "(Graphic Novel)" files are not
+  // the prose book of the same name.
+  const trailingParen = /\(([^)]*)\)?\s*$/.exec(folded);
+  const formatEdition = Boolean(trailingParen && FORMAT_LABEL_PATTERN.test(trailingParen[1]));
+  const withoutTrailingParen = formatEdition ? folded : folded.replace(/\s*\([^)]*\)?\s*$/, '');
+  const coreSources = [...(withColonFront ? [folded.split(':')[0]] : []), withoutTrailingParen];
   for (const source of coreSources) {
-    for (const variant of [source, normalizeCore(source)]) {
+    // normalizeCore would strip the trailing format label kept above.
+    for (const variant of formatEdition ? [source] : [source, normalizeCore(source)]) {
       const key = normalizeToken(variant);
       if (key.length >= 6) keys.push(key);
     }
   }
   return [...new Set(keys.filter(Boolean))];
+}
+
+/**
+ * True when two titles that both carry a subtitle share only the text before the colon. That front is
+ * often a series name - "Mistborn: The Final Empire" and "Mistborn: Secret History", "The Water
+ * Magician: Arc 1 Volume 7" and "...: The Central Provinces Arc, Volume 1" - so such a match only
+ * stands when both books also sit at the same number of the same series.
+ */
+export function sharesOnlyColonFront(workTitle: string, libraryTitle: string): boolean {
+  if (!workTitle.includes(':') || !libraryTitle.includes(':')) return false;
+  const libraryKeys = new Set(titleMatchKeys(libraryTitle, { withColonFront: false }));
+  return !titleMatchKeys(workTitle, { withColonFront: false }).some((key) => libraryKeys.has(key));
 }
 
 // Words that carry no identity on their own, so a title that differs from another only by these is
@@ -796,6 +834,7 @@ export class MonitoredCatalogService {
       if (existing) return existing;
       const created: OwnedCandidate = {
         bookId: row.bookId,
+        title: row.title ?? '',
         titleKey: foldedTitleKey(row.title ?? ''),
         seriesName: row.seriesName,
         seriesIndex: row.seriesIndex,
@@ -871,7 +910,16 @@ export class MonitoredCatalogService {
       }
       if (claims.size === 0) continue;
 
-      const allClaims = [...claims.values()];
+      // A title or series-prefix match is only a book's title; a provider id names the exact work.
+      const allClaims = [...claims.values()].filter(({ candidate, tier }) => {
+        if (tier === OWNED_MATCH_TIER.providerId) return true;
+        if (seriesVolumeConflict(work, candidate)) return false;
+        // A format label the two titles do not agree on is an edition change ("(Manga)" against the
+        // prose book, "(Manga)" against "(Light Novel)"), which neither a shared slot nor an
+        // agreeing volume number can rescue.
+        if (!sameFormatLabels(work.title, candidate.title)) return false;
+        return tier !== OWNED_MATCH_TIER.titleCore || !sharesOnlyColonFront(work.title, candidate.title) || sameSeriesSlot(work, candidate);
+      });
       const origins = new Map<string, number>();
       for (const format of new Set(allClaims.flatMap((entry) => [...entry.candidate.formats]))) {
         const winner = chooseOwnedCandidate(

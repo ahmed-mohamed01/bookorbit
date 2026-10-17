@@ -121,7 +121,16 @@ describe('seriesPrefixMatch', () => {
 });
 
 function candidate(bookId: number, patch: Partial<OwnedCandidate> = {}): OwnedCandidate {
-  return { bookId, titleKey: `book${bookId}`, seriesName: null, seriesIndex: null, publishedYear: null, formats: new Set(['epub']), ...patch };
+  return {
+    bookId,
+    title: '',
+    titleKey: `book${bookId}`,
+    seriesName: null,
+    seriesIndex: null,
+    publishedYear: null,
+    formats: new Set(['epub']),
+    ...patch,
+  };
 }
 
 function claim(bookId: number, tier: number, patch: Partial<OwnedCandidate> = {}): OwnedClaim {

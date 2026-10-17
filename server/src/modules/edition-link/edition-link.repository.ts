@@ -10,6 +10,7 @@ import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { audiobookProgress, authors, bookAuthors, bookFiles, bookMetadata, books, readingProgress } from '../../db/schema';
 import { normalizeName, scoreAuthors, scoreTitle, titleVolumeConflict } from '../../common/utils/fuzzy-match.utils';
+import { seriesVolumeConflict } from '../../common/utils/series-volume.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { bookEditionLinks, type BookEditionLink } from './schema/edition-link.schema';
 
@@ -314,7 +315,11 @@ export class EditionLinkRepository {
   async findCounterpartCandidates(options: FindCounterpartCandidatesOptions): Promise<EditionLinkCandidate[]> {
     if (options.accessibleLibraryIds.length === 0) return [];
 
-    const [source] = await this.db.select({ title: bookMetadata.title }).from(bookMetadata).where(eq(bookMetadata.bookId, options.bookId)).limit(1);
+    const [source] = await this.db
+      .select({ title: bookMetadata.title, seriesName: bookMetadata.seriesName, seriesIndex: bookMetadata.seriesIndex })
+      .from(bookMetadata)
+      .where(eq(bookMetadata.bookId, options.bookId))
+      .limit(1);
     const sourceAuthors = await this.db
       .select({ name: authors.name })
       .from(bookAuthors)
@@ -384,6 +389,8 @@ export class EditionLinkRepository {
       .select({
         bookId: books.id,
         title: bookMetadata.title,
+        seriesName: bookMetadata.seriesName,
+        seriesIndex: bookMetadata.seriesIndex,
         coverUpdatedAt: bookMetadata.coverUpdatedAt,
         authorNames: sql<string[]>`coalesce(
           array_agg(${authors.name} ORDER BY ${bookAuthors.displayOrder}, ${authors.id})
@@ -406,7 +413,7 @@ export class EditionLinkRepository {
           ...contentFilters,
         ),
       )
-      .groupBy(books.id, bookMetadata.title, bookMetadata.coverUpdatedAt)
+      .groupBy(books.id, bookMetadata.title, bookMetadata.seriesName, bookMetadata.seriesIndex, bookMetadata.coverUpdatedAt)
       .orderBy(
         desc(
           sql`similarity(
@@ -421,21 +428,27 @@ export class EditionLinkRepository {
     const sourceAuthorNames = sourceAuthors.map((row) => row.name);
     const normalizedQuery = query ? normalizeName(query) : null;
     // Sibling volumes share the author and differ by a digit, so edit distance puts "Series 13" and
-    // "Series 11" in the high nineties. A typed search is exempt: the reader may want any volume.
-    const scoreSourceTitle = (candidateTitle: string) =>
-      titleVolumeConflict(source!.title!, candidateTitle) ? 0 : scoreTitle(source!.title!, candidateTitle);
+    // "Series 11" in the high nineties - and spelled-out volumes ("Book Seven", "Book Three") or a bare
+    // first book against its numbered sequels score near 100. A typed search is exempt: the reader may
+    // want any volume.
+    const sourcePlaced = { title: source?.title ?? '', seriesName: source?.seriesName ?? null, seriesIndex: source?.seriesIndex ?? null };
+    const scoreSourceTitle = (row: { title: string | null; seriesName: string | null; seriesIndex: string | null }) => {
+      const candidate = { title: row.title ?? '', seriesName: row.seriesName, seriesIndex: row.seriesIndex };
+      const otherVolume = titleVolumeConflict(sourcePlaced.title, candidate.title) || seriesVolumeConflict(sourcePlaced, candidate);
+      return otherVolume ? 0 : scoreTitle(sourcePlaced.title, candidate.title);
+    };
 
     return rows
       .filter((row) => {
         if (normalizedQuery) {
           return [row.title, ...row.authorNames].some((value) => value && normalizeName(value).includes(normalizedQuery));
         }
-        const titleScore = scoreSourceTitle(row.title ?? '');
+        const titleScore = scoreSourceTitle(row);
         const authorScore = scoreAuthors(sourceAuthorNames, row.authorNames);
         return titleScore >= 0.8 && (sourceAuthorNames.length === 0 || row.authorNames.length === 0 ? titleScore >= 0.9 : authorScore >= 0.75);
       })
       .map((row) => {
-        const titleScore = query ? scoreTitle(query, row.title ?? '') : scoreSourceTitle(row.title ?? '');
+        const titleScore = query ? scoreTitle(query, row.title ?? '') : scoreSourceTitle(row);
         const authorScore = query ? scoreAuthors([query], row.authorNames) : scoreAuthors(sourceAuthorNames, row.authorNames);
         const hasComparableAuthors = query ? row.authorNames.length > 0 : sourceAuthorNames.length > 0 && row.authorNames.length > 0;
         const score = query ? Math.max(titleScore, authorScore) : hasComparableAuthors ? titleScore * 0.7 + authorScore * 0.3 : titleScore;

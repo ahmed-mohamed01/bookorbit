@@ -584,6 +584,176 @@ describe('targeted availability recompute', () => {
     expect(healed.size).toBe(0);
     expect(store.updateWorkMatch).not.toHaveBeenCalled();
   });
+
+  describe('owned matching across volume-shaped titles', () => {
+    interface PlacedTitle {
+      title: string;
+      seriesName?: string | null;
+      seriesIndex?: string | null;
+    }
+
+    async function rematch(workSide: PlacedTitle, librarySide: PlacedTitle) {
+      const queued = work({ id: 'w', ...workSide, requestIds: { ebook: 42 }, requestStatuses: { ebook: 'available' } });
+      const { service, store } = harness([[libraryRow({ bookId: 8, format: 'epub', ...librarySide })]]);
+      await service.recomputeWorkAvailability([{ monitor: monitor(), works: [queued] }]);
+      return store;
+    }
+
+    const otherVolume: [string, PlacedTitle, PlacedTitle][] = [
+      [
+        'a later volume against the bare series title',
+        { title: 'Beware of Chicken Volume 6', seriesName: 'Beware of Chicken', seriesIndex: '6' },
+        { title: 'Beware of Chicken' },
+      ],
+      [
+        'a later volume against the numbered first book',
+        { title: 'Beware of Chicken Volume 6', seriesName: 'Beware of Chicken', seriesIndex: '6' },
+        { title: 'Beware of Chicken', seriesName: 'Beware of Chicken', seriesIndex: '1' },
+      ],
+      [
+        'a light novel volume against another volume behind the same front',
+        { title: 'The Water Magician: Arc 1 Volume 7', seriesName: 'The Water Magician (Light Novel)', seriesIndex: '7' },
+        { title: 'The Water Magician: The Central Provinces Arc, Volume 1' },
+      ],
+      [
+        'the first book of a saga against a later entry of the inner series',
+        { title: 'Mistborn: The Final Empire', seriesName: 'The Mistborn Saga', seriesIndex: '1' },
+        { title: 'Mistborn: Secret History', seriesName: 'Mistborn', seriesIndex: '3.5' },
+      ],
+      [
+        'a colon-front namesake against a later entry of the series',
+        { title: 'Mistborn: Collected Tales' },
+        { title: 'Mistborn: Secret History', seriesName: 'Mistborn', seriesIndex: '3.5' },
+      ],
+      [
+        'a colon-front series compilation against a later entry of the series',
+        { title: 'Mistborn: The Wax & Wayne Series' },
+        { title: 'Mistborn: Secret History', seriesName: 'Mistborn', seriesIndex: '3.5' },
+      ],
+      [
+        'a trilogy namesake against the series it names',
+        { title: 'Star Wars: Heir to the Empire (Thrawn Trilogy, Book 1)', seriesName: 'Star Wars: The Thrawn Trilogy', seriesIndex: '1' },
+        { title: 'Star Wars: Thrawn (Book 1)', seriesName: 'Star Wars: Thrawn', seriesIndex: '1' },
+      ],
+      [
+        'book one of one series against book one of another',
+        { title: 'Mistborn: The Final Empire, Book 1', seriesName: 'Mistborn', seriesIndex: '1' },
+        { title: 'Mistborn: The Alloy of Law, Book 1', seriesName: 'Mistborn: Wax and Wayne', seriesIndex: '1' },
+      ],
+      [
+        'the prose book against its graphic novel edition',
+        { title: 'Dune', seriesName: 'Dune', seriesIndex: '1' },
+        { title: 'Dune: The Graphic Novel, Book 1' },
+      ],
+      [
+        'the manga against the light novel edition of the same volume',
+        { title: 'The Water Magician (Manga): Volume 2', seriesName: 'The Water Magician (Manga)', seriesIndex: '2' },
+        { title: 'The Water Magician: Arc 1 Volume 2', seriesName: 'The Water Magician (Light Novel)', seriesIndex: '2' },
+      ],
+      [
+        'a later volume against the first of a self-named series',
+        { title: 'Unintended Cultivator', seriesName: 'Unintended Cultivator', seriesIndex: '3' },
+        { title: 'Unintended Cultivator', seriesName: 'Unintended Cultivator', seriesIndex: '1' },
+      ],
+      ['a spelled-out volume against another', { title: 'Azarinth Healer: Book Seven' }, { title: 'Azarinth Healer: Book Three' }],
+      [
+        'a stated volume against the numbered first book',
+        { title: 'Defiance of the Fall 2: A LitRPG Adventure' },
+        { title: 'Defiance of the Fall', seriesName: 'Defiance of the Fall', seriesIndex: '1' },
+      ],
+    ];
+
+    it.each(otherVolume)('claims none of another volume or edition: %s', async (_, workSide, librarySide) => {
+      const store = await rematch(workSide, librarySide);
+      expect(store.updateWorkMatch).not.toHaveBeenCalled();
+    });
+
+    const otherEdition: [string, PlacedTitle, PlacedTitle][] = [
+      [
+        'the light novel against the manga edition of the same volume',
+        { title: 'The Water Magician: Arc 1 Volume 2', seriesName: 'The Water Magician', seriesIndex: '2' },
+        { title: 'The Water Magician: Arc 1 Volume 2 (Manga)', seriesName: 'The Water Magician (Manga)', seriesIndex: '2' },
+      ],
+      [
+        'the prose book against the graphic novel of the same name',
+        { title: 'Dungeon Crawler Carl' },
+        { title: 'Dungeon Crawler Carl (Graphic Novel)' },
+      ],
+      [
+        'the prose edition against the manga claiming the same series slot',
+        { title: 'The Water Magician: Arc 1 Volume 2', seriesName: 'The Water Magician', seriesIndex: '2' },
+        { title: 'The Water Magician: Arc 1 Volume 2 (Manga)', seriesName: 'The Water Magician', seriesIndex: '2' },
+      ],
+      [
+        'the light novel volume against the manga edition of the same slot',
+        { title: 'Ascendance of a Bookworm: Volume 1 (Light Novel)', seriesName: 'Ascendance of a Bookworm', seriesIndex: '1' },
+        { title: 'Ascendance of a Bookworm: Volume 1 (Manga)', seriesName: 'Ascendance of a Bookworm', seriesIndex: '1' },
+      ],
+    ];
+
+    it.each(otherEdition)('claims none of another edition: %s', async (_, workSide, librarySide) => {
+      const store = await rematch(workSide, librarySide);
+      expect(store.updateWorkMatch).not.toHaveBeenCalled();
+    });
+
+    const sameBook: [string, PlacedTitle, PlacedTitle][] = [
+      [
+        'the first book against its bare series title',
+        { title: 'Beware of Chicken', seriesName: 'Beware of Chicken', seriesIndex: '1' },
+        { title: 'Beware of Chicken' },
+      ],
+      [
+        'a trailing volume number against a subtitle',
+        { title: 'Beware of Chicken 5', seriesName: 'Beware of Chicken', seriesIndex: '5' },
+        { title: 'Beware of Chicken 5: A Xianxia Cultivation Novel' },
+      ],
+      [
+        'the same volume under a longer series name',
+        { title: 'The Water Magician: Arc 1 Volume 3', seriesName: 'The Water Magician (Light Novel)', seriesIndex: '3' },
+        { title: 'The Water Magician: Arc 1 Volume 3', seriesName: 'The Water Magician: The Central Provinces Arc', seriesIndex: '3' },
+      ],
+      [
+        'the same book under a different series name',
+        { title: 'Mistborn: The Final Empire', seriesName: 'The Mistborn Saga', seriesIndex: '1' },
+        { title: 'Mistborn: The Final Empire', seriesName: 'Mistborn', seriesIndex: '1' },
+      ],
+      [
+        'the same book numbered in two series',
+        { title: 'The Alloy of Law', seriesName: 'Mistborn', seriesIndex: '4' },
+        { title: 'The Alloy of Law', seriesName: 'Mistborn: Wax and Wayne', seriesIndex: '1' },
+      ],
+      [
+        'the same book with the series named in the title',
+        { title: 'Evershore', seriesName: 'Skyward Flight', seriesIndex: '3' },
+        { title: 'Evershore (Skyward Flight)', seriesName: 'Skyward', seriesIndex: '6' },
+      ],
+      [
+        'the same novella slot stated twice',
+        { title: 'Mitosis: A Reckoners Story', seriesName: 'The Reckoners', seriesIndex: '1.5' },
+        { title: 'Mitosis: The Reckoners (Book 1.5)', seriesName: 'The Reckoners', seriesIndex: '1.5' },
+      ],
+      [
+        'the same volume with and without a subtitle',
+        { title: 'The Primal Hunter 16: A LitRPG Adventure', seriesName: 'The Primal Hunter', seriesIndex: '16' },
+        { title: 'The Primal Hunter 16', seriesName: 'The Primal Hunter', seriesIndex: '16' },
+      ],
+      ['a number inside the title word', { title: 'Catch-22', seriesName: 'Catch-22', seriesIndex: '1' }, { title: 'Catch-22' }],
+      [
+        'the same labelled volume on both sides',
+        { title: 'Solo Leveling: Volume 1 (Manga)', seriesName: 'Solo Leveling', seriesIndex: '1' },
+        { title: 'Solo Leveling: Volume 1 (Manga)' },
+      ],
+    ];
+
+    it.each(sameBook)('claims the book the work is: %s', async (_, workSide, librarySide) => {
+      const store = await rematch(workSide, librarySide);
+      expect(store.updateWorkMatch).toHaveBeenCalledWith('w', {
+        matchedBookId: 8,
+        matchedBookIds: { ebook: 8 },
+        ownedFormats: ['ebook'],
+      });
+    });
+  });
 });
 
 // The reason slot resolution hides a work used to be computed and thrown away, leaving the review
