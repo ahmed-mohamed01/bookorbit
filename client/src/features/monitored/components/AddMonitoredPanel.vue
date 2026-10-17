@@ -6,7 +6,7 @@ import { toast } from 'vue-sonner'
 import type { MonitoredAuthorDetail, MonitoredAuthorSearchResult, MonitoredFormat } from '@bookorbit/types'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { Button } from '@/components/ui/button'
-import { bookCoverStyle } from '@/features/book/lib/book-cover'
+import AuthorPlaceholder from '@/features/author/components/AuthorPlaceholder.vue'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { deleteMonitoredAuthor, searchMonitoredAuthors } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
@@ -28,19 +28,6 @@ const stopping = ref(false)
 const failedImages = ref(new Set<string>())
 
 const initialFormats = computed<MonitoredFormat[]>(() => (choice.value === 'both' ? ['ebook', 'audiobook'] : [choice.value]))
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part.charAt(0).toUpperCase())
-    .join('')
-}
-
-function fallbackStyle(name: string) {
-  return bookCoverStyle(name)
-}
 
 function resultImageUrl(result: MonitoredAuthorSearchResult): string {
   return failedImages.value.has(result.name) ? '' : toMonitoredCoverUrl(result.imageUrl)
@@ -181,7 +168,7 @@ function handleCreated(detail: MonitoredAuthorDetail) {
       <h2 class="text-xs font-bold uppercase tracking-widest text-muted-foreground">{{ t('monitored.add.results') }}</h2>
       <div v-if="results.length > 0" class="mt-2 divide-y divide-border">
         <article v-for="result in results" :key="`${result.name}-${result.localAuthorId ?? 'remote'}`" class="flex items-center gap-3 py-3">
-          <div class="size-11 shrink-0 overflow-hidden rounded-full" :style="resultImageUrl(result) ? undefined : fallbackStyle(result.name)">
+          <div class="relative size-11 shrink-0 overflow-hidden rounded-full">
             <img
               v-if="resultImageUrl(result)"
               :src="resultImageUrl(result)"
@@ -189,9 +176,7 @@ function handleCreated(detail: MonitoredAuthorDetail) {
               class="size-full object-cover"
               @error="handleResultImageError(result)"
             />
-            <span v-else class="flex size-full items-center justify-center text-xs font-bold" :style="{ color: fallbackStyle(result.name).color }">{{
-              initials(result.name)
-            }}</span>
+            <AuthorPlaceholder v-else :name="result.name" />
           </div>
           <div class="min-w-0 flex-1">
             <h3 class="truncate text-sm font-semibold text-foreground">{{ result.name }}</h3>

@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import type { MonitoredAuthorItem } from '@bookorbit/types'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { bookCoverStyle } from '@/features/book/lib/book-cover'
+import AuthorPlaceholder from '@/features/author/components/AuthorPlaceholder.vue'
 import { refreshMonitoredAuthor } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
 import { monitoredPortraitUrl } from '../lib/portrait-url'
@@ -22,15 +22,6 @@ const { t } = useI18n()
 const { state: refreshState, run: runRefresh } = useRefreshFeedback()
 const imageFailed = ref(false)
 
-const initials = computed(() =>
-  props.author.authorName
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part.charAt(0).toUpperCase())
-    .join(''),
-)
-const fallbackStyle = computed(() => bookCoverStyle(props.author.authorName))
 const openLabel = computed(() => t('monitored.authorCard.open', { name: props.author.authorName, count: props.author.counts.total }))
 const portraitUrl = computed(() => (props.author.portraitAuthorId === null ? null : monitoredPortraitUrl(props.author.id)))
 
@@ -71,7 +62,6 @@ function stopCardClick(event: MouseEvent) {
   <article class="group">
     <div
       class="relative aspect-2/3 overflow-hidden rounded-sm shadow-md transition-[box-shadow,transform] duration-150 group-hover:scale-[1.02] group-hover:shadow-xl"
-      :style="portraitUrl && !imageFailed ? undefined : fallbackStyle"
     >
       <img
         v-if="portraitUrl && !imageFailed"
@@ -82,9 +72,7 @@ function stopCardClick(event: MouseEvent) {
         decoding="async"
         @error="handleImageError"
       />
-      <div v-else class="absolute inset-0 flex items-center justify-center text-3xl font-semibold" :style="{ color: fallbackStyle.color }">
-        {{ initials || '?' }}
-      </div>
+      <AuthorPlaceholder v-else :name="author.authorName" />
 
       <!-- The hit target is the whole tile: a click target sized to the name alone leaves most of it dead. -->
       <button

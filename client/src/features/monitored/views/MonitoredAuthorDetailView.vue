@@ -26,7 +26,7 @@ import type { MonitoredFormat, MonitoredGrouping, MonitoredMarkKind, MonitoredSo
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { bookCoverStyle } from '@/features/book/lib/book-cover'
+import AuthorPlaceholder from '@/features/author/components/AuthorPlaceholder.vue'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
 import { useScrollRestoreOnActivate } from '@/features/book/composables/useScrollRestoreOnActivate'
 import { useBookRequestProgress } from '@/features/book-requests/composables/useBookRequestProgress'
@@ -121,15 +121,6 @@ const catalogTotal = computed(() => {
 })
 const author = computed(() => detail.value?.author ?? null)
 const portraitUrl = computed(() => (author.value?.portraitAuthorId == null ? null : monitoredPortraitUrl(author.value.id)))
-const fallbackStyle = computed(() => bookCoverStyle(author.value?.authorName ?? 'Monitored author'))
-const initials = computed(() =>
-  (author.value?.authorName ?? '')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part.charAt(0).toUpperCase())
-    .join(''),
-)
 const nextRelease = computed(() => {
   if (!author.value?.nextReleaseAt) return t('monitored.common.tba')
   return d(new Date(author.value.nextReleaseAt), { year: 'numeric', month: 'short', day: 'numeric' })
@@ -499,10 +490,7 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
         <section class="mt-4 overflow-hidden rounded-xl border border-border bg-card/80">
           <div class="bg-linear-to-b from-primary/8 via-background/0 to-transparent p-3 sm:p-5">
             <div class="flex gap-3 sm:gap-4">
-              <div
-                class="h-24 w-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted shadow-sm sm:h-44 sm:w-32"
-                :style="portraitUrl && !imageFailed ? undefined : fallbackStyle"
-              >
+              <div class="relative h-24 w-16 shrink-0 overflow-hidden rounded-lg border border-border bg-muted shadow-sm sm:h-44 sm:w-32">
                 <img
                   v-if="portraitUrl && !imageFailed"
                   :src="portraitUrl"
@@ -510,12 +498,7 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                   class="size-full object-cover"
                   @error="handleImageError"
                 />
-                <span
-                  v-else
-                  class="flex size-full items-center justify-center text-xl font-semibold sm:text-3xl"
-                  :style="{ color: fallbackStyle.color }"
-                  >{{ initials }}</span
-                >
+                <AuthorPlaceholder v-else :name="author.authorName" />
               </div>
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-start justify-between gap-3">

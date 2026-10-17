@@ -7,7 +7,7 @@ import type { MonitorAuthorRequest, MonitoredAuthorDetail, MonitoredAuthorSearch
 import { Button } from '@/components/ui/button'
 import { useLibraries } from '@/features/library/composables/useLibraries'
 import { useRequestDestinationDefault } from '@/features/book-requests/composables/useRequestDestinationDefault'
-import { bookCoverStyle } from '@/features/book/lib/book-cover'
+import AuthorPlaceholder from '@/features/author/components/AuthorPlaceholder.vue'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { monitorAuthor } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
@@ -31,16 +31,7 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const imageFailed = ref(false)
 
-const fallbackStyle = computed(() => bookCoverStyle(props.result?.name ?? 'Monitored author'))
 const imageUrl = computed(() => toMonitoredCoverUrl(props.result?.imageUrl))
-const initials = computed(() =>
-  (props.result?.name ?? '')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part.charAt(0).toUpperCase())
-    .join(''),
-)
 const meta = computed(() => {
   if (!props.result) return ''
   const books =
@@ -160,11 +151,9 @@ async function handleSubmit() {
         class="fixed left-1/2 top-1/2 z-50 max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] max-w-[620px] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-2xl focus:outline-none sm:p-6"
       >
         <div v-if="result" class="flex items-start gap-4">
-          <div class="h-28 w-[84px] shrink-0 overflow-hidden rounded-lg shadow-sm" :style="imageUrl && !imageFailed ? undefined : fallbackStyle">
+          <div class="relative h-28 w-[84px] shrink-0 overflow-hidden rounded-lg shadow-sm">
             <img v-if="imageUrl && !imageFailed" :src="imageUrl" :alt="result.name" class="size-full object-cover" @error="handleImageError" />
-            <span v-else class="flex size-full items-center justify-center text-xl font-bold" :style="{ color: fallbackStyle.color }">{{
-              initials
-            }}</span>
+            <AuthorPlaceholder v-else :name="result.name" />
           </div>
           <div class="min-w-0 flex-1">
             <DialogTitle class="pr-8 text-lg font-semibold text-foreground">{{ t('monitored.modal.title', { name: result.name }) }}</DialogTitle>
