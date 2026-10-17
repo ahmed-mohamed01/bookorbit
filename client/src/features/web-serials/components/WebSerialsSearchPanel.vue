@@ -169,8 +169,9 @@ async function handleSubmit(event: Event) {
     return
   }
   const text = query.value.trim()
+  const startedAt = searchUrl.beginCommit()
   await search.submit()
-  searchUrl.commit(text)
+  searchUrl.commit(text, startedAt)
 }
 
 function handleQueryKeydown(event: KeyboardEvent) {
@@ -228,8 +229,9 @@ function handleOpenEntry(entry: WebSerialCatalogEntry) {
 
 async function handleSearchSites() {
   const text = query.value.trim()
+  const startedAt = searchUrl.beginCommit()
   await search.searchSites()
-  searchUrl.commit(text)
+  searchUrl.commit(text, startedAt)
 }
 
 function handleBackToSeries() {
@@ -239,8 +241,9 @@ function handleBackToSeries() {
 
 async function handleRetrySearch() {
   const text = query.value.trim()
+  const startedAt = searchUrl.beginCommit()
   await search.submit()
-  searchUrl.commit(text)
+  searchUrl.commit(text, startedAt)
 }
 
 function handleScope(next: WebSerialSearchScope) {
@@ -297,8 +300,9 @@ function isOpening(hit: WebSerialSearchHit): boolean {
 }
 
 async function searchSitesFor(title: string) {
+  const startedAt = searchUrl.beginCommit()
   await search.searchSites(title)
-  searchUrl.commit(title.trim())
+  searchUrl.commit(title.trim(), startedAt)
 }
 
 function cancelPreview() {

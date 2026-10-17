@@ -19,6 +19,7 @@ function build(options: { engine?: string; allowed?: string[]; disabled?: string
     recordNovelIndexDetails: vi.fn().mockResolvedValue(undefined),
     setNovelIndexMatch: vi.fn().mockResolvedValue(undefined),
     findUnmatchedNovelIndexByTitleKeys: vi.fn().mockResolvedValue([]),
+    findImportedMatchKeys: vi.fn().mockResolvedValue(new Set<string>()),
     setNovelIndexMatches: vi.fn().mockResolvedValue(0),
     findNovelIndexCandidates: vi.fn().mockResolvedValue([]),
     findNovelIndexByTitleKeys: vi.fn().mockResolvedValue([]),
@@ -226,6 +227,7 @@ describe('WebSerialsNovelIndexService', () => {
       sourcesCount: 2,
       mtlOnly: false,
       matchId: '9',
+      inLibrary: false,
       entries: [
         { sourceId: 'a', sourceName: 'Source A', path: 'p1', mtl: false, seriesKey: `nl:${novelRemoteId('a', 'p1')}` },
         { sourceId: 'a', sourceName: 'Source A', path: 'p2', mtl: true, seriesKey: p2 },
@@ -233,7 +235,41 @@ describe('WebSerialsNovelIndexService', () => {
     });
     expect(covers.remember).toHaveBeenCalledWith(p2, 'https://a.test/c.jpg');
     expect(result.suggestions[1]).not.toHaveProperty('matchId');
+    expect(result.suggestions[1]!.inLibrary).toBe(false);
     expect(result.suggestions[1]!.cover).toBeNull();
+  });
+
+  it('marks suggestions this user already imported, in one batched lookup over the match ids', async () => {
+    const { service, repo } = build();
+    const suggestion = (title: string, matchId: string | null) => ({
+      matchId,
+      title,
+      mtlOnly: false,
+      sourcesCount: 1,
+      entries: [{ sourceId: 'a', path: title, coverUrl: null, mtl: false }],
+    });
+    repo.suggestNovelIndex.mockResolvedValue([suggestion('Ours', '9'), suggestion('Also Ours', '9'), suggestion('Unknown', null)]);
+    repo.findImportedMatchKeys.mockImplementation((userId: number) =>
+      userId === 42 ? Promise.resolve(new Set(['mb:9'])) : Promise.resolve(new Set<string>()),
+    );
+
+    const mine = await service.suggest('omni', { id: 42 } as never);
+
+    expect(repo.findImportedMatchKeys).toHaveBeenCalledTimes(1);
+    expect(repo.findImportedMatchKeys).toHaveBeenCalledWith(42, ['mb:9']);
+    expect(mine.suggestions.map((entry) => [entry.title, entry.inLibrary])).toEqual([
+      ['Ours', true],
+      ['Also Ours', true],
+      ['Unknown', false],
+    ]);
+
+    const theirs = await service.suggest('omni', USER);
+    expect(repo.findImportedMatchKeys).toHaveBeenLastCalledWith(7, ['mb:9']);
+    expect(theirs.suggestions.map((entry) => [entry.title, entry.inLibrary])).toEqual([
+      ['Ours', false],
+      ['Also Ours', false],
+      ['Unknown', false],
+    ]);
   });
 
   it('keeps at most twelve copies per suggestion', async () => {

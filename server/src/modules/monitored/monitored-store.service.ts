@@ -10,6 +10,7 @@ import type {
   MonitoredBookEntry,
   MonitoredBookListSort,
   MonitoredBulkWorkPatch,
+  MonitoredCatalogSearchHit,
   MonitoredFormat,
   MonitoredListOrder,
   MonitoredReleaseFilter,
@@ -25,10 +26,11 @@ import type {
 import { MONITORED_ACQUISITION_STATE_BY_REQUEST_STATUS } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
-import { accentInsensitiveIlike, buildSearchPattern } from '../../common/utils/accent-insensitive-search.utils';
+import { accentInsensitiveIlike, buildSearchPattern, escapeLikePattern } from '../../common/utils/accent-insensitive-search.utils';
+import { normalizeMetadataText } from '../../common/utils/metadata-text-normalize.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
-import { normalizeMonitoredName } from './monitored-text.utils';
+import { identityLikePattern, identityLikeRun, normalizeMonitoredName, titleAuthorKey } from './monitored-text.utils';
 import { enrolReleaseProbes, reapplyReleaseOverlay } from './monitored-release-probe-store.service';
 import { recordChoiceLedger, restoreChoiceLedger } from './monitored-choice-ledger';
 import { recordRequestLedger, restoreRequestLedger, workProviderKeysSql } from './monitored-request-ledger';
@@ -42,6 +44,8 @@ import * as schema from './schema/monitored.schema';
 import type { AuthorCatalogWorkRow, MonitoredAuthorRow, MonitoredAuthorWorkRow } from './schema/monitored.schema';
 
 const WRITE_BATCH_SIZE = 250;
+/** The OR arms the identity prefilter may spend on one candidate list, so a query stays bounded. */
+const IDENTITY_LIKE_MAX_RUNS = 10;
 
 function batches<T>(values: T[]): T[][] {
   const result: T[][] = [];
@@ -458,6 +462,74 @@ export class MonitoredStoreService {
     };
   }
 
+  /**
+   * Watchlist works for the command palette: the caller's monitored authors' catalog works the
+   * caller does not own in any format, title-prefix matches first. The watchlist is a read of the
+   * caller's own monitors, so the plain owner scope is the whole access check; which works count as
+   * active is the shared work-visibility condition, never a local variant of it.
+   */
+  async searchCatalogWorks(viewer: RequestUser, q: string, limit: number): Promise<MonitoredCatalogSearchHit[]> {
+    const term = normalizeMetadataText(q);
+    if (!term) return [];
+    const libraryIds = await this.accessibleLibraryIds(viewer);
+    const authorRows = await this.db
+      .select({ id: schema.monitoredAuthors.id })
+      .from(schema.monitoredAuthors)
+      .where(
+        and(
+          this.readScope(viewer, schema.monitoredAuthors.ownerUserId),
+          accentInsensitiveIlike(schema.monitoredAuthors.authorName, buildSearchPattern(term)),
+        ),
+      )
+      .orderBy(asc(schema.monitoredAuthors.authorName), asc(schema.monitoredAuthors.id))
+      .limit(50);
+    const authorIds = authorRows.map((row) => row.id);
+    const titleMatch = accentInsensitiveIlike(schema.authorCatalogWorks.title, buildSearchPattern(term));
+    // The same per-viewer ownership the watchlist page reads, negated per format: a work held only
+    // in a library the viewer cannot reach counts as not owned for them.
+    const unowned = sql`not (${this.ownedFormatCondition('ebook', libraryIds)} or ${this.ownedFormatCondition('audiobook', libraryIds)})`;
+    const where = and(
+      this.readScope(viewer, schema.monitoredAuthors.ownerUserId),
+      // Both sides test author_catalog_works itself, so the planner can OR the title trigram index with
+      // the monitor_author_id index; testing the joined author name instead unaccented every catalog row.
+      authorIds.length ? or(titleMatch, inArray(schema.authorCatalogWorks.monitorAuthorId, authorIds)) : titleMatch,
+      unowned,
+      activeWorkCondition(visibleWorkCondition()),
+    )!;
+    const titlePrefix = accentInsensitiveIlike(schema.authorCatalogWorks.title, `${escapeLikePattern(term)}%`);
+    const rows = await this.db
+      .select({
+        work: schema.authorCatalogWorks,
+        authorName: schema.monitoredAuthors.authorName,
+        ebookMode: schema.monitoredAuthors.ebookMode,
+        audiobookMode: schema.monitoredAuthors.audiobookMode,
+      })
+      .from(schema.authorCatalogWorks)
+      .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, schema.authorCatalogWorks.monitorAuthorId))
+      .leftJoin(schema.monitoredAuthorWorks, eq(schema.monitoredAuthorWorks.workId, schema.authorCatalogWorks.id))
+      .where(where)
+      .orderBy(asc(sql`case when ${titlePrefix} then 0 else 1 end`), asc(schema.authorCatalogWorks.title), asc(schema.authorCatalogWorks.id))
+      .limit(limit);
+    const composed = await this.composeWorks(
+      rows.map((row) => row.work),
+      viewer,
+    );
+    const byWorkId = new Map(composed.map((item) => [item.work.id, item]));
+    return rows.flatMap((row) => {
+      const item = byWorkId.get(row.work.id);
+      return item
+        ? [
+            {
+              work: item.work,
+              monitorAuthorId: item.monitorAuthorId,
+              authorName: row.authorName,
+              authorModes: { ebook: row.ebookMode, audiobook: row.audiobookMode },
+            },
+          ]
+        : [];
+    });
+  }
+
   async findReleasePage(params: {
     viewer: RequestUser;
     q?: string;
@@ -562,6 +634,157 @@ export class MonitoredStoreService {
       if (key && !byName.has(key)) byName.set(key, row.id);
     }
     return byName;
+  }
+
+  /**
+   * The ILIKE prefilter over a candidate list of names or titles: each value narrows the scan by
+   * its longest letter-or-digit run, matched as a plain substring, so spellings that differ only in
+   * separator positions still pass from either side. It is an index narrowing, never the identity
+   * decision: the folded key comparison after it stays the final word. Undefined when no value
+   * holds a run; callers then answer from the candidate list alone instead of querying.
+   */
+  private identityLikeAny(column: AnyPgColumn, values: string[]): SQL | undefined {
+    const runs = [
+      ...new Set(
+        values.flatMap((value) => {
+          const run = identityLikeRun(value.trim());
+          return run ? [run] : [];
+        }),
+      ),
+    ].slice(0, IDENTITY_LIKE_MAX_RUNS);
+    if (!runs.length) return undefined;
+    return or(...runs.map((run) => accentInsensitiveIlike(column, `%${run}%`)));
+  }
+
+  /**
+   * The viewer's accessible libraries, or null when the viewer can reach every library. Callers that
+   * need it more than once resolve it a single time and share the answer, so a search pays for the
+   * libraries read once, not once per lookup.
+   */
+  async accessibleLibraryIds(viewer: RequestUser): Promise<number[] | null> {
+    return viewer.isSuperuser ? null : await this.libraries.findAccessibleLibraryIds(viewer);
+  }
+
+  /**
+   * Hardcover slugs the given accessible libraries already hold, so the palette's Hardcover step can
+   * drop books the user owns. A viewer with no accessible library owns nothing fetchable.
+   */
+  async findLibraryHardcoverIds(libraryIds: number[] | null, slugs: string[]): Promise<Set<string>> {
+    const unique = [...new Set(slugs.filter(Boolean))];
+    if (!unique.length) return new Set();
+    if (libraryIds && !libraryIds.length) return new Set();
+    const rows = await this.db
+      .select({ hardcoverId: dbSchema.bookMetadata.hardcoverId })
+      .from(dbSchema.bookMetadata)
+      .innerJoin(upstreamBooks, eq(upstreamBooks.id, dbSchema.bookMetadata.bookId))
+      .where(and(inArray(dbSchema.bookMetadata.hardcoverId, unique), libraryIds ? inArray(upstreamBooks.libraryId, libraryIds) : undefined));
+    return new Set(rows.flatMap((row) => (row.hardcoverId ? [row.hardcoverId] : [])));
+  }
+
+  async findCatalogHardcoverIds(viewer: RequestUser, slugs: string[]): Promise<Set<string>> {
+    const unique = [...new Set(slugs.filter(Boolean))];
+    if (!unique.length) return new Set();
+    const rows = await this.db
+      .select({ providerWorkId: schema.authorCatalogSourceWorks.providerWorkId })
+      .from(schema.authorCatalogSourceWorks)
+      .innerJoin(schema.authorCatalogWorks, eq(schema.authorCatalogWorks.id, schema.authorCatalogSourceWorks.workId))
+      .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, schema.authorCatalogWorks.monitorAuthorId))
+      .leftJoin(schema.monitoredAuthorWorks, eq(schema.monitoredAuthorWorks.workId, schema.authorCatalogWorks.id))
+      .where(
+        and(
+          this.readScope(viewer, schema.monitoredAuthors.ownerUserId),
+          eq(schema.authorCatalogSourceWorks.source, 'hardcover'),
+          inArray(schema.authorCatalogSourceWorks.providerWorkId, unique),
+          activeWorkCondition(visibleWorkCondition()),
+        ),
+      );
+    return new Set(rows.map((row) => row.providerWorkId));
+  }
+
+  /**
+   * `title|author` identity keys for the library books titled like one of the given titles, one
+   * query for the whole candidate list. The title filter is a substring ILIKE on each title's
+   * longest run so the trigram index narrows the scan; the exact identity check happens on the
+   * folded keys after. Every author of each book contributes a key, because a provider hit that
+   * lists any of them is a duplicate.
+   */
+  async findLibraryTitleAuthorKeys(libraryIds: number[] | null, titles: string[]): Promise<Set<string>> {
+    const unique = [...new Set(titles.filter((title) => identityLikePattern(title) != null))];
+    if (!unique.length) return new Set();
+    if (libraryIds && !libraryIds.length) return new Set();
+    const like = this.identityLikeAny(dbSchema.bookMetadata.title, unique);
+    if (!like) return new Set();
+    const rows = await this.db
+      .select({ title: dbSchema.bookMetadata.title, authorName: dbSchema.authors.name })
+      .from(dbSchema.bookMetadata)
+      .innerJoin(upstreamBooks, eq(upstreamBooks.id, dbSchema.bookMetadata.bookId))
+      .innerJoin(dbSchema.bookAuthors, eq(dbSchema.bookAuthors.bookId, dbSchema.bookMetadata.bookId))
+      .innerJoin(dbSchema.authors, eq(dbSchema.authors.id, dbSchema.bookAuthors.authorId))
+      .where(and(like, libraryIds ? inArray(upstreamBooks.libraryId, libraryIds) : undefined));
+    return new Set(rows.map((row) => titleAuthorKey(row.title, row.authorName)));
+  }
+
+  /**
+   * `title|author` identity keys for the watchlist works titled like one of the given titles, under
+   * the same active-work visibility the watchlist itself reads, so a work the watchlist never shows
+   * cannot suppress a Hardcover hit either.
+   */
+  async findCatalogTitleAuthorKeys(viewer: RequestUser, titles: string[]): Promise<Set<string>> {
+    const unique = [...new Set(titles.filter((title) => identityLikePattern(title) != null))];
+    if (!unique.length) return new Set();
+    const like = this.identityLikeAny(schema.authorCatalogWorks.title, unique);
+    if (!like) return new Set();
+    const rows = await this.db
+      .select({ title: schema.authorCatalogWorks.title, authorName: schema.monitoredAuthors.authorName })
+      .from(schema.authorCatalogWorks)
+      .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, schema.authorCatalogWorks.monitorAuthorId))
+      .leftJoin(schema.monitoredAuthorWorks, eq(schema.monitoredAuthorWorks.workId, schema.authorCatalogWorks.id))
+      .where(and(this.readScope(viewer, schema.monitoredAuthors.ownerUserId), like, activeWorkCondition(visibleWorkCondition())));
+    return new Set(rows.map((row) => titleAuthorKey(row.title, row.authorName)));
+  }
+
+  async findMonitoredHardcoverProviderIds(viewer: RequestUser, providerIds: string[]): Promise<Set<string>> {
+    const unique = [...new Set(providerIds.filter(Boolean))];
+    if (!unique.length) return new Set();
+    const rows = await this.db
+      .select({ providerId: schema.authorProviderIdentities.providerId })
+      .from(schema.authorProviderIdentities)
+      .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, schema.authorProviderIdentities.monitorAuthorId))
+      .where(
+        and(
+          this.readScope(viewer, schema.monitoredAuthors.ownerUserId),
+          eq(schema.authorProviderIdentities.source, 'hardcover'),
+          inArray(schema.authorProviderIdentities.providerId, unique),
+        ),
+      );
+    return new Set(rows.map((row) => row.providerId));
+  }
+
+  /**
+   * Identity keys of the given author names that already exist on books in the given accessible
+   * libraries, one query for the whole candidate list. The run-substring ILIKE prefilter keeps the
+   * scan on the author name trigram index; the folded key comparison after it stays the final word
+   * on what counts as the same name, and it is Unicode-aware, so a non-Latin name never collapses
+   * onto the empty key.
+   */
+  async findLocalAuthorNameKeys(libraryIds: number[] | null, names: string[]): Promise<Set<string>> {
+    const keys = new Set(names.map(normalizeMonitoredName).filter(Boolean));
+    if (!keys.size) return new Set();
+    if (libraryIds && !libraryIds.length) return new Set();
+    const like = this.identityLikeAny(dbSchema.authors.name, names);
+    if (!like) return new Set();
+    const rows = await this.db
+      .selectDistinct({ name: dbSchema.authors.name })
+      .from(dbSchema.authors)
+      .innerJoin(dbSchema.bookAuthors, eq(dbSchema.bookAuthors.authorId, dbSchema.authors.id))
+      .innerJoin(upstreamBooks, eq(upstreamBooks.id, dbSchema.bookAuthors.bookId))
+      .where(and(like, libraryIds ? inArray(upstreamBooks.libraryId, libraryIds) : undefined));
+    const found = new Set<string>();
+    for (const row of rows) {
+      const key = normalizeMonitoredName(row.name);
+      if (keys.has(key)) found.add(key);
+    }
+    return found;
   }
 
   /**

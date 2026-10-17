@@ -134,6 +134,12 @@ describe('monitored_request_ledger', () => {
     expect(MONITORED_SCHEMA_SQL).toContain('CREATE INDEX IF NOT EXISTS "monitored_request_ledger_request_id_idx"');
   });
 
+  it('indexes book_metadata.hardcover_id for the Hardcover dedupe without a Drizzle migration', () => {
+    expect(MONITORED_SCHEMA_SQL).toContain(
+      'CREATE INDEX IF NOT EXISTS "monitored_book_metadata_hardcover_id_idx" ON "book_metadata" USING btree ("hardcover_id");',
+    );
+  });
+
   it('adds release event identity keys to fresh and existing databases', () => {
     expect(getTableConfig(monitoredReleaseEvents).columns.find((column) => column.name === 'identity_keys')?.notNull).toBe(true);
     expect(MONITORED_SCHEMA_SQL).toContain(`"identity_keys" text[] DEFAULT '{}'::text[] NOT NULL,`);

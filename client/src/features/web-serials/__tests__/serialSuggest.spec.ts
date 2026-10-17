@@ -26,6 +26,7 @@ describe('serialSuggest', () => {
   it('turns a matched suggestion into a series-database entry', () => {
     expect(entryFromSuggestion({ ...suggestion({ cover: '/c' }), matchId: '7' })).toMatchObject({
       matchId: '7',
+      altTitles: [],
       kind: 'novel',
       coverUrl: '/c',
       url: 'https://mangabaka.org/7',

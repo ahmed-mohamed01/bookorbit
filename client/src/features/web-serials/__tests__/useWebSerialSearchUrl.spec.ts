@@ -1,17 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, flushPromises, mount, RouterLinkStub } from '@vue/test-utils'
 import { reactive } from 'vue'
+import type { discoverSerials, searchSerials, resolveSerialUrl, fetchSeries, fetchSeriesLookup } from '../api/webSerials'
 import type { WebSerialCapabilities } from '@bookorbit/types'
 import { i18n } from '@/i18n'
 import { catalogEntry, hit } from './fixtures'
 
 const api = vi.hoisted(() => ({
   fetchCapabilities: vi.fn<() => Promise<WebSerialCapabilities>>(),
-  discoverSerials: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
-  searchSerials: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
-  resolveSerialUrl: vi.fn<(input: unknown) => Promise<unknown>>(),
-  fetchSeries: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
-  fetchSeriesLookup: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
+  discoverSerials: vi.fn<typeof discoverSerials>(),
+  searchSerials: vi.fn<typeof searchSerials>(),
+  resolveSerialUrl: vi.fn<typeof resolveSerialUrl>(),
+  fetchSeries: vi.fn<typeof fetchSeries>(),
+  fetchSeriesLookup: vi.fn<typeof fetchSeriesLookup>(),
 }))
 const router = vi.hoisted(() => ({ replace: vi.fn<(to: unknown) => Promise<void>>(), push: vi.fn<(to: unknown) => Promise<void>>() }))
 const route = reactive<{ name: string; query: Record<string, string> }>({ name: 'web-serials', query: {} })
@@ -21,6 +22,8 @@ vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router })
 
 import WebSerialsSearchPanel from '../components/WebSerialsSearchPanel.vue'
 import { clearStoredSearch, resetStoredSearchMemory, saveStoredSearch, type StoredWebSerialSearch } from '../composables/webSerialSearchStore'
+
+enableAutoUnmount(afterEach)
 
 const KEY = 'bookorbit.webSerials.lastSearch'
 const BOTH: WebSerialCapabilities = {
@@ -86,7 +89,7 @@ describe('web serials search in the URL', () => {
   })
 
   it('commits the text that was searched, not what was typed while it ran', async () => {
-    let answer: (value: unknown) => void = () => undefined
+    let answer: (value: Awaited<ReturnType<typeof discoverSerials>>) => void = () => undefined
     api.discoverSerials.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)))
     const wrapper = await mountPanel()
     await wrapper.get('#web-serials-query').setValue('one piece')
@@ -202,6 +205,7 @@ describe('kept search results', () => {
     expect(api.discoverSerials).toHaveBeenCalledTimes(1)
     expect((second.get('#web-serials-query').element as HTMLInputElement).value).toBe('')
 
+    second.unmount()
     route.query = { q: 'one piece', kind: 'all' }
     await mountPanel({ userId: 8 })
     expect(api.discoverSerials).toHaveBeenCalledTimes(2)
@@ -267,7 +271,7 @@ describe('kept search results', () => {
 
   it('shows stale results at once and swaps them when the background search answers', async () => {
     saveStoredSearch(stored({ fetchedAt: Date.now() - 31 * 60_000 }))
-    let answer: (value: unknown) => void = () => undefined
+    let answer: (value: Awaited<ReturnType<typeof discoverSerials>>) => void = () => undefined
     api.discoverSerials.mockReturnValue(new Promise((resolve) => (answer = resolve)))
     route.query = { q: 'one piece', kind: 'all' }
 
@@ -416,4 +420,85 @@ describe('web serials not set up', () => {
     expect(wrapper.findComponent(RouterLinkStub).exists()).toBe(false)
     expect(wrapper.text()).toContain('Ask an administrator')
   })
+})
+
+it('restores changed q and kind on a mounted panel without replaying its own writes', async () => {
+  route.query = { q: 'one piece', kind: 'manga' }
+  await mountPanel()
+  api.discoverSerials.mockClear()
+  route.query = { q: 'new novel', kind: 'novel' }
+  await flushPromises()
+  expect(api.discoverSerials).toHaveBeenCalledExactlyOnceWith('new novel', 'novel', expect.anything(), false)
+  route.query = lastReplace().query
+  await flushPromises()
+  expect(api.discoverSerials).toHaveBeenCalledTimes(1)
+  route.query = { q: 'new novel', kind: 'manga' }
+  await flushPromises()
+  expect(api.discoverSerials).toHaveBeenCalledTimes(2)
+})
+
+it('clears on Back removing q without writing the old search back', async () => {
+  route.query = { q: 'one piece', kind: 'manga' }
+  const wrapper = await mountPanel()
+  router.replace.mockClear()
+  route.query = {}
+  await flushPromises()
+  expect(router.replace).not.toHaveBeenCalled()
+  expect((wrapper.get('#web-serials-query').element as HTMLInputElement).value).toBe('')
+  expect(sessionStorage.getItem(KEY)).toBeNull()
+})
+it('does not commit an old submit over a newer URL search', async () => {
+  let finish!: (value: Awaited<ReturnType<typeof discoverSerials>>) => void
+  api.discoverSerials.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finish = resolve
+    }),
+  )
+  const wrapper = await mountPanel()
+  await wrapper.get('#web-serials-query').setValue('old title')
+  await wrapper.get('form').trigger('submit')
+  route.query = { q: 'new title', kind: 'manga' }
+  await flushPromises()
+  finish({ results: [catalogEntry()], fallback: null })
+  await flushPromises()
+  expect(lastReplace().query.q).toBe('new title')
+})
+it('does not restore twice while the mount restore awaits capabilities', async () => {
+  let finish!: (value: WebSerialCapabilities) => void
+  api.fetchCapabilities.mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve
+    }),
+  )
+  route.query = { q: 'one piece', kind: 'manga' }
+  await mountPanel()
+  route.query = { q: 'one piece', kind: 'manga' }
+  await flushPromises()
+  finish(BOTH)
+  await flushPromises()
+  expect(api.discoverSerials).toHaveBeenCalledTimes(1)
+})
+it('shares a restore in flight instead of submitting twice', async () => {
+  const { effectScope, ref } = await import('vue')
+  const { useWebSerialSearch } = await import('../composables/useWebSerialSearch')
+  const { useWebSerialSearchUrl } = await import('../composables/useWebSerialSearchUrl')
+  route.query = { q: 'one piece', kind: 'manga' }
+  const scope = effectScope()
+  let finish!: () => void
+  const search = scope.run(() => useWebSerialSearch())!
+  const submit = vi.spyOn(search, 'submit').mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = () => resolve(null)
+      }),
+  )
+  const url = scope.run(() => useWebSerialSearchUrl(search, ref(null)))!
+  const first = url.restore()
+  await flushPromises()
+  const second = url.restore()
+  await flushPromises()
+  expect(submit).toHaveBeenCalledTimes(1)
+  finish()
+  await Promise.all([first, second])
+  scope.stop()
 })

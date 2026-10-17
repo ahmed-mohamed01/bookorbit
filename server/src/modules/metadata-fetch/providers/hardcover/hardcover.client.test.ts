@@ -74,6 +74,48 @@ describe('HardcoverClient', () => {
     );
   });
 
+  it('searches books and authors in one request', async () => {
+    const mockFetch = vi.mocked(fetchWithThrottleModule.fetchWithThrottle);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          data: {
+            books: { results: { hits: [{ document: { id: '1', slug: 'mistborn', title: 'Mistborn' } }] } },
+            authors: { results: { hits: [{ document: { id: 2, name: 'Brandon Sanderson' } }] } },
+          },
+        }),
+    } as Response);
+
+    const result = await client.searchBooksAndAuthors('mistborn', apiKey);
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(result.books.map((book) => book.slug)).toEqual(['mistborn']);
+    expect(result.authors.map((author) => author.name)).toEqual(['Brandon Sanderson']);
+  });
+
+  it('reports the rate-limit backlog through queueDelayMs', async () => {
+    const mockFetch = vi.mocked(fetchWithThrottleModule.fetchWithThrottle);
+    let resolveFetch: (value: Response) => void = () => undefined;
+    mockFetch.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    expect(client.queueDelayMs()).toBe(0);
+
+    const pending = client.searchByIsbn('1234567890', apiKey);
+    const backlog = client.queueDelayMs();
+    expect(backlog).toBeGreaterThan(0);
+    expect(backlog).toBeLessThanOrEqual(1000);
+
+    await vi.waitFor(() => expect(mockFetch).toHaveBeenCalled());
+    resolveFetch({ ok: true, status: 200, json: () => Promise.resolve({ data: { books: [] } }) } as Response);
+    await pending;
+  });
+
   it.each([
     ['ISBN search', () => client.searchByIsbn('9780756404079', apiKey)],
     ['stored ID lookup', () => client.lookupBySlug('the-name-of-the-wind', apiKey)],
@@ -261,6 +303,45 @@ describe('HardcoverClient failure surfacing', () => {
     await expect(client.fetchEditionsBySlugs(['book'], apiKey, undefined, { surfaceFailures: true })).rejects.toMatchObject({
       name: 'HardcoverRequestError',
       status: 503,
+    });
+  });
+
+  it('treats a 200 without well-formed hits as a failed request', async () => {
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ data: null }),
+    } as Response);
+
+    await expect(client.searchBooksAndAuthors('Mistborn', apiKey, undefined, { surfaceFailures: true })).rejects.toMatchObject({
+      name: 'HardcoverRequestError',
+      status: 200,
+    });
+  });
+
+  it('throws on a malformed 200 even without surfaceFailures, since the only caller opts in', async () => {
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ data: { books: { results: { hits: null } } } }),
+    } as Response);
+
+    await expect(client.searchBooksAndAuthors('Mistborn', apiKey)).rejects.toBeInstanceOf(HardcoverRequestError);
+  });
+
+  it('keeps a well-formed empty combined answer, since an empty array is a real answer', async () => {
+    vi.mocked(fetchWithThrottleModule.fetchWithThrottle).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          data: { books: { results: { hits: [] } }, authors: { results: { hits: [] } } },
+        }),
+    } as Response);
+
+    await expect(client.searchBooksAndAuthors('Nothing', apiKey, undefined, { surfaceFailures: true })).resolves.toEqual({
+      books: [],
+      authors: [],
     });
   });
 

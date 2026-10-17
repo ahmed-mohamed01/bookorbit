@@ -27,6 +27,8 @@ import {
   UpdateMonitoredWorkDto,
   UpdateMonitoredAuthorDto,
   UpdateMonitoredBookDto,
+  MonitoredCatalogSearchQueryDto,
+  HardcoverSearchQueryDto,
 } from './dto/monitored.dto';
 import {
   MonitoredBookParamsDto,
@@ -38,6 +40,7 @@ import { MonitoredCoverService } from './monitored-cover.service';
 import { MonitoredExceptionFilter } from './monitored-exception.filter';
 import { MonitoredService } from './monitored.service';
 import { MonitoredSettingsService } from './monitored-settings.service';
+import { MonitoredUniversalSearchService } from './monitored-universal-search.service';
 import { UpdateMonitoredSettingsDto } from './dto/update-monitored-settings.dto';
 
 @Controller('monitored')
@@ -47,6 +50,7 @@ export class MonitoredController {
     private readonly service: MonitoredService,
     private readonly monitoredCoverService: MonitoredCoverService,
     private readonly monitoredSettings: MonitoredSettingsService,
+    private readonly universalSearch: MonitoredUniversalSearchService,
   ) {}
 
   @Get('settings')
@@ -177,6 +181,18 @@ export class MonitoredController {
   @Get('search')
   searchAuthors(@Query() query: MonitoredSearchQueryDto, @CurrentUser() user: RequestUser) {
     return this.service.searchAuthors(query.q, user);
+  }
+
+  @Get('catalog/search')
+  @RequirePermission(Permission.BookRequestAccess)
+  searchCatalogWorks(@Query() query: MonitoredCatalogSearchQueryDto, @CurrentUser() user: RequestUser) {
+    return this.universalSearch.searchCatalogWorks(user, query.q, query.limit);
+  }
+
+  @Get('hardcover/search')
+  @RequirePermission(Permission.BookRequestAccess)
+  searchHardcover(@Query() query: HardcoverSearchQueryDto, @CurrentUser() user: RequestUser) {
+    return this.universalSearch.searchHardcover(user, query.q);
   }
 
   @Get('works/by-book/:bookId')

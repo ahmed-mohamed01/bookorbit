@@ -6,6 +6,7 @@ export function entryFromSuggestion(suggestion: WebSerialSuggestion & { matchId:
     matchId: suggestion.matchId,
     kind: 'novel',
     title: suggestion.title,
+    altTitles: [],
     authors: [],
     artists: [],
     year: null,

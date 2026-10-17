@@ -34,6 +34,8 @@ const SOURCES_CACHE_TTL_MS = 10 * 60_000;
 const FAILED_SOURCES_CACHE_TTL_MS = 60_000;
 const SYNOPSIS_MAX_CHARS = 4_000;
 const MAX_ALT_TITLES = 30;
+/** Discover entries carry fewer alt titles than the source check needs, to keep the payload small. */
+const ENTRY_ALT_TITLES = 15;
 const KINDS: readonly WebSerialKind[] = ['manga', 'novel'];
 
 interface CatalogInfo {
@@ -95,6 +97,17 @@ export class WebSerialsDiscoverService {
       `[${DISCOVER_EVENT}] [end] userId=${user.id} kind=${kind} durationMs=${Date.now() - startedAt} results=${results.length} fallback=none - series search completed`,
     );
     return { results, fallback: null };
+  }
+
+  /** One catalog entry by id and kind: what a deep link opens without a search to carry it. */
+  async getEntry(kind: WebSerialKind, matchId: string, user: RequestUser): Promise<WebSerialCatalogEntry> {
+    await this.requireInfo(kind, matchId);
+    // The info cache only keeps what source checks need, so the full series is read again for the complete entry.
+    const series = await this.lookupService.getCatalogSeries(matchId, kind);
+    if (!series) throw new BadGatewayException(codedError('This series could not be looked up right now', WebSerialErrorCode.SeriesUnavailable));
+    if (!typeAllowed(kind, series.type)) throw new NotFoundException(codedError(`That series is not a ${kind}`, WebSerialErrorCode.SeriesNotFound));
+    const imported = await this.repo.findImportedMatchKeys(user.id, [matchKeyOf(series.id)]);
+    return this.toEntry(kind, series, imported.has(matchKeyOf(series.id)));
   }
 
   /** The release sources carrying one series from the database, most complete first. Never searches the sources for anything else. */
@@ -191,6 +204,7 @@ export class WebSerialsDiscoverService {
       matchId: match.id,
       kind,
       title: match.title,
+      altTitles: info.altTitles.slice(0, ENTRY_ALT_TITLES),
       authors: match.authors,
       artists: match.artists,
       year: match.year,

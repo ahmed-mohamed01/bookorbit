@@ -1,23 +1,37 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { I18nT, useI18n } from 'vue-i18n'
 import { useRouter, type RouteLocationRaw } from 'vue-router'
 import { DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui'
-import { ArrowLeft, ArrowRight, Loader2, Search, X } from '@lucide/vue'
+import { ArrowLeft, ArrowRight, Check, Loader2, Plus, Search, UserPlus, X } from '@lucide/vue'
+import type { MonitoredAuthorSearchResult, WebSerialCatalogEntry } from '@bookorbit/types'
 import AppIcon from '@/components/AppIcon.vue'
 import AuthorPortrait from '@/features/author/components/AuthorPortrait.vue'
-import BookCoverImage from '@/features/book/components/BookCoverImage.vue'
 import BookFormatChip from '@/features/book/components/BookFormatChip.vue'
+import { useCoverVersions } from '@/features/book/composables/useCoverVersions'
 import { bookFormatEntries } from '@/features/book/lib/book-formats'
 import BookUploadModal from '@/features/library/components/BookUploadModal.vue'
 import { formatNumber, formatPercent } from '@/i18n/formatters'
+import MonitorAuthorModal from '@/features/monitored/components/MonitorAuthorModal.vue'
+import MonitoredFormatStatusChip from '@/features/monitored/components/MonitoredFormatStatusChip.vue'
+import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
+import { providerChipStyle } from '@/lib/provider-colors'
 import { useCommandPalette } from '../composables/useCommandPalette'
 import { useCommandPaletteResults, type PaletteItem, type PaletteTab } from '../composables/useCommandPaletteResults'
 import { highlightSegments } from '../lib/highlight'
+import { usePaletteRowActions } from '../composables/usePaletteRowActions'
+import PaletteCover from './PaletteCover.vue'
 
 const { t } = useI18n()
 const router = useRouter()
+const { coverUrl } = useCoverVersions()
 const { isOpen, closePalette } = useCommandPalette()
+
+const monitorResult = ref<MonitoredAuthorSearchResult | null>(null)
+const { watchedFormats, requestFormat, requestWork, requestBusy, followAuthor, isFollowed, isFollowing } = usePaletteRowActions()
+function closeMonitor() {
+  monitorResult.value = null
+}
 
 const query = ref('')
 const tab = ref<PaletteTab>('all')
@@ -36,15 +50,15 @@ function openUpload() {
   uploadOpen.value = true
 }
 
-const { sections, tabs, isSearching, loading, settled, hasMoreBooks, loadingMoreBooks, loadMoreBooks, clear } = useCommandPaletteResults(
+const { activate, sections, tabs, isSearching, loading, settled, hasMoreBooks, loadingMoreBooks, loadMoreBooks, clear } = useCommandPaletteResults(
   query,
   tab,
   isOpen,
   { openUpload, navigate },
 )
 
-const flatItems = computed(() => sections.value.flatMap((section) => section.items))
-const resultCount = computed(() => flatItems.value.filter((item) => item.kind !== 'more').length)
+const flatItems = computed(() => sections.value.flatMap((section) => section.items.filter(isSelectable)))
+const resultCount = computed(() => flatItems.value.filter((item) => !['more', 'externalSearch', 'seriesMore', 'skeleton'].includes(item.kind)).length)
 const showEmpty = computed(() => isSearching.value && settled.value && resultCount.value === 0)
 const activeOptionId = computed(() => (flatItems.value.length ? optionId(activeIndex.value) : undefined))
 
@@ -59,8 +73,11 @@ function indexOf(item: PaletteItem) {
   return indexByKey.value.get(item.key) ?? -1
 }
 
-watch(flatItems, () => {
-  activeIndex.value = 0
+watch(flatItems, (items, previous) => {
+  // Only a row the user moved to is followed across updates; the top row stays the top result.
+  const key = activeIndex.value > 0 ? previous?.[activeIndex.value]?.key : undefined
+  const index = items.findIndex((item) => item.key === key)
+  activeIndex.value = index >= 0 ? index : 0
 })
 
 watch(query, () => {
@@ -87,30 +104,21 @@ function handleOpenAutoFocus(event: Event) {
   inputRef.value?.focus()
 }
 
+function isSelectable(item: PaletteItem) {
+  return item.kind !== 'skeleton'
+}
+
 function select(item: PaletteItem) {
-  switch (item.kind) {
-    case 'book':
-    case 'reading':
-      navigate({ name: 'book-detail', params: { bookId: item.book.id } })
-      return
-    case 'author':
-      navigate({ name: 'author-detail', params: { id: item.author.id } })
-      return
-    case 'series':
-      navigate({ name: 'series-detail', params: { seriesId: item.series.id } })
-      return
-    case 'place':
-    case 'setting':
-      navigate(item.to)
-      return
-    case 'action':
-      closePalette()
-      item.run()
-      return
-    case 'more':
-      tab.value = item.tab
-      listRef.value?.scrollTo({ top: 0 })
-      inputRef.value?.focus()
+  if (!isSelectable(item)) return
+  const author = activate(item)
+  if (author) {
+    closePalette()
+    monitorResult.value = author
+  }
+  if (item.kind === 'action') closePalette()
+  if (item.kind === 'more') {
+    listRef.value?.scrollTo({ top: 0 })
+    inputRef.value?.focus()
   }
 }
 
@@ -146,7 +154,7 @@ function handleKeydown(event: KeyboardEvent) {
 }
 
 function hover(item: PaletteItem) {
-  activeIndex.value = indexOf(item)
+  if (isSelectable(item)) activeIndex.value = indexOf(item)
 }
 
 function clearQuery() {
@@ -162,6 +170,10 @@ function handleListScroll(event: Event) {
 
 function closeUpload() {
   uploadOpen.value = false
+}
+
+function mangaSubtitle(entry: WebSerialCatalogEntry) {
+  return [entry.authors.join(', '), entry.year].filter(Boolean).join(' · ')
 }
 
 function bookSubtitle(item: PaletteItem) {
@@ -193,6 +205,13 @@ const highlightClass = 'rounded-[2px] bg-(--shell-accent-tint) font-semibold tex
 </script>
 
 <template>
+  <MonitorAuthorModal
+    :open="monitorResult !== null"
+    :result="monitorResult"
+    :initial-formats="['ebook']"
+    @close="closeMonitor"
+    @created="closeMonitor"
+  />
   <DialogRoot :open="isOpen" @update:open="handleOpenChange">
     <DialogPortal>
       <DialogOverlay class="fixed inset-0 z-[60] bg-scrim" />
@@ -261,7 +280,7 @@ const highlightClass = 'rounded-[2px] bg-(--shell-accent-tint) font-semibold tex
             @click="selectTab(option.id)"
           >
             {{ option.label }}
-            <span class="text-xs tabular-nums" :class="tab === option.id ? 'text-primary' : 'text-muted-foreground'">{{
+            <span v-if="option.count != null" class="text-xs tabular-nums" :class="tab === option.id ? 'text-primary' : 'text-muted-foreground'">{{
               formatNumber(option.count)
             }}</span>
           </button>
@@ -288,22 +307,224 @@ const highlightClass = 'rounded-[2px] bg-(--shell-accent-tint) font-semibold tex
 
             <div
               v-for="item in section.items"
-              :id="optionId(indexOf(item))"
+              :id="isSelectable(item) ? optionId(indexOf(item)) : undefined"
               :key="item.key"
-              role="option"
-              :aria-selected="indexOf(item) === activeIndex"
+              :role="isSelectable(item) ? 'option' : undefined"
+              :aria-selected="isSelectable(item) ? indexOf(item) === activeIndex : undefined"
               class="flex w-full cursor-pointer items-center gap-3 rounded-md px-2.5 text-start"
               :class="[indexOf(item) === activeIndex ? 'bg-accent' : '', rowSizeClass(item)]"
               @mousemove="hover(item)"
               @click="select(item)"
             >
-              <template v-if="item.kind === 'book' || item.kind === 'reading'">
-                <BookCoverImage
-                  :book-id="item.book.id"
-                  type="thumbnail"
-                  :version="item.book.coverVersion"
-                  class="h-12 w-8 shrink-0 rounded-[2px] bg-muted object-cover"
-                  alt=""
+              <template v-if="item.kind === 'skeleton'">
+                <span class="h-12 w-8 shrink-0 animate-pulse rounded-[2px] bg-muted motion-reduce:animate-none" aria-hidden="true" />
+                <span class="min-w-0 flex-1 space-y-1.5" aria-hidden="true">
+                  <span class="block h-3.5 w-1/2 animate-pulse rounded-xs bg-muted motion-reduce:animate-none" />
+                  <span class="block h-3 w-1/3 animate-pulse rounded-xs bg-muted motion-reduce:animate-none" />
+                </span>
+              </template>
+
+              <template v-else-if="item.kind === 'lightNovel'">
+                <PaletteCover :src="item.suggestion.cover" :title="item.suggestion.title" :seed="item.key" />
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-[14px] font-medium text-foreground">
+                    <template v-for="(seg, i) in segments(item.suggestion.title)" :key="i"
+                      ><span v-if="seg.match" :class="highlightClass">{{ seg.text }}</span
+                      ><template v-else>{{ seg.text }}</template></template
+                    >
+                  </span>
+                  <span class="mt-0.5 block text-[13px] text-muted-foreground">{{
+                    t('commandPalette.sitesCount', { count: item.suggestion.sourcesCount })
+                  }}</span>
+                </span>
+                <span
+                  v-if="item.suggestion.inLibrary"
+                  class="inline-flex shrink-0 items-center gap-1 rounded-full border border-success/40 bg-success/10 px-1.5 text-[10px] font-medium text-success"
+                  :aria-label="t('webSerials.discover.series.inLibraryLabel')"
+                  ><Check :size="10" :stroke-width="2.5" aria-hidden="true" />{{ t('webSerials.discover.series.inLibrary') }}</span
+                >
+                <span v-if="item.suggestion.mtlOnly" class="rounded-xs bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{{
+                  t('commandPalette.mtl')
+                }}</span>
+              </template>
+              <template v-else-if="item.kind === 'manga' || item.kind === 'lightNovelEntry'">
+                <PaletteCover :src="item.entry.coverUrl" :title="item.entry.title" :authors="item.entry.authors" :seed="item.key" />
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-[14px] font-medium text-foreground">
+                    <template v-for="(seg, i) in segments(item.entry.title)" :key="i"
+                      ><span v-if="seg.match" :class="highlightClass">{{ seg.text }}</span
+                      ><template v-else>{{ seg.text }}</template></template
+                    >
+                  </span>
+                  <I18nT v-if="item.aka" keypath="commandPalette.alsoKnownAs" tag="span" class="mt-0.5 block truncate text-xs text-muted-foreground">
+                    <template #title
+                      ><template v-for="(seg, i) in segments(item.aka)" :key="i"
+                        ><span v-if="seg.match" :class="highlightClass">{{ seg.text }}</span
+                        ><template v-else>{{ seg.text }}</template></template
+                      ></template
+                    >
+                  </I18nT>
+                  <span class="mt-0.5 block truncate text-[13px] text-muted-foreground">{{ mangaSubtitle(item.entry) }}</span>
+                </span>
+                <span
+                  v-if="item.entry.inLibrary"
+                  class="inline-flex shrink-0 items-center gap-1 rounded-full border border-success/40 bg-success/10 px-1.5 text-[10px] font-medium text-success"
+                  :aria-label="t('webSerials.discover.series.inLibraryLabel')"
+                  ><Check :size="10" :stroke-width="2.5" aria-hidden="true" />{{ t('webSerials.discover.series.inLibrary') }}</span
+                >
+              </template>
+              <template v-else-if="item.kind === 'seriesMore'">
+                <span class="w-8 shrink-0" aria-hidden="true" />
+                <span class="text-[13px] font-medium text-primary">{{ t('commandPalette.moreWebSerials') }}</span>
+              </template>
+
+              <template v-else-if="item.kind === 'watchlist'">
+                <PaletteCover
+                  :src="toMonitoredCoverUrl(item.hit.work.coverUrl) || null"
+                  :title="item.hit.work.title"
+                  :authors="[item.hit.authorName]"
+                  :series-name="item.hit.work.seriesName"
+                  :series-index="item.hit.work.seriesIndex"
+                  :seed="item.key"
+                />
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-[14px] font-medium text-foreground">
+                    <template v-for="(seg, i) in segments(item.hit.work.title)" :key="i">
+                      <span v-if="seg.match" :class="highlightClass">{{ seg.text }}</span>
+                      <template v-else>{{ seg.text }}</template>
+                    </template>
+                  </span>
+                  <span class="mt-0.5 block truncate text-[13px] text-muted-foreground">
+                    {{ item.hit.authorName }}
+                    <template v-if="item.hit.work.seriesName">
+                      ·
+                      <i>{{ item.hit.work.seriesName }}</i>
+                    </template>
+                  </span>
+                </span>
+                <span class="flex shrink-0 items-center gap-1">
+                  <MonitoredFormatStatusChip
+                    v-for="format in watchedFormats(item.hit)"
+                    :key="format.format"
+                    :work="item.hit.work"
+                    :format="format.format"
+                    :status="format.status"
+                  />
+                </span>
+                <button
+                  v-if="requestFormat(item.hit)"
+                  type="button"
+                  class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-(--shell-accent-line) bg-(--shell-accent-wash) px-2.5 text-xs font-medium text-primary hover:bg-(--shell-accent-tint) disabled:opacity-60"
+                  :disabled="requestBusy.has(item.hit.work.id)"
+                  @mousedown.prevent
+                  @click.stop="requestWork(item.hit)"
+                >
+                  <Plus :size="13" aria-hidden="true" />
+                  {{ t('commandPalette.actions.requestFormat', { format: t(`monitored.formats.${requestFormat(item.hit)}`) }) }}
+                </button>
+              </template>
+
+              <template v-else-if="item.kind === 'hardcoverBook'">
+                <PaletteCover
+                  :src="toMonitoredCoverUrl(item.book.coverUrl) || null"
+                  :title="item.book.title"
+                  :authors="item.book.authorNames"
+                  :series-name="item.book.seriesName"
+                  :seed="item.key"
+                  dashed
+                />
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-[14px] font-medium text-foreground">
+                    <template v-for="(seg, i) in segments(item.book.title)" :key="i">
+                      <span v-if="seg.match" :class="highlightClass">{{ seg.text }}</span>
+                      <template v-else>{{ seg.text }}</template>
+                    </template>
+                  </span>
+                  <span class="mt-0.5 block truncate text-[13px] text-muted-foreground">
+                    {{ item.book.authorNames.join(', ') }}
+                    <template v-if="item.book.seriesName">
+                      ·
+                      <i>{{ item.book.seriesName }}</i>
+                    </template>
+                  </span>
+                </span>
+                <span class="flex shrink-0 items-center gap-0.5">
+                  <button
+                    v-if="item.book.authorNames.length"
+                    type="button"
+                    class="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-(--shell-accent-wash) hover:text-foreground disabled:hover:bg-transparent"
+                    :class="isFollowed(item.book) ? 'text-primary' : ''"
+                    :title="t('commandPalette.actions.followAuthor', { name: item.book.authorNames[0] })"
+                    :aria-label="t('commandPalette.actions.followAuthor', { name: item.book.authorNames[0] })"
+                    :disabled="isFollowed(item.book) || isFollowing(item.book)"
+                    @mousedown.prevent
+                    @click.stop="followAuthor(item.book)"
+                  >
+                    <Check v-if="isFollowed(item.book)" :size="15" aria-hidden="true" />
+                    <Loader2 v-else-if="isFollowing(item.book)" :size="15" class="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                    <UserPlus v-else :size="15" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    class="ms-1 inline-flex h-7 items-center gap-1.5 rounded-md border border-(--shell-accent-line) bg-(--shell-accent-wash) px-2.5 text-xs font-medium text-primary hover:bg-(--shell-accent-tint)"
+                    @mousedown.prevent
+                    @click.stop="select(item)"
+                  >
+                    <Plus :size="13" aria-hidden="true" />
+                    {{ t('commandPalette.actions.request') }}
+                  </button>
+                </span>
+              </template>
+
+              <template v-else-if="item.kind === 'hardcoverAuthor'">
+                <span class="size-8 shrink-0 overflow-hidden rounded-full bg-muted">
+                  <img
+                    v-if="toMonitoredCoverUrl(item.author.imageUrl)"
+                    :src="toMonitoredCoverUrl(item.author.imageUrl)"
+                    alt=""
+                    class="size-full object-cover"
+                  />
+                </span>
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-[14px] font-medium text-foreground">
+                    <template v-for="(seg, i) in segments(item.author.name)" :key="i">
+                      <span v-if="seg.match" :class="highlightClass">{{ seg.text }}</span>
+                      <template v-else>{{ seg.text }}</template>
+                    </template>
+                  </span>
+                  <span v-if="item.author.bookCount != null" class="mt-0.5 block truncate text-[13px] text-muted-foreground">{{
+                    t('components.appHeader.bookCount', { count: item.author.bookCount })
+                  }}</span>
+                </span>
+                <span class="provider-chip shrink-0 rounded-xs px-1.5 py-0.5 text-[11px] font-semibold" :style="providerChipStyle('hardcover')">{{
+                  t('commandPalette.kinds.hardcover')
+                }}</span>
+              </template>
+
+              <template v-else-if="item.kind === 'externalSearch'">
+                <span class="grid size-8 shrink-0 place-items-center rounded-(--shell-radius) bg-muted text-muted-foreground">
+                  <Search :size="16" aria-hidden="true" />
+                </span>
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-[14px] font-medium text-foreground">{{ item.label }}</span>
+                  <span class="mt-0.5 block truncate text-[13px] text-muted-foreground">{{ item.description }}</span>
+                </span>
+                <span
+                  v-if="item.providers.includes('hardcover')"
+                  class="provider-chip shrink-0 rounded-xs px-1.5 py-0.5 text-[11px] font-semibold"
+                  :style="providerChipStyle('hardcover')"
+                  >{{ t('commandPalette.kinds.hardcover') }}</span
+                >
+              </template>
+
+              <template v-else-if="item.kind === 'book' || item.kind === 'reading'">
+                <PaletteCover
+                  :src="item.book.hasCover ? coverUrl(item.book.id, 'thumbnail', item.book.coverVersion) : null"
+                  :title="item.book.title"
+                  :authors="item.book.authors"
+                  :series-name="item.book.seriesName"
+                  :series-index="item.book.seriesIndex"
+                  :seed="String(item.book.id)"
                 />
                 <span class="min-w-0 flex-1">
                   <span class="block truncate text-[14px] font-medium text-foreground">
@@ -360,12 +581,12 @@ const highlightClass = 'rounded-[2px] bg-(--shell-accent-tint) font-semibold tex
               <template v-else-if="item.kind === 'series'">
                 <span class="relative h-12 w-8 shrink-0">
                   <span class="absolute inset-0 translate-x-[3px] translate-y-[3px] rounded-[2px] border border-border bg-muted" aria-hidden="true" />
-                  <BookCoverImage
-                    v-if="item.series.coverBookIds[0]"
-                    :book-id="item.series.coverBookIds[0]"
-                    type="thumbnail"
-                    class="relative h-12 w-8 rounded-[2px] bg-muted object-cover"
-                    alt=""
+                  <PaletteCover
+                    class="relative"
+                    :src="item.series.coverBookIds[0] ? coverUrl(item.series.coverBookIds[0]) : null"
+                    :title="item.series.name"
+                    :authors="item.series.authors"
+                    :seed="item.key"
                   />
                 </span>
                 <span class="min-w-0 flex-1">

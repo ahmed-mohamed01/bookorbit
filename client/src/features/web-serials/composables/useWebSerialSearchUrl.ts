@@ -82,6 +82,8 @@ export function useWebSerialSearchUrl(search: SearchState, userId: Ref<number | 
   const route = useRoute()
   const router = useRouter()
   let committed: string | null = null
+  let generation = 0
+  let restoring: { key: string; promise: Promise<void> } | undefined
   // A search aborted by leaving the page still returns to its caller; nothing it does afterwards may touch the URL.
   let disposed = false
   claimStoredSearch(userId.value)
@@ -123,7 +125,8 @@ export function useWebSerialSearchUrl(search: SearchState, userId: Ref<number | 
   }
 
   /** `text` is what was searched, read before the search ran, so typing during a slow search is not committed. */
-  function commit(text = search.query.value.trim()): void {
+  function commit(text = search.query.value.trim(), startedAt = generation): void {
+    if (startedAt !== generation) return
     if (disposed || isSerialLink(text) || text.length < MIN_QUERY_LENGTH) return
     committed = text
     if (!search.snapshot()) clearStoredSearch()
@@ -135,12 +138,13 @@ export function useWebSerialSearchUrl(search: SearchState, userId: Ref<number | 
   }
 
   async function run(state: SavedSearch): Promise<void> {
+    const startedAt = ++generation
     search.setScope(state.kind)
     search.query.value = state.q
     committed = state.q.trim()
     if (state.mode === 'sites') await search.searchSites()
     else await search.submit()
-    if (disposed) return
+    if (disposed || startedAt !== generation) return
     if (state.source) search.setSource(state.source)
     syncFilters()
   }
@@ -162,7 +166,7 @@ export function useWebSerialSearchUrl(search: SearchState, userId: Ref<number | 
     return true
   }
 
-  async function restore(): Promise<void> {
+  async function restoreState(): Promise<void> {
     const fromUrl = readUrl(route.query)
     if (fromUrl) {
       if (!(await showStored(fromUrl))) await run(fromUrl)
@@ -173,6 +177,18 @@ export function useWebSerialSearchUrl(search: SearchState, userId: Ref<number | 
     committed = saved.q.trim()
     writeUrl(saved)
     if (!(await showStored(saved))) await run(saved)
+  }
+
+  function restore(): Promise<void> {
+    const key = JSON.stringify(readUrl(route.query) ?? readSaved())
+    if (restoring?.key === key) return restoring.promise
+    const promise = restoreState()
+    const pending = { key, promise }
+    restoring = pending
+    void promise.finally(() => {
+      if (restoring === pending) restoring = undefined
+    })
+    return promise
   }
 
   /** A new scope chip asks the committed search again under that scope, so the list, URL and stored answer agree. */
@@ -187,6 +203,7 @@ export function useWebSerialSearchUrl(search: SearchState, userId: Ref<number | 
   }
 
   function clear(): void {
+    generation++
     if (committed === null) return
     committed = null
     writeSaved(null)
@@ -202,16 +219,23 @@ export function useWebSerialSearchUrl(search: SearchState, userId: Ref<number | 
   )
 
   watch(userId, (next) => {
+    generation++
     committed = null
     claimStoredSearch(next)
   })
 
-  watch(
-    () => route.query.q,
-    (value) => {
-      if (value === undefined && committed !== null) sync()
-    },
-  )
+  watch([() => route.name, () => route.query.q, () => route.query.kind], () => {
+    if (disposed || route.name !== 'web-serials') return
+    const state = readUrl(route.query)
+    if (state && (state.q.trim() !== committed || state.kind !== search.scope.value)) void restore()
+    else if (route.query.q === undefined && committed !== null) {
+      generation++
+      committed = null
+      writeSaved(null)
+      clearStoredSearch()
+      search.query.value = ''
+    }
+  })
 
-  return { restore, commit, syncFilters, rescope, refresh, persist, clear }
+  return { beginCommit: () => ++generation, restore, commit, syncFilters, rescope, refresh, persist, clear }
 }

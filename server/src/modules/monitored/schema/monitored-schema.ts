@@ -389,6 +389,8 @@ CREATE INDEX IF NOT EXISTS "monitored_release_events_owner_user_id_idx" ON "moni
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "monitored_release_events_monitor_author_id_idx" ON "monitored_release_events" USING btree ("monitor_author_id");
 --> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "monitored_book_metadata_hardcover_id_idx" ON "book_metadata" USING btree ("hardcover_id");
+--> statement-breakpoint
 DO $$ BEGIN
 	IF NOT EXISTS (
 		SELECT 1 FROM information_schema.columns

@@ -546,6 +546,31 @@ export interface MonitoredAuthorSearchResult {
   alreadyMonitoredId: string | null;
 }
 
+export interface MonitoredCatalogSearchHit {
+  /** The full catalog work, so the palette can reuse the format-status helpers. */
+  work: MonitoredWork;
+  monitorAuthorId: string;
+  authorName: string;
+  /** The author's mode per format, so the palette knows which formats this author watches. */
+  authorModes: Record<MonitoredFormat, MonitorMode>;
+}
+
+export interface HardcoverSearchBook {
+  /** Hardcover slug, the same value book_metadata.hardcover_id stores. */
+  slug: string;
+  title: string;
+  authorNames: string[];
+  seriesName: string | null;
+  coverUrl: string | null;
+}
+
+export interface HardcoverUniversalSearchResult {
+  /** False when no Hardcover key resolves for this user; the palette then hides the Hardcover step. */
+  available: boolean;
+  books: HardcoverSearchBook[];
+  authors: MonitoredAuthorSearchResult[];
+}
+
 export interface MonitorAuthorRequest {
   authorName: string;
   localAuthorId?: number;

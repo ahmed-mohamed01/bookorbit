@@ -9,10 +9,12 @@ import { Permission } from '@bookorbit/types';
 import { PERMISSION_KEY } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
 import { MonitoredWorkFormatParamsDto, MonitoredWorkParamsDto } from './dto/monitored-release-date.dto';
+import { MONITORED_CATALOG_SEARCH_DEFAULT_LIMIT, MonitoredCatalogSearchQueryDto } from './dto/monitored.dto';
 import { MonitoredController } from './monitored.controller';
 import { MonitoredCoverService } from './monitored-cover.service';
 import { MonitoredService } from './monitored.service';
 import { MonitoredSettingsService } from './monitored-settings.service';
+import { MonitoredUniversalSearchService } from './monitored-universal-search.service';
 
 vi.mock('fs', async () => {
   const actual = await vi.importActual('fs');
@@ -28,6 +30,7 @@ async function makeController(
   service: Record<string, unknown>,
   coverService: Record<string, unknown> = {},
   settingsService: Record<string, unknown> = {},
+  universalSearch: Record<string, unknown> = {},
 ) {
   const module = await Test.createTestingModule({
     controllers: [MonitoredController],
@@ -35,6 +38,7 @@ async function makeController(
       { provide: MonitoredService, useValue: service },
       { provide: MonitoredCoverService, useValue: coverService },
       { provide: MonitoredSettingsService, useValue: settingsService },
+      { provide: MonitoredUniversalSearchService, useValue: universalSearch },
     ],
   }).compile();
   return module.get(MonitoredController);
@@ -71,6 +75,8 @@ describe('MonitoredController', () => {
     'listReleaseDateCandidates',
     'setReleaseDate',
     'refreshReleaseDates',
+    'searchCatalogWorks',
+    'searchHardcover',
   ] as const)('gates %s with BookRequestAccess', (method) => {
     expect(Reflect.getMetadata(PERMISSION_KEY, MonitoredController.prototype[method])).toBe(Permission.BookRequestAccess);
   });
@@ -125,6 +131,7 @@ describe('MonitoredController', () => {
         { provide: MonitoredService, useValue: service },
         { provide: MonitoredCoverService, useValue: {} },
         { provide: MonitoredSettingsService, useValue: {} },
+        { provide: MonitoredUniversalSearchService, useValue: {} },
       ],
     }).compile();
     const controller = module.get(MonitoredController);
@@ -136,6 +143,29 @@ describe('MonitoredController', () => {
 
   it('does not gate the monitored portrait route behind a permission', () => {
     expect(Reflect.getMetadata(PERMISSION_KEY, MonitoredController.prototype.getAuthorPortrait)).toBeUndefined();
+  });
+
+  it('forwards the universal search queries with the current user', async () => {
+    const searchCatalogWorks = vi.fn().mockResolvedValue([]);
+    const searchHardcover = vi.fn().mockResolvedValue({ available: true, books: [], authors: [] });
+    const controller = await makeController({}, {}, {}, { searchCatalogWorks, searchHardcover });
+    const user = { id: 7 } as RequestUser;
+
+    await controller.searchCatalogWorks({ q: 'mist', limit: 5 }, user);
+    await controller.searchHardcover({ q: 'mistborn' }, user);
+
+    expect(searchCatalogWorks).toHaveBeenCalledWith(user, 'mist', 5);
+    expect(searchHardcover).toHaveBeenCalledWith(user, 'mistborn');
+  });
+
+  it('uses the DTO default catalog search limit when the query omits it', async () => {
+    const searchCatalogWorks = vi.fn().mockResolvedValue([]);
+    const controller = await makeController({}, {}, {}, { searchCatalogWorks });
+    const query = Object.assign(new MonitoredCatalogSearchQueryDto(), { q: 'mist' });
+
+    await controller.searchCatalogWorks(query, { id: 7 } as RequestUser);
+
+    expect(searchCatalogWorks).toHaveBeenCalledWith(expect.anything(), 'mist', MONITORED_CATALOG_SEARCH_DEFAULT_LIMIT);
   });
 
   it('forwards validated list queries and the current user to the service', async () => {

@@ -259,6 +259,10 @@ export class WebSerialsNovelIndexService {
     const names = await this.sourceNames(scope);
     const sourceIds = installedOnly(await this.userSourceIds(user, scope), names);
     const rows = await this.indexRepo.suggestNovelIndex(key, sourceIds, SUGGEST_LIMIT);
+    // The index stores the bare MangaBaka id; the import ledger keys it as "mb:<id>".
+    const importedKeys = await this.repo.findImportedMatchKeys(user.id, [
+      ...new Set(rows.flatMap((row) => (row.matchId ? [`mb:${row.matchId}`] : []))),
+    ]);
     const suggestions = rows.flatMap((row): WebSerialSuggestion[] => {
       const kept = keyed(row.entries).slice(0, SUGGEST_ENTRIES_PER_SERIES);
       if (kept.length === 0) return [];
@@ -284,6 +288,7 @@ export class WebSerialsNovelIndexService {
           sourcesCount: row.sourcesCount,
           mtlOnly: row.mtlOnly,
           ...(row.matchId ? { matchId: row.matchId } : {}),
+          inLibrary: row.matchId ? importedKeys.has(`mb:${row.matchId}`) : false,
           entries,
         },
       ];

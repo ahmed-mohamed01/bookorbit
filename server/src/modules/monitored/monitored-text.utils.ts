@@ -23,3 +23,45 @@ export function normalizeMonitoredName(value: string): string {
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]/gu, '');
 }
+
+/**
+ * A LIKE pattern exactly as loose as the identity key: every run of characters the key would drop
+ * becomes a wildcard, edges included. Only its null check is consumed now: the store prefilters an
+ * indexed column on identityLikeRun instead, and this tells it whether a value holds anything a
+ * scan could match at all. null when nothing but separators remains.
+ */
+export function identityLikePattern(text: string): string | null {
+  const pattern = text.replace(/[^\p{L}\p{N}]+/gu, '%');
+  return /[\p{L}\p{N}]/u.test(pattern) ? pattern : null;
+}
+
+/**
+ * The longest run of letters or digits in the folded value, which the store matches as a plain
+ * substring to narrow an indexed scan. Matching one run instead of the whole pattern is what makes
+ * the prefilter symmetric between spellings that differ only in separator positions: the full
+ * pattern demanded the input's own separators, so a stored "Ursula K. Le Guin" escaped a search for
+ * "Ursula K. LeGuin". It is only a narrowing, never the identity decision - a stored value that
+ * splits the run itself ("Spider-Man" vs "Spiderman") still escapes it, and the folded key
+ * comparison after it stays the final word. Ties go to the earliest run; null when nothing but
+ * separators remains.
+ */
+export function identityLikeRun(value: string): string | null {
+  const runs = foldDiacritics(value)
+    .toLowerCase()
+    .match(/[\p{L}\p{N}]+/gu);
+  if (!runs?.length) return null;
+  return runs.reduce((longest, run) => (run.length > longest.length ? run : longest));
+}
+
+/** The words of a search query: accent-folded, lowercased, split on anything that is not a letter or digit. */
+export function foldedQueryWords(value: string): string[] {
+  return foldDiacritics(value)
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+}
+
+/** The `title|author` identity key the palette dedupes provider hits against owned works with. */
+export function titleAuthorKey(title: string | null | undefined, authorName: string | null | undefined): string {
+  return `${normalizeMonitoredName(title ?? '')}|${normalizeMonitoredName(authorName ?? '')}`;
+}

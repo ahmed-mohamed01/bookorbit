@@ -2,7 +2,7 @@ import { mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MetadataProviderKey, Permission } from '@bookorbit/types'
 import type { BookRequestMediaKind, MetadataCandidate, MetadataProviderInfo, ResolvedRequestDestination } from '@bookorbit/types'
-import type { Ref } from 'vue'
+import { reactive, nextTick, type Ref } from 'vue'
 import type { CandidateGroup } from '../composables/useCandidateGroups'
 
 /**
@@ -23,6 +23,7 @@ const state = vi.hoisted(
       searchFresh: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
       checkFreeText: vi.fn<() => Promise<unknown>>(),
       push: vi.fn<() => Promise<void>>(),
+      replace: vi.fn<(location: unknown) => Promise<void>>(),
       routeQuery: {} as Record<string, string>,
       toastError: vi.fn<(message: string) => void>(),
     }) as {
@@ -41,6 +42,7 @@ const state = vi.hoisted(
       search: ReturnType<typeof vi.fn>
       searchFresh: ReturnType<typeof vi.fn>
       checkFreeText: ReturnType<typeof vi.fn>
+      replace: ReturnType<typeof vi.fn>
       push: ReturnType<typeof vi.fn>
       routeQuery: Record<string, string>
       toastError: ReturnType<typeof vi.fn>
@@ -71,7 +73,7 @@ vi.mock('@/features/library/composables/useLibraries', async () => {
 
 vi.mock('vue-router', async (importOriginal) => ({
   ...(await importOriginal<typeof import('vue-router')>()),
-  useRouter: () => ({ push: state.push }),
+  useRouter: () => ({ push: state.push, replace: state.replace }),
   useRoute: () => ({ query: state.routeQuery }),
 }))
 
@@ -175,7 +177,7 @@ function blockingHint(wrapper: Awaited<ReturnType<typeof render>>): boolean {
 beforeEach(() => {
   state.providers.value = []
   state.groups.value = []
-  state.routeQuery = {}
+  state.routeQuery = reactive({})
 })
 
 describe('RequestSearchPanel provider sources', () => {
@@ -1002,4 +1004,24 @@ describe('RequestSearchPanel pair mode', () => {
     expect(wrapper.find('button[aria-label="Prefer M4B"]').exists()).toBe(true)
     expect(wrapper.find('button[aria-label="Prefer EPUB"]').exists()).toBe(true)
   })
+})
+
+it('applies prefill once, strips params, and applies a later query change', async () => {
+  vi.clearAllMocks()
+  state.mediaKind.value = 'ebook'
+  state.routeQuery = reactive({ title: 'First', author: 'Writer', tab: 'search' })
+  const wrapper = await render()
+  expect(state.search).toHaveBeenCalledOnce()
+  expect(state.replace).toHaveBeenCalledWith({ query: { tab: 'search' } })
+  delete state.routeQuery.title
+  delete state.routeQuery.author
+  await nextTick()
+  expect(state.search).toHaveBeenCalledOnce()
+  state.routeQuery.title = 'Second'
+  state.routeQuery.author = 'Other'
+  await nextTick()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(state.search).toHaveBeenCalledTimes(2)
+  expect(wrapper.get('#request-title').element).toHaveProperty('value', 'Second')
+  wrapper.unmount()
 })

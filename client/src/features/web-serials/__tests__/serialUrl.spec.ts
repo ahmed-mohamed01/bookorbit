@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isSerialLink } from '../lib/serialUrl'
+import { isSerialLink, formatSeriesParam, parseSeriesParam } from '../lib/serialUrl'
 
 describe('isSerialLink', () => {
   it('accepts http and https links', () => {
@@ -19,4 +19,10 @@ describe('isSerialLink', () => {
     expect(isSerialLink('javascript:alert(1)')).toBe(false)
     expect(isSerialLink('http://localhost')).toBe(false)
   })
+})
+
+it('round-trips typed series links and rejects malformed values', () => {
+  expect(parseSeriesParam(formatSeriesParam('novel', '123'))).toEqual({ kind: 'novel', matchId: '123' })
+  expect(parseSeriesParam('manga:42')).toEqual({ kind: 'manga', matchId: '42' })
+  for (const value of [null, ['novel:1'], 'other:1', 'novel:x', 'novel:']) expect(parseSeriesParam(value)).toBeNull()
 })

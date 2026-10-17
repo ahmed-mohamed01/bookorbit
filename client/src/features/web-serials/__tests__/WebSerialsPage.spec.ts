@@ -1,16 +1,22 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { enableAutoUnmount, mount, flushPromises } from '@vue/test-utils'
 import { reactive, ref } from 'vue'
+import { catalogEntry } from './fixtures'
+import { toast } from 'vue-sonner'
 import { i18n } from '@/i18n'
+
+enableAutoUnmount(afterEach)
 
 const state = vi.hoisted(() => ({
   allowed: true,
+  api: vi.fn<(...args: unknown[]) => Promise<unknown>>(),
   replace: vi.fn<(to: unknown) => Promise<void>>(),
   start: vi.fn<() => void>(),
   cancelPreview: vi.fn<() => void>(),
 }))
 const route = reactive<{ name: string; query: Record<string, string> }>({ name: 'web-serials', query: {} })
 
+vi.mock('@/lib/api', () => ({ api: state.api }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => ({ replace: state.replace }) }))
 vi.mock('vue-sonner', () => ({ toast: { success: vi.fn<() => void>(), error: vi.fn<() => void>() } }))
 vi.mock('@/features/auth/composables/useAuth', () => ({ useAuth: () => ({ user: ref({ id: 7 }) }) }))
@@ -53,6 +59,7 @@ function mountPage() {
 beforeEach(() => {
   vi.clearAllMocks()
   state.allowed = true
+  state.api.mockResolvedValue(new Response(JSON.stringify(catalogEntry()), { status: 200 }))
   route.name = 'web-serials'
   route.query = {}
 })
@@ -203,5 +210,44 @@ describe('WebSerialsPage preview answers', () => {
     await wrapper.vm.$nextTick()
 
     expect(wrapper.findComponent({ name: 'WebSerialPreviewSheet' }).props('detail')).toMatchObject({ seriesKey: 'm:new' })
+  })
+})
+
+describe('series deep links', () => {
+  it('fetches and opens once, strips the param, and handles a new link on the same page', async () => {
+    route.query = { series: 'manga:1995', q: 'frieren' }
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(state.api).toHaveBeenCalledExactlyOnceWith('/api/v1/web-serials/discover/manga/1995', { signal: expect.any(AbortSignal) })
+    expect(wrapper.findComponent({ name: 'WebSerialPreviewSheet' }).props()).toMatchObject({ open: true, entry: catalogEntry() })
+    expect(state.replace).toHaveBeenLastCalledWith({ name: 'web-serials', query: { q: 'frieren' } })
+    route.query = { series: 'manga:1995', q: 'another search' }
+    await flushPromises()
+    expect(state.api).toHaveBeenCalledTimes(1)
+    route.query = { q: 'frieren' }
+    await flushPromises()
+    expect(state.api).toHaveBeenCalledTimes(1)
+    state.api.mockResolvedValue(new Response(JSON.stringify(catalogEntry({ kind: 'novel', matchId: '77' })), { status: 200 }))
+    route.query = { series: 'novel:77' }
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'WebSerialPreviewSheet' }).props('entry')).toMatchObject({ kind: 'novel', matchId: '77' })
+    wrapper.unmount()
+  })
+  it.each(['manga:no', 'other:1', 'novel:1:2', 'manga:-1', ''])('ignores and strips invalid link %s', async (series) => {
+    route.query = { series }
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(state.api).not.toHaveBeenCalled()
+    expect(state.replace).toHaveBeenLastCalledWith({ name: 'web-serials', query: {} })
+    wrapper.unmount()
+  })
+  it('shows an error and strips a failed link', async () => {
+    state.api.mockResolvedValue(new Response('{}', { status: 502 }))
+    route.query = { series: 'manga:1995' }
+    const wrapper = mountPage()
+    await flushPromises()
+    expect(toast.error).toHaveBeenCalled()
+    expect(state.replace).toHaveBeenLastCalledWith({ name: 'web-serials', query: {} })
+    wrapper.unmount()
   })
 })

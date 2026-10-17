@@ -22,6 +22,8 @@ import WebSerialNovelProvidersSheet from './components/WebSerialNovelProvidersSh
 import WebSerialQueue from './components/WebSerialQueue.vue'
 import WebSerialsSearchPanel from './components/WebSerialsSearchPanel.vue'
 import { useWebSerialQueue } from './composables/useWebSerialQueue'
+import { useWebSerialSeriesUrl } from './composables/useWebSerialSeriesUrl'
+import { messageOf } from './lib/messageOf'
 import { entryFromSuggestion } from './lib/serialSuggest'
 import type { SerialJobAction } from './lib/serialJobStatus'
 
@@ -133,6 +135,8 @@ function handleOpenEntry(entry: WebSerialCatalogEntry) {
   previewLoadError.value = null
   previewOpen.value = true
 }
+
+useWebSerialSeriesUrl(handleOpenEntry, (cause) => toast.error(messageOf(cause, 'webSerials.api.search')))
 
 function handleOpenSuggestion(suggestion: WebSerialSuggestion) {
   previewDetail.value = null

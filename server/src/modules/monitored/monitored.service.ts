@@ -63,7 +63,6 @@ import { RequestFulfillmentService } from '../book-request/fulfillment/request-f
 import { IndexerSearchService } from '../book-request/indexers/indexer-search.service';
 import type { IndexerSearchRequest } from '../book-request/indexers/indexer-search.service';
 import { HardcoverClient } from '../metadata-fetch/providers/hardcover/hardcover.client';
-import type { HardcoverAuthorSearchDocument } from '../metadata-fetch/providers/hardcover/hardcover.types';
 import { LibraryService } from '../library/library.service';
 import { MonitoredCatalogService, normalizeMonitoredName, type WorkAvailabilityGroup } from './monitored-catalog.service';
 import { MonitoredAutoRequestService, submitThrottled } from './monitored-autorequest.service';
@@ -74,6 +73,7 @@ import { MonitoredAuthorStoreService } from './monitored-author-store.service';
 import { MonitoredSettingsService } from './monitored-settings.service';
 import { MonitoredReleaseDateLookupService } from './monitored-release-date-lookup.service';
 import { MonitoredReleaseProbeService } from './monitored-release-probe.service';
+import { strongestHitPerName } from './hardcover-author-hits.utils';
 import { isAudibleConfigured } from './providers/audible-bibliography.provider';
 import { isHardcoverConfigured } from './providers/hardcover-bibliography.provider';
 import type { MonitoredAuthorAggregate, MonitoredReleasePageEntry } from './monitored-store.service';
@@ -137,23 +137,6 @@ export function workMatchesStatusFilters(
     const status = monitoredFormatStatus(work, format, today, { authorWatches: monitor.formats[format]?.mode !== 'off' });
     return filters.includes(MONITORED_STATUS_FILTER_BY_FORMAT_STATUS[status]);
   });
-}
-
-/**
- * One Hardcover hit per author name, keeping whichever record carries the most books. Hardcover holds
- * several records for the same author - a populated one and empty stubs - and they all fold onto one
- * key here. Keeping whichever hit the search returned last would hand the monitor a stub's id, and a
- * bibliography fetch pinned to a stub comes back with nothing. This is the same tie-break the
- * bibliography provider applies when it has to resolve the author by name itself.
- */
-function strongestHitPerName(hits: HardcoverAuthorSearchDocument[]): HardcoverAuthorSearchDocument[] {
-  const best = new Map<string, HardcoverAuthorSearchDocument>();
-  for (const hit of hits) {
-    const key = normalizeMonitoredName(hit.name);
-    const current = best.get(key);
-    if (!current || (hit.books_count ?? 0) > (current.books_count ?? 0)) best.set(key, hit);
-  }
-  return [...best.values()];
 }
 
 /**

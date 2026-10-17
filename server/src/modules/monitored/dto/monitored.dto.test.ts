@@ -12,6 +12,7 @@ import {
   ListMonitoredBooksDto,
   ListMonitoredReleasesDto,
   MonitorAuthorDto,
+  MonitoredCatalogSearchQueryDto,
   MonitoredAuthorDetailQueryDto,
   UpdateMonitoredWorkDto,
 } from './monitored.dto';
@@ -138,6 +139,13 @@ describe('bulk mark kinds', () => {
 
   it.each(MONITORED_MARK_KINDS)('accepts the %s mark kind in a bulk update', async (kind) => {
     await expect(validate(plainToInstance(BulkUpdateWorksDto, { workIds: ['work-1'], patch: { kind } }), validationOptions)).resolves.toHaveLength(0);
+  });
+});
+
+describe('MonitoredCatalogSearchQueryDto', () => {
+  it('requires at least three characters, the length at which the title trigram index narrows the scan', async () => {
+    await expect(validate(plainToInstance(MonitoredCatalogSearchQueryDto, { q: 'mi' }))).resolves.not.toHaveLength(0);
+    await expect(validate(plainToInstance(MonitoredCatalogSearchQueryDto, { q: 'mis' }))).resolves.toHaveLength(0);
   });
 });
 

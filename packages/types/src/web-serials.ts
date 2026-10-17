@@ -710,6 +710,8 @@ export interface WebSerialCatalogEntry {
   kind: WebSerialKind;
   /** The database's official title. */
   title: string;
+  /** Other titles the database knows the series by (native, romanized, translations), so a match on one can be explained. */
+  altTitles: string[];
   authors: string[];
   artists: string[];
   year: number | null;
@@ -823,6 +825,8 @@ export interface WebSerialSuggestion {
   mtlOnly: boolean;
   /** The MangaBaka series id, when the index has matched it. */
   matchId?: string;
+  /** This user already has books from this series, known only when `matchId` is set. */
+  inLibrary: boolean;
   entries: WebSerialSuggestionEntry[];
 }
 

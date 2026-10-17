@@ -4,6 +4,7 @@ import type { FastifyReply } from 'fastify';
 import type {
   MoveWebSerialJobResult,
   WebSerialCapabilities,
+  WebSerialCatalogEntry,
   WebSerialClearFinishedResult,
   WebSerialDiscoverResult,
   WebSerialJob,
@@ -83,6 +84,12 @@ export class WebSerialsController {
   @RequirePermission(Permission.WebSerialAccess)
   discover(@Query() query: SearchWebSerialsDto, @CurrentUser() user: RequestUser): Promise<WebSerialDiscoverResult> {
     return this.discoverService.discover(query.q, query.kind ?? 'all', user, query.refresh === true);
+  }
+
+  @Get('discover/:kind/:matchId')
+  @RequirePermission(Permission.WebSerialAccess)
+  getDiscoverEntry(@Param() params: WebSerialDiscoverParamsDto, @CurrentUser() user: RequestUser): Promise<WebSerialCatalogEntry> {
+    return this.discoverService.getEntry(params.kind, params.matchId, user);
   }
 
   @Get('discover/:kind/:matchId/sources')

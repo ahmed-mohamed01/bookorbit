@@ -1,6 +1,8 @@
 import { api } from '@/lib/api'
 import { readApiErrorDetail } from '@/lib/api-error'
 import type {
+  MonitoredCatalogSearchHit,
+  HardcoverUniversalSearchResult,
   BookRequestItem,
   MonitorAuthorRequest,
   MonitoredAuthorListSort,
@@ -222,4 +224,20 @@ export async function bulkUpdateMonitoredWorks(payload: MonitoredBulkUpdatePaylo
 
 export async function fetchRequestSources(): Promise<RequestSourceOption[]> {
   return readJson(await api('/api/v1/book-request-sources'))
+}
+
+export async function searchCatalogWorks(q: string, limit: number, signal?: AbortSignal): Promise<MonitoredCatalogSearchHit[]> {
+  try {
+    return await readJson(await api(`${BASE_PATH}/catalog/search?${new URLSearchParams({ q, limit: String(limit) })}`, { signal }))
+  } catch {
+    return []
+  }
+}
+
+export async function searchHardcoverUniversal(q: string, signal?: AbortSignal): Promise<HardcoverUniversalSearchResult> {
+  try {
+    return await readJson(await api(`${BASE_PATH}/hardcover/search?${new URLSearchParams({ q })}`, { signal }))
+  } catch {
+    return { available: true, books: [], authors: [] }
+  }
 }

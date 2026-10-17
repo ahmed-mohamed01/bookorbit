@@ -8,6 +8,7 @@ import type {
   UpdateWebSerialNovelProvidersInput,
   UpdateWebSerialSettingsInput,
   WebSerialCapabilities,
+  WebSerialCatalogEntry,
   WebSerialEngineHealth,
   WebSerialClearFinishedResult,
   WebSerialDiscoverResult,
@@ -78,6 +79,10 @@ export async function discoverSerials(
   const params = new URLSearchParams({ q: query, kind })
   if (refresh) params.set('refresh', '1')
   return apiJson(`${BASE}/discover?${params.toString()}`, { signal }, 'webSerials.api.search')
+}
+
+export async function fetchDiscoverEntry(kind: WebSerialKind, matchId: string, signal?: AbortSignal): Promise<WebSerialCatalogEntry> {
+  return apiJson(`${BASE}/discover/${kind}/${encodeURIComponent(matchId)}`, { signal }, 'webSerials.api.search')
 }
 
 export async function fetchDiscoverSources(

@@ -17,6 +17,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
@@ -176,11 +177,15 @@ export class MonitoredAuthorDetailQueryDto {
   status?: MonitoredStatusFilter[];
 }
 
+function trimmed({ value }: { value: unknown }): unknown {
+  return typeof value === 'string' ? value.trim() : value;
+}
+
 class MonitoredPageQueryDto {
   @IsOptional()
   @IsString()
   @MaxLength(500)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(trimmed)
   q?: string;
 
   @IsOptional()
@@ -255,6 +260,33 @@ export class ListOwnedMonitoredAuthorIdsDto {
 export class MonitoredSearchQueryDto {
   @IsString()
   @MaxLength(500)
+  q!: string;
+}
+
+export const MONITORED_CATALOG_SEARCH_DEFAULT_LIMIT = 3;
+
+export class MonitoredCatalogSearchQueryDto {
+  @IsString()
+  // The title trigram index forms no trigram at two characters, so a two-char query scans the whole
+  // instance's catalog; three is the shortest query the index can narrow.
+  @MinLength(3)
+  @MaxLength(200)
+  @Transform(trimmed)
+  q!: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  limit: number = MONITORED_CATALOG_SEARCH_DEFAULT_LIMIT;
+}
+
+export class HardcoverSearchQueryDto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(200)
+  @Transform(trimmed)
   q!: string;
 }
 

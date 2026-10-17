@@ -56,6 +56,7 @@ import { providerIconPathSafe } from '@/features/book/lib/provider-icons'
 import { useLibraries } from '@/features/library/composables/useLibraries'
 import { useMonitorGroupAction } from '@/features/monitored/composables/useMonitorGroupAction'
 import { getProviderColor } from '@/lib/provider-colors'
+import { useRequestPrefillParam } from '../composables/useRequestPrefillParam'
 import { useCandidateGroups, type CandidateGroup, type CandidateIsbnChoice } from '../composables/useCandidateGroups'
 import { formatLanguageName } from '@/i18n/formatters'
 import { requestLanguageOptions, useRequestDestinationDefault, useRequestLanguageDefault } from '../composables/useRequestDestinationDefault'
@@ -232,6 +233,9 @@ const isLanguagePinned = computed(() => language.value !== null && defaultLangua
 
 const languageOptions = computed(() => requestLanguageOptions(locale.value))
 
+const prefillReady = ref(false)
+useRequestPrefillParam({ ready: prefillReady, title, author, search: runSearch })
+
 onMounted(async () => {
   await Promise.all([loadProviders(), fetchLibraries(), loadDefaultDestination(), loadLanguageDefault()])
   // Your own interface language, until you pin one. Never the edition's: that is the silent
@@ -240,6 +244,7 @@ onMounted(async () => {
   // One library is only worth preselecting for the requester who is also the approver.
   targetLibraryId.value = resolveDestination(libraries.value, undefined, settlesOnCreate.value).libraryId
   audioTargetLibraryId.value = resolveDestination(libraries.value, undefined, settlesOnCreate.value).libraryId
+  prefillReady.value = true
 })
 
 // A folder only means anything inside its own library, so it never outlives the library choice.

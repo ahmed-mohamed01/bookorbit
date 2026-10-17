@@ -16005,7 +16005,11 @@
       "books": "Books",
       "authors": "Authors",
       "series": "Series",
-      "settings": "Settings"
+      "settings": "Settings",
+      "watchlist": "Watchlist",
+      "hardcover": "Hardcover",
+      "lightNovels": "Light novels",
+      "manga": "Manga"
     },
     "sections": {
       "continueReading": "Continue Reading",
@@ -16014,7 +16018,12 @@
       "books": "Books",
       "authors": "Authors",
       "series": "Series",
-      "settings": "Settings"
+      "settings": "Settings",
+      "watchlist": "Watchlist",
+      "hardcoverBooks": "On Hardcover",
+      "hardcoverAuthors": "Hardcover authors",
+      "lightNovels": "Light novels",
+      "manga": "Manga"
     },
     "kinds": {
       "author": "Author",
@@ -16023,7 +16032,8 @@
       "smartScope": "Smart scope",
       "collection": "Collection",
       "page": "Page",
-      "setting": "Setting"
+      "setting": "Setting",
+      "hardcover": "Hardcover"
     },
     "showAllBooks": "{count, plural, one {Show # book} other {Show all # books}}",
     "showAllAuthors": "{count, plural, one {Show # author} other {Show all # authors}}",
@@ -16031,7 +16041,10 @@
     "showAllSettings": "{count, plural, one {Show # setting} other {Show all # settings}}",
     "actions": {
       "lightTheme": "Switch to light theme",
-      "darkTheme": "Switch to dark theme"
+      "darkTheme": "Switch to dark theme",
+      "followAuthor": "Follow {name}",
+      "request": "Request",
+      "requestFormat": "Request {format}"
     },
     "hints": {
       "navigate": "Navigate",
@@ -16043,6 +16056,26 @@
       "escape": "esc",
       "tab": "tab"
     },
-    "resultCount": "{count, plural, =0 {No results} one {# result} other {# results}}"
+    "resultCount": "{count, plural, =0 {No results} one {# result} other {# results}}",
+    "hardcover": {
+      "searchRow": "Search Hardcover for \"{q}\"",
+      "searchRowDescription": "Find books and authors to follow or request"
+    },
+    "external": {
+      "moreSources": "More sources",
+      "webSerials": "Web serials",
+      "providers": {
+        "hardcover": "Hardcover",
+        "manga": "manga",
+        "lightNovels": "light novels"
+      },
+      "searchProviders": "Search {providers} for \"{q}\"",
+      "descriptionProviders": "Find more to follow, request or download",
+      "descriptionProvidersHidden": "Find more to follow or download"
+    },
+    "moreWebSerials": "More on Web Serials",
+    "sitesCount": "{count, plural, one {# site} other {# sites}}",
+    "mtl": "MTL",
+    "alsoKnownAs": "Also known as {title}"
   }
 }

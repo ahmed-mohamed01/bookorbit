@@ -1374,3 +1374,320 @@ describe('MonitoredStoreService work by library book', () => {
     await expect(store.findWorkIdByMatchedBook(42, { id: 5, isSuperuser: false } as RequestUser)).resolves.toBeNull();
   });
 });
+
+describe('MonitoredStoreService catalog search', () => {
+  function searchSelectDb(results: unknown[][]) {
+    const builders: Array<Record<string, ReturnType<typeof vi.fn>>> = [];
+    const queue = [...results];
+    const select = vi.fn(() => {
+      const rows = queue.shift() ?? [];
+      const builder = {} as Record<string, ReturnType<typeof vi.fn>>;
+      for (const method of ['from', 'innerJoin', 'leftJoin', 'where', 'orderBy', 'limit']) {
+        builder[method] = vi.fn(() => builder);
+      }
+      builder.then = vi.fn((resolve: (value: unknown[]) => unknown) => Promise.resolve(rows).then(resolve));
+      builders.push(builder);
+      return builder;
+    });
+    return { db: { select }, builders };
+  }
+
+  const owner = { id: 5, isSuperuser: false } as RequestUser;
+  const libraries = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([2, 3]) };
+
+  it('scopes the search to the caller and reuses the shared active-work visibility, limiting in SQL', async () => {
+    const { db, builders } = searchSelectDb([[], []]);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    await expect(store.searchCatalogWorks(owner, 'mist', 3)).resolves.toEqual([]);
+
+    const query = new PgDialect().sqlToQuery(builders[1]?.where.mock.calls[0]?.[0] as SQL);
+    expect(query.sql).toContain('"monitored_authors"."owner_user_id" = $1');
+    expect(query.sql).toContain(`"monitored_author_works"."user_visibility" = 'hidden'`);
+    expect(query.sql).toContain('"monitored_author_works"."user_kind"');
+    expect(query.sql).toContain('"author_catalog_works"."verdict"');
+    expect(query.sql).toContain('"monitored_author_works"."monitor_state"');
+    expect(query.sql).toContain('"monitored_authors"."paused" <>');
+    expect(query.sql).not.toContain('"monitored_author_works"."user_visibility" is null');
+    expect(builders[1]?.limit).toHaveBeenCalledWith(3);
+  });
+
+  it('reads ownership through the viewer-derived condition, so a work held only in an inaccessible library is not owned', async () => {
+    const { db, builders } = searchSelectDb([[], []]);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    await store.searchCatalogWorks(owner, 'mist', 3);
+
+    expect(libraries.findAccessibleLibraryIds).toHaveBeenCalledWith(owner);
+    const query = new PgDialect().sqlToQuery(builders[1]?.where.mock.calls[0]?.[0] as SQL);
+    expect(query.sql).not.toContain('"author_catalog_works"."owned_formats" = \'[]\'::jsonb');
+    // The same per-format, per-library ownership arms the watchlist page reads, negated per format and OR-joined.
+    expect(query.sql).toContain('not (');
+    expect(query.sql).toContain('"author_catalog_works"."owned_formats" @>');
+    expect(query.sql).toContain('"books"."library_id" in (');
+    expect(query.sql).toContain('"book_requests"."status" = \'available\'');
+    expect(query.params).toContain(2);
+    expect(query.params).toContain(3);
+  });
+
+  it('orders the author pre-lookup by name then id before the limit', async () => {
+    const { db, builders } = searchSelectDb([[{ id: 'monitor-9' }], []]);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    await store.searchCatalogWorks(owner, 'sanderson', 3);
+
+    const [name, id] = builders[0]?.orderBy.mock.calls[0] as SQL[];
+    expect(new PgDialect().sqlToQuery(name).sql).toContain('"monitored_authors"."author_name"');
+    expect(new PgDialect().sqlToQuery(id).sql).toContain('"monitored_authors"."id"');
+  });
+
+  it('puts title-prefix matches first, then the title', async () => {
+    const { db, builders } = searchSelectDb([[], []]);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    await store.searchCatalogWorks(owner, 'mist', 3);
+
+    const [prefixTier, title, id] = builders[1]?.orderBy.mock.calls[0] as SQL[];
+    const prefixSql = new PgDialect().sqlToQuery(prefixTier).sql;
+    expect(prefixSql).toContain('case when');
+    expect(prefixSql).toContain('ILIKE');
+    expect(prefixSql).toContain('$');
+    expect(new PgDialect().sqlToQuery(title).sql).toContain('"author_catalog_works"."title"');
+    expect(new PgDialect().sqlToQuery(id).sql).toContain('"author_catalog_works"."id"');
+  });
+
+  it('composes found rows through the shared work mapper and returns search hits with author modes', async () => {
+    const work = workRow({
+      id: 'monitor-1:hardcover:7',
+      title: 'Mistborn',
+      matchedBookId: null,
+      matchedEbookBookId: null,
+      matchedAudioBookId: null,
+      ownedFormats: [],
+    });
+    const { db } = searchSelectDb([[], [{ work, authorName: 'Brandon Sanderson', ebookMode: 'auto-all', audiobookMode: 'off' }], [], [], []]);
+    const store = new MonitoredStoreService(db as never, {} as never);
+
+    const hits = await store.searchCatalogWorks({ id: 5, isSuperuser: true } as RequestUser, 'mist', 3);
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({
+      monitorAuthorId: 'monitor-1',
+      authorName: 'Brandon Sanderson',
+      authorModes: { ebook: 'auto-all', audiobook: 'off' },
+      work: { id: 'monitor-1:hardcover:7', title: 'Mistborn', ownedFormats: [], matchedBookId: null, requestIds: {} },
+    });
+  });
+
+  it('matches followed authors by id on the works table, never by the joined author name', async () => {
+    const { db, builders } = searchSelectDb([[{ id: 'monitor-9' }], []]);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    await store.searchCatalogWorks(owner, 'sanderson', 3);
+
+    const authorLookup = new PgDialect().sqlToQuery(builders[0]?.where.mock.calls[0]?.[0] as SQL);
+    expect(authorLookup.sql).toContain('"monitored_authors"."owner_user_id" = $1');
+    expect(authorLookup.sql).toContain('"monitored_authors"."author_name"');
+    expect(builders[0]?.limit).toHaveBeenCalledWith(50);
+    const search = new PgDialect().sqlToQuery(builders[1]?.where.mock.calls[0]?.[0] as SQL);
+    expect(search.sql).toContain('"author_catalog_works"."monitor_author_id" in');
+    expect(search.params).toContain('monitor-9');
+    expect(search.sql).not.toContain('"monitored_authors"."author_name"');
+  });
+
+  it('returns nothing for a blank query', async () => {
+    const { db } = searchSelectDb([[]]);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    await expect(store.searchCatalogWorks(owner, '   ', 3)).resolves.toEqual([]);
+    expect(db.select).not.toHaveBeenCalled();
+  });
+});
+
+describe('MonitoredStoreService hardcover dedupe lookups', () => {
+  const setDb = (rows: unknown[]) => {
+    const builder = {} as Record<string, ReturnType<typeof vi.fn>>;
+    for (const method of ['from', 'innerJoin', 'leftJoin', 'where']) builder[method] = vi.fn(() => builder);
+    builder.then = vi.fn((resolve: (value: unknown[]) => unknown) => Promise.resolve(rows).then(resolve));
+    return { db: { select: vi.fn(() => builder) }, builder };
+  };
+
+  const libraries = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([2, 3]) };
+
+  it('resolves the accessible library ids for a viewer, null for a superuser who reaches every library', async () => {
+    const store = new MonitoredStoreService({} as never, libraries as never);
+
+    await expect(store.accessibleLibraryIds({ id: 5, isSuperuser: false } as RequestUser)).resolves.toEqual([2, 3]);
+    await expect(store.accessibleLibraryIds({ id: 9, isSuperuser: true } as RequestUser)).resolves.toBeNull();
+
+    expect(libraries.findAccessibleLibraryIds).toHaveBeenCalledWith({ id: 5, isSuperuser: false });
+  });
+
+  it('reads library slugs through the accessible-library scope', async () => {
+    const { db, builder } = setDb([{ hardcoverId: 'owned-slug' }]);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    await expect(store.findLibraryHardcoverIds([2, 3], ['owned-slug', 'fresh-slug'])).resolves.toEqual(new Set(['owned-slug']));
+
+    const query = new PgDialect().sqlToQuery(builder.where.mock.calls[0]?.[0] as SQL);
+    expect(query.sql).toContain('"book_metadata"."hardcover_id" in ($1, $2)');
+    expect(query.sql).toContain('"books"."library_id" in ($3, $4)');
+    expect(query.params.slice(0, 4)).toEqual(['owned-slug', 'fresh-slug', 2, 3]);
+  });
+
+  it('skips the library slug read for a superuser, who can reach every library', async () => {
+    const { db, builder } = setDb([{ hardcoverId: 'owned-slug' }]);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    await store.findLibraryHardcoverIds(null, ['owned-slug']);
+
+    const query = new PgDialect().sqlToQuery(builder.where.mock.calls[0]?.[0] as SQL);
+    expect(query.sql).not.toContain('"books"."library_id"');
+  });
+
+  it('answers every library lookup without a query when the viewer can reach no library', async () => {
+    const db = { select: vi.fn(), selectDistinct: vi.fn() };
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    await expect(store.findLibraryHardcoverIds([], ['owned-slug'])).resolves.toEqual(new Set());
+    await expect(store.findLibraryTitleAuthorKeys([], ['thefinalempire'])).resolves.toEqual(new Set());
+    await expect(store.findLocalAuthorNameKeys([], ['Brandon Sanderson'])).resolves.toEqual(new Set());
+
+    expect(db.select).not.toHaveBeenCalled();
+    expect(db.selectDistinct).not.toHaveBeenCalled();
+  });
+
+  it('reads catalog slugs from the caller scoped hardcover source works', async () => {
+    const { db, builder } = setDb([{ providerWorkId: 'watched-slug' }]);
+    const store = new MonitoredStoreService(db as never, {} as never);
+
+    await expect(store.findCatalogHardcoverIds({ id: 5, isSuperuser: false } as RequestUser, ['watched-slug'])).resolves.toEqual(
+      new Set(['watched-slug']),
+    );
+
+    const query = new PgDialect().sqlToQuery(builder.where.mock.calls[0]?.[0] as SQL);
+    expect(query.sql).toContain('"author_catalog_source_works"."source" = $');
+    expect(query.sql).toContain('"monitored_authors"."owner_user_id" = $');
+    // The same active-work visibility the watchlist itself reads, so the two never disagree.
+    expect(builder.leftJoin).toHaveBeenCalled();
+    expect(query.sql).toContain('"monitored_author_works"."user_visibility"');
+    expect(query.sql).toContain('"monitored_author_works"."user_kind"');
+    expect(query.sql).toContain('"monitored_author_works"."monitor_state"');
+  });
+
+  it('answers a punctuation-only title list with an empty set and runs no query', async () => {
+    const db = { select: vi.fn(), selectDistinct: vi.fn() };
+    const store = new MonitoredStoreService(db as never, libraries as never);
+    const viewer = { id: 5, isSuperuser: false } as RequestUser;
+
+    await expect(store.findLibraryTitleAuthorKeys([2, 3], ['?', '   '])).resolves.toEqual(new Set());
+    await expect(store.findCatalogTitleAuthorKeys(viewer, ['…', '!!!'])).resolves.toEqual(new Set());
+    await expect(store.findLocalAuthorNameKeys([2, 3], ['?'])).resolves.toEqual(new Set());
+
+    expect(db.select).not.toHaveBeenCalled();
+    expect(db.selectDistinct).not.toHaveBeenCalled();
+  });
+
+  it('prefilters each title by its longest run wrapped in % wildcards', async () => {
+    const { db, builder } = setDb([]);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+    const viewer = { id: 5, isSuperuser: false } as RequestUser;
+
+    await store.findLibraryTitleAuthorKeys([2, 3], ["Ender's Game", 'Spider-Man']);
+    await store.findCatalogTitleAuthorKeys(viewer, ["Ender's Game"]);
+
+    const libraryQuery = new PgDialect().sqlToQuery(builder.where.mock.calls[0]?.[0] as SQL);
+    expect(libraryQuery.sql).toContain('ILIKE');
+    expect(libraryQuery.params).toContain('%ender%');
+    expect(libraryQuery.params).toContain('%spider%');
+    const catalogQuery = new PgDialect().sqlToQuery(builder.where.mock.calls[1]?.[0] as SQL);
+    expect(catalogQuery.sql).toContain('ILIKE');
+    expect(catalogQuery.params).toContain('%ender%');
+  });
+
+  it('folds library title keys against every listed author of each book', async () => {
+    const rows = [
+      { bookId: 1, title: 'Good Omens', authorName: 'Neil Gaiman', displayOrder: 1, authorId: 11 },
+      { bookId: 1, title: 'Good Omens', authorName: 'Terry Pratchett', displayOrder: 0, authorId: 12 },
+    ];
+    const { db } = setDb(rows);
+    const store = new MonitoredStoreService(db as never, libraries as never);
+
+    const keys = await store.findLibraryTitleAuthorKeys([2, 3], ['goodomens']);
+
+    expect(keys).toEqual(new Set(['goodomens|neilgaiman', 'goodomens|terrypratchett']));
+  });
+
+  it('folds catalog title keys against the monitor author name, scoped to the caller', async () => {
+    const { db, builder } = setDb([{ title: 'The Final Empire', authorName: 'Brandon Sanderson' }]);
+    const store = new MonitoredStoreService(db as never, {} as never);
+
+    const keys = await store.findCatalogTitleAuthorKeys({ id: 5, isSuperuser: false } as RequestUser, ['thefinalempire']);
+
+    expect(keys).toEqual(new Set(['thefinalempire|brandonsanderson']));
+    const query = new PgDialect().sqlToQuery(builder.where.mock.calls[0]?.[0] as SQL);
+    expect(query.sql).toContain('"monitored_authors"."owner_user_id" = $');
+    expect(builder.leftJoin).toHaveBeenCalled();
+    expect(query.sql).toContain('"monitored_author_works"."user_visibility"');
+    expect(query.sql).toContain('"monitored_author_works"."monitor_state"');
+  });
+
+  it('reads monitored hardcover provider ids scoped to the caller', async () => {
+    const { db, builder } = setDb([{ providerId: '12345' }]);
+    const store = new MonitoredStoreService(db as never, {} as never);
+
+    await expect(store.findMonitoredHardcoverProviderIds({ id: 5, isSuperuser: false } as RequestUser, ['12345'])).resolves.toEqual(
+      new Set(['12345']),
+    );
+
+    const query = new PgDialect().sqlToQuery(builder.where.mock.calls[0]?.[0] as SQL);
+    expect(query.sql).toContain('"author_provider_identities"."source" = $');
+    expect(query.sql).toContain('"monitored_authors"."owner_user_id" = $');
+  });
+
+  describe('local author name keys', () => {
+    const distinctDb = (rows: unknown[]) => {
+      const builder = {} as Record<string, ReturnType<typeof vi.fn>>;
+      for (const method of ['from', 'innerJoin', 'where']) builder[method] = vi.fn(() => builder);
+      builder.then = vi.fn((resolve: (value: unknown[]) => unknown) => Promise.resolve(rows).then(resolve));
+      return { db: { selectDistinct: vi.fn(() => builder) }, builder };
+    };
+
+    it('reads the whole candidate list through the accessible-library scope in one query', async () => {
+      const { db, builder } = distinctDb([{ name: 'Brandon Sanderson' }]);
+      const store = new MonitoredStoreService(db as never, libraries as never);
+
+      await expect(store.findLocalAuthorNameKeys([2, 3], ['Brandon Sanderson', 'Sandé Brandt'])).resolves.toEqual(new Set(['brandonsanderson']));
+
+      const query = new PgDialect().sqlToQuery(builder.where.mock.calls[0]?.[0] as SQL);
+      expect(query.sql).toContain('ILIKE');
+      expect(query.sql).toContain('"books"."library_id" in ($');
+      expect(db.selectDistinct).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips the library scope for a superuser, who can reach every library', async () => {
+      const { db, builder } = distinctDb([{ name: 'Brandon Sanderson' }]);
+      const store = new MonitoredStoreService(db as never, libraries as never);
+
+      await store.findLocalAuthorNameKeys(null, ['Brandon Sanderson']);
+
+      const query = new PgDialect().sqlToQuery(builder.where.mock.calls[0]?.[0] as SQL);
+      expect(query.sql).not.toContain('"books"."library_id"');
+    });
+
+    it('keeps only the requested keys even when the prefilter widens the scan', async () => {
+      const { db } = distinctDb([{ name: 'Other Author' }, { name: 'BRANDON SANDERSON' }]);
+      const store = new MonitoredStoreService(db as never, libraries as never);
+
+      await expect(store.findLocalAuthorNameKeys([2, 3], ['Brandon Sanderson'])).resolves.toEqual(new Set(['brandonsanderson']));
+    });
+
+    it('never matches a name that folds to an empty key', async () => {
+      const { db } = distinctDb([]);
+      const store = new MonitoredStoreService(db as never, libraries as never);
+
+      await expect(store.findLocalAuthorNameKeys([2, 3], ['...'])).resolves.toEqual(new Set());
+      expect(db.selectDistinct).not.toHaveBeenCalled();
+    });
+  });
+});

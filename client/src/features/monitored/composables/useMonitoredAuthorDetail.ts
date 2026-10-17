@@ -75,7 +75,7 @@ export function useMonitoredAuthorDetail() {
   const collapse = ref<MonitoredCollapseEntry>(emptyCollapseEntry())
   const statusFilters = ref<MonitoredStatusFilter[]>(readAuthorStatusFilters(storage.get<unknown>(STATUS_STORAGE_KEY, null)))
 
-  const authorId = computed(() => String(route.params.id ?? ''))
+  const authorId = ref(String(route.params.id ?? ''))
   // Collapsed sections are remembered per author, so returning to one finds the catalog as it was
   // left and a sibling author is untouched by it.
   watch(

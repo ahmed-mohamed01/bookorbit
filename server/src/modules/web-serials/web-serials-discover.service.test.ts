@@ -121,6 +121,7 @@ describe('WebSerialsDiscoverService discover', () => {
         matchId: '1995',
         kind: 'manga',
         title: 'Frieren: Beyond Journey’s End',
+        altTitles: ['Sousou no Frieren', '葬送のフリーレン', "Frieren: Beyond Journey's End"],
         authors: ['Kanehito Yamada'],
         artists: ['Tsukasa Abe'],
         year: 2020,
@@ -138,13 +139,30 @@ describe('WebSerialsDiscoverService discover', () => {
     expect(engines.getConfig).toHaveBeenCalled();
   });
 
-  it('never exposes the third-party cover url or the alternative titles', async () => {
+  it('never exposes the third-party cover url, but does list the alternative titles', async () => {
     const { service } = setup();
 
     const [entry] = (await service.discover('frieren', 'manga', USER)).results;
 
     expect(JSON.stringify(entry)).not.toContain('cdn.example');
-    expect(JSON.stringify(entry)).not.toContain('Sousou');
+    expect(entry.altTitles).toEqual(['Sousou no Frieren', '葬送のフリーレン', "Frieren: Beyond Journey's End"]);
+  });
+
+  it('caps the entry alt titles at fifteen and never repeats the main title in them', async () => {
+    const { service, lookup } = setup();
+    const series = {
+      ...frieren,
+      romanized_title: null,
+      native_title: null,
+      secondary_titles: { en: Array.from({ length: 20 }, (_, index) => ({ title: `Alt Title ${index}` })) },
+    };
+    lookup.searchCatalog.mockResolvedValue({ state: 'ok', series: [series] } as never);
+
+    const [entry] = (await service.discover('alt', 'manga', USER)).results;
+
+    expect(entry.altTitles).toHaveLength(15);
+    expect(entry.altTitles).toEqual(Array.from({ length: 15 }, (_, index) => `Alt Title ${index}`));
+    expect(entry.altTitles).not.toContain(series.title);
   });
 
   it('marks entries already in the library by one bounded ledger lookup over the result ids', async () => {
@@ -226,6 +244,58 @@ describe('WebSerialsDiscoverService discover', () => {
     );
 
     await expect(service.discover('frieren', 'all', USER)).resolves.toEqual({ results: [], fallback: 'unavailable' });
+  });
+});
+
+describe('WebSerialsDiscoverService entry', () => {
+  it('returns the complete entry with the user’s library flag', async () => {
+    const { service, repo } = setup();
+    repo.findImportedMatchKeys.mockResolvedValue(new Set(['mb:1995']));
+
+    const entry = await service.getEntry('manga', '1995', USER);
+
+    expect(repo.findImportedMatchKeys).toHaveBeenCalledWith(7, ['mb:1995']);
+    expect(entry).toEqual({
+      matchId: '1995',
+      kind: 'manga',
+      title: 'Frieren: Beyond Journey’s End',
+      altTitles: ['Sousou no Frieren', '葬送のフリーレン', "Frieren: Beyond Journey's End"],
+      authors: ['Kanehito Yamada'],
+      artists: ['Tsukasa Abe'],
+      year: 2020,
+      status: 'ongoing',
+      genres: ['Slice Of Life'],
+      synopsis: 'An elf outlives her party.',
+      coverUrl: '/api/v1/web-serials/discover/manga/1995/cover',
+      url: 'https://mangabaka.org/1995',
+      inLibrary: true,
+      publication: { licensed: true, finalVolume: 13, publishers: [{ name: 'VIZ Media', type: 'English', language: 'en' }] },
+    });
+  });
+
+  it('stays complete when the info cache only holds what source checks need', async () => {
+    const { service, repo } = setup();
+    await service.getSources('manga', '1995', USER);
+
+    const entry = await service.getEntry('manga', '1995', USER);
+
+    expect(repo.findImportedMatchKeys).toHaveBeenCalledWith(7, ['mb:1995']);
+    expect(entry).toMatchObject({
+      matchId: '1995',
+      year: 2020,
+      status: 'ongoing',
+      genres: ['Slice Of Life'],
+      synopsis: 'An elf outlives her party.',
+    });
+  });
+
+  it('rejects a malformed id before any lookup and a series of the other kind', async () => {
+    const { service, lookup } = setup();
+
+    await expect(service.getEntry('manga', 'abc', USER)).rejects.toBeInstanceOf(BadRequestException);
+    expect(lookup.getCatalogSeries).not.toHaveBeenCalled();
+    lookup.getCatalogSeries.mockResolvedValue(mother);
+    await expect(service.getEntry('manga', '77', USER)).rejects.toBeInstanceOf(NotFoundException);
   });
 });
 

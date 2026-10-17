@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
 import type { BookRequestItem, MonitoredBookItem, MonitoredReleaseDateLookup } from '@bookorbit/types'
 import {
+  searchCatalogWorks,
   bulkRequestMonitoredWorks,
   bulkUpdateMonitoredWorks,
   fetchMonitoredAuthorDetail,
@@ -218,4 +219,11 @@ describe('bulk work calls', () => {
 
     await expect(bulkRequestMonitoredWorks({ workIds: [], format: 'ebook' })).rejects.toThrow('too many works')
   })
+})
+
+it('sends the catalog limit and abort signal', async () => {
+  mockedApi.mockResolvedValue(mockOkResponse([]))
+  const controller = new AbortController()
+  await searchCatalogWorks('final', 10, controller.signal)
+  expect(mockedApi).toHaveBeenCalledWith('/api/v1/monitored/catalog/search?q=final&limit=10', { signal: controller.signal })
 })

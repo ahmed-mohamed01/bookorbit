@@ -10,6 +10,7 @@ import { buildRequestSignal, sanitizeLogError, sleep } from '../provider-utils';
 import {
   HardcoverAuthorSearchDocument,
   HardcoverAuthorSearchResponse,
+  HardcoverBookAndAuthorSearchResponse,
   HardcoverAuthorWithContributions,
   HardcoverAuthorContributionsResponse,
   HardcoverBookWithEditions,
@@ -93,6 +94,18 @@ const SEARCH_BOOKS_QUERY = `
 const SEARCH_AUTHORS_QUERY = `
   query AuthorSearch($q: String!) {
     search(query: $q, query_type: "Author", per_page: 5, page: 1) {
+      results
+    }
+  }
+`;
+
+// Both searches in one request, so a caller that needs books and authors takes one rate-limit slot.
+const SEARCH_BOOKS_AND_AUTHORS_QUERY = `
+  query BookAndAuthorSearch($q: String!, $limit: Int!) {
+    books: search(query: $q, query_type: "Book", per_page: $limit, page: 1) {
+      results
+    }
+    authors: search(query: $q, query_type: "Author", per_page: 5, page: 1) {
       results
     }
   }
@@ -187,6 +200,10 @@ class RateLimiter {
       await sleep(wait, signal);
     }
   }
+
+  queueDelayMs(): number {
+    return Math.max(0, this.nextAllowedTime - Date.now());
+  }
 }
 
 // GraphQL reports query and permission faults in a 200 body, sometimes alongside partial data.
@@ -201,6 +218,10 @@ function reportGraphqlBodyQuality(body: unknown, op: string): void {
 export class HardcoverClient {
   private readonly logger = new Logger(HardcoverClient.name);
   private readonly rateLimiter = new RateLimiter();
+
+  queueDelayMs(): number {
+    return this.rateLimiter.queueDelayMs();
+  }
 
   async searchByIsbn(isbn: string, apiKey: string, signal?: AbortSignal): Promise<HardcoverBookWithEditions[]> {
     const body = await this.post<HardcoverBooksResponse>('search-by-isbn', SEARCH_BY_ISBN_QUERY, { isbn }, apiKey, signal);
@@ -235,6 +256,34 @@ export class HardcoverClient {
         ?.map((hit) => hit.document)
         .filter((document): document is HardcoverAuthorSearchDocument => document != null) ?? []
     );
+  }
+
+  async searchBooksAndAuthors(
+    query: string,
+    apiKey: string,
+    signal?: AbortSignal,
+    options?: HardcoverRequestOptions,
+  ): Promise<{ books: HardcoverSearchDocument[]; authors: HardcoverAuthorSearchDocument[] }> {
+    const body = await this.post<HardcoverBookAndAuthorSearchResponse>(
+      'book-author-search',
+      SEARCH_BOOKS_AND_AUTHORS_QUERY,
+      { q: query, limit: PROVIDER_LIMITS.DEFAULT_SEARCH_RESULTS },
+      apiKey,
+      signal,
+      options,
+    );
+    const bookHits = body?.data?.books?.results?.hits;
+    const authorHits = body?.data?.authors?.results?.hits;
+    // A 200 whose hits are not arrays is not an answer: caching it as empty would silence the
+    // provider for every user of that query until the cache entry expires. The only caller opts
+    // into surfaceFailures, so a malformed body is always a failure here.
+    if (!Array.isArray(bookHits) || !Array.isArray(authorHits)) {
+      throw new HardcoverRequestError('book-author-search', 200);
+    }
+    return {
+      books: bookHits.map((hit) => hit.document).filter((document): document is HardcoverSearchDocument => document != null),
+      authors: authorHits.map((hit) => hit.document).filter((document): document is HardcoverAuthorSearchDocument => document != null),
+    };
   }
 
   async fetchAuthorContributions(
@@ -277,7 +326,7 @@ export class HardcoverClient {
   }
 
   private async post<T>(
-    op: 'search-by-isbn' | 'search' | 'lookup' | 'author-search' | 'author-contributions' | 'editions-by-slugs',
+    op: 'search-by-isbn' | 'search' | 'lookup' | 'author-search' | 'book-author-search' | 'author-contributions' | 'editions-by-slugs',
     query: string,
     variables: Record<string, unknown>,
     apiKey: string,

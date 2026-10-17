@@ -46,6 +46,7 @@ import type { MonitoredWorkGroup } from '../lib/grouping'
 import { useMonitoredAuthorDetail } from '../composables/useMonitoredAuthorDetail'
 import { useRefreshFeedback } from '../composables/useRefreshFeedback'
 import { seriesMembershipForGroup } from '../lib/grouping'
+import { useLinkedWorkParam } from '../composables/useLinkedWorkParam'
 
 const { t, d } = useI18n()
 const route = useRoute()
@@ -99,8 +100,8 @@ const panelWork = ref<MonitoredWork | null>(null)
 const panelOpen = ref(false)
 // Deferred server reconciliation runs when this kept-alive view returns.
 let reloadOnActivate = false
-let viewActive = true
-let initialLoadComplete = false
+const viewActive = ref(true)
+const initialLoadComplete = ref(false)
 let requestRefreshPending = false
 let requestRefreshTimer: ReturnType<typeof setTimeout> | null = null
 const REQUEST_CHANGE_DEBOUNCE_MS = 1500
@@ -242,6 +243,7 @@ function handlePanelGrabbed(work: MonitoredWork, format: MonitoredFormat, reques
  */
 async function handlePanelFiled(work: MonitoredWork) {
   await load()
+  void openLinkedWork()
   panelWork.value = detail.value?.works.find((candidate) => candidate.id === work.id) ?? panelWork.value
 }
 
@@ -403,20 +405,20 @@ function groupLabel(key: string, fallback: string): string {
 }
 
 function flushRequestRefresh(): void {
-  if (!requestRefreshPending || !initialLoadComplete || loading.value) return
+  if (!requestRefreshPending || !initialLoadComplete.value || loading.value) return
   requestRefreshPending = false
-  if (!viewActive) {
+  if (!viewActive.value) {
     reloadOnActivate = true
     return
   }
-  void load()
+  void load().then(openLinkedWork)
 }
 
 function handleRequestsChanged(): void {
   if (requestRefreshTimer) clearTimeout(requestRefreshTimer)
   requestRefreshTimer = setTimeout(() => {
     requestRefreshTimer = null
-    if (!viewActive) {
+    if (!viewActive.value) {
       reloadOnActivate = true
       return
     }
@@ -431,26 +433,36 @@ watch(loading, (isLoading) => {
   if (!isLoading) flushRequestRefresh()
 })
 
+const { openLinkedWork } = useLinkedWorkParam({
+  works: computed(() => detail.value?.works ?? []),
+  ready: initialLoadComplete,
+  active: viewActive,
+  load,
+  open: handlePreview,
+})
+
 onMounted(async () => {
   await load()
-  initialLoadComplete = true
+  initialLoadComplete.value = true
+  void openLinkedWork()
   flushRequestRefresh()
 })
 
 onActivated(() => {
-  viewActive = true
+  viewActive.value = true
+  void openLinkedWork()
   if (!reloadOnActivate) return
   reloadOnActivate = false
-  void load()
+  void load().then(openLinkedWork)
 })
 
 onDeactivated(() => {
-  viewActive = false
+  viewActive.value = false
   exitSelectionMode()
 })
 
 onUnmounted(() => {
-  viewActive = false
+  viewActive.value = false
   window.removeEventListener('keydown', handleSelectionKeydown)
   exitSelectionMode()
   if (requestRefreshTimer) clearTimeout(requestRefreshTimer)

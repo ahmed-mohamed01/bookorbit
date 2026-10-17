@@ -43,6 +43,7 @@ function setup() {
     pauseQueue: vi.fn().mockResolvedValue({ queuePaused: true }),
     resumeQueue: vi.fn().mockResolvedValue({ queuePaused: false }),
     discover: vi.fn().mockResolvedValue({ results: [], fallback: 'empty' }),
+    getEntry: vi.fn().mockResolvedValue({ matchId: '1995', kind: 'manga', inLibrary: false }),
     getSources: vi.fn().mockResolvedValue({ options: [], failedSources: [] }),
     getCover: vi.fn().mockResolvedValue({ body: Buffer.from('img'), contentType: 'image/png' }),
     getProviders: vi.fn().mockResolvedValue({}),
@@ -72,7 +73,7 @@ describe('WebSerialsController', () => {
   it('gates every route with WebSerialAccess', () => {
     const proto = WebSerialsController.prototype as unknown as Record<string, unknown>;
     const routes = Object.getOwnPropertyNames(WebSerialsController.prototype).filter((name) => name !== 'constructor');
-    expect(routes).toHaveLength(30);
+    expect(routes).toHaveLength(31);
     const adminRoutes = ['pauseQueue', 'resumeQueue'];
     for (const route of routes) {
       const expected = adminRoutes.includes(route) ? [Permission.WebSerialAccess, Permission.ManageAppSettings] : Permission.WebSerialAccess;
@@ -88,6 +89,7 @@ describe('WebSerialsController', () => {
     expect(route('search')).toEqual([RequestMethod.GET, 'search']);
     expect(route('suggest')).toEqual([RequestMethod.GET, 'suggest']);
     expect(route('discover')).toEqual([RequestMethod.GET, 'discover']);
+    expect(route('getDiscoverEntry')).toEqual([RequestMethod.GET, 'discover/:kind/:matchId']);
     expect(route('getDiscoverSources')).toEqual([RequestMethod.GET, 'discover/:kind/:matchId/sources']);
     expect(route('getDiscoverCover')).toEqual([RequestMethod.GET, 'discover/:kind/:matchId/cover']);
     expect(route('getNovelProviders')).toEqual([RequestMethod.GET, 'novel-providers']);
@@ -234,6 +236,14 @@ describe('WebSerialsController', () => {
     await controller.discover({ q: 'dune' }, USER);
 
     expect(service.discover).toHaveBeenCalledWith('dune', 'all', USER, false);
+  });
+
+  it('serves one catalog entry scoped to the calling user', async () => {
+    const { controller, service } = setup();
+
+    await controller.getDiscoverEntry({ kind: 'manga', matchId: '1995' }, USER);
+
+    expect(service.getEntry).toHaveBeenCalledWith('manga', '1995', USER);
   });
 
   it('serves a discover cover with hardening headers', async () => {

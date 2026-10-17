@@ -223,3 +223,10 @@ export interface HardcoverImage {
   width?: number | null;
   height?: number | null;
 }
+
+export interface HardcoverBookAndAuthorSearchResponse {
+  data?: {
+    books?: { results?: HardcoverSearchResults };
+    authors?: { results?: HardcoverAuthorSearchResults };
+  };
+}

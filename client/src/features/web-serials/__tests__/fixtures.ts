@@ -62,6 +62,7 @@ export function catalogEntry(overrides: Partial<WebSerialCatalogEntry> = {}): We
     matchId: '1995',
     kind: 'manga',
     title: 'Frieren: Beyond Journey’s End',
+    altTitles: [],
     authors: ['Kanehito Yamada'],
     artists: ['Tsukasa Abe'],
     year: 2020,
@@ -138,6 +139,7 @@ export function jobItem(overrides: Partial<WebSerialJobItem> = {}): WebSerialJob
 export function suggestion(overrides: Partial<WebSerialSuggestion> = {}): WebSerialSuggestion {
   return {
     kind: 'novel',
+    inLibrary: false,
     title: 'Omniscient Reader',
     cover: null,
     sourcesCount: 2,
