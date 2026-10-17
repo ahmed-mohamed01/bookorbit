@@ -661,6 +661,11 @@ export class RequestFulfillmentService {
     };
 
     if (release.magnet) {
+      // A proxy can publish both, as Jackett does for Nyaa with "Prefer Magnet Links" off. The
+      // .torrent is the only way to see the files before the grab, so it wins; the magnet is kept
+      // for when that fetch fails, which leaves the release exactly as grabbable as before.
+      const torrentFile = release.downloadUrl ? await this.torrentBesideMagnet(indexer, release, release.magnet) : null;
+      if (torrentFile) return torrentFileGrab(snapshot, torrentFile);
       return {
         ...snapshot,
         source: 'magnet',
@@ -742,18 +747,33 @@ export class RequestFulfillmentService {
         inspection: metadataUnavailableInspection('magnet'),
       };
     }
-    const metadata = torrentMetadataFromFile(torrentFile);
-    return {
-      ...snapshot,
-      source: 'torrent_file',
-      torrentFile,
-      // Named after the hash rather than the guid, which on torznab is a URL and would put path
-      // separators into a multipart filename.
-      torrentFileName: `${metadata.infoHash}.torrent`,
-      clientKey: metadata.infoHash,
-      releaseSizeBytes: snapshot.releaseSizeBytes ?? metadata.totalLength,
-      inspection: torrentInspection(metadata),
-    };
+    return torrentFileGrab(snapshot, { file: torrentFile, metadata: torrentMetadataFromFile(torrentFile) });
+  }
+
+  private async torrentBesideMagnet(indexer: ResolvedIndexerConfig, release: ReleaseCandidate, magnet: string): Promise<FetchedTorrent | null> {
+    const startedAt = Date.now();
+    try {
+      const adapter = this.indexerRegistry.require(indexer.adapterType);
+      if (!adapter.fetchTorrentFile) return null;
+      const fetched = await adapter.fetchTorrentFile(release, indexer);
+      if (!Buffer.isBuffer(fetched)) return null;
+      const metadata = torrentMetadataFromFile(fetched);
+      // The magnet's hash is what the feed named, and the client verifies every piece against
+      // it. A .torrent for anything else is a different release, so the magnet stays the answer.
+      const expected = infoHashFromMagnet(magnet);
+      if (metadata.infoHash !== expected) {
+        this.logger.warn(
+          `[book_request.release_resolve] [fail] indexerId=${indexer.id} durationMs=${Date.now() - startedAt} expectedHash=${expected} torrentHash=${metadata.infoHash} - .torrent does not match the magnet, using the magnet`,
+        );
+        return null;
+      }
+      return { file: fetched, metadata };
+    } catch (error) {
+      this.logger.warn(
+        `[book_request.release_resolve] [fail] indexerId=${indexer.id} durationMs=${Date.now() - startedAt} errorClass=${error instanceof Error ? error.constructor.name : typeof error} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - .torrent fetch failed, using the magnet`,
+      );
+      return null;
+    }
   }
 
   private rememberResolvedRelease(key: string, candidate: ReleaseCandidate, grab: ResolvedGrab): void {
@@ -845,6 +865,25 @@ function isRefreshableManagedReleaseError(error: unknown): boolean {
  * the reason is the tracker's own sentence. Letting the adapter's error through unmapped reports
  * it as a 500 with a stack trace, which loses the sentence and reads as a fault on our side.
  */
+interface FetchedTorrent {
+  file: Buffer;
+  metadata: ReturnType<typeof torrentMetadataFromFile>;
+}
+
+function torrentFileGrab<T extends { releaseSizeBytes: number | null }>(snapshot: T, torrent: FetchedTorrent) {
+  return {
+    ...snapshot,
+    source: 'torrent_file' as const,
+    torrentFile: torrent.file,
+    // Named after the hash rather than the guid, which on torznab is a URL and would put path
+    // separators into a multipart filename.
+    torrentFileName: `${torrent.metadata.infoHash}.torrent`,
+    clientKey: torrent.metadata.infoHash,
+    releaseSizeBytes: snapshot.releaseSizeBytes ?? torrent.metadata.totalLength,
+    inspection: torrentInspection(torrent.metadata),
+  };
+}
+
 async function fetchTorrentFile(adapter: IndexerAdapter, release: ReleaseCandidate, indexer: ResolvedIndexerConfig): Promise<TorrentFetchResult> {
   try {
     return await adapter.fetchTorrentFile!(release, indexer);

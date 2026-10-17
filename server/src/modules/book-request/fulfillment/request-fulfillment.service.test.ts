@@ -5,6 +5,7 @@ import type { RequestUser } from '../../../common/types/request-user';
 import type { BookRequestDownloadRow, BookRequestRow } from '../../../db/schema';
 import { newznabClientKey } from '../indexers/adapters/newznab.adapter';
 import { IndexerRetryExhaustedException, IndexerSearchException } from '../indexers/indexer-adapter';
+import { torrentMetadataFromFile } from './torrent.utils';
 import { RequestFulfillmentService } from './request-fulfillment.service';
 
 const INFO_HASH = 'c9e15763f722f23e98a29decdfae341b98d53056';
@@ -583,7 +584,9 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
   });
 
   it('explains that a magnet needs swarm metadata before its files are knowable', async () => {
-    const { service, indexerAdapter } = makeService({ releases: { find: vi.fn().mockReturnValue({ ...RELEASE, magnet: MAGNET }) } });
+    const { service, indexerAdapter } = makeService({
+      releases: { find: vi.fn().mockReturnValue({ ...RELEASE, downloadUrl: undefined, magnet: MAGNET }) },
+    });
 
     await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' })).resolves.toEqual({
       source: 'magnet',
@@ -798,7 +801,12 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
     });
     const { service, adapter } = makeService({
       releases: {
-        find: vi.fn().mockReturnValue({ ...RELEASE, seedRatioGoal: 1, seedTimeMinutes: 4320, ...(transport === 'magnet' ? { magnet: MAGNET } : {}) }),
+        find: vi.fn().mockReturnValue({
+          ...RELEASE,
+          seedRatioGoal: 1,
+          seedTimeMinutes: 4320,
+          ...(transport === 'magnet' ? { downloadUrl: undefined, magnet: MAGNET } : {}),
+        }),
       },
       indexers: { resolveSeedPolicy },
       indexerAdapter: { fetchTorrentFile },
@@ -962,12 +970,58 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
     expect(downloads.create).toHaveBeenCalledWith(expect.objectContaining({ releaseFormat: 'epub' }));
   });
 
-  it('uses the magnet directly when the indexer published one, without fetching a .torrent', async () => {
-    const { service, downloads, indexerAdapter } = makeService({ releases: { find: vi.fn().mockReturnValue({ ...RELEASE, magnet: MAGNET }) } });
+  it('uses the magnet directly when the indexer published only that', async () => {
+    const { service, downloads, indexerAdapter } = makeService({
+      releases: { find: vi.fn().mockReturnValue({ ...RELEASE, downloadUrl: undefined, magnet: MAGNET }) },
+    });
 
     await service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
 
     expect(indexerAdapter.fetchTorrentFile).not.toHaveBeenCalled();
+    expect(downloads.create).toHaveBeenCalledWith(expect.objectContaining({ source: 'magnet', clientKey: INFO_HASH }));
+  });
+
+  /** Jackett's Nyaa with "Prefer Magnet Links" off publishes both. */
+  it('prefers the .torrent over the magnet when the indexer published both, so its files can be listed', async () => {
+    const torrent = multiFileTorrent(['v01.epub', 'v02.epub']);
+    const magnet = `magnet:?xt=urn:btih:${torrentMetadataFromFile(torrent).infoHash}`;
+    const { service, downloads, indexerAdapter } = makeService({
+      releases: { find: vi.fn().mockReturnValue({ ...RELEASE, magnet }) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrent) },
+    });
+
+    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' })).resolves.toMatchObject({
+      source: 'torrent_file',
+      totalFiles: 2,
+    });
+    await service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+
+    expect(indexerAdapter.fetchTorrentFile).toHaveBeenCalledOnce();
+    expect(downloads.create).toHaveBeenCalledWith(expect.objectContaining({ source: 'torrent_file' }));
+  });
+
+  it('keeps the magnet when the .torrent beside it is a different torrent', async () => {
+    const { service, downloads } = makeService({
+      releases: { find: vi.fn().mockReturnValue({ ...RELEASE, magnet: MAGNET }) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes('not-the-release.epub')) },
+    });
+
+    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' })).resolves.toMatchObject({ source: 'magnet' });
+    await service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+
+    expect(downloads.create).toHaveBeenCalledWith(expect.objectContaining({ source: 'magnet', clientKey: INFO_HASH }));
+  });
+
+  it('falls back to the magnet when the .torrent beside it cannot be fetched', async () => {
+    const { service, downloads } = makeService({
+      releases: { find: vi.fn().mockReturnValue({ ...RELEASE, magnet: MAGNET }) },
+      indexerAdapter: {
+        fetchTorrentFile: vi.fn().mockRejectedValue(new IndexerSearchException('error', 'The indexer answered 404 for that download link')),
+      },
+    });
+
+    await service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+
     expect(downloads.create).toHaveBeenCalledWith(expect.objectContaining({ source: 'magnet', clientKey: INFO_HASH }));
   });
 
