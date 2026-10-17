@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BookOpen, Check, CopyPlus, Files, Image, Layers, Library, Split } from '@lucide/vue'
+import { BookOpen, Check, CopyPlus, Files, Image, Layers, Library, NotebookPen, Split } from '@lucide/vue'
 import { MONITORED_MARK_KINDS, type MonitoredMarkKind } from '@bookorbit/types'
 import { DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 
@@ -24,6 +24,7 @@ const KIND_ICONS: Record<MonitoredMarkKind, Component> = {
   split_part: Split,
   anthology: Library,
   graphic_novel: Image,
+  supplemental: NotebookPen,
   format_variant: CopyPlus,
   duplicate: Files,
 }

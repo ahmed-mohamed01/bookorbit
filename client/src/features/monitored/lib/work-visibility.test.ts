@@ -88,6 +88,7 @@ describe('countReviewKinds', () => {
       split_part: 1,
       anthology: 0,
       graphic_novel: 0,
+      supplemental: 0,
       format_variant: 0,
       duplicate: 1,
       other: 1,

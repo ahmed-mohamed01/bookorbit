@@ -349,6 +349,18 @@ describe('bootstrap SQL carries the columns the table declares', () => {
     expect(MONITORED_SCHEMA_SQL).toContain('ALTER TABLE "author_catalog_works" ADD COLUMN IF NOT EXISTS "kind" varchar(20);');
   });
 
+  it('replaces a kind check that predates the supplemental kind on an existing database', () => {
+    // The checks are only ever added when missing, so a database created before 'supplemental' keeps
+    // rejecting it until the outdated check is dropped and re-added.
+    for (const [table, constraint] of [
+      ['author_catalog_works', 'author_catalog_works_kind_chk'],
+      ['monitored_author_works', 'monitored_author_works_user_kind_chk'],
+    ]) {
+      expect(MONITORED_SCHEMA_SQL).toContain(`WHERE conname = '${constraint}'\n\t\t\tAND pg_get_constraintdef(oid) NOT LIKE '%supplemental%'`);
+      expect(MONITORED_SCHEMA_SQL).toContain(`ALTER TABLE "${table}" DROP CONSTRAINT "${constraint}";`);
+    }
+  });
+
   it('creates the user kind column on a fresh database and adds it to an existing one', () => {
     expect(MONITORED_SCHEMA_SQL).toContain('"user_kind" varchar(16)');
     expect(MONITORED_SCHEMA_SQL).toContain('ALTER TABLE "monitored_author_works" ADD COLUMN IF NOT EXISTS "user_kind" varchar(16);');

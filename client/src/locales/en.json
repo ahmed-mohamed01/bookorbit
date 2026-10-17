@@ -14639,6 +14639,10 @@
           "title": "Comic",
           "description": "Graphic novel or manga"
         },
+        "supplemental": {
+          "title": "Supplemental",
+          "description": "Annotations, excerpts, companions or game books"
+        },
         "format_variant": {
           "title": "Alternate edition",
           "description": "Another edition of a book you watch"
@@ -14826,6 +14830,7 @@
         "split_part": "Parts of a book",
         "anthology": "Anthologies",
         "graphic_novel": "Comics",
+        "supplemental": "Supplemental",
         "format_variant": "Alternate editions",
         "duplicate": "Duplicates",
         "other": "Other"
@@ -14835,6 +14840,7 @@
         "split_part": "Part of a book",
         "anthology": "Anthology",
         "graphic_novel": "Comic",
+        "supplemental": "Supplemental",
         "format_variant": "Alt edition",
         "duplicate": "Duplicate",
         "other": "Unverified"

@@ -1,7 +1,13 @@
 import type { MonitoredWorkKind } from '@bookorbit/types';
 
 import { normalizeText } from './observation-matcher';
-import { COLLECTION_TITLE_PATTERN, DRAMATIZED_ADAPTATION_PATTERN } from './work-shape';
+import {
+  COLLECTION_TITLE_PATTERN,
+  DRAMATIZED_ADAPTATION_PATTERN,
+  GRAPHIC_NOVEL_TITLE_PATTERN,
+  SUPPLEMENTAL_SERIES_PATTERN,
+  SUPPLEMENTAL_TITLE_PATTERN,
+} from './work-shape';
 import type { MergedWork, Observation } from './observation.types';
 
 /**
@@ -31,6 +37,7 @@ const KIND_BY_HIDE_REASON: Record<string, MonitoredWorkKind> = {
   format_variant: 'format_variant',
   multi_author_anthology: 'anthology',
   graphic_novel: 'graphic_novel',
+  supplemental: 'supplemental',
 };
 
 /**
@@ -429,6 +436,39 @@ function isCollection(work: MergedWork, signals: HardcoverSignals, isCompilableS
   return !holdsAnySeriesPosition(work) || namesItsOwnSeries(work, isCompilableSeries);
 }
 
+/** Annotations, excerpts, companions and game books: material about the author's books, not one of them. */
+function isSupplemental(work: MergedWork): boolean {
+  if (SUPPLEMENTAL_TITLE_PATTERN.test(work.title)) return true;
+  const entries = seriesEntries(work);
+  return entries.length > 0 && entries.every((entry) => SUPPLEMENTAL_SERIES_PATTERN.test(entry.name));
+}
+
+/**
+ * A title whose tail word is "Series" - `The Reckoners Series` - names a whole series rather than one
+ * entry in it. The tail alone also sits on novels (`Murder at the World Series`), so the rest of the
+ * title must also name a series this author actually has. Vocabulary keys are normalized text
+ * (lowercase letters, digits and single spaces), so they embed into the regex without escaping.
+ */
+const SERIES_TAIL_PATTERN = /\bseries\s*$/i;
+
+function namesAuthorSeries(title: string, vocabulary: Map<string, Set<string>>): boolean {
+  const tail = SERIES_TAIL_PATTERN.exec(title);
+  if (!tail) return false;
+  const rest = normalizeText(title.slice(0, tail.index)).replace(SERIES_LEADING_ARTICLE_PATTERN, '').trim();
+  return [...vocabulary.keys()].some((name) => name.length >= MIN_SERIES_NAME_LENGTH && new RegExp(`(?:^|\\s)${name}(?:\\s|$)`).test(rest));
+}
+
+// The comic label and any volume number, so `Dungeon Crawler Carl (Graphic Novel), Vol. 1` and `The
+// Communist Manifesto: A Graphic Novel` reduce to the title of the prose book they adapt. The whole
+// title survives: cutting at a subtitle separator would make `Dune: House Atreides (Graphic Novel)`
+// an adaptation of `Dune`, when it adapts the prequel the separator names.
+const GRAPHIC_LABEL_STRIP_PATTERN =
+  /[([]?\b(?:an?\s+|the\s+|el\s+|in\s+)?(?:original\s+|webtoon\s+)?(?:graphic novels?|manga|comics?|webtoon)\b[)\]]?|[,:]?\s*\b(?:vol\.?|volume|book|band)\s*\d+\b/gi;
+
+function graphicAdaptationTitle(title: string): string {
+  return normalizeText(title.replace(GRAPHIC_LABEL_STRIP_PATTERN, ' '));
+}
+
 /**
  * A dated upcoming release. Six of the 23 upcoming books across the validation set have a readership
  * of 3 or less and one has none at all, so this branch is exempt from every popularity, quality,
@@ -480,6 +520,9 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
 
   const reject = (index: number, reason: string): void => {
     if (rejected.has(index)) return;
+    // A supplemental work already sits in the review tray; a later duplicate rule must not drop it
+    // from the catalog and take the promote-back choice away.
+    if (hidden.has(index) && reasons.get(index) === 'supplemental') return;
     rejected.add(index);
     reasons.set(index, reason);
   };
@@ -522,6 +565,10 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   };
 
   const collections = works.map((work, index) => isCollection(work, signals[index], isCompilableSeries));
+  const isGraphic = (index: number): boolean => signals[index].categoryId === CATEGORY_GRAPHIC_NOVEL;
+  // A comic Hardcover did not categorise but whose own title says so. It is only ever hidden beside
+  // the prose book it adapts; the category alone decides lifting rejects and the format-variant rule.
+  const titledComic = works.map((work, index) => !isGraphic(index) && GRAPHIC_NOVEL_TITLE_PATTERN.test(work.title));
 
   // B1 - hard rejects on the row's own record.
   works.forEach((work, index) => {
@@ -529,6 +576,12 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
     else if (!isAuthorRole(signals[index])) reject(index, 'contributor_role');
     else if (DRAMATIZED_ADAPTATION_PATTERN.test(work.title)) reject(index, 'adaptation');
     else if (FOREIGN_BUNDLE_PATTERN.test(work.title)) reject(index, 'foreign_bundle');
+  });
+
+  // Supplemental material is hidden, never dropped: an annotated companion or a game book can still be
+  // wanted, and the owner can promote it back.
+  works.forEach((work, index) => {
+    if (isSupplemental(work)) hide(index, 'supplemental');
   });
 
   // Deliberately no language rule here. assignVerdict already flags a non-Latin title or an
@@ -573,6 +626,14 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
       else vocabulary.set(canonical, new Set([seriesKey]));
       seriesSize.set(seriesKey, (seriesSize.get(seriesKey) ?? 0) + 1);
     }
+  });
+
+  // A "... Series" title needs the vocabulary to prove it names one of the author's own series, and
+  // the vocabulary only exists from here on. isCollection ran before it, so amend its verdict here:
+  // the work still ranks as a collection in the slot contests below and hides as repackaging in B4.
+  const seriesTitled = works.map((work) => namesAuthorSeries(work.title, vocabulary));
+  works.forEach((_, index) => {
+    if (seriesTitled[index]) collections[index] = true;
   });
 
   const slotStrength = (slot: string): number =>
@@ -727,7 +788,7 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   works.forEach((work, index) => {
     if (!collections[index] || rejected.has(index)) return;
     if (holdsSlot.has(index)) return;
-    if (REPACKAGING_TITLE_PATTERN.test(work.title)) {
+    if (REPACKAGING_TITLE_PATTERN.test(work.title) || seriesTitled[index]) {
       hide(index, 'collection_repackaging');
       return;
     }
@@ -760,7 +821,7 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
       hide(index, 'format_variant');
       return;
     }
-    if (category === CATEGORY_GRAPHIC_NOVEL) return;
+    if (isGraphic(index)) return;
     if (category != null && category !== CATEGORY_BOOK) return;
     const claimed = claimedSeries.get(index);
     if (claimed && [...claimed].some((seriesKey) => formatSeries.has(seriesKey))) hide(index, 'format_variant');
@@ -791,11 +852,27 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   const adaptsProse = new Set<number>();
   for (const bucket of contests.values()) {
     const live = bucket.filter((claim) => !rejected.has(claim.work));
-    if (!live.some((claim) => signals[claim.work].categoryId !== CATEGORY_GRAPHIC_NOVEL)) continue;
-    for (const claim of live) if (signals[claim.work].categoryId === CATEGORY_GRAPHIC_NOVEL) adaptsProse.add(claim.work);
+    if (!live.some((claim) => !isGraphic(claim.work))) continue;
+    for (const claim of live) if (isGraphic(claim.work)) adaptsProse.add(claim.work);
   }
+  // A comic outside any shared slot still adapts a prose book when its title, with the comic label and
+  // volume number removed, is that book's WHOLE title: "The Communist Manifesto: A Graphic Novel" beside
+  // "The Communist Manifesto". Never the text before a colon, which is often a series name - "Dark One,
+  // Vol. 1" is not an adaptation of "Dark One: Forgotten".
+  const proseTitles = new Set<string>();
+  works.forEach((work, index) => {
+    if (rejected.has(index) || isGraphic(index) || titledComic[index]) return;
+    proseTitles.add(normalizeText(work.title));
+  });
+  works.forEach((work, index) => {
+    if (!isGraphic(index) && !titledComic[index]) return;
+    const adapted = graphicAdaptationTitle(work.title);
+    if (adapted.length < 3 || !proseTitles.has(adapted)) return;
+    if (titledComic[index]) hide(index, 'graphic_novel');
+    else adaptsProse.add(index);
+  });
   works.forEach((_, index) => {
-    if (signals[index].categoryId !== CATEGORY_GRAPHIC_NOVEL) return;
+    if (!isGraphic(index)) return;
     const reason = reasons.get(index);
     if (rejected.has(index) && reason != null && STRUCTURAL_REJECT_REASONS.has(reason)) return;
     const lifted = rejected.delete(index);

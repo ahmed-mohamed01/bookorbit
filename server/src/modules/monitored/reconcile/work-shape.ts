@@ -19,6 +19,29 @@ export const COLLECTION_TITLE_PATTERN =
   /\b(omnibus|box(?:ed)? ?set|complete series|collection|anthology|bundle|sampler|books?\s*\d+\s*[-–—]\s*\d+|\d+[- ]books?\b|trilogy|duology)\b/i;
 
 /**
+ * Material about a book rather than a book: annotations, excerpts, previews, companions and guides.
+ * Each phrase is narrow on purpose - a bare "guide" or "companion" is a real title (`The Hitchhiker's
+ * Guide to the Galaxy`, `The Companions`), so the generic words only count beside a qualifier, and
+ * "annotations" and "excerpt" only where the word is the subtitle rather than part of one.
+ */
+export const SUPPLEMENTAL_TITLE_PATTERN =
+  /\bannotations\s*$|\bexcerpt\b(?=\s*:|\s*$)|sneak (?:peek|preview)|\(preview\)\s*$|pocket companion|world guide|lore compendium|\bart ?book\b|colou?ring book|(?:study|reader['’]?s|discussion|book club) guide/i;
+
+/** A tabletop game line filed as a series, whose rulebooks and adventures are not the author's books. */
+export const SUPPLEMENTAL_SERIES_PATTERN = /\b(?:roleplaying game|role-playing game|rpg)\b/i;
+
+/**
+ * A comic edition named as one in its own title. Hardcover's Graphic Novel category is the primary
+ * signal, but it is missing on `The Communist Manifesto: A Graphic Novel` and on every WEBTOON
+ * printing of The Primal Hunter.
+ */
+export const GRAPHIC_NOVEL_TITLE_PATTERN = /\bgraphic novels?\b|\bmanga\b|\bcomics?\b|\bwebtoon\b/i;
+
+/** A translated listing labelled with its language, in the title or the series name. */
+export const LANGUAGE_EDITION_PATTERN =
+  /[([](?:polish|spanish|german|french|italian|russian|finnish|dutch|portuguese|brazilian portuguese|czech|swedish|danish|norwegian|hungarian|turkish|japanese|chinese|korean|romanian|bulgarian|greek|hebrew|ukrainian|catalan)\s+edition[)\]]/i;
+
+/**
  * Known divergence, deliberately left in place.
  *
  * slot-resolution refuses to act on Hardcover's bare `compilation` boolean without corroboration,

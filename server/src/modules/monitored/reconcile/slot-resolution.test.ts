@@ -489,7 +489,9 @@ describe('resolveSlots', () => {
     const result = resolveSlots(
       [
         work('1', { title: 'The Blacktongue Thief', popularity: { hardcover: 1797 }, seriesMemberships: [{ name: 'Blacktongue', index: '1' }] }),
-        work('2', { title: 'The Blacktongue Thief: Sneak Peek', popularity: { hardcover: 5 } }),
+        // The subtitle avoids the supplemental words: a supplemental duplicate stays in the review
+        // tray instead of being rejected, which the kinds suite covers separately.
+        work('2', { title: 'The Blacktongue Thief: Preview Edition', popularity: { hardcover: 5 } }),
       ],
       today,
     );
@@ -717,8 +719,142 @@ describe('resolveSlots', () => {
   });
 });
 
+describe('resolveSlots supplemental and title-shaped kinds', () => {
+  const kindOf = (works: MergedWork[], index: number) => {
+    const result = resolveSlots(works, '2026-10-17');
+    return result.hidden.has(index) ? slotReasonKind(result.reasons.get(index)) : null;
+  };
+
+  it('hides annotations, excerpts, previews, companions and game books as supplemental', () => {
+    for (const title of [
+      'Mistborn: The Final Empire - Annotations',
+      'The Alloy of Law Excerpt: Prologue - Chapter 6',
+      'Sneak Peek for Service Model',
+      'The Stormlight Archive - A Pocket Companion to The Way of Kings and Words of Radiance',
+      'Stormlight World Guide: A Lore Compendium and Art Book',
+      'Reader Study Guide for Cosmos',
+    ]) {
+      expect(kindOf([work('1', { title, popularity: { hardcover: 500 } })], 0)).toBe('supplemental');
+    }
+  });
+
+  it('hides a game book by its roleplaying-game series even when the title says nothing', () => {
+    const rulebook = work('1', { title: 'Welcome to Roshar', seriesName: 'Cosmere Roleplaying Game' });
+
+    expect(kindOf([rulebook], 0)).toBe('supplemental');
+  });
+
+  it('keeps a real book that also belongs to a roleplaying-game series', () => {
+    const novel = work('1', {
+      title: 'Welcome to Roshar',
+      seriesName: 'Cosmere Roleplaying Game',
+      seriesMemberships: [{ name: 'The Stormlight Archive', index: '1' }],
+    });
+
+    expect(kindOf([novel], 0)).toBeNull();
+  });
+
+  it('leaves real books whose titles share a supplemental word alone', () => {
+    for (const title of [
+      'Annotations of a Life',
+      'Excerpts from a Life',
+      'The Preview',
+      'A Companion to Wolves',
+      'The Art of the Steal',
+      'The Tales of Catt and Fisher: The Art of the Steal',
+      "The Hitchhiker's Guide to the Galaxy",
+      'The Companions',
+      "The Frugal Wizard's Handbook for Surviving Medieval England",
+    ]) {
+      expect(kindOf([work('1', { title, popularity: { hardcover: 500 } })], 0)).toBeNull();
+    }
+  });
+
+  it('keeps a supplemental duplicate in the review tray instead of dropping it', () => {
+    const novel = work('1', { title: 'Mistborn: The Final Empire', seriesName: 'Mistborn', seriesIndex: '1', popularity: { hardcover: 900 } });
+    const annotations = work('2', { title: 'Mistborn: The Final Empire - Annotations', popularity: { hardcover: 2 } });
+    const works = [novel, annotations];
+
+    expect(kindOf(works, 1)).toBe('supplemental');
+    expect(resolveSlots(works, '2026-10-17').rejected.has(1)).toBe(false);
+  });
+
+  it("treats a title naming one of the author's own series as a box set", () => {
+    const cases: [string, string, string][] = [
+      ['Mistborn: The Wax & Wayne Series', 'The Alloy of Law', 'Mistborn'],
+      ['Alcatraz vs. The Evil Librarians Series', 'Alcatraz vs. The Evil Librarians', 'Alcatraz vs. the Evil Librarians'],
+      ['The Reckoners Series', 'Steelheart', 'The Reckoners'],
+    ];
+    for (const [title, siblingTitle, seriesName] of cases) {
+      const boxSet = work('1', { title, popularity: { hardcover: 1 } });
+      const sibling = work('2', { title: siblingTitle, seriesName, seriesIndex: '1', popularity: { hardcover: 900 } });
+
+      expect(kindOf([boxSet, sibling], 0)).toBe('collection');
+      expect(kindOf([boxSet, sibling], 1)).toBeNull();
+    }
+  });
+
+  it('does not treat a title that merely ends in the word series as a box set', () => {
+    const murder = work('1', { title: 'Murder at the World Series', popularity: { hardcover: 400 } });
+    const sibling = work('2', { title: 'Steelheart', seriesName: 'The Reckoners', seriesIndex: '1', popularity: { hardcover: 900 } });
+
+    expect(kindOf([murder, sibling], 0)).toBeNull();
+  });
+
+  it('hides a comic named in its title when the prose book it adapts is in the catalog', () => {
+    const manifesto = work('1', { title: 'The Communist Manifesto', popularity: { hardcover: 900 } });
+    const comic = work('2', { title: 'The Communist Manifesto: A Graphic Novel', popularity: { hardcover: 40 } });
+    const carl = work('3', { title: 'Dungeon Crawler Carl', popularity: { hardcover: 900 } });
+    const carlComic = work('4', { title: 'Dungeon Crawler Carl (Graphic Novel), Vol. 1', popularity: { hardcover: 40 } });
+    const works = [manifesto, comic, carl, carlComic];
+
+    expect(kindOf(works, 1)).toBe('graphic_novel');
+    expect(kindOf(works, 3)).toBe('graphic_novel');
+    expect(kindOf(works, 0)).toBeNull();
+    expect(kindOf(works, 2)).toBeNull();
+  });
+
+  it('does not take a prose book sharing only a series front as the comic it adapts', () => {
+    // Dark One, Vol. 1 has no prose edition; "Dark One: Forgotten" is a different book in the series.
+    const comic = work('1', { title: 'Dark One, Vol. 1', popularity: { hardcover: 300 } }, { book_category_id: 4 });
+    const novel = work('2', { title: 'Dark One: Forgotten', popularity: { hardcover: 900 } });
+
+    expect(kindOf([comic, novel], 0)).toBeNull();
+  });
+
+  it('does not take a prose book sharing only the title front as the comic it adapts', () => {
+    // The comic adapts the "House Atreides" prequel, not the novel "Dune" it shares a front with.
+    const comic = work('1', { title: 'Dune: House Atreides (Graphic Novel)', popularity: { hardcover: 300 } }, { book_category_id: 4 });
+    const novel = work('2', { title: 'Dune', popularity: { hardcover: 900 } });
+
+    expect(kindOf([comic, novel], 0)).toBeNull();
+  });
+
+  it('hides a comic beside the prose book whose whole title it carries', () => {
+    const comic = work('1', { title: 'Dune: House Atreides (Graphic Novel)', popularity: { hardcover: 300 } }, { book_category_id: 4 });
+    const novel = work('2', { title: 'Dune: House Atreides', popularity: { hardcover: 900 } });
+
+    expect(kindOf([comic, novel], 0)).toBe('graphic_novel');
+  });
+
+  it('only hides a comic named in its title, never lifts it out of a reject', () => {
+    // Without Hardcover's comic category the title alone only decides the adaptation test.
+    const comic = work('1', { title: 'Comic Sans Murder', popularity: { hardcover: 50 } });
+
+    expect(kindOf([comic], 0)).toBeNull();
+  });
+
+  it('keeps a comic that is the only edition of its story visible', () => {
+    // White Sand was published as a graphic novel with no prose edition, so hiding it leaves nothing.
+    expect(
+      kindOf([work('1', { title: "Brandon Sanderson's White Sand Vol 3 Original Graphic Novel", popularity: { hardcover: 400 } })], 0),
+    ).toBeNull();
+  });
+});
+
 describe('slotReasonKind', () => {
   it('names the tray kind behind each hide reason', () => {
+    expect(slotReasonKind('supplemental')).toBe('supplemental');
     expect(slotReasonKind('collection_repackaging')).toBe('collection');
     expect(slotReasonKind('collection_weak')).toBe('collection');
     expect(slotReasonKind('multi_author_anthology')).toBe('anthology');

@@ -18,7 +18,7 @@ export type MonitoredWorkFlag = (typeof MONITORED_WORK_FLAGS)[number];
  * duplicate demotion set one: a work that is merely unverified carries no kind, because nothing
  * about its shape is known - it just failed to earn the default list.
  */
-export const MONITORED_WORK_KINDS = ["collection", "anthology", "graphic_novel", "format_variant", "duplicate"] as const;
+export const MONITORED_WORK_KINDS = ["collection", "anthology", "graphic_novel", "supplemental", "format_variant", "duplicate"] as const;
 export type MonitoredWorkKind = (typeof MONITORED_WORK_KINDS)[number];
 
 /**
@@ -26,7 +26,16 @@ export type MonitoredWorkKind = (typeof MONITORED_WORK_KINDS)[number];
  * series and keeps the work in the list; every other mark sends it to review. `split_part` is only
  * ever set by the owner.
  */
-export const MONITORED_MARK_KINDS = ["book", "collection", "split_part", "anthology", "graphic_novel", "format_variant", "duplicate"] as const;
+export const MONITORED_MARK_KINDS = [
+  "book",
+  "collection",
+  "split_part",
+  "anthology",
+  "graphic_novel",
+  "supplemental",
+  "format_variant",
+  "duplicate",
+] as const;
 export type MonitoredMarkKind = (typeof MONITORED_MARK_KINDS)[number];
 /** A kind that keeps a work in review: the reconciler's, or the owner's mark other than `book`. */
 export type MonitoredReviewWorkKind = Exclude<MonitoredMarkKind, "book">;

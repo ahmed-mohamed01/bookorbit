@@ -189,4 +189,31 @@ describe('assignVerdict', () => {
 
     expect(result.flags).not.toContain('placeholder');
   });
+
+  it('flags a listing whose title names its translation', () => {
+    const result = assignVerdict(work('goodreads', { title: 'Primal Hunter 5 (German Edition)' }), { today, floor: {} });
+
+    expect(result.flags).toContain('foreign_language');
+  });
+
+  it('flags a listing filed only under translated series', () => {
+    const polish = work('goodreads', {
+      title: 'Expeditionary Force. Tom 16. Konsekwencje',
+      seriesName: 'Expeditionary Force (Polish Edition)',
+      seriesIndex: '16',
+    });
+
+    expect(assignVerdict(polish, { today, floor: {} }).flags).toContain('foreign_language');
+  });
+
+  it('does not flag an English book that also carries one translated series', () => {
+    const steelheart = work('hardcover', {
+      title: 'Steelheart',
+      seriesName: 'The Reckoners',
+      seriesIndex: '1',
+      seriesMemberships: [{ name: 'Reckoners (Spanish Edition)', index: '1' }],
+    });
+
+    expect(assignVerdict(steelheart, { today, floor: {} }).flags).not.toContain('foreign_language');
+  });
 });

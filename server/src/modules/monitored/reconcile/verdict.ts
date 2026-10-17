@@ -2,7 +2,7 @@ import type { MonitoredWorkFlag, MonitoredWorkVerdict } from '@bookorbit/types';
 
 import { normalizeText } from './observation-matcher';
 import type { MergedWork, ObservationSource } from './observation.types';
-import { COLLECTION_TITLE_PATTERN, DRAMATIZED_ADAPTATION_PATTERN, SPLIT_PART_SUFFIX_PATTERN } from './work-shape';
+import { COLLECTION_TITLE_PATTERN, DRAMATIZED_ADAPTATION_PATTERN, LANGUAGE_EDITION_PATTERN, SPLIT_PART_SUFFIX_PATTERN } from './work-shape';
 
 const NON_LATIN_SCRIPT_PATTERN =
   /\p{Script=Greek}|\p{Script=Cyrillic}|\p{Script=Hebrew}|\p{Script=Arabic}|\p{Script=Devanagari}|\p{Script=Thai}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Han}|\p{Script=Hangul}/u;
@@ -69,7 +69,12 @@ export function assignVerdict(work: MergedWork, context: VerdictContext): Verdic
   // Flag translations: a non-Latin title, or a work whose editions are entirely non-English
   // (allForeign, sourced from Hardcover edition languages). A work with any English edition keeps
   // allForeign false and, after series-slot merge, wins its English title, so it is not flagged.
-  if (NON_LATIN_SCRIPT_PATTERN.test(work.title) || work.allForeign) flags.push('foreign_language');
+  // A "(Polish Edition)" label counts on the title, or on the series only when EVERY series says so:
+  // one Spanish listing merged into an English book must not flag the English book.
+  const seriesNames = [...(work.seriesMemberships ?? []).map((membership) => membership.name), ...(work.seriesName ? [work.seriesName] : [])];
+  const labelledTranslation =
+    LANGUAGE_EDITION_PATTERN.test(work.title) || (seriesNames.length > 0 && seriesNames.every((name) => LANGUAGE_EDITION_PATTERN.test(name)));
+  if (NON_LATIN_SCRIPT_PATTERN.test(work.title) || work.allForeign || labelledTranslation) flags.push('foreign_language');
   if (DRAMATIZED_ADAPTATION_PATTERN.test(work.title) || SPLIT_PART_SUFFIX_PATTERN.test(work.title)) flags.push('adaptation_split');
   if (work.allRolesNonAuthor) flags.push('wrong_contributor');
 
