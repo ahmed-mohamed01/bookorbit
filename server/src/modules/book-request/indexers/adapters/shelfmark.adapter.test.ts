@@ -159,6 +159,32 @@ describe('ShelfmarkIndexerAdapter', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('searches Elscione for ebooks only and keeps its path id and label', async () => {
+    const elscione = {
+      ...RELEASE,
+      source: 'elscione',
+      source_id: 'Spice and Wolf/Spice and Wolf - Volume 01 [Yen Press][Kobo].epub',
+      title: 'Spice and Wolf - Volume 01 [Yen Press][Kobo]',
+      language: null,
+      extra: { book_title: 'Spice and Wolf' },
+    };
+    const calls = mockShelfmark(() => ({ body: { releases: [elscione] } }));
+    const adapter = new ShelfmarkIndexerAdapter();
+    const sources = config({ settings: { shelfmarkSources: 'elscione' } });
+
+    const results = await adapter.search(query({ title: 'Spice and Wolf Volume 1', author: 'Isuna Hasekura' }), sources, AbortSignal.timeout(5_000));
+    await adapter.search(query({ mediaKind: 'audiobook' }), sources, AbortSignal.timeout(5_000));
+
+    expect(calls.map((call) => `${call.url.searchParams.get('content_type')}:${call.url.searchParams.get('source')}`)).toEqual(['ebook:elscione']);
+    expect(results).toEqual([
+      expect.objectContaining({
+        guid: `elscione:${elscione.source_id}`,
+        title: elscione.title,
+        origin: 'Elscione',
+      }),
+    ]);
+  });
+
   it('gives a source that just timed out a short budget until it answers again', async () => {
     let libgen: 'timeout' | 'answer' = 'timeout';
     vi.stubGlobal(

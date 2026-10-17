@@ -6,7 +6,7 @@ import type { BookRequestMediaKind } from '@bookorbit/types';
  * left out on purpose: BookOrbit talks to those directly, so searching them again through Shelfmark
  * would only list every release twice.
  */
-export const SHELFMARK_SOURCES = ['direct_download', 'libgen', 'audiobookbay', 'irc'] as const;
+export const SHELFMARK_SOURCES = ['direct_download', 'libgen', 'audiobookbay', 'irc', 'elscione'] as const;
 export type ShelfmarkSource = (typeof SHELFMARK_SOURCES)[number];
 
 /** Shelfmark's own display names, so a release says which site it came from. */
@@ -15,6 +15,7 @@ export const SHELFMARK_SOURCE_LABELS: Record<ShelfmarkSource, string> = {
   libgen: 'Library Genesis',
   audiobookbay: 'AudiobookBay',
   irc: 'IRC',
+  elscione: 'Elscione',
 };
 
 /** What each source's `supported_content_types` declares in Shelfmark; asking one for anything else only costs its timeout. */
@@ -23,6 +24,7 @@ export const SHELFMARK_SOURCE_MEDIA_KINDS: Record<ShelfmarkSource, readonly Book
   libgen: ['ebook'],
   audiobookbay: ['audiobook'],
   irc: ['ebook', 'audiobook'],
+  elscione: ['ebook'],
 };
 
 export function shelfmarkSourceCarries(source: string, mediaKind: BookRequestMediaKind): boolean {
