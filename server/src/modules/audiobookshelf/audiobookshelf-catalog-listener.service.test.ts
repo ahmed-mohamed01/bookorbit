@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AchievementEventsService, ACHIEVEMENT_EVENT_LIBRARY_CATALOG_CHANGED } from '../achievement/achievement-events.service';
 import { AUDIOBOOKSHELF_CATALOG_MATCH_MAX_RETRIES, AudiobookshelfCatalogListenerService } from './audiobookshelf-catalog-listener.service';
-import { AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS } from './audiobookshelf.constants';
+import { AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS, AUDIOBOOKSHELF_CATALOG_MATCH_FOLLOW_UP_DELAYS_MS } from './audiobookshelf.constants';
 
 const mockRepo = {
   findSettings: vi.fn(),
@@ -77,6 +77,50 @@ describe('AudiobookshelfCatalogListenerService', () => {
     await vi.advanceTimersByTimeAsync(AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS);
 
     expect(mockSyncService.sync).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs follow-up reconciles so items ABS indexes later still get matched', async () => {
+    emitCatalogChanged();
+    await vi.advanceTimersByTimeAsync(AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS);
+    expect(mockSyncService.sync).toHaveBeenCalledTimes(1);
+
+    for (const [index, delayMs] of AUDIOBOOKSHELF_CATALOG_MATCH_FOLLOW_UP_DELAYS_MS.entries()) {
+      await vi.advanceTimersByTimeAsync(delayMs - 1);
+      expect(mockSyncService.sync).toHaveBeenCalledTimes(index + 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(mockSyncService.sync).toHaveBeenCalledTimes(index + 2);
+      expect(mockSyncService.sync).toHaveBeenLastCalledWith(eligibleUser(), { reconcile: true });
+    }
+
+    await vi.advanceTimersByTimeAsync(Math.max(...AUDIOBOOKSHELF_CATALOG_MATCH_FOLLOW_UP_DELAYS_MS) * 2);
+    expect(mockSyncService.sync).toHaveBeenCalledTimes(AUDIOBOOKSHELF_CATALOG_MATCH_FOLLOW_UP_DELAYS_MS.length + 1);
+  });
+
+  it('restarts the follow-up passes when the catalog changes again', async () => {
+    emitCatalogChanged();
+    await vi.advanceTimersByTimeAsync(AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS);
+    await vi.advanceTimersByTimeAsync(AUDIOBOOKSHELF_CATALOG_MATCH_FOLLOW_UP_DELAYS_MS[0]!);
+    expect(mockSyncService.sync).toHaveBeenCalledTimes(2);
+
+    emitCatalogChanged();
+    await vi.advanceTimersByTimeAsync(AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS);
+    expect(mockSyncService.sync).toHaveBeenCalledTimes(3);
+
+    const followUpTotal = AUDIOBOOKSHELF_CATALOG_MATCH_FOLLOW_UP_DELAYS_MS.reduce((sum, delayMs) => sum + delayMs, 0);
+    await vi.advanceTimersByTimeAsync(followUpTotal);
+    expect(mockSyncService.sync).toHaveBeenCalledTimes(3 + AUDIOBOOKSHELF_CATALOG_MATCH_FOLLOW_UP_DELAYS_MS.length);
+  });
+
+  it('keeps running follow-up passes after a non-Conflict failure', async () => {
+    mockSyncService.sync.mockRejectedValueOnce(new Error('boom'));
+
+    emitCatalogChanged();
+    await vi.advanceTimersByTimeAsync(AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS);
+    expect(mockSyncService.sync).toHaveBeenCalledTimes(1);
+
+    const followUpTotal = AUDIOBOOKSHELF_CATALOG_MATCH_FOLLOW_UP_DELAYS_MS.reduce((sum, delayMs) => sum + delayMs, 0);
+    await vi.advanceTimersByTimeAsync(followUpTotal * 2);
+    expect(mockSyncService.sync).toHaveBeenCalledTimes(1 + AUDIOBOOKSHELF_CATALOG_MATCH_FOLLOW_UP_DELAYS_MS.length);
   });
 
   it('runs an independent sync per distinct user', async () => {
