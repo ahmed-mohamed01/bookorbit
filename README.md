@@ -38,6 +38,21 @@ A self-hosted library and reading platform for ebooks, PDFs, audiobooks, and com
 
 ---
 
+## About this fork
+
+This is a fork of [BookOrbit](https://github.com/bookorbit/bookorbit). It follows upstream release and adds the features below.
+
+### Changes from upstream:
+
+- **Audiobookshelf integration and sync**: Two way sync for listening progress between bookorbit and audiobookshelf. Audiobookshelf covers and metadata get added to bookorbit automatically via metadata.json / cover.jpg if using same library folders.
+- **Position sync**: Link an ebook and its audiobook and pick up in one where you left off in the other.
+- **Storyteller read-alongs**: Create read-along EPUB3 books from an ebook and its audiobook through your Storyteller server. See the [Storyteller guide](docs/STORYTELLER_READ_ALONG.md).
+- **Watchlist**: Follow authors, get notified when a new release lands, and request new releases automatically.
+- **Shelfmark integration**: Connect a self-hosted Shelfmark instance as an indexer and download provider. See the [Shelfmark guide](docs/SHELFMARK.md).
+- **Manga and light novels**: Find a series, pick the chapters or volumes you want, and BookOrbit downloads them into your library. Requires a [Suwayomi](https://github.com/Suwayomi/Suwayomi-Server) instance for manga and the [novel-sources](https://github.com/ahmed-mohamed01/bookorbit/pkgs/container/bookorbit-novel-sources) container for light novels. See the [setup guide](docs/WEB_SERIALS_ADMIN.md) and the [user guide](docs/WEB_SERIALS.md).
+- **Mini player**: Read-along narration keeps playing in a mini player after you close the reader.
+- **More series from metadata**: Books that belong to several series can pick up the other series from metadata providers that list them.
+
 ## What is BookOrbit?
 
 **[BookOrbit](https://bookorbit.app)** organizes your books and lets you enjoy them anywhere: on iPhone, Apple Watch, the web, Kobo, or KOReader. Your reading progress, highlights, and status stay synchronized, so you can start a chapter in one place and continue in another.
