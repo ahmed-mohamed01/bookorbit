@@ -36,6 +36,10 @@ export const AUDIOBOOKSHELF_WARM_SESSION_INTERVAL_MS = 90_000;
 // Debounce for the catalog-changed auto-match: a full scan emits many events, so wait for the burst
 // to settle before running one reconcile.
 export const AUDIOBOOKSHELF_CATALOG_MATCH_DEBOUNCE_MS = 30 * 1000;
+// Follow-up reconciles after the debounced one, each delay measured from the previous pass. ABS
+// indexes a new folder on its own watcher/scan schedule, often after BookOrbit has already seen it,
+// and scheduled polls never re-match, so a single early pass can leave the new audiobook unlinked.
+export const AUDIOBOOKSHELF_CATALOG_MATCH_FOLLOW_UP_DELAYS_MS: readonly number[] = [2 * 60 * 1000, 10 * 60 * 1000];
 // Users synced concurrently per scheduler tick. Small, bounded global parallelism: each user's
 // pipeline runs sequentially, and only this many users run at once so a slow ABS server cannot fan
 // out into unbounded outbound load.
