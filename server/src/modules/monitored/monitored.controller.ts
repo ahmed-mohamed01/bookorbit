@@ -4,6 +4,8 @@ import { stat } from 'fs/promises';
 import type { FastifyReply } from 'fastify';
 import { AuditAction, AuditResource, Permission } from '@bookorbit/types';
 
+import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { streamReleaseSearch } from '../../common/utils/sse-stream.utils';
 import { Auditable } from '../../common/decorators/auditable.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -230,6 +232,19 @@ export class MonitoredController {
   @RequirePermission(Permission.BookRequestAccess)
   updateWork(@Param('workId') workId: string, @Body() dto: UpdateMonitoredWorkDto, @CurrentUser() user: RequestUser) {
     return this.service.updateWork(user, workId, dto);
+  }
+
+  @Post('works/:workId/releases/stream')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(Permission.BookRequestAccess)
+  async streamWorkReleases(
+    @Param('workId') workId: string,
+    @Body() dto: SearchWorkReleasesDto,
+    @CurrentUser() user: RequestUser,
+    @Res() reply: FastifyReply,
+  ) {
+    const search = await this.service.prepareWorkReleaseSearch(user, workId, dto.format);
+    await streamReleaseSearch(reply, search, `workId="${sanitizeLogValue(workId)}" userId=${user.id}`);
   }
 
   @Post('works/:workId/releases/search')

@@ -1,5 +1,7 @@
 import { api } from '@/lib/api'
 import { readApiErrorDetail } from '@/lib/api-error'
+import { readSseEvents } from '@/lib/sse'
+import { RELEASE_SEARCH_ERROR_EVENT, RELEASE_SEARCH_PROGRESS_EVENT, RELEASE_SEARCH_RESULT_EVENT } from '@bookorbit/types'
 import type {
   MonitoredCatalogSearchHit,
   HardcoverUniversalSearchResult,
@@ -29,6 +31,7 @@ import type {
   MonitoredWorkPatch,
   MonitoredWorkReleasesResponse,
   MonitoredSummary,
+  ReleaseSearchProgress,
   RequestFromWorkPayload,
   RequestSourceOption,
   SetMonitoredReleaseDatePayload,
@@ -163,6 +166,38 @@ export async function searchWorkReleases(workId: string, format: MonitoredFormat
       body: JSON.stringify({ format }),
     }),
   )
+}
+
+/**
+ * The streamed form of `searchWorkReleases`: each merged snapshot is handed to `onProgress` as the
+ * sources answer, and the final ranked list resolves the promise. Failures surface as the same
+ * `MonitoredApiError` `readJson` throws, so a caller's error wording keeps working unchanged.
+ */
+export async function streamWorkReleases(
+  workId: string,
+  format: MonitoredFormat,
+  onProgress: (progress: ReleaseSearchProgress) => void,
+  signal?: AbortSignal,
+): Promise<MonitoredWorkReleasesResponse> {
+  const response = await api(`${BASE_PATH}/works/${encodeURIComponent(workId)}/releases/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ format }),
+    signal,
+  })
+  if (!response.ok) throw new MonitoredApiError(response.status, await readApiErrorDetail(response))
+
+  let result: MonitoredWorkReleasesResponse | null = null
+  await readSseEvents(response, (event, data) => {
+    if (event === RELEASE_SEARCH_PROGRESS_EVENT) onProgress(data as ReleaseSearchProgress)
+    else if (event === RELEASE_SEARCH_RESULT_EVENT) result = data as MonitoredWorkReleasesResponse
+    else if (event === RELEASE_SEARCH_ERROR_EVENT) {
+      const message = (data as { message?: unknown } | null)?.message
+      throw new MonitoredApiError(response.status, typeof message === 'string' && message.trim() ? message : null)
+    }
+  })
+  if (!result) throw new MonitoredApiError(response.status, null)
+  return result
 }
 
 /** Resolves to the book request the download now runs under, so the caller can open its progress. */

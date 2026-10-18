@@ -14,6 +14,7 @@ import type {
   ReleaseSearchOverrides,
   ReleaseSearchCriteria,
   ReleaseSearchResult,
+  ReleaseSearchProgress,
   ReleaseTier,
 } from '@bookorbit/types';
 
@@ -69,6 +70,7 @@ interface CacheEntry {
 export type IndexerSearchMode = 'all' | 'isbn-capable';
 
 export interface IndexerSearchOptions {
+  onProgress?: (progress: ReleaseSearchProgress) => void;
   refresh?: boolean;
   overrides?: ReleaseSearchOverrides;
   /** Internal automation pass selection. Manual searches always use every compatible indexer. */
@@ -85,6 +87,7 @@ export type IndexerSearchRequest = Pick<
 @Injectable()
 export class IndexerSearchService {
   private readonly logger = new Logger(IndexerSearchService.name);
+  private readonly inFlight = new Map<number, Set<Map<string, ReleaseCandidate>>>();
   private readonly cache = new Map<string, CacheEntry>();
 
   constructor(
@@ -129,13 +132,12 @@ export class IndexerSearchService {
     const uncoveredIndexerCount = configs.length - compatible.length;
 
     const started = Date.now();
-    const outcomes = await this.searchAll(searchable, query);
 
     const candidates = new Map<string, ReleaseCandidate>();
     const statuses: IndexerSearchStatus[] = [];
-    const scored: Array<{ scored: ScoredRelease; indexerName: string; managerPriority: number | null }> = [];
+    const scored: Array<{ scored: ScoredRelease; indexerName: string; indexerId: number; managerPriority: number | null }> = [];
 
-    for (const { config, releases, query: indexerQuery, failure, error } of outcomes) {
+    const mergeOutcome = ({ config, releases, query: indexerQuery, failure, error }: SearchOutcome) => {
       const seedsBack = this.registry.seedsBack(config.adapterType);
       const delivery = this.registry.delivery(config.adapterType);
       if (failure) {
@@ -152,7 +154,7 @@ export class IndexerSearchService {
           seedsBack,
           delivery,
         });
-        continue;
+        return;
       }
 
       // Inside the per-indexer accounting, like the search call itself. A release the filter or
@@ -176,7 +178,12 @@ export class IndexerSearchService {
           if (candidates.has(key)) continue;
 
           candidates.set(key, candidate);
-          scored.push({ scored: scoreRelease(candidate, scoringRequest), indexerName: config.name, managerPriority: config.managerPriority });
+          scored.push({
+            scored: scoreRelease(candidate, scoringRequest),
+            indexerName: config.name,
+            indexerId: config.id,
+            managerPriority: config.managerPriority,
+          });
           kept++;
         }
       } catch (error) {
@@ -198,7 +205,7 @@ export class IndexerSearchService {
           seedsBack,
           delivery,
         });
-        continue;
+        return;
       }
 
       statuses.push({
@@ -212,81 +219,118 @@ export class IndexerSearchService {
         seedsBack,
         delivery,
       });
-    }
-
-    // Mapped before the sort because tier is a property of the finished item, and the merged list
-    // has to be cut on the same axis the automation will read it by: tier first, so truncating at
-    // a hundred can never drop a release from a tier the operator asked for in favour of an
-    // untiered one that merely scored well.
-    const items = scored.map((entry) => ({
-      item: toReleaseItem(entry.scored, entry.indexerName, scoringRequest),
-      managerPriority: entry.managerPriority,
-    }));
-    // An unreported seeder count sorts below a stated one rather than above every zero.
-    items.sort(
-      (a, b) =>
-        compareByTier(a.item.tier, b.item.tier) ||
-        b.item.score - a.item.score ||
-        (b.item.seeders ?? -1) - (a.item.seeders ?? -1) ||
-        (a.managerPriority ?? Number.MAX_SAFE_INTEGER) - (b.managerPriority ?? Number.MAX_SAFE_INTEGER),
-    );
-    const releases = items.slice(0, MAX_MERGED_RELEASES).map(({ item }) => item);
-    // Only a listed release can be grabbed, so only those are kept for the hour a grab may take to come.
-    const grabbable = new Map(
-      releases.flatMap((release) => {
-        const key = `${release.indexerId}:${release.guid}`;
-        const candidate = candidates.get(key);
-        return candidate ? [[key, candidate] as const] : [];
-      }),
-    );
-
-    const result: ReleaseSearchResult = {
-      releases,
-      criteria: toSearchCriteria(scoringRequest, availableIsbns),
-      indexers: statuses,
-      uncoveredIndexerCount,
-      enabledIndexerCount: configs.length,
-      configuredIndexerCount: sources.configured,
-      profileActive: releaseProfileIsActive(tiers),
-      searchedAt: new Date().toISOString(),
-      cached: false,
     };
-    const previous = this.cache.get(cacheKey);
-    if (previous && previous.candidatesExpireAt > Date.now()) {
-      for (const [key, candidate] of previous.candidates) {
-        if (grabbable.size >= MAX_GRABBABLE_PER_ENTRY) break;
-        if (!grabbable.has(key)) grabbable.set(key, candidate);
+    const order = new Map(searchable.map((config, index) => [config.id, index]));
+    const rankedReleases = () => {
+      const items = [...scored]
+        .sort((a, b) => (order.get(a.indexerId) ?? 0) - (order.get(b.indexerId) ?? 0))
+        .map((entry) => ({
+          item: toReleaseItem(entry.scored, entry.indexerName, scoringRequest),
+          managerPriority: entry.managerPriority,
+        }));
+      // An unreported seeder count sorts below a stated one rather than above every zero.
+      items.sort(
+        (a, b) =>
+          compareByTier(a.item.tier, b.item.tier) ||
+          b.item.score - a.item.score ||
+          (b.item.seeders ?? -1) - (a.item.seeders ?? -1) ||
+          (a.managerPriority ?? Number.MAX_SAFE_INTEGER) - (b.managerPriority ?? Number.MAX_SAFE_INTEGER),
+      );
+      return items.slice(0, MAX_MERGED_RELEASES).map(({ item }) => item);
+    };
+    const orderedStatuses = () => searchable.flatMap((config) => statuses.filter((status) => status.indexerId === config.id));
+    const emitProgress = () => {
+      if (!options.onProgress) return;
+      try {
+        options.onProgress({
+          releases: rankedReleases(),
+          criteria: toSearchCriteria(scoringRequest, availableIsbns),
+          indexers: orderedStatuses(),
+          pending: searchable
+            .filter((config) => !statuses.some((status) => status.indexerId === config.id))
+            .map((config) => ({ indexerId: config.id, indexerName: config.name, color: config.color })),
+          uncoveredIndexerCount,
+          enabledIndexerCount: configs.length,
+          configuredIndexerCount: sources.configured,
+          profileActive: releaseProfileIsActive(tiers),
+          searchedAt: new Date().toISOString(),
+          cached: false,
+        });
+      } catch {
+        /* A disconnected observer must not interrupt cache population. */
       }
-    }
-    this.cache.delete(cacheKey);
-    const cachedAt = Date.now();
-    this.cache.set(cacheKey, {
-      requestId: request.id,
-      result,
-      resultExpiresAt: cachedAt + CACHE_TTL_MS,
-      candidatesExpireAt: cachedAt + ACTIONABLE_CACHE_TTL_MS,
-      query,
-      candidates: grabbable,
-    });
-    this.prune(request.id);
-
-    // Not awaited: the picker is waiting on this response, and how a source has been behaving is
-    // an operator-facing fact rather than part of the answer. A write that fails costs a badge.
-    void this.indexers
-      .recordSearchOutcomes(
-        statuses.map((status) => ({ indexerId: status.indexerId, ok: status.ok, error: status.ok ? null : (status.error ?? null) })),
-      )
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.logger.warn(
-          `[book_request.release_search] [fail] requestId=${request.id} durationMs=${Date.now() - started} errorClass=${error instanceof Error ? error.constructor.name : typeof error} error="${sanitizeLogValue(message)}" - could not record per-indexer search health`,
-        );
+    };
+    const running = this.inFlight.get(request.id) ?? new Set<Map<string, ReleaseCandidate>>();
+    this.inFlight.set(request.id, running);
+    running.add(candidates);
+    try {
+      emitProgress();
+      await this.searchAll(searchable, query, (outcome) => {
+        mergeOutcome(outcome);
+        emitProgress();
       });
+      statuses.splice(0, statuses.length, ...orderedStatuses());
+      const releases = rankedReleases();
+      // Only a listed release can be grabbed, so only those are kept for the hour a grab may take to come.
+      const grabbable = new Map(
+        releases.flatMap((release) => {
+          const key = `${release.indexerId}:${release.guid}`;
+          const candidate = candidates.get(key);
+          return candidate ? [[key, candidate] as const] : [];
+        }),
+      );
 
-    this.logger.log(
-      `[book_request.release_search] [end] requestId=${request.id} indexers=${searchable.length} uncovered=${uncoveredIndexerCount} releases=${releases.length} durationMs=${Date.now() - started} - searched enabled indexers`,
-    );
-    return result;
+      const result: ReleaseSearchResult = {
+        releases,
+        criteria: toSearchCriteria(scoringRequest, availableIsbns),
+        indexers: statuses,
+        uncoveredIndexerCount,
+        enabledIndexerCount: configs.length,
+        configuredIndexerCount: sources.configured,
+        profileActive: releaseProfileIsActive(tiers),
+        searchedAt: new Date().toISOString(),
+        cached: false,
+      };
+      const previous = this.cache.get(cacheKey);
+      if (previous && previous.candidatesExpireAt > Date.now()) {
+        for (const [key, candidate] of previous.candidates) {
+          if (grabbable.size >= MAX_GRABBABLE_PER_ENTRY) break;
+          if (!grabbable.has(key)) grabbable.set(key, candidate);
+        }
+      }
+      this.cache.delete(cacheKey);
+      const cachedAt = Date.now();
+      this.cache.set(cacheKey, {
+        requestId: request.id,
+        result,
+        resultExpiresAt: cachedAt + CACHE_TTL_MS,
+        candidatesExpireAt: cachedAt + ACTIONABLE_CACHE_TTL_MS,
+        query,
+        candidates: grabbable,
+      });
+      this.prune(request.id);
+
+      // Not awaited: the picker is waiting on this response, and how a source has been behaving is
+      // an operator-facing fact rather than part of the answer. A write that fails costs a badge.
+      void this.indexers
+        .recordSearchOutcomes(
+          statuses.map((status) => ({ indexerId: status.indexerId, ok: status.ok, error: status.ok ? null : (status.error ?? null) })),
+        )
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.logger.warn(
+            `[book_request.release_search] [fail] requestId=${request.id} durationMs=${Date.now() - started} errorClass=${error instanceof Error ? error.constructor.name : typeof error} error="${sanitizeLogValue(message)}" - could not record per-indexer search health`,
+          );
+        });
+
+      this.logger.log(
+        `[book_request.release_search] [end] requestId=${request.id} indexers=${searchable.length} uncovered=${uncoveredIndexerCount} releases=${releases.length} durationMs=${Date.now() - started} - searched enabled indexers`,
+      );
+      return result;
+    } finally {
+      running.delete(candidates);
+      if (running.size === 0) this.inFlight.delete(request.id);
+    }
   }
 
   /**
@@ -298,6 +342,10 @@ export class IndexerSearchService {
     for (const entry of [...this.cache.values()].reverse()) {
       if (entry.requestId !== requestId || entry.candidatesExpireAt <= Date.now()) continue;
       const candidate = entry.candidates.get(key);
+      if (candidate) return candidate;
+    }
+    for (const candidates of this.inFlight.get(requestId) ?? []) {
+      const candidate = candidates.get(key);
       if (candidate) return candidate;
     }
     return undefined;
@@ -349,7 +397,11 @@ export class IndexerSearchService {
     return !config.isbnSearchDisabled && this.registry.find(config.adapterType)?.supportsIsbnSearch === true;
   }
 
-  private async searchAll(configs: ResolvedIndexerConfig[], query: ReleaseQuery): Promise<SearchOutcome[]> {
+  private async searchAll(
+    configs: ResolvedIndexerConfig[],
+    query: ReleaseQuery,
+    onOutcome: (outcome: SearchOutcome) => void,
+  ): Promise<SearchOutcome[]> {
     const outcomes: SearchOutcome[] = [];
     // The cap protects tracker accounts, so a self-hosted source neither waits for a slot nor takes one.
     const selfHosted = configs.filter((config) => this.registry.find(config.adapterType)?.selfHosted === true);
@@ -363,7 +415,9 @@ export class IndexerSearchService {
     }
 
     const run = async (config: ResolvedIndexerConfig): Promise<void> => {
-      outcomes.push(await this.searchOne(config, query, config.managerId == null ? undefined : managerDeadlines.get(config.managerId)));
+      const outcome = await this.searchOne(config, query, config.managerId == null ? undefined : managerDeadlines.get(config.managerId));
+      outcomes.push(outcome);
+      onOutcome(outcome);
     };
     const worker = async (): Promise<void> => {
       for (let config = queue.shift(); config !== undefined; config = queue.shift()) await run(config);

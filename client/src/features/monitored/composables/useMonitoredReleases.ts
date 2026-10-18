@@ -1,8 +1,15 @@
 import { computed, ref, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MONITORED_FORMATS, type DownloadDelivery, type IndexerSearchStatus, type MonitoredFormat, type ReleaseCandidateItem } from '@bookorbit/types'
+import {
+  MONITORED_FORMATS,
+  type DownloadDelivery,
+  type IndexerSearchPending,
+  type IndexerSearchStatus,
+  type MonitoredFormat,
+  type ReleaseCandidateItem,
+} from '@bookorbit/types'
 
-import { grabWorkRelease, searchWorkReleases } from '../api/monitored'
+import { grabWorkRelease, streamWorkReleases } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
 
 /**
@@ -16,6 +23,8 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
   const { t } = useI18n()
   const releases = ref<ReleaseCandidateItem[]>([])
   const indexers = ref<IndexerSearchStatus[]>([])
+  /** Sources the streamed search has started but not yet heard back from, until its final result. */
+  const pending = ref<IndexerSearchPending[]>([])
   const loading = ref(false)
   const searched = ref(false)
   const searchedAt = ref<Date | null>(null)
@@ -29,6 +38,8 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
   // Indexer searches are slow enough that a response can land after the panel moved to another
   // work, so every search claims a generation and only the newest one may write state.
   let generation = 0
+  // The stream in flight, so a newer search can cut it short rather than wait out its sources.
+  let streamController: AbortController | null = null
 
   async function search(): Promise<void> {
     const requestedWorkId = workId.value
@@ -39,14 +50,29 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
     }
 
     const token = ++generation
+    streamController?.abort()
+    const controller = new AbortController()
+    streamController = controller
     loading.value = true
     error.value = null
     grabError.value = null
+    pending.value = []
     try {
-      const result = await searchWorkReleases(requestedWorkId, format)
+      const result = await streamWorkReleases(
+        requestedWorkId,
+        format,
+        (progress) => {
+          if (token !== generation || workId.value !== requestedWorkId) return
+          releases.value = progress.releases
+          indexers.value = progress.indexers
+          pending.value = progress.pending
+        },
+        controller.signal,
+      )
       if (token !== generation || workId.value !== requestedWorkId) return
       releases.value = result.releases
       indexers.value = result.indexers
+      pending.value = []
       searched.value = true
       searchedAt.value = new Date()
       forgetGrabs(requestedWorkId)
@@ -58,9 +84,11 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
       if (token !== generation || workId.value !== requestedWorkId) return
       releases.value = []
       indexers.value = []
+      pending.value = []
       searched.value = true
       error.value = monitoredErrorText(cause, t('monitored.errors.searchFailed'))
     } finally {
+      if (streamController === controller) streamController = null
       if (token === generation) loading.value = false
     }
   }
@@ -136,5 +164,5 @@ export function useMonitoredReleases(workId: Ref<string | null>, format: Monitor
     }
   }
 
-  return { releases, indexers, loading, searched, searchedAt, error, grabError, isGrabbing, isGrabbed, deliveryFor, search, grab }
+  return { releases, indexers, pending, loading, searched, searchedAt, error, grabError, isGrabbing, isGrabbed, deliveryFor, search, grab }
 }

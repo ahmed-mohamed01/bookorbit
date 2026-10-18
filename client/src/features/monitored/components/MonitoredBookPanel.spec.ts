@@ -132,6 +132,7 @@ function fakeReleases() {
   return {
     releases: ref<ReleaseCandidateItem[]>([]),
     indexers: ref<unknown[]>([{}, {}]),
+    pending: ref<unknown[]>([]),
     searchedAt: ref<Date | null>(new Date()),
     loading: ref(false),
     searched: ref(true),

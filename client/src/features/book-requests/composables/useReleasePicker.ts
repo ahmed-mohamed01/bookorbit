@@ -1,13 +1,16 @@
 import { ref, shallowReactive } from 'vue'
 import { api } from '@/lib/api'
+import { streamReleaseSearch } from '../api/streamReleaseSearch'
 import { fulfilmentBase } from '../fulfilmentBase'
 import type {
+  IndexerSearchPending,
   IndexerSearchStatus,
   InspectBookRequestReleasePayload,
   ReleaseCandidateItem,
   ReleaseFileInspection,
   ReleaseSearchCriteria,
   ReleaseSearchOverrides,
+  ReleaseSearchProgress,
   ReleaseSearchResult,
 } from '@bookorbit/types'
 
@@ -29,6 +32,12 @@ interface DefaultSearch {
   startedAt: number
   result: ReleaseSearchResult | null
   pending: Promise<ReleaseSearchResult | null> | null
+  /**
+   * The latest streamed snapshot while the search runs. A picker opened after the search started
+   * replays it, so it joins the stream where it is rather than staring at a spinner.
+   */
+  progress: ReleaseSearchProgress | null
+  listeners: Set<(progress: ReleaseSearchProgress) => void>
 }
 
 /** The server's own cache window; past it, a revisit searches again. */
@@ -52,28 +61,49 @@ function rememberSearch(path: string, entry: DefaultSearch): void {
   if (defaultSearches.size > SEARCH_CACHE_LIMIT) defaultSearches.delete(defaultSearches.keys().next().value!)
 }
 
-/** One default search, shared by everything that asks for it while it runs. */
-function loadDefaultSearch(path: string, refresh: boolean): Promise<ReleaseSearchResult | null> {
+/**
+ * One default search, shared by everything that asks for it while it runs. Each merged snapshot is
+ * handed to every listener as it arrives, and replayed to a listener that attaches mid-search.
+ */
+function loadDefaultSearch(
+  path: string,
+  refresh: boolean,
+  onProgress?: (progress: ReleaseSearchProgress) => void,
+): Promise<ReleaseSearchResult | null> {
   const existing = refresh ? null : freshEntry(path)
   if (existing?.result) return Promise.resolve(existing.result)
-  if (existing?.pending) return existing.pending
+  if (existing?.pending) {
+    if (onProgress) {
+      existing.listeners.add(onProgress)
+      if (existing.progress) onProgress(existing.progress)
+    }
+    return existing.pending
+  }
 
-  const startedAt = Date.now()
+  const entry: DefaultSearch = { startedAt: Date.now(), result: null, pending: null, progress: null, listeners: new Set() }
+  if (onProgress) entry.listeners.add(onProgress)
   const pending = (async () => {
     try {
-      const res = await api(refresh ? `${path}?refresh=true` : path)
-      if (!res.ok) return null
-      return (await res.json()) as ReleaseSearchResult
+      return await streamReleaseSearch(`${path}/stream`, refresh ? { refresh: true } : {}, (progress) => {
+        entry.progress = progress
+        for (const listener of entry.listeners) listener(progress)
+      })
     } catch {
       return null
     }
   })()
-  rememberSearch(path, { startedAt, result: null, pending })
+  entry.pending = pending
+  rememberSearch(path, entry)
   void pending.then((result) => {
     // Only the search that still owns the slot may settle it: a refresh started meanwhile replaced it.
-    if (defaultSearches.get(path)?.pending !== pending) return
-    if (result) rememberSearch(path, { startedAt, result, pending: null })
-    else defaultSearches.delete(path)
+    if (defaultSearches.get(path) !== entry) return
+    entry.progress = null
+    entry.listeners.clear()
+    if (result) {
+      entry.result = result
+      entry.pending = null
+      rememberSearch(path, entry)
+    } else defaultSearches.delete(path)
   })
   return pending
 }
@@ -125,6 +155,8 @@ export function useReleasePicker(canManage: () => boolean) {
    * they have not. Local to the picker and dropped on reset; nothing about it is worth persisting.
    */
   const attempts = ref(new Map<string, number>())
+  /** Sources the streamed search has started but not yet heard back from, until the final result. */
+  const pendingIndexers = ref<IndexerSearchPending[]>([])
   const inspections = ref(new Map<string, ReleaseFileInspection>())
   const inspecting = ref(new Set<string>())
   /**
@@ -141,6 +173,8 @@ export function useReleasePicker(canManage: () => boolean) {
    * request or to search again with different terms before the first one comes back.
    */
   let searchGeneration = 0
+  /** The custom search in flight, so a newer search or a reset can cut it short. */
+  let customSearchController: AbortController | null = null
 
   function applyResult(result: ReleaseSearchResult): void {
     releases.value = result.releases
@@ -152,14 +186,35 @@ export function useReleasePicker(canManage: () => boolean) {
     profileActive.value = result.profileActive
     cached.value = result.cached
     searched.value = true
+    pendingIndexers.value = []
     attempts.value = new Map(attempts.value).set(searchAttemptKey(result.criteria.activeIsbn), result.releases.length)
+  }
+
+  /**
+   * One merged snapshot of the search so far, ranked like the final result so it renders as the
+   * real list. Deliberately not the final word: `searched` and the attempt log stay unset, so no
+   * empty state can claim the search is over while sources are still answering.
+   */
+  function applyProgress(progress: ReleaseSearchProgress): void {
+    releases.value = progress.releases
+    criteria.value = progress.criteria
+    indexers.value = progress.indexers
+    uncoveredIndexerCount.value = progress.uncoveredIndexerCount
+    enabledIndexerCount.value = progress.enabledIndexerCount
+    configuredIndexerCount.value = progress.configuredIndexerCount
+    profileActive.value = progress.profileActive
+    cached.value = false
+    pendingIndexers.value = progress.pending
   }
 
   async function fetchReleases(requestId: number, options: { refresh?: boolean; overrides?: ReleaseSearchOverrides } = {}): Promise<boolean> {
     const generation = ++searchGeneration
+    customSearchController?.abort()
+    customSearchController = null
     const custom = options.overrides !== undefined
     const path = defaultSearchPath(canManage(), requestId)
     loadFailed.value = false
+    pendingIndexers.value = []
     clearInspections()
     // A search already answered is shown in the same tick, so switching to it never flashes a spinner.
     const known = custom || options.refresh ? null : freshEntry(path)?.result
@@ -171,18 +226,21 @@ export function useReleasePicker(canManage: () => boolean) {
     }
 
     loading.value = true
+    let controller: AbortController | null = null
     try {
       let result: ReleaseSearchResult | null
+      const applyStreamedProgress = (progress: ReleaseSearchProgress): void => {
+        if (generation !== searchGeneration) return
+        applyProgress(progress)
+      }
       if (custom) {
-        const res = await api(`${path}/search`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(options.overrides),
-        })
-        result = res.ok ? ((await res.json()) as ReleaseSearchResult) : null
-        if (result) rememberSearch(path, { startedAt: Date.now(), result, pending: null })
+        // The shared default search belongs to every picker of this request; a custom one is this picker's alone.
+        controller = new AbortController()
+        customSearchController = controller
+        result = await streamReleaseSearch(`${path}/stream`, { overrides: options.overrides }, applyStreamedProgress, controller.signal)
+        if (result) rememberSearch(path, { startedAt: Date.now(), result, pending: null, progress: null, listeners: new Set() })
       } else {
-        result = await loadDefaultSearch(path, options.refresh === true)
+        result = await loadDefaultSearch(path, options.refresh === true, applyStreamedProgress)
       }
       if (generation !== searchGeneration) return false
       if (!result) {
@@ -195,6 +253,7 @@ export function useReleasePicker(canManage: () => boolean) {
       if (generation === searchGeneration) loadFailed.value = true
       return false
     } finally {
+      if (controller && customSearchController === controller) customSearchController = null
       // A newer search owns the spinner from here, so an older one must not put it away.
       if (generation === searchGeneration) loading.value = false
     }
@@ -249,6 +308,8 @@ export function useReleasePicker(canManage: () => boolean) {
 
   function reset(): void {
     searchGeneration++
+    customSearchController?.abort()
+    customSearchController = null
     releases.value = []
     criteria.value = null
     indexers.value = []
@@ -260,6 +321,7 @@ export function useReleasePicker(canManage: () => boolean) {
     loadFailed.value = false
     searched.value = false
     attempts.value = new Map()
+    pendingIndexers.value = []
     clearInspections()
   }
 
@@ -284,6 +346,7 @@ export function useReleasePicker(canManage: () => boolean) {
     loadFailed,
     searched,
     attempts,
+    pendingIndexers,
     inspections,
     inspecting,
     inspectionFailed,

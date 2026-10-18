@@ -21,6 +21,7 @@ import {
   monitoredFormatStatus,
 } from '@bookorbit/types';
 import type {
+  ReleaseSearchProgress,
   MonitoredStatusFilter,
   MonitorAuthorRequest,
   MonitorMode,
@@ -813,6 +814,11 @@ export class MonitoredService {
    * sat in Requests (Beta) demanding a hand-picked release; only a grab commits to that.
    */
   async searchWorkReleases(user: RequestUser, workId: string, format: MonitoredFormat) {
+    const search = await this.prepareWorkReleaseSearch(user, workId, format);
+    return search();
+  }
+
+  async prepareWorkReleaseSearch(user: RequestUser, workId: string, format: MonitoredFormat) {
     const startedAt = Date.now();
     this.logger.log(
       `[monitored.work.search_releases] [start] workId="${sanitizeLogValue(workId)}" userId=${user.id} format=${format} - monitored release search started`,
@@ -823,15 +829,23 @@ export class MonitoredService {
       if (entry.monitor.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored work');
       await this.healWorkAvailability([{ monitor: entry.monitor, works: [entry.work] }], user);
       const synthetic = this.buildSearchRequest(entry.monitor, entry.work, format);
-      const result = await this.indexerSearch.search(synthetic, { refresh: true });
-      // Nothing ever reads this entry back: this search always refreshes, and a grab resolves its
-      // release under the real request id. Dropping it stops a browse of a monitored author from
-      // parking a result set per work in the shared release store for the length of its TTL.
-      this.indexerSearch.forget(synthetic.id);
-      this.logger.log(
-        `[monitored.work.search_releases] [end] workId="${sanitizeLogValue(workId)}" userId=${user.id} durationMs=${Date.now() - startedAt} releases=${result.releases.length} - monitored release search completed`,
-      );
-      return result;
+      return async (onProgress?: (progress: ReleaseSearchProgress) => void) => {
+        try {
+          const result = await this.indexerSearch.search(synthetic, { refresh: true, ...(onProgress ? { onProgress } : {}) });
+          // Nothing ever reads this entry back: this search always refreshes, and a grab resolves its
+          // release under the real request id. Dropping it stops a browse of a monitored author from
+          // parking a result set per work in the shared release store for the length of its TTL.
+          this.logger.log(
+            `[monitored.work.search_releases] [end] workId="${sanitizeLogValue(workId)}" userId=${user.id} durationMs=${Date.now() - startedAt} releases=${result.releases.length} - monitored release search completed`,
+          );
+          return result;
+        } catch (error) {
+          this.logOperationFailure('monitored.work.search_releases', workId, user.id, startedAt, error, 'workId');
+          throw error;
+        } finally {
+          this.indexerSearch.forget(synthetic.id);
+        }
+      };
     } catch (error) {
       this.logOperationFailure('monitored.work.search_releases', workId, user.id, startedAt, error, 'workId');
       throw error;

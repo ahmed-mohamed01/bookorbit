@@ -1,3 +1,6 @@
+import type { FastifyReply } from 'fastify';
+import { streamReleaseSearch } from '../../common/utils/sse-stream.utils';
+import { StreamBookRequestReleasesDto } from './dto/stream-book-request-releases.dto';
 import {
   Body,
   Controller,
@@ -11,6 +14,7 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { RouteConfig } from '@nestjs/platform-fastify';
 import { AuditAction, AuditResource, Permission } from '@bookorbit/types';
@@ -80,6 +84,16 @@ export class BookRequestAdminController {
   @Get(':id/releases')
   listReleases(@Param('id', ParseIntPipe) id: number, @Query('refresh', new DefaultValuePipe(false), ParseBoolPipe) refresh: boolean) {
     return this.fulfillment.listReleases(id, { refresh });
+  }
+
+  @Post(':id/releases/stream')
+  @HttpCode(HttpStatus.OK)
+  async streamReleases(@Param('id', ParseIntPipe) id: number, @Body() dto: StreamBookRequestReleasesDto, @Res() reply: FastifyReply) {
+    const search = await this.fulfillment.prepareReleaseSearch(id, {
+      refresh: dto.overrides ? true : dto.refresh,
+      overrides: dto.overrides,
+    });
+    await streamReleaseSearch(reply, search, `requestId=${id}`);
   }
 
   @Post(':id/releases/search')

@@ -82,6 +82,7 @@ const {
   loadFailed,
   searched,
   attempts,
+  pendingIndexers,
   inspections,
   inspecting,
   inspectionFailed,
@@ -223,8 +224,8 @@ const searchHeadline = computed<{ isbn: boolean; value: string }>(() => {
  * was the old panel: it repeated the ISBN already stated above it, and stayed silent about the
  * count, the rows the hard filters dropped, and the session that had expired.
  */
-const sourceRows = computed<SourceRow[]>(() =>
-  indexers.value.map((indexer) => ({
+const sourceRows = computed<SourceRow[]>(() => [
+  ...indexers.value.map((indexer) => ({
     id: indexer.indexerId,
     name: indexer.indexerName,
     query: indexer.query?.value ?? null,
@@ -236,10 +237,23 @@ const sourceRows = computed<SourceRow[]>(() =>
     count: indexer.count,
     filtered: indexer.filtered,
     failure: indexer.failure ?? null,
+    pending: false,
   })),
-)
-const failedSourceRows = computed(() => sourceRows.value.filter((row) => !row.ok))
-const cleanSourceRows = computed(() => sourceRows.value.filter((row) => row.ok))
+  ...pendingIndexers.value.map((indexer) => ({
+    id: indexer.indexerId,
+    name: indexer.indexerName,
+    query: null,
+    echoesKey: false,
+    isbnQuery: false,
+    ok: false,
+    count: 0,
+    filtered: 0,
+    failure: null,
+    pending: true,
+  })),
+])
+const failedSourceRows = computed(() => sourceRows.value.filter((row) => !row.pending && !row.ok))
+const cleanSourceRows = computed(() => sourceRows.value.filter((row) => !row.pending && row.ok))
 /**
  * Past a handful of sources the transcript is what pushes the releases off the screen, so the ones
  * with nothing to explain collapse into their total. Failures never collapse: they are the reason
@@ -300,6 +314,8 @@ type SourceRow = {
   count: number
   filtered: number
   failure: IndexerSearchFailure | null
+  /** Still answering, so the row has no outcome to state yet. */
+  pending: boolean
 }
 
 function localOnlyFacts(value: ReleaseSearchCriteria): CriteriaFact[] {
@@ -473,8 +489,12 @@ function scoreSurfaceClass(score: number): string {
   return 'border-border bg-muted'
 }
 
+/**
+ * The top row is provisional while any source is still answering, and naming it the winner early
+ * invites a grab of a release the next snapshot may re-rank below another.
+ */
 function isBest(index: number): boolean {
-  return marksBest.value && index === 0
+  return marksBest.value && pendingIndexers.value.length === 0 && index === 0
 }
 
 function isExpanded(release: ReleaseCandidateItem): boolean {
@@ -879,12 +899,14 @@ function showEverySource(): void {
             </li>
 
             <li v-for="row in listedSourceRows" :key="row.id" class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
-              <TriangleAlert v-if="!row.ok" :size="13" class="shrink-0 text-warning" aria-hidden="true" />
+              <Loader2 v-if="row.pending" :size="13" class="shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+              <TriangleAlert v-else-if="!row.ok" :size="13" class="shrink-0 text-warning" aria-hidden="true" />
               <CircleCheck v-else-if="row.count > 0" :size="13" class="shrink-0 text-success" aria-hidden="true" />
               <CircleMinus v-else :size="13" class="shrink-0 text-muted-foreground" aria-hidden="true" />
 
               <span class="shrink-0 font-medium text-foreground">{{ row.name }}</span>
-              <span v-if="row.echoesKey" class="text-muted-foreground">
+              <span v-if="row.pending" class="text-muted-foreground">{{ t('bookRequests.releases.criteria.sourceSearching') }}</span>
+              <span v-else-if="row.echoesKey" class="text-muted-foreground">
                 {{
                   t(row.isbnQuery ? 'bookRequests.releases.criteria.sourceSearchedIsbn' : 'bookRequests.releases.criteria.sourceSearchedTitleAuthor')
                 }}
@@ -892,9 +914,8 @@ function showEverySource(): void {
               <span v-else-if="row.query" class="min-w-0 truncate font-mono text-muted-foreground" :title="row.query">{{ row.query }}</span>
               <span v-else class="text-muted-foreground">{{ t('bookRequests.releases.criteria.sourceNoAdapter') }}</span>
 
-              <span class="ms-auto flex shrink-0 items-center gap-2">
-                <Loader2 v-if="loading" class="size-3 animate-spin text-muted-foreground" aria-hidden="true" />
-                <template v-else-if="!row.ok">
+              <span v-if="!row.pending" class="ms-auto flex shrink-0 items-center gap-2">
+                <template v-if="!row.ok">
                   <span class="text-warning">{{ t(`bookRequests.releases.failures.${row.failure ?? 'error'}`) }}</span>
                   <!-- The one failure with a specific fix, rather than a re-run of the same search. -->
                   <RouterLink
@@ -1142,7 +1163,8 @@ function showEverySource(): void {
           </div>
         </div>
 
-        <p v-else-if="loading" role="status" class="mt-5 flex items-center gap-2 text-sm text-muted-foreground">
+        <!-- Only while nothing has arrived yet: once rows exist they render while the rest of the search runs. -->
+        <p v-else-if="loading && releases.length === 0" role="status" class="mt-5 flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 class="size-4 animate-spin" aria-hidden="true" />
           {{ t('bookRequests.releases.searching') }}
         </p>
@@ -1188,6 +1210,12 @@ function showEverySource(): void {
           </RequestEmptyState>
 
           <template v-else-if="releases.length > 0">
+            <!-- The list above is the search so far: rows appear and re-rank as more sources answer. -->
+            <p v-if="loading && pendingIndexers.length" role="status" class="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
+              {{ t('bookRequests.releases.stillSearching', { count: pendingIndexers.length }) }}
+            </p>
+
             <!--
               Everything true of every release, said once. Four of the old nine columns were
               constant on a single-indexer search, and dropping them gives the two that actually

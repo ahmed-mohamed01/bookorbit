@@ -1,17 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, ref } from 'vue'
 import { mount } from '@vue/test-utils'
-import type { BookRequestItem, DownloadDelivery, IndexerSearchStatus, MonitoredWorkReleasesResponse, ReleaseCandidateItem } from '@bookorbit/types'
-import { grabWorkRelease, searchWorkReleases } from '../api/monitored'
+import type {
+  BookRequestItem,
+  DownloadDelivery,
+  IndexerSearchStatus,
+  MonitoredFormat,
+  MonitoredWorkReleasesResponse,
+  ReleaseCandidateItem,
+  ReleaseSearchProgress,
+} from '@bookorbit/types'
+import { grabWorkRelease, streamWorkReleases } from '../api/monitored'
 import { useMonitoredReleases } from './useMonitoredReleases'
 
 vi.mock('../api/monitored', () => ({
   grabWorkRelease: vi.fn<() => Promise<BookRequestItem>>(),
-  searchWorkReleases: vi.fn<() => Promise<MonitoredWorkReleasesResponse>>(),
+  streamWorkReleases:
+    vi.fn<
+      (
+        workId: string,
+        format: MonitoredFormat,
+        onProgress: (progress: ReleaseSearchProgress) => void,
+        signal?: AbortSignal,
+      ) => Promise<MonitoredWorkReleasesResponse>
+    >(),
 }))
 
 const grabMock = vi.mocked(grabWorkRelease)
-const searchMock = vi.mocked(searchWorkReleases)
+const searchMock = vi.mocked(streamWorkReleases)
 const release = { guid: 'release-1', indexerId: 7, seeders: null } as ReleaseCandidateItem
 
 function request(id: number): BookRequestItem {
@@ -207,6 +223,99 @@ describe('useMonitoredReleases delivery', () => {
     await composable.search()
 
     expect(composable.deliveryFor(release)).toBe('file')
+    wrapper.unmount()
+  })
+})
+
+describe('useMonitoredReleases streamed search', () => {
+  beforeEach(() => {
+    grabMock.mockReset()
+    searchMock.mockReset()
+  })
+
+  /** A snapshot is the final result's shape plus the sources still answering. */
+  function progressOf(result: MonitoredWorkReleasesResponse, pending: ReleaseSearchProgress['pending']): ReleaseSearchProgress {
+    return { ...result, pending } as ReleaseSearchProgress
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  it('applies each snapshot as it arrives and only the final result settles the search', async () => {
+    const { composable, wrapper } = mountComposable()
+    const stream: {
+      send: ((progress: ReleaseSearchProgress) => void) | undefined
+      finish: ((result: MonitoredWorkReleasesResponse) => void) | undefined
+    } = { send: undefined, finish: undefined }
+    searchMock.mockImplementationOnce(
+      (_workId, _format, onProgress) =>
+        new Promise<MonitoredWorkReleasesResponse>((resolve) => {
+          stream.send = onProgress
+          stream.finish = resolve
+        }),
+    )
+    const searching = composable.search()
+    await settle()
+
+    stream.send!(progressOf(searchResult([]), [{ indexerId: 9, indexerName: 'Slow', color: null }]))
+    await settle()
+
+    expect(composable.releases.value).toEqual([release])
+    expect(composable.pending.value).toEqual([{ indexerId: 9, indexerName: 'Slow', color: null }])
+    expect(composable.loading.value).toBe(true)
+    expect(composable.searched.value).toBe(false)
+
+    stream.finish!(searchResult([indexerStatus(7, 'torrent')]))
+    await searching
+
+    expect(composable.pending.value).toEqual([])
+    expect(composable.indexers.value).toEqual([indexerStatus(7, 'torrent')])
+    expect(composable.searched.value).toBe(true)
+    expect(composable.loading.value).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('ignores a snapshot and a result from a search a newer one replaced', async () => {
+    const { composable, wrapper } = mountComposable()
+    const stale: {
+      send: ((progress: ReleaseSearchProgress) => void) | undefined
+      finish: ((result: MonitoredWorkReleasesResponse) => void) | undefined
+    } = { send: undefined, finish: undefined }
+    searchMock.mockImplementationOnce(
+      (_workId, _format, onProgress) =>
+        new Promise<MonitoredWorkReleasesResponse>((resolve) => {
+          stale.send = onProgress
+          stale.finish = resolve
+        }),
+    )
+    const staleSearch = composable.search()
+    await settle()
+
+    const fresh = searchResult([indexerStatus(7, 'torrent')])
+    searchMock.mockResolvedValueOnce(fresh)
+    await composable.search()
+
+    stale.send!(progressOf(fresh, [{ indexerId: 9, indexerName: 'Slow', color: null }]))
+    stale.finish!(fresh)
+    await staleSearch
+
+    expect(composable.releases.value).toEqual(fresh.releases)
+    expect(composable.indexers.value).toEqual(fresh.indexers)
+    expect(composable.pending.value).toEqual([])
+    wrapper.unmount()
+  })
+
+  it('cuts the previous stream short when a new search starts', async () => {
+    const { composable, wrapper } = mountComposable()
+    searchMock.mockImplementationOnce(() => new Promise<MonitoredWorkReleasesResponse>(() => {}))
+    void composable.search()
+    await settle()
+    const staleSignal = searchMock.mock.calls[0]?.[3] as AbortSignal
+    expect(staleSignal.aborted).toBe(false)
+
+    searchMock.mockResolvedValueOnce(searchResult([indexerStatus(7, 'torrent')]))
+    await composable.search()
+
+    expect(staleSignal.aborted).toBe(true)
     wrapper.unmount()
   })
 })

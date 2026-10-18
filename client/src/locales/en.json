@@ -8929,6 +8929,7 @@
         "sources": "Sources",
         "sourceSearchedIsbn": "searched the ISBN",
         "sourceSearchedTitleAuthor": "searched the title and author",
+        "sourceSearching": "searching...",
         "sourceNoAdapter": "no matching adapter",
         "sourceReleases": "{count, plural, one {# release} other {# releases}}",
         "sourceNone": "no matches",
@@ -8982,6 +8983,7 @@
       },
       "singleFileNote": "A release can be one book in several formats, an audiobook in parts, or an archive - all of those import as a single book. A release holding several separate books asks you which one to keep.",
       "searching": "Searching indexers...",
+      "stillSearching": "Still searching {count, plural, one {# source...} other {# sources...}}",
       "refresh": "Search again",
       "cached": "Showing the last search. Search again for fresh results.",
       "sortBy": "Sort by",
@@ -14600,6 +14602,7 @@
       },
       "searchReleases": "Search for releases",
       "searching": "Searching for releases...",
+      "stillSearching": "Still searching {count, plural, one {# source...} other {# sources...}}",
       "noReleases": "No releases found",
       "verdict": {
         "verified": "Verified",

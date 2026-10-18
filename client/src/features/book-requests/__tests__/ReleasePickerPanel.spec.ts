@@ -161,6 +161,56 @@ function respond(body: unknown) {
   return Promise.resolve({ ok: true, json: () => Promise.resolve(body) } as Response)
 }
 
+/** A finished release search stream: zero or more progress frames, then the final result. */
+function sseRespond(result: unknown, progress: unknown[] = []) {
+  const frames = [
+    ...progress.map((snapshot) => `event: progress\ndata: ${JSON.stringify(snapshot)}`),
+    `event: result\ndata: ${JSON.stringify(result)}`,
+  ]
+  return Promise.resolve({ ok: true, status: 200, body: undefined, text: async () => `${frames.join('\n\n')}\n\n` } as unknown as Response)
+}
+
+/** A stream the test feeds frame by frame, so the panel can be observed mid-search. */
+function handFedStream() {
+  const frames: string[] = []
+  const waiters: Array<(read: { done: boolean; value?: Uint8Array }) => void> = []
+  const encoder = new TextEncoder()
+  let closed = false
+  const deliver = (): void => {
+    while (frames.length > 0 && waiters.length > 0) waiters.shift()!({ done: false, value: encoder.encode(frames.shift()!) })
+    if (closed && frames.length === 0) for (const waiter of waiters.splice(0)) waiter({ done: true })
+  }
+  const response = {
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: () =>
+          new Promise<{ done: boolean; value?: Uint8Array }>((resolve) => {
+            if (frames.length > 0) resolve({ done: false, value: encoder.encode(frames.shift()!) })
+            else if (closed) resolve({ done: true })
+            else waiters.push(resolve)
+          }),
+      }),
+    },
+  } as unknown as Response
+  const settle = (): void => {
+    closed = true
+    deliver()
+  }
+  return {
+    response,
+    sendProgress(snapshot: unknown): void {
+      frames.push(`event: progress\ndata: ${JSON.stringify(snapshot)}\n\n`)
+      deliver()
+    },
+    sendResult(result: unknown): void {
+      frames.push(`event: result\ndata: ${JSON.stringify(result)}\n\n`)
+      settle()
+    },
+  }
+}
+
 function refuse(body: unknown) {
   return Promise.resolve({ ok: false, status: 400, json: () => Promise.resolve(body) } as Response)
 }
@@ -194,6 +244,7 @@ function editFields(wrapper: VueWrapper): DOMWrapper<Element> {
 
 async function render(search: unknown = MIXED) {
   api.mockImplementation((input: string) => {
+    if (input.includes('/releases/stream')) return sseRespond(search)
     if (input.includes('/releases')) return respond(search)
     if (input.includes('download-clients')) return respond([])
     return respond(request())
@@ -328,12 +379,14 @@ describe('ReleasePickerPanel', () => {
     const alternative = wrapper.findAll('button').find((button) => button.text().includes('9781250301697'))!
     expect(alternative.text()).not.toContain('tried')
 
-    api.mockImplementation(() =>
-      respond({
-        ...MIXED,
-        releases: [],
-        criteria: { ...MIXED.criteria, activeIsbn: '9781250301697', isbns: ['9781234567897', '9781250301697'] },
-      }),
+    api.mockImplementation((input: string) =>
+      input.includes('/releases/stream')
+        ? sseRespond({
+            ...MIXED,
+            releases: [],
+            criteria: { ...MIXED.criteria, activeIsbn: '9781250301697', isbns: ['9781234567897', '9781250301697'] },
+          })
+        : respond(request()),
     )
     await alternative.trigger('click')
     await flushPromises()
@@ -377,16 +430,19 @@ describe('ReleasePickerPanel', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(api).toHaveBeenCalledWith('/api/v1/admin/book-requests/7/releases/search', {
+    expect(api).toHaveBeenCalledWith('/api/v1/admin/book-requests/7/releases/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title: 'Dune Messiah',
-        authors: ['Frank Herbert'],
-        isbn: '9780593098233',
-        language: null,
-        preferredFormats: ['azw3', 'epub'],
+        overrides: {
+          title: 'Dune Messiah',
+          authors: ['Frank Herbert'],
+          isbn: '9780593098233',
+          language: null,
+          preferredFormats: ['azw3', 'epub'],
+        },
       }),
+      signal: expect.anything(),
     })
   })
 
@@ -399,8 +455,8 @@ describe('ReleasePickerPanel', () => {
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    const customCall = api.mock.calls.find(([url]) => url.endsWith('/releases/search'))
-    expect(JSON.parse(String(customCall?.[1]?.body))).toEqual(expect.objectContaining({ isbn: null }))
+    const customCall = api.mock.calls.find(([url, options]) => url.endsWith('/releases/stream') && String(options?.body).includes('"overrides"'))
+    expect(JSON.parse(String(customCall?.[1]?.body))).toEqual(expect.objectContaining({ overrides: expect.objectContaining({ isbn: null }) }))
   })
 
   it('searches again with the currently displayed fields instead of reverting silently', async () => {
@@ -427,13 +483,15 @@ describe('ReleasePickerPanel', () => {
       .trigger('click')
     await flushPromises()
 
-    const customCall = api.mock.calls.find(([url]) => url.endsWith('/releases/search'))
+    const customCall = api.mock.calls.find(([url, options]) => url.endsWith('/releases/stream') && String(options?.body).includes('"overrides"'))
     expect(JSON.parse(String(customCall?.[1]?.body))).toEqual({
-      title: 'A manual title',
-      authors: ['A manual author'],
-      isbn: null,
-      language: null,
-      preferredFormats: ['azw3'],
+      overrides: {
+        title: 'A manual title',
+        authors: ['A manual author'],
+        isbn: null,
+        language: null,
+        preferredFormats: ['azw3'],
+      },
     })
   })
 
@@ -648,6 +706,7 @@ describe('ReleasePickerPanel', () => {
     }
     api.mockImplementation((input: string) => {
       if (input.includes('/releases/inspect')) return respond(READY_INSPECTION)
+      if (input.includes('/releases/stream')) return sseRespond(search)
       if (input.includes('/releases')) return respond(search)
       if (input.includes('download-clients')) return respond([])
       if (input.includes('/grab')) return refuse({ message: 'the tracker answered 406', errorCode: 'GRAB_SOURCE_REFUSED' })
@@ -884,6 +943,65 @@ describe('ReleasePickerPanel', () => {
   })
 })
 
+/**
+ * A streamed search answers several times: rows appear and re-rank as sources finish, so the
+ * panel must never hold the whole search behind a spinner or name a winner too early.
+ */
+describe('ReleasePickerPanel streamed search', () => {
+  it('renders rows as sources answer, without naming a best release yet', async () => {
+    const feed = handFedStream()
+    api.mockImplementation((input: string) => {
+      if (input.includes('/releases/stream')) return Promise.resolve(feed.response)
+      if (input.includes('/releases')) return respond(READY_INSPECTION)
+      if (input.includes('download-clients')) return respond([])
+      return respond(request())
+    })
+
+    const wrapper = mount(ReleasePickerPanel, { global: { stubs: { RouterLink: RouterLinkStub } } })
+    await flushPromises()
+
+    // Nothing has answered yet: the searching placeholder holds the stage.
+    expect(wrapper.text()).toContain('Searching indexers...')
+    expect(releaseRows(wrapper)).toHaveLength(0)
+
+    feed.sendProgress({
+      ...MIXED,
+      releases: [MIXED.releases[0]],
+      indexers: [MIXED.indexers[0]],
+      pending: [{ indexerId: 2, indexerName: 'Library Genesis', color: null }],
+    })
+    await flushPromises()
+
+    // Rows render while the search runs, and no empty state claims it is over.
+    expect(releaseRows(wrapper)).toHaveLength(1)
+    expect(wrapper.text()).not.toContain('Searching indexers...')
+    expect(wrapper.text()).toContain('Still searching 1 source...')
+    // The top row is provisional while any source is still answering.
+    expect(wrapper.text()).not.toContain('Best match')
+
+    // The pending source appears in the transcript as answering, not as having returned nothing.
+    const transcript = wrapper.get('ul[aria-label="Sources"]')
+    const pendingRow = transcript.findAll('li').find((row) => row.text().includes('Library Genesis'))!
+    expect(pendingRow.text()).toContain('searching...')
+    expect(pendingRow.find('.animate-spin').exists()).toBe(true)
+
+    // A row already on screen can be sent while the rest of the search runs.
+    const send = releaseRows(wrapper)[0]!
+      .findAll('button')
+      .find((button) => /Download release|Send/.test(button.text()))!
+    expect(send.attributes('disabled')).toBeUndefined()
+
+    feed.sendResult(MIXED)
+    await flushPromises()
+
+    expect(releaseRows(wrapper)).toHaveLength(2)
+    expect(wrapper.text()).toContain('Best match')
+    expect(wrapper.text()).not.toContain('Still searching')
+    // The source that answered late states its real outcome once the result lands.
+    expect(transcript.text()).toContain('Library Genesissearched the ISBN')
+  })
+})
+
 describe('ReleasePickerPanel for a pair', () => {
   const ebookHalf = (overrides: Partial<BookRequestItem> = {}) => request({ id: 7, companionRequestId: 8, ...overrides })
   const audioHalf = (overrides: Partial<BookRequestItem> = {}) => request({ id: 8, mediaKind: 'audiobook', companionRequestId: 7, ...overrides })
@@ -897,8 +1015,8 @@ describe('ReleasePickerPanel for a pair', () => {
   async function renderPair(audio: BookRequestItem = audioHalf()) {
     api.mockImplementation((input: string) => {
       if (input.includes('/releases/inspect')) return respond(READY_INSPECTION)
-      if (input.includes('/7/releases')) return respond(MIXED)
-      if (input.includes('/8/releases')) return respond(AUDIO_SEARCH)
+      if (input.includes('/7/releases/stream')) return sseRespond(MIXED)
+      if (input.includes('/8/releases/stream')) return sseRespond(AUDIO_SEARCH)
       if (input.includes('/7/grab')) return respond(ebookHalf({ status: 'grabbed' }))
       if (input.includes('download-clients')) return respond([])
       if (input.endsWith('/book-requests/8')) return respond(audio)
@@ -910,7 +1028,7 @@ describe('ReleasePickerPanel for a pair', () => {
   }
 
   const tabs = (wrapper: VueWrapper) => wrapper.get('nav[aria-label="Formats to pick releases for"]')
-  const searchesFor = (id: number) => api.mock.calls.filter(([input]) => input.endsWith(`/${id}/releases`)).length
+  const searchesFor = (id: number) => api.mock.calls.filter(([input]) => input.endsWith(`/${id}/releases/stream`)).length
 
   async function sendFirstRelease(wrapper: VueWrapper) {
     const send = releaseRows(wrapper)[0]!

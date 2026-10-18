@@ -19,6 +19,7 @@ import {
   GRABBABLE_BOOK_REQUEST_STATUSES,
   GRAB_FAILURE_CODES,
   isGrabbableBookRequestStatus,
+  isBookRequestMediaKind,
   NotificationType,
   normalizeBookRequestIsbn,
   releaseInspectionBlocksGrab,
@@ -40,6 +41,7 @@ import type {
   ReleaseManifestFile,
   ReleaseSearchOverrides,
   ReleaseSearchResult,
+  ReleaseSearchProgress,
   ReleaseUnitChoice,
   ReleaseUnitSummary,
 } from '@bookorbit/types';
@@ -68,6 +70,7 @@ import {
 import { IndexerConfigService } from '../indexers/indexer-config.service';
 import { IndexerRegistry } from '../indexers/indexer-registry';
 import { IndexerSearchService } from '../indexers/indexer-search.service';
+import { RETIRED_MEDIUM_REFUSAL } from '../retired-media';
 import { interpretRelease, type ReleaseFileInput, type ReleasePlan } from '../../scanner/lib/release-plan';
 import { resolveFormat } from '../indexers/release-scoring';
 import { BookRequestDownloadRepository } from './book-request-download.repository';
@@ -156,17 +159,29 @@ export class RequestFulfillmentService {
    * The ranked, cross-indexer release list for one request. Read-only, cached briefly, and the
    * only place a release is turned into something a grab can name.
    */
-  async listReleases(requestId: number, options: { refresh?: boolean; overrides?: SearchBookRequestReleasesDto } = {}): Promise<ReleaseSearchResult> {
+  async listReleases(
+    requestId: number,
+    options: { refresh?: boolean; overrides?: SearchBookRequestReleasesDto; onProgress?: (progress: ReleaseSearchProgress) => void } = {},
+  ): Promise<ReleaseSearchResult> {
+    const search = await this.prepareReleaseSearch(requestId, options);
+    return search(options.onProgress);
+  }
+
+  async prepareReleaseSearch(requestId: number, options: { refresh?: boolean; overrides?: SearchBookRequestReleasesDto } = {}) {
     const joined = await this.requests.findById(requestId);
     if (!joined) throw new NotFoundException('Book request not found');
     if (UNSEARCHABLE.includes(joined.request.status as BookRequestStatus)) {
       throw new BadRequestException(`A request that is ${joined.request.status} is not searched for releases`);
     }
 
-    return this.releases.search(joined.request, {
-      refresh: options.refresh,
-      overrides: options.overrides ? normalizeReleaseSearchOverrides(options.overrides) : undefined,
-    });
+    if (!isBookRequestMediaKind(joined.request.mediaKind)) throw new BadRequestException(RETIRED_MEDIUM_REFUSAL);
+    const overrides = options.overrides ? normalizeReleaseSearchOverrides(options.overrides) : undefined;
+    return (onProgress?: (progress: ReleaseSearchProgress) => void) =>
+      this.releases.search(joined.request, {
+        onProgress,
+        refresh: options.refresh,
+        overrides,
+      });
   }
 
   /**

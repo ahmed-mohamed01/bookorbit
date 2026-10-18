@@ -34,6 +34,7 @@ function joined(overrides: Partial<BookRequestRow> = {}) {
       id: 7,
       userId: 3,
       title: 'Dune',
+      mediaKind: 'ebook',
       status: 'approved',
       targetLibraryId: 2,
       createdAt: new Date('2026-08-18T00:00:00Z'),
@@ -1155,6 +1156,21 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
 });
 
 describe('RequestFulfillmentService.listReleases', () => {
+  it('prepares validation before starting and forwards progress to the search', async () => {
+    const { service, releases } = makeService();
+    const search = await service.prepareReleaseSearch(7);
+    expect(releases.search).not.toHaveBeenCalled();
+    const onProgress = vi.fn();
+    await search(onProgress);
+    expect(releases.search).toHaveBeenCalledWith(expect.anything(), { refresh: undefined, overrides: undefined, onProgress });
+  });
+
+  it('rejects retired media before starting the search', async () => {
+    const { service, releases } = makeService({ requests: { findById: vi.fn().mockResolvedValue(joined({ mediaKind: 'comic' } as never)) } });
+    await expect(service.prepareReleaseSearch(7)).rejects.toThrow(BadRequestException);
+    expect(releases.search).not.toHaveBeenCalled();
+  });
+
   it('does not spend a tracker hit on a request that was refused', async () => {
     const { service, releases } = makeService({ requests: { findById: vi.fn().mockResolvedValue(joined({ status: 'rejected' })) } });
 

@@ -1074,3 +1074,65 @@ describe('IndexerSearchService', () => {
     await expect(service.refreshCandidate(7, 1, stale)).resolves.toMatchObject({ downloadUrl: 'https://prowlarr.test/fresh' });
   });
 });
+
+describe('streaming release searches', () => {
+  it('merges each completed source, ranks snapshots and preserves final pick order and cache behavior', async () => {
+    const deferred = () => {
+      let resolve!: (value: ReleaseCandidate[]) => void;
+      const promise = new Promise<ReleaseCandidate[]>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    };
+    const first = deferred();
+    const second = deferred();
+    const adapter = { search: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise) };
+    const { service } = makeService([indexer(), indexer({ id: 2, name: 'second' })], { torznab: adapter });
+    const onProgress = vi.fn();
+    const searching = service.search(request(), { onProgress });
+    await vi.waitFor(() => expect(adapter.search).toHaveBeenCalledTimes(2));
+    expect(onProgress.mock.calls[0][0]).toMatchObject({ releases: [], indexers: [], pending: [{ indexerId: 1 }, { indexerId: 2 }], cached: false });
+    const candidate = release({ indexerId: 2, guid: 'second', seeders: 1 });
+    second.resolve([candidate]);
+    await vi.waitFor(() => expect(onProgress).toHaveBeenCalledTimes(2));
+    expect(onProgress.mock.calls[1][0]).toMatchObject({ indexers: [{ indexerId: 2 }], pending: [{ indexerId: 1 }] });
+    expect(service.find(7, 2, 'second')).toBe(candidate);
+    first.resolve([release({ guid: 'first', seeders: 10 })]);
+    const result = await searching;
+    expect(onProgress.mock.calls[2][0]).toMatchObject({ pending: [], releases: result.releases, indexers: result.indexers });
+    expect(result.indexers.map((source) => source.indexerId)).toEqual([1, 2]);
+    expect(result.releases.map((row) => row.guid)).toEqual(['first', 'second']);
+    onProgress.mockClear();
+    expect(await service.search(request(), { onProgress })).toMatchObject({ ...result, cached: true });
+    expect(onProgress).not.toHaveBeenCalled();
+    adapter.search.mockImplementation((_query, config) => Promise.resolve(config.id === 2 ? [candidate] : [release({ guid: 'first', seeders: 10 })]));
+    const plain = await service.search(request(), { refresh: true });
+    expect({ ...plain, searchedAt: result.searchedAt }).toEqual(result);
+    service.forget(7);
+    expect(service.find(7, 2, 'second')).toBeUndefined();
+  });
+
+  it('ignores observer exceptions and removes in-flight candidates after completion', async () => {
+    const { service } = makeService([indexer()], { torznab: { search: vi.fn().mockResolvedValue([release()]) } });
+    const onProgress = vi.fn(() => {
+      throw new Error('disconnected');
+    });
+    const result = await service.search(request(), { onProgress });
+    expect(result.releases).toHaveLength(1);
+    service.forget(7);
+    expect(service.find(7, 1, result.releases[0].guid)).toBeUndefined();
+  });
+});
+
+it('removes in-flight candidates when the search throws before caching', async () => {
+  const { service, indexers } = makeService([indexer()], { torznab: { search: vi.fn().mockResolvedValue([release()]) } });
+  indexers.recordSearchOutcomes.mockImplementation(() => {
+    throw new Error('write failed');
+  });
+  const onProgress = vi.fn((progress) => {
+    if (progress.releases.length) expect(service.find(7, 1, progress.releases[0].guid)).toBeDefined();
+  });
+  await expect(service.search(request(), { onProgress })).rejects.toThrow('write failed');
+  service.forget(7);
+  expect(service.find(7, 1, release().guid)).toBeUndefined();
+});

@@ -31,6 +31,11 @@ const releases = computed(() => props.source.releases.value)
 const visible = computed(() => (showAll.value ? releases.value : releases.value.slice(0, PREVIEW_COUNT)))
 const showFooter = computed(() => !props.source.loading.value && (releases.value.length > 0 || props.canAskApproval))
 const hiddenCount = computed(() => Math.max(0, releases.value.length - PREVIEW_COUNT))
+/** Rows arrive while the search runs, so the line says how much of it is still outstanding. */
+const searchingText = computed(() => {
+  const stillSearching = props.source.pending.value.length
+  return stillSearching > 0 ? t('monitored.panel.stillSearching', { count: stillSearching }) : t('monitored.panel.searching')
+})
 
 const heading = computed(() => {
   const parts = [t('monitored.slot.releases.title')]
@@ -101,18 +106,19 @@ function handleClose() {
     </p>
     <p v-if="source.loading.value" role="status" class="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
       <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
-      {{ t('monitored.panel.searching') }}
+      {{ searchingText }}
     </p>
-    <p v-else-if="source.error.value" role="alert" class="mt-2 text-xs text-destructive">{{ source.error.value }}</p>
+    <!-- Rows stream in while the search runs, so the list and the searching line coexist. -->
+    <p v-if="source.error.value" role="alert" class="mt-2 text-xs text-destructive">{{ source.error.value }}</p>
     <ul v-else-if="releases.length" class="mt-2 flex flex-col gap-1">
       <ReleaseResultRow
         v-for="(release, index) in visible"
         :key="releaseKey(release)"
         compact
-        :best="index === 0"
+        :best="index === 0 && !source.loading.value"
         :release="release"
         :delivery="source.deliveryFor(release)"
-        :busy="source.loading.value || source.isGrabbing(release)"
+        :busy="source.isGrabbing(release)"
         :grabbed="source.isGrabbed(release)"
         @grab="handleGrab"
       />

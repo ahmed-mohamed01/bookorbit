@@ -572,6 +572,32 @@ export interface ReleaseSearchResult {
   cached: boolean;
 }
 
+/** A source a streamed search has started but not yet heard back from. */
+export interface IndexerSearchPending {
+  indexerId: number;
+  indexerName: string;
+  color: IndexerColor | null;
+}
+
+/**
+ * A manual search's merged list so far. Ranked and capped exactly like the final result, so the
+ * picker can render it as-is; `pending` names the sources still searching.
+ */
+export interface ReleaseSearchProgress extends ReleaseSearchResult {
+  pending: IndexerSearchPending[];
+}
+
+/** SSE event names on a streamed release search. `result` is the last event of a successful search. */
+export const RELEASE_SEARCH_PROGRESS_EVENT = 'progress';
+export const RELEASE_SEARCH_RESULT_EVENT = 'result';
+export const RELEASE_SEARCH_ERROR_EVENT = 'error';
+
+/** Body of a streamed request release search. `overrides` is omitted for the request's default search. */
+export interface StreamBookRequestReleasesPayload {
+  refresh?: boolean;
+  overrides?: ReleaseSearchOverrides;
+}
+
 /**
  * How many search sources this instance has, readable by anybody who may file a request.
  *
