@@ -30,11 +30,12 @@ type ExtensionAction = 'install' | 'uninstall' | 'update';
 @Injectable()
 export class SuwayomiExtensionsClient {
   async listExtensionRepos(conn: EngineConnection): Promise<string[]> {
-    const data = await suwayomiGraphql<{ settings: { extensionRepos: string[] } }>(
+    // addExtensionStore writes to extensionStores; settings.extensionRepos is the legacy list and stays empty.
+    const data = await suwayomiGraphql<{ extensionStores: { nodes: Array<{ indexUrl: string }> } }>(
       conn,
-      `query BookOrbitExtensionRepos { settings { extensionRepos } }`,
+      `query BookOrbitExtensionRepos { extensionStores { nodes { indexUrl } } }`,
     );
-    return data.settings.extensionRepos;
+    return data.extensionStores.nodes.map((store) => store.indexUrl);
   }
 
   async addExtensionRepo(conn: EngineConnection, url: string): Promise<void> {

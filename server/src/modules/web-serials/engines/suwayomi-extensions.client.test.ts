@@ -17,10 +17,10 @@ beforeEach(() => {
 
 describe('SuwayomiExtensionsClient extension repositories', () => {
   it('lists repositories', async () => {
-    const calls = installGraphql(() => gql({ settings: { extensionRepos: ['https://example.com/index.pb'] } }));
+    const calls = installGraphql(() => gql({ extensionStores: { nodes: [{ indexUrl: 'https://example.com/index.pb' }] } }));
 
     await expect(new SuwayomiExtensionsClient().listExtensionRepos(conn)).resolves.toEqual(['https://example.com/index.pb']);
-    expect(calls[0].query).toContain('settings { extensionRepos }');
+    expect(calls[0].query).toContain('extensionStores { nodes { indexUrl } }');
   });
 
   it('adds and removes repositories with escaped URLs', async () => {
