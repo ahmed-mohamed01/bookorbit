@@ -273,7 +273,7 @@ describe('MonitoredWorkCard time pill', () => {
     const wrapper = mountWith(undefined, work({ ebookReleaseDate: '2099-01-01', ebookDatePrecision: 'day' }))
     const badge = wrapper.get('[data-testid="time-badge"]')
 
-    expect(badge.text()).toMatch(/^in [\d,]+ days$/)
+    expect(badge.text()).toMatch(/^in [\d,]+ years$/)
     expect(badge.classes()).toContain('bg-[var(--pill-warning)]')
     wrapper.unmount()
   })

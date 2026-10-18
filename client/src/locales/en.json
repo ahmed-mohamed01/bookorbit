@@ -14767,6 +14767,10 @@
       "today": "today",
       "inDays": "in {count, plural, one {# day} other {# days}}",
       "daysAgo": "{count, plural, one {# day ago} other {# days ago}}",
+      "inMonths": "in {count, plural, one {# month} other {# months}}",
+      "monthsAgo": "{count, plural, one {# month ago} other {# months ago}}",
+      "inYears": "in {count, plural, one {# year} other {# years}}",
+      "yearsAgo": "{count, plural, one {# year ago} other {# years ago}}",
       "getAutomatically": "Get automatically"
     },
     "add": {

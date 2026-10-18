@@ -4,6 +4,7 @@ import { formatPercent } from '@/i18n/formatters'
 import { daysUntil, type MonitoredFormatStatus } from '../lib/format-status'
 import { formatReleaseState } from '../lib/format-release'
 import { parseMonitoredDate } from '../lib/release-date'
+import { relativeReleaseLabel } from '../lib/time-badge'
 import { useMonitoredDateLabel } from './useMonitoredDateLabel'
 
 export interface FormatStatusText {
@@ -36,9 +37,7 @@ export function useFormatStatusText() {
   function relative(value: string | null): string | null {
     const parsed = parseMonitoredDate(value)
     if (!parsed) return null
-    const days = daysUntil(parsed.date)
-    if (days === 0) return t('monitored.releases.today')
-    return days > 0 ? t('monitored.releases.inDays', { count: days }) : t('monitored.releases.daysAgo', { count: Math.abs(days) })
+    return relativeReleaseLabel(daysUntil(parsed.date), t)
   }
 
   /** A chip has room for a day this year, or a month and year further out, never both. */

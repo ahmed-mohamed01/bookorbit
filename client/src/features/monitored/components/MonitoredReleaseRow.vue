@@ -9,6 +9,7 @@ import BookCoverPlaceholder from '@/features/book/components/BookCoverPlaceholde
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { parseMonitoredDate } from '../lib/release-date'
 import { daysUntil, workFormatStatus } from '../lib/format-status'
+import { relativeReleaseLabel } from '../lib/time-badge'
 import MonitoredFormatStatusChip from './MonitoredFormatStatusChip.vue'
 
 const props = withDefaults(
@@ -48,9 +49,7 @@ const coverUrl = computed(() => toMonitoredCoverUrl(props.item.coverUrl))
 const placeholderAuthors = computed(() => [props.item.authorName])
 const relativeTime = computed(() => {
   if (!date.value) return null
-  const days = daysUntil(date.value)
-  if (days === 0) return t('monitored.releases.today')
-  return days > 0 ? t('monitored.releases.inDays', { count: days }) : t('monitored.releases.daysAgo', { count: Math.abs(days) })
+  return relativeReleaseLabel(daysUntil(date.value), t)
 })
 
 /** The row's own format leads; the other one follows so the row reads like the card. */
