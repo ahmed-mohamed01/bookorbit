@@ -135,8 +135,8 @@ function bookDetail(overrides: Partial<BookDetail> = {}): BookDetail {
     coverSource: 'extracted',
     coverMedia: ['ebook', 'audio'],
     covers: {
-      ebook: { source: 'extracted', updatedAt: '2026-09-20T10:00:00.000Z', width: 600, height: 900 },
-      audio: { source: 'custom', updatedAt: '2026-09-21T12:30:00.000Z', width: 1000, height: 1000 },
+      ebook: { placeholder: false, source: 'extracted', updatedAt: '2026-09-20T10:00:00.000Z', width: 600, height: 900 },
+      audio: { placeholder: false, source: 'custom', updatedAt: '2026-09-21T12:30:00.000Z', width: 1000, height: 1000 },
     },
     coverVersion: COVER_VERSION,
     hardcoverEditionId: null,

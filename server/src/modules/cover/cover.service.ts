@@ -161,6 +161,30 @@ export class CoverService {
     }
   }
 
+  async setPlaceholder(bookId: number, user: RequestUser, enabled: boolean, requestedMedium?: CoverMedium): Promise<BookCoverSource | null> {
+    const startedAt = Date.now();
+    let medium = requestedMedium;
+    this.logger.log(
+      `[cover.placeholder] [start] bookId=${bookId} userId=${user.id} medium=${medium ?? 'auto'} enabled=${enabled} - placeholder switch started`,
+    );
+    try {
+      await this.verifyAccess(bookId, user);
+      medium ??= await this.coverStore.faceMediumFor(bookId);
+      await this.bookMetadataLockService.assertFieldsUnlocked(bookId, [this.lockField(medium)]);
+      const coverSource = await this.coverStore.setPlaceholder(bookId, medium, enabled);
+      await this.metadataScoreService.calculateAndSave(bookId);
+      this.logger.log(
+        `[cover.placeholder] [end] bookId=${bookId} userId=${user.id} medium=${medium} enabled=${enabled} durationMs=${Date.now() - startedAt} coverSource=${coverSource ?? 'null'} - placeholder switch completed`,
+      );
+      return coverSource;
+    } catch (error) {
+      this.logger.warn(
+        `[cover.placeholder] [fail] bookId=${bookId} userId=${user.id} medium=${medium ?? 'auto'} enabled=${enabled} durationMs=${Date.now() - startedAt} errorClass=${errorClass(error)} error="${sanitizeErrorMessage(error)}" - placeholder switch failed`,
+      );
+      throw error;
+    }
+  }
+
   private orderAllProviderResults(keys: CoverProviderKey[], resultsByProvider: Map<CoverProviderKey, CoverSearchResult[]>): CoverSearchResult[] {
     const duckDuckGoResults = resultsByProvider.get(DUCKDUCKGO_PROVIDER_KEY) ?? [];
     const iTunesResults = resultsByProvider.get(ITUNES_PROVIDER_KEY) ?? [];

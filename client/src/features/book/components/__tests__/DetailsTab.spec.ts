@@ -179,8 +179,8 @@ describe('DetailsTab - present state', () => {
       coverSource: 'extracted',
       coverMedia: ['ebook', 'audio'],
       covers: {
-        ebook: { source: 'extracted', updatedAt: '2026-09-01T00:00:00.000Z', width: 600, height: 900 },
-        audio: { source: 'custom', updatedAt: '2026-09-02T00:00:00.000Z', width: 800, height: 800 },
+        ebook: { placeholder: false, source: 'extracted', updatedAt: '2026-09-01T00:00:00.000Z', width: 600, height: 900 },
+        audio: { placeholder: false, source: 'custom', updatedAt: '2026-09-02T00:00:00.000Z', width: 800, height: 800 },
       },
     })
     const wrapper = mount(DetailsTab, { props: { book }, global: globalStubs })

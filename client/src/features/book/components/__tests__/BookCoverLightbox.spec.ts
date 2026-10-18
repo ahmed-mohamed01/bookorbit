@@ -19,7 +19,7 @@ vi.mock('../../composables/useCoverVersions', () => ({
 type LightboxBook = Pick<BookDetail, 'id' | 'title' | 'covers' | 'coverVersion' | 'coverAspectRatio'>
 
 function slot(updatedAt: string): BookCoverSlot {
-  return { source: 'extracted', updatedAt, width: null, height: null }
+  return { placeholder: false, source: 'extracted', updatedAt, width: null, height: null }
 }
 
 const bothSlots: LightboxBook = { id: 3, title: 'Dune', covers: { ebook: slot('e1'), audio: slot('a1') }, coverVersion: 'face' }

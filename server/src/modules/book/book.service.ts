@@ -3374,6 +3374,7 @@ export class BookService {
         let saved = false;
         for (const { medium, source } of unlocked) {
           saved = (await this.metadataService.refreshCoverForBook(id, source.absolutePath, source.format ?? '', medium)) || saved;
+          await this.coverStore.clearPlaceholder(id, medium);
         }
         if (saved) {
           updated++;

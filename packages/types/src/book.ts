@@ -360,6 +360,8 @@ export type BookDetail = {
 };
 
 export type BookCoverSlot = {
+  /** The slot keeps its image but shows the generated placeholder until a cover is written or the switch is turned off. */
+  placeholder: boolean;
   source: "extracted" | "custom";
   updatedAt: string;
   width: number | null;

@@ -1,12 +1,22 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import type { BookCoverSlot, BookDetail } from '@bookorbit/types'
-import { coverFieldMedium, coverFit, coverLockField, coverTileState, editorTiles, faceMedium, isLegacyCover, otherMedium } from '../cover-slots'
+import {
+  coverFieldMedium,
+  coverFit,
+  coverLockField,
+  coverTileState,
+  editorTiles,
+  faceMedium,
+  isLegacyCover,
+  otherMedium,
+  servedSlot,
+} from '../cover-slots'
 
 type SlotBook = Pick<BookDetail, 'coverMedia' | 'covers' | 'coverSource' | 'coverVersion'>
 
-function slot(source: BookCoverSlot['source'], updatedAt: string): BookCoverSlot {
-  return { source, updatedAt, width: null, height: null }
+function slot(source: BookCoverSlot['source'], updatedAt: string, placeholder = false): BookCoverSlot & { placeholder: boolean } {
+  return { source, updatedAt, width: null, height: null, placeholder }
 }
 
 function book(overrides: Partial<SlotBook> = {}): SlotBook {
@@ -49,23 +59,46 @@ describe('cover slots', () => {
     expect(isLegacyCover(book({ coverSource: 'custom' }))).toBe(true)
     expect(isLegacyCover(book({ coverSource: 'custom', covers: { ebook: slot('custom', 'a'), audio: null } }))).toBe(false)
     expect(isLegacyCover(book())).toBe(false)
+    expect(isLegacyCover(book({ coverSource: 'custom', covers: { ebook: slot('custom', 'a', true), audio: null } }))).toBe(false)
+  })
+
+  it('serves a slot only when it is not switched to the placeholder', () => {
+    const covers = { ebook: slot('custom', 'a', true), audio: slot('extracted', 'b') }
+    expect(servedSlot(book({ covers }), 'ebook')).toBeNull()
+    expect(servedSlot(book({ covers }), 'audio')).toBe(covers.audio)
+  })
+
+  it('treats a placeholder slot as absent when picking the face', () => {
+    const both = book({ covers: { ebook: slot('extracted', 'a'), audio: slot('custom', 'b', true) } })
+    expect(faceMedium(both, '1/1')).toBe('ebook')
+
+    const audioServed = book({ covers: { ebook: slot('extracted', 'a', true), audio: slot('extracted', 'b') } })
+    expect(faceMedium(audioServed, '2/3')).toBe('audio')
+
+    const noneServed = book({ covers: { ebook: slot('extracted', 'a', true), audio: null } })
+    expect(faceMedium(noneServed, '2/3')).toBe('ebook')
   })
 
   it('describes a filled slot from the slot itself', () => {
     const state = coverTileState(book({ coverSource: 'custom', covers: { ebook: null, audio: slot('custom', 'b') } }), 'audio', '2/3')
-    expect(state).toEqual({ hasImage: true, source: 'custom', version: 'b' })
+    expect(state).toEqual({ hasImage: true, placeholder: false, source: 'custom', version: 'b' })
+  })
+
+  it('shows a placeholder slot as no image, keeping the slot behind it', () => {
+    const state = coverTileState(book({ coverSource: 'custom', covers: { ebook: slot('custom', 'a', true), audio: null } }), 'ebook', '2/3')
+    expect(state).toEqual({ hasImage: false, placeholder: true, source: 'custom', version: 'a' })
   })
 
   it('shows an empty slot as empty', () => {
     const state = coverTileState(book({ coverSource: 'extracted', covers: { ebook: slot('extracted', 'a'), audio: null } }), 'audio', '2/3')
-    expect(state).toEqual({ hasImage: false, source: null, version: 'v' })
+    expect(state).toEqual({ hasImage: false, placeholder: false, source: null, version: 'v' })
   })
 
   it('puts a legacy cover on the face tile of a two-slot book, and on the only tile otherwise', () => {
     const legacy = book({ coverSource: 'custom', coverVersion: 'legacy:1' })
     expect(coverTileState(legacy, 'ebook', '2/3').hasImage).toBe(true)
     expect(coverTileState(legacy, 'audio', '2/3').hasImage).toBe(false)
-    expect(coverTileState(legacy, 'audio', '1/1')).toEqual({ hasImage: true, source: 'custom', version: 'legacy:1' })
+    expect(coverTileState(legacy, 'audio', '1/1')).toEqual({ hasImage: true, placeholder: false, source: 'custom', version: 'legacy:1' })
 
     const audioOnly = book({ coverMedia: ['audio'], coverSource: 'extracted', coverVersion: 'legacy:1' })
     expect(coverTileState(audioOnly, 'audio', '2/3').hasImage).toBe(true)

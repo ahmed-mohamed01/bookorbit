@@ -10,7 +10,7 @@ import { promisify } from 'util';
 
 import type { CoverMedia, CoverMedium } from '@bookorbit/types';
 
-import type { BookCoverContext, BookCoverSlotRow, BookCoverSourceFile } from '../book-cover-store/book-cover-store.repository';
+import type { BookCoverContext, BookCoverSlotState, BookCoverSourceFile } from '../book-cover-store/book-cover-store.repository';
 import type { CoverSlotReconciler as CoverSlotReconcilerType } from './cover-slot-reconciler.service';
 
 const execFile = promisify(execFileCallback);
@@ -31,7 +31,7 @@ type MemoryBook = {
 /** Holds the rows the store would keep in Postgres, so the real store and real extractors can run. */
 class MemoryCoverRepository {
   readonly books = new Map<number, MemoryBook>();
-  readonly slots = new Map<string, BookCoverSlotRow>();
+  readonly slots = new Map<string, BookCoverSlotState>();
   mutations = 0;
   private nextFileId = 1;
   private readonly helpers: typeof import('../book-cover-store/book-cover-store.repository');
@@ -61,14 +61,15 @@ class MemoryCoverRepository {
     book.files = files.map((file) => ({ ...file, id: file.id ?? this.nextFileId++ }));
   }
 
-  slot(bookId: number, medium: CoverMedium): BookCoverSlotRow | undefined {
+  slot(bookId: number, medium: CoverMedium): BookCoverSlotState | undefined {
     return this.slots.get(`${bookId}:${medium}`);
   }
 
-  putSlot(bookId: number, medium: CoverMedium, row: Partial<BookCoverSlotRow> = {}): void {
+  putSlot(bookId: number, medium: CoverMedium, row: Partial<BookCoverSlotState> = {}): void {
     this.slots.set(`${bookId}:${medium}`, {
       bookId,
       medium,
+      placeholder: false,
       source: 'extracted',
       origin: 'embedded',
       width: 10,
@@ -102,7 +103,7 @@ class MemoryCoverRepository {
     return Promise.resolve(book ? { formatPriority: book.formatPriority, files: book.files } : null);
   }
 
-  slotsFor(bookIds: number[]): Promise<Map<number, BookCoverSlotRow[]>> {
+  slotsFor(bookIds: number[]): Promise<Map<number, BookCoverSlotState[]>> {
     return Promise.resolve(new Map(bookIds.map((bookId) => [bookId, this.slotsOf(bookId)])));
   }
 
@@ -110,13 +111,19 @@ class MemoryCoverRepository {
     bookId: number,
     medium: CoverMedium,
     media: CoverMedia,
-    mutation: { kind: 'upsert'; row: Omit<BookCoverSlotRow, 'bookId' | 'medium'> } | { kind: 'delete' },
+    mutation: { kind: 'upsert'; row: Omit<BookCoverSlotState, 'bookId' | 'medium' | 'placeholder'> } | { kind: 'delete' },
     options: { servedBytesChanged: boolean; updatedAt: Date; beforeMedia?: CoverMedia },
   ) {
     this.mutations++;
     const before = this.slotsOf(bookId);
     if (mutation.kind === 'delete') this.slots.delete(`${bookId}:${medium}`);
-    else this.slots.set(`${bookId}:${medium}`, { bookId, medium, ...mutation.row });
+    else
+      this.slots.set(`${bookId}:${medium}`, {
+        bookId,
+        medium,
+        placeholder: options.servedBytesChanged ? false : (this.slot(bookId, medium)?.placeholder ?? false),
+        ...mutation.row,
+      });
     const after = this.slotsOf(bookId);
     const book = this.books.get(bookId)!;
     const koboCoverChanged = this.helpers.didKoboCoverChange(before, after, media, medium, options.servedBytesChanged, options.beforeMedia);
@@ -125,8 +132,8 @@ class MemoryCoverRepository {
     return Promise.resolve({ libraryId: book.libraryId, koboCoverChanged });
   }
 
-  importSlotWithoutStamp(bookId: number, medium: CoverMedium, row: Omit<BookCoverSlotRow, 'bookId' | 'medium'>) {
-    if (!this.slot(bookId, medium)) this.slots.set(`${bookId}:${medium}`, { bookId, medium, ...row });
+  importSlotWithoutStamp(bookId: number, medium: CoverMedium, row: Omit<BookCoverSlotState, 'bookId' | 'medium' | 'placeholder'>) {
+    if (!this.slot(bookId, medium)) this.slots.set(`${bookId}:${medium}`, { bookId, medium, placeholder: false, ...row });
     this.recomputeSummary(bookId, this.media(this.books.get(bookId)!));
     return Promise.resolve(1);
   }
@@ -149,13 +156,15 @@ class MemoryCoverRepository {
     return this.helpers.getCoverMediaFromDatabaseFiles(book.files);
   }
 
-  private slotsOf(bookId: number): BookCoverSlotRow[] {
+  private slotsOf(bookId: number): BookCoverSlotState[] {
     return [...this.slots.values()].filter((slot) => slot.bookId === bookId);
   }
 
   private recomputeSummary(bookId: number, media: CoverMedia): void {
     const book = this.books.get(bookId)!;
-    const active = this.slotsOf(bookId).filter((slot) => slot.dormantSince === null && (slot.medium === 'ebook' ? media.hasEbook : media.hasAudio));
+    const active = this.slotsOf(bookId).filter(
+      (slot) => slot.dormantSince === null && !slot.placeholder && (slot.medium === 'ebook' ? media.hasEbook : media.hasAudio),
+    );
     book.coverSource = active.some((slot) => slot.source === 'custom') ? 'custom' : active.length > 0 ? 'extracted' : null;
   }
 }
@@ -265,6 +274,19 @@ describe('CoverSlotReconciler on real files', () => {
     if (!slot) return null;
     return `${slot.origin}:${slot.width}x${slot.height}${slot.dormantSince ? ':dormant' : ''}`;
   }
+
+  it('keeps a placeholder slot occupied instead of refilling it', async () => {
+    const bookId = nextBookId++;
+    repository.addBook(bookId, await folder({ 'book.epub': 'epub' }));
+    await reconciler.reconcile(bookId);
+    repository.putSlot(bookId, 'ebook', { placeholder: true });
+    const before = repository.slot(bookId, 'ebook');
+    const mutations = repository.mutations;
+    const result = await reconciler.reconcile(bookId);
+    expect(result.filled).toEqual([]);
+    expect(repository.slot(bookId, 'ebook')).toEqual(before);
+    expect(repository.mutations).toBe(mutations);
+  });
 
   it('fills both slots of an EPUB and M4B folder from each medium’s own embedded art', async () => {
     const bookId = nextBookId++;

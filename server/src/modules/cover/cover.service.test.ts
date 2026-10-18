@@ -1,5 +1,5 @@
 import { type LookupAddress, lookup } from 'dns/promises';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import type { CoverSearchResult } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
@@ -92,6 +92,7 @@ function createMutationService(options?: { assertFieldsUnlocked?: ReturnType<typ
     chooseWriteMedium: vi.fn().mockResolvedValue('ebook'),
     faceMediumFor: vi.fn().mockResolvedValue('ebook'),
     saveCustom: vi.fn().mockResolvedValue(true),
+    setPlaceholder: vi.fn().mockResolvedValue('extracted'),
     revert: vi.fn().mockResolvedValue('extracted'),
   };
 
@@ -542,5 +543,29 @@ describe('CoverService', () => {
       expect(coverStore.revert).toHaveBeenCalledWith(12, 'ebook');
       expect(fileWriteService.scheduleWrite).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('CoverService placeholder switch', () => {
+  it('recalculates the score without scheduling write-back', async () => {
+    const { service, scoreService, fileWriteService, coverStore, assertFieldsUnlocked } = createMutationService();
+    const user = makeUser();
+    await expect(service.setPlaceholder(7, user, true, 'audio')).resolves.toBe('extracted');
+    expect(assertFieldsUnlocked).toHaveBeenCalledWith(7, ['audioCover']);
+    expect(coverStore.setPlaceholder).toHaveBeenCalledWith(7, 'audio', true);
+    expect(scoreService.calculateAndSave).toHaveBeenCalledWith(7);
+    expect(fileWriteService.scheduleWrite).not.toHaveBeenCalled();
+  });
+  it('refuses locked slots before changing anything', async () => {
+    const made = createMutationService({ assertFieldsUnlocked: vi.fn().mockRejectedValue(new ConflictException()) });
+    await expect(made.service.setPlaceholder(7, makeUser(), true)).rejects.toMatchObject({ status: 409 });
+    expect(made.coverStore.setPlaceholder).not.toHaveBeenCalled();
+    expect(made.scoreService.calculateAndSave).not.toHaveBeenCalled();
+  });
+  it('propagates missing-slot errors without scheduling write-back', async () => {
+    const made = createMutationService();
+    made.coverStore.setPlaceholder.mockRejectedValue(new NotFoundException('No cover to replace'));
+    await expect(made.service.setPlaceholder(7, makeUser(), true)).rejects.toMatchObject({ status: 404 });
+    expect(made.fileWriteService.scheduleWrite).not.toHaveBeenCalled();
   });
 });

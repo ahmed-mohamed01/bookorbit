@@ -292,6 +292,7 @@ function makeService(
     setNote: vi.fn().mockResolvedValue({ note: null, updatedAt: '2026-01-01T00:00:00.000Z' }),
   };
   const coverStore = {
+    clearPlaceholder: vi.fn().mockResolvedValue(false),
     resolve: vi.fn().mockResolvedValue(null),
     fetchState: vi.fn().mockResolvedValue({ media: { hasEbook: true, hasAudio: false }, filled: { ebook: false, audio: false }, locked: [] }),
     enrichCardFaces: vi.fn().mockResolvedValue(undefined),
@@ -2511,7 +2512,7 @@ describe('BookService', () => {
     });
 
     it('bulkReExtractCover leaves a locked audio slot alone while refreshing the book cover', async () => {
-      const { service, bookRepo, bookMetadataLockService, metadataService } = makeService();
+      const { service, bookRepo, bookMetadataLockService, metadataService, coverStore } = makeService();
       const user = makeUser();
       bookRepo.findLibraryIdsByBookIds.mockResolvedValue([{ id: 1, libraryId: 7 }]);
       bookRepo.findCoverSourceFilesByBookIds.mockResolvedValue([
@@ -2543,6 +2544,7 @@ describe('BookService', () => {
       expect(bookMetadataLockService.getBookIdsWithLockedField).toHaveBeenCalledWith([1], 'audioCover');
       expect(metadataService.refreshCoverForBook).toHaveBeenCalledOnce();
       expect(metadataService.refreshCoverForBook).toHaveBeenCalledWith(1, '/books/1.epub', 'epub', 'ebook');
+      expect(coverStore.clearPlaceholder).toHaveBeenCalledExactlyOnceWith(1, 'ebook');
     });
 
     it('bulkReExtractCover skips locked cover mutations', async () => {

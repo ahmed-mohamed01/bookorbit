@@ -6562,6 +6562,8 @@
         "saveCover": "Save cover",
         "revertToOriginal": "Revert to original",
         "regenerateCover": "Regenerate Cover",
+        "usePlaceholder": "Use placeholder cover",
+        "useCoverImage": "Use cover image",
         "slotsLabel": "Cover to edit",
         "slotEbook": "Book",
         "slotAudio": "Audiobook",
@@ -6579,7 +6581,8 @@
         "sourceMode": "Image source",
         "urlLabel": "Image URL",
         "saveFailed": "Could not save the cover",
-        "revertFailed": "Could not revert the cover"
+        "revertFailed": "Could not revert the cover",
+        "placeholderFailed": "Could not change the cover"
       },
       "coverLightbox": {
         "title": "Cover preview",

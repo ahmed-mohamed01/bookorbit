@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   COVER_MEDIA,
@@ -36,6 +36,8 @@ import {
   type BookCoverFaceRow,
   type BookCoverOrigin,
   type BookCoverSlotRow,
+  type BookCoverSlotState,
+  coverSourceForSlots,
   type BookCoverSource,
   type BookCoverSources,
 } from './book-cover-store.repository';
@@ -55,7 +57,7 @@ type SlotStateOptions = { backfill?: boolean };
 
 export type BookCoverFaceInput = Omit<BookCoverFaceRow, 'bookId' | 'primaryFormat'> & {
   primaryFormat: string | null | undefined;
-  slots: readonly BookCoverSlotRow[];
+  slots: readonly (BookCoverSlotRow & { placeholder?: boolean })[];
 };
 
 export type BookCoverFace = { coverAspectRatio: CoverAspectRatio; coverVersion: string };
@@ -86,7 +88,7 @@ export class BookCoverStore {
     const context = await this.convertOnRead(existing);
     const activeSlots = new Map(
       context.slots
-        .filter((slot) => slot.dormantSince === null && this.mediumIsActive(slot.medium as CoverMedium, context.media))
+        .filter((slot) => slot.dormantSince === null && !slot.placeholder && this.mediumIsActive(slot.medium as CoverMedium, context.media))
         .map((slot) => [slot.medium as CoverMedium, slot]),
     );
     const order = this.resolutionOrder(context, options.medium, options.strict === true);
@@ -242,6 +244,29 @@ export class BookCoverStore {
     return 'extracted';
   }
 
+  async setPlaceholder(bookId: number, medium: CoverMedium, enabled: boolean): Promise<BookCoverSource | null> {
+    const context = await this.convertedContext(bookId);
+    if (this.isLocked(context, medium)) throw new ConflictException('Cover is locked');
+    const slot = this.slotFor(context, medium);
+    if (enabled && (!slot || slot.dormantSince !== null || !this.mediumIsActive(medium, context.media))) {
+      throw new NotFoundException('No cover to replace');
+    }
+    if ((slot?.placeholder ?? false) === enabled) return coverSourceForSlots(context.slots, context.media);
+    await this.repository.setPlaceholder(bookId, medium, context.media, enabled, { updatedAt: new Date() });
+    this.events.emitChanged({ bookIds: [bookId], libraryId: context.libraryId });
+    return coverSourceForSlots(
+      context.slots.map((row) => (row.medium === medium ? { ...row, placeholder: enabled } : row)),
+      context.media,
+    );
+  }
+
+  async clearPlaceholder(bookId: number, medium: CoverMedium): Promise<boolean> {
+    const context = await this.convertedContext(bookId);
+    if (!this.slotFor(context, medium)?.placeholder) return false;
+    await this.setPlaceholder(bookId, medium, false);
+    return true;
+  }
+
   async markDormant(bookId: number, medium: CoverMedium, options: SlotStateOptions = {}): Promise<boolean> {
     const context = await this.requireContext(bookId);
     const slot = this.slotFor(context, medium);
@@ -303,7 +328,11 @@ export class BookCoverStore {
    * medium the target has no slot for. Call it after the merge and before the source's cover
    * directory is removed.
    */
-  async adoptSlots(sourceBookId: number, sourceSlots: readonly BookCoverSlotRow[], targetBookId: number): Promise<CoverMedium[]> {
+  async adoptSlots(
+    sourceBookId: number,
+    sourceSlots: readonly (BookCoverSlotRow & { placeholder?: boolean })[],
+    targetBookId: number,
+  ): Promise<CoverMedium[]> {
     if (sourceSlots.length === 0) return [];
     const target = await this.convertedContext(targetBookId);
     const adopted: CoverMedium[] = [];
@@ -410,7 +439,8 @@ export class BookCoverStore {
     if (!existing) return null;
     const context = await this.ensureConverted(existing);
     const active = (medium: CoverMedium) =>
-      this.mediumIsActive(medium, context.media) && context.slots.some((slot) => slot.medium === medium && slot.dormantSince === null);
+      this.mediumIsActive(medium, context.media) &&
+      context.slots.some((slot) => slot.medium === medium && slot.dormantSince === null && !slot.placeholder);
     return {
       media: context.media,
       filled: { ebook: active('ebook'), audio: active('audio') },
@@ -481,10 +511,11 @@ export class BookCoverStore {
     };
   }
 
-  private coverVersion(face: CoverMedium, slots: readonly BookCoverSlotRow[], legacyVersion: string): string {
+  private coverVersion(face: CoverMedium, slots: readonly (BookCoverSlotRow & { placeholder?: boolean })[], legacyVersion: string): string {
     if (slots.length === 0) return `legacy:${legacyVersion}`;
     const other: CoverMedium = face === 'ebook' ? 'audio' : 'ebook';
-    const stamp = (medium: CoverMedium) => slots.find((slot) => slot.medium === medium && slot.dormantSince === null)?.updatedAt.toISOString() ?? '-';
+    const stamp = (medium: CoverMedium) =>
+      slots.find((slot) => slot.medium === medium && slot.dormantSince === null && !slot.placeholder)?.updatedAt.toISOString() ?? '-';
     return `${face}:${stamp(face)}:${stamp(other)}`;
   }
 
@@ -761,10 +792,10 @@ export class BookCoverStore {
   }
 
   /** The preferred slot when it holds art, else the other one; with no art at all, a medium the book has. */
-  private servedFace(preferred: CoverMedium, slots: readonly BookCoverSlotRow[], media: CoverMedia): CoverMedium {
+  private servedFace(preferred: CoverMedium, slots: readonly (BookCoverSlotRow & { placeholder?: boolean })[], media: CoverMedia): CoverMedium {
     const alternate: CoverMedium = preferred === 'ebook' ? 'audio' : 'ebook';
     const filled = (medium: CoverMedium) =>
-      this.mediumIsActive(medium, media) && slots.some((slot) => slot.medium === medium && slot.dormantSince === null);
+      this.mediumIsActive(medium, media) && slots.some((slot) => slot.medium === medium && slot.dormantSince === null && !slot.placeholder);
     if (filled(preferred)) return preferred;
     if (filled(alternate)) return alternate;
     if (this.mediumIsActive(preferred, media)) return preferred;
@@ -780,13 +811,14 @@ export class BookCoverStore {
     return context.lockedFields.includes(medium === 'ebook' ? 'cover' : 'audioCover');
   }
 
-  private slotFor(context: BookCoverContext, medium: CoverMedium): BookCoverSlotRow | undefined {
+  private slotFor(context: BookCoverContext, medium: CoverMedium): BookCoverSlotState | undefined {
     return context.slots.find((slot) => slot.medium === medium);
   }
 
-  private toSlotDto(slot: BookCoverSlotRow | undefined): BookCoverSlot | null {
+  private toSlotDto(slot: BookCoverSlotState | undefined): BookCoverSlot | null {
     if (!slot) return null;
     return {
+      placeholder: slot.placeholder,
       source: slot.source as BookCoverSource,
       updatedAt: slot.updatedAt.toISOString(),
       width: slot.width,

@@ -9,12 +9,22 @@ describe('CoverController', () => {
     uploadCover: vi.fn(),
     uploadCoverFromUrl: vi.fn(),
     deleteCover: vi.fn(),
+    setPlaceholder: vi.fn(),
   };
 
   const controller = new CoverController(coverService as never);
 
   beforeEach(() => {
     vi.resetAllMocks();
+  });
+
+  it('delegates both placeholder routes with the optional medium', async () => {
+    const user = { id: 9 } as never;
+    coverService.setPlaceholder.mockResolvedValue(null);
+    await expect(controller.enablePlaceholder(11, user, { medium: 'audio' })).resolves.toEqual({ coverSource: null });
+    expect(coverService.setPlaceholder).toHaveBeenCalledWith(11, user, true, 'audio');
+    await expect(controller.disablePlaceholder(11, user)).resolves.toEqual({ coverSource: null });
+    expect(coverService.setPlaceholder).toHaveBeenCalledWith(11, user, false, undefined);
   });
 
   it('passes search filters to cover service', async () => {

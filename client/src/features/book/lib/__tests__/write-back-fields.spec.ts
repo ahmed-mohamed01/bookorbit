@@ -5,7 +5,7 @@ import type { BookCoverSlot, BookDetail } from '@bookorbit/types'
 import { resolveWriteBackFields } from '../write-back-fields'
 
 function slot(source: BookCoverSlot['source']): BookCoverSlot {
-  return { source, updatedAt: '2026-01-01T00:00:00.000Z', width: 400, height: 600 }
+  return { placeholder: false, source, updatedAt: '2026-01-01T00:00:00.000Z', width: 400, height: 600 }
 }
 
 function book(overrides: Partial<BookDetail>): BookDetail {

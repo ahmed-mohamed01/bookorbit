@@ -94,6 +94,22 @@ export function useCoverEditor(bookId: Ref<number>, medium: CoverMedium | null =
     }
   }
 
+  async function setPlaceholder(enabled: boolean): Promise<boolean> {
+    uploading.value = true
+    error.value = null
+    try {
+      const res = await api(route('cover/placeholder'), { method: enabled ? 'POST' : 'DELETE' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      bumpVersion(bookId.value)
+      return true
+    } catch {
+      error.value = t('book.detail.coverEditor.placeholderFailed')
+      return false
+    } finally {
+      uploading.value = false
+    }
+  }
+
   async function regenerate(): Promise<boolean> {
     regenerating.value = true
     error.value = null
@@ -114,5 +130,19 @@ export function useCoverEditor(bookId: Ref<number>, medium: CoverMedium | null =
     if (previewSrc.value?.startsWith('blob:')) URL.revokeObjectURL(previewSrc.value)
   })
 
-  return { uploading, regenerating, error, previewSrc, pendingFile, pendingUrl, selectFile, setUrl, clearPending, confirm, revert, regenerate }
+  return {
+    uploading,
+    regenerating,
+    error,
+    previewSrc,
+    pendingFile,
+    pendingUrl,
+    selectFile,
+    setUrl,
+    clearPending,
+    confirm,
+    revert,
+    setPlaceholder,
+    regenerate,
+  }
 }

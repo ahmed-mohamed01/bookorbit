@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, reactive, ref, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Image, ImagePlus, Link, Loader2, Lock, LockOpen, Maximize2, RotateCcw, Search, Upload } from '@lucide/vue'
+import { Image, ImageOff, ImagePlus, Link, Loader2, Lock, LockOpen, Maximize2, RotateCcw, Search, Upload } from '@lucide/vue'
 import type { BookDetail, BookMetadataLockField, CoverMedium } from '@bookorbit/types'
 import { hideOnError } from '../../../lib/metadata-fetch'
 import { useCoverEditor } from '../../../composables/useCoverEditor'
@@ -88,6 +88,7 @@ const tiles = computed(() =>
       hasImage: state.hasImage || Boolean(editor.previewSrc),
       src: editor.previewSrc ?? coverUrl(props.book.id, 'cover', state.version, medium ?? undefined),
       source: state.source,
+      placeholder: state.placeholder,
       label: medium === 'audio' ? t('book.detail.coverEditor.slotAudio') : t('book.detail.coverEditor.slotEbook'),
       name: medium === 'audio' ? t('book.detail.coverEditor.slotAudioName') : t('book.detail.coverEditor.slotEbookName'),
       lockLabel: lockLabel(medium, locked),
@@ -240,6 +241,12 @@ async function handleRegenerate() {
   if (controlsDisabled.value || activeEditor.value.regenerating) return
   const key = selectedKey.value
   if (await editors[key].regenerate()) emit('coverChanged', mediumOf(key))
+}
+
+async function handlePlaceholderToggle() {
+  if (controlsDisabled.value || activeEditor.value.uploading) return
+  const key = selectedKey.value
+  if (await editors[key].setPlaceholder(!selectedTile.value.placeholder)) emit('coverChanged', mediumOf(key))
 }
 
 /**
@@ -501,6 +508,18 @@ onUnmounted(() => clearTimeout(debounceTimer))
             <Loader2 v-if="activeEditor.regenerating" class="size-3 animate-spin" aria-hidden="true" />
             <Image v-else class="size-3" aria-hidden="true" />
             {{ t('book.detail.coverEditor.regenerateCover') }}
+          </button>
+          <button
+            v-if="hasPermission('library_edit_metadata') && (selectedTile.hasImage || selectedTile.placeholder)"
+            type="button"
+            class="flex items-center justify-center gap-1.5 w-full h-8 rounded-lg border border-input bg-background text-xs text-muted-foreground hover:text-foreground focus-visible:text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+            :disabled="activeEditor.uploading || controlsDisabled"
+            @click="handlePlaceholderToggle"
+          >
+            <Loader2 v-if="activeEditor.uploading" class="size-3 animate-spin" aria-hidden="true" />
+            <ImageOff v-else-if="!selectedTile.placeholder" class="size-3" aria-hidden="true" />
+            <Image v-else class="size-3" aria-hidden="true" />
+            {{ selectedTile.placeholder ? t('book.detail.coverEditor.useCoverImage') : t('book.detail.coverEditor.usePlaceholder') }}
           </button>
         </div>
       </div>

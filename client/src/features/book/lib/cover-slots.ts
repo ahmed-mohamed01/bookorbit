@@ -1,4 +1,12 @@
-import type { BookDetail, BookMetadataLockField, CoverAspectRatio, CoverMedium, MetadataCandidate, MetadataCoverShape } from '@bookorbit/types'
+import type {
+  BookCoverSlot,
+  BookDetail,
+  BookMetadataLockField,
+  CoverAspectRatio,
+  CoverMedium,
+  MetadataCandidate,
+  MetadataCoverShape,
+} from '@bookorbit/types'
 
 type SlotBook = Pick<BookDetail, 'coverMedia' | 'covers' | 'coverSource' | 'coverVersion'>
 
@@ -26,15 +34,21 @@ export function coverLockField(medium: CoverMedium | null): Extract<BookMetadata
   return medium === 'audio' ? 'audioCover' : 'cover'
 }
 
+/** The slot the server serves: one that holds art and is not switched to the placeholder. */
+export function servedSlot(book: Pick<SlotBook, 'covers'>, medium: CoverMedium): BookCoverSlot | null {
+  const slot = book.covers[medium]
+  return slot && !slot.placeholder ? slot : null
+}
+
 /**
  * The slot a frame of this shape shows. Given the book's own `coverAspectRatio`, which the server
  * derives from the slot it serves, this is the server's face.
  */
 export function faceMedium(book: Pick<SlotBook, 'covers'>, aspectRatio: CoverAspectRatio | string): CoverMedium {
   const preferred: CoverMedium = aspectRatio === '1/1' ? 'audio' : 'ebook'
-  if (book.covers[preferred]) return preferred
+  if (servedSlot(book, preferred)) return preferred
   const alternate = otherMedium(preferred)
-  return book.covers[alternate] ? alternate : preferred
+  return servedSlot(book, alternate) ? alternate : preferred
 }
 
 /**
@@ -60,20 +74,25 @@ export function isLegacyCover(book: Pick<SlotBook, 'covers' | 'coverSource'>): b
 
 export type CoverTileState = {
   hasImage: boolean
+  placeholder: boolean
   source: 'extracted' | 'custom' | null
   version: string
 }
 
 /**
  * What a tile shows. Until the upgrade converts a legacy cover, it has no slot, so the tile the face
- * would resolve to shows it rather than an empty placeholder.
+ * would resolve to shows it rather than an empty placeholder. A slot switched to the placeholder
+ * keeps its art behind the switch, so the tile reports the slot's source but no image.
  */
 export function coverTileState(book: SlotBook, medium: CoverMedium | null, aspectRatio: CoverAspectRatio | string): CoverTileState {
   const slot = medium ? book.covers[medium] : null
-  if (slot) return { hasImage: true, source: slot.source, version: slot.updatedAt }
-  if (!isLegacyCover(book)) return { hasImage: false, source: null, version: book.coverVersion }
+  if (slot) {
+    if (slot.placeholder) return { hasImage: false, placeholder: true, source: slot.source, version: slot.updatedAt }
+    return { hasImage: true, placeholder: false, source: slot.source, version: slot.updatedAt }
+  }
+  if (!isLegacyCover(book)) return { hasImage: false, placeholder: false, source: null, version: book.coverVersion }
   const tiles = editorTiles(book)
   const legacyTile = tiles.length === 1 ? tiles[0] : faceMedium(book, aspectRatio)
-  if (medium !== legacyTile) return { hasImage: false, source: null, version: book.coverVersion }
-  return { hasImage: true, source: book.coverSource, version: book.coverVersion }
+  if (medium !== legacyTile) return { hasImage: false, placeholder: false, source: null, version: book.coverVersion }
+  return { hasImage: true, placeholder: false, source: book.coverSource, version: book.coverVersion }
 }

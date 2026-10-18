@@ -63,6 +63,18 @@ export class CoverController {
       : this.coverService.uploadCoverFromUrl(id, dto.url, user);
   }
 
+  @Post(':id/cover/placeholder')
+  @RequirePermission(Permission.LibraryEditMetadata)
+  async enablePlaceholder(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: RequestUser, @Query() query?: CoverMediumQueryDto) {
+    return { coverSource: await this.coverService.setPlaceholder(id, user, true, query?.medium) };
+  }
+
+  @Delete(':id/cover/placeholder')
+  @RequirePermission(Permission.LibraryEditMetadata)
+  async disablePlaceholder(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: RequestUser, @Query() query?: CoverMediumQueryDto) {
+    return { coverSource: await this.coverService.setPlaceholder(id, user, false, query?.medium) };
+  }
+
   @Delete(':id/cover')
   @RequirePermission(Permission.LibraryEditMetadata)
   async deleteCover(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: RequestUser, @Query() query?: CoverMediumQueryDto) {

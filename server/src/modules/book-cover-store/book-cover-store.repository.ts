@@ -1,11 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { AUDIO_FORMAT_LIST, type CoverMedia, type CoverMedium } from '@bookorbit/types';
-import { and, eq, getTableName, gt, inArray, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
+import { and, eq, getTableName, getTableColumns, gt, inArray, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
+import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { bookCovers, bookFiles, bookMetadata, books, libraries } from '../../db/schema';
+import { bookCoverPlaceholders } from './schema/book-cover-placeholder.schema';
 
 type Db = NodePgDatabase<typeof schema>;
 type DbTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
@@ -13,6 +15,17 @@ type DbTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
 export type BookCoverOrigin = 'embedded' | 'folder_image' | 'opf' | 'provider' | 'dock' | 'upload' | 'legacy';
 export type BookCoverSource = 'extracted' | 'custom';
 export type BookCoverSlotRow = typeof bookCovers.$inferSelect;
+export type BookCoverSlotState = BookCoverSlotRow & { placeholder: boolean };
+function slotProjection() {
+  return {
+    ...getTableColumns(bookCovers),
+    placeholder: sql<boolean>`exists (select 1 from ${bookCoverPlaceholders} where ${bookCoverPlaceholders.bookId} = "book_covers"."book_id" and ${bookCoverPlaceholders.medium} = "book_covers"."medium")`,
+  };
+}
+export function coverSourceForSlots(rows: readonly (BookCoverSlotRow & { placeholder?: boolean })[], media: CoverMedia): BookCoverSource | null {
+  const active = rows.filter((row) => row.dormantSince === null && !row.placeholder && mediumIsActive(row.medium as CoverMedium, media));
+  return active.some((row) => row.source === 'custom') ? 'custom' : active.length > 0 ? 'extracted' : null;
+}
 
 type DatabaseCoverMediaFile = Pick<typeof bookFiles.$inferSelect, 'format' | 'role' | 'mediaOverlayAvailable'>;
 
@@ -76,6 +89,7 @@ export function activeCoverSlotSql(bookId: OuterBookId, medium: CoverMedium) {
     where ${bookCovers.bookId} = ${outerBookIdSql(bookId)}
       and ${bookCovers.medium} = ${medium}
       and ${bookCovers.dormantSince} is null
+      and not exists (select 1 from ${bookCoverPlaceholders} where ${bookCoverPlaceholders.bookId} = "book_covers"."book_id" and ${bookCoverPlaceholders.medium} = "book_covers"."medium")
   )`;
 }
 
@@ -90,7 +104,7 @@ export type BookCoverContext = {
   lockedFields: string[];
   media: CoverMedia;
   files: Array<{ id: number; format: string | null; role: string; mediaOverlayAvailable: boolean }>;
-  slots: BookCoverSlotRow[];
+  slots: BookCoverSlotState[];
 };
 
 export type BookCoverFaceRow = {
@@ -126,9 +140,11 @@ function mediumIsActive(medium: CoverMedium, media: CoverMedia): boolean {
   return medium === 'ebook' ? media.hasEbook : media.hasAudio;
 }
 
-export function resolveKoboCoverMedium(rows: readonly BookCoverSlotRow[], media: CoverMedia): CoverMedium | null {
+export function resolveKoboCoverMedium(rows: readonly (BookCoverSlotRow & { placeholder?: boolean })[], media: CoverMedia): CoverMedium | null {
   const active = new Set(
-    rows.filter((row) => row.dormantSince === null && mediumIsActive(row.medium as CoverMedium, media)).map((row) => row.medium as CoverMedium),
+    rows
+      .filter((row) => row.dormantSince === null && !row.placeholder && mediumIsActive(row.medium as CoverMedium, media))
+      .map((row) => row.medium as CoverMedium),
   );
   if (active.has('ebook')) return 'ebook';
   if (active.has('audio')) return 'audio';
@@ -136,8 +152,8 @@ export function resolveKoboCoverMedium(rows: readonly BookCoverSlotRow[], media:
 }
 
 export function didKoboCoverChange(
-  before: readonly BookCoverSlotRow[],
-  after: readonly BookCoverSlotRow[],
+  before: readonly (BookCoverSlotRow & { placeholder?: boolean })[],
+  after: readonly (BookCoverSlotRow & { placeholder?: boolean })[],
   media: CoverMedia,
   mutatedMedium: CoverMedium,
   servedBytesChanged: boolean,
@@ -183,7 +199,7 @@ export class BookCoverStoreRepository {
         })
         .from(bookFiles)
         .where(eq(bookFiles.bookId, bookId)),
-      this.db.select().from(bookCovers).where(eq(bookCovers.bookId, bookId)),
+      this.db.select(slotProjection()).from(bookCovers).where(eq(bookCovers.bookId, bookId)),
     ]);
 
     return {
@@ -201,10 +217,10 @@ export class BookCoverStoreRepository {
     };
   }
 
-  async slotsFor(bookIds: number[]): Promise<Map<number, BookCoverSlotRow[]>> {
-    const result = new Map<number, BookCoverSlotRow[]>();
+  async slotsFor(bookIds: number[]): Promise<Map<number, BookCoverSlotState[]>> {
+    const result = new Map<number, BookCoverSlotState[]>();
     if (bookIds.length === 0) return result;
-    const rows = await this.db.select().from(bookCovers).where(inArray(bookCovers.bookId, bookIds));
+    const rows = await this.db.select(slotProjection()).from(bookCovers).where(inArray(bookCovers.bookId, bookIds));
     for (const row of rows) {
       const list = result.get(row.bookId) ?? [];
       list.push(row);
@@ -264,38 +280,71 @@ export class BookCoverStoreRepository {
             set: mutation.row,
           });
       }
-      const after = await this.selectSlots(bookId, tx);
-      const koboCoverChanged = didKoboCoverChange(before, after, media, medium, options.servedBytesChanged, options.beforeMedia);
-      const activeRows = after.filter((row) => row.dormantSince === null && mediumIsActive(row.medium as CoverMedium, media));
-      const coverSource: BookCoverSource | null = activeRows.some((row) => row.source === 'custom')
-        ? 'custom'
-        : activeRows.length > 0
-          ? 'extracted'
-          : null;
-
-      const [existingMetadata] = await tx
-        .select({ updatedAt: bookMetadata.updatedAt, coverUpdatedAt: bookMetadata.coverUpdatedAt })
-        .from(bookMetadata)
-        .where(eq(bookMetadata.bookId, bookId))
-        .limit(1);
-      const metadataUpdatedAt = koboCoverChanged ? options.updatedAt : (existingMetadata?.updatedAt ?? options.updatedAt);
-      const coverUpdatedAt = koboCoverChanged ? options.updatedAt : (existingMetadata?.coverUpdatedAt ?? null);
-
-      await tx
-        .insert(bookMetadata)
-        .values({ bookId, coverSource, coverUpdatedAt, updatedAt: metadataUpdatedAt })
-        .onConflictDoUpdate({
-          target: bookMetadata.bookId,
-          set: { coverSource, coverUpdatedAt, updatedAt: metadataUpdatedAt },
-        });
-
-      if (options.bumpBook) {
-        await tx.update(books).set({ updatedAt: options.updatedAt }).where(eq(books.id, bookId));
+      if (mutation.kind === 'delete' || options.servedBytesChanged) {
+        await tx.delete(bookCoverPlaceholders).where(and(eq(bookCoverPlaceholders.bookId, bookId), eq(bookCoverPlaceholders.medium, medium)));
       }
-
-      const [book] = await tx.select({ libraryId: books.libraryId }).from(books).where(eq(books.id, bookId)).limit(1);
-      return { libraryId: book?.libraryId ?? 0, koboCoverChanged };
+      const after = await this.selectSlots(bookId, tx);
+      return this.finishMutation(tx, bookId, medium, media, before, after, options);
     });
+  }
+
+  async findMissingTables(tableNames: readonly string[]): Promise<string[]> {
+    return findMissingTables(this.db, tableNames);
+  }
+  async applySchemaStatements(statements: readonly string[]): Promise<void> {
+    return applySchemaStatements(this.db, statements);
+  }
+
+  async setPlaceholder(
+    bookId: number,
+    medium: CoverMedium,
+    media: CoverMedia,
+    enabled: boolean,
+    options: { updatedAt: Date },
+  ): Promise<{ libraryId: number }> {
+    return this.db.transaction(async (tx) => {
+      const before = await this.selectSlots(bookId, tx);
+      if (enabled) await tx.insert(bookCoverPlaceholders).values({ bookId, medium }).onConflictDoNothing();
+      else await tx.delete(bookCoverPlaceholders).where(and(eq(bookCoverPlaceholders.bookId, bookId), eq(bookCoverPlaceholders.medium, medium)));
+      const after = await this.selectSlots(bookId, tx);
+      return this.finishMutation(tx, bookId, medium, media, before, after, { ...options, bumpBook: true, servedBytesChanged: false });
+    });
+  }
+
+  private async finishMutation(
+    tx: DbTransaction,
+    bookId: number,
+    medium: CoverMedium,
+    media: CoverMedia,
+    before: BookCoverSlotState[],
+    after: BookCoverSlotState[],
+    options: { bumpBook: boolean; servedBytesChanged: boolean; updatedAt: Date; beforeMedia?: CoverMedia },
+  ): Promise<{ libraryId: number; koboCoverChanged: boolean }> {
+    const koboCoverChanged = didKoboCoverChange(before, after, media, medium, options.servedBytesChanged, options.beforeMedia);
+    const coverSource = coverSourceForSlots(after, media);
+
+    const [existingMetadata] = await tx
+      .select({ updatedAt: bookMetadata.updatedAt, coverUpdatedAt: bookMetadata.coverUpdatedAt })
+      .from(bookMetadata)
+      .where(eq(bookMetadata.bookId, bookId))
+      .limit(1);
+    const metadataUpdatedAt = koboCoverChanged ? options.updatedAt : (existingMetadata?.updatedAt ?? options.updatedAt);
+    const coverUpdatedAt = koboCoverChanged ? options.updatedAt : (existingMetadata?.coverUpdatedAt ?? null);
+
+    await tx
+      .insert(bookMetadata)
+      .values({ bookId, coverSource, coverUpdatedAt, updatedAt: metadataUpdatedAt })
+      .onConflictDoUpdate({
+        target: bookMetadata.bookId,
+        set: { coverSource, coverUpdatedAt, updatedAt: metadataUpdatedAt },
+      });
+
+    if (options.bumpBook) {
+      await tx.update(books).set({ updatedAt: options.updatedAt }).where(eq(books.id, bookId));
+    }
+
+    const [book] = await tx.select({ libraryId: books.libraryId }).from(books).where(eq(books.id, bookId)).limit(1);
+    return { libraryId: book?.libraryId ?? 0, koboCoverChanged };
   }
 
   async importSlotWithoutStamp(bookId: number, medium: CoverMedium, row: Omit<typeof bookCovers.$inferInsert, 'bookId' | 'medium'>): Promise<number> {
@@ -369,6 +418,7 @@ export class BookCoverStoreRepository {
           "book_covers"."book_id" as book_id,
           "book_covers"."source" as source,
           "book_covers"."dormant_since" is null
+            and not exists (select 1 from book_cover_placeholders p where p.book_id = "book_covers"."book_id" and p.medium = "book_covers"."medium")
             and (("book_covers"."medium" = 'ebook' and ${hasEbook}) or ("book_covers"."medium" = 'audio' and ${hasAudio})) as active
         from "book_covers"
       ),
@@ -422,8 +472,8 @@ export class BookCoverStoreRepository {
     return rows.map((row) => row.id);
   }
 
-  private async selectSlots(bookId: number, executor: Db | DbTransaction): Promise<BookCoverSlotRow[]> {
-    return executor.select().from(bookCovers).where(eq(bookCovers.bookId, bookId));
+  private async selectSlots(bookId: number, executor: Db | DbTransaction): Promise<BookCoverSlotState[]> {
+    return executor.select(slotProjection()).from(bookCovers).where(eq(bookCovers.bookId, bookId));
   }
 
   private async recomputeSummary(bookId: number, tx: DbTransaction): Promise<void> {
@@ -435,14 +485,7 @@ export class BookCoverStoreRepository {
       .limit(1);
     if (!book) return;
     const slots = await this.selectSlots(bookId, tx);
-    const activeRows = slots.filter(
-      (row) => row.dormantSince === null && mediumIsActive(row.medium as CoverMedium, { hasEbook: book.hasEbook, hasAudio: book.hasAudio }),
-    );
-    const coverSource: BookCoverSource | null = activeRows.some((row) => row.source === 'custom')
-      ? 'custom'
-      : activeRows.length > 0
-        ? 'extracted'
-        : null;
+    const coverSource = coverSourceForSlots(slots, { hasEbook: book.hasEbook, hasAudio: book.hasAudio });
     const [metadata] = await tx.select({ updatedAt: bookMetadata.updatedAt }).from(bookMetadata).where(eq(bookMetadata.bookId, bookId)).limit(1);
     const updatedAt = metadata?.updatedAt ?? new Date();
     await tx

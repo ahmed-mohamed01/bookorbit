@@ -109,6 +109,39 @@ describe('useCoverEditor', () => {
     expect(editor.error.value).toBe('book.detail.coverEditor.revertFailed')
   })
 
+  it('switches its slot to the placeholder and back', async () => {
+    vi.mocked(api).mockResolvedValue(response(true, { coverSource: null }))
+    const editor = useCoverEditor(ref(7), 'audio')
+
+    await expect(editor.setPlaceholder(true)).resolves.toBe(true)
+    expect(vi.mocked(api)).toHaveBeenCalledWith('/api/v1/books/7/cover/placeholder?medium=audio', { method: 'POST' })
+    expect(bumpVersion).toHaveBeenCalledWith(7)
+
+    await expect(editor.setPlaceholder(false)).resolves.toBe(true)
+    expect(vi.mocked(api)).toHaveBeenCalledWith('/api/v1/books/7/cover/placeholder?medium=audio', { method: 'DELETE' })
+    expect(bumpVersion).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves the medium off the placeholder switch for a book with no content files', async () => {
+    vi.mocked(api).mockResolvedValue(response(true))
+    const editor = useCoverEditor(ref(7), null)
+
+    await expect(editor.setPlaceholder(true)).resolves.toBe(true)
+
+    expect(vi.mocked(api)).toHaveBeenCalledWith('/api/v1/books/7/cover/placeholder', { method: 'POST' })
+  })
+
+  it('reports a failed placeholder switch', async () => {
+    vi.mocked(api).mockResolvedValue(response(false))
+    const editor = useCoverEditor(ref(7), 'audio')
+
+    await expect(editor.setPlaceholder(true)).resolves.toBe(false)
+
+    expect(editor.error.value).toBe('book.detail.coverEditor.placeholderFailed')
+    expect(editor.uploading.value).toBe(false)
+    expect(bumpVersion).not.toHaveBeenCalled()
+  })
+
   it('regenerates its slot and checks the response', async () => {
     vi.mocked(api).mockResolvedValueOnce(response(true)).mockResolvedValueOnce(response(false))
     const editor = useCoverEditor(ref(7), 'ebook')

@@ -4,12 +4,13 @@ import { join } from 'path';
 import sharp from 'sharp';
 
 import { bookCoverDirPath, bookCoverSlotDirPath } from '../../common/book-cover-storage';
-import type { BookCoverContext, BookCoverSlotRow } from './book-cover-store.repository';
+import type { BookCoverContext, BookCoverSlotState } from './book-cover-store.repository';
 import { BookCoverStore } from './book-cover-store.service';
 
-function slot(medium: 'ebook' | 'audio', source: 'extracted' | 'custom' = 'extracted'): BookCoverSlotRow {
+function slot(medium: 'ebook' | 'audio', source: 'extracted' | 'custom' = 'extracted'): BookCoverSlotState {
   return {
     bookId: 7,
+    placeholder: false,
     medium,
     source,
     origin: 'embedded',
@@ -57,6 +58,7 @@ function makeStore(root: string, current: BookCoverContext) {
   const repository = {
     findContext: vi.fn().mockResolvedValue(current),
     slotsFor: vi.fn().mockResolvedValue(new Map()),
+    setPlaceholder: vi.fn().mockResolvedValue({ libraryId: current.libraryId }),
     applySlotMutation: vi.fn().mockResolvedValue({ libraryId: current.libraryId, koboCoverChanged: true }),
     importSlotWithoutStamp: vi.fn().mockResolvedValue(current.libraryId),
     copyCoverLockToAudio: vi.fn().mockResolvedValue(undefined),
@@ -70,7 +72,9 @@ function makeStore(root: string, current: BookCoverContext) {
 function makeLegacyStore(root: string, legacy: BookCoverContext) {
   const made = makeStore(root, legacy);
   made.repository.findContext.mockImplementation(() => {
-    const imported = made.repository.importSlotWithoutStamp.mock.calls.map(([, medium, row]) => ({ ...row, bookId: 7, medium }) as BookCoverSlotRow);
+    const imported = made.repository.importSlotWithoutStamp.mock.calls.map(
+      ([, medium, row]) => ({ ...row, bookId: 7, medium }) as BookCoverSlotState,
+    );
     return Promise.resolve(imported.length > 0 ? { ...legacy, slots: imported } : legacy);
   });
   return made;
@@ -495,5 +499,111 @@ describe('BookCoverStore', () => {
       context({ slots: [{ ...slot('audio', 'custom'), dormantSince: new Date() }], media: { hasEbook: true, hasAudio: true } }),
     );
     await expect(dormantCustom.store.slotIsEmpty(7, 'audio')).resolves.toBe(false);
+  });
+});
+
+describe('placeholder display switch', () => {
+  it('retains editor data and lifecycle occupancy while hiding served and fetched art', async () => {
+    const current = context({ slots: [{ ...slot('ebook', 'custom'), placeholder: true }] });
+    const { store } = makeStore('/tmp/placeholder-test', current);
+    expect(await store.resolve(7, { variant: 'cover' })).toBeNull();
+    expect(store.slotDtos(current).ebook).toMatchObject({ placeholder: true, source: 'custom' });
+    expect(await store.slotIsEmpty(7, 'ebook')).toBe(false);
+    expect(await store.hasActiveSlot(7, 'ebook')).toBe(true);
+    expect((await store.fetchState(7))?.filled.ebook).toBe(false);
+  });
+
+  it('falls back to audio and changes face/version when ebook is hidden', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'placeholder-'));
+    try {
+      const current = context();
+      const { store } = makeStore(root, current);
+      const dir = bookCoverSlotDirPath(root, 7, 'audio');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'cover_extracted.jpg'), await image(100, 100));
+      const before = store.faceOf({
+        libraryCoverAspectRatio: '2/3',
+        primaryFormat: 'epub',
+        media: current.media,
+        slots: current.slots,
+        legacyVersion: 'old',
+      });
+      current.slots[0]!.placeholder = true;
+      const after = store.faceOf({
+        libraryCoverAspectRatio: '2/3',
+        primaryFormat: 'epub',
+        media: current.media,
+        slots: current.slots,
+        legacyVersion: 'old',
+      });
+      expect(after.coverVersion).not.toBe(before.coverVersion);
+      expect(after.coverAspectRatio).toBe('1/1');
+      expect(await store.resolve(7, { variant: 'cover', medium: 'ebook' })).toBe(join(dir, 'cover_extracted.jpg'));
+      expect(await store.resolve(7, { variant: 'cover', medium: 'ebook', strict: true })).toBeNull();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('checks locks and missing covers, toggles summaries, and avoids duplicate events', async () => {
+    const current = context({ slots: [slot('ebook', 'custom'), slot('audio')] });
+    const { store, repository, events } = makeStore('/tmp/placeholder-test', current);
+    expect(await store.setPlaceholder(7, 'ebook', true)).toBe('extracted');
+    expect(repository.setPlaceholder).toHaveBeenCalledWith(7, 'ebook', current.media, true, { updatedAt: expect.any(Date) });
+    current.slots[0]!.placeholder = true;
+    await store.setPlaceholder(7, 'ebook', true);
+    expect(events.emitChanged).toHaveBeenCalledTimes(1);
+    current.lockedFields = ['cover'];
+    await expect(store.setPlaceholder(7, 'ebook', false)).rejects.toMatchObject({ status: 409 });
+    current.lockedFields = [];
+    current.slots = [];
+    await expect(store.setPlaceholder(7, 'ebook', true)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe('placeholder writes and dormancy', () => {
+  it('keeps the switch through dormancy and clears it explicitly after an unchanged extraction', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'placeholder-write-'));
+    try {
+      const current = context({ slots: [{ ...slot('ebook'), placeholder: true }] });
+      const { store, repository } = makeStore(root, current);
+      const bytes = await image(100, 150);
+      const dir = bookCoverSlotDirPath(root, 7, 'ebook');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 'cover_extracted.jpg'), bytes);
+      await store.markDormant(7, 'ebook');
+      expect(repository.applySlotMutation).toHaveBeenLastCalledWith(
+        7,
+        'ebook',
+        current.media,
+        expect.objectContaining({ row: expect.not.objectContaining({ placeholder: expect.anything() }) }),
+        expect.objectContaining({ servedBytesChanged: false }),
+      );
+      expect(await store.saveExtracted(7, 'ebook', bytes, { origin: 'embedded', skipIfUnchanged: true })).toBe(false);
+      expect(await store.clearPlaceholder(7, 'ebook')).toBe(true);
+      expect(repository.setPlaceholder).toHaveBeenCalledWith(7, 'ebook', current.media, false, { updatedAt: expect.any(Date) });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['custom', 'extracted'] as const)('marks a %s write as changing served bytes', async (source) => {
+    const root = await mkdtemp(join(tmpdir(), 'placeholder-write-'));
+    try {
+      const current = context({ slots: [{ ...slot('ebook'), placeholder: true }] });
+      const { store, repository } = makeStore(root, current);
+      const bytes = await image(100, 150);
+      if (source === 'custom') await store.saveCustom(7, 'ebook', bytes);
+      else await store.saveExtracted(7, 'ebook', bytes, { origin: 'embedded' });
+      expect(repository.applySlotMutation).toHaveBeenCalledWith(
+        7,
+        'ebook',
+        current.media,
+        expect.objectContaining({ row: expect.objectContaining({ source }) }),
+        expect.objectContaining({ servedBytesChanged: true }),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

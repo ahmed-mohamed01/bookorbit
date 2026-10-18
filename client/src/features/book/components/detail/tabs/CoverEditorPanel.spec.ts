@@ -21,12 +21,18 @@ vi.mock('../../../composables/useCoverVersions', () => ({
   }),
 }))
 
+const { hasPermission } = vi.hoisted(() => ({ hasPermission: vi.fn<() => boolean>().mockReturnValue(true) }))
+
 vi.mock('@/features/auth/composables/usePermissions', () => ({
-  usePermissions: () => ({ hasPermission: vi.fn<() => boolean>().mockReturnValue(true) }),
+  usePermissions: () => ({ hasPermission }),
 }))
 
-function slot(source: BookCoverSlot['source'] = 'extracted', updatedAt = '2026-09-01T00:00:00.000Z'): BookCoverSlot {
-  return { source, updatedAt, width: null, height: null }
+function slot(
+  source: BookCoverSlot['source'] = 'extracted',
+  updatedAt = '2026-09-01T00:00:00.000Z',
+  placeholder = false,
+): BookCoverSlot & { placeholder: boolean } {
+  return { source, updatedAt, width: null, height: null, placeholder }
 }
 
 function makeBook(overrides: Partial<BookDetail> = {}): BookDetail {
@@ -85,6 +91,7 @@ function fakeEditor() {
       return true
     }),
     revert: vi.fn<() => Promise<'extracted' | null | false>>().mockResolvedValue('extracted'),
+    setPlaceholder: vi.fn<(enabled: boolean) => Promise<boolean>>().mockResolvedValue(true),
     regenerate: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
   }
 }
@@ -120,6 +127,7 @@ function radios(wrapper: ReturnType<typeof mountPanel>) {
 describe('CoverEditorPanel', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    hasPermission.mockReturnValue(true)
     editors = { ebook: fakeEditor(), audio: fakeEditor(), none: fakeEditor() }
     vi.mocked(useCoverEditor).mockImplementation((_bookId, medium) => editors[medium ?? 'none'] as never)
   })
@@ -407,6 +415,70 @@ describe('CoverEditorPanel', () => {
       expect(editors.ebook.clearPending).toHaveBeenCalled()
       expect(editors.audio.clearPending).toHaveBeenCalled()
       expect((wrapper.vm as unknown as ExposedPanel).hasPending).toBe(false)
+    })
+  })
+
+  describe('placeholder switch', () => {
+    function findSwitch(wrapper: ReturnType<typeof mountPanel>, label: string) {
+      return wrapper.findAll('button').find((button) => button.text().includes(label))
+    }
+
+    it('offers the switch for a tile with an image and turns the slot into a placeholder', async () => {
+      const wrapper = mountPanel({ book: makeBook({ coverSource: 'extracted', covers: { ebook: slot(), audio: null } }) })
+
+      const toggle = findSwitch(wrapper, 'book.detail.coverEditor.usePlaceholder')
+      expect(toggle).toBeDefined()
+      await toggle!.trigger('click')
+      await vi.runAllTimersAsync()
+
+      expect(editors.ebook.setPlaceholder).toHaveBeenCalledWith(true)
+      expect(wrapper.emitted('coverChanged')).toEqual([['ebook']])
+    })
+
+    it('renders the placeholder art and offers to bring the image back for a placeholder slot', async () => {
+      const wrapper = mountPanel({
+        book: makeBook({ coverSource: 'custom', covers: { ebook: slot('custom', '2026-09-01T00:00:00.000Z', true), audio: null } }),
+      })
+
+      expect(wrapper.find('img').exists()).toBe(false)
+      expect(wrapper.find('[data-test="placeholder"]').exists()).toBe(true)
+      expect(findSwitch(wrapper, 'book.detail.coverEditor.usePlaceholder')).toBeUndefined()
+      expect(wrapper.text()).toContain('book.detail.coverEditor.revertToOriginal')
+
+      const toggle = findSwitch(wrapper, 'book.detail.coverEditor.useCoverImage')
+      expect(toggle).toBeDefined()
+      await toggle!.trigger('click')
+      await vi.runAllTimersAsync()
+
+      expect(editors.ebook.setPlaceholder).toHaveBeenCalledWith(false)
+      expect(wrapper.emitted('coverChanged')).toEqual([['ebook']])
+    })
+
+    it('hides the switch for a slot with no image', () => {
+      const wrapper = mountPanel({ book: makeBook({ coverSource: null, covers: { ebook: null, audio: null } }) })
+
+      expect(findSwitch(wrapper, 'book.detail.coverEditor.usePlaceholder')).toBeUndefined()
+      expect(findSwitch(wrapper, 'book.detail.coverEditor.useCoverImage')).toBeUndefined()
+    })
+
+    it('hides the switch without the metadata permission', () => {
+      hasPermission.mockReturnValue(false)
+      const wrapper = mountPanel({ book: makeBook({ coverSource: 'extracted', covers: { ebook: slot(), audio: null } }) })
+
+      expect(findSwitch(wrapper, 'book.detail.coverEditor.usePlaceholder')).toBeUndefined()
+    })
+
+    it('points the switch at the selected tile of a two-slot book', async () => {
+      const wrapper = mountPanel({ book: mixedBook })
+      await radios(wrapper)[1]!.trigger('click')
+
+      const toggle = findSwitch(wrapper, 'book.detail.coverEditor.usePlaceholder')
+      await toggle!.trigger('click')
+      await vi.runAllTimersAsync()
+
+      expect(editors.audio.setPlaceholder).toHaveBeenCalledWith(true)
+      expect(editors.ebook.setPlaceholder).not.toHaveBeenCalled()
+      expect(wrapper.emitted('coverChanged')).toEqual([['audio']])
     })
   })
 
