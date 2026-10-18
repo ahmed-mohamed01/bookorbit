@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { formatDate, formatNumber } from '@/i18n/formatters'
 import type { AuthorDetail, MetadataCandidateCacheInfo } from '@bookorbit/types'
-import { Bell, Loader2, MoreHorizontal, Pencil, RefreshCcw, Trash2, UsersRound, X } from '@lucide/vue'
+import { Bell, BellOff, BellRing, Loader2, MoreHorizontal, Pencil, RefreshCcw, Trash2, UsersRound, X } from '@lucide/vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { toDisplayCoverUrl } from '@/features/book/lib/metadata-fetch'
 import MetadataCacheBadge from '@/features/metadata-cache/components/MetadataCacheBadge.vue'
@@ -29,6 +29,8 @@ const props = defineProps<{
   canMonitor?: boolean
   /** Set while the monitor action looks the author up before its dialog opens. */
   monitoring?: boolean
+  /** The viewer's monitor for this author, when the author is on their watchlist. */
+  monitoredId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -38,6 +40,7 @@ const emit = defineEmits<{
   searchFresh: []
   delete: []
   monitor: []
+  unmonitor: []
 }>()
 
 const { t } = useI18n()
@@ -102,10 +105,15 @@ const previewProviderLabel = computed(() => {
   return props.previewProvider
 })
 
-const showMenu = computed(() => props.canUpdate || props.canMerge || props.canDelete)
+const canUnmonitor = computed(() => Boolean(props.canMonitor && props.monitoredId))
+const showMenu = computed(() => props.canUpdate || props.canMerge || props.canDelete || canUnmonitor.value)
 
 function handleMonitor() {
   if (props.canMonitor && !props.monitoring) emit('monitor')
+}
+
+function handleUnmonitor() {
+  if (canUnmonitor.value) emit('unmonitor')
 }
 
 const imageLightboxOpen = ref(false)
@@ -152,8 +160,18 @@ watch(resolvedBio, () => {
             </div>
 
             <div class="flex shrink-0 items-center gap-2">
+              <RouterLink
+                v-if="monitoredId"
+                :to="{ name: 'monitored-author', params: { id: monitoredId } }"
+                data-test="author-monitored"
+                class="mt-0.5 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/15"
+                :title="t('monitored.actions.openOnWatchlist', { name: author.name })"
+              >
+                <BellRing :size="14" />
+                {{ t('monitored.actions.onWatchlist') }}
+              </RouterLink>
               <button
-                v-if="canMonitor"
+                v-else-if="canMonitor"
                 type="button"
                 data-test="author-monitor"
                 class="mt-0.5 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
@@ -187,7 +205,12 @@ watch(resolvedBio, () => {
                     <RefreshCcw class="mr-2 h-4 w-4" :class="refreshing ? 'animate-spin' : ''" />
                     {{ refreshing ? t('author.header.refreshing') : t('author.header.refreshMetadata') }}
                   </DropdownMenuItem>
-                  <DropdownMenuSeparator v-if="canDelete && (canUpdate || canMerge)" />
+                  <DropdownMenuSeparator v-if="canUnmonitor && (canUpdate || canMerge)" />
+                  <DropdownMenuItem v-if="canUnmonitor" data-test="author-unmonitor" @click="handleUnmonitor">
+                    <BellOff class="mr-2 h-4 w-4" />
+                    {{ t('monitored.actions.stopMonitoring') }}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator v-if="canDelete && (canUpdate || canMerge || canUnmonitor)" />
                   <DropdownMenuItem v-if="canDelete" class="text-destructive focus:text-destructive" @click="emit('delete')">
                     <Trash2 class="mr-2 h-4 w-4" />
                     {{ t('author.header.deleteAuthor') }}

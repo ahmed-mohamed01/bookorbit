@@ -37,6 +37,7 @@ import type {
   MonitoredBulkUpdatePayload,
   MonitoredBulkUpdateResponse,
   MonitoredFormat,
+  MonitoredLocalAuthorLookup,
   MonitoredPage,
   MonitoredReleaseDateLookup,
   MonitoredReleasePage,
@@ -85,6 +86,7 @@ import type {
   ListMonitoredBooksDto,
   ListMonitoredReleasesDto,
   ListOwnedMonitoredAuthorIdsDto,
+  LookupMonitoredLocalAuthorsDto,
   MonitoredAuthorDetailQueryDto,
   UpdateMonitoredBookDto,
 } from './dto/monitored.dto';
@@ -227,6 +229,12 @@ export class MonitoredService {
 
   listOwnedAuthorIds(user: RequestUser, query: ListOwnedMonitoredAuthorIdsDto): Promise<MonitoredPage<string>> {
     return this.store.findOwnedAuthorIdsPage(user, query.page ?? 0, query.size ?? 200);
+  }
+
+  async findMonitoredIdsForLocalAuthors(user: RequestUser, query: LookupMonitoredLocalAuthorsDto): Promise<MonitoredLocalAuthorLookup> {
+    const localAuthors = await this.authorsRepository.findNamesByIds(query.authorIds);
+    const monitoredIds = await this.store.findMonitoredIdsByLocalAuthors(localAuthors, user);
+    return Object.fromEntries(monitoredIds);
   }
 
   // Resolve each monitored author to a local authors row (by link or name) in a single query so the

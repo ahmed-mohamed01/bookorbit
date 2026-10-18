@@ -19,6 +19,7 @@ function mountTile(props: Record<string, unknown> = {}) {
         DropdownMenuContent: { template: '<div><slot /></div>' },
         DropdownMenuItem: { template: '<div><slot /></div>' },
         AuthorPortrait: { template: '<span class="portrait-stub" />' },
+        RouterLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' },
       },
     },
   })
@@ -189,5 +190,29 @@ describe('AuthorTile', () => {
     await findMonitorItem(wrapper)!.trigger('click')
 
     expect(wrapper.emitted('monitor')?.[0]).toEqual([1])
+  })
+
+  it('marks a monitored author and links the mark to its watchlist entry', () => {
+    const wrapper = mountTile({ canMonitor: true, monitoredId: 'mon-1' })
+    const mark = wrapper.get('[data-test="author-tile-monitored"]')
+
+    expect(JSON.parse(mark.attributes('data-to')!)).toEqual({ name: 'monitored-author', params: { id: 'mon-1' } })
+    expect(mark.attributes('aria-label')).toBe('Blake Crouch is on your watchlist. Open it there.')
+  })
+
+  it('offers removal instead of adding once the author is monitored', async () => {
+    const wrapper = mountTile({ canMonitor: true, monitoredId: 'mon-1' })
+    const remove = wrapper.findAll('div').find((node) => node.text() === 'Remove from watchlist')
+
+    expect(findMonitorItem(wrapper)).toBeUndefined()
+    await remove!.trigger('click')
+    expect(wrapper.emitted('unmonitor')?.[0]).toEqual([1])
+  })
+
+  it('shows no watchlist mark for an author that is not monitored or while selecting', () => {
+    expect(mountTile({ canMonitor: true }).find('[data-test="author-tile-monitored"]').exists()).toBe(false)
+    expect(mountTile({ canMonitor: true, monitoredId: 'mon-1', selectionMode: true }).find('[data-test="author-tile-monitored"]').exists()).toBe(
+      false,
+    )
   })
 })

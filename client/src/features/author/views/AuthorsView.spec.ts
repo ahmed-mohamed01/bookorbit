@@ -62,6 +62,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@/features/monitored/api/monitored', () => ({
   searchMonitoredAuthors: mocks.searchMonitoredAuthors,
+  fetchMonitoredLocalAuthors: vi.fn<() => Promise<Record<number, string>>>().mockResolvedValue({}),
   monitorAuthor: vi.fn<() => Promise<never>>(),
 }))
 

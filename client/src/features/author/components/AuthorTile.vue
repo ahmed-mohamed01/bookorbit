@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bell, Check, ExternalLink, Loader2, MoreHorizontal, RefreshCw, Trash2 } from '@lucide/vue'
+import { Bell, BellOff, BellRing, Check, ExternalLink, Loader2, MoreHorizontal, RefreshCw, Trash2 } from '@lucide/vue'
 import type { AuthorCoverShape, AuthorSummary } from '@bookorbit/types'
 import { formatNumber, formatRelativeFromNow } from '@/i18n/formatters'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import AuthorPortrait from './AuthorPortrait.vue'
 
 const props = withDefaults(
@@ -19,6 +20,8 @@ const props = withDefaults(
     refreshing?: boolean
     deleting?: boolean
     monitoring?: boolean
+    /** The viewer's monitor for this author, when the author is on their watchlist. */
+    monitoredId?: string | null
     coverFallback?: boolean
   }>(),
   { shape: 'square', coverFallback: true },
@@ -30,6 +33,7 @@ const emit = defineEmits<{
   refresh: [authorId: number]
   delete: [authorId: number]
   monitor: [authorId: number]
+  unmonitor: [authorId: number]
 }>()
 
 const { t } = useI18n()
@@ -81,6 +85,10 @@ function handleDelete() {
 function handleMonitor() {
   if (!props.canMonitor || props.monitoring) return
   emit('monitor', props.author.id)
+}
+
+function handleUnmonitor() {
+  if (props.canMonitor && props.monitoredId) emit('unmonitor', props.author.id)
 }
 </script>
 
@@ -161,6 +169,21 @@ function handleMonitor() {
         {{ bookCountLabel }}
       </span>
 
+      <Tooltip v-if="monitoredId && !selectionMode">
+        <TooltipTrigger as-child>
+          <RouterLink
+            :to="{ name: 'monitored-author', params: { id: monitoredId } }"
+            data-test="author-tile-monitored"
+            class="absolute z-30 grid size-[20px] place-items-center rounded-full bg-primary text-primary-foreground shadow-sm ring-1 ring-background/60 transition-colors hover:bg-primary/90"
+            :class="badgeInset.topLeft"
+            :aria-label="t('monitored.actions.openOnWatchlist', { name: author.name })"
+          >
+            <BellRing :size="11" />
+          </RouterLink>
+        </TooltipTrigger>
+        <TooltipContent>{{ t('monitored.actions.openOnWatchlist', { name: author.name }) }}</TooltipContent>
+      </Tooltip>
+
       <DropdownMenu v-if="!selectionMode" v-model:open="menuOpen">
         <DropdownMenuTrigger as-child>
           <button
@@ -183,7 +206,11 @@ function handleMonitor() {
             <RefreshCw v-else class="mr-2 h-4 w-4" />
             {{ t('author.card.refreshMetadata') }}
           </DropdownMenuItem>
-          <DropdownMenuItem v-if="canMonitor" :disabled="monitoring" @click="handleMonitor">
+          <DropdownMenuItem v-if="canMonitor && monitoredId" @click="handleUnmonitor">
+            <BellOff class="mr-2 h-4 w-4" />
+            {{ t('monitored.actions.stopMonitoring') }}
+          </DropdownMenuItem>
+          <DropdownMenuItem v-else-if="canMonitor" :disabled="monitoring" @click="handleMonitor">
             <Loader2 v-if="monitoring" class="mr-2 h-4 w-4 animate-spin" />
             <Bell v-else class="mr-2 h-4 w-4" />
             {{ t('monitored.actions.monitorAuthor') }}

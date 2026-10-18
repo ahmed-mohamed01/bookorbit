@@ -17,6 +17,7 @@ import {
   ListMonitoredBooksDto,
   ListMonitoredReleasesDto,
   ListOwnedMonitoredAuthorIdsDto,
+  LookupMonitoredLocalAuthorsDto,
   MonitorAuthorDto,
   MonitoredAuthorDetailQueryDto,
   MonitoredCoverQueryDto,
@@ -99,6 +100,11 @@ export class MonitoredController {
   @Get('authors/ids')
   listOwnedAuthorIds(@CurrentUser() user: RequestUser, @Query() query: ListOwnedMonitoredAuthorIdsDto) {
     return this.service.listOwnedAuthorIds(user, query);
+  }
+
+  @Get('authors/by-local')
+  lookupLocalAuthors(@CurrentUser() user: RequestUser, @Query() query: LookupMonitoredLocalAuthorsDto) {
+    return this.service.findMonitoredIdsForLocalAuthors(user, query);
   }
 
   @Get('authors/:id/portrait')

@@ -568,6 +568,9 @@ export interface MonitoredAuthorSearchResult {
   alreadyMonitoredId: string | null;
 }
 
+/** Library author id to the id of the viewer's monitor for that author; authors not monitored are absent. */
+export type MonitoredLocalAuthorLookup = Record<number, string>;
+
 export interface MonitoredCatalogSearchHit {
   /** The full catalog work, so the palette can reuse the format-status helpers. */
   work: MonitoredWork;

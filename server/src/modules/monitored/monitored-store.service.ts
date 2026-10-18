@@ -645,6 +645,44 @@ export class MonitoredStoreService {
   }
 
   /**
+   * The viewer's monitor for each library author: one linked by id wins, otherwise an unlinked one
+   * whose name folds to the same key. A monitor linked to some other author never matches by name,
+   * or a namesake would show as monitored and its removal would delete the other author's monitor.
+   */
+  async findMonitoredIdsByLocalAuthors(localAuthors: { id: number; name: string }[], viewer: RequestUser): Promise<Map<number, string>> {
+    if (localAuthors.length === 0) return new Map();
+    const ids = [...new Set(localAuthors.map((author) => author.id))];
+    const normalized = [...new Set(localAuthors.map((author) => normalizeMonitoredName(author.name)).filter(Boolean))];
+    const nameMatch = normalized.length
+      ? inArray(sql`regexp_replace(lower(public.bookorbit_unaccent(${schema.monitoredAuthors.authorName})), '[^[:alnum:]]', '', 'g')`, normalized)
+      : undefined;
+    const rows = await this.db
+      .select({
+        id: schema.monitoredAuthors.id,
+        authorName: schema.monitoredAuthors.authorName,
+        localAuthorId: schema.monitoredAuthors.localAuthorId,
+      })
+      .from(schema.monitoredAuthors)
+      .where(and(this.readScope(viewer, schema.monitoredAuthors.ownerUserId), or(inArray(schema.monitoredAuthors.localAuthorId, ids), nameMatch)));
+    const byLocalId = new Map<number, string>();
+    const byName = new Map<string, string>();
+    for (const row of rows) {
+      if (row.localAuthorId != null) {
+        if (!byLocalId.has(row.localAuthorId)) byLocalId.set(row.localAuthorId, row.id);
+        continue;
+      }
+      const key = normalizeMonitoredName(row.authorName);
+      if (key && !byName.has(key)) byName.set(key, row.id);
+    }
+    const result = new Map<number, string>();
+    for (const author of localAuthors) {
+      const monitoredId = byLocalId.get(author.id) ?? byName.get(normalizeMonitoredName(author.name));
+      if (monitoredId) result.set(author.id, monitoredId);
+    }
+    return result;
+  }
+
+  /**
    * The ILIKE prefilter over a candidate list of names or titles: each value narrows the scan by
    * its longest letter-or-digit run, matched as a plain substring, so spellings that differ only in
    * separator positions still pass from either side. It is an index narrowing, never the identity

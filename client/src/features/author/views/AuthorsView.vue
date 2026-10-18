@@ -83,11 +83,27 @@ const {
   beginMonitor,
   closeModal: closeMonitorModal,
   handleCreated: handleMonitoredAuthorCreated,
+  monitoredIdFor,
+  loadMonitoredStatus,
+  stopTarget: stopMonitorTarget,
+  stopping: stoppingMonitor,
+  beginStop: beginStopMonitor,
+  cancelStop: cancelStopMonitor,
+  confirmStop: confirmStopMonitor,
 } = useMonitorAuthorAction()
 
 const canRefreshMetadata = computed(() => hasPermissionInAnyLibrary('library_edit_metadata', 'editor') && !isDemoRestrictedAccount.value)
 const canDeleteAuthors = computed(() => isSuperuser.value)
 const canMonitorAuthors = computed(() => hasPermission('book_request_access'))
+
+// The list both replaces its array on a new query and appends to it on scroll; ids already looked up are skipped.
+watch(
+  [canMonitorAuthors, items, () => items.value.length],
+  () => {
+    if (canMonitorAuthors.value) void loadMonitoredStatus(items.value.map((item) => item.id))
+  },
+  { immediate: true },
+)
 
 /** The page offers exactly the two views the design has; `table` is not one of them. */
 const authorViewMode = computed<BookViewMode>({
@@ -439,6 +455,11 @@ function monitorSingleAuthor(authorId: number) {
   void beginMonitor(author)
 }
 
+function stopMonitorSingleAuthor(authorId: number) {
+  const author = items.value.find((item) => item.id === authorId)
+  if (author) beginStopMonitor(author)
+}
+
 function promptDeleteSingleAuthor(authorId: number) {
   if (!canDeleteAuthors.value || deletingAuthorId.value === authorId) return
   pendingDeleteIds.value = [authorId]
@@ -762,11 +783,13 @@ defineOptions({ name: 'AuthorsView' })
                 :refreshing="isRefreshing(author.id)"
                 :deleting="deletingAuthorId === author.id"
                 :monitoring="monitorResolvingId === author.id"
+                :monitored-id="monitoredIdFor(author.id)"
                 @open="openAuthor"
                 @select="handleAuthorSelect(author.id, $event)"
                 @refresh="refreshSingleAuthorMetadata"
                 @delete="promptDeleteSingleAuthor"
                 @monitor="monitorSingleAuthor"
+                @unmonitor="stopMonitorSingleAuthor"
               />
             </div>
 
@@ -789,11 +812,13 @@ defineOptions({ name: 'AuthorsView' })
                 :refreshing="isRefreshing(author.id)"
                 :deleting="deletingAuthorId === author.id"
                 :monitoring="monitorResolvingId === author.id"
+                :monitored-id="monitoredIdFor(author.id)"
                 @open="openAuthor"
                 @select="handleAuthorSelect(author.id, $event)"
                 @refresh="refreshSingleAuthorMetadata"
                 @delete="promptDeleteSingleAuthor"
                 @monitor="monitorSingleAuthor"
+                @unmonitor="stopMonitorSingleAuthor"
               />
             </div>
           </section>
@@ -966,6 +991,17 @@ defineOptions({ name: 'AuthorsView' })
       destructive
       @confirm="confirmDeleteAuthors"
       @cancel="cancelDeleteAuthors"
+    />
+
+    <AuthorConfirmDialog
+      :open="Boolean(stopMonitorTarget)"
+      :title="t('monitored.detail.stopDialog.title')"
+      :description="t('monitored.detail.stopDialog.description')"
+      :confirm-label="t('monitored.actions.stopMonitoring')"
+      :loading="stoppingMonitor"
+      destructive
+      @confirm="confirmStopMonitor"
+      @cancel="cancelStopMonitor"
     />
 
     <MonitorAuthorModal

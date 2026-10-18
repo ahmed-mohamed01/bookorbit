@@ -96,4 +96,16 @@ describe('monitor action', () => {
     await wrapper.get('[data-test="author-monitor"]').trigger('click')
     expect(wrapper.emitted('monitor')).toHaveLength(1)
   })
+
+  it('shows a watchlist link instead of the add button once the author is monitored', () => {
+    const wrapper = mount(AuthorHeader, {
+      props: { author, canMonitor: true, monitoredId: 'mon-1' },
+      global: { stubs: { RouterLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' } } },
+    })
+
+    expect(wrapper.find('[data-test="author-monitor"]').exists()).toBe(false)
+    const link = wrapper.get('[data-test="author-monitored"]')
+    expect(link.text()).toBe('On watchlist')
+    expect(JSON.parse(link.attributes('data-to')!)).toEqual({ name: 'monitored-author', params: { id: 'mon-1' } })
+  })
 })

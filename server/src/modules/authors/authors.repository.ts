@@ -280,6 +280,12 @@ export class AuthorsRepository {
     return inserted?.id ?? (await this.findIdByNormalizedName(trimmed));
   }
 
+  async findNamesByIds(ids: number[]): Promise<{ id: number; name: string }[]> {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0) return [];
+    return this.db.select({ id: authors.id, name: authors.name }).from(authors).where(inArray(authors.id, uniqueIds));
+  }
+
   async findPortraitCandidates(ids: number[], names: string[]): Promise<{ id: number; name: string; hasPhoto: boolean }[]> {
     const uniqueIds = [...new Set(ids.filter((value): value is number => value != null))];
     const loweredNames = [...new Set(names.map((value) => value.trim().toLowerCase()).filter(Boolean))];

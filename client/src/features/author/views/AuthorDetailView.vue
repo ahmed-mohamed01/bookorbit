@@ -110,8 +110,28 @@ const {
   beginMonitor,
   closeModal: closeMonitorModal,
   handleCreated: handleMonitoredAuthorCreated,
+  monitoredIdFor,
+  loadMonitoredStatus,
+  stopTarget: stopMonitorTarget,
+  stopping: stoppingMonitor,
+  beginStop: beginStopMonitor,
+  cancelStop: cancelStopMonitor,
+  confirmStop: confirmStopMonitor,
 } = useMonitorAuthorAction()
 const monitoringAuthor = computed(() => author.value !== null && monitorResolvingId.value === author.value.id)
+const authorMonitoredId = computed(() => (author.value ? monitoredIdFor(author.value.id) : null))
+
+watch(
+  () => (canMonitor.value ? author.value?.id : undefined),
+  (authorId) => {
+    if (authorId !== undefined) void loadMonitoredStatus([authorId])
+  },
+  { immediate: true },
+)
+
+function handleStopMonitorAuthor() {
+  if (author.value) beginStopMonitor(author.value)
+}
 
 function handleMonitorAuthor() {
   if (canMonitor.value && author.value) void beginMonitor(author.value)
@@ -580,7 +600,9 @@ defineOptions({ name: 'AuthorDetailView' })
           :refreshing="refreshingMetadata"
           :can-monitor="canMonitor"
           :monitoring="monitoringAuthor"
+          :monitored-id="authorMonitoredId"
           @monitor="handleMonitorAuthor"
+          @unmonitor="handleStopMonitorAuthor"
           @edit="toggleEdit"
           @merge="toggleMerge"
           @refresh="refreshMetadata"
@@ -884,6 +906,17 @@ defineOptions({ name: 'AuthorDetailView' })
     />
 
     <DeleteBookDialog :open="deleteBookId !== null" :deleting="deletingBook" @confirm="confirmDelete" @cancel="cancelDelete" />
+
+    <AuthorConfirmDialog
+      :open="Boolean(stopMonitorTarget)"
+      :title="t('monitored.detail.stopDialog.title')"
+      :description="t('monitored.detail.stopDialog.description')"
+      :confirm-label="t('monitored.actions.stopMonitoring')"
+      :loading="stoppingMonitor"
+      destructive
+      @confirm="confirmStopMonitor"
+      @cancel="cancelStopMonitor"
+    />
 
     <MonitorAuthorModal
       :open="Boolean(monitorTarget)"

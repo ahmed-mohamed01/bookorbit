@@ -14734,6 +14734,8 @@
     "actions": {
       "monitor": "Add to watchlist",
       "monitorAuthor": "Add author to watchlist",
+      "onWatchlist": "On watchlist",
+      "openOnWatchlist": "{name} is on your watchlist. Open it there.",
       "pause": "Pause",
       "resume": "Resume",
       "refresh": "Refresh",

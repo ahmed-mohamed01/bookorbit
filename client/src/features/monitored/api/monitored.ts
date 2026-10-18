@@ -15,6 +15,7 @@ import type {
   MonitoredBulkUpdatePayload,
   MonitoredBulkUpdateResponse,
   MonitoredFormat,
+  MonitoredLocalAuthorLookup,
   MonitoredListOrder,
   MonitoredPage,
   MonitoredReleaseDateLookup,
@@ -79,6 +80,12 @@ export async function fetchMonitoredAuthors(options: {
 
 export async function fetchOwnedMonitoredAuthorIds(page: number, size: number): Promise<MonitoredPage<string>> {
   return readJson(await api(`${BASE_PATH}/authors/ids?${pageQuery({ page, size })}`))
+}
+
+/** Which of these library authors the viewer monitors, keyed by library author id. */
+export async function fetchMonitoredLocalAuthors(authorIds: number[]): Promise<MonitoredLocalAuthorLookup> {
+  if (authorIds.length === 0) return {}
+  return readJson(await api(`${BASE_PATH}/authors/by-local?${pageQuery({ authorIds: authorIds.join(',') })}`))
 }
 
 export async function monitorAuthor(payload: MonitorAuthorRequest): Promise<MonitoredAuthorDetail> {

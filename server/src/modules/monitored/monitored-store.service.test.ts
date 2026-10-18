@@ -813,6 +813,59 @@ describe('MonitoredStoreService paged lists', () => {
     }
   });
 
+  it('maps library authors to the viewer own monitors, preferring a link by id over a name match', async () => {
+    const tracked = pagedSelectDb([
+      [
+        { id: 'by-name', authorName: 'Zogarth', localAuthorId: null },
+        { id: 'by-link', authorName: 'Zogarth (Author)', localAuthorId: 5 },
+        { id: 'other-name', authorName: 'Shirtaloon', localAuthorId: null },
+      ],
+    ]);
+    const store = new MonitoredStoreService(tracked.db as never, {} as never);
+
+    const result = await store.findMonitoredIdsByLocalAuthors(
+      [
+        { id: 5, name: 'Zogarth' },
+        { id: 6, name: 'shirtaloon' },
+        { id: 7, name: 'Nobody' },
+      ],
+      { id: 2, isSuperuser: true } as RequestUser,
+    );
+
+    expect(result).toEqual(
+      new Map([
+        [5, 'by-link'],
+        [6, 'other-name'],
+      ]),
+    );
+    const query = new PgDialect().sqlToQuery(tracked.builders[0]?.where.mock.calls[0]?.[0] as SQL);
+    expect(query.sql).toContain('"monitored_authors"."owner_user_id" = $1');
+    expect(query.params[0]).toBe(2);
+  });
+
+  it('never matches a namesake by name to a monitor linked to another author', async () => {
+    const tracked = pagedSelectDb([[{ id: 'linked-elsewhere', authorName: 'John Smith', localAuthorId: 8 }]]);
+    const store = new MonitoredStoreService(tracked.db as never, {} as never);
+
+    const result = await store.findMonitoredIdsByLocalAuthors(
+      [
+        { id: 8, name: 'John Smith' },
+        { id: 9, name: 'John Smith' },
+      ],
+      { id: 2, isSuperuser: false } as RequestUser,
+    );
+
+    expect(result).toEqual(new Map([[8, 'linked-elsewhere']]));
+  });
+
+  it('skips the query when no library authors are asked about', async () => {
+    const tracked = pagedSelectDb([]);
+    const store = new MonitoredStoreService(tracked.db as never, {} as never);
+
+    expect(await store.findMonitoredIdsByLocalAuthors([], { id: 2, isSuperuser: false } as RequestUser)).toEqual(new Map());
+    expect(tracked.builders).toHaveLength(0);
+  });
+
   it("returns only a superuser viewer's own monitored author ids", async () => {
     const tracked = pagedSelectDb([[{ id: 'mine-1' }], [{ total: 1 }]]);
     const store = new MonitoredStoreService(tracked.db as never, {} as never);

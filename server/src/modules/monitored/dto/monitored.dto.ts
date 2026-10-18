@@ -257,6 +257,26 @@ export class ListOwnedMonitoredAuthorIdsDto {
   size?: number = 200;
 }
 
+export const MONITORED_LOCAL_AUTHOR_LOOKUP_LIMIT = 200;
+
+export class LookupMonitoredLocalAuthorsDto {
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string'
+      ? value
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .map(Number)
+      : value,
+  )
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(MONITORED_LOCAL_AUTHOR_LOOKUP_LIMIT)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  authorIds!: number[];
+}
+
 export class MonitoredSearchQueryDto {
   @IsString()
   @MaxLength(500)
