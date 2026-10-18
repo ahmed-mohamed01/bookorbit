@@ -14,10 +14,14 @@ const migrations = [
   { hash: FORK_FILE_COUNT, folderMillis: 600, sql: ['SELECT file_count'] },
 ];
 
+function ledger(hashes: string[]) {
+  return hashes.map((hash) => ({ hash, created_at: migrations.find((m) => m.hash === hash)?.folderMillis ?? 0 }));
+}
+
 function createPool(tableName: string | null, recorded: string[]) {
-  const query = vi.fn((statement: string) => {
+  const query = vi.fn(async (statement: string): Promise<{ rows: unknown[]; rowCount?: number }> => {
     if (statement.includes('to_regclass')) return Promise.resolve({ rows: [{ tableName }] });
-    if (statement.startsWith('SELECT hash')) return Promise.resolve({ rows: recorded.map((hash) => ({ hash })) });
+    if (statement.startsWith('SELECT hash')) return Promise.resolve({ rows: ledger(recorded) });
     return Promise.resolve({ rows: [], rowCount: 1 });
   });
   const release = vi.fn();
@@ -27,21 +31,34 @@ function createPool(tableName: string | null, recorded: string[]) {
 
 describe('findHiddenMigrations', () => {
   it('returns upstream migrations journaled before a recorded renumbered fork migration', () => {
-    const hidden = findHiddenMigrations(migrations, new Set(['old', 'anchor', FORK_SHELFMARK, FORK_FILE_COUNT]));
+    const hidden = findHiddenMigrations(migrations, ledger(['old', 'anchor', FORK_SHELFMARK, FORK_FILE_COUNT]));
 
     expect(hidden.map((migration) => migration.hash)).toEqual(['upstream-a', 'upstream-b']);
   });
 
   it('never replays migrations older than the newest recorded upstream migration', () => {
-    const hidden = findHiddenMigrations(migrations, new Set(['anchor', FORK_SHELFMARK]));
+    const hidden = findHiddenMigrations(migrations, ledger(['anchor', FORK_SHELFMARK]));
 
     expect(hidden.map((migration) => migration.hash)).toEqual(['upstream-a', 'upstream-b']);
   });
 
+  it('recovers when fork migrations are absent from the journal', () => {
+    expect(findHiddenMigrations(migrations.slice(0, 4), ledger(['anchor', FORK_SHELFMARK])).map((m) => m.hash)).toEqual(['upstream-a', 'upstream-b']);
+  });
+
+  it('leaves pending migrations newer than the fork rows to Drizzle', () => {
+    expect(
+      findHiddenMigrations(migrations, [
+        { hash: 'anchor', created_at: '200' },
+        { hash: FORK_SHELFMARK, created_at: '250' },
+      ]),
+    ).toEqual([]);
+  });
+
   it('returns nothing once the gap is filled or when no fork row is recorded', () => {
-    expect(findHiddenMigrations(migrations, new Set(['old', 'anchor', 'upstream-a', 'upstream-b', FORK_SHELFMARK, FORK_FILE_COUNT]))).toEqual([]);
-    expect(findHiddenMigrations(migrations, new Set(['old', 'anchor']))).toEqual([]);
-    expect(findHiddenMigrations(migrations, new Set())).toEqual([]);
+    expect(findHiddenMigrations(migrations, ledger(['old', 'anchor', 'upstream-a', 'upstream-b', FORK_SHELFMARK, FORK_FILE_COUNT]))).toEqual([]);
+    expect(findHiddenMigrations(migrations, ledger(['old', 'anchor']))).toEqual([]);
+    expect(findHiddenMigrations(migrations, ledger([]))).toEqual([]);
   });
 });
 
@@ -74,7 +91,7 @@ describe('applyMigrationsHiddenByRenumberedForkRows', () => {
     const { pool, query, release } = createPool('drizzle.__drizzle_migrations', ['anchor', FORK_SHELFMARK]);
     query.mockImplementation((statement: string) => {
       if (statement.includes('to_regclass')) return Promise.resolve({ rows: [{ tableName: 'drizzle.__drizzle_migrations' }] });
-      if (statement.startsWith('SELECT hash')) return Promise.resolve({ rows: [{ hash: 'anchor' }, { hash: FORK_SHELFMARK }] });
+      if (statement.startsWith('SELECT hash')) return Promise.resolve({ rows: ledger(['anchor', FORK_SHELFMARK]) });
       if (statement === 'SELECT a2') return Promise.reject(new Error('relation exists'));
       return Promise.resolve({ rows: [], rowCount: 1 });
     });

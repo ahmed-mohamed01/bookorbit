@@ -70,6 +70,7 @@ function makeService(
         Promise.resolve(options.attemptSettled ? undefined : write(id, patch)),
       ),
     touch: vi.fn().mockResolvedValue(0),
+    setContentFileCount: vi.fn().mockResolvedValue(undefined),
   };
   const requests = {
     update: vi.fn().mockResolvedValue(undefined),
@@ -297,7 +298,7 @@ describe('DownloadMonitorService.tick', () => {
 
     await polled(service);
 
-    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), expect.objectContaining({ contentFileCount: 12 }));
+    expect(downloads.setContentFileCount).toHaveBeenCalledWith(11, 12);
   });
 
   /**

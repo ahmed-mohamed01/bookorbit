@@ -5,14 +5,34 @@ import { sanitizeLogValue } from '../common/utils/log-sanitize.utils';
 
 export const PARKED_CHECK_ROWS_TABLE = 'fork_parked_check_rows';
 
-// Fork values stored in a nullable upstream column that a CHECK constraint guards. When a pending
-// upstream migration recreates the constraint, its ADD CONSTRAINT validates every row, rejects
-// these, and rolls the whole migration run back. Parking nulls the value (NULL passes a CHECK)
-// and records the row, so the owning module's schema bootstrap can restore it once it has
-// re-extended the constraint. See FORK_MAINTENANCE.md, "Schema decoupling".
-const PARKED_CHECK_VALUES = [
+// Upstream constraint rebuilds validate every row. Park fork values until their owning bootstrap
+// re-extends the constraint, using NULL for nullable columns and safe placeholders otherwise.
+type ParkingEntry = {
+  table: string;
+  column: string;
+  constraint: string;
+  value: string;
+  placeholder?: string;
+  extraColumns?: { column: string; value: boolean }[];
+};
+const PARKED_CHECK_VALUES: readonly ParkingEntry[] = [
   { table: 'reading_sessions', column: 'source', constraint: 'reading_sessions_source_chk', value: 'audiobookshelf' },
-] as const;
+  {
+    table: 'download_clients',
+    column: 'adapter_type',
+    constraint: 'download_clients_adapter_type_chk',
+    value: 'shelfmark',
+    placeholder: 'qbittorrent',
+    extraColumns: [{ column: 'enabled', value: false }],
+  },
+  {
+    table: 'book_request_downloads',
+    column: 'source',
+    constraint: 'book_request_downloads_source_chk',
+    value: 'shelfmark',
+    placeholder: 'direct_url',
+  },
+];
 
 type ParkingResult = {
   parkedRows: number;
@@ -66,7 +86,20 @@ export async function parkRowsBlockingPendingCheckConstraints(
       `,
         [entry.table, entry.column, entry.value],
       );
-      const parked = await client.query(`UPDATE public.${entry.table} SET ${entry.column} = NULL WHERE ${entry.column} = $1`, [entry.value]);
+      for (const extra of entry.extraColumns ?? []) {
+        await client.query(
+          `INSERT INTO public.${PARKED_CHECK_ROWS_TABLE} (table_name, column_name, row_id, original_value)
+          SELECT $1, $2, id, ${extra.column}::text FROM public.${entry.table} WHERE ${entry.column} = $3 ON CONFLICT DO NOTHING`,
+          [entry.table, extra.column, entry.value],
+        );
+      }
+      const parked =
+        entry.placeholder === undefined
+          ? await client.query(`UPDATE public.${entry.table} SET ${entry.column} = NULL WHERE ${entry.column} = $1`, [entry.value])
+          : await client.query(
+              `UPDATE public.${entry.table} SET ${entry.column} = $2${(entry.extraColumns ?? []).map((extra) => `, ${extra.column} = ${extra.value}`).join('')} WHERE ${entry.column} = $1`,
+              [entry.value, entry.placeholder],
+            );
       parkedRows += parked.rowCount ?? 0;
     }
 

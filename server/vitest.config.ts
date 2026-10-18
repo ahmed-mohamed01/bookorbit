@@ -21,6 +21,8 @@ export default defineConfig({
     maxWorkers: process.env.CI ? undefined : localMaxWorkers,
     testTimeout: 15_000,
     include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
+    // Upstream's test pins both CHECKs to the shared constants, which the fork extends with Shelfmark; shelfmark-schema.test.ts runs the fork-aware copy.
+    exclude: ['src/db/schema/download-clients.schema.test.ts'],
     passWithNoTests: true,
     reporters: process.env.CI ? ['default', 'github-actions'] : ['default'],
     coverage: {

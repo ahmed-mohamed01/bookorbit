@@ -60,6 +60,16 @@ function assertOnlyChangelogDirty() {
   if (others.length) fail(`commit or set aside these first: ${others.join(", ")}`);
 }
 
+// Fork schema is bootstrap SQL only; a fork migration collides with upstream's numbering and ledger (FORK_MAINTENANCE.md, "Schema decoupling").
+const UPSTREAM_OWNED_DB_PATHS = ["server/src/db/migrations", "server/src/db/schema"];
+
+function assertDbMatchesUpstream() {
+  const base = tryGit("merge-base", "HEAD", "upstream/main");
+  if (!base) fail("cannot find the merge-base with upstream/main; run git fetch upstream");
+  const drift = git("diff", "--name-only", base, "HEAD", "--", ...UPSTREAM_OWNED_DB_PATHS);
+  if (drift) fail(`fork changes to upstream migrations or schema (move them to a module bootstrap):\n${drift}`);
+}
+
 function fetchRefs() {
   git("fetch", "--quiet", "--no-tags", "upstream", "main");
   // Best effort: a local upstream tag that differs from upstream's is refused rather than clobbered.
@@ -117,6 +127,7 @@ function prepare() {
   assertOnMonitored();
   assertOnlyChangelogDirty();
   fetchRefs();
+  assertDbMatchesUpstream();
   const base = git("describe", "--tags", "--abbrev=0", "--exclude", "*-m*", "HEAD");
   const previous = tryGit("describe", "--tags", "--abbrev=0", "--match", "v*-m*", "HEAD");
   const from = opt("from") ?? previous;
@@ -142,6 +153,7 @@ function publish() {
   if (!version || !VERSION_RE.test(version)) fail("usage: release.mjs publish vX.Y.Z-mN");
   assertOnMonitored();
   assertOnlyChangelogDirty();
+  assertDbMatchesUpstream();
 
   const changelog = readFileSync(CHANGELOG, "utf8");
   if (!new RegExp(`^## ${version.replace(/\./g, "\\.")}( |$)`, "m").test(changelog)) fail(`${CHANGELOG} has no ${version} entry`);

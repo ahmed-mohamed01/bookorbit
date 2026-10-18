@@ -96,3 +96,35 @@ describe('parkRowsBlockingPendingCheckConstraints', () => {
     expect(release).toHaveBeenCalledOnce();
   });
 });
+
+describe('Shelfmark row parking', () => {
+  it('parks the adapter and enabled flag before relabeling and disabling the client', async () => {
+    const { pool, query } = createPool({ parked: 2 });
+    await expect(
+      parkRowsBlockingPendingCheckConstraints(pool, [
+        { folderMillis: 200, sql: ['ALTER TABLE "download_clients" DROP CONSTRAINT "download_clients_adapter_type_chk";'] },
+      ]),
+    ).resolves.toEqual({ parkedRows: 2 });
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('SELECT $1, $2, id, adapter_type'), ['download_clients', 'adapter_type', 'shelfmark']);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('enabled::text'), ['download_clients', 'enabled', 'shelfmark']);
+    expect(query).toHaveBeenCalledWith('UPDATE public.download_clients SET adapter_type = $2, enabled = false WHERE adapter_type = $1', [
+      'shelfmark',
+      'qbittorrent',
+    ]);
+    const statements = statementsOf(query);
+    expect(statements.findIndex((s) => s.includes('enabled::text'))).toBeLessThan(
+      statements.findIndex((s) => s.startsWith('UPDATE public.download_clients')),
+    );
+  });
+
+  it('relabels Shelfmark downloads only for a pending source constraint rebuild', async () => {
+    const { pool, query } = createPool({ parked: 3 });
+    await expect(
+      parkRowsBlockingPendingCheckConstraints(pool, [
+        { folderMillis: 200, sql: ['ALTER TABLE "book_request_downloads" DROP CONSTRAINT "book_request_downloads_source_chk";'] },
+      ]),
+    ).resolves.toEqual({ parkedRows: 3 });
+    expect(query).toHaveBeenCalledWith('UPDATE public.book_request_downloads SET source = $2 WHERE source = $1', ['shelfmark', 'direct_url']);
+    expect(statementsOf(query).some((s) => s.includes('UPDATE public.download_clients'))).toBe(false);
+  });
+});

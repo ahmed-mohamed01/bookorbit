@@ -323,12 +323,12 @@ export class DownloadMonitorService implements OnModuleDestroy {
       downloadedBytes: status.downloadedBytes,
       totalBytes: status.totalBytes,
       contentPath: status.contentPath ?? row.contentPath,
-      contentFileCount: status.contentFileCount ?? row.contentFileCount,
       ...(movedBytes ? { lastProgressAt: new Date() } : {}),
       ...(status.state === 'completed' ? { completedAt: row.completedAt ?? new Date() } : {}),
       ...(row.source === 'direct_url' && status.state === 'completed' ? { directUrl: null, directEtag: null, directLastModified: null } : {}),
     });
     if (!updated) return;
+    if (status.contentFileCount !== undefined) await this.downloads.setContentFileCount(row.id, status.contentFileCount);
 
     if (row.status === 'queued' && status.state !== 'queued') {
       await this.requests.updateIf(row.requestId, DOWNLOADING_FROM, { status: 'downloading' });

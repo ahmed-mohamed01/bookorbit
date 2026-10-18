@@ -419,7 +419,7 @@ export class RequestImportService implements OnApplicationBootstrap {
    * book on its own; an audiobook missing its other parts is not, so it is held. Null when held.
    */
   private async spannedContentPath(download: BookRequestDownloadRow, request: BookRequestRow, localPath: string): Promise<string | null> {
-    const expected = download.contentFileCount ?? 1;
+    const expected = (await this.downloads.findContentFileCount(download.id)) ?? 1;
     if (expected <= 1) return localPath;
     const info = await stat(localPath).catch(() => null);
     if (info?.isDirectory()) return localPath;

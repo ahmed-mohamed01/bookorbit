@@ -20,6 +20,7 @@ import {
   type BookRequestDownloadRow,
   type NewBookRequestDownloadRow,
 } from '../../../db/schema';
+import { bookRequestDownloadFileCount } from '../schema/book-request-download-file-count.schema';
 
 /** Newest first, and bounded: an attempt list is something a person reads, not a full history. */
 const MAX_ATTEMPTS_PER_REQUEST = 20;
@@ -120,6 +121,20 @@ export class BookRequestDownloadRepository {
       .where(and(eq(bookRequestDownloads.requestId, requestId), inArray(bookRequestDownloads.status, [...IN_FLIGHT_BOOK_REQUEST_DOWNLOAD_STATUSES])))
       .returning({ id: bookRequestDownloads.id });
     return rows.length;
+  }
+
+  /** How many files a client wrote when it named only the first (a fork column, see the schema file). */
+  async findContentFileCount(id: number): Promise<number | null> {
+    const [row] = await this.db
+      .select({ contentFileCount: bookRequestDownloadFileCount.contentFileCount })
+      .from(bookRequestDownloadFileCount)
+      .where(eq(bookRequestDownloadFileCount.id, id))
+      .limit(1);
+    return row?.contentFileCount ?? null;
+  }
+
+  async setContentFileCount(id: number, contentFileCount: number): Promise<void> {
+    await this.db.update(bookRequestDownloadFileCount).set({ contentFileCount }).where(eq(bookRequestDownloadFileCount.id, id));
   }
 
   async findById(id: number): Promise<BookRequestDownloadRow | undefined> {

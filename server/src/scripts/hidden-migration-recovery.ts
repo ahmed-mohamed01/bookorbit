@@ -5,8 +5,9 @@ import { sanitizeLogValue } from '../common/utils/log-sanitize.utils';
 
 // Fork migrations that shipped before an upstream sync, then were renumbered after upstream's.
 // Drizzle applies only migrations newer than the newest ledger row, so a database that ran one of
-// these first never sees the upstream migrations now journaled ahead of it. Add a hash here
-// whenever a sync renumbers a fork migration that has already shipped.
+// these first never sees the upstream migrations journaled before it. The fork migrations are no
+// longer in the journal, so the ledger rows alone mark them. Add a hash here whenever a sync
+// renumbers a fork migration that has already shipped.
 const RENUMBERED_FORK_MIGRATION_HASHES = new Set<string>([
   // 0117_add_shelfmark_download_client (shipped as 0111)
   '8f494e7a42e0635f666be4eb6821f2cc22c4c5eaa49b921126666e8b7d832e68',
@@ -17,20 +18,20 @@ const RENUMBERED_FORK_MIGRATION_HASHES = new Set<string>([
 type RecoveryMigration = Pick<MigrationMeta, 'folderMillis' | 'hash' | 'sql'>;
 
 /**
- * Migrations missing from the ledger that sit between the newest recorded upstream migration and
- * the newest recorded renumbered fork migration. Anything older than the upstream anchor is left
+ * Migrations missing from the ledger after the newest recorded upstream journal entry, with
+ * timestamps no newer than the newest recorded fork row. Anything older than the upstream anchor is left
  * alone, so an edited historical migration is never replayed.
  */
-export function findHiddenMigrations(migrations: readonly RecoveryMigration[], recordedHashes: ReadonlySet<string>): RecoveryMigration[] {
+type LedgerRow = { hash: string; created_at: string | number };
+
+export function findHiddenMigrations(migrations: readonly RecoveryMigration[], ledger: readonly LedgerRow[]): RecoveryMigration[] {
+  const recordedHashes = new Set(ledger.map((row) => row.hash));
+  const forkMax = Math.max(...ledger.filter((row) => RENUMBERED_FORK_MIGRATION_HASHES.has(row.hash)).map((row) => Number(row.created_at)));
   let anchor = -1;
-  let lastFork = -1;
   migrations.forEach((migration, index) => {
-    if (!recordedHashes.has(migration.hash)) return;
-    if (RENUMBERED_FORK_MIGRATION_HASHES.has(migration.hash)) lastFork = index;
-    else anchor = index;
+    if (recordedHashes.has(migration.hash) && !RENUMBERED_FORK_MIGRATION_HASHES.has(migration.hash)) anchor = index;
   });
-  if (lastFork <= anchor) return [];
-  return migrations.slice(anchor + 1, lastFork).filter((migration) => !recordedHashes.has(migration.hash));
+  return migrations.slice(anchor + 1).filter((migration) => !recordedHashes.has(migration.hash) && migration.folderMillis <= forkMax);
 }
 
 export async function applyMigrationsHiddenByRenumberedForkRows(
@@ -48,8 +49,8 @@ export async function applyMigrationsHiddenByRenumberedForkRows(
       return { appliedMigrations: 0 };
     }
 
-    const ledger = await client.query<{ hash: string }>(`SELECT hash FROM drizzle.__drizzle_migrations`);
-    const hidden = findHiddenMigrations(migrations, new Set(ledger.rows.map((row) => row.hash)));
+    const ledger = await client.query<LedgerRow>(`SELECT hash, created_at FROM drizzle.__drizzle_migrations`);
+    const hidden = findHiddenMigrations(migrations, ledger.rows);
     for (const migration of hidden) {
       for (const statement of migration.sql) {
         await client.query(statement);

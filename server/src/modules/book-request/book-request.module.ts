@@ -72,6 +72,7 @@ import { RequestUserCleanupService } from './fulfillment/request-user-cleanup.se
 import { RequestCompanionService } from './fulfillment/request-companion.service';
 import { RequestVerificationService } from './fulfillment/request-verification.service';
 import { RequestWatchdogService } from './fulfillment/request-watchdog.service';
+import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bootstrap.service';
 
 /**
  * The dependency on `BookDockModule` is one way and must stay that way. The dock must not learn
@@ -110,6 +111,7 @@ import { RequestWatchdogService } from './fulfillment/request-watchdog.service';
     BookRequestSourcesService,
     BookRequestRepository,
     BookRequestAutoGrabBootstrapService,
+    ShelfmarkSchemaBootstrapService,
     BookRequestAttributionService,
     BookRequestDedupeService,
     BookRequestNotifier,

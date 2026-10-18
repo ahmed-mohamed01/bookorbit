@@ -355,9 +355,11 @@ these; the pattern is a deliberate fork exception to the CLAUDE.md rule "never h
 migration SQL", which exists for upstream contributions - fork schema never goes upstream.
 
 - Never add files under `server/src/db/migrations/`. Fork schema is bootstrap SQL only, so
-  the Drizzle ledger holds upstream hashes only. Drizzle applies every journal entry newer
+  new Drizzle ledger entries hold upstream hashes only. Drizzle applies every journal entry newer
   than the ledger's latest timestamp, so one fork migration in the ledger makes the
   upstream image silently skip any upstream migration generated before it.
+  `scripts/fork/release.mjs` refuses to prepare or publish while `server/src/db/migrations/` or
+  `server/src/db/schema/` differ from upstream at the merge-base, so a fork migration cannot ship.
 - Fork tables live in `modules/<feature>/schema/` and are never exported from
   `db/schema/index.ts`.
 - A fork column on an upstream table must be nullable, added with
@@ -366,14 +368,14 @@ migration SQL", which exists for upstream contributions - fork schema never goes
   schema file. Example: `book_requests.auto_grab` is owned by the book-request module
   (`modules/book-request/schema/book-request-auto-grab.schema.ts` plus its bootstrap, which
   runs in `onModuleInit` so the column exists before that module's crons tick).
-- A database that ever applied a fork migration must have those ledger rows removed, or
+- The historical pre-Shelfmark fork migrations below must have their ledger rows removed, or
   both images will skip upstream migrations older than them. Between 2026-09-04 and
   2026-09-06 the `monitored` branch shipped migrations 0086 to 0090; on any database that
   ran it (dev and test instances only, never prod), run once:
   `delete from drizzle.__drizzle_migrations where left(hash, 12) in ('960f1671810e',
 '550a44aa480d', '8b83e5f0ee7b', '20c8ec37ddf6', 'c5c3e317e464');`
 - Do not modify upstream CHECK constraints. The `audiobookshelf` value in
-  `reading_sessions_source_chk` and `reading_attempts_origin_chk` is the one accepted
+  `reading_sessions_source_chk` and `reading_attempts_origin_chk` is the first accepted
   exception. An upstream migration that recreates either constraint validates every row and
   would fail on those values, rolling the whole migration run back.
   - `reading_sessions.source` is handled automatically (it happened in v3.0.0, migration 0091).
@@ -388,6 +390,21 @@ migration SQL", which exists for upstream contributions - fork schema never goes
   - `reading_attempts.origin` is `NOT NULL`, so it cannot be parked this way. If upstream ever
     recreates `reading_attempts_origin_chk`, relabel those rows to a placeholder by hand, migrate,
     boot the fork, then restore them; extend the parking script only if it recurs.
+- Shelfmark is the second accepted CHECK exception: `download_clients_adapter_type_chk` and
+  `book_request_downloads_source_chk`. `ShelfmarkSchemaBootstrapService` OR-extends whatever
+  definition upstream currently has with `shelfmark` (so new upstream client types survive) and adds
+  the nullable `book_request_downloads.content_file_count` column, owned by
+  `modules/book-request/schema/book-request-download-file-count.schema.ts`. A pending upstream
+  migration that recreates either constraint first has the Shelfmark rows parked (adapter relabeled
+  to `qbittorrent` with `enabled=false`, or source relabeled to `direct_url`, originals recorded),
+  and the bootstrap restores them. Upstream's `db/schema/download-clients.schema.test.ts` is
+  excluded in `server/vitest.config.ts`; `shelfmark/shelfmark-schema.test.ts` is its fork copy.
+- Shelfmark first shipped as Drizzle migrations 0117/0118 (v3.4.0-m2 and m3) and was moved to the
+  bootstrap afterwards. Their ledger rows stay on databases that ran them: their timestamps are
+  older than upstream 0117 and everything after it, so Drizzle still applies upstream's
+  migrations, and a rollback to an m2/m3 image does not rerun the non-idempotent ADD COLUMN.
+  `hidden-migration-recovery.ts` reads the fork rows' recorded timestamps, not the journal, to
+  replay upstream migrations a database skipped because it ran a fork row first.
 - Bootstrap services log only when they create something or fail. A no-op boot is silent.
 
 **Switching images on prod (fork to upstream and back)**

@@ -46,6 +46,7 @@ async function makeHarness(options: { useHardlinks?: boolean } = {}) {
     update: vi.fn().mockResolvedValue(undefined),
     updateIf: vi.fn(),
     findById: vi.fn().mockResolvedValue(undefined),
+    findContentFileCount: vi.fn().mockResolvedValue(null),
   };
   // Conditional like the repository it stands for, because the choice import claims the attempt
   // with it: a mock that always answers would let two passes both believe they hold the same one.
@@ -361,7 +362,8 @@ describe('RequestImportService.importDownload', () => {
     const first = await makeFile(folder, 'track-01.mp3');
     await makeFile(folder, 'track-02.mp3');
 
-    await expect(harness.service.importDownload(download(first, { contentFileCount: 2 }))).resolves.toBe(true);
+    harness.downloads.findContentFileCount.mockResolvedValue(2);
+    await expect(harness.service.importDownload(download(first))).resolves.toBe(true);
 
     expect(harness.dockRepo.createUnit).toHaveBeenCalledWith(expect.objectContaining({ fileName: 'track-01.mp3' }), [
       expect.objectContaining({ fileName: 'track-01.mp3' }),
@@ -377,7 +379,8 @@ describe('RequestImportService.importDownload', () => {
 
     harness.requests.findById.mockResolvedValue({ request: request({ mediaKind: 'audiobook' }) });
 
-    await harness.service.importDownload(download(first, { contentFileCount: 2 }));
+    harness.downloads.findContentFileCount.mockResolvedValue(2);
+    await harness.service.importDownload(download(first));
 
     expect(harness.fulfillment.holdForReview).toHaveBeenCalledWith(
       expect.objectContaining({ id: 11 }),
@@ -394,7 +397,8 @@ describe('RequestImportService.importDownload', () => {
     await makeFile(harness.downloadsPath, 'Dune.mobi');
     await makeFile(harness.downloadsPath, 'Another Book.epub');
 
-    await expect(harness.service.importDownload(download(named, { contentFileCount: 2 }))).resolves.toBe(true);
+    harness.downloads.findContentFileCount.mockResolvedValue(2);
+    await expect(harness.service.importDownload(download(named))).resolves.toBe(true);
 
     expect(harness.fulfillment.holdForReview).not.toHaveBeenCalled();
     expect(harness.dockRepo.createUnit).toHaveBeenCalledWith(expect.objectContaining({ fileName: 'request-7-Dune.epub', format: 'epub' }), []);

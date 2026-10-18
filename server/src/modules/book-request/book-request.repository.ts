@@ -58,6 +58,7 @@ import {
   type NewBookRequestRow,
 } from '../../db/schema';
 import { bookRequestAutoGrab } from './schema/book-request-auto-grab.schema';
+import { readShelfmarkSchemaChanges } from './shelfmark/shelfmark-schema';
 
 /**
  * What happened to a grab claim. `moved` is somebody else's decision landing first; `duplicate` is
@@ -179,6 +180,10 @@ export interface OwnedMatchLookup {
 @Injectable()
 export class BookRequestRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
+
+  async shelfmarkSchemaChanges(): Promise<{ constraintsExtended: number; rowsRestored: number }> {
+    return readShelfmarkSchemaChanges(this.db);
+  }
 
   async findMissingColumns(tableName: string, columnNames: readonly string[]): Promise<string[]> {
     return findMissingColumns(this.db, tableName, columnNames);

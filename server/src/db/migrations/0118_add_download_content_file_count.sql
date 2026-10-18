@@ -1,1 +1,0 @@
-ALTER TABLE "book_request_downloads" ADD COLUMN "content_file_count" integer;
