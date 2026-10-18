@@ -166,27 +166,27 @@ function tileClass(index: number): string {
   return ''
 }
 
-const stackCoverStyles = computed(() =>
-  stackCoverIds.value.map((_, index) => {
-    const coverWidth = 100 - STACK_COVER_STEP_PCT * Math.max(0, stackCoverIds.value.length - 1)
+function stackCoverStyle(index: number, count: number) {
+  const coverWidth = 100 - STACK_COVER_STEP_PCT * Math.max(0, count - 1)
 
-    return {
-      right: `${STACK_COVER_STEP_PCT * index}%`,
-      bottom: `${STACK_COVER_STEP_PCT * index}%`,
-      width: `${coverWidth}%`,
-      aspectRatio: effectiveCoverAspectRatio.value,
-      zIndex: 100 - index,
-      boxShadow:
-        index === 0
-          ? '0 18px 34px -20px rgba(15, 23, 42, 0.72), 0 8px 14px -12px rgba(15, 23, 42, 0.28)'
-          : '0 14px 26px -20px rgba(15, 23, 42, 0.58), 0 6px 12px -12px rgba(15, 23, 42, 0.22)',
-      transformOrigin: 'center',
-      transform: 'translateY(0) scale(1)',
-      transition: 'transform 190ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 220ms ease',
-      willChange: 'transform',
-    }
-  }),
-)
+  return {
+    right: `${STACK_COVER_STEP_PCT * index}%`,
+    bottom: `${STACK_COVER_STEP_PCT * index}%`,
+    width: `${coverWidth}%`,
+    aspectRatio: effectiveCoverAspectRatio.value,
+    zIndex: 100 - index,
+    boxShadow:
+      index === 0
+        ? '0 18px 34px -20px rgba(15, 23, 42, 0.72), 0 8px 14px -12px rgba(15, 23, 42, 0.28)'
+        : '0 14px 26px -20px rgba(15, 23, 42, 0.58), 0 6px 12px -12px rgba(15, 23, 42, 0.22)',
+    transformOrigin: 'center',
+    transform: 'translateY(0) scale(1)',
+    transition: 'transform 190ms cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 220ms ease',
+    willChange: 'transform',
+  }
+}
+
+const stackCoverStyles = computed(() => stackCoverIds.value.map((_, index) => stackCoverStyle(index, stackCoverIds.value.length)))
 
 function resolveSeriesLabel(field: GridCardLabelField): string | null {
   if (field === 'hidden') return null
@@ -249,10 +249,23 @@ const secondaryLabelText = computed(() => resolveSeriesLabel(gridCardSecondaryLa
           </div>
           <div
             v-if="stackCoverIds.length === 0"
-            class="absolute inset-x-[24%] bottom-[6%] top-[6%] overflow-hidden rounded-md shadow-[0_12px_28px_-18px_rgba(15,23,42,0.7)]"
+            class="absolute overflow-hidden rounded-md"
+            :style="stackCoverStyle(0, 1)"
             data-testid="series-cover-stack-fallback"
           >
-            <BookCoverPlaceholder title="" author-line="" :is-audio="false" seed="series-empty" />
+            <BookCoverPlaceholder
+              :title="seriesName"
+              :author-line="authorLine"
+              :authors="book.authors"
+              :is-audio="isAudiobook"
+              :seed="`series-${seriesName || 'empty'}`"
+            />
+            <div
+              class="absolute right-1.5 top-1.5 z-20 rounded-sm bg-black/70 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-white group-hover:opacity-0 transition-opacity duration-150"
+              data-testid="series-count-badge"
+            >
+              {{ collapsed.bookCount }}
+            </div>
           </div>
         </div>
 

@@ -357,6 +357,35 @@ describe('CollapsedSeriesCard', () => {
       expect(wrapper.find('[data-testid="series-stack-cover"] img').attributes('src')).toBe(expectedCoverUrl(20))
     })
 
+    it('shows a titled full-size fallback with count badge when all stack covers fail', async () => {
+      const wrapper = mount(CollapsedSeriesCard, {
+        props: {
+          book: makeBook({
+            collapsedSeries: { bookCount: 2, readCount: 0, coverBookIds: [10, 20], seriesLatestAddedAt: null },
+          }),
+        },
+      })
+
+      await wrapper.find('[data-testid="series-stack-cover"] img').trigger('error')
+      await wrapper.vm.$nextTick()
+      await wrapper.find('[data-testid="series-stack-cover"] img').trigger('error')
+      await wrapper.vm.$nextTick()
+
+      const fallback = wrapper.find('[data-testid="series-cover-stack-fallback"]')
+      expect(fallback.exists()).toBe(true)
+      expect(fallback.attributes('style')).toContain('right: 0%;')
+      expect(fallback.attributes('style')).toContain('bottom: 0%;')
+      expect(fallback.attributes('style')).toContain('width: 100%;')
+
+      const placeholder = fallback.get('.book-cover-placeholder')
+      expect(placeholder.attributes('title')).toBe('The Arc')
+      expect(placeholder.attributes('author-line')).toBe('Author A')
+
+      const badge = wrapper.find('[data-testid="series-count-badge"]')
+      expect(badge.exists()).toBe(true)
+      expect(badge.text()).toBe('2')
+    })
+
     it('shows a stack fallback when coverBookIds is empty', () => {
       const wrapper = mount(CollapsedSeriesCard, {
         props: {
