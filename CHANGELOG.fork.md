@@ -2,6 +2,32 @@
 
 Releases of the ahmed-mohamed01/bookorbit fork. Versions are `v<upstream base>-m<N>`; see [FORK_MAINTENANCE.md](FORK_MAINTENANCE.md). Upstream changes are in the [upstream releases](https://github.com/bookorbit/bookorbit/releases).
 
+## v3.4.0-m4 - 2026-10-18
+
+Upstream base: v3.4.0 · Previous: v3.4.0-m3
+
+### Highlights
+
+- **Watchlist asks before it guesses**: a library book with the same title but a different series number is no longer counted as owned or missing. It is flagged as a possible match and held back from automatic downloads until you accept or reject it. Your answers, and any book you link or unlink by hand, stick across every refresh.
+- **Later volumes stop hiding behind volume one**: owning the first book of a series no longer marks Volume 6 or Book Seven as owned, so their releases get grabbed. The same check keeps Position sync from pairing different volumes.
+- **Kind filters on the author page**: companions, box sets, translations and other non-book entries stay out of the watchlist by default, and the author page filters by kind instead of a review tray.
+- **Torrent file lists for magnet releases**: when an indexer offers both a magnet and a .torrent, View files shows the real file list before you grab.
+
+### Features
+
+- **server:** list a release's files when it has a .torrent beside its magnet (4c6e5aef)
+- **client:** give watchlist authors a silhouette placeholder (bc46fbeb)
+- **server:** flag uncertain watchlist matches and let the owner fix them (3ff0c7e9)
+- **monitored:** turn the author page Display menu into kind filters (25a25036)
+- **monitored:** keep companions, box sets and translations out of the watchlist (4a2888ce)
+
+### Fixes
+
+- **series:** draw a full-size titled fallback for empty series stacks (c3e17e65)
+- **client:** draw watchlist book covers with the shared placeholder (645f2a17)
+- **monitored:** stop matching a different volume as the owned book (859ebb1e)
+- **server:** re-run audiobookshelf matching after new books are added (5a5c2eb0)
+
 ## v3.4.0-m3 - 2026-10-17
 
 Upstream base: v3.4.0 · Previous: v3.4.0-m2
