@@ -2,6 +2,24 @@
 
 Releases of the ahmed-mohamed01/bookorbit fork. Versions are `v<upstream base>-m<N>`; see [FORK_MAINTENANCE.md](FORK_MAINTENANCE.md). Upstream changes are in the [upstream releases](https://github.com/bookorbit/bookorbit/releases).
 
+## v3.4.0-m5 - 2026-10-18
+
+Upstream base: v3.4.0 · Previous: v3.4.0-m4
+
+### Features
+
+- **authors:** mark watchlisted authors and offer removal (078fd7fb)
+
+### Maintenance
+
+- **release:** give upstream releases their own entries in the fork's list (9f3c8586)
+- **release:** force-fetch version tags that origin holds as annotated copies (87dd2a15)
+- **server:** move Shelfmark schema out of the Drizzle migrations (a6169799)
+
+### Upstream syncs
+
+- Merge upstream/main (ce118e38) into monitored (660d204e)
+
 ## v3.4.0-m4 - 2026-10-18
 
 Upstream base: v3.4.0 · Previous: v3.4.0-m3
