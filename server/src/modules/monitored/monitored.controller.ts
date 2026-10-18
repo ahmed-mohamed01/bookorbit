@@ -36,6 +36,7 @@ import {
   MonitoredWorkParamsDto,
   SetMonitoredReleaseDateDto,
 } from './dto/monitored-release-date.dto';
+import { SetMonitoredWorkMatchDto } from './dto/monitored-work-match.dto';
 import { MonitoredCoverService } from './monitored-cover.service';
 import { MonitoredExceptionFilter } from './monitored-exception.filter';
 import { MonitoredService } from './monitored.service';
@@ -250,6 +251,13 @@ export class MonitoredController {
   @RequirePermission(Permission.BookRequestAccess)
   setReleaseDate(@Param() params: MonitoredWorkFormatParamsDto, @Body() dto: SetMonitoredReleaseDateDto, @CurrentUser() user: RequestUser) {
     return this.service.setWorkReleaseDate(user, params.workId, params.format, dto.releaseDate);
+  }
+
+  @Put('works/:workId/match/:format')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermission(Permission.BookRequestAccess)
+  setWorkMatch(@Param() params: MonitoredWorkFormatParamsDto, @Body() dto: SetMonitoredWorkMatchDto, @CurrentUser() user: RequestUser) {
+    return this.service.setWorkMatch(user, params.workId, params.format, dto);
   }
 
   @Post('works/:workId/release-dates/refresh')

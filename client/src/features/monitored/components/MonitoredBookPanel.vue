@@ -13,6 +13,7 @@ import {
 } from '@bookorbit/types'
 import { Sheet, SheetClose, SheetContent, SheetTitle, SheetDescription } from '@/components/ui/sheet'
 import { useRoute } from 'vue-router'
+import { toast } from 'vue-sonner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { bookCoverStyle } from '@/features/book/lib/book-cover'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
@@ -22,6 +23,7 @@ import { useSafeHtml } from '@/features/book/composables/useSafeHtml'
 import { useMonitoredReleases } from '../composables/useMonitoredReleases'
 import { useReleaseRows } from '../composables/useReleaseRows'
 import { useWorkReleaseDates } from '../composables/useWorkReleaseDates'
+import { useWorkMatch, type MonitoredMatchAnswer } from '../composables/useWorkMatch'
 import { normalizeSeriesName } from '../lib/grouping'
 import { subtitleRepeatsSeries } from '../lib/subtitle'
 import { workFormatStatus, type MonitoredFormatStatus } from '../lib/format-status'
@@ -171,6 +173,7 @@ function handleRetryBook(format: MonitoredFormat) {
 const ebookReleases = useMonitoredReleases(workIdRef, 'ebook')
 const audioReleases = useMonitoredReleases(workIdRef, 'audiobook')
 const releaseDates = useWorkReleaseDates(workIdRef)
+const workMatch = useWorkMatch(workIdRef)
 /** Only one lookup is open at a time, and a saved date closes the one that saved it. */
 const openDatesFormat = ref<MonitoredFormat | null>(null)
 const openReleases = ref<Record<MonitoredFormat, boolean>>({ ebook: false, audiobook: false })
@@ -315,6 +318,23 @@ async function refreshReleaseDates() {
 
 function handleRefreshReleaseDates() {
   void refreshReleaseDates()
+}
+
+async function answerMatch(format: MonitoredFormat, answer: MonitoredMatchAnswer, workId = props.work?.id ?? null) {
+  const updated = await workMatch.answer(format, answer, workId)
+  if (!updated) return
+  emit('work-updated', updated)
+  // Saying a book is not this work's hides it from the format for good, so it gets an undo, bound to
+  // this work: the toast outlives the panel moving on to another book.
+  if (answer.decision === 'reject') {
+    toast.success(t('monitored.slot.match.rejected'), {
+      action: { label: t('monitored.slot.match.undo'), onClick: () => void answerMatch(format, { decision: 'automatic' }, updated.id) },
+    })
+  }
+}
+
+function handleAnswerMatch(format: MonitoredFormat, answer: MonitoredMatchAnswer) {
+  void answerMatch(format, answer)
 }
 
 function handleOpenChange(value: boolean) {
@@ -578,6 +598,9 @@ function handleResumeAuthor() {
                 :checked-at="checkedAt"
                 :checking="checking"
                 :collapsed="isCollapsed(format)"
+                :can-answer-match="canManage"
+                :match-saving="workMatch.isSaving(format)"
+                @answer-match="handleAnswerMatch"
                 @request="handleRequest"
                 @toggle-releases="handleToggleReleases"
                 @toggle-monitor="handleToggleMonitor"

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MonitoredAuthorConfig, MonitoredWork, ProviderConfigurations } from '@bookorbit/types';
 import type { MergedWork, Observation } from './reconcile/observation.types';
 import type { MonitoredCatalog } from './monitored-store.service';
+import { emptyWorkMatchOverrides, type FormatMatchOverride, type WorkMatchOverrides } from './monitored-match-overrides';
 import {
   MonitoredCatalogService,
   catalogWorkId,
@@ -320,7 +321,11 @@ function catalogService(providers: { hardcover: unknown; goodreads: unknown; aud
 // known-good catalog from a Hardcover outage never fired. These pin the three outcomes apart.
 describe('fetchCatalog provider failure guards', () => {
   it('keeps the previous catalog and fails loudly when the Hardcover fetch throws', async () => {
-    const store = { getCatalog: vi.fn().mockResolvedValue(previousWorks(5)), saveCatalog: vi.fn() };
+    const store = {
+      getCatalog: vi.fn().mockResolvedValue(previousWorks(5)),
+      saveCatalog: vi.fn(),
+      findMatchOverrides: vi.fn().mockResolvedValue([]),
+    };
     const service = catalogService(
       {
         hardcover: fakeProvider('hardcover', { failWith: new Error('hardcover 503') }),
@@ -335,7 +340,12 @@ describe('fetchCatalog provider failure guards', () => {
   });
 
   it('refuses to persist a first catalog built during a Hardcover outage', async () => {
-    const store = { getCatalog: vi.fn().mockResolvedValue(null), saveCatalog: vi.fn() };
+    const store = {
+      getCatalog: vi.fn().mockResolvedValue(null),
+      saveCatalog: vi.fn(),
+      findMatchOverrides: vi.fn().mockResolvedValue([]),
+      findClaimedBookIds: vi.fn().mockResolvedValue(new Set<number>()),
+    };
     const service = catalogService(
       {
         hardcover: fakeProvider('hardcover', { failWith: new Error('hardcover 503') }),
@@ -350,7 +360,11 @@ describe('fetchCatalog provider failure guards', () => {
   });
 
   it('never fires the guard when Hardcover is switched off rather than failing', async () => {
-    const store = { getCatalog: vi.fn().mockResolvedValue(previousWorks(5)), saveCatalog: vi.fn() };
+    const store = {
+      getCatalog: vi.fn().mockResolvedValue(previousWorks(5)),
+      saveCatalog: vi.fn(),
+      findMatchOverrides: vi.fn().mockResolvedValue([]),
+    };
     const service = catalogService(
       {
         hardcover: fakeProvider('hardcover', { enabled: false }),
@@ -380,21 +394,34 @@ describe('fetchCatalog provider failure guards', () => {
   }
 
   it('refuses a first catalog when the author search itself failed', async () => {
-    const store = { getCatalog: vi.fn().mockResolvedValue(null), saveCatalog: vi.fn() };
+    const store = {
+      getCatalog: vi.fn().mockResolvedValue(null),
+      saveCatalog: vi.fn(),
+      findMatchOverrides: vi.fn().mockResolvedValue([]),
+      findClaimedBookIds: vi.fn().mockResolvedValue(new Set<number>()),
+    };
 
     await expect(outagingCatalogService(store).fetchCatalog(monitorConfig(), providerConfig())).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(store.saveCatalog).not.toHaveBeenCalled();
   });
 
   it('keeps a populated catalog when a refresh cannot resolve the author', async () => {
-    const store = { getCatalog: vi.fn().mockResolvedValue(previousWorks(5)), saveCatalog: vi.fn() };
+    const store = {
+      getCatalog: vi.fn().mockResolvedValue(previousWorks(5)),
+      saveCatalog: vi.fn(),
+      findMatchOverrides: vi.fn().mockResolvedValue([]),
+    };
 
     await expect(outagingCatalogService(store).fetchCatalog(monitorConfig(), providerConfig())).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(store.saveCatalog).not.toHaveBeenCalled();
   });
 
   it('lets a genuinely empty Hardcover bibliography shrink the catalog', async () => {
-    const store = { getCatalog: vi.fn().mockResolvedValue(previousWorks(5)), saveCatalog: vi.fn() };
+    const store = {
+      getCatalog: vi.fn().mockResolvedValue(previousWorks(5)),
+      saveCatalog: vi.fn(),
+      findMatchOverrides: vi.fn().mockResolvedValue([]),
+    };
     const service = catalogService(
       {
         hardcover: fakeProvider('hardcover', { observations: [] }),
@@ -475,7 +502,13 @@ describe('targeted availability recompute', () => {
   }
 
   function harness(rows: unknown[][]) {
-    const store = { updateWorkMatch: vi.fn().mockResolvedValue(undefined), saveCatalog: vi.fn(), updateWorkUserState: vi.fn() };
+    const store = {
+      updateWorkMatch: vi.fn().mockResolvedValue(undefined),
+      saveCatalog: vi.fn(),
+      updateWorkUserState: vi.fn(),
+      findMatchOverrides: vi.fn().mockResolvedValue([]),
+      findClaimedBookIds: vi.fn().mockResolvedValue(new Set<number>()),
+    };
     const db = queuedSelectDb(rows);
     const service = new MonitoredCatalogService({} as never, {} as never, {} as never, store as never, db as never, {} as never);
     return { service, store, db };
@@ -502,6 +535,8 @@ describe('targeted availability recompute', () => {
       matchedBookId: 5,
       matchedBookIds: { ebook: 5 },
       ownedFormats: ['ebook'],
+      linkedFormats: [],
+      answeredFormats: [],
     });
   });
 
@@ -511,7 +546,13 @@ describe('targeted availability recompute', () => {
 
     await service.recomputeWorkAvailability([{ monitor: monitor(), works: [queued] }]);
 
-    expect(Object.keys(store.updateWorkMatch.mock.calls[0][1])).toEqual(['matchedBookId', 'matchedBookIds', 'ownedFormats']);
+    expect(Object.keys(store.updateWorkMatch.mock.calls[0][1])).toEqual([
+      'matchedBookId',
+      'matchedBookIds',
+      'ownedFormats',
+      'linkedFormats',
+      'answeredFormats',
+    ]);
     expect(store.saveCatalog).not.toHaveBeenCalled();
     expect(store.updateWorkUserState).not.toHaveBeenCalled();
     // The composed work belongs to the read that is rendering it; the rematch answers through the store.
@@ -572,6 +613,8 @@ describe('targeted availability recompute', () => {
       matchedBookId: 8,
       matchedBookIds: { audiobook: 8 },
       ownedFormats: ['audiobook'],
+      linkedFormats: [],
+      answeredFormats: [],
     });
   });
 
@@ -751,7 +794,112 @@ describe('targeted availability recompute', () => {
         matchedBookId: 8,
         matchedBookIds: { ebook: 8 },
         ownedFormats: ['ebook'],
+        linkedFormats: [],
+        answeredFormats: [],
       });
+    });
+  });
+
+  describe('owner answers and possible matches', () => {
+    type MatchOwnedBooks = (
+      works: MonitoredWork[],
+      localAuthorId: number | null,
+      overrides: Map<string, WorkMatchOverrides>,
+      options: { detectPossible: boolean },
+    ) => Promise<void>;
+
+    async function match(rows: unknown[][], works: MonitoredWork[], overrides = new Map<string, WorkMatchOverrides>(), detectPossible = true) {
+      const { service } = harness(rows);
+      const matchOwnedBooks = (service as unknown as { matchOwnedBooks: MatchOwnedBooks }).matchOwnedBooks;
+      await Reflect.apply(matchOwnedBooks, service, [works, 7, overrides, { detectPossible }]);
+      return works;
+    }
+
+    function answers(patch: { ebook?: Partial<FormatMatchOverride> }): WorkMatchOverrides {
+      const result = emptyWorkMatchOverrides();
+      Object.assign(result.ebook, patch.ebook);
+      return result;
+    }
+
+    const inhibitorWork = () => work({ id: 'w-ip', title: 'Inhibitor Phase', seriesName: 'Revelation Space', seriesIndex: '4' });
+    const inhibitorBook = () => libraryRow({ bookId: 31, title: 'Inhibitor Phase', seriesName: 'Revelation Space', seriesIndex: '5' });
+
+    it('offers a same-titled book with another series number as a possible match instead of matching it', async () => {
+      const [result] = await match([[inhibitorBook()]], [inhibitorWork()]);
+
+      expect(result.matchedBookIds).toEqual({});
+      expect(result.possibleMatches).toEqual({ ebook: { bookId: 31, title: 'Inhibitor Phase', seriesName: 'Revelation Space', seriesIndex: '5' } });
+    });
+
+    it('does not offer a volume another work of the catalog already owns', async () => {
+      const volumeOne = work({ id: 'w-1', title: 'Beware of Chicken', seriesName: 'Beware of Chicken', seriesIndex: '1' });
+      const volumeSix = work({ id: 'w-6', title: 'Beware of Chicken Volume 6', seriesName: 'Beware of Chicken', seriesIndex: '6' });
+      const owned = libraryRow({ bookId: 11, title: 'Beware of Chicken', seriesName: 'Beware of Chicken', seriesIndex: '1' });
+
+      const [first, sixth] = await match([[owned]], [volumeOne, volumeSix]);
+
+      expect(first.matchedBookIds).toEqual({ ebook: 11 });
+      expect(sixth.matchedBookIds).toEqual({});
+      expect(sixth.possibleMatches).toBeUndefined();
+    });
+
+    it('stops offering a book the owner said is a different book', async () => {
+      const overrides = new Map([['w-ip', answers({ ebook: { rejected: new Set([31]) } })]]);
+
+      const [result] = await match([[inhibitorBook()]], [inhibitorWork()], overrides);
+
+      expect(result.possibleMatches).toBeUndefined();
+      expect(result.matchedBookIds).toEqual({});
+      expect(result.answeredFormats).toEqual(['ebook']);
+    });
+
+    it('matches a linked book whatever its series number says, and records the link', async () => {
+      const overrides = new Map([['w-ip', answers({ ebook: { linkedBookId: 31 } })]]);
+
+      const [result] = await match([[inhibitorBook()], [inhibitorBook()]], [inhibitorWork()], overrides);
+
+      expect(result.matchedBookIds).toEqual({ ebook: 31 });
+      expect(result.ownedFormats).toEqual(['ebook']);
+      expect(result.linkedFormats).toEqual(['ebook']);
+      expect(result.possibleMatches).toBeUndefined();
+    });
+
+    it('ignores a link to a book that no longer holds a file of the format', async () => {
+      const overrides = new Map([['w-ip', answers({ ebook: { linkedBookId: 31 } })]]);
+
+      const [result] = await match([[libraryRow({ bookId: 31, format: null })], []], [inhibitorWork()], overrides);
+
+      expect(result.matchedBookIds).toEqual({});
+      expect(result.linkedFormats).toEqual([]);
+    });
+
+    it('keeps an automatic match the owner undid from coming back', async () => {
+      const mistborn = work({ id: 'w-m', title: 'Mistborn' });
+      const overrides = new Map([['w-m', answers({ ebook: { rejected: new Set([5]) } })]]);
+
+      const [result] = await match([[libraryRow({ title: 'Mistborn' })]], [mistborn], overrides);
+
+      expect(result.matchedBookIds).toEqual({});
+      expect(result.ownedFormats).toEqual([]);
+    });
+
+    it('brings a possible match back when one work is rematched, unless another work owns the book', async () => {
+      const { service, store } = harness([[inhibitorBook()]]);
+      const open = await service.rematchWork(monitor(), inhibitorWork());
+      expect(open.possibleMatches?.ebook?.bookId).toBe(31);
+
+      const claimed = harness([[inhibitorBook()]]);
+      claimed.store.findClaimedBookIds.mockResolvedValue(new Set([31]));
+      const owned = await claimed.service.rematchWork(monitor(), inhibitorWork());
+      expect(owned.possibleMatches).toBeUndefined();
+      expect(claimed.store.findClaimedBookIds).toHaveBeenCalledWith('monitor-1', 'w-ip');
+      expect(store.findMatchOverrides).toHaveBeenCalledWith(['monitor-1']);
+    });
+
+    it('leaves possible matches alone in a pass that cannot see the rest of the catalog', async () => {
+      const [result] = await match([[inhibitorBook()]], [inhibitorWork()], new Map(), false);
+
+      expect(result.possibleMatches).toBeUndefined();
     });
   });
 });
@@ -784,7 +932,12 @@ describe('fetchCatalog review kinds', () => {
 
   it('persists the kind of a work it hid, and none for one it never judged', async () => {
     const crowd = Array.from({ length: 6 }, (_, index) => ({ contribution: 'Author', author: { id: index + 1, name: `Author ${index}` } }));
-    const store = { getCatalog: vi.fn().mockResolvedValue(null), saveCatalog: vi.fn() };
+    const store = {
+      getCatalog: vi.fn().mockResolvedValue(null),
+      saveCatalog: vi.fn(),
+      findMatchOverrides: vi.fn().mockResolvedValue([]),
+      findClaimedBookIds: vi.fn().mockResolvedValue(new Set<number>()),
+    };
     const service = new MonitoredCatalogService(
       fakeProvider('hardcover', {
         observations: [hardcoverBook(1, 'A Real Novel'), hardcoverBook(2, 'Voices of the Deep', { cached_contributors: crowd })],

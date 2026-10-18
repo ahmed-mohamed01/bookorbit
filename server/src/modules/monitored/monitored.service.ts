@@ -43,6 +43,7 @@ import type {
   MonitoredReleaseStatus,
   MonitoredSummary,
   MonitoredWork,
+  MonitoredWorkMatchPayload,
   MonitoredWorkPatch,
   ProviderConfigurations,
   ReleaseSearchOverrides,
@@ -53,6 +54,7 @@ import type {
 import type { RequestUser } from '../../common/types/request-user';
 import { isUniqueViolation } from '../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { matchIdentityKeys } from './monitored-match-overrides';
 import { AuthorEnrichmentExecutorService } from '../authors/author-enrichment-executor.service';
 import { AuthorImageStorageService } from '../authors/author-image-storage.service';
 import { AuthorMetadataPreferencesService } from '../authors/author-metadata-preferences.service';
@@ -76,7 +78,7 @@ import { MonitoredReleaseProbeService } from './monitored-release-probe.service'
 import { strongestHitPerName } from './hardcover-author-hits.utils';
 import { isAudibleConfigured } from './providers/audible-bibliography.provider';
 import { isHardcoverConfigured } from './providers/hardcover-bibliography.provider';
-import type { MonitoredAuthorAggregate, MonitoredReleasePageEntry } from './monitored-store.service';
+import type { MonitoredAuthorAggregate, MonitoredReleasePageEntry, StoredMatchAnswer } from './monitored-store.service';
 import type {
   CreateMonitoredBookDto,
   ListMonitoredAuthorsDto,
@@ -148,6 +150,16 @@ function syntheticRequestId(workId: string, format: MonitoredFormat): number {
   let hash = 0;
   for (const char of `${workId}:${format}`) hash = (hash * 31 + char.charCodeAt(0)) | 0;
   return -(hash >>> 0 || 1);
+}
+
+/** The DTO already pairs a book with link and reject; this keeps the same rule for any other caller. */
+function storedMatchAnswer(payload: MonitoredWorkMatchPayload): StoredMatchAnswer {
+  if (payload.decision === 'automatic') {
+    if (payload.bookId !== undefined) throw new BadRequestException('Automatic matching takes no book');
+    return { decision: 'automatic' };
+  }
+  if (payload.bookId === undefined) throw new BadRequestException('A book is required for this decision');
+  return { decision: payload.decision, bookId: payload.bookId };
 }
 
 @Injectable()
@@ -702,6 +714,41 @@ export class MonitoredService {
       return work;
     } catch (error) {
       this.logOperationFailure('monitored.release_dates.set', workId, user.id, startedAt, error, 'workId', `format=${format}`);
+      throw error;
+    }
+  }
+
+  /**
+   * The owner's answer about which library book is one format of a work: link it, reject it, or hand
+   * the format back to the matcher. The answer is stored apart from the catalog so every refresh
+   * applies it, and the work is matched again at once so the reply already reflects it.
+   */
+  async setWorkMatch(user: RequestUser, workId: string, format: MonitoredFormat, payload: MonitoredWorkMatchPayload): Promise<MonitoredWork> {
+    const entry = await this.getWritableWork(workId, user);
+    const answer = storedMatchAnswer(payload);
+    const bookId = answer.decision === 'automatic' ? null : answer.bookId;
+    const startedAt = Date.now();
+    this.logger.log(
+      `[monitored.work.set_match] [start] workId="${sanitizeLogValue(workId)}" userId=${user.id} format=${format} decision=${payload.decision} bookId=${bookId ?? 'none'} - work match write started`,
+    );
+    try {
+      if (bookId !== null && !(await this.store.isBookReadable(bookId, user))) throw new NotFoundException('Library book not found');
+      await this.store.writeMatchOverride(
+        { id: entry.work.id, monitorAuthorId: entry.monitor.id, identityKeys: matchIdentityKeys(entry.work) },
+        format,
+        answer,
+      );
+      // The rematch also works out the open questions again, so an answered one goes and a format
+      // handed back to the matcher gets its question back before auto-request could act on it.
+      const rematched = await this.catalog.rematchWork(entry.monitor, entry.work);
+      await this.store.updateWorkMatch(workId, rematched, { withPossibleMatches: true });
+      const work = await this.readWork(workId, user);
+      this.logger.log(
+        `[monitored.work.set_match] [end] workId="${sanitizeLogValue(workId)}" userId=${user.id} format=${format} decision=${payload.decision} durationMs=${Date.now() - startedAt} matched=${work.matchedBookIds?.[format] != null} - work match write completed`,
+      );
+      return work;
+    } catch (error) {
+      this.logOperationFailure('monitored.work.set_match', workId, user.id, startedAt, error, 'workId', `format=${format}`);
       throw error;
     }
   }

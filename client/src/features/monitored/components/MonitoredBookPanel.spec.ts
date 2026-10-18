@@ -8,12 +8,13 @@ import { TriangleAlert } from '@lucide/vue'
 import type { MonitoredReleaseDateLookup, MonitoredWork, ReleaseCandidateItem } from '@bookorbit/types'
 import MonitoredBookPanel from './MonitoredBookPanel.vue'
 import MonitoredFormatSlot from './MonitoredFormatSlot.vue'
+import MonitoredMatchFilePicker from './MonitoredMatchFilePicker.vue'
 import MonitoredReleaseDatePopover from './MonitoredReleaseDatePopover.vue'
 import MonitoredVisibilityBanner from './MonitoredVisibilityBanner.vue'
 import MonitoredSlotReleases from './MonitoredSlotReleases.vue'
 import ReleaseResultRow from './ReleaseResultRow.vue'
 import { useMonitoredReleases } from '../composables/useMonitoredReleases'
-import { fetchWorkReleaseDateCandidates, refreshWorkReleaseDates, setWorkReleaseDate } from '../api/monitored'
+import { fetchWorkReleaseDateCandidates, refreshWorkReleaseDates, setMonitoredWorkMatch, setWorkReleaseDate } from '../api/monitored'
 import { MonitoredApiError } from '../lib/api-error'
 
 vi.mock('../composables/useMonitoredReleases', () => ({ useMonitoredReleases: vi.fn<() => unknown>() }))
@@ -28,6 +29,7 @@ vi.mock('../api/monitored', async (importOriginal) => ({
   fetchWorkReleaseDateCandidates: vi.fn<() => Promise<MonitoredReleaseDateLookup>>(),
   setWorkReleaseDate: vi.fn<() => Promise<MonitoredWork>>(),
   refreshWorkReleaseDates: vi.fn<() => Promise<MonitoredWork>>(),
+  setMonitoredWorkMatch: vi.fn<() => Promise<MonitoredWork>>(),
 }))
 // The edition rows watch a live download over the shared request socket; none of these tests are about it.
 vi.mock('../composables/useMonitoredRequestProgress', async () => {
@@ -1751,6 +1753,83 @@ describe('MonitoredBookPanel navigation', () => {
     currentRoute.path = '/book/277'
     await nextTick()
     expect(wrapper.emitted('update:open')?.at(-1)).toEqual([false])
+    wrapper.unmount()
+  })
+})
+
+describe('MonitoredBookPanel library matches', () => {
+  beforeEach(resetPanelMocks)
+  const matchMock = vi.mocked(setMonitoredWorkMatch)
+  const toastSuccessMock = vi.mocked(toast.success)
+
+  const flagged: MonitoredWork = {
+    ...releasedWork,
+    title: 'Inhibitor Phase',
+    seriesName: 'Revelation Space',
+    seriesIndex: '4',
+    possibleMatches: { ebook: { bookId: 31, title: 'Inhibitor Phase', seriesName: 'Revelation Space', seriesIndex: '5' } },
+  }
+
+  it('flags a possible match on its format only, and links it on Accept', async () => {
+    const linked: MonitoredWork = {
+      ...flagged,
+      possibleMatches: undefined,
+      matchedBookId: 31,
+      matchedBookIds: { ebook: 31 },
+      ownedFormats: ['ebook'],
+    }
+    matchMock.mockResolvedValue(linked)
+    const wrapper = await mountPanel(flagged, [])
+
+    expect(slot(wrapper, 'ebook').find('[data-testid="possible-match"]').exists()).toBe(true)
+    expect(slot(wrapper, 'audiobook').find('[data-testid="possible-match"]').exists()).toBe(false)
+    expect(slot(wrapper, 'ebook').get('[data-testid="possible-match"]').find('[data-testid="match-file"]').exists()).toBe(true)
+    await slot(wrapper, 'ebook').get('[data-testid="possible-match-same"]').trigger('click')
+    await flushPromises()
+
+    expect(matchMock).toHaveBeenCalledWith('work-1', 'ebook', { decision: 'link', bookId: 31 })
+    expect(wrapper.emitted('work-updated')).toEqual([[linked]])
+    wrapper.unmount()
+  })
+
+  it('turns the re-check icon into a Fix match picker for the current file, and an unlink from it offers an undo', async () => {
+    bookDetailState.books = [ebookBook()]
+    matchMock.mockResolvedValue(releasedWork)
+    const wrapper = await mountPanel(ownedEbook, [])
+
+    expect(slot(wrapper, 'ebook').find('[data-testid="owned-recheck"]').exists()).toBe(false)
+    const picker = slot(wrapper, 'ebook').findComponent(MonitoredMatchFilePicker)
+    expect(picker.props('currentBookId')).toBe(5)
+    expect(picker.find('[data-testid="fix-match"]').exists()).toBe(true)
+    picker.vm.$emit('answer', 'ebook', { decision: 'reject', bookId: 5 })
+    await flushPromises()
+
+    expect(matchMock).toHaveBeenCalledWith('work-1', 'ebook', { decision: 'reject', bookId: 5 })
+    expect(toastSuccessMock).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ action: expect.any(Object) }))
+    expect(slot(wrapper, 'audiobook').find('[data-testid="fix-match"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('marks a hand-linked format and links the book picked in Fix match', async () => {
+    bookDetailState.books = [ebookBook()]
+    const linked: MonitoredWork = { ...ownedEbook, linkedFormats: ['ebook'] }
+    matchMock.mockResolvedValue(releasedWork)
+    const wrapper = await mountPanel(linked, [])
+
+    expect(slot(wrapper, 'ebook').find('[data-testid="linked-by-hand"]').exists()).toBe(true)
+    const picker = slot(wrapper, 'ebook').findComponent(MonitoredMatchFilePicker)
+    expect(picker.props('linkedByHand')).toBe(true)
+    picker.vm.$emit('answer', 'ebook', { decision: 'link', bookId: 9 })
+    await flushPromises()
+
+    expect(matchMock).toHaveBeenCalledWith('work-1', 'ebook', { decision: 'link', bookId: 9 })
+    wrapper.unmount()
+  })
+
+  it('offers no answers to a viewer who cannot manage the work', async () => {
+    const wrapper = await mountPanel({ ...flagged, matchedBookIds: {} }, [], false)
+
+    expect(slot(wrapper, 'ebook').find('[data-testid="possible-match-same"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

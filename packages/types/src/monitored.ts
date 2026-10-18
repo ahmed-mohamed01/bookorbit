@@ -432,6 +432,18 @@ export interface MonitoredWork {
    */
   matchedBookIds?: Partial<Record<MonitoredFormat, number>>;
   ownedFormats: MonitoredFormat[];
+  /**
+   * A library book per format with the work's title but disagreeing evidence, such as another series
+   * number. Neither matched nor ignored: it waits for the owner to say whether it is the same book.
+   */
+  possibleMatches?: Partial<Record<MonitoredFormat, MonitoredPossibleMatch>>;
+  /** Formats whose library book the owner linked by hand, which every refresh keeps. */
+  linkedFormats?: MonitoredFormat[];
+  /**
+   * Formats the owner has answered about (a link or a rejection), whose stored match is final. Only
+   * the matcher and the store use it; it is never sent to a client.
+   */
+  answeredFormats?: MonitoredFormat[];
   /** Per-work monitor toggles; a missing entry means monitoring is on for that format. */
   monitorFormats?: Partial<Record<MonitoredFormat, boolean>>;
   /**
@@ -596,6 +608,28 @@ export interface UpdateMonitoredAuthorRequest {
 export interface RequestFromWorkPayload {
   format: MonitoredFormat;
   autoDownload?: boolean;
+}
+
+/** The library book behind a possible match, as the owner needs to judge it. */
+export interface MonitoredPossibleMatch {
+  bookId: number;
+  title: string | null;
+  seriesName: string | null;
+  seriesIndex: string | null;
+}
+
+/**
+ * The owner's answer about one format's library book: `link` makes it the match, `reject` keeps it
+ * from ever matching (a dismissed possible match, or an automatic match undone), and `automatic`
+ * drops every answer for the format so the matcher decides again.
+ */
+export const MONITORED_MATCH_DECISIONS = ["link", "reject", "automatic"] as const;
+export type MonitoredMatchDecision = (typeof MONITORED_MATCH_DECISIONS)[number];
+
+export interface MonitoredWorkMatchPayload {
+  decision: MonitoredMatchDecision;
+  /** Required for `link` and `reject`, absent for `automatic`. */
+  bookId?: number;
 }
 
 /** Per-work monitor/visibility toggles accepted by PATCH /monitored/works/:workId. */

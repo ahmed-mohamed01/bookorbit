@@ -1,14 +1,24 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowUpRight, Bell, BellOff, BookCopy, BookOpen, ChevronUp, Folder, Headphones, RefreshCw } from '@lucide/vue'
-import type { BookDetail, MonitorMode, MonitoredFormat, MonitoredWork } from '@bookorbit/types'
+import { ArrowUpRight, Bell, BellOff, BookCopy, BookOpen, ChevronUp, Folder, Headphones, Link2, RefreshCw } from '@lucide/vue'
+import {
+  monitoredFormatReleaseDate,
+  monitoredReleaseStarted,
+  type BookDetail,
+  type MonitorMode,
+  type MonitoredFormat,
+  type MonitoredWork,
+} from '@bookorbit/types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatBytes } from '@/lib/formatting'
 import { useFormatSlotState } from '../composables/useFormatSlotState'
+import type { MonitoredMatchAnswer } from '../composables/useWorkMatch'
 import type { MonitoredReleaseRow } from '../composables/useReleaseRows'
 import type { MonitoredFormatStatus } from '../lib/format-status'
 import MonitoredOwnedTree from './MonitoredOwnedTree.vue'
+import MonitoredMatchFilePicker from './MonitoredMatchFilePicker.vue'
+import MonitoredPossibleMatch from './MonitoredPossibleMatch.vue'
 import MonitoredSlotDates from './MonitoredSlotDates.vue'
 import MonitoredSlotFooter from './MonitoredSlotFooter.vue'
 
@@ -40,6 +50,9 @@ const props = defineProps<{
   checking?: boolean
   /** Shows the identity row only. */
   collapsed?: boolean
+  /** May say which library book this format is: link, unlink, or answer a possible match. */
+  canAnswerMatch?: boolean
+  matchSaving?: boolean
 }>()
 const emit = defineEmits<{
   request: [format: MonitoredFormat, autoDownload: boolean]
@@ -53,6 +66,7 @@ const emit = defineEmits<{
   'check-library': [format: MonitoredFormat]
   'toggle-collapsed': [format: MonitoredFormat]
   filed: [requestId: number]
+  'answer-match': [format: MonitoredFormat, answer: MonitoredMatchAnswer]
 }>()
 
 defineSlots<{ releases(props: { canRequest: boolean }): unknown }>()
@@ -99,6 +113,26 @@ const emptyHint = computed(() => {
   if (!props.canEdit) return null
   return state.watching.value ? t('monitored.slot.emptyHintWatching') : t('monitored.slot.emptyHintNotWatching')
 })
+
+const possibleMatch = computed(() => (state.owned.value ? null : (props.work.possibleMatches?.[props.format] ?? null)))
+const linkedByHand = computed(() => props.work.linkedFormats?.includes(props.format) ?? false)
+const ownedBookId = computed(() => props.work.matchedBookIds?.[props.format] ?? null)
+/** Undoing a match needs the book it points at; a format owned only through a filed request has none to name. */
+const canUnlink = computed(() => !!props.canAnswerMatch && state.owned.value && ownedBookId.value != null)
+
+/**
+ * A format the matcher found nothing for can still be in the library under another name, unless its
+ * release date is still ahead. No known date is no evidence it is unreleased.
+ */
+const canMatchFile = computed(() => {
+  if (!props.canAnswerMatch || state.owned.value || state.requestMoving.value) return false
+  const { date, precision } = monitoredFormatReleaseDate(props.work, props.format)
+  return !date || monitoredReleaseStarted(date, precision, new Date().toISOString().slice(0, 10))
+})
+
+function handleAnswerMatch(format: MonitoredFormat, answer: MonitoredMatchAnswer) {
+  emit('answer-match', format, answer)
+}
 
 function handleToggleWatch() {
   emit('toggle-monitor', props.format, !state.watching.value)
@@ -175,13 +209,29 @@ function handleCheckLibrary() {
         >
           <ArrowUpRight :size="15" aria-hidden="true" />
         </RouterLink>
+        <TooltipProvider v-if="linkedByHand && state.owned.value">
+          <Tooltip>
+            <TooltipTrigger as-child>
+              <span
+                tabindex="0"
+                class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-primary"
+                :class="state.bookRoute.value ? undefined : 'ms-auto'"
+                data-testid="linked-by-hand"
+              >
+                <Link2 :size="15" aria-hidden="true" />
+                <span class="sr-only">{{ t('monitored.slot.match.linkedIndicator') }}</span>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent class="max-w-64">{{ t('monitored.slot.match.linkedIndicator') }}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
         <TooltipProvider>
           <Tooltip>
             <TooltipTrigger as-child>
               <button
                 type="button"
                 class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [@media(pointer:coarse)]:size-11"
-                :class="state.owned.value && state.bookRoute.value ? undefined : 'ms-auto'"
+                :class="(state.owned.value && state.bookRoute.value) || (linkedByHand && state.owned.value) ? undefined : 'ms-auto'"
                 :aria-expanded="!collapsed"
                 :aria-label="collapseLabel"
                 data-testid="slot-collapse"
@@ -296,7 +346,18 @@ function handleCheckLibrary() {
           :recheckable="canManage"
           :checking="checking"
           @recheck="handleCheckLibrary"
-        />
+        >
+          <template v-if="canUnlink" #action>
+            <MonitoredMatchFilePicker
+              :work="work"
+              :format="format"
+              :saving="!!matchSaving"
+              :current-book-id="ownedBookId"
+              :linked-by-hand="linkedByHand"
+              @answer="handleAnswerMatch"
+            />
+          </template>
+        </MonitoredOwnedTree>
         <div
           v-else-if="state.owned.value && state.ownedBody.value === 'error'"
           class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"
@@ -332,6 +393,17 @@ function handleCheckLibrary() {
             {{ t('monitored.slot.check') }}
           </button>
         </div>
+        <MonitoredPossibleMatch
+          v-else-if="possibleMatch"
+          :work="work"
+          :format="format"
+          :possible="possibleMatch"
+          :can-answer="!!canAnswerMatch"
+          :saving="!!matchSaving"
+          @answer="handleAnswerMatch"
+        >
+          <MonitoredMatchFilePicker :work="work" :format="format" :saving="!!matchSaving" @answer="handleAnswerMatch" />
+        </MonitoredPossibleMatch>
         <div
           v-else
           class="flex min-w-0 items-center gap-2 rounded-md border border-dashed border-muted-foreground/35 px-2.5 py-1.5 text-xs text-muted-foreground"
@@ -351,6 +423,7 @@ function handleCheckLibrary() {
             }}</span>
             <template v-if="emptyHint"> &middot; {{ emptyHint }}</template>
           </p>
+          <MonitoredMatchFilePicker v-if="canMatchFile" :work="work" :format="format" :saving="!!matchSaving" @answer="handleAnswerMatch" />
         </div>
       </template>
     </div>

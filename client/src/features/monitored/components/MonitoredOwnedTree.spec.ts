@@ -185,4 +185,14 @@ describe('MonitoredOwnedTree', () => {
     expect(line.text()).toBe('1 h 0 min')
     expect(line.find('[data-testid="owned-more-toggle"]').exists()).toBe(false)
   })
+
+  it('puts the action slot in place of the re-check icon', () => {
+    const wrapper = mount(MonitoredOwnedTree, {
+      props: { format: 'ebook', libraryName: 'Fiction', libraryId: 3, fileName: 'Title.epub', recheckable: true },
+      slots: { action: '<button data-testid="slot-action">Fix match</button>' },
+    })
+
+    expect(wrapper.find('[data-testid="owned-recheck"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="slot-action"]').text()).toBe('Fix match')
+  })
 })

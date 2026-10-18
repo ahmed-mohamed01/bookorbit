@@ -729,4 +729,65 @@ DO $$ BEGIN
 END $$;
 --> statement-breakpoint
 ALTER TABLE "monitored_choice_ledger" ADD COLUMN IF NOT EXISTS "work_id" varchar(255);
+--> statement-breakpoint
+ALTER TABLE "author_catalog_works"
+	ADD COLUMN IF NOT EXISTS "possible_ebook_book_id" integer,
+	ADD COLUMN IF NOT EXISTS "possible_audio_book_id" integer,
+	ADD COLUMN IF NOT EXISTS "linked_formats" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	ADD COLUMN IF NOT EXISTS "answered_formats" jsonb DEFAULT '[]'::jsonb NOT NULL;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'author_catalog_works_possible_ebook_book_id_books_id_fk'
+	) THEN
+		ALTER TABLE "author_catalog_works" ADD CONSTRAINT "author_catalog_works_possible_ebook_book_id_books_id_fk" FOREIGN KEY ("possible_ebook_book_id") REFERENCES "public"."books"("id") ON DELETE set null ON UPDATE no action;
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'author_catalog_works_possible_audio_book_id_books_id_fk'
+	) THEN
+		ALTER TABLE "author_catalog_works" ADD CONSTRAINT "author_catalog_works_possible_audio_book_id_books_id_fk" FOREIGN KEY ("possible_audio_book_id") REFERENCES "public"."books"("id") ON DELETE set null ON UPDATE no action;
+	END IF;
+END $$;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "author_catalog_works_possible_ebook_book_id_idx" ON "author_catalog_works" USING btree ("possible_ebook_book_id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "author_catalog_works_possible_audio_book_id_idx" ON "author_catalog_works" USING btree ("possible_audio_book_id");
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "monitored_match_overrides" (
+	"monitor_author_id" varchar(36) NOT NULL,
+	"format" varchar(10) NOT NULL,
+	"identity_key" varchar(300) NOT NULL,
+	"book_id" integer NOT NULL,
+	"decision" varchar(10) NOT NULL,
+	"work_id" varchar(255),
+	"decided_at" timestamp with time zone NOT NULL,
+	CONSTRAINT "monitored_match_overrides_monitor_author_id_format_identity_key_book_id_pk" PRIMARY KEY("monitor_author_id","format","identity_key","book_id"),
+	CONSTRAINT "monitored_match_overrides_format_chk" CHECK ("monitored_match_overrides"."format" in ('ebook', 'audiobook')),
+	CONSTRAINT "monitored_match_overrides_decision_chk" CHECK ("monitored_match_overrides"."decision" in ('link', 'reject'))
+);
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'monitored_match_overrides_monitor_author_id_monitored_authors_id_fk'
+	) THEN
+		ALTER TABLE "monitored_match_overrides" ADD CONSTRAINT "monitored_match_overrides_monitor_author_id_monitored_authors_id_fk" FOREIGN KEY ("monitor_author_id") REFERENCES "public"."monitored_authors"("id") ON DELETE cascade ON UPDATE no action;
+	END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+	IF NOT EXISTS (
+		SELECT 1 FROM pg_constraint
+		WHERE conname = 'monitored_match_overrides_book_id_books_id_fk'
+	) THEN
+		ALTER TABLE "monitored_match_overrides" ADD CONSTRAINT "monitored_match_overrides_book_id_books_id_fk" FOREIGN KEY ("book_id") REFERENCES "public"."books"("id") ON DELETE cascade ON UPDATE no action;
+	END IF;
+END $$;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "monitored_match_overrides_book_id_idx" ON "monitored_match_overrides" USING btree ("book_id");
 `;

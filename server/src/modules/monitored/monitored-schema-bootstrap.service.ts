@@ -13,6 +13,7 @@ const TABLE_NAMES = [
   'monitored_release_events',
   'monitored_request_ledger',
   'monitored_choice_ledger',
+  'monitored_match_overrides',
   'author_catalog_works',
   'author_catalog_state',
   'author_catalog_source_works',

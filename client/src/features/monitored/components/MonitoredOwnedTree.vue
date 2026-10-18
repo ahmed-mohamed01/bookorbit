@@ -37,6 +37,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ recheck: [] }>()
+/** Takes the re-check icon's place on the library row, such as the "Fix match" picker. */
+const slots = defineSlots<{ action?(): unknown }>()
 
 const { t } = useI18n()
 const { libraries } = useLibraries()
@@ -141,8 +143,9 @@ function rowIndent(row: OwnedTreeRow) {
         <CornerRightUp v-if="expanded" :size="12" class="shrink-0 text-muted-foreground" aria-hidden="true" />
         <CornerRightDown v-else :size="12" class="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true" data-testid="owned-path-arrow" />
       </button>
+      <slot v-if="slots.action" name="action" />
       <button
-        v-if="recheckable"
+        v-else-if="recheckable"
         type="button"
         :disabled="checking"
         class="inline-flex size-[22px] shrink-0 items-center justify-center rounded-[5px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [@media(pointer:coarse)]:size-11"

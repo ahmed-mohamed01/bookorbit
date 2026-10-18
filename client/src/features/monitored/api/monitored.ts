@@ -24,6 +24,7 @@ import type {
   MonitoredSort,
   MonitoredStatusFilter,
   MonitoredWork,
+  MonitoredWorkMatchPayload,
   MonitoredWorkPatch,
   MonitoredWorkReleasesResponse,
   MonitoredSummary,
@@ -31,6 +32,7 @@ import type {
   RequestSourceOption,
   SetMonitoredReleaseDatePayload,
   UpdateMonitoredAuthorRequest,
+  BookSearchOption,
 } from '@bookorbit/types'
 import { MonitoredApiError } from '../lib/api-error'
 import { statusFilterQuery } from '../lib/status-filter'
@@ -190,6 +192,26 @@ export async function setWorkReleaseDate(workId: string, format: MonitoredFormat
 /** Answers 429 when asked again too soon, and 409 when release checking is switched off in settings. */
 export async function refreshWorkReleaseDates(workId: string): Promise<MonitoredWork> {
   return readJson(await api(`${BASE_PATH}/works/${encodeURIComponent(workId)}/release-dates/refresh`, { method: 'POST' }))
+}
+
+/** The owner's answer about which library book is one format of a work; answers with the rematched work. */
+export async function setMonitoredWorkMatch(workId: string, format: MonitoredFormat, payload: MonitoredWorkMatchPayload): Promise<MonitoredWork> {
+  return readJson(
+    await api(`${BASE_PATH}/works/${encodeURIComponent(workId)}/match/${format}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }),
+  )
+}
+
+/** The viewer's own library search, already scoped to the libraries they can open. */
+/** The most results the library search returns for one query. */
+export const LIBRARY_SEARCH_LIMIT = 20
+
+export async function searchLibraryBooks(query: string, signal?: AbortSignal): Promise<BookSearchOption[]> {
+  const params = new URLSearchParams({ q: query, limit: String(LIBRARY_SEARCH_LIMIT) })
+  return readJson(await api(`/api/v1/books/search?${params.toString()}`, { signal }))
 }
 
 export async function updateMonitoredWork(workId: string, patch: MonitoredWorkPatch): Promise<MonitoredWork> {

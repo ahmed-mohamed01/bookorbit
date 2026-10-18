@@ -37,6 +37,8 @@ export function isRequestable(work: MonitoredWork, format: MonitoredFormat): boo
     work.monitorFormats?.[format] !== false &&
     !work.ownedFormats.includes(format) &&
     work.matchedBookIds?.[format] == null &&
+    // An unanswered possible match may be this very book, and grabbing it would file a duplicate.
+    work.possibleMatches?.[format] == null &&
     work.requestIds[format] == null
   );
 }

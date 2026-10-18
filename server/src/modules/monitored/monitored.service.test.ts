@@ -2168,3 +2168,74 @@ describe('MonitoredService work by library book', () => {
     await expect(service(store).getWorkByBook(viewer, 11)).rejects.toBeInstanceOf(NotFoundException);
   });
 });
+
+describe('MonitoredService.setWorkMatch', () => {
+  const target = () => work({ providerWorkIds: { hardcover: '77' } });
+
+  function matchStore(patch: Record<string, unknown> = {}) {
+    return {
+      getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author(), work: target() }),
+      isBookReadable: vi.fn().mockResolvedValue(true),
+      writeMatchOverride: vi.fn().mockResolvedValue(undefined),
+      updateWorkMatch: vi.fn().mockResolvedValue(undefined),
+      ...patch,
+    };
+  }
+
+  it('refuses an answer on a monitor owned by another user', async () => {
+    const store = matchStore({ getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author({ ownerUserId: 2 }), work: target() }) });
+
+    await expect(service(store).setWorkMatch(viewer, target().id, 'ebook', { decision: 'link', bookId: 31 })).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(store.writeMatchOverride).not.toHaveBeenCalled();
+  });
+
+  it('refuses a link or a rejection without a book, and a hand-back that names one', async () => {
+    const store = matchStore();
+    const instance = service(store);
+
+    await expect(instance.setWorkMatch(viewer, target().id, 'ebook', { decision: 'link' })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(instance.setWorkMatch(viewer, target().id, 'ebook', { decision: 'automatic', bookId: 31 })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(store.writeMatchOverride).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a book the owner cannot open', async () => {
+    const store = matchStore({ isBookReadable: vi.fn().mockResolvedValue(false) });
+
+    await expect(service(store).setWorkMatch(viewer, target().id, 'ebook', { decision: 'link', bookId: 31 })).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect(store.writeMatchOverride).not.toHaveBeenCalled();
+  });
+
+  it('files the answer under the work identity, rematches the work and returns it fresh', async () => {
+    const store = matchStore();
+    const rematched = { ...target(), matchedBookId: 31, matchedBookIds: { ebook: 31 }, ownedFormats: ['ebook'], linkedFormats: ['ebook'] };
+    const rematchWork = vi.fn().mockResolvedValue(rematched);
+
+    await service(store, {}, { catalog: { rematchWork } }).setWorkMatch(viewer, target().id, 'ebook', { decision: 'link', bookId: 31 });
+
+    expect(store.writeMatchOverride).toHaveBeenCalledWith(
+      { id: target().id, monitorAuthorId: 'monitor-1', identityKeys: ['hardcover:77'] },
+      'ebook',
+      { decision: 'link', bookId: 31 },
+    );
+    expect(rematchWork).toHaveBeenCalledWith(author(), target());
+    expect(store.updateWorkMatch).toHaveBeenCalledWith(target().id, rematched, { withPossibleMatches: true });
+    expect(store.getWorkWithMonitor).toHaveBeenLastCalledWith(target().id, viewer);
+  });
+
+  it('hands a format back to the matcher without checking any book', async () => {
+    const store = matchStore();
+
+    await service(store, {}, { catalog: { rematchWork: vi.fn().mockResolvedValue(target()) } }).setWorkMatch(viewer, target().id, 'audiobook', {
+      decision: 'automatic',
+    });
+
+    expect(store.isBookReadable).not.toHaveBeenCalled();
+    expect(store.writeMatchOverride).toHaveBeenCalledWith(expect.objectContaining({ id: target().id }), 'audiobook', { decision: 'automatic' });
+  });
+});

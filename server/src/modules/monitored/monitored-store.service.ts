@@ -13,6 +13,8 @@ import type {
   MonitoredCatalogSearchHit,
   MonitoredFormat,
   MonitoredListOrder,
+  MonitoredMatchDecision,
+  MonitoredPossibleMatch,
   MonitoredReleaseFilter,
   MonitoredReleaseListSort,
   MonitoredReleaseCardCounts,
@@ -41,7 +43,7 @@ import * as dbSchema from '../../db/schema';
 import { books as upstreamBooks } from '../../db/schema';
 import { LibraryService } from '../library/library.service';
 import * as schema from './schema/monitored.schema';
-import type { AuthorCatalogWorkRow, MonitoredAuthorRow, MonitoredAuthorWorkRow } from './schema/monitored.schema';
+import type { AuthorCatalogWorkRow, MonitoredAuthorRow, MonitoredAuthorWorkRow, MonitoredMatchOverrideRow } from './schema/monitored.schema';
 
 const WRITE_BATCH_SIZE = 250;
 /** The OR arms the identity prefilter may spend on one candidate list, so a query stays bounded. */
@@ -161,7 +163,13 @@ type WorkStatePatch = MonitoredWorkPatch & {
 };
 
 /** What owned-matching decides about a work: system truth, never the owner's overlay. */
-type WorkMatchUpdate = Pick<MonitoredWork, 'matchedBookId' | 'matchedBookIds' | 'ownedFormats'>;
+type WorkMatchUpdate = Pick<
+  MonitoredWork,
+  'matchedBookId' | 'matchedBookIds' | 'ownedFormats' | 'linkedFormats' | 'answeredFormats' | 'possibleMatches'
+>;
+
+/** One answer as the override table stores it: a book for a link or a rejection, none to go back to automatic. */
+export type StoredMatchAnswer = { decision: 'automatic' } | { decision: Exclude<MonitoredMatchDecision, 'automatic'>; bookId: number };
 
 type OverlayStatePatch = Pick<MonitoredWorkPatch, 'hidden' | 'automaticVisibility' | 'kind'>;
 
@@ -1196,8 +1204,88 @@ export class MonitoredStoreService {
    * matching decides is touched: the overlay beside it is the owner's own curation, and a rematch
    * has no business in it.
    */
-  async updateWorkMatch(workId: string, match: WorkMatchUpdate): Promise<void> {
-    await this.db.update(schema.authorCatalogWorks).set(this.matchValues(match)).where(eq(schema.authorCatalogWorks.id, workId));
+  async updateWorkMatch(workId: string, match: WorkMatchUpdate, options: { withPossibleMatches?: boolean } = {}): Promise<void> {
+    const values = options.withPossibleMatches ? { ...this.matchValues(match), ...this.possibleMatchValues(match) } : this.matchValues(match);
+    await this.db.update(schema.authorCatalogWorks).set(values).where(eq(schema.authorCatalogWorks.id, workId));
+  }
+
+  /** Whether a library book is present and sits in a library the viewer can open. */
+  async isBookReadable(bookId: number, viewer: RequestUser): Promise<boolean> {
+    const clauses = [eq(upstreamBooks.id, bookId), eq(upstreamBooks.status, 'present')];
+    if (!viewer.isSuperuser) {
+      const libraryIds = await this.libraries.findAccessibleLibraryIds(viewer);
+      if (!libraryIds.length) return false;
+      clauses.push(inArray(upstreamBooks.libraryId, libraryIds));
+    }
+    const [row] = await this.db
+      .select({ id: upstreamBooks.id })
+      .from(upstreamBooks)
+      .where(and(...clauses))
+      .limit(1);
+    return row != null;
+  }
+
+  /** Every answer the owners of these monitors gave about which library book is a work's book. */
+  async findMatchOverrides(monitorIds: string[]): Promise<MonitoredMatchOverrideRow[]> {
+    if (!monitorIds.length) return [];
+    return this.db.select().from(schema.monitoredMatchOverrides).where(inArray(schema.monitoredMatchOverrides.monitorAuthorId, monitorIds));
+  }
+
+  /**
+   * Files the owner's answer about one format's library book under every identity key of the work.
+   * A link replaces any earlier link for the format and lifts a rejection of the same book; a
+   * rejection drops a link to that book; `automatic` drops every answer for the format.
+   */
+  async writeMatchOverride(
+    work: { id: string; monitorAuthorId: string; identityKeys: string[] },
+    format: MonitoredFormat,
+    answer: StoredMatchAnswer,
+  ): Promise<void> {
+    const overrides = schema.monitoredMatchOverrides;
+    // Answers filed from this work under a provider id it no longer carries count too, or a later
+    // refresh that brings that id back would revive an answer the owner already replaced.
+    const scope = and(
+      eq(overrides.monitorAuthorId, work.monitorAuthorId),
+      eq(overrides.format, format),
+      or(inArray(overrides.identityKey, work.identityKeys), eq(overrides.workId, work.id)),
+    );
+    await this.db.transaction(async (tx) => {
+      if (answer.decision === 'automatic') {
+        await tx.delete(overrides).where(scope);
+        return;
+      }
+      const { decision, bookId } = answer;
+      if (decision === 'link') await tx.delete(overrides).where(and(scope, eq(overrides.decision, 'link')));
+      else await tx.delete(overrides).where(and(scope, eq(overrides.bookId, bookId)));
+      const decidedAt = new Date();
+      await tx
+        .insert(overrides)
+        .values(
+          work.identityKeys.map((identityKey) => ({
+            monitorAuthorId: work.monitorAuthorId,
+            format,
+            identityKey,
+            bookId,
+            decision,
+            workId: work.id,
+            decidedAt,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [overrides.monitorAuthorId, overrides.format, overrides.identityKey, overrides.bookId],
+          set: { decision: sql`excluded.decision`, workId: sql`excluded.work_id`, decidedAt: sql`excluded.decided_at` },
+        });
+    });
+  }
+
+  /** Library books the monitor's other works own, so a one-work rematch can tell a sibling volume from a candidate. */
+  async findClaimedBookIds(monitorId: string, exceptWorkId: string): Promise<Set<number>> {
+    const works = schema.authorCatalogWorks;
+    const rows = await this.db
+      .select({ ebook: works.matchedEbookBookId, audiobook: works.matchedAudioBookId })
+      .from(works)
+      .where(and(eq(works.monitorAuthorId, monitorId), ne(works.id, exceptWorkId)));
+    return new Set(rows.flatMap((row) => [row.ebook, row.audiobook]).filter((id): id is number => id != null));
   }
 
   async saveCatalog(monitorId: string, catalog: MonitoredCatalog | null, options: { enrolReleaseProbes?: boolean } = {}): Promise<void> {
@@ -1261,6 +1349,10 @@ export class MonitoredStoreService {
               matchedEbookBookId: sql`excluded.matched_ebook_book_id`,
               matchedAudioBookId: sql`excluded.matched_audio_book_id`,
               ownedFormats: sql`excluded.owned_formats`,
+              linkedFormats: sql`excluded.linked_formats`,
+              answeredFormats: sql`excluded.answered_formats`,
+              possibleEbookBookId: sql`excluded.possible_ebook_book_id`,
+              possibleAudioBookId: sql`excluded.possible_audio_book_id`,
             },
           });
       }
@@ -1788,7 +1880,11 @@ export class MonitoredStoreService {
     ];
     // Only the accessible-book read depends on the requests, so the ownership read runs beside them
     // rather than behind: a works page is a hot path and this keeps it at two waits, not three.
-    const [requestRows, ownedMonitorIds] = await Promise.all([this.requestProjections(requestIds), this.ownedMonitorIds(rows, viewer)]);
+    const [requestRows, ownedMonitorIds, possibleBooks] = await Promise.all([
+      this.requestProjections(requestIds),
+      this.ownedMonitorIds(rows, viewer),
+      this.possibleMatchBooks(rows),
+    ]);
     const requestMap = new Map(requestRows.map((request) => [request.id, request]));
     const requestedBookIds = requestRows.map((request) => request.matchedBookId).filter((id): id is number => id != null);
     const accessibleBooks = await this.accessibleMatchedBooks(rows, requestedBookIds, viewer);
@@ -1799,7 +1895,16 @@ export class MonitoredStoreService {
       return [
         {
           monitorAuthorId: row.monitorAuthorId,
-          work: this.composeWork(row, sourceMap.get(row.id) ?? [], overlay, accessibleBooks, isOwner, requestMap, releaseMap.get(row.id) ?? []),
+          work: this.composeWork(
+            row,
+            sourceMap.get(row.id) ?? [],
+            overlay,
+            accessibleBooks,
+            isOwner,
+            requestMap,
+            releaseMap.get(row.id) ?? [],
+            possibleBooks,
+          ),
         },
       ];
     });
@@ -1824,13 +1929,20 @@ export class MonitoredStoreService {
     isOwner = true,
     requests = new Map<number, RequestProjection>(),
     releases: Array<typeof schema.authorCatalogWorkReleases.$inferSelect> = [],
+    possibleBooks = new Map<number, MonitoredPossibleMatch>(),
   ): MonitoredWork {
     const ebookRequest = overlay?.ebookRequestId == null ? undefined : requests.get(overlay.ebookRequestId);
     const audiobookRequest = overlay?.audiobookRequestId == null ? undefined : requests.get(overlay.audiobookRequestId);
     const accessible = (bookId: number | null | undefined): bookId is number => bookId != null && (!accessibleBooks || accessibleBooks.has(bookId));
-    const filedEbookId = ebookRequest?.status === 'available' && accessible(ebookRequest.matchedBookId) ? ebookRequest.matchedBookId : undefined;
+    // A format the owner answered about by hand is settled by the stored match, so the book a request
+    // filed cannot bring back a match the owner rejected or replace one they linked.
+    const answered = (format: MonitoredFormat) => row.answeredFormats.includes(format);
+    const filedEbookId =
+      !answered('ebook') && ebookRequest?.status === 'available' && accessible(ebookRequest.matchedBookId) ? ebookRequest.matchedBookId : undefined;
     const filedAudioId =
-      audiobookRequest?.status === 'available' && accessible(audiobookRequest.matchedBookId) ? audiobookRequest.matchedBookId : undefined;
+      !answered('audiobook') && audiobookRequest?.status === 'available' && accessible(audiobookRequest.matchedBookId)
+        ? audiobookRequest.matchedBookId
+        : undefined;
     const storedEbookId = accessible(row.matchedEbookBookId) ? row.matchedEbookBookId : undefined;
     const storedAudioId = accessible(row.matchedAudioBookId) ? row.matchedAudioBookId : undefined;
     const ebookId = filedEbookId ?? storedEbookId;
@@ -1841,6 +1953,11 @@ export class MonitoredStoreService {
     const ownedFormats = row.ownedFormats.filter((format) => (format === 'ebook' ? storedEbookId != null : storedAudioId != null));
     if (filedEbookId != null && !ownedFormats.includes('ebook')) ownedFormats.push('ebook');
     if (filedAudioId != null && !ownedFormats.includes('audiobook')) ownedFormats.push('audiobook');
+    // Only the owner can answer a possible match, and a format already in the library has no question left.
+    const possibleFor = (bookId: number | null, ownedId: number | undefined) =>
+      isOwner && ownedId == null && accessible(bookId) ? possibleBooks.get(bookId) : undefined;
+    const possibleEbook = possibleFor(row.possibleEbookBookId, ebookId);
+    const possibleAudio = possibleFor(row.possibleAudioBookId, audioId);
     const userKind = isOwner ? overlay?.userKind : null;
     const effectiveKind = userKind === 'book' ? undefined : (userKind ?? row.kind ?? undefined);
     return {
@@ -1905,6 +2022,10 @@ export class MonitoredStoreService {
       matchedBookId,
       matchedBookIds: { ...(ebookId ? { ebook: ebookId } : {}), ...(audioId ? { audiobook: audioId } : {}) },
       ownedFormats,
+      ...(possibleEbook || possibleAudio
+        ? { possibleMatches: { ...(possibleEbook ? { ebook: possibleEbook } : {}), ...(possibleAudio ? { audiobook: possibleAudio } : {}) } }
+        : {}),
+      ...(isOwner && row.linkedFormats.length > 0 ? { linkedFormats: row.linkedFormats } : {}),
       monitorFormats: {
         ...(overlay?.monitorEbook != null ? { ebook: overlay.monitorEbook } : {}),
         ...(overlay?.monitorAudiobook != null ? { audiobook: overlay.monitorAudiobook } : {}),
@@ -1935,13 +2056,27 @@ export class MonitoredStoreService {
     return rows as RequestProjection[];
   }
 
+  /** The library side of each possible match on these rows, so the owner can judge it without opening the book. */
+  private async possibleMatchBooks(rows: AuthorCatalogWorkRow[]): Promise<Map<number, MonitoredPossibleMatch>> {
+    const ids = [...new Set(rows.flatMap((row) => [row.possibleEbookBookId, row.possibleAudioBookId]).filter((id): id is number => id != null))];
+    if (!ids.length) return new Map();
+    const metadata = dbSchema.bookMetadata;
+    const found = await this.db
+      .select({ bookId: metadata.bookId, title: metadata.title, seriesName: metadata.seriesName, seriesIndex: metadata.seriesIndex })
+      .from(metadata)
+      .where(inArray(metadata.bookId, ids));
+    return new Map(found.map((book) => [book.bookId, book]));
+  }
+
   private async accessibleMatchedBooks(rows: AuthorCatalogWorkRow[], requestedBookIds: number[], viewer?: RequestUser): Promise<Set<number> | null> {
     if (!viewer || viewer.isSuperuser) return null;
     const libraryIds = await this.libraries.findAccessibleLibraryIds(viewer);
     if (!libraryIds.length) return new Set();
     const ids = [
       ...new Set([
-        ...rows.flatMap((row) => [row.matchedBookId, row.matchedEbookBookId, row.matchedAudioBookId]).filter((id): id is number => id != null),
+        ...rows
+          .flatMap((row) => [row.matchedBookId, row.matchedEbookBookId, row.matchedAudioBookId, row.possibleEbookBookId, row.possibleAudioBookId])
+          .filter((id): id is number => id != null),
         ...requestedBookIds,
       ]),
     ];
@@ -2005,6 +2140,15 @@ export class MonitoredStoreService {
       matchedEbookBookId: work.matchedBookIds?.ebook ?? null,
       matchedAudioBookId: work.matchedBookIds?.audiobook ?? null,
       ownedFormats: work.ownedFormats,
+      linkedFormats: work.linkedFormats ?? [],
+      answeredFormats: work.answeredFormats ?? [],
+    };
+  }
+
+  private possibleMatchValues(work: Pick<MonitoredWork, 'possibleMatches'>) {
+    return {
+      possibleEbookBookId: work.possibleMatches?.ebook?.bookId ?? null,
+      possibleAudioBookId: work.possibleMatches?.audiobook?.bookId ?? null,
     };
   }
 
@@ -2029,6 +2173,7 @@ export class MonitoredStoreService {
       kind: work.kind === 'split_part' ? null : (work.kind ?? null),
       sources: work.sources,
       ...this.matchValues(work),
+      ...this.possibleMatchValues(work),
     };
   }
 

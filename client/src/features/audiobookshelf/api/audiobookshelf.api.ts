@@ -18,6 +18,7 @@ import type {
   AudiobookshelfSettings,
   AudiobookshelfSyncResult,
   UpsertAudiobookshelfSettingsPayload,
+  BookSearchOption,
 } from '@bookorbit/types'
 
 export type {
@@ -32,14 +33,7 @@ export type {
 const BASE = '/api/v1/audiobookshelf'
 const BOOK_SEARCH_PATH = '/api/v1/books/search'
 
-export interface BookSearchOption {
-  id: number
-  title: string | null
-  authors: string[]
-  seriesName: string | null
-  libraryName: string
-  formats: string[]
-}
+export type { BookSearchOption }
 
 async function responseError(response: Response, fallback: string, conflictMessage?: string): Promise<Error> {
   if (response.status === 409 && conflictMessage) return new Error(conflictMessage)

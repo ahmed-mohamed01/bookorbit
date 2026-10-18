@@ -4,6 +4,7 @@ import type {
   MonitoredDatePrecision,
   MonitoredFormat,
   MonitoredMarkKind,
+  MonitoredMatchDecision,
   MonitoredReleaseDateSource,
   MonitoredReleaseProbeStatus,
   MonitoredSeriesMembership,
@@ -115,6 +116,10 @@ export const authorCatalogWorks = pgTable(
     matchedEbookBookId: integer('matched_ebook_book_id').references(() => books.id, { onDelete: 'set null' }),
     matchedAudioBookId: integer('matched_audio_book_id').references(() => books.id, { onDelete: 'set null' }),
     ownedFormats: jsonb('owned_formats').$type<MonitoredFormat[]>().notNull().default([]),
+    possibleEbookBookId: integer('possible_ebook_book_id').references(() => books.id, { onDelete: 'set null' }),
+    possibleAudioBookId: integer('possible_audio_book_id').references(() => books.id, { onDelete: 'set null' }),
+    linkedFormats: jsonb('linked_formats').$type<MonitoredFormat[]>().notNull().default([]),
+    answeredFormats: jsonb('answered_formats').$type<MonitoredFormat[]>().notNull().default([]),
   },
   (t) => [
     index('author_catalog_works_monitor_author_id_idx').on(t.monitorAuthorId),
@@ -122,6 +127,8 @@ export const authorCatalogWorks = pgTable(
     index('author_catalog_works_matched_book_id_idx').on(t.matchedBookId),
     index('author_catalog_works_matched_ebook_book_id_idx').on(t.matchedEbookBookId),
     index('author_catalog_works_matched_audio_book_id_idx').on(t.matchedAudioBookId),
+    index('author_catalog_works_possible_ebook_book_id_idx').on(t.possibleEbookBookId),
+    index('author_catalog_works_possible_audio_book_id_idx').on(t.possibleAudioBookId),
     // The books and releases lists search this column with the same unaccented ILIKE, over a table
     // that holds every work of every monitor - tens of thousands of rows on a real library.
     index('author_catalog_works_title_unaccent_trgm_idx').using('gin', sql`public.bookorbit_unaccent(${t.title}) gin_trgm_ops`),
@@ -304,6 +311,36 @@ export const monitoredRequestLedger = pgTable(
   ],
 );
 
+/**
+ * The owner's answers about which library book is a work's book, per format, keyed by what identifies
+ * the work rather than by its id so a refresh that files the book under a new work id keeps them. A
+ * `link` makes the book the match whatever the matcher thinks; a `reject` keeps the book from ever
+ * matching or being offered as a possible match again.
+ */
+export const monitoredMatchOverrides = pgTable(
+  'monitored_match_overrides',
+  {
+    monitorAuthorId: varchar('monitor_author_id', { length: 36 })
+      .notNull()
+      .references(() => monitoredAuthors.id, { onDelete: 'cascade' }),
+    format: varchar('format', { length: 10 }).$type<MonitoredFormat>().notNull(),
+    identityKey: varchar('identity_key', { length: 300 }).notNull(),
+    bookId: integer('book_id')
+      .notNull()
+      .references(() => books.id, { onDelete: 'cascade' }),
+    decision: varchar('decision', { length: 10 }).$type<Exclude<MonitoredMatchDecision, 'automatic'>>().notNull(),
+    /** The work the answer was given on, for tracing; the identity key is what applies it. */
+    workId: varchar('work_id', { length: 255 }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.monitorAuthorId, t.format, t.identityKey, t.bookId] }),
+    index('monitored_match_overrides_book_id_idx').on(t.bookId),
+    check('monitored_match_overrides_format_chk', sql`${t.format} in ('ebook', 'audiobook')`),
+    check('monitored_match_overrides_decision_chk', sql`${t.decision} in ('link', 'reject')`),
+  ],
+);
+
 export const monitoredBooks = pgTable(
   'monitored_books',
   {
@@ -332,3 +369,4 @@ export type MonitoredAuthorRow = typeof monitoredAuthors.$inferSelect;
 export type AuthorCatalogWorkRow = typeof authorCatalogWorks.$inferSelect;
 export type MonitoredAuthorWorkRow = typeof monitoredAuthorWorks.$inferSelect;
 export type MonitoredBookRow = typeof monitoredBooks.$inferSelect;
+export type MonitoredMatchOverrideRow = typeof monitoredMatchOverrides.$inferSelect;

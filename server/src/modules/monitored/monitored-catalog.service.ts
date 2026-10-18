@@ -10,6 +10,7 @@ import {
   normalizeWorkToken,
   type MonitoredAuthorConfig,
   type MonitoredFormat,
+  type MonitoredPossibleMatch,
   type MonitoredWork,
   type MonitoredWorkKind,
   type ProviderConfigurations,
@@ -31,6 +32,7 @@ import type { MergedWork, Observation } from './reconcile/observation.types';
 import { resolveSlots, slotReasonKind } from './reconcile/slot-resolution';
 import { assignVerdict, computePopularityFloor, type VerdictResult } from './reconcile/verdict';
 import { foldDiacritics, normalizeMonitoredName } from './monitored-text.utils';
+import { emptyWorkMatchOverrides, resolveWorkMatchOverrides, type WorkMatchOverrides } from './monitored-match-overrides';
 import { MonitoredStoreService, type MonitoredCatalog } from './monitored-store.service';
 import { MonitoredSettingsService } from './monitored-settings.service';
 
@@ -91,11 +93,110 @@ function uniqueIds(values: (string | null | undefined)[]): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
 }
 
+function formatKind(fileFormat: string): MonitoredFormat {
+  return isAudioFormat(fileFormat) ? 'audiobook' : 'ebook';
+}
+
+/**
+ * The library book to offer as a possible match among the ones the series number turned away: the
+ * one carrying the work's own title first, then the strongest tier, then the lowest id so the offer
+ * stays the same across refreshes.
+ */
+export function choosePossibleMatch(work: Pick<MonitoredWork, 'title'>, claims: OwnedClaim[]): OwnedClaim | null {
+  if (claims.length === 0) return null;
+  const titleKey = foldedTitleKey(work.title);
+  const rank = (claim: OwnedClaim) => [claim.candidate.titleKey === titleKey ? 0 : 1, claim.tier, claim.candidate.bookId];
+  return claims.reduce((best, claim) => {
+    const [a, b] = [rank(claim), rank(best)];
+    for (let index = 0; index < a.length; index += 1) if (a[index] !== b[index]) return a[index] < b[index] ? claim : best;
+    return best;
+  });
+}
+
+/** The library columns an owned candidate is built from, before its files are added. */
+interface CandidateRow {
+  bookId: number;
+  title: string | null;
+  seriesName: string | null;
+  seriesIndex: string | null;
+  publishedYear: number | null;
+}
+
+function newOwnedCandidate(row: CandidateRow): OwnedCandidate {
+  return {
+    bookId: row.bookId,
+    title: row.title ?? '',
+    titleKey: foldedTitleKey(row.title ?? ''),
+    seriesName: row.seriesName,
+    seriesIndex: row.seriesIndex,
+    publishedYear: row.publishedYear,
+    formats: new Set<string>(),
+  };
+}
+
+/**
+ * Hands every format the owner linked by hand to the linked book, replacing what the matcher found,
+ * and returns the formats it took. A linked book that no longer holds a file of the format has
+ * nothing to own it with, so that link waits instead of claiming the format.
+ */
+function applyLinkedBooks(
+  origins: Map<string, number>,
+  overrides: WorkMatchOverrides,
+  linkedCandidates: Map<number, OwnedCandidate>,
+): MonitoredFormat[] {
+  const linkedFormats: MonitoredFormat[] = [];
+  for (const kind of MONITORED_FORMATS) {
+    const linkedId = overrides[kind].linkedBookId;
+    const linked = linkedId == null ? undefined : linkedCandidates.get(linkedId);
+    const files = linked ? [...linked.formats].filter((format) => formatKind(format) === kind) : [];
+    if (!linked || files.length === 0) continue;
+    for (const format of [...origins.keys()]) if (formatKind(format) === kind) origins.delete(format);
+    for (const format of files) origins.set(format, linked.bookId);
+    linkedFormats.push(kind);
+  }
+  return linkedFormats;
+}
+
+/**
+ * The books the series number turned away that are still worth asking the owner about, per format
+ * the work does not own. A book another work owns is that work's volume, which is what the series
+ * number said, and a book the owner rejected has had its answer.
+ */
+export function possibleMatchesFor(
+  work: Pick<MonitoredWork, 'title' | 'matchedBookIds'>,
+  conflicted: OwnedClaim[],
+  overrides: WorkMatchOverrides,
+  claimed: ReadonlySet<number>,
+): Partial<Record<MonitoredFormat, MonitoredPossibleMatch>> | undefined {
+  const possible: Partial<Record<MonitoredFormat, MonitoredPossibleMatch>> = {};
+  for (const kind of MONITORED_FORMATS) {
+    if (work.matchedBookIds?.[kind] != null) continue;
+    const best = choosePossibleMatch(
+      work,
+      conflicted.filter(
+        (entry) =>
+          !claimed.has(entry.candidate.bookId) &&
+          !overrides[kind].rejected.has(entry.candidate.bookId) &&
+          [...entry.candidate.formats].some((format) => formatKind(format) === kind),
+      ),
+    );
+    if (best) {
+      possible[kind] = {
+        bookId: best.candidate.bookId,
+        title: best.candidate.title || null,
+        seriesName: best.candidate.seriesName,
+        seriesIndex: best.candidate.seriesIndex,
+      };
+    }
+  }
+  return Object.keys(possible).length > 0 ? possible : undefined;
+}
+
 /** First origin row per monitored format, from format->bookId pairs gathered across all tiers. */
 function toMatchedBookIds(origins: Map<string, number>): Partial<Record<MonitoredFormat, number>> {
   const result: Partial<Record<MonitoredFormat, number>> = {};
   for (const [format, bookId] of origins) {
-    const kind: MonitoredFormat = isAudioFormat(format) ? 'audiobook' : 'ebook';
+    const kind = formatKind(format);
     if (result[kind] === undefined) result[kind] = bookId;
   }
   return result;
@@ -560,7 +661,8 @@ export class MonitoredCatalogService {
       if (previous && shouldKeepPreviousCatalog(previous.works.length, works.length, hardcoverOutcome)) {
         throw new ServiceUnavailableException('The Hardcover bibliography fetch failed for this author; keeping the previous catalog');
       }
-      await this.matchOwnedBooks(works, monitor.localAuthorId);
+      const overrides = await this.loadOverridesByWork(works.map((work) => ({ monitorId: monitor.id, work })));
+      await this.matchOwnedBooks(works, monitor.localAuthorId, overrides, { detectPossible: true });
       const catalog = { works, fetchedAt: new Date().toISOString() };
       const { releaseProbeEnabled } = await this.settings.getMonitoredSettings();
       await this.store.saveCatalog(monitor.id, catalog, { enrolReleaseProbes: releaseProbeEnabled });
@@ -600,17 +702,23 @@ export class MonitoredCatalogService {
       `[monitored.work.recompute_availability] [start] workIds="${formatWorkIds(works)}" works=${works.length} passes=${due.size} - work availability recompute started`,
     );
     try {
+      const monitorByWork = new Map(groups.flatMap((group) => group.works.map((work) => [work.id, group.monitor.id] as const)));
       for (const [localAuthorId, pass] of due) {
         // Cleared copies: the answer has to be what the library supports now, not a merge with what
         // the row already claimed, and the works the caller is rendering are not ours to mutate.
         const probes = pass.map((work): MonitoredWork => ({ ...work, matchedBookId: null, matchedBookIds: {}, ownedFormats: [] }));
-        await this.matchOwnedBooks(probes, localAuthorId);
+        const overrides = await this.loadOverridesByWork(probes.map((work) => ({ monitorId: monitorByWork.get(work.id)!, work })));
+        // A pass of a few works cannot tell which books the rest of the catalog owns, so possible
+        // matches are left to the full refresh.
+        await this.matchOwnedBooks(probes, localAuthorId, overrides, { detectPossible: false });
         for (const probe of probes) {
           if (probe.matchedBookId == null) continue;
           await this.store.updateWorkMatch(probe.id, {
             matchedBookId: probe.matchedBookId,
             matchedBookIds: probe.matchedBookIds,
             ownedFormats: probe.ownedFormats,
+            linkedFormats: probe.linkedFormats,
+            answeredFormats: probe.answeredFormats,
           });
           healed.add(probe.id);
         }
@@ -626,6 +734,45 @@ export class MonitoredCatalogService {
       );
     }
     return healed;
+  }
+
+  /**
+   * One work matched again right after its owner answered about it, with that answer applied. Its
+   * possible matches are worked out again too, against the books the rest of the catalog owns, so
+   * handing a format back to the matcher brings its open question back with it.
+   */
+  async rematchWork(monitor: MonitoredAuthorConfig, work: MonitoredWork): Promise<MonitoredWork> {
+    const probe: MonitoredWork = {
+      ...work,
+      matchedBookId: null,
+      matchedBookIds: {},
+      ownedFormats: [],
+      linkedFormats: [],
+      answeredFormats: [],
+      possibleMatches: undefined,
+    };
+    const [overrides, claimedElsewhere] = await Promise.all([
+      this.loadOverridesByWork([{ monitorId: monitor.id, work: probe }]),
+      this.store.findClaimedBookIds(monitor.id, work.id),
+    ]);
+    await this.matchOwnedBooks([probe], monitor.localAuthorId, overrides, { detectPossible: true, claimedElsewhere });
+    return probe;
+  }
+
+  private async loadOverridesByWork(entries: Array<{ monitorId: string; work: MonitoredWork }>): Promise<Map<string, WorkMatchOverrides>> {
+    const rows = await this.store.findMatchOverrides([...new Set(entries.map((entry) => entry.monitorId))]);
+    const result = new Map<string, WorkMatchOverrides>();
+    if (rows.length === 0) return result;
+    for (const { monitorId, work } of entries) {
+      result.set(
+        work.id,
+        resolveWorkMatchOverrides(
+          work,
+          rows.filter((row) => row.monitorAuthorId === monitorId),
+        ),
+      );
+    }
+    return result;
   }
 
   /** The works worth rematching on this read, grouped into one matching pass per local author. */
@@ -747,8 +894,16 @@ export class MonitoredCatalogService {
   // Goodreads id (all exact provider-id matches across the whole present library), then a title + series
   // + author fallback scoped to the monitored author's own books. ISBN belongs between the ids and the
   // title fallback, but MonitoredWork does not carry an ISBN yet (needs sourcing from Hardcover editions).
-  private async matchOwnedBooks(works: MonitoredWork[], localAuthorId: number | null): Promise<void> {
+  private async matchOwnedBooks(
+    works: MonitoredWork[],
+    localAuthorId: number | null,
+    overridesByWork: Map<string, WorkMatchOverrides>,
+    // A pass over part of a catalog cannot see which books the other works own, so it is told.
+    options: { detectPossible: boolean; claimedElsewhere?: ReadonlySet<number> },
+  ): Promise<void> {
     if (works.length === 0) return;
+    const linkedCandidates = await this.loadLinkedCandidates(overridesByWork);
+    const conflictsByWork = new Map<MonitoredWork, OwnedClaim[]>();
 
     const hardcoverIds = uniqueIds(works.map((work) => work.providerWorkIds.hardcover));
     const asins = uniqueIds(works.map((work) => work.providerWorkIds.audible));
@@ -823,24 +978,10 @@ export class MonitoredCatalogService {
     // One candidate per book, so the several file rows a book has collapse into its format set
     // instead of into several competing candidates for the same book.
     const candidates = new Map<number, OwnedCandidate>();
-    const candidateFor = (row: {
-      bookId: number;
-      title: string | null;
-      seriesName: string | null;
-      seriesIndex: string | null;
-      publishedYear: number | null;
-    }) => {
+    const candidateFor = (row: CandidateRow) => {
       const existing = candidates.get(row.bookId);
       if (existing) return existing;
-      const created: OwnedCandidate = {
-        bookId: row.bookId,
-        title: row.title ?? '',
-        titleKey: foldedTitleKey(row.title ?? ''),
-        seriesName: row.seriesName,
-        seriesIndex: row.seriesIndex,
-        publishedYear: row.publishedYear,
-        formats: new Set<string>(),
-      };
+      const created = newOwnedCandidate(row);
       candidates.set(row.bookId, created);
       return created;
     };
@@ -908,26 +1049,39 @@ export class MonitoredCatalogService {
         if (!seriesPrefixMatch(spacedWork, row.spaced, seriesBridgeTokens(work.seriesName, row.seriesName))) continue;
         claim(OWNED_MATCH_TIER.seriesPrefix, [row.candidate]);
       }
-      if (claims.size === 0) continue;
-
-      // A title or series-prefix match is only a book's title; a provider id names the exact work.
-      const allClaims = [...claims.values()].filter(({ candidate, tier }) => {
-        if (tier === OWNED_MATCH_TIER.providerId) return true;
-        if (seriesVolumeConflict(work, candidate)) return false;
-        // A format label the two titles do not agree on is an edition change ("(Manga)" against the
-        // prose book, "(Manga)" against "(Light Novel)"), which neither a shared slot nor an
-        // agreeing volume number can rescue.
-        if (!sameFormatLabels(work.title, candidate.title)) return false;
-        return tier !== OWNED_MATCH_TIER.titleCore || !sharesOnlyColonFront(work.title, candidate.title) || sameSeriesSlot(work, candidate);
-      });
+      const overrides = overridesByWork.get(work.id) ?? emptyWorkMatchOverrides();
+      // A title or series-prefix match is only a book's title; a provider id names the exact work. A
+      // title match the series number refuses may still be this book under another numbering, so it
+      // is kept aside as a possible match. A different format label or a shared series front is a
+      // different book, and is dropped.
+      const kept: OwnedClaim[] = [];
+      const conflicted: OwnedClaim[] = [];
+      for (const entry of claims.values()) {
+        const { candidate, tier } = entry;
+        if (tier === OWNED_MATCH_TIER.providerId) {
+          kept.push(entry);
+          continue;
+        }
+        if (!sameFormatLabels(work.title, candidate.title)) continue;
+        if (seriesVolumeConflict(work, candidate)) {
+          conflicted.push(entry);
+          continue;
+        }
+        if (tier === OWNED_MATCH_TIER.titleCore && sharesOnlyColonFront(work.title, candidate.title) && !sameSeriesSlot(work, candidate)) continue;
+        kept.push(entry);
+      }
+      if (conflicted.length > 0) conflictsByWork.set(work, conflicted);
       const origins = new Map<string, number>();
-      for (const format of new Set(allClaims.flatMap((entry) => [...entry.candidate.formats]))) {
+      for (const format of new Set(kept.flatMap((entry) => [...entry.candidate.formats]))) {
+        const rejected = overrides[formatKind(format)].rejected;
         const winner = chooseOwnedCandidate(
           work,
-          allClaims.filter((entry) => entry.candidate.formats.has(format)),
+          kept.filter((entry) => entry.candidate.formats.has(format) && !rejected.has(entry.candidate.bookId)),
         );
         if (winner) origins.set(format, winner.candidate.bookId);
       }
+      work.linkedFormats = applyLinkedBooks(origins, overrides, linkedCandidates);
+      work.answeredFormats = MONITORED_FORMATS.filter((kind) => overrides[kind].linkedBookId != null || overrides[kind].rejected.size > 0);
       const matchedBookIds = toMatchedBookIds(origins);
       const primary = matchedBookIds.ebook ?? matchedBookIds.audiobook ?? null;
       if (primary == null) continue;
@@ -935,6 +1089,47 @@ export class MonitoredCatalogService {
       work.matchedBookIds = matchedBookIds;
       work.ownedFormats = this.toOwnedFormats(new Set(origins.keys()));
     }
+
+    if (!options.detectPossible) return;
+    const claimed = new Set([...(options.claimedElsewhere ?? []), ...works.flatMap((work) => Object.values(work.matchedBookIds ?? {}))]);
+    for (const [work, conflicted] of conflictsByWork) {
+      work.possibleMatches = possibleMatchesFor(work, conflicted, overridesByWork.get(work.id) ?? emptyWorkMatchOverrides(), claimed);
+    }
+  }
+
+  /** Every present book the owners linked by hand, with its files, whoever wrote it. */
+  private async loadLinkedCandidates(overridesByWork: Map<string, WorkMatchOverrides>): Promise<Map<number, OwnedCandidate>> {
+    const ids = [
+      ...new Set(
+        [...overridesByWork.values()].flatMap((overrides) =>
+          MONITORED_FORMATS.map((format) => overrides[format].linkedBookId).filter((id): id is number => id != null),
+        ),
+      ),
+    ];
+    const result = new Map<number, OwnedCandidate>();
+    if (ids.length === 0) return result;
+    const rows = await this.db
+      .select({
+        bookId: books.id,
+        title: bookMetadata.title,
+        seriesName: bookMetadata.seriesName,
+        seriesIndex: bookMetadata.seriesIndex,
+        publishedYear: bookMetadata.publishedYear,
+        format: bookFiles.format,
+      })
+      .from(books)
+      .innerJoin(bookMetadata, eq(bookMetadata.bookId, books.id))
+      .leftJoin(bookFiles, and(eq(bookFiles.bookId, books.id), eq(bookFiles.role, 'content')))
+      .where(and(inArray(books.id, ids), eq(books.status, 'present')));
+    for (const row of rows) {
+      let candidate = result.get(row.bookId);
+      if (!candidate) {
+        candidate = newOwnedCandidate(row);
+        result.set(row.bookId, candidate);
+      }
+      if (row.format) candidate.formats.add(row.format);
+    }
+    return result;
   }
 
   private toOwnedFormats(formats: Set<string>): MonitoredFormat[] {

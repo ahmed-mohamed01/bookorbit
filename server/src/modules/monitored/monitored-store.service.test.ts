@@ -10,7 +10,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { MonitoredStoreService, releaseEventKey, releaseRangeOverlapsSql, type MonitoredDueRelease } from './monitored-store.service';
 import { visibleWorkCondition } from './monitored-work-conditions';
 import * as schema from './schema/monitored.schema';
-import { authorCatalogWorks, type AuthorCatalogWorkRow } from './schema/monitored.schema';
+import { authorCatalogWorks, type AuthorCatalogWorkRow, type MonitoredAuthorWorkRow } from './schema/monitored.schema';
 
 function probe(status: 'dated' | 'unlisted' | 'expected', releaseDate: string | null) {
   return { status, releaseDate, precision: releaseDate ? ('day' as const) : null };
@@ -83,6 +83,10 @@ function workRow(patch: Partial<AuthorCatalogWorkRow> = {}): AuthorCatalogWorkRo
     matchedEbookBookId: 10,
     matchedAudioBookId: 20,
     ownedFormats: ['ebook', 'audiobook'],
+    possibleEbookBookId: null,
+    possibleAudioBookId: null,
+    linkedFormats: [],
+    answeredFormats: [],
     ...patch,
   };
 }
@@ -177,6 +181,64 @@ describe('MonitoredStoreService work composition', () => {
       new Map(),
       releases,
     ]) as Record<string, unknown>;
+
+  describe('possible matches and links', () => {
+    const possibleBook = { bookId: 31, title: 'Inhibitor Phase', seriesName: 'Revelation Space', seriesIndex: '5' };
+    const unmatched = (patch: Partial<AuthorCatalogWorkRow> = {}) =>
+      workRow({ matchedBookId: null, matchedEbookBookId: null, matchedAudioBookId: null, ownedFormats: [], possibleEbookBookId: 31, ...patch });
+    const compose = (row: AuthorCatalogWorkRow, isOwner = true, accessible: Set<number> | null = null) =>
+      Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [
+        row,
+        [],
+        undefined,
+        accessible,
+        isOwner,
+        new Map(),
+        [],
+        new Map([[31, possibleBook]]),
+      ]) as Record<string, unknown>;
+
+    it('shows the owner the library book behind a possible match', () => {
+      expect(compose(unmatched()).possibleMatches).toEqual({ ebook: possibleBook });
+    });
+
+    it('drops the question once the format is in the library', () => {
+      expect(compose(unmatched({ matchedBookId: 10, matchedEbookBookId: 10, ownedFormats: ['ebook'] }))).not.toHaveProperty('possibleMatches');
+    });
+
+    it('withholds possible matches and links from anyone but the owner, and books the viewer cannot open', () => {
+      expect(compose(unmatched({ linkedFormats: ['audiobook'] }), false)).not.toHaveProperty('possibleMatches');
+      expect(compose(unmatched({ linkedFormats: ['audiobook'] }), false)).not.toHaveProperty('linkedFormats');
+      expect(compose(unmatched(), true, new Set())).not.toHaveProperty('possibleMatches');
+    });
+
+    it('lets an answered format keep its stored match over the book a request filed', () => {
+      const overlay = { workId: 'monitor-1:hardcover:1', ebookRequestId: 7 } as MonitoredAuthorWorkRow;
+      const requests = new Map([[7, { id: 7, status: 'available', matchedBookId: 99 }]]);
+      const composeWith = (row: AuthorCatalogWorkRow) =>
+        Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [
+          row,
+          [],
+          overlay,
+          null,
+          true,
+          requests,
+          [],
+          new Map(),
+        ]) as { matchedBookIds: Record<string, number>; ownedFormats: string[] };
+      const base: Partial<AuthorCatalogWorkRow> = { matchedBookId: null, matchedEbookBookId: null, matchedAudioBookId: null, ownedFormats: [] };
+
+      expect(composeWith(workRow({ ...base })).matchedBookIds).toEqual({ ebook: 99 });
+      const answered = composeWith(workRow({ ...base, answeredFormats: ['ebook'] }));
+      expect(answered.matchedBookIds).toEqual({});
+      expect(answered.ownedFormats).toEqual([]);
+    });
+
+    it('tells the owner which formats they linked by hand', () => {
+      expect(compose(workRow({ linkedFormats: ['ebook'] })).linkedFormats).toEqual(['ebook']);
+      expect(compose(workRow())).not.toHaveProperty('linkedFormats');
+    });
+  });
 
   it('supplies default user state when no overlay exists', () => {
     const result = Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [

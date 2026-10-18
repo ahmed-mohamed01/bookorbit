@@ -11,6 +11,7 @@ const TABLE_NAMES = [
   'monitored_release_events',
   'monitored_request_ledger',
   'monitored_choice_ledger',
+  'monitored_match_overrides',
   'author_catalog_works',
   'author_catalog_state',
   'author_catalog_source_works',
@@ -52,7 +53,7 @@ describe('MonitoredSchemaBootstrapService', () => {
     expect(store.findMissingTables).toHaveBeenCalledWith(TABLE_NAMES);
     expect(store.applySchemaStatements).toHaveBeenCalledTimes(1);
     const statements = store.applySchemaStatements.mock.calls[0]![0] as string[];
-    expect(statements.filter((statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'))).toHaveLength(12);
+    expect(statements.filter((statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS'))).toHaveLength(13);
     expect(statements.some((statement) => statement.includes('auto_grab'))).toBe(false);
     expect(statements.some((statement) => statement.includes('public.bookorbit_unaccent("title") gin_trgm_ops'))).toBe(true);
     expect(statements).toContain('DROP INDEX IF EXISTS "author_catalog_work_releases_next_check_at_idx";');
@@ -75,7 +76,7 @@ describe('MonitoredSchemaBootstrapService', () => {
     const message = logSpy.mock.calls[0]![0] as string;
     expect(message).toContain('[monitored.schema_bootstrap] [end]');
     expect(message).toContain('durationMs=');
-    expect(message).toContain('tablesCreated=12');
+    expect(message).toContain('tablesCreated=13');
     expect(errorSpy).not.toHaveBeenCalled();
   });
 

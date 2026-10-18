@@ -290,6 +290,13 @@ describe('auto-request helpers', () => {
     expect(isRequestable(work({ monitorState: 'stopped' }), 'ebook')).toBe(false);
   });
 
+  it('holds a format back while a possible match waits for the owner, and only that format', () => {
+    const flagged = work({ possibleMatches: { ebook: { bookId: 31, title: 'Inhibitor Phase', seriesName: 'Revelation Space', seriesIndex: '5' } } });
+
+    expect(isRequestable(flagged, 'ebook')).toBe(false);
+    expect(isRequestable(flagged, 'audiobook')).toBe(true);
+  });
+
   it('follows the owner mark: a review mark blocks a kept work, Book requests an unverified one', () => {
     expect(isRequestable(work({ userVisibility: 'visible', userKind: 'collection' }), 'ebook')).toBe(false);
     expect(isRequestable(work({ verdict: 'suspect', userKind: 'book' }), 'ebook')).toBe(true);

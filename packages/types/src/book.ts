@@ -516,3 +516,13 @@ export type CoverSearchResult = {
 
 /** `GET /books/cover/search` answers with a bare array of results, not an envelope. */
 export type CoverSearchResponse = CoverSearchResult[];
+
+/** One result of GET /books/search, the viewer's own cross-library search. `formats` are its file formats. */
+export interface BookSearchOption {
+  id: number;
+  title: string | null;
+  authors: string[];
+  seriesName: string | null;
+  libraryName: string;
+  formats: string[];
+}
