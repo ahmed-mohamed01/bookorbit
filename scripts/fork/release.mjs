@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Release step of a monitored push. Run on monitored, from a clean tree.
+// Cuts a fork release on demand. A plain push of monitored only builds the image (Container Image);
+// this tags and releases everything since the previous fork tag. Run on monitored, from a clean tree.
 //   Draft the next CHANGELOG.fork.md entry and print the release body for approval:
 //     node scripts/fork/release.mjs prepare [--version vX.Y.Z-mN] [--from <ref>]
 //   Print the release body from the working-tree changelog (after editing the entry):
