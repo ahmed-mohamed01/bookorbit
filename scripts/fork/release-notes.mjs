@@ -2,8 +2,12 @@
 // Fork release notes.
 //   Draft a CHANGELOG.fork.md entry from commits that are on the fork but not upstream:
 //     node scripts/fork/release-notes.mjs vX.Y.Z-mN [--from <ref>] [--to <ref>] [--upstream <ref>]
-//   Build the GitHub Release body (fork highlights, upstream notes for the base, then the fork's changelog entry):
+//   Build the GitHub Release body (highlights, upstream merged in this release only, then the fork's changes):
 //     node scripts/fork/release-notes.mjs vX.Y.Z-mN --release-body [--to <ref>] [--changelog <file>] [--image <ref>] [--allow-draft]
+//   List the upstream releases a fork release brings in, as "<tag> <commit> <date the fork merged it>":
+//     node scripts/fork/release-notes.mjs vX.Y.Z-mN --fresh-upstream [--to <ref>]
+//   Build the body of the fork's mirror of an upstream release (upstream's own notes):
+//     node scripts/fork/release-notes.mjs vX.Y.Z --upstream-release
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
@@ -15,7 +19,8 @@ const opt = (name, fallback) => {
   return i === -1 ? fallback : args[i + 1];
 };
 
-if (!version || !/^v\d+\.\d+\.\d+-m\d+$/.test(version)) {
+const upstreamMirror = args.includes("--upstream-release");
+if (!version || !(upstreamMirror ? /^v\d+\.\d+\.\d+$/ : /^v\d+\.\d+\.\d+-m\d+$/).test(version)) {
   console.error("usage: release-notes.mjs vX.Y.Z-mN [--release-body] [--from <ref>] [--to <ref>] [--upstream <ref>]");
   process.exit(1);
 }
@@ -37,7 +42,13 @@ const base = git("describe", "--tags", "--abbrev=0", "--exclude", "*-m*", to);
 const range = from ? [`${from}..${to}`] : [to];
 const HIGHLIGHTS_TODO = "<!-- highlights: write these before publishing -->";
 
-if (!version.startsWith(`${base}-m`)) {
+const forkRepo = () => {
+  const named = opt("repo", process.env.GITHUB_REPOSITORY);
+  if (named) return named;
+  return git("remote", "get-url", "origin").match(/github\.com[:/](.+?)(?:\.git)?$/)?.[1] ?? "ahmed-mohamed01/bookorbit";
+};
+
+if (!upstreamMirror && !version.startsWith(`${base}-m`)) {
   console.error(`warning: ${version} does not match the upstream base ${base} reachable from ${to}`);
 }
 
@@ -100,18 +111,24 @@ const bySemverDesc = (a, b) => {
   return y[0] - x[0] || y[1] - x[1] || y[2] - x[2];
 };
 
-// Upstream releases this fork release brings in; when the base did not move, repeat the base's notes.
-function upstreamReleaseTags() {
+// Upstream releases this fork release brings in. The first fork release brings in its base.
+function freshUpstreamTags() {
   const reachable = (ref) =>
     new Set(
       git("tag", "--merged", ref, "--list", "v*.*.*")
         .split("\n")
         .filter((t) => /^v\d+\.\d+\.\d+$/.test(t)),
     );
-  const now = reachable(to);
-  const before = from ? reachable(from) : new Set();
-  const fresh = from ? [...now].filter((t) => !before.has(t)) : [];
-  return (fresh.length ? fresh : [base]).sort(bySemverDesc);
+  if (!from) return [base];
+  const before = reachable(from);
+  return [...reachable(to)].filter((t) => !before.has(t)).sort(bySemverDesc);
+}
+
+// When the fork took the tag in: the first commit on monitored's own line that contains it.
+function adoptedAt(tag) {
+  const commits = git("log", "--first-parent", "--reverse", "--format=%H %cI", ...range).split("\n").filter(Boolean);
+  const hit = commits.find((c) => tryGit("merge-base", "--is-ancestor", tag, c.split(" ")[0]) !== null);
+  return hit ? hit.split(" ")[1] : git("log", "-1", "--format=%cI", tag);
 }
 
 function upstreamReleaseBody(tag) {
@@ -122,25 +139,50 @@ function upstreamReleaseBody(tag) {
   }
 }
 
-function unreleasedUpstream() {
+// Upstream main commits this release merged that no upstream release carries yet.
+function mergedUpstreamMain() {
   const syncPoint = tryGit("merge-base", to, upstream);
   if (!syncPoint) return [];
-  const commits = logCommits(`${base}..${syncPoint}`);
+  const previousSync = from ? tryGit("merge-base", from, upstream) : null;
+  const commits = logCommits(`${base}..${syncPoint}`, ...(previousSync ? ["--not", previousSync] : []));
   if (!commits.length) return [];
   const order = ["feat", "fix", "perf", "security", "db"];
   const notable = commits.filter((c) => order.includes(c.type)).sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type));
   const short = syncPoint.slice(0, 8);
   const out = [
-    `## Upstream changes after ${base}`,
-    "",
-    `Merged from upstream \`main\` at [${short}](https://github.com/${UPSTREAM_REPO}/commit/${syncPoint}), not yet in an upstream release. [Full compare](https://github.com/${UPSTREAM_REPO}/compare/${base}...${syncPoint}).`,
+    `Merged from upstream \`main\` up to [${short}](https://github.com/${UPSTREAM_REPO}/commit/${syncPoint}), not yet in an upstream release.`,
     "",
     ...notable.map((c) => qualifyUpstreamRefs(line(c))),
   ];
   const rest = commits.length - notable.length;
   if (rest) out.push(`- ${rest} maintenance commit${rest === 1 ? "" : "s"} (deps, i18n, docs, tests, CI)`);
-  out.push("");
   return out;
+}
+
+function upstreamSection() {
+  const fresh = freshUpstreamTags();
+  const merged = mergedUpstreamMain();
+  if (!fresh.length && !merged.length) return [];
+  const out = ["# Upstream changes in this release", ""];
+  for (const tag of fresh) {
+    out.push(`- Now based on upstream [BookOrbit ${tag.replace(/^v/, "")}](https://github.com/${forkRepo()}/releases/tag/${tag}); its release notes are there.`);
+  }
+  if (fresh.length && merged.length) out.push("");
+  out.push(...merged, "");
+  return out;
+}
+
+function mirrorBody() {
+  const body = upstreamReleaseBody(version);
+  const link = `https://github.com/${UPSTREAM_REPO}/releases/tag/${version}`;
+  return [
+    body ? qualifyUpstreamRefs(body).trim() : `See the [upstream release notes](${link}).`,
+    "",
+    "---",
+    "",
+    `Upstream BookOrbit ${version.replace(/^v/, "")}, mirrored from [${UPSTREAM_REPO}](${link}). Fork releases built on it are \`${version}-mN\`.`,
+    "",
+  ].join("\n");
 }
 
 // A backfilled tag points at a commit older than its changelog entry, so fall back to monitored.
@@ -169,21 +211,19 @@ function releaseBody() {
   const { highlights, rest } = splitHighlights(readChangelogSection());
   const out = [];
   if (highlights) out.push(`# Highlights in ${version.replace(/^v/, "")}`, "", highlights, "");
-  for (const tag of upstreamReleaseTags()) {
-    const body = upstreamReleaseBody(tag);
-    out.push(`# Upstream BookOrbit ${tag.replace(/^v/, "")}`, "");
-    out.push(body ? qualifyUpstreamRefs(body).trim() : `See the [upstream release notes](https://github.com/${UPSTREAM_REPO}/releases/tag/${tag}).`);
-    out.push("");
-  }
-  out.push(...unreleasedUpstream());
-  out.push(`# Fork additions in ${version.replace(/^v/, "")}`, "", rest.replace(/^### /gm, "## "), "");
+  out.push(...upstreamSection());
+  out.push(`# Fork changes in ${version.replace(/^v/, "")}`, "", rest.replace(/^### /gm, "## "), "");
   const image = opt("image", null);
   if (image) out.push("---", "", "**Docker**", "", "```bash", `docker pull ${image}`, "```", "");
   return out.join("\n");
 }
 
 try {
-  process.stdout.write(args.includes("--release-body") ? releaseBody() : draftEntry());
+  if (upstreamMirror) process.stdout.write(mirrorBody());
+  else if (args.includes("--fresh-upstream")) {
+    const lines = [...freshUpstreamTags()].reverse().map((tag) => `${tag} ${git("rev-parse", `${tag}^{commit}`)} ${adoptedAt(tag)}`);
+    process.stdout.write(lines.length ? `${lines.join("\n")}\n` : "");
+  } else process.stdout.write(args.includes("--release-body") ? releaseBody() : draftEntry());
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

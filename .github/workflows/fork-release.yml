@@ -126,7 +126,28 @@ jobs:
           git fetch --no-tags upstream '+refs/tags/v*:refs/tags/v*'
           git fetch --no-tags origin monitored:refs/remotes/origin/monitored
 
-      - name: Build notes (fork highlights, upstream release notes, then fork additions)
+      # Each upstream release this one brings in gets its own entry, dated when monitored merged it so
+      # the list reads 3.4.0, 3.4.0-m1, 3.4.0-m2. A tag's date is what orders the release list.
+      - name: Mirror the upstream releases this one brings in
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/fork/release-notes.mjs "$GITHUB_REF_NAME" --fresh-upstream --to "$GITHUB_SHA" > fresh.txt
+          while read -r tag sha adopted; do
+            gh release view "$tag" >/dev/null 2>&1 && continue
+            if ! gh api "repos/${GH_REPO}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+              object=$(gh api "repos/${GH_REPO}/git/tags" -f tag="$tag" -f message="BookOrbit ${tag#v} (upstream)" -f object="$sha" -f type=commit \
+                -f 'tagger[name]=github-actions[bot]' -f 'tagger[email]=41898282+github-actions[bot]@users.noreply.github.com' -f "tagger[date]=${adopted}" -q .sha)
+              gh api "repos/${GH_REPO}/git/refs" -f ref="refs/tags/${tag}" -f sha="$object" >/dev/null
+            fi
+            node scripts/fork/release-notes.mjs "$tag" --upstream-release > mirror.md
+            gh release create "$tag" --verify-tag --latest=false --title "BookOrbit ${tag#v}" --notes-file mirror.md
+          done < fresh.txt
+
+      - name: Build notes (highlights, upstream merged in this release, then fork changes)
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

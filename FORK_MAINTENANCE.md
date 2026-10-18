@@ -290,15 +290,20 @@ Fork versions are `v<upstream base>-m<N>`, e.g. `v3.1.0-m2`.
 followed by the drafted commit sections: commits on the fork but not upstream, grouped by type,
 `Closes #n` references carried over, upstream syncs listed.
 
-The GitHub Release for a fork version reads top to bottom:
+The fork's release list keeps upstream and fork changes apart, ordered by when monitored took them
+in: `3.4.0`, `3.4.0-m1`, `3.4.0-m2`. A release's place in the list is its tag's date.
 
-1. **Highlights in `<version>`**: the entry's highlights.
-2. **Upstream BookOrbit `<base>`**: upstream's own release notes for the base, verbatim (or every
-   upstream release the fork release newly brings in, newest first, when the base moved).
-3. **Upstream changes after `<base>`**: upstream `main` commits merged but not yet in an upstream
-   release, features and fixes listed, maintenance counted.
-4. **Fork additions in `<version>`**: the rest of the `CHANGELOG.fork.md` entry.
-5. **Docker**: the `docker pull` line, for releases that tag an image.
+- **Upstream entries** (`BookOrbit 3.4.0`): upstream's own release notes, verbatim, never Latest.
+  Fork Release creates one for each upstream release a fork release brings in
+  (`release-notes.mjs <fork tag> --fresh-upstream`), as an annotated tag dated when monitored
+  merged it, so it sorts just below that fork release.
+- **Fork entries** (`BookOrbit 3.4.0-m2`) read top to bottom:
+  1. **Highlights in `<version>`**: the entry's highlights.
+  2. **Upstream changes in this release**, only when this release merged upstream code: a link to
+     the upstream entry when the base moved, and the upstream `main` commits merged since the
+     previous fork release that no upstream release carries yet.
+  3. **Fork changes in `<version>`**: the rest of the `CHANGELOG.fork.md` entry.
+  4. **Docker**: the `docker pull` line, for releases that tag an image.
 
 Upstream `#123` references are rewritten to `bookorbit/bookorbit#123` so they do not link to fork
 issues.
