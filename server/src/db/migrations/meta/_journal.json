@@ -820,6 +820,34 @@
       "when": 1792185442568,
       "tag": "0116_regex_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1792191772317,
+      "tag": "0117_add_reading_session_sync_interval",
+      "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1792201109071,
+      "tag": "0118_add_kobo_bookmark_links",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1792206724086,
+      "tag": "0119_add_kobo_full_size_covers",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1792209194389,
+      "tag": "0120_record_kobo_snapshot_cover_ids",
+      "breakpoints": true
     }
   ]
 }
