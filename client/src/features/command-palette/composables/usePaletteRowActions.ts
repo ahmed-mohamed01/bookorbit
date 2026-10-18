@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
-import type { HardcoverSearchBook, MonitoredCatalogSearchHit, MonitoredFormat } from '@bookorbit/types'
+import { monitoredWorkIsAudiobookOnly, type HardcoverSearchBook, type MonitoredCatalogSearchHit, type MonitoredFormat } from '@bookorbit/types'
 import { useBookRequestVisibility } from '@/features/book-requests/composables/useBookRequestVisibility'
 import { requestMonitoredWork } from '@/features/monitored/api/monitored'
 import { useMonitorGroupAction } from '@/features/monitored/composables/useMonitorGroupAction'
@@ -26,8 +26,7 @@ export function usePaletteRowActions() {
     if (!showBookRequests.value || requestedRows.value.has(hit)) return undefined
     return watchedFormats(hit).find(
       ({ format, status }) =>
-        !(format === 'ebook' && hit.work.ebookReleaseDate == null && hit.work.audioReleaseDate != null) &&
-        editionRowAction(hit.work, format, status, true) === 'request',
+        !(format === 'ebook' && monitoredWorkIsAudiobookOnly(hit.work)) && editionRowAction(hit.work, format, status, true) === 'request',
     )?.format
   }
 

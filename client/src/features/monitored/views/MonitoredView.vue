@@ -51,7 +51,7 @@ import { monitoredErrorText } from '../lib/api-error'
 import { isMonitoredAcquisitionState } from '../lib/monitored-format-state'
 import { refreshAllAuthorsSequentially, type MonitoredRefreshSummary } from '../lib/refresh-summary'
 import { releaseItemHasFormatToGet, sweptRowWorkIds } from '../lib/bulk-select'
-import { collapseReleaseItems, releaseDateMoved, type MonitoredReleaseEntry } from '../lib/grouping'
+import { collapseReleaseItems, releaseDateForWork, releaseDateMoved, type MonitoredReleaseEntry } from '../lib/grouping'
 import AddMonitoredPanel from '../components/AddMonitoredPanel.vue'
 import MonitoredAuthorCard from '../components/MonitoredAuthorCard.vue'
 import MonitoredBookPanel from '../components/MonitoredBookPanel.vue'
@@ -886,8 +886,9 @@ function entryCanManage(entry: MonitoredReleaseEntry): boolean {
 }
 
 function entryTimeBadge(entry: MonitoredReleaseEntry): TimeBadge | null {
-  const first = entry.items[0]
-  return first ? releaseTimeBadge(first.releaseDate, t) : null
+  const workDate = releaseDateForWork(entry.work)
+  const shown = entry.items.find((item) => item.releaseDate === workDate) ?? entry.items[0]
+  return shown ? releaseTimeBadge(shown.releaseDate, t) : null
 }
 
 async function handleReleaseRequest(item: MonitoredReleaseItem) {

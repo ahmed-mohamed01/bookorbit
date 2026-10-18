@@ -282,6 +282,34 @@ describe('MonitoredService', () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
+  it('accepts an ebook request when the ebook date lives only on its probe row', async () => {
+    const expectedEbook = work({
+      ebookReleaseDate: null,
+      ebookDatePrecision: null,
+      audioReleaseDate: '2026-05-01',
+      audioDatePrecision: 'day',
+      formatReleases: {
+        ebook: {
+          status: 'expected',
+          releaseDate: '2026-10-13',
+          precision: 'day',
+          source: null,
+          checkedAt: null,
+          dateChangedAt: null,
+          previousReleaseDate: null,
+          previousPrecision: null,
+          suggested: null,
+        },
+      },
+    });
+    const store = { getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author(), work: expectedEbook }) };
+    const submitWorkRequest = vi.fn().mockResolvedValue(expectedEbook);
+
+    await service(store, {}, { autoRequests: { submitWorkRequest } }).requestFromWork(viewer, expectedEbook.id, { format: 'ebook' });
+
+    expect(submitWorkRequest).toHaveBeenCalledWith(viewer, expect.anything(), expectedEbook, 'ebook', undefined);
+  });
+
   it('omits a fractional series index from a request instead of truncating it', async () => {
     const submit = vi.fn().mockResolvedValue({ request: { id: 91 } });
     const updateWorkUserState = vi.fn().mockResolvedValue(work({ requestIds: { ebook: 91 } }));
@@ -1459,7 +1487,14 @@ describe('MonitoredService', () => {
       getCatalog: vi.fn().mockResolvedValue({
         fetchedAt: '2026-09-01T00:00:00.000Z',
         works: [
-          work({ id: 'undated', ebookReleaseDate: null, ebookDatePrecision: null, audioReleaseDate: null, audioDatePrecision: null }),
+          work({
+            id: 'undated',
+            releaseYear: null,
+            ebookReleaseDate: null,
+            ebookDatePrecision: null,
+            audioReleaseDate: null,
+            audioDatePrecision: null,
+          }),
           work({ id: 'dated', ebookReleaseDate: '2026-10-01', audioReleaseDate: null, audioDatePrecision: null }),
         ],
       }),
@@ -1469,6 +1504,39 @@ describe('MonitoredService', () => {
     const detail = await instance.getAuthor('monitor-1', viewer, { sort: 'releaseDate', order, includeHidden: false });
 
     expect(detail.works.map((item) => item.id)).toEqual(['dated', 'undated']);
+  });
+
+  it('sorts by a date the owner set ahead of a stale store date on the other format', async () => {
+    const ownerDated = work({
+      id: 'owner-dated',
+      ebookReleaseDate: '2029-01-01',
+      audioReleaseDate: '2024-08-28',
+      formatReleases: {
+        ebook: {
+          status: 'dated',
+          releaseDate: '2029-01-01',
+          precision: 'day',
+          source: 'user',
+          checkedAt: null,
+          dateChangedAt: null,
+          previousReleaseDate: null,
+          previousPrecision: null,
+          suggested: null,
+        },
+      },
+    });
+    const store = {
+      getAuthor: vi.fn().mockResolvedValue(author()),
+      getCatalog: vi.fn().mockResolvedValue({
+        fetchedAt: '2026-09-01T00:00:00.000Z',
+        works: [ownerDated, work({ id: 'next', ebookReleaseDate: '2027-01-01', audioReleaseDate: null, audioDatePrecision: null })],
+      }),
+    };
+    const instance = service(store, {}, { authorsRepository: { findIdByNormalizedName: vi.fn().mockResolvedValue(null) } });
+
+    const detail = await instance.getAuthor('monitor-1', viewer, { sort: 'releaseDate', order: 'asc', includeHidden: false });
+
+    expect(detail.works.map((item) => item.id)).toEqual(['next', 'owner-dated']);
   });
 
   it('does not let includeHidden reveal works the owner curated away from viewers', async () => {

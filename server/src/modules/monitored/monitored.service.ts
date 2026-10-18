@@ -15,6 +15,8 @@ import {
   isWorkVisible,
   monitoredBulkFormats,
   monitoredBulkSkipReason,
+  monitoredWorkIsAudiobookOnly,
+  monitoredWorkReleaseDate,
   MONITORED_FORMATS,
   MONITORED_STATUS_FILTER_BY_FORMAT_STATUS,
   monitoredAcquisitionState,
@@ -910,7 +912,7 @@ export class MonitoredService {
     const entry = await this.store.getWorkWithMonitor(workId);
     if (!entry) throw new NotFoundException('Monitored work not found');
     if (entry.monitor.ownerUserId !== user.id) throw new ForbiddenException('No access to this monitored work');
-    if (payload.format === 'ebook' && entry.work.ebookReleaseDate == null && entry.work.audioReleaseDate != null) {
+    if (payload.format === 'ebook' && monitoredWorkIsAudiobookOnly(entry.work)) {
       throw new BadRequestException('This work is audiobook-only and cannot be requested as an ebook');
     }
     return this.autoRequests.submitWorkRequest(
@@ -1272,8 +1274,8 @@ export class MonitoredService {
       .filter((work) => !query.status || workMatchesStatusFilters(monitor, work, query.status, today))
       .sort((left, right) => {
         if (query.sort === 'releaseDate') {
-          const leftDate = this.earliestReleaseDate(left);
-          const rightDate = this.earliestReleaseDate(right);
+          const leftDate = monitoredWorkReleaseDate(left);
+          const rightDate = monitoredWorkReleaseDate(right);
           if (leftDate == null) return rightDate == null ? 0 : 1;
           if (rightDate == null) return -1;
           return leftDate.localeCompare(rightDate) * direction;
@@ -1311,10 +1313,6 @@ export class MonitoredService {
       },
       nextReleaseAt: dated[0] ?? null,
     };
-  }
-
-  private earliestReleaseDate(work: MonitoredWork): string | null {
-    return [work.ebookReleaseDate, work.audioReleaseDate].filter((date): date is string => date != null).sort()[0] ?? null;
   }
 
   /**

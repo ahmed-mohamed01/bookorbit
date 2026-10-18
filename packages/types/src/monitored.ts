@@ -159,6 +159,33 @@ export function monitoredFormatReleaseDate(
 }
 
 /**
+ * The one date a work is listed, grouped and sorted by. The probe clears a format's date column once
+ * it turns out to be a hint rather than a listing, so a work whose only known date is an unconfirmed
+ * hint would otherwise fall back to January 1 of its release year and read as long past. The hints
+ * are ranked below the columns and above the year so such a book still lands in Upcoming. A date the
+ * owner set for a format they still want outranks both, so a store's stale listing for the other
+ * format cannot pull the work back into the past.
+ */
+export function monitoredWorkReleaseDate(work: MonitoredWork): string | null {
+  const releases = work.formatReleases ?? {};
+  const ownDates = MONITORED_FORMATS.filter((format) => !work.ownedFormats.includes(format) && work.monitorFormats?.[format] !== false)
+    .map((format) => releases[format])
+    .filter((release) => release?.source === "user" && release.status === "dated")
+    .map((release) => release?.releaseDate)
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  if (ownDates[0]) return ownDates[0];
+  const dates = [work.ebookReleaseDate, work.audioReleaseDate].filter((value): value is string => Boolean(value)).sort();
+  if (dates[0]) return dates[0];
+  const hints = Object.values(releases)
+    .filter((release) => release.status !== "unlisted")
+    .map((release) => release.releaseDate)
+    .filter((value): value is string => Boolean(value))
+    .sort();
+  return hints[0] ?? (work.releaseYear === null ? null : `${work.releaseYear}-01-01`);
+}
+
+/**
  * A request exists for the format and is not finished: it is being fetched, filed, or waiting on the
  * owner, so a new one is not offered. Wider than the server in_progress filter bucket, which leaves
  * out needs_choice.
@@ -188,8 +215,16 @@ export function monitoredBulkSkipReason(work: MonitoredWork, format: MonitoredFo
   const status = monitoredFormatStatus(work, format, todayUtc);
   if (status === "owned") return "owned";
   if (MONITORED_ACTIVE_REQUEST_STATUSES.has(status)) return "requested";
-  if (format === "ebook" && work.ebookReleaseDate == null && work.audioReleaseDate != null) return "no_ebook";
+  if (format === "ebook" && monitoredWorkIsAudiobookOnly(work)) return "no_ebook";
   return null;
+}
+
+/**
+ * Only the audiobook has a date. Read through the probe like the panel does: enrolment moves an
+ * ebook hint off the column, so the column alone would call a work with an expected ebook audio-only.
+ */
+export function monitoredWorkIsAudiobookOnly(work: MonitoredWork): boolean {
+  return monitoredFormatReleaseDate(work, "ebook").date == null && monitoredFormatReleaseDate(work, "audiobook").date != null;
 }
 
 export interface MonitoredBulkRequestPayload {

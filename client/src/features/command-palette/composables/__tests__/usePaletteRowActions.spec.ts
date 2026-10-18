@@ -40,6 +40,25 @@ it('offers audiobook for audiobook-only works', () => {
   row.work.ebookReleaseDate = null
   expect(usePaletteRowActions().requestFormat(row)).toBe('audiobook')
 })
+it('offers an ebook whose only date is an expected hint on its probe row', () => {
+  const row = hit()
+  row.work.ebookReleaseDate = null
+  row.work.audioReleaseDate = '2026-05-01'
+  row.work.formatReleases = {
+    ebook: {
+      status: 'expected',
+      releaseDate: '2026-01-13',
+      precision: 'day',
+      source: null,
+      checkedAt: null,
+      dateChangedAt: null,
+      previousReleaseDate: null,
+      previousPrecision: null,
+      suggested: null,
+    },
+  }
+  expect(usePaletteRowActions().requestFormat(row)).toBe('ebook')
+})
 it('offers nothing after a successful request', async () => {
   const row = hit()
   row.authorModes.audiobook = 'notify'

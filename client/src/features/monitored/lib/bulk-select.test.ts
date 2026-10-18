@@ -26,6 +26,32 @@ describe('bulkRequestPreview', () => {
     expect(preview.skipped.owned).toBe(1)
   })
 
+  it('reads the ebook date through its probe row, as the server does', () => {
+    const probeRelease = (status: 'expected' | 'unlisted', releaseDate: string | null) => ({
+      status,
+      releaseDate,
+      precision: releaseDate ? ('day' as const) : null,
+      source: null,
+      checkedAt: null,
+      dateChangedAt: null,
+      previousReleaseDate: null,
+      previousPrecision: null,
+      suggested: null,
+    })
+    const expectedEbook = workFixture({
+      id: 'expected-ebook',
+      ebookReleaseDate: null,
+      ebookDatePrecision: null,
+      formatReleases: { ebook: probeRelease('expected', '2026-01-13') },
+    })
+    const unlistedEbook = workFixture({ id: 'unlisted-ebook', formatReleases: { ebook: probeRelease('unlisted', null) } })
+
+    const preview = bulkRequestPreview([expectedEbook, unlistedEbook], 'ebook', TODAY)
+
+    expect(preview.ebooks).toBe(1)
+    expect(preview.skipped.no_ebook).toBe(1)
+  })
+
   it('counts an upcoming format as requestable, as the server does', () => {
     expect(bulkRequestPreview([upcoming], 'audiobook', TODAY).audiobooks).toBe(1)
   })

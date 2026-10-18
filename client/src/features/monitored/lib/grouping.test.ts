@@ -71,6 +71,64 @@ describe('monitored work grouping', () => {
     expect(releaseDateForWork(lordOfDemons)).toBe('2026-10-06')
   })
 
+  it('puts a date the owner set ahead of an earlier store date on the other format', () => {
+    // Untitled Elantris, Vol. 3: Audible lists a stale audiobook date, the owner moved the ebook out.
+    const elantris = work({
+      id: 'elantris-3',
+      title: 'Untitled Elantris, Vol. 3',
+      releaseYear: 2024,
+      ebookReleaseDate: '2029-01-01',
+      ebookDatePrecision: 'day',
+      audioReleaseDate: '2024-08-28',
+      audioDatePrecision: 'day',
+      formatReleases: {
+        ebook: {
+          status: 'dated',
+          releaseDate: '2029-01-01',
+          precision: 'day',
+          source: 'user',
+          checkedAt: null,
+          dateChangedAt: null,
+          previousReleaseDate: null,
+          previousPrecision: null,
+          suggested: null,
+        },
+      },
+    })
+
+    expect(releaseDateForWork(elantris)).toBe('2029-01-01')
+  })
+
+  it('takes the earliest owner date, and only for a format still wanted', () => {
+    const ownerDated = (releaseDate: string) => ({
+      status: 'dated' as const,
+      releaseDate,
+      precision: 'day' as const,
+      source: 'user' as const,
+      checkedAt: null,
+      dateChangedAt: null,
+      previousReleaseDate: null,
+      previousPrecision: null,
+      suggested: null,
+    })
+    const both = work({
+      id: 'both',
+      title: 'Both',
+      ebookReleaseDate: '2025-01-01',
+      formatReleases: { ebook: ownerDated('2029-06-01'), audiobook: ownerDated('2028-03-01') },
+    })
+    const ownedEbook = work({
+      id: 'owned',
+      title: 'Owned',
+      ownedFormats: ['ebook'],
+      audioReleaseDate: '2026-02-01',
+      formatReleases: { ebook: ownerDated('2029-06-01') },
+    })
+
+    expect(releaseDateForWork(both)).toBe('2028-03-01')
+    expect(releaseDateForWork(ownedEbook)).toBe('2026-02-01')
+  })
+
   it('keeps the columns ahead of the hints and the year behind them', () => {
     const withColumn = work({
       id: 'column',
