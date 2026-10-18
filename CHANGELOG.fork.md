@@ -2,6 +2,14 @@
 
 Releases of the ahmed-mohamed01/bookorbit fork. Versions are `v<upstream base>-m<N>`; see [FORK_MAINTENANCE.md](FORK_MAINTENANCE.md). Upstream changes are in the [upstream releases](https://github.com/bookorbit/bookorbit/releases).
 
+## v3.4.0-m6 - 2026-10-18
+
+Upstream base: v3.4.0 · Previous: v3.4.0-m5
+
+### Fixes
+
+- **monitored:** match a trailing "Book N" title to the bare number (1b21dcb8)
+
 ## v3.4.0-m5 - 2026-10-18
 
 Upstream base: v3.4.0 · Previous: v3.4.0-m4
