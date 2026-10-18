@@ -1,16 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { MonitoredWork } from '@bookorbit/types'
 import {
-  countReviewKinds,
-  DEFAULT_MONITORED_DISPLAY,
-  isEveryReviewKindSelected,
-  isReviewKindSelected,
-  toggleReviewKind,
-  isWorkDisplayed,
-  isWorkVisible,
-  readDisplayOptions,
-  reviewKindOf,
+  workKindOf,
   workDisplayClass,
+  countWorkClasses,
+  toggleKind,
+  isWorkDisplayed,
+  readDisplayOptions,
+  isDefaultDisplay,
+  DEFAULT_MONITORED_DISPLAY,
   workReleaseStatus,
 } from './work-visibility'
 
@@ -40,78 +38,6 @@ function work(overrides: Partial<MonitoredWork> = {}): MonitoredWork {
     ...overrides,
   }
 }
-
-describe('isWorkVisible', () => {
-  it('shows only a verified, unflagged work by default', () => {
-    expect(isWorkVisible(work())).toBe(true)
-    expect(isWorkVisible(work({ verdict: 'suspect' }))).toBe(false)
-    expect(isWorkVisible(work({ flags: ['compilation'] }))).toBe(false)
-  })
-
-  it('lets an owner override outrank the verdict in both directions', () => {
-    expect(isWorkVisible(work({ verdict: 'suspect', userVisibility: 'visible' }))).toBe(true)
-    expect(isWorkVisible(work({ userVisibility: 'hidden' }))).toBe(false)
-  })
-
-  it('lets the owner mark decide below hidden and above a kept choice', () => {
-    expect(isWorkVisible(work({ userVisibility: 'hidden', userKind: 'book' }))).toBe(false)
-    expect(isWorkVisible(work({ userVisibility: 'visible', userKind: 'collection' }))).toBe(false)
-    expect(isWorkVisible(work({ verdict: 'suspect', userKind: 'book' }))).toBe(true)
-    expect(isWorkVisible(work({ userKind: 'duplicate' }))).toBe(false)
-  })
-})
-
-describe('reviewKindOf', () => {
-  it('answers with the persisted kind', () => {
-    expect(reviewKindOf(work({ kind: 'graphic_novel' }))).toBe('graphic_novel')
-  })
-
-  it('files a work the reconciler never named under other', () => {
-    // Nothing about its shape is known - it simply failed to earn the default list.
-    expect(reviewKindOf(work({ verdict: 'probable' }))).toBe('other')
-  })
-})
-
-describe('countReviewKinds', () => {
-  it('counts every kind present and totals them under all', () => {
-    const counts = countReviewKinds([
-      work({ kind: 'collection' }),
-      work({ kind: 'collection' }),
-      work({ kind: 'split_part' }),
-      work({ kind: 'duplicate' }),
-      work(),
-    ])
-
-    expect(counts).toEqual({
-      all: 5,
-      collection: 2,
-      split_part: 1,
-      anthology: 0,
-      graphic_novel: 0,
-      supplemental: 0,
-      format_variant: 0,
-      duplicate: 1,
-      other: 1,
-    })
-  })
-})
-
-describe('workDisplayClass', () => {
-  it('gives every work exactly one class, so no switch double-counts against another', () => {
-    expect(workDisplayClass(work())).toBe('default')
-    expect(workDisplayClass(work({ userVisibility: 'hidden' }))).toBe('hidden')
-    expect(workDisplayClass(work({ verdict: 'probable', flags: ['placeholder'] }))).toBe('placeholder')
-    expect(workDisplayClass(work({ verdict: 'suspect' }))).toBe('review')
-  })
-
-  it('lets an owner promotion pull a work back into the default list', () => {
-    expect(workDisplayClass(work({ verdict: 'suspect', userVisibility: 'visible' }))).toBe('default')
-  })
-
-  it('reads a hidden placeholder as hidden, because an owner override outranks the flag', () => {
-    expect(workDisplayClass(work({ flags: ['placeholder'], userVisibility: 'hidden' }))).toBe('hidden')
-  })
-})
 
 describe('workReleaseStatus', () => {
   const now = Date.parse('2026-09-07T00:00:00Z')
@@ -159,76 +85,72 @@ describe('workReleaseStatus', () => {
   })
 })
 
-describe('isWorkDisplayed', () => {
-  const now = Date.parse('2026-09-07T00:00:00Z')
-  const display = (overrides: Partial<typeof DEFAULT_MONITORED_DISPLAY> = {}) => ({ ...DEFAULT_MONITORED_DISPLAY, ...overrides })
-
-  it('shows only the default class out of the box', () => {
-    expect(isWorkDisplayed(work(), display(), now)).toBe(true)
-    expect(isWorkDisplayed(work({ verdict: 'suspect' }), display(), now)).toBe(false)
-    expect(isWorkDisplayed(work({ userVisibility: 'hidden' }), display(), now)).toBe(false)
-    expect(isWorkDisplayed(work({ verdict: 'probable', flags: ['placeholder'] }), display(), now)).toBe(false)
+describe('kind visibility', () => {
+  it('resolves user marks before visibility and detected kinds', () => {
+    expect(workKindOf(work({ userKind: 'supplemental', kind: 'collection' }))).toBe('supplemental')
+    expect(workKindOf(work({ kind: 'collection' }))).toBe('book')
+    expect(workKindOf(work({ verdict: 'suspect', userVisibility: 'visible', kind: 'collection' }))).toBe('book')
+    expect(workKindOf(work({ verdict: 'suspect', kind: 'collection' }))).toBe('collection')
+    expect(workKindOf(work({ verdict: 'suspect' }))).toBeNull()
   })
-
-  it('narrows the review class to the picked kinds, and leaves the other classes untouched by it', () => {
-    const options = display({ review: true, reviewKinds: ['collection', 'anthology'] })
-
-    expect(isWorkDisplayed(work({ verdict: 'suspect', kind: 'collection' }), options, now)).toBe(true)
-    expect(isWorkDisplayed(work({ verdict: 'suspect', kind: 'anthology' }), options, now)).toBe(true)
-    expect(isWorkDisplayed(work({ verdict: 'suspect', kind: 'graphic_novel' }), options, now)).toBe(false)
-    expect(isWorkDisplayed(work(), options, now)).toBe(true)
+  it('counts kinds and unconfirmed works with hidden and placeholders excluded', () => {
+    const works = [
+      work(),
+      work({ userVisibility: 'hidden', userKind: 'collection', flags: ['placeholder'] }),
+      work({ verdict: 'suspect', kind: 'collection', flags: ['placeholder'] }),
+      work({ flags: ['placeholder'] }),
+      work({ verdict: 'suspect' }),
+    ]
+    expect(works.map(workDisplayClass)).toEqual(['kind', 'hidden', 'placeholder', 'placeholder', 'unconfirmed'])
+    expect(countWorkClasses(works)).toMatchObject({ hidden: 1, placeholder: 2, unconfirmed: 1, kinds: { book: 1, collection: 0, supplemental: 0 } })
   })
-
-  it('shows no review work at all once every kind is unticked', () => {
-    const options = display({ review: true, reviewKinds: [] })
-
-    expect(isWorkDisplayed(work({ verdict: 'suspect', kind: 'collection' }), options, now)).toBe(false)
-    expect(isWorkDisplayed(work(), options, now)).toBe(true)
+  it('keeps a placeholder the owner marked Book or kept on the default list', () => {
+    expect(workDisplayClass(work({ flags: ['placeholder'], userKind: 'book' }))).toBe('kind')
+    expect(workDisplayClass(work({ flags: ['placeholder'], userVisibility: 'visible' }))).toBe('kind')
+    expect(isWorkDisplayed(work({ flags: ['placeholder'], userKind: 'book' }), DEFAULT_MONITORED_DISPLAY)).toBe(true)
   })
-
-  it('never drops an undated work, whichever release switch is off', () => {
-    expect(isWorkDisplayed(work(), display({ released: false, upcoming: false }), now)).toBe(true)
-    expect(isWorkDisplayed(work({ ebookReleaseDate: '2020-01-01' }), display({ released: false }), now)).toBe(false)
-    expect(isWorkDisplayed(work({ ebookReleaseDate: '2099-01-01' }), display({ upcoming: false }), now)).toBe(false)
+  it('filters kinds and independently reveals the More classes', () => {
+    const display = { ...DEFAULT_MONITORED_DISPLAY, kinds: ['collection'] as const }
+    expect(isWorkDisplayed(work(), { ...display, kinds: [...display.kinds] })).toBe(false)
+    expect(isWorkDisplayed(work({ userKind: 'collection' }), { ...display, kinds: [...display.kinds] })).toBe(true)
+    for (const [extra, flag] of [
+      [{ userVisibility: 'hidden' }, 'hidden'],
+      [{ flags: ['placeholder'] }, 'placeholders'],
+      [{ verdict: 'suspect' }, 'unconfirmed'],
+    ] as const) {
+      const entry = work(extra as Partial<MonitoredWork>)
+      expect(isWorkDisplayed(entry, DEFAULT_MONITORED_DISPLAY)).toBe(false)
+      expect(isWorkDisplayed(entry, { ...DEFAULT_MONITORED_DISPLAY, [flag]: true })).toBe(true)
+    }
   })
-})
-
-describe('readDisplayOptions', () => {
-  it('falls back to the defaults for anything missing or malformed', () => {
-    expect(readDisplayOptions(null)).toEqual(DEFAULT_MONITORED_DISPLAY)
-    expect(readDisplayOptions('nonsense')).toEqual(DEFAULT_MONITORED_DISPLAY)
-    expect(readDisplayOptions({ released: 'yes' })).toEqual(DEFAULT_MONITORED_DISPLAY)
+  it('reveals unconfirmed works of any kind independently of kind selection', () => {
+    const anthology = work({ verdict: 'suspect', kind: 'anthology' })
+    const display = { ...DEFAULT_MONITORED_DISPLAY, kinds: [], unconfirmed: true }
+    expect(isWorkDisplayed(anthology, display)).toBe(true)
+    expect(isWorkDisplayed(work({ userKind: 'anthology' }), display)).toBe(false)
+    expect(isWorkDisplayed(work({ ...anthology, userVisibility: 'visible' }), display)).toBe(false)
+    expect(isWorkDisplayed(anthology, { ...display, unconfirmed: false })).toBe(false)
+    expect(countWorkClasses([anthology])).toMatchObject({ unconfirmed: 1, kinds: { anthology: 1 } })
   })
-
-  it('drops stored kinds that are no longer part of the vocabulary', () => {
-    expect(readDisplayOptions({ review: true, reviewKinds: ['novellas'] }).reviewKinds).toBe('all')
-    expect(readDisplayOptions({ review: true, reviewKinds: ['anthology', 'novellas'] }).reviewKinds).toEqual(['anthology'])
-    expect(readDisplayOptions({ review: true, reviewKinds: 'all' }).reviewKinds).toBe('all')
+  it('applies release switches and always passes undated works', () => {
+    expect(isWorkDisplayed(work(), { ...DEFAULT_MONITORED_DISPLAY, released: false, upcoming: false })).toBe(true)
+    expect(isWorkDisplayed(work({ ebookReleaseDate: '2020-01-01' }), { ...DEFAULT_MONITORED_DISPLAY, released: false })).toBe(false)
+    expect(isWorkDisplayed(work({ ebookReleaseDate: '2099-01-01' }), { ...DEFAULT_MONITORED_DISPLAY, upcoming: false })).toBe(false)
   })
-})
-
-describe('review kind selection', () => {
-  const present = ['collection', 'anthology', 'graphic_novel'] as const
-
-  it('treats the all sentinel as every kind, whatever this author happens to have', () => {
-    expect(isReviewKindSelected('all', 'duplicate')).toBe(true)
-    expect(isEveryReviewKindSelected('all', present)).toBe(true)
-    expect(isEveryReviewKindSelected(['collection'], present)).toBe(false)
-    expect(isEveryReviewKindSelected([...present], present)).toBe(true)
+  it('allows empty kinds and returns canonical order', () => {
+    expect(toggleKind(['book'], 'book')).toEqual([])
+    expect(toggleKind(['duplicate'], 'book')).toEqual(['book', 'duplicate'])
+    expect(toggleKind(['book', 'collection'], 'book')).toEqual(['collection'])
   })
-
-  it('unticks one kind out of all, rather than reading the click as select-only-this', () => {
-    expect(toggleReviewKind('all', 'anthology', present)).toEqual(['collection', 'graphic_novel'])
-  })
-
-  it('collapses back to the sentinel when the last missing kind is ticked again', () => {
-    // Storing a literal list of everything would narrow to nothing on an author with other kinds.
-    expect(toggleReviewKind(['collection', 'graphic_novel'], 'anthology', present)).toBe('all')
-  })
-
-  it('adds and removes kinds so several can be picked together', () => {
-    expect(toggleReviewKind(['collection'], 'anthology', present)).toEqual(['collection', 'anthology'])
-    expect(toggleReviewKind(['collection', 'anthology'], 'collection', present)).toEqual(['anthology'])
-    expect(toggleReviewKind(['collection'], 'collection', present)).toEqual([])
+  it('reads storage defensively and ignores the old model', () => {
+    for (const stored of [null, 'junk', { kinds: ['unknown'] }, { review: true, reviewKinds: ['collection'] }, { released: 'yes' }])
+      expect(readDisplayOptions(stored)).toEqual(DEFAULT_MONITORED_DISPLAY)
+    expect(readDisplayOptions({ kinds: ['duplicate', 'book', 'unknown', 'book'], unconfirmed: true })).toMatchObject({
+      kinds: ['book', 'duplicate'],
+      unconfirmed: true,
+    })
+    expect(readDisplayOptions({ kinds: [] }).kinds).toEqual([])
+    expect(isDefaultDisplay(readDisplayOptions(null))).toBe(true)
+    expect(isDefaultDisplay(readDisplayOptions({ kinds: ['collection'] }))).toBe(false)
   })
 })

@@ -862,7 +862,7 @@ describe('MonitoredBookPanel visibility banner', () => {
     const wrapper = await mountPanel(marked, [])
 
     const banner = wrapper.findComponent(MonitoredVisibilityBanner)
-    expect(banner.text()).toContain('You marked this as part of a book')
+    expect(banner.text()).toContain('Marked as part of a book')
     expect(banner.text()).not.toContain('probable match')
     wrapper.unmount()
   })
@@ -886,6 +886,13 @@ describe('MonitoredBookPanel visibility banner', () => {
       [review, false],
       [review, true],
     ])
+    wrapper.unmount()
+  })
+
+  it('names a detected kind without claiming an owner mark', async () => {
+    const wrapper = await mountPanel({ ...baseWork, verdict: 'suspect', kind: 'supplemental' }, [])
+    const banner = wrapper.findComponent(MonitoredVisibilityBanner)
+    expect(banner.text()).toContain('Detected as supplemental, so it is hidden by default and not auto-downloaded. You can still request it.')
     wrapper.unmount()
   })
 

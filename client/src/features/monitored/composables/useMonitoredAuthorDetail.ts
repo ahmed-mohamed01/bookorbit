@@ -21,14 +21,15 @@ import {
 } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
 import { collapseEntryFor, emptyCollapseEntry, readCollapseStore, writeCollapseEntry, type MonitoredCollapseEntry } from '../lib/group-collapse'
+import { readFilterSections, type MonitoredFilterSection } from '../lib/filter-sections'
 import { groupWorks, sortWorks } from '../lib/grouping'
-import { readAuthorStatusFilters } from '../lib/status-filter'
+import { defaultAuthorStatusFilters, isDefaultAuthorFilters, readAuthorStatusFilters, workMatchesAuthorStatus } from '../lib/status-filter'
+import { todayUtc } from '../lib/format-status'
 import {
-  countReviewKinds,
+  countWorkClasses,
   DEFAULT_MONITORED_DISPLAY,
   isWorkDisplayed,
   readDisplayOptions,
-  workDisplayClass,
   type MonitoredDisplayOptions,
 } from '../lib/work-visibility'
 
@@ -37,9 +38,10 @@ type SortOrder = 'asc' | 'desc'
 const SORT_STORAGE_KEY = 'monitored:authorDetail:sort'
 const ORDER_STORAGE_KEY = 'monitored:authorDetail:order'
 const GROUP_STORAGE_KEY = 'monitored:authorDetail:group'
-const DISPLAY_STORAGE_KEY = 'monitored:authorDetail:display'
+const DISPLAY_STORAGE_KEY = 'monitored:authorDetail:display:v3'
 const COLLAPSE_STORAGE_KEY = 'monitored:authorDetail:collapsed'
 const STATUS_STORAGE_KEY = 'monitored:authorDetail:status:v2'
+const FILTER_SECTIONS_STORAGE_KEY = 'monitored:authorDetail:filterSections:v2'
 
 function firstQueryValue(value: unknown): string | undefined {
   return Array.isArray(value) ? value[0] : typeof value === 'string' ? value : undefined
@@ -75,30 +77,13 @@ export function useMonitoredAuthorDetail() {
   const collapse = ref<MonitoredCollapseEntry>(emptyCollapseEntry())
   const statusFilters = ref<MonitoredStatusFilter[]>(readAuthorStatusFilters(storage.get<unknown>(STATUS_STORAGE_KEY, null)))
 
+  const filterSections = ref(readFilterSections(storage.get<unknown>(FILTER_SECTIONS_STORAGE_KEY, null)))
+  function toggleFilterSection(key: MonitoredFilterSection) {
+    filterSections.value = { ...filterSections.value, [key]: !filterSections.value[key] }
+    storage.set(FILTER_SECTIONS_STORAGE_KEY, filterSections.value)
+  }
+
   const authorId = ref(String(route.params.id ?? ''))
-  // Collapsed sections are remembered per author, so returning to one finds the catalog as it was
-  // left and a sibling author is untouched by it.
-  watch(
-    authorId,
-    (id) => {
-      collapse.value = collapseEntryFor(readCollapseStore(storage.get<unknown>(COLLAPSE_STORAGE_KEY, null)), id)
-    },
-    { immediate: true },
-  )
-  const loadedWorks = computed(() => detail.value?.works.filter((work) => !hiddenWorkIds.value.has(work.id)) ?? [])
-  const displayCounts = computed(() => {
-    const counts = { hidden: 0, placeholder: 0, review: 0 }
-    for (const work of loadedWorks.value) {
-      const displayClass = workDisplayClass(work)
-      if (displayClass !== 'default') counts[displayClass] += 1
-    }
-    return counts
-  })
-  const reviewKindCounts = computed(() => countReviewKinds(loadedWorks.value.filter((work) => workDisplayClass(work) === 'review')))
-  const visibleWorks = computed(() => loadedWorks.value.filter((work) => isWorkDisplayed(work, display.value)))
-  const sortedWorks = computed(() => sortWorks(visibleWorks.value, sort.value, order.value))
-  const groups = computed(() => groupWorks(sortedWorks.value, grouping.value, order.value, sort.value))
-  const allGroupsCollapsed = computed(() => groups.value.length > 0 && groups.value.every((group) => isGroupCollapsed(group.key)))
   const monitoredFormats = computed<MonitoredFormat[]>(() => {
     const formats = detail.value?.author.formats
     if (!formats) return ['ebook', 'audiobook']
@@ -109,6 +94,27 @@ export function useMonitoredAuthorDetail() {
     if (!formats) return {}
     return Object.fromEntries((Object.keys(formats) as MonitoredFormat[]).map((format) => [format, formats[format].mode]))
   })
+  // Collapsed sections are remembered per author, so returning to one finds the catalog as it was
+  // left and a sibling author is untouched by it.
+  watch(
+    authorId,
+    (id) => {
+      collapse.value = collapseEntryFor(readCollapseStore(storage.get<unknown>(COLLAPSE_STORAGE_KEY, null)), id)
+    },
+    { immediate: true },
+  )
+  const loadedWorks = computed(() => detail.value?.works.filter((work) => !hiddenWorkIds.value.has(work.id)) ?? [])
+  const filterCounts = computed(() => countWorkClasses(loadedWorks.value))
+  const visibleWorks = computed(() => {
+    const today = todayUtc()
+    return loadedWorks.value.filter(
+      (work) => isWorkDisplayed(work, display.value) && workMatchesAuthorStatus(work, statusFilters.value, formatModes.value, today),
+    )
+  })
+  const sortedWorks = computed(() => sortWorks(visibleWorks.value, sort.value, order.value))
+  const groups = computed(() => groupWorks(sortedWorks.value, grouping.value, order.value, sort.value))
+  const allGroupsCollapsed = computed(() => groups.value.length > 0 && groups.value.every((group) => isGroupCollapsed(group.key)))
+  const filtersAreDefault = computed(() => isDefaultAuthorFilters(display.value, statusFilters.value))
 
   function syncRouteQuery() {
     void router.replace({
@@ -131,24 +137,11 @@ export function useMonitoredAuthorDetail() {
       const loaded = await fetchMonitoredAuthorDetail(authorId.value, {
         sort: sort.value,
         order: order.value,
-        // Every class is fetched every time so the Display menu can state its counts the moment it
-        // opens. The withheld classes measured 13-59 kB of extra text on the largest catalogs here,
-        // which buys instant switches and counts that are never a guess.
+        // Every class is fetched every time so the Filters menu can state its counts the moment it
+        // opens. The withheld classes measured 13-59 kB of extra text on the largest catalogs here.
         includeHidden: true,
-        // The status filter narrows on the server. Works outside the default list always come back,
-        // because the Display menu already decides which of those classes this page shows.
-        status: [...statusFilters.value, 'hidden'],
       })
       detail.value = loaded
-      // Another author, or a promotion that emptied the kind, leaves no row to click back out of:
-      // an empty kind is not listed, so a stale one would strand the grid on an unfixable filter.
-      const selection = display.value.reviewKinds
-      const counts = reviewKindCounts.value
-      // A selection naming only kinds this author has none of would show an empty list with every
-      // box that could fix it already unticked, so it falls back to everything.
-      if (selection !== 'all' && !selection.some((kind) => counts[kind] > 0)) {
-        setDisplay({ ...display.value, reviewKinds: 'all' })
-      }
     } catch (cause) {
       error.value = monitoredErrorText(cause, t('monitored.errors.loadAuthor'))
     } finally {
@@ -237,12 +230,12 @@ export function useMonitoredAuthorDetail() {
 
   function resetDisplay(): void {
     setDisplay({ ...DEFAULT_MONITORED_DISPLAY })
+    setStatusFilters(defaultAuthorStatusFilters())
   }
 
-  async function setStatusFilters(value: MonitoredStatusFilter[]): Promise<void> {
+  function setStatusFilters(value: MonitoredStatusFilter[]): void {
     statusFilters.value = value
     storage.set(STATUS_STORAGE_KEY, value)
-    await load()
   }
 
   async function setPaused(paused: boolean): Promise<void> {
@@ -358,9 +351,12 @@ export function useMonitoredAuthorDetail() {
     toggleGroup,
     toggleAllGroups,
     visibleWorks,
+    loadedWorks,
+    filtersAreDefault,
     display,
-    displayCounts,
-    reviewKindCounts,
+    filterCounts,
+    filterSections,
+    toggleFilterSection,
     monitoredFormats,
     formatModes,
     statusFilters,

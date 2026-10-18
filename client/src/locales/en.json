@@ -14617,7 +14617,7 @@
       "unhide": "Unhide",
       "backToAutomatic": "Back to automatic",
       "markAs": "Mark as",
-      "markAsNote": "Anything other than Book moves to Review and is no longer searched.",
+      "markAsNote": "Anything other than Book is hidden by default and never auto-downloaded. You can still request it.",
       "markAsKinds": {
         "book": {
           "title": "Book",
@@ -14659,8 +14659,8 @@
       "request": "Request",
       "requestFormat": "Request {format}",
       "banner": {
-        "review": "In review: {reasons}. It is not searched until you keep it.",
-        "marked": "You marked this as {kind}, so it is in review and not searched.",
+        "review": "Unconfirmed: {reasons}. It is not auto-downloaded until you keep it.",
+        "marked": "Marked as {kind}, so it is hidden by default and not auto-downloaded. You can still request it.",
         "reviewUnverified": "not confirmed by a second source",
         "verdict": {
           "probable": "probable match",
@@ -14668,13 +14668,14 @@
         },
         "keep": "Keep and watch",
         "hidden": "You hid this book, so it is not searched or listed.",
-        "kept": "You kept this book, so it is on your watchlist even though it is in review.",
+        "kept": "You kept this book, so it is on your watchlist even though it was not confirmed.",
         "authorPaused": "Watching {author} is paused.",
         "workPaused": "Watching this book is paused.",
         "workStopped": "Watching this book is stopped.",
         "resumeAuthor": "Resume author",
         "openAuthor": "Open author",
-        "dismiss": "Dismiss"
+        "dismiss": "Dismiss",
+        "detected": "Detected as {kind}, so it is hidden by default and not auto-downloaded. You can still request it."
       }
     },
     "card": {
@@ -14812,29 +14813,7 @@
       "refreshedAll": "Refreshed {refreshed, plural, =0 {no authors} one {# author} other {# authors}}.",
       "refreshedAllPartial": "Refreshed {refreshed, plural, =0 {no authors} one {# author} other {# authors}}. {skipped} on cooldown, {failed} failed."
     },
-    "display": {
-      "title": "Display",
-      "released": "Show released",
-      "upcoming": "Show upcoming",
-      "hidden": "Show hidden",
-      "placeholders": "Show placeholders",
-      "review": "Show under review",
-      "status": "Status",
-      "reset": "Reset to defaults"
-    },
     "review": {
-      "filter": "Filter review",
-      "kinds": {
-        "all": "All",
-        "collection": "Collections",
-        "split_part": "Parts of a book",
-        "anthology": "Anthologies",
-        "graphic_novel": "Comics",
-        "supplemental": "Supplemental",
-        "format_variant": "Alternate editions",
-        "duplicate": "Duplicates",
-        "other": "Other"
-      },
       "badges": {
         "collection": "Collection",
         "split_part": "Part of a book",
@@ -14947,7 +14926,7 @@
         "upcoming": "Upcoming",
         "in_library": "In library",
         "not_watched": "Not watched",
-        "hidden": "Hidden or in review"
+        "hidden": "Hidden or not shown by default"
       },
       "hints": {
         "missing": "Released, not in your library",
@@ -14956,7 +14935,7 @@
         "upcoming": "Announced or still to come",
         "in_library": "Already in your library",
         "not_watched": "Formats you switched off",
-        "hidden": "Hidden by you or kept out for review"
+        "hidden": "Hidden by you, unconfirmed, or not a Book"
       }
     },
     "selection": {
@@ -15017,7 +14996,7 @@
         "monitor": "Monitor",
         "markAs": "Mark as",
         "markAsLabel": "{count, plural, one {Mark # book as} other {Mark # books as}}",
-        "markAsNote": "Anything other than Book moves them to Review and stops searching. Book brings them back.",
+        "markAsNote": "Anything other than Book hides them by default and stops auto-downloads. Book brings them back.",
         "watchEbooks": "Watch ebooks",
         "watchAudiobooks": "Watch audiobooks",
         "unwatchEbooks": "Stop watching ebooks",
@@ -15099,6 +15078,27 @@
       "requestStatus": "{format} request:",
       "collapse": "Collapse",
       "expand": "Expand"
+    },
+    "filters": {
+      "title": "Filters",
+      "sections": {
+        "status": "Status",
+        "release": "Release",
+        "kind": "Kind",
+        "more": "More"
+      },
+      "released": "Released",
+      "upcoming": "Upcoming",
+      "hidden": "Hidden by you",
+      "placeholders": "Placeholders",
+      "unconfirmed": "Unconfirmed",
+      "empty": "No books match these filters",
+      "reset": "Reset filters",
+      "summary": {
+        "all": "All",
+        "none": "None",
+        "count": "{count} of {total}"
+      }
     }
   },
   "tts": {

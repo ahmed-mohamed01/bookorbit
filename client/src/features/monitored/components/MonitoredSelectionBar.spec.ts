@@ -105,7 +105,7 @@ describe('MonitoredSelectionBar', () => {
     const wrapper = mountBar()
     const count = wrapper.props('works').length
     expect(wrapper.text()).toContain(`Mark ${count} books as`)
-    expect(wrapper.text()).toContain('Anything other than Book moves them to Review and stops searching. Book brings them back.')
+    expect(wrapper.text()).toContain('Anything other than Book hides them by default and stops auto-downloads. Book brings them back.')
     expect(wrapper.find('[data-testid="mark-as-book"] svg.lucide-check').exists()).toBe(false)
 
     await wrapper.get('[data-testid="mark-as-split_part"]').trigger('click')

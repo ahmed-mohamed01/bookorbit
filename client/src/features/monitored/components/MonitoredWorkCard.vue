@@ -11,7 +11,7 @@ import { cardBadgeKind, cardBadgeTone, type CardBadgeKind } from '../lib/card-ba
 import { ACTIVE_REQUEST_STATUSES, workFormatStatus, type MonitoredFormatStatus } from '../lib/format-status'
 import { releaseDateForWork } from '../lib/grouping'
 import { releaseTimeBadge, type TimeBadge } from '../lib/time-badge'
-import { reviewKindOf, workDisplayClass } from '../lib/work-visibility'
+import { workKindOf, workDisplayClass } from '../lib/work-visibility'
 import { useFormatStatusText } from '../composables/useFormatStatusText'
 import MonitoredCardMenu, { type CardFormatMenu } from './MonitoredCardMenu.vue'
 
@@ -80,11 +80,12 @@ const seriesLine = computed(() => {
   return number ? `${number} · ${membership.name}` : membership.name
 })
 
-// Only the review class carries a kind worth naming. A work the owner hid, or a placeholder, has
-// its own switch and its own meaning, and labelling either of them from the review vocabulary reads
-// as a verdict the reconciler never reached.
 const displayClass = computed(() => workDisplayClass(props.work))
-const kindLabel = computed(() => (displayClass.value === 'review' ? t(`monitored.review.badges.${reviewKindOf(props.work)}`) : null))
+const kindLabel = computed(() => {
+  const kind = workKindOf(props.work)
+  if (kind && kind !== 'book') return t(`monitored.review.badges.${kind}`)
+  return displayClass.value === 'unconfirmed' ? t('monitored.review.badges.other') : null
+})
 const isHidden = computed(() => displayClass.value === 'hidden')
 
 function authorWatches(format: MonitoredFormat): boolean {

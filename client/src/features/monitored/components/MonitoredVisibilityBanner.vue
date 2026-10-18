@@ -65,6 +65,8 @@ const message = computed(() => {
       if (props.work.userKind && props.work.userKind !== 'book') {
         return t('monitored.panel.banner.marked', { kind: t(`monitored.panel.markAsKinds.${props.work.userKind}.title`).toLowerCase() })
       }
+      if (props.work.kind)
+        return t('monitored.panel.banner.detected', { kind: t(`monitored.panel.markAsKinds.${props.work.kind}.title`).toLowerCase() })
       return t('monitored.panel.banner.review', { reasons: reasons.value })
     default:
       return ''

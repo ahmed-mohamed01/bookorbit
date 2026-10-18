@@ -36,7 +36,7 @@ import { monitoredPortraitUrl } from '../lib/portrait-url'
 import MonitoredWorkCard from '../components/MonitoredWorkCard.vue'
 import MonitoredBookPanel from '../components/MonitoredBookPanel.vue'
 import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
-import MonitoredDisplayMenu from '../components/MonitoredDisplayMenu.vue'
+import MonitoredFiltersMenu from '../components/MonitoredFiltersMenu.vue'
 import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
 import MonitoredVirtualGrid from '../components/MonitoredVirtualGrid.vue'
 import MonitoredQuickSelect from '../components/MonitoredQuickSelect.vue'
@@ -66,9 +66,12 @@ const {
   toggleGroup,
   toggleAllGroups,
   visibleWorks,
+  loadedWorks,
+  filtersAreDefault,
   display,
-  displayCounts,
-  reviewKindCounts,
+  filterCounts,
+  filterSections,
+  toggleFilterSection,
   monitoredFormats,
   formatModes,
   statusFilters,
@@ -110,6 +113,12 @@ const DETAIL_WORK_GRID_GAP = 12
 
 const canManage = computed(() => hasPermission(Permission.BookRequestAccess))
 const canEdit = computed(() => canManage.value && (detail.value?.author.isOwner ?? false))
+// The owner's filters can show every kind, so their total is the whole catalog, not just the default list.
+const catalogTotal = computed(() => {
+  const author = detail.value?.author
+  if (!author?.counts) return 0
+  return author.isOwner ? author.counts.total + author.counts.hidden : author.counts.total
+})
 const author = computed(() => detail.value?.author ?? null)
 const portraitUrl = computed(() => (author.value?.portraitAuthorId == null ? null : monitoredPortraitUrl(author.value.id)))
 const fallbackStyle = computed(() => bookCoverStyle(author.value?.authorName ?? 'Monitored author'))
@@ -338,7 +347,7 @@ async function handleResumeAuthor() {
 }
 
 function handleStatusFiltersChange(value: MonitoredStatusFilter[]) {
-  void setStatusFilters(value)
+  setStatusFilters(value)
 }
 
 async function handleToggleHidden(work: MonitoredWork, value: boolean) {
@@ -643,10 +652,8 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
         <section class="mt-4 rounded-xl border border-border bg-card/75 p-3 sm:p-4">
           <div class="flex items-center justify-between gap-3">
             <h2 class="min-w-0 truncate text-sm font-semibold text-foreground">
-              <span class="hidden sm:inline">{{
-                t('monitored.detail.booksHeading', { shown: visibleWorks.length, total: author.counts.total })
-              }}</span>
-              <span class="sm:hidden">{{ t('monitored.detail.booksHeadingShort', { shown: visibleWorks.length, total: author.counts.total }) }}</span>
+              <span class="hidden sm:inline">{{ t('monitored.detail.booksHeading', { shown: visibleWorks.length, total: catalogTotal }) }}</span>
+              <span class="sm:hidden">{{ t('monitored.detail.booksHeadingShort', { shown: visibleWorks.length, total: catalogTotal }) }}</span>
             </h2>
             <div class="flex shrink-0 items-center gap-2">
               <MonitoredSortMenu
@@ -694,12 +701,13 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                 <span class="hidden sm:inline">{{ selectionMode ? t('monitored.selection.done') : t('monitored.selection.select') }}</span>
                 <span class="sr-only sm:hidden">{{ selectionMode ? t('monitored.selection.done') : t('monitored.selection.select') }}</span>
               </button>
-              <MonitoredDisplayMenu
+              <MonitoredFiltersMenu
                 :model-value="display"
-                :counts="displayCounts"
-                :review-kind-counts="reviewKindCounts"
+                :counts="filterCounts"
+                :sections="filterSections"
                 :can-curate="canEdit"
                 :status-filters="statusFilters"
+                @toggle-section="toggleFilterSection"
                 @update:status-filters="handleStatusFiltersChange"
                 @update:model-value="setDisplay"
                 @reset="resetDisplay"
@@ -716,6 +724,15 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
             @add="addMany"
             @keep="replaceSelection"
           />
+
+          <div
+            v-if="!loading && !error && visibleWorks.length === 0 && loadedWorks.length > 0 && !filtersAreDefault"
+            class="mt-5 text-center text-sm text-muted-foreground"
+            data-testid="filters-empty"
+          >
+            {{ t('monitored.filters.empty') }}
+            <button type="button" class="ml-2 text-primary hover:underline" @click="resetDisplay">{{ t('monitored.filters.reset') }}</button>
+          </div>
 
           <div class="mt-5 space-y-6" :class="selectionMode ? 'pb-28' : ''">
             <section v-for="group in groups" :key="group.key">

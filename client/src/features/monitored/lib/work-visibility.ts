@@ -1,75 +1,41 @@
-import { isWorkVisible, type MonitoredWork } from '@bookorbit/types'
+import { isWorkVisible, MONITORED_MARK_KINDS, type MonitoredMarkKind, type MonitoredWork } from '@bookorbit/types'
 import { releaseDateForWork } from './grouping'
 import { parseMonitoredDate } from './release-date'
+import { toggleInOrder } from './toggle-in-order'
 
 export { isWorkVisible }
 
-export const MONITORED_REVIEW_KINDS = [
-  'collection',
-  'split_part',
-  'anthology',
-  'graphic_novel',
-  'supplemental',
-  'format_variant',
-  'duplicate',
-  'other',
-] as const
-export type MonitoredReviewKind = (typeof MONITORED_REVIEW_KINDS)[number]
-
-export type MonitoredReviewKindFilter = 'all' | MonitoredReviewKind
-
-export type MonitoredReviewKindCounts = Record<MonitoredReviewKindFilter, number>
-
-/**
- * Which review kinds the list is narrowed to. `all` is a sentinel rather than a materialised list
- * because the kinds an author actually has vary: a selection naming every kind of one author would
- * silently narrow to nothing on the next one.
- */
-export type MonitoredReviewKindSelection = 'all' | MonitoredReviewKind[]
-
-export function isReviewKindSelected(selection: MonitoredReviewKindSelection, kind: MonitoredReviewKind): boolean {
-  return selection === 'all' || selection.includes(kind)
+export function workKindOf(work: MonitoredWork): MonitoredMarkKind | null {
+  return work.userKind ?? (isWorkVisible(work) ? 'book' : (work.kind ?? null))
 }
 
-export function isEveryReviewKindSelected(selection: MonitoredReviewKindSelection, present: readonly MonitoredReviewKind[]): boolean {
-  return selection === 'all' || present.every((kind) => selection.includes(kind))
+export type MonitoredDisplayClass = 'hidden' | 'kind' | 'placeholder' | 'unconfirmed'
+export interface MonitoredDisplayClassCounts {
+  hidden: number
+  placeholder: number
+  unconfirmed: number
+  kinds: Record<MonitoredMarkKind, number>
 }
-
-/**
- * Ticking a kind out of `all` has to spell the sentinel out first, against the kinds on screen, or
- * the click would read as "select only this one" instead of "everything except this one".
- */
-export function toggleReviewKind(
-  selection: MonitoredReviewKindSelection,
-  kind: MonitoredReviewKind,
-  present: readonly MonitoredReviewKind[],
-): MonitoredReviewKindSelection {
-  const current = selection === 'all' ? [...present] : selection
-  const next = current.includes(kind) ? current.filter((entry) => entry !== kind) : [...current, kind]
-  return present.every((entry) => next.includes(entry)) ? 'all' : next
-}
-
-/**
- * Which switch in the Display menu governs a work. Every work belongs to exactly one class, so a
- * placeholder is never also counted under review and no toggle can double-count against another.
- */
-const MONITORED_DISPLAY_CLASSES = ['default', 'hidden', 'placeholder', 'review'] as const
-export type MonitoredDisplayClass = (typeof MONITORED_DISPLAY_CLASSES)[number]
-
-/** How many works each switch would reveal. The default class is the list itself, so it is absent. */
-export type MonitoredDisplayClassCounts = Record<Exclude<MonitoredDisplayClass, 'default'>, number>
 
 export function workDisplayClass(work: MonitoredWork): MonitoredDisplayClass {
   if (work.userVisibility === 'hidden') return 'hidden'
-  if (isWorkVisible(work)) return 'default'
-  return work.flags.includes('placeholder') ? 'placeholder' : 'review'
+  // A placeholder the owner kept or marked Book is on the default list, so only an automatic one is a placeholder here.
+  if (!isWorkVisible(work) && work.flags.includes('placeholder')) return 'placeholder'
+  return workKindOf(work) !== null ? 'kind' : 'unconfirmed'
 }
 
-/**
- * A work with neither a date nor a year is `undated`, and the released/upcoming switches leave it
- * alone: it is not evidence of either, and dropping it would silently swallow every unannounced
- * book in the catalog.
- */
+export function isWorkUnconfirmed(work: MonitoredWork): boolean {
+  return (
+    work.userVisibility !== 'hidden' &&
+    !work.userKind &&
+    work.userVisibility !== 'visible' &&
+    !work.flags.includes('placeholder') &&
+    (work.verdict !== 'verified' || work.flags.length > 0)
+  )
+}
+
+// A work with neither date nor year is undated, and the released/upcoming switches leave it alone:
+// it is evidence of neither, and dropping it would silently swallow every unannounced book.
 export type MonitoredWorkReleaseStatus = 'released' | 'upcoming' | 'undated'
 
 export function workReleaseStatus(work: MonitoredWork, now: number = Date.now()): MonitoredWorkReleaseStatus {
@@ -78,86 +44,82 @@ export function workReleaseStatus(work: MonitoredWork, now: number = Date.now())
   return parsed.date.getTime() > now ? 'upcoming' : 'released'
 }
 
-/**
- * The chip a review work answers to. Only slot resolution names a kind, so a work that reached the
- * tray on its verdict alone - too obscure to corroborate, or flagged - falls to `other`.
- */
-export function reviewKindOf(work: MonitoredWork): MonitoredReviewKind {
-  return work.kind ?? 'other'
-}
-
-export function countReviewKinds(works: MonitoredWork[]): MonitoredReviewKindCounts {
-  const counts: MonitoredReviewKindCounts = {
-    all: 0,
-    collection: 0,
-    split_part: 0,
-    anthology: 0,
-    graphic_novel: 0,
-    supplemental: 0,
-    format_variant: 0,
-    duplicate: 0,
-    other: 0,
-  }
-  for (const work of works) {
-    counts.all += 1
-    counts[reviewKindOf(work)] += 1
-  }
-  return counts
-}
+export type MonitoredDisplayFlag = 'released' | 'upcoming' | 'hidden' | 'placeholders' | 'unconfirmed'
 
 export interface MonitoredDisplayOptions {
   released: boolean
   upcoming: boolean
+  kinds: MonitoredMarkKind[]
   hidden: boolean
   placeholders: boolean
-  review: boolean
-  reviewKinds: MonitoredReviewKindSelection
+  unconfirmed: boolean
 }
 
 export const DEFAULT_MONITORED_DISPLAY: MonitoredDisplayOptions = {
   released: true,
   upcoming: true,
+  kinds: ['book'],
   hidden: false,
   placeholders: false,
-  review: false,
-  reviewKinds: 'all',
+  unconfirmed: false,
 }
 
 export function isWorkDisplayed(work: MonitoredWork, display: MonitoredDisplayOptions, now: number = Date.now()): boolean {
   const displayClass = workDisplayClass(work)
   if (displayClass === 'hidden' && !display.hidden) return false
   if (displayClass === 'placeholder' && !display.placeholders) return false
-  if (displayClass === 'review') {
-    if (!display.review) return false
-    if (!isReviewKindSelected(display.reviewKinds, reviewKindOf(work))) return false
+  if (displayClass !== 'hidden' && displayClass !== 'placeholder') {
+    const kind = workKindOf(work)
+    if (!(kind !== null && display.kinds.includes(kind)) && !(display.unconfirmed && isWorkUnconfirmed(work))) return false
   }
   const status = workReleaseStatus(work, now)
-  if (status === 'released' && !display.released) return false
-  if (status === 'upcoming' && !display.upcoming) return false
-  return true
+  return !(status === 'released' && !display.released) && !(status === 'upcoming' && !display.upcoming)
+}
+
+export function countWorkClasses(works: MonitoredWork[]): MonitoredDisplayClassCounts {
+  const counts: MonitoredDisplayClassCounts = {
+    hidden: 0,
+    placeholder: 0,
+    unconfirmed: 0,
+    kinds: Object.fromEntries(MONITORED_MARK_KINDS.map((kind) => [kind, 0])) as Record<MonitoredMarkKind, number>,
+  }
+  for (const work of works) {
+    const category = workDisplayClass(work)
+    if (category === 'kind') counts.kinds[workKindOf(work)!] += 1
+    else if (category !== 'unconfirmed') counts[category] += 1
+    if (isWorkUnconfirmed(work)) counts.unconfirmed += 1
+  }
+  return counts
+}
+
+export function toggleKind(selection: readonly MonitoredMarkKind[], kind: MonitoredMarkKind): MonitoredMarkKind[] {
+  return toggleInOrder(MONITORED_MARK_KINDS, selection, kind)
 }
 
 export function isDefaultDisplay(display: MonitoredDisplayOptions): boolean {
-  return (Object.keys(DEFAULT_MONITORED_DISPLAY) as (keyof MonitoredDisplayOptions)[]).every((key) => display[key] === DEFAULT_MONITORED_DISPLAY[key])
+  return (
+    display.released &&
+    display.upcoming &&
+    !display.hidden &&
+    !display.placeholders &&
+    !display.unconfirmed &&
+    display.kinds.length === 1 &&
+    display.kinds[0] === 'book'
+  )
 }
 
 export function readDisplayOptions(stored: unknown): MonitoredDisplayOptions {
-  if (typeof stored !== 'object' || stored === null) return { ...DEFAULT_MONITORED_DISPLAY }
-  const raw = stored as Partial<Record<keyof MonitoredDisplayOptions, unknown>>
-  const flag = (key: keyof MonitoredDisplayOptions): boolean =>
-    typeof raw[key] === 'boolean' ? (raw[key] as boolean) : (DEFAULT_MONITORED_DISPLAY[key] as boolean)
-  // A stored selection is filtered rather than trusted: the vocabulary can shrink between releases,
-  // and an unrecognised entry would narrow the list to nothing with no way to see why.
-  const storedKinds = raw.reviewKinds
-  const kinds = Array.isArray(storedKinds)
-    ? storedKinds.filter((entry): entry is MonitoredReviewKind => (MONITORED_REVIEW_KINDS as readonly unknown[]).includes(entry))
-    : null
+  const raw = typeof stored === 'object' && stored !== null ? (stored as Record<string, unknown>) : {}
+  const flag = (key: MonitoredDisplayFlag) => (typeof raw[key] === 'boolean' ? (raw[key] as boolean) : DEFAULT_MONITORED_DISPLAY[key])
+  // The stored kind selection is filtered rather than trusted: the vocabulary can change between
+  // releases, and an unknown entry would narrow the list with no way to see why.
+  const kinds = MONITORED_MARK_KINDS.filter((kind) => Array.isArray(raw.kinds) && raw.kinds.includes(kind))
   return {
     released: flag('released'),
     upcoming: flag('upcoming'),
     hidden: flag('hidden'),
     placeholders: flag('placeholders'),
-    review: flag('review'),
-    reviewKinds: kinds && kinds.length > 0 ? kinds : 'all',
+    unconfirmed: flag('unconfirmed'),
+    kinds: kinds.length || (Array.isArray(raw.kinds) && raw.kinds.length === 0) ? kinds : ['book'],
   }
 }

@@ -14,17 +14,18 @@ export const MONITORED_WORK_FLAGS = ["compilation", "placeholder", "adaptation_s
 export type MonitoredWorkFlag = (typeof MONITORED_WORK_FLAGS)[number];
 
 /**
- * Why a work sits in the review tray, in the terms the tray shows. Only slot resolution and
- * duplicate demotion set one: a work that is merely unverified carries no kind, because nothing
- * about its shape is known - it just failed to earn the default list.
+ * Why a work sits off the default list, in the terms the Filters menu shows. Only slot resolution
+ * and duplicate demotion set one: a work that is merely unverified carries no kind, because
+ * nothing about its shape is known - it just failed to earn the default list.
  */
 export const MONITORED_WORK_KINDS = ["collection", "anthology", "graphic_novel", "supplemental", "format_variant", "duplicate"] as const;
 export type MonitoredWorkKind = (typeof MONITORED_WORK_KINDS)[number];
 
 /**
  * What the owner says a work is, overriding the reconciler's kind. `book` is a plain title in the
- * series and keeps the work in the list; every other mark sends it to review. `split_part` is only
- * ever set by the owner.
+ * series and keeps the work in the list; every other mark keeps the work off the default list and
+ * out of auto-requests, though it can still be requested by hand. `split_part` is only ever set
+ * by the owner.
  */
 export const MONITORED_MARK_KINDS = [
   "book",
@@ -37,7 +38,7 @@ export const MONITORED_MARK_KINDS = [
   "duplicate",
 ] as const;
 export type MonitoredMarkKind = (typeof MONITORED_MARK_KINDS)[number];
-/** A kind that keeps a work in review: the reconciler's, or the owner's mark other than `book`. */
+/** A kind that keeps a work off the default list: the reconciler's, or the owner's mark other than `book`. */
 export type MonitoredReviewWorkKind = Exclude<MonitoredMarkKind, "book">;
 
 export const MONITORED_WORK_STATES = ["monitoring", "paused", "stopped"] as const;
@@ -392,7 +393,7 @@ export interface MonitoredSeriesMembership {
 }
 
 export interface MonitoredWorkRating {
-  source: 'goodreads' | 'audible' | 'hardcover';
+  source: "goodreads" | "audible" | "hardcover";
   average: number;
   count: number | null;
 }

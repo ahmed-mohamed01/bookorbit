@@ -1,10 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
-import { mount } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
+import en from '@/locales/en.json'
+import { mount, shallowMount, flushPromises } from '@vue/test-utils'
 import type { MonitoredAuthorDetail, MonitoredWork } from '@bookorbit/types'
 import { fetchMonitoredAuthorDetail, refreshMonitoredAuthor, requestMonitoredWork, updateMonitoredWork } from '../api/monitored'
 import { storage } from '@/services/storage'
+import { defaultAuthorStatusFilters } from '../lib/status-filter'
 import { useMonitoredAuthorDetail } from './useMonitoredAuthorDetail'
+import MonitoredAuthorDetailView from '../views/MonitoredAuthorDetailView.vue'
+
+vi.mock('@/features/auth/composables/usePermissions', () => ({
+  usePermissions: () => ({ hasPermission: () => false }),
+}))
+vi.mock('@/features/book-requests/composables/useBookRequestProgress', () => ({
+  useBookRequestProgress: () => ({ onRequestsChanged: () => () => {} }),
+}))
 
 const routeState = vi.hoisted(() => ({
   authorId: 'author-1',
@@ -107,16 +118,14 @@ describe('useMonitoredAuthorDetail', () => {
     routeState.replace.mockReset()
   })
 
-  it('defaults the status filter to every status except hidden, including owned and not watched', async () => {
-    storage.remove('monitored:authorDetail:status')
+  it('defaults the status filter to every status except hidden, and sends no status query', async () => {
+    storage.remove('monitored:authorDetail:status:v2')
     const { composable, wrapper } = mountComposable()
     await composable.load()
 
-    expect(composable.statusFilters.value).toEqual(['missing', 'in_progress', 'needs_attention', 'upcoming', 'in_library', 'not_watched'])
-    expect(fetchDetailMock).toHaveBeenCalledWith(
-      'author-1',
-      expect.objectContaining({ status: ['missing', 'in_progress', 'needs_attention', 'upcoming', 'in_library', 'not_watched', 'hidden'] }),
-    )
+    expect(composable.statusFilters.value).toEqual(['missing', 'needs_attention', 'upcoming', 'in_library', 'not_watched'])
+    expect(fetchDetailMock).toHaveBeenCalledWith('author-1', { sort: 'releaseDate', order: 'desc', includeHidden: true })
+    expect(composable.visibleWorks.value).toHaveLength(1)
     wrapper.unmount()
   })
 
@@ -283,106 +292,94 @@ describe('useMonitoredAuthorDetail display options', () => {
   }
 
   beforeEach(() => {
-    storage.remove('monitored:authorDetail:display')
+    storage.remove('monitored:authorDetail:display:v3')
     fetchDetailMock.mockReset()
     fetchDetailMock.mockResolvedValue(reviewDetail())
   })
 
-  it('shows only the default class, while already knowing what the other switches would reveal', async () => {
+  it('counts every loaded class and filters locally without reloading', async () => {
     const { composable, wrapper } = mountComposable()
     await composable.load()
-
     expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['work-1'])
-    // Counts used to arrive only once a switch forced a second fetch, so the menu opened blank.
-    expect(composable.displayCounts.value).toEqual({ hidden: 1, placeholder: 1, review: 3 })
-    expect(composable.reviewKindCounts.value.all).toBe(3)
-    wrapper.unmount()
-  })
-
-  it('never refetches for a switch, because every class was fetched up front', async () => {
-    const { composable, wrapper } = mountComposable()
-    await composable.load()
-    expect(fetchDetailMock).toHaveBeenCalledWith('author-1', expect.objectContaining({ includeHidden: true }))
+    expect(composable.filterCounts.value).toMatchObject({
+      hidden: 1,
+      placeholder: 1,
+      unconfirmed: 3,
+      kinds: { book: 1, collection: 1, graphic_novel: 1 },
+    })
     fetchDetailMock.mockClear()
-
-    composable.setDisplay({ ...composable.display.value, review: true })
-    composable.setDisplay({ ...composable.display.value, hidden: true })
-    await Promise.resolve()
-
+    composable.setDisplay({ ...composable.display.value, kinds: ['collection', 'graphic_novel'] })
+    expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['box-set', 'comic'])
+    await composable.load()
+    expect(composable.display.value.kinds).toEqual(['collection', 'graphic_novel'])
+    fetchDetailMock.mockClear()
+    composable.setDisplay({ ...composable.display.value, unconfirmed: true, hidden: true })
+    expect(composable.visibleWorks.value).toHaveLength(4)
     expect(fetchDetailMock).not.toHaveBeenCalled()
-    // Default + review + hidden; the placeholder stays out because its own switch is still off.
-    expect(composable.visibleWorks.value).toHaveLength(5)
     wrapper.unmount()
   })
-
-  it('counts each class once, so a placeholder is never also counted under review', async () => {
+  it('persists section state independently of reset', () => {
+    storage.remove('monitored:authorDetail:filterSections:v2')
     const { composable, wrapper } = mountComposable()
-    await composable.load()
-
-    expect(composable.displayCounts.value).toEqual({ hidden: 1, placeholder: 1, review: 3 })
-    expect(composable.reviewKindCounts.value).toMatchObject({ all: 3, collection: 1, graphic_novel: 1, other: 1, anthology: 0 })
+    expect(composable.filterSections.value).toEqual({ status: true, release: false, kind: false, more: false })
+    composable.toggleFilterSection('more')
+    composable.resetDisplay()
+    expect(storage.get('monitored:authorDetail:filterSections:v2', null)).toEqual({ status: true, release: false, kind: false, more: true })
+    storage.remove('monitored:authorDetail:filterSections:v2')
     wrapper.unmount()
   })
+})
 
-  it('narrows the review class to the picked kinds without disturbing the default list', async () => {
-    const { composable, wrapper } = mountComposable()
-    composable.setDisplay({ ...composable.display.value, review: true })
-    await composable.load()
-
-    composable.setDisplay({ ...composable.display.value, reviewKinds: ['collection'] })
-    expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['work-1', 'box-set'])
-
-    // Several kinds at once is the point of the multi-select.
-    composable.setDisplay({ ...composable.display.value, reviewKinds: ['collection', 'graphic_novel'] })
-    expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['work-1', 'box-set', 'comic'])
-    wrapper.unmount()
-  })
-
-  it('drops the selection when review is collapsed, so re-expanding starts from all', async () => {
-    const { composable, wrapper } = mountComposable()
-    composable.setDisplay({ ...composable.display.value, review: true, reviewKinds: ['collection'] })
-    await composable.load()
-
-    composable.setDisplay({ ...composable.display.value, review: false, reviewKinds: 'all' })
-    composable.setDisplay({ ...composable.display.value, review: true })
-
-    expect(composable.display.value.reviewKinds).toBe('all')
-    wrapper.unmount()
-  })
-
-  it('reveals a work the owner hid only when hidden is switched on', async () => {
-    const { composable, wrapper } = mountComposable()
-    composable.setDisplay({ ...composable.display.value, hidden: true })
-    await composable.load()
-
-    expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['work-1', 'buried'])
-    wrapper.unmount()
-  })
-
-  it('falls back to all when a reload leaves every picked kind empty', async () => {
-    const { composable, wrapper } = mountComposable()
-    composable.setDisplay({ ...composable.display.value, review: true, reviewKinds: ['collection'] })
-    await composable.load()
-
-    // The next author has a tray, but nothing in it is a collection, and an absent kind is not listed.
+describe('useMonitoredAuthorDetail status filtering', () => {
+  beforeEach(() => {
+    storage.remove('monitored:authorDetail:status:v2')
+    storage.remove('monitored:authorDetail:display:v3')
+    fetchDetailMock.mockReset()
     fetchDetailMock.mockResolvedValue({
       author: detail().author,
-      works: [work(), work({ id: 'comic', verdict: 'suspect', kind: 'graphic_novel' })],
+      works: [
+        work({ id: 'plain', title: 'Plain' }),
+        work({ id: 'owned', title: 'Owned', ownedFormats: ['ebook'] }),
+        work({ id: 'fetching', title: 'Fetching', requestStatuses: { ebook: 'downloading' } }),
+      ],
     })
-    await composable.load()
+  })
 
-    expect(composable.display.value.reviewKinds).toBe('all')
-    expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['work-1', 'comic'])
+  it('narrows the list on the client without reloading, and keeps the counts over the whole catalog', async () => {
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+    expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['plain', 'owned', 'fetching'])
+    const counts = composable.filterCounts.value
+    fetchDetailMock.mockClear()
+
+    composable.setStatusFilters(['in_library'])
+
+    expect(fetchDetailMock).not.toHaveBeenCalled()
+    expect(composable.filterCounts.value).toEqual(counts)
+    expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['owned', 'fetching'])
+
+    composable.setStatusFilters([])
+    expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['fetching'])
+
+    composable.setStatusFilters(defaultAuthorStatusFilters())
+    expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['plain', 'owned', 'fetching'])
     wrapper.unmount()
   })
 
-  it('keeps a selection that still matches something, even when part of it is absent here', async () => {
+  it('reports whether the filters sit at the author default', async () => {
     const { composable, wrapper } = mountComposable()
-    composable.setDisplay({ ...composable.display.value, review: true, reviewKinds: ['collection', 'duplicate'] })
     await composable.load()
+    expect(composable.filtersAreDefault.value).toBe(true)
 
-    expect(composable.display.value.reviewKinds).toEqual(['collection', 'duplicate'])
-    expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['work-1', 'box-set'])
+    composable.setStatusFilters(['missing'])
+    expect(composable.filtersAreDefault.value).toBe(false)
+
+    composable.setStatusFilters(defaultAuthorStatusFilters())
+    composable.setDisplay({ ...composable.display.value, hidden: true })
+    expect(composable.filtersAreDefault.value).toBe(false)
+
+    composable.resetDisplay()
+    expect(composable.filtersAreDefault.value).toBe(true)
     wrapper.unmount()
   })
 })
@@ -398,7 +395,7 @@ describe('useMonitoredAuthorDetail release switches', () => {
   })
 
   beforeEach(() => {
-    storage.remove('monitored:authorDetail:display')
+    storage.remove('monitored:authorDetail:display:v3')
     fetchDetailMock.mockReset()
     fetchDetailMock.mockResolvedValue(dated())
   })
@@ -553,6 +550,48 @@ describe('useMonitoredAuthorDetail group collapsing', () => {
 
     composable.toggleGroup('toString')
     expect(composable.isGroupCollapsed('toString')).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+describe('author detail empty filters', () => {
+  beforeEach(() => {
+    storage.remove('monitored:authorDetail:status:v2')
+    storage.remove('monitored:authorDetail:display:v3')
+    fetchDetailMock.mockReset()
+  })
+
+  it('renders an empty state and resets status and display filters', async () => {
+    storage.set('monitored:authorDetail:display:v3', { kinds: [] })
+    storage.set('monitored:authorDetail:status:v2', [])
+    fetchDetailMock.mockResolvedValue(detail())
+    const wrapper = shallowMount(MonitoredAuthorDetailView, { global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] } })
+    await flushPromises()
+    expect(wrapper.get('[data-testid="filters-empty"]').text()).toContain('No books match these filters')
+    expect(fetchDetailMock).toHaveBeenLastCalledWith('author-1', { sort: 'releaseDate', order: 'desc', includeHidden: true })
+    await wrapper.get('[data-testid="filters-empty"] button').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="filters-empty"]').exists()).toBe(false)
+    expect(storage.get('monitored:authorDetail:status:v2', null)).toEqual(['missing', 'needs_attention', 'upcoming', 'in_library', 'not_watched'])
+    expect(storage.get('monitored:authorDetail:display:v3', null)).toMatchObject({ kinds: ['book'] })
+    wrapper.unmount()
+    storage.remove('monitored:authorDetail:status:v2')
+    storage.remove('monitored:authorDetail:display:v3')
+  })
+
+  it('renders no empty state for a catalog with no works at all', async () => {
+    fetchDetailMock.mockResolvedValue({ ...detail(), works: [] })
+    const wrapper = shallowMount(MonitoredAuthorDetailView, { global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="filters-empty"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('renders no empty state while the filters sit at their default', async () => {
+    fetchDetailMock.mockResolvedValue({ ...detail(), works: [work({ userVisibility: 'hidden' })] })
+    const wrapper = shallowMount(MonitoredAuthorDetailView, { global: { plugins: [createI18n({ legacy: false, locale: 'en', messages: { en } })] } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="filters-empty"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

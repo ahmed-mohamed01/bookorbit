@@ -53,6 +53,7 @@ const KIND_LABELS = [
   ['split_part', 'Part of a book', 'A split release, like Part 1 of 2'],
   ['anthology', 'Anthology', 'Stories by several authors'],
   ['graphic_novel', 'Comic', 'Graphic novel or manga'],
+  ['supplemental', 'Supplemental', 'Annotations, excerpts, companions or game books'],
   ['format_variant', 'Alternate edition', 'Another edition of a book you watch'],
   ['duplicate', 'Duplicate', 'Same book listed twice'],
 ] as const
@@ -66,7 +67,9 @@ describe('MonitoredMarkAsMenu', () => {
       expect(item.text()).toContain(title)
       expect(item.text()).toContain(description)
     }
-    expect(wrapper.get('[data-testid="mark-as-note"]').text()).toBe('Anything other than Book moves to Review and is no longer searched.')
+    expect(wrapper.get('[data-testid="mark-as-note"]').text()).toBe(
+      'Anything other than Book is hidden by default and never auto-downloaded. You can still request it.',
+    )
     expect(wrapper.text()).toContain('Mark as')
     wrapper.unmount()
   })
