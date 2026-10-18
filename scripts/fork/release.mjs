@@ -74,7 +74,8 @@ function fetchRefs() {
   git("fetch", "--quiet", "--no-tags", "upstream", "main");
   // Best effort: a local upstream tag that differs from upstream's is refused rather than clobbered.
   tryGit("fetch", "--quiet", "--no-tags", "upstream", "refs/tags/v*:refs/tags/v*");
-  git("fetch", "--quiet", "--tags", "origin");
+  // Forced: origin's annotated copies of upstream tags differ from upstream's tag objects and would abort the fetch.
+  git("fetch", "--quiet", "--force", "--tags", "origin");
 }
 
 const remoteTagExists = (tag) => Boolean(tryGit("ls-remote", "--tags", "origin", `refs/tags/${tag}`));

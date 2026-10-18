@@ -122,7 +122,8 @@ jobs:
           set -euo pipefail
           git remote add upstream https://github.com/bookorbit/bookorbit.git
           git fetch --no-tags upstream main
-          git fetch --no-tags upstream 'refs/tags/v*:refs/tags/v*'
+          # Forced: origin holds annotated copies of upstream's tags (same commits, other tag objects).
+          git fetch --no-tags upstream '+refs/tags/v*:refs/tags/v*'
           git fetch --no-tags origin monitored:refs/remotes/origin/monitored
 
       - name: Build notes (fork highlights, upstream release notes, then fork additions)
