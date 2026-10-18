@@ -58,6 +58,23 @@ describe('titleMatchKeys', () => {
     expect(keysOverlap('Brandon Sanderson Sampler: The Way of Kings and Mistborn', 'The Way of Kings')).toBe(false);
   });
 
+  it('matches a trailing "Book N" to the bare number, either way round', () => {
+    expect(keysOverlap('Rise of the Living Forge, Book 2', 'Rise of the Living Forge 2')).toBe(true);
+    expect(keysOverlap('Rise of the Living Forge 2', 'Rise of the Living Forge, Book 2')).toBe(true);
+    expect(keysOverlap('Rise of the Living Forge Book 2', 'Rise of the Living Forge: Book 2')).toBe(true);
+    expect(keysOverlap('Rise of the Living Forge, Bk. 2', 'Rise of the Living Forge 2')).toBe(true);
+  });
+
+  it('keeps the number when folding "Book N", so neighbouring volumes stay apart', () => {
+    expect(keysOverlap('Rise of the Living Forge, Book 2', 'Rise of the Living Forge 3')).toBe(false);
+    expect(keysOverlap('Rise of the Living Forge, Book 2', 'Rise of the Living Forge')).toBe(false);
+  });
+
+  it('leaves "Book" alone when it is not a trailing number marker', () => {
+    expect(keysOverlap('The Book Thief', 'The Thief')).toBe(false);
+    expect(keysOverlap('Book 2', '2')).toBe(false);
+  });
+
   it('still matches the owned Way of Kings Prime file to its own work', () => {
     expect(keysOverlap('The Way of Kings Prime', 'The Way of Kings Prime')).toBe(true);
   });

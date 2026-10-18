@@ -263,14 +263,27 @@ export function chooseOwnedCandidate(
  * Sanderson Sampler: The Way of Kings and Mistborn") reduces to a core of its own and cannot claim
  * the file. The stripped variants are gated on length so a short core ("Lux") cannot alias works.
  */
+const TRAILING_BOOK_NUMBER_PATTERN = /[\s,:;-]*\b(?:book|bk\.?)\s*#?\s*(\d+(?:\.\d+)?)\s*$/;
+
+/**
+ * Lowercased, with the spellings that drift between a library and a provider folded together: "vs."
+ * and "versus", "&" and "and", and a trailing "Book 2" against a bare "2" ("Rise of the Living
+ * Forge, Book 2" is the library's "Rise of the Living Forge 2"). The number survives the fold, so
+ * book 2 never meets book 3, and a title that is nothing but "Book 2" keeps its word.
+ */
+function foldTitleSpellings(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/\bversus\b/g, 'vs')
+    .replace(/&/g, ' and ')
+    .replace(TRAILING_BOOK_NUMBER_PATTERN, (match, number: string, offset: number, source: string) =>
+      source.slice(0, offset).trim().length >= 3 ? ` ${number}` : match,
+    );
+}
+
 /** The title with the spellings that drift between a library and a provider folded together. */
 function foldedTitleKey(title: string): string {
-  return normalizeToken(
-    title
-      .toLowerCase()
-      .replace(/\bversus\b/g, 'vs')
-      .replace(/&/g, ' and '),
-  );
+  return normalizeToken(foldTitleSpellings(title));
 }
 
 const FORMAT_LABEL_PATTERN = /\b(?:manga|light novel|web novel|graphic novel|comic|webtoon)\b/i;
@@ -292,10 +305,7 @@ function sameFormatLabels(left: string, right: string): boolean {
 }
 
 export function titleMatchKeys(title: string, { withColonFront = true } = {}): string[] {
-  const folded = title
-    .toLowerCase()
-    .replace(/\bversus\b/g, 'vs')
-    .replace(/&/g, ' and ');
+  const folded = foldTitleSpellings(title);
   const keys = [normalizeToken(title), foldedTitleKey(title)];
   // A trailing format label is the edition, not noise: "(Manga)" and "(Graphic Novel)" files are not
   // the prose book of the same name.
