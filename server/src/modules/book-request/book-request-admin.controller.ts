@@ -108,8 +108,8 @@ export class BookRequestAdminController {
   /** Fetches only the selected release's metadata and never exposes its credentialed URL. */
   @Post(':id/releases/inspect')
   @HttpCode(HttpStatus.OK)
-  inspectRelease(@Param('id', ParseIntPipe) id: number, @Body() dto: InspectBookRequestReleaseDto) {
-    return this.fulfillment.inspectRelease(id, dto);
+  inspectRelease(@Param('id', ParseIntPipe) id: number, @Body() dto: InspectBookRequestReleaseDto, @CurrentUser() user: RequestUser) {
+    return this.fulfillment.inspectRelease(id, dto, user);
   }
 
   /**
@@ -259,6 +259,19 @@ export class BookRequestAdminController {
   })
   createBatch(@Body() dto: CreateBatchGrabDto, @CurrentUser() user: RequestUser) {
     return this.batches.create(user, dto);
+  }
+
+  @Post('batch/:id/retry')
+  @HttpCode(HttpStatus.OK)
+  @Auditable({
+    action: AuditAction.BookRequestGrab,
+    resource: AuditResource.BookRequest,
+    getResourceId: (req) => Number(req.params.id),
+    description: 'Retried the import of a failed multi-book batch',
+  })
+  async retryBatch(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: RequestUser) {
+    await this.batches.retry(user, id);
+    return this.service.getOne(id, user);
   }
 
   @Get('batch/:id/units')

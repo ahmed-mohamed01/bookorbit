@@ -15,12 +15,14 @@ function download(overrides: Partial<BookRequestDownloadRow> = {}): BookRequestD
   } as BookRequestDownloadRow;
 }
 
-function makeService(options: { latest?: BookRequestDownloadRow | null; removeError?: Error } = {}) {
+function makeService(options: { latest?: BookRequestDownloadRow | null; removeError?: Error; extended?: boolean; shared?: boolean } = {}) {
   const row = options.latest === undefined ? download() : options.latest;
   const downloads = {
     findLatestForRequests: vi.fn().mockResolvedValue(row ? new Map([[7, { download: row, downloadClientName: 'qbit' }]]) : new Map()),
     findById: vi.fn().mockResolvedValue(row ?? undefined),
     update: vi.fn().mockResolvedValue(undefined),
+    existsOtherForClientKey: vi.fn().mockResolvedValue(options.shared === true),
+    findExtension: vi.fn().mockResolvedValue({ filesPendingSince: null, extendsExisting: options.extended === true }),
     updateIf: vi
       .fn()
       .mockImplementation((id: number, expected: string[], patch: Record<string, unknown>) =>
@@ -138,5 +140,92 @@ describe('DownloadRemovalService.cleanupStagedDirectDownload', () => {
     const { service } = makeService({ latest: staged, removeError: new Error('busy') });
 
     await expect(service.cleanupStagedDirectDownload(staged)).resolves.toBeUndefined();
+  });
+});
+
+describe('DownloadRemovalService with a download that extended an existing torrent', () => {
+  const LEFT = 'This torrent was already in the download client, so BookOrbit left it there.';
+
+  it('cancel / delete / fulfil path: stops tracking without touching the client', async () => {
+    const { service, downloads, adapter, clients } = makeService({ extended: true });
+
+    await expect(service.removeLatestForRequest(7, true, 'ann')).resolves.toEqual({ removed: false, error: null });
+
+    expect(adapter.remove).not.toHaveBeenCalled();
+    expect(clients.resolveConfig).not.toHaveBeenCalled();
+    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: LEFT });
+  });
+
+  it('remove-from-client and cancel-download path: never removes or deletes files', async () => {
+    const { service, downloads, adapter } = makeService({ extended: true });
+
+    await expect(service.removeAttempt(7, 11, true, 'ann')).resolves.toEqual({ wasInFlight: true, leftInClient: true, leftMessage: LEFT });
+
+    expect(adapter.remove).not.toHaveBeenCalled();
+    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: LEFT });
+  });
+
+  it('user cleanup path: detachAttempt leaves the torrent and reports no refusal', async () => {
+    const { service, adapter } = makeService({ extended: true });
+
+    await expect(service.detachAttempt(download(), true)).resolves.toBeNull();
+
+    expect(adapter.remove).not.toHaveBeenCalled();
+  });
+
+  it('logs the skipped removal with the extended_torrent reason', async () => {
+    const { service } = makeService({ extended: true });
+    const log = vi.spyOn((service as never as { logger: { log: () => void } }).logger, 'log').mockImplementation(() => undefined);
+
+    await service.detachAttempt(download(), false);
+
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[book_request\.remove\] \[end\] .* reason=extended_torrent - /));
+  });
+});
+
+describe('DownloadRemovalService when another attempt uses the same torrent', () => {
+  const LEFT = 'Another request still uses this torrent, so BookOrbit left it in the download client.';
+
+  it('leaves the torrent in place on delete / cancel (removeLatestForRequest) even with delete-files', async () => {
+    const { service, adapter, downloads } = makeService({ shared: true });
+
+    await expect(service.removeLatestForRequest(7, true, 'ann')).resolves.toEqual({ removed: false, error: null });
+
+    expect(downloads.existsOtherForClientKey).toHaveBeenCalledWith(11, 7, 4, INFO_HASH);
+    expect(adapter.remove).not.toHaveBeenCalled();
+    expect(downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: LEFT });
+  });
+
+  it('leaves the torrent in place on remove-from-client (removeAttempt) with delete-files', async () => {
+    const { service, adapter } = makeService({ shared: true, latest: download({ status: 'imported' }) });
+
+    await expect(service.removeAttempt(7, 11, true, 'ann')).resolves.toEqual({ wasInFlight: false, leftInClient: true, leftMessage: LEFT });
+    expect(adapter.remove).not.toHaveBeenCalled();
+  });
+
+  it('logs the skipped removal with the shared_torrent reason', async () => {
+    const { service } = makeService({ shared: true });
+    const log = vi.spyOn((service as never as { logger: { log: () => void } }).logger, 'log').mockImplementation(() => undefined);
+
+    await service.detachAttempt(download(), false);
+
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[book_request\.remove\] \[end\] .* reason=shared_torrent - /));
+  });
+
+  it('still removes a torrent nobody else uses', async () => {
+    const { service, adapter } = makeService();
+
+    await service.removeLatestForRequest(7, true, 'ann');
+
+    expect(adapter.remove).toHaveBeenCalledWith(INFO_HASH, expect.anything(), { deleteFiles: true });
+  });
+
+  it('asks about other requests only, so a request retrying its own hash still removes the torrent', async () => {
+    const { service, adapter, downloads } = makeService({ shared: false });
+
+    await service.removeLatestForRequest(7, true, 'ann');
+
+    expect(downloads.existsOtherForClientKey).toHaveBeenCalledWith(11, 7, 4, INFO_HASH);
+    expect(adapter.remove).toHaveBeenCalledWith(INFO_HASH, expect.anything(), { deleteFiles: true });
   });
 });

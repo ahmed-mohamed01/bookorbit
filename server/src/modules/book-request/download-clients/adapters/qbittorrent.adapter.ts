@@ -12,7 +12,7 @@ import type {
   ResolvedClientConfig,
   SeedInfo,
 } from '../download-client-adapter';
-import { applyFileSelection, validateFileSelection } from '../file-selection.utils';
+import { applyFileSelection, extendFileSelection, validateFileSelection } from '../file-selection.utils';
 import { endpointUrl, fetchClient, readClientJson, readClientText, throwForClientServerError } from './client-http.utils';
 
 const LABEL = 'qBittorrent';
@@ -92,7 +92,7 @@ export class QbittorrentAdapter implements DownloadClientAdapter {
   private readonly sessions = new Map<number, { cookie: string; expiresAt: number }>();
   private readonly hashAliases = new Map<string, { primary: string; expiresAt: number }>();
 
-  async add(release: GrabPayload, config: ResolvedClientConfig): Promise<{ clientKey: string }> {
+  async add(release: GrabPayload, config: ResolvedClientConfig): Promise<{ clientKey: string; extended?: true }> {
     validateFileSelection(release);
     const form = new FormData();
     if (release.wantedPaths !== undefined) {
@@ -118,8 +118,13 @@ export class QbittorrentAdapter implements DownloadClientAdapter {
     // a torrent the client already holds, and one it could not read. Only the client can tell them
     // apart, so ask rather than hand the operator both guesses at once.
     if (response.status === 409 || body.toLowerCase().startsWith('fail')) {
-      if (release.wantedPaths !== undefined)
-        throw new BadRequestException('The download client did not accept the file selection: the torrent add was refused');
+      if (release.wantedPaths !== undefined) {
+        const clientKey = release.clientKey.toLowerCase();
+        if (!(await this.holds(clientKey, config)))
+          throw new BadRequestException('The download client did not accept the file selection: the torrent add was refused');
+        await this.extendSelection(clientKey, release.wantedPaths, config);
+        return { clientKey, extended: true };
+      }
       if (await this.holds(release.clientKey, config)) {
         // An earlier attempt on this release leaves its torrent behind when the import fails, and
         // without this every retry of that release is rejected by the client forever. The torrent
@@ -137,23 +142,49 @@ export class QbittorrentAdapter implements DownloadClientAdapter {
     return { clientKey: release.clientKey.toLowerCase() };
   }
 
+  private async listTorrentFiles(clientKey: string, config: ResolvedClientConfig): Promise<string[]> {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const response = await this.call(config, `/api/v2/torrents/files?hash=${encodeURIComponent(clientKey)}`, { method: 'GET' });
+      if (response.status !== 404) {
+        const files = await readClientJson<Array<{ name: string }>>(response, LABEL);
+        if (files.length) return files.map((file) => file.name);
+      }
+      if (attempt < 9) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return [];
+  }
+
+  private async startTorrent(clientKey: string, config: ResolvedClientConfig): Promise<void> {
+    const body = new URLSearchParams({ hashes: clientKey });
+    const response = await this.call(config, '/api/v2/torrents/start', { method: 'POST', body });
+    if (response.status === 404) await this.call(config, '/api/v2/torrents/resume', { method: 'POST', body });
+  }
+
+  private async extendSelection(clientKey: string, wantedPaths: string[], config: ResolvedClientConfig): Promise<void> {
+    await extendFileSelection({
+      clientId: config.id,
+      clientKey,
+      wantedPaths,
+      logger: this.logger,
+      listFiles: () => this.listTorrentFiles(clientKey, config),
+      enable: async (indexes) => {
+        if (indexes.length)
+          await this.call(config, '/api/v2/torrents/filePrio', {
+            method: 'POST',
+            body: new URLSearchParams({ hash: clientKey, id: indexes.join('|'), priority: '1' }),
+          });
+      },
+      start: () => this.startTorrent(clientKey, config),
+    });
+  }
+
   private async selectFiles(clientKey: string, wantedPaths: string[], config: ResolvedClientConfig): Promise<void> {
     await applyFileSelection({
       clientId: config.id,
       clientKey,
       wantedPaths,
       logger: this.logger,
-      listFiles: async () => {
-        for (let attempt = 0; attempt < 10; attempt++) {
-          const response = await this.call(config, `/api/v2/torrents/files?hash=${encodeURIComponent(clientKey)}`, { method: 'GET' });
-          if (response.status !== 404) {
-            const files = await readClientJson<Array<{ name: string }>>(response, LABEL);
-            if (files.length) return files.map((file) => file.name);
-          }
-          if (attempt < 9) await new Promise((resolve) => setTimeout(resolve, 500));
-        }
-        return [];
-      },
+      listFiles: () => this.listTorrentFiles(clientKey, config),
       skip: async (indexes) => {
         if (indexes.length)
           await this.call(config, '/api/v2/torrents/filePrio', {
@@ -161,11 +192,7 @@ export class QbittorrentAdapter implements DownloadClientAdapter {
             body: new URLSearchParams({ hash: clientKey, id: indexes.join('|'), priority: '0' }),
           });
       },
-      start: async () => {
-        const body = new URLSearchParams({ hashes: clientKey });
-        const response = await this.call(config, '/api/v2/torrents/start', { method: 'POST', body });
-        if (response.status === 404) await this.call(config, '/api/v2/torrents/resume', { method: 'POST', body });
-      },
+      start: () => this.startTorrent(clientKey, config),
       remove: () => this.remove(clientKey, config, { deleteFiles: true }),
     });
   }

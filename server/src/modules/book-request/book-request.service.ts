@@ -1035,7 +1035,7 @@ export class BookRequestService {
       throw new BadRequestException(`A download that is ${download.status} can no longer be cancelled`);
     }
 
-    const stopped = await this.removal.removeAttempt(id, downloadId, false, user.username);
+    const { wasInFlight: stopped } = await this.removal.removeAttempt(id, downloadId, false, user.username);
     if (!stopped) throw new BadRequestException('The download finished before it could be cancelled');
 
     await this.repo.updateIf(id, ACTIVE_TRANSFER_REQUEST_STATUSES, { status: 'approved', statusReason: null });

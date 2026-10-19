@@ -8,6 +8,15 @@ import { DownloadClientRegistry } from '../download-clients/download-client-regi
 import { BookRequestDownloadRepository } from './book-request-download.repository';
 import { DirectDownloadService } from './direct-download.service';
 
+export const EXTENDED_TORRENT_LEFT_MESSAGE = 'This torrent was already in the download client, so BookOrbit left it there.';
+export const SHARED_TORRENT_LEFT_MESSAGE = 'Another request still uses this torrent, so BookOrbit left it in the download client.';
+
+type LeftReason = 'extended_torrent' | 'shared_torrent';
+
+function leftMessage(reason: LeftReason): string {
+  return reason === 'extended_torrent' ? EXTENDED_TORRENT_LEFT_MESSAGE : SHARED_TORRENT_LEFT_MESSAGE;
+}
+
 export interface DownloadRemovalOutcome {
   /** True when a download was actually handed to the client. False when there was nothing to remove. */
   removed: boolean;
@@ -35,15 +44,22 @@ export class DownloadRemovalService {
    * Strict: an operator who pressed Remove wants the client's own refusal, not a shrug. Resolves
    * to whether the attempt was still working, which is what decides the request's own fate.
    */
-  async removeAttempt(requestId: number, downloadId: number, deleteFiles: boolean, actor: string): Promise<boolean> {
+  async removeAttempt(
+    requestId: number,
+    downloadId: number,
+    deleteFiles: boolean,
+    actor: string,
+  ): Promise<{ wasInFlight: boolean; leftInClient: boolean; leftMessage: string | null }> {
     const download = await this.downloads.findById(downloadId);
     if (!download || download.requestId !== requestId) throw new NotFoundException('That download attempt does not belong to this request');
     if (download.source !== 'direct_url' && download.downloadClientId === null) {
       throw new BadRequestException('That attempt is no longer attached to a download client');
     }
 
-    await this.detach(download, deleteFiles);
-    return this.failIfInFlight(download, `Removed from the download client by ${actor}`);
+    const left = await this.detach(download, deleteFiles);
+    const message = left ? leftMessage(left) : null;
+    const wasInFlight = await this.failIfInFlight(download, message ?? `Removed from the download client by ${actor}`);
+    return { wasInFlight, leftInClient: left !== false, leftMessage: message };
   }
 
   /**
@@ -57,8 +73,9 @@ export class DownloadRemovalService {
     if (!download || (download.source !== 'direct_url' && download.downloadClientId === null)) return { removed: false, error: null };
 
     let error: string | null = null;
+    let left: LeftReason | false = false;
     try {
-      await this.detach(download, deleteFiles);
+      left = await this.detach(download, deleteFiles);
     } catch (caught: unknown) {
       error = caught instanceof Error ? caught.message : String(caught);
       this.logger.warn(
@@ -72,9 +89,13 @@ export class DownloadRemovalService {
     // row, and the monitor would go on asking the client about it forever.
     await this.failIfInFlight(
       download,
-      error ? `Removed by ${actor}, but the download client refused: ${error}` : `Removed from the download client by ${actor}`,
+      error
+        ? `Removed by ${actor}, but the download client refused: ${error}`
+        : left
+          ? leftMessage(left)
+          : `Removed from the download client by ${actor}`,
     );
-    return { removed: error === null, error };
+    return { removed: error === null && !left, error };
   }
 
   /**
@@ -112,10 +133,21 @@ export class DownloadRemovalService {
     }
   }
 
-  /** A direct file is ours to drop; a torrent is detached from the client that holds it. */
-  private async detach(download: BookRequestDownloadRow, deleteFiles: boolean): Promise<void> {
+  /**
+   * A direct file is ours to drop; a torrent is detached from the client that holds it. Resolves
+   * the reason when the torrent was left alone: the grab extended one the client already had, or another attempt shares it.
+   */
+  private async detach(download: BookRequestDownloadRow, deleteFiles: boolean): Promise<LeftReason | false> {
     // An attempt a source refused was never handed to anything, so there is nothing holding it.
-    if (download.clientKey === null) return;
+    if (download.clientKey === null) return false;
+
+    const shared = download.source !== 'direct_url' ? await this.sharedReason(download) : null;
+    if (shared) {
+      this.logger.log(
+        `[book_request.remove] [end] requestId=${download.requestId} downloadId=${download.id} clientId=${download.downloadClientId ?? 'none'} reason=${shared} - torrent left in the client`,
+      );
+      return shared;
+    }
 
     const isDirect = download.source === 'direct_url';
     // There is no swarm to preserve on a staged file, so its bytes always go with the attempt.
@@ -132,6 +164,16 @@ export class DownloadRemovalService {
     this.logger.log(
       `[book_request.remove_download] [end] requestId=${download.requestId} downloadId=${download.id} clientId=${download.downloadClientId ?? 'direct'} source=${download.source} deleteFiles=${shouldDeleteFiles} - download removed`,
     );
+    return false;
+  }
+
+  /** The torrent is not this attempt's to remove when it extended one that was already there, or another attempt also uses it. */
+  private async sharedReason(download: BookRequestDownloadRow): Promise<LeftReason | null> {
+    if ((await this.downloads.findExtension(download.id)).extendsExisting) return 'extended_torrent';
+    if (download.downloadClientId === null || download.clientKey === null) return null;
+    return (await this.downloads.existsOtherForClientKey(download.id, download.requestId, download.downloadClientId, download.clientKey))
+      ? 'shared_torrent'
+      : null;
   }
 
   /**

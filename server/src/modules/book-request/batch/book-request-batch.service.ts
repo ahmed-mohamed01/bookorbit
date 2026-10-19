@@ -1,18 +1,27 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { DOWNLOAD_CLIENT_FILE_SELECTION, MAX_BATCH_UNITS } from '@bookorbit/types';
-import type { BatchUnitView, ReleaseUnitMediaKind } from '@bookorbit/types';
+import type { BatchUnitView, BookRequestDownloadStatus, ReleaseUnitMediaKind } from '@bookorbit/types';
 
+import { isUniqueViolation } from '../../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import type { RequestUser } from '../../../common/types/request-user';
 import { BookRequestRepository } from '../book-request.repository';
+import { BookRequestGateway } from '../book-request.gateway';
 import { BookRequestService } from '../book-request.service';
 import type { CreateBatchGrabDto } from '../dto/create-batch-grab.dto';
 import { DownloadClientConfigService } from '../download-clients/download-client-config.service';
-import { RequestFulfillmentService } from '../fulfillment/request-fulfillment.service';
+import { DownloadClientRegistry } from '../download-clients/download-client-registry';
+import { BookRequestDownloadRepository } from '../fulfillment/book-request-download.repository';
+import { RequestFulfillmentService, TORRENT_BUSY_MESSAGE } from '../fulfillment/request-fulfillment.service';
 import { IndexerSearchService } from '../indexers/indexer-search.service';
 import type { BatchUnitRow, NewBatchUnitRow } from '../schema/book-request-batch.schema';
 import { BookRequestBatchRepository } from './book-request-batch.repository';
+
+const NOT_RETRYABLE = 'Only a failed batch can be retried.';
+const TORRENT_GONE = 'The download client no longer has this torrent, so there is nothing to import. Send the batch again.';
+const TORRENT_UNFINISHED = 'The download has not finished in the download client yet. Try again when it has.';
+const RETRYABLE_DOWNLOAD_STATUSES: readonly BookRequestDownloadStatus[] = ['failed', 'imported'];
 
 @Injectable()
 export class BookRequestBatchService {
@@ -25,6 +34,9 @@ export class BookRequestBatchService {
     private readonly clients: DownloadClientConfigService,
     private readonly releases: IndexerSearchService,
     private readonly requestService: BookRequestService,
+    private readonly downloads: BookRequestDownloadRepository,
+    private readonly registry: DownloadClientRegistry,
+    private readonly gateway: BookRequestGateway,
   ) {}
 
   async create(user: RequestUser, dto: CreateBatchGrabDto): Promise<{ requestId: number }> {
@@ -38,7 +50,7 @@ export class BookRequestBatchService {
       const source = await this.requests.findById(dto.sourceRequestId);
       if (!source) throw new NotFoundException('Book request not found');
 
-      const inspection = await this.fulfillment.inspectRelease(dto.sourceRequestId, { indexerId: dto.indexerId, releaseGuid: dto.releaseGuid });
+      const inspection = await this.fulfillment.inspectRelease(dto.sourceRequestId, { indexerId: dto.indexerId, releaseGuid: dto.releaseGuid }, user);
       const selection = inspection.selection;
       if (!selection) {
         if (inspection.unitCount >= 2 || (inspection.totalFiles ?? 0) > MAX_BATCH_UNITS) {
@@ -58,12 +70,31 @@ export class BookRequestBatchService {
         throw new BadRequestException('One or more of the chosen books are not part of this release.');
       }
 
+      const imported = new Set(selection.alreadyImported ?? []);
+      if (dto.unitIndexes.some((index) => imported.has(index))) {
+        throw new BadRequestException('These books are already in Book Dock from an earlier batch.');
+      }
+
+      await this.fulfillment.assertTorrentFree({
+        sourceRequestId: dto.sourceRequestId,
+        indexerId: dto.indexerId,
+        releaseGuid: dto.releaseGuid,
+        downloadClientId: dto.downloadClientId,
+      });
+
       const filesByUnit = new Map<number, string[]>();
+      const sizesByUnit = new Map<number, Array<number | null>>();
       for (const file of selection.files) {
         if (file.unitIndex === null) continue;
         const paths = filesByUnit.get(file.unitIndex);
-        if (paths) paths.push(file.path);
-        else filesByUnit.set(file.unitIndex, [file.path]);
+        const sizes = sizesByUnit.get(file.unitIndex);
+        if (paths && sizes) {
+          paths.push(file.path);
+          sizes.push(file.sizeBytes);
+        } else {
+          filesByUnit.set(file.unitIndex, [file.path]);
+          sizesByUnit.set(file.unitIndex, [file.sizeBytes]);
+        }
       }
 
       const pickedUnits = ticked.filter((unit): unit is NonNullable<typeof unit> => unit !== undefined);
@@ -98,6 +129,7 @@ export class BookRequestBatchService {
           filePaths: filesByUnit.get(unit.index) ?? [],
           mediaKind: unit.mediaKind,
           sizeBytes: unit.sizeBytes,
+          fileSizes: knownSizes(sizesByUnit.get(unit.index)),
           status: 'waiting',
         })),
       );
@@ -131,10 +163,83 @@ export class BookRequestBatchService {
     }
   }
 
+  /**
+   * Sends a failed batch back through the import without downloading anything: the finished
+   * torrent is still in the client, so only the BookOrbit side of the batch is reset. The monitor's
+   * resume sweep picks the `completed` download up and re-imports it.
+   */
+  async retry(user: RequestUser, requestId: number): Promise<void> {
+    const startedAt = Date.now();
+    this.logger.log(`[book_request.batch_retry] [start] requestId=${requestId} userId=${user.id} - batch import retry started`);
+
+    try {
+      const joined = await this.requests.findById(requestId);
+      if (!joined) throw new NotFoundException('Book request not found');
+      const kind = (await this.batches.findKinds([requestId])).get(requestId);
+      if (kind !== 'batch' || joined.request.status !== 'failed') throw new BadRequestException(NOT_RETRYABLE);
+
+      const download = (await this.downloads.findLatestForRequests([requestId])).get(requestId)?.download;
+      if (!download || download.downloadClientId === null || download.clientKey === null) throw new BadRequestException(NOT_RETRYABLE);
+      if (!RETRYABLE_DOWNLOAD_STATUSES.includes(download.status as BookRequestDownloadStatus)) throw new BadRequestException(NOT_RETRYABLE);
+
+      const config = await this.clients.resolveConfig(download.downloadClientId);
+      const reported = await this.registry.require(config.adapterType).status([download.clientKey], config);
+      const live = reported.find((status) => status.clientKey.toLowerCase() === download.clientKey?.toLowerCase());
+      if (!live) throw new BadRequestException(TORRENT_GONE);
+      if (live.state !== 'completed' || live.progressPercent < 100) throw new BadRequestException(TORRENT_UNFINISHED);
+
+      if (await this.downloads.findUnsettledByClientKey(download.downloadClientId, download.clientKey)) {
+        throw new BadRequestException(TORRENT_BUSY_MESSAGE);
+      }
+
+      const reason = joined.request.statusReason;
+      const resumed = await this.requests.updateIf(requestId, ['failed'], {
+        status: 'downloading',
+        statusReason: null,
+        failureCode: null,
+        failureMeta: null,
+      });
+      if (!resumed) throw new BadRequestException(NOT_RETRYABLE);
+
+      // The download goes last: the resume sweep imports any `completed` download, and the units must be waiting again by then.
+      const units = await this.batches.resetUnitsForRetry(requestId);
+      let claimed: Awaited<ReturnType<BookRequestDownloadRepository['updateIf']>>;
+      try {
+        claimed = await this.downloads.updateIf(download.id, RETRYABLE_DOWNLOAD_STATUSES, { status: 'completed', errorMessage: null });
+      } catch (error) {
+        await this.requests.updateIf(requestId, ['downloading'], { status: 'failed', statusReason: reason });
+        if (isUniqueViolation(error)) throw new BadRequestException(TORRENT_BUSY_MESSAGE);
+        throw error;
+      }
+      if (!claimed) {
+        await this.requests.updateIf(requestId, ['downloading'], { status: 'failed', statusReason: reason });
+        throw new BadRequestException(NOT_RETRYABLE);
+      }
+      await this.downloads.setFilesPendingSince(download.id, null);
+      this.gateway.emitChanged();
+
+      this.logger.log(
+        `[book_request.batch_retry] [end] requestId=${requestId} userId=${user.id} downloadId=${download.id} units=${units} durationMs=${Date.now() - startedAt} - batch import retry queued`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const errorClass = error instanceof Error ? error.constructor.name : typeof error;
+      this.logger.warn(
+        `[book_request.batch_retry] [fail] requestId=${requestId} userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - batch import retry failed`,
+      );
+      throw error;
+    }
+  }
+
   async listUnits(user: RequestUser, requestId: number): Promise<BatchUnitView[]> {
     await this.requestService.getOne(requestId, user);
     return (await this.batches.findUnits(requestId)).map(toUnitView);
   }
+}
+
+function knownSizes(sizes: Array<number | null> | undefined): number[] | null {
+  if (!sizes || sizes.some((size) => size === null)) return null;
+  return sizes as number[];
 }
 
 function toUnitView(row: BatchUnitRow): BatchUnitView {

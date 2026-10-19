@@ -706,6 +706,8 @@ export interface ReleaseSelectionManifest {
     sizeBytes: number | null;
     primaryPath: string;
   }>;
+  /** Unit indexes an earlier batch on this same torrent already placed in Book Dock, scoped to what the viewer can see. */
+  alreadyImported?: number[];
 }
 
 /** The safe, credential-free result of inspecting one selected release server-side. */

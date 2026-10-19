@@ -71,6 +71,7 @@ function makeService(
       ),
     touch: vi.fn().mockResolvedValue(0),
     setContentFileCount: vi.fn().mockResolvedValue(undefined),
+    setFilesPendingSince: vi.fn().mockResolvedValue(undefined),
   };
   const requests = {
     update: vi.fn().mockResolvedValue(undefined),
@@ -289,6 +290,22 @@ describe('DownloadMonitorService.tick', () => {
     await polled(service);
 
     expect(fulfillment.failDownload).toHaveBeenCalledWith(expect.objectContaining({ id: 11 }), 'still failing');
+  });
+
+  it('clears the files-pending mark while the client is still downloading', async () => {
+    const { service, downloads } = makeService({ statuses: [status({ state: 'downloading', progressPercent: 40 })] });
+
+    await polled(service);
+
+    expect(downloads.setFilesPendingSince).toHaveBeenCalledWith(11, null);
+  });
+
+  it('leaves the files-pending mark alone when the client reports completed', async () => {
+    const { service, downloads } = makeService({ statuses: [status({ state: 'completed', progressPercent: 100 })] });
+
+    await polled(service);
+
+    expect(downloads.setFilesPendingSince).not.toHaveBeenCalled();
   });
 
   it('keeps how many files a finished download spans', async () => {

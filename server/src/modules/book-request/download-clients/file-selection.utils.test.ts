@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
-import { applyFileSelection, matchWantedFiles } from './file-selection.utils';
+import { applyFileSelection, extendFileSelection, matchWantedFiles } from './file-selection.utils';
 
 describe('matchWantedFiles', () => {
   it('matches release-relative paths against client paths that include the root folder', () => {
@@ -100,5 +100,35 @@ describe('applyFileSelection', () => {
     expect(input.remove).toHaveBeenCalledOnce();
     expect(input.logger.warn).toHaveBeenCalledOnce();
     expect(input.logger.log.mock.calls.some(([message]) => message.includes('[end]'))).toBe(false);
+  });
+});
+
+describe('extendFileSelection', () => {
+  const logger = { log: vi.fn(), warn: vi.fn() };
+  function options(overrides: Partial<Parameters<typeof extendFileSelection>[0]> = {}) {
+    return {
+      clientId: 1,
+      clientKey: 'abc',
+      wantedPaths: ['A/2.epub'],
+      logger,
+      listFiles: vi.fn().mockResolvedValue(['Root/A/1.epub', 'Root/A/2.epub']),
+      enable: vi.fn().mockResolvedValue(undefined),
+      start: vi.fn().mockResolvedValue(undefined),
+      ...overrides,
+    };
+  }
+
+  it('enables only the wanted indexes, then starts', async () => {
+    const opts = options();
+    await extendFileSelection(opts);
+    expect(opts.enable).toHaveBeenCalledWith([1]);
+    expect(opts.start).toHaveBeenCalled();
+  });
+
+  it('refuses a missing path without enabling or starting', async () => {
+    const opts = options({ wantedPaths: ['A/9.epub'] });
+    await expect(extendFileSelection(opts)).rejects.toThrow('did not accept the file selection');
+    expect(opts.enable).not.toHaveBeenCalled();
+    expect(opts.start).not.toHaveBeenCalled();
   });
 });

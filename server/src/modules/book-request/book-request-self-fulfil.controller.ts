@@ -95,7 +95,7 @@ export class BookRequestSelfFulfilController {
   @HttpCode(HttpStatus.OK)
   async inspectRelease(@Param('id', ParseIntPipe) id: number, @Body() dto: InspectBookRequestReleaseDto, @CurrentUser() user: RequestUser) {
     await this.service.assertCanFulfil(id, user);
-    return this.fulfillment.inspectRelease(id, dto);
+    return this.fulfillment.inspectRelease(id, dto, user);
   }
 
   @Post('batch')
@@ -109,6 +109,20 @@ export class BookRequestSelfFulfilController {
   async createBatch(@Body() dto: CreateBatchGrabDto, @CurrentUser() user: RequestUser) {
     await this.service.assertCanFulfil(dto.sourceRequestId, user);
     return this.batches.create(user, dto);
+  }
+
+  @Post('batch/:id/retry')
+  @HttpCode(HttpStatus.OK)
+  @Auditable({
+    action: AuditAction.BookRequestGrab,
+    resource: AuditResource.BookRequest,
+    getResourceId: (req) => Number(req.params.id),
+    description: 'Retried the import of a failed multi-book batch for their own request',
+  })
+  async retryBatch(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: RequestUser) {
+    await this.service.assertCanFulfil(id, user);
+    await this.batches.retry(user, id);
+    return this.service.getOne(id, user);
   }
 
   @Get('batch/:id/units')

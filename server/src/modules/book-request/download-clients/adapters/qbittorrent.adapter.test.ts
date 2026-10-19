@@ -185,10 +185,34 @@ describe('QbittorrentAdapter', () => {
       await expect(adapter.add({ ...release, wantedPaths: ['A/9.epub'] }, config())).rejects.toThrow('did not accept the file selection');
       expect((calls.find((c) => c.url.includes('/torrents/delete'))!.init.body as URLSearchParams).get('deleteFiles')).toBe('true');
     });
-    it('refuses a selection when the client already has the torrent', async () => {
+    it('extends a torrent the client already has: raises only the wanted files and starts it', async () => {
       const { calls, handlers } = setup();
       handlers.set('/torrents/add', () => response('Fails.'));
-      await expect(adapter.add(release, config())).rejects.toThrow('did not accept the file selection');
+      await expect(adapter.add(release, config())).resolves.toEqual({ clientKey: INFO_HASH, extended: true });
+      const prios = calls.filter((c) => c.url.includes('/torrents/filePrio'));
+      expect(prios).toHaveLength(1);
+      expect((prios[0].init.body as URLSearchParams).get('id')).toBe('1');
+      expect((prios[0].init.body as URLSearchParams).get('priority')).toBe('1');
+      expect(calls.some((c) => c.url.includes('/torrents/start'))).toBe(true);
+      expect(calls.some((c) => c.url.includes('/torrents/delete'))).toBe(false);
+    });
+    it('extends on a 409 as well', async () => {
+      const { calls, handlers } = setup();
+      handlers.set('/torrents/add', () => response('', { status: 409 }));
+      await expect(adapter.add(release, config())).resolves.toEqual({ clientKey: INFO_HASH, extended: true });
+      expect(calls.some((c) => c.url.includes('/torrents/filePrio'))).toBe(true);
+    });
+    it('refuses without removing anything when an extended wanted file is missing', async () => {
+      const { calls, handlers } = setup();
+      handlers.set('/torrents/add', () => response('Fails.'));
+      await expect(adapter.add({ ...release, wantedPaths: ['A/9.epub'] }, config())).rejects.toThrow('did not accept the file selection');
+      expect(calls.some((c) => /torrents\/(filePrio|start|delete)/.test(c.url))).toBe(false);
+    });
+    it('refuses when the add failed and the client does not hold the torrent', async () => {
+      const { calls, handlers } = setup();
+      handlers.set('/torrents/add', () => response('Fails.'));
+      handlers.set('/torrents/info', () => response([]));
+      await expect(adapter.add(release, config())).rejects.toThrow('the torrent add was refused');
       expect(calls.some((c) => /torrents\/(filePrio|start|delete)/.test(c.url))).toBe(false);
     });
   });

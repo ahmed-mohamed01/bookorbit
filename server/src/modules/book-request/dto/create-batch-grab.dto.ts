@@ -24,7 +24,7 @@ export class CreateBatchGrabDto implements CreateBatchGrabPayload {
   downloadClientId!: number;
 
   @IsArray()
-  @ArrayMinSize(2)
+  @ArrayMinSize(1)
   @ArrayMaxSize(MAX_BATCH_UNITS)
   @ArrayUnique()
   @IsInt({ each: true })

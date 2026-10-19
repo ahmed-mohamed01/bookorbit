@@ -329,6 +329,7 @@ export class DownloadMonitorService implements OnModuleDestroy {
     });
     if (!updated) return;
     if (status.contentFileCount !== undefined) await this.downloads.setContentFileCount(row.id, status.contentFileCount);
+    if (status.state !== 'completed') await this.downloads.setFilesPendingSince(row.id, null);
 
     if (row.status === 'queued' && status.state !== 'queued') {
       await this.requests.updateIf(row.requestId, DOWNLOADING_FROM, { status: 'downloading' });

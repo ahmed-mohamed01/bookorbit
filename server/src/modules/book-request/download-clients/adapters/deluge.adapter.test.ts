@@ -113,10 +113,37 @@ describe('DelugeAdapter', () => {
       await adapter.add(release, config());
       expect(calls.find((c) => c.method === 'core.set_torrent_options')?.params).toEqual([[INFO_HASH], { file_priorities: [0, 0, 1] }]);
     });
-    it('refuses a selection when the add fails because Deluge already has it', async () => {
-      const { calls, handlers } = setup();
-      handlers.set('core.add_torrent_file', () => failure('already exists'));
-      handlers.set('core.get_torrents_status', () => result({ [INFO_HASH]: { hash: INFO_HASH } }));
+    function extendSetup() {
+      const mock = setup();
+      mock.handlers.set('core.add_torrent_file', () => failure('already exists'));
+      mock.handlers.set('core.get_torrents_status', () => result({ [INFO_HASH]: { hash: INFO_HASH } }));
+      mock.handlers.set('core.get_torrent_status', () =>
+        result({
+          files: [
+            { index: 0, path: 'Root/A/1.epub' },
+            { index: 1, path: 'Root/A/2.epub' },
+            { index: 2, path: 'Root/B/x.zip' },
+          ],
+          file_priorities: [1, 0, 4],
+        }),
+      );
+      return mock;
+    }
+    it('extends a torrent Deluge already has: raises wanted indexes and leaves the rest as they are', async () => {
+      const { calls } = extendSetup();
+      await expect(adapter.add(release, config())).resolves.toEqual({ clientKey: INFO_HASH, extended: true });
+      expect(calls.find((c) => c.method === 'core.set_torrent_options')?.params).toEqual([[INFO_HASH], { file_priorities: [1, 1, 4] }]);
+      expect(calls.some((c) => c.method === 'core.remove_torrent')).toBe(false);
+      expect(calls.some((c) => c.method === 'core.resume_torrent')).toBe(true);
+    });
+    it('refuses an extended selection with a missing file and removes nothing', async () => {
+      const { calls } = extendSetup();
+      await expect(adapter.add({ ...release, wantedPaths: ['A/9.epub'] }, config())).rejects.toThrow('did not accept the file selection');
+      expect(calls.some((c) => ['core.set_torrent_options', 'core.remove_torrent', 'core.resume_torrent'].includes(c.method))).toBe(false);
+    });
+    it('refuses when the add fails and Deluge does not hold the torrent', async () => {
+      const { calls, handlers } = extendSetup();
+      handlers.set('core.get_torrents_status', () => result({}));
       await expect(adapter.add(release, config())).rejects.toThrow('did not accept the file selection');
       expect(calls.some((c) => ['core.set_torrent_options', 'core.remove_torrent'].includes(c.method))).toBe(false);
     });

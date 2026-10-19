@@ -22,6 +22,7 @@ import {
   isBookRequestMediaKind,
   NotificationType,
   normalizeBookRequestIsbn,
+  Permission,
   releaseInspectionBlocksGrab,
   toRequestLanguage,
   UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES,
@@ -86,6 +87,7 @@ import type { SearchBookRequestReleasesDto } from '../dto/search-book-request-re
 import { resolveEffectiveSeedGoals } from './indexer-seed-policy';
 
 /** One metadata lookup against the source, spent only on the release an approver actually picked. */
+export const TORRENT_BUSY_MESSAGE = 'This torrent is still downloading for another batch. Try again when it finishes.';
 const RESOLVE_FILE_TIMEOUT_MS = 20_000;
 const TRANSIENT_GRAB_RETRY_DELAY_MS = 500;
 const RESOLVED_RELEASE_TTL_MS = 60_000;
@@ -205,14 +207,33 @@ export class RequestFulfillmentService {
     return (await this.downloads.findForRequest(requestId)).map(mapBookRequestDownload);
   }
 
-  async inspectRelease(requestId: number, dto: InspectBookRequestReleaseDto): Promise<ReleaseFileInspection> {
+  async inspectRelease(requestId: number, dto: InspectBookRequestReleaseDto, user: RequestUser): Promise<ReleaseFileInspection> {
     const joined = await this.requests.findById(requestId);
     if (!joined) throw new NotFoundException('Book request not found');
     if (UNSEARCHABLE.includes(joined.request.status as BookRequestStatus)) {
       throw new BadRequestException(`A request that is ${joined.request.status} cannot inspect releases`);
     }
 
-    return (await this.resolvePickedRelease(requestId, dto.indexerId, dto.releaseGuid.trim())).inspection;
+    const grab = await this.resolvePickedRelease(requestId, dto.indexerId, dto.releaseGuid.trim());
+    const selection = grab.inspection.selection;
+    if (!selection) return grab.inspection;
+
+    // The inspection is cached per release, so the per-viewer part is added to a copy.
+    const canSeeAll = user.isSuperuser || user.permissions.includes(Permission.ManageBookRequests);
+    const alreadyImported = await this.batches.findImportedUnitIndexes(grab.clientKey, canSeeAll ? null : user.id);
+    return { ...grab.inspection, selection: { ...selection, alreadyImported } };
+  }
+
+  /** Refuses a batch grab while another batch still holds this torrent in the client. */
+  async assertTorrentFree(input: { sourceRequestId: number; indexerId: number; releaseGuid: string; downloadClientId: number }): Promise<void> {
+    const grab = await this.resolvePickedRelease(input.sourceRequestId, input.indexerId, input.releaseGuid.trim());
+    await this.refuseIfTorrentBusy(input.downloadClientId, grab.clientKey);
+  }
+
+  private async refuseIfTorrentBusy(downloadClientId: number, clientKey: string): Promise<void> {
+    if (await this.downloads.findUnsettledByClientKey(downloadClientId, clientKey)) {
+      throw new BadRequestException(TORRENT_BUSY_MESSAGE);
+    }
   }
 
   /**
@@ -284,6 +305,7 @@ export class RequestFulfillmentService {
 
     const client = await this.resolveClient(input.downloadClientId, grab.source);
     if (client === null) throw grabError('GRAB_CLIENT_REFUSED', 'Picking books needs a download client');
+    await this.refuseIfTorrentBusy(client.id, grab.clientKey);
 
     const download = await this.handOff({
       requestId: input.batchRequestId,
@@ -384,6 +406,7 @@ export class RequestFulfillmentService {
       });
     } catch (error) {
       if (isUniqueViolation(error)) {
+        if (wantedPaths !== undefined) throw new BadRequestException(TORRENT_BUSY_MESSAGE);
         throw grabConflict('GRAB_RELEASE_REFUSED', 'That release is already downloading, or waiting for a review, on another request');
       }
       throw error;
@@ -400,8 +423,10 @@ export class RequestFulfillmentService {
       } else {
         const config = await this.clients.resolveConfig(client.id);
         const adapter = this.registry.require(config.adapterType);
-        await this.withTransientRetry(user === null, requestId, 'client', () =>
-          adapter.add(
+        let addAttempts = 0;
+        const added = await this.withTransientRetry(user === null, requestId, 'client', () => {
+          addAttempts++;
+          return adapter.add(
             {
               magnet: grab.magnet,
               torrentFile: grab.torrentFile,
@@ -416,8 +441,11 @@ export class RequestFulfillmentService {
               ...(grab.seedTimeMinutes !== null && grab.seedTimeMinutes !== undefined ? { seedTimeMinutes: grab.seedTimeMinutes } : {}),
             },
             config,
-          ),
-        );
+          );
+        });
+        // Only the first add can have found a torrent that predates this grab; on a retry the
+        // duplicate may be the torrent this very grab just added.
+        if (added.extended && addAttempts === 1) await this.downloads.setExtendsExisting(download.id);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

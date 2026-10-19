@@ -1,11 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { BatchSummary, BookRequestKind } from '@bookorbit/types';
 
 import { applySchemaStatements, findMissingColumns } from '../../../common/utils/schema-bootstrap.utils';
 import { DB } from '../../../db';
 import * as schema from '../../../db/schema';
+import { bookDockFiles, bookRequestDownloads, bookRequests } from '../../../db/schema';
 import { bookRequestBatchUnits, bookRequestKind, type BatchUnitRow, type NewBatchUnitRow } from '../schema/book-request-batch.schema';
 
 type Db = NodePgDatabase<typeof schema>;
@@ -41,8 +42,52 @@ export class BookRequestBatchRepository {
       .orderBy(asc(bookRequestBatchUnits.unitIndex));
   }
 
+  /**
+   * Units of one torrent that an earlier batch already placed in Book Dock. `ownerUserId` null
+   * means the viewer sees every batch; otherwise only that user's own.
+   */
+  async findImportedUnitIndexes(clientKey: string, ownerUserId: number | null): Promise<number[]> {
+    const rows = await this.db
+      .selectDistinct({ unitIndex: bookRequestBatchUnits.unitIndex })
+      .from(bookRequestBatchUnits)
+      .innerJoin(bookRequestDownloads, eq(bookRequestDownloads.requestId, bookRequestBatchUnits.requestId))
+      .innerJoin(bookRequests, eq(bookRequests.id, bookRequestBatchUnits.requestId))
+      .where(
+        and(
+          eq(bookRequestBatchUnits.status, 'in_dock'),
+          sql`lower(${bookRequestDownloads.clientKey}) = ${clientKey.toLowerCase()}`,
+          ownerUserId === null ? undefined : eq(bookRequests.userId, ownerUserId),
+        ),
+      )
+      .orderBy(asc(bookRequestBatchUnits.unitIndex));
+    return rows.map((row) => row.unitIndex);
+  }
+
   async updateUnit(id: number, data: Partial<NewBatchUnitRow>): Promise<void> {
     await this.db.update(bookRequestBatchUnits).set(data).where(eq(bookRequestBatchUnits.id, id));
+  }
+
+  /**
+   * Gives failed units another go. A unit whose Book Dock row still exists goes to 'placing' with
+   * its id kept, so the import's adoption logic decides rather than placing it a second time.
+   * 'placing' and 'in_dock' units are left alone.
+   */
+  async resetUnitsForRetry(requestId: number): Promise<number> {
+    const liveDockRow = sql`exists (select 1 from ${bookDockFiles} where ${bookDockFiles.id} = ${bookRequestBatchUnits.bookDockFileId})`;
+    const failed = and(eq(bookRequestBatchUnits.requestId, requestId), eq(bookRequestBatchUnits.status, 'failed'));
+    return this.db.transaction(async (tx) => {
+      const adopted = await tx
+        .update(bookRequestBatchUnits)
+        .set({ status: 'placing', errorMessage: null })
+        .where(and(failed, liveDockRow))
+        .returning({ id: bookRequestBatchUnits.id });
+      const reset = await tx
+        .update(bookRequestBatchUnits)
+        .set({ status: 'waiting', errorMessage: null, bookDockFileId: null })
+        .where(failed)
+        .returning({ id: bookRequestBatchUnits.id });
+      return adopted.length + reset.length;
+    });
   }
 
   async findKinds(requestIds: number[]): Promise<Map<number, BookRequestKind>> {

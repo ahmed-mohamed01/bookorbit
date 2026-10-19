@@ -82,3 +82,36 @@ export async function applyFileSelection(options: {
     throw new BadRequestException(`The download client did not accept the file selection: ${detail}`);
   }
 }
+
+export async function extendFileSelection(options: {
+  clientId: number;
+  clientKey: string;
+  wantedPaths: string[];
+  logger: Pick<Logger, 'log' | 'warn'>;
+  listFiles(): Promise<string[]>;
+  enable(indexes: number[]): Promise<void>;
+  start(): Promise<void>;
+}): Promise<void> {
+  const { clientId, clientKey, wantedPaths, logger } = options;
+  const started = Date.now();
+  logger.log(
+    `[download_client.extend_selection] [start] clientId=${clientId} clientKey=${clientKey} wanted=${wantedPaths.length} - adding files to a torrent the client already holds`,
+  );
+  try {
+    const files = await options.listFiles();
+    if (!files.length) throw new BadRequestException('the client returned no files');
+    const selection = matchWantedFiles(files, wantedPaths);
+    if (selection.missing.length) throw new BadRequestException('wanted files are missing');
+    await options.enable(selection.wantedIndexes);
+    await options.start();
+    logger.log(
+      `[download_client.extend_selection] [end] clientId=${clientId} clientKey=${clientKey} wanted=${selection.wantedIndexes.length} durationMs=${Date.now() - started} - file selection extended`,
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    logger.warn(
+      `[download_client.extend_selection] [fail] clientId=${clientId} clientKey=${clientKey} wanted=${wantedPaths.length} durationMs=${Date.now() - started} errorClass=${error instanceof Error ? error.constructor.name : 'UnknownError'} error="${sanitizeLogValue(detail)}" - extending the file selection failed`,
+    );
+    throw new BadRequestException(`The download client did not accept the file selection: ${detail}`);
+  }
+}

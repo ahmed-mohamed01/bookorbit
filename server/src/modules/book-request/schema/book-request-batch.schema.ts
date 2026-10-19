@@ -15,6 +15,7 @@ export const bookRequestBatchUnits = pgTable('book_request_batch_units', {
   filePaths: text('file_paths').array().notNull(),
   mediaKind: varchar('media_kind', { length: 10 }).notNull(),
   sizeBytes: bigint('size_bytes', { mode: 'number' }),
+  fileSizes: bigint('file_sizes', { mode: 'number' }).array(),
   status: varchar('status', { length: 10 }).notNull().default('waiting'),
   bookDockFileId: integer('book_dock_file_id'),
   errorMessage: text('error_message'),

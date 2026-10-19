@@ -83,6 +83,8 @@ function makeService(
     update: vi.fn().mockResolvedValue(undefined),
     updateIf: vi.fn().mockImplementation((id: number, _expected: unknown, patch: Record<string, unknown>) => Promise.resolve({ id, ...patch })),
     findLatestForRequests: vi.fn().mockResolvedValue(new Map()),
+    findUnsettledByClientKey: vi.fn().mockResolvedValue(undefined),
+    setExtendsExisting: vi.fn().mockResolvedValue(undefined),
     ...overrides.downloads,
   };
   const clients = {
@@ -123,6 +125,7 @@ function makeService(
   const batches = {
     findKinds: vi.fn().mockResolvedValue(new Map()),
     summaries: vi.fn().mockResolvedValue(new Map()),
+    findImportedUnitIndexes: vi.fn().mockResolvedValue([]),
   };
 
   const service = new RequestFulfillmentService(
@@ -442,6 +445,119 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
     expect(requests.claimForGrab).not.toHaveBeenCalled();
   });
 
+  it('grabSelection refuses while an unsettled attempt holds the same torrent on that client', async () => {
+    const { service, downloads, adapter } = makeService({
+      releases: { find: vi.fn().mockReturnValue(RELEASE) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+      downloads: { findUnsettledByClientKey: vi.fn().mockResolvedValue({ id: 3, status: 'downloading' }) },
+    });
+
+    await expect(
+      service.grabSelection(
+        { sourceRequestId: 7, batchRequestId: 21, indexerId: 9, releaseGuid: 'r-1', downloadClientId: 4, wantedPaths: ['a/one.epub'] },
+        user(),
+      ),
+    ).rejects.toThrow('This torrent is still downloading for another batch. Try again when it finishes.');
+    expect(downloads.findUnsettledByClientKey).toHaveBeenCalledWith(4, expect.stringMatching(/^[0-9a-f]{40}$/));
+    expect(downloads.create).not.toHaveBeenCalled();
+    expect(adapter.add).not.toHaveBeenCalled();
+  });
+
+  it('grabSelection records that the download extended a torrent the client already had', async () => {
+    const { service, downloads, adapter } = makeService({
+      releases: { find: vi.fn().mockReturnValue(RELEASE) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+    });
+    adapter.add.mockResolvedValue({ clientKey: INFO_HASH, extended: true });
+
+    await service.grabSelection(
+      { sourceRequestId: 7, batchRequestId: 21, indexerId: 9, releaseGuid: 'r-1', downloadClientId: 4, wantedPaths: ['a/one.epub'] },
+      user(),
+    );
+
+    expect(downloads.setExtendsExisting).toHaveBeenCalledWith(11);
+  });
+
+  it('grabSelection does not mark a retried add as extended', async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, downloads, adapter } = makeService({
+        releases: { find: vi.fn().mockReturnValue(RELEASE) },
+        indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+      });
+      adapter.add
+        .mockRejectedValueOnce(new ServiceUnavailableException('client busy'))
+        .mockResolvedValueOnce({ clientKey: INFO_HASH, extended: true });
+
+      const pending = service.grabSelection(
+        { sourceRequestId: 7, batchRequestId: 21, indexerId: 9, releaseGuid: 'r-1', downloadClientId: 4, wantedPaths: ['a/one.epub'] },
+        null,
+      );
+      await vi.runAllTimersAsync();
+      await pending;
+
+      expect(adapter.add).toHaveBeenCalledTimes(2);
+      expect(downloads.setExtendsExisting).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('grabSelection does not mark an ordinary add as extended', async () => {
+    const { service, downloads } = makeService({
+      releases: { find: vi.fn().mockReturnValue(RELEASE) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+    });
+
+    await service.grabSelection(
+      { sourceRequestId: 7, batchRequestId: 21, indexerId: 9, releaseGuid: 'r-1', downloadClientId: 4, wantedPaths: ['a/one.epub'] },
+      user(),
+    );
+
+    expect(downloads.setExtendsExisting).not.toHaveBeenCalled();
+  });
+
+  it('grabSelection maps a lost unique-index race to the batch message', async () => {
+    const { service, adapter } = makeService({
+      releases: { find: vi.fn().mockReturnValue(RELEASE) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+      downloads: { create: vi.fn().mockRejectedValue(Object.assign(new Error('duplicate key'), { code: '23505' })) },
+    });
+
+    await expect(
+      service.grabSelection(
+        { sourceRequestId: 7, batchRequestId: 21, indexerId: 9, releaseGuid: 'r-1', downloadClientId: 4, wantedPaths: ['a/one.epub'] },
+        user(),
+      ),
+    ).rejects.toThrow('This torrent is still downloading for another batch. Try again when it finishes.');
+    expect(adapter.add).not.toHaveBeenCalled();
+  });
+
+  it('grabSelection goes ahead when no unsettled attempt holds the torrent', async () => {
+    const { service, adapter } = makeService({
+      releases: { find: vi.fn().mockReturnValue(RELEASE) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+    });
+
+    await service.grabSelection(
+      { sourceRequestId: 7, batchRequestId: 21, indexerId: 9, releaseGuid: 'r-1', downloadClientId: 4, wantedPaths: ['a/one.epub'] },
+      user(),
+    );
+    expect(adapter.add).toHaveBeenCalled();
+  });
+
+  it('assertTorrentFree refuses with the same sentence', async () => {
+    const { service } = makeService({
+      releases: { find: vi.fn().mockReturnValue(RELEASE) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+      downloads: { findUnsettledByClientKey: vi.fn().mockResolvedValue({ id: 3 }) },
+    });
+
+    await expect(service.assertTorrentFree({ sourceRequestId: 7, indexerId: 9, releaseGuid: 'r-1', downloadClientId: 4 })).rejects.toThrow(
+      'This torrent is still downloading for another batch. Try again when it finishes.',
+    );
+  });
+
   it('hands a magnet redirect from a Torznab download endpoint to the torrent client', async () => {
     const { service, downloads, adapter } = makeService({
       releases: { find: vi.fn().mockReturnValue(RELEASE) },
@@ -560,7 +676,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
     });
 
-    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' })).resolves.toMatchObject({
+    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).resolves.toMatchObject({
       source: 'torrent_file',
       status: 'ready',
       totalFiles: 1,
@@ -585,7 +701,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes('wrapped.zip')) },
     });
 
-    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' })).resolves.toMatchObject({
+    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).resolves.toMatchObject({
       status: 'contents_unknown',
       unitCount: 0,
       containerCount: 1,
@@ -606,7 +722,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(multiFileTorrent(['one.epub', 'two.epub', 'cover.jpg'])) },
     });
 
-    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' })).resolves.toMatchObject({
+    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).resolves.toMatchObject({
       status: 'multiple_supported_files',
       unitCount: 2,
     });
@@ -623,7 +739,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(multiFileTorrent(['Chapter 1.mp3', 'Chapter 2.mp3', 'cover.jpg'])) },
     });
 
-    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' })).resolves.toMatchObject({
+    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).resolves.toMatchObject({
       status: 'ready',
       unitCount: 1,
       units: [expect.objectContaining({ mediaKind: 'audiobook', contentFileCount: 2 })],
@@ -638,7 +754,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(namedTorrent(root, paths)) },
     });
 
-    const inspection = await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' });
+    const inspection = await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
 
     expect(inspection.selection?.rootName).toBe(root);
     expect(inspection.selection?.files).toHaveLength(7);
@@ -648,13 +764,52 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
     expect(inspection.selection?.units).toHaveLength(5);
   });
 
+  describe('already imported units', () => {
+    const paths = [1, 2, 3].map((n) => `Vol 0${n}.epub`);
+    function multi() {
+      return makeService({
+        releases: { find: vi.fn().mockReturnValue(RELEASE) },
+        indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(namedTorrent('Pack', paths)) },
+      });
+    }
+    it('scopes the lookup to the viewer own batches', async () => {
+      const { service, batches } = multi();
+      batches.findImportedUnitIndexes.mockResolvedValue([1]);
+
+      const inspection = await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+
+      expect(batches.findImportedUnitIndexes).toHaveBeenCalledWith(expect.stringMatching(/^[0-9a-f]{40}$/), 1);
+      expect(inspection.selection?.alreadyImported).toEqual([1]);
+    });
+    it('lets a user who manages book requests see every batch', async () => {
+      const { service, batches } = multi();
+      const manager = { id: 2, name: 'Mo', isSuperuser: false, permissions: ['manage_book_requests'] } as unknown as RequestUser;
+
+      await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, manager);
+      await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, { ...manager, permissions: [], isSuperuser: true } as RequestUser);
+
+      expect(batches.findImportedUnitIndexes).toHaveBeenNthCalledWith(1, expect.stringMatching(/^[0-9a-f]{40}$/), null);
+      expect(batches.findImportedUnitIndexes).toHaveBeenNthCalledWith(2, expect.stringMatching(/^[0-9a-f]{40}$/), null);
+    });
+    it('does not write the viewer part into the cached inspection', async () => {
+      const { service, batches } = multi();
+      batches.findImportedUnitIndexes.mockResolvedValueOnce([0]).mockResolvedValueOnce([]);
+
+      const first = await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+      const second = await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+
+      expect(first.selection?.alreadyImported).toEqual([0]);
+      expect(second.selection?.alreadyImported).toEqual([]);
+    });
+  });
+
   it('inspection has no selection manifest for a single-book torrent', async () => {
     const { service } = makeService({
       releases: { find: vi.fn().mockReturnValue(RELEASE) },
       indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(namedTorrent('Dune', ['Dune.epub', 'cover.jpg'])) },
     });
 
-    const inspection = await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' });
+    const inspection = await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
     expect(inspection.selection).toBeNull();
   });
 
@@ -674,7 +829,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(multiFileTorrent(names)) },
     });
 
-    const inspection = await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' });
+    const inspection = await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
     expect(inspection).toMatchObject({
       status: 'multiple_supported_files',
       totalFiles: 201,
@@ -689,7 +844,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       releases: { find: vi.fn().mockReturnValue({ ...RELEASE, downloadUrl: undefined, magnet: MAGNET }) },
     });
 
-    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' })).resolves.toEqual({
+    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).resolves.toEqual({
       source: 'magnet',
       status: 'metadata_unavailable',
       files: [],
@@ -785,7 +940,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       },
     });
 
-    expect(await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' })).toMatchObject({
+    expect(await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).toMatchObject({
       status: 'ready',
       primaryFileCount: 1,
       files: [expect.objectContaining({ path: 'download.epub', bookFile: true })],
@@ -806,7 +961,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       },
     });
 
-    expect(await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' })).toMatchObject({ status: 'no_supported_file' });
+    expect(await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).toMatchObject({ status: 'no_supported_file' });
 
     // Recorded as a refused attempt the way any other unimportable release is, and never fetched.
     await expect(service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).rejects.toMatchObject({ status: 400 });
@@ -914,7 +1069,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       indexerAdapter: { fetchTorrentFile },
     });
 
-    if (inspected) await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' });
+    if (inspected) await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
     resolveSeedPolicy.mockResolvedValue({
       id: 9,
       adapterType: 'torznab',
@@ -948,7 +1103,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       indexerAdapter: { fetchTorrentFile },
     });
 
-    await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' });
+    await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
     await service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
 
     expect(fetchTorrentFile).toHaveBeenCalledTimes(1);
@@ -967,7 +1122,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       indexerAdapter: { fetchTorrentFile },
     });
 
-    await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' });
+    await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
     await expect(service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).rejects.toMatchObject({
       status: 400,
       response: { errorCode: 'GRAB_RELEASE_REFUSED' },
@@ -994,7 +1149,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       indexerAdapter: { fetchTorrentFile },
     });
 
-    await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' });
+    await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
     await expect(service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).rejects.toMatchObject({
       status: 400,
       response: { errorCode: 'GRAB_RELEASE_REFUSED' },
@@ -1092,7 +1247,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrent) },
     });
 
-    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' })).resolves.toMatchObject({
+    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).resolves.toMatchObject({
       source: 'torrent_file',
       totalFiles: 2,
     });
@@ -1108,7 +1263,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes('not-the-release.epub')) },
     });
 
-    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' })).resolves.toMatchObject({ source: 'magnet' });
+    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).resolves.toMatchObject({ source: 'magnet' });
     await service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
 
     expect(downloads.create).toHaveBeenCalledWith(expect.objectContaining({ source: 'magnet', clientKey: INFO_HASH }));

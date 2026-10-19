@@ -70,14 +70,14 @@ export class RequestSeedService {
    * automation does not immediately undo a removal an approver asked for.
    */
   async removeFromClient(requestId: number, downloadId: number, deleteFiles: boolean, user: RequestUser): Promise<BookRequestItem> {
-    const wasInFlight = await this.removal.removeAttempt(requestId, downloadId, deleteFiles, user.username);
+    const { wasInFlight, leftMessage } = await this.removal.removeAttempt(requestId, downloadId, deleteFiles, user.username);
 
     if (wasInFlight) {
       // Conditional, so removing the transfer under a request somebody has already cancelled or
       // filed does not reopen it as a failure.
       await this.requests.updateIf(requestId, WORKER_WRITABLE_BOOK_REQUEST_STATUSES, {
         status: 'failed',
-        statusReason: `Removed from the download client by ${user.username}`,
+        statusReason: leftMessage ?? `Removed from the download client by ${user.username}`,
       });
       this.gateway.emitChanged();
     }

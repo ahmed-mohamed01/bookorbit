@@ -91,11 +91,20 @@ describe('TransmissionAdapter', () => {
       expect(calls.find((c) => c.method === 'torrent-start')?.args).toEqual({ ids: [INFO_HASH] });
       expect(calls.findIndex((c) => c.method === 'torrent-start')).toBeGreaterThan(calls.findIndex((c) => c.method === 'torrent-set'));
     });
-    it('refuses a selection on torrent-duplicate', async () => {
+    it('extends a torrent-duplicate: wants only the requested files, skips none, starts it', async () => {
       const { calls, handlers } = setup();
       handlers.set('torrent-add', () => success({ 'torrent-duplicate': { hashString: INFO_HASH } }));
-      await expect(adapter.add(release, config())).rejects.toThrow('did not accept the file selection');
-      expect(calls.some((c) => ['torrent-set', 'torrent-remove'].includes(c.method))).toBe(false);
+      await expect(adapter.add(release, config())).resolves.toEqual({ clientKey: INFO_HASH, extended: true });
+      expect(calls.find((c) => c.method === 'torrent-set')?.args).toEqual({ ids: [INFO_HASH], 'files-wanted': [1] });
+      expect(calls.some((c) => c.method === 'torrent-remove')).toBe(false);
+      expect(calls.some((c) => JSON.stringify(c.args).includes('files-unwanted'))).toBe(false);
+      expect(calls.some((c) => c.method === 'torrent-start')).toBe(true);
+    });
+    it('refuses an extended selection with a missing file and removes nothing', async () => {
+      const { calls, handlers } = setup();
+      handlers.set('torrent-add', () => success({ 'torrent-duplicate': { hashString: INFO_HASH } }));
+      await expect(adapter.add({ ...release, wantedPaths: ['A/9.epub'] }, config())).rejects.toThrow('did not accept the file selection');
+      expect(calls.some((c) => ['torrent-set', 'torrent-remove', 'torrent-start'].includes(c.method))).toBe(false);
     });
     it('removes the torrent when a wanted file is missing', async () => {
       const { calls } = setup();

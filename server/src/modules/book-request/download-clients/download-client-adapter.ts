@@ -107,7 +107,8 @@ export interface DownloadClientAdapter {
   readonly delivers: DownloadDelivery;
   readonly supportsFileSelection?: true;
 
-  add(release: GrabPayload, config: ResolvedClientConfig): Promise<{ clientKey: string }>;
+  /** `extended` is set when the client already held the torrent and only more of its files were switched on. */
+  add(release: GrabPayload, config: ResolvedClientConfig): Promise<{ clientKey: string; extended?: true }>;
   /**
    * Batched deliberately: one poll tick is one HTTP call per client however many downloads are
    * in flight. A key the client no longer knows about is simply absent from the result.

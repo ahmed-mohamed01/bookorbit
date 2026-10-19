@@ -33,6 +33,8 @@ function makeService(
   const downloads = {
     findLatestForRequests: vi.fn().mockResolvedValue(row ? new Map([[7, { download: row, downloadClientName: 'qbit' }]]) : new Map()),
     findById: vi.fn().mockResolvedValue(row ?? undefined),
+    findExtension: vi.fn().mockResolvedValue({ filesPendingSince: null, extendsExisting: false }),
+    existsOtherForClientKey: vi.fn().mockResolvedValue(false),
     update: vi.fn().mockResolvedValue(undefined),
     updateIf: vi
       .fn()
@@ -63,7 +65,7 @@ function makeService(
 
   // The real removal service, not a double: these tests are about what reaches the download
   // client, and a stubbed remover would assert only that the seed service called a mock.
-  const removal = new DownloadRemovalService(downloads as never, clients as never, registry as never);
+  const removal = new DownloadRemovalService(downloads as never, clients as never, registry as never, { remove: vi.fn() } as never);
 
   const service = new RequestSeedService(
     downloads as never,
@@ -145,6 +147,27 @@ describe('RequestSeedService.removeFromClient', () => {
     await service.removeFromClient(7, 11, false, user());
 
     expect(adapter.remove).toHaveBeenCalledWith(INFO_HASH, expect.anything(), { deleteFiles: false });
+  });
+
+  it('never removes or deletes a torrent the download only extended', async () => {
+    const { service, adapter, downloads } = makeService();
+    downloads.findExtension.mockResolvedValue({ filesPendingSince: null, extendsExisting: true });
+
+    await service.removeFromClient(7, 11, true, user());
+
+    expect(adapter.remove).not.toHaveBeenCalled();
+  });
+
+  it('tells the request the torrent was left in the client', async () => {
+    const { service, downloads, requests } = makeService({ latest: download({ status: 'downloading' }) });
+    downloads.findExtension.mockResolvedValue({ filesPendingSince: null, extendsExisting: true });
+
+    await service.removeFromClient(7, 11, false, user());
+
+    expect(requests.updateIf).toHaveBeenCalledWith(7, expect.anything(), {
+      status: 'failed',
+      statusReason: 'This torrent was already in the download client, so BookOrbit left it there.',
+    });
   });
 
   it('deletes the files when the approver asked for that', async () => {

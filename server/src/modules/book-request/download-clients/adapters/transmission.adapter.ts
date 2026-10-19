@@ -12,7 +12,7 @@ import type {
   ResolvedClientConfig,
   SeedInfo,
 } from '../download-client-adapter';
-import { applyFileSelection, validateFileSelection } from '../file-selection.utils';
+import { applyFileSelection, extendFileSelection, validateFileSelection } from '../file-selection.utils';
 import { basicAuthHeader, endpointUrl, fetchClient, readClientJson, throwForClientServerError } from './client-http.utils';
 
 const LABEL = 'Transmission';
@@ -96,7 +96,7 @@ export class TransmissionAdapter implements DownloadClientAdapter {
   /** The CSRF token the daemon issued, per client row. Not a login: it survives no restart. */
   private readonly sessions = new Map<number, string>();
 
-  async add(release: GrabPayload, config: ResolvedClientConfig): Promise<{ clientKey: string }> {
+  async add(release: GrabPayload, config: ResolvedClientConfig): Promise<{ clientKey: string; extended?: true }> {
     validateFileSelection(release);
     const args: Record<string, unknown> = { paused: release.wantedPaths !== undefined };
     if (release.torrentFile) {
@@ -115,8 +115,6 @@ export class TransmissionAdapter implements DownloadClientAdapter {
     // rather than an error. An earlier attempt on this release leaves its torrent behind when the
     // import fails, and the torrent we asked for being present is the outcome we wanted.
     const duplicate = result['torrent-duplicate'];
-    if (duplicate && release.wantedPaths !== undefined)
-      throw new BadRequestException('The download client did not accept the file selection: the client already has the torrent');
     const added = result['torrent-added'] ?? duplicate;
     const hash = added?.hashString?.toLowerCase();
     if (!hash) throw new BadRequestException('Transmission accepted the torrent but named no infohash');
@@ -132,9 +130,39 @@ export class TransmissionAdapter implements DownloadClientAdapter {
       );
     }
 
-    if (release.wantedPaths !== undefined) await this.selectFiles(hash, release.wantedPaths, config);
+    if (release.wantedPaths !== undefined) {
+      if (duplicate) {
+        await this.extendSelection(hash, release.wantedPaths, config);
+        return { clientKey: hash, extended: true };
+      }
+      await this.selectFiles(hash, release.wantedPaths, config);
+    }
     await this.applySeedGoal(hash, release, config);
     return { clientKey: hash };
+  }
+
+  private async listTorrentFiles(clientKey: string, config: ResolvedClientConfig): Promise<string[]> {
+    const result = await this.rpc<{ torrents?: Array<{ files?: Array<{ name: string }> }> }>(config, 'torrent-get', {
+      ids: [clientKey],
+      fields: ['files'],
+    });
+    return result.torrents?.[0]?.files?.map((file) => file.name) ?? [];
+  }
+
+  private async extendSelection(clientKey: string, wantedPaths: string[], config: ResolvedClientConfig): Promise<void> {
+    await extendFileSelection({
+      clientId: config.id,
+      clientKey,
+      wantedPaths,
+      logger: this.logger,
+      listFiles: () => this.listTorrentFiles(clientKey, config),
+      enable: async (indexes) => {
+        if (indexes.length) await this.rpc(config, 'torrent-set', { ids: [clientKey], 'files-wanted': indexes });
+      },
+      start: async () => {
+        await this.rpc(config, 'torrent-start', { ids: [clientKey] });
+      },
+    });
   }
 
   private async selectFiles(clientKey: string, wantedPaths: string[], config: ResolvedClientConfig): Promise<void> {
@@ -143,13 +171,7 @@ export class TransmissionAdapter implements DownloadClientAdapter {
       clientKey,
       wantedPaths,
       logger: this.logger,
-      listFiles: async () => {
-        const result = await this.rpc<{ torrents?: Array<{ files?: Array<{ name: string }> }> }>(config, 'torrent-get', {
-          ids: [clientKey],
-          fields: ['files'],
-        });
-        return result.torrents?.[0]?.files?.map((file) => file.name) ?? [];
-      },
+      listFiles: () => this.listTorrentFiles(clientKey, config),
       skip: async (indexes) => {
         if (indexes.length) await this.rpc(config, 'torrent-set', { ids: [clientKey], 'files-unwanted': indexes });
       },

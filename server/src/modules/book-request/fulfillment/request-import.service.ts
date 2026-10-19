@@ -10,6 +10,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'pat
 import { isUniqueViolation } from '../../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import type { BookRequestDownloadRow, BookRequestRow } from '../../../db/schema';
+import type { BatchUnitRow } from '../schema/book-request-batch.schema';
 import type { FileRole } from '../../scanner/lib/classify';
 import { AuditService } from '../../audit/audit.service';
 import { BookDockRepository } from '../../book-dock/book-dock.repository';
@@ -42,6 +43,9 @@ import { DownloadRemovalService } from './download-removal.service';
 import { RequestFulfillmentService } from './request-fulfillment.service';
 
 /** A release folder is books plus artwork, not a filesystem. Depth and count stay bounded. */
+/** How long a finished download may keep reporting chosen files that are not all there. */
+const BATCH_FILES_GRACE_MS = 30 * 60 * 1000;
+const BATCH_FILES_NEVER_ARRIVED = 'The download client reported the download finished, but some selected files never arrived.';
 const MAX_SCAN_DEPTH = 4;
 const MAX_SCAN_ENTRIES = 2_000;
 /** Enough attempts to get past a same-named retry without turning a collision into a loop. */
@@ -207,12 +211,17 @@ export class RequestImportService implements OnApplicationBootstrap {
       root,
       plan,
       containmentRoot: contentContainmentRoot,
-    } = await this.resolveReleasePlan(localPath, resolved.containmentRoot, extractionDirectory);
+    } = await this.resolveReleasePlan(localPath, download.contentPath, resolved.containmentRoot, extractionDirectory);
 
     if ((await this.batches.findKinds([request.id])).get(request.id) === 'batch') {
       await this.runBatchImportFromDisk(download, request, root, plan, contentContainmentRoot);
       return;
     }
+
+    // The directory walk swallows read errors, so an unreadable folder would otherwise surface as "no supported book file".
+    await readdir(root).catch((error: NodeJS.ErrnoException) => {
+      throw new Error(unreadableDownloadMessage(root, download.contentPath ?? root, error.code), { cause: error });
+    });
 
     // Part of the release was never read, so what looks like a whole book may be the half of one
     // that fitted inside the bounds. Importing it would mark the request available on a book with
@@ -358,7 +367,20 @@ export class RequestImportService implements OnApplicationBootstrap {
     const started = Date.now();
     const rows = await this.batches.findUnits(request.id);
 
-    const unreadable = await batchSourceProblem(root, plan);
+    const unreadable = await batchSourceProblem(root, download.contentPath ?? root, plan);
+    if (unreadable && unreadable.errorClass !== 'EmptyDownload') {
+      await this.failUnreadableBatch(download, request, unreadable, started);
+      return;
+    }
+
+    const missing = await incompleteBatchFiles(root, rows);
+    if (missing > 0) {
+      await this.holdIncompleteBatch(download, request, missing, started);
+      return;
+    }
+
+    await this.downloads.setFilesPendingSince(download.id, null);
+
     if (unreadable) {
       await this.failUnreadableBatch(download, request, unreadable, started);
       return;
@@ -438,16 +460,52 @@ export class RequestImportService implements OnApplicationBootstrap {
   }
 
   /**
+   * A torrent extended with more files can be reported as finished for a moment before the new
+   * files arrive. Nothing is wrong with the units, so the download goes back to being polled; only
+   * a client that still disagrees long after the grab fails the batch.
+   */
+  private async holdIncompleteBatch(download: BookRequestDownloadRow, request: BookRequestRow, missing: number, started: number): Promise<void> {
+    const { filesPendingSince } = await this.downloads.findExtension(download.id);
+    if (filesPendingSince === null) await this.downloads.setFilesPendingSince(download.id, new Date(started));
+    if (filesPendingSince !== null && started - filesPendingSince.getTime() >= BATCH_FILES_GRACE_MS) {
+      await this.requests.updateIf(request.id, [...WORKER_WRITABLE_BOOK_REQUEST_STATUSES, 'importing'], {
+        status: 'failed',
+        statusReason: BATCH_FILES_NEVER_ARRIVED,
+      });
+      await this.downloads.updateIf(download.id, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, {
+        status: 'failed',
+        errorMessage: BATCH_FILES_NEVER_ARRIVED,
+      });
+      this.logger.warn(
+        `[book_request.batch_import] [fail] requestId=${request.id} downloadId=${download.id} missingUnits=${missing} durationMs=${Date.now() - started} errorClass=FilesNeverArrived error="${sanitizeLogValue(BATCH_FILES_NEVER_ARRIVED)}" - the selected files never arrived`,
+      );
+      this.gateway.emitChanged();
+      return;
+    }
+
+    await this.downloads.updateIf(download.id, ['completed', 'importing'], {
+      status: 'downloading',
+      completedAt: null,
+      lastProgressAt: new Date(),
+    });
+    await this.requests.updateIf(request.id, ['importing'], { status: 'downloading' });
+    this.logger.log(
+      `[book_request.batch_import] [end] requestId=${request.id} downloadId=${download.id} missingUnits=${missing} durationMs=${Date.now() - started} - selected files are not complete yet, polling the client again`,
+    );
+    this.gateway.emitChanged();
+  }
+
+  /**
    * Units stay 'waiting': nothing was wrong with them, so a later re-run can still place them once
    * the download is readable again.
    */
   private async failUnreadableBatch(
     download: BookRequestDownloadRow,
     request: BookRequestRow,
-    problem: { errorClass: string; reason: string },
+    problem: { errorClass: string; message: string },
     started: number,
   ): Promise<void> {
-    const message = `BookOrbit could not read the finished download: ${problem.reason}`;
+    const message = problem.message;
     await this.requests.updateIf(request.id, [...WORKER_WRITABLE_BOOK_REQUEST_STATUSES, 'importing'], {
       status: 'failed',
       statusReason: message,
@@ -566,11 +624,16 @@ export class RequestImportService implements OnApplicationBootstrap {
    */
   private async resolveReleasePlan(
     localPath: string,
+    clientPath: string,
     containmentRoot: string,
     extractionDirectory: string,
   ): Promise<{ root: string; plan: ReleasePlan; containmentRoot: string }> {
-    const info = await stat(localPath).catch(() => null);
-    if (!info) throw new Error(`The downloaded content is not readable at ${localPath}`);
+    let info: Awaited<ReturnType<typeof stat>>;
+    try {
+      info = await stat(localPath);
+    } catch (error) {
+      throw new Error(unreadableDownloadMessage(localPath, clientPath, (error as NodeJS.ErrnoException).code), { cause: error });
+    }
 
     const root = info.isDirectory() ? localPath : dirname(localPath);
     const rootName = info.isDirectory() ? basename(localPath) : null;
@@ -957,23 +1020,52 @@ async function holdsExactlyFiles(folder: string, expected: number): Promise<bool
 const UNREADABLE_REASONS: Record<string, string> = {
   EPERM: 'permission denied',
   EACCES: 'permission denied',
-  ENOENT: 'the download folder was not found',
+  ENOENT: 'not found',
 };
+
+function unreadableDownloadMessage(localPath: string, clientPath: string, code: string | undefined): string {
+  const reason = (code && UNREADABLE_REASONS[code]) ?? code ?? 'unknown error';
+  return `BookOrbit could not read the finished download at ${localPath} (${reason}). The download client reported ${clientPath}; check the path mapping for this client.`;
+}
 
 /**
  * The directory walk swallows read errors, so an unreadable download looks exactly like one that
  * holds nothing. A batch has to tell the two apart: marking every unit "not found" would blame
  * the files for a problem with the folder.
  */
-async function batchSourceProblem(root: string, plan: ReleasePlan): Promise<{ errorClass: string; reason: string } | null> {
+async function batchSourceProblem(root: string, clientPath: string, plan: ReleasePlan): Promise<{ errorClass: string; message: string } | null> {
   try {
     await readdir(root);
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? 'Error';
-    return { errorClass: code, reason: UNREADABLE_REASONS[code] ?? 'the download folder could not be opened' };
+    const code = (error as NodeJS.ErrnoException).code;
+    return { errorClass: code ?? 'Error', message: unreadableDownloadMessage(root, clientPath, code) };
   }
-  if (plan.units.length === 0) return { errorClass: 'EmptyDownload', reason: 'the download folder is empty' };
+  if (plan.units.length === 0) {
+    return { errorClass: 'EmptyDownload', message: 'BookOrbit could not read the finished download: the download folder is empty' };
+  }
   return null;
+}
+
+/**
+ * How many waiting units have a file that is missing or smaller than when the batch was created.
+ * Rows from before sizes were recorded carry none and are never held back.
+ */
+async function incompleteBatchFiles(root: string, rows: BatchUnitRow[]): Promise<number> {
+  let incomplete = 0;
+  for (const row of rows) {
+    if ((row.status !== 'waiting' && row.status !== 'placing') || !row.fileSizes || row.fileSizes.length !== row.filePaths.length) continue;
+    for (let index = 0; index < row.filePaths.length; index++) {
+      const size = await stat(join(root, row.filePaths[index])).then(
+        (info) => info.size,
+        () => null,
+      );
+      if (size === null || size < row.fileSizes[index]) {
+        incomplete++;
+        break;
+      }
+    }
+  }
+  return incomplete;
 }
 
 async function collectReleaseFiles(root: string): Promise<ReleaseWalk> {

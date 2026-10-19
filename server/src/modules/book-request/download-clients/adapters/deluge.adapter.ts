@@ -12,7 +12,7 @@ import type {
   ResolvedClientConfig,
   SeedInfo,
 } from '../download-client-adapter';
-import { applyFileSelection, validateFileSelection } from '../file-selection.utils';
+import { applyFileSelection, extendFileSelection, validateFileSelection } from '../file-selection.utils';
 import { endpointUrl, fetchClient, readClientJson, throwForClientServerError } from './client-http.utils';
 
 const LABEL = 'Deluge';
@@ -110,7 +110,7 @@ export class DelugeAdapter implements DownloadClientAdapter {
   private readonly sessions = new Map<number, DelugeSession>();
   private requestId = 0;
 
-  async add(release: GrabPayload, config: ResolvedClientConfig): Promise<{ clientKey: string }> {
+  async add(release: GrabPayload, config: ResolvedClientConfig): Promise<{ clientKey: string; extended?: true }> {
     validateFileSelection(release);
     if (!release.torrentFile && !release.magnet) {
       throw new BadRequestException('A grab needs either a magnet link or a .torrent file');
@@ -138,6 +138,11 @@ export class DelugeAdapter implements DownloadClientAdapter {
       hash = (added ?? release.clientKey).toLowerCase();
     } catch (error) {
       if (release.wantedPaths !== undefined) {
+        const clientKey = release.clientKey.toLowerCase();
+        if (await this.holds(clientKey, config)) {
+          await this.extendSelection(clientKey, release.wantedPaths, config);
+          return { clientKey, extended: true };
+        }
         const detail = error instanceof Error ? error.message : String(error);
         throw new BadRequestException(`The download client did not accept the file selection: ${detail}`);
       }
@@ -154,6 +159,42 @@ export class DelugeAdapter implements DownloadClientAdapter {
     if (release.wantedPaths !== undefined) await this.selectFiles(hash, release.wantedPaths, config);
     await this.applyLabel(hash, config);
     return { clientKey: hash };
+  }
+
+  private async extendSelection(clientKey: string, wantedPaths: string[], config: ResolvedClientConfig): Promise<void> {
+    let files: Array<{ index: number; path: string }> = [];
+    let priorities: number[] = [];
+    await extendFileSelection({
+      clientId: config.id,
+      clientKey,
+      wantedPaths,
+      logger: this.logger,
+      listFiles: async () => {
+        const result = await this.rpc<{ files?: Array<{ index: number; path: string }>; file_priorities?: number[] }>(
+          config,
+          'core.get_torrent_status',
+          [clientKey, ['files', 'file_priorities']],
+        );
+        files = result?.files ?? [];
+        priorities = result?.file_priorities ?? [];
+        if (
+          files.some((file) => !Number.isInteger(file.index) || file.index < 0 || file.index >= files.length) ||
+          new Set(files.map((file) => file.index)).size !== files.length ||
+          priorities.length !== files.length
+        ) {
+          throw new BadRequestException('the client returned invalid file indexes');
+        }
+        return files.map((file) => file.path);
+      },
+      enable: async (indexes) => {
+        const next = [...priorities];
+        for (const index of indexes) next[files[index].index] = 1;
+        await this.rpc(config, 'core.set_torrent_options', [[clientKey], { file_priorities: next }]);
+      },
+      start: async () => {
+        await this.rpc(config, 'core.resume_torrent', [[clientKey]]);
+      },
+    });
   }
 
   private async selectFiles(clientKey: string, wantedPaths: string[], config: ResolvedClientConfig): Promise<void> {

@@ -166,7 +166,7 @@ function makeService(
   };
   const removal = {
     removeLatestForRequest: vi.fn().mockResolvedValue({ removed: false, error: null }),
-    removeAttempt: vi.fn().mockResolvedValue(true),
+    removeAttempt: vi.fn().mockResolvedValue({ wasInFlight: true, leftInClient: false }),
     ...overrides.removal,
   };
   // The summary caches on the broadcast count, so the stub has to move it the way the real one does.
@@ -1123,7 +1123,7 @@ describe('BookRequestService.cancelDownload', () => {
   it('does not report a cancellation when completion wins the detach race', async () => {
     const { service, repo } = makeService({
       repo: { findById: vi.fn().mockResolvedValue(joined({ status: 'downloading' })) },
-      removal: { removeAttempt: vi.fn().mockResolvedValue(false) },
+      removal: { removeAttempt: vi.fn().mockResolvedValue({ wasInFlight: false, leftInClient: false }) },
     });
 
     await expect(service.cancelDownload(10, 11, user())).rejects.toThrow('The download finished before it could be cancelled');

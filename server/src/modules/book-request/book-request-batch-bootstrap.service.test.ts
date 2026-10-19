@@ -36,10 +36,11 @@ describe('BookRequestBatchBootstrapService', () => {
 
     expect(repo.findMissingColumns).toHaveBeenCalledWith('book_requests', ['kind']);
     const statements = repo.applySchemaStatements.mock.calls[0]![0] as string[];
-    expect(statements).toHaveLength(5);
+    expect(statements).toHaveLength(8);
     expect(statements[0]).toContain('ADD COLUMN IF NOT EXISTS "kind" varchar(10) NOT NULL DEFAULT \'single\'');
     expect(statements.join('\n')).toContain('book_requests_kind_chk');
     expect(statements.join('\n')).toContain('CREATE TABLE IF NOT EXISTS "book_request_batch_units"');
+    expect(statements.join('\n')).toContain('ADD COLUMN IF NOT EXISTS "file_sizes" bigint[]');
     expect(logSpy.mock.calls[0]![0]).toMatch(/^\[book_request\.batch_bootstrap\] \[end\] durationMs=\d+ columnsAdded=1 - batch grab schema applied$/);
   });
 
