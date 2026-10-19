@@ -5,7 +5,7 @@ import MonitoredFiltersPanel from './MonitoredFiltersPanel.vue'
 import { DEFAULT_MONITORED_DISPLAY, countWorkClasses } from '../lib/work-visibility'
 import { defaultAuthorStatusFilters } from '../lib/status-filter'
 
-function menu(statusFilters = defaultAuthorStatusFilters()) {
+function menu(statusFilters = defaultAuthorStatusFilters(), extra: Record<string, unknown> = {}) {
   return mount(MonitoredFiltersMenu, {
     props: {
       modelValue: { ...DEFAULT_MONITORED_DISPLAY },
@@ -13,6 +13,7 @@ function menu(statusFilters = defaultAuthorStatusFilters()) {
       canCurate: true,
       statusFilters,
       sections: { status: true, release: false, kind: true, more: false },
+      ...extra,
     },
     global: {
       stubs: {
@@ -45,5 +46,33 @@ describe('MonitoredFiltersMenu', () => {
     expect(wrapper.find('button').classes()).toContain('border-primary/55')
     await wrapper.setProps({ modelValue: { ...DEFAULT_MONITORED_DISPLAY }, statusFilters: ['missing'] })
     expect(wrapper.find('button').classes()).toContain('border-primary/55')
+  })
+  it('holds ticks as a draft and commits once when the popover closes', async () => {
+    const wrapper = menu(defaultAuthorStatusFilters(), { commitOnClose: true })
+    const panel = wrapper.findComponent(MonitoredFiltersPanel)
+    wrapper.findComponent({ name: 'Popover' }).vm.$emit('update:open', true)
+    panel.vm.$emit('update:statusFilters', ['missing'])
+    panel.vm.$emit('update:modelValue', { ...DEFAULT_MONITORED_DISPLAY, hidden: true })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('update:statusFilters')).toBeUndefined()
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    wrapper.findComponent({ name: 'Popover' }).vm.$emit('update:open', false)
+    expect(wrapper.emitted('update:statusFilters')).toEqual([[['missing']]])
+    expect(wrapper.emitted('update:modelValue')).toEqual([[{ ...DEFAULT_MONITORED_DISPLAY, hidden: true }]])
+    expect(wrapper.emitted('open-change')).toEqual([[true], [false]])
+  })
+  it('keeps the last status ticked and resets the draft without emitting reset in commit mode', async () => {
+    const wrapper = menu(['missing'], { commitOnClose: true })
+    const popover = wrapper.findComponent({ name: 'Popover' })
+    popover.vm.$emit('update:open', true)
+    const panel = wrapper.findComponent(MonitoredFiltersPanel)
+    panel.vm.$emit('update:statusFilters', [])
+    panel.vm.$emit('update:modelValue', { ...DEFAULT_MONITORED_DISPLAY, hidden: true })
+    panel.vm.$emit('reset')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('reset')).toBeUndefined()
+    popover.vm.$emit('update:open', false)
+    expect(wrapper.emitted('update:statusFilters')?.[0]?.[0]).toEqual(expect.arrayContaining(['missing']))
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
   })
 })

@@ -2,11 +2,12 @@ import { describe, expect, it } from 'vitest'
 import type { MonitorMode, MonitoredFormat, MonitoredWork } from '@bookorbit/types'
 import {
   AUTHOR_STATUS_OPTIONS,
+  RELEASE_STATUS_OPTIONS,
   defaultAuthorStatusFilters,
+  defaultStatusFilters,
   isDefaultAuthorFilters,
   readAuthorStatusFilters,
   readStatusFilters,
-  toggleAuthorStatusFilter,
   workMatchesAuthorStatus,
 } from './status-filter'
 import { DEFAULT_MONITORED_DISPLAY } from './work-visibility'
@@ -48,10 +49,13 @@ describe('author status filters', () => {
     expect(AUTHOR_STATUS_OPTIONS).not.toContain('hidden')
     expect(readAuthorStatusFilters(['in_progress', 'hidden', 'missing'])).toEqual(['missing'])
     expect(readAuthorStatusFilters(['in_progress', 'hidden'])).toEqual(AUTHOR_STATUS_OPTIONS)
-    expect(readStatusFilters(['in_progress', 'hidden'])).toEqual(['in_progress', 'hidden'])
+    expect(readStatusFilters(['in_progress', 'hidden'])).toEqual(['in_progress'])
+    expect(readStatusFilters(['hidden'])).toEqual(defaultStatusFilters())
+    expect(readStatusFilters(['missing', 'hidden'])).toEqual(['missing'])
+    expect(RELEASE_STATUS_OPTIONS).not.toContain('hidden')
+    expect(RELEASE_STATUS_OPTIONS).toContain('in_progress')
   })
   it('allows and persists an empty author selection', () => {
-    expect(toggleAuthorStatusFilter(['missing'], 'missing')).toEqual([])
     expect(readAuthorStatusFilters([])).toEqual([])
     expect(readAuthorStatusFilters(null)).toEqual(AUTHOR_STATUS_OPTIONS)
     expect(readAuthorStatusFilters(['invalid'])).toEqual(AUTHOR_STATUS_OPTIONS)

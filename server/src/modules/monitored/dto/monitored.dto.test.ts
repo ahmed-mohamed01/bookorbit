@@ -1,3 +1,4 @@
+import { ValidationPipe } from '@nestjs/common';
 import 'reflect-metadata';
 
 import { plainToInstance } from 'class-transformer';
@@ -178,5 +179,24 @@ describe('monitored list query DTOs', () => {
     await expect(validate(plainToInstance(ListMonitoredAuthorsDto, { sort: 'progress', order: 'desc', q: '  Le Guin  ' }))).resolves.toHaveLength(0);
     await expect(validate(plainToInstance(ListMonitoredBooksDto, { sort: 'author', order: 'asc' }))).resolves.toHaveLength(0);
     await expect(validate(plainToInstance(ListMonitoredReleasesDto, { sort: 'title', order: 'desc', filter: 'soon' }))).resolves.toHaveLength(0);
+  });
+});
+
+describe('release display classes', () => {
+  it('parses kinds and review flags through the strict boundary', async () => {
+    const dto = plainToInstance(ListMonitoredReleasesDto, { kinds: 'graphic_novel,collection', more: 'unconfirmed' });
+    expect(await validate(dto, { whitelist: true, forbidNonWhitelisted: true })).toEqual([]);
+    expect(dto).toMatchObject({ kinds: ['graphic_novel', 'collection'], more: ['unconfirmed'] });
+  });
+
+  it('returns HTTP 400 for an invalid release kind', async () => {
+    const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
+    await expect(pipe.transform({ kinds: 'bogus' }, { type: 'query', metatype: ListMonitoredReleasesDto })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('rejects invalid kinds and flags', async () => {
+    for (const query of [{ kinds: 'bogus' }, { more: 'bogus' }]) {
+      expect(await validate(plainToInstance(ListMonitoredReleasesDto, query))).not.toHaveLength(0);
+    }
   });
 });

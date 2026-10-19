@@ -13,21 +13,28 @@ import {
   CalendarCheck,
   FileQuestion,
   ShieldQuestion,
+  Download,
 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { MONITORED_MARK_KINDS, type MonitoredMarkKind, type MonitoredStatusFilter } from '@bookorbit/types'
-import { AUTHOR_STATUS_OPTIONS, isDefaultAuthorFilters, toggleAuthorStatusFilter } from '../lib/status-filter'
+import { AUTHOR_STATUS_OPTIONS, isDefaultFilterSelection } from '../lib/status-filter'
+import { toggleInOrder } from '../lib/toggle-in-order'
 import { toggleKind, type MonitoredDisplayClassCounts, type MonitoredDisplayFlag, type MonitoredDisplayOptions } from '../lib/work-visibility'
 import type { MonitoredFilterSection, MonitoredFilterSections } from '../lib/filter-sections'
 import { MONITORED_KIND_ICONS } from '../lib/kind-icons'
 
-const props = defineProps<{
-  modelValue: MonitoredDisplayOptions
-  counts: MonitoredDisplayClassCounts
-  canCurate: boolean
-  statusFilters?: MonitoredStatusFilter[]
-  sections: MonitoredFilterSections
-}>()
+const props = withDefaults(
+  defineProps<{
+    modelValue: MonitoredDisplayOptions
+    counts: MonitoredDisplayClassCounts
+    canCurate: boolean
+    statusFilters?: MonitoredStatusFilter[]
+    sections: MonitoredFilterSections
+    statusOptions?: readonly MonitoredStatusFilter[]
+    showRelease?: boolean
+  }>(),
+  { statusOptions: () => AUTHOR_STATUS_OPTIONS, showRelease: true },
+)
 const emit = defineEmits<{
   'update:modelValue': [value: MonitoredDisplayOptions]
   'update:statusFilters': [value: MonitoredStatusFilter[]]
@@ -48,8 +55,9 @@ const statusIcons: Partial<Record<MonitoredStatusFilter, Component>> = {
   upcoming: CalendarClock,
   in_library: CircleCheck,
   not_watched: EyeOff,
+  in_progress: Download,
 }
-const isDefault = computed(() => isDefaultAuthorFilters(props.modelValue, props.statusFilters))
+const isDefault = computed(() => isDefaultFilterSelection(props.modelValue, props.statusFilters, props.statusOptions))
 function flagRow(key: MonitoredDisplayFlag, icon: Component, count?: number): Row {
   return { key, label: t(`monitored.filters.${key}`), icon, selected: props.modelValue[key], count }
 }
@@ -65,14 +73,14 @@ const groups = computed(() => {
   if (props.statusFilters)
     entries.push({
       key: 'status',
-      rows: AUTHOR_STATUS_OPTIONS.map((key) => ({
+      rows: props.statusOptions.map((key) => ({
         key,
         label: t(`monitored.statusFilter.options.${key}`),
         icon: statusIcons[key]!,
         selected: props.statusFilters!.includes(key),
       })),
     })
-  entries.push({ key: 'release', rows: [flagRow('released', CalendarCheck), flagRow('upcoming', CalendarClock)] })
+  if (props.showRelease) entries.push({ key: 'release', rows: [flagRow('released', CalendarCheck), flagRow('upcoming', CalendarClock)] })
   entries.push({
     key: 'kind',
     rows: MONITORED_MARK_KINDS.map((key) => ({
@@ -99,7 +107,7 @@ function toggleSection(key: MonitoredFilterSection) {
 }
 function toggleRow(section: MonitoredFilterSection, key: string) {
   if (section === 'status') {
-    if (props.statusFilters) emit('update:statusFilters', toggleAuthorStatusFilter(props.statusFilters, key as MonitoredStatusFilter))
+    if (props.statusFilters) emit('update:statusFilters', toggleInOrder(props.statusOptions, props.statusFilters, key as MonitoredStatusFilter))
   } else if (section === 'kind') {
     emit('update:modelValue', { ...props.modelValue, kinds: toggleKind(props.modelValue.kinds, key as MonitoredMarkKind) })
   } else {

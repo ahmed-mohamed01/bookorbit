@@ -1,10 +1,10 @@
-import { isWorkVisible, type MonitoredWork } from '@bookorbit/types'
+import { isWorkListed, isWorkVisible, type MonitoredWork } from '@bookorbit/types'
 
 /**
  * Why a work is not in its plain state, most pressing first, or null when it is. Each state has its
  * own way out, so the panel says only the one that applies.
  */
-export type MonitoredVisibilityState = 'author-paused' | 'work-paused' | 'work-stopped' | 'hidden' | 'kept' | 'review'
+export type MonitoredVisibilityState = 'author-paused' | 'work-paused' | 'work-stopped' | 'hidden' | 'kept' | 'review' | 'owned'
 
 export function monitoredVisibilityState(work: MonitoredWork, authorPaused = false): MonitoredVisibilityState | null {
   if (authorPaused) return 'author-paused'
@@ -15,5 +15,6 @@ export function monitoredVisibilityState(work: MonitoredWork, authorPaused = fal
   const verdictShows = work.verdict === 'verified' && work.flags.length === 0
   // Keeping a work, by the Keep button or by marking it Book, changes nothing when the verdict already shows it.
   if (work.userVisibility === 'visible' || work.userKind === 'book') return verdictShows ? null : 'kept'
-  return isWorkVisible(work) ? null : 'review'
+  if (isWorkVisible(work)) return null
+  return isWorkListed(work) ? 'owned' : 'review'
 }

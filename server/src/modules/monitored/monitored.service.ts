@@ -12,6 +12,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import {
+  isWorkListed,
   isWorkVisible,
   monitoredBulkFormats,
   monitoredBulkSkipReason,
@@ -45,6 +46,7 @@ import type {
   MonitoredReleaseDateLookup,
   MonitoredReleasePage,
   MonitoredReleaseStatus,
+  MonitoredDisplayClassCounts,
   MonitoredSummary,
   MonitoredWork,
   MonitoredWorkMatchPayload,
@@ -95,6 +97,7 @@ import type {
 } from './dto/monitored.dto';
 import { releaseDateWithinWindow } from './release-window';
 
+const SLOW_CLASS_COUNTS_MS = 500;
 const RELEASE_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
 const RELEASE_LOOKAHEAD_MS = 365 * 24 * 60 * 60 * 1000;
 const DEFAULT_FORMAT_CONFIG: MonitorFormatConfig = { mode: 'off', libraryId: null, folderId: null };
@@ -124,14 +127,17 @@ function sourceCount(sourceIds: number[] | null | undefined): number | 'all' | '
   return sourceIds === null ? 'all' : sourceIds.length;
 }
 
-function monitoredReleaseStatus(work: MonitoredWork, format: MonitoredFormat, releaseDate: string, today: string): MonitoredReleaseStatus {
+function monitoredReleaseStatus(work: MonitoredWork, format: MonitoredFormat, releaseDate: string | null, today: string): MonitoredReleaseStatus {
   if (work.matchedBookIds?.[format] != null || work.ownedFormats.includes(format)) return 'grabbed';
-  return monitoredAcquisitionState(work.requestStatuses?.[format]) ?? (releaseDate <= today ? 'available' : 'upcoming');
+  const acquisition = monitoredAcquisitionState(work.requestStatuses?.[format]);
+  if (acquisition) return acquisition;
+  return releaseDate !== null && releaseDate <= today ? 'available' : 'upcoming';
 }
 
 /**
- * A work outside the default list answers only to `hidden`; any other work matches when one of its
- * formats is in a selected state. Kept beside the SQL twin in the store so both lists agree.
+ * The author-detail filter only: a work outside the default list answers only to `hidden`; any other
+ * work matches when one of its formats is in a selected state. The releases list filters in SQL and
+ * does not honour `hidden`.
  */
 export function workMatchesStatusFilters(
   monitor: MonitoredAuthorConfig,
@@ -203,6 +209,16 @@ export class MonitoredService {
     const latest = new Date(now + RELEASE_LOOKAHEAD_MS).toISOString().slice(0, 10);
     const [counts, config] = await Promise.all([this.store.countSummary(user, earliest, latest, today), this.providerConfigs.forUser(user.id)]);
     return { ...counts, hardcoverConfigured: isHardcoverConfigured(config), audibleConfigured: isAudibleConfigured(config) };
+  }
+
+  async countWorkClasses(user: RequestUser): Promise<MonitoredDisplayClassCounts> {
+    const startedAt = Date.now();
+    const counts = await this.store.countWorkClasses(user);
+    const durationMs = Date.now() - startedAt;
+    if (durationMs > SLOW_CLASS_COUNTS_MS) {
+      this.logger.warn(`[monitored.class_counts] [end] userId=${user.id} durationMs=${durationMs} - slow class counts read`);
+    }
+    return counts;
   }
 
   async listAuthors(user: RequestUser, query: ListMonitoredAuthorsDto): Promise<MonitoredPage<MonitoredAuthorItem>> {
@@ -567,6 +583,8 @@ export class MonitoredService {
       order: query.order ?? 'asc',
       filter: query.filter ?? 'all',
       status: query.status,
+      kinds: query.kinds,
+      more: query.more,
       earliest,
       latest,
       today,
@@ -1270,7 +1288,7 @@ export class MonitoredService {
     const isOwner = isOwnerView(monitor.ownerUserId, user);
     const today = new Date().toISOString().slice(0, 10);
     const works = allWorks
-      .filter((work) => (isOwner && query.includeHidden) || isWorkVisible(work))
+      .filter((work) => (isOwner && query.includeHidden) || isWorkListed(work))
       .filter((work) => !query.status || workMatchesStatusFilters(monitor, work, query.status, today))
       .sort((left, right) => {
         if (query.sort === 'releaseDate') {

@@ -167,6 +167,39 @@ function createHarness(fetchCatalog: ReturnType<typeof vi.fn>, providerConfigs?:
 }
 
 describe('MonitoredService', () => {
+  it('passes class selections through and returns undated releases as upcoming', async () => {
+    const store = {
+      findReleasePage: vi.fn().mockResolvedValue({
+        items: [{ monitor: author(), work: work({ userVisibility: 'hidden' }), format: 'ebook', releaseDate: null }],
+        total: 1,
+        page: 0,
+        size: 50,
+      }),
+    };
+    const result = await service(store).listReleases(viewer, {
+      page: 0,
+      size: 50,
+      order: 'asc',
+      kinds: [],
+      more: ['hidden'],
+    });
+    expect(store.findReleasePage).toHaveBeenCalledWith(expect.objectContaining({ kinds: [], more: ['hidden'] }));
+    expect(result.items[0]).toMatchObject({ releaseDate: null, status: 'upcoming' });
+  });
+
+  it('reports an owned undated format as grabbed, not upcoming', async () => {
+    const store = {
+      findReleasePage: vi.fn().mockResolvedValue({
+        items: [{ monitor: author(), work: work({ ownedFormats: ['ebook'] }), format: 'ebook', releaseDate: null }],
+        total: 1,
+        page: 0,
+        size: 50,
+      }),
+    };
+    const result = await service(store).listReleases(viewer, { page: 0, size: 50, order: 'asc', kinds: [], more: ['hidden'] });
+    expect(result.items[0]).toMatchObject({ releaseDate: null, status: 'grabbed' });
+  });
+
   it('emits independent ebook and audiobook releases with per-format status', async () => {
     const monitoredWork = work({
       requestIds: { audiobook: 22 },
@@ -1552,6 +1585,20 @@ describe('MonitoredService', () => {
     expect(detail.works).toEqual([]);
   });
 
+  it('lists owned flagged works for a non-owner viewer', async () => {
+    const ownedFlagged = work({ ownedFormats: ['ebook'], verdict: 'suspect', flags: ['wrong_contributor'] });
+    const store = {
+      getAuthor: vi.fn().mockResolvedValue(author({ ownerUserId: 2 })),
+      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [ownedFlagged] }),
+    };
+    const instance = service(store, {}, { authorsRepository: { findIdByNormalizedName: vi.fn().mockResolvedValue(null) } });
+
+    const detail = await instance.getAuthor('monitor-1', viewer, { sort: 'title', order: 'asc', includeHidden: false });
+
+    expect(detail.works).toEqual([ownedFlagged]);
+    expect(store.getCatalog).toHaveBeenCalledWith('monitor-1', viewer);
+  });
+
   it('builds the release feed from the viewer-scoped store rows without a queued status for a masked overlay', async () => {
     const monitoredWork = work({ requestIds: {}, audioReleaseDate: null, audioDatePrecision: null });
     const findReleasePage = vi.fn().mockResolvedValue({
@@ -2305,5 +2352,30 @@ describe('MonitoredService.setWorkMatch', () => {
 
     expect(store.isBookReadable).not.toHaveBeenCalled();
     expect(store.writeMatchOverride).toHaveBeenCalledWith(expect.objectContaining({ id: target().id }), 'audiobook', { decision: 'automatic' });
+  });
+});
+
+describe('MonitoredService.countWorkClasses', () => {
+  const counts = { hidden: 1, placeholder: 2, unconfirmed: 3, kinds: {} };
+
+  it('returns the store counts for the viewer without logging a fast read', async () => {
+    const countWorkClasses = vi.fn().mockResolvedValue(counts);
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    await expect(service({ countWorkClasses }).countWorkClasses(viewer)).resolves.toBe(counts);
+
+    expect(countWorkClasses).toHaveBeenCalledWith(viewer);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('warns once past 500 ms in the class_counts log style', async () => {
+    const now = vi.spyOn(Date, 'now');
+    now.mockReturnValueOnce(1_000).mockReturnValueOnce(1_501);
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+    await service({ countWorkClasses: vi.fn().mockResolvedValue(counts) }).countWorkClasses(viewer);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('[monitored.class_counts] [end] userId=1 durationMs=501 - slow class counts read');
   });
 });

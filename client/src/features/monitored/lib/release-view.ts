@@ -23,6 +23,13 @@ export function releaseCount(rows: number, cards: MonitoredReleaseCardCounts): n
 }
 
 /** Released means dated on or before today in UTC, the same cut the server counts cards by. */
-export function isReleasedByUtcDate(releaseDate: string, todayUtc: string = new Date().toISOString().slice(0, 10)): boolean {
-  return releaseDate <= todayUtc
+export function isReleasedByUtcDate(releaseDate: string | null, todayUtc: string = new Date().toISOString().slice(0, 10)): boolean {
+  return releaseDate !== null && releaseDate <= todayUtc
+}
+
+export type MonitoredReleaseSection = 'released' | 'upcoming' | 'undated'
+
+export function releaseSectionOf(releaseDate: string | null, todayUtc: string = new Date().toISOString().slice(0, 10)): MonitoredReleaseSection {
+  if (releaseDate === null) return 'undated'
+  return isReleasedByUtcDate(releaseDate, todayUtc) ? 'released' : 'upcoming'
 }

@@ -500,6 +500,77 @@ export function isWorkVisible(work: MonitoredWork): boolean {
   return work.verdict === "verified" && work.flags.length === 0;
 }
 
+export function isWorkListed(work: MonitoredWork): boolean {
+  return isWorkVisible(work) || (work.ownedFormats.length > 0 && work.userVisibility !== "hidden" && (!work.userKind || work.userKind === "book"));
+}
+
+export function workKindOf(work: MonitoredWork): MonitoredMarkKind | null {
+  return work.userKind ?? (isWorkVisible(work) ? "book" : (work.kind ?? null));
+}
+
+export type MonitoredDisplayClass = "hidden" | "kind" | "placeholder" | "unconfirmed";
+export interface MonitoredDisplayClassCounts {
+  hidden: number;
+  placeholder: number;
+  unconfirmed: number;
+  kinds: Record<MonitoredMarkKind, number>;
+}
+
+export function workDisplayClass(work: MonitoredWork): MonitoredDisplayClass {
+  if (work.userVisibility === "hidden") return "hidden";
+  // A placeholder the owner kept or marked Book is on the default list, so only an automatic one is a placeholder here.
+  if (!isWorkVisible(work) && work.flags.includes("placeholder")) return "placeholder";
+  return workKindOf(work) !== null ? "kind" : "unconfirmed";
+}
+
+export function isWorkUnconfirmed(work: MonitoredWork): boolean {
+  return (
+    work.userVisibility !== "hidden" &&
+    !work.userKind &&
+    work.userVisibility !== "visible" &&
+    !work.flags.includes("placeholder") &&
+    (work.verdict !== "verified" || work.flags.length > 0)
+  );
+}
+
+export function countWorkClasses(works: MonitoredWork[]): MonitoredDisplayClassCounts {
+  const counts: MonitoredDisplayClassCounts = {
+    hidden: 0,
+    placeholder: 0,
+    unconfirmed: 0,
+    kinds: Object.fromEntries(MONITORED_MARK_KINDS.map((kind) => [kind, 0])) as Record<MonitoredMarkKind, number>,
+  };
+  for (const work of works) {
+    const category = workDisplayClass(work);
+    if (category === "kind") {
+      const kind = workKindOf(work)!;
+      if (kind in counts.kinds) counts.kinds[kind] += 1;
+    } else if (category !== "unconfirmed") counts[category] += 1;
+    if (isWorkUnconfirmed(work)) counts.unconfirmed += 1;
+  }
+  return counts;
+}
+
+export const MONITORED_REVIEW_FLAGS = ["hidden", "placeholders", "unconfirmed"] as const;
+export type MonitoredReviewFlag = (typeof MONITORED_REVIEW_FLAGS)[number];
+
+export interface MonitoredClassSelection {
+  kinds: MonitoredMarkKind[];
+  more: MonitoredReviewFlag[];
+}
+
+export function workMatchesClassSelection(work: MonitoredWork, selection: MonitoredClassSelection): boolean {
+  const displayClass = workDisplayClass(work);
+  if (displayClass === "hidden") return selection.more.includes("hidden");
+  if (displayClass === "placeholder") return selection.more.includes("placeholders");
+  const kind = workKindOf(work);
+  return (kind !== null && selection.kinds.includes(kind)) || (selection.more.includes("unconfirmed") && isWorkUnconfirmed(work));
+}
+
+export function isDefaultClassSelection(selection: MonitoredClassSelection): boolean {
+  return selection.kinds.length === 1 && selection.kinds[0] === "book" && selection.more.length === 0;
+}
+
 export interface MonitoredBookEntry {
   id: string;
   ownerUserId: number;
@@ -548,7 +619,7 @@ export interface MonitoredReleaseItem {
   authorName: string;
   coverUrl: string | null;
   format: MonitoredFormat;
-  releaseDate: string;
+  releaseDate: string | null;
   status: MonitoredReleaseStatus;
   requestId: number | null;
   /** The author's mode per format, so a surface can say whether a release is grabbed or only announced. */

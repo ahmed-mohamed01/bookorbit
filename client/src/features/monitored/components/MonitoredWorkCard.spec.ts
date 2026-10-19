@@ -406,7 +406,7 @@ describe('MonitoredWorkCard select mode', () => {
     wrapper.unmount()
   })
 
-  it('keeps the format badges in select mode and drops only the time pill and kind label', async () => {
+  it('keeps the format badges and kind label in select mode and drops only the time pill', async () => {
     const wrapper = mountCard(work({ ebookReleaseDate: '2099-04-10', ebookDatePrecision: 'day', verdict: 'probable' }))
     expect(wrapper.find('[data-testid="time-badge"]').exists()).toBe(true)
     expect(wrapper.find('[data-badge]').exists()).toBe(true)
@@ -415,7 +415,7 @@ describe('MonitoredWorkCard select mode', () => {
     await wrapper.setProps({ selectionMode: true })
 
     expect(wrapper.find('[data-testid="time-badge"]').exists()).toBe(false)
-    expect(wrapper.text()).not.toContain('Unverified')
+    expect(wrapper.text()).toContain('Unverified')
     expect(wrapper.find('[data-badge]').exists()).toBe(true)
     wrapper.unmount()
   })
@@ -562,5 +562,56 @@ describe('MonitoredWorkCard long press select', () => {
     off.get('[data-testid="cover-button"]').element.dispatchEvent(untouched)
     expect(untouched.defaultPrevented).toBe(false)
     off.unmount()
+  })
+})
+
+describe('MonitoredWorkCard review reasons', () => {
+  it('shows reason chips for an unconfirmed work', () => {
+    const wrapper = mountCard(work({ verdict: 'suspect', flags: ['audio_episode' as never] }))
+    const chips = wrapper.get('[data-testid="review-reasons"]').text()
+    expect(chips).toContain('Doubtful match')
+    expect(chips).toContain('Audio episode')
+  })
+
+  it('shows none for a verified work', () => {
+    expect(mountCard(work()).find('[data-testid="review-reasons"]').exists()).toBe(false)
+  })
+
+  it('labels a hidden work Hidden by you and humanizes an unknown kind', () => {
+    expect(
+      mountCard(work({ userVisibility: 'hidden' }))
+        .get('[data-testid="kind-pill"]')
+        .text(),
+    ).toBe('Hidden by you')
+    expect(
+      mountCard(work({ verdict: 'suspect', kind: 'dramatization' as never }))
+        .get('[data-testid="kind-pill"]')
+        .text(),
+    ).toBe('Dramatization')
+  })
+
+  it('keeps the reason chips and kind pill in select mode', () => {
+    const wrapper = mount(MonitoredWorkCard, {
+      props: {
+        queued: false,
+        ebookQueued: false,
+        audiobookQueued: false,
+        work: work({ verdict: 'suspect', flags: ['audio_episode' as never], kind: 'collection' }),
+        canManage: true,
+        selectionMode: true,
+        selectable: true,
+      },
+      global: {
+        stubs: {
+          DropdownMenu: passthrough,
+          DropdownMenuTrigger: passthrough,
+          DropdownMenuContent: passthrough,
+          DropdownMenuItem: passthrough,
+          DropdownMenuSeparator: true,
+        },
+      },
+    })
+    expect(wrapper.get('[data-testid="review-reasons"]').text()).toContain('Audio episode')
+    expect(wrapper.get('[data-testid="kind-pill"]').text()).toBe('Collection')
   })
 })

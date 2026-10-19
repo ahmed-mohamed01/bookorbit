@@ -10,6 +10,8 @@ import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { parseMonitoredDate } from '../lib/release-date'
 import { daysUntil, workFormatStatus } from '../lib/format-status'
 import { relativeReleaseLabel } from '../lib/time-badge'
+import MonitoredReasonChips from './MonitoredReasonChips.vue'
+import { reviewReasons } from '../lib/review-reasons'
 import MonitoredFormatStatusChip from './MonitoredFormatStatusChip.vue'
 
 const props = withDefaults(
@@ -33,7 +35,7 @@ const emit = defineEmits<{
   select: [item: MonitoredReleaseItem, event: MouseEvent]
   longPress: [item: MonitoredReleaseItem]
 }>()
-const { t, d } = useI18n()
+const { t, d, te } = useI18n()
 const imageFailed = ref(false)
 
 const DENSITY_CLASSES: Record<TableDensity, { row: string; date: string; day: string; cover: string }> = {
@@ -43,8 +45,9 @@ const DENSITY_CLASSES: Record<TableDensity, { row: string; date: string; day: st
 }
 const classes = computed(() => DENSITY_CLASSES[props.density])
 const date = computed(() => parseMonitoredDate(props.item.releaseDate)?.date ?? null)
-const day = computed(() => (date.value ? String(date.value.getDate()).padStart(2, '0') : ''))
+const day = computed(() => (date.value ? String(date.value.getDate()).padStart(2, '0') : '-'))
 const month = computed(() => (date.value ? d(date.value, { month: 'short' }).toUpperCase() : ''))
+const reasons = computed(() => reviewReasons(props.item.work, t, te))
 const coverUrl = computed(() => toMonitoredCoverUrl(props.item.coverUrl))
 const placeholderAuthors = computed(() => [props.item.authorName])
 const relativeTime = computed(() => {
@@ -174,6 +177,7 @@ function handleImageError() {
         </button>
       </h3>
       <p class="truncate text-xs text-muted-foreground">{{ item.authorName }}</p>
+      <MonitoredReasonChips :reasons="reasons" text-size="sm" class="mt-1" />
       <div class="mt-1.5 flex flex-wrap items-center gap-1.5">
         <MonitoredFormatStatusChip
           v-for="format in formats"

@@ -204,6 +204,11 @@ export class MonitoredController {
     return this.universalSearch.searchHardcover(user, query.q);
   }
 
+  @Get('works/class-counts')
+  getClassCounts(@CurrentUser() user: RequestUser) {
+    return this.service.countWorkClasses(user);
+  }
+
   @Get('works/by-book/:bookId')
   getWorkByBook(@Param() params: MonitoredBookParamsDto, @CurrentUser() user: RequestUser) {
     return this.service.getWorkByBook(user, params.bookId);

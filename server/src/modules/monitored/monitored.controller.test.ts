@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, RequestMethod } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { createReadStream } from 'fs';
 import { stat } from 'fs/promises';
@@ -187,6 +187,26 @@ describe('MonitoredController', () => {
     expect(listAuthors).toHaveBeenCalledWith(user, authorsQuery);
     expect(listBooks).toHaveBeenCalledWith(user, booksQuery);
     expect(listReleases).toHaveBeenCalledWith(user, releasesQuery);
+  });
+
+  it('routes works/class-counts to the service ahead of any works/:workId route', async () => {
+    const countWorkClasses = vi.fn().mockResolvedValue({ hidden: 1 });
+    const controller = await makeController({ countWorkClasses });
+    const user = { id: 7 } as RequestUser;
+
+    await expect(controller.getClassCounts(user)).resolves.toEqual({ hidden: 1 });
+
+    expect(countWorkClasses).toHaveBeenCalledWith(user);
+    expect(Reflect.getMetadata('path', MonitoredController.prototype.getClassCounts)).toBe('works/class-counts');
+    expect(Reflect.getMetadata('method', MonitoredController.prototype.getClassCounts)).toBe(RequestMethod.GET);
+    expect(Reflect.getMetadata(PERMISSION_KEY, MonitoredController.prototype.getClassCounts)).toBe(
+      Reflect.getMetadata(PERMISSION_KEY, MonitoredController.prototype.listReleases),
+    );
+    const names = Object.getOwnPropertyNames(MonitoredController.prototype);
+    const parametric = names.filter((name) =>
+      String(Reflect.getMetadata('path', (MonitoredController.prototype as never)[name]) ?? '').startsWith('works/:'),
+    );
+    for (const name of parametric) expect(names.indexOf('getClassCounts')).toBeLessThan(names.indexOf(name));
   });
 
   it.each([

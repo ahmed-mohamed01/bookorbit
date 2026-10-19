@@ -1,3 +1,4 @@
+import MonitoredMarkAsMenu from './MonitoredMarkAsMenu.vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick, reactive, ref } from 'vue'
 import type { Library } from '@bookorbit/types'
@@ -888,6 +889,29 @@ describe('MonitoredBookPanel visibility banner', () => {
     expect(wrapper.emitted('toggle-hidden')).toEqual([
       [review, false],
       [review, true],
+    ])
+    wrapper.unmount()
+  })
+
+  it('explains an owned flagged listing and reuses the review actions', async () => {
+    const owned: MonitoredWork = { ...ownedEbook, flags: ['wrong_contributor'] }
+    const wrapper = await mountPanel(owned, [])
+    const banner = wrapper.findComponent(MonitoredVisibilityBanner)
+
+    expect(banner.text()).toContain('Listed because you own it. Its missing formats are not watched until you keep it.')
+    expect(banner.get('[role="status"]').attributes('data-state')).toBe('owned')
+    expect(wrapper.findComponent(MonitoredMarkAsMenu).exists()).toBe(true)
+    await banner
+      .findAll('button')
+      .find((button) => button.text() === 'Keep and watch')!
+      .trigger('click')
+    await banner
+      .findAll('button')
+      .find((button) => button.text() === 'Hide')!
+      .trigger('click')
+    expect(wrapper.emitted('toggle-hidden')).toEqual([
+      [owned, false],
+      [owned, true],
     ])
     wrapper.unmount()
   })

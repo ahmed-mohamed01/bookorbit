@@ -112,6 +112,20 @@ describe('MonitoredAutoRequestService', () => {
     expect(updateWorkUserState).toHaveBeenCalledWith('work-1', { requestIds: { ebook: 100 } }, user);
   });
 
+  it('does not request missing audio for an owned flagged work', async () => {
+    const works = [work({ ownedFormats: ['ebook'], verdict: 'suspect', flags: ['wrong_contributor'] })];
+    const { service, submit } = harness(works);
+    const configured = monitor({
+      formats: {
+        ebook: { mode: 'off', libraryId: null, folderId: null },
+        audiobook: { mode: 'auto-all', libraryId: 2, folderId: 3 },
+      },
+    });
+
+    await expect(service.fanOut(configured, works, user)).resolves.toEqual({ created: 0, skipped: 1, failed: 0 });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it('forwards a per-request source list to the book request submission', async () => {
     const works = [work()];
     const { service, submit } = harness(works);

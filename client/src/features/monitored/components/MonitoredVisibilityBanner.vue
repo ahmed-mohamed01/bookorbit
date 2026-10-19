@@ -61,6 +61,8 @@ const message = computed(() => {
       return t('monitored.panel.banner.hidden')
     case 'kept':
       return t('monitored.panel.banner.kept')
+    case 'owned':
+      return t('monitored.panel.banner.owned')
     case 'review':
       if (props.work.userKind && props.work.userKind !== 'book') {
         return t('monitored.panel.banner.marked', { kind: t(`monitored.panel.markAsKinds.${props.work.userKind}.title`).toLowerCase() })
@@ -76,7 +78,7 @@ const message = computed(() => {
 const icon = computed(() => {
   if (state.value === 'hidden') return EyeOff
   if (state.value === 'kept') return UserCheck
-  if (state.value === 'review') return ShieldQuestion
+  if (state.value === 'review' || state.value === 'owned') return ShieldQuestion
   return CirclePause
 })
 
@@ -119,7 +121,7 @@ function handleDismiss() {
     <component :is="icon" :size="14" class="shrink-0 text-[var(--pill-warning)]" aria-hidden="true" />
     <p class="min-w-0 flex-1 basis-48 text-xs text-foreground">{{ message }}</p>
     <div class="flex shrink-0 flex-wrap items-center gap-2 max-sm:order-last">
-      <template v-if="state === 'review' && canManage">
+      <template v-if="(state === 'review' || state === 'owned') && canManage">
         <Button size="sm" variant="outline" class="h-7 text-xs" @click="handleHide">{{ t('monitored.panel.hide') }}</Button>
         <Button size="sm" class="h-7 text-xs" @click="handleKeep">{{ t('monitored.panel.banner.keep') }}</Button>
       </template>

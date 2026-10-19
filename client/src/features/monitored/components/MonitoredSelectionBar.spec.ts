@@ -207,4 +207,25 @@ describe('MonitoredSelectionBar', () => {
       running.unmount()
     })
   })
+
+  describe('keep in list', () => {
+    const unconfirmed = workFixture({ id: 'maybe', verdict: 'probable', flags: ['single_source' as never] })
+
+    it('shows Keep in list for a selection with an unconfirmed work and sends hidden: false', async () => {
+      const wrapper = mountBar({ works: [unconfirmed, workFixture({ id: 'fine' })] })
+
+      const keep = wrapper.get('[data-testid="bulk-keep"]')
+      expect(keep.text()).toBe('Keep in list')
+      await keep.trigger('click')
+
+      expect(wrapper.emitted('patch')?.[0]).toEqual([{ hidden: false }])
+      wrapper.unmount()
+    })
+
+    it('does not show it when every selected work is already on the list', () => {
+      const wrapper = mountBar({ works: [workFixture({ id: 'a' }), workFixture({ id: 'b' })] })
+      expect(wrapper.find('[data-testid="bulk-keep"]').exists()).toBe(false)
+      wrapper.unmount()
+    })
+  })
 })

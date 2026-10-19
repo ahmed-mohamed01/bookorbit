@@ -10,17 +10,19 @@ import {
   type MonitoredStatusFilter,
   type MonitoredWork,
 } from '@bookorbit/types'
-import { toggleInOrder } from './toggle-in-order'
 import { isDefaultDisplay, type MonitoredDisplayOptions } from './work-visibility'
 
 export function defaultStatusFilters(): MonitoredStatusFilter[] {
   return [...DEFAULT_MONITORED_STATUS_FILTERS]
 }
 
+/** The releases tab has no Hidden status: hidden works are reached through the More section instead. */
+export const RELEASE_STATUS_OPTIONS: readonly MonitoredStatusFilter[] = MONITORED_STATUS_FILTERS.filter((filter) => filter !== 'hidden')
+
 /** A stored selection is filtered rather than trusted, and an empty one falls back to the default. */
 export function readStatusFilters(stored: unknown): MonitoredStatusFilter[] {
-  const parsed = parseMonitoredStatusFilters(stored)
-  return parsed && parsed.length ? parsed : defaultStatusFilters()
+  const parsed = (parseMonitoredStatusFilters(stored) ?? []).filter((filter) => filter !== 'hidden')
+  return parsed.length ? parsed : defaultStatusFilters()
 }
 
 export function isDefaultStatusFilters(selection: readonly MonitoredStatusFilter[]): boolean {
@@ -32,14 +34,6 @@ export function isDefaultStatusFilters(selection: readonly MonitoredStatusFilter
 /** The query value the list endpoints read: the canonical order, comma separated. */
 export function statusFilterQuery(selection: readonly MonitoredStatusFilter[]): string {
   return (parseMonitoredStatusFilters([...selection]) ?? []).join(',')
-}
-
-/** Never leaves the selection empty: a list filtered to nothing has no way to say why. */
-export function toggleStatusFilter(selection: readonly MonitoredStatusFilter[], filter: MonitoredStatusFilter): MonitoredStatusFilter[] {
-  if (selection.includes(filter)) {
-    return selection.length > 1 ? selection.filter((entry) => entry !== filter) : [...selection]
-  }
-  return parseMonitoredStatusFilters([...selection, filter]) ?? [...selection, filter]
 }
 
 /** `hidden` belongs to the display filters, and in-progress is too transient to tick. */
@@ -62,13 +56,19 @@ export function isSameStatusSelection(a: readonly MonitoredStatusFilter[], b: re
   return a.length === b.length && a.every((filter) => b.includes(filter))
 }
 
-export function toggleAuthorStatusFilter(selection: readonly MonitoredStatusFilter[], filter: MonitoredStatusFilter): MonitoredStatusFilter[] {
-  return toggleInOrder(AUTHOR_STATUS_OPTIONS, selection, filter)
-}
-
 /** Both filter halves back at the author default, which is what the Filters menu calls "unchanged". */
 export function isDefaultAuthorFilters(display: MonitoredDisplayOptions, status?: readonly MonitoredStatusFilter[]): boolean {
   return isDefaultDisplay(display) && (!status || isSameStatusSelection(status, defaultAuthorStatusFilters()))
+}
+
+/** The release options include in-progress, which is how the releases tab tells its default apart from the author page's. */
+export function isDefaultFilterSelection(
+  display: MonitoredDisplayOptions,
+  status: readonly MonitoredStatusFilter[] | undefined,
+  options: readonly MonitoredStatusFilter[],
+): boolean {
+  if (!options.includes('in_progress')) return isDefaultAuthorFilters(display, status)
+  return isDefaultDisplay(display) && (!status || isDefaultStatusFilters(status))
 }
 
 /**

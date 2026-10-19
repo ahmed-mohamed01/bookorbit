@@ -28,6 +28,7 @@ import {
   MONITORED_FORMATS,
   MONITORED_LIST_ORDERS,
   MONITORED_MARK_KINDS,
+  MONITORED_REVIEW_FLAGS,
   MONITORED_RELEASE_FILTERS,
   MONITORED_RELEASE_LIST_SORTS,
   MONITORED_SORTS,
@@ -46,6 +47,7 @@ import type {
   MonitoredFormat,
   MonitoredListOrder,
   MonitoredMarkKind,
+  MonitoredReviewFlag,
   MonitoredReleaseFilter,
   MonitoredReleaseListSort,
   MonitoredSort,
@@ -224,6 +226,18 @@ export class ListMonitoredBooksDto extends MonitoredPageQueryDto {
 
 export class ListMonitoredReleasesDto extends MonitoredPageQueryDto {
   @IsOptional()
+  @Transform(commaList)
+  @IsArray()
+  @IsIn(MONITORED_MARK_KINDS, { each: true })
+  kinds?: MonitoredMarkKind[];
+
+  @IsOptional()
+  @Transform(commaList)
+  @IsArray()
+  @IsIn(MONITORED_REVIEW_FLAGS, { each: true })
+  more?: MonitoredReviewFlag[];
+
+  @IsOptional()
   @IsIn(MONITORED_RELEASE_LIST_SORTS)
   sort?: MonitoredReleaseListSort = 'date';
 
@@ -233,7 +247,7 @@ export class ListMonitoredReleasesDto extends MonitoredPageQueryDto {
   @IsIn(MONITORED_RELEASE_FILTERS)
   filter?: MonitoredReleaseFilter = 'all';
 
-  /** Absent lists every visible, watched release as before; present lists the rows in these states. */
+  /** Optional status buckets; hidden is accepted for compatibility and ignored. */
   @IsOptional()
   @Transform(commaList)
   @IsArray()

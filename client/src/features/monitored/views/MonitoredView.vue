@@ -9,6 +9,7 @@ import {
   MONITORED_LIST_ORDERS,
   MONITORED_RELEASE_FILTERS,
   MONITORED_RELEASE_LIST_SORTS,
+  isDefaultClassSelection,
   monitoredAcquisitionState,
   Permission,
 } from '@bookorbit/types'
@@ -16,6 +17,7 @@ import type {
   MonitorMode,
   MonitoredAuthorItem,
   MonitoredAuthorListSort,
+  MonitoredClassSelection,
   MonitoredFormat,
   MonitoredMarkKind,
   MonitoredStatusFilter,
@@ -41,6 +43,7 @@ import { useScrollRestoreOnActivate } from '@/features/book/composables/useScrol
 import { useBookRequestProgress } from '@/features/book-requests/composables/useBookRequestProgress'
 import {
   deleteMonitoredAuthor,
+  fetchClassCounts,
   fetchOwnedMonitoredAuthorIds,
   refreshMonitoredAuthor,
   requestMonitoredWork,
@@ -60,16 +63,26 @@ import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
 import MonitoredAudibleNotice from '../components/MonitoredAudibleNotice.vue'
 import MonitoredHardcoverNotice from '../components/MonitoredHardcoverNotice.vue'
 import MonitoredReleaseFilterBar from '../components/MonitoredReleaseFilterBar.vue'
-import { isReleasedByUtcDate, releaseCount, releaseGroup, releasesView } from '../lib/release-view'
+import { releaseSectionOf, releaseCount, type MonitoredReleaseSection, releaseGroup, releasesView } from '../lib/release-view'
 import MonitoredReleaseRow from '../components/MonitoredReleaseRow.vue'
 import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
 import MonitoredVirtualGrid from '../components/MonitoredVirtualGrid.vue'
 import MonitoredWorkCard from '../components/MonitoredWorkCard.vue'
-import MonitoredStatusFilterMenu from '../components/MonitoredStatusFilterMenu.vue'
+import MonitoredFiltersMenu from '../components/MonitoredFiltersMenu.vue'
 import MonitoredQuickSelect from '../components/MonitoredQuickSelect.vue'
 import MonitoredSelectionBar from '../components/MonitoredSelectionBar.vue'
 import { useMonitoredBulkSelection } from '../composables/useMonitoredBulkSelection'
-import { readStatusFilters } from '../lib/status-filter'
+import { RELEASE_STATUS_OPTIONS, readStatusFilters } from '../lib/status-filter'
+import { readFilterSections, type MonitoredFilterSection } from '../lib/filter-sections'
+import {
+  classChangeLeavesQueue,
+  countWorkClasses,
+  readClassSelection,
+  workClassChanged,
+  toClassSelection,
+  toReleaseDisplay,
+  type MonitoredDisplayOptions,
+} from '../lib/work-visibility'
 import { releaseTimeBadge, type TimeBadge } from '../lib/time-badge'
 import { MONITORED_RELEASE_GROUPS, MONITORED_TABS, type MonitoredReleaseGroup, type MonitoredTab, useMonitored } from '../composables/useMonitored'
 import { useMonitoredRefreshAll } from '../composables/useMonitoredRefreshAll'
@@ -218,10 +231,14 @@ function applyWorkUpdate(updated: MonitoredWork): void {
 // worth a reload: the refresh button usually changes nothing, and a reload drops the scrolled pages.
 function handleWorkUpdated(updated: MonitoredWork): void {
   const before = panelWork.value?.id === updated.id ? panelWork.value : null
+  const previous = before ?? releases.value.find((item) => item.workId === updated.id)?.work ?? null
+  if (workClassChanged(previous, updated)) refreshReleaseClassCounts()
   const moved = releaseDateMoved(before, updated)
   applyWorkUpdate(updated)
-  if (!moved) return
-  void loadSummary()
+  // In the review queue the row leaves the list once its class no longer matches the selection.
+  const leavesQueue = classChangeLeavesQueue(previous, updated, effectiveReleaseClasses.value)
+  if (!moved && !leavesQueue) return
+  if (moved) void loadSummary()
   void reloadActive(true)
 }
 
@@ -248,6 +265,7 @@ async function patchWork(work: MonitoredWork, patch: MonitoredWorkPatch) {
   if (!canManage.value) return
   try {
     const updated = await updateMonitoredWork(work.id, patch)
+    if (workClassChanged(work, updated)) refreshReleaseClassCounts()
     if (panelWork.value?.id === work.id) panelWork.value = updated
     void reloadActive(true)
   } catch (cause) {
@@ -359,8 +377,51 @@ const RELEASE_STATUS_STORAGE_KEY = 'monitored:releases:status'
 const releaseStatus = ref<MonitoredStatusFilter[]>(readStatusFilters(storage.get<unknown>(RELEASE_STATUS_STORAGE_KEY, null)))
 watch(releaseStatus, (next) => storage.set(RELEASE_STATUS_STORAGE_KEY, next))
 
+// Only the class half of the display options reaches the server here; the time chips cover released/upcoming.
+const RELEASE_CLASSES_STORAGE_KEY = 'monitored:releases:classes'
+const releaseClasses = ref<MonitoredClassSelection>(readClassSelection(storage.get<unknown>(RELEASE_CLASSES_STORAGE_KEY, null)))
+watch(releaseClasses, (next) => storage.set(RELEASE_CLASSES_STORAGE_KEY, next))
+// A user who cannot curate has no More section, so a stored selection from it must not narrow the list.
+const effectiveReleaseClasses = computed<MonitoredClassSelection>(() =>
+  canManage.value ? releaseClasses.value : { kinds: releaseClasses.value.kinds, more: [] },
+)
+const releaseDisplay = computed(() => toReleaseDisplay(effectiveReleaseClasses.value))
+
+const RELEASE_FILTER_SECTIONS_STORAGE_KEY = 'monitored:releases:filterSections'
+const releaseFilterSections = ref(readFilterSections(storage.get<unknown>(RELEASE_FILTER_SECTIONS_STORAGE_KEY, null)))
+
+function handleReleaseFilterSectionToggle(key: MonitoredFilterSection) {
+  releaseFilterSections.value = { ...releaseFilterSections.value, [key]: !releaseFilterSections.value[key] }
+  storage.set(RELEASE_FILTER_SECTIONS_STORAGE_KEY, releaseFilterSections.value)
+}
+
 function handleReleaseStatusChange(value: MonitoredStatusFilter[]) {
-  releaseStatus.value = value
+  // A list filtered to no status at all could not say why it is empty, so the last tick stays.
+  if (value.length) releaseStatus.value = value
+}
+
+function handleReleaseDisplayChange(value: MonitoredDisplayOptions) {
+  releaseClasses.value = toClassSelection(value)
+}
+
+const releaseClassCounts = ref(countWorkClasses([]))
+let releaseClassCountsLoaded = false
+
+async function loadReleaseClassCounts(): Promise<void> {
+  try {
+    releaseClassCounts.value = await fetchClassCounts()
+    releaseClassCountsLoaded = true
+  } catch {
+    // The counts are a convenience on the menu: a failed fetch leaves the previous ones and the next open retries.
+  }
+}
+
+function handleReleaseFiltersOpenChange(open: boolean) {
+  if (open) void loadReleaseClassCounts()
+}
+
+function refreshReleaseClassCounts() {
+  if (releaseClassCountsLoaded) void loadReleaseClassCounts()
 }
 
 type AuthorSort = MonitoredAuthorListSort
@@ -463,11 +524,12 @@ const releaseGroups = computed<{ key: string; label: string | null; items: Monit
   const items = sortedReleases.value
   if (releaseGroup.value === 'none') return [{ key: 'all', label: null, items }]
   const todayUtc = new Date().toISOString().slice(0, 10)
-  const released = items.filter((item) => isReleasedByUtcDate(item.releaseDate, todayUtc))
-  const upcoming = items.filter((item) => !isReleasedByUtcDate(item.releaseDate, todayUtc))
+  const bySection: Record<MonitoredReleaseSection, MonitoredReleaseItem[]> = { released: [], upcoming: [], undated: [] }
+  for (const item of items) bySection[releaseSectionOf(item.releaseDate, todayUtc)].push(item)
   return [
-    { key: 'released', label: t('monitored.controlsBar.sectionReleased'), items: released },
-    { key: 'upcoming', label: t('monitored.controlsBar.sectionUpcoming'), items: upcoming },
+    { key: 'released', label: t('monitored.controlsBar.sectionReleased'), items: bySection.released },
+    { key: 'upcoming', label: t('monitored.controlsBar.sectionUpcoming'), items: bySection.upcoming },
+    { key: 'undated', label: t('monitored.releases.sections.undated'), items: bySection.undated },
   ].filter((group) => group.items.length > 0)
 })
 
@@ -481,6 +543,10 @@ const releaseSections = computed(() =>
 
 const selectionAvailable = computed(() => activeTab.value === 'releases' && canManage.value)
 
+// Review classes (unconfirmed, hidden, other kinds) are picked to be kept or marked, not downloaded,
+// so a row with nothing left to get is still a valid pick there.
+const reviewClassesActive = computed(() => !isDefaultClassSelection(effectiveReleaseClasses.value))
+
 /**
  * Works a list row may be picked for: yours to manage, with a watched format still to get. Decided once
  * per work so both of its rows agree, and once per list change rather than per row on every render.
@@ -490,7 +556,7 @@ const selectableRowWorkIds = computed(() => {
   if (!canManage.value) return ids
   for (const section of releaseSections.value) {
     for (const item of section.items) {
-      if (!ids.has(item.workId) && item.isOwner && releaseItemHasFormatToGet(item)) ids.add(item.workId)
+      if (!ids.has(item.workId) && item.isOwner && (reviewClassesActive.value || releaseItemHasFormatToGet(item))) ids.add(item.workId)
     }
   }
   return ids
@@ -513,7 +579,7 @@ const groupSelectableIds = computed(
       }),
     ),
 )
-// One work can sit in both the released and the upcoming section, so it is listed once, by first appearance.
+// One work can sit in more than one section, so it is listed once, by first appearance.
 const selectableWorks = computed(() => {
   if (!selectionAvailable.value) return []
   if (releasesView.value === 'table') {
@@ -547,7 +613,10 @@ const {
 } = useMonitoredBulkSelection({
   works: selectableWorks,
   applyWork: applyWorkUpdate,
-  onChanged: () => void reloadActive(true),
+  onChanged: () => {
+    refreshReleaseClassCounts()
+    void reloadActive(true)
+  },
 })
 
 type ReleaseSection = (typeof releaseSections.value)[number]
@@ -601,7 +670,10 @@ function handleRowLongPress(item: MonitoredReleaseItem) {
 watch(selectionMode, (on) => {
   if (!on) rowAnchor.value = null
 })
-watch([activeTab, releasesView, filterQuery, releaseSort, releaseOrder, releaseFilter, releaseStatus, releaseGroup], exitSelectionMode)
+watch(
+  [activeTab, releasesView, filterQuery, releaseSort, releaseOrder, releaseFilter, releaseStatus, releaseClasses, releaseGroup],
+  exitSelectionMode,
+)
 watch(selectionAvailable, (available) => {
   if (!available) exitSelectionMode()
 })
@@ -709,7 +781,17 @@ async function reloadActive(reset = false): Promise<void> {
   if (tab === 'authors') {
     await loadAuthors({ q, sort: authorSort.value, order: authorOrder.value }, reset)
   } else if (tab === 'releases') {
-    await loadReleases({ q, sort: releaseSort.value, order: releaseOrder.value, filter: releaseFilter.value, status: releaseStatus.value }, reset)
+    await loadReleases(
+      {
+        q,
+        sort: releaseSort.value,
+        order: releaseOrder.value,
+        filter: releaseFilter.value,
+        status: releaseStatus.value,
+        classes: effectiveReleaseClasses.value,
+      },
+      reset,
+    )
   } else {
     return
   }
@@ -951,7 +1033,7 @@ watch([authorSort, authorOrder], () => {
   syncRouteQuery()
   void reloadActive(true)
 })
-watch([releaseSort, releaseOrder, releaseFilter, releaseStatus], () => {
+watch([releaseSort, releaseOrder, releaseFilter, releaseStatus, effectiveReleaseClasses], () => {
   if (hydrating || activeTab.value !== 'releases') return
   syncRouteQuery()
   void reloadActive(true)
@@ -1080,7 +1162,20 @@ defineOptions({ name: 'MonitoredView' })
             @update:model-value="handleReleaseSortChange"
             @update:order="handleReleaseOrderChange"
           />
-          <MonitoredStatusFilterMenu :model-value="releaseStatus" @update:model-value="handleReleaseStatusChange" />
+          <MonitoredFiltersMenu
+            :model-value="releaseDisplay"
+            :counts="releaseClassCounts"
+            :sections="releaseFilterSections"
+            :can-curate="canManage"
+            :status-filters="releaseStatus"
+            :status-options="RELEASE_STATUS_OPTIONS"
+            :show-release="false"
+            commit-on-close
+            @toggle-section="handleReleaseFilterSectionToggle"
+            @update:status-filters="handleReleaseStatusChange"
+            @update:model-value="handleReleaseDisplayChange"
+            @open-change="handleReleaseFiltersOpenChange"
+          />
           <MonitoredGroupMenu
             :options="releaseGroupOptions"
             :model-value="releaseGroup"

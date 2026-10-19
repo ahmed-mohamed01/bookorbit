@@ -180,4 +180,19 @@ describe('MonitoredReleaseRow long press select', () => {
     expect(wrapper.emitted('longPress')).toBeUndefined()
     wrapper.unmount()
   })
+
+  it('shows reason chips under the title for an unconfirmed work', () => {
+    const flagged = { ...work, verdict: 'probable' as const, flags: ['audio_episode' as never] }
+    const wrapper = mount(MonitoredReleaseRow, { props: { item: item({ work: flagged }), canManage: true } })
+    expect(wrapper.get('[data-testid="review-reasons"]').text()).toContain('Probable match')
+    expect(wrapper.get('[data-testid="review-reasons"]').text()).toContain('Audio episode')
+    wrapper.unmount()
+  })
+
+  it('shows no reason chips for a verified work and no date for an undated row', () => {
+    const wrapper = mount(MonitoredReleaseRow, { props: { item: item({ releaseDate: null }), canManage: true } })
+    expect(wrapper.find('[data-testid="review-reasons"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('NaN')
+    wrapper.unmount()
+  })
 })

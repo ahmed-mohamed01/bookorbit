@@ -9,7 +9,7 @@ import {
 } from '@bookorbit/types'
 import { editionRowAction, workFormatStatus } from './format-status'
 import { monitoredVisibilityState } from './visibility-state'
-import { isDefaultStatusFilters, readStatusFilters, statusFilterQuery, toggleStatusFilter } from './status-filter'
+import { isDefaultStatusFilters, readStatusFilters, statusFilterQuery } from './status-filter'
 
 const TODAY = '2026-10-15'
 
@@ -194,13 +194,7 @@ describe('status filter selection', () => {
   it('falls back to the default for anything stored it cannot read', () => {
     expect(readStatusFilters(null)).toEqual(['missing', 'in_progress', 'needs_attention', 'upcoming'])
     expect(readStatusFilters(['bogus'])).toEqual(['missing', 'in_progress', 'needs_attention', 'upcoming'])
-    expect(readStatusFilters(['hidden', 'missing', 'bogus'])).toEqual(['missing', 'hidden'])
-  })
-
-  it('never empties the selection', () => {
-    expect(toggleStatusFilter(['missing'], 'missing')).toEqual(['missing'])
-    expect(toggleStatusFilter(['missing', 'upcoming'], 'missing')).toEqual(['upcoming'])
-    expect(toggleStatusFilter(['upcoming'], 'missing')).toEqual(['missing', 'upcoming'])
+    expect(readStatusFilters(['hidden', 'missing', 'bogus'])).toEqual(['missing'])
   })
 
   it('sends a canonical query and knows the default when it sees it', () => {

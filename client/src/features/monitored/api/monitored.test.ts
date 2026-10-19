@@ -5,6 +5,7 @@ import {
   searchCatalogWorks,
   bulkRequestMonitoredWorks,
   bulkUpdateMonitoredWorks,
+  fetchClassCounts,
   fetchMonitoredAuthorDetail,
   fetchMonitoredReleases,
   fetchWorkReleaseDateCandidates,
@@ -176,6 +177,29 @@ describe('status filters', () => {
     expect(String(mockedApi.mock.calls[0]?.[0])).not.toContain('status=')
   })
 
+  it('sends kinds and more only for a non-default class selection', async () => {
+    mockedApi.mockResolvedValue(mockOkResponse({}))
+    const base = { page: 0, size: 24, sort: 'date', order: 'asc', filter: 'all' } as const
+
+    await fetchMonitoredReleases({ ...base, classes: { kinds: ['book', 'graphic_novel'], more: ['unconfirmed'] } })
+    const sent = new URL(String(mockedApi.mock.calls[0]?.[0]), 'http://x').searchParams
+    expect(sent.get('kinds')).toBe('book,graphic_novel')
+    expect(sent.get('more')).toBe('unconfirmed')
+
+    await fetchMonitoredReleases({ ...base, classes: { kinds: [], more: ['hidden'] } })
+    const onlyHidden = new URL(String(mockedApi.mock.calls[1]?.[0]), 'http://x').searchParams
+    expect(onlyHidden.get('kinds')).toBe('')
+    expect(onlyHidden.get('more')).toBe('hidden')
+
+    await fetchMonitoredReleases({ ...base, classes: { kinds: ['book'], more: [] } })
+    await fetchMonitoredReleases(base)
+    for (const call of [2, 3]) {
+      const query = new URL(String(mockedApi.mock.calls[call]?.[0]), 'http://x').searchParams
+      expect(query.has('kinds')).toBe(false)
+      expect(query.has('more')).toBe(false)
+    }
+  })
+
   it('joins the selection for an author page too', async () => {
     mockedApi.mockResolvedValue(mockOkResponse({}))
 
@@ -226,4 +250,16 @@ it('sends the catalog limit and abort signal', async () => {
   const controller = new AbortController()
   await searchCatalogWorks('final', 10, controller.signal)
   expect(mockedApi).toHaveBeenCalledWith('/api/v1/monitored/catalog/search?q=final&limit=10', { signal: controller.signal })
+})
+
+it('reads the class counts from the works route', async () => {
+  const counts = { hidden: 1, placeholder: 0, unconfirmed: 2, kinds: {} }
+  mockedApi.mockResolvedValue(mockOkResponse(counts))
+  await expect(fetchClassCounts()).resolves.toEqual(counts)
+  expect(mockedApi).toHaveBeenCalledWith('/api/v1/monitored/works/class-counts')
+})
+
+it('throws when the class counts read fails', async () => {
+  mockedApi.mockResolvedValue(mockErrorResponse(500, 'boom'))
+  await expect(fetchClassCounts()).rejects.toThrow('boom')
 })

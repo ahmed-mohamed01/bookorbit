@@ -1021,6 +1021,74 @@ describe('MonitoredStoreService paged lists', () => {
     return { run, statements, findAccessibleLibraryIds };
   }
 
+  it('passes selected kinds and review flags into release SQL', () => {
+    const store = new MonitoredStoreService({} as never, {} as never);
+    const statement = store['releaseRowsSql']({
+      viewer: { id: 1, isSuperuser: false } as RequestUser,
+      kinds: ['graphic_novel', 'collection'],
+      more: ['unconfirmed', 'hidden', 'placeholders'],
+      filter: 'all',
+      earliest: '2026-06-07',
+      latest: '2027-09-05',
+      today: '2026-09-05',
+      soonLatest: '2026-10-05',
+      currentYear: '2026',
+    });
+    const compiled = new PgDialect().sqlToQuery(statement);
+    expect(compiled.params).toEqual(expect.arrayContaining(['graphic_novel', 'collection']));
+    expect(compiled.sql).toContain('is null');
+    expect(compiled.sql).toContain('["placeholder"]');
+  });
+
+  it('reads review-class dates through the probe rows, not the catalog columns alone', () => {
+    const store = new MonitoredStoreService({} as never, {} as never);
+    const statement = store['releaseRowsSql']({
+      viewer: { id: 1, isSuperuser: false } as RequestUser,
+      kinds: ['comic'],
+      more: [],
+      filter: 'recent',
+      earliest: '2026-06-07',
+      latest: '2027-09-05',
+      today: '2026-09-05',
+      soonLatest: '2026-10-05',
+      currentYear: '2026',
+    });
+    const compiled = new PgDialect().sqlToQuery(statement);
+    expect(compiled.sql).toContain('left join "author_catalog_work_releases" as "ebook_probe"');
+    expect(compiled.sql).toContain('left join "author_catalog_work_releases" as "audiobook_probe"');
+    expect(compiled.sql).toContain(`nullif("ebook_probe"."release_date", '')`);
+    expect(compiled.sql).toContain(`nullif("audiobook_probe"."release_date", '')`);
+    expect(compiled.sql).toMatch(/as "releaseDate"/);
+    expect(compiled.sql).not.toMatch(/"author_catalog_works"\."ebook_release_date" as "releaseDate"/);
+    expect(compiled.sql).not.toMatch(/"author_catalog_works"\."audio_release_date" as "releaseDate"/);
+  });
+
+  it('preserves the default release row SQL baseline', () => {
+    const store = new MonitoredStoreService({} as never, {} as never);
+    const statement = store['releaseRowsSql']({
+      viewer: { id: 1, isSuperuser: false } as RequestUser,
+      filter: 'all',
+      earliest: '2026-06-07',
+      latest: '2027-09-05',
+      today: '2026-09-05',
+      soonLatest: '2026-10-05',
+      currentYear: '2026',
+    });
+    expect(new PgDialect().sqlToQuery(statement)).toMatchSnapshot();
+    const explicit = store['releaseRowsSql']({
+      viewer: { id: 1, isSuperuser: false } as RequestUser,
+      kinds: ['book'],
+      more: [],
+      filter: 'all',
+      earliest: '2026-06-07',
+      latest: '2027-09-05',
+      today: '2026-09-05',
+      soonLatest: '2026-10-05',
+      currentYear: '2026',
+    });
+    expect(new PgDialect().sqlToQuery(explicit)).toEqual(new PgDialect().sqlToQuery(statement));
+  });
+
   it('keeps the old visible-and-watched release list when no status filter is sent', async () => {
     const { run, statements, findAccessibleLibraryIds } = releaseStatusStatements(undefined);
     await run;
@@ -1280,7 +1348,14 @@ describe('MonitoredStoreService paged lists', () => {
     expect(Object.keys(onConflictDoUpdate.mock.calls[0]?.[0]?.set).sort()).toEqual(['userKind', 'userVisibility']);
   });
 
-  it('reaches works outside the default list only when hidden is selected', async () => {
+  it('orders undated rows last and counts them in a separate card bucket', async () => {
+    const { run, statements } = releaseStatusStatements(undefined);
+    await run;
+    expect(statements[0]?.sql).toContain('order by "releaseDate" asc nulls last, "workId" asc, format asc');
+    expect(statements[1]?.sql).toContain(`when "releaseDate" is null then ':undated'`);
+  });
+
+  it('ignores hidden in release status selections', async () => {
     const without = releaseStatusStatements(['upcoming']);
     await without.run;
     const withHidden = releaseStatusStatements(['upcoming', 'hidden']);
@@ -1288,8 +1363,7 @@ describe('MonitoredStoreService paged lists', () => {
 
     const plain = without.statements.find((statement) => statement.sql.includes('limit'))?.sql ?? '';
     const widened = withHidden.statements.find((statement) => statement.sql.includes('limit'))?.sql ?? '';
-    expect(plain).toContain('or false)');
-    expect(widened).toContain('or (not coalesce(');
+    expect(widened).toBe(plain);
   });
 });
 
@@ -1804,5 +1878,46 @@ describe('MonitoredStoreService hardcover dedupe lookups', () => {
       await expect(store.findLocalAuthorNameKeys([2, 3], ['...'])).resolves.toEqual(new Set());
       expect(db.selectDistinct).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe('MonitoredStoreService.countWorkClasses', () => {
+  function countDb(rows: unknown[]) {
+    const builder = {} as Record<string, ReturnType<typeof vi.fn>>;
+    for (const method of ['from', 'innerJoin', 'leftJoin', 'where', 'groupBy']) builder[method] = vi.fn(() => builder);
+    builder.then = vi.fn((resolve: (value: unknown[]) => unknown) => Promise.resolve(rows).then(resolve));
+    return { db: { select: vi.fn(() => builder) }, builder };
+  }
+
+  it('folds grouped rows into the display class counts', async () => {
+    const { db } = countDb([
+      { classKey: 'hidden', unconfirmed: false, total: 2 },
+      { classKey: 'placeholder', unconfirmed: false, total: 3 },
+      { classKey: 'book', unconfirmed: false, total: 10 },
+      { classKey: 'collection', unconfirmed: true, total: 4 },
+      { classKey: 'unconfirmed', unconfirmed: true, total: 5 },
+    ]);
+    const store = new MonitoredStoreService(db as never, {} as never);
+
+    const counts = await store.countWorkClasses({ id: 1, isSuperuser: false } as RequestUser);
+
+    expect(counts).toMatchObject({ hidden: 2, placeholder: 3, unconfirmed: 9 });
+    expect(counts.kinds.book).toBe(10);
+    expect(counts.kinds.collection).toBe(4);
+    expect(counts.kinds.anthology).toBe(0);
+    expect(Object.values(counts.kinds).reduce((sum, value) => sum + value, 0)).toBe(14);
+  });
+
+  it('scopes to the viewer owner id and groups in one statement', async () => {
+    const { db, builder } = countDb([]);
+    const store = new MonitoredStoreService(db as never, {} as never);
+
+    await store.countWorkClasses({ id: 42, isSuperuser: true } as RequestUser);
+
+    expect(db.select).toHaveBeenCalledTimes(1);
+    expect(builder.groupBy).toHaveBeenCalledTimes(1);
+    const query = new PgDialect().sqlToQuery(builder.where.mock.calls[0]?.[0] as SQL);
+    expect(query.sql).toContain('"monitored_authors"."owner_user_id" = $1');
+    expect(query.params[0]).toBe(42);
   });
 });

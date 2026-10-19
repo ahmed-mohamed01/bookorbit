@@ -12,6 +12,8 @@ import { ACTIVE_REQUEST_STATUSES, workFormatStatus, type MonitoredFormatStatus }
 import { releaseDateForWork } from '../lib/grouping'
 import { releaseTimeBadge, type TimeBadge } from '../lib/time-badge'
 import { workKindOf, workDisplayClass } from '../lib/work-visibility'
+import MonitoredReasonChips from './MonitoredReasonChips.vue'
+import { kindPillLabel, reviewReasons } from '../lib/review-reasons'
 import { useFormatStatusText } from '../composables/useFormatStatusText'
 import MonitoredCardMenu, { type CardFormatMenu } from './MonitoredCardMenu.vue'
 
@@ -50,7 +52,7 @@ const emit = defineEmits<{
   select: [work: MonitoredWork, event: MouseEvent]
   longPress: [work: MonitoredWork]
 }>()
-const { t } = useI18n()
+const { t, te } = useI18n()
 const { sentence } = useFormatStatusText()
 const { cardInfoMode } = useDisplaySettings()
 const imageFailed = ref(false)
@@ -87,10 +89,12 @@ const seriesLine = computed(() => {
 
 const displayClass = computed(() => workDisplayClass(props.work))
 const kindLabel = computed(() => {
+  if (displayClass.value === 'hidden') return t('monitored.filters.hidden')
   const kind = workKindOf(props.work)
-  if (kind && kind !== 'book') return t(`monitored.review.badges.${kind}`)
+  if (kind && kind !== 'book') return kindPillLabel(kind, t, te)
   return displayClass.value === 'unconfirmed' ? t('monitored.review.badges.other') : null
 })
+const reasons = computed(() => reviewReasons(props.work, t, te))
 const isHidden = computed(() => displayClass.value === 'hidden')
 
 function authorWatches(format: MonitoredFormat): boolean {
@@ -272,7 +276,10 @@ function handleStop() {
         </div>
       </div>
 
-      <div class="pointer-events-none absolute left-1.5 flex flex-col items-start gap-1" :class="inSelectMode ? 'top-8 z-40' : 'top-1.5 z-20'">
+      <div
+        class="pointer-events-none absolute left-1.5 flex max-w-[calc(100%-0.75rem)] flex-col items-start gap-1"
+        :class="inSelectMode ? 'top-8 z-40' : 'top-1.5 z-20'"
+      >
         <span
           v-if="isHidden"
           class="flex items-center justify-center rounded-sm bg-black/60 p-1 text-white"
@@ -290,9 +297,10 @@ function handleStop() {
           data-testid="time-badge"
           >{{ badgeTime.label }}</span
         >
-        <span v-if="kindLabel && !inSelectMode" class="rounded-sm bg-black/60 px-1.5 py-0.5 text-[9px] font-bold leading-none text-white">{{
+        <span v-if="kindLabel" class="rounded-sm bg-black/60 px-1.5 py-0.5 text-[9px] font-bold leading-none text-white" data-testid="kind-pill">{{
           kindLabel
         }}</span>
+        <MonitoredReasonChips v-if="inSelectMode && !showBelowCoverLabel" :reasons="reasons" stacked />
         <span v-if="badges.length" class="flex items-center gap-1">
           <span
             v-for="badge in badges"
@@ -337,6 +345,7 @@ function handleStop() {
         <div class="min-w-0">
           <p class="line-clamp-2 pr-8 text-xs font-semibold leading-tight text-white" data-testid="hover-title">{{ work.title }}</p>
           <p v-if="authorName" class="truncate text-[10px] text-white/70" data-testid="hover-author">{{ authorName }}</p>
+          <MonitoredReasonChips :reasons="reasons" class="mt-1" />
           <p v-if="seriesLine" class="truncate text-[10px] text-white/70" data-testid="hover-series">{{ seriesLine }}</p>
         </div>
       </div>
@@ -392,6 +401,7 @@ function handleStop() {
           </button>
         </MonitoredCardMenu>
       </div>
+      <MonitoredReasonChips :reasons="reasons" class="mt-0.5" />
       <p v-if="subline" class="truncate text-[0.675rem] leading-3.5 text-muted-foreground">{{ subline }}</p>
       <p v-if="seriesLine" class="truncate text-[0.675rem] leading-3.5 text-muted-foreground" data-testid="below-series">{{ seriesLine }}</p>
     </div>

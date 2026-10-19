@@ -4,7 +4,7 @@ import { createI18n } from 'vue-i18n'
 import en from '@/locales/en.json'
 import MonitoredFiltersPanel from './MonitoredFiltersPanel.vue'
 import { DEFAULT_MONITORED_DISPLAY, countWorkClasses } from '../lib/work-visibility'
-import { defaultAuthorStatusFilters } from '../lib/status-filter'
+import { RELEASE_STATUS_OPTIONS, defaultAuthorStatusFilters, defaultStatusFilters } from '../lib/status-filter'
 
 function panel(overrides = {}) {
   return mount(MonitoredFiltersPanel, {
@@ -49,6 +49,15 @@ describe('MonitoredFiltersPanel', () => {
     expect(wrapper.emitted('update:statusFilters')).toEqual([[[]]])
     await wrapper.get('[data-testid="kind-supplemental"]').trigger('click')
     expect(wrapper.emitted('update:modelValue')?.[1]).toEqual([{ ...DEFAULT_MONITORED_DISPLAY, kinds: ['book', 'supplemental'] }])
+  })
+  it('offers the release statuses without Hidden and drops the Release section on the releases tab', () => {
+    const wrapper = panel({ statusOptions: RELEASE_STATUS_OPTIONS, showRelease: false, statusFilters: defaultStatusFilters() })
+    expect(wrapper.findAll('section')).toHaveLength(3)
+    expect(wrapper.find('[data-testid="section-release"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="status-in_progress"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('In progress')
+    expect(wrapper.find('[data-testid="status-hidden"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="reset"]').exists()).toBe(false)
   })
   it('hides More for non-curators and Status without a selection', () => {
     const wrapper = panel({ canCurate: false, statusFilters: undefined })

@@ -1,8 +1,10 @@
 import { api } from '@/lib/api'
 import { readApiErrorDetail } from '@/lib/api-error'
 import { readSseEvents } from '@/lib/sse'
-import { RELEASE_SEARCH_ERROR_EVENT, RELEASE_SEARCH_PROGRESS_EVENT, RELEASE_SEARCH_RESULT_EVENT } from '@bookorbit/types'
+import { RELEASE_SEARCH_ERROR_EVENT, RELEASE_SEARCH_PROGRESS_EVENT, RELEASE_SEARCH_RESULT_EVENT, isDefaultClassSelection } from '@bookorbit/types'
 import type {
+  MonitoredClassSelection,
+  MonitoredDisplayClassCounts,
   MonitoredCatalogSearchHit,
   HardcoverUniversalSearchResult,
   BookRequestItem,
@@ -138,9 +140,21 @@ export async function fetchMonitoredReleases(options: {
   filter: MonitoredReleaseFilter
   /** Absent lists every visible, watched release. */
   status?: MonitoredStatusFilter[]
+  /** Absent, or the default selection, lists books only. */
+  classes?: MonitoredClassSelection
 }): Promise<MonitoredReleasePage> {
-  const { status, ...rest } = options
-  return readJson(await api(`${BASE_PATH}/releases?${pageQuery({ ...rest, status: status?.length ? statusFilterQuery(status) : undefined })}`))
+  const { status, classes, ...rest } = options
+  const query = new URLSearchParams(pageQuery({ ...rest, status: status?.length ? statusFilterQuery(status) : undefined }))
+  if (classes && !isDefaultClassSelection(classes)) {
+    // An empty kinds value is meaningful (only the More classes), so it is sent rather than dropped.
+    query.set('kinds', classes.kinds.join(','))
+    if (classes.more.length) query.set('more', classes.more.join(','))
+  }
+  return readJson(await api(`${BASE_PATH}/releases?${query}`))
+}
+
+export async function fetchClassCounts(): Promise<MonitoredDisplayClassCounts> {
+  return readJson(await api(`${BASE_PATH}/works/class-counts`))
 }
 
 export async function searchMonitoredAuthors(query: string): Promise<MonitoredAuthorSearchResult[]> {

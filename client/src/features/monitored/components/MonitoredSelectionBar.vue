@@ -20,7 +20,7 @@ import type { SourceGroup } from '../composables/useRequestSources'
 import { bulkRequestPreview } from '../lib/bulk-select'
 import { todayUtc } from '../lib/format-status'
 import MonitoredMarkAsItems from './MonitoredMarkAsItems.vue'
-import { workDisplayClass } from '../lib/work-visibility'
+import { isWorkVisible, workDisplayClass } from '../lib/work-visibility'
 
 const props = defineProps<{
   visible: boolean
@@ -42,14 +42,15 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const SEGMENT =
-  'inline-flex h-7 items-center rounded-md px-3 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
+  'inline-flex h-7 items-center max-sm:h-10 rounded-md px-3 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none'
 const BUTTON_GHOST =
-  'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:text-muted-foreground'
+  'inline-flex h-8 max-sm:h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:text-muted-foreground'
 
 const preview = computed(() => bulkRequestPreview(props.works, props.format, todayUtc()))
 const willRequest = computed(() => preview.value.ebooks + preview.value.audiobooks)
 const count = computed(() => props.works.length)
 const everyHidden = computed(() => props.works.length > 0 && props.works.every((work) => workDisplayClass(work) === 'hidden'))
+const canKeep = computed(() => props.works.some((work) => !isWorkVisible(work)))
 const formatOptions = computed(() => MONITORED_BULK_REQUEST_FORMATS.map((value) => ({ value, label: t(`monitored.selection.bar.${value}`) })))
 const getLabel = computed(() => {
   if (props.format === 'ebook') return t('monitored.selection.bar.getEbooks', { count: preview.value.ebooks })
@@ -134,6 +135,10 @@ function handleMarkAs(kind: MonitoredMarkKind) {
   emit('patch', { kind })
 }
 
+function handleKeep() {
+  emit('patch', { hidden: false })
+}
+
 function handleHide() {
   emit('patch', everyHidden.value ? { automaticVisibility: true } : { hidden: true })
 }
@@ -147,7 +152,7 @@ function handleExit() {
   <SelectionActionBar :visible="visible" :count="count" @exit="handleExit">
     <template #content>
       <span
-        class="inline-flex h-8 shrink-0 items-center whitespace-nowrap rounded-lg bg-primary/10 px-2.5 text-sm font-semibold tabular-nums text-primary"
+        class="inline-flex h-8 max-sm:h-11 shrink-0 items-center whitespace-nowrap rounded-lg bg-primary/10 px-2.5 text-sm font-semibold tabular-nums text-primary"
         data-testid="selected-count"
         >{{ t('monitored.selection.selectedCount', { count: formatNumber(count) }) }}</span
       >
@@ -155,7 +160,7 @@ function handleExit() {
       <div
         role="radiogroup"
         :aria-label="t('monitored.selection.bar.formatLabel')"
-        class="inline-flex h-8 shrink-0 items-center gap-0.5 rounded-lg bg-muted p-0.5"
+        class="inline-flex h-8 max-sm:h-11 shrink-0 items-center gap-0.5 rounded-lg bg-muted p-0.5"
       >
         <button
           v-for="option in formatOptions"
@@ -175,7 +180,7 @@ function handleExit() {
         <PopoverTrigger as-child>
           <button
             type="button"
-            class="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-muted px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            class="inline-flex h-8 max-sm:h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-muted px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             :class="sourcesOpen ? 'ring-1 ring-primary' : ''"
             aria-haspopup="dialog"
             :aria-expanded="sourcesOpen"
@@ -198,7 +203,7 @@ function handleExit() {
             <span class="flex-1 text-sm font-semibold">{{ t('monitored.selection.sources.title') }}</span>
             <button
               type="button"
-              class="inline-flex h-8 items-center rounded-lg px-2 text-sm font-medium text-primary transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              class="inline-flex h-8 max-sm:h-11 items-center rounded-lg px-2 text-sm font-medium text-primary transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               data-testid="sources-use-all"
               @click="handleUseAllSources"
             >
@@ -237,7 +242,7 @@ function handleExit() {
 
       <button
         type="button"
-        class="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-primary px-3.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        class="inline-flex h-8 max-sm:h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-primary px-3.5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         :disabled="!canRequest"
         data-testid="bulk-request"
         @click="handleRequest"
@@ -289,13 +294,17 @@ function handleExit() {
         </DropdownMenuContent>
       </DropdownMenu>
 
+      <button v-if="canKeep" type="button" :class="BUTTON_GHOST" :disabled="running" data-testid="bulk-keep" @click="handleKeep">
+        {{ t('monitored.selection.keep') }}
+      </button>
+
       <button type="button" :class="BUTTON_GHOST" :disabled="running || count === 0" data-testid="bulk-hide" @click="handleHide">
         {{ everyHidden ? t('monitored.selection.bar.unhide') : t('monitored.selection.bar.hide') }}
       </button>
 
       <button
         type="button"
-        class="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        class="flex size-8 max-sm:size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         :aria-label="t('monitored.selection.exit')"
         data-testid="bulk-exit"
         @click="handleExit"

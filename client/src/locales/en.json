@@ -14668,6 +14668,7 @@
       "requestFormat": "Request {format}",
       "banner": {
         "review": "Unconfirmed: {reasons}. It is not auto-downloaded until you keep it.",
+        "owned": "Listed because you own it. Its missing formats are not watched until you keep it.",
         "marked": "Marked as {kind}, so it is hidden by default and not auto-downloaded. You can still request it.",
         "reviewUnverified": "not confirmed by a second source",
         "verdict": {
@@ -14774,7 +14775,10 @@
       "monthsAgo": "{count, plural, one {# month ago} other {# months ago}}",
       "inYears": "in {count, plural, one {# year} other {# years}}",
       "yearsAgo": "{count, plural, one {# year ago} other {# years ago}}",
-      "getAutomatically": "Get automatically"
+      "getAutomatically": "Get automatically",
+      "sections": {
+        "undated": "Undated"
+      }
     },
     "add": {
       "placeholder": "Search by author name",
@@ -14956,6 +14960,7 @@
       "select": "Select",
       "done": "Done selecting",
       "selectedCount": "{count} selected",
+      "keep": "Keep in list",
       "exit": "Exit selection",
       "card": {
         "select": "Select {title}",

@@ -1,38 +1,29 @@
-import { isWorkVisible, MONITORED_MARK_KINDS, type MonitoredMarkKind, type MonitoredWork } from '@bookorbit/types'
+import {
+  isDefaultClassSelection,
+  workDisplayClass,
+  workKindOf,
+  isWorkListed,
+  isWorkVisible,
+  workMatchesClassSelection,
+  MONITORED_REVIEW_FLAGS,
+  MONITORED_MARK_KINDS,
+  type MonitoredClassSelection,
+  type MonitoredMarkKind,
+  type MonitoredWork,
+} from '@bookorbit/types'
 import { releaseDateForWork } from './grouping'
 import { parseMonitoredDate } from './release-date'
 import { toggleInOrder } from './toggle-in-order'
 
-export { isWorkVisible }
-
-export function workKindOf(work: MonitoredWork): MonitoredMarkKind | null {
-  return work.userKind ?? (isWorkVisible(work) ? 'book' : (work.kind ?? null))
-}
-
-export type MonitoredDisplayClass = 'hidden' | 'kind' | 'placeholder' | 'unconfirmed'
-export interface MonitoredDisplayClassCounts {
-  hidden: number
-  placeholder: number
-  unconfirmed: number
-  kinds: Record<MonitoredMarkKind, number>
-}
-
-export function workDisplayClass(work: MonitoredWork): MonitoredDisplayClass {
-  if (work.userVisibility === 'hidden') return 'hidden'
-  // A placeholder the owner kept or marked Book is on the default list, so only an automatic one is a placeholder here.
-  if (!isWorkVisible(work) && work.flags.includes('placeholder')) return 'placeholder'
-  return workKindOf(work) !== null ? 'kind' : 'unconfirmed'
-}
-
-export function isWorkUnconfirmed(work: MonitoredWork): boolean {
-  return (
-    work.userVisibility !== 'hidden' &&
-    !work.userKind &&
-    work.userVisibility !== 'visible' &&
-    !work.flags.includes('placeholder') &&
-    (work.verdict !== 'verified' || work.flags.length > 0)
-  )
-}
+export {
+  isWorkVisible,
+  workKindOf,
+  workDisplayClass,
+  isWorkUnconfirmed,
+  countWorkClasses,
+  type MonitoredDisplayClass,
+  type MonitoredDisplayClassCounts,
+} from '@bookorbit/types'
 
 // A work with neither date nor year is undated, and the released/upcoming switches leave it alone:
 // it is evidence of neither, and dropping it would silently swallow every unannounced book.
@@ -65,31 +56,10 @@ export const DEFAULT_MONITORED_DISPLAY: MonitoredDisplayOptions = {
 }
 
 export function isWorkDisplayed(work: MonitoredWork, display: MonitoredDisplayOptions, now: number = Date.now()): boolean {
-  const displayClass = workDisplayClass(work)
-  if (displayClass === 'hidden' && !display.hidden) return false
-  if (displayClass === 'placeholder' && !display.placeholders) return false
-  if (displayClass !== 'hidden' && displayClass !== 'placeholder') {
-    const kind = workKindOf(work)
-    if (!(kind !== null && display.kinds.includes(kind)) && !(display.unconfirmed && isWorkUnconfirmed(work))) return false
-  }
+  const ownedBypass = display.kinds.includes('book') && isWorkListed(work) && !isWorkVisible(work)
+  if (!ownedBypass && !workMatchesClassSelection(work, toClassSelection(display))) return false
   const status = workReleaseStatus(work, now)
   return !(status === 'released' && !display.released) && !(status === 'upcoming' && !display.upcoming)
-}
-
-export function countWorkClasses(works: MonitoredWork[]): MonitoredDisplayClassCounts {
-  const counts: MonitoredDisplayClassCounts = {
-    hidden: 0,
-    placeholder: 0,
-    unconfirmed: 0,
-    kinds: Object.fromEntries(MONITORED_MARK_KINDS.map((kind) => [kind, 0])) as Record<MonitoredMarkKind, number>,
-  }
-  for (const work of works) {
-    const category = workDisplayClass(work)
-    if (category === 'kind') counts.kinds[workKindOf(work)!] += 1
-    else if (category !== 'unconfirmed') counts[category] += 1
-    if (isWorkUnconfirmed(work)) counts.unconfirmed += 1
-  }
-  return counts
 }
 
 export function toggleKind(selection: readonly MonitoredMarkKind[], kind: MonitoredMarkKind): MonitoredMarkKind[] {
@@ -122,4 +92,36 @@ export function readDisplayOptions(stored: unknown): MonitoredDisplayOptions {
     unconfirmed: flag('unconfirmed'),
     kinds: kinds.length || (Array.isArray(raw.kinds) && raw.kinds.length === 0) ? kinds : ['book'],
   }
+}
+
+export function toClassSelection(display: MonitoredDisplayOptions): MonitoredClassSelection {
+  return { kinds: [...display.kinds], more: MONITORED_REVIEW_FLAGS.filter((flag) => display[flag]) }
+}
+
+/** The releases tab keeps only the class half of the display options; released/upcoming are fixed there. */
+export function toReleaseDisplay(selection: MonitoredClassSelection): MonitoredDisplayOptions {
+  return {
+    released: true,
+    upcoming: true,
+    kinds: [...selection.kinds],
+    hidden: selection.more.includes('hidden'),
+    placeholders: selection.more.includes('placeholders'),
+    unconfirmed: selection.more.includes('unconfirmed'),
+  }
+}
+
+export function readClassSelection(stored: unknown): MonitoredClassSelection {
+  const raw = typeof stored === 'object' && stored !== null ? (stored as Record<string, unknown>) : {}
+  const kinds = MONITORED_MARK_KINDS.filter((kind) => Array.isArray(raw.kinds) && raw.kinds.includes(kind))
+  const more = MONITORED_REVIEW_FLAGS.filter((flag) => Array.isArray(raw.more) && raw.more.includes(flag))
+  return { kinds: kinds.length || (Array.isArray(raw.kinds) && raw.kinds.length === 0) ? kinds : ['book'], more }
+}
+
+export function workClassChanged(before: MonitoredWork | null, after: MonitoredWork): boolean {
+  return before !== null && (workDisplayClass(before) !== workDisplayClass(after) || workKindOf(before) !== workKindOf(after))
+}
+
+/** A row leaves the review queue when its class changes, so only a non-default selection needs the reload. */
+export function classChangeLeavesQueue(before: MonitoredWork | null, after: MonitoredWork, selection: MonitoredClassSelection): boolean {
+  return workClassChanged(before, after) && !isDefaultClassSelection(selection)
 }

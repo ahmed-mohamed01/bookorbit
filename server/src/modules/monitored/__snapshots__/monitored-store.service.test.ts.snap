@@ -1,0 +1,91 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MonitoredStoreService paged lists > preserves the default release row SQL baseline 1`] = `
+{
+  "params": [
+    1,
+    true,
+    "monitoring",
+    "verified",
+    "off",
+    false,
+    "2027-09-05",
+    "2026-06-07",
+    1,
+    true,
+    "monitoring",
+    "verified",
+    "off",
+    false,
+    "2027-09-05",
+    "2026-06-07",
+  ],
+  "sql": "
+      select
+        "author_catalog_works"."id" as "workId",
+        "monitored_authors"."id" as "monitorAuthorId",
+        'ebook'::text as format,
+        "author_catalog_works"."ebook_release_date" as "releaseDate",
+        "author_catalog_works"."title" as title,
+        "monitored_authors"."author_name" as "authorName"
+      
+      from "author_catalog_works"
+      inner join "monitored_authors"
+        on "monitored_authors"."id" = "author_catalog_works"."monitor_author_id"
+      inner join "author_catalog_state"
+        on "author_catalog_state"."monitor_author_id" = "monitored_authors"."id"
+      left join "monitored_author_works"
+        on "monitored_author_works"."work_id" = "author_catalog_works"."id"
+      
+    
+      where ("monitored_authors"."owner_user_id" = $1 and ("monitored_authors"."paused" <> $2 and ("monitored_author_works"."monitor_state" = $3 or "monitored_author_works"."monitor_state" is null) and coalesce(case
+    when "monitored_author_works"."user_visibility" = 'hidden' then false
+    when "monitored_author_works"."user_kind" is not null then "monitored_author_works"."user_kind" = 'book'
+    when "monitored_author_works"."user_visibility" = 'visible' then true
+    else ("author_catalog_works"."verdict" = $4 and jsonb_array_length("author_catalog_works"."flags") = 0)
+  end, false)) and ("monitored_authors"."ebook_mode" <> $5 and ("monitored_author_works"."monitor_ebook" <> $6 or "monitored_author_works"."monitor_ebook" is null) and case case when "author_catalog_works"."ebook_date_precision" is not null then "author_catalog_works"."ebook_date_precision" when length("author_catalog_works"."ebook_release_date") = 4 then 'year' when length("author_catalog_works"."ebook_release_date") = 7 then 'month' else 'day' end when 'year' then "author_catalog_works"."ebook_release_date" || '-01-01' when 'month' then "author_catalog_works"."ebook_release_date" || '-01' else "author_catalog_works"."ebook_release_date" end <= $7 and case case when "author_catalog_works"."ebook_date_precision" is not null then "author_catalog_works"."ebook_date_precision" when length("author_catalog_works"."ebook_release_date") = 4 then 'year' when length("author_catalog_works"."ebook_release_date") = 7 then 'month' else 'day' end when 'year' then "author_catalog_works"."ebook_release_date" || '-12-31' when 'month' then "author_catalog_works"."ebook_release_date" || '-31' else "author_catalog_works"."ebook_release_date" end >= $8 and true))
+      union all
+      select
+        "author_catalog_works"."id" as "workId",
+        "monitored_authors"."id" as "monitorAuthorId",
+        'audiobook'::text as format,
+        "author_catalog_works"."audio_release_date" as "releaseDate",
+        "author_catalog_works"."title" as title,
+        "monitored_authors"."author_name" as "authorName"
+      
+      from "author_catalog_works"
+      inner join "monitored_authors"
+        on "monitored_authors"."id" = "author_catalog_works"."monitor_author_id"
+      inner join "author_catalog_state"
+        on "author_catalog_state"."monitor_author_id" = "monitored_authors"."id"
+      left join "monitored_author_works"
+        on "monitored_author_works"."work_id" = "author_catalog_works"."id"
+      
+    
+      where ("monitored_authors"."owner_user_id" = $9 and ("monitored_authors"."paused" <> $10 and ("monitored_author_works"."monitor_state" = $11 or "monitored_author_works"."monitor_state" is null) and coalesce(case
+    when "monitored_author_works"."user_visibility" = 'hidden' then false
+    when "monitored_author_works"."user_kind" is not null then "monitored_author_works"."user_kind" = 'book'
+    when "monitored_author_works"."user_visibility" = 'visible' then true
+    else ("author_catalog_works"."verdict" = $12 and jsonb_array_length("author_catalog_works"."flags") = 0)
+  end, false)) and ("monitored_authors"."audiobook_mode" <> $13 and ("monitored_author_works"."monitor_audiobook" <> $14 or "monitored_author_works"."monitor_audiobook" is null) and case case when "author_catalog_works"."audio_date_precision" is not null then "author_catalog_works"."audio_date_precision" when length("author_catalog_works"."audio_release_date") = 4 then 'year' when length("author_catalog_works"."audio_release_date") = 7 then 'month' else 'day' end when 'year' then "author_catalog_works"."audio_release_date" || '-01-01' when 'month' then "author_catalog_works"."audio_release_date" || '-01' else "author_catalog_works"."audio_release_date" end <= $15 and case case when "author_catalog_works"."audio_date_precision" is not null then "author_catalog_works"."audio_date_precision" when length("author_catalog_works"."audio_release_date") = 4 then 'year' when length("author_catalog_works"."audio_release_date") = 7 then 'month' else 'day' end when 'year' then "author_catalog_works"."audio_release_date" || '-12-31' when 'month' then "author_catalog_works"."audio_release_date" || '-31' else "author_catalog_works"."audio_release_date" end >= $16 and true))
+    ",
+  "typings": [
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+    "none",
+  ],
+}
+`;

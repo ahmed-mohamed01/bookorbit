@@ -1,15 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import type { MonitoredWork } from '@bookorbit/types'
 import {
+  isWorkListed,
+  isWorkVisible,
   workKindOf,
   workDisplayClass,
   countWorkClasses,
+  isWorkUnconfirmed,
+  workMatchesClassSelection,
+  isDefaultClassSelection,
+  MONITORED_REVIEW_FLAGS,
+  type MonitoredClassSelection,
+  type MonitoredWork,
+} from '@bookorbit/types'
+import {
   toggleKind,
   isWorkDisplayed,
   readDisplayOptions,
   isDefaultDisplay,
   DEFAULT_MONITORED_DISPLAY,
   workReleaseStatus,
+  readClassSelection,
+  toClassSelection,
+  toReleaseDisplay,
+  workClassChanged,
+  classChangeLeavesQueue,
 } from './work-visibility'
 
 function work(overrides: Partial<MonitoredWork> = {}): MonitoredWork {
@@ -132,6 +146,11 @@ describe('kind visibility', () => {
     expect(isWorkDisplayed(anthology, { ...display, unconfirmed: false })).toBe(false)
     expect(countWorkClasses([anthology])).toMatchObject({ unconfirmed: 1, kinds: { anthology: 1 } })
   })
+  it('lets an owned listed-but-not-watched work through only when Book is selected', () => {
+    const owned = work({ ownedFormats: ['ebook'], verdict: 'suspect', flags: ['wrong_contributor'], kind: 'graphic_novel' })
+    expect(isWorkDisplayed(owned, DEFAULT_MONITORED_DISPLAY)).toBe(true)
+    expect(isWorkDisplayed(owned, { ...DEFAULT_MONITORED_DISPLAY, kinds: ['collection'] })).toBe(false)
+  })
   it('applies release switches and always passes undated works', () => {
     expect(isWorkDisplayed(work(), { ...DEFAULT_MONITORED_DISPLAY, released: false, upcoming: false })).toBe(true)
     expect(isWorkDisplayed(work({ ebookReleaseDate: '2020-01-01' }), { ...DEFAULT_MONITORED_DISPLAY, released: false })).toBe(false)
@@ -152,5 +171,171 @@ describe('kind visibility', () => {
     expect(readDisplayOptions({ kinds: [] }).kinds).toEqual([])
     expect(isDefaultDisplay(readDisplayOptions(null))).toBe(true)
     expect(isDefaultDisplay(readDisplayOptions({ kinds: ['collection'] }))).toBe(false)
+  })
+})
+
+const ownedFlagged = work({ ownedFormats: ['ebook'], verdict: 'suspect', flags: ['wrong_contributor'], kind: 'graphic_novel' })
+
+describe('owned work listing', () => {
+  it.each([
+    [{}, true],
+    [{ userVisibility: 'hidden' }, false],
+    [{ userKind: 'graphic_novel' }, false],
+    [{ userKind: 'book' }, true],
+    [{ ownedFormats: [] }, false],
+  ] as [Partial<MonitoredWork>, boolean][])('lists according to ownership and explicit overrides %j', (patch, expected) => {
+    expect(isWorkListed({ ...ownedFlagged, ...patch })).toBe(expected)
+  })
+
+  it('keeps owned flagged works displayed without changing their watched status or classifier kind', () => {
+    expect(isWorkDisplayed(ownedFlagged, DEFAULT_MONITORED_DISPLAY)).toBe(true)
+    expect(isWorkDisplayed(ownedFlagged, { ...DEFAULT_MONITORED_DISPLAY, kinds: ['book', 'collection'] })).toBe(true)
+    expect(isWorkDisplayed(ownedFlagged, { ...DEFAULT_MONITORED_DISPLAY, kinds: [] })).toBe(false)
+    expect(isWorkVisible(ownedFlagged)).toBe(false)
+    expect(workKindOf(ownedFlagged)).toBe('graphic_novel')
+  })
+
+  it('bypasses More classes but still applies release switches', () => {
+    expect(isWorkDisplayed({ ...ownedFlagged, flags: ['placeholder'] }, DEFAULT_MONITORED_DISPLAY)).toBe(true)
+    expect(isWorkDisplayed({ ...ownedFlagged, ebookReleaseDate: '2020-01-01' }, { ...DEFAULT_MONITORED_DISPLAY, released: false })).toBe(false)
+    expect(isWorkDisplayed({ ...ownedFlagged, ebookReleaseDate: '2099-01-01' }, { ...DEFAULT_MONITORED_DISPLAY, upcoming: false })).toBe(false)
+  })
+})
+
+const bookSel: MonitoredClassSelection = { kinds: ['book'], more: [] }
+const hiddenSel: MonitoredClassSelection = { kinds: [], more: ['hidden'] }
+const placeholderSel: MonitoredClassSelection = { kinds: [], more: ['placeholders'] }
+const unconfirmedSel: MonitoredClassSelection = { kinds: [], more: ['unconfirmed'] }
+const collectionSel: MonitoredClassSelection = { kinds: ['collection'], more: [] }
+const emptySel: MonitoredClassSelection = { kinds: [], more: [] }
+
+const classSelectionCases: Array<{ name: string; work: MonitoredWork; matches: MonitoredClassSelection[]; misses: MonitoredClassSelection[] }> = [
+  { name: 'verified book', work: work(), matches: [bookSel], misses: [emptySel, unconfirmedSel, collectionSel] },
+  { name: 'verified detected collection', work: work({ kind: 'collection' }), matches: [bookSel], misses: [collectionSel, unconfirmedSel] },
+  { name: 'probable unknown', work: work({ verdict: 'probable' }), matches: [unconfirmedSel], misses: [bookSel, emptySel] },
+  {
+    name: 'suspect collection',
+    work: work({ verdict: 'suspect', kind: 'collection' }),
+    matches: [collectionSel, unconfirmedSel],
+    misses: [bookSel, emptySel],
+  },
+  {
+    name: 'verified flagged collection',
+    work: work({ flags: ['wrong_contributor'], kind: 'collection' }),
+    matches: [collectionSel, unconfirmedSel],
+    misses: [bookSel, placeholderSel],
+  },
+  {
+    name: 'automatic placeholder',
+    work: work({ flags: ['placeholder'], kind: 'collection' }),
+    matches: [placeholderSel],
+    misses: [bookSel, collectionSel, unconfirmedSel],
+  },
+  {
+    name: 'hidden marked placeholder',
+    work: work({ userVisibility: 'hidden', userKind: 'book', flags: ['placeholder'] }),
+    matches: [hiddenSel],
+    misses: [bookSel, placeholderSel, unconfirmedSel],
+  },
+  {
+    name: 'kept placeholder',
+    work: work({ userVisibility: 'visible', flags: ['placeholder'] }),
+    matches: [bookSel],
+    misses: [placeholderSel, unconfirmedSel],
+  },
+  {
+    name: 'book marked placeholder',
+    work: work({ userKind: 'book', flags: ['placeholder'] }),
+    matches: [bookSel],
+    misses: [placeholderSel, unconfirmedSel],
+  },
+  {
+    name: 'owner collection overrides kept',
+    work: work({ userVisibility: 'visible', userKind: 'collection', kind: 'anthology' }),
+    matches: [collectionSel],
+    misses: [bookSel, unconfirmedSel],
+  },
+  {
+    name: 'hidden flagged',
+    work: work({ userVisibility: 'hidden', flags: ['wrong_contributor'] }),
+    matches: [hiddenSel],
+    misses: [bookSel, unconfirmedSel],
+  },
+  {
+    name: 'owned suspect collection',
+    work: work({ ownedFormats: ['ebook'], verdict: 'suspect', flags: ['wrong_contributor'], kind: 'collection' }),
+    matches: [collectionSel, unconfirmedSel],
+    misses: [bookSel, emptySel],
+  },
+]
+
+describe('shared class selection', () => {
+  it.each(classSelectionCases)('$name', ({ work, matches, misses }) => {
+    for (const selection of matches) expect(workMatchesClassSelection(work, selection)).toBe(true)
+    for (const selection of misses) expect(workMatchesClassSelection(work, selection)).toBe(false)
+  })
+
+  it('recognizes only the default class selection', () => {
+    expect(MONITORED_REVIEW_FLAGS).toEqual(['hidden', 'placeholders', 'unconfirmed'])
+    expect(isDefaultClassSelection({ kinds: ['book'], more: [] })).toBe(true)
+    expect(isDefaultClassSelection({ kinds: [], more: [] })).toBe(false)
+    expect(isDefaultClassSelection({ kinds: ['book', 'book'], more: [] })).toBe(false)
+    expect(isDefaultClassSelection({ kinds: ['book', 'collection'], more: [] })).toBe(false)
+    for (const flag of MONITORED_REVIEW_FLAGS) expect(isDefaultClassSelection({ kinds: ['book'], more: [flag] })).toBe(false)
+  })
+
+  it('excludes explicit decisions and placeholders from unconfirmed', () => {
+    expect(isWorkUnconfirmed(work({ verdict: 'probable' }))).toBe(true)
+    for (const patch of [
+      { userVisibility: 'hidden' },
+      { userVisibility: 'visible' },
+      { userKind: 'collection' },
+      { flags: ['placeholder'] },
+    ] as Partial<MonitoredWork>[]) {
+      expect(isWorkUnconfirmed(work({ verdict: 'suspect', ...patch }))).toBe(false)
+    }
+  })
+})
+
+describe('release tab class selection', () => {
+  it('reads a stored selection defensively', () => {
+    expect(readClassSelection(null)).toEqual({ kinds: ['book'], more: [] })
+    expect(readClassSelection({ kinds: ['bogus'], more: ['x', 'hidden'] })).toEqual({ kinds: ['book'], more: ['hidden'] })
+    expect(readClassSelection({ kinds: [], more: ['unconfirmed'] })).toEqual({ kinds: [], more: ['unconfirmed'] })
+    expect(readClassSelection({ kinds: ['graphic_novel', 'book'], more: [] })).toEqual({ kinds: ['book', 'graphic_novel'], more: [] })
+  })
+
+  it('round-trips through the display options with released and upcoming fixed on', () => {
+    const selection = { kinds: ['book', 'graphic_novel'] as const, more: ['placeholders', 'unconfirmed'] as const }
+    const display = toReleaseDisplay({ kinds: [...selection.kinds], more: [...selection.more] })
+    expect(display).toMatchObject({ released: true, upcoming: true, hidden: false, placeholders: true, unconfirmed: true })
+    expect(toClassSelection(display)).toEqual({ kinds: ['book', 'graphic_novel'], more: ['placeholders', 'unconfirmed'] })
+  })
+})
+
+describe('class change in the review queue', () => {
+  const book = work({ userKind: 'book' })
+  const hidden = work({ userVisibility: 'hidden' })
+  const comic = work({ userKind: 'graphic_novel' })
+
+  it('detects a changed display class or kind, and nothing for the same class or no before', () => {
+    expect(workClassChanged(book, hidden)).toBe(true)
+    expect(workClassChanged(book, comic)).toBe(true)
+    expect(workClassChanged(book, { ...book, title: 'Other' })).toBe(false)
+    expect(workClassChanged(null, hidden)).toBe(false)
+  })
+
+  it('asks for a reload only when the selection is not the default', () => {
+    expect(classChangeLeavesQueue(book, hidden, { kinds: ['book'], more: ['hidden'] })).toBe(true)
+    expect(classChangeLeavesQueue(book, hidden, { kinds: ['book'], more: [] })).toBe(false)
+    expect(classChangeLeavesQueue(book, { ...book, title: 'Other' }, { kinds: ['book'], more: ['hidden'] })).toBe(false)
+  })
+})
+
+describe('countWorkClasses with an unknown kind', () => {
+  it('ignores a kind the vocabulary does not list', () => {
+    const counts = countWorkClasses([work({ userKind: 'mystery' as never })])
+    expect(Object.keys(counts.kinds)).not.toContain('mystery')
+    expect(Object.values(counts.kinds).every((total) => total === 0)).toBe(true)
   })
 })

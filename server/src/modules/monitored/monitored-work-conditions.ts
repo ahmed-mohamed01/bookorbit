@@ -1,4 +1,5 @@
-import { and, eq, ne, or, sql } from 'drizzle-orm';
+import type { MonitoredClassSelection } from '@bookorbit/types';
+import { and, eq, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
 import * as schema from './schema/monitored.schema';
@@ -30,4 +31,55 @@ export function activeWorkCondition(visible: ReturnType<typeof visibleWorkCondit
     or(eq(schema.monitoredAuthorWorks.monitorState, 'monitoring'), sql`${schema.monitoredAuthorWorks.monitorState} is null`),
     visible,
   )!;
+}
+
+export function bookClassSql(): SQL<boolean> {
+  return visibleWorkCondition();
+}
+
+function hiddenWorkSql(): SQL<boolean> {
+  return sql<boolean>`coalesce(${schema.monitoredAuthorWorks.userVisibility} = 'hidden', false)`;
+}
+
+function placeholderWorkSql(visible: SQL<boolean>): SQL<boolean> {
+  return sql<boolean>`(not ${visible} and ${schema.authorCatalogWorks.flags} @> '["placeholder"]'::jsonb)`;
+}
+
+function workKindSql(visible: SQL<boolean>): SQL {
+  return sql`coalesce(${schema.monitoredAuthorWorks.userKind}, case when ${visible} then 'book' else ${schema.authorCatalogWorks.kind} end)`;
+}
+
+export function unconfirmedWorkSql(): SQL<boolean> {
+  return sql<boolean>`(${schema.monitoredAuthorWorks.userKind} is null
+        and ${schema.monitoredAuthorWorks.userVisibility} is distinct from 'hidden'
+        and ${schema.monitoredAuthorWorks.userVisibility} is distinct from 'visible'
+        and not (${schema.authorCatalogWorks.flags} @> '["placeholder"]'::jsonb)
+        and (${schema.authorCatalogWorks.verdict} <> 'verified' or jsonb_array_length(${schema.authorCatalogWorks.flags}) > 0))`;
+}
+
+/** 'hidden', 'placeholder', the work's kind, or 'unconfirmed' when it has no kind: the display class of workDisplayClass. */
+export function workClassKeySql(): SQL<string> {
+  const visible = visibleWorkCondition();
+  return sql<string>`case
+    when ${hiddenWorkSql()} then 'hidden'
+    when ${placeholderWorkSql(visible)} then 'placeholder'
+    else coalesce(${workKindSql(visible)}, 'unconfirmed')
+  end`;
+}
+
+export function classSelectionMatchSql(selection: MonitoredClassSelection): SQL<boolean> {
+  const visible = visibleWorkCondition();
+  const kind = workKindSql(visible);
+  const kinds = selection.kinds.length
+    ? sql`coalesce(${kind} in (${sql.join(
+        selection.kinds.map((value) => sql`${value}`),
+        sql`, `,
+      )}), false)`
+    : sql`false`;
+  const unconfirmed = selection.more.includes('unconfirmed') ? unconfirmedWorkSql() : sql`false`;
+  return sql<boolean>`case
+    when ${hiddenWorkSql()} then ${selection.more.includes('hidden')}
+    when ${placeholderWorkSql(visible)} then ${selection.more.includes('placeholders')}
+    else (${kinds} or ${unconfirmed})
+  end`;
 }
