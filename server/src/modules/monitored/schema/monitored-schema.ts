@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS "author_catalog_works" (
 	"matched_audio_book_id" integer,
 	"owned_formats" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	CONSTRAINT "author_catalog_works_verdict_chk" CHECK ("author_catalog_works"."verdict" in ('verified', 'probable', 'suspect')),
-	CONSTRAINT "author_catalog_works_kind_chk" CHECK ("author_catalog_works"."kind" is null or "author_catalog_works"."kind" in ('collection', 'anthology', 'graphic_novel', 'supplemental', 'format_variant', 'duplicate'))
+	CONSTRAINT "author_catalog_works_kind_chk" CHECK ("author_catalog_works"."kind" is null or "author_catalog_works"."kind" in ('collection', 'anthology', 'graphic_novel', 'supplemental', 'format_variant', 'duplicate', 'dramatization', 'split_part'))
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "author_catalog_work_releases" (
@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS "monitored_author_works" (
 	"audiobook_request_id" integer,
 	CONSTRAINT "monitored_author_works_monitor_state_chk" CHECK ("monitored_author_works"."monitor_state" in ('monitoring', 'paused', 'stopped')),
 	CONSTRAINT "monitored_author_works_user_visibility_chk" CHECK ("monitored_author_works"."user_visibility" is null or "monitored_author_works"."user_visibility" in ('hidden', 'visible')),
-	CONSTRAINT "monitored_author_works_user_kind_chk" CHECK ("monitored_author_works"."user_kind" is null or "monitored_author_works"."user_kind" in ('book', 'collection', 'split_part', 'anthology', 'graphic_novel', 'supplemental', 'format_variant', 'duplicate'))
+	CONSTRAINT "monitored_author_works_user_kind_chk" CHECK ("monitored_author_works"."user_kind" is null or "monitored_author_works"."user_kind" in ('book', 'collection', 'split_part', 'dramatization', 'anthology', 'graphic_novel', 'supplemental', 'format_variant', 'duplicate'))
 );
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "monitored_authors" (
@@ -576,7 +576,7 @@ DO $$ BEGIN
 	IF EXISTS (
 		SELECT 1 FROM pg_constraint
 		WHERE conname = 'author_catalog_works_kind_chk'
-			AND pg_get_constraintdef(oid) NOT LIKE '%supplemental%'
+			AND pg_get_constraintdef(oid) NOT LIKE '%dramatization%'
 	) THEN
 		ALTER TABLE "author_catalog_works" DROP CONSTRAINT "author_catalog_works_kind_chk";
 	END IF;
@@ -584,7 +584,7 @@ DO $$ BEGIN
 		SELECT 1 FROM pg_constraint
 		WHERE conname = 'author_catalog_works_kind_chk'
 	) THEN
-		ALTER TABLE "author_catalog_works" ADD CONSTRAINT "author_catalog_works_kind_chk" CHECK ("author_catalog_works"."kind" is null or "author_catalog_works"."kind" in ('collection', 'anthology', 'graphic_novel', 'supplemental', 'format_variant', 'duplicate'));
+		ALTER TABLE "author_catalog_works" ADD CONSTRAINT "author_catalog_works_kind_chk" CHECK ("author_catalog_works"."kind" is null or "author_catalog_works"."kind" in ('collection', 'anthology', 'graphic_novel', 'supplemental', 'format_variant', 'duplicate', 'dramatization', 'split_part'));
 	END IF;
 END $$;
 --> statement-breakpoint
@@ -592,7 +592,7 @@ DO $$ BEGIN
 	IF EXISTS (
 		SELECT 1 FROM pg_constraint
 		WHERE conname = 'monitored_author_works_user_kind_chk'
-			AND pg_get_constraintdef(oid) NOT LIKE '%supplemental%'
+			AND pg_get_constraintdef(oid) NOT LIKE '%dramatization%'
 	) THEN
 		ALTER TABLE "monitored_author_works" DROP CONSTRAINT "monitored_author_works_user_kind_chk";
 	END IF;
@@ -600,7 +600,7 @@ DO $$ BEGIN
 		SELECT 1 FROM pg_constraint
 		WHERE conname = 'monitored_author_works_user_kind_chk'
 	) THEN
-		ALTER TABLE "monitored_author_works" ADD CONSTRAINT "monitored_author_works_user_kind_chk" CHECK ("monitored_author_works"."user_kind" is null or "monitored_author_works"."user_kind" in ('book', 'collection', 'split_part', 'anthology', 'graphic_novel', 'supplemental', 'format_variant', 'duplicate'));
+		ALTER TABLE "monitored_author_works" ADD CONSTRAINT "monitored_author_works_user_kind_chk" CHECK ("monitored_author_works"."user_kind" is null or "monitored_author_works"."user_kind" in ('book', 'collection', 'split_part', 'dramatization', 'anthology', 'graphic_novel', 'supplemental', 'format_variant', 'duplicate'));
 	END IF;
 END $$;
 --> statement-breakpoint

@@ -871,13 +871,23 @@ describe('MonitoredBookPanel visibility banner', () => {
     wrapper.unmount()
   })
 
+  it('names a flag stored before it was retired instead of showing its message key', async () => {
+    const legacy = { ...baseWork, verdict: 'probable', flags: ['compilation'] } as unknown as MonitoredWork
+    const wrapper = await mountPanel(legacy, [])
+
+    const banner = wrapper.findComponent(MonitoredVisibilityBanner)
+    expect(banner.text()).toContain('compilation')
+    expect(banner.text()).not.toContain('monitored.panel.flags')
+    wrapper.unmount()
+  })
+
   it('says why a work is in review and lets the owner keep or hide it', async () => {
-    const review: MonitoredWork = { ...baseWork, verdict: 'probable', flags: ['compilation'] }
+    const review: MonitoredWork = { ...baseWork, verdict: 'probable', flags: ['placeholder'] }
     const wrapper = await mountPanel(review, [])
 
     const banner = wrapper.findComponent(MonitoredVisibilityBanner)
     expect(banner.text()).toContain('probable match')
-    expect(banner.text()).toContain('compilation')
+    expect(banner.text()).toContain('placeholder')
     await banner
       .findAll('button')
       .find((button) => button.text() === 'Keep and watch')!

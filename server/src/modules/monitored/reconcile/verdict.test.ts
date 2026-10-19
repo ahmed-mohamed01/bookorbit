@@ -216,4 +216,163 @@ describe('assignVerdict', () => {
 
     expect(assignVerdict(steelheart, { today, floor: {} }).flags).not.toContain('foreign_language');
   });
+
+  it('sets no flag for a dramatized or split title', () => {
+    for (const title of ['Red Rising (1 of 2) [Dramatized Adaptation]', 'The Way of Kings, Part 1']) {
+      const result = assignVerdict(work('hardcover', { title, sources: ['hardcover', 'goodreads'], cover: 'c' }), { today, floor: {} });
+
+      expect(result.flags).toEqual([]);
+    }
+  });
+
+  it("does not flag Hardcover's compilation boolean or a bundle title", () => {
+    for (const title of ['Axiom', 'Mistborn Trilogy Boxed Set']) {
+      const result = assignVerdict(work('hardcover', { title, compilationFlag: true, sources: ['hardcover', 'goodreads'], cover: 'c' }), {
+        today,
+        floor: {},
+      });
+
+      expect(result.flags).toEqual([]);
+    }
+  });
+
+  it('reads the foreword credit off the best-read row', () => {
+    const row = (id: string, role: string, popularity: number) =>
+      ({ source: 'hardcover', id, role, popularity, raw: {} }) as unknown as MergedWork['observations'][number];
+    const result = assignVerdict(
+      work('hardcover', {
+        title: 'The Shining Ones',
+        sources: ['hardcover', 'goodreads'],
+        cover: 'c',
+        observations: [row('hc:1', 'Foreword', 9), row('hc:2', 'Author', 0)],
+      }),
+      { today, floor: {} },
+    );
+
+    expect(result.flags).toContain('wrong_contributor');
+  });
+
+  it('flags a book the author only wrote the foreword for', () => {
+    const observation = {
+      source: 'hardcover',
+      id: 'hc:1',
+      role: 'Foreword',
+      popularity: 26,
+      raw: {},
+    } as unknown as MergedWork['observations'][number];
+    const result = assignVerdict(
+      work('hardcover', { title: "King's League", sources: ['hardcover', 'goodreads'], cover: 'c', observations: [observation] }),
+      { today, floor: {} },
+    );
+
+    expect(result.flags).toContain('wrong_contributor');
+  });
+
+  describe('foreign editions', () => {
+    const corroborated = { sources: ['hardcover', 'goodreads'] as MergedWork['sources'], cover: 'c' };
+    const hardcoverRow = (patch: Record<string, unknown>) =>
+      ({
+        source: 'hardcover',
+        id: 'hc:1',
+        role: 'Author',
+        popularity: 0,
+        language: null,
+        raw: {},
+        ...patch,
+      }) as unknown as MergedWork['observations'][number];
+    const translator = { cached_contributors: [{ contribution: null }, { contribution: 'Translator' }] };
+
+    it('flags a title with non-English letters', () => {
+      for (const title of ['Černé léto', 'Oceánem hvězd']) {
+        expect(assignVerdict(work('hardcover', { title, ...corroborated }), { today, floor: {} }).flags).toContain('foreign_language');
+      }
+    });
+
+    it('flags a translation known only by its series name', () => {
+      const result = assignVerdict(work('hardcover', { title: 'Carl', seriesMemberships: [{ name: 'Hrobkař Carl', index: '1' }], ...corroborated }), {
+        today,
+        floor: {},
+      });
+
+      expect(result.flags).toContain('foreign_language');
+    });
+
+    it('flags a translator-credited listing', () => {
+      const result = assignVerdict(work('hardcover', { title: 'La rebelión', ...corroborated, observations: [hardcoverRow({ raw: translator })] }), {
+        today,
+        floor: {},
+      });
+
+      expect(result.flags).toContain('foreign_language');
+    });
+
+    it('flags an accented title that has no English edition', () => {
+      const result = assignVerdict(work('hardcover', { title: 'La rebelión', ...corroborated, observations: [hardcoverRow({ language: null })] }), {
+        today,
+        floor: {},
+      });
+
+      expect(result.flags).toContain('foreign_language');
+    });
+
+    it('keeps an accented English title', () => {
+      const result = assignVerdict(
+        work('hardcover', { title: 'Café Endless: Spring Rain', ...corroborated, observations: [hardcoverRow({ language: 'english' })] }),
+        { today, floor: {} },
+      );
+
+      expect(result.flags).not.toContain('foreign_language');
+    });
+
+    it('keeps a well-read accented English title with no language data', () => {
+      const result = assignVerdict(
+        work('hardcover', {
+          title: 'Déjà Dead',
+          ...corroborated,
+          popularity: { hardcover: 5000 },
+          observations: [hardcoverRow({ popularity: 5000 })],
+        }),
+        { today, floor: {} },
+      );
+
+      expect(result.flags).not.toContain('foreign_language');
+    });
+
+    it('keeps a well-read translator-credited book with no language data', () => {
+      const result = assignVerdict(
+        work('hardcover', {
+          title: 'The Three-Body Problem',
+          ...corroborated,
+          popularity: { hardcover: 5000 },
+          observations: [hardcoverRow({ popularity: 5000, raw: translator })],
+        }),
+        { today, floor: {} },
+      );
+
+      expect(result.flags).not.toContain('foreign_language');
+    });
+
+    it('keeps an English translation of a translated author', () => {
+      const result = assignVerdict(
+        work('hardcover', {
+          title: 'The Three-Body Problem',
+          ...corroborated,
+          popularity: { hardcover: 5000 },
+          observations: [hardcoverRow({ language: 'english', popularity: 5000, raw: translator })],
+        }),
+        { today, floor: {} },
+      );
+
+      expect(result.flags).not.toContain('foreign_language');
+    });
+
+    it('leaves a plain English book alone', () => {
+      const result = assignVerdict(
+        work('hardcover', { title: 'Children of Time', ...corroborated, observations: [hardcoverRow({ language: 'english' })] }),
+        { today, floor: {} },
+      );
+
+      expect(result.flags).toEqual([]);
+    });
+  });
 });

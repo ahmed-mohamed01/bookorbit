@@ -14639,6 +14639,10 @@
           "title": "Part of a book",
           "description": "A split release, like Part 1 of 2"
         },
+        "dramatization": {
+          "title": "Dramatization",
+          "description": "A full-cast audio production or one episode of one"
+        },
         "anthology": {
           "title": "Anthology",
           "description": "Stories by several authors"
@@ -14835,6 +14839,7 @@
       "badges": {
         "collection": "Collection",
         "split_part": "Part of a book",
+        "dramatization": "Dramatization",
         "anthology": "Anthology",
         "graphic_novel": "Comic",
         "supplemental": "Supplemental",

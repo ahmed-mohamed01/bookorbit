@@ -10,7 +10,7 @@ export type MonitorMode = (typeof MONITOR_MODES)[number];
 export const MONITORED_WORK_VERDICTS = ["verified", "probable", "suspect"] as const;
 export type MonitoredWorkVerdict = (typeof MONITORED_WORK_VERDICTS)[number];
 
-export const MONITORED_WORK_FLAGS = ["compilation", "placeholder", "adaptation_split", "foreign_language", "wrong_contributor"] as const;
+export const MONITORED_WORK_FLAGS = ["placeholder", "foreign_language", "wrong_contributor"] as const;
 export type MonitoredWorkFlag = (typeof MONITORED_WORK_FLAGS)[number];
 
 /**
@@ -18,19 +18,28 @@ export type MonitoredWorkFlag = (typeof MONITORED_WORK_FLAGS)[number];
  * and duplicate demotion set one: a work that is merely unverified carries no kind, because
  * nothing about its shape is known - it just failed to earn the default list.
  */
-export const MONITORED_WORK_KINDS = ["collection", "anthology", "graphic_novel", "supplemental", "format_variant", "duplicate"] as const;
+export const MONITORED_WORK_KINDS = [
+  "collection",
+  "anthology",
+  "graphic_novel",
+  "supplemental",
+  "format_variant",
+  "duplicate",
+  "dramatization",
+  "split_part",
+] as const;
 export type MonitoredWorkKind = (typeof MONITORED_WORK_KINDS)[number];
 
 /**
  * What the owner says a work is, overriding the reconciler's kind. `book` is a plain title in the
  * series and keeps the work in the list; every other mark keeps the work off the default list and
- * out of auto-requests, though it can still be requested by hand. `split_part` is only ever set
- * by the owner.
+ * out of auto-requests, though it can still be requested by hand.
  */
 export const MONITORED_MARK_KINDS = [
   "book",
   "collection",
   "split_part",
+  "dramatization",
   "anthology",
   "graphic_novel",
   "supplemental",

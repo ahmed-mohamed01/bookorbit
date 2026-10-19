@@ -4,7 +4,9 @@ import { normalizeText } from './observation-matcher';
 import {
   COLLECTION_TITLE_PATTERN,
   DRAMATIZED_ADAPTATION_PATTERN,
+  DRAMATIZED_SERIES_PATTERN,
   GRAPHIC_NOVEL_TITLE_PATTERN,
+  SPLIT_PART_SUFFIX_PATTERN,
   SUPPLEMENTAL_SERIES_PATTERN,
   SUPPLEMENTAL_TITLE_PATTERN,
 } from './work-shape';
@@ -38,6 +40,8 @@ const KIND_BY_HIDE_REASON: Record<string, MonitoredWorkKind> = {
   multi_author_anthology: 'anthology',
   graphic_novel: 'graphic_novel',
   supplemental: 'supplemental',
+  dramatization: 'dramatization',
+  split_part: 'split_part',
 };
 
 /**
@@ -105,6 +109,9 @@ const IDENTITY_WORD_PATTERN =
 const MAX_BOILERPLATE_TAILS = 3;
 
 const MULTI_AUTHOR_ANTHOLOGY_CREDITS = 5;
+const ANTHOLOGY_CONTRIBUTOR_CREDITS = 3;
+/** Credits that name a piece of someone else's book, never authorship of the whole. */
+const ANTHOLOGY_ROLE_PATTERN = /^(?:contributor|editor)/i;
 const MIN_SERIES_NAME_LENGTH = 4;
 const SERIES_NAME_NUMBER_SUFFIX = '(?:\\s+(?:book|vol|volume)?\\s*(?:\\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten))?';
 
@@ -127,7 +134,7 @@ const SERIES_LEADING_ARTICLE_PATTERN = /^(?:the|a|an) /;
 const SERIES_GENERIC_TAIL_PATTERN = / (?:saga|series|cycle|trilogy|sequence)$/;
 
 /** B1 rejects a row on its own record rather than on its place in the catalog. */
-const STRUCTURAL_REJECT_REASONS = new Set(['status', 'contributor_role', 'adaptation', 'foreign_bundle']);
+const STRUCTURAL_REJECT_REASONS = new Set(['status', 'contributor_role', 'foreign_bundle']);
 
 // ---------------------------------------------------------------------------
 // Raw Hardcover field access
@@ -147,6 +154,12 @@ interface HardcoverSignals {
   pages: number;
   /** Author-role credits on the best-read row, NOT unioned across the cluster - see readSignals. */
   authorCredits: number;
+  /** The monitored author's own credit on the best-read row: `Author`, or `Contributor`, `Editor`... */
+  ownRole: string | null;
+  /** Every credited person on the best-read row, and how many of them are editors or contributors. */
+  credits: number;
+  editorCredits: number;
+  contributorCredits: number;
   seriesIds: Map<string, number>;
 }
 
@@ -196,6 +209,10 @@ function readSignals(work: MergedWork): HardcoverSignals {
   let editions = 0;
   let pages = 0;
   let authorCredits = 0;
+  let ownRole: string | null = null;
+  let credits = 0;
+  let editorCredits = 0;
+  let contributorCredits = 0;
   let bestReadUsers = -1;
 
   for (const observation of observations) {
@@ -216,6 +233,11 @@ function readSignals(work: MergedWork): HardcoverSignals {
     if (users > bestReadUsers) {
       bestReadUsers = users;
       authorCredits = countAuthorCredits(raw.cached_contributors);
+      ownRole = observation.role;
+      const roles = (Array.isArray(raw.cached_contributors) ? raw.cached_contributors : []).map((entry) => asRecord(entry).contribution);
+      credits = roles.length;
+      editorCredits = roles.filter((role) => typeof role === 'string' && /^editor/i.test(role)).length;
+      contributorCredits = roles.filter((role) => typeof role === 'string' && /^contributor/i.test(role)).length;
     }
     for (const entry of Array.isArray(raw.book_series) ? raw.book_series : []) {
       const series = asRecord(asRecord(entry).series);
@@ -227,7 +249,20 @@ function readSignals(work: MergedWork): HardcoverSignals {
     }
   }
 
-  return { statusIds, roleIds, categoryId: categoryIds[0] ?? null, usersRead, editions, pages, authorCredits, seriesIds };
+  return {
+    statusIds,
+    roleIds,
+    categoryId: categoryIds[0] ?? null,
+    usersRead,
+    editions,
+    pages,
+    authorCredits,
+    ownRole,
+    credits,
+    editorCredits,
+    contributorCredits,
+    seriesIds,
+  };
 }
 
 /** Live unless Hardcover says otherwise: Deleted(3), Deduped(4) and To Review(2) are not books. */
@@ -444,6 +479,21 @@ function isSupplemental(work: MergedWork): boolean {
 }
 
 /**
+ * A dramatized production or one episode of one. The series name is read off every raw Hardcover row,
+ * because the provider only drops bracketed adaptation series and keeps `... Season 1` as a membership.
+ */
+function isDramatization(work: MergedWork): boolean {
+  if (DRAMATIZED_ADAPTATION_PATTERN.test(work.title) || DRAMATIZED_SERIES_PATTERN.test(work.title)) return true;
+  return hardcoverObservations(work).some((observation) => {
+    const entries = asRecord(observation.raw).book_series;
+    return (Array.isArray(entries) ? entries : []).some((entry) => {
+      const name = asRecord(asRecord(entry).series).name;
+      return typeof name === 'string' && DRAMATIZED_SERIES_PATTERN.test(name);
+    });
+  });
+}
+
+/**
  * A title whose tail word is "Series" - `The Reckoners Series` - names a whole series rather than one
  * entry in it. The tail alone also sits on novels (`Murder at the World Series`), so the rest of the
  * title must also name a series this author actually has. Vocabulary keys are normalized text
@@ -520,9 +570,9 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
 
   const reject = (index: number, reason: string): void => {
     if (rejected.has(index)) return;
-    // A supplemental work already sits in the review tray; a later duplicate rule must not drop it
+    // A supplemental work or a dramatization already sits in the review tray; a later duplicate rule must not drop it
     // from the catalog and take the promote-back choice away.
-    if (hidden.has(index) && reasons.get(index) === 'supplemental') return;
+    if (hidden.has(index) && (reasons.get(index) === 'supplemental' || reasons.get(index) === 'dramatization')) return;
     rejected.add(index);
     reasons.set(index, reason);
   };
@@ -534,6 +584,10 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
 
   const signals = works.map(readSignals);
   const statusOk = works.map((_, index) => isStatusOk(signals[index]));
+  // A dramatization stays in the catalog but takes no part in any catalog-shape rule below, exactly as
+  // a rejected row does: otherwise a well-read dramatized part could win the slot of the novel it adapts.
+  const dramatized = works.map(isDramatization);
+  const excluded = (index: number): boolean => rejected.has(index) || dramatized[index];
   const datedFuture = works.map((work) => isDatedFuture(work, today));
 
   // Series ids are the stable identity; a normalised name is the fallback where Hardcover omits one.
@@ -549,7 +603,7 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
 
   const occupiedSlots = new Map<string, Set<number>>();
   works.forEach((work, index) => {
-    if (!statusOk[index]) return;
+    if (!statusOk[index] || dramatized[index]) return;
     for (const entry of seriesEntries(work)) {
       const position = integerPosition(entry.index);
       if (position == null) continue;
@@ -574,7 +628,7 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   works.forEach((work, index) => {
     if (!statusOk[index]) reject(index, 'status');
     else if (!isAuthorRole(signals[index])) reject(index, 'contributor_role');
-    else if (DRAMATIZED_ADAPTATION_PATTERN.test(work.title)) reject(index, 'adaptation');
+    else if (dramatized[index]) hide(index, 'dramatization');
     else if (FOREIGN_BUNDLE_PATTERN.test(work.title)) reject(index, 'foreign_bundle');
   });
 
@@ -616,7 +670,7 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   const vocabulary = new Map<string, Set<string>>();
   const seriesSize = new Map<string, number>();
   works.forEach((work, index) => {
-    if (!statusOk[index]) return;
+    if (!statusOk[index] || dramatized[index]) return;
     for (const entry of seriesEntries(work)) {
       const canonical = canonicalSeriesName(entry.name);
       if (canonical.length < 3) continue;
@@ -634,6 +688,27 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   const seriesTitled = works.map((work) => namesAuthorSeries(work.title, vocabulary));
   works.forEach((_, index) => {
     if (seriesTitled[index]) collections[index] = true;
+  });
+
+  // A collection repackaging books already in this catalog names them, or names a whole series as
+  // `The Complete ...`. Only works already called collections are tested, so a novel whose title merely
+  // contains two short catalog titles (`Mistborn: The Final Empire`) never becomes an omnibus here.
+  const catalogTitles = [...new Set(works.flatMap((work, index) => (statusOk[index] && !excluded(index) ? [normalizeText(work.title)] : [])))].filter(
+    (title) => title.length >= MIN_SERIES_NAME_LENGTH,
+  );
+  const containsPhrase = (text: string, phrase: string): boolean => ` ${text} `.includes(` ${phrase} `);
+  const namesCompleteSeries = (title: string): boolean =>
+    containsPhrase(title, 'complete') && [...vocabulary.keys()].some((name) => name.length >= MIN_SERIES_NAME_LENGTH && containsPhrase(title, name));
+  const repackagesCatalog = works.map((work, index) => {
+    const title = normalizeText(work.title);
+    // `The Complete Wheel of Time` parks at series position 0, which isCollection reads as a real
+    // place in the series; the compilation flag plus a whole series named in the title outweighs it.
+    if (!collections[index] && !(work.compilationFlag && namesCompleteSeries(title))) return false;
+    const named = catalogTitles.filter((other) => other !== title && containsPhrase(title, other));
+    return named.length >= 2 || namesCompleteSeries(title);
+  });
+  works.forEach((_, index) => {
+    if (repackagesCatalog[index]) collections[index] = true;
   });
 
   const slotStrength = (slot: string): number =>
@@ -670,7 +745,7 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   // a live one, nor count as the rival that makes a slot contested.
   const contests = new Map<string, SlotClaim[]>();
   for (const claim of claims) {
-    if (rejected.has(claim.work)) continue;
+    if (excluded(claim.work)) continue;
     const bucket = contests.get(claim.slot);
     if (bucket) bucket.push(claim);
     else contests.set(claim.slot, [claim]);
@@ -707,12 +782,12 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   const isKnownSeriesName = (text: string): boolean => seriesNames.some((name) => text === name || text.endsWith(` ${name}`));
   const anchorCounts = new Map<string, number>();
   works.forEach((work, index) => {
-    if (rejected.has(index) || !holdsAnySeriesPosition(work)) return;
+    if (excluded(index) || !holdsAnySeriesPosition(work)) return;
     const title = preColonTitle(work.title, isKnownSeriesName);
     anchorCounts.set(title, (anchorCounts.get(title) ?? 0) + 1);
   });
   works.forEach((work, index) => {
-    if (rejected.has(index) || hasAnySeriesMembership(work)) return;
+    if (excluded(index) || hasAnySeriesMembership(work)) return;
     const title = preColonTitle(work.title, isKnownSeriesName);
     if (title.length >= 3 && anchorCounts.get(title) === 1) reject(index, 'series_less_duplicate');
   });
@@ -728,7 +803,7 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   // candidate matches and lets through 4, every one a genuine duplicate.
   const slotMembers = new Map<string, number[]>();
   works.forEach((work, index) => {
-    if (rejected.has(index)) return;
+    if (excluded(index)) return;
     for (const entry of seriesEntries(work)) {
       if (integerPosition(entry.index) == null) continue;
       const key = canonicalSeriesName(entry.name);
@@ -744,7 +819,7 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
     .filter(([key, members]) => key.length >= MIN_SERIES_NAME_LENGTH && !members.some((member) => normalizedTitles[member].startsWith(key)))
     .map(([key, members]) => ({ key, members, stripper: seriesNameStripper(key) }));
   works.forEach((work, index) => {
-    if (rejected.has(index) || hasAnySeriesMembership(work)) return;
+    if (excluded(index) || hasAnySeriesMembership(work)) return;
     const title = normalizedTitles[index];
     for (const { members, stripper } of candidateSeries) {
       if (!stripper.test(title)) continue;
@@ -769,26 +844,37 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   // collapsing into one.
   const strongestByCore = new Map<string, number>();
   works.forEach((work, index) => {
-    if (rejected.has(index)) return;
+    if (excluded(index)) return;
     const key = normalizeText(work.title);
     const best = strongestByCore.get(key);
     if (best == null || readership(works[best], signals[best]) < readership(work, signals[index])) strongestByCore.set(key, index);
   });
   works.forEach((work, index) => {
-    if (rejected.has(index)) return;
+    if (excluded(index)) return;
     const parent = SPLIT_PART_PATTERN.exec(work.title)?.groups?.parent?.trim();
     if (!parent) return;
     const candidate = strongestByCore.get(normalizeText(parent));
     if (candidate == null || candidate === index) return;
     if (readership(works[candidate], signals[candidate]) > 2 * readership(work, signals[index])) reject(index, 'split_edition');
   });
+  works.forEach((work, index) => {
+    if (!excluded(index) && SPLIT_PART_SUFFIX_PATTERN.test(work.title)) hide(index, 'split_part');
+  });
 
   // B4 - collections, in this order. Signal applied before slot status would accept every repackaged
   // omnibus, all of which are well read.
   works.forEach((work, index) => {
-    if (!collections[index] || rejected.has(index)) return;
+    if (!collections[index] || excluded(index)) return;
+    // A bundle word is repackaging whatever slot it holds: a box set is often the only member of a junk
+    // series of its own, which it wins unopposed. Naming catalog titles overrides a held slot only with
+    // a second sign of bundling, since Hardcover files real novels under the Collection category too.
+    const bundled = work.compilationFlag || COLLECTION_TITLE_PATTERN.test(work.title);
+    if (REPACKAGING_TITLE_PATTERN.test(work.title) || (repackagesCatalog[index] && bundled)) {
+      hide(index, 'collection_repackaging');
+      return;
+    }
     if (holdsSlot.has(index)) return;
-    if (REPACKAGING_TITLE_PATTERN.test(work.title) || seriesTitled[index]) {
+    if (seriesTitled[index] || repackagesCatalog[index]) {
       hide(index, 'collection_repackaging');
       return;
     }
@@ -832,8 +918,14 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   // row: real books sit at 0-2 credits and every anthology in the validation set at 5 or more, with
   // nothing genuine in between. It is HIDDEN rather than dropped, because these do carry original
   // short fiction by the author and the owner can promote them.
-  works.forEach((_, index) => {
-    if (signals[index].authorCredits >= MULTI_AUTHOR_ANTHOLOGY_CREDITS) hide(index, 'multi_author_anthology');
+  // Credit lists are often incomplete, so two more signals catch what the count misses: the author's
+  // own credit names a piece of someone else's book (Solaris Rising 2 credits Tchaikovsky as
+  // Contributor), or the book credits an editor over a crowd of contributors (Shakespeare vs. Cthulhu).
+  works.forEach((work, index) => {
+    const { authorCredits, ownRole, credits, editorCredits, contributorCredits } = signals[index];
+    const contributedOnly = ownRole != null && ANTHOLOGY_ROLE_PATTERN.test(ownRole) && (work.sources.length >= 2 || credits > 1);
+    const edited = editorCredits >= 1 && contributorCredits >= ANTHOLOGY_CONTRIBUTOR_CREDITS;
+    if (authorCredits >= MULTI_AUTHOR_ANTHOLOGY_CREDITS || contributedOnly || edited) hide(index, 'multi_author_anthology');
   });
 
   // Graphic novels are never dropped by a catalog-shape rule: White Sand Vol. 1/2/3 and Dark One
@@ -851,7 +943,7 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   // the slot, and counting it would make White Sand Vol. 1 look like an adaptation of it.
   const adaptsProse = new Set<number>();
   for (const bucket of contests.values()) {
-    const live = bucket.filter((claim) => !rejected.has(claim.work));
+    const live = bucket.filter((claim) => !excluded(claim.work));
     if (!live.some((claim) => !isGraphic(claim.work))) continue;
     for (const claim of live) if (isGraphic(claim.work)) adaptsProse.add(claim.work);
   }
@@ -861,7 +953,7 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
   // Vol. 1" is not an adaptation of "Dark One: Forgotten".
   const proseTitles = new Set<string>();
   works.forEach((work, index) => {
-    if (rejected.has(index) || isGraphic(index) || titledComic[index]) return;
+    if (excluded(index) || isGraphic(index) || titledComic[index]) return;
     proseTitles.add(normalizeText(work.title));
   });
   works.forEach((work, index) => {
@@ -872,7 +964,7 @@ export function resolveSlots(works: MergedWork[], today: string): SlotResolution
     else adaptsProse.add(index);
   });
   works.forEach((_, index) => {
-    if (!isGraphic(index)) return;
+    if (!isGraphic(index) || dramatized[index]) return;
     const reason = reasons.get(index);
     if (rejected.has(index) && reason != null && STRUCTURAL_REJECT_REASONS.has(reason)) return;
     const lifted = rejected.delete(index);

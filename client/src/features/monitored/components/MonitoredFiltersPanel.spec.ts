@@ -37,7 +37,7 @@ describe('MonitoredFiltersPanel', () => {
     await wrapper.setProps({ modelValue: { ...DEFAULT_MONITORED_DISPLAY, kinds: ['book', 'collection'] } })
     expect(wrapper.get('[data-testid="section-kind"]').text()).toContain('Book, Collection')
     await wrapper.setProps({ modelValue: { ...DEFAULT_MONITORED_DISPLAY, kinds: ['book', 'collection', 'duplicate'] } })
-    expect(wrapper.get('[data-testid="section-kind"]').text()).toContain('3 of 8')
+    expect(wrapper.get('[data-testid="section-kind"]').text()).toContain('3 of 9')
   })
   it('allows the last kind and status to be unticked', async () => {
     const wrapper = panel({ statusFilters: ['missing'] })

@@ -135,7 +135,7 @@ export const authorCatalogWorks = pgTable(
     check('author_catalog_works_verdict_chk', sql`${t.verdict} in ('verified', 'probable', 'suspect')`),
     check(
       'author_catalog_works_kind_chk',
-      sql`${t.kind} is null or ${t.kind} in ('collection', 'anthology', 'graphic_novel', 'supplemental', 'format_variant', 'duplicate')`,
+      sql`${t.kind} is null or ${t.kind} in ('collection', 'anthology', 'graphic_novel', 'supplemental', 'format_variant', 'duplicate', 'dramatization', 'split_part')`,
     ),
   ],
 );
@@ -222,7 +222,7 @@ export const monitoredAuthorWorks = pgTable(
     check('monitored_author_works_user_visibility_chk', sql`${t.userVisibility} is null or ${t.userVisibility} in ('hidden', 'visible')`),
     check(
       'monitored_author_works_user_kind_chk',
-      sql`${t.userKind} is null or ${t.userKind} in ('book', 'collection', 'split_part', 'anthology', 'graphic_novel', 'supplemental', 'format_variant', 'duplicate')`,
+      sql`${t.userKind} is null or ${t.userKind} in ('book', 'collection', 'split_part', 'dramatization', 'anthology', 'graphic_novel', 'supplemental', 'format_variant', 'duplicate')`,
     ),
   ],
 );

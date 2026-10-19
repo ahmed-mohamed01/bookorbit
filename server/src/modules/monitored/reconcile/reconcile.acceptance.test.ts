@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import type { MonitoredWorkKind } from '@bookorbit/types';
+
 import type { AudibleProduct } from '../../metadata-fetch/providers/audible/audible.types';
 import { describe, expect, it } from 'vitest';
 
@@ -10,15 +12,27 @@ import { mapHardcoverObservations } from '../providers/hardcover-bibliography.pr
 import { mergeCluster } from './cluster-merger';
 import { matchObservations, normalizeCore } from './observation-matcher';
 import type { MergedWork, Observation } from './observation.types';
-import { resolveSlots } from './slot-resolution';
+import { resolveSlots, slotReasonKind } from './slot-resolution';
 import { assignVerdict, computePopularityFloor } from './verdict';
+import { COLLECTION_TITLE_PATTERN } from './work-shape';
 
 const TODAY = '2026-09-03';
 // brandon_sanderson_lost_metal is a second, later capture of the same author, kept because it is the
 // only fixture that carries the rows the English/Italian identity regression needs: the Italian
 // Il Metallo Perduto with no canonical_id, and a 2025 Russian printing that Hardcover DOES mark
 // canonical. Hardcover had indexed neither when brandon_sanderson was captured.
-const ALL_FIXTURES = ['brandon_sanderson', 'brandon_sanderson_lost_metal', 'adrian_tchaikovsky', 'rinoz', 'arcanecadence', 'zogarth'];
+const ALL_FIXTURES = [
+  'brandon_sanderson',
+  'brandon_sanderson_lost_metal',
+  'adrian_tchaikovsky',
+  'rinoz',
+  'arcanecadence',
+  'zogarth',
+  'matt_dinniman',
+  'dan_simmons',
+  'arthur_c_clarke',
+  'dakota_krout',
+];
 const FIXTURE_DIR = join(import.meta.dirname, '__fixtures__');
 const NON_LATIN_SCRIPT_PATTERN =
   /\p{Script=Greek}|\p{Script=Cyrillic}|\p{Script=Hebrew}|\p{Script=Arabic}|\p{Script=Devanagari}|\p{Script=Thai}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Han}|\p{Script=Hangul}/u;
@@ -30,7 +44,7 @@ interface Fixture {
   audible: { products: AudibleProduct[] };
 }
 
-type ReconciledWork = MergedWork & ReturnType<typeof assignVerdict>;
+type ReconciledWork = MergedWork & ReturnType<typeof assignVerdict> & { kind: MonitoredWorkKind | null };
 
 function fixture(slug: string): Fixture {
   return JSON.parse(readFileSync(join(FIXTURE_DIR, `${slug}.json`), 'utf8')) as Fixture;
@@ -56,7 +70,12 @@ function reconcileObservations(observations: Observation[]): ReconciledWork[] {
   const floor = computePopularityFloor(merged);
   return survivors.map(({ work, index }) => {
     const verdict = assignVerdict(work, { today: TODAY, floor });
-    return { ...work, ...verdict, verdict: slots.hidden.has(index) ? ('suspect' as const) : verdict.verdict };
+    return {
+      ...work,
+      ...verdict,
+      verdict: slots.hidden.has(index) ? ('suspect' as const) : verdict.verdict,
+      kind: slotReasonKind(slots.reasons.get(index)),
+    };
   });
 }
 
@@ -161,7 +180,10 @@ describe('multi-source reconciliation acceptance', () => {
     // translation. A translation is an EDITION, so it has to fold in, and the English row has to keep
     // the identity.
     const works = loadAndReconcile('brandon_sanderson_lost_metal');
-    const lostMetal = works.filter((work) => normalizeCore(work.title, work.seriesName) === 'the lost metal' && !work.flags.includes('compilation'));
+    const lostMetal = works.filter(
+      (work) =>
+        normalizeCore(work.title, work.seriesName) === 'the lost metal' && !work.compilationFlag && !COLLECTION_TITLE_PATTERN.test(work.title),
+    );
 
     expect(lostMetal).toHaveLength(1);
     expect(lostMetal[0]).toMatchObject({
@@ -210,6 +232,81 @@ describe('multi-source reconciliation acceptance', () => {
       const claims = works.flatMap((work) => Object.entries(work.providerWorkIds).map(([source, id]) => `${source}:${id}`));
 
       expect(new Set(claims).size).toBe(claims.length);
+    }
+  });
+});
+
+describe('Hardcover signals on real catalogs', () => {
+  const catalogs = new Map<string, ReconciledWork[]>();
+  const catalog = (slug: string): ReconciledWork[] => {
+    if (!catalogs.has(slug)) catalogs.set(slug, reconcile(fixture(slug)));
+    return catalogs.get(slug)!;
+  };
+  const isShown = (work: ReconciledWork): boolean => work.verdict === 'verified' && work.flags.length === 0 && work.kind == null;
+  const titled = (slug: string, title: string): ReconciledWork[] => {
+    const works = catalog(slug).filter((work) => work.title === title);
+    expect(works, `${slug} has no work titled ${title}`).not.toHaveLength(0);
+    return works;
+  };
+  const expectShown = (slug: string, title: string): void => {
+    expect(titled(slug, title).some(isShown), `${title} should be shown`).toBe(true);
+  };
+  const expectKind = (slug: string, title: string, kind: MonitoredWorkKind): void => {
+    for (const work of titled(slug, title)) expect(work.kind, title).toBe(kind);
+  };
+  const expectForeign = (slug: string, title: string): void => {
+    for (const work of titled(slug, title)) expect(work.flags, title).toContain('foreign_language');
+  };
+
+  it('hides Dungeon Crawler Carl season episodes as dramatizations and keeps the novels', () => {
+    for (const title of ['A Betrayal Most Foul', 'Thank You for Volunteering', 'Cockblock!']) expectKind('matt_dinniman', title, 'dramatization');
+    for (const title of [
+      'Dungeon Crawler Carl',
+      "Carl's Doomsday Scenario",
+      "The Dungeon Anarchist's Cookbook",
+      'The Gate of the Feral Gods',
+      "The Butcher's Masquerade",
+      'The Eye of the Bedlam Bride',
+      'This Inevitable Ruin',
+    ]) {
+      expectShown('matt_dinniman', title);
+    }
+  });
+
+  it('shows real books that Hardcover flags as compilations and hides the omnibuses', () => {
+    expectShown('dakota_krout', 'Axiom');
+    expectShown('adrian_tchaikovsky', 'A Time for Grief');
+    expectShown('brandon_sanderson', 'Tailored Realities');
+    for (const title of ['Mistborn Trilogy Boxed Set', "Legion and the Emperor's Soul", 'The Complete Wheel of Time']) {
+      expectKind('brandon_sanderson', title, 'collection');
+    }
+  });
+
+  it('hides anthologies the author only contributed to', () => {
+    expectKind('adrian_tchaikovsky', 'Shakespeare vs. Cthulhu', 'anthology');
+    expectKind('adrian_tchaikovsky', 'Solaris Rising 2: The New Solaris Book of Science Fiction', 'anthology');
+    expectKind('dan_simmons', 'The Space Opera Renaissance', 'anthology');
+    expectShown('adrian_tchaikovsky', 'Children of Time');
+  });
+
+  it('flags foreign editions and keeps the English originals', () => {
+    expectForeign('dan_simmons', 'Černé léto');
+    expectForeign('dan_simmons', 'La rebelión');
+    expectForeign('arthur_c_clarke', 'Oceánem hvězd');
+    expectForeign('arthur_c_clarke', 'Las Arenas de Marte');
+    expectForeign('arthur_c_clarke', 'Fuentes del paraíso');
+    expectShown('dan_simmons', 'Hyperion');
+    expectShown('dan_simmons', 'Summer of Night');
+    expectShown('arthur_c_clarke', "Childhood's End");
+  });
+
+  it('hides published prologues as supplemental', () => {
+    for (const title of [
+      'By Grace and Banners Fallen: Prologue to A Memory of Light',
+      'What the Storm Means: Prologue to The Gathering Storm',
+      'Distinctions: Prologue to Towers of Midnight',
+    ]) {
+      expectKind('brandon_sanderson', title, 'supplemental');
     }
   });
 });

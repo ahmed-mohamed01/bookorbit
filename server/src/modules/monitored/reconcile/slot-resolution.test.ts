@@ -860,6 +860,8 @@ describe('slotReasonKind', () => {
     expect(slotReasonKind('multi_author_anthology')).toBe('anthology');
     expect(slotReasonKind('format_variant')).toBe('format_variant');
     expect(slotReasonKind('graphic_novel')).toBe('graphic_novel');
+    expect(slotReasonKind('dramatization')).toBe('dramatization');
+    expect(slotReasonKind('split_part')).toBe('split_part');
   });
 
   it('reads a composite reason as its leading token', () => {
@@ -872,5 +874,277 @@ describe('slotReasonKind', () => {
     expect(slotReasonKind('slot_loser')).toBeNull();
     expect(slotReasonKind('status')).toBeNull();
     expect(slotReasonKind(undefined)).toBeNull();
+  });
+});
+
+describe('resolveSlots dramatizations', () => {
+  it('hides a Season-series episode as a dramatization and keeps it out of the slot contest', () => {
+    const novel = work('1', {
+      title: 'Dungeon Crawler Carl',
+      seriesMemberships: [{ name: 'Dungeon Crawler Carl', index: '1' }],
+      popularity: { hardcover: 900 },
+    });
+    const episode = work(
+      '2',
+      {
+        title: 'Thank You for Volunteering',
+        seriesMemberships: [{ name: 'Dungeon Crawler Carl Season 1', index: '1' }],
+        popularity: { hardcover: 6 },
+      },
+      seriesRaw({ id: 9, name: 'Dungeon Crawler Carl Season 1', position: 1 }),
+    );
+    const result = resolveSlots([novel, episode], today);
+
+    expect(result.hidden.has(1)).toBe(true);
+    expect(result.reasons.get(1)).toBe('dramatization');
+    expect(result.rejected.has(0)).toBe(false);
+    expect(result.hidden.has(0)).toBe(false);
+  });
+
+  it('a dramatized part with more readers than the novel does not take its slot', () => {
+    const novel = work('1', { title: 'Red Rising', seriesMemberships: [{ name: 'Red Rising', index: '1' }], popularity: { hardcover: 100 } });
+    const part = work('2', {
+      title: 'Red Rising (1 of 2) [Dramatized Adaptation]',
+      seriesMemberships: [{ name: 'Red Rising', index: '1' }],
+      popularity: { hardcover: 900 },
+    });
+    const result = resolveSlots([novel, part], today);
+
+    expect(result.rejected.has(0)).toBe(false);
+    expect(result.hidden.has(0)).toBe(false);
+    expect(result.hidden.has(1)).toBe(true);
+    expect(result.reasons.get(1)).toBe('dramatization');
+  });
+
+  it('hides the Audio Immersion Tunnel season by its title', () => {
+    const result = resolveSlots(
+      [work('1', { title: 'Dungeon Crawler Carl Audio Immersion Tunnel - Season 1', popularity: { hardcover: 3 } })],
+      today,
+    );
+
+    expect(result.hidden.has(0)).toBe(true);
+    expect(result.reasons.get(0)).toBe('dramatization');
+  });
+});
+
+describe('resolveSlots split parts', () => {
+  it('hides a surviving split volume as split_part', () => {
+    const result = resolveSlots([work('1', { title: 'The Way of Kings, Part 1', popularity: { hardcover: 40 } })], today);
+
+    expect(result.hidden.has(0)).toBe(true);
+    expect(result.reasons.get(0)).toBe('split_part');
+  });
+});
+
+describe('resolveSlots collections', () => {
+  const rich = { cover: 'cover.jpg', hasDesc: true };
+
+  it('keeps Axiom, a compilation-flagged series opener', () => {
+    const series = (index: string) => [{ name: "Artorian's Archives", index }];
+    const works = [
+      work('1', { title: 'Axiom', compilationFlag: true, seriesMemberships: series('1'), popularity: { hardcover: 105 }, ...rich }),
+      work('2', { title: 'Acme', seriesMemberships: series('2'), popularity: { hardcover: 90 }, ...rich }),
+      work('3', { title: 'Accords', seriesMemberships: series('3'), popularity: { hardcover: 80 }, ...rich }),
+    ];
+    const result = resolveSlots(works, today);
+
+    expect(result.hidden.has(0)).toBe(false);
+    expect(result.rejected.has(0)).toBe(false);
+  });
+
+  it('keeps an original single-author collection', () => {
+    const result = resolveSlots(
+      [work('1', { title: 'Tailored Realities', compilationFlag: true, popularity: { hardcover: 393 }, ...rich }, { book_category_id: 8 })],
+      today,
+    );
+
+    expect(result.hidden.has(0)).toBe(false);
+    expect(result.rejected.has(0)).toBe(false);
+  });
+
+  it('hides an omnibus that names two catalog works', () => {
+    const works = [
+      work('1', { title: "Legion and the Emperor's Soul", compilationFlag: true, popularity: { hardcover: 104 }, ...rich }),
+      work('2', { title: 'Legion', popularity: { hardcover: 900 }, ...rich }),
+      work('3', { title: "The Emperor's Soul", popularity: { hardcover: 900 }, ...rich }),
+    ];
+    const result = resolveSlots(works, today);
+
+    expect(result.hidden.has(0)).toBe(true);
+    expect(result.reasons.get(0)).toBe('collection_repackaging');
+  });
+
+  it('hides a Complete-series omnibus', () => {
+    const wot = (index: string) => [{ name: 'The Wheel of Time', index }];
+    const works = [
+      work(
+        '1',
+        { title: 'The Complete Wheel of Time', seriesMemberships: wot('0'), popularity: { hardcover: 95 }, ...rich },
+        { book_category_id: 8 },
+      ),
+      work('2', { title: 'The Eye of the World', seriesMemberships: wot('1'), popularity: { hardcover: 9000 }, ...rich }),
+      work('3', { title: 'The Great Hunt', seriesMemberships: wot('2'), popularity: { hardcover: 7000 }, ...rich }),
+      work('4', { title: 'The Dragon Reborn', seriesMemberships: wot('3'), popularity: { hardcover: 6000 }, ...rich }),
+    ];
+    const result = resolveSlots(works, today);
+
+    expect(result.hidden.has(0)).toBe(true);
+    expect(result.reasons.get(0)).toBe('collection_repackaging');
+  });
+
+  it('hides a compilation-flagged Complete-series omnibus with no category', () => {
+    const wot = (index: string) => [{ name: 'The Wheel of Time', index }];
+    const works = [
+      work('1', { title: 'The Complete Wheel of Time', compilationFlag: true, seriesMemberships: wot('0'), popularity: { hardcover: 95 }, ...rich }),
+      work('2', { title: 'The Eye of the World', seriesMemberships: wot('1'), popularity: { hardcover: 9000 }, ...rich }),
+      work('3', { title: 'The Great Hunt', seriesMemberships: wot('2'), popularity: { hardcover: 7000 }, ...rich }),
+    ];
+    const result = resolveSlots(works, today);
+
+    expect(result.reasons.get(0)).toBe('collection_repackaging');
+  });
+
+  it('hides a bundle-titled set even when it holds a series slot of its own', () => {
+    const set = work('1', {
+      title: 'The Stormlight Archive Series 5 Books Collection Set by Brandon Sanderson',
+      seriesMemberships: [{ name: 'The Way of Kings Book 1, Words of Radiance Book 2', index: '4' }],
+      popularity: { hardcover: 4 },
+      ...rich,
+    });
+    const result = resolveSlots([set], today);
+
+    expect(result.reasons.get(0)).toBe('collection_repackaging');
+  });
+
+  it('never calls a non-collection novel an omnibus for naming catalog titles', () => {
+    const works = [
+      work('1', { title: 'Mistborn: The Final Empire', popularity: { hardcover: 9000 }, ...rich }),
+      work('2', { title: 'Mistborn', popularity: { hardcover: 3 } }),
+      work('3', { title: 'The Final Empire', popularity: { hardcover: 3 } }),
+    ];
+    const result = resolveSlots(works, today);
+
+    expect(result.reasons.get(0)).not.toBe('collection_repackaging');
+  });
+});
+
+describe('resolveSlots anthology contributions', () => {
+  const credits = (...roles: (string | null)[]) => ({
+    cached_contributors: roles.map((contribution, i) => ({ author: { id: 500 + i, name: `Person ${i}` }, contribution })),
+  });
+  const withRole = (base: MergedWork, role: string): MergedWork => ({
+    ...base,
+    observations: base.observations.map((observation) => ({ ...observation, role })),
+  });
+
+  it('hides a book the author only contributed to', () => {
+    const anthology = withRole(
+      work(
+        '1',
+        { title: 'Solaris Rising 2: The New Solaris Book of Science Fiction', sources: ['goodreads', 'hardcover'], popularity: { hardcover: 10 } },
+        credits(null, ...Array.from({ length: 11 }, () => 'Contributor')),
+      ),
+      'Contributor',
+    );
+    const result = resolveSlots([anthology], today);
+
+    expect(result.hidden.has(0)).toBe(true);
+    expect(result.reasons.get(0)).toBe('multi_author_anthology');
+  });
+
+  it('hides an edited anthology with incomplete author credits', () => {
+    const anthology = work(
+      '1',
+      { title: 'Shakespeare vs. Cthulhu', sources: ['goodreads', 'hardcover'], popularity: { hardcover: 1 } },
+      credits('Editor', ...Array.from({ length: 6 }, () => 'Contributor'), ...Array.from({ length: 5 }, () => 'Illustrator')),
+    );
+    const result = resolveSlots([anthology], today);
+
+    expect(result.hidden.has(0)).toBe(true);
+    expect(result.reasons.get(0)).toBe('multi_author_anthology');
+  });
+
+  it("does not call another author's novel an anthology for a foreword credit", () => {
+    const novel = withRole(
+      work(
+        '1',
+        { title: "King's League", sources: ['goodreads', 'hardcover'], popularity: { hardcover: 26 } },
+        credits('Author', 'Author', 'Foreword'),
+      ),
+      'Foreword',
+    );
+
+    expect(resolveSlots([novel], today).reasons.get(0)).not.toBe('multi_author_anthology');
+  });
+
+  it('does not call a narrated own book an anthology', () => {
+    const narrated = withRole(
+      work('1', { title: 'A Narrated Novel', sources: ['goodreads', 'hardcover'], popularity: { hardcover: 50 } }, credits(null)),
+      'Narrator',
+    );
+
+    expect(resolveSlots([narrated], today).hidden.has(0)).toBe(false);
+  });
+
+  it('keeps a four-author anthology with no editor', () => {
+    const shadows = work(
+      '1',
+      {
+        title: 'Shadows Beneath: The Writing Excuses Anthology',
+        sources: ['goodreads', 'hardcover'],
+        popularity: { hardcover: 105 },
+        cover: 'cover.jpg',
+        hasDesc: true,
+      },
+      credits(null, null, null, null),
+    );
+
+    expect(resolveSlots([shadows], today).reasons.get(0)).not.toBe('multi_author_anthology');
+  });
+});
+
+describe('resolveSlots prologues', () => {
+  it('hides a published prologue as supplemental', () => {
+    for (const title of [
+      'By Grace and Banners Fallen: Prologue to A Memory of Light',
+      'What the Storm Means: Prologue to The Gathering Storm',
+      'Distinctions: Prologue to Towers of Midnight',
+    ]) {
+      const result = resolveSlots(
+        [work('1', { title, seriesMemberships: [{ name: 'The Wheel of Time', index: '13.9' }], popularity: { hardcover: 104 } })],
+        today,
+      );
+
+      expect(result.reasons.get(0)).toBe('supplemental');
+    }
+  });
+
+  it('keeps a real title that only contains the word prologue', () => {
+    expect(resolveSlots([work('1', { title: 'The Prologue Murders', popularity: { hardcover: 50 } })], today).hidden.has(0)).toBe(false);
+  });
+});
+
+describe('resolveSlots review fixes', () => {
+  const rich = { cover: 'cover.jpg', hasDesc: true };
+
+  it('keeps a category-Collection book that holds its slot and only happens to name two catalog titles', () => {
+    const twilight = (index: string) => [{ name: 'Twilight Cycle', index }];
+    const works = [
+      work(
+        '1',
+        { title: 'Between Dawn and Dusk', seriesMemberships: twilight('1'), popularity: { hardcover: 300 }, ...rich },
+        { book_category_id: 8 },
+      ),
+      work('2', { title: 'Dawn', seriesMemberships: twilight('2'), popularity: { hardcover: 200 }, ...rich }),
+      work('3', { title: 'Dusk', seriesMemberships: twilight('3'), popularity: { hardcover: 200 }, ...rich }),
+    ];
+    const result = resolveSlots(works, today);
+
+    expect(result.hidden.has(0)).toBe(false);
+    expect(result.rejected.has(0)).toBe(false);
+  });
+
+  it('keeps a novel whose title begins A Prologue to', () => {
+    expect(resolveSlots([work('1', { title: 'A Prologue to Love', popularity: { hardcover: 300 } })], today).hidden.has(0)).toBe(false);
   });
 });

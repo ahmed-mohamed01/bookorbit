@@ -2,10 +2,16 @@ import type { MonitoredWorkFlag, MonitoredWorkVerdict } from '@bookorbit/types';
 
 import { normalizeText } from './observation-matcher';
 import type { MergedWork, ObservationSource } from './observation.types';
-import { COLLECTION_TITLE_PATTERN, DRAMATIZED_ADAPTATION_PATTERN, LANGUAGE_EDITION_PATTERN, SPLIT_PART_SUFFIX_PATTERN } from './work-shape';
+import { LANGUAGE_EDITION_PATTERN } from './work-shape';
 
 const NON_LATIN_SCRIPT_PATTERN =
   /\p{Script=Greek}|\p{Script=Cyrillic}|\p{Script=Hebrew}|\p{Script=Arabic}|\p{Script=Devanagari}|\p{Script=Thai}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Han}|\p{Script=Hangul}/u;
+
+/** Letters that occur in Czech, Polish, Spanish, Portuguese, Hungarian and German titles but never in English. */
+const NON_ENGLISH_LETTER_PATTERN = /[ěřůčšžňťďąęłśźżñãõőűß¿¡]/i;
+const WIDELY_READ_READERS = 50;
+const ACCENTED_VOWEL_PATTERN = /[áéíóúàèìòùâêîôûäëïöü]/i;
+const FRONT_MATTER_ROLE_PATTERN = /^(?:introduction|foreword|afterword|preface)/i;
 
 export interface VerdictContext {
   today: string;
@@ -15,6 +21,14 @@ export interface VerdictContext {
 export interface VerdictResult {
   verdict: MonitoredWorkVerdict;
   flags: MonitoredWorkFlag[];
+}
+
+function creditsTranslator(raw: unknown): boolean {
+  const contributors = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>).cached_contributors : null;
+  return (Array.isArray(contributors) ? contributors : []).some((entry) => {
+    const role = typeof entry === 'object' && entry !== null ? (entry as Record<string, unknown>).contribution : null;
+    return typeof role === 'string' && /^translat/i.test(role);
+  });
 }
 
 function escapeRegExp(value: string): string {
@@ -36,14 +50,6 @@ export function computePopularityFloor(works: MergedWork[]): Partial<Record<Obse
 
 export function assignVerdict(work: MergedWork, context: VerdictContext): VerdictResult {
   const flags: MonitoredWorkFlag[] = [];
-  // NOTE: this deliberately still trusts Hardcover's bare `compilation` boolean, unlike
-  // slot-resolution's isCollection. Relaxing it here to match was measured and is net-negative: it
-  // recovers 6 real novels (`Axiom`, `An Autumn War`, `Cold Hearted`) but exposes ~14 genuine
-  // omnibuses, anthologies and magazines that carry a series position and no bundle word in the
-  // title - `The Complete Wheel of Time`, `Shadow and Betrayal`, `Unfettered III`, `Interzone 157`.
-  // Fixing it properly needs the signals slot-resolution has and this function does not: the book
-  // category and the author-credit count. See work-shape.ts.
-  if (work.compilationFlag || COLLECTION_TITLE_PATTERN.test(work.title)) flags.push('compilation');
   // normalizeText strips non-ASCII, so a CJK, Greek or Cyrillic series name collapses to the empty
   // string and the pattern degenerates to /^\s*(?:book\s*)?[\d.]+$/ - which matches any purely
   // numeric title. Without this guard `1984` or `2001` would read as a bare series-and-number stub.
@@ -74,9 +80,43 @@ export function assignVerdict(work: MergedWork, context: VerdictContext): Verdic
   const seriesNames = [...(work.seriesMemberships ?? []).map((membership) => membership.name), ...(work.seriesName ? [work.seriesName] : [])];
   const labelledTranslation =
     LANGUAGE_EDITION_PATTERN.test(work.title) || (seriesNames.length > 0 && seriesNames.every((name) => LANGUAGE_EDITION_PATTERN.test(name)));
-  if (NON_LATIN_SCRIPT_PATTERN.test(work.title) || work.allForeign || labelledTranslation) flags.push('foreign_language');
-  if (DRAMATIZED_ADAPTATION_PATTERN.test(work.title) || SPLIT_PART_SUFFIX_PATTERN.test(work.title)) flags.push('adaptation_split');
-  if (work.allRolesNonAuthor) flags.push('wrong_contributor');
+  // Poor metadata is itself a sign that a row is not the definitive edition, so any one of these
+  // marks it, and the owner can promote it back. Letters English never uses give away `Černé léto` and
+  // `Hrobkař Carl`; a translator credit gives away `Fuentes del paraíso`. A translator alone is no proof
+  // on a well-read work: that is how a translated author's English book looks.
+  const nonEnglishLetters =
+    NON_ENGLISH_LETTER_PATTERN.test(work.title) || (seriesNames.length > 0 && seriesNames.every((name) => NON_ENGLISH_LETTER_PATTERN.test(name)));
+  const hardcoverRows = work.observations.filter((observation) => observation.source === 'hardcover');
+  const bestRead = hardcoverRows.reduce<(typeof hardcoverRows)[number] | null>(
+    (best, row) => (best && best.popularity >= row.popularity ? best : row),
+    null,
+  );
+  const translatorCredited = creditsTranslator(bestRead?.raw);
+  const englishEdition = work.observations.some((observation) => /^(?:english|en)$/i.test(observation.language ?? ''));
+  // Hardcover knows no language for a third of the rows, English books included. A known English edition
+  // at the trust floor clears a translator credit; with no language known it takes a real readership
+  // (`Déjà Dead`), since a three-reader Spanish printing sits at the floor too.
+  const readers = work.popularity.hardcover ?? 0;
+  const wellRead = readers >= Math.max(3, context.floor.hardcover ?? 0);
+  const widelyRead = !work.allForeign && readers >= Math.max(WIDELY_READ_READERS, context.floor.hardcover ?? 0);
+  const translated = translatorCredited && !((englishEdition && wellRead) || widelyRead);
+  // Accented vowels sit on English titles too (`Café`, `Déjà Dead`), so they only count on a little-read
+  // work with no known English edition: `La rebelión` carries no other mark at all.
+  const accentedWithoutEnglish = !englishEdition && !widelyRead && ACCENTED_VOWEL_PATTERN.test(work.title);
+  if (
+    NON_LATIN_SCRIPT_PATTERN.test(work.title) ||
+    work.allForeign ||
+    labelledTranslation ||
+    nonEnglishLetters ||
+    translated ||
+    accentedWithoutEnglish
+  ) {
+    flags.push('foreign_language');
+  }
+  // A foreword or an introduction on the best-read row is a credit on somebody else's book, whatever
+  // other source lists it: `King's League` is Anspach and Chaney's novel with a foreword by Dakota Krout.
+  const frontMatterOnly = bestRead?.role != null && FRONT_MATTER_ROLE_PATTERN.test(bestRead.role);
+  if (work.allRolesNonAuthor || frontMatterOnly) flags.push('wrong_contributor');
 
   const releaseValue = work.ebookReleaseDate ?? work.audioReleaseDate;
   const releasePrecision = work.ebookReleaseDate ? work.ebookDatePrecision : work.audioDatePrecision;
