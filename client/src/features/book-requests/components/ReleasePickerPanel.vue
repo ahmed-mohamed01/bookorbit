@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useRequestAuthorLine } from '../composables/useRequestAuthorLine'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -199,7 +200,8 @@ const busy = computed(() => grabbing.value || actions.isPending(request.value?.i
 /** A retry is the same picker; only the framing changes, so the approver knows why it reopened. */
 const isRetry = computed(() => request.value?.status === 'failed')
 const failureText = computed(() => (request.value ? requestFailureText(request.value, (key, named) => t(key, named)) : null))
-const authorLine = computed(() => request.value?.authors.join(', ') ?? '')
+const formatAuthorLine = useRequestAuthorLine()
+const authorLine = computed(() => formatAuthorLine(request.value))
 const localOnlyCriteriaFacts = computed(() => (criteria.value ? localOnlyFacts(criteria.value) : []))
 /**
  * Adding a source or switching one back on happens under Settings > System > Requests, which is
@@ -814,7 +816,7 @@ function showEverySource(): void {
           <div class="min-w-0 flex-1">
             <h2 class="truncate text-base font-semibold tracking-tight text-foreground">{{ request.title }}</h2>
             <p class="mt-0.5 truncate text-sm text-muted-foreground">
-              {{ authorLine || t('bookRequests.detail.unknownAuthor') }}
+              {{ authorLine }}
               <template v-if="request.publishedYear">
                 &middot; <span class="tabular-nums">{{ request.publishedYear }}</span>
               </template>

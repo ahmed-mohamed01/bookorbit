@@ -43,7 +43,8 @@ describe('ReleaseFileInspectionPanel', () => {
   it('shows the actual manifest path and size', () => {
     const wrapper = mountPanel()
 
-    expect(wrapper.text()).toContain('Pride and Prejudice/Pride and Prejudice.epub')
+    expect(wrapper.get('[data-testid="tree-file"]').text()).toContain('Pride and Prejudice.epub')
+    expect(wrapper.findAll('[role="checkbox"]')).toHaveLength(0)
     expect(wrapper.text()).toContain('2 kB')
     expect(wrapper.get('[role="status"]').text()).toContain('1 file')
   })
@@ -64,7 +65,7 @@ describe('ReleaseFileInspectionPanel', () => {
   })
 
   /** Three formats and a cover: the cover is the exception, so the cover is what gets marked. */
-  it('marks the extras rather than the book files when the books are the majority', () => {
+  it('marks non-book files when books are the majority', () => {
     const wrapper = mountPanel({
       inspection: inspection({
         files: [
@@ -76,12 +77,12 @@ describe('ReleaseFileInspectionPanel', () => {
       }),
     })
 
-    expect(wrapper.text()).toContain('Extra')
+    expect(wrapper.text()).toContain('Not a book')
     expect(wrapper.text()).not.toContain('Book file')
   })
 
   /** One epub in a pack of junk: now the book file is the exception, so it is marked instead. */
-  it('marks the book files when they are the minority', () => {
+  it('marks non-book files when books are the minority', () => {
     const wrapper = mountPanel({
       inspection: inspection({
         files: [
@@ -92,7 +93,7 @@ describe('ReleaseFileInspectionPanel', () => {
       }),
     })
 
-    expect(wrapper.text()).toContain('Book file')
+    expect(wrapper.text()).toContain('Not a book')
     expect(wrapper.text()).not.toContain('Extra')
   })
 
@@ -106,7 +107,7 @@ describe('ReleaseFileInspectionPanel', () => {
     })
 
     expect(wrapper.get('[role="alert"]').text()).toContain('no directly supported book file')
-    expect(wrapper.text()).toContain('release/book.zip')
+    expect(wrapper.get('[data-testid="tree-file"]').text()).toContain('book.zip')
   })
 
   it('says how many separate books a release holds, and names them', () => {
@@ -193,6 +194,7 @@ describe('ReleaseFileInspectionPanel', () => {
     })
 
     expect(wrapper.get('[role="status"]').text()).toContain('until a torrent client fetches the metadata from the swarm')
+    expect(wrapper.find('[data-testid="tree-folder"]').exists()).toBe(false)
   })
 
   it('explains why a Usenet file list is unavailable without mentioning torrents', () => {
@@ -294,6 +296,26 @@ describe('ReleaseFileInspectionPanel', () => {
       vi.mocked(api).mockReset()
     })
 
+    it('handles one imported book in the panel and bar', async () => {
+      const data = multi()
+      data.selection!.alreadyImported = [0]
+      const wrapper = mountPanel({ inspection: data, clients: clientList(true), ...identity })
+      await flushPromises()
+      expect(wrapper.text()).toContain('This release holds 2 books. 1 already in Book Dock; select more to download.')
+      expect(wrapper.text()).toContain('100 byte in this release')
+    })
+
+    it('handles every book imported in the panel and bar', async () => {
+      const data = multi()
+      data.selection!.alreadyImported = [0, 1]
+      const wrapper = mountPanel({ inspection: data, clients: clientList(true), ...identity })
+      await flushPromises()
+      expect(wrapper.get('[role="alert"], [role="status"]').text()).toBe('This release holds 2 books.')
+      expect(wrapper.text()).not.toContain('select more to download')
+      expect(wrapper.text()).toContain('Every book in this release is already in Book Dock.')
+      expect(wrapper.findAll('button').some((button) => button.text().includes('download'))).toBe(false)
+    })
+
     it('shows checkboxes for a multi-book torrent', async () => {
       const wrapper = mountPanel({ inspection: multi(), clients: clientList(true), ...identity })
       await flushPromises()
@@ -386,5 +408,53 @@ describe('ReleaseFileInspectionPanel', () => {
       const box = wrapper.findAll('[role="checkbox"]').find((row) => row.text().includes('One.epub'))!
       expect(box.attributes('aria-checked')).toBe('true')
     })
+  })
+})
+
+describe('ReleaseFileInspectionPanel read-only tree book counts', () => {
+  const tracks = Array.from({ length: 20 }, (_, i) => ({ path: `Book/track-${i + 1}.mp3`, sizeBytes: 10, bookFile: true }))
+
+  it('counts a 20-track audiobook as one book', () => {
+    const wrapper = mountPanel({
+      inspection: inspection({
+        files: [...tracks, { path: 'Book/cover.jpg', sizeBytes: 5, bookFile: false }],
+        totalFiles: 21,
+        units: [{ mediaKind: 'audiobook', title: 'Book', contentFileCount: 20, totalFileCount: 21, sizeBytes: 200 }],
+        unitCount: 1,
+      }),
+    })
+
+    expect(wrapper.text()).toContain('1 book, 1 other file')
+    expect(wrapper.get('[data-testid="tree-folder-row"]').text()).toContain('1 book')
+    expect(wrapper.text()).not.toContain('20 books')
+  })
+
+  it('counts one ebook in three formats as one book', () => {
+    const wrapper = mountPanel({
+      inspection: inspection({
+        files: ['epub', 'mobi', 'azw3'].map((ext) => ({ path: `Book/Book.${ext}`, sizeBytes: 10, bookFile: true })),
+        totalFiles: 3,
+        unitCount: 1,
+      }),
+    })
+
+    expect(wrapper.text()).toContain('1 book, 0 other files')
+    expect(wrapper.text()).not.toContain('3 books')
+  })
+
+  it('hides book counts when several books are reported but membership is unknown', () => {
+    const wrapper = mountPanel({
+      inspection: inspection({
+        files: tracks,
+        totalFiles: 5000,
+        truncated: true,
+        unitCount: 3,
+        units: [{ mediaKind: 'audiobook', title: 'Book', contentFileCount: 20, totalFileCount: 20, sizeBytes: 200 }],
+      }),
+    })
+
+    expect(wrapper.text()).toContain('20 files in 2 folders')
+    expect(wrapper.text()).not.toMatch(/\d+ books?, /)
+    for (const row of wrapper.findAll('[data-testid="tree-folder-row"]')) expect(row.text()).not.toMatch(/books?\b/)
   })
 })

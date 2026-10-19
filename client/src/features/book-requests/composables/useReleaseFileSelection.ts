@@ -8,14 +8,9 @@ export interface FileTreeNode {
   sizeBytes: number | null
   unitIndex: number | null
   children: FileTreeNode[]
+  imported?: boolean
   bookCount: number
   fileCount: number
-}
-
-export function splitForMiddleEllipsis(name: string, tail = 28): { head: string; tail: string } {
-  const chars = Array.from(name)
-  if (chars.length <= tail) return { head: '', tail: name }
-  return { head: chars.slice(0, chars.length - tail).join(''), tail: chars.slice(chars.length - tail).join('') }
 }
 
 function directory(name: string, path: string): FileTreeNode {
@@ -34,6 +29,7 @@ function unitIndexes(node: FileTreeNode): Set<number> {
 }
 
 export function buildFileTree(manifest: ReleaseSelectionManifest): FileTreeNode {
+  const imported = new Set(manifest.alreadyImported ?? [])
   const root = directory(manifest.rootName ?? '', '')
   const directories = new Map<string, FileTreeNode>([['', root]])
   const counts = new Map<FileTreeNode, Set<number>>([[root, new Set()]])
@@ -55,6 +51,7 @@ export function buildFileTree(manifest: ReleaseSelectionManifest): FileTreeNode 
       ancestors.push(parent)
     }
     parent.children.push({
+      imported: file.unitIndex !== null && imported.has(file.unitIndex),
       kind: 'file',
       name,
       path: file.path,
@@ -72,6 +69,7 @@ export function buildFileTree(manifest: ReleaseSelectionManifest): FileTreeNode 
   }
   for (const node of directories.values()) {
     node.bookCount = counts.get(node)!.size
+    node.imported = node.bookCount > 0 && [...counts.get(node)!].every((index) => imported.has(index))
     node.children.sort((a, b) => Number(b.kind === 'dir') - Number(a.kind === 'dir') || a.name.localeCompare(b.name, undefined, { numeric: true }))
   }
   return root
@@ -84,20 +82,25 @@ export function useReleaseFileSelection(manifest: Ref<ReleaseSelectionManifest |
     selectedUnits.value = new Set()
   }
   watch(manifest, clear, { flush: 'sync' })
+  const imported = computed(() => new Set(manifest.value?.alreadyImported ?? []))
+  function selectableIndexes(node: FileTreeNode) {
+    return new Set([...unitIndexes(node)].filter((index) => !imported.value.has(index)))
+  }
   function toggleUnit(index: number) {
+    if (imported.value.has(index)) return
     if (!manifest.value?.units.some((unit) => unit.index === index)) return
     if (selectedUnits.value.has(index)) selectedUnits.value.delete(index)
     else selectedUnits.value.add(index)
   }
   function dirState(node: FileTreeNode): 'all' | 'some' | 'none' | 'empty' {
-    const indexes = unitIndexes(node)
+    const indexes = selectableIndexes(node)
     if (!indexes.size) return 'empty'
     let selected = 0
     for (const index of indexes) if (selectedUnits.value.has(index)) selected += 1
     return selected === indexes.size ? 'all' : selected ? 'some' : 'none'
   }
   function toggleDir(node: FileTreeNode) {
-    const indexes = unitIndexes(node)
+    const indexes = selectableIndexes(node)
     const remove = dirState(node) === 'all'
     for (const index of indexes) {
       if (remove) selectedUnits.value.delete(index)

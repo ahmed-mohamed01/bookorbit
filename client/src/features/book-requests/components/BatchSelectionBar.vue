@@ -6,6 +6,7 @@ import { formatBytes } from '@/lib/formatting'
 import type { DownloadClientSummary } from '@bookorbit/types'
 
 const props = defineProps<{
+  allImported?: boolean
   count: number
   sizeBytes: number
   totalBytes: number | null
@@ -41,7 +42,8 @@ function handleSend() {
 
 <template>
   <div class="mt-3 rounded-lg border border-border bg-card p-3">
-    <div class="flex flex-wrap items-center gap-2">
+    <p v-if="allImported" class="text-sm text-muted-foreground">{{ t('bookRequests.batch.bar.allImported') }}</p>
+    <div v-else class="flex flex-wrap items-center gap-2">
       <span class="text-sm font-semibold text-foreground tabular-nums">{{ summary }}</span>
       <select
         :value="clientId ?? ''"
@@ -61,6 +63,6 @@ function handleSend() {
         {{ label }}
       </button>
     </div>
-    <p class="mt-2 text-xs text-muted-foreground">{{ t('bookRequests.batch.bar.note') }}</p>
+    <p v-if="!allImported" class="mt-2 text-xs text-muted-foreground">{{ t('bookRequests.batch.bar.note') }}</p>
   </div>
 </template>

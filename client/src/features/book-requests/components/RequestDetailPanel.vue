@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useRequestAuthorLine } from '../composables/useRequestAuthorLine'
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -84,7 +85,7 @@ const { libraries, fetchLibraries } = useLibraries()
 const { load: loadDefaultDestination, defaultFor: instanceDefaultFor, resolveDestination } = useRequestDestinationDefault()
 const { progressByRequest, onRequestsChanged, pruneSettledProgress } = useBookRequestProgress()
 const actions = useBookRequestActions(canManageFn)
-const { fetchUnits } = useBatchGrab(canManageFn)
+const { fetchUnits, retry: retryBatchImport, retrying: retryingBatch } = useBatchGrab(canManageFn)
 const picker = useFulfilmentPicker()
 const { review, fetchReview, reset: resetReview } = useRequestReview(canManageFn)
 
@@ -118,8 +119,10 @@ const canFulfilThis = computed(
     (hasPermission(Permission.BookRequestSelfFulfill) && request.value != null && isBookRequestFulfiller(request.value, user.value?.id)),
 )
 const busy = computed(() => actions.isPending(request.value?.id))
+const canRetryBatchImport = computed(() => canFulfilThis.value && isBatch.value && request.value?.status === 'failed')
 const mediaIcon = computed(() => requestMediaIcon(request.value?.mediaKind ?? 'ebook'))
-const authorLine = computed(() => request.value?.authors.join(', ') ?? '')
+const formatAuthorLine = useRequestAuthorLine()
+const authorLine = computed(() => formatAuthorLine(request.value))
 /** Non-empty only while an attempt is held because its release turned out to hold several books. */
 const releaseUnits = computed(() => request.value?.download?.releaseUnits ?? [])
 const isHeld = computed(() => request.value?.status === 'needs_review')
@@ -451,6 +454,13 @@ async function handleLanguageChange(event: Event) {
   toast.success(t('bookRequests.toasts.languageChanged'))
 }
 
+async function handleRetryBatchImport() {
+  const current = request.value
+  if (!current) return
+  const reason = await retryBatchImport(current.id)
+  if (reason !== null) toast.error(t('bookRequests.batch.retry.failed'), reason ? { description: reason } : undefined)
+}
+
 function handleApprove() {
   void approveRequest()
 }
@@ -707,7 +717,7 @@ function dockFileMeta(file: BookDockFile): string {
 
           <div class="min-w-0 flex-1 space-y-1.5">
             <h2 class="text-lg leading-snug font-semibold tracking-tight text-foreground">{{ request.title }}</h2>
-            <p class="text-sm text-muted-foreground">{{ authorLine || t('bookRequests.detail.unknownAuthor') }}</p>
+            <p class="text-sm text-muted-foreground">{{ authorLine }}</p>
 
             <div class="flex flex-wrap items-center gap-1.5 pt-1">
               <RequestStatusBadge :status="presentationStatus ?? request.status" />
@@ -820,6 +830,14 @@ function dockFileMeta(file: BookDockFile): string {
             />
             <span class="text-sm" :class="failureIsAlarming ? 'text-destructive' : 'text-foreground'">{{ failureText }}</span>
           </p>
+
+          <div v-if="canRetryBatchImport" class="space-y-1.5">
+            <Button variant="outline" size="sm" :disabled="retryingBatch" @click="handleRetryBatchImport">
+              <Loader2 v-if="retryingBatch" :size="14" class="animate-spin" aria-hidden="true" />
+              {{ t('bookRequests.batch.retry.button') }}
+            </Button>
+            <p class="text-xs text-muted-foreground">{{ t('bookRequests.batch.retry.help') }}</p>
+          </div>
 
           <!-- The decision inputs live here; the buttons that consume them sit in the footer. -->
           <section v-if="canDecide" class="space-y-3 rounded-lg border border-border bg-card p-4">

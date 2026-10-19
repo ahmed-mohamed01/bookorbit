@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useRequestAuthorLine } from '../composables/useRequestAuthorLine'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowDown, ArrowUp, ChevronsUpDown, ExternalLink, EyeOff, LibraryBig, TriangleAlert, Zap } from '@lucide/vue'
@@ -71,9 +72,7 @@ function mediaLabel(request: BookRequestItem): string {
   return t(`bookRequests.mediaKind.${request.mediaKind}`)
 }
 
-function authorLine(request: BookRequestItem): string {
-  return request.authors.join(', ')
-}
+const authorLine = useRequestAuthorLine()
 
 function batchOf(request: BookRequestItem): BatchSummary | null {
   return request.kind === 'batch' ? request.batch : null

@@ -1,7 +1,7 @@
 import { ref } from 'vue'
 import { describe, expect, it } from 'vitest'
 import type { ReleaseSelectionManifest } from '@bookorbit/types'
-import { buildFileTree, splitForMiddleEllipsis, useReleaseFileSelection } from '../composables/useReleaseFileSelection'
+import { buildFileTree, useReleaseFileSelection } from '../composables/useReleaseFileSelection'
 
 function manifest(): ReleaseSelectionManifest {
   return {
@@ -88,32 +88,22 @@ describe('release file selection', () => {
   })
 })
 
-describe('splitForMiddleEllipsis', () => {
-  it('keeps a short name whole in the tail', () => {
-    expect(splitForMiddleEllipsis('Book.epub')).toEqual({ head: '', tail: 'Book.epub' })
-  })
+it('skips imported units for individual and folder selection', () => {
+  const data = manifest()
+  data.alreadyImported = [0, 1]
+  const selection = useReleaseFileSelection(ref(data))
+  selection.toggleUnit(0)
+  expect(selection.selectedUnits.value.size).toBe(0)
+  selection.toggleDir(selection.tree.value!)
+  expect([...selection.selectedUnits.value].sort()).toEqual([2, 3, 4])
+})
 
-  it('keeps a name of exactly 28 characters whole', () => {
-    const name = 'a'.repeat(28)
-    expect(splitForMiddleEllipsis(name)).toEqual({ head: '', tail: name })
-  })
-
-  it('splits a long name at the last 28 characters', () => {
-    const name = 'Long Title Volume v01 [Seven Seas] [LuCaZ].epub'
-    const { head, tail } = splitForMiddleEllipsis(name)
-    expect(tail).toBe(name.slice(-28))
-    expect(head + tail).toBe(name)
-  })
-
-  it('honours a custom tail length', () => {
-    expect(splitForMiddleEllipsis('abcdef', 2)).toEqual({ head: 'abcd', tail: 'ef' })
-  })
-
-  it('counts code points so surrogate pairs are not cut', () => {
-    const name = '😀'.repeat(30)
-    const { head, tail } = splitForMiddleEllipsis(name)
-    expect(Array.from(tail)).toHaveLength(28)
-    expect(Array.from(head)).toHaveLength(2)
-    expect(head + tail).toBe(name)
-  })
+it('leaves fully imported directories empty of selectable units', () => {
+  const data = manifest()
+  data.alreadyImported = [0, 1, 2, 3, 4]
+  const selection = useReleaseFileSelection(ref(data))
+  expect(selection.tree.value!.imported).toBe(true)
+  expect(selection.dirState(selection.tree.value!)).toBe('empty')
+  selection.toggleDir(selection.tree.value!)
+  expect(selection.selectedUnits.value.size).toBe(0)
 })

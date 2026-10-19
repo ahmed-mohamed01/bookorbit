@@ -8554,7 +8554,15 @@
         "root": "Release files",
         "books": "{count, plural, one {# book} other {# books}}",
         "notBook": "Not a book",
+        "imported": "In Book Dock",
+        "bookPositionNoSize": "book {n} of {total}",
         "toggleFolder": "Expand or collapse {name}",
+        "openFolder": "Open folder",
+        "closeFolder": "Close folder",
+        "fileName": "File name",
+        "bookPosition": "{size} · book {n} of {total}",
+        "select": "Select",
+        "unselect": "Unselect",
         "summaryFiles": "{files, plural, one {# file} other {# files}} in {folders, plural, one {# folder} other {# folders}}",
         "summaryBooks": "{books, plural, one {# book} other {# books}}, {other, plural, one {# other file} other {# other files}}",
         "showAll": "Show all {count}"
@@ -8564,10 +8572,18 @@
         "summaryNoTotal": "{count, plural, one {# book} other {# books}} · {size}",
         "summaryNone": "No books selected · {total} in this release",
         "summaryNoneNoTotal": "No books selected",
+        "allImported": "Every book in this release is already in Book Dock.",
         "note": "Files you don't select are skipped in the download client. This request is not changed: cancel it once Book Dock has the book.",
         "download": "Download {count, plural, one {# book} other {# books}}",
         "empty": "Select a book to download",
         "client": "Download client"
+      },
+      "importedNote": "This release holds {count, plural, one {# book} other {# books}}. {imported, plural, one {# already in Book Dock} other {# already in Book Dock}}; select more to download.",
+      "allImportedNote": "This release holds {count, plural, one {# book} other {# books}}.",
+      "retry": {
+        "button": "Retry import",
+        "help": "Imports the books again from the files already downloaded. Nothing downloads again.",
+        "failed": "Could not retry the import"
       },
       "noClient": "Picking books needs a client that can skip files: qBittorrent, Transmission or Deluge.",
       "sent": "Sent {count, plural, one {# book} other {# books}} to {client}. Track them on Requests.",
@@ -8749,6 +8765,8 @@
     },
     "detail": {
       "unknownAuthor": "Author unknown",
+      "batch": "Batch",
+      "batchBooks": "Batch · {total, plural, one {# book} other {# books}}",
       "requestedBy": "Requested by",
       "requestedOn": "Requested on",
       "library": "Library",
@@ -9210,7 +9228,8 @@
         "approved": "Approved",
         "release": "Release found",
         "downloading": "Downloading",
-        "filed": "Filed"
+        "filed": "Filed",
+        "inBookDock": "In Book Dock"
       },
       "summary": {
         "waiting": "Waiting at: {step}",

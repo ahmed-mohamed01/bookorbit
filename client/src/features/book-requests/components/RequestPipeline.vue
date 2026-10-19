@@ -7,7 +7,7 @@ import { REQUEST_PIPELINE_STEPS, requestPipelineState, requestStepState, type Re
 
 const props = withDefaults(
   defineProps<{
-    request: Pick<BookRequestItem, 'status' | 'download'>
+    request: Pick<BookRequestItem, 'status' | 'download'> & Partial<Pick<BookRequestItem, 'kind'>>
     live?: BookRequestProgressEvent | null
     /** The table rendering: five segments, no labels, same state model. */
     compact?: boolean
@@ -32,7 +32,7 @@ const steps = computed(() =>
   REQUEST_PIPELINE_STEPS.map((step, index) => ({
     step,
     index,
-    label: t(`bookRequests.pipeline.steps.${step}`),
+    label: t(`bookRequests.pipeline.steps.${step === 'filed' && props.request.kind === 'batch' ? 'inBookDock' : step}`),
     state: requestStepState(state.value, index),
   })),
 )
@@ -41,7 +41,9 @@ const currentLabel = computed(() => steps.value[state.value.currentIndex]?.label
 
 /** Colour is never the only carrier, so the whole bar has one sentence behind it. */
 const summary = computed(() => {
-  if (state.value.tone === 'done') return t('bookRequests.pipeline.summary.done')
+  if (state.value.tone === 'done') {
+    return t(props.request.kind === 'batch' ? 'bookRequests.pipeline.steps.inBookDock' : 'bookRequests.pipeline.summary.done')
+  }
   return t(`bookRequests.pipeline.summary.${state.value.tone}`, { step: currentLabel.value })
 })
 </script>

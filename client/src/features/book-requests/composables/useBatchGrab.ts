@@ -12,6 +12,7 @@ async function failureMessage(res: Response): Promise<string | null> {
 export function useBatchGrab(canManage: () => boolean) {
   const sending = ref(false)
   const error = ref<string | null>(null)
+  const retrying = ref(false)
 
   async function send(payload: CreateBatchGrabPayload): Promise<number | null> {
     if (sending.value) return null
@@ -43,6 +44,20 @@ export function useBatchGrab(canManage: () => boolean) {
     }
   }
 
+  /** Resolves to the server's reason when the retry was refused, or null once it was accepted. */
+  async function retry(requestId: number): Promise<string | null> {
+    if (retrying.value) return null
+    retrying.value = true
+    try {
+      const res = await api(`${fulfilmentBase(canManage())}/batch/${requestId}/retry`, { method: 'POST' })
+      return res.ok ? null : ((await failureMessage(res)) ?? '')
+    } catch {
+      return ''
+    } finally {
+      retrying.value = false
+    }
+  }
+
   async function fetchUnits(requestId: number): Promise<BatchUnitView[]> {
     try {
       const res = await api(`${fulfilmentBase(canManage())}/batch/${requestId}/units`)
@@ -53,5 +68,5 @@ export function useBatchGrab(canManage: () => boolean) {
     }
   }
 
-  return { sending, error, send, fetchUnits }
+  return { sending, error, retrying, send, retry, fetchUnits }
 }

@@ -9,7 +9,7 @@ import { formatBytes } from '@/lib/formatting'
 import BatchSelectionBar from './BatchSelectionBar.vue'
 import ReleaseFileTree from './ReleaseFileTree.vue'
 import { useBatchGrab } from '../composables/useBatchGrab'
-import { useReleaseFileSelection } from '../composables/useReleaseFileSelection'
+import { buildFileTree, useReleaseFileSelection } from '../composables/useReleaseFileSelection'
 
 const props = withDefaults(
   defineProps<{
@@ -32,7 +32,19 @@ const emit = defineEmits<{ sent: [batchRequestId: number] }>()
 const { t } = useI18n()
 
 const manifest = computed(() => props.inspection?.selection ?? null)
-const { tree, selectedUnits, toggleUnit, toggleDir, dirState, selectedSizeBytes, clear } = useReleaseFileSelection(manifest)
+const { tree: selectionTree, selectedUnits, toggleUnit, toggleDir, dirState, selectedSizeBytes, clear } = useReleaseFileSelection(manifest)
+const booksKnown = computed(() => selectionTree.value !== null || (props.inspection?.unitCount ?? 0) <= 1)
+const tree = computed(() => {
+  if (selectionTree.value) return selectionTree.value
+  const files = props.inspection?.files ?? []
+  if (!files.length) return null
+  const oneBook = (props.inspection?.unitCount ?? 0) <= 1
+  return buildFileTree({
+    rootName: null,
+    units: [],
+    files: files.map((file, index) => ({ path: file.path, sizeBytes: file.sizeBytes, unitIndex: file.bookFile ? (oneBook ? 0 : index) : null })),
+  })
+})
 const treeStats = computed(() => {
   let files = 0
   let folders = 0
@@ -58,9 +70,13 @@ const hasSeveralBooks = computed(() => (props.inspection?.unitCount ?? 0) > 1)
 const capableClients = computed(() => props.clients.filter((client) => client.fileSelection))
 const selectable = computed(() => manifest.value !== null && capableClients.value.length > 0)
 const showsNoClientNotice = computed(() => hasSeveralBooks.value && capableClients.value.length === 0)
+const imported = computed(() => new Set(manifest.value?.alreadyImported ?? []))
+const importedCount = computed(() => manifest.value?.units.filter((unit) => imported.value.has(unit.index)).length ?? 0)
+const allImported = computed(() => importedCount.value > 0 && importedCount.value === manifest.value?.units.length)
 const totalBytes = computed(() => {
   let total = 0
   for (const file of manifest.value?.files ?? []) {
+    if (file.unitIndex === null || imported.value.has(file.unitIndex)) continue
     if (file.sizeBytes === null) return null
     total += file.sizeBytes
   }
@@ -109,26 +125,16 @@ const showsUnits = computed(() => {
   return inspection !== null && (inspection.unitCount > 1 || (inspection.units[0]?.contentFileCount ?? 0) > 1)
 })
 
-/**
- * Which of the two classes of file to mark, or neither where the list is all one class.
- *
- * Always marking the book files states the same thing at several times the volume: a release of
- * three formats and a cover said "Book file" three times over, and the one row that mattered was
- * the one saying nothing. The smaller group is marked, so the badge is always the exception.
- */
-const marksFiles = computed<'book' | 'extra' | null>(() => {
-  const files = props.inspection?.files ?? []
-  const books = files.filter((file) => file.bookFile).length
-  const extras = files.length - books
-  if (books === 0 || extras === 0) return null
-  return books <= extras ? 'book' : 'extra'
-})
-
 const UNIT_ICONS = { ebook: BookOpen, audiobook: AudioLines, comic: Images } as const
 
 function summary(): string {
   const inspection = props.inspection
   if (!inspection) return ''
+
+  if (selectable.value && allImported.value) return t('bookRequests.batch.allImportedNote', { count: manifest.value!.units.length })
+
+  if (selectable.value && importedCount.value > 0 && !allImported.value)
+    return t('bookRequests.batch.importedNote', { count: manifest.value!.units.length, imported: importedCount.value })
 
   switch (inspection.status) {
     case 'ready': {
@@ -170,10 +176,6 @@ function unitDetail(unit: ReleaseUnitSummary): string {
     ...(unit.sizeBytes === null ? [] : [formatBytes(unit.sizeBytes)]),
   ]
   return parts.join(DETAIL_SEPARATOR)
-}
-
-function fileSize(sizeBytes: number | null): string | null {
-  return sizeBytes === null ? null : formatBytes(sizeBytes)
 }
 </script>
 
@@ -222,11 +224,12 @@ function fileSize(sizeBytes: number | null): string | null {
       <div v-if="tree" role="group" :aria-label="t('bookRequests.batch.tree.root')" class="mt-2 text-[12.5px]">
         <div class="flex flex-wrap justify-between gap-x-3 gap-y-1 px-2.5 pb-1.5 text-xs text-muted-foreground">
           <span>{{ t('bookRequests.batch.tree.summaryFiles', { files: treeStats.files, folders: treeStats.folders }) }}</span>
-          <span>{{ t('bookRequests.batch.tree.summaryBooks', { books: tree.bookCount, other: treeStats.other }) }}</span>
+          <span v-if="booksKnown">{{ t('bookRequests.batch.tree.summaryBooks', { books: tree.bookCount, other: treeStats.other }) }}</span>
         </div>
         <ReleaseFileTree
           :tree="tree"
           :selectable="selectable"
+          :show-books="booksKnown"
           :selected-units="selectedUnits"
           :dir-state="dirState"
           @toggle-unit="toggleUnit"
@@ -237,6 +240,7 @@ function fileSize(sizeBytes: number | null): string | null {
       <BatchSelectionBar
         v-if="selectable"
         :count="selectedUnits.size"
+        :all-imported="allImported"
         :size-bytes="selectedSizeBytes"
         :total-bytes="totalBytes"
         :clients="props.clients"
@@ -248,29 +252,6 @@ function fileSize(sizeBytes: number | null): string | null {
       <p v-if="sendError" role="alert" class="mt-2 text-xs text-destructive">{{ sendError }}</p>
 
       <p v-if="showsNoClientNotice" class="mt-2 text-xs text-muted-foreground">{{ t('bookRequests.batch.noClient') }}</p>
-
-      <ul v-if="inspection.files.length && !tree" class="mt-2 divide-y divide-border overflow-hidden rounded-md border border-border bg-card">
-        <li
-          v-for="(file, fileIndex) in inspection.files"
-          :key="`${fileIndex}:${file.path}`"
-          class="flex min-w-0 items-start gap-2 px-2.5 py-2 text-xs"
-        >
-          <span class="min-w-0 flex-1 break-all text-foreground">{{ file.path }}</span>
-          <span
-            v-if="marksFiles === 'book' && file.bookFile"
-            class="shrink-0 rounded-full border border-success/40 bg-success/10 px-1.5 py-px font-medium text-success"
-          >
-            {{ t('bookRequests.releases.manifest.bookFile') }}
-          </span>
-          <span
-            v-else-if="marksFiles === 'extra' && !file.bookFile"
-            class="shrink-0 rounded-full border border-border px-1.5 py-px text-muted-foreground"
-          >
-            {{ t('bookRequests.releases.manifest.extraFile') }}
-          </span>
-          <span v-if="fileSize(file.sizeBytes)" class="shrink-0 text-muted-foreground tabular-nums">{{ fileSize(file.sizeBytes) }}</span>
-        </li>
-      </ul>
 
       <p v-if="inspection.truncated" class="mt-2 text-xs text-muted-foreground">
         {{

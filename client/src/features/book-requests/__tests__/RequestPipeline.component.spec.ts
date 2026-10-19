@@ -12,6 +12,16 @@ function render(request: PipelineRequest, compact = false, live: BookRequestProg
 }
 
 describe('RequestPipeline', () => {
+  it('finishes an available batch in Book Dock', () => {
+    const request = { kind: 'batch' as const, status: 'available' as const, download: null }
+    const wrapper = render(request)
+    expect(wrapper.findAll('ol').at(1)?.findAll('li').at(4)?.text()).toBe('In Book Dock')
+    expect(wrapper.findAll('li[aria-current="step"]')).toHaveLength(0)
+    expect(wrapper.findAll('svg')).toHaveLength(5)
+    expect(wrapper.text()).not.toContain('Filed')
+    expect(render(request, true).find('ol').attributes('aria-label')).toBe('In Book Dock')
+  })
+
   it('marks the stage the request is sitting on as the current step', () => {
     const wrapper = render({ status: 'downloading', download: DOWNLOAD })
     const current = wrapper.findAll('li[aria-current="step"]')

@@ -85,6 +85,15 @@ function render(item = request()) {
 }
 
 describe('RequestListTable', () => {
+  it.each([
+    [{ kind: 'batch', authors: [], batch: { total: 1, inDock: 0, failed: 0 } }, 'Batch · 1 book'],
+    [{ kind: 'batch', authors: [], batch: null }, 'Batch'],
+    [{ kind: 'batch', authors: ['Terry Pratchett'] }, 'Terry Pratchett'],
+    [{ kind: 'single', authors: [] }, 'Author unknown'],
+  ] as const)('shows the request author line for %j', (overrides, expected) => {
+    expect(render(request({ ...overrides, authors: [...overrides.authors] })).text()).toContain(expected)
+  })
+
   it('constrains every intrinsic sizing boundary around a long title', () => {
     const wrapper = render()
     const titleButton = wrapper.findAll('tbody button').find((button) => button.text() === LONG_TITLE)

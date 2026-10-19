@@ -1,15 +1,15 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import ReleaseFileTree from '../components/ReleaseFileTree.vue'
 import { buildFileTree } from '../composables/useReleaseFileSelection'
 
 type DirState = 'all' | 'some' | 'none' | 'empty'
 
 function mountTree(
-  files: { path: string; sizeBytes: number; unitIndex: number | null }[],
-  opts: { selectable?: boolean; selected?: number[]; state?: DirState } = {},
+  files: { path: string; sizeBytes: number | null; unitIndex: number | null }[],
+  opts: { selectable?: boolean; selected?: number[]; state?: DirState; imported?: number[] } = {},
 ) {
-  const tree = buildFileTree({ rootName: 'Pack', units: [], files })
+  const tree = buildFileTree({ rootName: 'Pack', units: [], files, alreadyImported: opts.imported })
   const wrapper = mount(ReleaseFileTree, {
     props: {
       tree,
@@ -98,7 +98,7 @@ describe('ReleaseFileTree', () => {
   it('emits toggle-dir from the folder row but not from the caret, which only collapses', async () => {
     const { tree, wrapper } = mountTree([{ path: 'Book.epub', sizeBytes: 10, unitIndex: 0 }])
     expect(wrapper.find('[data-testid="tree-file"]').exists()).toBe(true)
-    await wrapper.get('[data-testid="tree-caret"]').trigger('click')
+    await wrapper.get('[data-testid="tree-folder-icon"]').trigger('click')
     expect(wrapper.emitted('toggle-dir')).toBeUndefined()
     expect(wrapper.find('[data-testid="tree-file"]').exists()).toBe(false)
     await wrapper.get('[data-testid="tree-folder-row"]').trigger('click')
@@ -135,26 +135,53 @@ describe('ReleaseFileTree', () => {
     await wrapper.get('[data-testid="tree-folder-row"]').trigger('click')
     expect(wrapper.emitted('toggle-unit')).toBeUndefined()
     expect(wrapper.emitted('toggle-dir')).toBeUndefined()
-    await wrapper.get('[data-testid="tree-caret"]').trigger('click')
+    await wrapper.get('[data-testid="tree-folder-icon"]').trigger('click')
     expect(wrapper.find('[data-testid="tree-file"]').exists()).toBe(false)
   })
 
-  it('splits a long file name into a shrinking ellipsised head and a fixed tail with a full-name title', () => {
-    const long = 'Some Very Long Manga Title Volume v01 [Seven Seas] [LuCaZ].epub'
-    const { wrapper } = mountTree([{ path: long, sizeBytes: 10, unitIndex: 0 }])
-    const name = wrapper.get(`[title="${long}"]`)
-    const [head, tail] = Array.from(name.element.querySelectorAll('span'))
-    expect(name.classes()).toContain('font-mono')
-    expect(head!.className).toContain('sm:text-ellipsis')
-    expect(head!.className).toContain('min-w-0')
-    expect(tail!.className).toContain('sm:shrink-0')
-    expect(head!.textContent! + tail!.textContent!).toBe(long)
+  it('initially scrolls past the muted sibling prefix', async () => {
+    const width = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(120)
+    const { wrapper } = mountTree([
+      { path: 'Some Very Long Shared Title Volume 01.epub', sizeBytes: 10, unitIndex: 0 },
+      { path: 'Some Very Long Shared Title Volume 02.epub', sizeBytes: 10, unitIndex: 1 },
+    ])
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('[data-testid="tree-prefix"]').text()).toBe('Some Very Long Shared Title Volume')
+    expect((wrapper.get('[data-testid="tree-name"]').element as HTMLElement).scrollLeft).toBe(92)
+    width.mockRestore()
+  })
+
+  it('suppresses selection after a mouse drag', async () => {
+    const { wrapper } = mountTree([{ path: 'Book.epub', sizeBytes: 10, unitIndex: 0 }])
+    const row = wrapper.get('[data-testid="tree-file"]')
+    row.element.dispatchEvent(Object.assign(new Event('pointerdown', { bubbles: true }), { pointerType: 'mouse', clientX: 10, clientY: 0 }))
+    row.element.dispatchEvent(Object.assign(new Event('pointermove', { bubbles: true }), { pointerType: 'mouse', clientX: 30, clientY: 0 }))
+    await row.trigger('pointerup')
+    await row.trigger('click')
+    expect(wrapper.emitted('toggle-unit')).toBeUndefined()
+  })
+
+  it('opens the touch sheet without selecting, then selects explicitly', async () => {
+    vi.useFakeTimers()
+    const { wrapper } = mountTree([{ path: 'Book.epub', sizeBytes: 10, unitIndex: 0 }])
+    const row = wrapper.get('[data-testid="tree-file"]')
+    row.element.dispatchEvent(Object.assign(new Event('pointerdown', { bubbles: true }), { pointerType: 'touch', clientX: 0, clientY: 0 }))
+    await vi.advanceTimersByTimeAsync(500)
+    await row.trigger('pointerup')
+    await row.trigger('click')
+    expect(wrapper.emitted('toggle-unit')).toBeUndefined()
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Book.epub')
+    ;(document.querySelector('[data-testid="sheet-select"]') as HTMLElement).click()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.emitted('toggle-unit')).toEqual([[0]])
+    wrapper.unmount()
+    vi.useRealTimers()
   })
 
   it('opens levels zero and one while deeper folders start collapsed', () => {
     const { wrapper } = mountTree([{ path: 'One/Two/Book.epub', sizeBytes: 10, unitIndex: 0 }])
     expect(wrapper.findAll('[data-testid="tree-folder"]')).toHaveLength(3)
-    expect(wrapper.findAll('[data-testid="tree-caret"]').map((c) => c.attributes('aria-expanded'))).toEqual(['true', 'true', 'false'])
+    expect(wrapper.findAll('[data-testid="tree-folder-icon"]').map((c) => c.attributes('aria-expanded'))).toEqual(['true', 'true', 'false'])
     expect(wrapper.find('[data-testid="tree-file"]').exists()).toBe(false)
   })
 
@@ -169,4 +196,40 @@ describe('ReleaseFileTree', () => {
       .trigger('click')
     expect(wrapper.findAll('[data-testid="tree-file"]')).toHaveLength(201)
   })
+})
+
+it('renders imported files and folders as inert muted checks', async () => {
+  const { wrapper } = mountTree([{ path: 'Book.epub', sizeBytes: 10, unitIndex: 0 }], { imported: [0] })
+  for (const row of [wrapper.get('[data-testid="tree-file"]'), wrapper.get('[data-testid="tree-folder-row"]')]) {
+    expect(row.attributes('aria-disabled')).toBe('true')
+    expect(row.attributes('role')).toBeUndefined()
+    expect(row.find('[data-testid="tree-check"]').exists()).toBe(true)
+    expect(row.classes()).not.toContain('group')
+    await row.trigger('click')
+  }
+  expect(wrapper.text()).toContain('In Book Dock')
+  expect(wrapper.emitted('toggle-unit')).toBeUndefined()
+  expect(wrapper.emitted('toggle-dir')).toBeUndefined()
+})
+it.each([' ', 'Enter'])('allows keyboard %s after a drag without a click', async (key) => {
+  const { wrapper } = mountTree([{ path: 'Book.epub', sizeBytes: 10, unitIndex: 0 }])
+  const row = wrapper.get('[data-testid="tree-file"]')
+  row.element.dispatchEvent(Object.assign(new Event('pointerdown', { bubbles: true }), { pointerType: 'mouse', clientX: 0, clientY: 0 }))
+  row.element.dispatchEvent(Object.assign(new Event('pointermove', { bubbles: true }), { pointerType: 'mouse', clientX: 30, clientY: 0 }))
+  await row.trigger('pointerup')
+  await row.trigger('keydown', { key })
+  await row.trigger('click')
+  expect(wrapper.emitted('toggle-unit')).toEqual([[0]])
+})
+it('omits the size separator for an unknown-size long-press sheet', async () => {
+  vi.useFakeTimers()
+  const { wrapper } = mountTree([{ path: 'Book.epub', sizeBytes: null, unitIndex: 0 }])
+  wrapper
+    .get('[data-testid="tree-file"]')
+    .element.dispatchEvent(Object.assign(new Event('pointerdown', { bubbles: true }), { pointerType: 'touch', clientX: 0, clientY: 0 }))
+  await vi.advanceTimersByTimeAsync(500)
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('book 1 of 1')
+  expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('·')
+  wrapper.unmount()
+  vi.useRealTimers()
 })
