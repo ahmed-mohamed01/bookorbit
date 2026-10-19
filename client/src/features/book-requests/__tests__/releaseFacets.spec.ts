@@ -23,6 +23,7 @@ function release(overrides: Partial<ReleaseCandidateItem> = {}): ReleaseCandidat
     audio: null,
     score: 50,
     tier: null,
+    inspectionWanted: false,
     tierName: null,
     profileMismatch: null,
     reasons: [],

@@ -1,6 +1,6 @@
 import { computed, ref, watch, type Ref } from 'vue'
-import { classifyFileLayout, compareByTier } from '@bookorbit/types'
-import type { ReleaseCandidateItem, ReleaseFileLayout } from '@bookorbit/types'
+import { releaseFileLayout, compareByTier } from '@bookorbit/types'
+import type { ReleaseCandidateItem, ReleaseFileLayout, ReleaseInspectionRanking } from '@bookorbit/types'
 
 import { facetsOf, formatKeys, languageKey } from '../releaseFacets'
 
@@ -19,7 +19,12 @@ const BITRATE_STEPS = [64, 96, 128] as const
  * Sorting and filtering stay client-side. The list is already capped and in hand, and a round
  * trip would re-run the search against every tracker, spending rate limit to reorder rows.
  */
-export function useReleaseFilters(releases: Ref<ReleaseCandidateItem[]>) {
+export function useReleaseFilters(releases: Ref<ReleaseCandidateItem[]>, rankingOverrides?: Ref<Map<string, ReleaseInspectionRanking>>) {
+  const rowReleases = computed(() => releases.value.map(applyRanking))
+  function applyRanking(release: ReleaseCandidateItem): ReleaseCandidateItem {
+    const ranking = rankingOverrides?.value.get(`${release.indexerId}:${release.guid}`)
+    return ranking ? { ...release, ...ranking } : release
+  }
   const sortKey = ref<ReleaseSortKey>('score')
   const language = ref<string | null>(null)
   const format = ref<string | null>(null)
@@ -45,7 +50,7 @@ export function useReleaseFilters(releases: Ref<ReleaseCandidateItem[]>) {
 
   /** A release whose source states no count is neither layout, so it fails either choice. */
   function passesFiles(release: ReleaseCandidateItem): boolean {
-    return fileLayout.value === null || classifyFileLayout(release.fileCount) === fileLayout.value
+    return fileLayout.value === null || releaseFileLayout(release) === fileLayout.value
   }
 
   function passesBitrate(release: ReleaseCandidateItem): boolean {
@@ -96,13 +101,15 @@ export function useReleaseFilters(releases: Ref<ReleaseCandidateItem[]>) {
 
   const visibleReleases = computed(() =>
     releases.value
-      .filter((release) => passesAllExcept(release))
-      // Safe to sort in place: filter already returned a fresh array. Tier leads every ordering,
+      .slice()
+      // Sort the search facts so inspection updates never move a row. Tier leads every ordering,
       // including the explicit ones: an approver who sorts by size is asking to reorder within what
       // they said they wanted, not to be shown a release the profile ranked below it. Score keeps
       // the server's tie-break on seeders, and the others fall back to score so equal sizes or dates
       // do not reorder themselves between renders.
-      .sort((a, b) => compareByTier(a.tier, b.tier) || orderOf(b) - orderOf(a) || b.score - a.score || (b.seeders ?? -1) - (a.seeders ?? -1)),
+      .sort((a, b) => compareByTier(a.tier, b.tier) || orderOf(b) - orderOf(a) || b.score - a.score || (b.seeders ?? -1) - (a.seeders ?? -1))
+      .map(applyRanking)
+      .filter((release) => passesAllExcept(release)),
   )
 
   const hasFilter = computed(
@@ -165,7 +172,7 @@ export function useReleaseFilters(releases: Ref<ReleaseCandidateItem[]>) {
   })
 
   function candidatesFor(except: ReleaseFilterKey): ReleaseCandidateItem[] {
-    return releases.value.filter((release) => passesAllExcept(release, except))
+    return rowReleases.value.filter((release) => passesAllExcept(release, except))
   }
 
   const languageFacets = computed(() => facetsOf(candidatesFor('language'), (release) => languageKey(release.language)))
@@ -177,7 +184,7 @@ export function useReleaseFilters(releases: Ref<ReleaseCandidateItem[]>) {
     })),
   )
   const fileFacets = computed(() =>
-    facetsOf(candidatesFor('files'), (release) => classifyFileLayout(release.fileCount)).map((facet) => ({
+    facetsOf(candidatesFor('files'), (release) => releaseFileLayout(release)).map((facet) => ({
       ...facet,
       layout: facet.value as ReleaseFileLayout,
     })),

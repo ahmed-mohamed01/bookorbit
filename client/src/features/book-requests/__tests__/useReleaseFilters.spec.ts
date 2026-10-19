@@ -25,6 +25,7 @@ function release(overrides: Partial<ReleaseCandidateItem> = {}): ReleaseCandidat
     audio: null,
     score: 50,
     tier: null,
+    inspectionWanted: false,
     tierName: null,
     profileMismatch: null,
     reasons: [],
@@ -143,4 +144,11 @@ describe('useReleaseFilters', () => {
     expect(filters.hasFilter.value).toBe(false)
     expect(filters.sortKey.value).toBe('score')
   })
+})
+
+it('excludes a four-book pack from the single-file facet', () => {
+  const filters = useReleaseFilters(ref([release({ fileCount: 4, bookCount: 4 })]))
+  expect(filters.fileFacets.value).toEqual([{ value: 'multi', count: 1, layout: 'multi' }])
+  filters.selectFileLayout('single')
+  expect(filters.visibleReleases.value).toEqual([])
 })

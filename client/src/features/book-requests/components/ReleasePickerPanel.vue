@@ -55,6 +55,7 @@ import { useBookRequestActions } from '../composables/useBookRequests'
 import { useBookRequestDetail } from '../composables/useBookRequestDetail'
 import { useDownloadClientSummaries } from '../composables/useDownloadClients'
 import { useReleaseFacetGroups } from '../composables/useReleaseFacetGroups'
+import { useBackgroundInspection } from '../composables/useBackgroundInspection'
 import { useReleaseFilters } from '../composables/useReleaseFilters'
 import { useReleaseGrab } from '../composables/useReleaseGrab'
 import { peekReleaseSearch, prefetchReleaseSearch, useReleasePicker } from '../composables/useReleasePicker'
@@ -71,7 +72,8 @@ const { hasPermission } = usePermissions()
 const canManage = () => hasPermission(Permission.ManageBookRequests)
 
 const {
-  releases,
+  releases: searchReleases,
+  rankingOverrides,
   criteria,
   indexers,
   uncoveredIndexerCount,
@@ -85,6 +87,7 @@ const {
   attempts,
   pendingIndexers,
   inspections,
+  inspectionGeneration,
   inspecting,
   inspectionFailed,
   fetchReleases,
@@ -141,7 +144,21 @@ const pairTabs = computed<ReleasePairTab[] | null>(() => {
     })
 })
 
-const filters = useReleaseFilters(releases)
+const releases = computed(() => searchReleases.value.map((release) => ({ ...release, ...rankingOverrides.value.get(releaseKey(release)) })))
+const filters = useReleaseFilters(searchReleases, rankingOverrides)
+const backgroundInspection = useBackgroundInspection({ inspect: (release) => inspectRelease(requestId.value, release, true) })
+watch(inspectionGeneration, backgroundInspection.reset, { flush: 'sync' })
+const vInspectRelease = {
+  mounted(el: Element, binding: { value: ReleaseCandidateItem }) {
+    backgroundInspection.observe(el, binding.value)
+  },
+  updated(el: Element, binding: { value: ReleaseCandidateItem }) {
+    backgroundInspection.observe(el, binding.value)
+  },
+  unmounted(el: Element) {
+    backgroundInspection.unobserve(el)
+  },
+}
 const { visibleReleases, hasFilter, showFacets, marksBest, tiedWithBest, clearFilters, resetFilters } = filters
 
 const expandedFiles = ref(new Set<string>())
@@ -1332,6 +1349,7 @@ function showEverySource(): void {
               <li
                 v-for="(release, index) in visibleReleases"
                 :key="releaseKey(release)"
+                v-inspect-release="release"
                 class="rounded-xl border p-3 transition-colors motion-reduce:transition-none"
                 :class="isBest(index) ? 'border-primary/50 bg-primary/6 hover:bg-primary/10' : 'border-border bg-card hover:bg-accent/50'"
               >

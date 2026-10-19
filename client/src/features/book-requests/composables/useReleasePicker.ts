@@ -1,4 +1,4 @@
-import { ref, shallowReactive } from 'vue'
+import { computed, ref, shallowReactive } from 'vue'
 import { api } from '@/lib/api'
 import { streamReleaseSearch } from '../api/streamReleaseSearch'
 import { fulfilmentBase } from '../fulfilmentBase'
@@ -8,6 +8,7 @@ import type {
   InspectBookRequestReleasePayload,
   ReleaseCandidateItem,
   ReleaseFileInspection,
+  ReleaseInspectionRanking,
   ReleaseSearchCriteria,
   ReleaseSearchOverrides,
   ReleaseSearchProgress,
@@ -158,6 +159,13 @@ export function useReleasePicker(canManage: () => boolean) {
   /** Sources the streamed search has started but not yet heard back from, until the final result. */
   const pendingIndexers = ref<IndexerSearchPending[]>([])
   const inspections = ref(new Map<string, ReleaseFileInspection>())
+  const rankingOverrides = computed(() => {
+    const overrides = new Map<string, ReleaseInspectionRanking>()
+    for (const [key, inspection] of inspections.value) {
+      if (inspection.ranking) overrides.set(key, inspection.ranking)
+    }
+    return overrides
+  })
   const inspecting = ref(new Set<string>())
   /**
    * Keyed by release, valued by what the tracker said. A refusal is usually a sentence worth
@@ -166,7 +174,7 @@ export function useReleasePicker(canManage: () => boolean) {
    */
   const inspectionFailed = ref(new Map<string, string | null>())
   const pendingInspections = new Map<string, Promise<ReleaseFileInspection | null>>()
-  let inspectionGeneration = 0
+  const inspectionGeneration = ref(0)
   /**
    * Bumped per search so an answer to an earlier one cannot land on a later one. A tracker search
    * can take the better part of a minute, which is long enough for the approver to step to another
@@ -259,15 +267,18 @@ export function useReleasePicker(canManage: () => boolean) {
     }
   }
 
-  async function inspectRelease(requestId: number, release: ReleaseCandidateItem): Promise<ReleaseFileInspection | null> {
+  async function inspectRelease(requestId: number, release: ReleaseCandidateItem, background = false): Promise<ReleaseFileInspection | null> {
     const key = releaseKey(release)
     const existing = inspections.value.get(key)
     if (existing) return existing
     const pending = pendingInspections.get(key)
-    if (pending) return pending
+    if (pending) {
+      if (!background) setMembership(inspecting, key, true)
+      return pending
+    }
 
-    const generation = inspectionGeneration
-    setMembership(inspecting, key, true)
+    const generation = inspectionGeneration.value
+    if (!background) setMembership(inspecting, key, true)
     clearFailure(inspectionFailed, key)
     const operation = performInspection(requestId, release, key, generation)
     pendingInspections.set(key, operation)
@@ -291,17 +302,18 @@ export function useReleasePicker(canManage: () => boolean) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ indexerId: release.indexerId, releaseGuid: release.guid } satisfies InspectBookRequestReleasePayload),
       })
-      if (generation !== inspectionGeneration) return null
+      if (generation !== inspectionGeneration.value) return null
       if (!res.ok) {
         recordFailure(inspectionFailed, key, await readErrorMessage(res))
         return null
       }
       const result = (await res.json()) as ReleaseFileInspection
+      if (generation !== inspectionGeneration.value) return null
       inspections.value = new Map(inspections.value).set(key, result)
       return result
     } catch {
       // A transport failure has no server sentence to pass on, so the generic copy stands.
-      if (generation === inspectionGeneration) recordFailure(inspectionFailed, key, null)
+      if (generation === inspectionGeneration.value) recordFailure(inspectionFailed, key, null)
       return null
     }
   }
@@ -326,11 +338,11 @@ export function useReleasePicker(canManage: () => boolean) {
   }
 
   function clearInspections(): void {
-    inspectionGeneration++
     inspections.value = new Map()
     inspecting.value = new Set()
     inspectionFailed.value = new Map()
     pendingInspections.clear()
+    inspectionGeneration.value++
   }
 
   return {
@@ -348,6 +360,8 @@ export function useReleasePicker(canManage: () => boolean) {
     attempts,
     pendingIndexers,
     inspections,
+    inspectionGeneration,
+    rankingOverrides,
     inspecting,
     inspectionFailed,
     fetchReleases,

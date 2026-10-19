@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ReleaseCandidateItem, ReleaseFileInspection } from '@bookorbit/types'
+import type { ReleaseCandidateItem, ReleaseFileInspection, ReleaseInspectionRanking } from '@bookorbit/types'
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>() }))
 vi.mock('@/lib/api', () => ({ api: apiMock }))
@@ -115,6 +115,7 @@ const inspection: ReleaseFileInspection = {
   ignoredFileCount: 0,
   containerCount: 0,
   selection: null,
+  ranking: null,
 }
 
 describe('useReleasePicker', () => {
@@ -263,6 +264,24 @@ describe('useReleasePicker', () => {
       body: JSON.stringify({ indexerId: 9, releaseGuid: 'release-guid' }),
     })
     expect(picker.inspections.value.get('9:release-guid')).toEqual(inspection)
+  })
+
+  it('carries the inspected score in the picker ranking override', async () => {
+    const ranking: ReleaseInspectionRanking = {
+      score: 95,
+      tier: 0,
+      tierName: 'EPUB',
+      profileMismatch: null,
+      format: 'epub',
+      formats: ['epub'],
+      fileCount: 1,
+      bookCount: 1,
+      inspectionWanted: false,
+    }
+    apiMock.mockResolvedValue(ok({ ...inspection, ranking }))
+    const picker = useReleasePicker(() => true)
+    await picker.inspectRelease(42, release)
+    expect(picker.rankingOverrides.value.get('9:release-guid')).toEqual(ranking)
   })
 
   it('reuses an inspection until search results are refreshed', async () => {

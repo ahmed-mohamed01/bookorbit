@@ -22,6 +22,7 @@ const release: ReleaseCandidateItem = {
   audio: null,
   score: 71,
   tier: null,
+  inspectionWanted: false,
   tierName: null,
   profileMismatch: null,
   reasons: [],

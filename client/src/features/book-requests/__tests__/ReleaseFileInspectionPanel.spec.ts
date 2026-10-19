@@ -20,6 +20,7 @@ function inspection(overrides: Partial<ReleaseFileInspection> = {}): ReleaseFile
     ignoredFileCount: 0,
     containerCount: 0,
     selection: null,
+    ranking: null,
     ...overrides,
   }
 }

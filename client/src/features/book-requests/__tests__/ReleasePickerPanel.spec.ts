@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Permission } from '@bookorbit/types'
 import type { BookRequestItem, IndexerSearchStatus, ReleaseCandidateItem } from '@bookorbit/types'
 
+let notifyIntersection: IntersectionObserverCallback
 const api = vi.fn<(input: string, init?: RequestInit) => Promise<Response>>()
 vi.mock('@/lib/api', () => ({ api: (...args: [string, RequestInit?]) => api(...args) }))
 // The panel reads whether the viewer moderates the queue, which decides whether it asks the admin
@@ -101,6 +102,7 @@ function release(overrides: Partial<ReleaseCandidateItem> = {}): ReleaseCandidat
     audio: null,
     score: 89,
     tier: null,
+    inspectionWanted: false,
     tierName: null,
     profileMismatch: null,
     reasons: [{ code: 'titleMatch', points: 55 }],
@@ -258,6 +260,17 @@ async function render(search: unknown = MIXED) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal(
+    'IntersectionObserver',
+    class {
+      constructor(callback: IntersectionObserverCallback) {
+        notifyIntersection = callback
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  )
   api.mockReset()
   // A moderator by default, which is the path every existing case in this file was written against.
   hasPermission.mockReturnValue(true)
@@ -1118,4 +1131,122 @@ describe('ReleasePickerPanel for a pair', () => {
     const toAudiobook = links.find((link) => (link.props('to') as { params?: { id: number } }).params?.id === 8)!
     expect(toAudiobook.props('to')).toEqual({ name: 'book-request-releases', params: { id: 8 }, query: { tab: 'mine' } })
   })
+})
+
+it.each(['manual', 'background'])('applies %s inspection ranking without moving the row', async (mode) => {
+  const wrapper = await render({
+    ...MIXED,
+    releases: [
+      release({ tierName: 'Existing tier', tier: 1 }),
+      release({
+        guid: 'inspect-me',
+        inspectionWanted: true,
+        profileMismatch: { tier: 0, tierName: 'Single', failures: [{ code: 'fileLayoutUnknown', expected: 'single' }] },
+      }),
+    ],
+  })
+  api.mockResolvedValue(
+    await respond({
+      ranking: {
+        tier: 0,
+        tierName: 'Inspected tier',
+        profileMismatch: null,
+        format: 'pdf',
+        formats: ['pdf'],
+        fileCount: 4,
+        bookCount: 4,
+        inspectionWanted: false,
+      },
+      status: 'ready',
+      files: [],
+      source: 'torrent_file',
+      units: [],
+      unitCount: 1,
+      totalFiles: 4,
+      primaryFileCount: 4,
+      truncated: false,
+      ignoredFileCount: 0,
+      containerCount: 0,
+      selection: null,
+    }),
+  )
+  const rows = wrapper.findAll('li').filter((row) => row.text().includes('View files'))
+  expect(rows[1]!.text()).toContain('Single')
+  if (mode === 'manual') {
+    await rows[1]!
+      .findAll('button')
+      .find((button) => button.text().includes('View files'))!
+      .trigger('click')
+  } else {
+    notifyIntersection([{ target: rows[1]!.element, isIntersecting: true } as unknown as IntersectionObserverEntry], {} as IntersectionObserver)
+  }
+  await flushPromises()
+  expect(rows[1]!.text()).toContain('Inspected tier')
+  expect(rows[1]!.text()).not.toContain('Single')
+  expect(rows[1]!.text()).toContain('4 files')
+  expect(rows[1]!.text()).toContain('PDF')
+  expect(
+    wrapper
+      .findAll('li')
+      .filter((row) => row.text().includes('View files'))[0]!
+      .text(),
+  ).toContain('Existing tier')
+  const requestBody = JSON.parse(api.mock.calls.find(([path]) => path.endsWith('/releases/inspect'))![1]!.body as string)
+  expect(requestBody).toEqual({ indexerId: 1, releaseGuid: 'inspect-me' })
+  expect(rows[0]!.text()).toContain('Existing tier')
+})
+
+it('keeps background work silent and reuses it when View files is clicked', async () => {
+  const wrapper = await render({ ...MIXED, releases: [release({ inspectionWanted: true })] })
+  let finish!: (response: Response) => void
+  api.mockImplementation(
+    () =>
+      new Promise<Response>((resolve) => {
+        finish = resolve
+      }),
+  )
+  const row = releaseRows(wrapper)[0]!
+  notifyIntersection([{ target: row.element, isIntersecting: true } as unknown as IntersectionObserverEntry], {} as IntersectionObserver)
+  await flushPromises()
+  const view = row.findAll('button').find((button) => button.text().includes('View files'))!
+  const send = row.findAll('button').find((button) => /Download release|Send/.test(button.text()))!
+  expect(view.find('.animate-spin').exists()).toBe(false)
+  expect(send.attributes('disabled')).toBeUndefined()
+  const calls = api.mock.calls.length
+  await view.trigger('click')
+  await flushPromises()
+  expect(row.find('.animate-spin').exists()).toBe(true)
+  expect(send.attributes('disabled')).toBeDefined()
+  expect(api.mock.calls).toHaveLength(calls)
+  finish(await respond(READY_INSPECTION))
+  await flushPromises()
+})
+
+it('inspects the same release again after a second search and applies its new ranking', async () => {
+  const search = { ...MIXED, releases: [release({ inspectionWanted: true })] }
+  const wrapper = await render(search)
+  let tierName = 'First inspection'
+  api.mockImplementation((path: string) => {
+    if (path.endsWith('/releases/inspect')) return respond({ ...READY_INSPECTION, ranking: { tier: 0, tierName, profileMismatch: null } })
+    if (path.includes('/releases/stream')) return sseRespond(search)
+    return respond(search)
+  })
+  const intersect = () =>
+    notifyIntersection(
+      [{ target: releaseRows(wrapper)[0]!.element, isIntersecting: true } as unknown as IntersectionObserverEntry],
+      {} as IntersectionObserver,
+    )
+  intersect()
+  await flushPromises()
+  expect(releaseRows(wrapper)[0]!.text()).toContain('First inspection')
+  tierName = 'Second inspection'
+  await wrapper
+    .findAll('button')
+    .find((button) => button.text().includes('Search again'))!
+    .trigger('click')
+  await flushPromises()
+  intersect()
+  await flushPromises()
+  expect(releaseRows(wrapper)[0]!.text()).toContain('Second inspection')
+  expect(api.mock.calls.filter(([path]) => path.endsWith('/releases/inspect'))).toHaveLength(2)
 })
