@@ -182,6 +182,16 @@ describe('BookRequestRepository.findDueForResearch', () => {
     expect(query.sql).toContain('coalesce("book_requests"."auto_grab"');
     expect(query.params).toContain(instanceAutomationOn);
   });
+
+  it('never returns a batch request', async () => {
+    const db = makeSelectingDb();
+    const repo = new BookRequestRepository(db as never);
+
+    await repo.findDueForResearch(true, 24, 60, 8, 7 * 24 * 60 * 60 * 1000, 25);
+
+    const query = new PgDialect().sqlToQuery(db.where.mock.calls[0]?.[0] as SQL);
+    expect(query.sql).toContain(`"book_requests"."kind" <> 'batch'`);
+  });
 });
 
 describe('BookRequestRepository.findById', () => {

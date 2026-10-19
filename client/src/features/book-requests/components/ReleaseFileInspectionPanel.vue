@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { toast } from 'vue-sonner'
 import { AudioLines, BookOpen, FileCheck2, FileWarning, Images, Loader2 } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { releaseInspectionBlocksGrab } from '@bookorbit/types'
-import type { DownloadDelivery, ReleaseFileInspection, ReleaseUnitSummary } from '@bookorbit/types'
+import type { DownloadClientSummary, DownloadDelivery, ReleaseFileInspection, ReleaseUnitSummary } from '@bookorbit/types'
 import { formatBytes } from '@/lib/formatting'
+import BatchSelectionBar from './BatchSelectionBar.vue'
+import ReleaseFileTree from './ReleaseFileTree.vue'
+import { useBatchGrab } from '../composables/useBatchGrab'
+import { useReleaseFileSelection } from '../composables/useReleaseFileSelection'
 
 const props = withDefaults(
   defineProps<{
@@ -14,11 +19,87 @@ const props = withDefaults(
     failed: boolean
     /** What the tracker or the server said, where either said anything worth repeating. */
     failureReason?: string | null
+    requestId?: number
+    indexerId?: number
+    releaseGuid?: string
+    canManage?: boolean
+    clients?: DownloadClientSummary[]
   }>(),
-  { delivery: 'torrent', failureReason: null },
+  { delivery: 'torrent', failureReason: null, requestId: 0, indexerId: 0, releaseGuid: '', canManage: false, clients: () => [] },
 )
+const emit = defineEmits<{ sent: [batchRequestId: number] }>()
 
 const { t } = useI18n()
+
+const manifest = computed(() => props.inspection?.selection ?? null)
+const { tree, selectedUnits, toggleUnit, toggleDir, dirState, selectedSizeBytes, clear } = useReleaseFileSelection(manifest)
+const treeStats = computed(() => {
+  let files = 0
+  let folders = 0
+  let other = 0
+  const pending = tree.value ? [tree.value] : []
+  while (pending.length) {
+    const node = pending.pop()!
+    if (node.kind === 'dir') {
+      folders += 1
+      pending.push(...node.children)
+    } else {
+      files += 1
+      if (node.unitIndex === null) other += 1
+    }
+  }
+  return { files, folders, other }
+})
+const batch = useBatchGrab(() => props.canManage)
+const clientId = ref<number | null>(null)
+const sendError = ref<string | null>(null)
+
+const hasSeveralBooks = computed(() => (props.inspection?.unitCount ?? 0) > 1)
+const capableClients = computed(() => props.clients.filter((client) => client.fileSelection))
+const selectable = computed(() => manifest.value !== null && capableClients.value.length > 0)
+const showsNoClientNotice = computed(() => hasSeveralBooks.value && capableClients.value.length === 0)
+const totalBytes = computed(() => {
+  let total = 0
+  for (const file of manifest.value?.files ?? []) {
+    if (file.sizeBytes === null) return null
+    total += file.sizeBytes
+  }
+  return total
+})
+
+watch(
+  capableClients,
+  (capable) => {
+    if (clientId.value === null || !capable.some((client) => client.id === clientId.value)) clientId.value = capable[0]?.id ?? null
+  },
+  { immediate: true },
+)
+
+watch(selectedUnits, () => (sendError.value = null), { deep: true })
+
+function handleClientId(id: number) {
+  clientId.value = id
+}
+
+async function handleSend() {
+  if (clientId.value === null || selectedUnits.value.size === 0) return
+  const unitIndexes = [...selectedUnits.value].sort((a, b) => a - b)
+  const batchRequestId = await batch.send({
+    sourceRequestId: props.requestId,
+    indexerId: props.indexerId,
+    releaseGuid: props.releaseGuid,
+    downloadClientId: clientId.value,
+    unitIndexes,
+  })
+  if (batchRequestId === null) {
+    sendError.value = batch.error.value || t('bookRequests.batch.sendFailed')
+    return
+  }
+  const client = props.clients.find((item) => item.id === clientId.value)?.name ?? ''
+  toast.success(t('bookRequests.batch.sent', { count: unitIndexes.length, client }))
+  clear()
+  emit('sent', batchRequestId)
+}
 
 const blocked = computed(() => releaseInspectionBlocksGrab(props.inspection?.status))
 
@@ -61,7 +142,9 @@ function summary(): string {
     case 'contents_unknown':
       return t('bookRequests.releases.manifest.contentsUnknown')
     case 'multiple_supported_files':
-      return t('bookRequests.releases.manifest.multipleBooks', { count: inspection.unitCount })
+      return t(selectable.value ? 'bookRequests.releases.manifest.multipleBooksSelectable' : 'bookRequests.releases.manifest.multipleBooks', {
+        count: inspection.unitCount,
+      })
     case 'metadata_unavailable':
       return t(
         inspection.source === 'nzb_file'
@@ -118,7 +201,7 @@ function fileSize(sizeBytes: number | null): string | null {
         <span>{{ summary() }}</span>
       </p>
 
-      <ul v-if="showsUnits" class="mt-2 space-y-1.5">
+      <ul v-if="showsUnits && !selectable" class="mt-2 space-y-1.5">
         <li
           v-for="(unit, unitIndex) in inspection.units"
           :key="`${unitIndex}:${unit.title ?? ''}`"
@@ -136,7 +219,37 @@ function fileSize(sizeBytes: number | null): string | null {
         {{ t('bookRequests.releases.manifest.unitsTruncated', { shown: inspection.units.length, total: inspection.unitCount }) }}
       </p>
 
-      <ul v-if="inspection.files.length" class="mt-2 divide-y divide-border overflow-hidden rounded-md border border-border bg-card">
+      <div v-if="tree" role="group" :aria-label="t('bookRequests.batch.tree.root')" class="mt-2 text-[12.5px]">
+        <div class="flex flex-wrap justify-between gap-x-3 gap-y-1 px-2.5 pb-1.5 text-xs text-muted-foreground">
+          <span>{{ t('bookRequests.batch.tree.summaryFiles', { files: treeStats.files, folders: treeStats.folders }) }}</span>
+          <span>{{ t('bookRequests.batch.tree.summaryBooks', { books: tree.bookCount, other: treeStats.other }) }}</span>
+        </div>
+        <ReleaseFileTree
+          :tree="tree"
+          :selectable="selectable"
+          :selected-units="selectedUnits"
+          :dir-state="dirState"
+          @toggle-unit="toggleUnit"
+          @toggle-dir="toggleDir"
+        />
+      </div>
+
+      <BatchSelectionBar
+        v-if="selectable"
+        :count="selectedUnits.size"
+        :size-bytes="selectedSizeBytes"
+        :total-bytes="totalBytes"
+        :clients="props.clients"
+        :client-id="clientId"
+        :sending="batch.sending.value"
+        @update:client-id="handleClientId"
+        @send="handleSend"
+      />
+      <p v-if="sendError" role="alert" class="mt-2 text-xs text-destructive">{{ sendError }}</p>
+
+      <p v-if="showsNoClientNotice" class="mt-2 text-xs text-muted-foreground">{{ t('bookRequests.batch.noClient') }}</p>
+
+      <ul v-if="inspection.files.length && !tree" class="mt-2 divide-y divide-border overflow-hidden rounded-md border border-border bg-card">
         <li
           v-for="(file, fileIndex) in inspection.files"
           :key="`${fileIndex}:${file.path}`"

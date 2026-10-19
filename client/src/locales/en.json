@@ -8549,6 +8549,46 @@
     }
   },
   "bookRequests": {
+    "batch": {
+      "tree": {
+        "root": "Release files",
+        "books": "{count, plural, one {# book} other {# books}}",
+        "notBook": "Not a book",
+        "toggleFolder": "Expand or collapse {name}",
+        "summaryFiles": "{files, plural, one {# file} other {# files}} in {folders, plural, one {# folder} other {# folders}}",
+        "summaryBooks": "{books, plural, one {# book} other {# books}}, {other, plural, one {# other file} other {# other files}}",
+        "showAll": "Show all {count}"
+      },
+      "bar": {
+        "summary": "{count, plural, one {# book} other {# books}} · {size} of {total}",
+        "summaryNoTotal": "{count, plural, one {# book} other {# books}} · {size}",
+        "summaryNone": "No books selected · {total} in this release",
+        "summaryNoneNoTotal": "No books selected",
+        "note": "Files you don't select are skipped in the download client. This request is not changed: cancel it once Book Dock has the book.",
+        "download": "Download {count, plural, one {# book} other {# books}}",
+        "empty": "Select a book to download",
+        "client": "Download client"
+      },
+      "noClient": "Picking books needs a client that can skip files: qBittorrent, Transmission or Deluge.",
+      "sent": "Sent {count, plural, one {# book} other {# books}} to {client}. Track them on Requests.",
+      "sendFailed": "Could not send the books",
+      "row": {
+        "count": "Batch · {count, plural, one {# book} other {# books}}",
+        "importing": "{inDock} of {total} in Book Dock",
+        "finishedWithFailures": "{inDock} of {total} in Book Dock · {failed} failed",
+        "progressLabel": "Books in Book Dock for {title}"
+      },
+      "units": {
+        "heading": "Books in this batch",
+        "untitled": "Untitled",
+        "status": {
+          "waiting": "Waiting for download",
+          "placing": "Placing",
+          "in_dock": "In Book Dock",
+          "failed": "Failed"
+        }
+      }
+    },
     "title": "Requests (Beta)",
     "subtitle": "Ask for books the library does not have yet. This feature is experimental, expect minor bugs.",
     "tabs": {
@@ -9014,6 +9054,7 @@
         "noSupported": "This release has no directly supported book file, so it cannot be sent.",
         "contentsUnknown": "This release is packaged as an archive (RAR, ZIP or 7z). BookOrbit will extract it after downloading, so its contents are not known yet.",
         "multipleBooks": "This release contains {count} separate books. After it downloads you will be asked which one to import.",
+        "multipleBooksSelectable": "This release holds {count, plural, one {# book} other {# books}}. Select the ones to download.",
         "multiPartBook": "{count, plural, one {This release is one book made of # file.} other {This release is one book made of # files, imported together as a single book.}}",
         "metadataUnavailable": "This is a magnet link. Its file list is unavailable until a torrent client fetches the metadata from the swarm.",
         "usenetMetadataUnavailable": "This is a Usenet release. Its final file list is unavailable until NZBGet downloads and post-processes it.",
@@ -9229,6 +9270,7 @@
     "outcome": {
       "filedIn": "Filed in {library} {time}",
       "filed": "Filed {time}",
+      "inBookDock": "In Book Dock {time}",
       "rejected": "Rejected {time}",
       "cancelled": "Cancelled {time}",
       "awaitingApproval": "Waiting for approval",

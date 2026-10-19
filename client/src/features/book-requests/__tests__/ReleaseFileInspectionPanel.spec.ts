@@ -1,7 +1,11 @@
-import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
-import type { DownloadDelivery, ReleaseFileInspection } from '@bookorbit/types'
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { api } from '@/lib/api'
+import type { DownloadClientSummary, DownloadDelivery, ReleaseFileInspection } from '@bookorbit/types'
 import ReleaseFileInspectionPanel from '../components/ReleaseFileInspectionPanel.vue'
+
+vi.mock('@/lib/api', () => ({ api: vi.fn<(...args: [RequestInfo | URL, RequestInit?]) => Promise<Response>>() }))
+vi.mock('vue-sonner', () => ({ toast: { success: vi.fn<(title: string) => void>(), error: vi.fn<(title: string, options?: unknown) => void>() } }))
 
 function inspection(overrides: Partial<ReleaseFileInspection> = {}): ReleaseFileInspection {
   return {
@@ -15,6 +19,7 @@ function inspection(overrides: Partial<ReleaseFileInspection> = {}): ReleaseFile
     unitCount: 1,
     ignoredFileCount: 0,
     containerCount: 0,
+    selection: null,
     ...overrides,
   }
 }
@@ -26,6 +31,7 @@ function mountPanel(
     loading: boolean
     failed: boolean
     failureReason: string | null
+    clients: DownloadClientSummary[]
   }> = {},
 ) {
   return mount(ReleaseFileInspectionPanel, {
@@ -252,5 +258,133 @@ describe('ReleaseFileInspectionPanel', () => {
     const wrapper = mountPanel({ inspection: null, failed: true })
 
     expect(wrapper.get('[role="alert"]').text()).toContain('file list could not be read')
+  })
+
+  describe('picking books', () => {
+    const unit = (index: number, title: string) => ({
+      index,
+      title,
+      mediaKind: 'ebook' as const,
+      sizeBytes: 100,
+      primaryPath: `Series/${title}.epub`,
+    })
+    const multi = () =>
+      inspection({
+        units: [
+          { mediaKind: 'ebook', title: 'One', contentFileCount: 1, totalFileCount: 1, sizeBytes: 100 },
+          { mediaKind: 'ebook', title: 'Two', contentFileCount: 1, totalFileCount: 1, sizeBytes: 100 },
+        ],
+        unitCount: 2,
+        selection: {
+          rootName: 'Series',
+          files: [
+            { path: 'Series/One.epub', sizeBytes: 100, unitIndex: 0 },
+            { path: 'Series/Two.epub', sizeBytes: 100, unitIndex: 1 },
+          ],
+          units: [unit(0, 'One'), unit(1, 'Two')],
+        },
+      })
+    const clientList = (fileSelection: boolean): DownloadClientSummary[] => [
+      { id: 7, name: 'qBittorrent', color: null, delivery: 'torrent', fileSelection },
+    ]
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
+    const identity = { requestId: 5, indexerId: 2, releaseGuid: 'guid-1', canManage: true }
+
+    beforeEach(() => {
+      vi.mocked(api).mockReset()
+    })
+
+    it('shows checkboxes for a multi-book torrent', async () => {
+      const wrapper = mountPanel({ inspection: multi(), clients: clientList(true), ...identity })
+      await flushPromises()
+      expect(api).not.toHaveBeenCalled()
+      expect(wrapper.findAll('[role="checkbox"]').length).toBeGreaterThan(0)
+      expect(wrapper.text()).toContain('Select a book to download')
+    })
+
+    it('replaces the ask-later note with the select prompt when the tree is selectable', async () => {
+      const wrapper = mountPanel({
+        inspection: { ...multi(), status: 'multiple_supported_files' },
+        clients: clientList(true),
+        ...identity,
+      })
+      await flushPromises()
+      const note = wrapper.get('[role="alert"], [role="status"]').text()
+      expect(note).toContain('This release holds 2 books. Select the ones to download.')
+      expect(wrapper.text()).not.toContain('you will be asked which one to import')
+    })
+
+    it('keeps the ask-later note where selection is not available', async () => {
+      const wrapper = mountPanel({
+        inspection: { ...multi(), status: 'multiple_supported_files' },
+        clients: clientList(false),
+        ...identity,
+      })
+      await flushPromises()
+      expect(wrapper.text()).toContain('After it downloads you will be asked which one to import.')
+    })
+
+    it('stays read-only for a single-book release', async () => {
+      const single = inspection({
+        selection: {
+          rootName: null,
+          files: [{ path: 'Pride and Prejudice.epub', sizeBytes: 2048, unitIndex: 0 }],
+          units: [unit(0, 'Pride and Prejudice')],
+        },
+      })
+      const wrapper = mountPanel({ inspection: single, ...identity })
+      await flushPromises()
+      expect(wrapper.findAll('[role="checkbox"]')).toHaveLength(0)
+      expect(wrapper.text()).not.toContain('Download')
+      expect(wrapper.text()).not.toContain('Picking books needs')
+      expect(api).not.toHaveBeenCalled()
+    })
+
+    it('shows the client notice when no client can skip files', async () => {
+      const wrapper = mountPanel({ inspection: multi(), clients: clientList(false), ...identity })
+      await flushPromises()
+      expect(wrapper.findAll('[role="checkbox"]')).toHaveLength(0)
+      expect(wrapper.text()).toContain('Picking books needs a client that can skip files: qBittorrent, Transmission or Deluge.')
+    })
+
+    async function tickFirstBook(wrapper: ReturnType<typeof mountPanel>) {
+      const box = wrapper.findAll('[role="checkbox"]').find((row) => row.text().includes('One.epub'))!
+      await box.trigger('click')
+      await wrapper.findAll('button').at(-1)!.trigger('click')
+      await flushPromises()
+    }
+
+    it('emits sent with the batch id after a successful send', async () => {
+      vi.mocked(api).mockResolvedValueOnce(json({ requestId: 42 }))
+      const wrapper = mountPanel({ inspection: multi(), clients: clientList(true), ...identity })
+      await flushPromises()
+      await tickFirstBook(wrapper)
+      expect(wrapper.emitted('sent')).toEqual([[42]])
+      const body = JSON.parse(vi.mocked(api).mock.calls[0]![1]!.body as string)
+      expect(body).toEqual({ sourceRequestId: 5, indexerId: 2, releaseGuid: 'guid-1', downloadClientId: 7, unitIndexes: [0] })
+    })
+
+    it('clears the ticked selection after a successful send so a second click cannot send again', async () => {
+      vi.mocked(api).mockResolvedValueOnce(json({ requestId: 42 }))
+      const wrapper = mountPanel({ inspection: multi(), clients: clientList(true), ...identity })
+      await flushPromises()
+      await tickFirstBook(wrapper)
+      const box = wrapper.findAll('[role="checkbox"]').find((row) => row.text().includes('One.epub'))!
+      expect(box.attributes('aria-checked')).toBe('false')
+      await wrapper.findAll('button').at(-1)!.trigger('click')
+      await flushPromises()
+      expect(api).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps the selection and shows the server message when the send fails', async () => {
+      vi.mocked(api).mockResolvedValueOnce(json({ message: 'Client refused the files' }, 400))
+      const wrapper = mountPanel({ inspection: multi(), clients: clientList(true), ...identity })
+      await flushPromises()
+      await tickFirstBook(wrapper)
+      expect(wrapper.emitted('sent')).toBeUndefined()
+      expect(wrapper.get('[role="alert"]').text()).toBe('Client refused the files')
+      const box = wrapper.findAll('[role="checkbox"]').find((row) => row.text().includes('One.epub'))!
+      expect(box.attributes('aria-checked')).toBe('true')
+    })
   })
 })

@@ -86,6 +86,8 @@ function request(overrides: Partial<BookRequestItem> = {}): BookRequestItem {
     decisionNote: null,
     matchedBookId: null,
     bookDockFileId: null,
+    kind: 'single',
+    batch: null,
     selfServe: false,
     fulfillerUserId: null,
     statusReason: null,

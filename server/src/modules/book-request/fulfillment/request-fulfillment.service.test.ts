@@ -6,7 +6,8 @@ import type { BookRequestDownloadRow, BookRequestRow } from '../../../db/schema'
 import { newznabClientKey } from '../indexers/adapters/newznab.adapter';
 import { IndexerRetryExhaustedException, IndexerSearchException } from '../indexers/indexer-adapter';
 import { torrentMetadataFromFile } from './torrent.utils';
-import { RequestFulfillmentService } from './request-fulfillment.service';
+import { interpretRelease } from '../../scanner/lib/release-plan';
+import { RequestFulfillmentService, selectionManifest } from './request-fulfillment.service';
 
 const INFO_HASH = 'c9e15763f722f23e98a29decdfae341b98d53056';
 const MAGNET = `magnet:?xt=urn:btih:${INFO_HASH}&dn=Dune`;
@@ -22,6 +23,14 @@ function torrentBytes(name = 'dune.epub'): Buffer {
 function multiFileTorrent(names: string[]): Buffer {
   const files = names.map((name) => Buffer.concat([Buffer.from('d6:lengthi1e4:pathl'), bencodeString(name), Buffer.from('ee')]));
   return Buffer.concat([Buffer.from('d4:infod5:filesl'), ...files, Buffer.from('e4:name7:releaseee')]);
+}
+
+function namedTorrent(name: string, paths: string[]): Buffer {
+  const files = paths.map((path) => {
+    const parts = path.split('/').map((part) => bencodeString(part));
+    return Buffer.concat([Buffer.from('d6:lengthi1e4:pathl'), ...parts, Buffer.from('ee')]);
+  });
+  return Buffer.concat([Buffer.from('d4:infod5:filesl'), ...files, Buffer.from('e4:name'), bencodeString(name), Buffer.from('ee')]);
 }
 
 function user(): RequestUser {
@@ -111,6 +120,11 @@ function makeService(
   const gateway = { emitChanged: vi.fn(), emitProgress: vi.fn() };
   const events = { emit: vi.fn() };
 
+  const batches = {
+    findKinds: vi.fn().mockResolvedValue(new Map()),
+    summaries: vi.fn().mockResolvedValue(new Map()),
+  };
+
   const service = new RequestFulfillmentService(
     requests as never,
     downloads as never,
@@ -123,6 +137,7 @@ function makeService(
     notifier as never,
     gateway as never,
     events as never,
+    batches as never,
   );
 
   return {
@@ -140,10 +155,30 @@ function makeService(
     notifier,
     gateway,
     events,
+    batches,
   };
 }
 
 describe('RequestFulfillmentService.grab', () => {
+  it('refuses to grab for a batch request', async () => {
+    const { service, batches, adapter, requests } = makeService();
+    batches.findKinds.mockResolvedValue(new Map([[7, 'batch']]));
+
+    await expect(service.grab(7, { magnet: MAGNET }, user())).rejects.toThrow(BadRequestException);
+
+    expect(adapter.add).not.toHaveBeenCalled();
+    expect(requests.claimForGrab).not.toHaveBeenCalled();
+  });
+
+  it('refuses to list releases for a batch request', async () => {
+    const { service, batches, releases } = makeService();
+    batches.findKinds.mockResolvedValue(new Map([[7, 'batch']]));
+
+    await expect(service.listReleases(7)).rejects.toThrow(BadRequestException);
+
+    expect(releases.search).not.toHaveBeenCalled();
+  });
+
   it('records the attempt before calling the client, so an add never outlives its row', async () => {
     const { service, downloads, adapter } = makeService();
 
@@ -379,6 +414,34 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
     );
   });
 
+  it('grab still sends a whole torrent without wantedPaths', async () => {
+    const { service, adapter } = makeService({
+      releases: { find: vi.fn().mockReturnValue(RELEASE) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+    });
+
+    await service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+
+    expect(adapter.add.mock.calls[0]![0]).not.toHaveProperty('wantedPaths');
+  });
+
+  it('grabSelection writes the attempt under the batch request and narrows the add to the wanted files', async () => {
+    const { service, downloads, adapter, requests } = makeService({
+      releases: { find: vi.fn().mockReturnValue(RELEASE) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+    });
+
+    await service.grabSelection(
+      { sourceRequestId: 7, batchRequestId: 21, indexerId: 9, releaseGuid: 'r-1', downloadClientId: 4, wantedPaths: ['a/one.epub'] },
+      user(),
+    );
+
+    expect(downloads.create).toHaveBeenCalledWith(expect.objectContaining({ requestId: 21, releaseGuid: 'r-1' }));
+    expect(adapter.add).toHaveBeenCalledWith(expect.objectContaining({ wantedPaths: ['a/one.epub'] }), expect.anything());
+    expect(requests.updateIf).toHaveBeenCalledWith(21, ['approved'], { status: 'grabbed', statusReason: null });
+    expect(requests.claimForGrab).not.toHaveBeenCalled();
+  });
+
   it('hands a magnet redirect from a Torznab download endpoint to the torrent client', async () => {
     const { service, downloads, adapter } = makeService({
       releases: { find: vi.fn().mockReturnValue(RELEASE) },
@@ -567,6 +630,43 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
     });
   });
 
+  it('inspection carries a selection manifest for a multi-book torrent', async () => {
+    const root = '7th Time Loop [Seven Seas] [Retail]';
+    const paths = [1, 2, 3, 4, 5].map((n) => `Light Novels/Vol 0${n}.epub`).concat(['Extras/pack.zip', 'Extras/cover.jpg']);
+    const { service } = makeService({
+      releases: { find: vi.fn().mockReturnValue(RELEASE) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(namedTorrent(root, paths)) },
+    });
+
+    const inspection = await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' });
+
+    expect(inspection.selection?.rootName).toBe(root);
+    expect(inspection.selection?.files).toHaveLength(7);
+    expect(inspection.selection?.files.slice(0, 5).map((file) => file.unitIndex)).toEqual([0, 1, 2, 3, 4]);
+    expect(inspection.selection?.files.find((file) => file.path === 'Extras/pack.zip')?.unitIndex).toBeNull();
+    expect(inspection.selection?.files.find((file) => file.path === 'Extras/cover.jpg')?.unitIndex).toBeNull();
+    expect(inspection.selection?.units).toHaveLength(5);
+  });
+
+  it('inspection has no selection manifest for a single-book torrent', async () => {
+    const { service } = makeService({
+      releases: { find: vi.fn().mockReturnValue(RELEASE) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(namedTorrent('Dune', ['Dune.epub', 'cover.jpg'])) },
+    });
+
+    const inspection = await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' });
+    expect(inspection.selection).toBeNull();
+  });
+
+  /** A .torrent over the file cap is refused earlier, so the truncated plan is built directly. */
+  it('inspection has no selection manifest when the plan is truncated', () => {
+    const inputs = Array.from({ length: 2001 }, (_, index) => ({ path: `book-${index}.epub`, sizeBytes: 1 }));
+    const plan = interpretRelease(inputs);
+
+    expect(plan.truncated).toBe(true);
+    expect(selectionManifest(plan, 'release', inputs)).toBeNull();
+  });
+
   it('bounds the manifest response even when every listed file is supported', async () => {
     const names = Array.from({ length: 201 }, (_, index) => `book-${index}.epub`);
     const { service } = makeService({
@@ -600,6 +700,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
       unitCount: 0,
       ignoredFileCount: 0,
       containerCount: 0,
+      selection: null,
     });
     expect(indexerAdapter.fetchTorrentFile).not.toHaveBeenCalled();
   });

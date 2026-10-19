@@ -14,6 +14,9 @@ import { UserModule } from '../user/user.module';
 import { BookRequestAdminController } from './book-request-admin.controller';
 import { BookRequestAutomationController } from './book-request-automation.controller';
 import { BookRequestAttributionService } from './book-request-attribution.service';
+import { BookRequestBatchBootstrapService } from './book-request-batch-bootstrap.service';
+import { BookRequestBatchRepository } from './batch/book-request-batch.repository';
+import { BookRequestBatchService } from './batch/book-request-batch.service';
 import { BookRequestAutoGrabBootstrapService } from './book-request-auto-grab-bootstrap.service';
 import { BookRequestController } from './book-request.controller';
 import { BookRequestSelfFulfilController } from './book-request-self-fulfil.controller';
@@ -111,6 +114,9 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
     BookRequestSourcesService,
     BookRequestRepository,
     BookRequestAutoGrabBootstrapService,
+    BookRequestBatchRepository,
+    BookRequestBatchBootstrapService,
+    BookRequestBatchService,
     ShelfmarkSchemaBootstrapService,
     BookRequestAttributionService,
     BookRequestDedupeService,

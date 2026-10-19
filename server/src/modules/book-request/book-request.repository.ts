@@ -58,6 +58,7 @@ import {
   type NewBookRequestRow,
 } from '../../db/schema';
 import { bookRequestAutoGrab } from './schema/book-request-auto-grab.schema';
+import { bookRequestKind } from './schema/book-request-batch.schema';
 import { readShelfmarkSchemaChanges } from './shelfmark/shelfmark-schema';
 
 /**
@@ -898,6 +899,7 @@ export class BookRequestRepository {
           // A request for a retired medium is never searched, so it is never due either.
           inArray(bookRequests.mediaKind, [...BOOK_REQUEST_MEDIA_KINDS]),
           sql`${bookRequests.targetLibraryId} is not null`,
+          sql`${bookRequestKind.kind} <> 'batch'`,
           sql`${bookRequests.createdAt} > now() - make_interval(days => ${maxAgeDays})`,
           sql`now() - ${bookRequests.updatedAt} >= make_interval(hours => ${baseIntervalHours}) * least(
             ${backoffCap}::double precision,

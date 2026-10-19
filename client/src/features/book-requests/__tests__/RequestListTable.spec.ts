@@ -40,6 +40,8 @@ function request(overrides: Partial<BookRequestItem> = {}): BookRequestItem {
     decisionNote: null,
     matchedBookId: 42,
     bookDockFileId: null,
+    kind: 'single',
+    batch: null,
     selfServe: false,
     fulfillerUserId: null,
     statusReason: null,
@@ -193,5 +195,59 @@ describe('RequestListTable pairs', () => {
     // Only the pending ebook can be acted on in bulk; the downloading audiobook cannot.
     expect((renderPair([10]).get('table tbody input[type="checkbox"]').element as HTMLInputElement).checked).toBe(true)
     expect((renderPair([]).get('table tbody input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('does not make an approved batch row selectable', () => {
+    const wrapper = render(request({ kind: 'batch', batch: { total: 3, inDock: 0, failed: 0 }, status: 'approved' }))
+
+    expect(wrapper.findAll('input[type="checkbox"]').filter((box) => !(box.element as HTMLInputElement).disabled)).toHaveLength(0)
+  })
+
+  it('shows a batch row with its unit count', () => {
+    const wrapper = render(request({ kind: 'batch', batch: { total: 12, inDock: 0, failed: 0 }, status: 'downloading' }))
+
+    expect(wrapper.text()).toContain('Batch · 12 books')
+  })
+
+  it('shows N of M in Book Dock while importing', () => {
+    const wrapper = render(request({ kind: 'batch', batch: { total: 12, inDock: 5, failed: 0 }, status: 'importing' }))
+
+    expect(wrapper.text()).toContain('5 of 12 in Book Dock')
+    expect(wrapper.text()).not.toContain('Batch · 12 books')
+    const bar = wrapper.findAll('[role="progressbar"]').find((el) => el.attributes('aria-valuemax') === '12')
+    expect(bar?.attributes('aria-valuenow')).toBe('5')
+  })
+
+  it('keeps the N of M count once the batch has finished', () => {
+    const wrapper = render(request({ kind: 'batch', batch: { total: 12, inDock: 10, failed: 2 }, status: 'available' }))
+
+    expect(wrapper.text()).toContain('10 of 12 in Book Dock · 2 failed')
+    expect(wrapper.text()).not.toContain('Batch · 12 books')
+  })
+
+  it('batch rows use the live download progress like single requests', () => {
+    const item = request({
+      kind: 'batch',
+      batch: { total: 3, inDock: 0, failed: 0 },
+      status: 'downloading',
+      download: {
+        id: 7,
+        status: 'downloading',
+        progressPercent: 10,
+        downloadedBytes: 100,
+        totalBytes: 1000,
+      } as BookRequestItem['download'],
+    })
+    const wrapper = render(item)
+    wrapper.setProps({
+      progressByRequest: {
+        [item.id]: { requestId: item.id, downloadId: 7, status: 'downloading', progressPercent: 64, downloadedBytes: 640, totalBytes: 1000 },
+      },
+    })
+
+    return wrapper.vm.$nextTick().then(() => {
+      const bars = wrapper.findAll('[role="progressbar"]')
+      expect(bars.some((bar) => bar.attributes('aria-valuenow') === '64')).toBe(true)
+    })
   })
 })

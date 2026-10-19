@@ -1,9 +1,11 @@
 import type {
+  BatchSummary,
   BookRequestDownloadItem,
   BookRequestDownloadSource,
   BookRequestDownloadStatus,
   BookRequestHandbackCode,
   BookRequestItem,
+  BookRequestKind,
   BookRequestMediaKind,
   BookRequestStatus,
   BookRequestSubscriber,
@@ -23,6 +25,8 @@ export function mapBookRequestRow(
   subscribers: BookRequestSubscriber[],
   download: BookRequestDownloadJoinedRow | null,
   dismissed: boolean,
+  kind: BookRequestKind,
+  batch: BatchSummary | null,
 ): BookRequestItem {
   const r = row.request;
   return {
@@ -56,6 +60,8 @@ export function mapBookRequestRow(
     decisionNote: r.decisionNote,
     matchedBookId: r.matchedBookId,
     bookDockFileId: r.bookDockFileId,
+    kind,
+    batch,
     selfServe: r.selfServe,
     fulfillerUserId: r.fulfillerUserId,
     statusReason: r.statusReason,

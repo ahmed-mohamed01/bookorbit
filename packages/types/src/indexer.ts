@@ -681,6 +681,33 @@ export interface ReleaseUnitChoice extends ReleaseUnitSummary {
   primaryPath: string;
 }
 
+/**
+ * One file an operator picked inside a release. Release-relative with the root segment stripped,
+ * so it stays meaningful wherever the release lands.
+ */
+export interface ReleaseSelectionFile {
+  path: string;
+  sizeBytes: number | null;
+  /** The unit the file belongs to; null for files outside every unit. */
+  unitIndex: number | null;
+}
+
+/**
+ * What the operator selected from a release: a bounded file list plus the units those files
+ * belong to, so a grab can be narrowed to chosen content rather than the whole torrent.
+ */
+export interface ReleaseSelectionManifest {
+  rootName: string | null;
+  files: ReleaseSelectionFile[];
+  units: Array<{
+    index: number;
+    title: string | null;
+    mediaKind: ReleaseUnitMediaKind;
+    sizeBytes: number | null;
+    primaryPath: string;
+  }>;
+}
+
 /** The safe, credential-free result of inspecting one selected release server-side. */
 export interface ReleaseFileInspection {
   source: BookRequestDownloadSource;
@@ -697,6 +724,8 @@ export interface ReleaseFileInspection {
   ignoredFileCount: number;
   /** Archives found in the release. Non-zero with no units is what `contents_unknown` means. */
   containerCount: number;
+  /** The operator's file selection, when the client supports one and a selection was made. */
+  selection: ReleaseSelectionManifest | null;
 }
 
 /**

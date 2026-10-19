@@ -40,7 +40,7 @@ const { t } = useI18n()
 
 const isPending = computed(() => props.request.status === 'pending')
 const canApprove = computed(() => props.canManage && isPending.value)
-const canGrab = computed(() => props.canManage && isGrabbableBookRequestStatus(props.request.status))
+const canGrab = computed(() => props.canManage && props.request.kind !== 'batch' && isGrabbableBookRequestStatus(props.request.status))
 const canCancel = computed(() => canCancelRequest(props.request, props.currentUserId, props.canManage, props.canSelfFulfil))
 const canDismiss = computed(() => canDismissRequest(props.request))
 const canDelete = computed(() => canDeleteRequest(props.request, props.canManage))

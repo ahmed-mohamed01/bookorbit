@@ -39,6 +39,7 @@ import type {
   ReleaseFileInspection,
   ReleaseFileInspectionStatus,
   ReleaseManifestFile,
+  ReleaseSelectionManifest,
   ReleaseSearchOverrides,
   ReleaseSearchResult,
   ReleaseSearchProgress,
@@ -50,6 +51,7 @@ import { isUniqueViolation } from '../../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import type { RequestUser } from '../../../common/types/request-user';
 import type { BookRequestDownloadRow, BookRequestRow } from '../../../db/schema';
+import { BookRequestBatchRepository } from '../batch/book-request-batch.repository';
 import { BOOK_REQUEST_DOWNLOAD_FAILED, BookRequestEventsService } from '../book-request-events.service';
 import { BookRequestGateway } from '../book-request.gateway';
 import { BookRequestNotifier } from '../book-request-notifier.service';
@@ -153,7 +155,14 @@ export class RequestFulfillmentService {
     private readonly notifier: BookRequestNotifier,
     private readonly gateway: BookRequestGateway,
     private readonly events: BookRequestEventsService,
+    private readonly batches: BookRequestBatchRepository,
   ) {}
+
+  private async refuseBatch(requestId: number): Promise<void> {
+    if ((await this.batches.findKinds([requestId])).get(requestId) === 'batch') {
+      throw new BadRequestException('A batch cannot be sent again. Start a new batch from the release.');
+    }
+  }
 
   /**
    * The ranked, cross-indexer release list for one request. Read-only, cached briefly, and the
@@ -170,6 +179,7 @@ export class RequestFulfillmentService {
   async prepareReleaseSearch(requestId: number, options: { refresh?: boolean; overrides?: SearchBookRequestReleasesDto } = {}) {
     const joined = await this.requests.findById(requestId);
     if (!joined) throw new NotFoundException('Book request not found');
+    await this.refuseBatch(requestId);
     if (UNSEARCHABLE.includes(joined.request.status as BookRequestStatus)) {
       throw new BadRequestException(`A request that is ${joined.request.status} is not searched for releases`);
     }
@@ -217,6 +227,7 @@ export class RequestFulfillmentService {
     const joined = await this.requests.findById(requestId);
     if (!joined) throw new NotFoundException('Book request not found');
     const request = joined.request;
+    await this.refuseBatch(requestId);
 
     if (!isGrabbableBookRequestStatus(request.status as BookRequestStatus)) {
       throw new BadRequestException(`A request that is ${request.status} cannot be sent to a download client`);
@@ -252,6 +263,46 @@ export class RequestFulfillmentService {
     }
   }
 
+  /**
+   * Starts a torrent narrowed to the files of the ticked units, on behalf of a batch request. The
+   * release is resolved under the request it was found for, while the attempt row and the status
+   * move belong to the batch request that tracks the units.
+   */
+  async grabSelection(
+    input: {
+      sourceRequestId: number;
+      batchRequestId: number;
+      indexerId: number;
+      releaseGuid: string;
+      downloadClientId: number;
+      wantedPaths: string[];
+    },
+    user: RequestUser | null,
+  ): Promise<void> {
+    const grab = await this.resolvePickedRelease(input.sourceRequestId, input.indexerId, input.releaseGuid.trim(), true);
+    assertReleaseCanImport(grab.inspection);
+
+    const client = await this.resolveClient(input.downloadClientId, grab.source);
+    if (client === null) throw grabError('GRAB_CLIENT_REFUSED', 'Picking books needs a download client');
+
+    const download = await this.handOff({
+      requestId: input.batchRequestId,
+      grab,
+      client,
+      user,
+      directUrl: null,
+      directFileName: null,
+      torrentFileName: grab.torrentFileName,
+      wantedPaths: input.wantedPaths,
+    });
+
+    await this.requests.updateIf(input.batchRequestId, ['approved'], { status: 'grabbed', statusReason: null });
+    this.logger.log(
+      `[book_request.grab_selection] [end] requestId=${input.batchRequestId} sourceRequestId=${input.sourceRequestId} downloadId=${download.id} clientId=${client.id} files=${input.wantedPaths.length} userId=${user?.id ?? 'automation'} - selected files sent to the download client`,
+    );
+    this.gateway.emitChanged();
+  }
+
   private async startGrab(requestId: number, dto: GrabBookRequestDto, user: RequestUser | null): Promise<BookRequestItem> {
     // Asking the source is the part worth recording when it refuses, because a refusal nobody
     // recorded is exactly the one that gets asked about later: "it downloaded from the second
@@ -271,6 +322,46 @@ export class RequestFulfillmentService {
     const directUrl = client === null ? requireFileUrl(grab) : null;
     const directFileName = client === null ? stagedDirectFileName(grab.fileName, grab.releaseFormat) : null;
 
+    const download = await this.handOff({
+      requestId,
+      grab,
+      client,
+      user,
+      directUrl,
+      directFileName,
+      torrentFileName: grab.torrentFileName ?? dto.torrentFileName,
+    });
+
+    // Still conditional on the claim this grab took, so a cancellation that landed while the client
+    // was being asked is not overwritten by the answer.
+    await this.requests.updateIf(requestId, ['grabbed'], { status: 'grabbed', statusReason: null });
+    // A retry is the one way out of a settled status, and someone who hid the failure still wants
+    // the book when it lands. Leaving the dismissal on would hide the arrival too.
+    await this.requests.clearDismissals(requestId);
+    this.logger.log(
+      `[book_request.grab] [end] requestId=${requestId} downloadId=${download.id} clientId=${client?.id ?? 'direct'} indexerId=${grab.indexerId ?? 'none'} indexer="${sanitizeLogValue(grab.indexerName ?? 'pasted by hand')}" userId=${user?.id ?? 'automation'} source=${grab.source} key=${grab.clientKey} - release grab started`,
+    );
+    this.gateway.emitChanged();
+
+    return this.toItem(requestId, user?.id ?? null);
+  }
+
+  /**
+   * Writes the attempt row and hands the release to its client or the direct fetcher. Shared by the
+   * ordinary grab and the batch grab, which differ only in which request owns the attempt and
+   * whether the client is told to skip files.
+   */
+  private async handOff(input: {
+    requestId: number;
+    grab: ResolvedGrab;
+    client: Awaited<ReturnType<RequestFulfillmentService['resolveClient']>>;
+    user: RequestUser | null;
+    directUrl: string | null;
+    directFileName: string | null;
+    torrentFileName: string | undefined;
+    wantedPaths?: string[];
+  }): Promise<BookRequestDownloadRow> {
+    const { requestId, grab, client, user, directUrl, directFileName, torrentFileName, wantedPaths } = input;
     let download: BookRequestDownloadRow;
     try {
       download = await this.downloads.create({
@@ -314,11 +405,12 @@ export class RequestFulfillmentService {
             {
               magnet: grab.magnet,
               torrentFile: grab.torrentFile,
-              torrentFileName: grab.torrentFileName ?? dto.torrentFileName,
+              torrentFileName,
               nzbFile: grab.nzbFile,
               nzbFileName: grab.nzbFileName,
               shelfmarkRelease: grab.shelfmarkRelease,
               clientKey: grab.clientKey,
+              ...(wantedPaths !== undefined ? { wantedPaths } : {}),
               // The indexer's goals, enforced by the client: BookOrbit never stops a seed itself.
               ...(grab.seedRatioGoal !== null && grab.seedRatioGoal !== undefined ? { seedRatioGoal: grab.seedRatioGoal } : {}),
               ...(grab.seedTimeMinutes !== null && grab.seedTimeMinutes !== undefined ? { seedTimeMinutes: grab.seedTimeMinutes } : {}),
@@ -347,18 +439,7 @@ export class RequestFulfillmentService {
       );
     }
 
-    // Still conditional on the claim this grab took, so a cancellation that landed while the client
-    // was being asked is not overwritten by the answer.
-    await this.requests.updateIf(requestId, ['grabbed'], { status: 'grabbed', statusReason: null });
-    // A retry is the one way out of a settled status, and someone who hid the failure still wants
-    // the book when it lands. Leaving the dismissal on would hide the arrival too.
-    await this.requests.clearDismissals(requestId);
-    this.logger.log(
-      `[book_request.grab] [end] requestId=${requestId} downloadId=${download.id} clientId=${client?.id ?? 'direct'} indexerId=${grab.indexerId ?? 'none'} indexer="${sanitizeLogValue(grab.indexerName ?? 'pasted by hand')}" userId=${user?.id ?? 'automation'} source=${grab.source} key=${grab.clientKey} - release grab started`,
-    );
-    this.gateway.emitChanged();
-
-    return this.toItem(requestId, user?.id ?? null);
+    return download;
   }
 
   private async withTransientRetry<T>(automated: boolean, requestId: number, phase: 'source' | 'client', run: () => Promise<T>): Promise<T> {
@@ -553,12 +634,21 @@ export class RequestFulfillmentService {
   private async toItem(requestId: number, viewerId: number | null): Promise<BookRequestItem> {
     const joined = await this.requests.findById(requestId);
     if (!joined) throw new NotFoundException('Book request not found');
-    const [subscribers, downloads, dismissed] = await Promise.all([
+    const [subscribers, downloads, dismissed, kinds, summaries] = await Promise.all([
       this.requests.findSubscribers([requestId]),
       this.downloads.findLatestForRequests([requestId]),
       viewerId === null ? Promise.resolve(new Set<number>()) : this.requests.findDismissedRequestIds(viewerId, [requestId]),
+      this.batches.findKinds([requestId]),
+      this.batches.summaries([requestId]),
     ]);
-    return mapBookRequestRow(joined, subscribers.get(requestId) ?? [], downloads.get(requestId) ?? null, dismissed.has(requestId));
+    return mapBookRequestRow(
+      joined,
+      subscribers.get(requestId) ?? [],
+      downloads.get(requestId) ?? null,
+      dismissed.has(requestId),
+      kinds.get(requestId) ?? 'single',
+      summaries.get(requestId) ?? null,
+    );
   }
 
   /**
@@ -1101,7 +1191,8 @@ function torrentInspection(metadata: TorrentFileMetadata): ReleaseFileInspection
     ...allFiles.filter((file) => !file.bookFile).slice(0, MAX_DISPLAYED_MANIFEST_FILES - displayedPrimaryFiles.length),
   ];
 
-  const plan = interpretRelease(releaseInputsFromManifest(metadata), { rootName: metadata.name });
+  const inputs = releaseInputsFromManifest(metadata);
+  const plan = interpretRelease(inputs, { rootName: metadata.name });
 
   return {
     source: 'torrent_file',
@@ -1110,7 +1201,37 @@ function torrentInspection(metadata: TorrentFileMetadata): ReleaseFileInspection
     totalFiles: allFiles.length,
     primaryFileCount: primaryFiles.length,
     truncated: displayed.length < allFiles.length,
+    selection: selectionManifest(plan, metadata.name, inputs),
     ...unitFields(plan),
+  };
+}
+
+/**
+ * Only a release with several units is worth narrowing, and a truncated plan cannot say which
+ * files belong to which unit, so neither case offers a selection.
+ */
+export function selectionManifest(plan: ReleasePlan, rootName: string | null, inputs: ReleaseFileInput[]): ReleaseSelectionManifest | null {
+  if (plan.truncated || plan.units.length < 2) return null;
+
+  const unitIndexByPath = new Map<string, number>();
+  plan.units.forEach((unit, index) => {
+    for (const file of unit.files) unitIndexByPath.set(file.path, index);
+  });
+
+  return {
+    rootName,
+    files: inputs.map((input) => ({
+      path: input.path,
+      sizeBytes: input.sizeBytes ?? null,
+      unitIndex: unitIndexByPath.get(input.path) ?? null,
+    })),
+    units: plan.units.map((unit, index) => ({
+      index,
+      title: unit.title,
+      mediaKind: unit.mediaKind,
+      sizeBytes: unit.sizeBytes,
+      primaryPath: unit.primaryPath,
+    })),
   };
 }
 
@@ -1157,6 +1278,7 @@ function directFileInspection(fileName: string, sizeBytes: number | null | undef
     totalFiles: 1,
     primaryFileCount: bookFile ? 1 : 0,
     truncated: false,
+    selection: null,
     ...unitFields(plan),
   };
 }
@@ -1173,6 +1295,7 @@ function metadataUnavailableInspection(source: 'magnet' | 'nzb_file' | 'shelfmar
     unitCount: 0,
     ignoredFileCount: 0,
     containerCount: 0,
+    selection: null,
   };
 }
 

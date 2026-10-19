@@ -40,6 +40,7 @@ export * from "./kobo";
 export * from "./koreader";
 export * from "./book-dock";
 export * from "./book-request";
+export * from "./book-request-batch";
 export * from "./book-request-automation";
 export * from "./book-request-destination";
 export * from "./book-request-preferences";

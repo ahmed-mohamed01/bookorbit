@@ -65,6 +65,18 @@ describe('requestOutcome', () => {
     expect(requestOutcome(row, null, formatTime)).toEqual({ kind: 'settled', key: 'filed', params: { time: TIME } })
   })
 
+  it('reports a finished batch as placed in Book Dock rather than filed', () => {
+    const row = request({ status: 'available', kind: 'batch', targetLibraryName: 'Main' })
+
+    expect(requestOutcome(row, null, formatTime)).toEqual({ kind: 'settled', key: 'inBookDock', params: { time: TIME } })
+  })
+
+  it('keeps a failed batch a failure so the row shows its status reason', () => {
+    const row = request({ status: 'failed', kind: 'batch', statusReason: 'BookOrbit could not read the finished download: permission denied' })
+
+    expect(requestOutcome(row, null, formatTime)).toEqual({ kind: 'failure', key: null })
+  })
+
   it.each([
     ['rejected', 'rejected'],
     ['cancelled', 'cancelled'],

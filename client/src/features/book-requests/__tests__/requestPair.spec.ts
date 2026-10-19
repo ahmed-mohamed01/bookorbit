@@ -129,6 +129,12 @@ describe('pair rows', () => {
     expect(oneLeft.grabHalves.map((item) => item.id)).toEqual([10])
   })
 
+  it('never offers a batch half for a release grab', () => {
+    const row = { ...ebook, status: 'approved' as const, kind: 'batch' as const, companion: { ...audiobook, status: 'approved' as const } }
+    const actions = pairRowActions(row, { userId: 4, canManage: true, canSelfFulfil: false })
+    expect(actions.grabHalves.map((item) => item.id)).toEqual([11])
+  })
+
   it('only counts the halves a self-fulfiller drives', () => {
     const row = { ...ebook, status: 'approved' as const, companion: { ...audiobook, status: 'approved' as const, userId: 9 } }
     const actions = pairRowActions(row, { userId: 4, canManage: false, canSelfFulfil: true })

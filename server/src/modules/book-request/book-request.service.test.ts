@@ -93,6 +93,7 @@ function makeService(
     libraryService?: Record<string, unknown>;
     companions?: Record<string, unknown>;
     requestSources?: Record<string, unknown>;
+    batches?: Record<string, unknown>;
     /** The user a delegated submission names, as `AuthService` would resolve them. */
     actingUser?: RequestUser | null;
   } = {},
@@ -180,6 +181,12 @@ function makeService(
   const companions = { handOn: vi.fn().mockResolvedValue(false), ...overrides.companions };
   const requestSources = { assertRequestable: vi.fn().mockResolvedValue(undefined), ...overrides.requestSources };
 
+  const batches = {
+    findKinds: vi.fn().mockResolvedValue(new Map()),
+    summaries: vi.fn().mockResolvedValue(new Map()),
+    ...overrides.batches,
+  };
+
   const service = new BookRequestService(
     repo as never,
     dedupe as never,
@@ -194,6 +201,7 @@ function makeService(
     {} as never,
     requestSources as never,
     companions as never,
+    batches as never,
   );
 
   return {
@@ -210,6 +218,7 @@ function makeService(
     auth,
     companions,
     requestSources,
+    batches,
   };
 }
 
@@ -1067,6 +1076,19 @@ describe('BookRequestService.cancelDownload', () => {
     expect(repo.updateIf).toHaveBeenCalledWith(10, ['grabbed', 'downloading'], { status: 'approved', statusReason: null });
     expect(repo.updateIf).not.toHaveBeenCalledWith(10, expect.anything(), expect.objectContaining({ status: 'cancelled' }));
     expect(gateway.emitChanged).toHaveBeenCalled();
+  });
+
+  it('cancels the whole request when it is a batch, never returning it to approved', async () => {
+    const { service, repo, removal } = makeService({
+      repo: { findById: vi.fn().mockResolvedValue(joined({ status: 'downloading' })) },
+      batches: { findKinds: vi.fn().mockResolvedValue(new Map([[10, 'batch']])) },
+    });
+
+    await service.cancelDownload(10, 11, user());
+
+    expect(repo.updateIf).toHaveBeenCalledWith(10, expect.anything(), expect.objectContaining({ status: 'cancelled' }));
+    expect(repo.updateIf).not.toHaveBeenCalledWith(10, expect.anything(), { status: 'approved', statusReason: null });
+    expect(removal.removeLatestForRequest).toHaveBeenCalled();
   });
 
   it('refuses someone who cannot drive the request', async () => {
@@ -2527,6 +2549,33 @@ describe('BookRequestService.submit for a book that is missing a format', () => 
 
     expect(result.subscribed).toBe(true);
     expect(repo.setTargetBookIfUnset).toHaveBeenCalledWith(7, 42);
+  });
+});
+
+describe('BookRequestService list batch info', () => {
+  it('list items carry batch kind and unit counts', async () => {
+    const { service, batches } = makeService({
+      repo: {
+        findAll: vi.fn().mockResolvedValue({
+          items: [
+            { ...joined({ id: 10 }), visibleCompanionId: null },
+            { ...joined({ id: 12 }), visibleCompanionId: null },
+          ],
+          total: 2,
+        }),
+      },
+      batches: {
+        findKinds: vi.fn().mockResolvedValue(new Map([[12, 'batch']])),
+        summaries: vi.fn().mockResolvedValue(new Map([[12, { total: 3, inDock: 2, failed: 1 }]])),
+      },
+    });
+
+    const page = await service.listMine({}, user());
+
+    expect(page.items[0]).toMatchObject({ id: 10, kind: 'single', batch: null });
+    expect(page.items[1]).toMatchObject({ id: 12, kind: 'batch', batch: { total: 3, inDock: 2, failed: 1 } });
+    expect(batches.findKinds).toHaveBeenCalledExactlyOnceWith([10, 12]);
+    expect(batches.summaries).toHaveBeenCalledExactlyOnceWith([10, 12]);
   });
 });
 

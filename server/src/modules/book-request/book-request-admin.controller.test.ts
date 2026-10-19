@@ -4,6 +4,7 @@ import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fa
 import type { ReleaseSearchProgress, ReleaseSearchResult } from '@bookorbit/types';
 import { BookRequestAdminController } from './book-request-admin.controller';
 import { BookRequestService } from './book-request.service';
+import { BookRequestBatchService } from './batch/book-request-batch.service';
 import { DownloadClientConfigService } from './download-clients/download-client-config.service';
 import { RequestFulfillmentService } from './fulfillment/request-fulfillment.service';
 import { RequestImportService } from './fulfillment/request-import.service';
@@ -28,7 +29,14 @@ describe('BookRequestAdminController release stream', () => {
       controllers: [BookRequestAdminController],
       providers: [
         { provide: RequestFulfillmentService, useValue: fulfillment },
-        ...[BookRequestService, DownloadClientConfigService, RequestImportService, RequestSeedService, RequestVerificationService].map((provide) => ({
+        ...[
+          BookRequestService,
+          BookRequestBatchService,
+          DownloadClientConfigService,
+          RequestImportService,
+          RequestSeedService,
+          RequestVerificationService,
+        ].map((provide) => ({
           provide,
           useValue: {},
         })),

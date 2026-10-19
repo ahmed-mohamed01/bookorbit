@@ -5,7 +5,7 @@ import type { ReleaseUnitChoice } from '@bookorbit/types';
 import { randomUUID } from 'crypto';
 import { constants } from 'fs';
 import { copyFile, link, mkdir, opendir, readdir, realpath, rmdir, stat, unlink } from 'fs/promises';
-import { basename, dirname, extname, join, relative, sep } from 'path';
+import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'path';
 
 import { isUniqueViolation } from '../../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
@@ -31,6 +31,7 @@ import {
   type ReleaseUnit,
 } from '../../scanner/lib/release-plan';
 import { UploadValidatorService } from '../../upload/upload-validator.service';
+import { BookRequestBatchRepository } from '../batch/book-request-batch.repository';
 import { BookRequestRepository } from '../book-request.repository';
 import { BookRequestGateway } from '../book-request.gateway';
 import { DownloadClientConfigService } from '../download-clients/download-client-config.service';
@@ -93,6 +94,7 @@ export class RequestImportService implements OnApplicationBootstrap {
     private readonly fulfillment: RequestFulfillmentService,
     private readonly removal: DownloadRemovalService,
     private readonly audit: AuditService,
+    private readonly batches: BookRequestBatchRepository,
   ) {
     this.bookDockPath = this.config.getOrThrow<string>('storage.bookDockPath');
     this.stagingPath = join(this.config.getOrThrow<string>('storage.appDataPath'), 'tmp', 'release-extract');
@@ -206,6 +208,11 @@ export class RequestImportService implements OnApplicationBootstrap {
       plan,
       containmentRoot: contentContainmentRoot,
     } = await this.resolveReleasePlan(localPath, resolved.containmentRoot, extractionDirectory);
+
+    if ((await this.batches.findKinds([request.id])).get(request.id) === 'batch') {
+      await this.runBatchImportFromDisk(download, request, root, plan, contentContainmentRoot);
+      return;
+    }
 
     // Part of the release was never read, so what looks like a whole book may be the half of one
     // that fitted inside the bounds. Importing it would mark the request available on a book with
@@ -333,6 +340,222 @@ export class RequestImportService implements OnApplicationBootstrap {
       });
 
     await this.removal.cleanupStagedDirectDownload(download);
+  }
+
+  /**
+   * Every ticked unit is placed on its own, so one missing or unplaceable file fails only its row.
+   * The download's own book_dock_file_id stays null: verification follows that column, and a batch
+   * has no single dock row for it to follow. Rows already in the dock or failed are skipped, which
+   * makes a re-run after a crash place only what is left.
+   */
+  private async runBatchImportFromDisk(
+    download: BookRequestDownloadRow,
+    request: BookRequestRow,
+    root: string,
+    plan: ReleasePlan,
+    containmentRoot: string,
+  ): Promise<void> {
+    const started = Date.now();
+    const rows = await this.batches.findUnits(request.id);
+
+    const unreadable = await batchSourceProblem(root, plan);
+    if (unreadable) {
+      await this.failUnreadableBatch(download, request, unreadable, started);
+      return;
+    }
+
+    // 'importing' is accepted so a run resumed after a crash can pick the request up again.
+    const claimed = await this.requests.updateIf(request.id, [...WORKER_WRITABLE_BOOK_REQUEST_STATUSES, 'importing'], { status: 'importing' });
+    if (!claimed) {
+      await this.downloads.updateIf(download.id, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, {
+        status: 'failed',
+        errorMessage: 'The request was settled while this download was finishing, so nothing was imported',
+      });
+      this.gateway.emitChanged();
+      return;
+    }
+    this.gateway.emitChanged();
+
+    this.logger.log(
+      `[book_request.batch_import] [start] requestId=${request.id} downloadId=${download.id} units=${rows.length} - placing batch units`,
+    );
+
+    const diskUnits = new Map(plan.units.map((unit) => [unit.primaryPath, unit]));
+    let placed = rows.filter((row) => row.status === 'in_dock').length;
+    let failed = 0;
+
+    for (const row of rows) {
+      if (row.status !== 'waiting' && row.status !== 'placing') continue;
+      if ((await this.requests.findById(request.id))?.request.status !== 'importing') {
+        this.logger.warn(
+          `[book_request.batch_import] [end] requestId=${request.id} downloadId=${download.id} placed=${placed} failed=${failed} durationMs=${Date.now() - started} - the request was settled mid-import, stopping`,
+        );
+        await this.downloads.updateIf(download.id, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, {
+          status: 'failed',
+          errorMessage: 'The request was settled while this download was finishing, so the remaining books were not imported',
+        });
+        this.gateway.emitChanged();
+        return;
+      }
+      const unit = diskUnits.get(row.primaryPath);
+      try {
+        if (!unit) {
+          await this.batches.updateUnit(row.id, { status: 'failed', errorMessage: 'This file was not found in the finished download.' });
+          this.logBatchUnitFailure(request.id, row.unitIndex, 'This file was not found in the finished download.');
+          failed++;
+        } else {
+          let dockFileId =
+            row.status === 'placing' && row.bookDockFileId !== null ? await this.adoptPlacedUnit(request.id, row.bookDockFileId) : null;
+          if (dockFileId === null) {
+            await this.batches.updateUnit(row.id, { status: 'placing', errorMessage: null });
+            dockFileId = await this.placeBatchUnit(download, request, root, unit, containmentRoot, row.id);
+          }
+          await this.batches.updateUnit(row.id, { status: 'in_dock', bookDockFileId: dockFileId });
+          placed++;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await this.batches.updateUnit(row.id, { status: 'failed', errorMessage: message.slice(0, 500) });
+        this.logBatchUnitFailure(request.id, row.unitIndex, message);
+        failed++;
+      }
+      this.gateway.emitChanged();
+    }
+
+    // The request first: a crash between the two leaves a completed download that the resume sweep
+    // settles, where the other order would leave the request at 'importing' for good.
+    await this.requests.updateIf(
+      request.id,
+      ['importing'],
+      placed > 0 ? { status: 'available' } : { status: 'failed', statusReason: 'None of the ticked books could be placed in Book Dock.' },
+    );
+    await this.downloads.updateIf(download.id, ['completed'], { status: 'imported' });
+    this.logger.log(
+      `[book_request.batch_import] [end] requestId=${request.id} downloadId=${download.id} placed=${placed} failed=${failed} durationMs=${Date.now() - started} - batch import finished`,
+    );
+    this.gateway.emitChanged();
+    await this.removal.cleanupStagedDirectDownload(download);
+  }
+
+  /**
+   * Units stay 'waiting': nothing was wrong with them, so a later re-run can still place them once
+   * the download is readable again.
+   */
+  private async failUnreadableBatch(
+    download: BookRequestDownloadRow,
+    request: BookRequestRow,
+    problem: { errorClass: string; reason: string },
+    started: number,
+  ): Promise<void> {
+    const message = `BookOrbit could not read the finished download: ${problem.reason}`;
+    await this.requests.updateIf(request.id, [...WORKER_WRITABLE_BOOK_REQUEST_STATUSES, 'importing'], {
+      status: 'failed',
+      statusReason: message,
+    });
+    await this.downloads.updateIf(download.id, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, { status: 'failed', errorMessage: message });
+    this.logger.warn(
+      `[book_request.batch_import] [fail] requestId=${request.id} downloadId=${download.id} durationMs=${Date.now() - started} errorClass=${problem.errorClass} error="${sanitizeLogValue(message)}" - the finished download could not be read`,
+    );
+    this.gateway.emitChanged();
+    await this.removal.cleanupStagedDirectDownload(download);
+  }
+
+  private logBatchUnitFailure(requestId: number, unitIndex: number, message: string): void {
+    this.logger.warn(
+      `[book_request.batch_import] [fail] requestId=${requestId} unitIndex=${unitIndex} error="${sanitizeLogValue(message)}" - could not place this unit`,
+    );
+  }
+
+  private async placeBatchUnit(
+    download: BookRequestDownloadRow,
+    request: BookRequestRow,
+    root: string,
+    unit: ReleaseUnit,
+    containmentRoot: string,
+    unitRowId: number,
+  ): Promise<number> {
+    let { placement, dockRow, suffix } = await this.claimDestination(request, root, unit);
+    await this.batches.updateUnit(unitRowId, { status: 'placing', bookDockFileId: dockRow.id });
+    for (;;) {
+      try {
+        await this.placeUnit(placement, containmentRoot, download);
+        break;
+      } catch (error) {
+        await this.dockRepo.deleteById(dockRow.id).catch(() => {});
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || suffix >= MAX_UNIQUE_SUFFIX_ATTEMPTS - 1) {
+          await this.batches.updateUnit(unitRowId, { bookDockFileId: null }).catch(() => {});
+          throw error;
+        }
+        ({ placement, dockRow, suffix } = await this.claimDestination(request, root, unit, suffix + 1));
+        await this.batches.updateUnit(unitRowId, { status: 'placing', bookDockFileId: dockRow.id });
+      }
+    }
+
+    await this.queueBatchDockRow(request.id, dockRow.id, placement.primaryDestPath);
+    return dockRow.id;
+  }
+
+  /**
+   * A unit left at 'placing' with a dock row id was interrupted after its destination was claimed.
+   * If that row's file landed, the unit is done; otherwise the stale claim is dropped so placing
+   * again cannot leave a second row behind.
+   */
+  private async adoptPlacedUnit(requestId: number, dockFileId: number): Promise<number | null> {
+    const dockRow = await this.dockRepo.findById(dockFileId);
+    if (dockRow) {
+      const expected = !dockRow.unitDirectory
+        ? [{ absolutePath: dockRow.absolutePath, fileSize: dockRow.fileSize }]
+        : await this.dockRepo.findUnitFiles(dockFileId);
+      const landed =
+        expected.length > 0 && (await Promise.all(expected.map((file) => this.hasLanded(file.absolutePath, file.fileSize)))).every(Boolean);
+      if (landed) {
+        await this.queueBatchDockRow(requestId, dockRow.id, dockRow.absolutePath);
+        return dockRow.id;
+      }
+      await this.removeLeftovers(dockRow, !dockRow.unitDirectory ? [] : expected.map((file) => file.absolutePath));
+    }
+    await this.dockRepo.deleteById(dockFileId).catch(() => {});
+    return null;
+  }
+
+  private hasLanded(path: string, size: number | null): Promise<boolean> {
+    return stat(path).then(
+      (info) => info.isFile() && info.size === size,
+      () => false,
+    );
+  }
+
+  /**
+   * A stale claim's files that did land would otherwise be ingested by the Book Dock watcher as a
+   * partial second row once the claim is gone. Only paths inside the dock are touched, and the
+   * directories are removed with a plain rmdir so anything unexpected inside survives.
+   */
+  private async removeLeftovers(dockRow: { absolutePath: string; unitDirectory: string | null }, unitFilePaths: string[]): Promise<void> {
+    const files = !dockRow.unitDirectory ? [dockRow.absolutePath] : unitFilePaths;
+    for (const path of files) {
+      if (this.isInsideBookDock(path)) await unlink(path).catch(() => {});
+    }
+    const directory = dockRow.unitDirectory;
+    if (!directory || !this.isInsideBookDock(directory)) return;
+    const nested = new Set<string>();
+    for (const path of files) {
+      for (let dir = dirname(path); dir.startsWith(directory + sep) && this.isInsideBookDock(dir); dir = dirname(dir)) nested.add(dir);
+    }
+    for (const dir of [...nested].sort((left, right) => right.length - left.length)) await rmdir(dir).catch(() => {});
+    await rmdir(directory).catch(() => {});
+  }
+
+  private isInsideBookDock(path: string): boolean {
+    const rel = relative(this.bookDockPath, path);
+    return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  }
+
+  private async queueBatchDockRow(requestId: number, dockFileId: number, primaryDestPath: string): Promise<void> {
+    await this.dockIngest.ingestFromWatchedFolder(primaryDestPath).catch((err: unknown) => {
+      this.logger.warn(
+        `[book_request.batch_import] [fail] requestId=${requestId} dockFileId=${dockFileId} error="${sanitizeLogValue(err instanceof Error ? err.message : String(err))}" - could not queue the dock row, leaving it to the watcher`,
+      );
+    });
   }
 
   /**
@@ -729,6 +952,28 @@ async function holdsExactlyFiles(folder: string, expected: number): Promise<bool
     if (!entry.isFile() || ++files > expected) return false;
   }
   return files === expected;
+}
+
+const UNREADABLE_REASONS: Record<string, string> = {
+  EPERM: 'permission denied',
+  EACCES: 'permission denied',
+  ENOENT: 'the download folder was not found',
+};
+
+/**
+ * The directory walk swallows read errors, so an unreadable download looks exactly like one that
+ * holds nothing. A batch has to tell the two apart: marking every unit "not found" would blame
+ * the files for a problem with the folder.
+ */
+async function batchSourceProblem(root: string, plan: ReleasePlan): Promise<{ errorClass: string; reason: string } | null> {
+  try {
+    await readdir(root);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? 'Error';
+    return { errorClass: code, reason: UNREADABLE_REASONS[code] ?? 'the download folder could not be opened' };
+  }
+  if (plan.units.length === 0) return { errorClass: 'EmptyDownload', reason: 'the download folder is empty' };
+  return null;
 }
 
 async function collectReleaseFiles(root: string): Promise<ReleaseWalk> {

@@ -56,6 +56,7 @@ import { BookRequestGateway } from './book-request.gateway';
 import { BookRequestNotifier } from './book-request-notifier.service';
 import { BookRequestSourcesService } from './book-request-sources.service';
 import { mapBookRequestRow } from './book-request.mapper';
+import { BookRequestBatchRepository } from './batch/book-request-batch.repository';
 import { BookRequestDownloadRepository } from './fulfillment/book-request-download.repository';
 import { DownloadRemovalService } from './fulfillment/download-removal.service';
 import { BookRequestRepository, type BookPlacement, type BookRequestJoinedRow, type BookRequestListRow } from './book-request.repository';
@@ -227,6 +228,7 @@ export class BookRequestService {
     private readonly indexers: IndexerConfigService,
     private readonly requestSources: BookRequestSourcesService,
     private readonly companions: RequestCompanionService,
+    private readonly batches: BookRequestBatchRepository,
   ) {}
 
   canManageAll(user: RequestUser): boolean {
@@ -1025,6 +1027,7 @@ export class BookRequestService {
     const joined = await this.repo.findById(id);
     if (!joined) throw new NotFoundException('Book request not found');
     if (!this.canDrive(joined.request, user)) throw new ForbiddenException('You cannot cancel this book request download');
+    if ((await this.batches.findKinds([id])).get(id) === 'batch') return this.cancel(id, user);
 
     const download = await this.downloads.findById(downloadId);
     if (!download || download.requestId !== id) throw new NotFoundException('That download attempt does not belong to this request');
@@ -1441,14 +1444,24 @@ export class BookRequestService {
 
   private async toItems(rows: BookRequestJoinedRow[], viewerId: number): Promise<BookRequestItem[]> {
     const ids = rows.map((r) => r.request.id);
-    const [subscribers, downloads, dismissed] = await Promise.all([
+    const [subscribers, downloads, dismissed, kinds, summaries] = await Promise.all([
       this.repo.findSubscribers(ids),
       this.downloads.findLatestForRequests(ids),
       this.repo.findDismissedRequestIds(viewerId, ids),
+      this.batches.findKinds(ids),
+      this.batches.summaries(ids),
     ]);
-    return rows.map((row) =>
-      mapBookRequestRow(row, subscribers.get(row.request.id) ?? [], downloads.get(row.request.id) ?? null, dismissed.has(row.request.id)),
-    );
+    return rows.map((row) => {
+      const id = row.request.id;
+      return mapBookRequestRow(
+        row,
+        subscribers.get(id) ?? [],
+        downloads.get(id) ?? null,
+        dismissed.has(id),
+        kinds.get(id) ?? 'single',
+        summaries.get(id) ?? null,
+      );
+    });
   }
 
   /**

@@ -114,6 +114,7 @@ const inspection: ReleaseFileInspection = {
   unitCount: 1,
   ignoredFileCount: 0,
   containerCount: 0,
+  selection: null,
 }
 
 describe('useReleasePicker', () => {

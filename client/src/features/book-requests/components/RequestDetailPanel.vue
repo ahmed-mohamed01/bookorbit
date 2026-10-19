@@ -12,7 +12,7 @@ import {
   NO_RESOLVED_REQUEST_DESTINATION,
   Permission,
 } from '@bookorbit/types'
-import type { BookCard, BookDockFile, BookRequestItem } from '@bookorbit/types'
+import type { BatchUnitView, BookCard, BookDockFile, BookRequestItem } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -31,10 +31,12 @@ import RequestReviewPanel from './RequestReviewPanel.vue'
 import RequestDownloadProgress from './RequestDownloadProgress.vue'
 import RequestDrawerToolbar from './RequestDrawerToolbar.vue'
 import RequestPipeline from './RequestPipeline.vue'
+import BatchUnitList from './BatchUnitList.vue'
 import RequestAttemptsPanel from './RequestAttemptsPanel.vue'
 import RequestSeedPanel from './RequestSeedPanel.vue'
 import RequestStatusBadge from './RequestStatusBadge.vue'
 import { useBookRequestActions, type ActionOutcome } from '../composables/useBookRequests'
+import { useBatchGrab } from '../composables/useBatchGrab'
 import { useBookRequestDetail } from '../composables/useBookRequestDetail'
 import { useBookRequestProgress } from '../composables/useBookRequestProgress'
 import { useCoalescedRefresh } from '../composables/useCoalescedRefresh'
@@ -82,6 +84,7 @@ const { libraries, fetchLibraries } = useLibraries()
 const { load: loadDefaultDestination, defaultFor: instanceDefaultFor, resolveDestination } = useRequestDestinationDefault()
 const { progressByRequest, onRequestsChanged, pruneSettledProgress } = useBookRequestProgress()
 const actions = useBookRequestActions(canManageFn)
+const { fetchUnits } = useBatchGrab(canManageFn)
 const picker = useFulfilmentPicker()
 const { review, fetchReview, reset: resetReview } = useRequestReview(canManageFn)
 
@@ -139,7 +142,9 @@ const presentationStatus = computed(() => (request.value ? requestPresentationSt
 
 const isPending = computed(() => request.value?.status === 'pending')
 const canDecide = computed(() => canManage.value && isPending.value)
-const canGrab = computed(() => canFulfilThis.value && request.value != null && isGrabbableBookRequestStatus(request.value.status))
+const canGrab = computed(
+  () => canFulfilThis.value && request.value != null && request.value.kind !== 'batch' && isGrabbableBookRequestStatus(request.value.status),
+)
 const showTransferRetry = computed(() => canGrab.value && request.value?.download?.status === 'failed')
 const canFulfill = computed(() => canManage.value && request.value != null && isFulfillableBookRequestStatus(request.value.status))
 const canCancel = computed(() =>
@@ -196,7 +201,22 @@ onMounted(async () => {
   await fetchRequest(requestId.value)
   resetDestination()
   void syncReview()
+  void syncBatchUnits()
 })
+
+const batchUnits = ref<BatchUnitView[]>([])
+const isBatch = computed(() => request.value?.kind === 'batch')
+
+/** A batch lands unit by unit, so the list is read again on every change broadcast, not only on a status move. */
+async function syncBatchUnits(): Promise<void> {
+  const current = request.value
+  if (!current || current.kind !== 'batch') {
+    batchUnits.value = []
+    return
+  }
+  const units = await fetchUnits(current.id)
+  if (request.value?.id === current.id) batchUnits.value = units
+}
 
 /** The companion follows whichever half is open, and goes away when the open request has none. */
 watch(
@@ -259,6 +279,7 @@ onRequestsChanged(
   useCoalescedRefresh(() => {
     if (!Number.isInteger(requestId.value)) return
     void fetchRequest(requestId.value, { background: true }).then(syncReview)
+    void syncBatchUnits()
     const companionId = request.value?.companionRequestId
     if (companionId != null) void companionDetail.fetchRequest(companionId, { background: true })
   }, CHANGE_REFRESH_WINDOW_MS),
@@ -275,6 +296,7 @@ watch(requestId, async (id) => {
   picker.reset()
   decisionNote.value = ''
   resetReview()
+  batchUnits.value = []
 
   // Switching between the halves of a pair: both are already loaded, so they trade places at once
   // and are refreshed behind the scenes. Fetching from scratch blanked the drawer to a loading line
@@ -287,12 +309,14 @@ watch(requestId, async (id) => {
     resetDestination()
     void syncReview()
     void fetchRequest(id, { background: true }).then(syncReview)
+    void syncBatchUnits()
     return
   }
 
   await fetchRequest(id)
   resetDestination()
   void syncReview()
+  void syncBatchUnits()
 })
 
 // Libraries can land after the panel has rendered, and an untouched picker still needs them.
@@ -751,7 +775,7 @@ function dockFileMeta(file: BookDockFile): string {
               :live="liveProgress"
               :show-error="showDownloadError"
               :can-retry="showTransferRetry"
-              :can-cancel="canCancel"
+              :can-cancel="canCancel && !isBatch"
               @retry="goToReleases"
               @cancel="handleCancelDownload"
             />
@@ -761,6 +785,8 @@ function dockFileMeta(file: BookDockFile): string {
             Under the current transfer, because that is the question it answers: what was tried
             before this, and what did those sources say. Approvers only: it names indexers.
           -->
+          <BatchUnitList v-if="isBatch && batchUnits.length" :units="batchUnits" />
+
           <RequestAttemptsPanel v-if="canFulfilThis" :request="request" :can-manage="canManage" />
 
           <!-- Sits above the failure reason: the reason says a choice is needed, and this is it. -->

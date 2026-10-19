@@ -1,4 +1,5 @@
 import type { BookRequestDownloadItem } from "./download-client";
+import type { BatchSummary, BookRequestKind } from "./book-request-batch";
 import { AUDIO_FORMAT_LIST, COMIC_FORMAT_LIST, EBOOK_FORMAT_LIST } from "./book";
 
 /** What a book can be requested as: an ebook or an audiobook, alone or as a pair. */
@@ -441,6 +442,10 @@ export interface BookRequestItem extends BookRequestWorkSnapshot {
   decisionNote: string | null;
   matchedBookId: number | null;
   bookDockFileId: number | null;
+  /** Whether this request grabs one release whole or splits it into per-unit grabs. */
+  kind: BookRequestKind;
+  /** Present only on a `batch` request: how many units it holds and how far they have landed. */
+  batch: BatchSummary | null;
   /**
    * Created by somebody fulfilling it themselves rather than asking for it. Badged in the
    * moderation queue, and never waiting on a decision.

@@ -1524,6 +1524,11 @@ function showEverySource(): void {
                   :loading="isInspecting(release)"
                   :failed="inspectionHasFailed(release)"
                   :failure-reason="inspectionFailureReason(release)"
+                  :request-id="requestId"
+                  :indexer-id="release.indexerId"
+                  :release-guid="release.guid"
+                  :can-manage="canManage()"
+                  :clients="clients"
                 />
               </li>
             </ul>

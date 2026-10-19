@@ -124,7 +124,9 @@ export function pairRowActions(row: BookRequestItem, viewer: { userId: number | 
   const pending = halves.filter((half) => viewer.canManage && half.status === 'pending')
   const grabHalves = halves.filter(
     (half) =>
-      isGrabbableBookRequestStatus(half.status) && (viewer.canManage || (viewer.canSelfFulfil && isBookRequestFulfiller(half, viewer.userId))),
+      half.kind !== 'batch' &&
+      isGrabbableBookRequestStatus(half.status) &&
+      (viewer.canManage || (viewer.canSelfFulfil && isBookRequestFulfiller(half, viewer.userId))),
   )
   return {
     approve: pending,

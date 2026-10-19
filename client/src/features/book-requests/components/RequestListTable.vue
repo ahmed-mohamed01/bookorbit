@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ArrowDown, ArrowUp, ChevronsUpDown, ExternalLink, EyeOff, TriangleAlert, Zap } from '@lucide/vue'
+import { ArrowDown, ArrowUp, ChevronsUpDown, ExternalLink, EyeOff, LibraryBig, TriangleAlert, Zap } from '@lucide/vue'
 import { isGrabbableBookRequestStatus } from '@bookorbit/types'
-import type { BookRequestItem, BookRequestProgressEvent, BookRequestSortDirection, BookRequestSortField } from '@bookorbit/types'
+import type { BatchSummary, BookRequestItem, BookRequestProgressEvent, BookRequestSortDirection, BookRequestSortField } from '@bookorbit/types'
 import { formatPercent, formatRelativeFromNow } from '@/i18n/formatters'
 import { formatBytes } from '@/lib/formatting'
 import type { RequestListDensity } from '../composables/useRequestListDensity'
@@ -75,6 +75,32 @@ function authorLine(request: BookRequestItem): string {
   return request.authors.join(', ')
 }
 
+function batchOf(request: BookRequestItem): BatchSummary | null {
+  return request.kind === 'batch' ? request.batch : null
+}
+
+/** A batch counts landed books only once its files are being placed; before that the sub-line is just its size. */
+function isImportingBatch(request: BookRequestItem): boolean {
+  return batchOf(request) !== null && statusFor(request) === 'importing'
+}
+
+function batchLine(request: BookRequestItem): string | null {
+  const batch = batchOf(request)
+  if (!batch) return null
+  const status = statusFor(request)
+  const placed = status === 'importing' || status === 'available' || batch.inDock + batch.failed > 0
+  if (placed && batch.failed > 0)
+    return t('bookRequests.batch.row.finishedWithFailures', { inDock: batch.inDock, total: batch.total, failed: batch.failed })
+  if (placed) return t('bookRequests.batch.row.importing', { inDock: batch.inDock, total: batch.total })
+  return t('bookRequests.batch.row.count', { count: batch.total })
+}
+
+function batchDockPercent(request: BookRequestItem): number {
+  const batch = batchOf(request)
+  if (!batch || batch.total <= 0) return 0
+  return Math.max(0, Math.min(100, (batch.inDock / batch.total) * 100))
+}
+
 /** Reconcile socket progress with the latest fetched attempt before rendering a transfer bar. */
 function progressFor(request: BookRequestItem): { percent: number; done: number; total: number | null } | null {
   const live = liveFor(request)
@@ -127,7 +153,7 @@ function isPending(request: BookRequestItem): boolean {
 }
 
 function canGrab(request: BookRequestItem): boolean {
-  return props.canManage && isGrabbableBookRequestStatus(request.status)
+  return props.canManage && request.kind !== 'batch' && isGrabbableBookRequestStatus(request.status)
 }
 
 /**
@@ -421,6 +447,10 @@ function rowDismissed(row: BookRequestItem): boolean {
                   </RouterLink>
                 </div>
                 <span v-if="authorLine(request)" class="block truncate text-xs text-muted-foreground">{{ authorLine(request) }}</span>
+                <span v-if="batchLine(request)" class="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                  <LibraryBig :size="11" class="shrink-0" aria-hidden="true" />
+                  <span class="truncate">{{ batchLine(request) }}</span>
+                </span>
               </div>
             </div>
           </td>
@@ -525,6 +555,20 @@ function rowDismissed(row: BookRequestItem): boolean {
                   {{ t(`bookRequests.outcome.${outcomeFor(half).key}`, outcomeFor(half).params ?? {}) }}
                 </span>
               </div>
+            </div>
+            <div
+              v-else-if="isImportingBatch(request)"
+              class="h-1.5 w-full max-w-24 overflow-hidden rounded-full bg-surface-4"
+              role="progressbar"
+              :aria-valuenow="batchOf(request)?.inDock ?? 0"
+              aria-valuemin="0"
+              :aria-valuemax="batchOf(request)?.total ?? 0"
+              :aria-label="t('bookRequests.batch.row.progressLabel', { title: request.title })"
+            >
+              <div
+                class="h-full rounded-full bg-success transition-[width] duration-500 motion-reduce:transition-none"
+                :style="{ width: `${batchDockPercent(request)}%` }"
+              />
             </div>
             <template v-else-if="outcomeFor(request).kind === 'progress'">
               <div
@@ -649,6 +693,10 @@ function rowDismissed(row: BookRequestItem): boolean {
               </RouterLink>
             </div>
             <p v-if="authorLine(request)" class="truncate text-xs text-muted-foreground">{{ authorLine(request) }}</p>
+            <p v-if="batchLine(request)" class="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+              <LibraryBig :size="11" class="shrink-0" aria-hidden="true" />
+              <span class="truncate">{{ batchLine(request) }}</span>
+            </p>
 
             <!-- A pair stacks one line per half: the medium, its stage, and what is happening to it. -->
             <template v-if="isPair(request)">

@@ -1,4 +1,4 @@
-import { link, mkdir, mkdtemp, readdir, readFile, realpath, stat, symlink, unlink, writeFile } from 'fs/promises';
+import { chmod, link, mkdir, mkdtemp, readdir, readFile, realpath, stat, symlink, unlink, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { basename, join } from 'path';
 
@@ -37,6 +37,7 @@ async function makeHarness(options: { useHardlinks?: boolean } = {}) {
   const dockRepo = {
     create: vi.fn().mockImplementation((data: Record<string, unknown>) => Promise.resolve({ id: nextDockId++, ...data })),
     createUnit: vi.fn().mockImplementation((data: Record<string, unknown>) => Promise.resolve({ id: nextDockId++, ...data })),
+    findById: vi.fn().mockResolvedValue(undefined),
     findUnitFiles: vi.fn().mockResolvedValue([]),
     deleteById: vi.fn().mockResolvedValue(undefined),
     findByAbsolutePath: vi.fn().mockResolvedValue(undefined),
@@ -71,6 +72,12 @@ async function makeHarness(options: { useHardlinks?: boolean } = {}) {
     findPathMappings: vi.fn().mockResolvedValue([{ remotePath: downloadsPath, localPath: downloadsPath }]),
   } as never);
 
+  const batches = {
+    findKinds: vi.fn().mockResolvedValue(new Map([[7, 'single']])),
+    findUnits: vi.fn().mockResolvedValue([]),
+    updateUnit: vi.fn().mockResolvedValue(undefined),
+  };
+
   const service = new RequestImportService(
     { getOrThrow: (key: string) => (key === 'storage.appDataPath' ? appDataPath : bookDockPath) } as never,
     downloads as never,
@@ -84,6 +91,7 @@ async function makeHarness(options: { useHardlinks?: boolean } = {}) {
     fulfillment as never,
     removal as never,
     audit as never,
+    batches as never,
   );
   await service.onApplicationBootstrap();
 
@@ -97,6 +105,7 @@ async function makeHarness(options: { useHardlinks?: boolean } = {}) {
     dockIngest,
     audit,
     removal,
+    batches,
     bookDockPath,
     appDataPath,
     downloadsPath,
@@ -550,6 +559,304 @@ describe('RequestImportService.importDownload', () => {
 
     expect(harness.fulfillment.holdForReview).not.toHaveBeenCalled();
     expect(harness.dockRepo.createUnit).toHaveBeenCalledWith(expect.objectContaining({ format: 'm4b' }), []);
+  });
+
+  describe('batch requests', () => {
+    function unitRow(index: number, overrides: Record<string, unknown> = {}) {
+      return {
+        id: 500 + index,
+        requestId: 7,
+        unitIndex: index,
+        primaryPath: `Book ${index}.epub`,
+        status: 'waiting',
+        ...overrides,
+      };
+    }
+
+    async function batchHarness(rows: Array<ReturnType<typeof unitRow>>, files: string[]) {
+      const harness = await makeHarness();
+      harness.batches.findKinds.mockResolvedValue(new Map([[7, 'batch']]));
+      harness.batches.findUnits.mockResolvedValue(rows);
+      harness.requests.findById.mockResolvedValue({ request: request({ status: 'importing' }) });
+      const folder = join(harness.downloadsPath, 'pack');
+      for (const name of files) await makeFile(folder, name);
+      return { harness, folder };
+    }
+
+    it('places every ticked unit into Book Dock and marks the batch available', async () => {
+      const { harness, folder } = await batchHarness(
+        [unitRow(0), unitRow(1), unitRow(2)],
+        ['Book 0.epub', 'Book 1.epub', 'Book 2.epub', 'Book 3.epub', 'Book 4.epub'],
+      );
+
+      await expect(harness.service.importDownload(download(folder))).resolves.toBe(true);
+
+      expect(harness.dockRepo.createUnit).toHaveBeenCalledTimes(3);
+      expect(harness.dockIngest.ingestFromWatchedFolder).toHaveBeenCalledTimes(3);
+      const inDock = harness.batches.updateUnit.mock.calls.filter(([, data]) => data.status === 'in_dock');
+      expect(inDock).toEqual([
+        [500, { status: 'in_dock', bookDockFileId: 100 }],
+        [501, { status: 'in_dock', bookDockFileId: 101 }],
+        [502, { status: 'in_dock', bookDockFileId: 102 }],
+      ]);
+      expect(harness.requests.updateIf).toHaveBeenCalledWith(7, ['importing'], { status: 'available' });
+      expect(harness.downloads.updateIf).toHaveBeenCalledWith(11, ['completed'], { status: 'imported' });
+      expect(harness.downloads.update.mock.calls.every(([, data]) => !('bookDockFileId' in data))).toBe(true);
+      expect(harness.fulfillment.holdForReview).not.toHaveBeenCalled();
+    });
+
+    it('marks a unit failed when its file is missing and places the rest', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0), unitRow(1), unitRow(2)], ['Book 0.epub', 'Book 2.epub']);
+
+      await harness.service.importDownload(download(folder));
+
+      expect(harness.batches.updateUnit).toHaveBeenCalledWith(501, {
+        status: 'failed',
+        errorMessage: 'This file was not found in the finished download.',
+      });
+      expect(harness.batches.updateUnit).toHaveBeenCalledWith(500, expect.objectContaining({ status: 'in_dock' }));
+      expect(harness.batches.updateUnit).toHaveBeenCalledWith(502, expect.objectContaining({ status: 'in_dock' }));
+      expect(harness.requests.updateIf).toHaveBeenCalledWith(7, ['importing'], { status: 'available' });
+    });
+
+    it('marks the batch failed when no unit could be placed', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0), unitRow(1)], ['Other.epub']);
+
+      await harness.service.importDownload(download(folder));
+
+      expect(harness.dockRepo.createUnit).not.toHaveBeenCalled();
+      expect(harness.requests.updateIf).toHaveBeenCalledWith(7, ['importing'], {
+        status: 'failed',
+        statusReason: 'None of the ticked books could be placed in Book Dock.',
+      });
+      expect(harness.downloads.updateIf).toHaveBeenCalledWith(11, ['completed'], { status: 'imported' });
+    });
+
+    it('fails the batch once with the real reason when the download folder cannot be read', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0), unitRow(1)], ['Book 0.epub', 'Book 1.epub']);
+      await chmod(folder, 0o000);
+
+      try {
+        await harness.service.importDownload(download(folder));
+      } finally {
+        await chmod(folder, 0o755);
+      }
+
+      const reason = 'BookOrbit could not read the finished download: permission denied';
+      expect(harness.requests.updateIf).toHaveBeenCalledWith(7, expect.anything(), { status: 'failed', statusReason: reason });
+      expect(harness.downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: reason });
+      expect(harness.batches.updateUnit).not.toHaveBeenCalled();
+      expect(harness.dockRepo.createUnit).not.toHaveBeenCalled();
+    });
+
+    it('fails the batch once when the download folder is empty', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0), unitRow(1)], []);
+      await mkdir(folder, { recursive: true });
+
+      await harness.service.importDownload(download(folder));
+
+      const reason = 'BookOrbit could not read the finished download: the download folder is empty';
+      expect(harness.requests.updateIf).toHaveBeenCalledWith(7, expect.anything(), { status: 'failed', statusReason: reason });
+      expect(harness.downloads.updateIf).toHaveBeenCalledWith(11, expect.anything(), { status: 'failed', errorMessage: reason });
+      expect(harness.batches.updateUnit).not.toHaveBeenCalled();
+    });
+
+    it('skips units already in Book Dock on a re-run', async () => {
+      const { harness, folder } = await batchHarness(
+        [unitRow(0, { status: 'in_dock', bookDockFileId: 90 }), unitRow(1), unitRow(2)],
+        ['Book 0.epub', 'Book 1.epub', 'Book 2.epub'],
+      );
+
+      await harness.service.importDownload(download(folder));
+
+      expect(harness.dockRepo.createUnit).toHaveBeenCalledTimes(2);
+      expect(harness.batches.updateUnit).not.toHaveBeenCalledWith(500, expect.anything());
+      expect(harness.requests.updateIf).toHaveBeenCalledWith(7, ['importing'], { status: 'available' });
+    });
+
+    it('records the dock row on the unit before placing it', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0)], ['Book 0.epub']);
+
+      await harness.service.importDownload(download(folder));
+
+      expect(harness.batches.updateUnit).toHaveBeenCalledWith(500, { status: 'placing', bookDockFileId: 100 });
+    });
+
+    it('adopts a placing unit whose file already landed instead of placing it again', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0, { status: 'placing', bookDockFileId: 90 })], ['Book 0.epub']);
+      const landed = await makeFile(harness.bookDockPath, 'request-7-Book 0.epub');
+      harness.dockRepo.findById.mockResolvedValue({ id: 90, absolutePath: landed, fileSize: (await stat(landed)).size });
+
+      await harness.service.importDownload(download(folder));
+
+      expect(harness.dockRepo.createUnit).not.toHaveBeenCalled();
+      expect(harness.dockRepo.deleteById).not.toHaveBeenCalled();
+      expect(harness.dockIngest.ingestFromWatchedFolder).toHaveBeenCalledWith(landed);
+      expect(harness.batches.updateUnit).toHaveBeenCalledWith(500, { status: 'in_dock', bookDockFileId: 90 });
+      expect(harness.requests.updateIf).toHaveBeenCalledWith(7, ['importing'], { status: 'available' });
+    });
+
+    it('drops a stale dock row and places a placing unit again when its file never landed', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0, { status: 'placing', bookDockFileId: 90 })], ['Book 0.epub']);
+      harness.dockRepo.findById.mockResolvedValue({ id: 90, absolutePath: join(harness.bookDockPath, 'missing.epub'), fileSize: 5 });
+
+      await harness.service.importDownload(download(folder));
+
+      expect(harness.dockRepo.deleteById).toHaveBeenCalledWith(90);
+      expect(harness.dockRepo.createUnit).toHaveBeenCalledTimes(1);
+      expect(harness.batches.updateUnit).toHaveBeenCalledWith(500, { status: 'in_dock', bookDockFileId: 100 });
+    });
+
+    it('removes the files of a stale claim before placing the unit again', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0, { status: 'placing', bookDockFileId: 90 })], ['Book 0.epub']);
+      const partial = await makeFile(harness.bookDockPath, 'request-7-Book 0.epub');
+      harness.dockRepo.findById.mockResolvedValue({ id: 90, absolutePath: partial, fileSize: 999, unitDirectory: null });
+      let leftoverGoneAtDelete = false;
+      harness.dockRepo.deleteById.mockImplementation(async (id: number) => {
+        if (id === 90)
+          leftoverGoneAtDelete = await stat(partial).then(
+            () => false,
+            () => true,
+          );
+      });
+
+      await harness.service.importDownload(download(folder));
+
+      expect(leftoverGoneAtDelete).toBe(true);
+      expect(harness.dockRepo.createUnit).toHaveBeenCalledTimes(1);
+    });
+
+    describe('a resumed multi-file unit', () => {
+      async function resumedUnit(withSecondTrack: boolean) {
+        const { harness, folder } = await batchHarness([unitRow(0, { status: 'placing', bookDockFileId: 90 })], ['Book 0.epub']);
+        const unitDirectory = join(harness.bookDockPath, 'request-7-Audio');
+        const first = await makeFile(unitDirectory, 'track01.mp3');
+        const second = join(unitDirectory, 'track02.mp3');
+        if (withSecondTrack) await makeFile(unitDirectory, 'track02.mp3');
+        const size = (await stat(first)).size;
+        harness.dockRepo.findById.mockResolvedValue({ id: 90, absolutePath: first, fileSize: size, unitDirectory });
+        harness.dockRepo.findUnitFiles.mockResolvedValue([
+          { absolutePath: first, fileSize: size },
+          { absolutePath: second, fileSize: size },
+        ]);
+        return { harness, folder, unitDirectory, first };
+      }
+
+      it('is not adopted when a track is missing, and the landed tracks are removed', async () => {
+        const { harness, folder, unitDirectory, first } = await resumedUnit(false);
+
+        await harness.service.importDownload(download(folder));
+
+        expect(harness.dockRepo.deleteById).toHaveBeenCalledWith(90);
+        await expect(stat(first)).rejects.toThrow();
+        await expect(stat(unitDirectory)).rejects.toThrow();
+        expect(harness.dockRepo.createUnit).toHaveBeenCalledTimes(1);
+      });
+
+      it('is adopted when every track landed', async () => {
+        const { harness, folder, first } = await resumedUnit(true);
+
+        await harness.service.importDownload(download(folder));
+
+        expect(harness.dockRepo.deleteById).not.toHaveBeenCalled();
+        expect(harness.dockRepo.createUnit).not.toHaveBeenCalled();
+        expect(harness.dockIngest.ingestFromWatchedFolder).toHaveBeenCalledWith(first);
+        expect(harness.batches.updateUnit).toHaveBeenCalledWith(500, { status: 'in_dock', bookDockFileId: 90 });
+      });
+    });
+
+    it('clears the dock id on a unit whose placement failed for good', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0)], ['Book 0.epub']);
+      const link = vi.spyOn(harness.service as never as { placeFile: () => Promise<void> }, 'placeFile').mockRejectedValue(new Error('disk full'));
+
+      await harness.service.importDownload(download(folder));
+      link.mockRestore();
+
+      expect(harness.dockRepo.deleteById).toHaveBeenCalledWith(100);
+      expect(harness.batches.updateUnit).toHaveBeenCalledWith(500, { bookDockFileId: null });
+      expect(harness.batches.updateUnit).toHaveBeenCalledWith(500, { status: 'failed', errorMessage: 'disk full' });
+    });
+
+    it('settles the request before the download so a crash between them cannot strand it', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0)], ['Book 0.epub']);
+
+      await harness.service.importDownload(download(folder));
+
+      const requestWrite = harness.requests.updateIf.mock.calls.findIndex(([, , patch]) => patch.status === 'available');
+      const downloadWrite = harness.downloads.updateIf.mock.calls.findIndex(([, , patch]) => patch.status === 'imported');
+      expect(harness.requests.updateIf.mock.invocationCallOrder[requestWrite]).toBeLessThan(
+        harness.downloads.updateIf.mock.invocationCallOrder[downloadWrite]!,
+      );
+    });
+
+    it('fails only the unit whose placement throws and carries on', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0), unitRow(1)], ['Book 0.epub', 'Book 1.epub']);
+      harness.dockRepo.createUnit.mockRejectedValueOnce(new Error('disk full'));
+
+      await harness.service.importDownload(download(folder));
+
+      expect(harness.batches.updateUnit).toHaveBeenCalledWith(500, { status: 'failed', errorMessage: 'disk full' });
+      expect(harness.batches.updateUnit).toHaveBeenCalledWith(501, expect.objectContaining({ status: 'in_dock' }));
+      expect(harness.requests.updateIf).toHaveBeenCalledWith(7, ['importing'], { status: 'available' });
+    });
+
+    it('does not hold a truncated batch download for review', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0)], ['Book 0.epub']);
+      await Promise.all(Array.from({ length: 2_001 }, (_, index) => makeFile(folder, `pad-${index}.txt`)));
+
+      await harness.service.importDownload(download(folder));
+
+      expect(harness.fulfillment.holdForReview).not.toHaveBeenCalled();
+      expect(harness.dockRepo.createUnit).toHaveBeenCalledTimes(1);
+    });
+
+    it('places nothing when the request can no longer be claimed', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0)], ['Book 0.epub']);
+      harness.requests.updateIf.mockResolvedValue(undefined);
+
+      await harness.service.importDownload(download(folder));
+
+      expect(harness.dockRepo.createUnit).not.toHaveBeenCalled();
+      expect(harness.batches.updateUnit).not.toHaveBeenCalled();
+    });
+
+    it('stops placing when the request is cancelled mid-import and leaves it cancelled', async () => {
+      const { harness, folder } = await batchHarness([unitRow(0), unitRow(1)], ['Book 0.epub', 'Book 1.epub']);
+      harness.requests.findById
+        .mockResolvedValueOnce({ request: request({ status: 'importing' }) })
+        .mockResolvedValueOnce({ request: request({ status: 'importing' }) })
+        .mockResolvedValue({ request: request({ status: 'cancelled' }) });
+
+      await harness.service.importDownload(download(folder));
+
+      expect(harness.dockRepo.createUnit).toHaveBeenCalledTimes(1);
+      expect(harness.requests.updateIf).not.toHaveBeenCalledWith(7, ['importing'], expect.anything());
+      expect(harness.requests.update).not.toHaveBeenCalled();
+      expect(harness.downloads.updateIf).not.toHaveBeenCalledWith(11, ['completed'], { status: 'imported' });
+    });
+
+    it('resumes a request already importing and places only the remaining units', async () => {
+      const { harness, folder } = await batchHarness(
+        [unitRow(0, { status: 'in_dock', bookDockFileId: 90 }), unitRow(1)],
+        ['Book 0.epub', 'Book 1.epub'],
+      );
+
+      await harness.service.importDownload(download(folder, { status: 'completed' }));
+
+      expect(harness.requests.updateIf).toHaveBeenCalledWith(7, expect.arrayContaining(['importing']), { status: 'importing' });
+      expect(harness.dockRepo.createUnit).toHaveBeenCalledTimes(1);
+      expect(harness.batches.updateUnit).toHaveBeenCalledWith(501, expect.objectContaining({ status: 'in_dock' }));
+    });
+
+    it('takes the single path when the request kind is single', async () => {
+      const harness = await makeHarness();
+      const source = await makeFile(harness.downloadsPath, 'dune.epub');
+
+      await harness.service.importDownload(download(source));
+
+      expect(harness.batches.findUnits).not.toHaveBeenCalled();
+      expect(harness.requests.updateIf).toHaveBeenCalledWith(7, expect.anything(), expect.objectContaining({ bookDockFileId: expect.any(Number) }));
+    });
   });
 
   describe('importChosenUnit', () => {
