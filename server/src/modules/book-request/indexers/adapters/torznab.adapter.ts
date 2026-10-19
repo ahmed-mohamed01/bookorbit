@@ -34,6 +34,8 @@ const MAX_XML_RESPONSE_BYTES = 16 * 1024 * 1024;
 const MAX_FEED_ITEMS = 500;
 const MAX_FEED_FIELD_CHARS = MAX_INDEXER_RELEASE_GUID_LENGTH;
 const REQUEST_TIMEOUT_MS = 25_000;
+const CATEGORY_NAMES_TTL_MS = 24 * 60 * 60 * 1000;
+const CAPS_RETRY_DELAY_MS = 10 * 60 * 1000;
 /** The same ceiling the direct fetcher uses, and for the same reason: a chain, not a loop. */
 const MAX_REDIRECTS = 5;
 const XML_ACCEPT = 'application/rss+xml, application/xml, text/xml, */*;q=0.1';
@@ -41,6 +43,7 @@ const XML_ACCEPT = 'application/rss+xml, application/xml, text/xml, */*;q=0.1';
 const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_', textNodeName: '#text' });
 
 interface TorznabItem {
+  category?: string | number | { '#text'?: string | number } | Array<string | number | { '#text'?: string | number }>;
   title?: string;
   guid?: unknown;
   link?: string;
@@ -48,6 +51,12 @@ interface TorznabItem {
   pubDate?: string;
   enclosure?: { '@_url'?: string; '@_length'?: string | number } | Array<{ '@_url'?: string; '@_length'?: string | number }>;
   'torznab:attr'?: TorznabAttr | TorznabAttr[];
+}
+
+interface CapsCategory {
+  '@_id'?: string | number;
+  '@_name'?: string;
+  subcat?: CapsCategory | CapsCategory[];
 }
 
 interface TorznabAttr {
@@ -70,6 +79,9 @@ export class TorznabAdapter implements IndexerAdapter {
   readonly requiresCredential = false;
   readonly searchesConcurrently = true;
 
+  private readonly categoryCache = new Map<string, { expiresAt: number; names: Map<string, string> }>();
+  private readonly pendingCategories = new Map<string, Promise<Map<string, string>>>();
+
   private readonly logger = new Logger(TorznabAdapter.name);
 
   async search(query: ReleaseQuery, config: ResolvedIndexerConfig, signal: AbortSignal): Promise<ReleaseCandidate[]> {
@@ -78,8 +90,39 @@ export class TorznabAdapter implements IndexerAdapter {
     const categories = config.categories[query.mediaKind];
     if (categories.length > 0) params.set('cat', categories.join(','));
 
-    const xml = await this.callXml(config, params, signal);
-    return parseItems(xml, config.id);
+    const [xml, names] = await Promise.all([this.callXml(config, params, signal), this.categoryNames(config)]);
+    return parseItems(xml, config.id, names);
+  }
+
+  private categoryNames(config: ResolvedIndexerConfig): Promise<Map<string, string>> {
+    const key = config.baseUrl;
+    const cached = this.categoryCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.names);
+    const pending = this.pendingCategories.get(key);
+    if (pending) return pending;
+
+    const startedAt = Date.now();
+    const params = new URLSearchParams({ t: 'caps' });
+    if (config.credential) params.set('apikey', config.credential);
+    const request = this.callXml(config, params, AbortSignal.timeout(REQUEST_TIMEOUT_MS))
+      .then((xml) => {
+        const names = parseCategoryNames(xml);
+        this.categoryCache.set(key, { names, expiresAt: Date.now() + CATEGORY_NAMES_TTL_MS });
+        return names;
+      })
+      .catch((error: unknown) => {
+        const names = cached?.names ?? new Map<string, string>();
+        this.categoryCache.set(key, { names, expiresAt: Date.now() + CAPS_RETRY_DELAY_MS });
+        const errorClass = error instanceof Error ? error.name : 'UnknownError';
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.warn(
+          `[book_request.indexer_caps] [fail] indexerId=${config.id} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - indexer category names unavailable`,
+        );
+        return names;
+      })
+      .finally(() => this.pendingCategories.delete(key));
+    this.pendingCategories.set(key, request);
+    return request;
   }
 
   async test(config: ResolvedIndexerConfig): Promise<IndexerTestResult> {
@@ -257,7 +300,27 @@ function readErrorElement(body: string): { failure: 'unauthorized' | 'error'; de
   return { failure: Number.isFinite(code) && code >= 100 && code < 200 ? 'unauthorized' : 'error', description };
 }
 
-function parseItems(xml: string, indexerId: number): ReleaseCandidate[] {
+function parseCategoryNames(xml: string): Map<string, string> {
+  const parsed = parser.parse(xml) as { caps?: { categories?: { category?: CapsCategory | CapsCategory[] } } };
+  if (!parsed.caps) throw new IndexerSearchException('error', 'That URL did not return torznab capabilities');
+  const names = new Map<string, string>();
+  const visit = (categories: CapsCategory | CapsCategory[] | undefined): void => {
+    for (const category of toArray(categories)) {
+      if (category['@_id'] !== undefined && typeof category['@_name'] === 'string') {
+        names.set(String(category['@_id']), category['@_name']);
+      }
+      visit(category.subcat);
+    }
+  };
+  visit(parsed.caps.categories?.category);
+  return names;
+}
+
+function languageFromCategoryNames(names: readonly string[]): string | undefined {
+  return names.some((name) => /english[- ]translated/i.test(name)) && !names.some((name) => /non[- ]english/i.test(name)) ? 'en' : undefined;
+}
+
+function parseItems(xml: string, indexerId: number, categoryNames: Map<string, string>): ReleaseCandidate[] {
   const parsed = parser.parse(xml) as { rss?: { channel?: { item?: TorznabItem | TorznabItem[] } } };
   // Bounded before the loop, so an item count nobody asked for costs one slice rather than a pass.
   const items = toArray(parsed.rss?.channel?.item).slice(0, MAX_FEED_ITEMS);
@@ -284,6 +347,13 @@ function parseItems(xml: string, indexerId: number): ReleaseCandidate[] {
     const seedRatioGoal = normalizeProviderSeedRatio(toNumber(attrs.get('minimumratio')));
     const seedTimeMinutes = normalizeTorznabSeedTimeSeconds(toNumber(attrs.get('minimumseedtime')));
     const bookTitle = attrs.get('booktitle')?.trim();
+    const names = [
+      ...toArray(item.category).map((category) => String(typeof category === 'object' ? (category['#text'] ?? '') : category)),
+      ...toArray(item['torznab:attr'])
+        .filter((attr) => attr['@_name']?.toLowerCase() === 'category')
+        .map((attr) => String(attr['@_value'] ?? '')),
+    ].map((id) => categoryNames.get(id.trim()) ?? '');
+    const language = attrs.get('language') || languageFromCategoryNames(names);
 
     releases.push({
       indexerId,
@@ -297,7 +367,7 @@ function parseItems(xml: string, indexerId: number): ReleaseCandidate[] {
       seeders: toNumber(attrs.get('seeders')),
       leechers: leecherCount(attrs),
       ...(attrs.get('author') ? { author: attrs.get('author') } : {}),
-      ...(attrs.get('language') ? { language: attrs.get('language') } : {}),
+      ...(language ? { language } : {}),
       // Torznab reports freeleech as a downloadvolumefactor of 0: the release costs no download.
       freeleech: toNumber(attrs.get('downloadvolumefactor')) === 0,
       ...(publishedAt ? { publishedAt } : {}),

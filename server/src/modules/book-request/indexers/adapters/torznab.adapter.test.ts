@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { DEFAULT_INDEXER_CATEGORIES } from '@bookorbit/types';
 
 /**
@@ -22,6 +23,14 @@ import { ProxyAgent } from 'undici';
 import { forgetDispatchers } from '../../../../common/utils/safe-fetch';
 import { IndexerSearchException, type ReleaseQuery, type ResolvedIndexerConfig } from '../indexer-adapter';
 import { TorznabAdapter } from './torznab.adapter';
+
+function stubFetchWithCaps(fetchMock: ReturnType<typeof vi.fn>): { response: string | null } {
+  const caps: { response: string | null } = { response: '<caps><categories /></caps>' };
+  vi.stubGlobal('fetch', (url: string, init: RequestInit) =>
+    new URL(url).searchParams.get('t') === 'caps' && caps.response !== null ? Promise.resolve(new Response(caps.response)) : fetchMock(url, init),
+  );
+  return caps;
+}
 
 const RELEASE = {
   indexerId: 7,
@@ -107,11 +116,12 @@ const ITEM = `
   </item>`;
 
 describe('TorznabAdapter', () => {
+  let caps: ReturnType<typeof stubFetchWithCaps>;
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    caps = stubFetchWithCaps(fetchMock);
   });
 
   afterEach(() => {
@@ -175,6 +185,7 @@ describe('TorznabAdapter', () => {
   it('uses Prowlarr REST Torznab feed URLs without appending /api', async () => {
     fetchMock.mockResolvedValue(new Response('<caps><server title="Prowlarr" /></caps>'));
 
+    caps.response = null;
     await expect(new TorznabAdapter().test(config({ baseUrl: 'http://127.0.0.1:9696/api/v1/indexer/7/newznab' }))).resolves.toEqual({
       success: true,
       indexerName: 'Prowlarr',
@@ -238,6 +249,7 @@ describe('TorznabAdapter', () => {
   it('reports a caps document as a successful test', async () => {
     fetchMock.mockResolvedValue(new Response('<caps><server title="Jackett" version="0.21" /></caps>'));
 
+    caps.response = null;
     await expect(new TorznabAdapter().test(config())).resolves.toEqual({ success: true, indexerName: 'Jackett' });
     expect(lastUrl().searchParams.get('t')).toBe('caps');
   });
@@ -245,12 +257,14 @@ describe('TorznabAdapter', () => {
   it('fails the test when the URL answers with something that is not torznab', async () => {
     fetchMock.mockResolvedValue(new Response('<html><body>hello</body></html>'));
 
+    caps.response = null;
     await expect(new TorznabAdapter().test(config())).resolves.toMatchObject({ success: false });
   });
 
   it('reports a Prowlarr server URL as a non-torznab response instead of an opaque 406', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ current: 'v1', deprecated: [] }), { headers: { 'content-type': 'application/json' } }));
 
+    caps.response = null;
     await expect(new TorznabAdapter().test(config({ name: 'Prowlarr', baseUrl: 'http://127.0.0.1:9696' }))).resolves.toEqual({
       success: false,
       error: 'That URL answered, but not with a torznab capabilities document',
@@ -337,7 +351,7 @@ describe('TorznabAdapter search redirects', () => {
 
   beforeEach(() => {
     fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetchWithCaps(fetchMock);
   });
 
   afterEach(() => {
@@ -391,7 +405,7 @@ describe('TorznabAdapter.fetchTorrentFile', () => {
 
   beforeEach(() => {
     fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetchWithCaps(fetchMock);
   });
 
   afterEach(() => {
@@ -508,7 +522,7 @@ describe('TorznabAdapter search response bounds', () => {
 
   beforeEach(() => {
     fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
+    stubFetchWithCaps(fetchMock);
   });
 
   afterEach(() => {
@@ -531,5 +545,129 @@ describe('TorznabAdapter search response bounds', () => {
 
     await expect(new TorznabAdapter().search(query(), config(), AbortSignal.timeout(5000))).rejects.toThrow(/more XML/);
     expect(pulled()).toBe(0);
+  });
+});
+
+describe('TorznabAdapter category language', () => {
+  const caps =
+    '<caps><categories><category id="1" name="Books"><subcat id="2" name="Literature - English-translated" /><subcat id="3" name="Literature - Non-English-translated" /><subcat id="4" name="Literature - Raw" /></category></categories></caps>';
+  let fetchMock: ReturnType<typeof vi.fn<(url: string, init: RequestInit) => Promise<Response>>>;
+  let adapter: TorznabAdapter;
+
+  beforeEach(() => {
+    adapter = new TorznabAdapter();
+    fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    forgetDispatchers();
+  });
+
+  function respond(items: string, capabilities = caps): void {
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve(new Response(new URL(url).searchParams.get('t') === 'caps' ? capabilities : feed(items))),
+    );
+  }
+
+  it.each([
+    ['<category>2</category>', 'en'],
+    ['<category>3</category>', undefined],
+    ['<category>4</category>', undefined],
+    ['<torznab:attr name="category" value="4" /><torznab:attr name="category" value="2" />', 'en'],
+    ['<category>2</category><category>3</category>', undefined],
+    ['<category>2</category><torznab:attr name="language" value="ja" />', 'ja'],
+  ])('resolves category language for %s', async (categories, expected) => {
+    respond('<item><title>Dune</title>' + categories + '</item>');
+    expect((await adapter.search(query(), config(), AbortSignal.timeout(1000)))[0].language).toBe(expected);
+  });
+
+  it('caches caps for two searches and expires names after 24 hours', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    respond('<item><title>Dune</title><category>2</category></item>');
+    await adapter.search(query(), config(), AbortSignal.timeout(1000));
+    await adapter.search(query(), config(), AbortSignal.timeout(1000));
+    expect(fetchMock.mock.calls.filter(([url]) => new URL(url).searchParams.get('t') === 'caps')).toHaveLength(1);
+    now.mockReturnValue(24 * 60 * 60 * 1000);
+    await adapter.search(query(), config(), AbortSignal.timeout(1000));
+    expect(fetchMock.mock.calls.filter(([url]) => new URL(url).searchParams.get('t') === 'caps')).toHaveLength(2);
+  });
+
+  it('keeps expired names after a failed refresh and retries only after ten minutes', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const items = '<item><title>Dune</title><category>2</category></item>';
+    respond(items);
+    expect((await adapter.search(query(), config(), AbortSignal.timeout(1000)))[0].language).toBe('en');
+    let capsCalls = 0;
+    fetchMock.mockImplementation((url: string) => {
+      if (new URL(url).searchParams.get('t') === 'caps') {
+        capsCalls++;
+        return Promise.resolve(new Response('', { status: 503 }));
+      }
+      return Promise.resolve(new Response(feed(items)));
+    });
+    now.mockReturnValue(24 * 60 * 60 * 1000);
+    expect((await adapter.search(query(), config(), AbortSignal.timeout(1000)))[0].language).toBe('en');
+    now.mockReturnValue(24 * 60 * 60 * 1000 + 10 * 60 * 1000 - 1);
+    expect((await adapter.search(query(), config(), AbortSignal.timeout(1000)))[0].language).toBe('en');
+    expect(capsCalls).toBe(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    now.mockReturnValue(24 * 60 * 60 * 1000 + 10 * 60 * 1000);
+    expect((await adapter.search(query(), config(), AbortSignal.timeout(1000)))[0].language).toBe('en');
+    expect(capsCalls).toBe(2);
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('caches a caps failure for ten minutes without failing search and logs once', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(0);
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve(
+        new Response(new URL(url).searchParams.get('t') === 'caps' ? '' : feed('<item><title>Dune</title><category>2</category></item>'), {
+          status: new URL(url).searchParams.get('t') === 'caps' ? 503 : 200,
+        }),
+      ),
+    );
+    for (let i = 0; i < 2; i++) expect((await adapter.search(query(), config(), AbortSignal.timeout(1000)))[0].language).toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[book_request.indexer_caps\] \[fail\] indexerId=7 durationMs=0 errorClass=IndexerSearchException error="/),
+    );
+    now.mockReturnValue(10 * 60 * 1000);
+    await adapter.search(query(), config(), AbortSignal.timeout(1000));
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('starts search alongside shared caps and uses an independent caps signal', async () => {
+    let resolveCaps!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => {
+      resolveCaps = resolve;
+    });
+    const controller = new AbortController();
+    fetchMock.mockImplementation((url: string, init: RequestInit) => {
+      if (new URL(url).searchParams.get('t') === 'caps') {
+        expect(init.signal).not.toBe(controller.signal);
+        return pending;
+      }
+      return Promise.resolve(new Response(feed('<item><title>Dune</title><category>2</category></item>')));
+    });
+    const first = adapter.search(query(), config(), controller.signal);
+    const second = adapter.search(query(), config(), AbortSignal.timeout(1000));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    controller.abort();
+    resolveCaps(new Response(caps));
+    expect((await first)[0].language).toBe('en');
+    expect((await second)[0].language).toBe('en');
+  });
+
+  it('reads a single top-level category and single nested subcategory', async () => {
+    respond(
+      '<item><title>Dune</title><category>2</category></item>',
+      '<caps><categories><category id="1" name="Books"><subcat id="2" name="English translated" /></category></categories></caps>',
+    );
+    expect((await adapter.search(query(), config(), AbortSignal.timeout(1000)))[0].language).toBe('en');
   });
 });
