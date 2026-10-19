@@ -102,9 +102,20 @@ describe('DownloadClientConfigService', () => {
     });
 
     await expect(service.findEnabledSummaries()).resolves.toEqual([
-      { id: 4, name: 'qbit', color: null, delivery: 'torrent' },
-      { id: 5, name: 'usenet', color: null, delivery: 'usenet' },
+      { id: 4, name: 'qbit', color: null, delivery: 'torrent', fileSelection: true },
+      { id: 5, name: 'usenet', color: null, delivery: 'usenet', fileSelection: false },
     ]);
+  });
+
+  it('marks torrent clients as supporting file selection', async () => {
+    const { service } = makeService({
+      repo: {
+        findAllEnabled: vi.fn().mockResolvedValue([clientRow(), clientRow({ id: 6, name: 'sab', adapterType: 'sabnzbd' })]),
+      },
+    });
+
+    const summaries = await service.findEnabledSummaries();
+    expect(summaries.map((summary) => summary.fileSelection)).toEqual([true, false]);
   });
 
   it('answers with nothing rather than inventing a client when none is configured', async () => {

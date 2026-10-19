@@ -30,6 +30,19 @@ export const DOWNLOAD_CLIENT_DELIVERY: Record<DownloadClientType, DownloadDelive
   shelfmark: "shelfmark",
 };
 
+/**
+ * Which adapters let a grab be narrowed to chosen files. Torrent clients take per-file priorities;
+ * every other delivery is all-or-nothing, so a selection over one of them has nothing to send.
+ */
+export const DOWNLOAD_CLIENT_FILE_SELECTION: Record<DownloadClientType, boolean> = {
+  qbittorrent: true,
+  transmission: true,
+  deluge: true,
+  nzbget: false,
+  sabnzbd: false,
+  shelfmark: false,
+};
+
 export type DownloadClientCredentialKind = "usernamePassword" | "apiKey";
 
 /** Shapes the settings form without making one daemon's authentication model universal. */
@@ -108,6 +121,8 @@ export interface DownloadClientSummary {
   name: string;
   color: IndexerColor | null;
   delivery: DownloadDelivery;
+  /** Whether this client can act on a file selection, so the picker can shape the grab dialog. */
+  fileSelection: boolean;
 }
 
 /**

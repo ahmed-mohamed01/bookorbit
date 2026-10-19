@@ -72,6 +72,38 @@ describe('TransmissionAdapter', () => {
     vi.unstubAllGlobals();
   });
 
+  describe('add with a file selection', () => {
+    const release = { torrentFile: Buffer.from('torrent'), clientKey: INFO_HASH, wantedPaths: ['A/2.epub'] };
+    function setup() {
+      const mock = mockRpc();
+      mock.handlers.set('torrent-add', () => success({ 'torrent-added': { hashString: INFO_HASH } }));
+      mock.handlers.set('torrent-get', () =>
+        success({ torrents: [{ files: [{ name: 'Root/A/1.epub' }, { name: 'Root/A/2.epub' }, { name: 'Root/B/x.zip' }] }] }),
+      );
+      return mock;
+    }
+    it('adds paused, marks unwanted files and starts', async () => {
+      const { calls } = setup();
+      await adapter.add(release, config());
+      expect(calls.find((c) => c.method === 'torrent-add')?.args.paused).toBe(true);
+      expect(calls.find((c) => c.method === 'torrent-get')?.args).toEqual({ ids: [INFO_HASH], fields: ['files'] });
+      expect(calls.find((c) => c.method === 'torrent-set')?.args).toEqual({ ids: [INFO_HASH], 'files-unwanted': [0, 2] });
+      expect(calls.find((c) => c.method === 'torrent-start')?.args).toEqual({ ids: [INFO_HASH] });
+      expect(calls.findIndex((c) => c.method === 'torrent-start')).toBeGreaterThan(calls.findIndex((c) => c.method === 'torrent-set'));
+    });
+    it('refuses a selection on torrent-duplicate', async () => {
+      const { calls, handlers } = setup();
+      handlers.set('torrent-add', () => success({ 'torrent-duplicate': { hashString: INFO_HASH } }));
+      await expect(adapter.add(release, config())).rejects.toThrow('did not accept the file selection');
+      expect(calls.some((c) => ['torrent-set', 'torrent-remove'].includes(c.method))).toBe(false);
+    });
+    it('removes the torrent when a wanted file is missing', async () => {
+      const { calls } = setup();
+      await expect(adapter.add({ ...release, wantedPaths: ['A/9.epub'] }, config())).rejects.toThrow('did not accept the file selection');
+      expect(calls.find((c) => c.method === 'torrent-remove')?.args).toEqual({ ids: [INFO_HASH], 'delete-local-data': true });
+    });
+  });
+
   describe('base URL', () => {
     it('keeps a reverse-proxy path prefix on every call', async () => {
       const { calls } = mockRpc();

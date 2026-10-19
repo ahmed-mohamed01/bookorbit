@@ -20,6 +20,8 @@ export interface GrabPayload {
   magnet?: string;
   torrentFile?: Buffer;
   torrentFileName?: string;
+  /** Release-relative file selection, valid only with torrentFile. */
+  wantedPaths?: string[];
   nzbFile?: Buffer;
   nzbFileName?: string;
   /** A source that serves the file itself, resolved by the indexer adapter to one direct URL. */
@@ -103,6 +105,7 @@ export interface DownloadClientAdapter {
   readonly label: string;
   /** What this client can be handed, which is what decides whether a given grab may go to it. */
   readonly delivers: DownloadDelivery;
+  readonly supportsFileSelection?: true;
 
   add(release: GrabPayload, config: ResolvedClientConfig): Promise<{ clientKey: string }>;
   /**

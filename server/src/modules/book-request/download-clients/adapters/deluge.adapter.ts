@@ -12,6 +12,7 @@ import type {
   ResolvedClientConfig,
   SeedInfo,
 } from '../download-client-adapter';
+import { applyFileSelection, validateFileSelection } from '../file-selection.utils';
 import { endpointUrl, fetchClient, readClientJson, throwForClientServerError } from './client-http.utils';
 
 const LABEL = 'Deluge';
@@ -103,17 +104,19 @@ export class DelugeAdapter implements DownloadClientAdapter {
   readonly type = 'deluge' as const;
   readonly label = LABEL;
   readonly delivers = 'torrent' as const;
+  readonly supportsFileSelection = true as const;
 
   private readonly logger = new Logger(DelugeAdapter.name);
   private readonly sessions = new Map<number, DelugeSession>();
   private requestId = 0;
 
   async add(release: GrabPayload, config: ResolvedClientConfig): Promise<{ clientKey: string }> {
+    validateFileSelection(release);
     if (!release.torrentFile && !release.magnet) {
       throw new BadRequestException('A grab needs either a magnet link or a .torrent file');
     }
 
-    const options: Record<string, unknown> = { add_paused: false };
+    const options: Record<string, unknown> = { add_paused: release.wantedPaths !== undefined };
     // The client enforces the goal, BookOrbit never stops a seed itself. Deluge has no seed-time
     // goal of any kind, so a tracker's minimum time is left seeding rather than stopped early.
     if (release.seedRatioGoal !== undefined) {
@@ -131,8 +134,13 @@ export class DelugeAdapter implements DownloadClientAdapter {
             options,
           ])
         : await this.rpc<string | null>(config, 'core.add_torrent_magnet', [release.magnet, options]);
+      if (!added && release.wantedPaths !== undefined) throw new BadRequestException('the torrent add was refused');
       hash = (added ?? release.clientKey).toLowerCase();
     } catch (error) {
+      if (release.wantedPaths !== undefined) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new BadRequestException(`The download client did not accept the file selection: ${detail}`);
+      }
       // Deluge refuses a torrent it already holds outright rather than adopting it. An earlier
       // attempt on this release leaves its torrent behind when the import fails, and without this
       // every retry of that release is refused forever. Only the client can say which case it is.
@@ -143,8 +151,39 @@ export class DelugeAdapter implements DownloadClientAdapter {
       hash = release.clientKey.toLowerCase();
     }
 
+    if (release.wantedPaths !== undefined) await this.selectFiles(hash, release.wantedPaths, config);
     await this.applyLabel(hash, config);
     return { clientKey: hash };
+  }
+
+  private async selectFiles(clientKey: string, wantedPaths: string[], config: ResolvedClientConfig): Promise<void> {
+    let files: Array<{ index: number; path: string }> = [];
+    await applyFileSelection({
+      clientId: config.id,
+      clientKey,
+      wantedPaths,
+      logger: this.logger,
+      listFiles: async () => {
+        const result = await this.rpc<{ files?: Array<{ index: number; path: string }> }>(config, 'core.get_torrent_status', [clientKey, ['files']]);
+        files = result?.files ?? [];
+        if (
+          files.some((file) => !Number.isInteger(file.index) || file.index < 0 || file.index >= files.length) ||
+          new Set(files.map((file) => file.index)).size !== files.length
+        ) {
+          throw new BadRequestException('the client returned invalid file indexes');
+        }
+        return files.map((file) => file.path);
+      },
+      skip: async (indexes) => {
+        const priorities = Array<number>(files.length).fill(1);
+        for (const index of indexes) priorities[files[index].index] = 0;
+        await this.rpc(config, 'core.set_torrent_options', [[clientKey], { file_priorities: priorities }]);
+      },
+      start: async () => {
+        await this.rpc(config, 'core.resume_torrent', [[clientKey]]);
+      },
+      remove: () => this.remove(clientKey, config, { deleteFiles: true }),
+    });
   }
 
   /**

@@ -86,6 +86,113 @@ describe('QbittorrentAdapter', () => {
     });
   });
 
+  describe('add with a file selection', () => {
+    const release = { torrentFile: Buffer.from('torrent'), torrentFileName: 'books.torrent', clientKey: INFO_HASH, wantedPaths: ['A/2.epub'] };
+    function setup() {
+      const mock = mockFetch();
+      mock.handlers.set('/torrents/files', () => response([{ name: 'Root/A/1.epub' }, { name: 'Root/A/2.epub' }, { name: 'Root/B/x.zip' }]));
+      mock.handlers.set('/torrents/info', () => response([{ hash: INFO_HASH }]));
+      return mock;
+    }
+    it('adds the torrent stopped, skips unwanted files and starts it', async () => {
+      const { calls } = setup();
+      await adapter.add(release, config());
+      const form = calls.find((c) => c.url.includes('/torrents/add'))!.init.body as FormData;
+      expect(form.get('stopped')).toBe('true');
+      expect(form.get('paused')).toBe('true');
+      const priority = calls.findIndex((c) => c.url.includes('/torrents/filePrio'));
+      expect(priority).toBeGreaterThan(-1);
+      expect((calls[priority].init.body as URLSearchParams).get('id')).toBe('0|2');
+      expect((calls[priority].init.body as URLSearchParams).get('hash')).toBe(INFO_HASH);
+      expect((calls[priority].init.body as URLSearchParams).get('priority')).toBe('0');
+      const start = calls.findIndex((c) => c.url.includes('/torrents/start'));
+      expect(start).toBeGreaterThan(priority);
+      expect((calls[start].init.body as URLSearchParams).get('hashes')).toBe(INFO_HASH);
+    });
+    it('falls back to torrents/resume when torrents/start is missing', async () => {
+      const { calls, handlers } = setup();
+      handlers.set('/torrents/start', () => response('', { status: 404 }));
+      await adapter.add(release, config());
+      expect(calls.some((c) => c.url.includes('/torrents/resume'))).toBe(true);
+    });
+    it('retries the file list until the client has it', async () => {
+      vi.useFakeTimers();
+      try {
+        const { calls, handlers } = setup();
+        let attempts = 0;
+        handlers.set('/torrents/files', () => response(++attempts < 3 ? [] : [{ name: 'Root/A/2.epub' }]));
+        const pending = adapter.add(release, config());
+        await vi.runAllTimersAsync();
+        await pending;
+        expect(calls.filter((c) => c.url.includes('/torrents/files'))).toHaveLength(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+    it('stops polling after ten attempts and removes the torrent', async () => {
+      vi.useFakeTimers();
+      try {
+        const { calls, handlers } = setup();
+        handlers.set('/torrents/files', () => response([]));
+        const pending = expect(adapter.add(release, config())).rejects.toThrow('did not accept the file selection');
+        await vi.runAllTimersAsync();
+        await pending;
+        expect(calls.filter((c) => c.url.includes('/torrents/files'))).toHaveLength(10);
+        expect(calls.some((c) => c.url.includes('/torrents/delete'))).toBe(true);
+        expect(calls.some((c) => c.url.includes('/torrents/start'))).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+    it('retries 404 file lists until the client has it', async () => {
+      vi.useFakeTimers();
+      try {
+        const { calls, handlers } = setup();
+        let attempts = 0;
+        handlers.set('/torrents/files', () => (++attempts < 3 ? response('', { status: 404 }) : response([{ name: 'Root/A/2.epub' }])));
+        const pending = adapter.add(release, config());
+        await vi.runAllTimersAsync();
+        await pending;
+        expect(calls.filter((c) => c.url.includes('/torrents/files'))).toHaveLength(3);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+    it('stops polling after ten 404 responses and removes the torrent', async () => {
+      vi.useFakeTimers();
+      try {
+        const { calls, handlers } = setup();
+        handlers.set('/torrents/files', () => response('', { status: 404 }));
+        const pending = expect(adapter.add(release, config())).rejects.toThrow('did not accept the file selection');
+        await vi.runAllTimersAsync();
+        await pending;
+        expect(calls.filter((c) => c.url.includes('/torrents/files'))).toHaveLength(10);
+        expect(calls.some((c) => c.url.includes('/torrents/delete'))).toBe(true);
+        expect(calls.some((c) => c.url.includes('/torrents/start'))).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+    it('removes the torrent when setting priorities fails', async () => {
+      const { calls, handlers } = setup();
+      handlers.set('/torrents/filePrio', () => response('', { status: 500 }));
+      await expect(adapter.add(release, config())).rejects.toThrow('did not accept the file selection');
+      expect(calls.some((c) => c.url.includes('/torrents/delete'))).toBe(true);
+      expect(calls.some((c) => c.url.includes('/torrents/start'))).toBe(false);
+    });
+    it('refuses and removes the torrent when a wanted file is missing', async () => {
+      const { calls } = setup();
+      await expect(adapter.add({ ...release, wantedPaths: ['A/9.epub'] }, config())).rejects.toThrow('did not accept the file selection');
+      expect((calls.find((c) => c.url.includes('/torrents/delete'))!.init.body as URLSearchParams).get('deleteFiles')).toBe('true');
+    });
+    it('refuses a selection when the client already has the torrent', async () => {
+      const { calls, handlers } = setup();
+      handlers.set('/torrents/add', () => response('Fails.'));
+      await expect(adapter.add(release, config())).rejects.toThrow('did not accept the file selection');
+      expect(calls.some((c) => /torrents\/(filePrio|start|delete)/.test(c.url))).toBe(false);
+    });
+  });
+
   describe('add', () => {
     it('posts a magnet with the configured category and returns the caller-derived hash', async () => {
       const { calls } = mockFetch();
@@ -178,6 +285,17 @@ describe('QbittorrentAdapter', () => {
   });
 
   describe('status', () => {
+    it('reports the size of the selected files, not the whole torrent', async () => {
+      const { handlers } = mockFetch();
+      handlers.set('/torrents/info', () =>
+        response([{ hash: INFO_HASH, state: 'downloading', progress: 0.5, downloaded: 200, size: 400, total_size: 12000 }]),
+      );
+
+      const [status] = await adapter.status([INFO_HASH], config());
+
+      expect(status?.totalBytes).toBe(400);
+    });
+
     it('asks for every hash in one call and maps qBittorrent states', async () => {
       const { calls, handlers } = mockFetch();
       handlers.set('/torrents/info', () =>

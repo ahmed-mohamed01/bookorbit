@@ -10,7 +10,7 @@ import type {
   DownloadClientType,
   PathMappingHardlinkTestResult,
 } from '@bookorbit/types';
-import { DOWNLOAD_CLIENT_DELIVERY } from '@bookorbit/types';
+import { DOWNLOAD_CLIENT_DELIVERY, DOWNLOAD_CLIENT_FILE_SELECTION } from '@bookorbit/types';
 
 import { isUniqueViolation } from '../../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
@@ -62,6 +62,7 @@ export class DownloadClientConfigService {
       name: row.name,
       color: row.color ?? null,
       delivery: DOWNLOAD_CLIENT_DELIVERY[row.adapterType as DownloadClientType],
+      fileSelection: DOWNLOAD_CLIENT_FILE_SELECTION[row.adapterType as DownloadClientType],
     }));
   }
 

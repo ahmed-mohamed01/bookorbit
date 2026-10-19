@@ -12,6 +12,7 @@ import type {
   ResolvedClientConfig,
   SeedInfo,
 } from '../download-client-adapter';
+import { applyFileSelection, validateFileSelection } from '../file-selection.utils';
 import { endpointUrl, fetchClient, readClientJson, readClientText, throwForClientServerError } from './client-http.utils';
 
 const LABEL = 'qBittorrent';
@@ -85,13 +86,19 @@ export class QbittorrentAdapter implements DownloadClientAdapter {
   readonly type = 'qbittorrent' as const;
   readonly label = 'qBittorrent';
   readonly delivers = 'torrent' as const;
+  readonly supportsFileSelection = true as const;
 
   private readonly logger = new Logger(QbittorrentAdapter.name);
   private readonly sessions = new Map<number, { cookie: string; expiresAt: number }>();
   private readonly hashAliases = new Map<string, { primary: string; expiresAt: number }>();
 
   async add(release: GrabPayload, config: ResolvedClientConfig): Promise<{ clientKey: string }> {
+    validateFileSelection(release);
     const form = new FormData();
+    if (release.wantedPaths !== undefined) {
+      form.append('stopped', 'true');
+      form.append('paused', 'true');
+    }
     if (release.torrentFile) {
       form.append('torrents', new Blob([new Uint8Array(release.torrentFile)]), release.torrentFileName ?? 'upload.torrent');
     } else if (release.magnet) {
@@ -111,6 +118,8 @@ export class QbittorrentAdapter implements DownloadClientAdapter {
     // a torrent the client already holds, and one it could not read. Only the client can tell them
     // apart, so ask rather than hand the operator both guesses at once.
     if (response.status === 409 || body.toLowerCase().startsWith('fail')) {
+      if (release.wantedPaths !== undefined)
+        throw new BadRequestException('The download client did not accept the file selection: the torrent add was refused');
       if (await this.holds(release.clientKey, config)) {
         // An earlier attempt on this release leaves its torrent behind when the import fails, and
         // without this every retry of that release is rejected by the client forever. The torrent
@@ -124,7 +133,41 @@ export class QbittorrentAdapter implements DownloadClientAdapter {
       throw new BadRequestException('qBittorrent could not read that torrent. The file may be corrupt, or the magnet link invalid.');
     }
 
+    if (release.wantedPaths !== undefined) await this.selectFiles(release.clientKey.toLowerCase(), release.wantedPaths, config);
     return { clientKey: release.clientKey.toLowerCase() };
+  }
+
+  private async selectFiles(clientKey: string, wantedPaths: string[], config: ResolvedClientConfig): Promise<void> {
+    await applyFileSelection({
+      clientId: config.id,
+      clientKey,
+      wantedPaths,
+      logger: this.logger,
+      listFiles: async () => {
+        for (let attempt = 0; attempt < 10; attempt++) {
+          const response = await this.call(config, `/api/v2/torrents/files?hash=${encodeURIComponent(clientKey)}`, { method: 'GET' });
+          if (response.status !== 404) {
+            const files = await readClientJson<Array<{ name: string }>>(response, LABEL);
+            if (files.length) return files.map((file) => file.name);
+          }
+          if (attempt < 9) await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        return [];
+      },
+      skip: async (indexes) => {
+        if (indexes.length)
+          await this.call(config, '/api/v2/torrents/filePrio', {
+            method: 'POST',
+            body: new URLSearchParams({ hash: clientKey, id: indexes.join('|'), priority: '0' }),
+          });
+      },
+      start: async () => {
+        const body = new URLSearchParams({ hashes: clientKey });
+        const response = await this.call(config, '/api/v2/torrents/start', { method: 'POST', body });
+        if (response.status === 404) await this.call(config, '/api/v2/torrents/resume', { method: 'POST', body });
+      },
+      remove: () => this.remove(clientKey, config, { deleteFiles: true }),
+    });
   }
 
   /**
@@ -299,7 +342,11 @@ export class QbittorrentAdapter implements DownloadClientAdapter {
       return this.call(config, path, init, false);
     }
     // Newer clients report duplicate adds as 409; add() verifies presence before adopting.
-    if (!response.ok && !(response.status === 409 && path === '/api/v2/torrents/add')) {
+    if (
+      !response.ok &&
+      !(response.status === 404 && (path === '/api/v2/torrents/start' || path.startsWith('/api/v2/torrents/files?'))) &&
+      !(response.status === 409 && path === '/api/v2/torrents/add')
+    ) {
       throwForClientServerError(response, LABEL, path.split('?')[0]!);
       throw new BadRequestException(`qBittorrent answered ${response.status} for ${path.split('?')[0]}`);
     }
@@ -364,7 +411,7 @@ function torrentHashes(entry: QbTorrentInfo): string[] {
 }
 
 function toDownloadStatus(hash: string, entry: QbTorrentInfo): DownloadStatus {
-  const totalBytes = entry.total_size ?? entry.size ?? null;
+  const totalBytes = entry.size ?? entry.total_size ?? null;
   const state = mapState(entry.state);
   return {
     clientKey: hash,

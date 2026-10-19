@@ -72,6 +72,61 @@ describe('DelugeAdapter', () => {
     vi.unstubAllGlobals();
   });
 
+  describe('add with a file selection', () => {
+    const release = { torrentFile: Buffer.from('torrent'), clientKey: INFO_HASH, wantedPaths: ['A/2.epub'] };
+    function setup() {
+      const mock = mockRpc();
+      mock.handlers.set('core.add_torrent_file', () => result(INFO_HASH));
+      mock.handlers.set('core.get_torrent_status', () =>
+        result({
+          files: [
+            { index: 0, path: 'Root/A/1.epub' },
+            { index: 1, path: 'Root/A/2.epub' },
+            { index: 2, path: 'Root/B/x.zip' },
+          ],
+        }),
+      );
+      return mock;
+    }
+    it('adds paused, sets file priorities and resumes', async () => {
+      const { calls } = setup();
+      await adapter.add(release, config());
+      expect(calls.find((c) => c.method === 'core.add_torrent_file')?.params[2]).toEqual({ add_paused: true });
+      expect(calls.find((c) => c.method === 'core.get_torrent_status')?.params).toEqual([INFO_HASH, ['files']]);
+      expect(calls.find((c) => c.method === 'core.set_torrent_options')?.params).toEqual([[INFO_HASH], { file_priorities: [0, 1, 0] }]);
+      expect(calls.find((c) => c.method === 'core.resume_torrent')?.params).toEqual([[INFO_HASH]]);
+      expect(calls.findIndex((c) => c.method === 'core.resume_torrent')).toBeGreaterThan(
+        calls.findIndex((c) => c.method === 'core.set_torrent_options'),
+      );
+    });
+    it('uses Deluge indexes when the file list is reordered', async () => {
+      const { calls, handlers } = setup();
+      handlers.set('core.get_torrent_status', () =>
+        result({
+          files: [
+            { index: 2, path: 'Root/A/2.epub' },
+            { index: 0, path: 'Root/A/1.epub' },
+            { index: 1, path: 'Root/B/x.zip' },
+          ],
+        }),
+      );
+      await adapter.add(release, config());
+      expect(calls.find((c) => c.method === 'core.set_torrent_options')?.params).toEqual([[INFO_HASH], { file_priorities: [0, 0, 1] }]);
+    });
+    it('refuses a selection when the add fails because Deluge already has it', async () => {
+      const { calls, handlers } = setup();
+      handlers.set('core.add_torrent_file', () => failure('already exists'));
+      handlers.set('core.get_torrents_status', () => result({ [INFO_HASH]: { hash: INFO_HASH } }));
+      await expect(adapter.add(release, config())).rejects.toThrow('did not accept the file selection');
+      expect(calls.some((c) => ['core.set_torrent_options', 'core.remove_torrent'].includes(c.method))).toBe(false);
+    });
+    it('removes the torrent when a wanted file is missing', async () => {
+      const { calls } = setup();
+      await expect(adapter.add({ ...release, wantedPaths: ['A/9.epub'] }, config())).rejects.toThrow('did not accept the file selection');
+      expect(calls.find((c) => c.method === 'core.remove_torrent')?.params).toEqual([INFO_HASH, true]);
+    });
+  });
+
   describe('base URL', () => {
     it('keeps a reverse-proxy path prefix on every call', async () => {
       const { calls } = mockRpc();
