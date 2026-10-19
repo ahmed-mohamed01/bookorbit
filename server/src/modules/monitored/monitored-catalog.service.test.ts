@@ -644,6 +644,21 @@ describe('targeted availability recompute', () => {
 
     const otherVolume: [string, PlacedTitle, PlacedTitle][] = [
       [
+        'a comic sub-series volume against the novel its front names',
+        { title: 'Red Rising: Sons of Ares Vol. 1', seriesName: 'Red Rising: Sons of Ares', seriesIndex: '1' },
+        { title: 'Red Rising', seriesName: 'Red Rising Saga', seriesIndex: '1' },
+      ],
+      [
+        'a single issue against the novel its front names',
+        { title: 'Red Rising: Sons of Ares #2', seriesName: 'Red Rising: Sons of Ares (Single Issues)', seriesIndex: '2' },
+        { title: 'Red Rising', seriesName: 'Red Rising Saga', seriesIndex: '1' },
+      ],
+      [
+        'an omnibus against the novel its front names',
+        { title: 'Red Rising: Sons of Ares Omnibus', seriesName: 'Red Rising: Sons of Ares', seriesIndex: '1' },
+        { title: 'Red Rising' },
+      ],
+      [
         'a later volume against the bare series title',
         { title: 'Beware of Chicken Volume 6', seriesName: 'Beware of Chicken', seriesIndex: '6' },
         { title: 'Beware of Chicken' },
@@ -740,6 +755,21 @@ describe('targeted availability recompute', () => {
     });
 
     const sameBook: [string, PlacedTitle, PlacedTitle][] = [
+      [
+        'the first book against its bare file under a saga series name',
+        { title: 'Mistborn: The Final Empire', seriesName: 'Mistborn Saga', seriesIndex: '1' },
+        { title: 'Mistborn' },
+      ],
+      [
+        'the first book against its bare series-named file',
+        { title: 'Mistborn: The Final Empire', seriesName: 'Mistborn', seriesIndex: '1' },
+        { title: 'Mistborn' },
+      ],
+      [
+        'the first book of a saga against its bare file',
+        { title: 'Mistborn: The Final Empire', seriesName: 'The Mistborn Saga', seriesIndex: '1' },
+        { title: 'Mistborn', seriesName: 'Mistborn', seriesIndex: '1' },
+      ],
       [
         'the first book against its bare series title',
         { title: 'Beware of Chicken', seriesName: 'Beware of Chicken', seriesIndex: '1' },

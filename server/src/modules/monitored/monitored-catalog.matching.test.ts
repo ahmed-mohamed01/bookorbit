@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   chooseOwnedCandidate,
+  colonFrontNamesSubSeries,
   OWNED_MATCH_TIER,
   seriesBridgeTokens,
   seriesPrefixMatch,
@@ -224,5 +225,22 @@ describe('chooseOwnedCandidate', () => {
     ];
 
     expect(chooseOwnedCandidate({ seriesName: 'The Stormlight Archive', seriesIndex: '1.0', releaseYear: null }, claims)?.candidate.bookId).toBe(11);
+  });
+});
+
+describe('colonFrontNamesSubSeries', () => {
+  it.each([
+    ['Red Rising: Sons of Ares Vol. 1', ['Red Rising: Sons of Ares'], true],
+    ['Mistborn: The Final Empire', ['Mistborn'], false],
+    ...['saga', 'series', 'sequence', 'cycle', 'trilogy', 'duology', 'chronicles', 'books', 'novels', 'universe'].map(
+      (word) => ['Mistborn: The Final Empire', [`Mistborn ${word}`], false] as const,
+    ),
+    ['Mistborn: The Final Empire', ['Mistborn the Saga'], false],
+    ['Mistborn: The Final Empire', ['Mistborn Saga the'], false],
+    ['Red Rising: Morning Star', ['The Red Rising Saga'], false],
+    ['Mistborn: The Final Empire', ['The Mistborn Saga'], false],
+    ['Red Rising', ['Red Rising: Sons of Ares'], false],
+  ] as const)('checks %s against its series names', (title, seriesNames, expected) => {
+    expect(colonFrontNamesSubSeries(title, seriesNames)).toBe(expected);
   });
 });

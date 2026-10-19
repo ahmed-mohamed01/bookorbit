@@ -331,8 +331,25 @@ export function titleMatchKeys(title: string, { withColonFront = true } = {}): s
  */
 export function sharesOnlyColonFront(workTitle: string, libraryTitle: string): boolean {
   if (!workTitle.includes(':') || !libraryTitle.includes(':')) return false;
+  return fullTitlesShareNoKey(workTitle, libraryTitle);
+}
+
+export function fullTitlesShareNoKey(workTitle: string, libraryTitle: string): boolean {
   const libraryKeys = new Set(titleMatchKeys(libraryTitle, { withColonFront: false }));
   return !titleMatchKeys(workTitle, { withColonFront: false }).some((key) => libraryKeys.has(key));
+}
+
+const GENERIC_SERIES_SUFFIX = /^(?:the)?(?:saga|series|sequence|cycle|trilogy|duology|chronicles|books|novels|universe)*(?:the)?$/;
+
+/** Prevents "Red Rising: Sons of Ares" sub-series titles from claiming the bare "Red Rising" novel. */
+export function colonFrontNamesSubSeries(colonTitle: string, seriesNames: readonly (string | null | undefined)[]): boolean {
+  if (!colonTitle.includes(':')) return false;
+  const front = normalizeMonitoredName(colonTitle.split(':')[0]);
+  return seriesNames.some((name) => {
+    if (!name) return false;
+    const normalized = normalizeMonitoredName(name);
+    return normalized.startsWith(front) && normalized.length > front.length && !GENERIC_SERIES_SUFFIX.test(normalized.slice(front.length));
+  });
 }
 
 // Words that carry no identity on their own, so a title that differs from another only by these is
@@ -1078,6 +1095,14 @@ export class MonitoredCatalogService {
           continue;
         }
         if (tier === OWNED_MATCH_TIER.titleCore && sharesOnlyColonFront(work.title, candidate.title) && !sameSeriesSlot(work, candidate)) continue;
+        if (
+          tier === OWNED_MATCH_TIER.titleCore &&
+          !sameSeriesSlot(work, candidate) &&
+          (colonFrontNamesSubSeries(work.title, [work.seriesName, ...work.seriesMemberships.map((membership) => membership.name)]) ||
+            colonFrontNamesSubSeries(candidate.title, [candidate.seriesName]))
+        ) {
+          if (fullTitlesShareNoKey(work.title, candidate.title)) continue;
+        }
         kept.push(entry);
       }
       if (conflicted.length > 0) conflictsByWork.set(work, conflicted);
