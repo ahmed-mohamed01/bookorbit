@@ -1,5 +1,6 @@
+import { factsFromInspection } from './release-inspection-facts';
 import type { ReleaseCandidate } from './indexer-adapter';
-import { rejectRelease, scoreRelease, toReleaseItem, type ScoringRequest } from './release-scoring';
+import { applyInspectionFacts, rejectRelease, scoreRelease, toReleaseItem, type ScoringRequest } from './release-scoring';
 
 function request(overrides: Partial<ScoringRequest> = {}): ScoringRequest {
   return {
@@ -439,5 +440,78 @@ describe('toReleaseItem', () => {
       tierName: 'Everyday EPUB',
       failures: [{ code: 'formatUnknown', expected: ['epub'] }],
     });
+  });
+});
+
+describe('inspection facts', () => {
+  const facts = { infoHash: 'a'.repeat(40), formats: ['epub'], fileCount: 3, primaryFileCount: 1 };
+  it('fills missing facts without mutating the candidate', () => {
+    const candidate = release({ title: 'Dune' });
+    expect(applyInspectionFacts(candidate, facts)).toMatchObject({ format: 'epub', primaryFileCount: 1 });
+    expect(candidate.primaryFileCount).toBeUndefined();
+  });
+  it.each([{ format: 'pdf' }, { title: 'Dune PDF' }])('preserves resolved indexer formats %j', (overrides) => {
+    const candidate = applyInspectionFacts(release(overrides), facts);
+    expect(toReleaseItem(scoreRelease(candidate, request()), 'Nyaa', request()).formats).toEqual(['pdf']);
+  });
+  it.each([{ fileCount: 0 }, { primaryFileCount: 0 }])('preserves stated counts %j', (overrides) => {
+    expect(applyInspectionFacts(release(overrides), facts)).toMatchObject(overrides);
+    expect(applyInspectionFacts(release(overrides), facts).primaryFileCount).toBe(overrides.primaryFileCount);
+  });
+  it('never requests inspection for magnet-only candidates', () => {
+    const candidate = release({ title: 'Dune', magnet: 'magnet:?xt=urn:btih:' + facts.infoHash });
+    const criteria = request({ tiers: [{ id: 'epub', name: 'EPUB', conditions: { formats: ['epub'] } }] });
+    expect(toReleaseItem(scoreRelease(candidate, criteria), 'Nyaa', criteria).inspectionWanted).toBe(false);
+  });
+});
+
+describe('inspection eligibility', () => {
+  const criteria = request({ tiers: [{ id: 'epub', name: 'EPUB', conditions: { formats: ['epub'], fileLayout: 'single' } }] });
+  const candidate = release({ title: 'Dune', infoHash: 'a'.repeat(40), downloadUrl: 'https://nyaa.si/download/1.torrent' });
+  it('requests inspection only for inspectable unknown facts', () => {
+    expect(toReleaseItem(scoreRelease(candidate, criteria), 'Nyaa', criteria).inspectionWanted).toBe(true);
+  });
+  it.each([
+    { infoHash: undefined },
+    { downloadUrl: undefined },
+    { downloadUrl: 'MAGNET:?xt=urn:btih:' + 'a'.repeat(40) },
+    { format: 'pdf' },
+    { fileCount: 10 },
+  ])('does not request inspection for %j', (overrides) => {
+    const input = { ...candidate, ...overrides };
+    expect(toReleaseItem(scoreRelease(input, criteria), 'Nyaa', criteria).inspectionWanted).toBe(false);
+  });
+  it('does not retry an inspected release with unknown formats', () => {
+    expect(toReleaseItem(scoreRelease(candidate, criteria), 'Nyaa', criteria, true).inspectionWanted).toBe(false);
+  });
+  it('does not request inspection without a configured profile', () => {
+    expect(toReleaseItem(scoreRelease(candidate, request()), 'Nyaa', request()).inspectionWanted).toBe(false);
+  });
+});
+
+it('never promotes zip-only inspection facts into a single-layout tier', () => {
+  const scoring = request({ tiers: [{ id: 'single', name: 'Single', conditions: { fileLayout: 'single' } }] });
+  const facts = factsFromInspection('a'.repeat(40), {
+    source: 'torrent_file',
+    status: 'contents_unknown',
+    files: [{ path: 'Dune.zip', sizeBytes: 1, bookFile: false }],
+    totalFiles: 1,
+    primaryFileCount: 0,
+    unitCount: 0,
+    units: [],
+    truncated: false,
+    ignoredFileCount: 0,
+    containerCount: 1,
+    selection: null,
+    ranking: null,
+  });
+  expect(facts).not.toBeNull();
+  const candidate = applyInspectionFacts(release({ title: 'Dune archive', format: undefined }), facts!);
+  expect(toReleaseItem(scoreRelease(candidate, scoring), 'Nyaa', scoring, true)).toMatchObject({
+    tier: null,
+    bookCount: 0,
+    fileCount: 0,
+    inspectionWanted: false,
+    profileMismatch: { failures: [expect.objectContaining({ code: 'fileLayoutUnknown' })] },
   });
 });

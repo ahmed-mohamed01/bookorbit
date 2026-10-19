@@ -12,6 +12,7 @@ import type { BookRequestMediaKind, ReleaseCandidateItem, ReleaseScoreReason, Re
 import { normalizeIsbn, normalizeMetadataIsbn } from '../../../common/text-match/isbn-normalize';
 import { normalizeTitleText, significantTokens, symmetricTitleSimilarity, tokenizeTitleText } from '../../../common/text-match/title-match';
 import type { ReleaseCandidate } from './indexer-adapter';
+import { releaseInfoHash, type ReleaseInspectionFacts } from './release-inspection-facts';
 
 /**
  * Weights, and the reason each one is what it is. They sum to 100 at their maximum, so a score is
@@ -77,7 +78,7 @@ const SIZE_RANGES: Record<BookRequestMediaKind, { min: number; max: number }> = 
  * from the three shared lists rather than restated: written out by hand it had already lost `cbx`,
  * so a comic release naming that format read as having no format at all.
  */
-const FORMAT_TOKENS: readonly string[] = Object.values(BOOK_REQUEST_FORMATS_BY_MEDIA_KIND).flat();
+export const FORMAT_TOKENS: readonly string[] = Object.values(BOOK_REQUEST_FORMATS_BY_MEDIA_KIND).flat();
 
 const SCENE_LANGUAGE_NAMES: ReadonlyMap<string, string> = new Map([
   ['chinese', 'zh'],
@@ -185,7 +186,19 @@ export function scoreRelease(candidate: ReleaseCandidate, request: ScoringReques
   return { candidate, score: Math.max(0, Math.min(100, round(total))), reasons };
 }
 
-export function toReleaseItem(scored: ScoredRelease, indexerName: string, request: ScoringRequest): ReleaseCandidateItem {
+export function applyInspectionFacts(
+  candidate: ReleaseCandidate,
+  facts: (Omit<ReleaseInspectionFacts, 'unitCount'> & { unitCount?: number }) | undefined,
+): ReleaseCandidate {
+  return {
+    ...candidate,
+    ...(facts?.unitCount !== undefined && candidate.bookCount === undefined ? { bookCount: facts.unitCount } : {}),
+    ...(facts && resolveFormats(candidate).length === 0 ? { format: facts.formats.join(' ') } : {}),
+    ...(facts && candidate.primaryFileCount === undefined && candidate.fileCount === undefined ? { primaryFileCount: facts.primaryFileCount } : {}),
+  };
+}
+
+export function toReleaseItem(scored: ScoredRelease, indexerName: string, request: ScoringRequest, factsApplied = false): ReleaseCandidateItem {
   const { candidate } = scored;
   const formats = orderByPreference(resolveFormats(candidate), request.preferredFormats);
   const fileCount = candidate.primaryFileCount ?? candidate.fileCount ?? null;
@@ -202,6 +215,7 @@ export function toReleaseItem(scored: ScoredRelease, indexerName: string, reques
     formats,
     language: resolveLanguage(candidate),
     fileCount,
+    ...(candidate.bookCount !== undefined ? { bookCount: candidate.bookCount } : {}),
     freeleech: candidate.freeleech ?? false,
     vipOnly: candidate.vipOnly ?? false,
     alreadyGrabbed: candidate.alreadyGrabbed ?? false,
@@ -212,12 +226,22 @@ export function toReleaseItem(scored: ScoredRelease, indexerName: string, reques
   // Matched on the shape the picker will show rather than on the raw candidate, so the tier an
   // approver reads on a row is the one the automation used to choose it.
   const tier = matchReleaseTier(base, request.tiers);
+  const profileMismatch = tier === null ? explainReleaseProfileMismatch(base, request.tiers) : null;
   return {
     ...base,
     score: scored.score,
     tier,
     tierName: tier === null ? null : (request.tiers[tier]?.name ?? null),
-    profileMismatch: tier === null ? explainReleaseProfileMismatch(base, request.tiers) : null,
+    profileMismatch,
+    inspectionWanted: Boolean(
+      tier === null &&
+      profileMismatch &&
+      profileMismatch.failures.every((failure) => failure.code === 'formatUnknown' || failure.code === 'fileLayoutUnknown') &&
+      releaseInfoHash(candidate) &&
+      candidate.downloadUrl &&
+      !/^magnet:/i.test(candidate.downloadUrl) &&
+      !factsApplied,
+    ),
     reasons: scored.reasons,
   };
 }

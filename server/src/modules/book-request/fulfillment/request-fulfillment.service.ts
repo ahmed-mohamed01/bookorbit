@@ -1,3 +1,5 @@
+import { InspectionRefusal, inspectionRefusal } from './release-inspection-sweep';
+import type { ScoringRequest } from '../indexers/release-scoring';
 import { createHash } from 'node:crypto';
 import { extname } from 'node:path';
 import {
@@ -39,6 +41,8 @@ import type {
   IndexerSearchFailure,
   ReleaseFileInspection,
   ReleaseFileInspectionStatus,
+  ReleaseInspectionRanking,
+  ReleaseCandidateItem,
   ReleaseManifestFile,
   ReleaseSelectionManifest,
   ReleaseSearchOverrides,
@@ -48,6 +52,8 @@ import type {
   ReleaseUnitSummary,
 } from '@bookorbit/types';
 
+import { ReleaseInspectionFactsRepository } from '../indexers/release-inspection-facts.repository';
+import { factsFromInspection, releaseInfoHash } from '../indexers/release-inspection-facts';
 import { isUniqueViolation } from '../../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import type { RequestUser } from '../../../common/types/request-user';
@@ -75,7 +81,7 @@ import { IndexerRegistry } from '../indexers/indexer-registry';
 import { IndexerSearchService } from '../indexers/indexer-search.service';
 import { RETIRED_MEDIUM_REFUSAL } from '../retired-media';
 import { interpretRelease, type ReleaseFileInput, type ReleasePlan } from '../../scanner/lib/release-plan';
-import { resolveFormat } from '../indexers/release-scoring';
+import { applyInspectionFacts, scoreRelease, toReleaseItem, resolveFormat } from '../indexers/release-scoring';
 import { BookRequestDownloadRepository } from './book-request-download.repository';
 import { DirectDownloadService, stagedDirectFileName } from './direct-download.service';
 import { shelfmarkClientKey, type ShelfmarkRelease } from '../shelfmark/shelfmark-release';
@@ -158,6 +164,7 @@ export class RequestFulfillmentService {
     private readonly gateway: BookRequestGateway,
     private readonly events: BookRequestEventsService,
     private readonly batches: BookRequestBatchRepository,
+    private readonly releaseFacts: ReleaseInspectionFactsRepository,
   ) {}
 
   private async refuseBatch(requestId: number): Promise<void> {
@@ -215,13 +222,62 @@ export class RequestFulfillmentService {
     }
 
     const grab = await this.resolvePickedRelease(requestId, dto.indexerId, dto.releaseGuid.trim());
-    const selection = grab.inspection.selection;
-    if (!selection) return grab.inspection;
+    let ranking: ReleaseInspectionRanking | null = null;
+    try {
+      const { scoringRequest } = await this.releases.prepareScoringRequest(joined.request);
+      ranking = await this.rankInspected(requestId, grab.candidate, grab.indexerName ?? '', grab.inspection, scoringRequest);
+    } catch (error) {
+      this.logger.warn(
+        `[book_request.release_rank] [fail] requestId=${requestId} errorClass=${error instanceof Error ? error.name : 'UnknownError'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - inspection ranking failed`,
+      );
+    }
+    const inspection = { ...grab.inspection, ranking };
+    const selection = inspection.selection;
+    if (!selection) return inspection;
 
     // The inspection is cached per release, so the per-viewer part is added to a copy.
     const canSeeAll = user.isSuperuser || user.permissions.includes(Permission.ManageBookRequests);
     const alreadyImported = await this.batches.findImportedUnitIndexes(grab.clientKey, canSeeAll ? null : user.id);
-    return { ...grab.inspection, selection: { ...selection, alreadyImported } };
+    return { ...inspection, selection: { ...selection, alreadyImported } };
+  }
+
+  private readonly inspectionFetches = new Set<Promise<unknown>>();
+
+  async inspectForRanking(
+    requestId: number,
+    release: ReleaseCandidateItem,
+    scoringRequest?: ScoringRequest,
+  ): Promise<ReleaseInspectionRanking | null> {
+    const candidate = this.releases.find(requestId, release.indexerId, release.guid);
+    if (candidate && !releaseInfoHash(candidate)) return null;
+    const grab = await this.resolvePickedRelease(requestId, release.indexerId, release.guid, false, true);
+    return this.rankInspected(requestId, grab.candidate, grab.indexerName ?? '', grab.inspection, scoringRequest);
+  }
+
+  async rankInspected(
+    requestId: number,
+    candidate: ReleaseCandidate,
+    indexerName: string,
+    inspection: ReleaseFileInspection,
+    scoringRequest?: ScoringRequest,
+  ): Promise<ReleaseInspectionRanking | null> {
+    const infoHash = releaseInfoHash(candidate);
+    if (!infoHash) return null;
+    const facts = factsFromInspection(infoHash, inspection);
+    if (!facts) return null;
+    if (!scoringRequest) {
+      const joined = await this.requests.findById(requestId);
+      if (!joined) throw new NotFoundException('Book request not found');
+      scoringRequest = (await this.releases.prepareScoringRequest(joined.request)).scoringRequest;
+    }
+    const overlaid = applyInspectionFacts(candidate, facts);
+    const { score, tier, tierName, profileMismatch, format, formats, fileCount, bookCount, inspectionWanted } = toReleaseItem(
+      scoreRelease(overlaid, scoringRequest),
+      indexerName,
+      scoringRequest,
+      true,
+    );
+    return { score, tier, tierName, profileMismatch, format, formats, fileCount, bookCount, inspectionWanted };
   }
 
   /** Refuses a batch grab while another batch still holds this torrent in the client. */
@@ -696,7 +752,13 @@ export class RequestFulfillmentService {
     return this.resolvePickedRelease(requestId, dto.indexerId!, dto.releaseGuid!.trim(), true);
   }
 
-  private async resolvePickedRelease(requestId: number, indexerId: number, releaseGuid: string, applyCurrentPolicy = false): Promise<ResolvedGrab> {
+  private async resolvePickedRelease(
+    requestId: number,
+    indexerId: number,
+    releaseGuid: string,
+    applyCurrentPolicy = false,
+    automaticInspection = false,
+  ): Promise<ResolvedGrab & { candidate: ReleaseCandidate }> {
     const release = this.releases.find(requestId, indexerId, releaseGuid);
     if (!release) {
       throw grabError('GRAB_RELEASE_REFUSED', 'That release is no longer in the search results. Search again and pick one.');
@@ -707,10 +769,24 @@ export class RequestFulfillmentService {
     let grab: ResolvedGrab;
     if (cached && cached.candidate === release && cached.expiresAt > Date.now()) grab = cached.grab;
     else {
-      grab = await this.resolveRelease(requestId, release);
+      grab = await this.resolveRelease(requestId, release, automaticInspection);
+      const infoHash = releaseInfoHash(release);
+      if (infoHash && (grab.source === 'torrent_file' || grab.source === 'magnet')) {
+        const facts = factsFromInspection(infoHash, grab.inspection);
+        if (facts) {
+          const startedAt = Date.now();
+          try {
+            await this.releaseFacts.upsert(facts);
+          } catch (error) {
+            this.logger.warn(
+              `[book_request.release_facts] [fail] requestId=${requestId} indexerId=${indexerId} durationMs=${Date.now() - startedAt} errorClass=${error instanceof Error ? error.name : 'UnknownError'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - could not save release inspection facts`,
+            );
+          }
+        }
+      }
       this.rememberResolvedRelease(key, release, grab);
     }
-    return applyCurrentPolicy ? this.applyCurrentSeedPolicy(grab) : grab;
+    return { ...(applyCurrentPolicy ? await this.applyCurrentSeedPolicy(grab) : grab), candidate: release };
   }
 
   private async applyCurrentSeedPolicy(grab: ResolvedGrab): Promise<ResolvedGrab> {
@@ -738,11 +814,12 @@ export class RequestFulfillmentService {
     };
   }
 
-  private async resolveRelease(requestId: number, release: ReleaseCandidate): Promise<ResolvedGrab> {
+  private async resolveRelease(requestId: number, release: ReleaseCandidate, automaticInspection = false): Promise<ResolvedGrab> {
     const indexer = await this.indexers.resolveConfig(release.indexerId);
     try {
-      return await this.resolveReleaseFor(indexer, release);
+      return await this.resolveReleaseFor(indexer, release, automaticInspection);
     } catch (error) {
+      if (automaticInspection) throw inspectionRefusal(error) ?? error;
       let finalError = error;
       if (indexer.managerId != null && release.downloadUrl && isRefreshableManagedReleaseError(error)) {
         // A failed refresh is not an answer about the release. The original refusal is what the
@@ -774,7 +851,7 @@ export class RequestFulfillmentService {
     }
   }
 
-  private async resolveReleaseFor(indexer: ResolvedIndexerConfig, release: ReleaseCandidate): Promise<ResolvedGrab> {
+  private async resolveReleaseFor(indexer: ResolvedIndexerConfig, release: ReleaseCandidate, automaticInspection = false): Promise<ResolvedGrab> {
     const snapshot = {
       indexerId: release.indexerId,
       indexerName: indexer.name,
@@ -797,7 +874,7 @@ export class RequestFulfillmentService {
       // A proxy can publish both, as Jackett does for Nyaa with "Prefer Magnet Links" off. The
       // .torrent is the only way to see the files before the grab, so it wins; the magnet is kept
       // for when that fetch fails, which leaves the release exactly as grabbable as before.
-      const torrentFile = release.downloadUrl ? await this.torrentBesideMagnet(indexer, release, release.magnet) : null;
+      const torrentFile = release.downloadUrl ? await this.torrentBesideMagnet(indexer, release, release.magnet, automaticInspection) : null;
       if (torrentFile) return torrentFileGrab(snapshot, torrentFile);
       return {
         ...snapshot,
@@ -870,7 +947,7 @@ export class RequestFulfillmentService {
       throw grabError('GRAB_SOURCE_REFUSED', `${indexer.name} released no magnet link, and its adapter cannot fetch a .torrent file`);
     }
 
-    const torrentFile = await fetchTorrentFile(adapter, release, indexer);
+    const torrentFile = await this.fetchInspectionTorrent(adapter, release, indexer, automaticInspection);
     if (!Buffer.isBuffer(torrentFile)) {
       return {
         ...snapshot,
@@ -883,12 +960,47 @@ export class RequestFulfillmentService {
     return torrentFileGrab(snapshot, { file: torrentFile, metadata: torrentMetadataFromFile(torrentFile) });
   }
 
-  private async torrentBesideMagnet(indexer: ResolvedIndexerConfig, release: ReleaseCandidate, magnet: string): Promise<FetchedTorrent | null> {
+  private async fetchInspectionTorrent(
+    adapter: IndexerAdapter,
+    release: ReleaseCandidate,
+    indexer: ResolvedIndexerConfig,
+    automaticInspection: boolean,
+  ): Promise<TorrentFetchResult> {
+    if (!automaticInspection) return fetchTorrentFile(adapter, release, indexer);
+    while (this.inspectionFetches.size >= 2) await Promise.race(this.inspectionFetches);
+    const fetch = adapter.fetchTorrentFile!(release, indexer);
+    const settled = fetch.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.inspectionFetches.add(settled);
+    void settled.then(() => this.inspectionFetches.delete(settled));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        fetch,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new InspectionRefusal('timeout')), 10_000);
+        }),
+      ]);
+      if (Buffer.isBuffer(result) && /^\s*</i.test(result.subarray(0, 1024).toString())) throw new InspectionRefusal('challenge');
+      return result;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async torrentBesideMagnet(
+    indexer: ResolvedIndexerConfig,
+    release: ReleaseCandidate,
+    magnet: string,
+    automaticInspection = false,
+  ): Promise<FetchedTorrent | null> {
     const startedAt = Date.now();
     try {
       const adapter = this.indexerRegistry.require(indexer.adapterType);
       if (!adapter.fetchTorrentFile) return null;
-      const fetched = await adapter.fetchTorrentFile(release, indexer);
+      const fetched = await this.fetchInspectionTorrent(adapter, release, indexer, automaticInspection);
       if (!Buffer.isBuffer(fetched)) return null;
       const metadata = torrentMetadataFromFile(fetched);
       // The magnet's hash is what the feed named, and the client verifies every piece against
@@ -902,6 +1014,7 @@ export class RequestFulfillmentService {
       }
       return { file: fetched, metadata };
     } catch (error) {
+      if (automaticInspection) throw inspectionRefusal(error) ?? error;
       this.logger.warn(
         `[book_request.release_resolve] [fail] indexerId=${indexer.id} durationMs=${Date.now() - startedAt} errorClass=${error instanceof Error ? error.constructor.name : typeof error} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - .torrent fetch failed, using the magnet`,
       );
@@ -1224,6 +1337,7 @@ function torrentInspection(metadata: TorrentFileMetadata): ReleaseFileInspection
 
   return {
     source: 'torrent_file',
+    ranking: null,
     status: inspectionStatus(plan),
     files: displayed,
     totalFiles: allFiles.length,
@@ -1307,6 +1421,7 @@ function directFileInspection(fileName: string, sizeBytes: number | null | undef
     primaryFileCount: bookFile ? 1 : 0,
     truncated: false,
     selection: null,
+    ranking: null,
     ...unitFields(plan),
   };
 }
@@ -1324,6 +1439,7 @@ function metadataUnavailableInspection(source: 'magnet' | 'nzb_file' | 'shelfmar
     ignoredFileCount: 0,
     containerCount: 0,
     selection: null,
+    ranking: null,
   };
 }
 

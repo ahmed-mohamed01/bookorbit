@@ -1,10 +1,11 @@
-import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { Logger, BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { NotificationType, UNSETTLED_BOOK_REQUEST_DOWNLOAD_STATUSES, WORKER_WRITABLE_BOOK_REQUEST_STATUSES } from '@bookorbit/types';
 
 import type { RequestUser } from '../../../common/types/request-user';
 import type { BookRequestDownloadRow, BookRequestRow } from '../../../db/schema';
 import { newznabClientKey } from '../indexers/adapters/newznab.adapter';
-import { IndexerRetryExhaustedException, IndexerSearchException } from '../indexers/indexer-adapter';
+import { type ReleaseCandidate, IndexerRetryExhaustedException, IndexerSearchException } from '../indexers/indexer-adapter';
+import { prepareScoringRequest } from '../indexers/indexer-search.service';
 import { torrentMetadataFromFile } from './torrent.utils';
 import { interpretRelease } from '../../scanner/lib/release-plan';
 import { RequestFulfillmentService, selectionManifest } from './request-fulfillment.service';
@@ -110,10 +111,13 @@ function makeService(
   };
   const indexerAdapter = { fetchTorrentFile: vi.fn(), ...overrides.indexerAdapter } as Record<string, ReturnType<typeof vi.fn>>;
   const indexerRegistry = { require: vi.fn().mockReturnValue(indexerAdapter) };
-  const releases = { find: vi.fn().mockReturnValue(undefined), search: vi.fn(), forget: vi.fn(), ...overrides.releases } as Record<
-    string,
-    ReturnType<typeof vi.fn>
-  >;
+  const releases = {
+    prepareScoringRequest: vi.fn().mockImplementation((request) => Promise.resolve(prepareScoringRequest(request, []))),
+    find: vi.fn().mockReturnValue(undefined),
+    search: vi.fn(),
+    forget: vi.fn(),
+    ...overrides.releases,
+  } as Record<string, ReturnType<typeof vi.fn>>;
   const notifier = {
     notifyApprovers: vi.fn().mockResolvedValue(undefined),
     notifyInterested: vi.fn().mockResolvedValue(undefined),
@@ -128,6 +132,8 @@ function makeService(
     findImportedUnitIndexes: vi.fn().mockResolvedValue([]),
   };
 
+  const releaseFacts = { upsert: vi.fn().mockResolvedValue(undefined) };
+
   const service = new RequestFulfillmentService(
     requests as never,
     downloads as never,
@@ -141,6 +147,7 @@ function makeService(
     gateway as never,
     events as never,
     batches as never,
+    releaseFacts as never,
   );
 
   return {
@@ -159,6 +166,7 @@ function makeService(
     gateway,
     events,
     batches,
+    releaseFacts,
   };
 }
 
@@ -670,6 +678,118 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
     expect(adapter.add).not.toHaveBeenCalled();
   });
 
+  it.each([1, 3, 4])('returns the inspected ranking for a %s-EPUB Nyaa release', async (count) => {
+    const { service, requests } = makeService({
+      releases: {
+        find: vi.fn().mockReturnValue({ ...RELEASE, title: 'Dune', format: undefined, infoHash: INFO_HASH }),
+        prepareScoringRequest: vi.fn().mockResolvedValue({
+          scoringRequest: {
+            title: 'Dune',
+            authors: [],
+            isbns: [],
+            isbn10: null,
+            isbn13: null,
+            language: null,
+            mediaKind: 'ebook',
+            preferredFormats: ['epub'],
+            tiers: [{ id: 'epub', name: 'Single EPUB', conditions: { formats: ['epub'], fileLayout: 'single' } }],
+          },
+        }),
+      },
+      indexers: { resolveConfig: vi.fn().mockResolvedValue({ id: 9, name: 'Nyaa', adapterType: 'nyaa' }) },
+      indexerAdapter: {
+        fetchTorrentFile: vi
+          .fn()
+          .mockResolvedValue(
+            multiFileTorrent(count === 3 ? ['Dune.epub', 'Dune.mobi', 'Dune.azw3'] : Array.from({ length: count }, (_, i) => `Dune ${i + 1}.epub`)),
+          ),
+      },
+    });
+    const inspection = await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+    expect(requests.findById).toHaveBeenCalledTimes(1);
+    expect(inspection.ranking?.score).toEqual(expect.any(Number));
+    expect(inspection.unitCount).toBe(count === 4 ? 4 : 1);
+    expect(inspection).toMatchObject({
+      ranking:
+        count !== 4
+          ? { tier: 0, profileMismatch: null, inspectionWanted: false, fileCount: count, format: 'epub' }
+          : {
+              tier: null,
+              profileMismatch: { failures: [expect.objectContaining({ code: 'fileLayout', actual: 'multi' })] },
+              inspectionWanted: false,
+              fileCount: 4,
+            },
+    });
+  });
+
+  describe('inspection ranking resilience', () => {
+    it.each(['settings', 'ranking'])('returns inspection when %s fails and logs a sanitized error', async (failure) => {
+      const { service, releases, requests } = makeService({
+        releases: { find: vi.fn<() => ReleaseCandidate>().mockReturnValue({ ...RELEASE, infoHash: INFO_HASH }) },
+        indexerAdapter: { fetchTorrentFile: vi.fn<() => Promise<Buffer>>().mockResolvedValue(torrentBytes()) },
+      });
+      const error = new BadRequestException('bad "ranking"');
+      if (failure === 'settings') releases.prepareScoringRequest.mockRejectedValue(error);
+      else vi.spyOn(service, 'rankInspected').mockRejectedValue(error);
+      const warning = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).resolves.toMatchObject({ totalFiles: 1, ranking: null });
+      expect(requests.findById).toHaveBeenCalledTimes(1);
+      expect(warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          '[book_request.release_rank] [fail] requestId=7 errorClass=BadRequestException error="bad \\"ranking\\"" - inspection ranking failed',
+        ),
+      );
+      warning.mockRestore();
+    });
+  });
+
+  it('returns null ranking without a hash or exact metadata, without loading the request', async () => {
+    const { service, requests, releases } = makeService();
+    const inspection = { totalFiles: null } as import('@bookorbit/types').ReleaseFileInspection;
+    expect(await service.rankInspected(7, RELEASE, 'Nyaa', inspection)).toBeNull();
+    expect(await service.rankInspected(7, { ...RELEASE, infoHash: INFO_HASH }, 'Nyaa', inspection)).toBeNull();
+    expect(requests.findById).not.toHaveBeenCalled();
+    expect(releases.prepareScoringRequest).not.toHaveBeenCalled();
+  });
+
+  it('writes fresh torrent facts once and does not rewrite cached inspections', async () => {
+    const { service, releaseFacts } = makeService({
+      releases: { find: vi.fn().mockReturnValue({ ...RELEASE, infoHash: INFO_HASH.toUpperCase() }) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+    });
+    await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+    await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+    expect(releaseFacts.upsert).toHaveBeenCalledExactlyOnceWith({
+      infoHash: INFO_HASH,
+      fileCount: 1,
+      unitCount: 1,
+      primaryFileCount: 1,
+      formats: ['epub'],
+    });
+  });
+
+  it('keeps inspection successful when saving facts fails', async () => {
+    const { service, releaseFacts } = makeService({
+      releases: { find: vi.fn().mockReturnValue({ ...RELEASE, infoHash: INFO_HASH }) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+    });
+    const warning = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    releaseFacts.upsert.mockRejectedValue(new Error('database "offline"'));
+    await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).resolves.toMatchObject({ totalFiles: 1 });
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('[book_request.release_facts] [fail]'));
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('error="database \\"offline\\""'));
+    warning.mockRestore();
+  });
+
+  it('does not save facts for a torrent release without a candidate hash', async () => {
+    const { service, releaseFacts } = makeService({
+      releases: { find: vi.fn().mockReturnValue({ ...RELEASE, infoHash: undefined, magnet: undefined }) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+    });
+    await service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+    expect(releaseFacts.upsert).not.toHaveBeenCalled();
+  });
+
   it('inspects the torrent without creating an attempt and reuses it for the following grab', async () => {
     const { service, downloads, adapter, indexerAdapter } = makeService({
       releases: { find: vi.fn().mockReturnValue(RELEASE) },
@@ -846,6 +966,7 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
 
     await expect(service.inspectRelease(7, { indexerId: 9, releaseGuid: 'r-1' }, user())).resolves.toEqual({
       source: 'magnet',
+      ranking: null,
       status: 'metadata_unavailable',
       files: [],
       totalFiles: null,

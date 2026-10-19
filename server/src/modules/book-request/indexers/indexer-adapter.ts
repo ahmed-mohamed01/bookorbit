@@ -132,6 +132,7 @@ export interface ReleaseCandidate {
    * cover image counts too, so it is a scoring penalty rather than a hard filter.
    */
   fileCount?: number;
+  bookCount?: number;
   /**
    * Seeding the tracker requires of this release, where it states them. A default only: the
    * operator's own per-indexer figures win, since those are a deliberate choice and these are

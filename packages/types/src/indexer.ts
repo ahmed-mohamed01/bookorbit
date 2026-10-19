@@ -445,6 +445,7 @@ export interface ReleaseCandidateItem {
    * fetch per release and so belongs to inspection, not to search.
    */
   fileCount: number | null;
+  bookCount?: number;
   freeleech: boolean;
   /** The tracker will refuse the download outright unless the account is VIP. */
   vipOnly: boolean;
@@ -463,6 +464,7 @@ export interface ReleaseCandidateItem {
    * the list, exactly as before profiles existed.
    */
   tier: number | null;
+  inspectionWanted: boolean;
   /** The operator's own name for that tier, carried so the row need not resolve it. */
   tierName: string | null;
   /** Why the release missed its closest tier. Null when it matched or no profile is configured. */
@@ -588,9 +590,9 @@ export interface ReleaseSearchProgress extends ReleaseSearchResult {
 }
 
 /** SSE event names on a streamed release search. `result` is the last event of a successful search. */
-export const RELEASE_SEARCH_PROGRESS_EVENT = 'progress';
-export const RELEASE_SEARCH_RESULT_EVENT = 'result';
-export const RELEASE_SEARCH_ERROR_EVENT = 'error';
+export const RELEASE_SEARCH_PROGRESS_EVENT = "progress";
+export const RELEASE_SEARCH_RESULT_EVENT = "result";
+export const RELEASE_SEARCH_ERROR_EVENT = "error";
 
 /** Body of a streamed request release search. `overrides` is omitted for the request's default search. */
 export interface StreamBookRequestReleasesPayload {
@@ -711,7 +713,13 @@ export interface ReleaseSelectionManifest {
 }
 
 /** The safe, credential-free result of inspecting one selected release server-side. */
+export type ReleaseInspectionRanking = Pick<
+  ReleaseCandidateItem,
+  "score" | "tier" | "tierName" | "profileMismatch" | "format" | "formats" | "fileCount" | "bookCount" | "inspectionWanted"
+>;
+
 export interface ReleaseFileInspection {
+  ranking: ReleaseInspectionRanking | null;
   source: BookRequestDownloadSource;
   status: ReleaseFileInspectionStatus;
   files: ReleaseManifestFile[];

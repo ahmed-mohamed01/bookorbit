@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   classifyFileLayout,
+  releaseTierFailures,
   compareByTier,
   explainReleaseProfileMismatch,
   matchReleaseTier,
@@ -66,6 +67,12 @@ describe('releaseMatchesTier', () => {
   it('still reads a real set of tracks as several files', () => {
     expect(releaseMatchesTier(release({ fileCount: 40 }), { fileLayout: 'single' })).toBe(false);
     expect(releaseMatchesTier(release({ fileCount: 40 }), { fileLayout: 'multi' })).toBe(true);
+  });
+
+  it('uses known book counts and preserves the five-entry fallback', () => {
+    expect(releaseMatchesTier(release({ fileCount: 4, bookCount: 4 }), { fileLayout: 'single' })).toBe(false);
+    expect(releaseMatchesTier(release({ fileCount: 3, bookCount: 1 }), { fileLayout: 'single' })).toBe(true);
+    expect(releaseMatchesTier(release({ fileCount: 5 }), { fileLayout: 'single' })).toBe(true);
   });
 
   it('classifies a layout the same way the picker facet does', () => {
@@ -234,4 +241,12 @@ describe('compareByTier', () => {
     rows.sort((a, b) => compareByTier(a.tier, b.tier));
     expect(rows.map((row) => row.tier)).toEqual([0, 1, 2, null, null]);
   });
+});
+
+it('keeps a zero-book inspection layout unknown regardless of file count', () => {
+  for (const fileCount of [0, 1, 30]) {
+    expect(releaseTierFailures(release({ fileCount, bookCount: 0 }), { fileLayout: 'single' })).toEqual([
+      expect.objectContaining({ code: 'fileLayoutUnknown' }),
+    ]);
+  }
 });

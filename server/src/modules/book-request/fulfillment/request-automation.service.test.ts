@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, HttpException } from '@nestjs/common';
 import { DEFAULT_BOOK_REQUEST_AUTOMATION_SETTINGS } from '@bookorbit/types';
 import type { BookRequestAutomationSettings, GrabFailureCode, IndexerSearchStatus, ReleaseCandidateItem } from '@bookorbit/types';
 
@@ -28,6 +28,7 @@ function release(overrides: Partial<ReleaseCandidateItem> = {}): ReleaseCandidat
     audio: null,
     score: 92,
     tier: null,
+    inspectionWanted: false,
     tierName: null,
     profileMismatch: null,
     reasons: [],
@@ -105,6 +106,7 @@ function makeService(
     findTriedReleaseKeys: vi.fn().mockResolvedValue(new Set(options.tried ?? [])),
   };
   const releases = {
+    prepareScoringRequest: vi.fn().mockResolvedValue({ scoringRequest: {} }),
     search: vi.fn().mockResolvedValue({
       releases: options.releases ?? [release()],
       indexers: options.indexers ?? [],
@@ -115,7 +117,11 @@ function makeService(
       cached: false,
     }),
   };
-  const fulfillment = { grab: vi.fn().mockResolvedValue(undefined), setRequestStatus: vi.fn().mockResolvedValue(true) };
+  const fulfillment = {
+    inspectForRanking: vi.fn().mockResolvedValue(null),
+    grab: vi.fn().mockResolvedValue(undefined),
+    setRequestStatus: vi.fn().mockResolvedValue(true),
+  };
   const events = { on: vi.fn() };
   const notifier = { notifyApprovers: vi.fn().mockResolvedValue(undefined) };
   const searchDelay = { wait: vi.fn().mockResolvedValue(undefined) };
@@ -148,6 +154,115 @@ async function settle(): Promise<void> {
 }
 
 describe('RequestAutomationService.considerRequest', () => {
+  const profiles = { ebook: [{ name: 'EPUB', conditions: { formats: ['epub' as const] } }], audiobook: [] };
+
+  it('logs every rejected inspection including non-refusals', async () => {
+    const { service, fulfillment } = makeService({
+      settings: { profiles },
+      releases: [release({ inspectionWanted: true }), release({ guid: 'other', inspectionWanted: true })],
+    });
+    fulfillment.inspectForRanking.mockRejectedValue(new BadRequestException('bad "torrent"'));
+    const warn = vi.spyOn(service['logger'], 'warn');
+    service.considerRequest(7);
+    await settle();
+    expect(fulfillment.inspectForRanking).toHaveBeenCalledTimes(2);
+    const failures = warn.mock.calls
+      .map(([message]) => String(message))
+      .filter((message) => message.includes('[book_request.release_inspect_auto] [fail]'));
+    expect(failures).toHaveLength(2);
+    for (const message of failures) {
+      expect(message).toMatch(/requestId=7 indexerId=9 durationMs=\d+ errorClass=BadRequestException/);
+      expect(message).toContain('error="bad \\"torrent\\""');
+    }
+  });
+
+  it('sums candidate and cached fact rows across search variants', async () => {
+    const { service, releases } = makeService({ settings: { profiles }, request: { isbn13: '9780441172719' } });
+    const response = await releases.search();
+    releases.search.mockClear();
+    releases.search
+      .mockResolvedValueOnce({
+        ...response,
+        releases: [release({ guid: 'first', inspectionWanted: true }), release({ guid: 'cached1', bookCount: 0 })],
+      })
+      .mockResolvedValueOnce({
+        ...response,
+        releases: [
+          release({ guid: 'second', inspectionWanted: true }),
+          release({ guid: 'cached2', bookCount: 1 }),
+          release({ guid: 'cached3', bookCount: 2 }),
+        ],
+      });
+    const log = vi.spyOn(service['logger'], 'log');
+    service.considerRequest(7);
+    await settle();
+    expect(releases.search).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('candidates=2 cached=3 inspected=2'));
+  });
+
+  it('keeps the old ranking when scoring preparation fails', async () => {
+    const { service, releases, fulfillment } = makeService({
+      settings: { profiles },
+      releases: [release({ tier: 0, inspectionWanted: true })],
+    });
+    const warn = vi.spyOn(service['logger'], 'warn');
+    releases.prepareScoringRequest.mockRejectedValue(new BadRequestException('bad "scoring"'));
+    service.considerRequest(7);
+    await settle();
+    expect(fulfillment.grab).toHaveBeenCalledOnce();
+    expect(warn.mock.calls.filter(([message]) => String(message).includes('[book_request.release_inspect_auto] [fail]'))).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(' - release inspection failed'));
+  });
+
+  it.each(['budget', 'refusal', 'duplicate', 'tried'] as const)('shares inspection state across variants: %s', async (mode) => {
+    const first = Array.from({ length: mode === 'budget' ? 12 : 1 }, (_, i) => release({ guid: String(i), inspectionWanted: true }));
+    const { service, releases, fulfillment } = makeService({
+      settings: { profiles },
+      request: { isbn13: '9780441172719' },
+      tried: mode === 'tried' ? ['9:0'] : [],
+      releases: first,
+    });
+    const response = await releases.search();
+    releases.search.mockClear();
+    releases.search.mockResolvedValueOnce(response).mockResolvedValue({
+      ...response,
+      releases:
+        mode === 'duplicate' || mode === 'tried'
+          ? first
+          : Array.from({ length: 15 }, (_, i) => release({ guid: String(i + 12), inspectionWanted: true })),
+    });
+    if (mode === 'refusal') fulfillment.inspectForRanking.mockRejectedValue(new HttpException('refused', 429));
+    const log = vi.spyOn(service['logger'], 'log');
+    service.considerRequest(7);
+    await settle();
+    expect(releases.search).toHaveBeenCalledTimes(2);
+    expect(fulfillment.inspectForRanking).toHaveBeenCalledTimes(mode === 'budget' ? 20 : mode === 'tried' ? 0 : 1);
+    const messages = log.mock.calls.map(([message]) => String(message));
+    expect(messages.filter((message) => message.includes('[book_request.release_inspect_auto] [start]'))).toHaveLength(1);
+    expect(messages.filter((message) => message.includes('[book_request.release_inspect_auto] [end]'))).toHaveLength(1);
+  });
+
+  it('inspects a Nyaa single EPUB before grabbing it with a profile', async () => {
+    const { service, fulfillment } = makeService({
+      settings: { profiles: { ebook: [{ name: 'EPUB', conditions: { formats: ['epub'] } }], audiobook: [] } },
+      releases: [release({ indexerName: 'Nyaa', format: null, formats: [], fileCount: null, inspectionWanted: true })],
+    });
+    fulfillment.inspectForRanking.mockResolvedValue({
+      score: 95,
+      tier: 0,
+      tierName: 'EPUB',
+      format: 'epub',
+      formats: ['epub'],
+      fileCount: 1,
+      inspectionWanted: false,
+      profileMismatch: null,
+    });
+    service.considerRequest(7);
+    await settle();
+    expect(fulfillment.inspectForRanking).toHaveBeenCalledTimes(1);
+    expect(fulfillment.grab).toHaveBeenCalledOnce();
+  });
+
   it('does nothing at all while unattended grabbing is off', async () => {
     const { service, fulfillment, releases, notifier } = makeService({ settings: { autoGrabEnabled: false } });
 

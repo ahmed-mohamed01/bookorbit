@@ -1,3 +1,4 @@
+import { sweepUnknownReleases } from './release-inspection-sweep';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { CronExpression } from '@nestjs/schedule';
 import {
@@ -469,50 +470,118 @@ export class RequestAutomationService implements OnModuleInit {
       sourceCount: request.sourceIds?.length ?? 'all',
     };
 
-    for (const [index, variant] of variants.entries()) {
-      if (index > 0) await this.searchDelay.wait();
+    const inspection = {
+      startedAt: 0,
+      candidates: 0,
+      cached: 0,
+      inspected: 0,
+      promoted: 0,
+      refused: false,
+      timeouts: 0,
+      keys: new Set<string>(),
+      stoppedBy: 'exhausted' as 'tier' | 'exhausted' | 'ceiling' | 'refused',
+    };
+    try {
+      for (const [index, variant] of variants.entries()) {
+        if (index > 0) await this.searchDelay.wait();
 
-      const result = await this.releases.search(request, {
-        indexerMode: variant.indexerMode,
-        sourceIds: request.sourceIds,
-        ...(variant.isbn !== undefined ? { overrides: { isbn: variant.isbn } } : {}),
-      });
-      for (const status of result.indexers) indexers.set(status.indexerId, status);
-      for (const release of result.releases) {
-        const key = `${release.indexerId}:${release.guid}`;
-        const current = releases.get(key);
-        if (!current || release.score > current.score) releases.set(key, release);
+        const result = await this.releases.search(request, {
+          indexerMode: variant.indexerMode,
+          sourceIds: request.sourceIds,
+          ...(variant.isbn !== undefined ? { overrides: { isbn: variant.isbn } } : {}),
+        });
+        if (profiled) {
+          inspection.candidates += result.releases.filter(
+            (release) => release.inspectionWanted && release.score >= settings.autoGrabMinScore && !tried.has(`${release.indexerId}:${release.guid}`),
+          ).length;
+          inspection.cached += result.releases.filter((release) => release.bookCount !== undefined).length;
+        }
+        for (const status of result.indexers) indexers.set(status.indexerId, status);
+        for (const release of result.releases) {
+          const key = `${release.indexerId}:${release.guid}`;
+          const current = releases.get(key);
+          if (!current || release.score > current.score) releases.set(key, release);
+        }
+
+        let ranked = [...releases.values()].sort(
+          (a, b) => compareByTier(a.tier, b.tier) || b.score - a.score || (b.seeders ?? -1) - (a.seeders ?? -1),
+        );
+
+        if (profiled && !inspection.refused && inspection.inspected < 20) {
+          const startedAt = Date.now();
+          if (!inspection.startedAt) {
+            inspection.startedAt = startedAt;
+            this.logger.log(
+              `[book_request.release_inspect_auto] [start] requestId=${request.id} candidates=${ranked.filter((r) => r.inspectionWanted && r.score >= settings.autoGrabMinScore && !tried.has(`${r.indexerId}:${r.guid}`)).length} - automatic inspection started`,
+            );
+          }
+          try {
+            const { scoringRequest } = await this.releases.prepareScoringRequest(request);
+            const sweep = await sweepUnknownReleases({
+              ranked,
+              minScore: settings.autoGrabMinScore,
+              limit: 20 - inspection.inspected,
+              alreadyInspected: new Set([...inspection.keys, ...tried]),
+              consecutiveTimeouts: inspection.timeouts,
+              inspect: async (release) => {
+                const fetchStartedAt = Date.now();
+                const key = `${release.indexerId}:${release.guid}`;
+                inspection.keys.add(key);
+                inspection.inspected++;
+                try {
+                  return await this.fulfillment.inspectForRanking(request.id, release, scoringRequest);
+                } catch (error) {
+                  this.logger.warn(
+                    `[book_request.release_inspect_auto] [fail] requestId=${request.id} indexerId=${release.indexerId} durationMs=${Date.now() - fetchStartedAt} errorClass=${error instanceof Error ? error.name : 'UnknownError'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - automatic inspection failed`,
+                  );
+                  throw error;
+                }
+              },
+            });
+            inspection.promoted += sweep.promoted;
+            inspection.timeouts = sweep.consecutiveTimeouts;
+            inspection.stoppedBy = sweep.stoppedBy;
+            inspection.refused = sweep.stoppedBy === 'refused';
+            ranked = sweep.releases.sort((a, b) => compareByTier(a.tier, b.tier) || b.score - a.score || (b.seeders ?? -1) - (a.seeders ?? -1));
+            for (const release of ranked) releases.set(`${release.indexerId}:${release.guid}`, release);
+          } catch (error) {
+            this.logger.warn(
+              `[book_request.release_inspect_auto] [fail] requestId=${request.id} durationMs=${Date.now() - startedAt} errorClass=${error instanceof Error ? error.name : 'UnknownError'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - release inspection failed`,
+            );
+          }
+        }
+
+        // A release matching no tier is never grabbed unattended. It stays in the picker for a person
+        // to choose, which is the whole point of the untiered state: the operator said what they want,
+        // and anything else is a decision they have not delegated.
+        const inProfile = profiled ? ranked.filter((release) => release.tier !== null) : ranked;
+        const cleared = inProfile.filter((release) => release.score >= settings.autoGrabMinScore);
+        const candidates = cleared.filter((release) => !tried.has(`${release.indexerId}:${release.guid}`));
+
+        picks = {
+          candidates,
+          indexers: [...indexers.values()],
+          allTried: candidates.length === 0 && cleared.length > 0,
+          // Only when the profile is what emptied the list. Without this the operator is told nothing
+          // scored well enough, while the picker in front of them is full of releases that did.
+          profileExcludedAll: profiled && inProfile.length === 0 && ranked.length > 0,
+          enabledIndexerCount: result.enabledIndexerCount,
+          configuredIndexerCount: result.configuredIndexerCount,
+          // From whichever variant ran last. The medium filter runs before the ISBN-capable
+          // narrowing, so every variant of one pass reports the same number.
+          uncoveredIndexerCount: result.uncoveredIndexerCount,
+          sourceCount: picks.sourceCount,
+        };
+        if (candidates.length > 0) return picks;
       }
 
-      const ranked = [...releases.values()].sort(
-        (a, b) => compareByTier(a.tier, b.tier) || b.score - a.score || (b.seeders ?? -1) - (a.seeders ?? -1),
-      );
-
-      // A release matching no tier is never grabbed unattended. It stays in the picker for a person
-      // to choose, which is the whole point of the untiered state: the operator said what they want,
-      // and anything else is a decision they have not delegated.
-      const inProfile = profiled ? ranked.filter((release) => release.tier !== null) : ranked;
-      const cleared = inProfile.filter((release) => release.score >= settings.autoGrabMinScore);
-      const candidates = cleared.filter((release) => !tried.has(`${release.indexerId}:${release.guid}`));
-
-      picks = {
-        candidates,
-        indexers: [...indexers.values()],
-        allTried: candidates.length === 0 && cleared.length > 0,
-        // Only when the profile is what emptied the list. Without this the operator is told nothing
-        // scored well enough, while the picker in front of them is full of releases that did.
-        profileExcludedAll: profiled && inProfile.length === 0 && ranked.length > 0,
-        enabledIndexerCount: result.enabledIndexerCount,
-        configuredIndexerCount: result.configuredIndexerCount,
-        // From whichever variant ran last. The medium filter runs before the ISBN-capable
-        // narrowing, so every variant of one pass reports the same number.
-        uncoveredIndexerCount: result.uncoveredIndexerCount,
-        sourceCount: picks.sourceCount,
-      };
-      if (candidates.length > 0) return picks;
+      return picks;
+    } finally {
+      if (inspection.startedAt)
+        this.logger.log(
+          `[book_request.release_inspect_auto] [end] requestId=${request.id} durationMs=${Date.now() - inspection.startedAt} candidates=${inspection.candidates} cached=${inspection.cached} inspected=${inspection.inspected} promoted=${inspection.promoted} stoppedBy=${inspection.stoppedBy} - automatic inspection completed`,
+        );
     }
-
-    return picks;
   }
 
   /**

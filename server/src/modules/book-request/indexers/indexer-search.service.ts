@@ -28,7 +28,9 @@ import { IndexerSearchException, type ReleaseCandidate, type ReleaseQuery, type 
 import { IndexerConfigService } from './indexer-config.service';
 import { IndexerOperationLock, SlotWaitAbortedError } from './indexer-operation-lock';
 import { IndexerRegistry } from './indexer-registry';
-import { rejectRelease, scoreRelease, toReleaseItem, type ScoredRelease, type ScoringRequest } from './release-scoring';
+import { releaseInfoHash } from './release-inspection-facts';
+import { ReleaseInspectionFactsRepository } from './release-inspection-facts.repository';
+import { applyInspectionFacts, rejectRelease, scoreRelease, toReleaseItem, type ScoredRelease, type ScoringRequest } from './release-scoring';
 import { buildSearchText } from './search-text';
 
 /**
@@ -96,7 +98,15 @@ export class IndexerSearchService {
     private readonly automationSettings: RequestAutomationSettingsService,
     private readonly operationLock: IndexerOperationLock,
     private readonly requestSources: BookRequestSourcesService,
+    private readonly inspectionFacts: ReleaseInspectionFactsRepository,
   ) {}
+
+  async prepareScoringRequest(request: IndexerSearchRequest, overrides?: ReleaseSearchOverrides) {
+    const mediaKind = request.mediaKind;
+    if (!isBookRequestMediaKind(mediaKind)) throw new BadRequestException(RETIRED_MEDIUM_REFUSAL);
+    const { profiles } = await this.automationSettings.get();
+    return prepareScoringRequest({ ...request, mediaKind }, profiles[mediaKind] ?? [], overrides);
+  }
 
   async search(request: IndexerSearchRequest, options: IndexerSearchOptions = {}): Promise<ReleaseSearchResult> {
     const mediaKind = request.mediaKind;
@@ -116,9 +126,8 @@ export class IndexerSearchService {
     // say whether anything was ever going to be searched, and "no source configured" and "every
     // source switched off" need opposite fixes.
     const [configs, sources] = await Promise.all([this.indexers.resolveEnabledConfigs(), this.indexers.countSources()]);
-    const { profiles } = await this.automationSettings.get();
-    const tiers = profiles[mediaKind] ?? [];
-    const { scoringRequest, availableIsbns } = prepareScoringRequest({ ...request, mediaKind }, tiers, options.overrides);
+    const { scoringRequest, availableIsbns } = await this.prepareScoringRequest(request, options.overrides);
+    const tiers = scoringRequest.tiers;
     const query = toQuery(scoringRequest);
 
     // A source that does not carry the requested medium is left out of the search rather than
@@ -137,7 +146,7 @@ export class IndexerSearchService {
     const statuses: IndexerSearchStatus[] = [];
     const scored: Array<{ scored: ScoredRelease; indexerName: string; indexerId: number; managerPriority: number | null }> = [];
 
-    const mergeOutcome = ({ config, releases, query: indexerQuery, failure, error }: SearchOutcome) => {
+    const mergeOutcome = async ({ config, releases, query: indexerQuery, failure, error }: SearchOutcome) => {
       const seedsBack = this.registry.seedsBack(config.adapterType);
       const delivery = this.registry.delivery(config.adapterType);
       if (failure) {
@@ -162,6 +171,7 @@ export class IndexerSearchService {
       // merge and 500s the picker for every other indexer that answered perfectly well.
       let filtered = 0;
       let kept = 0;
+      const keptCandidates: ReleaseCandidate[] = [];
       try {
         for (const candidate of releases) {
           const rejection = rejectRelease(candidate, scoringRequest);
@@ -178,8 +188,30 @@ export class IndexerSearchService {
           if (candidates.has(key)) continue;
 
           candidates.set(key, candidate);
+          keptCandidates.push(candidate);
+        }
+        const hashes = [...new Set(keptCandidates.map(releaseInfoHash).filter((hash): hash is string => hash !== null))];
+        let facts: Awaited<ReturnType<ReleaseInspectionFactsRepository['findByHashes']>> = new Map();
+        if (hashes.length) {
+          try {
+            facts = await this.inspectionFacts.findByHashes(hashes);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const errorClass = error instanceof Error ? error.constructor.name : 'UnknownError';
+            this.logger.warn(
+              `[book_request.release_search] [fail] indexerId=${config.id} hashes=${hashes.length} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - stored release facts could not be read`,
+            );
+          }
+        }
+        for (const candidate of keptCandidates) {
+          const hash = releaseInfoHash(candidate);
+          const stored = hash ? facts.get(hash) : undefined;
+          const overlaid = stored ? applyInspectionFacts(candidate, stored) : candidate;
+          const key = candidateKey(candidate);
+          candidates.set(key, overlaid);
+          if (stored) factsApplied.add(key);
           scored.push({
-            scored: scoreRelease(candidate, scoringRequest),
+            scored: scoreRelease(overlaid, scoringRequest),
             indexerName: config.name,
             indexerId: config.id,
             managerPriority: config.managerPriority,
@@ -220,12 +252,13 @@ export class IndexerSearchService {
         delivery,
       });
     };
+    const factsApplied = new Set<string>();
     const order = new Map(searchable.map((config, index) => [config.id, index]));
     const rankedReleases = () => {
       const items = [...scored]
         .sort((a, b) => (order.get(a.indexerId) ?? 0) - (order.get(b.indexerId) ?? 0))
         .map((entry) => ({
-          item: toReleaseItem(entry.scored, entry.indexerName, scoringRequest),
+          item: toReleaseItem(entry.scored, entry.indexerName, scoringRequest, factsApplied.has(candidateKey(entry.scored.candidate))),
           managerPriority: entry.managerPriority,
         }));
       // An unreported seeder count sorts below a stated one rather than above every zero.
@@ -265,11 +298,12 @@ export class IndexerSearchService {
     running.add(candidates);
     try {
       emitProgress();
-      await this.searchAll(searchable, query, (outcome) => {
-        mergeOutcome(outcome);
-        emitProgress();
+      await this.searchAll(searchable, query, async (outcome) => {
+        await mergeOutcome(outcome);
+        if (statuses.length < searchable.length) emitProgress();
       });
       statuses.splice(0, statuses.length, ...orderedStatuses());
+      emitProgress();
       const releases = rankedReleases();
       // Only a listed release can be grabbed, so only those are kept for the hour a grab may take to come.
       const grabbable = new Map(
@@ -400,7 +434,7 @@ export class IndexerSearchService {
   private async searchAll(
     configs: ResolvedIndexerConfig[],
     query: ReleaseQuery,
-    onOutcome: (outcome: SearchOutcome) => void,
+    onOutcome: (outcome: SearchOutcome) => Promise<void>,
   ): Promise<SearchOutcome[]> {
     const outcomes: SearchOutcome[] = [];
     // The cap protects tracker accounts, so a self-hosted source neither waits for a slot nor takes one.
@@ -417,7 +451,7 @@ export class IndexerSearchService {
     const run = async (config: ResolvedIndexerConfig): Promise<void> => {
       const outcome = await this.searchOne(config, query, config.managerId == null ? undefined : managerDeadlines.get(config.managerId));
       outcomes.push(outcome);
-      onOutcome(outcome);
+      await onOutcome(outcome);
     };
     const worker = async (): Promise<void> => {
       for (let config = queue.shift(); config !== undefined; config = queue.shift()) await run(config);
@@ -596,7 +630,7 @@ function toQuery(request: ScoringRequest): ReleaseQuery {
   };
 }
 
-function prepareScoringRequest(
+export function prepareScoringRequest(
   request: IndexerSearchRequest & { mediaKind: BookRequestMediaKind },
   tiers: readonly ReleaseTier[],
   overrides?: ReleaseSearchOverrides,

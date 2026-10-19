@@ -1,3 +1,5 @@
+import { ReleaseInspectionFactsBootstrapService } from './release-inspection-facts-bootstrap.service';
+import { ReleaseInspectionFactsRepository } from './indexers/release-inspection-facts.repository';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
@@ -110,6 +112,8 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
     IndexerManagerController,
   ],
   providers: [
+    ReleaseInspectionFactsRepository,
+    ReleaseInspectionFactsBootstrapService,
     BookRequestService,
     BookRequestSourcesService,
     BookRequestRepository,

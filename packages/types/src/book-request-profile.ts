@@ -86,10 +86,16 @@ export function emptyReleaseProfiles(): ReleaseProfiles {
  * so the picker can show a tier without a second round trip and the server can evaluate the same
  * rules against its own candidate shape.
  */
+export function releaseFileLayout(input: { fileCount: number | null; bookCount?: number | null }): ReleaseFileLayout | null {
+  if (typeof input.bookCount === "number") return input.bookCount === 0 ? null : input.bookCount === 1 ? "single" : "multi";
+  return classifyFileLayout(input.fileCount);
+}
+
 export interface ReleaseTierInput {
   formats: string[];
   /** Null where the source reported no count, which must not be read as one file. */
   fileCount: number | null;
+  bookCount?: number;
   audio: { bitrateKbps: number | null; channels: number | null } | null;
   language: string | null;
   indexerId: number;
@@ -140,7 +146,7 @@ export function releaseTierFailures(release: ReleaseTierInput, conditions: Relea
   }
 
   if (fileLayout) {
-    const actual = classifyFileLayout(release.fileCount);
+    const actual = releaseFileLayout(release);
     if (actual === null) failures.push({ code: "fileLayoutUnknown", expected: fileLayout });
     else if (actual !== fileLayout) failures.push({ code: "fileLayout", expected: fileLayout, actual });
   }

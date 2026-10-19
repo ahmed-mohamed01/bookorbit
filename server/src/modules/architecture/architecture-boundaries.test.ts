@@ -33,6 +33,16 @@ describe('Architecture boundaries', () => {
     expect(violations.sort()).toEqual(allowlist);
   });
 
+  it('records DB injection in the release facts repository explicitly', async () => {
+    const allowlist = ['src/modules/book-request/indexers/release-inspection-facts.repository.ts'];
+    const files = (await listFilesRecursive(modulesRoot)).filter((file) => file.endsWith('/release-inspection-facts.repository.ts'));
+    const actual: string[] = [];
+    for (const file of files) {
+      if ((await readFile(file, 'utf8')).includes('@Inject(DB)')) actual.push(relative(process.cwd(), file));
+    }
+    expect(actual.sort()).toEqual(allowlist);
+  });
+
   it('freezes direct DB injection in services to an explicit allowlist', async () => {
     const allowlist = [
       'src/modules/auth/auth.service.ts',

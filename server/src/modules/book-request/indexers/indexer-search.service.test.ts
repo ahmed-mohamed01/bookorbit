@@ -110,16 +110,91 @@ function makeService(
   };
   // No profile, which is the shipped default and keeps these cases about search and scoring.
   const automationSettings = { get: vi.fn(() => Promise.resolve({ profiles: emptyReleaseProfiles() })) };
+  const factsRepository = { findByHashes: vi.fn().mockResolvedValue(new Map()) };
   const requestSources = new BookRequestSourcesService(indexers as never, registry as never);
   return {
-    service: new IndexerSearchService(indexers as never, registry as never, automationSettings as never, new IndexerOperationLock(), requestSources),
+    service: new IndexerSearchService(
+      indexers as never,
+      registry as never,
+      automationSettings as never,
+      new IndexerOperationLock(),
+      requestSources,
+      factsRepository as never,
+    ),
     indexers,
     adapters,
     automationSettings,
+    factsRepository,
   };
 }
 
 describe('IndexerSearchService', () => {
+  it('looks up hashes once per indexer with hashed candidates and reuses cached results', async () => {
+    const hash = 'a'.repeat(40);
+    const otherHash = 'b'.repeat(40);
+    const first = {
+      search: vi
+        .fn()
+        .mockResolvedValueOnce([release({ infoHash: hash.toUpperCase() }), release({ guid: 'rejected', infoHash: 'c'.repeat(40), seeders: 0 })])
+        .mockResolvedValueOnce([release({ indexerId: 3, guid: 'no-hash' })]),
+    };
+    const second = {
+      search: vi
+        .fn()
+        .mockResolvedValue([
+          release({ indexerId: 2, guid: 'other', infoHash: otherHash }),
+          release({ indexerId: 2, guid: 'same-hash', magnet: 'magnet:?xt=urn:btih:' + hash }),
+        ]),
+    };
+    const { service, factsRepository } = makeService([indexer(), indexer({ id: 2, adapterType: pluginType('nyaa') }), indexer({ id: 3 })], {
+      torznab: first,
+      nyaa: second,
+    });
+    await service.search(request());
+    expect(factsRepository.findByHashes).toHaveBeenCalledTimes(2);
+    expect(factsRepository.findByHashes).toHaveBeenCalledWith([hash]);
+    expect(factsRepository.findByHashes).toHaveBeenCalledWith([otherHash, hash]);
+    await service.search(request());
+    expect(factsRepository.findByHashes).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns releases when stored facts cannot be read', async () => {
+    const hash = 'a'.repeat(40);
+    const { service, factsRepository } = makeService([indexer()], {
+      torznab: { search: vi.fn().mockResolvedValue([release({ infoHash: hash })]) },
+    });
+    const warn = vi.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+    factsRepository.findByHashes.mockRejectedValue(new Error('missing "facts" table'));
+    const result = await service.search(request());
+    expect(result.releases).toHaveLength(1);
+    expect(result.indexers[0]).toMatchObject({ ok: true, count: 1 });
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      '[book_request.release_search] [fail] indexerId=1 hashes=1 errorClass=Error error="missing \\"facts\\" table" - stored release facts could not be read',
+    );
+  });
+
+  it.each([true, false])('ranks unknown releases with stored facts=%s using one batched lookup', async (stored) => {
+    const hash = 'a'.repeat(40);
+    const candidate = release({ title: 'Dune', format: undefined, infoHash: hash, downloadUrl: 'https://nyaa.si/download/1.torrent' });
+    const { service, automationSettings, factsRepository } = makeService([indexer()], {
+      torznab: { search: vi.fn().mockResolvedValue([candidate]) },
+    });
+    const profiles = emptyReleaseProfiles();
+    profiles.ebook = [{ id: 'epub', name: 'EPUB single', conditions: { formats: ['epub'], fileLayout: 'single' } }];
+    automationSettings.get.mockResolvedValue({ profiles });
+    if (stored)
+      factsRepository.findByHashes.mockResolvedValue(new Map([[hash, { infoHash: hash, formats: ['epub'], fileCount: 3, primaryFileCount: 1 }]]));
+    const result = await service.search(request());
+    expect(factsRepository.findByHashes).toHaveBeenCalledExactlyOnceWith([hash]);
+    expect(result.releases[0]).toMatchObject({ tier: stored ? 0 : null, inspectionWanted: !stored });
+    if (stored) {
+      expect(result.releases[0]).toMatchObject({ formats: ['epub'], fileCount: 1 });
+      expect(result.releases[0].reasons).toContainEqual({ code: 'preferredFormat', points: 12, detail: 'epub' });
+    } else {
+      expect(result.releases[0].profileMismatch?.failures.map((failure) => failure.code)).toEqual(['formatUnknown', 'fileLayoutUnknown']);
+    }
+  });
+
   it('starts a self-hosted source at once instead of queueing it behind the tracker slots', async () => {
     const pending: Array<() => void> = [];
     const blocked = () => new Promise<ReleaseCandidate[]>((resolve) => pending.push(() => resolve([])));
@@ -1095,7 +1170,7 @@ describe('streaming release searches', () => {
     const candidate = release({ indexerId: 2, guid: 'second', seeders: 1 });
     second.resolve([candidate]);
     await vi.waitFor(() => expect(onProgress).toHaveBeenCalledTimes(2));
-    expect(onProgress.mock.calls[1][0]).toMatchObject({ indexers: [{ indexerId: 2 }], pending: [{ indexerId: 1 }] });
+    expect(onProgress.mock.calls[1][0]).toMatchObject({ releases: [{ guid: 'second' }], indexers: [{ indexerId: 2 }], pending: [{ indexerId: 1 }] });
     expect(service.find(7, 2, 'second')).toBe(candidate);
     first.resolve([release({ guid: 'first', seeders: 10 })]);
     const result = await searching;

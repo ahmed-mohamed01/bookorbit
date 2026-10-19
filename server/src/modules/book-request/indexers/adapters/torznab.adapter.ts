@@ -139,7 +139,10 @@ export class TorznabAdapter implements IndexerAdapter {
         continue;
       }
 
-      if (!response.ok) throw new IndexerSearchException('error', `The indexer answered ${response.status} for that download link`);
+      if (!response.ok) {
+        const failure = response.status === 429 ? 'throttled' : response.status === 401 || response.status === 403 ? 'unauthorized' : 'error';
+        throw new IndexerSearchException(failure, `The indexer answered ${response.status} for that download link`);
+      }
 
       const body = await readBounded(response, MAX_TORRENT_FILE_BYTES, 'The indexer returned a .torrent file that is too large');
       if (body.byteLength === 0) throw new IndexerSearchException('error', 'The indexer returned an empty .torrent file');

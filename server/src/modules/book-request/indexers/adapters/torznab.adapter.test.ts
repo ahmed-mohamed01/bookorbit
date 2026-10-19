@@ -404,6 +404,15 @@ describe('TorznabAdapter.fetchTorrentFile', () => {
     return config({ baseUrl: 'https://tracker.example.com/api', allowPrivateAddress: false, ...overrides });
   }
 
+  it.each([
+    [429, 'throttled'],
+    [401, 'unauthorized'],
+    [403, 'unauthorized'],
+  ])('classifies download HTTP %s as %s', async (status, failure) => {
+    fetchMock.mockResolvedValue(new Response('', { status: Number(status) }));
+    await expect(new TorznabAdapter().fetchTorrentFile(RELEASE, publicConfig())).rejects.toMatchObject({ name: 'IndexerSearchException', failure });
+  });
+
   it('returns the .torrent a tracker answered with', async () => {
     fetchMock.mockResolvedValue(new Response(Buffer.from('d8:announce...e')));
 
