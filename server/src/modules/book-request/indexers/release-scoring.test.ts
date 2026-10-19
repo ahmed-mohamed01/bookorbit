@@ -34,6 +34,51 @@ function pointsFor(scored: ReturnType<typeof scoreRelease>, code: string): numbe
 }
 
 describe('rejectRelease', () => {
+  it.each(['7th Time Loop v01 [Audiobook] [Seven Seas Siren] v2', 'Vol. 3 [Audio Book]', 'Dune [AUDIO-BOOK]', 'Dune [Audiobooks]'])(
+    'rejects an audio title without a resolved format for ebook requests: %s',
+    (title) => {
+      expect(rejectRelease(release({ title }), request())).toBe('an audiobook, not an ebook');
+    },
+  );
+
+  it.each(['Dune [Ebook]', 'Dune [Ebooks]', 'Dune [E-Book]', 'Dune [E-Books]'])(
+    'rejects an ebook title without a resolved format for audiobook requests: %s',
+    (title) => {
+      expect(rejectRelease(release({ title }), request({ mediaKind: 'audiobook' }))).toBe('an ebook, not an audiobook');
+    },
+  );
+
+  it.each(['Volume 06 [Seven Seas]', 'Dune [Ebook + Audiobook]', 'Notebook', 'Facebook', 'Myaudiobook', 'Audiobookshelf'])(
+    'keeps ambiguous titles and words embedded in other words: %s',
+    (title) => {
+      expect(rejectRelease(release({ title }), request())).toBeNull();
+      expect(rejectRelease(release({ title }), request({ mediaKind: 'audiobook' }))).toBeNull();
+    },
+  );
+
+  it('keeps a matching medium title without a resolved format', () => {
+    expect(rejectRelease(release({ title: 'Dune [Audiobook]' }), request({ mediaKind: 'audiobook' }))).toBeNull();
+    expect(rejectRelease(release({ title: 'Dune [Ebook]' }), request())).toBeNull();
+  });
+
+  it.each([{ title: 'Dune [Audiobook] epub' }, { title: 'Dune [Audiobook]', format: 'epub' }])(
+    'lets resolved formats decide the medium: %j',
+    (overrides) => {
+      expect(rejectRelease(release(overrides), request())).toBeNull();
+      expect(rejectRelease(release(overrides), request({ mediaKind: 'audiobook' }))).toBe('epub is not a audiobook format');
+    },
+  );
+
+  it('lets inspection facts supplying a format decide the medium', () => {
+    const candidate = applyInspectionFacts(release({ title: 'Dune [Audiobook]' }), {
+      infoHash: 'a'.repeat(40),
+      formats: ['epub'],
+      fileCount: 1,
+      primaryFileCount: 1,
+    });
+    expect(rejectRelease(candidate, request())).toBeNull();
+  });
+
   it('drops a release nobody is seeding', () => {
     expect(rejectRelease(release({ seeders: 0 }), request())).toBe('no seeders');
   });

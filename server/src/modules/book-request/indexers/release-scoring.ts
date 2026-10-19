@@ -147,6 +147,15 @@ export function rejectRelease(candidate: ReleaseCandidate, request: ScoringReque
     return `${formats.join('/')} is not a ${request.mediaKind} format`;
   }
 
+  if (formats.length === 0) {
+    const namesAudiobook = /\b(?:audiobooks?|audio[ -]book)\b/i.test(candidate.title);
+    const namesEbook = /\be-?books?\b/i.test(candidate.title);
+    if (namesAudiobook !== namesEbook) {
+      const medium = namesAudiobook ? 'audiobook' : 'ebook';
+      if (medium !== request.mediaKind) return `an ${medium}, not an ${request.mediaKind}`;
+    }
+  }
+
   const language = resolveLanguage(candidate);
   if (request.language && language && !languagesAgree(request.language, language)) {
     return `in ${language}, not ${request.language}`;
