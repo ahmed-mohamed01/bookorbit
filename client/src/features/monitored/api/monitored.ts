@@ -19,6 +19,7 @@ import type {
   MonitoredBulkUpdatePayload,
   MonitoredBulkUpdateResponse,
   MonitoredFormat,
+  MonitoredMatchHolder,
   MonitoredLocalAuthorLookup,
   MonitoredListOrder,
   MonitoredPage,
@@ -260,6 +261,16 @@ export async function setMonitoredWorkMatch(workId: string, format: MonitoredFor
       body: JSON.stringify(payload),
     }),
   )
+}
+
+/** The monitor's other works holding a library book for one format. */
+export async function fetchMatchHolders(
+  workId: string,
+  format: MonitoredFormat,
+  bookId: number,
+  signal?: AbortSignal,
+): Promise<MonitoredMatchHolder[]> {
+  return readJson(await api(`${BASE_PATH}/works/${encodeURIComponent(workId)}/match/${format}/holders?bookId=${bookId}`, { signal }))
 }
 
 /** The viewer's own library search, already scoped to the libraries they can open. */

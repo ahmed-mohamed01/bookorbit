@@ -8,6 +8,7 @@ import {
   type MonitorMode,
   type MonitoredFormat,
   type MonitoredMarkKind,
+  type MonitoredMatchHolder,
   type MonitoredWork,
   type ReleaseCandidateItem,
 } from '@bookorbit/types'
@@ -333,8 +334,22 @@ async function answerMatch(format: MonitoredFormat, answer: MonitoredMatchAnswer
   }
 }
 
-function handleAnswerMatch(format: MonitoredFormat, answer: MonitoredMatchAnswer) {
-  void answerMatch(format, answer)
+/** Moving a shared file here links it to this work, then tells each work that held it the book is not theirs. */
+async function linkAndMove(format: MonitoredFormat, answer: MonitoredMatchAnswer, moveFrom: MonitoredMatchHolder[]) {
+  const workId = props.work?.id ?? null
+  const updated = await workMatch.answer(format, answer, workId)
+  if (!updated) return
+  emit('work-updated', updated)
+  if (answer.bookId == null) return
+  for (const holder of moveFrom) {
+    const released = await workMatch.answer(format, { decision: 'reject', bookId: answer.bookId }, holder.workId)
+    if (released) emit('work-updated', released)
+  }
+}
+
+function handleAnswerMatch(format: MonitoredFormat, answer: MonitoredMatchAnswer, moveFrom?: MonitoredMatchHolder[]) {
+  if (moveFrom && moveFrom.length > 0) void linkAndMove(format, answer, moveFrom)
+  else void answerMatch(format, answer)
 }
 
 function handleOpenChange(value: boolean) {

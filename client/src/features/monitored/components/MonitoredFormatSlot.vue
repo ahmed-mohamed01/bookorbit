@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUpRight, Bell, BellOff, BookCopy, BookOpen, ChevronUp, Folder, Headphones, Link2, RefreshCw } from '@lucide/vue'
 import {
@@ -8,10 +8,12 @@ import {
   type BookDetail,
   type MonitorMode,
   type MonitoredFormat,
+  type MonitoredMatchHolder,
   type MonitoredWork,
 } from '@bookorbit/types'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatBytes } from '@/lib/formatting'
+import { fetchMatchHolders } from '../api/monitored'
 import { useFormatSlotState } from '../composables/useFormatSlotState'
 import type { MonitoredMatchAnswer } from '../composables/useWorkMatch'
 import type { MonitoredReleaseRow } from '../composables/useReleaseRows'
@@ -66,7 +68,7 @@ const emit = defineEmits<{
   'check-library': [format: MonitoredFormat]
   'toggle-collapsed': [format: MonitoredFormat]
   filed: [requestId: number]
-  'answer-match': [format: MonitoredFormat, answer: MonitoredMatchAnswer]
+  'answer-match': [format: MonitoredFormat, answer: MonitoredMatchAnswer, moveFrom?: MonitoredMatchHolder[]]
 }>()
 
 defineSlots<{ releases(props: { canRequest: boolean }): unknown }>()
@@ -130,8 +132,33 @@ const canMatchFile = computed(() => {
   return !date || monitoredReleaseStarted(date, precision, new Date().toISOString().slice(0, 10))
 })
 
-function handleAnswerMatch(format: MonitoredFormat, answer: MonitoredMatchAnswer) {
-  emit('answer-match', format, answer)
+function handleAnswerMatch(format: MonitoredFormat, answer: MonitoredMatchAnswer, moveFrom?: MonitoredMatchHolder[]) {
+  emit('answer-match', format, answer, moveFrom)
+}
+
+/** Other works of this author holding the same file, so a shared file is never a surprise. */
+const sharedWith = ref<MonitoredMatchHolder[]>([])
+let holdersRequest: AbortController | null = null
+watch(
+  [() => props.work.id, ownedBookId, () => !!props.canAnswerMatch],
+  async ([workId, bookId, canAnswer]) => {
+    holdersRequest?.abort()
+    sharedWith.value = []
+    if (!canAnswer || bookId == null) return
+    const controller = new AbortController()
+    holdersRequest = controller
+    try {
+      const holders = await fetchMatchHolders(workId, props.format, bookId, controller.signal)
+      if (!controller.signal.aborted) sharedWith.value = holders
+    } catch {
+      // The line is a convenience; a failed lookup just leaves it out.
+    }
+  },
+  { immediate: true },
+)
+
+function holderRoute(holder: MonitoredMatchHolder) {
+  return { name: 'monitored-author', params: { id: holder.monitorId }, query: { work: holder.workId } }
 }
 
 function handleToggleWatch() {
@@ -425,6 +452,20 @@ function handleCheckLibrary() {
           </p>
           <MonitoredMatchFilePicker v-if="canMatchFile" :work="work" :format="format" :saving="!!matchSaving" @answer="handleAnswerMatch" />
         </div>
+        <p
+          v-if="state.owned.value && sharedWith.length > 0"
+          class="flex min-w-0 flex-wrap items-center gap-x-1 text-[11px] text-muted-foreground"
+          data-testid="slot-shared-with"
+        >
+          <Link2 :size="12" class="shrink-0" aria-hidden="true" />
+          <span>{{ t('monitored.slot.match.alsoLinkedTo') }}</span>
+          <template v-for="(holder, index) in sharedWith" :key="holder.workId">
+            <RouterLink :to="holderRoute(holder)" class="font-medium text-foreground underline-offset-2 hover:underline">{{
+              holder.title
+            }}</RouterLink
+            ><span v-if="index < sharedWith.length - 1">,</span>
+          </template>
+        </p>
       </template>
     </div>
 
