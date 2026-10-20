@@ -16163,6 +16163,12 @@
       "pickHint": "Pick releases, or use the suggestion above",
       "download": "{count, plural, one {Download # volume} other {Download # volumes}}",
       "downloading": "{count, plural, one {Downloading # volume} other {Downloading # volumes}}",
+      "finished": "Finished: {summary}",
+      "finishedCount": {
+        "filed": "{count, plural, one {# volume filed} other {# volumes filed}}",
+        "failed": "{count, plural, one {# failed} other {# failed}}",
+        "held": "{count, plural, one {# needs review} other {# need review}}"
+      },
       "progress": {
         "waiting": "Waiting for peers",
         "downloading": "Downloading",

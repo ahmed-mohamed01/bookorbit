@@ -4,14 +4,31 @@ import { useI18n } from 'vue-i18n'
 import type { WebSerialPrintDownload } from '@bookorbit/types'
 const props = defineProps<{ downloads: WebSerialPrintDownload[] }>()
 const { t } = useI18n()
-const count = computed(() => new Set(props.downloads.flatMap((row) => row.volumes)).size)
+const SETTLED = ['filed', 'failed', 'held'] as const
+type SettledStatus = (typeof SETTLED)[number]
+function isSettled(status: WebSerialPrintDownload['status']): status is SettledStatus {
+  return (SETTLED as readonly string[]).includes(status)
+}
+// A row whose file names named no volume still stands for one.
+function volumeCount(rows: WebSerialPrintDownload[]) {
+  return new Set(rows.flatMap((row) => row.volumes)).size + rows.filter((row) => !row.volumes.length).length
+}
+const heading = computed(() => {
+  const active = props.downloads.filter((row) => !isSettled(row.status))
+  if (active.length) return t('webSerials.acquisition.downloading', volumeCount(active))
+  const summary = SETTLED.flatMap((status) => {
+    const count = volumeCount(props.downloads.filter((row) => row.status === status))
+    return count ? [t(`webSerials.acquisition.finishedCount.${status}`, count)] : []
+  }).join(', ')
+  return t('webSerials.acquisition.finished', { summary })
+})
 function percent(row: WebSerialPrintDownload) {
   return Math.max(0, Math.min(100, row.percent ?? (row.status === 'filed' || row.status === 'filing' ? 100 : 0)))
 }
 </script>
 <template>
   <section v-if="downloads.length" class="space-y-3 rounded-xl border border-warning/40 bg-warning/10 p-4" aria-live="polite">
-    <h3 class="text-sm font-semibold">{{ t('webSerials.acquisition.downloading', count) }}</h3>
+    <h3 class="text-sm font-semibold">{{ heading }}</h3>
     <div v-for="row in downloads" :key="row.key" class="space-y-1.5">
       <div class="flex justify-between gap-3 text-xs">
         <span>{{ row.title }}</span
