@@ -36,7 +36,8 @@ export interface ScoredClaimInput {
 
 export type ClaimWork = Pick<MonitoredWork, 'title' | 'seriesName' | 'seriesIndex' | 'releaseYear' | 'flags' | 'kind' | 'userKind'>;
 
-export type ShapeConflict = 'collection_part' | 'collection_file' | 'split_part' | 'language' | 'comic_format' | 'prose_format' | 'audio_only';
+export type ShapeConflict =
+  'collection_part' | 'collection_file' | 'split_part' | 'language' | 'dramatized_file' | 'comic_format' | 'prose_format' | 'audio_only';
 
 /** The two title spellings each side can be named by, so the gates can tell "named after" from "contains". */
 export interface TitleKeyReader {
@@ -73,6 +74,7 @@ const PART_WORDS: Record<string, string> = {
 };
 
 const OF_PART_PATTERN = /\(\s*(\d+)\s+of\s+\d+\s*\)/i;
+const BRACKETED_PART_PATTERN = /[([]\s*(?:part|pt\.?)\s+(\d+|[ivx]+|one|two|three|four|five|six|seven|eight|nine|ten)(?:\s+of\s+[^)\]]+)?\s*[)\]]/i;
 const TRAILING_BRACKETS_PATTERN = /\s*[([][^)\]]*[)\]]\s*$/;
 const TRAILING_PART_PATTERN = /(?:^|[\s,:;-])(?:part|pt\.?)\s+(\d+|[ivx]+|one|two|three|four|five|six|seven|eight|nine|ten)(?:\s+of\s+\S+)?\s*$/i;
 
@@ -80,23 +82,63 @@ const TRAILING_PART_PATTERN = /(?:^|[\s,:;-])(?:part|pt\.?)\s+(\d+|[ivx]+|one|tw
 export function splitPartOf(title: string): string | null {
   const ofPart = OF_PART_PATTERN.exec(title);
   if (ofPart) return String(Number(ofPart[1]));
+  const bracketed = BRACKETED_PART_PATTERN.exec(title);
+  if (bracketed) return partNumber(bracketed[1]);
   let trimmed = title.trim();
   for (let previous = ''; previous !== trimmed;) {
     previous = trimmed;
     trimmed = trimmed.replace(TRAILING_BRACKETS_PATTERN, '').trim();
   }
   const match = TRAILING_PART_PATTERN.exec(trimmed);
-  if (!match) return null;
-  const value = match[1].toLowerCase();
+  return match ? partNumber(match[1]) : null;
+}
+
+function partNumber(raw: string): string {
+  const value = raw.toLowerCase();
   return PART_WORDS[value] ?? String(Number(value));
 }
 
-function isEnglishLanguage(language: string): boolean {
-  return /^(?:en|eng|english)(?:[-_\s].*)?$/i.test(language.trim());
+/** What a file's language tag says: English, another language, or nothing usable (missing, undetermined, mixed). */
+export function fileLanguage(language: string | null | undefined): 'english' | 'other' | 'unknown' {
+  const tags = (language ?? '')
+    .split(/[,;/|]+/)
+    .map((tag) => tag.trim())
+    .filter((tag) => tag && !/^(?:und|mul|zxx)$/i.test(tag));
+  if (tags.length === 0) return 'unknown';
+  const english = tags.map((tag) => /^(?:en|eng|english)(?:[-_].*)?$/i.test(tag));
+  if (english.every(Boolean)) return 'english';
+  if (!english.some(Boolean)) return 'other';
+  return 'unknown';
+}
+
+function languageFits(work: ClaimWork, candidate: ClaimCandidate): boolean {
+  const language = fileLanguage(candidate.language);
+  if (language === 'unknown') return true;
+  return work.flags.includes('foreign_language') ? language === 'other' : language === 'english';
+}
+
+/**
+ * The claims whose file is in the work's language, when there are any. The per-work pick knows
+ * nothing of language, so without this an English work beside a Spanish and an English copy of its
+ * book would take whichever copy had the lower id.
+ */
+export function preferLanguageFit<C extends ScoredClaimInput>(work: ClaimWork, claims: C[]): C[] {
+  const fitting = claims.filter((claim) => languageFits(work, claim.candidate));
+  return fitting.length > 0 ? fitting : claims;
 }
 
 function isGraphicWork(work: ClaimWork): boolean {
+  if (work.userKind === 'book') return false;
   return effectiveWorkKind(work) === 'graphic_novel' || GRAPHIC_NOVEL_TITLE_PATTERN.test(work.title);
+}
+
+const DRAMATIZED_FILE_PATTERN = /dramatized adaptation|graphic ?audio/i;
+
+/** A title naming one numbered book of a series ("The Grisha Trilogy Book 1") is that book, not the set. */
+const SINGLE_SERIES_BOOK_PATTERN = /(?:\bbook|\bbk\.?|#|\bvol(?:ume)?\.?)\s*\d+(?:\.\d+)?\s*[)\]]?\s*$/i;
+
+function looksLikeCollectionFile(title: string): boolean {
+  return COLLECTION_TITLE_PATTERN.test(title) && !SINGLE_SERIES_BOOK_PATTERN.test(title);
 }
 
 function isCollectionWork(work: ClaimWork): boolean {
@@ -128,7 +170,7 @@ export function namedAfter(workTitle: string, fileTitle: string, keys: TitleKeyR
  */
 export function bookShapeConflict(work: ClaimWork, candidate: ClaimCandidate, keys: TitleKeyReader): ShapeConflict | null {
   const workCollection = isCollectionWork(work);
-  const fileCollection = COLLECTION_TITLE_PATTERN.test(candidate.title);
+  const fileCollection = looksLikeCollectionFile(candidate.title);
   if (workCollection !== fileCollection && !namedAfter(work.title, candidate.title, keys)) {
     return workCollection ? 'collection_part' : 'collection_file';
   }
@@ -138,7 +180,8 @@ export function bookShapeConflict(work: ClaimWork, candidate: ClaimCandidate, ke
   if ((workPart === null) !== (filePart === null)) return 'split_part';
   if (workPart !== null && workPart !== '?' && workPart !== filePart) return 'split_part';
 
-  if (work.flags.includes('foreign_language') && candidate.language && isEnglishLanguage(candidate.language)) return 'language';
+  if (work.flags.includes('foreign_language') && fileLanguage(candidate.language) === 'english') return 'language';
+  if (effectiveWorkKind(work) !== 'dramatization' && DRAMATIZED_FILE_PATTERN.test(candidate.title)) return 'dramatized_file';
   return null;
 }
 
@@ -147,6 +190,7 @@ export function fileFormatConflict(work: ClaimWork, candidate: ClaimCandidate, f
   const lower = format.toLowerCase();
   if (effectiveWorkKind(work) === 'dramatization') return isAudioFormat(lower) ? null : 'audio_only';
   if (isGraphicWork(work)) {
+    if (isAudioFormat(lower)) return null;
     const fixedLayoutEpub = (lower === 'epub' || lower === 'kepub') && candidate.fixedLayoutFormats?.has(format) === true;
     return isComicFormat(lower) || lower === 'pdf' || fixedLayoutEpub ? null : 'comic_format';
   }
@@ -155,18 +199,16 @@ export function fileFormatConflict(work: ClaimWork, candidate: ClaimCandidate, f
 
 const TIER_POINTS = [40, 30, 20, 10];
 
+// Collections and dramatizations carry no penalty here: the gates already keep them on files of
+// their own shape, and on such a file they are the rightful owner, not a lesser claimant.
 const KIND_PENALTY: Record<string, number> = {
-  collection: -35,
-  anthology: -35,
   supplemental: -30,
-  dramatization: -30,
   duplicate: -30,
   format_variant: -20,
   split_part: -10,
 };
 
 const FLAG_PENALTY: Record<string, number> = {
-  foreign_language: -35,
   wrong_contributor: -25,
   placeholder: -20,
 };
@@ -189,9 +231,13 @@ export function scoreClaim(work: ClaimWork, claim: ScoredClaimInput, context: Cl
   if (work.releaseYear != null && year != null && Math.abs(year - work.releaseYear) <= 1) score += 5;
   const kind = effectiveWorkKind(work);
   if (kind) score += KIND_PENALTY[kind] ?? 0;
+  if (kind === 'dramatization' && !DRAMATIZED_FILE_PATTERN.test(claim.candidate.title)) score -= 30;
   for (const flag of work.flags) score += FLAG_PENALTY[flag] ?? 0;
-  const language = claim.candidate.language;
-  if (language && !work.flags.includes('foreign_language') && !isEnglishLanguage(language) && !/^(?:und|mul|zxx)$/i.test(language.trim())) {
+  // A translation only gives way to the original when the file says nothing of its language.
+  const language = fileLanguage(claim.candidate.language);
+  if (work.flags.includes('foreign_language')) {
+    if (language === 'unknown') score -= 35;
+  } else if (language === 'other') {
     score -= 25;
   }
   return score;
@@ -238,48 +284,78 @@ export function assignExclusiveClaims<W, C extends ScoredClaimInput>(
     [...entry.claimsByFormat.keys()].filter((format) => !entry.skipKinds.has(entry.formatKind(format))).map((format) => ({ entry, format })),
   );
 
+  // A work keeps one book per format kind: its epub and its mobi come from the same book, so the
+  // stored match (one book id per kind) is the whole of what the work holds.
+  const heldKind = new Map<W, Map<MonitoredFormat, number>>();
+  type Proposal = { item: (typeof pending)[number]; claim: C; score: number };
+
   while (pending.length > 0) {
-    const proposals = new Map<string, { entry: AssignableWork<W, C>; format: string; claim: C; score: number }[]>();
-    const stillPending: typeof pending = [];
+    const picks: Proposal[] = [];
     for (const item of pending) {
       const kind = item.entry.formatKind(item.format);
+      const heldBook = heldKind.get(item.entry.work)?.get(kind);
       const free = (item.entry.claimsByFormat.get(item.format) ?? []).filter((claim) => {
+        if (heldBook !== undefined) return claim.candidate.bookId === heldBook;
         const key = keyOf(claim.candidate.bookId, kind);
         return !holder.has(key) || holder.get(key) === item.entry.work;
       });
       const pick = choose(item.entry.work, free);
       if (!pick) continue;
-      const key = keyOf(pick.candidate.bookId, kind);
-      if (holder.get(key) === item.entry.work) {
-        origins.get(item.entry.work)!.set(item.format, pick.candidate.bookId);
+      if (heldBook !== undefined) {
+        origins.get(item.entry.work)!.set(item.format, heldBook);
         continue;
       }
-      const group = proposals.get(key) ?? [];
-      group.push({ ...item, claim: pick, score: score(item.entry.work, pick) });
-      proposals.set(key, group);
-      stillPending.push(item);
+      picks.push({ item, claim: pick, score: score(item.entry.work, pick) });
+    }
+
+    // One book per work and kind goes forward each round; the work's other formats of that kind
+    // wait and pick again, limited to the book it ends up holding.
+    const leadByWorkKind = new Map<string, Proposal>();
+    const workIndex = new Map<W, number>(entries.map((entry, index) => [entry.work, index]));
+    for (const proposal of picks) {
+      const slot = `${workIndex.get(proposal.item.entry.work)}|${proposal.item.entry.formatKind(proposal.item.format)}`;
+      const lead = leadByWorkKind.get(slot);
+      if (!lead || proposal.score > lead.score || (proposal.score === lead.score && proposal.claim.candidate.bookId < lead.claim.candidate.bookId)) {
+        leadByWorkKind.set(slot, proposal);
+      }
+    }
+    const proposals = new Map<string, Proposal[]>();
+    const stillPending: typeof pending = [];
+    for (const proposal of picks) {
+      stillPending.push(proposal.item);
+      const kind = proposal.item.entry.formatKind(proposal.item.format);
+      const lead = leadByWorkKind.get(`${workIndex.get(proposal.item.entry.work)}|${kind}`)!;
+      if (lead.claim.candidate.bookId !== proposal.claim.candidate.bookId) continue;
+      const key = keyOf(proposal.claim.candidate.bookId, kind);
+      proposals.set(key, [...(proposals.get(key) ?? []), proposal]);
     }
 
     const settled = new Set<(typeof pending)[number]>();
     for (const [key, group] of proposals) {
       const bestByWork = new Map<W, number>();
-      for (const proposal of group) bestByWork.set(proposal.entry.work, Math.max(bestByWork.get(proposal.entry.work) ?? -Infinity, proposal.score));
+      for (const proposal of group) {
+        bestByWork.set(proposal.item.entry.work, Math.max(bestByWork.get(proposal.item.entry.work) ?? -Infinity, proposal.score));
+      }
       const ranked = [...bestByWork.entries()].sort((left, right) => right[1] - left[1]);
       if (ranked.length > 1 && ranked[0][1] - ranked[1][1] < CLAIM_MARGIN) {
         holder.set(key, null);
         for (const proposal of group) {
-          const list = contested.get(proposal.entry.work) ?? [];
+          const list = contested.get(proposal.item.entry.work) ?? [];
           if (!list.includes(proposal.claim)) list.push(proposal.claim);
-          contested.set(proposal.entry.work, list);
+          contested.set(proposal.item.entry.work, list);
         }
         continue;
       }
       const winner = ranked[0][0];
       holder.set(key, winner);
       for (const proposal of group) {
-        if (proposal.entry.work !== winner) continue;
-        origins.get(winner)!.set(proposal.format, proposal.claim.candidate.bookId);
-        settled.add(stillPending.find((item) => item.entry === proposal.entry && item.format === proposal.format)!);
+        if (proposal.item.entry.work !== winner) continue;
+        const kind = proposal.item.entry.formatKind(proposal.item.format);
+        const held = heldKind.get(winner) ?? new Map<MonitoredFormat, number>();
+        held.set(kind, proposal.claim.candidate.bookId);
+        heldKind.set(winner, held);
+        origins.get(winner)!.set(proposal.item.format, proposal.claim.candidate.bookId);
+        settled.add(proposal.item);
       }
     }
     pending = stillPending.filter((item) => !settled.has(item));

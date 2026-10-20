@@ -1057,6 +1057,50 @@ describe('targeted availability recompute', () => {
       expect(novella.linkedFormats).toEqual(['ebook']);
     });
 
+    it('gives each copy to the work in its language when both are in the library', async () => {
+      const english = work({ id: 'w-en', title: 'Steelheart' });
+      const spanish = work({ id: 'w-es', title: 'Steelheart', flags: ['foreign_language'] });
+      const spanishCopy = idRow({ bookId: 52, title: 'Steelheart', language: 'spa' });
+      const englishCopy = idRow({ bookId: 53, title: 'Steelheart', language: 'eng' });
+
+      const [en, es] = await match([[spanishCopy, englishCopy]], [english, spanish]);
+
+      expect(en.matchedBookIds).toEqual({ ebook: 53 });
+      expect(es.matchedBookIds).toEqual({ ebook: 52 });
+    });
+
+    it('gives an omnibus file to the omnibus, not to the novella its front names', async () => {
+      const novella = work({ id: 'w-n', title: 'Legion', releaseYear: 2012 });
+      const omnibus = work({ id: 'w-o', title: 'Legion: The Many Lives of Stephen Leeds', kind: 'collection', releaseYear: 2018 });
+
+      const [n, o] = await match(
+        [[idRow({ bookId: 90, title: 'Legion: The Many Lives of Stephen Leeds', publishedYear: 2018 })]],
+        [novella, omnibus],
+      );
+
+      expect(o.matchedBookIds).toEqual({ ebook: 90 });
+      expect(n.matchedBookIds).toEqual({});
+    });
+
+    it('keeps a novel off its dramatized production', async () => {
+      const novel = work({ id: 'w-n', title: 'Mistborn' });
+      const drama = work({ id: 'w-d', title: 'Mistborn (Dramatized Adaptation)', kind: 'dramatization' });
+
+      const [n, d] = await match([[idRow({ bookId: 91, title: 'Mistborn [Dramatized Adaptation]', format: 'm4b' })]], [novel, drama]);
+
+      expect(n.matchedBookIds).toEqual({});
+      expect(d.matchedBookIds).toEqual({ audiobook: 91 });
+    });
+
+    it('does not settle a file the full refresh left to the owner in a pass over one work', async () => {
+      const { service, store } = harness([[idRow({ bookId: 80, title: 'Legion' })]]);
+      store.findClaimedBookKeys.mockResolvedValue(new Set(['80|ebook']));
+
+      const result = await service.rematchWork(monitor(), work({ id: 'w-a', title: 'Legion' }));
+
+      expect(result.matchedBookIds).toEqual({});
+    });
+
     it('does not take a file another work holds in a pass over one work', async () => {
       const { service, store } = harness([[worBook()]]);
       store.findClaimedBookKeys.mockResolvedValue(new Set(['40|ebook']));

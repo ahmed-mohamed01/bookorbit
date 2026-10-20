@@ -34,7 +34,14 @@ import { assignVerdict, computePopularityFloor, type VerdictResult } from './rec
 import { foldDiacritics, normalizeMonitoredName } from './monitored-text.utils';
 import { emptyWorkMatchOverrides, resolveWorkMatchOverrides, type WorkMatchOverrides } from './monitored-match-overrides';
 import { CatalogFetchError, classifyCatalogFetchError } from './monitored-fetch-error';
-import { assignExclusiveClaims, bookShapeConflict, fileFormatConflict, scoreClaim, type AssignableWork } from './monitored-file-claims';
+import {
+  assignExclusiveClaims,
+  bookShapeConflict,
+  fileFormatConflict,
+  preferLanguageFit,
+  scoreClaim,
+  type AssignableWork,
+} from './monitored-file-claims';
 import { MonitoredStoreService, type MonitoredCatalog } from './monitored-store.service';
 import { MonitoredSettingsService } from './monitored-settings.service';
 
@@ -192,6 +199,7 @@ export function possibleMatchesFor(
   conflicted: OwnedClaim[],
   overrides: WorkMatchOverrides,
   claimed: ReadonlySet<number>,
+  formatAllowed: (claim: OwnedClaim, format: string) => boolean = () => true,
 ): Partial<Record<MonitoredFormat, MonitoredPossibleMatch>> | undefined {
   const possible: Partial<Record<MonitoredFormat, MonitoredPossibleMatch>> = {};
   for (const kind of MONITORED_FORMATS) {
@@ -202,7 +210,7 @@ export function possibleMatchesFor(
         (entry) =>
           !claimed.has(entry.candidate.bookId) &&
           !overrides[kind].rejected.has(entry.candidate.bookId) &&
-          [...entry.candidate.formats].some((format) => formatKind(format) === kind),
+          [...entry.candidate.formats].some((format) => formatKind(format) === kind && formatAllowed(entry, format)),
       ),
     );
     if (best) {
@@ -1171,7 +1179,7 @@ export class MonitoredCatalogService {
     for (const [group, entries] of entriesByGroup) {
       const { origins: originsByWork, contested } = assignExclusiveClaims(
         entries,
-        chooseOwnedCandidate,
+        (work, claims) => chooseOwnedCandidate(work, preferLanguageFit(work, claims)),
         (work, claim) =>
           scoreClaim(work, claim, {
             exactTitle: foldedTitleKey(work.title) === claim.candidate.titleKey,
@@ -1200,7 +1208,13 @@ export class MonitoredCatalogService {
       ...works.flatMap((work) => Object.values(work.matchedBookIds ?? {})),
     ]);
     for (const [work, conflicted] of conflictsByWork) {
-      work.possibleMatches = possibleMatchesFor(work, conflicted, overridesByWork.get(work.id) ?? emptyWorkMatchOverrides(), claimed);
+      work.possibleMatches = possibleMatchesFor(
+        work,
+        conflicted,
+        overridesByWork.get(work.id) ?? emptyWorkMatchOverrides(),
+        claimed,
+        (claim, format) => !fileFormatConflict(work, claim.candidate, format),
+      );
     }
   }
 

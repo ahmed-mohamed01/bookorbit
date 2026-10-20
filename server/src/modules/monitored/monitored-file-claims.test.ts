@@ -6,7 +6,9 @@ import {
   assignExclusiveClaims,
   bookShapeConflict,
   fileFormatConflict,
+  fileLanguage,
   namedAfter,
+  preferLanguageFit,
   scoreClaim,
   splitPartOf,
   type AssignableWork,
@@ -39,6 +41,9 @@ describe('splitPartOf', () => {
     ['Words of Radiance: Part II (The Stormlight Archive)', '2'],
     ['The Way of Kings (3 of 5) [Dramatized Adaptation]', '3'],
     ['The Way of Kings Pt. 2 of 2', '2'],
+    ['Words of Radiance (Part 1)', '1'],
+    ['Words of Radiance (Part 1 of 2)', '1'],
+    ['Words of Radiance [Part Two]', '2'],
   ])('reads the part of %s', (title, part) => {
     expect(splitPartOf(title)).toBe(part);
   });
@@ -70,6 +75,28 @@ describe('bookShapeConflict', () => {
     expect(bookShapeConflict(claimWork({ title: 'The Final Empire' }), candidate({ title: 'The Mistborn Trilogy' }), titleMatchKeys)).toBe(
       'collection_file',
     );
+  });
+
+  it('does not read one numbered book of a series as a collection file', () => {
+    expect(
+      bookShapeConflict(claimWork({ title: 'Shadow and Bone' }), candidate({ title: 'Shadow and Bone - The Grisha Trilogy Book 1' }), titleMatchKeys),
+    ).toBeNull();
+    expect(bookShapeConflict(claimWork({ title: 'Mistborn' }), candidate({ title: 'Mistborn Trilogy Books 1-3' }), titleMatchKeys)).toBe(
+      'collection_file',
+    );
+  });
+
+  it('keeps a plain work off a dramatized production', () => {
+    expect(bookShapeConflict(claimWork({ title: 'Mistborn' }), candidate({ title: 'Mistborn [Dramatized Adaptation]' }), titleMatchKeys)).toBe(
+      'dramatized_file',
+    );
+    expect(
+      bookShapeConflict(
+        claimWork({ title: 'Mistborn [Dramatized Adaptation]', kind: 'dramatization' }),
+        candidate({ title: 'Mistborn [Dramatized Adaptation]' }),
+        titleMatchKeys,
+      ),
+    ).toBeNull();
   });
 
   it('lets an anthology match its own file', () => {
@@ -115,6 +142,11 @@ describe('fileFormatConflict', () => {
     expect(fileFormatConflict(claimWork({ title: 'Mistborn (Manga)' }), candidate(), 'epub')).toBe('comic_format');
   });
 
+  it('honours a prose mark on a comic-sounding title, and leaves a comic its audiobook', () => {
+    expect(fileFormatConflict(claimWork({ title: 'The Comic Sans Murders', userKind: 'book' }), candidate(), 'epub')).toBeNull();
+    expect(fileFormatConflict(claimWork({ kind: 'graphic_novel' }), candidate(), 'm4b')).toBeNull();
+  });
+
   it('keeps prose off comic archives and dramatizations off ebooks', () => {
     expect(fileFormatConflict(claimWork(), candidate(), 'cbr')).toBe('prose_format');
     expect(fileFormatConflict(claimWork({ kind: 'dramatization' }), candidate(), 'epub')).toBe('audio_only');
@@ -124,23 +156,59 @@ describe('fileFormatConflict', () => {
 
 describe('scoreClaim', () => {
   const context = { exactTitle: true, sameSeriesSlot: true };
+  const weak = { exactTitle: false, sameSeriesSlot: false };
 
-  it('ranks the book above its translation and its bundle', () => {
+  it('ranks the book above a translation when the file says nothing of its language', () => {
     const book = scoreClaim(claimWork(), { candidate: candidate(), tier: 2 }, context);
-    const translation = scoreClaim(
-      claimWork({ flags: ['foreign_language'] }),
-      { candidate: candidate(), tier: 0 },
-      { exactTitle: false, sameSeriesSlot: false },
-    );
-    const bundle = scoreClaim(claimWork({ kind: 'collection' }), { candidate: candidate(), tier: 0 }, { exactTitle: false, sameSeriesSlot: false });
+    const translation = scoreClaim(claimWork({ flags: ['foreign_language'] }), { candidate: candidate(), tier: 0 }, weak);
     expect(book).toBe(50);
     expect(book - translation).toBeGreaterThanOrEqual(10);
-    expect(book - bundle).toBeGreaterThanOrEqual(10);
+  });
+
+  it('lets a translation keep a file in its own language', () => {
+    const spanishFile = candidate({ language: 'spa' });
+    const translation = scoreClaim(claimWork({ flags: ['foreign_language'] }), { candidate: spanishFile, tier: 2 }, context);
+    const english = scoreClaim(claimWork(), { candidate: spanishFile, tier: 2 }, context);
+    expect(translation).toBe(50);
+    expect(translation - english).toBeGreaterThanOrEqual(10);
+  });
+
+  it('does not mark down a collection or a dramatization on a file of its own shape', () => {
+    expect(scoreClaim(claimWork({ kind: 'collection' }), { candidate: candidate(), tier: 2 }, context)).toBe(50);
+    const drama = claimWork({ kind: 'dramatization' });
+    expect(scoreClaim(drama, { candidate: candidate({ title: 'Mistborn [Dramatized Adaptation]' }), tier: 2 }, context)).toBe(50);
+    expect(scoreClaim(drama, { candidate: candidate({ title: 'Mistborn' }), tier: 2 }, context)).toBe(20);
   });
 
   it('marks down a file in another language for an English work', () => {
     expect(scoreClaim(claimWork(), { candidate: candidate({ language: 'es' }), tier: 2 }, context)).toBe(25);
     expect(scoreClaim(claimWork(), { candidate: candidate({ language: 'und' }), tier: 2 }, context)).toBe(50);
+  });
+});
+
+describe('fileLanguage', () => {
+  it.each([
+    ['en', 'english'],
+    ['en-US', 'english'],
+    ['English', 'english'],
+    ['spa', 'other'],
+    ['es, fr', 'other'],
+    ['English; Spanish', 'unknown'],
+    ['en,es', 'unknown'],
+    ['und', 'unknown'],
+    ['', 'unknown'],
+  ])('reads %s as %s', (tag, expected) => {
+    expect(fileLanguage(tag)).toBe(expected);
+  });
+});
+
+describe('preferLanguageFit', () => {
+  it('keeps the copies in the work language when there are any', () => {
+    const spanish = { candidate: candidate({ bookId: 1, language: 'spa' }), tier: 2 };
+    const english = { candidate: candidate({ bookId: 2, language: 'eng' }), tier: 2 };
+    expect(preferLanguageFit(claimWork(), [spanish, english])).toEqual([english]);
+    expect(preferLanguageFit(claimWork({ flags: ['foreign_language'] }), [spanish, english])).toEqual([spanish]);
+    expect(preferLanguageFit(claimWork(), [spanish])).toEqual([spanish]);
   });
 });
 
@@ -190,6 +258,23 @@ describe('assignExclusiveClaims', () => {
     expect(origins.get(right)?.size).toBe(0);
     expect(contested.get(left)?.[0].candidate.bookId).toBe(1);
     expect(contested.get(right)?.[0].candidate.bookId).toBe(1);
+  });
+
+  it('keeps a work to one book per format kind', () => {
+    const work = { id: 'w', score: { 1: 50, 2: 40 } };
+    const twoFormats: AssignableWork<TestWork, ScoredClaimInput> = {
+      work,
+      formatKind: kindOf,
+      claimsByFormat: new Map([
+        ['epub', [1, 2].map((bookId) => ({ candidate: candidate({ bookId }), tier: 2 }))],
+        ['mobi', [{ candidate: candidate({ bookId: 2 }), tier: 2 }]],
+      ]),
+      skipKinds: new Set(),
+    };
+
+    const { origins } = assignExclusiveClaims([twoFormats], pickBest, (w, claim) => w.score[claim.candidate.bookId]);
+
+    expect(origins.get(work)).toEqual(new Map([['epub', 1]]));
   });
 
   it('leaves books held outside the pass, and formats the owner linked, alone', () => {

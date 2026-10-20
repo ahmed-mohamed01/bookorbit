@@ -133,23 +133,33 @@ const canMatchFile = computed(() => {
 })
 
 function handleAnswerMatch(format: MonitoredFormat, answer: MonitoredMatchAnswer, moveFrom?: MonitoredMatchHolder[]) {
+  if (moveFrom) movedAway.value = new Set([...movedAway.value, ...moveFrom.map((holder) => holder.workId)])
   emit('answer-match', format, answer, moveFrom)
 }
 
 /** Other works of this author holding the same file, so a shared file is never a surprise. */
-const sharedWith = ref<MonitoredMatchHolder[]>([])
+const holders = ref<MonitoredMatchHolder[]>([])
+/** Works a move just took the file from: the lookup can answer before their rejects land. */
+const movedAway = ref(new Set<string>())
+const sharedWith = computed(() => holders.value.filter((holder) => !movedAway.value.has(holder.workId)))
+watch(
+  () => props.work.id,
+  () => {
+    movedAway.value = new Set()
+  },
+)
 let holdersRequest: AbortController | null = null
 watch(
   [() => props.work.id, ownedBookId, () => !!props.canAnswerMatch],
   async ([workId, bookId, canAnswer]) => {
     holdersRequest?.abort()
-    sharedWith.value = []
+    holders.value = []
     if (!canAnswer || bookId == null) return
     const controller = new AbortController()
     holdersRequest = controller
     try {
-      const holders = await fetchMatchHolders(workId, props.format, bookId, controller.signal)
-      if (!controller.signal.aborted) sharedWith.value = holders
+      const found = await fetchMatchHolders(workId, props.format, bookId, controller.signal)
+      if (!controller.signal.aborted) holders.value = found
     } catch {
       // The line is a convenience; a failed lookup just leaves it out.
     }

@@ -15163,7 +15163,9 @@
         "linkToo": "Link here too",
         "moveHere": "Move here",
         "back": "Back",
-        "alsoLinkedTo": "Also linked to"
+        "alsoLinkedTo": "Also linked to",
+        "moveBlocked": "These works share their saved answers, so the file can only be linked to both",
+        "moveIncomplete": "Linked here, but {title} still has the file too"
       },
       "fullPath": "Full path",
       "hidePath": "Hide path",
