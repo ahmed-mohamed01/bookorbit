@@ -18,6 +18,7 @@ import type {
   MonitoredBulkWorkPatch,
   MonitoredCatalogSearchHit,
   MonitoredFormat,
+  MonitoredMatchHolder,
   MonitoredListOrder,
   MonitoredMatchDecision,
   MonitoredPossibleMatch,
@@ -1542,13 +1543,40 @@ export class MonitoredStoreService {
   }
 
   /** Library books the monitor's other works own, so a one-work rematch can tell a sibling volume from a candidate. */
-  async findClaimedBookIds(monitorId: string, exceptWorkId: string): Promise<Set<number>> {
+  /**
+   * The `bookId|kind` keys the monitor's other works hold through the matcher. A hand-made link is
+   * left out: it does not keep the matcher from giving the same file to another work.
+   */
+  async findClaimedBookKeys(monitorId: string, exceptWorkIds: string[]): Promise<Set<string>> {
     const works = schema.authorCatalogWorks;
     const rows = await this.db
-      .select({ ebook: works.matchedEbookBookId, audiobook: works.matchedAudioBookId })
+      .select({ ebook: works.matchedEbookBookId, audiobook: works.matchedAudioBookId, linkedFormats: works.linkedFormats })
       .from(works)
-      .where(and(eq(works.monitorAuthorId, monitorId), ne(works.id, exceptWorkId)));
-    return new Set(rows.flatMap((row) => [row.ebook, row.audiobook]).filter((id): id is number => id != null));
+      .where(and(eq(works.monitorAuthorId, monitorId), exceptWorkIds.length > 0 ? notInArray(works.id, exceptWorkIds) : undefined));
+    const keys = new Set<string>();
+    for (const row of rows) {
+      const linked = new Set(row.linkedFormats ?? []);
+      if (row.ebook != null && !linked.has('ebook')) keys.add(`${row.ebook}|ebook`);
+      if (row.audiobook != null && !linked.has('audiobook')) keys.add(`${row.audiobook}|audiobook`);
+    }
+    return keys;
+  }
+
+  async findMatchHolders(monitorId: string, bookId: number, format: MonitoredFormat, exceptWorkId: string): Promise<MonitoredMatchHolder[]> {
+    const works = schema.authorCatalogWorks;
+    const column = format === 'audiobook' ? works.matchedAudioBookId : works.matchedEbookBookId;
+    const rows = await this.db
+      .select({ monitorId: works.monitorAuthorId, workId: works.id, title: works.title, linkedFormats: works.linkedFormats })
+      .from(works)
+      .where(and(eq(works.monitorAuthorId, monitorId), eq(column, bookId), ne(works.id, exceptWorkId)))
+      .orderBy(asc(works.title))
+      .limit(20);
+    return rows.map((row) => ({
+      monitorId: row.monitorId,
+      workId: row.workId,
+      title: row.title,
+      linkedByHand: (row.linkedFormats ?? []).includes(format),
+    }));
   }
 
   async saveCatalog(monitorId: string, catalog: MonitoredCatalog | null, options: { enrolReleaseProbes?: boolean } = {}): Promise<void> {

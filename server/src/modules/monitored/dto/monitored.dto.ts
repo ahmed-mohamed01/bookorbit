@@ -504,3 +504,11 @@ export class MonitoredCoverQueryDto {
   @MaxLength(2048)
   url!: string;
 }
+
+export class MonitoredMatchHoldersQueryDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(MAX_INT4)
+  bookId!: number;
+}

@@ -52,6 +52,7 @@ import type {
   MonitoredDisplayClassCounts,
   MonitoredSummary,
   MonitoredWork,
+  MonitoredMatchHolder,
   MonitoredWorkMatchPayload,
   MonitoredWorkPatch,
   ProviderConfigurations,
@@ -764,6 +765,15 @@ export class MonitoredService {
       this.logOperationFailure('monitored.work.set_match', workId, user.id, startedAt, error, 'workId', `format=${format}`);
       throw error;
     }
+  }
+
+  /**
+   * The monitor's other works that hold a library book for one format, so the owner can see a file
+   * they are about to link is already another work's, and choose to share it or move it.
+   */
+  async findMatchHolders(user: RequestUser, workId: string, format: MonitoredFormat, bookId: number): Promise<MonitoredMatchHolder[]> {
+    const entry = await this.getWritableWork(workId, user);
+    return this.store.findMatchHolders(entry.monitor.id, bookId, format, workId);
   }
 
   /** Runs every probe tier against one work now, for an owner who does not want to wait for the sweep. */

@@ -774,6 +774,15 @@ export interface MonitoredWorkMatchPayload {
   bookId?: number;
 }
 
+/** Another work of the same monitor that holds a library book for one format. */
+export interface MonitoredMatchHolder {
+  monitorId: string;
+  workId: string;
+  title: string;
+  /** The owner linked it by hand rather than the matcher finding it. */
+  linkedByHand: boolean;
+}
+
 /** Per-work monitor/visibility toggles accepted by PATCH /monitored/works/:workId. */
 export interface MonitoredWorkPatch {
   monitorEbook?: boolean;
