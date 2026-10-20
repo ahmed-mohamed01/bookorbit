@@ -276,7 +276,8 @@ function toCandidate(raw: unknown, indexerId: number, query: ReleaseQuery): Rele
 
   const extra = record.extra && typeof record.extra === 'object' ? (record.extra as Record<string, unknown>) : {};
   const format = text(record.format)?.toLowerCase();
-  const language = text(record.language);
+  // Elscione serves only officially translated English light novels.
+  const language = text(record.language) ?? (source === 'elscione' ? 'en' : undefined);
   const author = text(record.author) ?? text(extra.author);
   const seeders = count(record.seeders);
   // Shelfmark titles are catalogue titles, subtitle and series note included, so a request for the

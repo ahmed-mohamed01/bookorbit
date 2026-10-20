@@ -185,6 +185,33 @@ describe('ShelfmarkIndexerAdapter', () => {
     ]);
   });
 
+  it('elscione releases without a language are English', async () => {
+    mockShelfmark(() => ({
+      body: { releases: [undefined, null, '', '   '].map((language) => ({ ...RELEASE, source: 'elscione', language })) },
+    }));
+
+    const results = await new ShelfmarkIndexerAdapter().search(
+      query(),
+      config({ settings: { shelfmarkSources: 'elscione' } }),
+      AbortSignal.timeout(5_000),
+    );
+
+    expect(results).toHaveLength(4);
+    expect(results.map((release) => release.language)).toEqual(['en', 'en', 'en', 'en']);
+  });
+
+  it('a stated language is kept', async () => {
+    mockShelfmark(() => ({ body: { releases: [{ ...RELEASE, source: 'elscione', language: 'ja' }] } }));
+
+    const [release] = await new ShelfmarkIndexerAdapter().search(
+      query(),
+      config({ settings: { shelfmarkSources: 'elscione' } }),
+      AbortSignal.timeout(5_000),
+    );
+
+    expect(release?.language).toBe('ja');
+  });
+
   it('gives a source that just timed out a short budget until it answers again', async () => {
     let libgen: 'timeout' | 'answer' = 'timeout';
     vi.stubGlobal(
