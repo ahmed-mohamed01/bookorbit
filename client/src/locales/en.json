@@ -15160,7 +15160,12 @@
         "linkedIndicator": "Linked by hand",
         "rejected": "Match rejected",
         "undo": "Undo",
-        "failed": "Could not save the match"
+        "failed": "Could not save the match",
+        "sharedPrompt": "{title} is already matched to {works}.",
+        "linkToo": "Link here too",
+        "moveHere": "Move here",
+        "back": "Back",
+        "alsoLinkedTo": "Also linked to"
       },
       "fullPath": "Full path",
       "hidePath": "Hide path",
