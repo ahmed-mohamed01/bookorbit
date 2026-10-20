@@ -344,7 +344,7 @@ describe('fetchCatalog provider failure guards', () => {
       getCatalog: vi.fn().mockResolvedValue(null),
       saveCatalog: vi.fn(),
       findMatchOverrides: vi.fn().mockResolvedValue([]),
-      findClaimedBookIds: vi.fn().mockResolvedValue(new Set<number>()),
+      findClaimedBookKeys: vi.fn().mockResolvedValue(new Set<string>()),
     };
     const service = catalogService(
       {
@@ -398,7 +398,7 @@ describe('fetchCatalog provider failure guards', () => {
       getCatalog: vi.fn().mockResolvedValue(null),
       saveCatalog: vi.fn(),
       findMatchOverrides: vi.fn().mockResolvedValue([]),
-      findClaimedBookIds: vi.fn().mockResolvedValue(new Set<number>()),
+      findClaimedBookKeys: vi.fn().mockResolvedValue(new Set<string>()),
     };
 
     await expect(outagingCatalogService(store).fetchCatalog(monitorConfig(), providerConfig())).rejects.toBeInstanceOf(ServiceUnavailableException);
@@ -507,7 +507,7 @@ describe('targeted availability recompute', () => {
       saveCatalog: vi.fn(),
       updateWorkUserState: vi.fn(),
       findMatchOverrides: vi.fn().mockResolvedValue([]),
-      findClaimedBookIds: vi.fn().mockResolvedValue(new Set<number>()),
+      findClaimedBookKeys: vi.fn().mockResolvedValue(new Set<string>()),
     };
     const db = queuedSelectDb(rows);
     const service = new MonitoredCatalogService({} as never, {} as never, {} as never, store as never, db as never, {} as never);
@@ -919,10 +919,10 @@ describe('targeted availability recompute', () => {
       expect(open.possibleMatches?.ebook?.bookId).toBe(31);
 
       const claimed = harness([[inhibitorBook()]]);
-      claimed.store.findClaimedBookIds.mockResolvedValue(new Set([31]));
+      claimed.store.findClaimedBookKeys.mockResolvedValue(new Set(['31|ebook']));
       const owned = await claimed.service.rematchWork(monitor(), inhibitorWork());
       expect(owned.possibleMatches).toBeUndefined();
-      expect(claimed.store.findClaimedBookIds).toHaveBeenCalledWith('monitor-1', 'w-ip');
+      expect(claimed.store.findClaimedBookKeys).toHaveBeenCalledWith('monitor-1', ['w-ip']);
       expect(store.findMatchOverrides).toHaveBeenCalledWith(['monitor-1']);
     });
 
@@ -930,6 +930,159 @@ describe('targeted availability recompute', () => {
       const [result] = await match([[inhibitorBook()]], [inhibitorWork()], new Map(), false);
 
       expect(result.possibleMatches).toBeUndefined();
+    });
+  });
+
+  describe('one file, one work', () => {
+    type MatchOwnedBooks = (
+      works: MonitoredWork[],
+      localAuthorId: number | null,
+      overrides: Map<string, WorkMatchOverrides>,
+      options: { detectPossible: boolean },
+    ) => Promise<void>;
+
+    async function match(rows: unknown[][], works: MonitoredWork[], overrides = new Map<string, WorkMatchOverrides>()) {
+      const { service } = harness(rows);
+      const matchOwnedBooks = (service as unknown as { matchOwnedBooks: MatchOwnedBooks }).matchOwnedBooks;
+      await Reflect.apply(matchOwnedBooks, service, [works, 7, overrides, { detectPossible: true }]);
+      return works;
+    }
+
+    function idRow(patch: Record<string, unknown>) {
+      return { hardcoverId: null, audibleId: null, goodreadsId: null, language: null, isFixedLayout: null, ...libraryRow(patch), ...patch };
+    }
+
+    const wordsOfRadiance = () =>
+      work({ id: 'w-wor', title: 'Words of Radiance', seriesName: 'The Stormlight Archive', seriesIndex: '2', releaseYear: 2014 });
+    const worBook = (patch: Record<string, unknown> = {}) =>
+      idRow({ bookId: 40, title: 'Words of Radiance', seriesName: 'The Stormlight Archive', seriesIndex: '2', publishedYear: 2014, ...patch });
+
+    it('keeps a bundle off the file of one book it contains', async () => {
+      const bundle = work({
+        id: 'w-bundle',
+        title: 'The Stormlight Archive Bundle: Words of Radiance Part One, Words of Radiance Part Two, The Way of Kings Part Two',
+        kind: 'collection',
+        providerWorkIds: { goodreads: 'g-bundle' },
+      });
+
+      const [real, bundled] = await match([[worBook({ goodreadsId: 'g-bundle' })], [worBook()]], [wordsOfRadiance(), bundle]);
+
+      expect(real.matchedBookIds).toEqual({ ebook: 40 });
+      expect(bundled.matchedBookIds).toEqual({});
+      expect(bundled.ownedFormats).toEqual([]);
+    });
+
+    it('lets a bundle that loses one file still take the file that is the bundle', async () => {
+      const bundle = work({ id: 'w-bundle', title: 'The Stormlight Archive Bundle', kind: 'collection', providerWorkIds: { goodreads: 'g-bundle' } });
+      const bundleBook = idRow({ bookId: 41, title: 'The Stormlight Archive Bundle', goodreadsId: 'g-bundle' });
+
+      const [real, bundled] = await match([[worBook({ goodreadsId: 'g-bundle' }), bundleBook], [worBook()]], [wordsOfRadiance(), bundle]);
+
+      expect(real.matchedBookIds).toEqual({ ebook: 40 });
+      expect(bundled.matchedBookIds).toEqual({ ebook: 41 });
+    });
+
+    it('gives the English files to the English book, not to its translation', async () => {
+      const steelheart = work({ id: 'w-en', title: 'Steelheart', seriesName: 'The Reckoners', seriesIndex: '1' });
+      const spanish = work({ id: 'w-es', title: 'The Reckoners #1 - Steelheart', flags: ['foreign_language'], providerWorkIds: { audible: 'A-es' } });
+      const ebook = idRow({ bookId: 50, title: 'Steelheart', seriesName: 'The Reckoners', seriesIndex: '1', audibleId: 'A-es' });
+      const audio = idRow({ bookId: 51, title: 'Steelheart', seriesName: 'The Reckoners', seriesIndex: '1', audibleId: 'A-es', format: 'm4b' });
+
+      const [english, translation] = await match(
+        [
+          [ebook, audio],
+          [ebook, audio],
+        ],
+        [steelheart, spanish],
+      );
+
+      expect(english.matchedBookIds).toEqual({ ebook: 50, audiobook: 51 });
+      expect(translation.matchedBookIds).toEqual({});
+    });
+
+    it('never gives a translation a file tagged English, even unopposed', async () => {
+      const spanish = work({ id: 'w-es', title: 'Steelheart', flags: ['foreign_language'] });
+
+      const [translation] = await match([[idRow({ bookId: 50, title: 'Steelheart', language: 'en' })]], [spanish]);
+
+      expect(translation.matchedBookIds).toEqual({});
+    });
+
+    it('matches a collection to its own file and keeps the stories inside it unowned', async () => {
+      const arcanum = work({ id: 'w-au', title: 'Arcanum Unbounded', kind: 'collection' });
+      const emperorsSoul = work({ id: 'w-es', title: "The Emperor's Soul", providerWorkIds: { hardcover: 'h-es' } });
+      const arcanumBook = idRow({ bookId: 60, title: 'Arcanum Unbounded: The Cosmere Collection', hardcoverId: 'h-es' });
+
+      const [collection, novella] = await match([[arcanumBook], [arcanumBook]], [arcanum, emperorsSoul]);
+
+      expect(collection.matchedBookIds).toEqual({ ebook: 60 });
+      expect(novella.matchedBookIds).toEqual({});
+    });
+
+    it('matches a split part only to that part, never to the whole book', async () => {
+      const partOne = work({ id: 'w-p1', title: 'Words of Radiance Part One' });
+      const [whole] = await match([[worBook()]], [partOne]);
+      expect(whole.matchedBookIds).toEqual({});
+
+      const [part] = await match(
+        [[worBook({ bookId: 42, title: 'Words of Radiance, Part 1' })]],
+        [work({ id: 'w-p1', title: 'Words of Radiance Part One' })],
+      );
+      expect(part.matchedBookIds).toEqual({ ebook: 42 });
+
+      const [wholeWork] = await match([[worBook({ bookId: 42, title: 'Words of Radiance, Part 1' })]], [wordsOfRadiance()]);
+      expect(wholeWork.matchedBookIds).toEqual({});
+    });
+
+    it('matches comics to comic formats and fixed-layout epubs only', async () => {
+      const manga = () => work({ id: 'w-m', title: 'Mistborn', kind: 'graphic_novel' });
+
+      const [reflowable] = await match([[idRow({ bookId: 70, title: 'Mistborn' })]], [manga()]);
+      expect(reflowable.matchedBookIds).toEqual({});
+
+      const [fixed] = await match([[idRow({ bookId: 70, title: 'Mistborn', isFixedLayout: true })]], [manga()]);
+      expect(fixed.matchedBookIds).toEqual({ ebook: 70 });
+
+      const [cbz] = await match([[idRow({ bookId: 71, title: 'Mistborn', format: 'cbz' })]], [manga()]);
+      expect(cbz.matchedBookIds).toEqual({ ebook: 71 });
+
+      const [prose] = await match([[idRow({ bookId: 71, title: 'Mistborn', format: 'cbz' })]], [work({ id: 'w-p', title: 'Mistborn' })]);
+      expect(prose.matchedBookIds).toEqual({});
+    });
+
+    it('leaves a file both works claim equally to neither, and asks on both', async () => {
+      const first = work({ id: 'w-a', title: 'Legion' });
+      const second = work({ id: 'w-b', title: 'Legion' });
+
+      const [a, b] = await match([[idRow({ bookId: 80, title: 'Legion' })]], [first, second]);
+
+      expect(a.matchedBookIds).toEqual({});
+      expect(b.matchedBookIds).toEqual({});
+      expect(a.possibleMatches?.ebook?.bookId).toBe(80);
+      expect(b.possibleMatches?.ebook?.bookId).toBe(80);
+    });
+
+    it('keeps a hand-made link beside the automatic match of the same file', async () => {
+      const arcanum = work({ id: 'w-au', title: 'Arcanum Unbounded' });
+      const emperorsSoul = work({ id: 'w-es', title: "The Emperor's Soul" });
+      const linked = emptyWorkMatchOverrides();
+      linked.ebook.linkedBookId = 60;
+      const arcanumBook = idRow({ bookId: 60, title: 'Arcanum Unbounded' });
+
+      const [collection, novella] = await match([[arcanumBook], [arcanumBook]], [arcanum, emperorsSoul], new Map([['w-es', linked]]));
+
+      expect(collection.matchedBookIds).toEqual({ ebook: 60 });
+      expect(novella.matchedBookIds).toEqual({ ebook: 60 });
+      expect(novella.linkedFormats).toEqual(['ebook']);
+    });
+
+    it('does not take a file another work holds in a pass over one work', async () => {
+      const { service, store } = harness([[worBook()]]);
+      store.findClaimedBookKeys.mockResolvedValue(new Set(['40|ebook']));
+
+      const result = await service.rematchWork(monitor(), wordsOfRadiance());
+
+      expect(result.matchedBookIds).toEqual({});
     });
   });
 });
@@ -966,7 +1119,7 @@ describe('fetchCatalog review kinds', () => {
       getCatalog: vi.fn().mockResolvedValue(null),
       saveCatalog: vi.fn(),
       findMatchOverrides: vi.fn().mockResolvedValue([]),
-      findClaimedBookIds: vi.fn().mockResolvedValue(new Set<number>()),
+      findClaimedBookKeys: vi.fn().mockResolvedValue(new Set<string>()),
     };
     const service = new MonitoredCatalogService(
       fakeProvider('hardcover', {

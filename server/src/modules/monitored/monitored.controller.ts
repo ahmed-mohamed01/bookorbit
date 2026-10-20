@@ -32,6 +32,7 @@ import {
   UpdateMonitoredBookDto,
   MonitoredCatalogSearchQueryDto,
   HardcoverSearchQueryDto,
+  MonitoredMatchHoldersQueryDto,
 } from './dto/monitored.dto';
 import {
   MonitoredBookParamsDto,
@@ -284,6 +285,12 @@ export class MonitoredController {
   @RequirePermission(Permission.BookRequestAccess)
   setWorkMatch(@Param() params: MonitoredWorkFormatParamsDto, @Body() dto: SetMonitoredWorkMatchDto, @CurrentUser() user: RequestUser) {
     return this.service.setWorkMatch(user, params.workId, params.format, dto);
+  }
+
+  @Get('works/:workId/match/:format/holders')
+  @RequirePermission(Permission.BookRequestAccess)
+  findMatchHolders(@Param() params: MonitoredWorkFormatParamsDto, @Query() query: MonitoredMatchHoldersQueryDto, @CurrentUser() user: RequestUser) {
+    return this.service.findMatchHolders(user, params.workId, params.format, query.bookId);
   }
 
   @Post('works/:workId/release-dates/refresh')
