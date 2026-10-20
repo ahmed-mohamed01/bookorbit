@@ -38,6 +38,7 @@ import {
   assignExclusiveClaims,
   bookShapeConflict,
   fileFormatConflict,
+  isSplitPartOfWholeWork,
   preferLanguageFit,
   scoreClaim,
   type AssignableWork,
@@ -1137,7 +1138,10 @@ export class MonitoredCatalogService {
       const conflicted: OwnedClaim[] = [];
       for (const entry of claims.values()) {
         const { candidate, tier } = entry;
-        if (bookShapeConflict(work, candidate, titleMatchKeys)) continue;
+        if (bookShapeConflict(work, candidate, titleMatchKeys)) {
+          if (isSplitPartOfWholeWork(work, candidate)) conflicted.push(entry);
+          continue;
+        }
         if (tier === OWNED_MATCH_TIER.providerId) {
           kept.push(entry);
           continue;

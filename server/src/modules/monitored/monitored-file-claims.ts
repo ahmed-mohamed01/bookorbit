@@ -163,6 +163,19 @@ export function namedAfter(workTitle: string, fileTitle: string, keys: TitleKeyR
   );
 }
 
+function workSplitPart(work: ClaimWork): string | null {
+  return splitPartOf(work.title) ?? (effectiveWorkKind(work) === 'split_part' ? '?' : null);
+}
+
+/**
+ * True when the book is one split part of the whole book the work is. It cannot own the work, but
+ * dropping it outright leaves the work looking missing, and an automatic request would then fetch
+ * a book the owner already holds half of.
+ */
+export function isSplitPartOfWholeWork(work: ClaimWork, candidate: ClaimCandidate): boolean {
+  return workSplitPart(work) === null && splitPartOf(candidate.title) !== null;
+}
+
 /**
  * Why a work and a library book cannot be the same thing whatever their titles say, or null. These
  * only fire on what the book actually shows: a file with no language tag or no collection wording is
@@ -175,7 +188,7 @@ export function bookShapeConflict(work: ClaimWork, candidate: ClaimCandidate, ke
     return workCollection ? 'collection_part' : 'collection_file';
   }
 
-  const workPart = splitPartOf(work.title) ?? (effectiveWorkKind(work) === 'split_part' ? '?' : null);
+  const workPart = workSplitPart(work);
   const filePart = splitPartOf(candidate.title);
   if ((workPart === null) !== (filePart === null)) return 'split_part';
   if (workPart !== null && workPart !== '?' && workPart !== filePart) return 'split_part';

@@ -1015,6 +1015,15 @@ describe('targeted availability recompute', () => {
       expect(wholeWork.matchedBookIds).toEqual({});
     });
 
+    it('offers a split part of the whole book as a possible match, never the whole book to a part', async () => {
+      const [wholeWork] = await match([[worBook({ bookId: 42, title: 'Words of Radiance, Part 2' })]], [wordsOfRadiance()]);
+      expect(wholeWork.matchedBookIds).toEqual({});
+      expect(wholeWork.possibleMatches?.ebook?.bookId).toBe(42);
+
+      const [partWork] = await match([[worBook()]], [work({ id: 'w-p1', title: 'Words of Radiance Part One' })]);
+      expect(partWork.possibleMatches).toBeUndefined();
+    });
+
     it('matches comics to comic formats and fixed-layout epubs only', async () => {
       const manga = () => work({ id: 'w-m', title: 'Mistborn', kind: 'graphic_novel' });
 
