@@ -36,7 +36,9 @@ describe('BookRequestBatchBootstrapService', () => {
 
     expect(repo.findMissingColumns).toHaveBeenCalledWith('book_requests', ['kind']);
     const statements = repo.applySchemaStatements.mock.calls[0]![0] as string[];
-    expect(statements).toHaveLength(8);
+    expect(statements).toHaveLength(10);
+    expect(statements.join('\n')).toContain('DROP CONSTRAINT IF EXISTS "book_request_batch_units_status_chk"');
+    expect(statements.join('\n')).toContain("pg_get_constraintdef(oid) LIKE '%filed%'");
     expect(statements[0]).toContain('ADD COLUMN IF NOT EXISTS "kind" varchar(10) NOT NULL DEFAULT \'single\'');
     expect(statements.join('\n')).toContain('book_requests_kind_chk');
     expect(statements.join('\n')).toContain('CREATE TABLE IF NOT EXISTS "book_request_batch_units"');

@@ -54,7 +54,7 @@ export class BookRequestBatchRepository {
       .innerJoin(bookRequests, eq(bookRequests.id, bookRequestBatchUnits.requestId))
       .where(
         and(
-          eq(bookRequestBatchUnits.status, 'in_dock'),
+          inArray(bookRequestBatchUnits.status, ['in_dock', 'filed']),
           sql`lower(${bookRequestDownloads.clientKey}) = ${clientKey.toLowerCase()}`,
           ownerUserId === null ? undefined : eq(bookRequests.userId, ownerUserId),
         ),
@@ -63,14 +63,38 @@ export class BookRequestBatchRepository {
     return rows.map((row) => row.unitIndex);
   }
 
+  async findUnitsForRequests(requestIds: number[]): Promise<BatchUnitRow[]> {
+    const unique = [...new Set(requestIds)];
+    if (unique.length === 0) return [];
+    return this.db
+      .select()
+      .from(bookRequestBatchUnits)
+      .where(inArray(bookRequestBatchUnits.requestId, unique))
+      .orderBy(asc(bookRequestBatchUnits.requestId), asc(bookRequestBatchUnits.unitIndex));
+  }
+
+  async findUnitByDockFileId(fileId: number): Promise<BatchUnitRow | undefined> {
+    const [row] = await this.db.select().from(bookRequestBatchUnits).where(eq(bookRequestBatchUnits.bookDockFileId, fileId)).limit(1);
+    return row;
+  }
+
+  async markFiled(id: number, bookId: number | null): Promise<void> {
+    await this.updateUnit(id, { status: 'filed', bookId, errorMessage: null });
+  }
+
   async updateUnit(id: number, data: Partial<NewBatchUnitRow>): Promise<void> {
-    await this.db.update(bookRequestBatchUnits).set(data).where(eq(bookRequestBatchUnits.id, id));
+    await this.db
+      .update(bookRequestBatchUnits)
+      .set(data)
+      .where(
+        and(eq(bookRequestBatchUnits.id, id), data.status === 'in_dock' ? inArray(bookRequestBatchUnits.status, ['waiting', 'placing']) : undefined),
+      );
   }
 
   /**
    * Gives failed units another go. A unit whose Book Dock row still exists goes to 'placing' with
    * its id kept, so the import's adoption logic decides rather than placing it a second time.
-   * 'placing' and 'in_dock' units are left alone.
+   * 'placing', 'in_dock' and 'filed' units are left alone.
    */
   async resetUnitsForRetry(requestId: number): Promise<number> {
     const liveDockRow = sql`exists (select 1 from ${bookDockFiles} where ${bookDockFiles.id} = ${bookRequestBatchUnits.bookDockFileId})`;
@@ -111,12 +135,13 @@ export class BookRequestBatchRepository {
       .select({
         requestId: bookRequestBatchUnits.requestId,
         total: sql<number>`count(*)::int`,
-        inDock: sql<number>`(count(*) filter (where ${bookRequestBatchUnits.status} = 'in_dock'))::int`,
+        inDock: sql<number>`(count(*) filter (where ${bookRequestBatchUnits.status} in ('in_dock', 'filed')))::int`,
+        filed: sql<number>`(count(*) filter (where ${bookRequestBatchUnits.status} = 'filed'))::int`,
         failed: sql<number>`(count(*) filter (where ${bookRequestBatchUnits.status} = 'failed'))::int`,
       })
       .from(bookRequestBatchUnits)
       .where(inArray(bookRequestBatchUnits.requestId, unique))
       .groupBy(bookRequestBatchUnits.requestId);
-    return new Map(rows.map((row) => [row.requestId, { total: row.total, inDock: row.inDock, failed: row.failed }]));
+    return new Map(rows.map((row) => [row.requestId, { total: row.total, inDock: row.inDock, filed: row.filed, failed: row.failed }]));
   }
 }

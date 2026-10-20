@@ -1,5 +1,13 @@
 import { apiJson, apiSend, jsonBody } from './http'
 import type {
+  WebSerialDraft,
+  WebSerialPrintSuggestion,
+  WebSerialPrintSuggestionInput,
+  WebSerialDownloadInput,
+  WebSerialPrintSeriesInput,
+  WebSerialPrintState,
+  RequestWebSerialVolumesInput,
+  LinkWebSerialBatchInput,
   CreateWebSerialJobInput,
   MoveWebSerialJobInput,
   MoveWebSerialJobResult,
@@ -276,4 +284,36 @@ export async function addMangaRepo(input: WebSerialExtensionRepoInput): Promise<
 
 export async function removeMangaRepo(url: string): Promise<void> {
   await apiSend(`${BASE}/admin/manga-repos?url=${encodeURIComponent(url)}`, { method: 'DELETE' }, 'webSerials.api.removeRepo')
+}
+
+export async function fetchPrintState(matchId: string, input: WebSerialPrintSeriesInput): Promise<WebSerialPrintState> {
+  return apiJson(`${BASE}/novel/${encodeURIComponent(matchId)}/print-state`, jsonBody('POST', input), 'webSerials.api.requests')
+}
+
+export async function requestPrintVolumes(matchId: string, input: RequestWebSerialVolumesInput): Promise<WebSerialPrintState> {
+  return apiJson(`${BASE}/novel/${encodeURIComponent(matchId)}/series-request`, jsonBody('POST', input), 'webSerials.api.requestVolume')
+}
+
+export async function linkPrintBatch(matchId: string, input: LinkWebSerialBatchInput): Promise<void> {
+  await apiSend(`${BASE}/novel/${encodeURIComponent(matchId)}/batches`, jsonBody('POST', input), 'webSerials.api.recordRequest')
+}
+
+export async function createPrintDraft(matchId: string, input: WebSerialPrintSeriesInput): Promise<WebSerialDraft> {
+  return apiJson(`${BASE}/novel/${encodeURIComponent(matchId)}/draft`, jsonBody('POST', input), 'webSerials.api.requests')
+}
+
+export async function closePrintDraft(matchId: string, seriesRequestId: number): Promise<void> {
+  await apiSend(
+    `${BASE}/novel/${encodeURIComponent(matchId)}/draft/${seriesRequestId}`,
+    { method: 'DELETE', keepalive: true },
+    'webSerials.api.requests',
+  )
+}
+
+export async function fetchPrintSuggestion(matchId: string, input: WebSerialPrintSuggestionInput): Promise<WebSerialPrintSuggestion> {
+  return apiJson(`${BASE}/novel/${encodeURIComponent(matchId)}/suggestion`, jsonBody('POST', input), 'webSerials.api.releases')
+}
+
+export async function downloadPrintVolumes(matchId: string, input: WebSerialDownloadInput): Promise<WebSerialPrintState> {
+  return apiJson(`${BASE}/novel/${encodeURIComponent(matchId)}/download`, jsonBody('POST', input), 'webSerials.api.grab')
 }

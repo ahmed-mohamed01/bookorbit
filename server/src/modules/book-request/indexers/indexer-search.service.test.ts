@@ -1211,3 +1211,27 @@ it('removes in-flight candidates when the search throws before caching', async (
   service.forget(7);
   expect(service.find(7, 1, release().guid)).toBeUndefined();
 });
+
+it('adopts a cached candidate for a child without searching again or exposing it to other requests', async () => {
+  const adapter = { search: vi.fn().mockResolvedValue([release()]) };
+  const { service } = makeService([indexer()], { torznab: adapter });
+  await service.search(request());
+  const candidate = service.find(7, 1, release().guid);
+  expect(candidate).toBeDefined();
+  expect(service.find(8, 1, release().guid)).toBeUndefined();
+  expect(service.adoptCandidate(7, 8, 1, release().guid)).toBe(true);
+  expect(service.find(8, 1, release().guid)).toBe(candidate);
+  expect(service.find(9, 1, release().guid)).toBeUndefined();
+  expect(service.adoptCandidate(7, 9, 1, 'missing')).toBe(false);
+  expect(adapter.search).toHaveBeenCalledTimes(1);
+});
+it('refuses expired candidates when adopting', async () => {
+  const { service } = makeService([indexer()], { torznab: { search: vi.fn().mockResolvedValue([release()]) } });
+  await service.search(request());
+  const now = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 24 * 60 * 60 * 1000);
+  try {
+    expect(service.adoptCandidate(7, 8, 1, release().guid)).toBe(false);
+  } finally {
+    now.mockRestore();
+  }
+});

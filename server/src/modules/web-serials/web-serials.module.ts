@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
+import { BookRequestModule } from '../book-request/book-request.module';
+import { SeriesModule } from '../series/series.module';
+import { UserModule } from '../user/user.module';
+import { WebSerialsPrintService } from './web-serials-print.service';
 import { BookDockModule } from '../book-dock/book-dock.module';
 import { BookMetadataLockModule } from '../book-metadata-lock/book-metadata-lock.module';
 import { LibraryModule } from '../library/library.module';
@@ -41,9 +45,20 @@ import { WebSerialsNovelIndexRepository } from './web-serials-novel-index.reposi
 import { WebSerialsRepository } from './web-serials.repository';
 
 @Module({
-  imports: [ConfigModule.forFeature(webSerialsConfig), LibraryModule, BookDockModule, NotificationModule, MetadataModule, BookMetadataLockModule],
+  imports: [
+    BookRequestModule,
+    SeriesModule,
+    UserModule,
+    ConfigModule.forFeature(webSerialsConfig),
+    LibraryModule,
+    BookDockModule,
+    NotificationModule,
+    MetadataModule,
+    BookMetadataLockModule,
+  ],
   controllers: [WebSerialsAdminController, WebSerialsController],
   providers: [
+    WebSerialsPrintService,
     WebSerialsRepository,
     WebSerialsNovelIndexRepository,
     WebSerialsSecretService,

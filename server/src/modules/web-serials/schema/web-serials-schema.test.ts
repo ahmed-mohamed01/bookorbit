@@ -1,3 +1,4 @@
+import { getTableConfig } from 'drizzle-orm/pg-core';
 import { describe, expect, it } from 'vitest';
 
 import { splitSchemaStatements } from '../../../common/utils/schema-bootstrap.utils';
@@ -9,6 +10,8 @@ import {
   webSerialJobItems,
   webSerialJobs,
   webSerialSettings,
+  webSerialSeriesRequests,
+  webSerialSeriesBatches,
   webSerialVolumeRequests,
 } from './web-serials.schema';
 import { WEB_SERIALS_SCHEMA_SQL, WEB_SERIALS_TABLE_NAMES } from './web-serials-schema';
@@ -35,6 +38,9 @@ describe('web serials schema SQL', () => {
     'web_serial_novel_index_sources_state_chk',
     'web_serial_volume_requests_kind_chk',
     'web_serial_volume_requests_unique',
+    'web_serial_series_requests_kind_chk',
+    'web_serial_series_requests_user_request_unique',
+    'web_serial_series_batches_batch_request_unique',
   ];
 
   it.each(inlineConstraints)('declares %s inline for a fresh database', (name) => {
@@ -44,6 +50,8 @@ describe('web serials schema SQL', () => {
 
   const allConstraints = [
     ...inlineConstraints,
+    'web_serial_series_requests_user_id_fk',
+    'web_serial_series_batches_series_request_fk',
     'web_serial_settings_manga_library_fk',
     'web_serial_settings_manga_folder_fk',
     'web_serial_settings_novel_library_fk',
@@ -236,4 +244,32 @@ describe('web serials schema SQL', () => {
     expect(webSerialNovelIndexSources.nextPage.default).toBe(1);
     expect(webSerialSettings.novelIndexDailyBudget.default).toBe(1500);
   });
+});
+
+describe('series request schema', () => {
+  it('requires created_at on both series tables', () => {
+    for (const table of ['web_serial_series_requests', 'web_serial_series_batches']) {
+      const create = statements.find((statement) => statement.startsWith(`CREATE TABLE IF NOT EXISTS "${table}"`));
+      expect(create).toContain('"created_at" timestamp with time zone DEFAULT now() NOT NULL');
+    }
+    expect(webSerialSeriesRequests.createdAt.notNull).toBe(true);
+    expect(webSerialSeriesBatches.createdAt.notNull).toBe(true);
+  });
+
+  it('creates the series request and batch tables', () => {
+    expect(WEB_SERIALS_TABLE_NAMES).toContain('web_serial_series_requests');
+    expect(WEB_SERIALS_TABLE_NAMES).toContain('web_serial_series_batches');
+    expect(WEB_SERIALS_SCHEMA_SQL).toContain('"series_keys" text[] NOT NULL');
+    expect(WEB_SERIALS_SCHEMA_SQL).toContain('ON "web_serial_series_requests" USING gin ("series_keys")');
+    expect(WEB_SERIALS_SCHEMA_SQL).toContain('ON "web_serial_series_requests" ("user_id", "kind", "match_id")');
+  });
+});
+
+it('scopes shared series request uniqueness to the user in SQL and pgTable', () => {
+  const name = 'web_serial_series_requests_user_request_unique';
+  const create = statements.find((s) => s.startsWith('CREATE TABLE') && s.includes(`CONSTRAINT "${name}"`));
+  const guarded = statements.find((s) => s.startsWith('DO $$') && s.includes(`ADD CONSTRAINT "${name}"`));
+  for (const statement of [create, guarded]) expect(statement).toContain('UNIQUE ("user_id", "book_request_id")');
+  const constraint = getTableConfig(webSerialSeriesRequests).uniqueConstraints.find((c) => c.name === name);
+  expect(constraint?.columns.map((column) => column.name)).toEqual(['user_id', 'book_request_id']);
 });

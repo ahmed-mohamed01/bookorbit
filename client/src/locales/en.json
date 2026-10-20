@@ -8590,6 +8590,7 @@
       "sendFailed": "Could not send the books",
       "row": {
         "count": "Batch · {count, plural, one {# book} other {# books}}",
+        "filed": "{filed} of {total} in library",
         "importing": "{inDock} of {total} in Book Dock",
         "finishedWithFailures": "{inDock} of {total} in Book Dock · {failed} failed",
         "progressLabel": "Books in Book Dock for {title}"
@@ -8601,6 +8602,7 @@
           "waiting": "Waiting for download",
           "placing": "Placing",
           "in_dock": "In Book Dock",
+          "filed": "In library",
           "failed": "Failed"
         }
       }
@@ -15457,7 +15459,8 @@
           "disabled": "Showing results from your sources because the series database is turned off.",
           "unavailable": "Showing results from your sources because the series database is unavailable.",
           "empty": "Showing results from your sources because the series database has nothing for this search."
-        }
+        },
+        "published": "Published"
       }
     },
     "errors": {
@@ -15501,7 +15504,8 @@
       "tagsLess": "Show fewer tags",
       "kind": {
         "manga": "Manga",
-        "novel": "Web novel"
+        "novel": "Web novel",
+        "lightNovel": "Light novel"
       },
       "updated": "Updated {time}",
       "alreadyInLibrary": "{count} already in your library",
@@ -16108,6 +16112,93 @@
       "matchVolume": "Could not match this volume.",
       "requestMatched": "Could not request the matched book.",
       "searchUnavailable": "Search is not set up right now. Paste a link to open a series."
+    },
+    "acquisition": {
+      "volumes": "Volumes",
+      "state": {
+        "owned": "In library",
+        "in_dock": "In Book Dock",
+        "downloading": "Downloading",
+        "requested": "Requested",
+        "missing": "Missing"
+      },
+      "legend": {
+        "owned": "In library",
+        "in_dock": "In Book Dock",
+        "downloading": "Downloading",
+        "requested": "Requested, waiting for an approver",
+        "missing": "Missing"
+      },
+      "count": {
+        "owned": "{count} in library",
+        "in_dock": "{count} in Book Dock",
+        "downloading": "{count} downloading",
+        "requested": "{count} requested",
+        "missing": "{count} missing"
+      },
+      "cell": "Volume {volume}: {state}",
+      "willDownload": "Will download",
+      "selected": "Selected",
+      "select": "Select",
+      "showMissing": "Show missing only",
+      "clearFilter": "Clear volume filter",
+      "searching": "{count, plural, one {Searching # indexer} other {Searching # indexers}}",
+      "searched": "Searched {count, plural, one {# indexer} other {# indexers}} · {results, plural, one {# result} other {# results}}",
+      "searchAgain": "Search again",
+      "search": {
+        "title": "Search for",
+        "author": "Author",
+        "submit": "Search",
+        "otherTitles": "Other titles"
+      },
+      "searchingChip": "searching",
+      "failed": "failed",
+      "timedOut": "timed out, retry",
+      "suggestion": "All {count, plural, one {# missing volume} other {# missing volumes}} from {releases, plural, one {# release} other {# releases}}",
+      "selectThese": "Select these {count}",
+      "totalSize": "{size} in total.",
+      "barTitle": "{count, plural, one {# volume} other {# volumes}} from {releases, plural, one {# release} other {# releases}}",
+      "nothingSelected": "Nothing selected",
+      "barDetail": "{size} · one download per release · files go to the LN library",
+      "pickHint": "Pick releases, or use the suggestion above",
+      "download": "{count, plural, one {Download # volume} other {Download # volumes}}",
+      "downloading": "{count, plural, one {Downloading # volume} other {Downloading # volumes}}",
+      "progress": {
+        "waiting": "Waiting for peers",
+        "downloading": "Downloading",
+        "filing": "Filing into library",
+        "held": "Needs review in Book Dock",
+        "filed": "Filed into library",
+        "failed": "Download failed"
+      },
+      "requestTitle": "Ask for the volumes you are missing",
+      "requestHelp": "Tap volumes to choose, or request every missing one. An approver finds and downloads them; they land in your light novel library and turn green here.",
+      "cancelRequest": "Cancel request",
+      "requestDetail": "One request for the series, listing the volumes",
+      "allMissing": "All missing",
+      "volumesSelected": "{count, plural, =0 {No volumes selected} one {# volume selected} other {# volumes selected}}",
+      "requestVolumes": "{count, plural, =0 {Request volumes} one {Request # volume} other {Request # volumes}}",
+      "fileHint": "{count, plural, one {# book · ticked: the ones you are missing} other {# books · ticked: the ones you are missing}}",
+      "ticked": "{count} ticked · {size}",
+      "seeders": "{count, plural, one {# seeder} other {# seeders}}",
+      "volumeRange": "Vol. {range}",
+      "books": "{count, plural, one {# book} other {# books}}",
+      "files": "{count, plural, one {# file} other {# files}}",
+      "tier": "Tier {count}",
+      "youNeed": "{count, plural, one {you need it} other {# you need}}",
+      "youHave": "you have it",
+      "freeleech": "Freeleech",
+      "vip": "VIP",
+      "grabbed": "Already grabbed",
+      "viewFiles": "View files",
+      "needsVip": "Needs VIP",
+      "selectRelease": "Select {title}",
+      "deselectRelease": "Deselect {title}",
+      "otherFormats": "Other formats of this series",
+      "unmatched": "Unmatched results ({count})",
+      "manga": "Manga",
+      "audiobook": "Audiobook",
+      "webSources": "Web sources, for volumes not in print"
     }
   },
   "commandPalette": {

@@ -75,17 +75,30 @@ export function buildFileTree(manifest: ReleaseSelectionManifest): FileTreeNode 
   return root
 }
 
-export function useReleaseFileSelection(manifest: Ref<ReleaseSelectionManifest | null>) {
+export function useReleaseFileSelection(
+  manifest: Ref<ReleaseSelectionManifest | null>,
+  preselect?: (units: ReleaseSelectionManifest['units']) => number[],
+) {
   const tree = computed(() => (manifest.value ? buildFileTree(manifest.value) : null))
   const selectedUnits = ref(new Set<number>())
   function clear() {
     selectedUnits.value = new Set()
   }
-  watch(manifest, clear, { flush: 'sync' })
   const imported = computed(() => new Set(manifest.value?.alreadyImported ?? []))
   function selectableIndexes(node: FileTreeNode) {
     return new Set([...unitIndexes(node)].filter((index) => !imported.value.has(index)))
   }
+  watch(
+    manifest,
+    (current) => {
+      clear()
+      if (!current || !preselect) return
+      const validIndexes = new Set(current.units.map((unit) => unit.index))
+      const alreadyImported = new Set(current.alreadyImported ?? [])
+      selectedUnits.value = new Set(preselect(current.units).filter((index) => validIndexes.has(index) && !alreadyImported.has(index)))
+    },
+    { flush: 'sync', immediate: true },
+  )
   function toggleUnit(index: number) {
     if (imported.value.has(index)) return
     if (!manifest.value?.units.some((unit) => unit.index === index)) return

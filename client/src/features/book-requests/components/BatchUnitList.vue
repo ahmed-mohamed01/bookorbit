@@ -8,12 +8,13 @@ defineProps<{ units: BatchUnitView[] }>()
 
 const { t } = useI18n()
 
-const STATUS_ICONS = { waiting: CircleDashed, placing: Loader2, in_dock: Check, failed: TriangleAlert } as const
+const STATUS_ICONS = { waiting: CircleDashed, placing: Loader2, in_dock: Check, filed: Check, failed: TriangleAlert } as const
 
 const STATUS_TONES: Record<BatchUnitStatus, string> = {
   waiting: 'text-muted-foreground',
   placing: 'text-info',
   in_dock: 'text-success',
+  filed: 'text-success',
   failed: 'text-destructive',
 }
 
@@ -30,7 +31,7 @@ function unitLabel(unit: BatchUnitView): string {
         <div class="min-w-0">
           <p class="line-clamp-2 text-sm break-words text-foreground">{{ unitLabel(unit) }}</p>
           <p v-if="unit.sizeBytes !== null" class="text-xs text-muted-foreground tabular-nums">{{ formatBytes(unit.sizeBytes) }}</p>
-          <p v-if="unit.status === 'failed' && unit.errorMessage" class="mt-0.5 line-clamp-2 text-xs break-words text-destructive">
+          <p v-if="unit.errorMessage" class="mt-0.5 line-clamp-2 text-xs break-words text-destructive">
             {{ unit.errorMessage }}
           </p>
         </div>

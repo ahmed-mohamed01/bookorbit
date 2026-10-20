@@ -403,7 +403,7 @@ export class RequestImportService implements OnApplicationBootstrap {
     );
 
     const diskUnits = new Map(plan.units.map((unit) => [unit.primaryPath, unit]));
-    let placed = rows.filter((row) => row.status === 'in_dock').length;
+    let placed = rows.filter((row) => row.status === 'in_dock' || row.status === 'filed').length;
     let failed = 0;
 
     for (const row of rows) {

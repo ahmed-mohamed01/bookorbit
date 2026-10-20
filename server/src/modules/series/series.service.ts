@@ -233,4 +233,15 @@ export class SeriesService {
     if (!scopedLibraryId) return accessibleIds;
     return accessibleIds.includes(scopedLibraryId) ? [scopedLibraryId] : [];
   }
+
+  async findOwnedVolumes(user: RequestUser, names: string[], maxVolume: number): Promise<Map<number, number>> {
+    if (names.length > 12) throw new BadRequestException('At most 12 series names are allowed');
+    const loweredNames = names.map((name) => name.trim().toLowerCase()).filter(Boolean);
+    if (loweredNames.length === 0) return new Map();
+
+    const libraryIds = await this.resolveLibraryIds(user);
+    if (libraryIds.length === 0) return new Map();
+
+    return this.seriesRepo.findOwnedVolumes({ names: loweredNames, maxVolume, libraryIds });
+  }
 }

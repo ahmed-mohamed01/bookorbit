@@ -86,7 +86,7 @@ function render(item = request()) {
 
 describe('RequestListTable', () => {
   it.each([
-    [{ kind: 'batch', authors: [], batch: { total: 1, inDock: 0, failed: 0 } }, 'Batch · 1 book'],
+    [{ kind: 'batch', authors: [], batch: { total: 1, filed: 0, inDock: 0, failed: 0 } }, 'Batch · 1 book'],
     [{ kind: 'batch', authors: [], batch: null }, 'Batch'],
     [{ kind: 'batch', authors: ['Terry Pratchett'] }, 'Terry Pratchett'],
     [{ kind: 'single', authors: [] }, 'Author unknown'],
@@ -207,19 +207,19 @@ describe('RequestListTable pairs', () => {
   })
 
   it('does not make an approved batch row selectable', () => {
-    const wrapper = render(request({ kind: 'batch', batch: { total: 3, inDock: 0, failed: 0 }, status: 'approved' }))
+    const wrapper = render(request({ kind: 'batch', batch: { total: 3, filed: 0, inDock: 0, failed: 0 }, status: 'approved' }))
 
     expect(wrapper.findAll('input[type="checkbox"]').filter((box) => !(box.element as HTMLInputElement).disabled)).toHaveLength(0)
   })
 
   it('shows a batch row with its unit count', () => {
-    const wrapper = render(request({ kind: 'batch', batch: { total: 12, inDock: 0, failed: 0 }, status: 'downloading' }))
+    const wrapper = render(request({ kind: 'batch', batch: { total: 12, filed: 0, inDock: 0, failed: 0 }, status: 'downloading' }))
 
     expect(wrapper.text()).toContain('Batch · 12 books')
   })
 
   it('shows N of M in Book Dock while importing', () => {
-    const wrapper = render(request({ kind: 'batch', batch: { total: 12, inDock: 5, failed: 0 }, status: 'importing' }))
+    const wrapper = render(request({ kind: 'batch', batch: { total: 12, filed: 0, inDock: 5, failed: 0 }, status: 'importing' }))
 
     expect(wrapper.text()).toContain('5 of 12 in Book Dock')
     expect(wrapper.text()).not.toContain('Batch · 12 books')
@@ -227,8 +227,13 @@ describe('RequestListTable pairs', () => {
     expect(bar?.attributes('aria-valuenow')).toBe('5')
   })
 
+  it('shows filed units in the library', () => {
+    const wrapper = render(request({ kind: 'batch', batch: { total: 12, filed: 3, inDock: 10, failed: 2 }, status: 'available' }))
+    expect(wrapper.text()).toContain('3 of 12 in library')
+  })
+
   it('keeps the N of M count once the batch has finished', () => {
-    const wrapper = render(request({ kind: 'batch', batch: { total: 12, inDock: 10, failed: 2 }, status: 'available' }))
+    const wrapper = render(request({ kind: 'batch', batch: { total: 12, filed: 0, inDock: 10, failed: 2 }, status: 'available' }))
 
     expect(wrapper.text()).toContain('10 of 12 in Book Dock · 2 failed')
     expect(wrapper.text()).not.toContain('Batch · 12 books')
@@ -237,7 +242,7 @@ describe('RequestListTable pairs', () => {
   it('batch rows use the live download progress like single requests', () => {
     const item = request({
       kind: 'batch',
-      batch: { total: 3, inDock: 0, failed: 0 },
+      batch: { total: 3, filed: 0, inDock: 0, failed: 0 },
       status: 'downloading',
       download: {
         id: 7,

@@ -56,7 +56,8 @@ export function requestOutcome(
 
   switch (request.status) {
     case 'available':
-      if (request.kind === 'batch') return { kind: 'settled', key: 'inBookDock', params: { time: settled } }
+      if (request.kind === 'batch' && !(request.batch && request.batch.total > 0 && request.batch.filed === request.batch.total))
+        return { kind: 'settled', key: 'inBookDock', params: { time: settled } }
       return request.targetLibraryName
         ? { kind: 'settled', key: 'filedIn', params: { library: request.targetLibraryName, time: settled } }
         : { kind: 'settled', key: 'filed', params: { time: settled } }

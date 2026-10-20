@@ -18,6 +18,7 @@ export const bookRequestBatchUnits = pgTable('book_request_batch_units', {
   fileSizes: bigint('file_sizes', { mode: 'number' }).array(),
   status: varchar('status', { length: 10 }).notNull().default('waiting'),
   bookDockFileId: integer('book_dock_file_id'),
+  bookId: integer('book_id'),
   errorMessage: text('error_message'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true })

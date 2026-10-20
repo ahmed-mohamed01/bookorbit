@@ -12,6 +12,7 @@ const props = withDefaults(
     tree: FileTreeNode
     selectable: boolean
     selectedUnits: Set<number>
+    lockedLabels?: Map<number, string>
     prefix?: string
     /** False when which file belongs to which book is unknown, so counts and positions would be guesses. */
     showBooks?: boolean
@@ -197,6 +198,7 @@ function handleShowAll() {
           :show-books="showBooks"
           :dir-state="dirState"
           :prefix="siblingPrefix"
+          :locked-labels="lockedLabels"
           @toggle-unit="forwardUnit"
           @toggle-dir="forwardDirectory"
         />
@@ -214,7 +216,12 @@ function handleShowAll() {
       :role="fileClickable ? 'checkbox' : undefined"
       :aria-checked="fileClickable ? checked : undefined"
       :aria-disabled="tree.imported || undefined"
-      :class="[ROW, fileClickable ? PRESS : '', ticked ? 'bg-primary/10' : '', isBook ? 'text-foreground' : 'text-muted-foreground']"
+      :class="[
+        ROW,
+        fileClickable ? PRESS : '',
+        ticked ? 'bg-primary/10' : '',
+        isBook && !tree.imported ? 'text-foreground' : 'text-muted-foreground',
+      ]"
       :style="indent"
       data-testid="tree-file"
       @click="handleFile"
@@ -235,7 +242,7 @@ function handleShowAll() {
         t('bookRequests.batch.tree.notBook')
       }}</span>
       <span v-if="tree.imported" class="mt-0.5 shrink-0 rounded-xs bg-muted px-1 text-[10px] leading-4 font-medium text-muted-foreground">{{
-        t('bookRequests.batch.tree.imported')
+        (tree.unitIndex !== null ? lockedLabels?.get(tree.unitIndex) : undefined) ?? t('bookRequests.batch.tree.imported')
       }}</span>
       <span :class="SIZE">{{ size }}</span>
       <span :class="SLOT" data-testid="tree-slot">

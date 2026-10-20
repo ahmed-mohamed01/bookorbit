@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent } from 'vue'
 import type { WebSerialSeriesLookup, WebSerialSeriesMatch, WebSerialSourceOption } from '@bookorbit/types'
 import { i18n } from '@/i18n'
-import { novelDetail, suggestion } from './fixtures'
+import { catalogEntry, mangaDetail, novelDetail, suggestion } from './fixtures'
 
 const api = vi.hoisted(() => ({
   fetchCapabilities: vi.fn<() => Promise<unknown>>(),
@@ -21,6 +21,8 @@ vi.mock('@/features/library/composables/useLibraries', async () => {
   return { useLibraries: () => ({ libraries, loaded: ref(true), fetchLibraries: vi.fn<() => Promise<void>>() }) }
 })
 
+vi.mock('@/features/auth/composables/usePermissions', () => ({ usePermissions: () => ({ hasPermission: () => true }) }))
+
 import WebSerialPreviewSheet from '../components/WebSerialPreviewSheet.vue'
 
 const passthrough = defineComponent({ template: '<div><slot /></div>' })
@@ -31,6 +33,7 @@ const stubs = {
   SheetTitle: passthrough,
   SheetDescription: passthrough,
   WebSerialPublishedVolumes: publishedStub,
+  LnAcquisitionSection: defineComponent({ template: '<section data-testid="acquisition-section" />' }),
 }
 
 const ARC: WebSerialSeriesMatch = {
@@ -73,23 +76,18 @@ beforeEach(() => {
 })
 
 describe('published volumes in the preview of a site series', () => {
-  it('puts the picker and Get first and keeps the print panel as one collapsed line that expands in place', async () => {
+  it('a novel in print renders the acquisition section before sources and keeps sources collapsed', async () => {
     api.fetchSeriesLookup.mockResolvedValue(lookupOf(ARC))
     const wrapper = mountSheet()
     await flushPromises()
-
-    expect(wrapper.find('[data-testid="published-volumes"]').exists()).toBe(false)
-    const toggle = wrapper.get('[data-testid="published-disclosure"] button')
-    expect(toggle.text()).toBe('Also published in print: request volumes')
+    expect(wrapper.find('[data-testid="acquisition-section"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Light novel')
+    expect(wrapper.findAll('button').some((button) => button.text() === 'Get')).toBe(false)
+    const toggle = wrapper.get('[data-testid="web-sources-disclosure"] button')
     expect(toggle.attributes('aria-expanded')).toBe('false')
-    const html = wrapper.html()
-    expect(html.indexOf('web-serial-units-novel')).toBeLessThan(html.indexOf('data-testid="published-disclosure"'))
-    expect(wrapper.text()).not.toContain('Published volumes')
-
+    expect(wrapper.find('[id="web-serial-units-novel"]').exists()).toBe(false)
     await toggle.trigger('click')
-
-    expect(toggle.attributes('aria-expanded')).toBe('true')
-    expect(wrapper.find('[data-testid="published-volumes"]').exists()).toBe(true)
+    expect(wrapper.find('[id="web-serial-units-novel"]').exists()).toBe(true)
   })
 
   it('has no print line for a series that is not licensed', async () => {
@@ -217,4 +215,29 @@ describe('WebSerialPreviewSheet opened from a suggestion', () => {
     expect(api.fetchSeriesLookup).toHaveBeenCalledWith('nl:a', '777')
     expect(wrapper.get('h2').text()).toBe('Water Magician')
   })
+})
+
+it('keeps discover source lookup lazy until the web sources disclosure is opened', async () => {
+  api.fetchDiscoverSources.mockResolvedValue({ options: [], failedSources: [] })
+  const wrapper = mountSheet({
+    detail: null,
+    entry: catalogEntry({ kind: 'novel', publication: { licensed: true, finalVolume: 4, publishers: [] } }),
+  })
+  await flushPromises()
+  expect(api.fetchDiscoverSources).not.toHaveBeenCalled()
+  expect(wrapper.find('[data-testid="acquisition-section"]').exists()).toBe(true)
+  await wrapper.get('[data-testid="web-sources-disclosure"] button').trigger('click')
+  await flushPromises()
+  expect(api.fetchDiscoverSources).toHaveBeenCalledTimes(1)
+  wrapper.unmount()
+})
+
+it('manga keeps the published disclosure and source picker layout', async () => {
+  api.fetchSeriesLookup.mockResolvedValue(lookupOf(ARC))
+  const wrapper = mountSheet({ detail: mangaDetail() })
+  await flushPromises()
+  expect(wrapper.find('[data-testid="acquisition-section"]').exists()).toBe(false)
+  expect(wrapper.find('[data-testid="web-sources-disclosure"]').exists()).toBe(false)
+  expect(wrapper.find('[data-testid="published-disclosure"]').exists()).toBe(true)
+  wrapper.unmount()
 })

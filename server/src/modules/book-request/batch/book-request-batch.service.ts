@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { DOWNLOAD_CLIENT_FILE_SELECTION, MAX_BATCH_UNITS } from '@bookorbit/types';
-import type { BatchUnitView, BookRequestDownloadStatus, ReleaseUnitMediaKind } from '@bookorbit/types';
+import { ACTIVE_BOOK_REQUEST_STATUSES, DOWNLOAD_CLIENT_FILE_SELECTION, MAX_BATCH_UNITS } from '@bookorbit/types';
+import type { BatchUnitView, BookRequestStatus, BookRequestDownloadStatus } from '@bookorbit/types';
 
 import { isUniqueViolation } from '../../../common/utils/db-error.utils';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
@@ -15,7 +15,8 @@ import { DownloadClientRegistry } from '../download-clients/download-client-regi
 import { BookRequestDownloadRepository } from '../fulfillment/book-request-download.repository';
 import { RequestFulfillmentService, TORRENT_BUSY_MESSAGE } from '../fulfillment/request-fulfillment.service';
 import { IndexerSearchService } from '../indexers/indexer-search.service';
-import type { BatchUnitRow, NewBatchUnitRow } from '../schema/book-request-batch.schema';
+import type { NewBatchUnitRow } from '../schema/book-request-batch.schema';
+import { toUnitView } from './book-request-batch.mapper';
 import { BookRequestBatchRepository } from './book-request-batch.repository';
 
 const NOT_RETRYABLE = 'Only a failed batch can be retried.';
@@ -38,6 +39,69 @@ export class BookRequestBatchService {
     private readonly registry: DownloadClientRegistry,
     private readonly gateway: BookRequestGateway,
   ) {}
+
+  async settleAvailable(requestId: number, reason: string): Promise<boolean> {
+    const moved = await this.requests.updateIf(
+      requestId,
+      ACTIVE_BOOK_REQUEST_STATUSES.filter((status) => status !== 'available'),
+      {
+        status: 'available',
+        statusReason: reason,
+      },
+    );
+    if (!moved) return false;
+    this.gateway.emitChanged();
+    this.logger.log(`[book_request.settle_available] [end] requestId=${requestId} moved=true - book request settled as available`);
+    return true;
+  }
+
+  async findBatchUnits(batchRequestIds: number[]): Promise<Map<number, BatchUnitView[]>> {
+    if (batchRequestIds.length > 50) throw new BadRequestException('At most 50 request ids are allowed');
+    const result = new Map<number, BatchUnitView[]>();
+    if (batchRequestIds.length === 0) return result;
+    for (const row of await this.batches.findUnitsForRequests(batchRequestIds)) {
+      const units = result.get(row.requestId);
+      if (units) units.push(toUnitView(row));
+      else result.set(row.requestId, [toUnitView(row)]);
+    }
+    return result;
+  }
+
+  async findBatchUnitByDockFileId(fileId: number): Promise<{ batchRequestId: number; unit: BatchUnitView } | null> {
+    const row = await this.batches.findUnitByDockFileId(fileId);
+    return row ? { batchRequestId: row.requestId, unit: toUnitView(row) } : null;
+  }
+
+  async findRequestsByIds(ids: number[]): Promise<
+    Map<
+      number,
+      {
+        userId: number;
+        status: BookRequestStatus;
+        seriesName: string | null;
+        authors: string[] | null;
+        targetLibraryId: number | null;
+        targetFolderId: number | null;
+      }
+    >
+  > {
+    if (ids.length > 50) throw new BadRequestException('At most 50 request ids are allowed');
+    if (ids.length === 0) return new Map();
+    const rows = await this.requests.findByIds(ids);
+    return new Map(
+      rows.map(({ request }) => [
+        request.id,
+        {
+          userId: request.userId,
+          status: request.status as BookRequestStatus,
+          seriesName: request.seriesName,
+          authors: request.authors,
+          targetLibraryId: request.targetLibraryId,
+          targetFolderId: request.targetFolderId,
+        },
+      ]),
+    );
+  }
 
   async create(user: RequestUser, dto: CreateBatchGrabDto): Promise<{ requestId: number }> {
     const startedAt = Date.now();
@@ -113,8 +177,8 @@ export class BookRequestBatchService {
         status: 'approved',
         title,
         authors: source.request.authors,
-        targetLibraryId: null,
-        targetFolderId: null,
+        targetLibraryId: source.request.targetLibraryId,
+        targetFolderId: source.request.targetFolderId,
         dedupeKey: `batch:${randomUUID()}`,
       });
       requestId = row.id;
@@ -240,17 +304,4 @@ export class BookRequestBatchService {
 function knownSizes(sizes: Array<number | null> | undefined): number[] | null {
   if (!sizes || sizes.some((size) => size === null)) return null;
   return sizes as number[];
-}
-
-function toUnitView(row: BatchUnitRow): BatchUnitView {
-  return {
-    unitIndex: row.unitIndex,
-    title: row.title,
-    primaryPath: row.primaryPath,
-    mediaKind: row.mediaKind as ReleaseUnitMediaKind,
-    sizeBytes: row.sizeBytes,
-    status: row.status as BatchUnitView['status'],
-    bookDockFileId: row.bookDockFileId,
-    errorMessage: row.errorMessage,
-  };
 }

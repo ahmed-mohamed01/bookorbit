@@ -86,6 +86,7 @@ function isImportingBatch(request: BookRequestItem): boolean {
 function batchLine(request: BookRequestItem): string | null {
   const batch = batchOf(request)
   if (!batch) return null
+  if (batch.filed > 0) return t('bookRequests.batch.row.filed', { filed: batch.filed, total: batch.total })
   const status = statusFor(request)
   const placed = status === 'importing' || status === 'available' || batch.inDock + batch.failed > 0
   if (placed && batch.failed > 0)

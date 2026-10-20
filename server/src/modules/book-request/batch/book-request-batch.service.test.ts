@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { ACTIVE_BOOK_REQUEST_STATUSES } from '@bookorbit/types';
 import type { ReleaseFileInspection, ReleaseSelectionManifest } from '@bookorbit/types';
 
 import type { RequestUser } from '../../../common/types/request-user';
@@ -33,7 +34,7 @@ const DTO = { sourceRequestId: 7, indexerId: 9, releaseGuid: 'g-1', downloadClie
 
 function makeService(options: { inspection?: ReleaseFileInspection; adapterType?: string; grabError?: Error } = {}) {
   const requests = {
-    findById: vi.fn().mockResolvedValue({ request: { id: 7, title: 'Source', authors: ['Ann Author'], targetLibraryId: 2, targetFolderId: null } }),
+    findById: vi.fn().mockResolvedValue({ request: { id: 7, title: 'Source', authors: ['Ann Author'], targetLibraryId: 4, targetFolderId: 9 } }),
     create: vi.fn().mockResolvedValue({ id: 21 }),
     updateIf: vi.fn().mockResolvedValue(undefined),
   };
@@ -215,12 +216,12 @@ describe('BookRequestBatchService.create half-created batches', () => {
     expect(fulfillment.grabSelection).not.toHaveBeenCalled();
   });
 
-  it('creates the batch with no target library or folder', async () => {
+  it("batch request inherits the source request's target library and folder", async () => {
     const { service, requests } = makeService();
 
     await service.create(user(), DTO);
 
-    expect(requests.create).toHaveBeenCalledWith(expect.objectContaining({ targetLibraryId: null, targetFolderId: null }));
+    expect(requests.create).toHaveBeenCalledWith(expect.objectContaining({ targetLibraryId: 4, targetFolderId: 9 }));
   });
 });
 
@@ -371,5 +372,150 @@ describe('BookRequestBatchService.retry', () => {
 
     await expect(service.retry(user(), 21)).rejects.toThrow(new BadRequestException(BUSY));
     expect(requests.updateIf).toHaveBeenLastCalledWith(21, ['downloading'], { status: 'failed', statusReason: 'broke' });
+  });
+});
+
+function joinedSeam(overrides: Record<string, unknown> = {}) {
+  return {
+    request: {
+      authors: [],
+      id: 12,
+      userId: 1,
+      status: 'pending',
+      seriesName: null,
+      targetLibraryId: null,
+      targetFolderId: null,
+      ...overrides,
+    },
+  };
+}
+function makeSeamService(overrides: { repo?: Record<string, unknown>; batches?: Record<string, unknown> } = {}) {
+  const harness = makeService();
+  const repo = Object.assign(harness.requests, { updateIf: vi.fn().mockResolvedValue({ id: 10 }), findByIds: vi.fn() }, overrides.repo);
+  const batches = Object.assign(harness.batches, overrides.batches);
+  return { ...harness, repo, batches };
+}
+describe('BookRequestBatchService system seams', () => {
+  it('settleAvailable moves an approved request to available and returns true', async () => {
+    const { service, repo, gateway } = makeSeamService();
+    await expect(service.settleAvailable(10, 'serial complete')).resolves.toBe(true);
+    expect(repo.updateIf).toHaveBeenCalledExactlyOnceWith(
+      10,
+      ACTIVE_BOOK_REQUEST_STATUSES.filter((status) => status !== 'available'),
+      {
+        status: 'available',
+        statusReason: 'serial complete',
+      },
+    );
+    expect(gateway.emitChanged).toHaveBeenCalledOnce();
+  });
+
+  it('settleAvailable leaves a cancelled request alone and returns false', async () => {
+    const { service, repo, gateway } = makeSeamService({
+      repo: {
+        updateIf: vi
+          .fn()
+          .mockImplementation((_id, expected) => Promise.resolve(expected.includes('cancelled') ? { status: 'available' } : undefined)),
+      },
+    });
+    await expect(service.settleAvailable(10, 'serial complete')).resolves.toBe(false);
+    expect(repo.updateIf).toHaveBeenCalledOnce();
+    expect(gateway.emitChanged).not.toHaveBeenCalled();
+  });
+
+  it('findBatchUnits groups units by request id', async () => {
+    const unit = {
+      unitIndex: 0,
+      title: 'A',
+      primaryPath: 'a.epub',
+      mediaKind: 'ebook',
+      sizeBytes: 5,
+      status: 'waiting',
+      bookDockFileId: null,
+      errorMessage: null,
+    };
+    const { service, batches } = makeSeamService({
+      batches: {
+        findUnitsForRequests: vi.fn().mockResolvedValue([
+          { ...unit, id: 1, requestId: 10, filePaths: ['a.epub'] },
+          { ...unit, id: 2, requestId: 12 },
+          { ...unit, id: 3, requestId: 10, unitIndex: 1 },
+        ]),
+      },
+    });
+    await expect(service.findBatchUnits([10, 12])).resolves.toEqual(
+      new Map([
+        [10, [unit, { ...unit, unitIndex: 1 }]],
+        [12, [unit]],
+      ]),
+    );
+    expect(batches.findUnitsForRequests).toHaveBeenCalledExactlyOnceWith([10, 12]);
+  });
+
+  it('findBatchUnits rejects more than 50 ids', async () => {
+    const findUnitsForRequests = vi.fn();
+    const { service } = makeSeamService({ batches: { findUnitsForRequests } });
+    await expect(service.findBatchUnits(Array(51).fill(10))).rejects.toBeInstanceOf(BadRequestException);
+    expect(findUnitsForRequests).not.toHaveBeenCalled();
+  });
+
+  it('findBatchUnits returns an empty map without querying for an empty list', async () => {
+    const findUnitsForRequests = vi.fn();
+    const { service } = makeSeamService({ batches: { findUnitsForRequests } });
+    await expect(service.findBatchUnits([])).resolves.toEqual(new Map());
+    expect(findUnitsForRequests).not.toHaveBeenCalled();
+  });
+
+  it('findRequestsByIds returns only the fields needed by system callers', async () => {
+    const { service, repo } = makeSeamService({
+      repo: {
+        findByIds: vi
+          .fn()
+          .mockResolvedValue([
+            joinedSeam({ id: 10, userId: 5, status: 'approved', seriesName: 'Series', targetLibraryId: 3, targetFolderId: 4 }),
+            joinedSeam({ id: 12 }),
+          ]),
+      },
+    });
+    await expect(service.findRequestsByIds([10, 12, 99])).resolves.toEqual(
+      new Map([
+        [10, { userId: 5, status: 'approved', seriesName: 'Series', authors: [], targetLibraryId: 3, targetFolderId: 4 }],
+        [12, { userId: 1, status: 'pending', seriesName: null, authors: [], targetLibraryId: null, targetFolderId: null }],
+      ]),
+    );
+    expect(repo.findByIds).toHaveBeenCalledExactlyOnceWith([10, 12, 99]);
+  });
+
+  it('findBatchUnitByDockFileId maps the unit and its batch request, or returns null', async () => {
+    const findUnitByDockFileId = vi
+      .fn()
+      .mockResolvedValueOnce({
+        requestId: 50,
+        unitIndex: 2,
+        title: 'Vol 3',
+        primaryPath: '/a/3.epub',
+        filePaths: ['/a/3.epub'],
+        mediaKind: 'ebook',
+        sizeBytes: 1,
+        status: 'in_dock',
+        bookDockFileId: 5,
+        errorMessage: null,
+      })
+      .mockResolvedValueOnce(undefined);
+    const { service } = makeSeamService({ batches: { findUnitByDockFileId } });
+    await expect(service.findBatchUnitByDockFileId(5)).resolves.toMatchObject({ batchRequestId: 50, unit: { unitIndex: 2, bookDockFileId: 5 } });
+    await expect(service.findBatchUnitByDockFileId(6)).resolves.toBeNull();
+  });
+
+  it('findRequestsByIds rejects more than 50 ids without querying', async () => {
+    const { service, repo } = makeSeamService();
+    await expect(service.findRequestsByIds(Array(51).fill(10))).rejects.toBeInstanceOf(BadRequestException);
+    expect(repo.findByIds).not.toHaveBeenCalled();
+  });
+
+  it('findRequestsByIds returns an empty map without querying for an empty list', async () => {
+    const { service, repo } = makeSeamService();
+    await expect(service.findRequestsByIds([])).resolves.toEqual(new Map());
+    expect(repo.findByIds).not.toHaveBeenCalled();
   });
 });

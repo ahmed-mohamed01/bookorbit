@@ -286,6 +286,47 @@ export const webSerialVolumeRequests = pgTable(
   ],
 );
 
+export const webSerialSeriesRequests = pgTable(
+  'web_serial_series_requests',
+  {
+    id: serial('id').primaryKey(),
+    userId: integer('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: varchar('kind', { length: 10 }).$type<WebSerialKind>().notNull(),
+    matchId: varchar('match_id', { length: 16 }).notNull(),
+    bookRequestId: integer('book_request_id').notNull(),
+    draft: boolean('draft').notNull().default(false),
+    seriesKeys: text('series_keys').array().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    check('web_serial_series_requests_kind_chk', sql`${t.kind} in ('novel')`),
+    unique('web_serial_series_requests_user_request_unique').on(t.userId, t.bookRequestId),
+    index('web_serial_series_requests_draft_idx')
+      .on(t.createdAt, t.id)
+      .where(sql`${t.draft} = true`),
+    index('web_serial_series_requests_keys_idx').using('gin', t.seriesKeys),
+    index('web_serial_series_requests_match_idx').on(t.userId, t.kind, t.matchId),
+  ],
+);
+
+export const webSerialSeriesBatches = pgTable(
+  'web_serial_series_batches',
+  {
+    id: serial('id').primaryKey(),
+    seriesRequestId: integer('series_request_id')
+      .notNull()
+      .references(() => webSerialSeriesRequests.id, { onDelete: 'cascade' }),
+    batchRequestId: integer('batch_request_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [unique('web_serial_series_batches_batch_request_unique').on(t.batchRequestId)],
+);
+
+export type WebSerialSeriesRequestRow = typeof webSerialSeriesRequests.$inferSelect;
+export type NewWebSerialSeriesRequestRow = typeof webSerialSeriesRequests.$inferInsert;
+
 export type WebSerialSettingsRow = typeof webSerialSettings.$inferSelect;
 export type NewWebSerialSettingsRow = typeof webSerialSettings.$inferInsert;
 export type WebSerialJobRow = typeof webSerialJobs.$inferSelect;
@@ -296,3 +337,17 @@ export type NewWebSerialImportRow = typeof webSerialImports.$inferInsert;
 export type WebSerialNovelIndexRow = typeof webSerialNovelIndex.$inferSelect;
 export type WebSerialNovelIndexSourceRow = typeof webSerialNovelIndexSources.$inferSelect;
 export type NewWebSerialNovelIndexSourceRow = typeof webSerialNovelIndexSources.$inferInsert;
+
+export const webSerialVolumeChildren = pgTable(
+  'web_serial_volume_children',
+  {
+    id: serial('id').primaryKey(),
+    seriesRequestId: integer('series_request_id')
+      .notNull()
+      .references(() => webSerialSeriesRequests.id, { onDelete: 'cascade' }),
+    volume: integer('volume').notNull(),
+    bookRequestId: integer('book_request_id').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index('web_serial_volume_children_series_idx').on(t.seriesRequestId)],
+);

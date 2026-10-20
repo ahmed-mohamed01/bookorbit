@@ -43,6 +43,8 @@ const IMPORTS = 'web_serial_imports';
 const NOVEL_PREFS = 'web_serial_novel_prefs';
 const NOVEL_INDEX = 'web_serial_novel_index';
 const NOVEL_INDEX_SOURCES = 'web_serial_novel_index_sources';
+const SERIES_REQUESTS = 'web_serial_series_requests';
+const SERIES_BATCHES = 'web_serial_series_batches';
 const VOLUME_REQUESTS = 'web_serial_volume_requests';
 
 const JOB_STATUSES = `'queued', 'paused', 'running', 'importing', 'completed', 'completed_with_gaps', 'failed', 'cancelled'`;
@@ -155,6 +157,22 @@ const VOLUME_REQUEST_CONSTRAINTS: { table: string; name: string; definition: str
     table: VOLUME_REQUESTS,
     name: 'web_serial_volume_requests_user_id_fk',
     definition: 'FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action',
+  },
+];
+
+const SERIES_REQUEST_CONSTRAINTS: { table: string; name: string; definition: string }[] = [
+  { table: SERIES_REQUESTS, name: 'web_serial_series_requests_kind_chk', definition: `CHECK ("kind" in ('novel'))` },
+  { table: SERIES_REQUESTS, name: 'web_serial_series_requests_user_request_unique', definition: `UNIQUE ("user_id", "book_request_id")` },
+  {
+    table: SERIES_REQUESTS,
+    name: 'web_serial_series_requests_user_id_fk',
+    definition: `FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action`,
+  },
+  { table: SERIES_BATCHES, name: 'web_serial_series_batches_batch_request_unique', definition: `UNIQUE ("batch_request_id")` },
+  {
+    table: SERIES_BATCHES,
+    name: 'web_serial_series_batches_series_request_fk',
+    definition: `FOREIGN KEY ("series_request_id") REFERENCES "public"."web_serial_series_requests"("id") ON DELETE cascade ON UPDATE no action`,
   },
 ];
 
@@ -322,6 +340,24 @@ const CREATE_STATEMENTS = [
 	CONSTRAINT "web_serial_volume_requests_kind_chk" CHECK ("kind" in ('manga', 'novel')),
 	CONSTRAINT "web_serial_volume_requests_unique" UNIQUE ("user_id", "kind", "match_id", "volume")
 );`,
+  `CREATE TABLE IF NOT EXISTS "${SERIES_REQUESTS}" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"user_id" integer NOT NULL,
+	"kind" varchar(10) NOT NULL,
+	"match_id" varchar(16) NOT NULL,
+	"book_request_id" integer NOT NULL,
+	"series_keys" text[] NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "web_serial_series_requests_kind_chk" CHECK ("kind" in ('novel')),
+	CONSTRAINT "web_serial_series_requests_user_request_unique" UNIQUE ("user_id", "book_request_id")
+);`,
+  `CREATE TABLE IF NOT EXISTS "${SERIES_BATCHES}" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"series_request_id" integer NOT NULL,
+	"batch_request_id" integer NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "web_serial_series_batches_batch_request_unique" UNIQUE ("batch_request_id")
+);`,
 ];
 
 const COLUMN_STATEMENTS = [
@@ -354,6 +390,9 @@ const COLUMN_STATEMENTS = [
 ];
 
 const INDEX_STATEMENTS = [
+  `CREATE INDEX IF NOT EXISTS "web_serial_series_requests_keys_idx" ON "${SERIES_REQUESTS}" USING gin ("series_keys");`,
+  `CREATE INDEX IF NOT EXISTS "web_serial_series_requests_match_idx" ON "${SERIES_REQUESTS}" ("user_id", "kind", "match_id");`,
+
   `CREATE INDEX IF NOT EXISTS "web_serial_jobs_user_created_idx" ON "${JOBS}" ("user_id", "created_at" DESC);`,
   `CREATE INDEX IF NOT EXISTS "web_serial_jobs_active_idx" ON "${JOBS}" ("status") WHERE "status" in ('queued', 'running', 'importing');`,
   `CREATE INDEX IF NOT EXISTS "web_serial_jobs_queue_idx" ON "${JOBS}" ("queue_order", "id") WHERE "status" = 'queued';`,
@@ -408,14 +447,38 @@ WHERE NOT EXISTS (SELECT 1 FROM "${IMPORTS}")
 ORDER BY "item_id", "member"
 ON CONFLICT ("user_id", "series_key", "unit_key", "packaging") DO NOTHING;`;
 
-export const WEB_SERIALS_TABLE_NAMES = [SETTINGS, JOBS, ITEMS, IMPORTS, NOVEL_PREFS, NOVEL_INDEX, NOVEL_INDEX_SOURCES, VOLUME_REQUESTS] as const;
+export const WEB_SERIALS_TABLE_NAMES = [
+  SETTINGS,
+  JOBS,
+  ITEMS,
+  IMPORTS,
+  NOVEL_PREFS,
+  NOVEL_INDEX,
+  NOVEL_INDEX_SOURCES,
+  VOLUME_REQUESTS,
+  SERIES_REQUESTS,
+  SERIES_BATCHES,
+  'web_serial_volume_children',
+] as const;
 
 export const WEB_SERIALS_SCHEMA_SQL = [
   ...CREATE_STATEMENTS,
   ...COLUMN_STATEMENTS,
-  ...[...CONSTRAINTS, ...IMPORT_CONSTRAINTS, ...NOVEL_PREFS_CONSTRAINTS, ...NOVEL_INDEX_CONSTRAINTS, ...VOLUME_REQUEST_CONSTRAINTS].map(
-    ({ table, name, definition }) => guardedConstraint(table, name, definition),
-  ),
+  `ALTER TABLE "web_serial_series_requests" ADD COLUMN IF NOT EXISTS "draft" boolean NOT NULL DEFAULT false;`,
+  `CREATE TABLE IF NOT EXISTS "web_serial_volume_children" (
+    "id" serial PRIMARY KEY, "series_request_id" integer NOT NULL REFERENCES "web_serial_series_requests"("id") ON DELETE CASCADE,
+    "volume" integer NOT NULL, "book_request_id" integer NOT NULL UNIQUE, "created_at" timestamptz NOT NULL DEFAULT now()
+  );`,
+  `CREATE INDEX IF NOT EXISTS "web_serial_volume_children_series_idx" ON "web_serial_volume_children" ("series_request_id");`,
+  `CREATE INDEX IF NOT EXISTS "web_serial_series_requests_draft_idx" ON "web_serial_series_requests" ("created_at", "id") WHERE "draft" = true;`,
+  ...[
+    ...CONSTRAINTS,
+    ...IMPORT_CONSTRAINTS,
+    ...NOVEL_PREFS_CONSTRAINTS,
+    ...NOVEL_INDEX_CONSTRAINTS,
+    ...VOLUME_REQUEST_CONSTRAINTS,
+    ...SERIES_REQUEST_CONSTRAINTS,
+  ].map(({ table, name, definition }) => guardedConstraint(table, name, definition)),
   replacedConstraint(JOBS, 'web_serial_jobs_status_chk', `CHECK ("status" in (${JOB_STATUSES}))`, 'paused'),
   ...INDEX_STATEMENTS,
   BACKFILL_STATEMENT,

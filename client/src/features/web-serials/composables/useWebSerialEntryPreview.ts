@@ -37,6 +37,7 @@ export function useWebSerialEntryPreview(
   entry: Ref<WebSerialCatalogEntry | null>,
   suggestion?: Ref<WebSerialSuggestion | null>,
   open: Ref<boolean> = ref(true),
+  deferred?: Ref<boolean>,
 ) {
   const state = ref<WebSerialEntryPreviewState>('idle')
   const options = ref<WebSerialSourceOption[]>([])
@@ -160,6 +161,10 @@ export function useWebSerialEntryPreview(
     chosenKey.value = null
     error.value = null
     pendingSource.value = null
+    if (deferred?.value) {
+      state.value = 'idle'
+      return
+    }
     if (suggested && open.value) {
       await loadSuggestion(suggested, mine)
       return
@@ -217,7 +222,7 @@ export function useWebSerialEntryPreview(
     return null
   }
 
-  watch([entry, suggestion ?? ref(null)], () => void load(), { immediate: true })
+  watch([entry, suggestion ?? ref(null), deferred ?? ref(false)], () => void load(), { immediate: true })
 
   watch(open, (isOpen) => {
     if (isOpen) {

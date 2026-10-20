@@ -21,10 +21,24 @@ CREATE TABLE IF NOT EXISTS "book_request_batch_units" (
   "error_message" text,
   "created_at" timestamptz NOT NULL DEFAULT now(),
   "updated_at" timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT "book_request_batch_units_status_chk" CHECK ("status" IN ('waiting', 'placing', 'in_dock', 'failed'))
+  CONSTRAINT "book_request_batch_units_status_chk" CHECK ("status" IN ('waiting', 'placing', 'in_dock', 'filed', 'failed'))
 );
 --> statement-breakpoint
 ALTER TABLE "book_request_batch_units" ADD COLUMN IF NOT EXISTS "file_sizes" bigint[];
+--> statement-breakpoint
+ALTER TABLE "book_request_batch_units" ADD COLUMN IF NOT EXISTS "book_id" integer;
+--> statement-breakpoint
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conrelid = to_regclass('book_request_batch_units')
+      AND conname = 'book_request_batch_units_status_chk'
+      AND pg_get_constraintdef(oid) LIKE '%filed%'
+  ) THEN
+    ALTER TABLE "book_request_batch_units" DROP CONSTRAINT IF EXISTS "book_request_batch_units_status_chk";
+    ALTER TABLE "book_request_batch_units" ADD CONSTRAINT "book_request_batch_units_status_chk" CHECK ("status" IN ('waiting', 'placing', 'in_dock', 'filed', 'failed'));
+  END IF;
+END $$;
 --> statement-breakpoint
 ALTER TABLE "book_request_downloads" ADD COLUMN IF NOT EXISTS "files_pending_since" timestamptz;
 --> statement-breakpoint

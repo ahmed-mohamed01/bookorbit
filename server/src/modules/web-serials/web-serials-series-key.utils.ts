@@ -40,3 +40,14 @@ export function parseSeriesKey(key: string): EngineSeriesRef {
 export function seriesCoverPath(seriesKey: WebSerialSeriesKey): string {
   return `/api/v1/web-serials/series/${seriesKey}/cover`;
 }
+
+export function printSeriesKeys(title: string, altTitles: string[]): string[] {
+  const keys = new Set<string>();
+  for (const value of [title, ...altTitles]) {
+    const name = value.trim().toLowerCase();
+    if (!name) continue;
+    keys.add(name);
+    keys.add(`${name} (light novel)`);
+  }
+  return [...keys].slice(0, 12);
+}

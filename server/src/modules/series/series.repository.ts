@@ -646,6 +646,29 @@ export class SeriesRepository {
         return [...seriesIndexOrderBy(bookSeriesMemberships.seriesIndex, order === 'asc' ? 'ASC' : 'DESC'), asc(books.id)];
     }
   }
+
+  async findOwnedVolumes(params: { names: string[]; maxVolume: number; libraryIds: number[] }): Promise<Map<number, number>> {
+    if (params.names.length === 0 || params.libraryIds.length === 0) return new Map();
+
+    const idx = bookSeriesMemberships.seriesIndex;
+    // Guard the cast inside CASE because SQL may reorder WHERE predicates.
+    const volume = sql`CASE WHEN ${idx} ~ '^[0-9]+$' THEN ${idx}::numeric END`;
+    const rows = await this.db
+      .select({ seriesIndex: volume, bookId: sql<number>`min(${bookSeriesMemberships.bookId})::int` })
+      .from(bookSeriesMemberships)
+      .innerJoin(bookSeries, eq(bookSeries.id, bookSeriesMemberships.seriesId))
+      .innerJoin(books, eq(books.id, bookSeriesMemberships.bookId))
+      .where(
+        and(
+          this.buildLibraryFilter(params.libraryIds),
+          sql`lower(${bookSeries.name}) = ANY(${sql.param(params.names)}::text[])`,
+          sql`${volume} BETWEEN 1 AND ${params.maxVolume}`,
+        ),
+      )
+      .groupBy(volume);
+
+    return new Map(rows.map((row) => [Number(row.seriesIndex), row.bookId]));
+  }
 }
 
 function seriesSearchScore(

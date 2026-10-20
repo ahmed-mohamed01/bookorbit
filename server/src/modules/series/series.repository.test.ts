@@ -306,6 +306,67 @@ describe('SeriesRepository', () => {
     });
   });
 
+  describe('findOwnedVolumes', () => {
+    function setup() {
+      const chain = makeChain([
+        { seriesIndex: '1', bookId: 10 },
+        { seriesIndex: '2', bookId: 20 },
+      ]);
+      db.select.mockReturnValue(chain);
+      return chain;
+    }
+
+    it('returns volume to book id for matching series', async () => {
+      setup();
+      await expect(repo.findOwnedVolumes({ names: ['dune'], maxVolume: 3, libraryIds: [1] })).resolves.toEqual(
+        new Map([
+          [1, 10],
+          [2, 20],
+        ]),
+      );
+      const selection = db.select.mock.calls[0][0];
+      expect(new PgDialect().sqlToQuery(selection.bookId).sql).toContain('min(');
+    });
+
+    it('matches any of the given names case-insensitively', async () => {
+      const chain = setup();
+      await repo.findOwnedVolumes({ names: ['dune', 'foundation'], maxVolume: 3, libraryIds: [1] });
+      const query = new PgDialect().sqlToQuery((chain.where as ReturnType<typeof vi.fn>).mock.calls[0][0]);
+      expect(query.sql).toContain('lower("book_series"."name") = ANY(');
+      expect(query.params).toContainEqual(['dune', 'foundation']);
+    });
+
+    it('ignores books in libraries the user cannot access', async () => {
+      const chain = setup();
+      await repo.findOwnedVolumes({ names: ['dune'], maxVolume: 3, libraryIds: [7, 9] });
+      const query = new PgDialect().sqlToQuery((chain.where as ReturnType<typeof vi.fn>).mock.calls[0][0]);
+      expect(query.sql).toContain('"books"."library_id" in (');
+      expect(query.params).toContain(7);
+      expect(query.params).toContain(9);
+      expect(chain.innerJoin).toHaveBeenCalledTimes(2);
+    });
+
+    it('ignores fractional and out-of-range indexes', async () => {
+      const chain = setup();
+      await repo.findOwnedVolumes({ names: ['dune'], maxVolume: 3, libraryIds: [1] });
+      const query = new PgDialect().sqlToQuery((chain.where as ReturnType<typeof vi.fn>).mock.calls[0][0]);
+      expect(query.sql).toContain("~ '^[0-9]+$'");
+      expect(query.sql).toContain('BETWEEN 1 AND');
+      expect(query.params).toContain(3);
+      expect(chain.groupBy).toHaveBeenCalled();
+    });
+
+    it('returns empty for no names without querying', async () => {
+      await expect(repo.findOwnedVolumes({ names: [], maxVolume: 3, libraryIds: [1] })).resolves.toEqual(new Map());
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('returns empty for no libraries without querying', async () => {
+      await expect(repo.findOwnedVolumes({ names: ['dune'], maxVolume: 3, libraryIds: [] })).resolves.toEqual(new Map());
+      expect(db.select).not.toHaveBeenCalled();
+    });
+  });
+
   describe('findBookIds', () => {
     const BOOK_PARAMS = {
       seriesId: 42,

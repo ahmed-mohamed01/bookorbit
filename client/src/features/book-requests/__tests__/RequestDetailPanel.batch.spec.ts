@@ -83,7 +83,7 @@ function batchRequest(): BookRequestItem {
     matchedBookId: null,
     bookDockFileId: null,
     kind: 'batch',
-    batch: { total: 2, inDock: 1, failed: 0 },
+    batch: { total: 2, filed: 0, inDock: 1, failed: 0 },
     selfServe: false,
     fulfillerUserId: null,
     statusReason: null,
@@ -130,7 +130,7 @@ describe('RequestDetailPanel batch units', () => {
     [null, 'Batch'],
   ])('labels an authorless batch with total %s', async (total, expected) => {
     fetchUnits.mockResolvedValue([])
-    requestRef.value = { ...batchRequest(), batch: total === null ? null : { total: total as number, inDock: 0, failed: 0 } }
+    requestRef.value = { ...batchRequest(), batch: total === null ? null : { total: total as number, filed: 0, inDock: 0, failed: 0 } }
     const wrapper = shallowMount(RequestDetailPanel)
     await flushPromises()
     expect(wrapper.text()).toContain(expected)

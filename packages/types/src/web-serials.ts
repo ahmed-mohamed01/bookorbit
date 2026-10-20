@@ -834,3 +834,119 @@ export interface WebSerialSuggestResult {
   query: string;
   suggestions: WebSerialSuggestion[];
 }
+
+export type WebSerialVolumeState = "owned" | "in_dock" | "downloading" | "requested" | "missing";
+export interface WebSerialPrintVolume {
+  volume: number;
+  state: WebSerialVolumeState;
+  bookId: number | null;
+  error: string | null;
+}
+export interface WebSerialPrintState {
+  failures?: { indexerId: number; releaseGuid: string; error: string }[];
+  role: WebSerialViewerRole;
+  downloads: WebSerialPrintDownload[];
+  bookRequestId: number | null;
+  seriesRequestId: number | null;
+  volumes: WebSerialPrintVolume[];
+}
+export interface WebSerialPrintSeriesInput {
+  title: string;
+  altTitles: string[];
+  authors: string[];
+  url: string;
+  volumeCount: number;
+}
+export interface RequestWebSerialVolumesInput extends WebSerialPrintSeriesInput {
+  volumes: number[];
+}
+export interface LinkWebSerialBatchInput {
+  seriesRequestId: number;
+  batchRequestId: number;
+}
+
+export function parseReleaseVolumes(title: string, max = WEB_SERIAL_MAX_PUBLISHED_VOLUMES): number[] | null {
+  const volumes = new Set<number>();
+  const number = String.raw`\d{1,4}(?:\.\d+)?(?!\d)`;
+  const volumeToken = String.raw`vol(?:ume)?s?\.?\s*|v(?=\d)`;
+  const token = new RegExp(String.raw`\b(${volumeToken})(${number}(?:\s*(?:(?:-|~|to)\s*(?:${volumeToken})?|,)\s*${number})*)`, "gi");
+  const rangeEndToken = new RegExp(String.raw`^(?:${volumeToken})`, "i");
+
+  for (const match of title.matchAll(token)) {
+    // A standalone bracketed v-number identifies a release revision.
+    if (
+      match[1].toLowerCase() === "v" &&
+      title.slice(0, match.index).endsWith("[") &&
+      title.slice(match.index + match[0].length).startsWith("]") &&
+      /^\d+(?:\.\d+)?$/.test(match[2])
+    ) {
+      continue;
+    }
+
+    if (match[1].toLowerCase() === "v" && /^\d+\.\d+$/.test(match[2])) {
+      continue;
+    }
+
+    for (const item of match[2].split(/\s*,\s*/)) {
+      const [startText, endText] = item.split(/\s*(?:-|~|to)\s*/i);
+      const start = Number(startText);
+      if (!Number.isInteger(start)) continue;
+      const end = endText === undefined ? start : Math.floor(Number(endText.replace(rangeEndToken, "")));
+      for (let volume = Math.max(1, start); volume <= Math.min(max, end); volume++) {
+        volumes.add(volume);
+      }
+    }
+  }
+
+  return volumes.size ? [...volumes].sort((a, b) => a - b) : null;
+}
+
+export function compressVolumeRanges(volumes: number[]): string {
+  const sorted = [...new Set(volumes)].sort((a, b) => a - b);
+  const ranges: string[] = [];
+  for (let index = 0; index < sorted.length; index++) {
+    const start = sorted[index];
+    let end = start;
+    while (index + 1 < sorted.length && sorted[index + 1] === end + 1) {
+      end = sorted[++index];
+    }
+    ranges.push(start === end ? String(start) : `${start}-${end}`);
+  }
+  return ranges.join(", ");
+}
+
+export type WebSerialViewerRole = "approver" | "requester";
+export interface WebSerialPrintDownload {
+  key: string;
+  title: string;
+  kind: "batch" | "single";
+  volumes: number[];
+  status: "waiting" | "downloading" | "filing" | "filed" | "failed" | "held";
+  percent: number | null;
+  error: string | null;
+}
+export interface WebSerialDraft {
+  seriesRequestId: number;
+  bookRequestId: number;
+}
+export interface WebSerialPrintSuggestionInput extends Pick<WebSerialPrintSeriesInput, "title" | "altTitles" | "volumeCount"> {
+  seriesRequestId: number;
+  query?: { title: string; authors: string[] };
+}
+export interface WebSerialPrintSuggestion {
+  releases: { indexerId: number; guid: string }[];
+  volumes: number[];
+  sizeBytes: number | null;
+}
+export interface WebSerialDownloadPick {
+  downloadClientId?: number | null;
+  indexerId: number;
+  releaseGuid: string;
+  unitIndexes: number[] | null;
+  volumes: number[];
+}
+export interface WebSerialDownloadInput extends Pick<WebSerialPrintSeriesInput, "title" | "altTitles" | "volumeCount"> {
+  seriesRequestId: number;
+  downloadClientId: number;
+  picks: WebSerialDownloadPick[];
+}

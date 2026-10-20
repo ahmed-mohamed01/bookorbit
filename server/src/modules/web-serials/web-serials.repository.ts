@@ -36,6 +36,11 @@ import {
   webSerialJobs,
   webSerialSettings,
   webSerialVolumeRequests,
+  webSerialSeriesRequests,
+  webSerialSeriesBatches,
+  webSerialVolumeChildren,
+  type NewWebSerialSeriesRequestRow,
+  type WebSerialSeriesRequestRow,
   type NewWebSerialImportRow,
   type NewWebSerialJobItemRow,
   type NewWebSerialJobRow,
@@ -331,6 +336,113 @@ export class WebSerialsRepository {
       .where(and(eq(webSerialVolumeRequests.userId, userId), eq(webSerialVolumeRequests.kind, kind), eq(webSerialVolumeRequests.matchId, matchId)))
       .orderBy(asc(webSerialVolumeRequests.id))
       .limit(MAX_VOLUME_REQUESTS_PER_SERIES);
+  }
+
+  async findVolumeChildren(seriesRequestId: number) {
+    return this.db.select().from(webSerialVolumeChildren).where(eq(webSerialVolumeChildren.seriesRequestId, seriesRequestId)).limit(10000);
+  }
+  async insertVolumeChild(seriesRequestId: number, volume: number, bookRequestId: number): Promise<void> {
+    await this.db.insert(webSerialVolumeChildren).values({ seriesRequestId, volume, bookRequestId }).onConflictDoNothing();
+  }
+  async setSeriesDraft(id: number, draft: boolean): Promise<boolean> {
+    const rows = await this.db
+      .update(webSerialSeriesRequests)
+      .set({ draft })
+      .where(eq(webSerialSeriesRequests.id, id))
+      .returning({ id: webSerialSeriesRequests.id });
+    return rows.length > 0;
+  }
+  async findStaleDrafts(before: Date) {
+    return this.db
+      .select()
+      .from(webSerialSeriesRequests)
+      .where(and(eq(webSerialSeriesRequests.draft, true), lt(webSerialSeriesRequests.createdAt, before), this.untouchedDraft()))
+      .orderBy(asc(webSerialSeriesRequests.createdAt), asc(webSerialSeriesRequests.id))
+      .limit(50);
+  }
+  private untouchedDraft() {
+    return sql`not exists (select 1 from ${webSerialSeriesBatches} where ${webSerialSeriesBatches.seriesRequestId} = ${webSerialSeriesRequests.id}) and not exists (select 1 from ${webSerialVolumeChildren} where ${webSerialVolumeChildren.seriesRequestId} = ${webSerialSeriesRequests.id})`;
+  }
+  async deleteUntouchedDraft(id: number, userId: number): Promise<number> {
+    const deleted = await this.db
+      .delete(webSerialSeriesRequests)
+      .where(
+        and(
+          eq(webSerialSeriesRequests.id, id),
+          eq(webSerialSeriesRequests.userId, userId),
+          eq(webSerialSeriesRequests.draft, true),
+          this.untouchedDraft(),
+        ),
+      )
+      .returning({ id: webSerialSeriesRequests.id });
+    return deleted.length;
+  }
+  async hasSeriesRequestReference(bookRequestId: number): Promise<boolean> {
+    const rows = await this.db
+      .select({ id: webSerialSeriesRequests.id })
+      .from(webSerialSeriesRequests)
+      .where(eq(webSerialSeriesRequests.bookRequestId, bookRequestId))
+      .limit(1);
+    return rows.length > 0;
+  }
+  async insertSeriesRequest(row: NewWebSerialSeriesRequestRow): Promise<WebSerialSeriesRequestRow> {
+    const [inserted] = await this.db.insert(webSerialSeriesRequests).values(row).returning();
+    return inserted!;
+  }
+
+  async findSeriesRequests(userId: number, kind: WebSerialKind, matchId: string): Promise<WebSerialSeriesRequestRow[]> {
+    return this.db
+      .select()
+      .from(webSerialSeriesRequests)
+      .where(and(eq(webSerialSeriesRequests.userId, userId), eq(webSerialSeriesRequests.kind, kind), eq(webSerialSeriesRequests.matchId, matchId)))
+      .orderBy(desc(webSerialSeriesRequests.createdAt), desc(webSerialSeriesRequests.id))
+      .limit(10);
+  }
+
+  async findSeriesRequestsByKeys(keys: string[]): Promise<WebSerialSeriesRequestRow[]> {
+    if (keys.length === 0) return [];
+    return this.db
+      .select()
+      .from(webSerialSeriesRequests)
+      .where(sql`${webSerialSeriesRequests.seriesKeys} && ${sql.param(keys)}::text[]`)
+      .limit(50);
+  }
+
+  async findSeriesRequestById(id: number): Promise<WebSerialSeriesRequestRow | undefined> {
+    const [row] = await this.db.select().from(webSerialSeriesRequests).where(eq(webSerialSeriesRequests.id, id)).limit(1);
+    return row;
+  }
+
+  async linkBatch(seriesRequestId: number, batchRequestId: number): Promise<void> {
+    await this.db.insert(webSerialSeriesBatches).values({ seriesRequestId, batchRequestId }).onConflictDoNothing();
+  }
+
+  async findSeriesRequestByBatch(batchRequestId: number): Promise<WebSerialSeriesRequestRow | undefined> {
+    const [row] = await this.db
+      .select({ request: webSerialSeriesRequests })
+      .from(webSerialSeriesBatches)
+      .innerJoin(webSerialSeriesRequests, eq(webSerialSeriesRequests.id, webSerialSeriesBatches.seriesRequestId))
+      .where(eq(webSerialSeriesBatches.batchRequestId, batchRequestId))
+      .limit(1);
+    return row?.request;
+  }
+
+  async findBatchIds(seriesRequestIds: number[]): Promise<Map<number, number[]>> {
+    const result = new Map<number, number[]>();
+    if (seriesRequestIds.length === 0) return result;
+    const rows = await this.db
+      .select({
+        seriesRequestId: webSerialSeriesBatches.seriesRequestId,
+        batchRequestId: webSerialSeriesBatches.batchRequestId,
+      })
+      .from(webSerialSeriesBatches)
+      .where(inArray(webSerialSeriesBatches.seriesRequestId, seriesRequestIds));
+    for (const row of rows) {
+      const ids = result.get(row.seriesRequestId) ?? [];
+      ids.push(row.batchRequestId);
+      result.set(row.seriesRequestId, ids);
+    }
+    return result;
   }
 
   async removeNovelSourceId(sourceId: string): Promise<void> {

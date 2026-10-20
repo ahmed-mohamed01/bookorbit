@@ -23,6 +23,7 @@ describe('BatchUnitList', () => {
     const wrapper = mount(BatchUnitList, {
       props: {
         units: [
+          unit({ unitIndex: 4, status: 'filed' }),
           unit(),
           unit({ unitIndex: 1, title: 'Small Gods', status: 'placing' }),
           unit({ unitIndex: 2, title: 'Guards! Guards!', status: 'in_dock', bookDockFileId: 9 }),
@@ -32,6 +33,7 @@ describe('BatchUnitList', () => {
     })
     const rows = wrapper.findAll('li')
 
+    expect(rows.shift()!.text()).toContain('In library')
     expect(rows).toHaveLength(4)
     expect(rows[0]!.text()).toContain('Mort')
     expect(rows[0]!.text()).toContain('Waiting for download')

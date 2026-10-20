@@ -24,3 +24,14 @@ describe('series keys', () => {
     expect(seriesCoverPath('m:5')).toBe('/api/v1/web-serials/series/m:5/cover');
   });
 });
+
+it('print series keys include alt titles and suffix variants and are bounded', async () => {
+  const { printSeriesKeys } = await import('./web-serials-series-key.utils');
+  expect(printSeriesKeys(' Story ', ['OTHER', 'story'])).toEqual(['story', 'story (light novel)', 'other', 'other (light novel)']);
+  expect(
+    printSeriesKeys(
+      'Story',
+      Array.from({ length: 10 }, (_, i) => String(i)),
+    ),
+  ).toHaveLength(12);
+});

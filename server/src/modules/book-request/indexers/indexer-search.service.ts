@@ -597,6 +597,21 @@ export class IndexerSearchService {
       this.cache.delete(oldest);
     }
   }
+  adoptCandidate(fromRequestId: number, toRequestId: number, indexerId: number, releaseGuid: string): boolean {
+    const key = `${indexerId}:${releaseGuid}`;
+    const source = [...this.cache.values()]
+      .reverse()
+      .find((entry) => entry.requestId === fromRequestId && entry.candidatesExpireAt > Date.now() && entry.candidates.has(key));
+    if (!source) return false;
+    this.cache.set(`adopt:${toRequestId}:${key}`, {
+      ...source,
+      requestId: toRequestId,
+      result: null,
+      candidates: new Map([[key, source.candidates.get(key)!]]),
+    });
+    this.prune(toRequestId);
+    return true;
+  }
 }
 
 interface SearchOutcome {

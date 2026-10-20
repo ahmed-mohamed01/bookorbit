@@ -1140,3 +1140,124 @@ describe('webSerialMangaVolumeOwned', () => {
     expect(webSerialMangaVolumeOwned(['vol:12:100-103'], '12', null)).toBe(false);
   });
 });
+
+describe('WebSerialsRepository series requests', () => {
+  it('findSeriesRequestsByKeys uses array overlap', async () => {
+    const db = mockDb({ select: [[{ id: 1 }]] });
+    await expect(new WebSerialsRepository(db as never).findSeriesRequestsByKeys(['saga', 'alias'])).resolves.toEqual([{ id: 1 }]);
+    expect(whereSql(builderAt(db.select))).toEqual(
+      expect.objectContaining({
+        sql: '"web_serial_series_requests"."series_keys" && $1::text[]',
+        params: [['saga', 'alias']],
+      }),
+    );
+    expect(builderAt(db.select).limit).toHaveBeenCalledWith(50);
+  });
+});
+
+describe('WebSerialsRepository findSeriesRequestByBatch', () => {
+  it('returns the series request linked to a batch request, or undefined', async () => {
+    const db = mockDb({ select: [[{ request: { id: 4 } }], []] });
+    const repo = new WebSerialsRepository(db as never);
+    await expect(repo.findSeriesRequestByBatch(50)).resolves.toEqual({ id: 4 });
+    expect(whereSql(builderAt(db.select)).params).toEqual([50]);
+    await expect(repo.findSeriesRequestByBatch(51)).resolves.toBeUndefined();
+  });
+});
+
+describe('WebSerialsRepository series request storage', () => {
+  it('inserts a series request and returns the stored row', async () => {
+    const row = { userId: 7, kind: 'novel' as const, matchId: '12', bookRequestId: 9, seriesKeys: ['saga'] };
+    const db = mockDb({ insert: [[{ ...row, id: 1 }]] });
+    await expect(new WebSerialsRepository(db as never).insertSeriesRequest(row)).resolves.toEqual({ ...row, id: 1 });
+    expect(builderAt(db.insert).values).toHaveBeenCalledWith(row);
+  });
+
+  it('finds the newest ten requests within the user and series scope', async () => {
+    const db = mockDb();
+    await new WebSerialsRepository(db as never).findSeriesRequests(7, 'novel', '12');
+    const builder = builderAt(db.select);
+    expect(whereSql(builder).params).toEqual([7, 'novel', '12']);
+    expect(builder.limit).toHaveBeenCalledWith(10);
+    expect(render(builder.orderBy!.mock.calls[0]![0]).sql).toContain('"created_at" desc');
+  });
+
+  it('finds one request by id or returns undefined', async () => {
+    const db = mockDb({ select: [[{ id: 1 }], []] });
+    const repo = new WebSerialsRepository(db as never);
+    await expect(repo.findSeriesRequestById(1)).resolves.toEqual({ id: 1 });
+    await expect(repo.findSeriesRequestById(2)).resolves.toBeUndefined();
+    expect(whereSql(builderAt(db.select)).params).toEqual([1]);
+    expect(builderAt(db.select).limit).toHaveBeenCalledWith(1);
+  });
+
+  it('links batches idempotently and groups batch ids by request', async () => {
+    const db = mockDb({
+      select: [
+        [
+          { seriesRequestId: 1, batchRequestId: 10 },
+          { seriesRequestId: 1, batchRequestId: 11 },
+          { seriesRequestId: 2, batchRequestId: 12 },
+        ],
+      ],
+    });
+    const repo = new WebSerialsRepository(db as never);
+    await repo.linkBatch(1, 10);
+    expect(builderAt(db.insert).values).toHaveBeenCalledWith({ seriesRequestId: 1, batchRequestId: 10 });
+    expect(builderAt(db.insert).onConflictDoNothing).toHaveBeenCalledOnce();
+    await expect(repo.findBatchIds([1, 2])).resolves.toEqual(
+      new Map([
+        [1, [10, 11]],
+        [2, [12]],
+      ]),
+    );
+    expect(whereSql(builderAt(db.select)).params).toEqual([1, 2]);
+  });
+
+  it('skips empty key and request id queries', async () => {
+    const db = mockDb();
+    const repo = new WebSerialsRepository(db as never);
+    await expect(repo.findSeriesRequestsByKeys([])).resolves.toEqual([]);
+    await expect(repo.findBatchIds([])).resolves.toEqual(new Map());
+    expect(db.select).not.toHaveBeenCalled();
+  });
+});
+
+describe('WebSerialsRepository draft retention', () => {
+  it('bounds the stale sweep and excludes linked batches and children', async () => {
+    const db = mockDb();
+    const before = new Date('2026-10-20T06:00:00Z');
+    await new WebSerialsRepository(db as never).findStaleDrafts(before);
+    const query = builderAt(db.select);
+    expect(query.limit).toHaveBeenCalledWith(50);
+    const ordering = query.orderBy.mock.calls[0]?.[0] as SQL;
+    expect(new PgDialect().sqlToQuery(ordering).sql).toContain('created_at');
+    const { sql, params } = whereSql(query);
+    expect(sql).toContain('not exists');
+    expect(sql).toContain('web_serial_series_batches');
+    expect(sql).toContain('web_serial_volume_children');
+    expect(params).toContain(true);
+    expect(params).toContain(before.toISOString());
+  });
+  it('only deletes untouched drafts owned by the caller', async () => {
+    const db = mockDb();
+    await new WebSerialsRepository(db as never).deleteUntouchedDraft(4, 7);
+    const { sql, params } = whereSql(builderAt(db.delete));
+    expect(params).toEqual([4, 7, true]);
+    expect(sql).toContain('not exists');
+    expect(sql).toContain('web_serial_volume_children');
+  });
+});
+
+it('returns conditional deletion counts and bounds reference checks', async () => {
+  const db = mockDb({ delete: [[{ id: 4 }], []], select: [[{ id: 5 }], []], update: [[{ id: 4 }], []] });
+  const repo = new WebSerialsRepository(db as never);
+  expect(await repo.deleteUntouchedDraft(4, 7)).toBe(1);
+  expect(await repo.deleteUntouchedDraft(4, 7)).toBe(0);
+  expect(await repo.hasSeriesRequestReference(9)).toBe(true);
+  expect(await repo.hasSeriesRequestReference(9)).toBe(false);
+  expect(builderAt(db.select).limit).toHaveBeenCalledWith(1);
+  expect(whereSql(builderAt(db.select)).params).toEqual([9]);
+  expect(await repo.setSeriesDraft(4, false)).toBe(true);
+  expect(await repo.setSeriesDraft(4, false)).toBe(false);
+});

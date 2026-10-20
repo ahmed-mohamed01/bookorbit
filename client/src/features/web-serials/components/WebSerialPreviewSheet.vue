@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Download, ExternalLink, Link2, Loader2, TriangleAlert } from '@lucide/vue'
 import { baseSeriesDisplayTitle, baseSeriesTitle } from '@bookorbit/types'
@@ -14,6 +14,10 @@ import { useWebSerialJobForm } from '../composables/useWebSerialJobForm'
 import { useWebSerialLookup } from '../composables/useWebSerialLookup'
 import { useWebSerialSeriesSwitch } from '../composables/useWebSerialSeriesSwitch'
 import { useWebSerialSources } from '../composables/useWebSerialSources'
+import { Permission } from '@bookorbit/types'
+import { usePermissions } from '@/features/auth/composables/usePermissions'
+import LnAcquisitionSection from './preview/LnAcquisitionSection.vue'
+import WebSerialWebSourcesDisclosure from './preview/WebSerialWebSourcesDisclosure.vue'
 import WebSerialCover from './WebSerialCover.vue'
 import WebSerialEntryPreview from './WebSerialEntryPreview.vue'
 import type { PublishedSeries } from '../lib/publishedVolumes'
@@ -54,7 +58,26 @@ const userId = computed(() => user.value?.id ?? null)
 const entryRef = computed(() => props.entry)
 const suggestionRef = computed(() => props.suggestion)
 const openRef = computed(() => props.open)
-const entryPreview = useWebSerialEntryPreview(entryRef, suggestionRef, openRef)
+const { hasPermission } = usePermissions()
+const webSourcesOpen = ref(false)
+const entryPrintVisible = computed(
+  () =>
+    (hasPermission(Permission.BookRequestAccess) || hasPermission(Permission.ManageBookRequests)) &&
+    props.entry?.kind === 'novel' &&
+    props.entry.publication?.licensed === true,
+)
+const deferred = computed(() => entryPrintVisible.value && !webSourcesOpen.value)
+watch(
+  [entryRef, suggestionRef],
+  () => {
+    webSourcesOpen.value = false
+  },
+  { flush: 'sync' },
+)
+function handleWebSourcesOpen(value: boolean) {
+  webSourcesOpen.value = value
+}
+const entryPreview = useWebSerialEntryPreview(entryRef, suggestionRef, openRef, deferred)
 const fromDiscover = computed(() => props.entry !== null || props.suggestion !== null)
 // Reopening the same series keeps a fresh answer; a stale one, or a check that found nothing or failed, is asked again.
 const REOPEN_FRESH_MS = 60_000
@@ -135,11 +158,20 @@ const publishedSeries = computed<PublishedSeries | null>(() => {
     authors: credits.authors.value.length > 0 ? credits.authors.value : match.authors,
     url: match.url,
     publication: match.publication ?? null,
+    altTitles: props.entry?.altTitles ?? [],
+    coversWholeSeries: coversWholeSeries.value,
   }
 })
 const openedOption = computed(() => sourceOptions.value.find((option) => option.seriesKey === shown.value?.seriesKey) ?? null)
 // Both mean the site carries the whole series while the match (and its print volumes) covers only its first arc.
 const coversWholeSeries = computed(() => credits.match.value?.scope === 'part' || openedOption.value?.confidence === 'whole_series')
+const printVisible = computed(
+  () =>
+    (hasPermission(Permission.BookRequestAccess) || hasPermission(Permission.ManageBookRequests)) &&
+    publishedSeries.value?.kind === 'novel' &&
+    publishedSeries.value.publication?.licensed === true &&
+    !coversWholeSeries.value,
+)
 const publishedReason = computed(() => (publishedSeries.value?.publication?.licensed && !coversWholeSeries.value ? 'licensed' : null))
 const headerTitle = computed(() => {
   const match = credits.match.value
@@ -344,6 +376,10 @@ async function handleGet() {
       <WebSerialEntryPreview
         v-else-if="entry && !shown"
         :entry="entry"
+        :open="props.open"
+        :print-visible="entryPrintVisible"
+        :web-sources-open="webSourcesOpen"
+        @update:web-sources-open="handleWebSourcesOpen"
         :state="entryPreview.state.value"
         :options="entryPreview.options.value"
         :failed-sources="entryPreview.failedSources.value"
@@ -366,7 +402,13 @@ async function handleGet() {
               <p v-if="authorLine" class="mt-0.5 text-sm text-muted-foreground">{{ authorLine }}</p>
               <div class="mt-2 flex flex-wrap items-center gap-1.5">
                 <span class="inline-flex h-5.5 items-center rounded-full border border-border bg-muted px-2 text-xs font-medium text-foreground">
-                  {{ t(`webSerials.preview.kind.${shown.kind}`) }}
+                  {{
+                    t(
+                      shown.kind === 'novel' && publishedSeries?.publication?.licensed
+                        ? 'webSerials.preview.kind.lightNovel'
+                        : `webSerials.preview.kind.${shown.kind}`,
+                    )
+                  }}
                 </span>
                 <span
                   v-if="seriesStatus !== 'unknown'"
@@ -422,155 +464,161 @@ async function handleGet() {
             @retry="handleRetryLookup"
           />
 
-          <WebSerialSources
-            :key="sourcesRenderKey"
-            :options="sourceOptions"
-            :state="sourcesState"
-            :selected-key="shown.seriesKey"
-            :disabled="switching"
-            :discover="fromDiscover"
-            :entry-state="entryPreview.state.value"
-            :failed-sources="entryPreview.failedSources.value"
-            @select="handleSelectSource"
-            @retry="handleRetryEntry"
-            @retry-failed="handleRetryFailedSources"
-            @search-sites="handleSearchSites"
-          />
-          <p
-            v-if="switching && seriesLoadingNotice"
-            role="status"
-            class="flex items-start gap-2 text-xs text-muted-foreground"
-            data-testid="series-loading"
-          >
-            <Loader2 class="mt-0.5 size-3.5 shrink-0 animate-spin" aria-hidden="true" />
-            {{ seriesLoadingNotice }}
-          </p>
-          <p v-if="switchError" role="alert" class="flex items-start gap-2 text-xs text-destructive">
-            <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-            {{ switchError }}
-          </p>
+          <LnAcquisitionSection v-if="printVisible && publishedSeries" :series="publishedSeries" :open="props.open" />
 
-          <section class="space-y-2" :aria-labelledby="`web-serial-units-${shown.kind}`">
-            <div class="flex items-center gap-2.5">
-              <h3 :id="`web-serial-units-${shown.kind}`" class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                {{ t(`webSerials.preview.units.${shown.kind}`) }}
-              </h3>
-              <span class="ms-auto text-xs text-muted-foreground tabular-nums">{{ availableLine }}</span>
-            </div>
-            <p v-if="shown.units.length === 0" class="text-sm text-muted-foreground">{{ t('webSerials.preview.noUnits') }}</p>
-            <WebSerialUnitPicker
-              v-else
-              :kind="shown.kind"
-              :units="shown.units"
-              :imported-unit-keys="shown.importedUnitKeys"
-              :imported-group-keys="shown.importedGroupKeys"
-              :range="effectiveRange"
-              :show-volumes="isManga && packaging === 'volume'"
-              :volume-of="form.volumeOf"
-              :range-includes-imported-gap="rangeIncludesImportedGap"
-              @set-mode="handleMode"
-              @select-unit="handleSelectUnit"
-              @select-latest="handleSelectLatest"
-              @select-first="handleSelectFirst"
-              @select-missing="handleSelectMissing"
-              @clear-range="handleClearRange"
+          <WebSerialWebSourcesDisclosure :active="printVisible" :open="webSourcesOpen" @update:open="handleWebSourcesOpen">
+            <WebSerialSources
+              :key="sourcesRenderKey"
+              :options="sourceOptions"
+              :state="sourcesState"
+              :selected-key="shown.seriesKey"
+              :disabled="switching"
+              :discover="fromDiscover"
+              :entry-state="entryPreview.state.value"
+              :failed-sources="entryPreview.failedSources.value"
+              @select="handleSelectSource"
+              @retry="handleRetryEntry"
+              @retry-failed="handleRetryFailedSources"
+              @search-sites="handleSearchSites"
             />
-          </section>
-
-          <WebSerialPublishedDisclosure
-            v-if="publishedSeries && publishedReason"
-            :key="publishedSeries.matchId"
-            :series="publishedSeries"
-            :reason="publishedReason"
-          />
-
-          <section class="space-y-2.5" aria-labelledby="web-serial-landing-title">
-            <h3 id="web-serial-landing-title" class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              {{ t('webSerials.preview.landing') }}
-            </h3>
-
-            <div
-              v-if="choosesPackaging"
-              role="radiogroup"
-              :aria-label="t('webSerials.preview.landing')"
-              class="grid gap-2"
-              :class="isManga ? 'sm:grid-cols-3' : 'sm:grid-cols-2'"
+            <p
+              v-if="switching && seriesLoadingNotice"
+              role="status"
+              class="flex items-start gap-2 text-xs text-muted-foreground"
+              data-testid="series-loading"
             >
-              <label
-                v-for="option in packagingOptions"
-                :key="option"
-                class="flex items-start gap-3 rounded-lg border p-2.5 transition-colors focus-within:ring-2 focus-within:ring-ring"
-                :class="[
-                  packagingDisabled(option) ? 'cursor-not-allowed bg-muted/50 opacity-70' : 'cursor-pointer',
-                  packaging === option ? 'border-primary bg-primary/7 ring-1 ring-primary' : 'border-border bg-background',
-                  !packagingDisabled(option) && packaging !== option ? 'hover:bg-muted' : '',
-                ]"
-                :aria-disabled="packagingDisabled(option)"
+              <Loader2 class="mt-0.5 size-3.5 shrink-0 animate-spin" aria-hidden="true" />
+              {{ seriesLoadingNotice }}
+            </p>
+            <p v-if="switchError" role="alert" class="flex items-start gap-2 text-xs text-destructive">
+              <TriangleAlert class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              {{ switchError }}
+            </p>
+
+            <section class="space-y-2" :aria-labelledby="`web-serial-units-${shown.kind}`">
+              <div class="flex items-center gap-2.5">
+                <h3 :id="`web-serial-units-${shown.kind}`" class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                  {{ t(`webSerials.preview.units.${shown.kind}`) }}
+                </h3>
+                <span class="ms-auto text-xs text-muted-foreground tabular-nums">{{ availableLine }}</span>
+              </div>
+              <p v-if="shown.units.length === 0" class="text-sm text-muted-foreground">{{ t('webSerials.preview.noUnits') }}</p>
+              <WebSerialUnitPicker
+                v-else
+                :kind="shown.kind"
+                :units="shown.units"
+                :imported-unit-keys="shown.importedUnitKeys"
+                :imported-group-keys="shown.importedGroupKeys"
+                :range="effectiveRange"
+                :show-volumes="isManga && packaging === 'volume'"
+                :volume-of="form.volumeOf"
+                :range-includes-imported-gap="rangeIncludesImportedGap"
+                @set-mode="handleMode"
+                @select-unit="handleSelectUnit"
+                @select-latest="handleSelectLatest"
+                @select-first="handleSelectFirst"
+                @select-missing="handleSelectMissing"
+                @clear-range="handleClearRange"
+              />
+            </section>
+
+            <WebSerialPublishedDisclosure
+              v-if="!printVisible && publishedSeries && publishedReason"
+              :key="publishedSeries.matchId"
+              :series="publishedSeries"
+              :reason="publishedReason"
+            />
+            <section class="space-y-2.5" aria-labelledby="web-serial-landing-title">
+              <h3 id="web-serial-landing-title" class="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                {{ t('webSerials.preview.landing') }}
+              </h3>
+
+              <div
+                v-if="choosesPackaging"
+                role="radiogroup"
+                :aria-label="t('webSerials.preview.landing')"
+                class="grid gap-2"
+                :class="isManga ? 'sm:grid-cols-3' : 'sm:grid-cols-2'"
               >
-                <input
-                  type="radio"
-                  name="web-serials-packaging"
-                  class="mt-0.5 size-4 accent-primary"
-                  :value="option"
-                  :checked="packaging === option"
-                  :disabled="packagingDisabled(option)"
-                  @change="handlePackaging(option)"
-                />
-                <span class="min-w-0 flex-1">
-                  <span class="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-                    {{ t(`webSerials.preview.packaging.${isManga ? 'manga.' : ''}${option}.label`) }}
-                    <Loader2
-                      v-if="option === 'volume' && isManga && volumeLoading"
-                      class="size-3.5 animate-spin text-muted-foreground"
-                      aria-hidden="true"
-                    />
+                <label
+                  v-for="option in packagingOptions"
+                  :key="option"
+                  class="flex items-start gap-3 rounded-lg border p-2.5 transition-colors focus-within:ring-2 focus-within:ring-ring"
+                  :class="[
+                    packagingDisabled(option) ? 'cursor-not-allowed bg-muted/50 opacity-70' : 'cursor-pointer',
+                    packaging === option ? 'border-primary bg-primary/7 ring-1 ring-primary' : 'border-border bg-background',
+                    !packagingDisabled(option) && packaging !== option ? 'hover:bg-muted' : '',
+                  ]"
+                  :aria-disabled="packagingDisabled(option)"
+                >
+                  <input
+                    type="radio"
+                    name="web-serials-packaging"
+                    class="mt-0.5 size-4 accent-primary"
+                    :value="option"
+                    :checked="packaging === option"
+                    :disabled="packagingDisabled(option)"
+                    @change="handlePackaging(option)"
+                  />
+                  <span class="min-w-0 flex-1">
+                    <span class="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                      {{ t(`webSerials.preview.packaging.${isManga ? 'manga.' : ''}${option}.label`) }}
+                      <Loader2
+                        v-if="option === 'volume' && isManga && volumeLoading"
+                        class="size-3.5 animate-spin text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                    </span>
+                    <span class="mt-0.5 block text-xs text-muted-foreground">{{ packagingHint(option) }}</span>
                   </span>
-                  <span class="mt-0.5 block text-xs text-muted-foreground">{{ packagingHint(option) }}</span>
-                </span>
-              </label>
-            </div>
-            <WebSerialVolumeNotice v-if="volumeNotice" :notice="volumeNotice" :single-chapters="singleChapterCount" />
-
-            <div class="grid grid-cols-1 gap-2.5">
-              <div class="flex min-w-0 flex-col gap-1.5">
-                <label for="web-serials-library" class="settings-label">{{ t('webSerials.preview.library') }}</label>
-                <select id="web-serials-library" class="select-field w-full" :value="libraryId ?? ''" @change="handleLibrary">
-                  <option value="" disabled>{{ t('webSerials.preview.libraryPlaceholder') }}</option>
-                  <option v-for="library in libraries" :key="library.id" :value="library.id">{{ library.name }}</option>
-                </select>
+                </label>
               </div>
-              <div v-if="folders.length > 1" class="flex min-w-0 flex-col gap-1.5">
-                <label for="web-serials-folder" class="settings-label">{{ t('webSerials.preview.folder') }}</label>
-                <select id="web-serials-folder" class="select-field w-full" :value="folderId ?? ''" @change="handleFolder">
-                  <option v-for="folder in folders" :key="folder.id" :value="folder.id">{{ folder.path }}</option>
-                </select>
+              <WebSerialVolumeNotice v-if="volumeNotice" :notice="volumeNotice" :single-chapters="singleChapterCount" />
+
+              <div class="grid grid-cols-1 gap-2.5">
+                <div class="flex min-w-0 flex-col gap-1.5">
+                  <label for="web-serials-library" class="settings-label">{{ t('webSerials.preview.library') }}</label>
+                  <select id="web-serials-library" class="select-field w-full" :value="libraryId ?? ''" @change="handleLibrary">
+                    <option value="" disabled>{{ t('webSerials.preview.libraryPlaceholder') }}</option>
+                    <option v-for="library in libraries" :key="library.id" :value="library.id">{{ library.name }}</option>
+                  </select>
+                </div>
+                <div v-if="folders.length > 1" class="flex min-w-0 flex-col gap-1.5">
+                  <label for="web-serials-folder" class="settings-label">{{ t('webSerials.preview.folder') }}</label>
+                  <select id="web-serials-folder" class="select-field w-full" :value="folderId ?? ''" @change="handleFolder">
+                    <option v-for="folder in folders" :key="folder.id" :value="folder.id">{{ folder.path }}</option>
+                  </select>
+                </div>
               </div>
-            </div>
-            <p v-if="savedPath" class="truncate text-xs text-muted-foreground">
-              {{ t('webSerials.preview.savedTo') }} <span class="font-mono text-foreground">{{ savedPath }}</span>
-            </p>
-            <p v-if="libraries.length === 0" class="flex items-start gap-2 text-xs text-muted-foreground">
-              <TriangleAlert class="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
-              {{ t('webSerials.preview.noLibraries') }}
-            </p>
-          </section>
+              <p v-if="savedPath" class="truncate text-xs text-muted-foreground">
+                {{ t('webSerials.preview.savedTo') }} <span class="font-mono text-foreground">{{ savedPath }}</span>
+              </p>
+              <p v-if="libraries.length === 0" class="flex items-start gap-2 text-xs text-muted-foreground">
+                <TriangleAlert class="mt-0.5 size-3.5 shrink-0 text-warning" aria-hidden="true" />
+                {{ t('webSerials.preview.noLibraries') }}
+              </p>
+            </section>
 
-          <p v-if="showUnknownAuthorHint" class="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <TriangleAlert class="size-3.5 shrink-0 text-warning" aria-hidden="true" />
-            {{ t('webSerials.preview.unknownAuthorHint') }}
-          </p>
+            <p v-if="showUnknownAuthorHint" class="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <TriangleAlert class="size-3.5 shrink-0 text-warning" aria-hidden="true" />
+              {{ t('webSerials.preview.unknownAuthorHint') }}
+            </p>
 
-          <p
-            v-if="error"
-            role="alert"
-            class="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
-          >
-            <TriangleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            {{ error }}
-          </p>
+            <p
+              v-if="error"
+              role="alert"
+              class="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+            >
+              <TriangleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              {{ error }}
+            </p>
+          </WebSerialWebSourcesDisclosure>
         </div>
 
-        <footer class="flex shrink-0 flex-col gap-2 border-t border-border bg-card px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+        <footer
+          v-if="!printVisible"
+          class="flex shrink-0 flex-col gap-2 border-t border-border bg-card px-5 py-3 sm:flex-row sm:items-center sm:justify-between"
+        >
           <p class="text-sm text-muted-foreground tabular-nums">
             {{ nothingToDownload ? t('webSerials.preview.summary.nothing') : footerSummary }}
           </p>

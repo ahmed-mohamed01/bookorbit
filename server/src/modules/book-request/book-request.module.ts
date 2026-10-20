@@ -18,6 +18,7 @@ import { BookRequestAutomationController } from './book-request-automation.contr
 import { BookRequestAttributionService } from './book-request-attribution.service';
 import { BookRequestBatchBootstrapService } from './book-request-batch-bootstrap.service';
 import { BookRequestBatchRepository } from './batch/book-request-batch.repository';
+import { BatchUnitFilingService } from './batch/batch-unit-filing.service';
 import { BookRequestBatchService } from './batch/book-request-batch.service';
 import { BookRequestAutoGrabBootstrapService } from './book-request-auto-grab-bootstrap.service';
 import { BookRequestController } from './book-request.controller';
@@ -121,6 +122,7 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
     BookRequestBatchRepository,
     BookRequestBatchBootstrapService,
     BookRequestBatchService,
+    BatchUnitFilingService,
     ShelfmarkSchemaBootstrapService,
     BookRequestAttributionService,
     BookRequestDedupeService,
@@ -190,6 +192,13 @@ import { ShelfmarkSchemaBootstrapService } from './shelfmark/shelfmark-schema-bo
     DownloadMonitorService,
     RequestWatchdogService,
   ],
-  exports: [BookRequestService, BookRequestSourcesService, RequestFulfillmentService, IndexerSearchService],
+  exports: [
+    BatchUnitFilingService,
+    BookRequestBatchService,
+    BookRequestService,
+    BookRequestSourcesService,
+    RequestFulfillmentService,
+    IndexerSearchService,
+  ],
 })
 export class BookRequestModule {}

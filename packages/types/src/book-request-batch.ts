@@ -8,7 +8,7 @@ export const BOOK_REQUEST_KINDS = ["single", "batch"] as const;
 export type BookRequestKind = (typeof BOOK_REQUEST_KINDS)[number];
 
 /** The stops a unit of a batch passes through, from queued in BookOrbit to landed in the Book Dock. */
-export const BATCH_UNIT_STATUSES = ["waiting", "placing", "in_dock", "failed"] as const;
+export const BATCH_UNIT_STATUSES = ["waiting", "placing", "in_dock", "filed", "failed"] as const;
 export type BatchUnitStatus = (typeof BATCH_UNIT_STATUSES)[number];
 
 /** The largest number of units one release may be split into. */
@@ -39,5 +39,6 @@ export interface BatchUnitView {
 export interface BatchSummary {
   total: number;
   inDock: number;
+  filed: number;
   failed: number;
 }

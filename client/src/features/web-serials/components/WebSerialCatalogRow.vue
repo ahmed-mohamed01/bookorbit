@@ -41,6 +41,11 @@ function handleOpen() {
       </span>
       <span v-if="metaLine" class="hidden shrink-0 text-[11px] whitespace-nowrap text-muted-foreground sm:inline">{{ metaLine }}</span>
       <span
+        v-if="entry.kind === 'novel' && entry.publication?.licensed"
+        class="inline-flex rounded-full border border-info/40 bg-info/10 px-2 py-0.5 text-xs font-medium text-info"
+        >{{ t('webSerials.discover.series.published') }}</span
+      >
+      <span
         v-if="entry.inLibrary"
         class="inline-flex shrink-0 items-center gap-1 rounded-full border border-success/40 bg-success/10 px-1.5 text-[10px] font-medium text-success"
         :aria-label="t('webSerials.discover.series.inLibraryLabel')"
@@ -63,6 +68,11 @@ function handleOpen() {
           <span class="shrink-0 rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
             {{ t(`webSerials.kind.${entry.kind}`) }}
           </span>
+          <span
+            v-if="entry.kind === 'novel' && entry.publication?.licensed"
+            class="inline-flex rounded-full border border-info/40 bg-info/10 px-2 py-0.5 text-xs font-medium text-info"
+            >{{ t('webSerials.discover.series.published') }}</span
+          >
           <span
             v-if="entry.inLibrary"
             class="inline-flex shrink-0 items-center gap-1 rounded-full border border-success/40 bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success"

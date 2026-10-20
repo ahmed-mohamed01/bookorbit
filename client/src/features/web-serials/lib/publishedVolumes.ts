@@ -8,6 +8,8 @@ export interface PublishedSeries {
   matchId: string
   title: string
   authors: string[]
+  altTitles?: string[]
+  coversWholeSeries?: boolean
   url: string
   publication: WebSerialPublication | null
 }

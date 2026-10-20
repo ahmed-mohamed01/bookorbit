@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Post, Put, Query, Res } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Post, Put, Query, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 
 import type {
@@ -13,6 +13,7 @@ import type {
   WebSerialMoveCandidates,
   WebSerialNovelProviders,
   WebSerialPublishedRequest,
+  WebSerialPrintState,
   WebSerialSearchResult,
   WebSerialSeriesDetail,
   WebSerialSeriesLookup,
@@ -40,6 +41,14 @@ import {
   WebSerialJobScopeDto,
   WebSerialSeriesKeyParamsDto,
 } from './dto';
+import {
+  WebSerialDownloadDto,
+  WebSerialSuggestionDto,
+  WebSerialPrintSeriesDto,
+  RequestWebSerialVolumesDto,
+  LinkWebSerialBatchDto,
+} from './dto/web-serials-print.dto';
+import { WebSerialsPrintService } from './web-serials-print.service';
 import { WebSerialsCatalogService } from './web-serials-catalog.service';
 import { WebSerialsDiscoverService } from './web-serials-discover.service';
 import { WebSerialsCoverService } from './web-serials-cover.service';
@@ -48,6 +57,10 @@ import { WebSerialsNovelProvidersService } from './web-serials-novel-providers.s
 import { WebSerialJobMoveService } from './web-serials-job-move.service';
 import { WebSerialsPublishedRequestsService } from './web-serials-published-requests.service';
 import { WebSerialsNovelIndexService } from './web-serials-novel-index.service';
+
+function validateNovelMatchId(matchId: string): void {
+  if (!/^[A-Za-z0-9_-]{1,16}$/.test(matchId)) throw new BadRequestException('Invalid matchId');
+}
 
 @Controller('web-serials')
 export class WebSerialsController {
@@ -60,7 +73,63 @@ export class WebSerialsController {
     private readonly discoverService: WebSerialsDiscoverService,
     private readonly novelIndex: WebSerialsNovelIndexService,
     private readonly publishedRequests: WebSerialsPublishedRequestsService,
+    private readonly print: WebSerialsPrintService,
   ) {}
+
+  @Post('novel/:matchId/draft')
+  @RequirePermission(Permission.WebSerialAccess, Permission.ManageBookRequests)
+  createPrintDraft(@Param('matchId') matchId: string, @Body() input: WebSerialPrintSeriesDto, @CurrentUser() user: RequestUser) {
+    validateNovelMatchId(matchId);
+    return this.print.createDraft(user, matchId, input);
+  }
+  @Delete('novel/:matchId/draft/:seriesRequestId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission(Permission.WebSerialAccess, Permission.ManageBookRequests)
+  deletePrintDraft(@Param('matchId') matchId: string, @Param('seriesRequestId', ParseIntPipe) id: number, @CurrentUser() user: RequestUser) {
+    validateNovelMatchId(matchId);
+    return this.print.deleteDraft(user, matchId, id);
+  }
+  @Post('novel/:matchId/suggestion')
+  @RequirePermission(Permission.WebSerialAccess, Permission.ManageBookRequests)
+  suggestPrintDownload(@Param('matchId') matchId: string, @Body() input: WebSerialSuggestionDto, @CurrentUser() user: RequestUser) {
+    validateNovelMatchId(matchId);
+    return this.print.suggestion(user, matchId, input);
+  }
+  @Post('novel/:matchId/download')
+  @RequirePermission(Permission.WebSerialAccess, Permission.ManageBookRequests)
+  downloadPrintVolumes(@Param('matchId') matchId: string, @Body() input: WebSerialDownloadDto, @CurrentUser() user: RequestUser) {
+    validateNovelMatchId(matchId);
+    return this.print.download(user, matchId, input);
+  }
+  @Post('novel/:matchId/print-state')
+  @RequirePermission(Permission.WebSerialAccess)
+  getPrintState(
+    @Param('matchId') matchId: string,
+    @Body() input: WebSerialPrintSeriesDto,
+    @CurrentUser() user: RequestUser,
+  ): Promise<WebSerialPrintState> {
+    validateNovelMatchId(matchId);
+    return this.print.getState(user, matchId, input);
+  }
+
+  @Post('novel/:matchId/series-request')
+  @RequirePermission(Permission.WebSerialAccess, Permission.BookRequestAccess)
+  requestPrintVolumes(
+    @Param('matchId') matchId: string,
+    @Body() input: RequestWebSerialVolumesDto,
+    @CurrentUser() user: RequestUser,
+  ): Promise<WebSerialPrintState> {
+    validateNovelMatchId(matchId);
+    return this.print.requestVolumes(user, matchId, input);
+  }
+
+  @Post('novel/:matchId/batches')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermission(Permission.WebSerialAccess, Permission.ManageBookRequests)
+  linkPrintBatch(@Param('matchId') matchId: string, @Body() input: LinkWebSerialBatchDto, @CurrentUser() user: RequestUser): Promise<void> {
+    validateNovelMatchId(matchId);
+    return this.print.linkBatch(user, matchId, input);
+  }
 
   @Get('capabilities')
   @RequirePermission(Permission.WebSerialAccess)

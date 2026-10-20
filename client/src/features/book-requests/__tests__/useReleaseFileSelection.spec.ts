@@ -16,6 +16,44 @@ function manifest(): ReleaseSelectionManifest {
 }
 
 describe('release file selection', () => {
+  it('preselect ticks the returned units on load', () => {
+    const selection = useReleaseFileSelection(ref(manifest()), (units) => units.slice(1, 3).map((unit) => unit.index))
+    expect([...selection.selectedUnits.value]).toEqual([1, 2])
+    expect(selection.selectedSizeBytes.value).toBe(200)
+    selection.toggleUnit(1)
+    expect(selection.selectedSizeBytes.value).toBe(100)
+  })
+
+  it('preselect ignores indexes not in the manifest', () => {
+    const data = manifest()
+    data.units = [{ ...data.units[0]!, index: 42 }]
+    const selection = useReleaseFileSelection(ref(data), () => [-1, 0, 42, 42, 99])
+    expect([...selection.selectedUnits.value]).toEqual([42])
+  })
+
+  it('without preselect nothing is ticked', () => {
+    const source = ref(manifest())
+    const selection = useReleaseFileSelection(source)
+    expect(selection.selectedUnits.value.size).toBe(0)
+    selection.toggleUnit(1)
+    source.value = manifest()
+    expect(selection.selectedUnits.value.size).toBe(0)
+  })
+
+  it('reapplies preselect after clearing on manifest changes', () => {
+    const source = ref<ReleaseSelectionManifest | null>(null)
+    const selection = useReleaseFileSelection(source, (units) => units.map((unit) => unit.index))
+    expect(selection.selectedUnits.value.size).toBe(0)
+    source.value = manifest()
+    expect(selection.selectedUnits.value.size).toBe(5)
+    selection.clear()
+    expect(selection.selectedUnits.value.size).toBe(0)
+    source.value = { ...manifest(), units: [manifest().units[2]!] }
+    expect([...selection.selectedUnits.value]).toEqual([2])
+    source.value = null
+    expect(selection.selectedUnits.value.size).toBe(0)
+  })
+
   it('builds a tree from the manifest with folder counts', () => {
     const tree = buildFileTree(manifest())
     expect(tree).toMatchObject({ name: 'Collection', path: '', bookCount: 5, fileCount: 7, sizeBytes: 530 })

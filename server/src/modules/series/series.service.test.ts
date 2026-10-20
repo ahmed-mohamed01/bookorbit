@@ -48,6 +48,7 @@ describe('SeriesService', () => {
     findPage: vi.fn(),
     findDetail: vi.fn(),
     findBookIds: vi.fn(),
+    findOwnedVolumes: vi.fn(),
     findNextReadableBook: vi.fn(),
     countSeries: vi.fn(),
   };
@@ -73,6 +74,36 @@ describe('SeriesService', () => {
     );
     libraryService.findAll.mockResolvedValue([{ id: 1 }, { id: 2 }]);
     libraryService.findAccessibleLibraryIds.mockResolvedValue([1, 2]);
+  });
+
+  describe('findOwnedVolumes', () => {
+    it('returns volume to book id for matching series', async () => {
+      const owned = new Map([
+        [1, 10],
+        [2, 20],
+      ]);
+      seriesRepo.findOwnedVolumes.mockResolvedValue(owned);
+      await expect(service.findOwnedVolumes(reqUser(), [' Dune ', '', '   '], 3)).resolves.toEqual(owned);
+      expect(seriesRepo.findOwnedVolumes).toHaveBeenCalledWith({ names: ['dune'], maxVolume: 3, libraryIds: [1, 2] });
+    });
+
+    it('returns empty for no names without querying', async () => {
+      await expect(service.findOwnedVolumes(reqUser(), ['  '], 3)).resolves.toEqual(new Map());
+      expect(seriesRepo.findOwnedVolumes).not.toHaveBeenCalled();
+      expect(libraryService.findAll).not.toHaveBeenCalled();
+    });
+
+    it('returns empty when no libraries are accessible', async () => {
+      libraryService.findAll.mockResolvedValue([]);
+      await expect(service.findOwnedVolumes(reqUser(), ['Dune'], 3)).resolves.toEqual(new Map());
+      expect(seriesRepo.findOwnedVolumes).not.toHaveBeenCalled();
+    });
+
+    it('rejects more than 12 names and accepts 12', async () => {
+      await expect(service.findOwnedVolumes(reqUser(), Array(13).fill('Dune'), 3)).rejects.toBeInstanceOf(BadRequestException);
+      seriesRepo.findOwnedVolumes.mockResolvedValue(new Map());
+      await expect(service.findOwnedVolumes(reqUser(), Array(12).fill('Dune'), 3)).resolves.toEqual(new Map());
+    });
   });
 
   describe('countAll', () => {

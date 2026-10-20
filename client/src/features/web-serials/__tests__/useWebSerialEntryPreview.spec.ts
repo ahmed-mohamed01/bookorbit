@@ -285,3 +285,16 @@ describe('useWebSerialEntryPreview with a long chapter list', () => {
     expect(api.fetchSeries).toHaveBeenCalledTimes(2)
   })
 })
+
+it('opening the web sources disclosure starts the source lookup once', async () => {
+  api.fetchDiscoverSources.mockResolvedValue({ options: [], failedSources: [] })
+  const deferred = ref(true)
+  const scope = effectScope()
+  const preview = scope.run(() => useWebSerialEntryPreview(ref(catalogEntry()), undefined, ref(true), deferred))!
+  expect(preview.state.value).toBe('idle')
+  expect(api.fetchDiscoverSources).not.toHaveBeenCalled()
+  deferred.value = false
+  await nextTick()
+  expect(api.fetchDiscoverSources).toHaveBeenCalledTimes(1)
+  scope.stop()
+})

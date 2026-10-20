@@ -333,7 +333,7 @@ describe('WebSerialPublishedVolumes rows', () => {
 })
 
 describe('WebSerialEntryPreview published volumes', () => {
-  const props = { options: [], failedSources: [], error: null, selectedKey: '' }
+  const props = { open: true, options: [], failedSources: [], error: null, selectedKey: '' }
 
   it('offers the volumes when no source carries the series', async () => {
     const wrapper = mount(WebSerialEntryPreview, {

@@ -1,3 +1,5 @@
+import { BadRequestException, ValidationPipe } from '@nestjs/common';
+import { RequestWebSerialVolumesDto, WebSerialPrintSeriesDto, LinkWebSerialBatchDto } from './dto/web-serials-print.dto';
 import { HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
@@ -8,6 +10,7 @@ import { PERMISSION_KEY } from '../../common/decorators/require-permission.decor
 import type { RequestUser } from '../../common/types/request-user';
 import { WebSerialsController } from './web-serials.controller';
 
+vi.mock('./web-serials-print.service', () => ({ WebSerialsPrintService: class {} }));
 vi.mock('./web-serials-catalog.service', () => ({ WebSerialsCatalogService: class {} }));
 vi.mock('./web-serials-jobs.service', () => ({ WebSerialJobsService: class {} }));
 vi.mock('./web-serials-job-move.service', () => ({ WebSerialJobMoveService: class {} }));
@@ -21,6 +24,9 @@ const USER = { id: 7 } as RequestUser;
 
 function setup() {
   const service = {
+    getState: vi.fn().mockResolvedValue({ seriesRequestId: null, volumes: [] }),
+    requestVolumes: vi.fn().mockResolvedValue({ seriesRequestId: 1, volumes: [] }),
+    linkBatch: vi.fn().mockResolvedValue(undefined),
     getCapabilities: vi.fn().mockResolvedValue({}),
     search: vi.fn().mockResolvedValue({ hits: [] }),
     resolve: vi.fn().mockResolvedValue({}),
@@ -63,6 +69,7 @@ function setup() {
       service as never,
       service as never,
       service as never,
+      service as never,
     ),
     service,
     covers,
@@ -73,10 +80,17 @@ describe('WebSerialsController', () => {
   it('gates every route with WebSerialAccess', () => {
     const proto = WebSerialsController.prototype as unknown as Record<string, unknown>;
     const routes = Object.getOwnPropertyNames(WebSerialsController.prototype).filter((name) => name !== 'constructor');
-    expect(routes).toHaveLength(31);
+    expect(routes).toHaveLength(38);
     const adminRoutes = ['pauseQueue', 'resumeQueue'];
     for (const route of routes) {
-      const expected = adminRoutes.includes(route) ? [Permission.WebSerialAccess, Permission.ManageAppSettings] : Permission.WebSerialAccess;
+      const expected =
+        route === 'requestPrintVolumes'
+          ? [Permission.WebSerialAccess, Permission.BookRequestAccess]
+          : ['linkPrintBatch', 'createPrintDraft', 'deletePrintDraft', 'downloadPrintVolumes', 'suggestPrintDownload'].includes(route)
+            ? [Permission.WebSerialAccess, Permission.ManageBookRequests]
+            : adminRoutes.includes(route)
+              ? [Permission.WebSerialAccess, Permission.ManageAppSettings]
+              : Permission.WebSerialAccess;
       expect(Reflect.getMetadata(PERMISSION_KEY, proto[route] as object), route).toEqual(expected);
     }
   });
@@ -256,4 +270,93 @@ describe('WebSerialsController', () => {
     expect(reply.header).toHaveBeenCalledWith('X-Content-Type-Options', 'nosniff');
     expect(reply.type).toHaveBeenCalledWith('image/png');
   });
+});
+
+it('maps print routes and forwards the user, series and body', async () => {
+  const { controller, service } = setup();
+  const input = { title: 'Story', altTitles: [], authors: [], url: 'https://example.com/1', volumeCount: 2 };
+  const proto = WebSerialsController.prototype;
+  for (const [method, path] of [
+    [proto.getPrintState, 'print-state'],
+    [proto.requestPrintVolumes, 'series-request'],
+    [proto.linkPrintBatch, 'batches'],
+  ] as const) {
+    expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(RequestMethod.POST);
+    expect(Reflect.getMetadata(PATH_METADATA, method)).toBe(`novel/:matchId/${path}`);
+  }
+  expect(Reflect.getMetadata(HTTP_CODE_METADATA, proto.linkPrintBatch)).toBe(204);
+  await controller.getPrintState('12', input, USER);
+  await controller.requestPrintVolumes('12', { ...input, volumes: [1] }, USER);
+  await controller.linkPrintBatch('12', { seriesRequestId: 1, batchRequestId: 2 }, USER);
+  expect(service.getState).toHaveBeenCalledWith(USER, '12', input);
+  expect(service.requestVolumes).toHaveBeenCalledWith(USER, '12', { ...input, volumes: [1] });
+  expect(service.linkBatch).toHaveBeenCalledWith(USER, '12', { seriesRequestId: 1, batchRequestId: 2 });
+});
+it('validates print DTOs with the global pipe', async () => {
+  const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
+  const input = { title: 'Story', altTitles: [], authors: [], url: 'https://example.com/1', volumeCount: 2 };
+  await expect(pipe.transform(input, { type: 'body', metatype: WebSerialPrintSeriesDto })).resolves.toMatchObject(input);
+  for (const volumes of [[0], [-1], [201], [1, 1], [1.5], [], ['1']])
+    await expect(pipe.transform({ ...input, volumes }, { type: 'body', metatype: RequestWebSerialVolumesDto })).rejects.toThrow();
+  await expect(pipe.transform({ ...input, volumes: [1], extra: true }, { type: 'body', metatype: RequestWebSerialVolumesDto })).rejects.toThrow();
+  await expect(pipe.transform({ ...input, url: 'ftp://example.com' }, { type: 'body', metatype: WebSerialPrintSeriesDto })).rejects.toThrow();
+  await expect(pipe.transform({ seriesRequestId: 1, batchRequestId: 2 }, { type: 'body', metatype: LinkWebSerialBatchDto })).resolves.toEqual({
+    seriesRequestId: 1,
+    batchRequestId: 2,
+  });
+});
+
+it.each(['', 'a'.repeat(17), 'bad.id', 'bad id', 'é', 'id\n'])('rejects invalid print matchId %j on all three routes', (matchId) => {
+  const { controller, service } = setup();
+  const input = { title: 'Story', altTitles: [], authors: [], url: 'https://example.com/1', volumeCount: 2 };
+  expect(() => controller.getPrintState(matchId, input, USER)).toThrow(BadRequestException);
+  expect(() => controller.requestPrintVolumes(matchId, { ...input, volumes: [1] }, USER)).toThrow(BadRequestException);
+  expect(() => controller.linkPrintBatch(matchId, { seriesRequestId: 1, batchRequestId: 2 }, USER)).toThrow(BadRequestException);
+  expect(service.getState).not.toHaveBeenCalled();
+  expect(service.requestVolumes).not.toHaveBeenCalled();
+  expect(service.linkBatch).not.toHaveBeenCalled();
+});
+
+it('validates download DTO limits and nested picks', async () => {
+  const { WebSerialDownloadDto } = await import('./dto/web-serials-print.dto');
+  const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
+  const pick = { indexerId: 1, releaseGuid: 'release', unitIndexes: [0], volumes: [1] };
+  const body = { title: 'Story', altTitles: ['Other'], volumeCount: 26, seriesRequestId: 1, downloadClientId: 1, picks: [pick] };
+  const transform = (value: unknown) => pipe.transform(value, { type: 'body', metatype: WebSerialDownloadDto });
+  await expect(transform(body)).resolves.toMatchObject(body);
+  await expect(transform({ ...body, picks: Array(51).fill(pick) })).rejects.toThrow(BadRequestException);
+  await expect(transform({ ...body, picks: [{ ...pick, unitIndexes: Array.from({ length: 2001 }, (_, i) => i) }] })).rejects.toThrow(
+    BadRequestException,
+  );
+  await expect(transform({ ...body, picks: [{ ...pick, volumes: Array.from({ length: 201 }, (_, i) => i + 1) }] })).rejects.toThrow(
+    BadRequestException,
+  );
+  await expect(transform({ ...body, picks: [{ ...pick, unitIndexes: null }] })).resolves.toBeDefined();
+  await expect(transform({ ...body, picks: [{ ...pick, unitIndexes: undefined }] })).rejects.toThrow(BadRequestException);
+});
+
+it('requires request management permission for print suggestions', () => {
+  expect(Reflect.getMetadata(PERMISSION_KEY, WebSerialsController.prototype.suggestPrintDownload)).toEqual([
+    Permission.WebSerialAccess,
+    Permission.ManageBookRequests,
+  ]);
+});
+
+it('validates the optional suggestion query', async () => {
+  const { WebSerialSuggestionDto } = await import('./dto/web-serials-print.dto');
+  const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
+  const input = { title: 'Story', altTitles: [], volumeCount: 2, seriesRequestId: 1 };
+  const transform = (query: unknown) => pipe.transform({ ...input, query }, { type: 'body', metatype: WebSerialSuggestionDto });
+  await expect(transform({ title: 'a'.repeat(500), authors: Array(10).fill('a'.repeat(500)) })).resolves.toBeDefined();
+  await expect(transform({ title: 'Story', authors: [] })).resolves.toBeDefined();
+  for (const query of [
+    { title: '', authors: [] },
+    { title: 'a'.repeat(501), authors: [] },
+    { title: 'Story', authors: Array(11).fill('a') },
+    { title: 'Story', authors: ['a'.repeat(501)] },
+    { title: 'Story', authors: [1] },
+    { title: 'Story' },
+  ]) {
+    await expect(transform(query)).rejects.toThrow();
+  }
 });

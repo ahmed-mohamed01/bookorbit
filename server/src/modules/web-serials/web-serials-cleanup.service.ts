@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { SystemCron } from '../../common/decorators/system-cron.decorator';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { WebSerialsPrintService } from './web-serials-print.service';
 import { WebSerialsImportService } from './web-serials-import.service';
 import { WebSerialsJobRunnerService } from './web-serials-job-runner.service';
 import { describeError } from './web-serials-log.utils';
@@ -20,7 +21,25 @@ export class WebSerialsCleanupService {
     private readonly repo: WebSerialsRepository,
     private readonly importer: WebSerialsImportService,
     private readonly runner: WebSerialsJobRunnerService,
+    private readonly print: WebSerialsPrintService,
   ) {}
+
+  @SystemCron('*/30 * * * *')
+  async sweepDrafts(): Promise<number> {
+    const startedAt = Date.now();
+    this.logger.log('[web_serials.draft.sweep] [start] limit=50 - draft sweep started');
+    try {
+      const removed = await this.print.sweepDrafts();
+      this.logger.log(`[web_serials.draft.sweep] [end] durationMs=${Date.now() - startedAt} removed=${removed} - draft sweep completed`);
+      return removed;
+    } catch (error) {
+      const { errorClass, message } = describeError(error);
+      this.logger.error(
+        `[web_serials.draft.sweep] [fail] durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${sanitizeLogValue(message)}" - draft sweep failed`,
+      );
+      return 0;
+    }
+  }
 
   @SystemCron('30 3 * * *')
   async cleanupFinishedJobs(): Promise<number> {

@@ -607,6 +607,20 @@ describe('RequestImportService.importDownload', () => {
       expect(harness.fulfillment.holdForReview).not.toHaveBeenCalled();
     });
 
+    it('keeps a rerun available when every batch unit is already filed', async () => {
+      const { harness, folder } = await batchHarness(
+        [unitRow(0, { status: 'filed', bookDockFileId: 90 }), unitRow(1, { status: 'filed', bookDockFileId: 91 })],
+        ['Book 0.epub', 'Book 1.epub'],
+      );
+
+      await expect(harness.service.importDownload(download(folder))).resolves.toBe(true);
+
+      expect(harness.dockRepo.createUnit).not.toHaveBeenCalled();
+      expect(harness.batches.updateUnit).not.toHaveBeenCalled();
+      expect(harness.requests.updateIf).toHaveBeenCalledWith(7, ['importing'], { status: 'available' });
+      expect(harness.downloads.updateIf).toHaveBeenCalledWith(11, ['completed'], { status: 'imported' });
+    });
+
     it('marks a unit failed when its file is missing and places the rest', async () => {
       const { harness, folder } = await batchHarness([unitRow(0), unitRow(1), unitRow(2)], ['Book 0.epub', 'Book 2.epub']);
 
