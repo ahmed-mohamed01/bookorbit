@@ -44,12 +44,12 @@ describe('MonitoredOwnedTree', () => {
     expect(wrapper.text()).not.toContain('…')
   })
 
-  it('toggles the chevron, aria-expanded and the open folder icon', async () => {
+  it('toggles aria-expanded and the open folder icon', async () => {
     const wrapper = mountTree()
     const toggle = wrapper.get('[data-testid="owned-toggle"]')
 
     expect(toggle.attributes('aria-expanded')).toBe('false')
-    expect(wrapper.find('[data-testid="owned-chevron-right"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="owned-library-closed"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="owned-library-open"]').exists()).toBe(false)
 
     await toggle.trigger('click')
@@ -57,7 +57,7 @@ describe('MonitoredOwnedTree', () => {
     const open = wrapper.get('[data-testid="owned-toggle"]')
     expect(open.attributes('aria-expanded')).toBe('true')
     expect(open.attributes('title')).toBe('/mnt/data/Fiction/Author/Title/Title.epub')
-    expect(wrapper.find('[data-testid="owned-chevron-down"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="owned-library-closed"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="owned-library-open"]').exists()).toBe(true)
   })
 

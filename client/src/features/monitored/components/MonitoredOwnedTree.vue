@@ -1,19 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  ChevronDown,
-  ChevronRight,
-  CornerRightDown,
-  CornerRightUp,
-  File,
-  FileText,
-  Folder,
-  FolderOpen,
-  Headphones,
-  Image,
-  RefreshCw,
-} from '@lucide/vue'
+import { ChevronDown, CornerRightDown, CornerRightUp, File, FileText, Folder, FolderOpen, Headphones, Image, RefreshCw } from '@lucide/vue'
 import type { MonitoredFormat } from '@bookorbit/types'
 import { formatBytes } from '@/lib/formatting'
 import { useLibraries } from '@/features/library/composables/useLibraries'
@@ -132,10 +120,8 @@ function rowIndent(row: OwnedTreeRow) {
         data-testid="owned-toggle"
         @click="handleToggle"
       >
-        <ChevronDown v-if="expanded" :size="12" class="shrink-0" aria-hidden="true" data-testid="owned-chevron-down" />
-        <ChevronRight v-else :size="12" class="shrink-0" aria-hidden="true" data-testid="owned-chevron-right" />
         <FolderOpen v-if="expanded" :size="12" class="shrink-0" aria-hidden="true" data-testid="owned-library-open" />
-        <Folder v-else :size="12" class="shrink-0" aria-hidden="true" />
+        <Folder v-else :size="12" class="shrink-0" aria-hidden="true" data-testid="owned-library-closed" />
         <span class="shrink-0 font-mono text-[11.5px] leading-5" data-testid="owned-library">{{ libraryName }}/</span>
         <span class="shrink-0 text-[11px] leading-5 text-muted-foreground" :title="folderTitle" data-testid="owned-path">{{
           expanded ? t('monitored.slot.hidePath') : t('monitored.slot.fullPath')
