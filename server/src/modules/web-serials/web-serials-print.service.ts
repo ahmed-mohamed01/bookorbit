@@ -13,6 +13,7 @@ import {
   WEB_SERIAL_MAX_PUBLISHED_VOLUMES,
   compressVolumeRanges,
   parseReleaseVolumes,
+  releaseNamesSeries,
   type WebSerialPrintSeriesInput,
   type RequestWebSerialVolumesInput,
   type LinkWebSerialBatchInput,
@@ -159,6 +160,7 @@ export class WebSerialsPrintService implements OnModuleInit {
     const needed = new Set(state.volumes.filter((volume) => volume.state === 'missing').map((volume) => volume.volume));
     const result = await this.fulfillment.listReleases(row.bookRequestId, { refresh: false, ...(input.query ? { overrides: input.query } : {}) });
     const candidates = result.releases
+      .filter((r) => releaseNamesSeries(r.title, [input.title, ...input.altTitles]))
       .filter(
         (r) =>
           (!r.format || r.format.toLowerCase() === 'epub' || r.formats?.some((f) => f.toLowerCase() === 'epub')) &&

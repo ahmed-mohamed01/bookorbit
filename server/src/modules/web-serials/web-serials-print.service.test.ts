@@ -314,6 +314,21 @@ it('suggestion covers all missing with fewest releases', async () => {
   });
   expect(fulfillment.listReleases).toHaveBeenCalledWith(9, { refresh: false });
 });
+it('suggestion excludes off-series releases with volume markers', async () => {
+  const { service, fulfillment } = await setup();
+  vi.mocked(fulfillment.listReleases).mockResolvedValue({
+    releases: [release("2-Minute Tabletop's Everything Pack V7 by 2-Minute Tabletop [ENG] [VIP]")],
+  } as never);
+  expect(
+    await service.suggestion({ ...user, permissions: [Permission.ManageBookRequests] }, '12', {
+      ...input,
+      title: 'The Water Magician: The Central Provinces Arc',
+      altTitles: [],
+      volumeCount: 7,
+      seriesRequestId: 1,
+    }),
+  ).toEqual({ releases: [], volumes: [], sizeBytes: 0 });
+});
 it('suggestion allows VIP and skips manga', async () => {
   const { service, fulfillment } = await setup();
   vi.mocked(fulfillment.listReleases).mockResolvedValue({

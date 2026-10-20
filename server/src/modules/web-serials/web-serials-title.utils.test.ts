@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { authorsContradict, authorsMatch, baseSeriesDisplayTitle, baseSeriesTitle } from '@bookorbit/types';
+import { authorsContradict, authorsMatch, baseSeriesDisplayTitle, baseSeriesTitle, releaseNamesSeries } from '@bookorbit/types';
 import { fixApostropheCase } from './web-serials-title.utils';
 
 describe('fixApostropheCase', () => {
@@ -123,5 +123,22 @@ describe('authorsContradict', () => {
     ['Naoki Urasawa (Art)', ['Kim Webtoon', '김웹툰']],
   ])('still tells %s from %j', (source, series) => {
     expect(authorsContradict([source], series)).toBe(true);
+  });
+});
+
+describe('releaseNamesSeries', () => {
+  it.each<[string, string[], boolean]>([
+    ["2-Minute Tabletop's Everything Pack V7 by 2-Minute Tabletop [ENG] [VIP]", ['The Water Magician: The Central Provinces Arc'], false],
+    ['The Water Magician Vol. 7 (Yen Press) [EPUB]', ['The Water Magician: The Central Provinces Arc'], true],
+    ['Water Magician v01-05', ['The Water Magician: The Central Provinces Arc'], true],
+    ['Mizu Zokusei no Mahou Tsukai v03', ['Some Other Name', 'Mizu Zokusei no Mahou Tsukai'], true],
+    ['Magician Tales v2', ['The Water Magician: The Central Provinces Arc'], false],
+    ['Water Magicians v2', ['Water Magician'], false],
+    ['So Im a Spider So What Vol. 1 [EPUB]', ["So I'm a Spider, So What?"], true],
+    ['So I’m a Spider, So What? v02', ['So Im a Spider So What'], true],
+    ['Anything v2', ['', '   ', '!!!'], false],
+    ['Anything v2', [], false],
+  ])('matches %s against %j: %s', (release, titles, expected) => {
+    expect(releaseNamesSeries(release, titles)).toBe(expected);
   });
 });

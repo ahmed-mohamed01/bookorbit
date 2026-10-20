@@ -134,6 +134,23 @@ afterEach(() => {
   vi.useRealTimers()
 })
 describe('light novel acquisition', () => {
+  it('leaves off-series releases unmatched while retaining matching volumes', async () => {
+    vi.mocked(streamReleaseSearch).mockResolvedValue({
+      ...result,
+      releases: [
+        { ...release, guid: 'tabletop', title: "2-Minute Tabletop's Everything Pack V7 by 2-Minute Tabletop [ENG] [VIP]" },
+        { ...release, title: 'The Water Magician Vol. 7 (Yen Press) [EPUB]' },
+      ],
+    })
+    const { flow } = mount('approver', {
+      ...series,
+      title: 'The Water Magician: The Central Provinces Arc',
+      publication: { ...series.publication!, finalVolume: 7 },
+    })
+    await flush()
+    expect(flow.releases.value.map(({ volumes }) => volumes)).toEqual([[], [7]])
+  })
+
   it('requests chosen volumes and cancels the current series request without a draft', async () => {
     vi.mocked(endpoints.requestPrintVolumes).mockResolvedValue({ ...printState, role: 'requester' })
     vi.mocked(cancelVolumeRequest).mockResolvedValue({} as Awaited<ReturnType<typeof cancelVolumeRequest>>)

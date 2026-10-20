@@ -63,6 +63,17 @@ export function baseSeriesTitle(title: string): string {
   return base;
 }
 
+// Indexers often drop apostrophes ("So Im a Spider"), so both sides lose them before comparing.
+const APOSTROPHES = /['’‘`]/gu;
+
+export function releaseNamesSeries(releaseTitle: string, seriesTitles: readonly string[]): boolean {
+  const release = ` ${normalizeSerialTitle(releaseTitle.replace(APOSTROPHES, ""))} `;
+  return seriesTitles.some((title) => {
+    const base = baseSeriesTitle(title.replace(APOSTROPHES, ""));
+    return base.length > 0 && release.includes(` ${base} `);
+  });
+}
+
 function withoutLeadingArticle(value: string): string {
   const next = value.replace(LEADING_ARTICLE, "");
   return next.length > 0 ? next : value;

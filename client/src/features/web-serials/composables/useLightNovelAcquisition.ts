@@ -1,5 +1,5 @@
 import { computed, onScopeDispose, ref, toValue, watch, type MaybeRefOrGetter, type Ref } from 'vue'
-import { parseReleaseVolumes } from '@bookorbit/types'
+import { parseReleaseVolumes, releaseNamesSeries } from '@bookorbit/types'
 import type {
   ReleaseCandidateItem,
   ReleaseFileInspection,
@@ -68,6 +68,10 @@ export function useLightNovelAcquisition(
       ? { title: current.title, altTitles: (current.altTitles ?? []).slice(0, 10), authors: current.authors, url: current.url, volumeCount }
       : null
   })
+  function releaseVolumes(title: string): number[] | null {
+    const current = input.value
+    return current && releaseNamesSeries(title, [current.title, ...current.altTitles]) ? parseReleaseVolumes(title, current.volumeCount) : null
+  }
   const counts = computed(() => countVolumes(state.value?.volumes ?? []))
   const downloads = computed(() => state.value?.downloads ?? [])
   const approver = () => toValue(access.role) === 'approver'
@@ -147,7 +151,7 @@ export function useLightNovelAcquisition(
   }
   const releases = computed(() =>
     results.value
-      .map((release) => ({ ...release, kind: offFormatKind(release), volumes: parseReleaseVolumes(release.title, input.value?.volumeCount) ?? [] }))
+      .map((release) => ({ ...release, kind: offFormatKind(release), volumes: releaseVolumes(release.title) ?? [] }))
       .filter((release) => !volumeFilter.value.size || release.volumes.some((volume) => volumeFilter.value.has(volume)))
       .sort((a, b) => Number(a.kind !== null) - Number(b.kind !== null) || b.score - a.score),
   )
@@ -161,7 +165,7 @@ export function useLightNovelAcquisition(
           ? (inspection.selection?.units ?? [])
               .filter((unit) => fileSelection.value.get(key)?.has(unit.index))
               .flatMap((unit) => unitVolumes(unit, input.value?.volumeCount ?? 0))
-          : (parseReleaseVolumes(release.title, input.value?.volumeCount) ?? [])
+          : (releaseVolumes(release.title) ?? [])
       planned.set(
         key,
         [...new Set(volumes)].sort((a, b) => a - b),
@@ -242,10 +246,7 @@ export function useLightNovelAcquisition(
         if (closed.value || token !== generation || searchToken !== searchGeneration) return null
         inspections.value.set(key, inspection)
         const releaseTitle = results.value.find((item) => releaseKey(item) === key)?.title ?? ''
-        if (
-          inspection.unitCount === 0 ||
-          (inspection.unitCount === 1 && (parseReleaseVolumes(releaseTitle, input.value?.volumeCount)?.length ?? 0) !== 1)
-        ) {
+        if (inspection.unitCount === 0 || (inspection.unitCount === 1 && (releaseVolumes(releaseTitle)?.length ?? 0) !== 1)) {
           picks.value.delete(key)
           inspectionErrors.value.set(key, new Error('This release cannot be downloaded as one volume'))
         }
