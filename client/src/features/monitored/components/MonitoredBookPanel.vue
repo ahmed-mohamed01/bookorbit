@@ -344,6 +344,7 @@ async function linkAndMove(format: MonitoredFormat, answer: MonitoredMatchAnswer
   for (const holder of moveFrom) {
     const released = await workMatch.answer(format, { decision: 'reject', bookId: answer.bookId }, holder.workId)
     if (released) emit('work-updated', released)
+    else toast.error(t('monitored.slot.match.moveIncomplete', { title: holder.title }))
   }
 }
 

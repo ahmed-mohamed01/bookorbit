@@ -757,6 +757,11 @@ export interface MonitoredMatchHolder {
   title: string;
   /** The owner linked it by hand rather than the matcher finding it. */
   linkedByHand: boolean;
+  /**
+   * It is filed under the same provider ids (or, with none, the same title) as the work asking, so
+   * the two share every saved answer: rejecting the book on it would reject it on the asking work too.
+   */
+  sharesAnswers: boolean;
 }
 
 /** Per-work monitor/visibility toggles accepted by PATCH /monitored/works/:workId. */

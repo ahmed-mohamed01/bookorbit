@@ -789,7 +789,14 @@ export class MonitoredService {
    */
   async findMatchHolders(user: RequestUser, workId: string, format: MonitoredFormat, bookId: number): Promise<MonitoredMatchHolder[]> {
     const entry = await this.getWritableWork(workId, user);
-    return this.store.findMatchHolders(entry.monitor.id, bookId, format, workId);
+    const holders = await this.store.findMatchHolders(entry.monitor.id, bookId, format, workId);
+    if (holders.length === 0) return [];
+    const ownKeys = new Set(matchIdentityKeys(entry.work));
+    const holderWorks = await Promise.all(holders.map((holder) => this.store.getWorkWithMonitor(holder.workId)));
+    return holders.map((holder, index) => {
+      const holderWork = holderWorks[index]?.work;
+      return { ...holder, sharesAnswers: holderWork ? matchIdentityKeys(holderWork).some((key) => ownKeys.has(key)) : false };
+    });
   }
 
   /** Runs every probe tier against one work now, for an owner who does not want to wait for the sweep. */

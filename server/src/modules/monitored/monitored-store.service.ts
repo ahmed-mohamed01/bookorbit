@@ -1334,13 +1334,21 @@ export class MonitoredStoreService {
 
   /** Library books the monitor's other works own, so a one-work rematch can tell a sibling volume from a candidate. */
   /**
-   * The `bookId|kind` keys the monitor's other works hold through the matcher. A hand-made link is
-   * left out: it does not keep the matcher from giving the same file to another work.
+   * The `bookId|kind` keys the monitor's other works hold through the matcher, or are still asking
+   * about as a possible match. A hand-made link is left out: it does not keep the matcher from giving
+   * the same file to another work. A possible match is kept in: a full refresh gave that file to
+   * nobody, and a pass over one work must not settle that question behind the owner's back.
    */
   async findClaimedBookKeys(monitorId: string, exceptWorkIds: string[]): Promise<Set<string>> {
     const works = schema.authorCatalogWorks;
     const rows = await this.db
-      .select({ ebook: works.matchedEbookBookId, audiobook: works.matchedAudioBookId, linkedFormats: works.linkedFormats })
+      .select({
+        ebook: works.matchedEbookBookId,
+        audiobook: works.matchedAudioBookId,
+        possibleEbook: works.possibleEbookBookId,
+        possibleAudiobook: works.possibleAudioBookId,
+        linkedFormats: works.linkedFormats,
+      })
       .from(works)
       .where(and(eq(works.monitorAuthorId, monitorId), exceptWorkIds.length > 0 ? notInArray(works.id, exceptWorkIds) : undefined));
     const keys = new Set<string>();
@@ -1348,11 +1356,18 @@ export class MonitoredStoreService {
       const linked = new Set(row.linkedFormats ?? []);
       if (row.ebook != null && !linked.has('ebook')) keys.add(`${row.ebook}|ebook`);
       if (row.audiobook != null && !linked.has('audiobook')) keys.add(`${row.audiobook}|audiobook`);
+      if (row.possibleEbook != null) keys.add(`${row.possibleEbook}|ebook`);
+      if (row.possibleAudiobook != null) keys.add(`${row.possibleAudiobook}|audiobook`);
     }
     return keys;
   }
 
-  async findMatchHolders(monitorId: string, bookId: number, format: MonitoredFormat, exceptWorkId: string): Promise<MonitoredMatchHolder[]> {
+  async findMatchHolders(
+    monitorId: string,
+    bookId: number,
+    format: MonitoredFormat,
+    exceptWorkId: string,
+  ): Promise<Omit<MonitoredMatchHolder, 'sharesAnswers'>[]> {
     const works = schema.authorCatalogWorks;
     const column = format === 'audiobook' ? works.matchedAudioBookId : works.matchedEbookBookId;
     const rows = await this.db

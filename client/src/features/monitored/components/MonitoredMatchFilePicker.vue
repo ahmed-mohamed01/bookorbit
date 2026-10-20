@@ -31,6 +31,8 @@ const open = ref(false)
 const pending = ref<{ book: BookSearchOption; holders: MonitoredMatchHolder[] } | null>(null)
 const checkingHolders = ref(false)
 const holderTitles = computed(() => pending.value?.holders.map((holder) => holder.title).join(', ') ?? '')
+/** A holder filed under this work's own ids shares its answers, so rejecting the book there would undo the link here. */
+const canMove = computed(() => pending.value?.holders.every((holder) => !holder.sharesAnswers) ?? false)
 const search = useLibraryMatchSearch(toRef(props, 'format'))
 const fixing = computed(() => props.currentBookId != null)
 const results = computed(() => search.results.value.filter((book) => book.id !== props.currentBookId))
@@ -65,6 +67,8 @@ async function handlePick(book: BookSearchOption) {
   } finally {
     checkingHolders.value = false
   }
+  // Closed while the lookup ran: the owner walked away from this pick.
+  if (!open.value) return
   if (holders.length > 0) {
     pending.value = { book, holders }
     return
@@ -131,6 +135,8 @@ function handleDrop() {
             type="button"
             class="inline-flex h-7 items-center rounded-md border border-border px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [@media(pointer:coarse)]:min-h-11"
             data-testid="match-file-move-here"
+            :disabled="!canMove"
+            :title="canMove ? undefined : t('monitored.slot.match.moveBlocked')"
             @click="handleMoveHere"
           >
             {{ t('monitored.slot.match.moveHere') }}
