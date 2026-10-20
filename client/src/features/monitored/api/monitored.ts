@@ -29,6 +29,7 @@ import type {
   MonitoredSort,
   MonitoredStatusFilter,
   MonitoredWork,
+  MonitoredWorkSearchPage,
   MonitoredWorkMatchPayload,
   MonitoredWorkPatch,
   MonitoredWorkReleasesResponse,
@@ -318,4 +319,8 @@ export async function searchHardcoverUniversal(q: string, signal?: AbortSignal):
   } catch {
     return { available: true, books: [], authors: [] }
   }
+}
+
+export async function searchMonitoredWorks(options: { q: string; page: number; size: number }): Promise<MonitoredWorkSearchPage> {
+  return readJson(await api(`${BASE_PATH}/works?${pageQuery(options)}`))
 }

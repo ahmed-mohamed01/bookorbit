@@ -8,8 +8,9 @@ import { BROWSE_BAR_KEY, barDivider, type BrowsePlace } from './browse-header'
 
 /**
  * The browse pages' header: a title row naming the place, and one command bar for finding and
- * arranging what is in it. Nothing else stacks here, so the grid starts right under the bar; when
- * the page scrolls the title row folds away and the bar carries a small copy of the title.
+ * arranging what is in it. A page with sections puts its tabs between the two, so the bar works on
+ * the section above it. When the page scrolls the title row folds away and the bar carries a small
+ * copy of the title.
  */
 const props = defineProps<{
   eyebrow: string
@@ -85,7 +86,13 @@ onBeforeUnmount(detach)
       </div>
     </div>
 
-    <div ref="barRef" class="flex h-12 min-w-0 items-center gap-1 rounded-[10px] border border-border bg-card px-[7px] shadow-xs">
+    <slot name="tabs" />
+
+    <div
+      :class="$slots.tabs ? 'mt-2' : undefined"
+      ref="barRef"
+      class="flex h-12 min-w-0 items-center gap-1 rounded-[10px] border border-border bg-card px-[7px] shadow-xs"
+    >
       <template v-if="folded">
         <div class="flex shrink-0 items-center gap-2 ps-1 pe-1">
           <PageMenuButton class="-ms-1 size-8" />

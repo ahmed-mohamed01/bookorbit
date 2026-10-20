@@ -9,7 +9,7 @@ import { Permission } from '@bookorbit/types';
 import { PERMISSION_KEY } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
 import { MonitoredWorkFormatParamsDto, MonitoredWorkParamsDto } from './dto/monitored-release-date.dto';
-import { MONITORED_CATALOG_SEARCH_DEFAULT_LIMIT, MonitoredCatalogSearchQueryDto } from './dto/monitored.dto';
+import { MONITORED_CATALOG_SEARCH_DEFAULT_LIMIT, MonitoredCatalogSearchQueryDto, SearchMonitoredWorksDto } from './dto/monitored.dto';
 import { MonitoredController } from './monitored.controller';
 import { MonitoredCoverService } from './monitored-cover.service';
 import { MonitoredService } from './monitored.service';
@@ -156,6 +156,18 @@ describe('MonitoredController', () => {
 
     expect(searchCatalogWorks).toHaveBeenCalledWith(user, 'mist', 5);
     expect(searchHardcover).toHaveBeenCalledWith(user, 'mistborn');
+  });
+
+  it('forwards the watchlist works search with the current user and leaves reading ungated', async () => {
+    const searchWorks = vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, size: 20 });
+    const controller = await makeController({ searchWorks });
+    const user = { id: 7 } as RequestUser;
+    const query = Object.assign(new SearchMonitoredWorksDto(), { q: 'mist', page: 1, size: 20 });
+
+    await controller.searchWorks(user, query);
+
+    expect(searchWorks).toHaveBeenCalledWith(user, query);
+    expect(Reflect.getMetadata(PERMISSION_KEY, MonitoredController.prototype.searchWorks)).toBeUndefined();
   });
 
   it('uses the DTO default catalog search limit when the query omits it', async () => {

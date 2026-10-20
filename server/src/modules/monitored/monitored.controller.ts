@@ -31,6 +31,7 @@ import {
   UpdateMonitoredAuthorDto,
   UpdateMonitoredBookDto,
   MonitoredCatalogSearchQueryDto,
+  SearchMonitoredWorksDto,
   HardcoverSearchQueryDto,
 } from './dto/monitored.dto';
 import {
@@ -202,6 +203,11 @@ export class MonitoredController {
   @RequirePermission(Permission.BookRequestAccess)
   searchHardcover(@Query() query: HardcoverSearchQueryDto, @CurrentUser() user: RequestUser) {
     return this.universalSearch.searchHardcover(user, query.q);
+  }
+
+  @Get('works')
+  searchWorks(@CurrentUser() user: RequestUser, @Query() query: SearchMonitoredWorksDto) {
+    return this.service.searchWorks(user, query);
   }
 
   @Get('works/class-counts')

@@ -23,6 +23,7 @@ import {
   MONITORED_STATUS_FILTER_BY_FORMAT_STATUS,
   monitoredAcquisitionState,
   monitoredFormatStatus,
+  MONITORED_WORK_SEARCH_PAGE_SIZE,
 } from '@bookorbit/types';
 import type {
   ReleaseSearchProgress,
@@ -46,6 +47,7 @@ import type {
   MonitoredPage,
   MonitoredReleaseDateLookup,
   MonitoredReleasePage,
+  MonitoredWorkSearchPage,
   MonitoredReleaseStatus,
   MonitoredDisplayClassCounts,
   MonitoredSummary,
@@ -94,6 +96,7 @@ import type {
   ListMonitoredAuthorsDto,
   ListMonitoredBooksDto,
   ListMonitoredReleasesDto,
+  SearchMonitoredWorksDto,
   ListOwnedMonitoredAuthorIdsDto,
   LookupMonitoredLocalAuthorsDto,
   MonitoredAuthorDetailQueryDto,
@@ -580,6 +583,19 @@ export class MonitoredService {
           authorLastRefreshedAt: monitor.lastRefreshedAt,
         };
       }),
+    };
+  }
+
+  async searchWorks(user: RequestUser, query: SearchMonitoredWorksDto): Promise<MonitoredWorkSearchPage> {
+    const page = await this.store.searchWorks({
+      viewer: user,
+      q: query.q,
+      page: query.page ?? 0,
+      size: query.size ?? MONITORED_WORK_SEARCH_PAGE_SIZE,
+    });
+    return {
+      ...page,
+      items: page.items.map(({ ownerUserId, ...item }) => ({ ...item, isOwner: isOwnerView(ownerUserId, user) })),
     };
   }
 

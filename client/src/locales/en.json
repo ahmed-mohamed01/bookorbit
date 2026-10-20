@@ -14758,7 +14758,7 @@
       "hidden": "Hidden by you"
     },
     "title": "Watchlist",
-    "searchPlaceholder": "Filter watchlist...",
+    "searchPlaceholder": "Search watchlist books...",
     "facts": {
       "releases": "{count, plural, one {# release} other {# releases}}"
     },
@@ -15231,6 +15231,12 @@
       "retry": "Retry",
       "queuedSummary": "Queued {count, plural, =0 {no authors} one {# author} other {# authors}} for refresh.",
       "queuedSummaryPartial": "Queued {count, plural, =0 {no authors} one {# author} other {# authors}} for refresh. {skipped} on cooldown, {failed} failed."
+    },
+    "search": {
+      "hint": "Type at least {min} characters to search watchlist books",
+      "count": "{count, plural, one {# book} other {# books}}",
+      "empty": "No watchlist books match",
+      "emptyDescription": "Try another title or author name."
     }
   },
   "tts": {

@@ -170,6 +170,26 @@ describe('MonitoredService', () => {
     expect(result.items[0]).toMatchObject({ releaseDate: null, status: 'upcoming' });
   });
 
+  it('maps watchlist search rows to items with isOwner and the author refresh time', async () => {
+    const item = (ownerUserId: number) => ({
+      work: work({ ownedFormats: ['ebook'] }),
+      monitorAuthorId: 'monitor-1',
+      authorName: 'Brandon Sanderson',
+      authorModes: { ebook: 'auto-all', audiobook: 'off' },
+      ownerUserId,
+      authorLastRefreshedAt: '2026-09-01T10:00:00.000Z',
+    });
+    const store = { searchWorks: vi.fn().mockResolvedValue({ items: [item(1), item(2)], total: 2, page: 1, size: 20 }) };
+
+    const result = await service(store).searchWorks(viewer, { q: 'mist', page: 1, size: 20 });
+
+    expect(store.searchWorks).toHaveBeenCalledWith({ viewer, q: 'mist', page: 1, size: 20 });
+    expect(result).toMatchObject({ total: 2, page: 1, size: 20 });
+    expect(result.items[0]).toMatchObject({ isOwner: true, authorLastRefreshedAt: '2026-09-01T10:00:00.000Z', authorName: 'Brandon Sanderson' });
+    expect(result.items[1]).toMatchObject({ isOwner: false });
+    expect(result.items[0]).not.toHaveProperty('ownerUserId');
+  });
+
   it('reports an owned undated format as grabbed, not upcoming', async () => {
     const store = {
       findReleasePage: vi.fn().mockResolvedValue({

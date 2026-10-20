@@ -35,6 +35,8 @@ import {
   MONITORED_STATUS_FILTERS,
   MONITOR_MODES,
   MONITORED_WORK_BULK_LIMIT,
+  MONITORED_WORK_SEARCH_MIN_LENGTH,
+  MONITORED_WORK_SEARCH_PAGE_SIZE,
 } from '@bookorbit/types';
 import type {
   MonitorMode,
@@ -298,6 +300,28 @@ export class MonitoredSearchQueryDto {
 }
 
 export const MONITORED_CATALOG_SEARCH_DEFAULT_LIMIT = 3;
+
+export class SearchMonitoredWorksDto {
+  @IsString()
+  @MinLength(MONITORED_WORK_SEARCH_MIN_LENGTH)
+  @MaxLength(200)
+  @Transform(trimmed)
+  q!: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(10000)
+  page?: number = 0;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  size?: number = MONITORED_WORK_SEARCH_PAGE_SIZE;
+}
 
 export class MonitoredCatalogSearchQueryDto {
   @IsString()

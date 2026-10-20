@@ -1,6 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
-import type { SQL } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { PgDialect } from 'drizzle-orm/pg-core';
 
@@ -1572,16 +1572,18 @@ describe('MonitoredStoreService catalog search', () => {
     const select = vi.fn(() => {
       const rows = queue.shift() ?? [];
       const builder = {} as Record<string, ReturnType<typeof vi.fn>>;
-      for (const method of ['from', 'innerJoin', 'leftJoin', 'where', 'orderBy', 'limit']) {
+      for (const method of ['from', 'innerJoin', 'leftJoin', 'where', 'orderBy', 'limit', 'offset']) {
         builder[method] = vi.fn(() => builder);
       }
       builder.then = vi.fn((resolve: (value: unknown[]) => unknown) => Promise.resolve(rows).then(resolve));
+      builder.getSQL = vi.fn(() => sql`(select author subquery)`);
       builders.push(builder);
       return builder;
     });
     return { db: { select }, builders };
   }
 
+  // The first select is the matching-author subquery, which is embedded in the work search condition and never awaited.
   const owner = { id: 5, isSuperuser: false } as RequestUser;
   const libraries = { findAccessibleLibraryIds: vi.fn().mockResolvedValue([2, 3]) };
 
@@ -1620,30 +1622,21 @@ describe('MonitoredStoreService catalog search', () => {
     expect(query.params).toContain(3);
   });
 
-  it('orders the author pre-lookup by name then id before the limit', async () => {
-    const { db, builders } = searchSelectDb([[{ id: 'monitor-9' }], []]);
-    const store = new MonitoredStoreService(db as never, libraries as never);
-
-    await store.searchCatalogWorks(owner, 'sanderson', 3);
-
-    const [name, id] = builders[0]?.orderBy.mock.calls[0] as SQL[];
-    expect(new PgDialect().sqlToQuery(name).sql).toContain('"monitored_authors"."author_name"');
-    expect(new PgDialect().sqlToQuery(id).sql).toContain('"monitored_authors"."id"');
-  });
-
-  it('puts title-prefix matches first, then the title', async () => {
+  it('puts title or series prefix matches first, then each series in reading order', async () => {
     const { db, builders } = searchSelectDb([[], []]);
     const store = new MonitoredStoreService(db as never, libraries as never);
 
     await store.searchCatalogWorks(owner, 'mist', 3);
 
-    const [prefixTier, title, id] = builders[1]?.orderBy.mock.calls[0] as SQL[];
-    const prefixSql = new PgDialect().sqlToQuery(prefixTier).sql;
-    expect(prefixSql).toContain('case when');
-    expect(prefixSql).toContain('ILIKE');
-    expect(prefixSql).toContain('$');
-    expect(new PgDialect().sqlToQuery(title).sql).toContain('"author_catalog_works"."title"');
-    expect(new PgDialect().sqlToQuery(id).sql).toContain('"author_catalog_works"."id"');
+    const [prefixTier, series, index, title, id] = (builders[1]?.orderBy.mock.calls[0] as SQL[]).map((part) => new PgDialect().sqlToQuery(part).sql);
+    expect(prefixTier).toContain('case when');
+    expect(prefixTier).toContain('"author_catalog_works"."title"');
+    expect(prefixTier).toContain('"author_catalog_works"."series_name"');
+    expect(prefixTier).toContain("'^(the|an|a)[[:space:]]+'");
+    expect(series).toMatch(/coalesce\(.*"series_name".*"title"/);
+    expect(index).toContain('"author_catalog_works"."series_index"::numeric');
+    expect(title).toContain('"author_catalog_works"."title"');
+    expect(id).toContain('"author_catalog_works"."id"');
   });
 
   it('composes found rows through the shared work mapper and returns search hits with author modes', async () => {
@@ -1669,19 +1662,19 @@ describe('MonitoredStoreService catalog search', () => {
     });
   });
 
-  it('matches followed authors by id on the works table, never by the joined author name', async () => {
-    const { db, builders } = searchSelectDb([[{ id: 'monitor-9' }], []]);
+  it('matches followed authors through a scoped subquery on the works table, never by the joined author name or a capped id list', async () => {
+    const { db, builders } = searchSelectDb([[], []]);
     const store = new MonitoredStoreService(db as never, libraries as never);
 
     await store.searchCatalogWorks(owner, 'sanderson', 3);
 
+    expect(db.select).toHaveBeenCalledTimes(2);
     const authorLookup = new PgDialect().sqlToQuery(builders[0]?.where.mock.calls[0]?.[0] as SQL);
     expect(authorLookup.sql).toContain('"monitored_authors"."owner_user_id" = $1');
     expect(authorLookup.sql).toContain('"monitored_authors"."author_name"');
-    expect(builders[0]?.limit).toHaveBeenCalledWith(50);
+    expect(builders[0]?.limit).not.toHaveBeenCalled();
     const search = new PgDialect().sqlToQuery(builders[1]?.where.mock.calls[0]?.[0] as SQL);
-    expect(search.sql).toContain('"author_catalog_works"."monitor_author_id" in');
-    expect(search.params).toContain('monitor-9');
+    expect(search.sql).toContain('"author_catalog_works"."monitor_author_id" = any(array(((select author subquery))))');
     expect(search.sql).not.toContain('"monitored_authors"."author_name"');
   });
 
@@ -1691,6 +1684,81 @@ describe('MonitoredStoreService catalog search', () => {
 
     await expect(store.searchCatalogWorks(owner, '   ', 3)).resolves.toEqual([]);
     expect(db.select).not.toHaveBeenCalled();
+  });
+
+  describe('searchWorks', () => {
+    it('returns an empty page without querying for a blank term', async () => {
+      const { db } = searchSelectDb([]);
+      const store = new MonitoredStoreService(db as never, libraries as never);
+
+      await expect(store.searchWorks({ viewer: owner, q: '   ', page: 2, size: 10 })).resolves.toEqual({ items: [], total: 0, page: 2, size: 10 });
+      expect(db.select).not.toHaveBeenCalled();
+    });
+
+    it('does not exclude owned works, keeps the shared visibility, and matches authors without a cap', async () => {
+      const { db, builders } = searchSelectDb([[], [], [{ total: 0 }]]);
+      const store = new MonitoredStoreService(db as never, libraries as never);
+
+      await store.searchWorks({ viewer: owner, q: 'sanderson', page: 0, size: 50 });
+
+      expect(builders[0]?.limit).not.toHaveBeenCalled();
+      const query = new PgDialect().sqlToQuery(builders[1]?.where.mock.calls[0]?.[0] as SQL);
+      expect(query.sql).toContain('"monitored_authors"."owner_user_id" = $1');
+      expect(query.sql).toContain('"author_catalog_works"."monitor_author_id" = any(array(');
+      expect(query.sql).toContain('"monitored_author_works"."user_visibility" = \'hidden\'');
+      expect(query.sql).not.toContain('not (');
+      expect(query.sql).not.toContain('"author_catalog_works"."owned_formats" @>');
+      expect(libraries.findAccessibleLibraryIds).not.toHaveBeenCalledWith(owner);
+    });
+
+    it('pages in SQL with a stable series-aware order and counts with the same condition', async () => {
+      const { db, builders } = searchSelectDb([[], [], [{ total: 120 }]]);
+      const store = new MonitoredStoreService(db as never, libraries as never);
+
+      const page = await store.searchWorks({ viewer: owner, q: 'mist', page: 2, size: 25 });
+
+      expect(page).toEqual({ items: [], total: 120, page: 2, size: 25 });
+      expect(builders[1]?.limit).toHaveBeenCalledWith(25);
+      expect(builders[1]?.offset).toHaveBeenCalledWith(50);
+      const order = (builders[1]?.orderBy.mock.calls[0] as SQL[]).map((part) => new PgDialect().sqlToQuery(part).sql);
+      expect(order).toHaveLength(5);
+      expect(order[2]).toContain('"author_catalog_works"."series_index"::numeric');
+      expect(order[4]).toContain('"author_catalog_works"."id"');
+      expect(builders[2]?.where.mock.calls[0]?.[0]).toBe(builders[1]?.where.mock.calls[0]?.[0]);
+    });
+
+    it('returns owned works with their owner and refresh time for the service to map', async () => {
+      const work = workRow({
+        id: 'monitor-1:hardcover:7',
+        title: 'Mistborn',
+        matchedBookId: 11,
+        matchedEbookBookId: 11,
+        matchedAudioBookId: null,
+        ownedFormats: ['ebook'],
+      });
+      const refreshed = new Date('2026-09-01T10:00:00.000Z');
+      const { db } = searchSelectDb([
+        [],
+        [{ work, authorName: 'Brandon Sanderson', ownerUserId: 5, lastRefreshedAt: refreshed, ebookMode: 'auto-all', audiobookMode: 'off' }],
+        [{ total: 1 }],
+        [],
+        [],
+        [],
+      ]);
+      const store = new MonitoredStoreService(db as never, libraries as never);
+
+      const page = await store.searchWorks({ viewer: owner, q: 'mist', page: 0, size: 50 });
+
+      expect(page.total).toBe(1);
+      expect(page.items[0]).toMatchObject({
+        monitorAuthorId: 'monitor-1',
+        authorName: 'Brandon Sanderson',
+        authorModes: { ebook: 'auto-all', audiobook: 'off' },
+        ownerUserId: 5,
+        authorLastRefreshedAt: '2026-09-01T10:00:00.000Z',
+        work: { id: 'monitor-1:hardcover:7' },
+      });
+    });
   });
 });
 

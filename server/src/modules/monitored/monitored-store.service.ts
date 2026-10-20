@@ -29,6 +29,7 @@ import type {
   MonitoredWork,
   MonitoredWorkPatch,
   MonitoredWorkRating,
+  MonitoredWorkSearchItem,
   BookRequestStatus,
 } from '@bookorbit/types';
 import { countWorkClasses, isDefaultClassSelection, MONITORED_ACQUISITION_STATE_BY_REQUEST_STATUS } from '@bookorbit/types';
@@ -283,6 +284,8 @@ function releaseDueSql(date: AnyPgColumn, precision: AnyPgColumn, addedDay: stri
   return sql<boolean>`case when ${effective} = 'day' then ${rangeStart} <= ${today} else ${rangeEnd} < ${today} end and ${rangeEnd} >= ${addedDay}`;
 }
 
+export type MonitoredWorkSearchRow = Omit<MonitoredWorkSearchItem, 'isOwner'> & { ownerUserId: number };
+
 @Injectable()
 export class MonitoredStoreService {
   private readonly logger = new Logger(MonitoredStoreService.name);
@@ -499,31 +502,10 @@ export class MonitoredStoreService {
     const term = normalizeMetadataText(q);
     if (!term) return [];
     const libraryIds = await this.accessibleLibraryIds(viewer);
-    const authorRows = await this.db
-      .select({ id: schema.monitoredAuthors.id })
-      .from(schema.monitoredAuthors)
-      .where(
-        and(
-          this.readScope(viewer, schema.monitoredAuthors.ownerUserId),
-          accentInsensitiveIlike(schema.monitoredAuthors.authorName, buildSearchPattern(term)),
-        ),
-      )
-      .orderBy(asc(schema.monitoredAuthors.authorName), asc(schema.monitoredAuthors.id))
-      .limit(50);
-    const authorIds = authorRows.map((row) => row.id);
-    const titleMatch = accentInsensitiveIlike(schema.authorCatalogWorks.title, buildSearchPattern(term));
     // The same per-viewer ownership the watchlist page reads, negated per format: a work held only
     // in a library the viewer cannot reach counts as not owned for them.
     const unowned = sql`not (${this.ownedFormatCondition('ebook', libraryIds)} or ${this.ownedFormatCondition('audiobook', libraryIds)})`;
-    const where = and(
-      this.readScope(viewer, schema.monitoredAuthors.ownerUserId),
-      // Both sides test author_catalog_works itself, so the planner can OR the title trigram index with
-      // the monitor_author_id index; testing the joined author name instead unaccented every catalog row.
-      authorIds.length ? or(titleMatch, inArray(schema.authorCatalogWorks.monitorAuthorId, authorIds)) : titleMatch,
-      unowned,
-      activeWorkCondition(visibleWorkCondition()),
-    )!;
-    const titlePrefix = accentInsensitiveIlike(schema.authorCatalogWorks.title, `${escapeLikePattern(term)}%`);
+    const where = and(this.workSearchCondition(viewer, term), unowned)!;
     const rows = await this.db
       .select({
         work: schema.authorCatalogWorks,
@@ -535,7 +517,7 @@ export class MonitoredStoreService {
       .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, schema.authorCatalogWorks.monitorAuthorId))
       .leftJoin(schema.monitoredAuthorWorks, eq(schema.monitoredAuthorWorks.workId, schema.authorCatalogWorks.id))
       .where(where)
-      .orderBy(asc(sql`case when ${titlePrefix} then 0 else 1 end`), asc(schema.authorCatalogWorks.title), asc(schema.authorCatalogWorks.id))
+      .orderBy(...this.workSearchOrder(term))
       .limit(limit);
     const composed = await this.composeWorks(
       rows.map((row) => row.work),
@@ -555,6 +537,113 @@ export class MonitoredStoreService {
           ]
         : [];
     });
+  }
+
+  /**
+   * The Watchlist page search: the same matching and visibility as the palette's, but paged and
+   * without the not-owned filter, because the page lists every watchlist book owned or not.
+   */
+  async searchWorks(params: { viewer: RequestUser; q: string; page: number; size: number }): Promise<{
+    items: MonitoredWorkSearchRow[];
+    total: number;
+    page: number;
+    size: number;
+  }> {
+    const term = normalizeMetadataText(params.q);
+    if (!term) return { items: [], total: 0, page: params.page, size: params.size };
+    const where = this.workSearchCondition(params.viewer, term);
+    const [rows, [countRow]] = await Promise.all([
+      this.db
+        .select({
+          work: schema.authorCatalogWorks,
+          authorName: schema.monitoredAuthors.authorName,
+          ownerUserId: schema.monitoredAuthors.ownerUserId,
+          lastRefreshedAt: schema.monitoredAuthors.lastRefreshedAt,
+          ebookMode: schema.monitoredAuthors.ebookMode,
+          audiobookMode: schema.monitoredAuthors.audiobookMode,
+        })
+        .from(schema.authorCatalogWorks)
+        .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, schema.authorCatalogWorks.monitorAuthorId))
+        .leftJoin(schema.monitoredAuthorWorks, eq(schema.monitoredAuthorWorks.workId, schema.authorCatalogWorks.id))
+        .where(where)
+        .orderBy(...this.workSearchOrder(term))
+        .limit(params.size)
+        .offset(params.page * params.size),
+      this.db
+        .select({ total: count() })
+        .from(schema.authorCatalogWorks)
+        .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, schema.authorCatalogWorks.monitorAuthorId))
+        .leftJoin(schema.monitoredAuthorWorks, eq(schema.monitoredAuthorWorks.workId, schema.authorCatalogWorks.id))
+        .where(where),
+    ]);
+    const total = Number(countRow?.total ?? 0);
+    if (!rows.length) return { items: [], total, page: params.page, size: params.size };
+    const composed = await this.composeWorks(
+      rows.map((row) => row.work),
+      params.viewer,
+    );
+    const byWorkId = new Map(composed.map((item) => [item.work.id, item]));
+    return {
+      items: rows.flatMap((row) => {
+        const item = byWorkId.get(row.work.id);
+        return item
+          ? [
+              {
+                work: item.work,
+                monitorAuthorId: item.monitorAuthorId,
+                authorName: row.authorName,
+                authorModes: { ebook: row.ebookMode, audiobook: row.audiobookMode },
+                ownerUserId: row.ownerUserId,
+                authorLastRefreshedAt: row.lastRefreshedAt ? row.lastRefreshedAt.toISOString() : null,
+              },
+            ]
+          : [];
+      }),
+      total,
+      page: params.page,
+      size: params.size,
+    };
+  }
+
+  private workSearchCondition(viewer: RequestUser, term: string): SQL {
+    const pattern = buildSearchPattern(term);
+    const matchingAuthors = this.db
+      .select({ id: schema.monitoredAuthors.id })
+      .from(schema.monitoredAuthors)
+      .where(and(this.readScope(viewer, schema.monitoredAuthors.ownerUserId), accentInsensitiveIlike(schema.monitoredAuthors.authorName, pattern)));
+    return and(
+      this.readScope(viewer, schema.monitoredAuthors.ownerUserId),
+      // Both sides test author_catalog_works itself, so the planner can BitmapOr the title trigram index
+      // with the monitor_author_id index; testing the joined author name instead unaccented every catalog
+      // row. The author ids go through array(): a bare IN (subquery) under OR is a hashed subplan that
+      // forces a sequential scan of every catalog work.
+      or(
+        accentInsensitiveIlike(schema.authorCatalogWorks.title, pattern),
+        sql`${schema.authorCatalogWorks.monitorAuthorId} = any(array(${matchingAuthors}))`,
+      ),
+      activeWorkCondition(visibleWorkCondition()),
+    )!;
+  }
+
+  /**
+   * Works whose title or series starts with the term lead, then each series runs in reading order.
+   * A leading article is ignored so "The Primal Hunter" sorts and matches as "Primal Hunter", and
+   * series_index is text, so only a plain number is read as one; "2-3" or "1a" fall after them.
+   */
+  private workSearchOrder(term: string): SQL[] {
+    const work = schema.authorCatalogWorks;
+    const prefix = `${escapeLikePattern(term)}%`;
+    const withoutLeadingArticle = (value: AnyPgColumn) =>
+      sql`regexp_replace(public.bookorbit_unaccent(${value}), '^(the|an|a)[[:space:]]+', '', 'i')`;
+    const startsWith = (value: AnyPgColumn) =>
+      or(accentInsensitiveIlike(value, prefix), sql`${withoutLeadingArticle(value)} ILIKE public.bookorbit_unaccent(${prefix})`);
+    return [
+      asc(sql`case when ${or(startsWith(work.title), startsWith(work.seriesName))} then 0 else 1 end`),
+      asc(sql`lower(coalesce(${withoutLeadingArticle(work.seriesName)}, ${withoutLeadingArticle(work.title)}))`),
+      asc(sql`case when ${work.seriesIndex} ~ '^[0-9]+([.][0-9]+)?$' then ${work.seriesIndex}::numeric end`),
+      asc(sql`lower(${withoutLeadingArticle(work.title)})`),
+      asc(work.id),
+    ];
   }
 
   async findReleasePage(params: {

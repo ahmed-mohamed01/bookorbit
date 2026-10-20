@@ -490,7 +490,7 @@ describe('useCommandPaletteResults', () => {
         { length: 10 },
         (_, i) =>
           ({
-            work: workFixture({ id: String(i), title: 'Final' }),
+            work: workFixture({ id: String(i), title: i === 0 ? 'The Final 2' : 'Final 3' }),
             authorName: 'A',
             authorModes: { ebook: 'notify', audiobook: 'off' },
             monitorAuthorId: 'a',
@@ -504,6 +504,7 @@ describe('useCommandPaletteResults', () => {
     expect(state.sections.value.find((s) => s.id === 'watchlist')?.items).toHaveLength(3)
     state.tab.value = 'watchlist'
     expect(state.sections.value[0]?.items).toHaveLength(10)
+    expect(state.sections.value[0]?.items.slice(0, 2).map((item) => item.key)).toEqual(['watchlist:0', 'watchlist:1'])
     expect(state.tabs.value.find((t) => t.id === 'watchlist')?.count).toBe(10)
     const signal = mocks.catalog.mock.calls[0]?.[2]
     state.query.value = 'other'

@@ -275,14 +275,6 @@ export function useCommandPaletteResults(query: Ref<string>, tab: Ref<PaletteTab
   })
 
   // Outside sources keep their own order inside a tier, but title matches lead, as they do for the library.
-  const rankedWatchlist = computed(() =>
-    rankByRelevance(
-      watchlist.value,
-      trimmed.value,
-      (hit) => hit.work.title,
-      (hit) => [hit.authorName],
-    ),
-  )
   const rankedManga = computed(() =>
     rankByRelevance(
       visibleManga.value,
@@ -387,7 +379,7 @@ export function useCommandPaletteResults(query: Ref<string>, tab: Ref<PaletteTab
       result.push({
         id: 'watchlist',
         label: t('commandPalette.sections.watchlist'),
-        items: rankedWatchlist.value
+        items: watchlist.value
           .slice(0, tab.value === 'watchlist' ? WATCHLIST_TAB_LIMIT : ALL_TAB_LIMITS.watchlist)
           .map((hit) => ({ kind: 'watchlist', key: `watchlist:${hit.work.id}`, hit })),
       })

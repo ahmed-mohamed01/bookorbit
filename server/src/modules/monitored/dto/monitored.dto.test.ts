@@ -15,6 +15,7 @@ import {
   MonitorAuthorDto,
   MonitoredCatalogSearchQueryDto,
   MonitoredAuthorDetailQueryDto,
+  SearchMonitoredWorksDto,
   UpdateMonitoredWorkDto,
 } from './monitored.dto';
 
@@ -198,5 +199,28 @@ describe('release display classes', () => {
     for (const query of [{ kinds: 'bogus' }, { more: 'bogus' }]) {
       expect(await validate(plainToInstance(ListMonitoredReleasesDto, query))).not.toHaveLength(0);
     }
+  });
+});
+
+describe('SearchMonitoredWorksDto', () => {
+  const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
+  const parse = (query: Record<string, unknown>) => pipe.transform(query, { type: 'query', metatype: SearchMonitoredWorksDto });
+
+  it('trims q and applies the paging defaults', async () => {
+    await expect(parse({ q: '  dune  ' })).resolves.toMatchObject({ q: 'dune', page: 0, size: 50 });
+  });
+
+  it('rejects a query shorter than three characters after trimming', async () => {
+    await expect(parse({ q: ' ab ' })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('rejects a page past the bound before it can overflow the offset', async () => {
+    await expect(parse({ q: 'dune', page: '10000' })).resolves.toMatchObject({ page: 10000 });
+    await expect(parse({ q: 'dune', page: '10001' })).rejects.toMatchObject({ status: 400 });
+    await expect(parse({ q: 'dune', page: '1e18' })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('rejects the list order it does not read', async () => {
+    await expect(parse({ q: 'dune', order: 'asc' })).rejects.toMatchObject({ status: 400 });
   });
 });

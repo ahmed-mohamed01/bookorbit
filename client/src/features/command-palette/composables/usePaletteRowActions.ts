@@ -1,13 +1,12 @@
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
-import { monitoredWorkIsAudiobookOnly, type HardcoverSearchBook, type MonitoredCatalogSearchHit, type MonitoredFormat } from '@bookorbit/types'
+import { monitoredWorkIsAudiobookOnly, type HardcoverSearchBook, type MonitoredCatalogSearchHit } from '@bookorbit/types'
 import { useBookRequestVisibility } from '@/features/book-requests/composables/useBookRequestVisibility'
 import { requestMonitoredWork } from '@/features/monitored/api/monitored'
 import { useMonitorGroupAction } from '@/features/monitored/composables/useMonitorGroupAction'
 import { editionRowAction, workFormatStatus } from '@/features/monitored/lib/format-status'
-
-const FORMATS: MonitoredFormat[] = ['ebook', 'audiobook']
+import { watchedFormats as watchedAuthorFormats } from '@/features/monitored/lib/monitored-format-state'
 
 export function usePaletteRowActions() {
   const { t } = useI18n()
@@ -17,7 +16,7 @@ export function usePaletteRowActions() {
   const { showBookRequests } = useBookRequestVisibility()
 
   function watchedFormats(hit: MonitoredCatalogSearchHit) {
-    return FORMATS.filter((format) => hit.authorModes[format] !== 'off')
+    return watchedAuthorFormats(hit.authorModes)
       .map((format) => ({ format, status: workFormatStatus(hit.work, format, { authorWatches: true }) }))
       .filter(({ status }) => status !== 'not_watching' && status !== 'unannounced')
   }

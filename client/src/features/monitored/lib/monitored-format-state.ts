@@ -3,6 +3,7 @@ import {
   monitoredAcquisitionState,
   type MonitoredAcquisitionState,
   type MonitoredFormat,
+  type MonitorMode,
   type MonitoredReleaseStatus,
   type MonitoredWork,
 } from '@bookorbit/types'
@@ -34,4 +35,8 @@ export function isMonitoredAcquisitionState(state: MonitoredFormatState | Monito
 export function monitoredPendingLabelKey(state: MonitoredFormatState, format: MonitoredFormat): string {
   if (isMonitoredAcquisitionState(state) && state !== 'queued') return `monitored.detail.badges.${state}`
   return `monitored.detail.${format}Queued`
+}
+
+export function watchedFormats(modes: Partial<Record<MonitoredFormat, MonitorMode>>): MonitoredFormat[] {
+  return (['ebook', 'audiobook'] as const).filter((format) => modes[format] !== 'off')
 }

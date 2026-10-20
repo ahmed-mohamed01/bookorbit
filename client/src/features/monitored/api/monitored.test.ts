@@ -3,6 +3,7 @@ import { api } from '@/lib/api'
 import type { BookRequestItem, MonitoredBookItem, MonitoredReleaseDateLookup } from '@bookorbit/types'
 import {
   searchCatalogWorks,
+  searchMonitoredWorks,
   bulkRequestMonitoredWorks,
   bulkUpdateMonitoredWorks,
   fetchClassCounts,
@@ -262,4 +263,10 @@ it('reads the class counts from the works route', async () => {
 it('throws when the class counts read fails', async () => {
   mockedApi.mockResolvedValue(mockErrorResponse(500, 'boom'))
   await expect(fetchClassCounts()).rejects.toThrow('boom')
+})
+
+it('searches watchlist works with encoded paging parameters', async () => {
+  mockedApi.mockResolvedValue(mockOkResponse({ items: [], total: 0, page: 2, size: 50 }))
+  await searchMonitoredWorks({ q: 'A & B', page: 2, size: 50 })
+  expect(mockedApi).toHaveBeenCalledWith('/api/v1/monitored/works?q=A+%26+B&page=2&size=50')
 })

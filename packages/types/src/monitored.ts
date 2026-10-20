@@ -705,6 +705,20 @@ export interface MonitoredCatalogSearchHit {
   authorModes: Record<MonitoredFormat, MonitorMode>;
 }
 
+/** The Watchlist page search reads works in the viewer's watchlist only; shorter queries cannot use the title trigram index. */
+export const MONITORED_WORK_SEARCH_MIN_LENGTH = 3;
+
+export const MONITORED_WORK_SEARCH_PAGE_SIZE = 50;
+
+/** A book the Watchlist page search found, owned formats included, with what its card and panel need. */
+export interface MonitoredWorkSearchItem extends MonitoredCatalogSearchHit {
+  isOwner: boolean;
+  /** When the author's catalog and library matches were last refreshed, for the panel's "Checked" line. */
+  authorLastRefreshedAt: string | null;
+}
+
+export type MonitoredWorkSearchPage = MonitoredPage<MonitoredWorkSearchItem>;
+
 export interface HardcoverSearchBook {
   /** Hardcover slug, the same value book_metadata.hardcover_id stores. */
   slug: string;

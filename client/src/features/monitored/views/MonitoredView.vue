@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import {
+  MONITORED_WORK_SEARCH_MIN_LENGTH,
   MONITORED_AUTHOR_LIST_SORTS,
   MONITORED_LIST_ORDERS,
   MONITORED_RELEASE_FILTERS,
@@ -27,6 +28,7 @@ import type {
   MonitoredReleaseListSort,
   MonitoredReleaseStatus,
   MonitoredWork,
+  MonitoredWorkSearchItem,
   MonitoredWorkPatch,
   TableDensity,
 } from '@bookorbit/types'
@@ -54,7 +56,7 @@ import {
 } from '../api/monitored'
 import { useMonitoredFetchEvents } from '../composables/useMonitoredFetchEvents'
 import { monitoredErrorText } from '../lib/api-error'
-import { isMonitoredAcquisitionState } from '../lib/monitored-format-state'
+import { isMonitoredAcquisitionState, watchedFormats } from '../lib/monitored-format-state'
 import { refreshAllAuthorsSequentially, type MonitoredRefreshSummary } from '../lib/refresh-summary'
 import { releaseItemHasFormatToGet, sweptRowWorkIds } from '../lib/bulk-select'
 import { collapseReleaseItems, releaseDateForWork, releaseDateMoved, type MonitoredReleaseEntry } from '../lib/grouping'
@@ -92,7 +94,11 @@ import { useMonitoredRefreshAll } from '../composables/useMonitoredRefreshAll'
 import { usePageRetryGuard } from '../composables/usePageRetryGuard'
 import { useRefreshFeedback } from '../composables/useRefreshFeedback'
 import { storage } from '@/services/storage'
+import { useMonitoredWorkSearch } from '../composables/useMonitoredWorkSearch'
+import MonitoredWorkSearchResults from '../components/MonitoredWorkSearchResults.vue'
+import { isSearchReady } from '../lib/search-query'
 
+const workSearch = useMonitoredWorkSearch()
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
@@ -114,12 +120,12 @@ const {
   summaryReleaseCards,
   hardcoverConfigured,
   audibleConfigured,
-  error,
+  error: tabError,
   loadSummary,
   loadAuthors,
   loadReleases,
 } = useMonitored(() => {
-  if (authors.value.some((author) => author.fetch.state !== 'idle')) void reloadActive(true)
+  if (!searchMode.value && authors.value.some((author) => author.fetch.state !== 'idle')) void reloadActive(true)
 })
 const { onRequestsChanged } = useBookRequestProgress()
 const { monitoredReleaseRowDensity } = useDisplaySettings()
@@ -143,10 +149,11 @@ const loadedTabs = ref(new Set<string>())
 let hydrating = true
 let observer: IntersectionObserver | null = null
 let topObserver: IntersectionObserver | null = null
-let searchTimer: ReturnType<typeof setTimeout> | null = null
+const searchTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 let suppressSearchReload = false
 // Deferred server reconciliation runs when this kept-alive view returns.
 let reloadOnActivate = false
+let cancelledSearch = false
 let viewActive = true
 let initialLoadComplete = false
 let requestRefreshPending = false
@@ -204,6 +211,7 @@ function handlePanelOpen(value: boolean) {
 function handlePanelGrabbed(work: MonitoredWork, format: MonitoredFormat, requestId: number) {
   work.requestIds = { ...work.requestIds, [format]: requestId }
   work.requestStatuses = { ...work.requestStatuses, [format]: 'grabbed' }
+  applyWorkUpdate(work)
   for (const item of releases.value) {
     if (item.workId === work.id && item.format === format) {
       item.status = 'queued'
@@ -218,8 +226,11 @@ function handlePanelGrabbed(work: MonitoredWork, format: MonitoredFormat, reques
  * work owns now, so the tab refetches and the open panel re-points at the row that came back.
  */
 async function handlePanelFiled(work: MonitoredWork) {
-  await Promise.all([loadSummary(), reloadActive(true)])
-  const reloaded = releases.value.find((item) => item.workId === work.id)?.work
+  applyWorkUpdate(work)
+  await Promise.all([loadSummary(), ...(searchMode.value ? [] : [reloadActive(true)])])
+  const reloaded = searchMode.value
+    ? workSearch.items.value.find((item) => item.work.id === work.id)?.work
+    : releases.value.find((item) => item.workId === work.id)?.work
   if (reloaded) panelWork.value = reloaded
 }
 
@@ -228,6 +239,7 @@ async function handlePanelFiled(work: MonitoredWork) {
  * its release rows and the open panel cannot drift apart while the page waits for its refetch.
  */
 function applyWorkUpdate(updated: MonitoredWork): void {
+  workSearch.applyWorkUpdate(updated)
   for (const item of releases.value) if (item.workId === updated.id) item.work = updated
   if (panelWork.value?.id === updated.id) panelWork.value = updated
 }
@@ -242,7 +254,7 @@ function handleWorkUpdated(updated: MonitoredWork): void {
   applyWorkUpdate(updated)
   // In the review queue the row leaves the list once its class no longer matches the selection.
   const leavesQueue = classChangeLeavesQueue(previous, updated, effectiveReleaseClasses.value)
-  if (!moved && !leavesQueue) return
+  if (searchMode.value || (!moved && !leavesQueue)) return
   if (moved) void loadSummary()
   void reloadActive(true)
 }
@@ -256,7 +268,7 @@ async function requestWorkFormat(work: MonitoredWork, format: MonitoredFormat, a
     })
     applyWorkUpdate(updated)
     toast.success(t('monitored.toast.sendingToRequests', { title: work.title, format: t(`monitored.formats.${format}`) }))
-    void reloadActive(true)
+    if (!searchMode.value) void reloadActive(true)
   } catch (cause) {
     toast.error(monitoredErrorText(cause, t('monitored.toast.queueFailed')))
   }
@@ -271,8 +283,10 @@ async function patchWork(work: MonitoredWork, patch: MonitoredWorkPatch) {
   try {
     const updated = await updateMonitoredWork(work.id, patch)
     if (workClassChanged(work, updated)) refreshReleaseClassCounts()
-    if (panelWork.value?.id === work.id) panelWork.value = updated
-    void reloadActive(true)
+    applyWorkUpdate(updated)
+    if (searchMode.value) {
+      if (patch.hidden === true) workSearch.removeWork(work.id)
+    } else void reloadActive(true)
   } catch (cause) {
     toast.error(monitoredErrorText(cause, t('monitored.toast.updateFailed')))
   }
@@ -316,10 +330,10 @@ async function settleLibraryCheckAttempt(authorId: string): Promise<void> {
     if (panelAuthorId.value === authorId) {
       panelCheckedAt.value = detail.author.lastRefreshedAt
       const reloaded = detail.works.find((work) => work.id === panelWork.value?.id)
-      if (reloaded) panelWork.value = reloaded
+      if (reloaded) applyWorkUpdate(reloaded)
     }
     clearChecking(authorId)
-    void reloadActive(true)
+    if (!searchMode.value) void reloadActive(true)
   } catch (cause) {
     clearChecking(authorId)
     toast.error(monitoredErrorText(cause, t('monitored.toast.refreshFailed')))
@@ -363,6 +377,20 @@ function parseTab(value: unknown): MonitoredTab {
 }
 
 const activeTab = ref<MonitoredTab>(parseTab(route.query.tab))
+const searchMode = computed(() => activeTab.value !== 'add' && filterQuery.value.trim().length > 0)
+const searchReady = computed(() => searchMode.value && isSearchReady(filterQuery.value))
+const error = computed(() => (searchMode.value ? workSearch.error.value : tabError.value))
+
+function openSearchPanel(item: MonitoredWorkSearchItem) {
+  panelOwned.value = item.isOwner
+  panelWork.value = item.work
+  panelAuthorName.value = item.authorName
+  panelFormats.value = watchedFormats(item.authorModes)
+  panelAuthorId.value = item.monitorAuthorId
+  panelModes.value = item.authorModes
+  panelCheckedAt.value = item.authorLastRefreshedAt
+  panelOpen.value = true
+}
 
 const DEFAULT_SORT = { authors: 'name', releases: 'date' } as const
 const DEFAULT_ORDER = { authors: 'asc', releases: 'asc' } as const
@@ -476,7 +504,7 @@ const activeCardSize = computed({
     else workCardSize.value = next
   },
 })
-const showDisplayControls = computed(() => activeTab.value === 'authors' || activeTab.value === 'releases')
+const showDisplayControls = computed(() => !searchMode.value && (activeTab.value === 'authors' || activeTab.value === 'releases'))
 const showReleaseRows = computed(() => activeTab.value === 'releases' && releasesView.value === 'table')
 const headerRowDensity = computed(() => (showReleaseRows.value ? monitoredReleaseRowDensity.value : undefined))
 const sortedAuthors = computed(() => authors.value)
@@ -566,7 +594,7 @@ const releaseSections = computed(() =>
   }),
 )
 
-const selectionAvailable = computed(() => activeTab.value === 'releases' && canManage.value)
+const selectionAvailable = computed(() => !searchMode.value && activeTab.value === 'releases' && canManage.value)
 
 // Review classes (unconfirmed, hidden, other kinds) are picked to be kept or marked, not downloaded,
 // so a row with nothing left to get is still a valid pick there.
@@ -705,25 +733,38 @@ watch(selectionAvailable, (available) => {
 
 // Audiobook release dates are sourced from Audible alone, so with that provider off the feed is
 // silently ebook-only rather than empty. The notice belongs where that gap is visible.
-const showAudibleNotice = computed(() => activeTab.value === 'releases' && !audibleConfigured.value)
+const showAudibleNotice = computed(() => !searchMode.value && activeTab.value === 'releases' && !audibleConfigured.value)
 
 const activeTotal = computed(() => {
+  if (searchMode.value) return searchReady.value ? workSearch.total.value : 0
   if (activeTab.value === 'add') return 0
   if (activeTab.value === 'authors') return authorTotal.value
   return releaseCount(releaseTotal.value, releaseCardTotal.value)
 })
 
-const foldedCount = computed(() => (activeTab.value === 'add' ? undefined : formatNumber(activeTotal.value)))
+const foldedCount = computed(() =>
+  searchMode.value
+    ? searchReady.value
+      ? t('monitored.search.count', { count: activeTotal.value })
+      : undefined
+    : activeTab.value === 'add'
+      ? undefined
+      : formatNumber(activeTotal.value),
+)
 const factsLabel = computed(() =>
-  activeTab.value === 'authors'
-    ? t('components.browseHeader.facts.authors', { count: activeTotal.value })
-    : t('monitored.facts.releases', { count: activeTotal.value }),
+  searchMode.value
+    ? searchReady.value
+      ? t('monitored.search.count', { count: activeTotal.value })
+      : undefined
+    : activeTab.value === 'authors'
+      ? t('components.browseHeader.facts.authors', { count: activeTotal.value })
+      : t('monitored.facts.releases', { count: activeTotal.value }),
 )
 
 const showSkeleton = computed(() => activeTab.value !== 'add' && !initialLoaded.value && loading.value)
 const showEmpty = computed(() => initialLoaded.value && !loading.value && activeItemsLength.value === 0)
 const skeletonGridStyle = computed(() => ({
-  gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${activeCardSize.value}px), 1fr))`,
+  gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${searchMode.value ? workCardSize.value : activeCardSize.value}px), 1fr))`,
   gap: `${cardGap.value}px`,
 }))
 
@@ -737,6 +778,7 @@ const refreshLabel = computed(() =>
 )
 
 const allLoadedLabel = computed(() => {
+  if (searchMode.value) return t('monitored.search.count', { count: activeTotal.value })
   const total = formatNumber(activeTotal.value)
   if (activeTab.value === 'authors') return t('monitored.list.allLoadedAuthors', { total })
   return t('monitored.list.allLoadedReleases', { total })
@@ -744,9 +786,12 @@ const allLoadedLabel = computed(() => {
 
 // Skeleton only before a tab's first page ever lands. Search keystrokes, sorts and filter chips
 // refetch constantly, and swapping content for a skeleton on each one is a flicker, not a state.
-const initialLoaded = computed(() => activeTab.value === 'add' || loadedTabs.value.has(activeTab.value))
+const initialLoaded = computed(() =>
+  searchMode.value ? workSearch.page.value > 0 : activeTab.value === 'add' || loadedTabs.value.has(activeTab.value),
+)
 
 const loading = computed(() => {
+  if (searchMode.value) return searchReady.value && (workSearch.loading.value || searchTimer.value !== null)
   if (activeTab.value === 'authors') return authorLoading.value
   if (activeTab.value === 'releases') return releaseLoading.value
   return summaryLoading.value
@@ -781,17 +826,20 @@ watch([loading, summaryLoading], ([isLoading, isSummaryLoading]) => {
   if (!isLoading && !isSummaryLoading) flushRequestRefresh()
 })
 const hasMore = computed(() => {
+  if (searchMode.value) return searchReady.value && !searchTimer.value && workSearch.hasMore.value
   if (activeTab.value === 'authors') return authorHasMore.value
   if (activeTab.value === 'releases') return releaseHasMore.value
   return false
 })
 const activeItemsLength = computed(() => {
+  if (searchMode.value) return workSearch.items.value.length
   if (activeTab.value === 'authors') return authors.value.length
   if (activeTab.value === 'releases') return releases.value.length
   return 0
 })
 /** > 0 once the retention cap has dropped the earliest pages of the active list from memory. */
 const activeDroppedOffset = computed(() => {
+  if (searchMode.value) return workSearch.droppedOffset.value
   if (activeTab.value === 'authors') return authorDroppedOffset.value
   if (activeTab.value === 'releases') return releaseDroppedOffset.value
   return 0
@@ -802,13 +850,15 @@ const { blocked: autoLoadBlocked, record: recordPageResult, reset: resetPageRetr
 async function reloadActive(reset = false): Promise<void> {
   if (reset) resetPageRetries()
   const tab = activeTab.value
-  const q = filterQuery.value.trim() || undefined
+  if (searchMode.value) {
+    if (searchReady.value) await workSearch.load(filterQuery.value, reset)
+    return
+  }
   if (tab === 'authors') {
-    await loadAuthors({ q, sort: authorSort.value, order: authorOrder.value }, reset)
+    await loadAuthors({ sort: authorSort.value, order: authorOrder.value }, reset)
   } else if (tab === 'releases') {
     await loadReleases(
       {
-        q,
         sort: releaseSort.value,
         order: releaseOrder.value,
         filter: releaseFilter.value,
@@ -835,8 +885,14 @@ function activeOrder(): 'asc' | 'desc' | null {
   return null
 }
 
+// The view stays alive under other pages, and the route it would otherwise rewrite is theirs.
+function onWatchlistRoute(): boolean {
+  return route.name === 'monitored'
+}
+
 /** Only non-default state reaches the URL, so a plain visit keeps a clean address. */
 function syncRouteQuery() {
+  if (!onWatchlistRoute()) return
   const tab = activeTab.value
   const sort = activeSort()
   const order = activeOrder()
@@ -844,7 +900,7 @@ function syncRouteQuery() {
     name: 'monitored',
     query: {
       tab: tab === 'authors' ? undefined : tab,
-      q: filterQuery.value.trim() || undefined,
+      q: tab === 'add' ? undefined : filterQuery.value.trim() || undefined,
       sort: tab !== 'add' && sort !== DEFAULT_SORT[tab] ? sort : undefined,
       order: tab !== 'add' && order !== DEFAULT_ORDER[tab] ? order : undefined,
       group: tab === 'releases' && releaseGroup.value !== 'status' ? releaseGroup.value : undefined,
@@ -855,7 +911,7 @@ function syncRouteQuery() {
 
 function hydrateFromRoute() {
   const query = route.query
-  if (typeof query.q === 'string') filterQuery.value = query.q
+  if (activeTab.value !== 'add' && typeof query.q === 'string') filterQuery.value = query.q
   const sort = typeof query.sort === 'string' ? query.sort : null
   const order = typeof query.order === 'string' ? query.order : null
   if (order === 'asc' || order === 'desc') {
@@ -1026,22 +1082,22 @@ async function handleReleaseRequest(item: MonitoredReleaseItem) {
 }
 
 function handleChanged() {
-  void Promise.all([loadSummary(), reloadActive(true)])
+  void Promise.all([loadSummary(), ...(searchMode.value ? [] : [reloadActive(true)])])
 }
 
 async function loadMore(): Promise<void> {
-  if (autoLoadBlocked.value || loading.value || !hasMore.value) return
+  if (!viewActive || autoLoadBlocked.value || loading.value || !hasMore.value) return
   await reloadActive()
   recordPageResult(Boolean(error.value))
 }
 
 function handleRetry() {
   resetPageRetries()
-  void reloadActive(activeItemsLength.value === 0)
+  void reloadActive(searchMode.value || activeItemsLength.value === 0)
 }
 
 function loadIfSentinelVisible() {
-  if (autoLoadBlocked.value || loading.value || !hasMore.value || !sentinel.value) return
+  if (!viewActive || autoLoadBlocked.value || loading.value || !hasMore.value || !sentinel.value) return
   if (sentinel.value.getBoundingClientRect().top < window.innerHeight + 250) void loadMore()
 }
 
@@ -1050,28 +1106,39 @@ function loadIfSentinelVisible() {
  * than render a hole, scrolling back up to that edge resets the list to a fresh page 0 fetch.
  */
 function handleScrolledToTop() {
-  if (activeDroppedOffset.value <= 0 || loading.value) return
+  if (!viewActive || activeDroppedOffset.value <= 0 || loading.value) return
   void reloadActive(true)
 }
 
 watch([authorSort, authorOrder], () => {
-  if (hydrating || activeTab.value !== 'authors') return
+  if (hydrating || searchMode.value || activeTab.value !== 'authors') return
   syncRouteQuery()
   void reloadActive(true)
 })
 watch([releaseSort, releaseOrder, releaseFilter, releaseStatus, effectiveReleaseClasses], () => {
-  if (hydrating || activeTab.value !== 'releases') return
+  if (hydrating || searchMode.value || activeTab.value !== 'releases') return
   syncRouteQuery()
   void reloadActive(true)
 })
 watch(releaseGroup, () => {
-  if (hydrating || activeTab.value !== 'releases') return
+  if (hydrating || searchMode.value || activeTab.value !== 'releases') return
   syncRouteQuery()
 })
+watch(
+  () => route.query.q,
+  (q) => {
+    if (!onWatchlistRoute() || !viewActive || activeTab.value === 'add') return
+    const value = typeof q === 'string' ? q : ''
+    if (value !== filterQuery.value.trim()) filterQuery.value = value
+  },
+)
 watch(filterQuery, () => {
-  if (searchTimer) clearTimeout(searchTimer)
+  workSearch.invalidate(filterQuery.value)
+  if (searchTimer.value) clearTimeout(searchTimer.value)
+  searchTimer.value = null
   if (hydrating || suppressSearchReload) return
-  searchTimer = setTimeout(() => {
+  searchTimer.value = setTimeout(() => {
+    searchTimer.value = null
     syncRouteQuery()
     void reloadActive(true)
   }, 250)
@@ -1112,6 +1179,17 @@ onMounted(async () => {
 
 onActivated(() => {
   viewActive = true
+  void nextTick(loadIfSentinelVisible)
+  if (!hydrating && onWatchlistRoute()) {
+    if (cancelledSearch) {
+      cancelledSearch = false
+      syncRouteQuery()
+      void reloadActive(true)
+    } else {
+      const q = activeTab.value !== 'add' && typeof route.query.q === 'string' ? route.query.q : ''
+      if (q !== filterQuery.value) filterQuery.value = q
+    }
+  }
   if (reloadOnActivate) {
     reloadOnActivate = false
     handleChanged()
@@ -1123,13 +1201,18 @@ onActivated(() => {
 
 onDeactivated(() => {
   viewActive = false
+  if (searchTimer.value) {
+    clearTimeout(searchTimer.value)
+    searchTimer.value = null
+    cancelledSearch = true
+  }
 })
 
 onUnmounted(() => {
   viewActive = false
   observer?.disconnect()
   topObserver?.disconnect()
-  if (searchTimer) clearTimeout(searchTimer)
+  if (searchTimer.value) clearTimeout(searchTimer.value)
   if (requestRefreshTimer) clearTimeout(requestRefreshTimer)
 })
 
@@ -1168,6 +1251,40 @@ defineOptions({ name: 'MonitoredView' })
         </button>
       </template>
 
+      <template #tabs>
+        <div class="flex min-w-0 flex-wrap items-center gap-2 border-b border-border px-1">
+          <div class="monitored-tabs no-scrollbar flex max-w-full gap-1 overflow-x-auto" role="tablist" :aria-label="t('monitored.tabs.label')">
+            <button
+              v-for="tab in tabs"
+              :key="tab.id"
+              type="button"
+              role="tab"
+              :aria-selected="activeTab === tab.id"
+              class="inline-flex shrink-0 items-center gap-1 border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-reduce:transition-none"
+              :class="tabClass(tab.id)"
+              @click="selectTab(tab.id)"
+            >
+              <Plus v-if="tab.id === 'add'" :size="14" aria-hidden="true" />
+              {{ tab.label }}
+              <template v-if="tab.count !== null">
+                <span
+                  class="ms-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/15 px-1.5 text-xs font-semibold text-primary tabular-nums"
+                  aria-hidden="true"
+                >
+                  {{ formatNumber(tab.count) }}
+                </span>
+                <span class="sr-only">{{ formatNumber(tab.count) }}</span>
+              </template>
+            </button>
+          </div>
+
+          <!-- The header row has no room for the filter on narrow screens, so it stays beside the tabs there. -->
+          <div v-if="!searchMode && activeTab === 'releases'" class="min-w-0 md:hidden">
+            <MonitoredReleaseFilterBar v-model="releaseFilter" />
+          </div>
+        </div>
+      </template>
+
       <template #bar>
         <BrowseSearchField
           v-if="activeTab !== 'add'"
@@ -1177,7 +1294,7 @@ defineOptions({ name: 'MonitoredView' })
           @update:model-value="handleSearchUpdate"
           @clear="handleSearchClear"
         />
-        <template v-if="activeTab === 'releases'">
+        <template v-if="!searchMode && activeTab === 'releases'">
           <span :class="barDivider" aria-hidden="true" />
           <MonitoredSortMenu
             :options="releaseSortOptions"
@@ -1212,7 +1329,7 @@ defineOptions({ name: 'MonitoredView' })
             <MonitoredReleaseFilterBar v-model="releaseFilter" />
           </div>
         </template>
-        <template v-else-if="activeTab === 'authors'">
+        <template v-else-if="!searchMode && activeTab === 'authors'">
           <span :class="barDivider" aria-hidden="true" />
           <MonitoredSortMenu
             :options="authorSortOptions"
@@ -1254,38 +1371,6 @@ defineOptions({ name: 'MonitoredView' })
       </template>
     </BrowseHeader>
 
-    <div class="mb-3 flex min-w-0 flex-wrap items-center gap-2 border-b border-border px-1">
-      <div class="monitored-tabs no-scrollbar flex max-w-full gap-1 overflow-x-auto" role="tablist" :aria-label="t('monitored.tabs.label')">
-        <button
-          v-for="tab in tabs"
-          :key="tab.id"
-          type="button"
-          role="tab"
-          :aria-selected="activeTab === tab.id"
-          class="inline-flex shrink-0 items-center gap-1 border-b-2 px-3 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none motion-reduce:transition-none"
-          :class="tabClass(tab.id)"
-          @click="selectTab(tab.id)"
-        >
-          <Plus v-if="tab.id === 'add'" :size="14" aria-hidden="true" />
-          {{ tab.label }}
-          <template v-if="tab.count !== null">
-            <span
-              class="ms-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/15 px-1.5 text-xs font-semibold text-primary tabular-nums"
-              aria-hidden="true"
-            >
-              {{ formatNumber(tab.count) }}
-            </span>
-            <span class="sr-only">{{ formatNumber(tab.count) }}</span>
-          </template>
-        </button>
-      </div>
-
-      <!-- The header row has no room for the filter on narrow screens, so it stays beside the tabs there. -->
-      <div v-if="activeTab === 'releases'" class="min-w-0 md:hidden">
-        <MonitoredReleaseFilterBar v-model="releaseFilter" />
-      </div>
-    </div>
-
     <main ref="mainRef" class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto pr-0 sm:pr-2">
       <div class="mx-auto w-full max-w-7xl pb-8">
         <div
@@ -1303,7 +1388,7 @@ defineOptions({ name: 'MonitoredView' })
         <div v-if="activeTab !== 'add'" ref="topSentinel" aria-hidden="true" />
         <!-- Skeleton only before a tab's first page lands; a refetch keeps the current rows on screen. -->
         <div v-if="showSkeleton" class="mt-4 px-1" aria-hidden="true">
-          <div v-if="activeTab === 'authors' || releasesView === 'cards'" class="grid" :style="skeletonGridStyle">
+          <div v-if="searchMode || activeTab === 'authors' || releasesView === 'cards'" class="grid" :style="skeletonGridStyle">
             <div v-for="index in INITIAL_SKELETON_COUNT" :key="`monitored-skeleton-${index}`" class="flex flex-col gap-1.5">
               <div class="aspect-2/3 w-full animate-pulse rounded-md bg-muted/60" />
             </div>
@@ -1316,6 +1401,24 @@ defineOptions({ name: 'MonitoredView' })
             />
           </div>
         </div>
+
+        <section v-else-if="searchMode" class="mt-4 px-1">
+          <p v-if="!searchReady" class="text-sm text-muted-foreground">{{ t('monitored.search.hint', { min: MONITORED_WORK_SEARCH_MIN_LENGTH }) }}</p>
+          <MonitoredWorkSearchResults
+            v-else
+            :items="workSearch.items.value"
+            :loading="workSearch.loading.value || searchTimer !== null"
+            :error="error"
+            :can-manage="canManage"
+            :card-size="workCardSize"
+            :grid-gap="cardGap"
+            @preview="openSearchPanel"
+            @quick-view="handleCardQuickView"
+            @download-ebook="handleDownloadEbook"
+            @download-audiobook="handleDownloadAudiobook"
+            @stop="handleHideWork"
+          />
+        </section>
 
         <section v-else-if="activeTab === 'authors'" class="mt-4 px-1">
           <MonitoredVirtualGrid v-if="sortedAuthors.length > 0" :items="sortedAuthors" :card-size="authorCardSize" :grid-gap="cardGap">
