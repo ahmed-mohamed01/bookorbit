@@ -1,23 +1,25 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { Check, Loader2, Search, UserRound } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
-import type { MonitoredAuthorItem, MonitoredAuthorSearchResult, MonitoredFormat } from '@bookorbit/types'
+import type { MonitoredAuthorItem, MonitoredAuthorSearchResult, MonitoredFetchState, MonitoredFormat } from '@bookorbit/types'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import AuthorPlaceholder from '@/features/author/components/AuthorPlaceholder.vue'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
-import { deleteMonitoredAuthor, searchMonitoredAuthors } from '../api/monitored'
+import { deleteMonitoredAuthor, fetchMonitoredAuthorDetail, searchMonitoredAuthors } from '../api/monitored'
+import { useMonitoredFetchEvents } from '../composables/useMonitoredFetchEvents'
 import { monitoredErrorText } from '../lib/api-error'
 import MonitorAuthorModal from './MonitorAuthorModal.vue'
 
-type FormatChoice = 'ebook' | 'audiobook' | 'both'
+// The modal holds the per-format toggles, so every add starts with both formats on.
+const INITIAL_FORMATS: MonitoredFormat[] = ['ebook', 'audiobook']
 
 const emit = defineEmits<{ changed: [] }>()
 const { t } = useI18n()
 const query = ref('')
-const choice = ref<FormatChoice>('both')
 const results = ref<MonitoredAuthorSearchResult[]>([])
 const loading = ref(false)
 const searched = ref(false)
@@ -26,8 +28,42 @@ const selected = ref<MonitoredAuthorSearchResult | null>(null)
 const stopTarget = ref<MonitoredAuthorSearchResult | null>(null)
 const stopping = ref(false)
 const failedImages = ref(new Set<string>())
+/** Fetch state of the authors added from this panel, keyed by monitor id. */
+const fetchStates = ref<Record<string, MonitoredFetchState>>({})
 
-const initialFormats = computed<MonitoredFormat[]>(() => (choice.value === 'both' ? ['ebook', 'audiobook'] : [choice.value]))
+function setFetchState(monitorId: string, state: MonitoredFetchState) {
+  fetchStates.value = { ...fetchStates.value, [monitorId]: state }
+}
+
+function isFetching(result: MonitoredAuthorSearchResult): boolean {
+  const state = result.alreadyMonitoredId ? fetchStates.value[result.alreadyMonitoredId] : undefined
+  return state === 'queued' || state === 'fetching'
+}
+
+function authorRoute(monitorId: string) {
+  return { name: 'monitored-author', params: { id: monitorId } }
+}
+
+async function reconcileFetchStates() {
+  const busy = Object.entries(fetchStates.value).filter(([, state]) => state === 'queued' || state === 'fetching')
+  for (const [monitorId] of busy) {
+    try {
+      const detail = await fetchMonitoredAuthorDetail(monitorId, { sort: 'releaseDate', order: 'desc' })
+      setFetchState(monitorId, detail.author.fetch.state)
+    } catch {
+      // A failed check leaves the spinner; the next event or reconnect settles it.
+    }
+  }
+}
+
+useMonitoredFetchEvents({
+  onItem(item) {
+    if (item.id in fetchStates.value) setFetchState(item.id, item.fetch.state)
+  },
+  onReconnect() {
+    void reconcileFetchStates()
+  },
+})
 
 function resultImageUrl(result: MonitoredAuthorSearchResult): string {
   return failedImages.value.has(result.name) ? '' : toMonitoredCoverUrl(result.imageUrl)
@@ -40,18 +76,6 @@ function handleResultImageError(result: MonitoredAuthorSearchResult) {
 function resultMeta(result: MonitoredAuthorSearchResult): string {
   const bookCount = result.bookCount === null ? t('monitored.common.unknownBooks') : t('monitored.common.bookCount', { count: result.bookCount })
   return result.genres.length > 0 ? `${bookCount} · ${result.genres.join(', ')}` : bookCount
-}
-
-function selectEbooks() {
-  choice.value = 'ebook'
-}
-
-function selectAudiobooks() {
-  choice.value = 'audiobook'
-}
-
-function selectBoth() {
-  choice.value = 'both'
 }
 
 async function handleSearch() {
@@ -92,6 +116,9 @@ async function confirmStopMonitoring() {
   try {
     await deleteMonitoredAuthor(monitorId)
     result.alreadyMonitoredId = null
+    const next = { ...fetchStates.value }
+    delete next[monitorId]
+    fetchStates.value = next
     toast.success(t('monitored.toast.stopped', { name: result.name }))
     emit('changed')
     stopTarget.value = null
@@ -109,6 +136,7 @@ function closeModal() {
 function handleCreated(detail: MonitoredAuthorItem) {
   const result = results.value.find((item) => item.name === detail.authorName)
   if (result) result.alreadyMonitoredId = detail.id
+  setFetchState(detail.id, detail.fetch.state)
   selected.value = null
   toast.success(t('monitored.toast.monitoring', { name: detail.authorName }))
   emit('changed')
@@ -134,34 +162,6 @@ function handleCreated(detail: MonitoredAuthorItem) {
       </Button>
     </form>
 
-    <div class="mt-4 flex flex-wrap items-center gap-2">
-      <span class="text-xs font-medium text-muted-foreground">{{ t('monitored.add.monitorFormats') }}</span>
-      <button
-        type="button"
-        class="rounded-full border px-3 py-1.5 text-xs font-semibold"
-        :class="choice === 'ebook' ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground'"
-        @click="selectEbooks"
-      >
-        {{ t('monitored.formats.ebooks') }}
-      </button>
-      <button
-        type="button"
-        class="rounded-full border px-3 py-1.5 text-xs font-semibold"
-        :class="choice === 'audiobook' ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground'"
-        @click="selectAudiobooks"
-      >
-        {{ t('monitored.formats.audiobooks') }}
-      </button>
-      <button
-        type="button"
-        class="rounded-full border px-3 py-1.5 text-xs font-semibold"
-        :class="choice === 'both' ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-background text-muted-foreground'"
-        @click="selectBoth"
-      >
-        {{ t('monitored.formats.both') }}
-      </button>
-    </div>
-
     <p v-if="error" class="mt-4 text-sm text-destructive">{{ error }}</p>
 
     <div v-if="searched && !loading" class="mt-6">
@@ -177,9 +177,31 @@ function handleCreated(detail: MonitoredAuthorItem) {
               @error="handleResultImageError(result)"
             />
             <AuthorPlaceholder v-else :name="result.name" />
+            <Tooltip v-if="isFetching(result)">
+              <TooltipTrigger as-child>
+                <span
+                  data-testid="result-fetching"
+                  tabindex="0"
+                  class="absolute inset-0 flex items-center justify-center bg-background/55"
+                  :aria-label="t('monitored.fetch.fetching')"
+                >
+                  <Loader2 :size="20" class="animate-spin text-foreground" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{{ t('monitored.fetch.fetching') }}</TooltipContent>
+            </Tooltip>
           </div>
           <div class="min-w-0 flex-1">
-            <h3 class="truncate text-sm font-semibold text-foreground">{{ result.name }}</h3>
+            <h3 class="truncate text-sm font-semibold text-foreground">
+              <RouterLink
+                v-if="result.alreadyMonitoredId"
+                :to="authorRoute(result.alreadyMonitoredId)"
+                class="rounded-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              >
+                {{ result.name }}
+              </RouterLink>
+              <template v-else>{{ result.name }}</template>
+            </h3>
             <p class="truncate text-xs text-muted-foreground">{{ resultMeta(result) }}</p>
           </div>
           <Button v-if="!result.alreadyMonitoredId" size="sm" @click="handleMonitor(result)">{{ t('monitored.actions.monitor') }}</Button>
@@ -202,7 +224,7 @@ function handleCreated(detail: MonitoredAuthorItem) {
     </div>
   </section>
 
-  <MonitorAuthorModal :open="Boolean(selected)" :result="selected" :initial-formats="initialFormats" @close="closeModal" @created="handleCreated" />
+  <MonitorAuthorModal :open="Boolean(selected)" :result="selected" :initial-formats="INITIAL_FORMATS" @close="closeModal" @created="handleCreated" />
 
   <ConfirmDialog
     :open="Boolean(stopTarget)"

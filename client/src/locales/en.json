@@ -14773,8 +14773,7 @@
       "audiobook": "Audiobook",
       "ebooks": "Ebooks",
       "audiobooks": "Audiobooks",
-      "audiobookOff": "Audiobook off",
-      "both": "Both"
+      "audiobookOff": "Audiobook off"
     },
     "status": {
       "monitoring": "Watching",
@@ -14849,7 +14848,6 @@
     },
     "add": {
       "placeholder": "Search by author name",
-      "monitorFormats": "Watch formats:",
       "results": "Results",
       "noResults": "No authors matched your search.",
       "searchFailed": "Failed to search authors."
