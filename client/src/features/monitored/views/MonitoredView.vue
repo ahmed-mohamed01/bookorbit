@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useLibraryCheckSettlement } from '../composables/useLibraryCheckSettlement'
 import { computed, nextTick, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Check, Loader2, Minus, Plus, RefreshCw } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
@@ -44,12 +45,14 @@ import { useBookRequestProgress } from '@/features/book-requests/composables/use
 import {
   deleteMonitoredAuthor,
   fetchClassCounts,
+  fetchMonitoredAuthorDetail,
   fetchOwnedMonitoredAuthorIds,
   refreshMonitoredAuthor,
   requestMonitoredWork,
   updateMonitoredAuthor,
   updateMonitoredWork,
 } from '../api/monitored'
+import { useMonitoredFetchEvents } from '../composables/useMonitoredFetchEvents'
 import { monitoredErrorText } from '../lib/api-error'
 import { isMonitoredAcquisitionState } from '../lib/monitored-format-state'
 import { refreshAllAuthorsSequentially, type MonitoredRefreshSummary } from '../lib/refresh-summary'
@@ -115,7 +118,9 @@ const {
   loadSummary,
   loadAuthors,
   loadReleases,
-} = useMonitored()
+} = useMonitored(() => {
+  if (authors.value.some((author) => author.fetch.state !== 'idle')) void reloadActive(true)
+})
 const { onRequestsChanged } = useBookRequestProgress()
 const { monitoredReleaseRowDensity } = useDisplaySettings()
 const { state: refreshState, run: runRefresh } = useRefreshFeedback()
@@ -297,29 +302,49 @@ function handleSetKind(work: MonitoredWork, kind: MonitoredMarkKind) {
   void patchWork(work, { kind })
 }
 
-/**
- * The panel's Check is the author refresh: the scan that re-reads every format's files on disk.
- * The refreshed author answers with its works, so the open panel re-points at the one that came back.
- */
-async function handleCheckLibrary() {
-  const authorId = panelAuthorId.value
-  if (!authorId || panelChecking.value) return
-  checkingAuthorIds.value = new Set([...checkingAuthorIds.value, authorId])
+function clearChecking(authorId: string): void {
+  const next = new Set(checkingAuthorIds.value)
+  next.delete(authorId)
+  checkingAuthorIds.value = next
+}
+
+const settleLibraryCheck = useLibraryCheckSettlement((authorId) => checkingAuthorIds.value.has(authorId), settleLibraryCheckAttempt)
+async function settleLibraryCheckAttempt(authorId: string): Promise<void> {
   try {
-    const detail = await refreshMonitoredAuthor(authorId)
-    // The reader may have moved to another author's book while the refresh ran; that panel is not ours to rewrite.
+    const detail = await fetchMonitoredAuthorDetail(authorId, { sort: 'releaseDate', order: 'desc', includeHidden: true })
+    if (detail.author.fetch.state === 'queued' || detail.author.fetch.state === 'fetching') return
     if (panelAuthorId.value === authorId) {
       panelCheckedAt.value = detail.author.lastRefreshedAt
       const reloaded = detail.works.find((work) => work.id === panelWork.value?.id)
       if (reloaded) panelWork.value = reloaded
     }
+    clearChecking(authorId)
     void reloadActive(true)
   } catch (cause) {
+    clearChecking(authorId)
     toast.error(monitoredErrorText(cause, t('monitored.toast.refreshFailed')))
-  } finally {
-    const next = new Set(checkingAuthorIds.value)
-    next.delete(authorId)
-    checkingAuthorIds.value = next
+  }
+}
+
+useMonitoredFetchEvents({
+  onItem(item) {
+    if (item.fetch.state === 'idle' || item.fetch.state === 'failed') void settleLibraryCheck(item.id)
+  },
+  onReconnect() {
+    for (const id of checkingAuthorIds.value) void settleLibraryCheck(id)
+  },
+})
+
+async function handleCheckLibrary() {
+  const authorId = panelAuthorId.value
+  if (!authorId || panelChecking.value) return
+  checkingAuthorIds.value = new Set([...checkingAuthorIds.value, authorId])
+  try {
+    const item = await refreshMonitoredAuthor(authorId)
+    handleAuthorUpdated(item)
+  } catch (cause) {
+    clearChecking(authorId)
+    toast.error(monitoredErrorText(cause, t('monitored.toast.refreshFailed')))
   }
 }
 
@@ -873,7 +898,7 @@ function openAuthor(id: string) {
 }
 
 async function handleRefresh() {
-  let summary: MonitoredRefreshSummary = { refreshed: 0, skipped: 0, failed: 0 }
+  let summary: MonitoredRefreshSummary = { queued: 0, refreshed: 0, skipped: 0, failed: 0 }
   if (!startRefreshAll()) return
   try {
     await runRefresh(async () => {
@@ -885,8 +910,9 @@ async function handleRefresh() {
       await Promise.all([loadSummary(), reloadActive(true)])
       if (error.value) throw new Error(error.value)
     })
-    if (summary.skipped > 0 || summary.failed > 0) toast.success(t('monitored.toast.refreshedAllPartial', { ...summary }))
-    else toast.success(t('monitored.toast.refreshedAll', { ...summary }))
+    if (summary.skipped > 0 || summary.failed > 0) {
+      toast.success(t('monitored.fetch.queuedSummaryPartial', { count: summary.queued, skipped: summary.skipped, failed: summary.failed }))
+    } else toast.success(t('monitored.fetch.queuedSummary', { count: summary.queued }))
   } catch {
     // The failure is surfaced via the error banner; keep the button from showing a success tick.
   }

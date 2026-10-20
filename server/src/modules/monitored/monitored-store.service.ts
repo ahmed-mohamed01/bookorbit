@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import { ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { and, asc, count, desc, eq, inArray, lt, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, ne, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type {
+  MonitoredFetchState,
+  MonitoredFetchErrorKind,
   MonitoredClassSelection,
   MonitoredDisplayClassCounts,
   MonitoredMarkKind,
@@ -36,6 +38,7 @@ import { accentInsensitiveIlike, buildSearchPattern, escapeLikePattern } from '.
 import { normalizeMetadataText } from '../../common/utils/metadata-text-normalize.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
+import { dueForAutomaticFetchSql } from './monitored-fetch-due';
 import { identityLikePattern, identityLikeRun, normalizeMonitoredName, titleAuthorKey } from './monitored-text.utils';
 import { enrolReleaseProbes, reapplyReleaseOverlay } from './monitored-release-probe-store.service';
 import { recordChoiceLedger, restoreChoiceLedger } from './monitored-choice-ledger';
@@ -164,7 +167,11 @@ function releaseProbeAlias(name: string) {
 }
 type ReleaseProbeAlias = ReturnType<typeof releaseProbeAlias>;
 
-type AuthorWrite = Omit<MonitoredAuthorConfig, 'id'> & { id?: string; lastReleaseCheckAt?: string | null };
+type AuthorWrite = Omit<MonitoredAuthorConfig, 'id' | 'fetch'> & {
+  id?: string;
+  fetchState?: MonitoredFetchState;
+  lastReleaseCheckAt?: string | null;
+};
 type AuthorFields = Partial<Omit<MonitoredAuthorConfig, 'id'>>;
 type BookWrite = Omit<MonitoredBookEntry, 'id'> & { id?: string };
 type Db = NodePgDatabase<typeof dbSchema>;
@@ -898,7 +905,121 @@ export class MonitoredStoreService {
       paused: input.paused,
       addedAt: input.addedAt,
       lastRefreshedAt: input.lastRefreshedAt,
+      fetch: { state: input.fetchState ?? 'idle', errorKind: null, errorAt: null, retryAt: null },
     };
+  }
+
+  async markFetchQueued(monitorId: string): Promise<boolean> {
+    const rows = await this.db
+      .update(schema.monitoredAuthors)
+      .set({ fetchState: 'queued', fetchErrorKind: null, fetchErrorAt: null, fetchRetryAt: null })
+      .where(and(eq(schema.monitoredAuthors.id, monitorId), inArray(schema.monitoredAuthors.fetchState, ['idle', 'failed'])))
+      .returning({ id: schema.monitoredAuthors.id });
+    return rows.length > 0;
+  }
+
+  async claimFetch(monitorId: string): Promise<boolean> {
+    const rows = await this.db
+      .update(schema.monitoredAuthors)
+      .set({ fetchState: 'fetching' })
+      .where(and(eq(schema.monitoredAuthors.id, monitorId), eq(schema.monitoredAuthors.fetchState, 'queued')))
+      .returning({ id: schema.monitoredAuthors.id });
+    return rows.length > 0;
+  }
+
+  async releaseFetch(monitorId: string): Promise<boolean> {
+    const rows = await this.db
+      .update(schema.monitoredAuthors)
+      .set({ fetchState: 'idle' })
+      .where(and(eq(schema.monitoredAuthors.id, monitorId), eq(schema.monitoredAuthors.fetchState, 'fetching')))
+      .returning({ id: schema.monitoredAuthors.id });
+    return rows.length > 0;
+  }
+
+  async finishFetchSucceeded(
+    monitorId: string,
+    fields: { lastRefreshedAt: string; hardcoverAuthorId: string | null; localAuthorId: number | null },
+  ): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const rows = await tx
+        .update(schema.monitoredAuthors)
+        .set({
+          fetchState: 'idle',
+          fetchErrorKind: null,
+          fetchErrorAt: null,
+          fetchRetryAt: null,
+          fetchAttempts: 0,
+          lastRefreshedAt: new Date(fields.lastRefreshedAt),
+          ...(fields.localAuthorId !== null ? { localAuthorId: fields.localAuthorId } : {}),
+        })
+        .where(and(eq(schema.monitoredAuthors.id, monitorId), eq(schema.monitoredAuthors.fetchState, 'fetching')))
+        .returning({ id: schema.monitoredAuthors.id });
+      if (!rows.length) return false;
+      if (fields.hardcoverAuthorId !== null) {
+        await tx
+          .insert(schema.authorProviderIdentities)
+          .values({ monitorAuthorId: monitorId, source: 'hardcover', providerId: fields.hardcoverAuthorId })
+          .onConflictDoUpdate({
+            target: [schema.authorProviderIdentities.monitorAuthorId, schema.authorProviderIdentities.source],
+            set: { providerId: fields.hardcoverAuthorId },
+          });
+      }
+      return true;
+    });
+  }
+
+  async finishFetchFailed(
+    monitorId: string,
+    failure: { kind: MonitoredFetchErrorKind; at: string; retryAt: string | null; attempts: number },
+  ): Promise<boolean> {
+    const rows = await this.db
+      .update(schema.monitoredAuthors)
+      .set({
+        fetchState: 'failed',
+        fetchErrorKind: failure.kind,
+        fetchErrorAt: new Date(failure.at),
+        fetchRetryAt: failure.retryAt ? new Date(failure.retryAt) : null,
+        fetchAttempts: Math.min(failure.attempts, 3),
+      })
+      .where(and(eq(schema.monitoredAuthors.id, monitorId), eq(schema.monitoredAuthors.fetchState, 'fetching')))
+      .returning({ id: schema.monitoredAuthors.id });
+    return rows.length > 0;
+  }
+
+  async resetInterruptedFetches(): Promise<number> {
+    const rows = await this.db
+      .update(schema.monitoredAuthors)
+      .set({ fetchState: 'queued' })
+      .where(eq(schema.monitoredAuthors.fetchState, 'fetching'))
+      .returning({ id: schema.monitoredAuthors.id });
+    return rows.length;
+  }
+
+  async findQueuedFetches(after: { addedAt: string; id: string } | null, limit: number): Promise<Array<{ id: string; addedAt: string }>> {
+    const t = schema.monitoredAuthors;
+    const rows = await this.db
+      .select({ id: t.id, addedAt: t.addedAt })
+      .from(t)
+      .where(and(eq(t.fetchState, 'queued'), after ? sql`(${t.addedAt}, ${t.id}) > (${new Date(after.addedAt)}, ${after.id})` : undefined))
+      .orderBy(asc(t.addedAt), asc(t.id))
+      .limit(limit);
+    return rows.map((row) => ({ id: row.id, addedAt: row.addedAt.toISOString() }));
+  }
+
+  async findPendingRetries(): Promise<Array<{ id: string; retryAt: string }>> {
+    const t = schema.monitoredAuthors;
+    const rows = await this.db
+      .select({ id: t.id, retryAt: t.fetchRetryAt })
+      .from(t)
+      .where(and(eq(t.fetchState, 'failed'), sql`${t.fetchRetryAt} is not null`));
+    return rows.map((row) => ({ id: row.id, retryAt: row.retryAt!.toISOString() }));
+  }
+
+  async getMonitorForFetch(monitorId: string): Promise<(MonitoredAuthorConfig & { fetchAttempts: number }) | null> {
+    const [row] = await this.db.select().from(schema.monitoredAuthors).where(eq(schema.monitoredAuthors.id, monitorId)).limit(1);
+    if (!row) return null;
+    const [monitor] = await this.composeAuthors([row]);
+    return { ...monitor, fetchAttempts: row.fetchAttempts };
   }
 
   async updateAuthorFields(id: string, fields: AuthorFields, actor?: RequestUser): Promise<MonitoredAuthorConfig> {
@@ -1444,34 +1565,23 @@ export class MonitoredStoreService {
    * Monitors whose latest sync attempt or refresh is older than the interval, staleness first.
    */
   async findMonitorsDueForSync(staleBefore: Date, limit: number): Promise<MonitoredAuthorConfig[]> {
+    const now = new Date();
     const lastAttempt = sql`greatest(${schema.monitoredAuthors.lastSyncAttemptedAt}, ${schema.monitoredAuthors.lastRefreshedAt})`;
     const rows = await this.db
       .select()
       .from(schema.monitoredAuthors)
-      .where(
-        and(
-          ne(schema.monitoredAuthors.paused, true),
-          or(ne(schema.monitoredAuthors.ebookMode, 'off'), ne(schema.monitoredAuthors.audiobookMode, 'off')),
-          or(sql`${lastAttempt} is null`, lt(lastAttempt, staleBefore)),
-        ),
-      )
+      .where(dueForAutomaticFetchSql(now, (now.getTime() - staleBefore.getTime()) / 3_600_000))
       .orderBy(sql`${lastAttempt} asc nulls first`, asc(schema.monitoredAuthors.id))
       .limit(limit);
     return this.composeAuthors(rows);
   }
 
   async countMonitorsDueForSync(staleBefore: Date): Promise<number> {
-    const lastAttempt = sql`greatest(${schema.monitoredAuthors.lastSyncAttemptedAt}, ${schema.monitoredAuthors.lastRefreshedAt})`;
+    const now = new Date();
     const [row] = await this.db
       .select({ total: count() })
       .from(schema.monitoredAuthors)
-      .where(
-        and(
-          ne(schema.monitoredAuthors.paused, true),
-          or(ne(schema.monitoredAuthors.ebookMode, 'off'), ne(schema.monitoredAuthors.audiobookMode, 'off')),
-          or(sql`${lastAttempt} is null`, lt(lastAttempt, staleBefore)),
-        ),
-      );
+      .where(dueForAutomaticFetchSql(now, (now.getTime() - staleBefore.getTime()) / 3_600_000));
     return Number(row?.total ?? 0);
   }
 
@@ -1934,6 +2044,12 @@ export class MonitoredStoreService {
       paused: row.paused,
       addedAt: row.addedAt.toISOString(),
       lastRefreshedAt: row.lastRefreshedAt?.toISOString() ?? null,
+      fetch: {
+        state: row.fetchState,
+        errorKind: row.fetchErrorKind,
+        errorAt: row.fetchErrorAt?.toISOString() ?? null,
+        retryAt: row.fetchRetryAt?.toISOString() ?? null,
+      },
     }));
   }
 
@@ -2177,6 +2293,7 @@ export class MonitoredStoreService {
       authorName: author.authorName,
       localAuthorId: author.localAuthorId,
       paused: author.paused,
+      ...(author.fetchState !== undefined ? { fetchState: author.fetchState } : {}),
       ebookMode: author.formats.ebook.mode,
       ebookLibraryId: author.formats.ebook.libraryId,
       ebookFolderId: author.formats.ebook.folderId,

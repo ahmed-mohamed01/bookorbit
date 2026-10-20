@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { Check, Loader2, Search, UserRound } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
-import type { MonitoredAuthorDetail, MonitoredAuthorSearchResult, MonitoredFormat } from '@bookorbit/types'
+import type { MonitoredAuthorItem, MonitoredAuthorSearchResult, MonitoredFormat } from '@bookorbit/types'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { Button } from '@/components/ui/button'
 import AuthorPlaceholder from '@/features/author/components/AuthorPlaceholder.vue'
@@ -106,11 +106,11 @@ function closeModal() {
   selected.value = null
 }
 
-function handleCreated(detail: MonitoredAuthorDetail) {
-  const result = results.value.find((item) => item.name === detail.author.authorName)
-  if (result) result.alreadyMonitoredId = detail.author.id
+function handleCreated(detail: MonitoredAuthorItem) {
+  const result = results.value.find((item) => item.name === detail.authorName)
+  if (result) result.alreadyMonitoredId = detail.id
   selected.value = null
-  toast.success(t('monitored.toast.monitoring', { name: detail.author.authorName }))
+  toast.success(t('monitored.toast.monitoring', { name: detail.authorName }))
   emit('changed')
 }
 </script>

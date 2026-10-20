@@ -1,7 +1,23 @@
 import { sql } from 'drizzle-orm';
-import { boolean, check, index, integer, jsonb, pgTable, primaryKey, real, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  smallint,
+  check,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  real,
+  text,
+  timestamp,
+  uniqueIndex,
+  varchar,
+} from 'drizzle-orm/pg-core';
 import type {
   MonitoredDatePrecision,
+  MonitoredFetchState,
+  MonitoredFetchErrorKind,
   MonitoredFormat,
   MonitoredMarkKind,
   MonitoredMatchDecision,
@@ -52,12 +68,25 @@ export const monitoredAuthors = pgTable(
     audiobookFolderId: integer('audiobook_folder_id').references(() => libraryFolders.id, { onDelete: 'set null' }),
     addedAt: timestamp('added_at', { withTimezone: true }).notNull(),
     lastRefreshedAt: timestamp('last_refreshed_at', { withTimezone: true }),
+    fetchState: varchar('fetch_state', { length: 12 }).$type<MonitoredFetchState>().notNull().default('idle'),
+    fetchErrorKind: varchar('fetch_error_kind', { length: 20 }).$type<MonitoredFetchErrorKind>(),
+    fetchErrorAt: timestamp('fetch_error_at', { withTimezone: true }),
+    fetchRetryAt: timestamp('fetch_retry_at', { withTimezone: true }),
+    fetchAttempts: smallint('fetch_attempts').notNull().default(0),
     lastSyncAttemptedAt: timestamp('last_sync_attempted_at', { withTimezone: true }),
     // Null means the release watcher has never looked at this monitor. The first pass seeds the
     // ledger silently instead of announcing every book that came out since the monitor was added.
     lastReleaseCheckAt: timestamp('last_release_check_at', { withTimezone: true }),
   },
   (t) => [
+    index('monitored_authors_fetch_pending_idx')
+      .on(t.fetchState, t.addedAt, t.id)
+      .where(sql`${t.fetchState} <> 'idle'`),
+    check('monitored_authors_fetch_state_chk', sql`${t.fetchState} in ('idle', 'queued', 'fetching', 'failed')`),
+    check(
+      'monitored_authors_fetch_error_kind_chk',
+      sql`${t.fetchErrorKind} in ('timeout', 'rate_limited', 'unavailable', 'auth_failed', 'author_gone', 'not_configured')`,
+    ),
     index('monitored_authors_owner_user_id_idx').on(t.ownerUserId),
     // Author search is an accent-insensitive ILIKE over bookorbit_unaccent(author_name), the same
     // predicate authors/series/book_metadata already index this way (migration 0047). Without it the

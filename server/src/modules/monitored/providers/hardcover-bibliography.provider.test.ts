@@ -35,7 +35,7 @@ describe('HardcoverBibliographyProvider failure reporting', () => {
     const provider = new HardcoverBibliographyProvider({ searchAuthors } as never);
 
     await expect(provider.resolveAuthor('Alexander Olson', config)).rejects.toBeInstanceOf(HardcoverRequestError);
-    expect(searchAuthors).toHaveBeenCalledWith('Alexander Olson', 'key', undefined, { surfaceFailures: true });
+    expect(searchAuthors).toHaveBeenCalledWith('Alexander Olson', 'key', undefined, { surfaceFailures: true, timeoutMs: 30_000 });
   });
 
   it('still reports an author nobody matched as no author, not as a failure', async () => {
@@ -50,7 +50,7 @@ describe('HardcoverBibliographyProvider failure reporting', () => {
     const provider = new HardcoverBibliographyProvider({ fetchAuthorContributions } as never);
 
     await expect(provider.fetchObservations(authorRef, config)).rejects.toBeInstanceOf(HardcoverAuthorGoneError);
-    expect(fetchAuthorContributions).toHaveBeenCalledWith(685771, 0, 'key', undefined, { surfaceFailures: true });
+    expect(fetchAuthorContributions).toHaveBeenCalledWith(685771, 0, 'key', undefined, { surfaceFailures: true, timeoutMs: 30_000 });
   });
 });
 
@@ -63,5 +63,18 @@ describe('mapHardcoverObservations ratings', () => {
 
     expect(mapped.rating).toEqual({ average: 4.07, count: 1143 });
     expect(mapHardcoverObservations([{ id: 2, title: 'Bare', rating: null, ratings_count: 0 }])[0].rating).toBeNull();
+  });
+});
+
+describe('Hardcover bibliography malformed pages', () => {
+  it('rejects missing contributions instead of truncating the catalog', async () => {
+    const provider = new HardcoverBibliographyProvider({
+      fetchAuthorContributions: vi.fn().mockResolvedValue({ id: 1, contributions: undefined }),
+    } as never);
+    await expect(
+      provider.fetchObservations({ id: '1', name: 'Author', bookCount: null, imageUrl: null }, {
+        hardcover: { enabled: true, apiKey: 'key' },
+      } as ProviderConfigurations),
+    ).rejects.toMatchObject({ name: 'HardcoverRequestError', status: 200 });
   });
 });

@@ -1,5 +1,6 @@
 export const PROVIDER_TIMEOUT_MS = {
   DEFAULT: 10_000,
+  BACKGROUND: 30_000,
   SCRAPE: 15_000,
   KOBO_SCRAPE: 30_000,
 } as const;

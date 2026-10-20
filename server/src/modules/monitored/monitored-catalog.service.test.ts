@@ -1,3 +1,5 @@
+import { CatalogFetchError } from './monitored-fetch-error';
+import { HardcoverRequestError } from '../metadata-fetch/providers/hardcover/hardcover.errors';
 import { ServiceUnavailableException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -11,8 +13,6 @@ import {
   enforceUniqueWorkIds,
   normalizeMonitoredName,
   resolvePreviousWorks,
-  shouldKeepPreviousCatalog,
-  shouldRejectEmptyCatalog,
 } from './monitored-catalog.service';
 import { HardcoverBibliographyProvider, mapHardcoverObservations } from './providers/hardcover-bibliography.provider';
 import { HardcoverClient } from '../metadata-fetch/providers/hardcover/hardcover.client';
@@ -23,28 +23,6 @@ vi.mock('../metadata-fetch/fetch-with-throttle', () => ({ fetchWithThrottle: vi.
 describe('monitored catalog helpers', () => {
   it('normalizes author identity without punctuation or diacritics', () => {
     expect(normalizeMonitoredName('Álex N. Gilbert')).toBe('alexngilbert');
-  });
-
-  it('keeps the previous catalog only when a FAILING Hardcover collapsed it', () => {
-    const failed = { attempted: true, failed: true };
-    const healthy = { attempted: true, failed: false };
-    const disabled = { attempted: false, failed: false };
-
-    expect(shouldKeepPreviousCatalog(5, 0, failed)).toBe(true);
-    expect(shouldKeepPreviousCatalog(5, 1, failed)).toBe(true);
-    expect(shouldKeepPreviousCatalog(5, 4, failed)).toBe(false);
-    // A healthy Hardcover that simply has nothing for a small author must not 503 forever.
-    expect(shouldKeepPreviousCatalog(5, 0, healthy)).toBe(false);
-    // Hardcover switched off is not a Hardcover outage.
-    expect(shouldKeepPreviousCatalog(5, 0, disabled)).toBe(false);
-    expect(shouldKeepPreviousCatalog(0, 0, failed)).toBe(false);
-  });
-
-  it('refuses to persist an empty first catalog when Hardcover failed', () => {
-    expect(shouldRejectEmptyCatalog({ attempted: true, failed: true }, 0)).toBe(true);
-    expect(shouldRejectEmptyCatalog({ attempted: true, failed: true }, 3)).toBe(false);
-    expect(shouldRejectEmptyCatalog({ attempted: true, failed: false }, 0)).toBe(false);
-    expect(shouldRejectEmptyCatalog({ attempted: false, failed: false }, 0)).toBe(false);
   });
 
   it('maps Hardcover contributions without discarding evidence before reconciliation', () => {
@@ -284,6 +262,7 @@ function monitorConfig(): MonitoredAuthorConfig {
     paused: false,
     addedAt: '2026-01-01T00:00:00.000Z',
     lastRefreshedAt: null,
+    fetch: { state: 'idle', errorKind: null, errorAt: null, retryAt: null },
   };
 }
 
@@ -464,6 +443,7 @@ describe('targeted availability recompute', () => {
       paused: false,
       addedAt: '2026-01-01T00:00:00.000Z',
       lastRefreshedAt: null,
+      fetch: { state: 'idle', errorKind: null, errorAt: null, retryAt: null },
       ...patch,
     };
   }
@@ -987,5 +967,44 @@ describe('fetchCatalog review kinds', () => {
     expect(anthology?.verdict).toBe('suspect');
     expect(anthology?.kind).toBe('anthology');
     expect(works.find((work) => work.title === 'A Real Novel')?.kind).toBeUndefined();
+  });
+});
+
+describe('Hardcover catalog failure semantics', () => {
+  it.each([
+    [new HardcoverRequestError('author-contributions', null, { cause: new DOMException('t', 'TimeoutError') }), 'timeout'],
+    [new HardcoverRequestError('author-contributions', 200), 'unavailable'],
+  ])('fails the fetch when Hardcover fails even if Audible answers: %s', async (error, kind) => {
+    const previous = previousWorks(5);
+    const store = { getCatalog: vi.fn().mockResolvedValue(previous), saveCatalog: vi.fn(), findMatchOverrides: vi.fn().mockResolvedValue([]) };
+    const service = catalogService(
+      {
+        hardcover: fakeProvider('hardcover', { failWith: error }),
+        goodreads: fakeProvider('goodreads', { enabled: false }),
+        audible: fakeProvider('audible', { observations: Array.from({ length: 158 }, () => observation()) }),
+      },
+      store,
+    );
+    await expect(service.fetchCatalog(monitorConfig(), providerConfig())).rejects.toBeInstanceOf(CatalogFetchError);
+    await expect(service.fetchCatalog(monitorConfig(), providerConfig())).rejects.toMatchObject({ kind });
+    expect(store.saveCatalog).not.toHaveBeenCalled();
+    expect(previous.works).toHaveLength(5);
+  });
+
+  it('propagates caller cancellation without saving', async () => {
+    const controller = new AbortController();
+    const reason = new Error('cancelled');
+    controller.abort(reason);
+    const store = { saveCatalog: vi.fn() };
+    const service = catalogService(
+      {
+        hardcover: fakeProvider('hardcover', { failWith: reason }),
+        goodreads: fakeProvider('goodreads', { enabled: false }),
+        audible: fakeProvider('audible', { enabled: false }),
+      },
+      store,
+    );
+    await expect(service.fetchCatalog(monitorConfig(), providerConfig(), controller.signal)).rejects.toBe(reason);
+    expect(store.saveCatalog).not.toHaveBeenCalled();
   });
 });

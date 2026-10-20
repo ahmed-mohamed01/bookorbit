@@ -1381,6 +1381,7 @@ describe('MonitoredStoreService release detection', () => {
     paused: false,
     addedAt: '2026-03-15T10:00:00.000Z',
     lastRefreshedAt: null,
+    fetch: { state: 'idle', errorKind: null, errorAt: null, retryAt: null },
   };
 
   const dueRelease: MonitoredDueRelease = {
@@ -1919,5 +1920,206 @@ describe('MonitoredStoreService.countWorkClasses', () => {
     const query = new PgDialect().sqlToQuery(builder.where.mock.calls[0]?.[0] as SQL);
     expect(query.sql).toContain('"monitored_authors"."owner_user_id" = $1');
     expect(query.params[0]).toBe(42);
+  });
+});
+
+describe('MonitoredStoreService fetch transitions', () => {
+  function fetchDb(rows: unknown[]) {
+    const builder = {} as Record<string, ReturnType<typeof vi.fn>>;
+    for (const method of ['set', 'where', 'values', 'onConflictDoUpdate', 'orderBy', 'from']) builder[method] = vi.fn(() => builder);
+    builder.returning = vi.fn().mockResolvedValue(rows);
+    builder.limit = vi.fn().mockResolvedValue(rows);
+    builder.then = vi.fn((resolve: (value: unknown[]) => unknown) => Promise.resolve(rows).then(resolve));
+    const db = { update: vi.fn(() => builder), insert: vi.fn(() => builder), select: vi.fn(() => builder), transaction: vi.fn() };
+    db.transaction.mockImplementation((run) => run(db));
+    return { db, builder, store: new MonitoredStoreService(db as never, {} as never) };
+  }
+
+  it.each([
+    [[{ id: 'm' }], true],
+    [[], false],
+  ] as const)('conditionally queues and claims with affected rows %j', async (rows, expected) => {
+    const { store, builder } = fetchDb([...rows]);
+    await expect(store.markFetchQueued('m')).resolves.toBe(expected);
+    const queued = new PgDialect().sqlToQuery(builder.where.mock.calls[0][0]);
+    expect(queued.sql).toContain('"monitored_authors"."fetch_state" in');
+    expect(queued.params).toEqual(['m', 'idle', 'failed']);
+    expect(builder.set.mock.calls[0][0]).toEqual({ fetchState: 'queued', fetchErrorKind: null, fetchErrorAt: null, fetchRetryAt: null });
+    await expect(store.claimFetch('m')).resolves.toBe(expected);
+    expect(new PgDialect().sqlToQuery(builder.where.mock.calls[1][0]).params).toEqual(['m', 'queued']);
+  });
+
+  it.each([[{ id: 'm' }], []])('releases only a fetching row without changing other fields: %j', async (...rows) => {
+    const { store, builder } = fetchDb(rows);
+    await expect(store.releaseFetch('m')).resolves.toBe(rows.length > 0);
+    expect(builder.set.mock.calls[0][0]).toEqual({ fetchState: 'idle' });
+    expect(new PgDialect().sqlToQuery(builder.where.mock.calls[0][0]).params).toEqual(['m', 'fetching']);
+  });
+
+  it('fails only a fetching row without changing the success stamp and saturates attempts', async () => {
+    const { store, builder } = fetchDb([]);
+    await expect(store.finishFetchFailed('m', { kind: 'timeout', at: '2026-10-20T00:00:00Z', retryAt: null, attempts: 9 })).resolves.toBe(false);
+    expect(builder.set.mock.calls[0][0]).toMatchObject({ fetchState: 'failed', fetchAttempts: 3 });
+    expect(builder.set.mock.calls[0][0]).not.toHaveProperty('lastRefreshedAt');
+    expect(new PgDialect().sqlToQuery(builder.where.mock.calls[0][0]).params).toEqual(['m', 'fetching']);
+  });
+
+  it('finishes successfully in one transaction and clears failure fields', async () => {
+    const { store, db, builder } = fetchDb([{ id: 'm' }]);
+    const lastRefreshedAt = '2026-10-20T00:00:00Z';
+    await expect(store.finishFetchSucceeded('m', { lastRefreshedAt, hardcoverAuthorId: '42', localAuthorId: 7 })).resolves.toBe(true);
+    expect(db.transaction).toHaveBeenCalledOnce();
+    expect(builder.set.mock.calls[0][0]).toMatchObject({
+      fetchState: 'idle',
+      fetchErrorKind: null,
+      fetchErrorAt: null,
+      fetchRetryAt: null,
+      fetchAttempts: 0,
+      lastRefreshedAt: new Date(lastRefreshedAt),
+      localAuthorId: 7,
+    });
+    expect(builder.values).toHaveBeenCalledWith({ monitorAuthorId: 'm', source: 'hardcover', providerId: '42' });
+  });
+
+  it('keeps the stored local author link when success resolves none', async () => {
+    const { store, builder } = fetchDb([{ id: 'm' }]);
+    await store.finishFetchSucceeded('m', { lastRefreshedAt: '2026-10-20T00:00:00Z', hardcoverAuthorId: null, localAuthorId: null });
+    expect(builder.set.mock.calls[0][0]).not.toHaveProperty('localAuthorId');
+  });
+
+  it('does not write an identity when success loses the conditional update', async () => {
+    const { store, db } = fetchDb([]);
+    await expect(
+      store.finishFetchSucceeded('m', { lastRefreshedAt: '2026-10-20T00:00:00Z', hardcoverAuthorId: '42', localAuthorId: null }),
+    ).resolves.toBe(false);
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('resets interrupted rows and pages queued rows by added time and id', async () => {
+    const { store, builder } = fetchDb([{ id: 'm', addedAt: new Date('2026-10-20T00:00:00Z') }]);
+    await expect(store.resetInterruptedFetches()).resolves.toBe(1);
+    await expect(store.findQueuedFetches({ addedAt: '2026-10-19T00:00:00Z', id: 'a' }, 100)).resolves.toEqual([
+      { id: 'm', addedAt: '2026-10-20T00:00:00.000Z' },
+    ]);
+    const query = new PgDialect().sqlToQuery(builder.where.mock.calls[1][0]);
+    expect(query.sql).toContain('("monitored_authors"."added_at", "monitored_authors"."id") >');
+    expect(builder.limit).toHaveBeenCalledWith(100);
+  });
+
+  it('selects only failed rows with pending retry timestamps', async () => {
+    const { store, builder } = fetchDb([{ id: 'm', retryAt: new Date('2026-10-20T00:00:00Z') }]);
+    await expect(store.findPendingRetries()).resolves.toEqual([{ id: 'm', retryAt: '2026-10-20T00:00:00.000Z' }]);
+    expect(rendered(builder.where.mock.calls[0][0])).toContain('"monitored_authors"."fetch_retry_at" is not null');
+  });
+});
+
+describe('MonitoredStoreService fetch composition', () => {
+  const input = {
+    ownerUserId: 1,
+    authorName: 'Author',
+    localAuthorId: null,
+    providerIds: {},
+    formats: {
+      ebook: { mode: 'notify' as const, libraryId: null, folderId: null },
+      audiobook: { mode: 'off' as const, libraryId: null, folderId: null },
+    },
+    paused: false,
+    addedAt: '2026-10-20T00:00:00Z',
+    lastRefreshedAt: null,
+  };
+
+  it('returns the inserted fetch state from upsertAuthor', async () => {
+    const tx = { insert: vi.fn(), delete: vi.fn() };
+    tx.insert.mockReturnValue({ values: vi.fn(() => ({ onConflictDoUpdate: vi.fn() })) });
+    tx.delete.mockReturnValue({ where: vi.fn() });
+    const db = { transaction: vi.fn((run) => run(tx)) };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    await expect(store.upsertAuthor({ ...input, fetchState: 'queued' })).resolves.toMatchObject({
+      fetch: { state: 'queued', errorKind: null, errorAt: null, retryAt: null },
+    });
+    await expect(store.upsertAuthor(input)).resolves.toMatchObject({ fetch: { state: 'idle' } });
+  });
+
+  it('composes fetch status and keeps attempts internal to getMonitorForFetch', async () => {
+    const at = new Date('2026-10-20T00:00:00Z');
+    const row = {
+      ...input,
+      id: 'm',
+      addedAt: at,
+      ebookMode: 'notify',
+      audiobookMode: 'off',
+      fetchState: 'failed',
+      fetchErrorKind: 'timeout',
+      fetchErrorAt: at,
+      fetchRetryAt: at,
+      fetchAttempts: 2,
+    };
+    const queue = [[row], [], [row], []];
+    const db = {
+      select: vi.fn(() => {
+        const rows = queue.shift()!;
+        const builder = {
+          from: vi.fn(),
+          where: vi.fn(),
+          limit: vi.fn().mockResolvedValue(rows),
+          then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve(rows).then(resolve),
+        };
+        builder.from.mockReturnValue(builder);
+        builder.where.mockReturnValue(builder);
+        return builder;
+      }),
+    };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    await expect(store.getAuthor('m')).resolves.toMatchObject({
+      fetch: { state: 'failed', errorKind: 'timeout', errorAt: at.toISOString(), retryAt: at.toISOString() },
+    });
+    await expect(store.getMonitorForFetch('m')).resolves.toMatchObject({ fetchAttempts: 2, ownerUserId: 1 });
+  });
+});
+
+describe('MonitoredStoreService automatic fetch eligibility SQL', () => {
+  it('uses the same retry and interval predicate for selection and count', async () => {
+    const conditions: SQL[] = [];
+    const builder = {
+      from: vi.fn(),
+      where: vi.fn((condition: SQL) => {
+        conditions.push(condition);
+        return builder;
+      }),
+      orderBy: vi.fn(),
+      limit: vi.fn().mockResolvedValue([]),
+      then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve([{ total: 0 }]).then(resolve),
+    };
+    builder.from.mockReturnValue(builder);
+    builder.orderBy.mockReturnValue(builder);
+    const store = new MonitoredStoreService({ select: vi.fn(() => builder) } as never, {} as never);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-20T12:00:00Z'));
+      const stale = new Date('2026-10-20T11:00:00Z');
+      await store.findMonitorsDueForSync(stale, 100);
+      await store.countMonitorsDueForSync(stale);
+      const queries = conditions.map((condition) => new PgDialect().sqlToQuery(condition));
+      expect(queries[0]).toEqual(queries[1]);
+      const { sql, params } = queries[0];
+      expect(sql).toContain('"monitored_authors"."paused"');
+      expect(sql).toContain('"monitored_authors"."ebook_mode"');
+      expect(sql).toContain('"monitored_authors"."audiobook_mode"');
+      expect(sql).toContain('"monitored_authors"."fetch_state"');
+      expect(sql).toContain('"monitored_authors"."fetch_error_kind" is null');
+      expect(sql).toContain('"monitored_authors"."fetch_error_kind" not in');
+      expect(sql).toContain('"monitored_authors"."fetch_retry_at" <=');
+      expect(sql).toContain('"monitored_authors"."fetch_retry_at" is null');
+      expect(sql).toContain('greatest(');
+      expect(params).toContain('idle');
+      expect(params).toContain('failed');
+      expect(params).not.toContain('queued');
+      expect(params).not.toContain('fetching');
+      for (const kind of ['auth_failed', 'author_gone', 'not_configured']) expect(params).toContain(kind);
+      expect(params).toContain('2026-10-20T12:00:00.000Z');
+      expect(params).toContainEqual(stale);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

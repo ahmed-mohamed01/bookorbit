@@ -3,7 +3,8 @@ import type { ProviderConfigurations } from '@bookorbit/types';
 
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import { HardcoverClient } from '../../metadata-fetch/providers/hardcover/hardcover.client';
-import { HardcoverAuthorGoneError } from '../../metadata-fetch/providers/hardcover/hardcover.errors';
+import { PROVIDER_TIMEOUT_MS } from '../../metadata-fetch/providers/provider-constants';
+import { HardcoverAuthorGoneError, HardcoverRequestError } from '../../metadata-fetch/providers/hardcover/hardcover.errors';
 import type { HardcoverAuthorContribution, HardcoverContributionBook } from '../../metadata-fetch/providers/hardcover/hardcover.types';
 import { normalizeText } from '../reconcile/observation-matcher';
 import { toObservationRating } from '../reconcile/observation-rating';
@@ -17,7 +18,7 @@ const PAGE_SIZE = 100;
  * list, the catalog guards read that as an author with no books, and a transient Hardcover error
  * quietly empties a good catalog.
  */
-const SURFACE_FAILURES = { surfaceFailures: true } as const;
+const SURFACE_FAILURES = { surfaceFailures: true, timeoutMs: PROVIDER_TIMEOUT_MS.BACKGROUND } as const;
 const MAX_CONTRIBUTIONS = 1500;
 
 export function isHardcoverConfigured(config: ProviderConfigurations): boolean {
@@ -169,7 +170,8 @@ export class HardcoverBibliographyProvider implements AuthorBibliographyProvider
       for (let offset = 0; offset < MAX_CONTRIBUTIONS; offset += PAGE_SIZE) {
         const author = await this.hardcover.fetchAuthorContributions(authorId, offset, config.hardcover.apiKey, signal, SURFACE_FAILURES);
         if (!author) throw new HardcoverAuthorGoneError(authorId);
-        const page = author.contributions ?? [];
+        if (!Array.isArray(author.contributions)) throw new HardcoverRequestError('author-contributions', 200);
+        const page = author.contributions;
         rows.push(...page.slice(0, MAX_CONTRIBUTIONS - rows.length));
         if (page.length < PAGE_SIZE) break;
       }

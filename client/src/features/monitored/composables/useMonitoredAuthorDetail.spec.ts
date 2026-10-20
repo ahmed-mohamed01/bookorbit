@@ -31,7 +31,7 @@ vi.mock('vue-router', () => ({
 
 vi.mock('../api/monitored', () => ({
   fetchMonitoredAuthorDetail: vi.fn<() => Promise<MonitoredAuthorDetail>>(),
-  refreshMonitoredAuthor: vi.fn<() => Promise<MonitoredAuthorDetail>>(),
+  refreshMonitoredAuthor: vi.fn<() => Promise<MonitoredAuthorDetail['author']>>(),
   requestMonitoredWork: vi.fn<() => Promise<never>>(),
   updateMonitoredAuthor: vi.fn<() => Promise<never>>(),
   updateMonitoredWork: vi.fn<() => Promise<MonitoredWork>>(),
@@ -81,6 +81,7 @@ function detail(): MonitoredAuthorDetail {
       paused: false,
       addedAt: '2026-01-01',
       lastRefreshedAt: null,
+      fetch: { state: 'idle', errorKind: null, errorAt: null, retryAt: null },
       isOwner: true,
       counts: { total: 1, ebookOwned: 0, audioOwned: 0, hidden: 0 },
       nextReleaseAt: null,
@@ -138,10 +139,10 @@ describe('useMonitoredAuthorDetail', () => {
     wrapper.unmount()
   })
 
-  it('shows the same works after a refresh as a reload would', async () => {
+  it('keeps the catalog while a background refresh is queued', async () => {
     const filtered = detail()
     fetchDetailMock.mockResolvedValue(filtered)
-    refreshMock.mockResolvedValue({ ...filtered, works: [work({ id: 'unfiltered-extra' })] })
+    refreshMock.mockResolvedValue({ ...filtered.author, fetch: { ...filtered.author.fetch, state: 'queued' } })
     const { composable, wrapper } = mountComposable()
     await composable.load()
     const before = composable.detail.value?.works.map((entry) => entry.id)
@@ -150,7 +151,8 @@ describe('useMonitoredAuthorDetail', () => {
     await composable.refreshAuthor()
 
     expect(refreshMock).toHaveBeenCalledWith('author-1')
-    expect(fetchDetailMock).toHaveBeenCalledTimes(1)
+    expect(fetchDetailMock).not.toHaveBeenCalled()
+    expect(composable.fetchStatus.value.state).toBe('queued')
     expect(composable.detail.value?.works.map((entry) => entry.id)).toEqual(before)
     wrapper.unmount()
   })

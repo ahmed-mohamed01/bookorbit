@@ -85,25 +85,23 @@ it('shares in-flight and completed follow state across author rows', async () =>
   await actions.followAuthor(b)
   expect(mocks.follow).toHaveBeenCalledOnce()
   finish({
-    author: {
-      id: 'a',
-      ownerUserId: 1,
-      authorName: 'Author',
-      localAuthorId: null,
-      providerIds: {},
-      formats: { ebook: { mode: 'notify', libraryId: null, folderId: null }, audiobook: { mode: 'off', libraryId: null, folderId: null } },
-      paused: false,
-      addedAt: '2026-01-01',
-      lastRefreshedAt: null,
-      isOwner: true,
-      counts: { total: 0, ebookOwned: 0, audioOwned: 0, hidden: 0 },
-      nextReleaseAt: null,
-      portraitAuthorId: null,
-      description: null,
-      website: null,
-      genres: [],
-    },
-    works: [],
+    id: 'a',
+    ownerUserId: 1,
+    authorName: 'Author',
+    localAuthorId: null,
+    providerIds: {},
+    formats: { ebook: { mode: 'notify', libraryId: null, folderId: null }, audiobook: { mode: 'off', libraryId: null, folderId: null } },
+    paused: false,
+    addedAt: '2026-01-01',
+    lastRefreshedAt: null,
+    fetch: { state: 'idle', errorKind: null, errorAt: null, retryAt: null },
+    isOwner: true,
+    counts: { total: 0, ebookOwned: 0, audioOwned: 0, hidden: 0 },
+    nextReleaseAt: null,
+    portraitAuthorId: null,
+    description: null,
+    website: null,
+    genres: [],
   })
   await pending
   expect(actions.isFollowed(b)).toBe(true)

@@ -464,3 +464,23 @@ describe('bootstrap SQL carries the columns the table declares', () => {
     }
   });
 });
+
+describe('monitored fetch state', () => {
+  it('adds fetch state columns idempotently', () => {
+    for (const definition of [
+      "fetch_state\" varchar(12) NOT NULL DEFAULT 'idle'",
+      'fetch_error_kind" varchar(20)',
+      'fetch_error_at" timestamp with time zone',
+      'fetch_retry_at" timestamp with time zone',
+      'fetch_attempts" smallint NOT NULL DEFAULT 0',
+    ])
+      expect(MONITORED_SCHEMA_SQL).toContain('ADD COLUMN IF NOT EXISTS "' + definition);
+    for (const name of ['monitored_authors_fetch_state_chk', 'monitored_authors_fetch_error_kind_chk']) {
+      expect(MONITORED_SCHEMA_SQL).toContain("IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '" + name + "')");
+      expect(getTableConfig(monitoredAuthors).checks.some((check) => check.name === name)).toBe(true);
+    }
+    expect(MONITORED_SCHEMA_SQL).toContain(
+      'CREATE INDEX IF NOT EXISTS "monitored_authors_fetch_pending_idx" ON "monitored_authors" ("fetch_state","added_at","id") WHERE "fetch_state" <> \'idle\'',
+    );
+  });
+});

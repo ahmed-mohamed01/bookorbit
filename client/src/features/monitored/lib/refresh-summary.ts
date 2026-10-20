@@ -2,6 +2,7 @@ import { MonitoredApiError } from './api-error'
 import type { MonitoredPage } from '@bookorbit/types'
 
 export interface MonitoredRefreshSummary {
+  queued: number
   refreshed: number
   skipped: number
   failed: number
@@ -23,11 +24,11 @@ export async function refreshAuthorsSequentially(
   offset = 0,
   total = ids.length,
 ): Promise<MonitoredRefreshSummary> {
-  const summary: MonitoredRefreshSummary = { refreshed: 0, skipped: 0, failed: 0 }
+  const summary: MonitoredRefreshSummary = { queued: 0, refreshed: 0, skipped: 0, failed: 0 }
   for (const [index, id] of ids.entries()) {
     try {
       await refresh(id)
-      summary.refreshed += 1
+      summary.queued += 1
     } catch (cause) {
       if (cause instanceof MonitoredApiError && cause.status === HTTP_TOO_MANY_REQUESTS) summary.skipped += 1
       else summary.failed += 1
@@ -46,7 +47,7 @@ export async function refreshAllAuthorsSequentially(
   refresh: (id: string) => Promise<unknown>,
   onProgress?: MonitoredRefreshProgress,
 ): Promise<MonitoredRefreshSummary> {
-  const summary: MonitoredRefreshSummary = { refreshed: 0, skipped: 0, failed: 0 }
+  const summary: MonitoredRefreshSummary = { queued: 0, refreshed: 0, skipped: 0, failed: 0 }
   let page = 0
   let processed = 0
 
@@ -54,6 +55,7 @@ export async function refreshAllAuthorsSequentially(
     const result = await fetchPage(page)
     if (result.items.length === 0) return summary
     const current = await refreshAuthorsSequentially(result.items, refresh, onProgress, processed, result.total)
+    summary.queued += current.queued
     summary.refreshed += current.refreshed
     summary.skipped += current.skipped
     summary.failed += current.failed

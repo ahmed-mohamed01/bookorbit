@@ -1,5 +1,9 @@
 import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
+import type { StringValue } from 'ms';
 
+import { AuthModule } from '../auth/auth.module';
 import { AuthorsModule } from '../authors/authors.module';
 import { AppSettingsModule } from '../app-settings/app-settings.module';
 import { BookRequestModule } from '../book-request/book-request.module';
@@ -10,6 +14,10 @@ import { MetadataFetchModule } from '../metadata-fetch/metadata-fetch.module';
 import { MetadataPreferencesModule } from '../metadata-preferences/metadata-preferences.module';
 import { NotificationModule } from '../notification/notification.module';
 import { UserModule } from '../user/user.module';
+import { MonitoredFetchCoordinator } from './fetch/monitored-fetch-coordinator.service';
+import { MonitoredFetchJobService } from './fetch/monitored-fetch-job.service';
+import { MONITORED_FETCH_REQUESTS } from './fetch/monitored-fetch-requests';
+import { MonitoredGateway } from './monitored.gateway';
 import { MonitoredCatalogService } from './monitored-catalog.service';
 import { MonitoredAuthorStoreService } from './monitored-author-store.service';
 import { MonitoredAutoRequestService } from './monitored-autorequest.service';
@@ -37,6 +45,14 @@ import { AmazonProductPageClient } from './release-probe/amazon-product-page.cli
 
 @Module({
   imports: [
+    AuthModule,
+    JwtModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.getOrThrow<string>('auth.jwtSecret'),
+        signOptions: { expiresIn: config.getOrThrow<StringValue | number>('auth.jwtExpiresIn') },
+      }),
+    }),
     AppSettingsModule,
     AuthorsModule,
     BookRequestModule,
@@ -50,6 +66,10 @@ import { AmazonProductPageClient } from './release-probe/amazon-product-page.cli
   ],
   controllers: [MonitoredController],
   providers: [
+    MonitoredGateway,
+    MonitoredFetchJobService,
+    MonitoredFetchCoordinator,
+    { provide: MONITORED_FETCH_REQUESTS, useExisting: MonitoredFetchCoordinator },
     MonitoredStoreService,
     MonitoredAuthorStoreService,
     MonitoredSchemaBootstrapService,

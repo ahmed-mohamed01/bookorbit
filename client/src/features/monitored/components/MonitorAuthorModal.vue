@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { BookOpen, Headphones, Loader2, X } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui'
-import type { MonitorAuthorRequest, MonitoredAuthorDetail, MonitoredAuthorSearchResult, MonitoredFormat, MonitorMode } from '@bookorbit/types'
+import type { MonitorAuthorRequest, MonitoredAuthorItem, MonitoredAuthorSearchResult, MonitoredFormat, MonitorMode } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import { useLibraries } from '@/features/library/composables/useLibraries'
 import { useRequestDestinationDefault } from '@/features/book-requests/composables/useRequestDestinationDefault'
@@ -20,7 +20,7 @@ const props = defineProps<{
   result: MonitoredAuthorSearchResult | null
   initialFormats: MonitoredFormat[]
 }>()
-const emit = defineEmits<{ close: []; created: [detail: MonitoredAuthorDetail] }>()
+const emit = defineEmits<{ close: []; created: [item: MonitoredAuthorItem] }>()
 const { t } = useI18n()
 const { libraries, fetchLibraries } = useLibraries()
 const { load: loadRequestDestinations, defaultFor } = useRequestDestinationDefault()

@@ -93,7 +93,7 @@ export async function fetchMonitoredLocalAuthors(authorIds: number[]): Promise<M
   return readJson(await api(`${BASE_PATH}/authors/by-local?${pageQuery({ authorIds: authorIds.join(',') })}`))
 }
 
-export async function monitorAuthor(payload: MonitorAuthorRequest): Promise<MonitoredAuthorDetail> {
+export async function monitorAuthor(payload: MonitorAuthorRequest): Promise<MonitoredAuthorItem> {
   return readJson(
     await api(`${BASE_PATH}/authors`, {
       method: 'POST',
@@ -127,7 +127,7 @@ export async function deleteMonitoredAuthor(id: string): Promise<void> {
   await assertOk(await api(`${BASE_PATH}/authors/${encodeURIComponent(id)}`, { method: 'DELETE' }))
 }
 
-export async function refreshMonitoredAuthor(id: string): Promise<MonitoredAuthorDetail> {
+export async function refreshMonitoredAuthor(id: string): Promise<MonitoredAuthorItem> {
   return readJson(await api(`${BASE_PATH}/authors/${encodeURIComponent(id)}/refresh`, { method: 'POST' }))
 }
 

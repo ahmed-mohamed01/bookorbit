@@ -33,6 +33,7 @@ import { useBookRequestProgress } from '@/features/book-requests/composables/use
 import { deleteMonitoredAuthor } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
 import { monitoredPortraitUrl } from '../lib/portrait-url'
+import MonitoredFetchFailedBanner from '../components/MonitoredFetchFailedBanner.vue'
 import MonitoredWorkCard from '../components/MonitoredWorkCard.vue'
 import MonitoredBookPanel from '../components/MonitoredBookPanel.vue'
 import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
@@ -54,6 +55,7 @@ const router = useRouter()
 const { hasPermission } = usePermissions()
 const {
   detail,
+  fetchStatus,
   loading,
   error,
   updating,
@@ -121,6 +123,10 @@ const catalogTotal = computed(() => {
 })
 const author = computed(() => detail.value?.author ?? null)
 const portraitUrl = computed(() => (author.value?.portraitAuthorId == null ? null : monitoredPortraitUrl(author.value.id)))
+const hasCatalog = computed(() => author.value?.lastRefreshedAt != null)
+const ebookCount = computed(() => (hasCatalog.value ? `${author.value?.counts.ebookOwned}/${author.value?.counts.total}` : '-'))
+const audioCount = computed(() => (hasCatalog.value ? `${author.value?.counts.audioOwned}/${author.value?.counts.total}` : '-'))
+const fetchBusy = computed(() => fetchStatus.value.state === 'queued' || fetchStatus.value.state === 'fetching')
 const nextRelease = computed(() => {
   if (!author.value?.nextReleaseAt) return t('monitored.common.tba')
   return d(new Date(author.value.nextReleaseAt), { year: 'numeric', month: 'short', day: 'numeric' })
@@ -178,12 +184,11 @@ async function handleToggleMonitoring() {
 
 async function handleRefresh() {
   if (!author.value) return
-  const { authorName } = author.value
   try {
     await runRefresh(async () => {
       await refreshAuthor()
     })
-    toast.success(t('monitored.toast.authorRefreshed', { name: authorName }))
+    toast.success(t('monitored.fetch.queued'))
   } catch (cause) {
     toast.error(monitoredErrorText(cause, t('monitored.toast.refreshFailed')))
   }
@@ -359,11 +364,25 @@ async function handleSetKind(work: MonitoredWork, kind: MonitoredMarkKind) {
   }
 }
 
-/** The panel's Check reuses the page refresh: the author scan is what re-reads the files on disk. */
-async function handleCheckLibrary() {
-  await handleRefresh()
+const checkingLibrary = ref(false)
+watch(detail, (loaded) => {
+  if (!loaded || !checkingLibrary.value || fetchBusy.value) return
   const workId = panelWork.value?.id
-  if (workId) panelWork.value = detail.value?.works.find((candidate) => candidate.id === workId) ?? panelWork.value
+  if (workId) panelWork.value = loaded.works.find((candidate) => candidate.id === workId) ?? panelWork.value
+  checkingLibrary.value = false
+})
+watch(fetchStatus, (status) => {
+  if (checkingLibrary.value && status.state === 'failed') void load()
+})
+async function handleCheckLibrary() {
+  if (checkingLibrary.value || fetchBusy.value) return
+  checkingLibrary.value = true
+  try {
+    await refreshAuthor()
+  } catch (cause) {
+    checkingLibrary.value = false
+    toast.error(monitoredErrorText(cause, t('monitored.toast.refreshFailed')))
+  }
 }
 
 async function queue(work: MonitoredWork, format: MonitoredFormat, autoDownload?: boolean) {
@@ -526,10 +545,11 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                           <Check v-else-if="refreshState === 'done'" class="text-[var(--pill-success)]" />
                           <MoreHorizontal v-else />
                           {{ t('monitored.actions.actions') }}
+                          <span v-if="fetchBusy && hasCatalog" class="text-xs text-muted-foreground">{{ t('monitored.fetch.refreshing') }}</span>
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem :disabled="refreshState === 'loading'" @click="handleRefresh"
+                        <DropdownMenuItem :disabled="fetchBusy || refreshState === 'loading'" @click="handleRefresh"
                           ><RefreshCw :class="refreshState === 'loading' ? 'animate-spin' : ''" />{{
                             t('monitored.actions.refresh')
                           }}</DropdownMenuItem
@@ -545,20 +565,18 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
 
                 <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm sm:hidden">
                   <span class="flex items-center gap-1 font-semibold text-foreground">
-                    <BookCopy :size="14" role="img" :aria-label="t('monitored.detail.stats.books')" />{{ author.counts.total }}
+                    <BookCopy :size="14" role="img" :aria-label="t('monitored.detail.stats.books')" />{{ hasCatalog ? author.counts.total : '-' }}
                   </span>
                   <span class="flex items-center gap-1 font-semibold text-[var(--pill-media-ebook)]">
-                    <BookOpen :size="14" role="img" :aria-label="t('monitored.formats.ebooks')" />{{ author.counts.ebookOwned }}/{{
-                      author.counts.total
-                    }}
+                    <BookOpen :size="14" role="img" :aria-label="t('monitored.formats.ebooks')" />{{ ebookCount }}
                   </span>
                   <span class="flex items-center gap-1 font-semibold text-[var(--pill-media-audiobook)]">
-                    <Headphones :size="14" role="img" :aria-label="t('monitored.formats.audiobooks')" />{{ author.counts.audioOwned }}/{{
-                      author.counts.total
-                    }}
+                    <Headphones :size="14" role="img" :aria-label="t('monitored.formats.audiobooks')" />{{
+                      hasCatalog ? author.counts.audioOwned : '-'
+                    }}/{{ hasCatalog ? author.counts.total : '-' }}
                   </span>
                   <span class="flex items-center gap-1 font-semibold text-[var(--pill-warning)]">
-                    <CalendarDays :size="14" role="img" :aria-label="t('monitored.detail.stats.nextRelease')" />{{ nextRelease }}
+                    <CalendarDays :size="14" role="img" :aria-label="t('monitored.detail.stats.nextRelease')" />{{ hasCatalog ? nextRelease : '-' }}
                   </span>
                 </div>
 
@@ -605,24 +623,26 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
 
                 <div class="mt-5 hidden grid-cols-2 gap-2 sm:grid lg:grid-cols-4">
                   <div class="rounded-lg border border-border bg-background/40 px-3 py-2.5">
-                    <p class="flex items-center gap-1.5 text-base font-semibold text-foreground"><BookCopy :size="15" />{{ author.counts.total }}</p>
+                    <p class="flex items-center gap-1.5 text-base font-semibold text-foreground">
+                      <BookCopy :size="15" />{{ hasCatalog ? author.counts.total : '-' }}
+                    </p>
                     <p class="text-xs text-muted-foreground">{{ t('monitored.detail.stats.books') }}</p>
                   </div>
                   <div class="rounded-lg border border-border bg-background/40 px-3 py-2.5">
                     <p class="flex items-center gap-1.5 text-base font-semibold text-[var(--pill-media-ebook)]">
-                      <BookOpen :size="15" />{{ author.counts.ebookOwned }}/{{ author.counts.total }}
+                      <BookOpen :size="15" />{{ ebookCount }}
                     </p>
                     <p class="text-xs text-muted-foreground">{{ t('monitored.formats.ebooks') }}</p>
                   </div>
                   <div class="rounded-lg border border-border bg-background/40 px-3 py-2.5">
                     <p class="flex items-center gap-1.5 text-base font-semibold text-[var(--pill-media-audiobook)]">
-                      <Headphones :size="15" />{{ author.counts.audioOwned }}/{{ author.counts.total }}
+                      <Headphones :size="15" />{{ audioCount }}
                     </p>
                     <p class="text-xs text-muted-foreground">{{ t('monitored.formats.audiobooks') }}</p>
                   </div>
                   <div class="rounded-lg border border-border bg-background/40 px-3 py-2.5">
                     <p class="flex items-center gap-1.5 text-sm font-semibold text-[var(--pill-warning)]">
-                      <CalendarDays :size="15" />{{ nextRelease }}
+                      <CalendarDays :size="15" />{{ hasCatalog ? nextRelease : '-' }}
                     </p>
                     <p class="text-xs text-muted-foreground">{{ t('monitored.detail.stats.nextRelease') }}</p>
                   </div>
@@ -632,11 +652,28 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
           </div>
         </section>
 
+        <MonitoredFetchFailedBanner
+          v-if="fetchStatus.state === 'failed'"
+          class="mt-4"
+          :status="fetchStatus"
+          :has-catalog="hasCatalog"
+          :last-refreshed-at="author.lastRefreshedAt"
+          @retry="handleRefresh"
+        >
+          <template #retry>
+            <Button v-if="canEdit" variant="outline" size="sm" @click="handleRefresh">{{ t('monitored.fetch.retryNow') }}</Button>
+          </template>
+        </MonitoredFetchFailedBanner>
         <section class="mt-4 rounded-xl border border-border bg-card/75 p-3 sm:p-4">
           <div class="flex items-center justify-between gap-3">
             <h2 class="min-w-0 truncate text-sm font-semibold text-foreground">
-              <span class="hidden sm:inline">{{ t('monitored.detail.booksHeading', { shown: visibleWorks.length, total: catalogTotal }) }}</span>
-              <span class="sm:hidden">{{ t('monitored.detail.booksHeadingShort', { shown: visibleWorks.length, total: catalogTotal }) }}</span>
+              <span v-if="!hasCatalog">{{ t(fetchBusy ? 'monitored.fetch.fetching' : 'monitored.fetch.noBooksYet') }}</span>
+              <span v-else class="hidden sm:inline">{{
+                t('monitored.detail.booksHeading', { shown: visibleWorks.length, total: catalogTotal })
+              }}</span>
+              <span v-if="hasCatalog" class="sm:hidden">{{
+                t('monitored.detail.booksHeadingShort', { shown: visibleWorks.length, total: catalogTotal })
+              }}</span>
             </h2>
             <div class="flex shrink-0 items-center gap-2">
               <MonitoredSortMenu
@@ -717,6 +754,10 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
             <button type="button" class="ml-2 text-primary hover:underline" @click="resetDisplay">{{ t('monitored.filters.reset') }}</button>
           </div>
 
+          <div v-if="!hasCatalog" role="status" class="mt-5 flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
+            <Loader2 v-if="fetchBusy" :size="20" class="animate-spin" aria-hidden="true" />
+            {{ t(fetchBusy ? 'monitored.fetch.fetching' : 'monitored.fetch.noBooksYet') }}
+          </div>
           <div class="mt-5 space-y-6" :class="selectionMode ? 'pb-28' : ''">
             <section v-for="group in groups" :key="group.key">
               <div class="mb-3 flex items-center gap-2">
@@ -837,7 +878,7 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
       :can-resume-author="canEdit"
       :can-manage="canEdit"
       :checked-at="author?.lastRefreshedAt ?? null"
-      :checking="refreshState === 'loading'"
+      :checking="checkingLibrary || fetchBusy || refreshState === 'loading'"
       :open="panelOpen"
       @update:open="handlePanelOpen"
       @request="handlePanelRequest"

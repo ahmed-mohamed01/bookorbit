@@ -2,11 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import type { MonitoredAuthorConfig } from '@bookorbit/types';
 
-import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
-import { UserService } from '../user/user.service';
-import { MonitoredReleaseWatcher } from './monitored-release-watcher.service';
-import { MonitoredService } from './monitored.service';
+import { MonitoredFetchCoordinator } from './fetch/monitored-fetch-coordinator.service';
 import { MonitoredStoreService } from './monitored-store.service';
 import { MonitoredSettingsService } from './monitored-settings.service';
 
@@ -22,13 +19,10 @@ const SYNC_CRON = '0 30 * * * *';
 /**
  * Keeps monitored catalogs current so the release watcher has something to watch.
  *
- * Without this the catalog only changes when somebody opens the page and clicks Refresh, which
- * means a book announced after that click is invisible and a date the publisher moves is never
- * picked up. Modelled on the Audiobookshelf sync scheduler: page through owners, isolate every
- * failure to one monitor, and never let a slow provider wedge the next tick.
- *
- * The release check runs immediately after each refresh rather than waiting for the watcher's own
- * hourly tick, so a date that arrives with a sync is announced in the same pass.
+ * Without this the catalog only changes when somebody clicks Refresh, so a book announced after that
+ * click is invisible and a date the publisher moves is never picked up. Each tick only queues the due
+ * monitors on the fetch coordinator; the fetch, its retries and the release check that follows it run
+ * there, so a slow provider never wedges the next tick.
  */
 @Injectable()
 export class MonitoredSyncSchedulerService {
@@ -37,9 +31,7 @@ export class MonitoredSyncSchedulerService {
 
   constructor(
     private readonly store: MonitoredStoreService,
-    private readonly monitored: MonitoredService,
-    private readonly watcher: MonitoredReleaseWatcher,
-    private readonly users: UserService,
+    private readonly coordinator: MonitoredFetchCoordinator,
     private readonly settings: MonitoredSettingsService,
   ) {}
 
@@ -68,27 +60,14 @@ export class MonitoredSyncSchedulerService {
 
       for (const monitor of monitors) {
         const monitorStartedAt = Date.now();
-        let outcome: 'refreshed' | 'skipped' | null = null;
         try {
-          outcome = await this.syncMonitor(monitor);
+          await this.store.stampSyncAttempt(monitor.id, new Date());
+          if (await this.coordinator.request(monitor.id, 'sync')) refreshed++;
+          else skipped++;
         } catch (error) {
           failed++;
           this.logMonitorFailure('monitored.sync.monitor', monitor, monitorStartedAt, error);
         }
-
-        try {
-          await this.store.stampSyncAttempt(monitor.id, new Date());
-        } catch (stampError) {
-          this.logMonitorFailure('monitored.sync.stamp', monitor, monitorStartedAt, stampError);
-        }
-
-        if (outcome === null) continue;
-        if (outcome === 'skipped') {
-          skipped++;
-          continue;
-        }
-        refreshed++;
-        await this.checkReleases(monitor);
       }
 
       this.logger.log(
@@ -102,31 +81,6 @@ export class MonitoredSyncSchedulerService {
       );
     } finally {
       this.running = false;
-    }
-  }
-
-  private async syncMonitor(monitor: MonitoredAuthorConfig): Promise<'refreshed' | 'skipped'> {
-    const owner: RequestUser | null = await this.users.findByIdWithPermissions(monitor.ownerUserId);
-    if (!owner) return 'skipped';
-
-    const didRefresh = await this.monitored.refreshForSchedule(monitor, owner);
-    if (!didRefresh) return 'skipped';
-
-    return 'refreshed';
-  }
-
-  private async checkReleases(monitor: MonitoredAuthorConfig): Promise<void> {
-    // A refresh that threw leaves the catalog as it was, so the check only runs on a clean pass.
-    // Its own failures are already contained; they must not turn a good refresh into a failure.
-    const releaseCheckStartedAt = Date.now();
-    try {
-      await this.watcher.checkMonitor(monitor);
-    } catch (error) {
-      const errorClass = error instanceof Error ? error.constructor.name : 'UnknownError';
-      const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
-      this.logger.warn(
-        `[monitored.sync.release_check] [fail] monitorId="${sanitizeLogValue(monitor.id)}" userId=${monitor.ownerUserId} durationMs=${Date.now() - releaseCheckStartedAt} errorClass=${errorClass} error="${message}" - post-sync release check failed`,
-      );
     }
   }
 

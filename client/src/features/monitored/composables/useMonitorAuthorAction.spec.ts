@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { KeepAlive, defineComponent, h, nextTick, ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 import { toast } from 'vue-sonner'
-import type { MonitoredAuthorDetail, MonitoredAuthorSearchResult } from '@bookorbit/types'
+import type { MonitoredAuthorItem, MonitoredAuthorSearchResult } from '@bookorbit/types'
 import { deleteMonitoredAuthor, fetchMonitoredLocalAuthors, searchMonitoredAuthors } from '../api/monitored'
 import { MonitoredApiError } from '../lib/api-error'
 import { useMonitorAuthorAction } from './useMonitorAuthorAction'
@@ -52,8 +52,8 @@ function syntheticFallback(): MonitoredAuthorSearchResult {
   }
 }
 
-function detail(authorName: string, id = 'mon-new'): MonitoredAuthorDetail {
-  return { author: { id, authorName }, works: [] } as unknown as MonitoredAuthorDetail
+function detail(authorName: string, id = 'mon-new'): MonitoredAuthorItem {
+  return { id, authorName } as unknown as MonitoredAuthorItem
 }
 
 function mountComposable() {

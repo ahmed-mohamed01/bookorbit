@@ -301,3 +301,7 @@ describe('MonitoredController', () => {
     expect(reply.send).toHaveBeenCalledWith({ stream: true });
   });
 });
+
+it('returns HTTP 202 for author refresh', () => {
+  expect(Reflect.getMetadata('__httpCode__', MonitoredController.prototype.refreshAuthor)).toBe(202);
+});

@@ -2,13 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent } from 'vue'
 import { mount } from '@vue/test-utils'
 import { toast } from 'vue-sonner'
-import type { MonitoredAuthorDetail } from '@bookorbit/types'
+import type { MonitoredAuthorItem } from '@bookorbit/types'
 import { monitorAuthor } from '../api/monitored'
 import { MonitoredApiError } from '../lib/api-error'
 import { useMonitorGroupAction, type MonitorGroupTarget } from './useMonitorGroupAction'
 
 vi.mock('../api/monitored', () => ({
-  monitorAuthor: vi.fn<() => Promise<MonitoredAuthorDetail>>(),
+  monitorAuthor: vi.fn<() => Promise<MonitoredAuthorItem>>(),
 }))
 
 vi.mock('vue-sonner', () => ({
@@ -23,8 +23,8 @@ const monitorMock = vi.mocked(monitorAuthor)
 
 const group: MonitorGroupTarget = { key: 'group-1', authors: ['Blake Crouch'] }
 
-function detail(): MonitoredAuthorDetail {
-  return { author: { authorName: 'Blake Crouch' }, works: [] } as unknown as MonitoredAuthorDetail
+function detail(): MonitoredAuthorItem {
+  return { authorName: 'Blake Crouch' } as unknown as MonitoredAuthorItem
 }
 
 function mountComposable() {
@@ -79,7 +79,7 @@ describe('useMonitorGroupAction', () => {
 
   it('ignores a second click while the first request is still in flight', async () => {
     let settle = () => {}
-    monitorMock.mockImplementation(() => new Promise<MonitoredAuthorDetail>((resolve) => (settle = () => resolve(detail()))))
+    monitorMock.mockImplementation(() => new Promise<MonitoredAuthorItem>((resolve) => (settle = () => resolve(detail()))))
     const { composable, wrapper } = mountComposable()
 
     const first = composable.monitorGroupAuthor(group)

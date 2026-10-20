@@ -418,7 +418,17 @@ export interface MonitoredAuthorProviderIds {
   audible?: string;
 }
 
+export type MonitoredFetchState = "idle" | "queued" | "fetching" | "failed";
+export type MonitoredFetchErrorKind = "timeout" | "rate_limited" | "unavailable" | "auth_failed" | "author_gone" | "not_configured";
+export interface MonitoredFetchStatus {
+  state: MonitoredFetchState;
+  errorKind: MonitoredFetchErrorKind | null;
+  errorAt: string | null;
+  retryAt: string | null;
+}
+
 export interface MonitoredAuthorConfig {
+  fetch: MonitoredFetchStatus;
   id: string;
   ownerUserId: number;
   authorName: string;

@@ -30,6 +30,7 @@ const GRAPHQL_ENDPOINT = 'https://api.hardcover.app/v1/graphql';
  * apart before it decides to persist a catalog.
  */
 export interface HardcoverRequestOptions {
+  timeoutMs?: number;
   surfaceFailures?: boolean;
 }
 
@@ -301,6 +302,9 @@ export class HardcoverClient {
       signal,
       options,
     );
+    if (options?.surfaceFailures && !Array.isArray(body?.data?.authors)) {
+      throw new HardcoverRequestError('author-contributions', 200);
+    }
     return body?.data?.authors?.[0] ?? null;
   }
 
@@ -345,7 +349,7 @@ export class HardcoverClient {
           Authorization: toBearerAuthorization(apiKey),
         },
         body: JSON.stringify({ query, variables }),
-        signal: buildRequestSignal(PROVIDER_TIMEOUT_MS.DEFAULT, signal),
+        signal: buildRequestSignal(options?.timeoutMs ?? PROVIDER_TIMEOUT_MS.DEFAULT, signal),
       });
 
       if (!res.ok) {

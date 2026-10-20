@@ -5,12 +5,14 @@ import type {
   MonitorMode,
   MonitoredAuthorDetail,
   MonitoredFormat,
+  MonitoredFetchStatus,
   MonitoredGrouping,
   MonitoredSort,
   MonitoredStatusFilter,
   MonitoredWork,
   MonitoredWorkPatch,
 } from '@bookorbit/types'
+import { useMonitoredFetchEvents } from './useMonitoredFetchEvents'
 import { storage } from '@/services/storage'
 import {
   fetchMonitoredAuthorDetail,
@@ -129,8 +131,26 @@ export function useMonitoredAuthorDetail() {
     })
   }
 
+  let loadSequence = 0
+  const fetchStatus = computed<MonitoredFetchStatus>(
+    () => detail.value?.author.fetch ?? { state: 'idle', errorKind: null, errorAt: null, retryAt: null },
+  )
+  useMonitoredFetchEvents({
+    onItem(item) {
+      if (item.id !== authorId.value) return
+      loadSequence += 1
+      loading.value = false
+      if (detail.value) detail.value.author = item
+      if (!detail.value || item.fetch.state === 'idle') void load()
+    },
+    onReconnect() {
+      if (fetchStatus.value.state !== 'idle') void load()
+    },
+  })
+
   async function load(): Promise<void> {
     if (!authorId.value) return
+    const sequence = ++loadSequence
     loading.value = true
     error.value = null
     try {
@@ -141,19 +161,19 @@ export function useMonitoredAuthorDetail() {
         // opens. The withheld classes measured 13-59 kB of extra text on the largest catalogs here.
         includeHidden: true,
       })
-      detail.value = loaded
+      if (sequence === loadSequence) detail.value = loaded
     } catch (cause) {
-      error.value = monitoredErrorText(cause, t('monitored.errors.loadAuthor'))
+      if (sequence === loadSequence) error.value = monitoredErrorText(cause, t('monitored.errors.loadAuthor'))
     } finally {
-      loading.value = false
+      if (sequence === loadSequence) loading.value = false
     }
   }
 
-  /** The refresh response is not applied: a normal load keeps the page's filter, so it shows what a reload would. */
   async function refreshAuthor(): Promise<void> {
     if (!authorId.value) return
-    await refreshMonitoredAuthor(authorId.value)
-    await load()
+    const sequence = loadSequence
+    const item = await refreshMonitoredAuthor(authorId.value)
+    if (sequence === loadSequence && detail.value && item.id === authorId.value) detail.value.author = item
   }
 
   function setSort(value: MonitoredSort) {
@@ -339,6 +359,7 @@ export function useMonitoredAuthorDetail() {
 
   return {
     detail,
+    fetchStatus,
     loading,
     error,
     updating,

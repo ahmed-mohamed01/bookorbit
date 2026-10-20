@@ -1,7 +1,7 @@
 import { onActivated, onDeactivated, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
-import type { MonitoredAuthorDetail, MonitoredAuthorSearchResult, MonitoredFormat } from '@bookorbit/types'
+import type { MonitoredAuthorItem, MonitoredAuthorSearchResult, MonitoredFormat } from '@bookorbit/types'
 import { deleteMonitoredAuthor, fetchMonitoredLocalAuthors, searchMonitoredAuthors } from '../api/monitored'
 import { MonitoredApiError, monitoredErrorText } from '../lib/api-error'
 
@@ -107,11 +107,11 @@ export function useMonitorAuthorAction() {
     targetLocalId = null
   }
 
-  function handleCreated(detail: MonitoredAuthorDetail) {
+  function handleCreated(detail: MonitoredAuthorItem) {
     target.value = null
-    if (targetLocalId !== null) monitoredIds.value = { ...monitoredIds.value, [targetLocalId]: detail.author.id }
+    if (targetLocalId !== null) monitoredIds.value = { ...monitoredIds.value, [targetLocalId]: detail.id }
     targetLocalId = null
-    toast.success(t('monitored.toast.monitoring', { name: detail.author.authorName }))
+    toast.success(t('monitored.toast.monitoring', { name: detail.authorName }))
   }
 
   function beginStop(author: { id: number; name: string }) {

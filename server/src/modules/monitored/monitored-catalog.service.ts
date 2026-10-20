@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { and, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
@@ -33,6 +33,7 @@ import { resolveSlots, slotReasonKind } from './reconcile/slot-resolution';
 import { assignVerdict, computePopularityFloor, type VerdictResult } from './reconcile/verdict';
 import { foldDiacritics, normalizeMonitoredName } from './monitored-text.utils';
 import { emptyWorkMatchOverrides, resolveWorkMatchOverrides, type WorkMatchOverrides } from './monitored-match-overrides';
+import { CatalogFetchError, classifyCatalogFetchError } from './monitored-fetch-error';
 import { MonitoredStoreService, type MonitoredCatalog } from './monitored-store.service';
 import { MonitoredSettingsService } from './monitored-settings.service';
 
@@ -445,21 +446,6 @@ interface ProviderOutcome {
   failed: boolean;
 }
 
-// Only a FAILING Hardcover spine justifies keeping a stale catalog. Counting "zero observations" as
-// failure punished two innocent cases: Hardcover disabled by configuration (never attempted, so the
-// catalog is legitimately Hardcover-free) and a genuinely small author with no Hardcover entries -
-// both were 503'd on every refresh forever. Conversely a failing Hardcover that still returned one
-// partial row silenced the guard entirely, so the collapse threshold is on the work count instead.
-export function shouldKeepPreviousCatalog(previousCount: number, nextCount: number, hardcover: ProviderOutcome): boolean {
-  return previousCount > 0 && hardcover.attempted && hardcover.failed && nextCount < previousCount * 0.5;
-}
-
-// Create path: a first refresh whose spine errored has nothing to fall back on, so persisting the
-// empty result would bake the outage into a brand new catalog.
-export function shouldRejectEmptyCatalog(hardcover: ProviderOutcome, totalObservations: number): boolean {
-  return hardcover.attempted && hardcover.failed && totalObservations === 0;
-}
-
 // A fresh, cross-source release (2+ providers, upcoming or released within six months) is admitted even
 // without a Hardcover edition, so indie/LitRPG titles surface on release week instead of waiting for the
 // crowd-sourced Hardcover to index them (often months later). The verdict step still flags translations
@@ -617,6 +603,7 @@ interface CatalogFetchResult {
 }
 
 interface ProviderResult extends ProviderOutcome {
+  error?: unknown;
   source: AuthorBibliographyProvider['source'];
   authorRef: BibliographyAuthorRef | null;
   observations: Observation[];
@@ -637,22 +624,22 @@ export class MonitoredCatalogService {
     private readonly settings: MonitoredSettingsService,
   ) {}
 
-  async fetchCatalog(monitor: MonitoredAuthorConfig, config: ProviderConfigurations): Promise<CatalogFetchResult> {
+  async fetchCatalog(monitor: MonitoredAuthorConfig, config: ProviderConfigurations, signal?: AbortSignal): Promise<CatalogFetchResult> {
     const startedAt = Date.now();
     this.logger.log(
       `[monitored.catalog] [start] monitorId=${monitor.id} authorName="${sanitizeLogValue(monitor.authorName)}" - catalog fetch started`,
     );
     try {
       const providers = enabledBibliographyProviders([this.hardcover, this.goodreads, this.audible], config);
-      const results = await Promise.all(providers.map((provider) => this.fetchProvider(provider, monitor, config)));
-      const observations = results.flatMap((result) => result.observations);
-      // A provider missing from `results` was filtered out as disabled or unconfigured, which is not
-      // an outage: attempted=false keeps both guards off. Everything in `results` really ran, and its
-      // `failed` flag comes from the provider throwing rather than from an empty answer.
-      const hardcoverOutcome: ProviderOutcome = results.find((result) => result.source === 'hardcover') ?? { attempted: false, failed: false };
-      if (shouldRejectEmptyCatalog(hardcoverOutcome, observations.length)) {
-        throw new ServiceUnavailableException('Hardcover bibliography fetch failed and no source returned any book; not persisting an empty catalog');
+      const results = await Promise.all(providers.map((provider) => this.fetchProvider(provider, monitor, config, signal)));
+      if (signal?.aborted) throw signal.reason;
+      const hardcoverResult = results.find((result) => result.source === 'hardcover');
+      if (hardcoverResult?.failed) {
+        const failure = classifyCatalogFetchError(hardcoverResult.error, signal);
+        if (failure === 'aborted') throw hardcoverResult.error;
+        throw new CatalogFetchError(failure.kind, failure.retryAfterSeconds, hardcoverResult.error);
       }
+      const observations = results.flatMap((result) => result.observations);
       const today = new Date().toISOString().slice(0, 10);
       // Hardcover is the catalog spine: Audible/Goodreads enrich and corroborate Hardcover works but
       // never stand alone. A cluster with no Hardcover edition is a translation-only audiobook or a
@@ -681,12 +668,6 @@ export class MonitoredCatalogService {
         this.logger.warn(
           `[monitored.catalog.work_id] [fail] monitorId=${monitor.id} workId="${sanitizeLogValue(collision)}" errorClass=DuplicateWorkId error="two clusters resolved to one previous work" - duplicate work id renamed to keep the catalog writable`,
         );
-      }
-      // A rate-limited or failing Hardcover spine yields a near-empty merge; persisting that would
-      // destroy a known-good catalog over a transient outage. Keep
-      // the previous catalog and surface the failure instead.
-      if (previous && shouldKeepPreviousCatalog(previous.works.length, works.length, hardcoverOutcome)) {
-        throw new ServiceUnavailableException('The Hardcover bibliography fetch failed for this author; keeping the previous catalog');
       }
       const overrides = await this.loadOverridesByWork(works.map((work) => ({ monitorId: monitor.id, work })));
       await this.matchOwnedBooks(works, monitor.localAuthorId, overrides, { detectPossible: true });
@@ -845,21 +826,22 @@ export class MonitoredCatalogService {
     provider: AuthorBibliographyProvider,
     monitor: MonitoredAuthorConfig,
     config: ProviderConfigurations,
+    signal?: AbortSignal,
   ): Promise<ProviderResult> {
     const startedAt = Date.now();
     try {
       let authorRef: BibliographyAuthorRef | null;
       if (provider.source === 'hardcover') {
-        const authorId = await this.resolveHardcoverAuthorId(monitor, config);
+        const authorId = await this.resolveHardcoverAuthorId(monitor, config, signal);
         authorRef = authorId == null ? null : { id: String(authorId), name: monitor.authorName, bookCount: null, imageUrl: null };
       } else {
-        authorRef = await provider.resolveAuthor(monitor.authorName, config, monitor.providerIds[provider.source]);
+        authorRef = await provider.resolveAuthor(monitor.authorName, config, monitor.providerIds[provider.source], signal);
       }
       if (!authorRef) return { source: provider.source, authorRef: null, observations: [], attempted: true, failed: false };
       return {
         source: provider.source,
         authorRef,
-        observations: await provider.fetchObservations(authorRef, config),
+        observations: await provider.fetchObservations(authorRef, config, signal),
         attempted: true,
         failed: false,
       };
@@ -869,12 +851,16 @@ export class MonitoredCatalogService {
       this.logger.warn(
         `[monitored.catalog.provider] [fail] monitorId=${monitor.id} source=${provider.source} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${message}" - provider catalog fetch failed`,
       );
-      return { source: provider.source, authorRef: null, observations: [], attempted: true, failed: true };
+      return { source: provider.source, authorRef: null, observations: [], attempted: true, failed: true, error };
     }
   }
 
-  private async resolveHardcoverAuthorId(monitor: MonitoredAuthorConfig, config: ProviderConfigurations): Promise<number | null> {
-    const author = await this.hardcover.resolveAuthor(monitor.authorName, config, monitor.providerIds.hardcover);
+  private async resolveHardcoverAuthorId(
+    monitor: MonitoredAuthorConfig,
+    config: ProviderConfigurations,
+    signal?: AbortSignal,
+  ): Promise<number | null> {
+    const author = await this.hardcover.resolveAuthor(monitor.authorName, config, monitor.providerIds.hardcover, signal);
     const authorId = Number(author?.id);
     return Number.isSafeInteger(authorId) && authorId > 0 ? authorId : null;
   }

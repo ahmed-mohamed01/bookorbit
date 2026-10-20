@@ -113,6 +113,11 @@ CREATE TABLE IF NOT EXISTS "monitored_authors" (
 	"added_at" timestamp with time zone NOT NULL,
 	"last_refreshed_at" timestamp with time zone,
 	"last_sync_attempted_at" timestamp with time zone,
+	"fetch_state" varchar(12) NOT NULL DEFAULT 'idle',
+	"fetch_error_kind" varchar(20),
+	"fetch_error_at" timestamp with time zone,
+	"fetch_retry_at" timestamp with time zone,
+	"fetch_attempts" smallint NOT NULL DEFAULT 0,
 	"last_release_check_at" timestamp with time zone,
 	CONSTRAINT "monitored_authors_ebook_mode_chk" CHECK ("monitored_authors"."ebook_mode" in ('notify', 'auto-upcoming', 'auto-all', 'off')),
 	CONSTRAINT "monitored_authors_audiobook_mode_chk" CHECK ("monitored_authors"."audiobook_mode" in ('notify', 'auto-upcoming', 'auto-all', 'off'))
@@ -790,4 +795,28 @@ DO $$ BEGIN
 END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "monitored_match_overrides_book_id_idx" ON "monitored_match_overrides" USING btree ("book_id");
+--> statement-breakpoint
+ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "fetch_state" varchar(12) NOT NULL DEFAULT 'idle';
+--> statement-breakpoint
+ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "fetch_error_kind" varchar(20);
+--> statement-breakpoint
+ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "fetch_error_at" timestamp with time zone;
+--> statement-breakpoint
+ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "fetch_retry_at" timestamp with time zone;
+--> statement-breakpoint
+ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "fetch_attempts" smallint NOT NULL DEFAULT 0;
+--> statement-breakpoint
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'monitored_authors_fetch_state_chk') THEN
+  ALTER TABLE "monitored_authors" ADD CONSTRAINT "monitored_authors_fetch_state_chk" CHECK ("fetch_state" in ('idle', 'queued', 'fetching', 'failed'));
+ END IF;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'monitored_authors_fetch_error_kind_chk') THEN
+  ALTER TABLE "monitored_authors" ADD CONSTRAINT "monitored_authors_fetch_error_kind_chk" CHECK ("fetch_error_kind" in ('timeout', 'rate_limited', 'unavailable', 'auth_failed', 'author_gone', 'not_configured'));
+ END IF;
+END $$;
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "monitored_authors_fetch_pending_idx" ON "monitored_authors" ("fetch_state","added_at","id") WHERE "fetch_state" <> 'idle';
 `;

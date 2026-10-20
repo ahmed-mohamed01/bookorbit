@@ -13,6 +13,7 @@ import type {
   MonitoredSummary,
 } from '@bookorbit/types'
 import { fetchMonitoredAuthors, fetchMonitoredReleases, fetchMonitoredSummary } from '../api/monitored'
+import { useMonitoredFetchEvents } from './useMonitoredFetchEvents'
 import { appendUnique } from '../lib/append-unique'
 import { monitoredErrorText } from '../lib/api-error'
 import { appendBoundedPage, type RetainedPage } from '../lib/bounded-page-retention'
@@ -37,7 +38,7 @@ const PAGE_SIZE = 50
 export const MONITORED_MAX_RETAINED_ITEMS = 1500
 export const MONITORED_IDLE_TRIM_MS = 10 * 60 * 1000
 
-export function useMonitored() {
+export function useMonitored(onReconnect: () => void = () => {}) {
   const { t } = useI18n()
   const summary = ref<MonitoredSummary>({ ...EMPTY_SUMMARY })
   const authors = ref<MonitoredAuthorItem[]>([])
@@ -61,6 +62,21 @@ export function useMonitored() {
   let authorFirstPage: MonitoredAuthorItem[] = []
   let releaseFirstPage: MonitoredReleaseItem[] = []
   let idleTrimTimer: ReturnType<typeof setTimeout> | null = null
+
+  const latestEvents = new Map<string, { item: MonitoredAuthorItem; at: number }>()
+
+  useMonitoredFetchEvents({
+    onItem(item) {
+      latestEvents.delete(item.id)
+      latestEvents.set(item.id, { item, at: performance.now() })
+      if (latestEvents.size > 500) latestEvents.delete(latestEvents.keys().next().value!)
+      const replace = (items: MonitoredAuthorItem[]) => items.map((author) => (author.id === item.id ? item : author))
+      authors.value = replace(authors.value)
+      authorFirstPage = replace(authorFirstPage)
+      authorPages = authorPages.map((page) => ({ ...page, items: replace(page.items) }))
+    },
+    onReconnect,
+  })
 
   // A reset refetch keeps the current page rendered until the new one lands; blanking the list
   // first turns every search keystroke into an empty-state flash.
@@ -122,6 +138,7 @@ export function useMonitored() {
 
   async function loadAuthors(options: { q?: string; sort: MonitoredAuthorListSort; order: MonitoredListOrder }, reset = false): Promise<void> {
     if (!reset && (authorLoading.value || !authorHasMore.value)) return
+    const requestStartedAt = performance.now()
     const token = ++authorToken
     const requestPage = reset ? 0 : authorPage.value
     authorLoading.value = true
@@ -129,8 +146,12 @@ export function useMonitored() {
     try {
       const result = await fetchMonitoredAuthors({ ...options, page: requestPage, size: PAGE_SIZE })
       if (token !== authorToken) return
+      const responseItems = result.items.map((item) => {
+        const event = latestEvents.get(item.id)
+        return event && event.at > requestStartedAt ? event.item : item
+      })
       if (reset) {
-        const items = appendUnique([], result.items, (item) => item.id)
+        const items = appendUnique([], responseItems, (item) => item.id)
         authorFirstPage = [...items]
         authorPages = [{ page: result.page, items }]
         authors.value = items
@@ -138,7 +159,7 @@ export function useMonitored() {
       } else {
         const retained = appendBoundedPage(
           authorPages,
-          { page: result.page, items: result.items },
+          { page: result.page, items: responseItems },
           PAGE_SIZE,
           MONITORED_MAX_RETAINED_ITEMS,
           (item) => item.id,

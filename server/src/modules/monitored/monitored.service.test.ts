@@ -35,6 +35,7 @@ function author(patch: Partial<MonitoredAuthorConfig> = {}): MonitoredAuthorConf
     paused: false,
     addedAt: '2026-01-01T00:00:00.000Z',
     lastRefreshedAt: null,
+    fetch: { state: 'idle', errorKind: null, errorAt: null, retryAt: null },
     ...patch,
   };
 }
@@ -69,6 +70,7 @@ function work(patch: Partial<MonitoredWork> = {}): MonitoredWork {
 }
 
 type ServiceDeps = {
+  coordinator?: Record<string, unknown>;
   catalog?: Record<string, unknown>;
   authorsRepository?: Record<string, unknown>;
   monitoredAuthorStore?: Record<string, unknown>;
@@ -114,28 +116,9 @@ function service(store: Record<string, unknown>, bookRequests: Record<string, un
     (deps.releaseWatcher ?? { checkMonitor: vi.fn().mockResolvedValue({ announced: 0 }) }) as never,
     (deps.releaseProbe ?? { enrolAndProbe: vi.fn().mockResolvedValue(undefined) }) as never,
     (deps.releaseDateLookup ?? { lookup: vi.fn().mockResolvedValue({ format: 'ebook', candidates: [], unavailable: [] }) }) as never,
+    { findByIdWithPermissions: vi.fn().mockResolvedValue(viewer) } as never,
+    (deps.coordinator ?? { request: vi.fn().mockResolvedValue(true), enqueueInserted: vi.fn(), clearRetry: vi.fn(), cancel: vi.fn() }) as never,
   );
-}
-
-function refreshHarness(profile: { hasPhoto: boolean; description: string | null }) {
-  const monitor = author({ localAuthorId: 7 });
-  const execute = vi.fn().mockResolvedValue({ kind: 'updated' });
-  const store = {
-    getAuthor: vi.fn().mockResolvedValue(monitor),
-    updateAuthorFields: vi.fn().mockResolvedValue(monitor),
-    getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [] }),
-  };
-  const instance = service(
-    store,
-    {},
-    {
-      catalog: { fetchCatalog: vi.fn().mockResolvedValue({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null }) },
-      authorsRepository: { findByIdForEnrichment: vi.fn().mockResolvedValue({ ...profile, website: null, genres: [] }) },
-      authorMetadataPreferences: { getPreferences: vi.fn().mockResolvedValue({}) },
-      enrichmentExecutor: { execute },
-    },
-  );
-  return { instance, execute };
 }
 
 /** A create path that reaches the catalog fetch: everything before it resolves, nothing else matters. */
@@ -144,7 +127,7 @@ function createHarness(fetchCatalog: ReturnType<typeof vi.fn>, providerConfigs?:
   const store = {
     hasAuthorNamed: vi.fn().mockResolvedValue(false),
     upsertAuthor: vi.fn().mockImplementation((input: Record<string, unknown>) => {
-      saved = { ...input, id: input.id ?? 'monitor-1' };
+      saved = { ...input, id: input.id ?? 'monitor-1', fetch: { state: input.fetchState, errorKind: null, errorAt: null, retryAt: null } };
       return Promise.resolve(saved);
     }),
     updateAuthorFields: vi.fn().mockImplementation((_id: string, fields: Record<string, unknown>) => {
@@ -902,107 +885,6 @@ describe('MonitoredService', () => {
     expect(getImagePath).not.toHaveBeenCalled();
   });
 
-  it('re-enriches the local author on refresh when the profile has no photo', async () => {
-    const { instance, execute } = refreshHarness({ hasPhoto: false, description: 'bio' });
-
-    await instance.refreshAuthor('monitor-1', viewer);
-
-    expect(execute).toHaveBeenCalledWith({ authorId: 7, preferences: {}, allowOrphan: true });
-  });
-
-  it('re-enriches the local author on refresh when the profile has no description', async () => {
-    const { instance, execute } = refreshHarness({ hasPhoto: true, description: null });
-
-    await instance.refreshAuthor('monitor-1', viewer);
-
-    expect(execute).toHaveBeenCalledWith({ authorId: 7, preferences: {}, allowOrphan: true });
-  });
-
-  it('does not re-enrich the local author on refresh when the profile is complete', async () => {
-    const { instance, execute } = refreshHarness({ hasPhoto: true, description: 'bio' });
-
-    await instance.refreshAuthor('monitor-1', viewer);
-
-    expect(execute).not.toHaveBeenCalled();
-  });
-
-  it('rejects refresh when Hardcover is unconfigured before fetching the catalog', async () => {
-    const fetchCatalog = vi.fn();
-    const instance = service(
-      { getAuthor: vi.fn().mockResolvedValue(author()) },
-      {},
-      {
-        catalog: { fetchCatalog },
-        providerConfigs: { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: false, apiKey: 'key' } }) },
-      },
-    );
-
-    await expect(instance.refreshAuthor('monitor-1', viewer)).rejects.toBeInstanceOf(ServiceUnavailableException);
-    expect(fetchCatalog).not.toHaveBeenCalled();
-  });
-
-  it("passes the caller's refresh config to the catalog", async () => {
-    const monitor = author({ ownerUserId: 27 });
-    const config = { hardcover: { enabled: true, apiKey: 'owner-key' } };
-    const forUser = vi.fn().mockResolvedValue(config);
-    const failure = new Error('stop after fetch');
-    const fetchCatalog = vi.fn().mockRejectedValue(failure);
-    const instance = service({ getAuthor: vi.fn().mockResolvedValue(monitor) }, {}, { catalog: { fetchCatalog }, providerConfigs: { forUser } });
-    const owner = { id: monitor.ownerUserId, isSuperuser: false } as RequestUser;
-
-    await expect(instance.refreshAuthor(monitor.id, owner)).rejects.toBe(failure);
-    expect(forUser).toHaveBeenCalledWith(monitor.ownerUserId);
-    expect(fetchCatalog).toHaveBeenCalledWith(monitor, config);
-  });
-
-  it('uses the configured refresh cooldown for each monitored author', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-09-06T12:00:00.000Z'));
-    try {
-      const monitor = author({ lastRefreshedAt: '2026-09-06T11:55:00.000Z' });
-      const fetchCatalog = vi.fn();
-      const instance = service(
-        { getAuthor: vi.fn().mockResolvedValue(monitor) },
-        {},
-        {
-          catalog: { fetchCatalog },
-          appSettings: { getMonitoredSettings: vi.fn().mockResolvedValue({ refreshCooldownMinutes: 10 }) },
-        },
-      );
-
-      const failure = await instance.refreshAuthor(monitor.id, viewer).catch((error: unknown) => error);
-
-      expect(failure).toBeInstanceOf(HttpException);
-      expect((failure as HttpException).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
-      expect(fetchCatalog).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('allows a refresh once the configured cooldown has elapsed', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-09-06T12:00:00.000Z'));
-    try {
-      const monitor = author({ lastRefreshedAt: '2026-09-06T11:55:00.000Z' });
-      const failure = new Error('stop after fetch');
-      const fetchCatalog = vi.fn().mockRejectedValue(failure);
-      const instance = service(
-        { getAuthor: vi.fn().mockResolvedValue(monitor) },
-        {},
-        {
-          catalog: { fetchCatalog },
-          appSettings: { getMonitoredSettings: vi.fn().mockResolvedValue({ refreshCooldownMinutes: 5 }) },
-        },
-      );
-
-      await expect(instance.refreshAuthor(monitor.id, viewer)).rejects.toBe(failure);
-      expect(fetchCatalog).toHaveBeenCalledOnce();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it.each([
     ['disabled', { enabled: false, apiKey: 'key' }],
     ['missing API key', { enabled: true, apiKey: '' }],
@@ -1023,346 +905,12 @@ describe('MonitoredService', () => {
     expect(fetchCatalog).not.toHaveBeenCalled();
   });
 
-  it('passes the resolved user config to the create catalog fetch', async () => {
-    const config = { hardcover: { enabled: true, apiKey: 'user-key' } };
-    const forUser = vi.fn().mockResolvedValue(config);
-    const failure = new Error('stop after fetch');
-    const fetchCatalog = vi.fn().mockRejectedValue(failure);
-    const { instance } = createHarness(fetchCatalog, { forUser });
-
-    await expect(instance.createAuthor({ authorName: 'Test Author', formats: {} }, viewer)).rejects.toBe(failure);
-    expect(forUser).toHaveBeenCalledWith(viewer.id);
-    expect(fetchCatalog).toHaveBeenCalledWith(expect.objectContaining({ ownerUserId: viewer.id }), config);
-  });
-
-  it('stamps a new monitor for release checking at the same instant it is added', async () => {
-    const failure = new Error('stop after fetch');
-    const { instance, store } = createHarness(vi.fn().mockRejectedValue(failure));
-
-    await expect(instance.createAuthor({ authorName: 'Test Author', formats: {} }, viewer)).rejects.toBe(failure);
-
-    const inserted = store.upsertAuthor.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(inserted.lastReleaseCheckAt).toBe(inserted.addedAt);
-  });
-
-  it('runs create fan-out after reading the saved catalog and succeeds when items failed', async () => {
-    const monitoredWork = work();
-    const getCatalog = vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [monitoredWork] });
-    let saved!: MonitoredAuthorConfig;
-    const store = {
-      hasAuthorNamed: vi.fn().mockResolvedValue(false),
-      upsertAuthor: vi.fn().mockImplementation((input: MonitoredAuthorConfig) => {
-        saved = input;
-        return Promise.resolve(input);
-      }),
-      updateAuthorFields: vi.fn().mockImplementation((_id: string, fields: Partial<MonitoredAuthorConfig>) => {
-        saved = { ...saved, ...fields };
-        return Promise.resolve(saved);
-      }),
-      removeAuthor: vi.fn(),
-      getCatalog,
-    };
-    const fanOut = vi.fn().mockResolvedValue({ created: 0, skipped: 0, failed: 1 });
-    const checkMonitor = vi.fn().mockResolvedValue({ announced: 0 });
-    const instance = service(
-      store,
-      {},
-      {
-        catalog: { fetchCatalog: vi.fn().mockResolvedValue({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null }) },
-        autoRequests: { fanOut },
-        releaseWatcher: { checkMonitor },
-        authorsRepository: { findIdByNormalizedName: vi.fn().mockResolvedValue(null), findOrCreateByName: vi.fn().mockResolvedValue(null) },
-      },
-    );
-
-    await expect(instance.createAuthor({ authorName: 'Test Author', formats: {} }, viewer)).resolves.toMatchObject({ works: [monitoredWork] });
-    expect(fanOut).toHaveBeenCalledWith(expect.objectContaining({ authorName: 'Test Author' }), [monitoredWork], viewer);
-    expect(getCatalog.mock.invocationCallOrder[0]).toBeLessThan(fanOut.mock.invocationCallOrder[0]);
-    expect(checkMonitor).toHaveBeenCalledWith(expect.objectContaining({ authorName: 'Test Author' }));
-    expect(fanOut.mock.invocationCallOrder[0]).toBeLessThan(checkMonitor.mock.invocationCallOrder[0]);
-  });
-
-  it('enriches a freshly created local author only once', async () => {
-    const monitoredWork = work();
-    let saved!: MonitoredAuthorConfig;
-    const store = {
-      hasAuthorNamed: vi.fn().mockResolvedValue(false),
-      upsertAuthor: vi.fn().mockImplementation((input: MonitoredAuthorConfig) => {
-        saved = input;
-        return Promise.resolve(input);
-      }),
-      updateAuthorFields: vi.fn().mockImplementation((_id: string, fields: Partial<MonitoredAuthorConfig>) => {
-        saved = { ...saved, ...fields };
-        return Promise.resolve(saved);
-      }),
-      removeAuthor: vi.fn(),
-      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [monitoredWork] }),
-    };
-    const findByIdForEnrichment = vi.fn().mockResolvedValue({ description: null, website: null, genres: [], hasPhoto: false });
-    const execute = vi.fn().mockResolvedValue({ kind: 'updated' });
-    const instance = service(
-      store,
-      {},
-      {
-        catalog: { fetchCatalog: vi.fn().mockResolvedValue({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null }) },
-        autoRequests: { fanOut: vi.fn().mockResolvedValue({ created: 0, skipped: 0, failed: 0 }) },
-        authorsRepository: {
-          findIdByNormalizedName: vi.fn().mockResolvedValue(null),
-          findOrCreateByName: vi.fn().mockResolvedValue(7),
-          findByIdForEnrichment,
-        },
-        authorMetadataPreferences: { getPreferences: vi.fn().mockResolvedValue({}) },
-        enrichmentExecutor: { execute },
-      },
-    );
-
+  it('stamps release checking at the same instant a queued monitor is added', async () => {
+    const { instance, store } = createHarness(vi.fn());
     await instance.createAuthor({ authorName: 'Test Author', formats: {} }, viewer);
-
-    expect(execute).toHaveBeenCalledTimes(1);
-    expect(findByIdForEnrichment).toHaveBeenCalledTimes(1);
-  });
-
-  it('runs refresh fan-out after reading the saved catalog and succeeds when items failed', async () => {
-    const monitoredAuthor = author({ localAuthorId: 7 });
-    const monitoredWork = work();
-    const getCatalog = vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [monitoredWork] });
-    const store = {
-      getAuthor: vi.fn().mockResolvedValue(monitoredAuthor),
-      updateAuthorFields: vi.fn().mockResolvedValue(monitoredAuthor),
-      getCatalog,
-    };
-    const fanOut = vi.fn().mockResolvedValue({ created: 0, skipped: 0, failed: 1 });
-    const checkMonitor = vi.fn().mockResolvedValue({ announced: 0 });
-    const instance = service(
-      store,
-      {},
-      {
-        catalog: { fetchCatalog: vi.fn().mockResolvedValue({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null }) },
-        autoRequests: { fanOut },
-        releaseWatcher: { checkMonitor },
-        authorsRepository: {
-          findByIdForEnrichment: vi.fn().mockResolvedValue({ description: 'bio', website: null, genres: [], hasPhoto: true }),
-        },
-      },
-    );
-
-    await expect(instance.refreshAuthor(monitoredAuthor.id, viewer)).resolves.toMatchObject({ works: [monitoredWork] });
-    expect(fanOut).toHaveBeenCalledWith(monitoredAuthor, [monitoredWork], viewer);
-    expect(getCatalog.mock.invocationCallOrder[0]).toBeLessThan(fanOut.mock.invocationCallOrder[0]);
-    expect(checkMonitor).toHaveBeenCalledWith(monitoredAuthor);
-    expect(fanOut.mock.invocationCallOrder[0]).toBeLessThan(checkMonitor.mock.invocationCallOrder[0]);
-  });
-
-  it('does not fail an interactive refresh when the release check throws', async () => {
-    const monitoredAuthor = author({ localAuthorId: 7 });
-    const store = {
-      getAuthor: vi.fn().mockResolvedValue(monitoredAuthor),
-      updateAuthorFields: vi.fn().mockResolvedValue(monitoredAuthor),
-      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [] }),
-    };
-    const instance = service(
-      store,
-      {},
-      {
-        catalog: { fetchCatalog: vi.fn().mockResolvedValue({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null }) },
-        autoRequests: { fanOut: vi.fn().mockResolvedValue({ created: 0, skipped: 0, failed: 0 }) },
-        releaseWatcher: { checkMonitor: vi.fn().mockRejectedValue(new Error('notification database unavailable')) },
-        authorsRepository: {
-          findByIdForEnrichment: vi.fn().mockResolvedValue({ description: 'bio', website: null, genres: [], hasPhoto: true }),
-        },
-      },
-    );
-
-    await expect(instance.refreshAuthor(monitoredAuthor.id, viewer)).resolves.toMatchObject({ works: [] });
-  });
-
-  it('refreshes for the scheduler and fans out like the interactive refresh', async () => {
-    const monitoredAuthor = author({ localAuthorId: 7 });
-    const monitoredWork = work();
-    const store = {
-      updateAuthorFields: vi.fn().mockResolvedValue(monitoredAuthor),
-      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [monitoredWork] }),
-    };
-    const fanOut = vi.fn().mockResolvedValue({ created: 0, skipped: 0, failed: 0 });
-    const instance = service(
-      store,
-      {},
-      {
-        catalog: { fetchCatalog: vi.fn().mockResolvedValue({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null }) },
-        autoRequests: { fanOut },
-        authorsRepository: {
-          findByIdForEnrichment: vi.fn().mockResolvedValue({ description: 'bio', website: null, genres: [], hasPhoto: true }),
-        },
-      },
-    );
-
-    await expect(instance.refreshForSchedule(monitoredAuthor, viewer)).resolves.toBe(true);
-    expect(store.updateAuthorFields).toHaveBeenCalledWith(
-      monitoredAuthor.id,
-      expect.objectContaining({ lastRefreshedAt: expect.anything() }),
-      viewer,
-    );
-    expect(fanOut).toHaveBeenCalledWith(monitoredAuthor, [monitoredWork], viewer);
-    expect(store.updateAuthorFields.mock.invocationCallOrder[0]).toBeLessThan(fanOut.mock.invocationCallOrder[0]);
-  });
-
-  it('re-reads the catalog after a scheduled fan-out files requests', async () => {
-    const monitoredAuthor = author({ localAuthorId: 7 });
-    const store = {
-      updateAuthorFields: vi.fn().mockResolvedValue(monitoredAuthor),
-      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [work()] }),
-    };
-    const instance = service(
-      store,
-      {},
-      {
-        catalog: { fetchCatalog: vi.fn().mockResolvedValue({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null }) },
-        autoRequests: { fanOut: vi.fn().mockResolvedValue({ created: 1, skipped: 0, failed: 0 }) },
-        authorsRepository: {
-          findByIdForEnrichment: vi.fn().mockResolvedValue({ description: 'bio', website: null, genres: [], hasPhoto: true }),
-        },
-      },
-    );
-
-    await instance.refreshForSchedule(monitoredAuthor, viewer);
-
-    expect(store.getCatalog).toHaveBeenCalledTimes(2);
-  });
-
-  it('probes after the catalog fetch and before reading the catalog or filing requests', async () => {
-    const monitoredAuthor = author({ localAuthorId: 7 });
-    const calls: string[] = [];
-    const store = {
-      getAuthor: vi.fn().mockResolvedValue(monitoredAuthor),
-      updateAuthorFields: vi.fn().mockResolvedValue(monitoredAuthor),
-      getCatalog: vi.fn().mockImplementation(() => {
-        calls.push('getCatalog');
-        return Promise.resolve({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [] });
-      }),
-    };
-    const fanOut = vi.fn().mockImplementation(() => {
-      calls.push('fanOut');
-      return Promise.resolve({ created: 0, skipped: 0, failed: 0 });
-    });
-    const instance = service(
-      store,
-      {},
-      {
-        catalog: {
-          fetchCatalog: vi.fn().mockImplementation(() => {
-            calls.push('fetchCatalog');
-            return Promise.resolve({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null });
-          }),
-        },
-        releaseProbe: {
-          enrolAndProbe: vi.fn().mockImplementation(() => {
-            calls.push('probe');
-            return Promise.resolve();
-          }),
-        },
-        autoRequests: { fanOut },
-        authorsRepository: { findByIdForEnrichment: vi.fn().mockResolvedValue({ description: 'bio', website: null, genres: [], hasPhoto: true }) },
-      },
-    );
-
-    await instance.refreshAuthor(monitoredAuthor.id, viewer);
-
-    expect(calls).toEqual(['fetchCatalog', 'probe', 'getCatalog', 'fanOut']);
-  });
-
-  it('continues a catalog refresh when the release probe rejects', async () => {
-    const monitoredAuthor = author({ localAuthorId: 7 });
-    const store = {
-      getAuthor: vi.fn().mockResolvedValue(monitoredAuthor),
-      updateAuthorFields: vi.fn().mockResolvedValue(monitoredAuthor),
-      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [] }),
-    };
-    const instance = service(
-      store,
-      {},
-      {
-        catalog: { fetchCatalog: vi.fn().mockResolvedValue({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null }) },
-        releaseProbe: { enrolAndProbe: vi.fn().mockRejectedValue(new TypeError('probe failed')) },
-        autoRequests: { fanOut: vi.fn().mockResolvedValue({ created: 0, skipped: 0, failed: 0 }) },
-        authorsRepository: { findByIdForEnrichment: vi.fn().mockResolvedValue({ description: 'bio', website: null, genres: [], hasPhoto: true }) },
-      },
-    );
-
-    await expect(instance.refreshAuthor(monitoredAuthor.id, viewer)).resolves.toMatchObject({ works: [] });
-    expect(store.getCatalog).toHaveBeenCalled();
-  });
-
-  it('hands the refreshed detail every class, so the caller can still count what it is not showing', async () => {
-    // The detail view replaces its whole copy with this answer and reads every class to count them.
-    // Returning only the default class emptied those counts until the next navigation.
-    const monitoredAuthor = author({ localAuthorId: 7 });
-    const shown = work({ id: 'shown' });
-    const underReview = work({ id: 'suspect', verdict: 'suspect' });
-    const store = {
-      getAuthor: vi.fn().mockResolvedValue(monitoredAuthor),
-      updateAuthorFields: vi.fn().mockResolvedValue(monitoredAuthor),
-      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-01T00:00:00.000Z', works: [shown, underReview] }),
-    };
-    const instance = service(
-      store,
-      {},
-      {
-        catalog: { fetchCatalog: vi.fn().mockResolvedValue({ catalog: { fetchedAt: '2026-09-01T00:00:00.000Z' }, hardcoverAuthorId: null }) },
-        autoRequests: { fanOut: vi.fn().mockResolvedValue({ created: 0, skipped: 0, failed: 0 }) },
-        authorsRepository: {
-          findByIdForEnrichment: vi.fn().mockResolvedValue({ description: 'bio', website: null, genres: [], hasPhoto: true }),
-        },
-      },
-    );
-
-    const detail = await instance.refreshAuthor(monitoredAuthor.id, viewer);
-
-    expect(detail.works.map((entry) => entry.id)).toEqual(['shown', 'suspect']);
-    // The headline count still reports only what the default list shows.
-    expect(detail.author.counts.total).toBe(1);
-    expect(detail.author.counts.hidden).toBe(1);
-  });
-
-  it('does not revert a concurrent paused patch when refresh finishes from an older snapshot', async () => {
-    let current = author({ localAuthorId: 7, paused: false });
-    const updateAuthorFields = vi.fn().mockImplementation((_id: string, fields: Partial<MonitoredAuthorConfig>) => {
-      current = {
-        ...current,
-        ...fields,
-        providerIds: { ...current.providerIds, ...(fields.providerIds ?? {}) },
-      };
-      return current;
-    });
-    const store = {
-      getAuthor: vi.fn().mockImplementation(() => current),
-      updateAuthorFields,
-      getCatalog: vi.fn().mockResolvedValue({ fetchedAt: '2026-09-02T00:00:00.000Z', works: [] }),
-    };
-    const instance = service(
-      store,
-      {},
-      {
-        catalog: {
-          fetchCatalog: vi.fn().mockImplementation(() => {
-            current = { ...current, paused: true };
-            return { catalog: { fetchedAt: '2026-09-02T00:00:00.000Z' }, hardcoverAuthorId: '42' };
-          }),
-        },
-        authorsRepository: {
-          findByIdForEnrichment: vi.fn().mockResolvedValue({ description: 'bio', website: null, genres: [], hasPhoto: true }),
-        },
-      },
-    );
-
-    const result = await instance.refreshAuthor('monitor-1', viewer);
-
-    expect(result.author.paused).toBe(true);
-    expect(updateAuthorFields).toHaveBeenCalledWith(
-      'monitor-1',
-      { localAuthorId: 7, providerIds: { hardcover: '42' }, lastRefreshedAt: '2026-09-02T00:00:00.000Z' },
-      viewer,
-    );
-    expect(updateAuthorFields.mock.calls[0]?.[1]).not.toHaveProperty('paused');
+    const inserted = store.upsertAuthor.mock.calls[0][0];
+    expect(inserted.lastReleaseCheckAt).toBe(inserted.addedAt);
+    expect(inserted.fetchState).toBe('queued');
   });
 
   it('returns provider matches when the viewer can reach no local library', async () => {
@@ -1856,10 +1404,9 @@ describe('MonitoredService', () => {
   });
 
   it('rate limits a second catalog-fetching create from the same user', async () => {
-    const boom = new Error('provider unavailable');
-    const instance = createHarness(vi.fn().mockRejectedValue(boom)).instance;
+    const instance = createHarness(vi.fn()).instance;
 
-    await expect(instance.createAuthor({ authorName: 'First', formats: {} }, viewer)).rejects.toBe(boom);
+    await expect(instance.createAuthor({ authorName: 'First', formats: {} }, viewer)).resolves.toMatchObject({ fetch: { state: 'queued' } });
     const second = await instance.createAuthor({ authorName: 'Second', formats: {} }, viewer).catch((error: unknown) => error);
 
     expect(second).toBeInstanceOf(HttpException);
@@ -1867,11 +1414,12 @@ describe('MonitoredService', () => {
   });
 
   it('rate limits each user independently', async () => {
-    const boom = new Error('provider unavailable');
-    const instance = createHarness(vi.fn().mockRejectedValue(boom)).instance;
+    const instance = createHarness(vi.fn()).instance;
 
-    await expect(instance.createAuthor({ authorName: 'First', formats: {} }, viewer)).rejects.toBe(boom);
-    await expect(instance.createAuthor({ authorName: 'Second', formats: {} }, { id: 2, isSuperuser: false } as RequestUser)).rejects.toBe(boom);
+    await expect(instance.createAuthor({ authorName: 'First', formats: {} }, viewer)).resolves.toMatchObject({ fetch: { state: 'queued' } });
+    await expect(instance.createAuthor({ authorName: 'Second', formats: {} }, { id: 2, isSuperuser: false } as RequestUser)).resolves.toMatchObject({
+      fetch: { state: 'queued' },
+    });
   });
 
   it('does not burn the create cooldown on a create that never reached a provider', async () => {
@@ -1881,8 +1429,8 @@ describe('MonitoredService', () => {
     store.upsertAuthor.mockRejectedValueOnce(duplicate);
 
     await expect(instance.createAuthor({ authorName: 'First', formats: {} }, viewer)).rejects.toBeInstanceOf(BadRequestException);
-    await expect(instance.createAuthor({ authorName: 'Second', formats: {} }, viewer)).resolves.toMatchObject({ works: [] });
-    expect(fetchCatalog).toHaveBeenCalledOnce();
+    await expect(instance.createAuthor({ authorName: 'Second', formats: {} }, viewer)).resolves.toMatchObject({ fetch: { state: 'queued' } });
+    expect(fetchCatalog).not.toHaveBeenCalled();
   });
 
   // Both orphan predicates (no books, no monitors) are now inside the DELETE, so the service asks
@@ -2377,5 +1925,202 @@ describe('MonitoredService.countWorkClasses', () => {
 
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith('[monitored.class_counts] [end] userId=1 durationMs=501 - slow class counts read');
+  });
+});
+
+describe('fetch follow-ups', () => {
+  function followUpHarness() {
+    const monitor = author({ localAuthorId: 7 });
+    const store = {
+      getMonitorForFetch: vi.fn().mockResolvedValue(monitor),
+      getCatalog: vi.fn().mockResolvedValue({ works: [] }),
+      updateAuthorFields: vi.fn().mockResolvedValue(monitor),
+    };
+    const fanOut = vi.fn().mockResolvedValue({ created: 0 });
+    const checkMonitor = vi.fn().mockResolvedValue(undefined);
+    const instance = service(
+      store,
+      {},
+      {
+        autoRequests: { fanOut },
+        releaseWatcher: { checkMonitor },
+        authorsRepository: { findByIdForEnrichment: vi.fn().mockResolvedValue({ hasPhoto: true, description: 'bio' }) },
+      },
+    );
+    return { instance, store, fanOut, checkMonitor, monitor };
+  }
+  it('continues release checking after fan-out throws', async () => {
+    const h = followUpHarness();
+    h.fanOut.mockRejectedValue(new Error('fan-out'));
+    await h.instance.runFetchFollowUps('monitor-1', 'refresh');
+    expect(h.checkMonitor).toHaveBeenCalled();
+  });
+  it('skips fan-out when paused at the re-read', async () => {
+    const h = followUpHarness();
+    h.store.getMonitorForFetch.mockResolvedValueOnce(h.monitor).mockResolvedValue({ ...h.monitor, paused: true });
+    await h.instance.runFetchFollowUps('monitor-1', 'sync');
+    expect(h.fanOut).not.toHaveBeenCalled();
+  });
+  it('stops after a re-read finds the monitor deleted', async () => {
+    const h = followUpHarness();
+    h.store.getMonitorForFetch.mockResolvedValueOnce(h.monitor).mockResolvedValue(null);
+    await h.instance.runFetchFollowUps('monitor-1', 'sync');
+    expect(h.fanOut).not.toHaveBeenCalled();
+    expect(h.checkMonitor).not.toHaveBeenCalled();
+  });
+});
+
+describe('background fetch entry points', () => {
+  function entryHarness(monitor = author()) {
+    const coordinator = { request: vi.fn().mockResolvedValue(true), enqueueInserted: vi.fn(), clearRetry: vi.fn(), cancel: vi.fn() };
+    const fetchCatalog = vi.fn(() => new Promise(() => {}));
+    const store = {
+      hasAuthorNamed: vi.fn().mockResolvedValue(false),
+      upsertAuthor: vi.fn((input) =>
+        Promise.resolve({ ...input, fetch: { state: input.fetchState, errorKind: null, errorAt: null, retryAt: null } }),
+      ),
+      getAuthor: vi.fn().mockResolvedValue(monitor),
+      getCatalog: vi.fn().mockResolvedValue(null),
+      getAuthorAggregates: vi.fn().mockResolvedValue(new Map()),
+      updateAuthorFields: vi.fn().mockResolvedValue(monitor),
+      removeAuthor: vi.fn(),
+    };
+    const instance = service(store, {}, { coordinator, catalog: { fetchCatalog } });
+    vi.spyOn(instance as never, 'loadAuthorProfile' as never).mockResolvedValue(null as never);
+    return { instance, store, coordinator, fetchCatalog };
+  }
+  it('returns queued from create without awaiting a pending catalog fetch', async () => {
+    const h = entryHarness();
+    expect(await h.instance.createAuthor({ authorName: 'New', formats: {} }, viewer)).toMatchObject({ fetch: { state: 'queued' } });
+    expect(h.fetchCatalog).not.toHaveBeenCalled();
+    expect(h.coordinator.enqueueInserted).toHaveBeenCalled();
+  });
+  it('rejects a duplicate before insertion', async () => {
+    const h = entryHarness();
+    h.store.hasAuthorNamed.mockResolvedValue(true);
+    await expect(h.instance.createAuthor({ authorName: 'New', formats: {} }, viewer)).rejects.toBeInstanceOf(BadRequestException);
+    expect(h.store.upsertAuthor).not.toHaveBeenCalled();
+  });
+  it('bypasses cooldown for failed fetches', async () => {
+    const h = entryHarness(
+      author({ lastRefreshedAt: new Date().toISOString(), fetch: { state: 'failed', errorKind: 'timeout', errorAt: null, retryAt: null } }),
+    );
+    await h.instance.refreshAuthor('monitor-1', viewer);
+    expect(h.coordinator.request).toHaveBeenCalledWith('monitor-1', 'refresh');
+  });
+  it('keeps cooldown for idle fetches', async () => {
+    const h = entryHarness(author({ lastRefreshedAt: new Date().toISOString() }));
+    await expect(h.instance.refreshAuthor('monitor-1', viewer)).rejects.toMatchObject({ status: 429 });
+    expect(h.coordinator.request).not.toHaveBeenCalled();
+  });
+  it('returns queued items without requesting again', async () => {
+    const h = entryHarness(author({ fetch: { state: 'queued', errorKind: null, errorAt: null, retryAt: null } }));
+    expect(await h.instance.refreshAuthor('monitor-1', viewer)).toMatchObject({ fetch: { state: 'queued' } });
+    expect(h.coordinator.request).not.toHaveBeenCalled();
+  });
+  it('clears retries on pause', async () => {
+    const h = entryHarness();
+    await h.instance.updateAuthor('monitor-1', { paused: true }, viewer);
+    expect(h.coordinator.clearRetry).toHaveBeenCalledWith('monitor-1');
+  });
+  it('cancels before deleting', async () => {
+    const h = entryHarness();
+    await h.instance.deleteAuthor('monitor-1', viewer);
+    expect(h.coordinator.cancel.mock.invocationCallOrder[0]).toBeLessThan(h.store.removeAuthor.mock.invocationCallOrder[0]);
+  });
+});
+
+describe('background fetch follow-up ordering and enrichment', () => {
+  function harness(profile = { hasPhoto: true, description: 'bio' as string | null }) {
+    const monitor = author({ localAuthorId: 7 });
+    const probe = vi.fn().mockResolvedValue(undefined);
+    const enrich = vi.fn().mockResolvedValue({ kind: 'updated' });
+    const findByIdForEnrichment = vi.fn().mockResolvedValue(profile);
+    const store = {
+      getMonitorForFetch: vi.fn().mockResolvedValue(monitor),
+      updateAuthorFields: vi.fn().mockResolvedValue(monitor),
+      getCatalog: vi.fn().mockResolvedValue({ works: [work()] }),
+    };
+    const fanOut = vi.fn().mockResolvedValue({ created: 0 });
+    const checkMonitor = vi.fn().mockResolvedValue(undefined);
+    const instance = service(
+      store,
+      {},
+      {
+        releaseProbe: { enrolAndProbe: probe },
+        autoRequests: { fanOut },
+        releaseWatcher: { checkMonitor },
+        authorsRepository: { findByIdForEnrichment },
+        authorMetadataPreferences: { getPreferences: vi.fn().mockResolvedValue({}) },
+        enrichmentExecutor: { execute: enrich },
+      },
+    );
+    return { instance, store, probe, enrich, fanOut, checkMonitor, findByIdForEnrichment, monitor };
+  }
+  it.each([
+    [false, 'bio', true],
+    [true, null, true],
+    [true, 'bio', false],
+  ] as const)('enriches incomplete profiles with photo=%s and description=%s', async (hasPhoto, description, expected) => {
+    const h = harness({ hasPhoto, description });
+    await h.instance.runFetchFollowUps('monitor-1', 'refresh');
+    expect(h.enrich).toHaveBeenCalledTimes(expected ? 1 : 0);
+    if (expected) expect(h.enrich).toHaveBeenCalledWith({ authorId: 7, preferences: {}, allowOrphan: true });
+  });
+  it.each(['probe', 'local_author', 'fanout', 'release_check'])('isolates a failure in %s', async (step) => {
+    const h = harness();
+    const error = new Error('follow-up failed');
+    if (step === 'probe') h.probe.mockRejectedValue(error);
+    if (step === 'local_author') h.store.updateAuthorFields.mockRejectedValue(error);
+    if (step === 'fanout') h.fanOut.mockRejectedValue(error);
+    if (step === 'release_check') h.checkMonitor.mockRejectedValue(error);
+    await expect(h.instance.runFetchFollowUps('monitor-1', 'sync')).resolves.toBeUndefined();
+    expect(h.fanOut).toHaveBeenCalled();
+    expect(h.checkMonitor).toHaveBeenCalled();
+  });
+  it('stops when deleted during the release probe', async () => {
+    const h = harness();
+    const resolve = vi.spyOn(h.instance as never, 'resolveLocalAuthorId' as never);
+    h.store.getMonitorForFetch.mockResolvedValueOnce(h.monitor).mockResolvedValue(null);
+    await h.instance.runFetchFollowUps('monitor-1', 'refresh');
+    expect(resolve).not.toHaveBeenCalled();
+    expect(h.findByIdForEnrichment).not.toHaveBeenCalled();
+    expect(h.fanOut).not.toHaveBeenCalled();
+    expect(h.checkMonitor).not.toHaveBeenCalled();
+  });
+  it('uses current formats after probing and links before fan-out', async () => {
+    const h = harness();
+    const current = author({ localAuthorId: 7, formats: { ...h.monitor.formats, ebook: { mode: 'off', libraryId: null, folderId: null } } });
+    h.store.getMonitorForFetch.mockResolvedValueOnce(h.monitor).mockResolvedValue(current);
+    await h.instance.runFetchFollowUps('monitor-1', 'sync');
+    expect(h.fanOut).toHaveBeenCalledWith(current, [work()], viewer);
+    expect(h.probe.mock.invocationCallOrder[0]).toBeLessThan(h.store.updateAuthorFields.mock.invocationCallOrder[0]);
+    expect(h.store.updateAuthorFields.mock.invocationCallOrder[0]).toBeLessThan(h.fanOut.mock.invocationCallOrder[0]);
+    expect(h.fanOut.mock.invocationCallOrder[0]).toBeLessThan(h.checkMonitor.mock.invocationCallOrder[0]);
+  });
+  it('does not enrich a newly created local author twice', async () => {
+    const h = harness({ hasPhoto: false, description: null });
+    vi.spyOn(h.instance as never, 'resolveLocalAuthorId' as never).mockResolvedValue({ id: 7, created: true } as never);
+    await h.instance.runFetchFollowUps('monitor-1', 'create');
+    expect(h.findByIdForEnrichment).not.toHaveBeenCalled();
+    expect(h.enrich).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetch event item', () => {
+  it('uses owner-scoped aggregates without exposing internal attempts or reading the catalog', async () => {
+    const store = {
+      getAuthor: vi.fn().mockResolvedValue(author()),
+      getMonitorForFetch: vi.fn().mockResolvedValue({ ...author(), fetchAttempts: 2 }),
+      getAuthorAggregates: vi.fn().mockResolvedValue(new Map()),
+      getCatalog: vi.fn(),
+    };
+    const instance = service(store);
+    vi.spyOn(instance as never, 'loadAuthorProfile' as never).mockResolvedValue(null as never);
+    const item = await instance.toFetchEventItem('monitor-1');
+    expect(item).toMatchObject({ id: 'monitor-1', isOwner: true });
+    expect(item).not.toHaveProperty('fetchAttempts');
+    expect(store.getAuthorAggregates).toHaveBeenCalledWith(['monitor-1'], viewer, expect.any(String));
+    expect(store.getCatalog).not.toHaveBeenCalled();
   });
 });

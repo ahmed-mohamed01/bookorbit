@@ -7,6 +7,7 @@ import {
   HttpException,
   HttpStatus,
   Injectable,
+  Inject,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
@@ -76,6 +77,9 @@ import { MonitoredCatalogService, normalizeMonitoredName, type WorkAvailabilityG
 import { MonitoredAutoRequestService, submitThrottled } from './monitored-autorequest.service';
 import { MonitoredProviderConfigService } from './monitored-provider-config.service';
 import { MonitoredReleaseWatcher } from './monitored-release-watcher.service';
+import { UserService } from '../user/user.service';
+import { MONITORED_FETCH_REQUESTS, type MonitoredFetchRequests } from './fetch/monitored-fetch-requests';
+import type { MonitoredFetchTrigger } from './fetch/monitored-fetch-job.service';
 import { MonitoredStoreService } from './monitored-store.service';
 import { MonitoredAuthorStoreService } from './monitored-author-store.service';
 import { MonitoredSettingsService } from './monitored-settings.service';
@@ -200,6 +204,8 @@ export class MonitoredService {
     private readonly releaseWatcher: MonitoredReleaseWatcher,
     private readonly releaseProbe: MonitoredReleaseProbeService,
     private readonly releaseDateLookup: MonitoredReleaseDateLookupService,
+    private readonly users: UserService,
+    @Inject(MONITORED_FETCH_REQUESTS) private readonly coordinator: MonitoredFetchRequests,
   ) {}
 
   async getSummary(user: RequestUser): Promise<MonitoredSummary> {
@@ -282,7 +288,7 @@ export class MonitoredService {
     return result;
   }
 
-  async createAuthor(input: MonitorAuthorRequest, user: RequestUser): Promise<MonitoredAuthorDetail> {
+  async createAuthor(input: MonitorAuthorRequest, user: RequestUser): Promise<MonitoredAuthorItem> {
     const startedAt = Date.now();
     // Hardcover files some authors under a name carrying runs of internal whitespace ("Alexander
     // Olson" is stored there with three spaces). HTML collapses those on screen, so the name reaches
@@ -301,7 +307,7 @@ export class MonitoredService {
     this.logger.log(
       `[monitored.author.create] [start] monitorId="${sanitizeLogValue(monitorId)}" userId=${user.id} authorName="${sanitizeLogValue(authorName)}" - monitored author creation started`,
     );
-    let monitor: MonitoredAuthorConfig | null = null;
+    let monitor: MonitoredAuthorConfig;
     try {
       const now = new Date().toISOString();
       monitor = await this.store.upsertAuthor(
@@ -315,36 +321,22 @@ export class MonitoredService {
           paused: false,
           addedAt: now,
           lastRefreshedAt: null,
+          fetchState: 'queued',
           lastReleaseCheckAt: now,
         },
         user,
       );
       this.recordCatalogFetch(user);
-      const { refreshed, works } = await this.runCatalogRefresh(monitor, config, user);
-      await this.checkReleasesAfterInteractiveRefresh(refreshed);
-      // These two writes are owner-only and their answer replaces the detail view's own copy, which
-      // reads every class to count them. Withholding the hidden ones here empties those counts.
-      const detail = await this.buildDetail(refreshed, works, user, { sort: 'releaseDate', order: 'desc', includeHidden: true });
-      this.logger.log(
-        `[monitored.author.create] [end] monitorId="${sanitizeLogValue(monitor.id)}" userId=${user.id} durationMs=${Date.now() - startedAt} works=${works.length} - monitored author creation completed`,
-      );
-      return detail;
     } catch (error) {
-      if (monitor) {
-        try {
-          await this.store.removeAuthor(monitor.id, user);
-        } catch (rollbackError) {
-          const rollbackClass = rollbackError instanceof Error ? rollbackError.name : 'Error';
-          const rollbackMessage = sanitizeLogValue(rollbackError instanceof Error ? rollbackError.message : String(rollbackError));
-          this.logger.warn(
-            `[monitored.author.create_rollback] [fail] monitorId="${sanitizeLogValue(monitor.id)}" userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${rollbackClass} error="${rollbackMessage}" - monitored author rollback failed`,
-          );
-        }
-      }
       this.logOperationFailure('monitored.author.create', monitorId, user.id, startedAt, error);
       if (isUniqueViolation(error)) throw new BadRequestException('This author is already monitored');
       throw error;
     }
+    this.coordinator.enqueueInserted(monitor.id);
+    this.logger.log(
+      `[monitored.author.create] [end] monitorId=${monitor.id} userId=${user.id} durationMs=${Date.now() - startedAt} - monitored author queued`,
+    );
+    return this.toAuthorItem(monitor, this.summarizeWorks(monitor, []), user, null);
   }
 
   async getAuthor(id: string, user: RequestUser, query: MonitoredAuthorDetailQueryDto): Promise<MonitoredAuthorDetail> {
@@ -367,6 +359,7 @@ export class MonitoredService {
       },
       user,
     );
+    if (input.paused === true) this.coordinator.clearRetry(id);
     const [catalog, metadata] = await Promise.all([this.store.getCatalog(id, user), this.loadAuthorProfile(updated)]);
     return this.toAuthorItem(updated, this.summarizeWorks(updated, catalog?.works ?? []), user, metadata);
   }
@@ -376,6 +369,7 @@ export class MonitoredService {
     this.logger.log(`[monitored.author.delete] [start] monitorId="${sanitizeLogValue(id)}" userId=${user.id} - monitored author deletion started`);
     try {
       const monitor = await this.getWritableAuthor(id, user);
+      this.coordinator.cancel(id);
       await this.store.removeAuthor(id, user);
       const orphanRemoved = await this.removeOrphanLocalAuthor(monitor.localAuthorId);
       this.logger.log(
@@ -387,99 +381,73 @@ export class MonitoredService {
     }
   }
 
-  async refreshAuthor(id: string, user: RequestUser): Promise<MonitoredAuthorDetail> {
-    const startedAt = Date.now();
-    this.logger.log(`[monitored.author.refresh] [start] monitorId="${sanitizeLogValue(id)}" userId=${user.id} - monitored author refresh started`);
-    try {
-      const monitor = await this.getWritableAuthor(id, user);
+  async refreshAuthor(id: string, user: RequestUser): Promise<MonitoredAuthorItem> {
+    const monitor = await this.getWritableAuthor(id, user);
+    if (monitor.fetch.state !== 'queued' && monitor.fetch.state !== 'fetching') {
       const { refreshCooldownMinutes } = await this.settings.getMonitoredSettings();
-      const refreshCooldownMs = refreshCooldownMinutes * 60 * 1000;
-      if (monitor.lastRefreshedAt && Date.now() - new Date(monitor.lastRefreshedAt).getTime() < refreshCooldownMs) {
+      if (
+        monitor.fetch.state !== 'failed' &&
+        monitor.lastRefreshedAt &&
+        Date.now() - new Date(monitor.lastRefreshedAt).getTime() < refreshCooldownMinutes * 60_000
+      ) {
         throw new HttpException('Monitored author was refreshed a moment ago; try again shortly', HttpStatus.TOO_MANY_REQUESTS);
       }
-      const config = await this.providerConfigs.forUser(monitor.ownerUserId);
-      this.assertHardcoverAvailable(config);
-      const { refreshed, works } = await this.runCatalogRefresh(monitor, config, user);
-      await this.checkReleasesAfterInteractiveRefresh(refreshed);
-      const detail = await this.buildDetail(refreshed, works, user, { sort: 'releaseDate', order: 'desc', includeHidden: true });
-      this.logger.log(
-        `[monitored.author.refresh] [end] monitorId="${sanitizeLogValue(id)}" userId=${user.id} durationMs=${Date.now() - startedAt} works=${works.length} - monitored author refresh completed`,
-      );
-      return detail;
-    } catch (error) {
-      this.logOperationFailure('monitored.author.refresh', id, user.id, startedAt, error);
-      throw error;
+      await this.coordinator.request(id, 'refresh');
     }
+    const current = await this.getWritableAuthor(id, user);
+    const [aggregates, metadata] = await Promise.all([
+      this.store.getAuthorAggregates([id], user, new Date().toISOString().slice(0, 10)),
+      this.loadAuthorProfile(current),
+    ]);
+    return this.toAuthorItem(current, aggregates.get(id) ?? this.summarizeWorks(current, []), user, metadata);
   }
 
-  /**
-   * A catalog refresh with no HTTP concerns: fetch, re-resolve the local author, persist, and fan
-   * out.
-   *
-   * Shared with the background sweep, which must not inherit the two things that belong to the
-   * interactive route - the cooldown, which exists to stop a user hammering the button, and the 503
-   * when the owner has no Hardcover token, which the sweep treats as "skip this monitor" instead.
-   */
-  private async runCatalogRefresh(
-    monitor: MonitoredAuthorConfig,
-    config: ProviderConfigurations,
-    user: RequestUser,
-  ): Promise<{ refreshed: MonitoredAuthorConfig; works: MonitoredWork[] }> {
-    const result = await this.catalog.fetchCatalog(monitor, config);
-    const probeStartedAt = Date.now();
-    try {
-      await this.releaseProbe.enrolAndProbe(monitor, config);
-    } catch (error) {
-      const errorClass = error instanceof Error ? error.constructor.name : 'UnknownError';
-      const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
-      this.logger.warn(
-        `[monitored.release_probe.refresh] [fail] monitorId="${sanitizeLogValue(monitor.id)}" userId=${monitor.ownerUserId} durationMs=${Date.now() - probeStartedAt} errorClass=${errorClass} error="${message}" - refresh release probe failed`,
-      );
-    }
-    const { id: localAuthorId, created: localAuthorCreated } = await this.resolveLocalAuthorId(monitor);
-    if (localAuthorId != null && !localAuthorCreated) {
-      const profile = await this.authorsRepository.findByIdForEnrichment(localAuthorId);
-      if (profile && (!profile.hasPhoto || !profile.description)) {
-        await this.enrichLocalAuthor(localAuthorId);
+  async toFetchEventItem(monitorId: string): Promise<MonitoredAuthorItem | null> {
+    const monitor = await this.store.getAuthor(monitorId);
+    if (!monitor) return null;
+    const owner = await this.users.findByIdWithPermissions(monitor.ownerUserId);
+    if (!owner) return null;
+    const [aggregates, metadata] = await Promise.all([
+      this.store.getAuthorAggregates([monitorId], owner, new Date().toISOString().slice(0, 10)),
+      this.loadAuthorProfile(monitor),
+    ]);
+    return this.toAuthorItem(monitor, aggregates.get(monitorId) ?? this.summarizeWorks(monitor, []), owner, metadata);
+  }
+
+  async runFetchFollowUps(monitorId: string, trigger: MonitoredFetchTrigger): Promise<void> {
+    const monitor = await this.store.getMonitorForFetch(monitorId);
+    if (!monitor) return;
+    const owner = await this.users.findByIdWithPermissions(monitor.ownerUserId);
+    if (!owner) return;
+    const step = async (name: string, run: () => Promise<unknown>): Promise<void> => {
+      const startedAt = Date.now();
+      try {
+        await run();
+      } catch (error) {
+        this.logger.warn(
+          `[monitored.author.fetch_followup] [fail] monitorId=${monitorId} step=${name} durationMs=${Date.now() - startedAt} errorClass=${error instanceof Error ? error.name : 'Error'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - fetch follow-up failed`,
+        );
       }
-    }
-    const refreshed = await this.store.updateAuthorFields(
-      monitor.id,
-      {
-        ...(localAuthorId != null ? { localAuthorId } : {}),
-        ...(result.hardcoverAuthorId ? { providerIds: { hardcover: result.hardcoverAuthorId } } : {}),
-        lastRefreshedAt: result.catalog.fetchedAt,
-      },
-      user,
-    );
-    let works = (await this.store.getCatalog(monitor.id, user))?.works ?? [];
-    const outcome = await this.autoRequests.fanOut(refreshed, works, user);
-    if (outcome.created > 0) works = (await this.store.getCatalog(monitor.id, user))?.works ?? [];
-    return { refreshed, works };
-  }
-
-  /**
-   * The background sweep's way in. Returns false when the owner has no usable Hardcover token, so
-   * the scheduler can count a skip rather than treat a configuration gap as a failure.
-   */
-  async refreshForSchedule(monitor: MonitoredAuthorConfig, owner: RequestUser): Promise<boolean> {
-    const config = await this.providerConfigs.forUser(monitor.ownerUserId);
-    if (!isHardcoverConfigured(config)) return false;
-    await this.runCatalogRefresh(monitor, config, owner);
-    return true;
-  }
-
-  private async checkReleasesAfterInteractiveRefresh(monitor: MonitoredAuthorConfig): Promise<void> {
-    const startedAt = Date.now();
-    try {
-      await this.releaseWatcher.checkMonitor(monitor);
-    } catch (error) {
-      const errorClass = error instanceof Error ? error.constructor.name : 'UnknownError';
-      const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
-      this.logger.warn(
-        `[monitored.release.check] [fail] monitorId="${sanitizeLogValue(monitor.id)}" userId=${monitor.ownerUserId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${message}" - interactive release check failed`,
-      );
-    }
+    };
+    await step('release_probe', async () => this.releaseProbe.enrolAndProbe(monitor, await this.providerConfigs.forUser(owner.id)));
+    const beforeLocalAuthor = await this.store.getMonitorForFetch(monitorId);
+    if (!beforeLocalAuthor) return;
+    await step('local_author', async () => {
+      const { id, created } = await this.resolveLocalAuthorId(beforeLocalAuthor);
+      if (id === null) return;
+      await this.store.updateAuthorFields(monitorId, { localAuthorId: id }, owner);
+      if (!created) {
+        const profile = await this.authorsRepository.findByIdForEnrichment(id);
+        if (profile && (!profile.hasPhoto || !profile.description)) await this.enrichLocalAuthor(id);
+      }
+    });
+    const current = await this.store.getMonitorForFetch(monitorId);
+    if (!current || current.paused) return;
+    await step('auto_requests', async () => {
+      const catalog = await this.store.getCatalog(monitorId, owner);
+      await this.autoRequests.fanOut(current, catalog?.works ?? [], owner);
+    });
+    await step(trigger === 'sync' ? 'sync_release_check' : 'release_check', async () => this.releaseWatcher.checkMonitor(current));
   }
 
   // Monitored read scope is the access check here: the authors module gates portraits on library

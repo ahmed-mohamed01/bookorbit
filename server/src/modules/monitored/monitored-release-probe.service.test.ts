@@ -544,6 +544,7 @@ describe('MonitoredReleaseProbeService', () => {
         paused: false,
         addedAt: '2026-01-01T00:00:00.000Z',
         lastRefreshedAt: null,
+        fetch: { state: 'idle', errorKind: null, errorAt: null, retryAt: null },
       },
       config({ enabled: true, cookie: 'cookie' }),
     );

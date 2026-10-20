@@ -14,7 +14,7 @@ describe('refreshAuthorsSequentially', () => {
 
     const summary = await refreshAuthorsSequentially(['a', 'cooldown', 'broken', 'offline', 'b'], refresh)
 
-    expect(summary).toEqual({ refreshed: 2, skipped: 1, failed: 2 })
+    expect(summary).toEqual({ queued: 2, refreshed: 0, skipped: 1, failed: 2 })
     expect(refresh).toHaveBeenCalledTimes(5)
   })
 
@@ -33,13 +33,13 @@ describe('refreshAuthorsSequentially', () => {
     const summary = await refreshAuthorsSequentially(['a', 'b', 'c'], refresh)
 
     expect(started).toEqual(['a', 'b', 'c'])
-    expect(summary).toEqual({ refreshed: 2, skipped: 0, failed: 1 })
+    expect(summary).toEqual({ queued: 2, refreshed: 0, skipped: 0, failed: 1 })
   })
 
   it('reports an empty summary when nothing is owned', async () => {
     const refresh = vi.fn<(id: string) => Promise<void>>()
 
-    expect(await refreshAuthorsSequentially([], refresh)).toEqual({ refreshed: 0, skipped: 0, failed: 0 })
+    expect(await refreshAuthorsSequentially([], refresh)).toEqual({ queued: 0, refreshed: 0, skipped: 0, failed: 0 })
     expect(refresh).not.toHaveBeenCalled()
   })
 })
@@ -54,8 +54,12 @@ describe('refreshAllAuthorsSequentially', () => {
     }))
     const refresh = vi.fn<(id: string) => Promise<void>>().mockResolvedValue(undefined)
 
-    await expect(refreshAllAuthorsSequentially(fetchPage, refresh)).resolves.toEqual({ refreshed: 3, skipped: 0, failed: 0 })
+    await expect(refreshAllAuthorsSequentially(fetchPage, refresh)).resolves.toEqual({ queued: 3, refreshed: 0, skipped: 0, failed: 0 })
     expect(fetchPage).toHaveBeenCalledTimes(2)
     expect(refresh.mock.calls.map(([id]) => id)).toEqual(['a', 'b', 'c'])
   })
+})
+
+it('counts three resolved refreshes as queued', async () => {
+  expect(await refreshAuthorsSequentially(['a', 'b', 'c'], async () => ({}))).toEqual({ queued: 3, refreshed: 0, skipped: 0, failed: 0 })
 })

@@ -27,6 +27,7 @@ function monitor(patch: Partial<MonitoredAuthorConfig> = {}): MonitoredAuthorCon
     paused: false,
     addedAt: '2026-03-15T10:00:00.000Z',
     lastRefreshedAt: null,
+    fetch: { state: 'idle', errorKind: null, errorAt: null, retryAt: null },
     ...patch,
   };
 }

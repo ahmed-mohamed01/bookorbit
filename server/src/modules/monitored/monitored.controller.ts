@@ -152,7 +152,7 @@ export class MonitoredController {
   }
 
   @Post('authors/:id/refresh')
-  @HttpCode(HttpStatus.OK)
+  @HttpCode(HttpStatus.ACCEPTED)
   @RequirePermission(Permission.BookRequestAccess)
   refreshAuthor(@Param('id') id: string, @CurrentUser() user: RequestUser) {
     return this.service.refreshAuthor(id, user);

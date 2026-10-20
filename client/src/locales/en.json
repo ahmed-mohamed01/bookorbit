@@ -15210,6 +15210,29 @@
         "none": "None",
         "count": "{count} of {total}"
       }
+    },
+    "fetch": {
+      "fetching": "Fetching books from Hardcover...",
+      "queued": "Waiting to fetch...",
+      "refreshing": "Refreshing...",
+      "timeout": "Hardcover timed out",
+      "rate_limited": "Hardcover API limit reached",
+      "unavailable": "Hardcover is unavailable",
+      "auth_failed": "Hardcover rejected the API key",
+      "author_gone": "This author no longer exists on Hardcover",
+      "not_configured": "Hardcover is not set up",
+      "retryIn": "Retrying in {minutes} min",
+      "useRefresh": "Use Refresh to try again",
+      "authorGone": "Remove this author or add them again",
+      "checkKey": "Check your Hardcover API key in Settings, then use Refresh",
+      "addKey": "Add a Hardcover API key in Settings, then use Refresh",
+      "showingFrom": "Showing books from {when}",
+      "failedAt": "Failed {when}",
+      "noBooksYet": "No books have been loaded yet.",
+      "retryNow": "Retry now",
+      "retry": "Retry",
+      "queuedSummary": "Queued {count, plural, =0 {no authors} one {# author} other {# authors}} for refresh.",
+      "queuedSummaryPartial": "Queued {count, plural, =0 {no authors} one {# author} other {# authors}} for refresh. {skipped} on cooldown, {failed} failed."
     }
   },
   "tts": {
