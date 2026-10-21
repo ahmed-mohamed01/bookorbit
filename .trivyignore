@@ -1,0 +1,4 @@
+# Go crypto/x509 flaw in the bundled kepubify binaries (built with Go 1.27.2).
+# kepubify only converts local files and never verifies certificates.
+# Drop this once kepubify ships a build with Go 1.27.3 or later.
+CVE-2026-111943
