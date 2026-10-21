@@ -1774,8 +1774,10 @@ ${doc.querySelector('parsererror').innerText}`)
     if (!this.#loaderMediaUrl || this.#encryption.isEncrypted(href)) return null
     return this.#loaderMediaUrl(href)
   }
+  // BookOrbit fork: the host can supply its own narration engine, given foliate's as a fallback.
   getMediaOverlay() {
-    return new MediaOverlay(this, this.#loadXML.bind(this))
+    const fallback = () => new MediaOverlay(this, this.#loadXML.bind(this))
+    return this.createMediaOverlay?.(fallback) ?? fallback()
   }
   resolveCFI(cfi) {
     return this.resources.resolveCFI(cfi)

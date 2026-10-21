@@ -27,6 +27,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { toast } from 'vue-sonner'
+import MediaScrubber from '@/components/media/MediaScrubber.vue'
+import type { MediaScrubberTooltip } from '@/components/media/types'
+import { formatPlaybackClock } from '@/features/podcast/lib/podcast-format'
 import CoverFill from '@/features/book/components/CoverFill.vue'
 import { copyToClipboard } from '@/lib/clipboard'
 import { useMediaOverlay } from '../composables/useMediaOverlay'
@@ -42,8 +45,23 @@ const emit = defineEmits<{ minimise: [] }>()
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3].filter((speed) => speed >= EPUB_NARRATION_SPEED_MIN && speed <= EPUB_NARRATION_SPEED_MAX)
 
 const { t } = useI18n()
-const { isPlaying, isWaitingForAudio, isDetached, isBackground, rate, currentBook, error, toggle, nextSentence, prevSentence, setRate, stop } =
-  useMediaOverlay()
+const {
+  isPlaying,
+  isWaitingForAudio,
+  isDetached,
+  isBackground,
+  rate,
+  currentBook,
+  error,
+  positionSeconds,
+  durationSeconds,
+  toggle,
+  nextSentence,
+  prevSentence,
+  seekTo,
+  setRate,
+  stop,
+} = useMediaOverlay()
 const router = useRouter()
 const { chapters, currentIndex, currentChapter, playChapter } = useNarrationChapters()
 const sleep = useNarrationSleep()
@@ -61,6 +79,24 @@ const sleepButtonLabel = computed(() =>
   isSleepActive.value ? t('reader.narration.sleepTimerWith', { value: sleep.label.value }) : t('reader.narration.sleepTimer'),
 )
 const isSpeedChanged = computed(() => rate.value !== 1)
+const hasBookClock = computed(() => positionSeconds.value !== null && (durationSeconds.value ?? 0) > 0)
+const elapsedLabel = computed(() => formatPlaybackClock(positionSeconds.value ?? 0))
+// At the chosen speed, so it says how long the listener has left, not how long the recording is.
+const timeLeftLabel = computed(() => {
+  const left = Math.max(0, (durationSeconds.value ?? 0) - (positionSeconds.value ?? 0)) / (rate.value || 1)
+  return t('reader.narration.timeLeft', { time: formatPlaybackClock(left) })
+})
+const positionValueText = computed(() =>
+  t('reader.narration.bookPositionValue', { position: elapsedLabel.value, duration: formatPlaybackClock(durationSeconds.value ?? 0) }),
+)
+
+function scrubberTooltip(seconds: number): MediaScrubberTooltip {
+  return { primary: formatPlaybackClock(seconds) }
+}
+
+function handleSeek(seconds: number) {
+  seekTo(seconds)
+}
 
 function speedOptionLabel(speed: number) {
   return speed === 1 ? t('reader.narration.normalSpeed', { speed }) : t('reader.narration.speedValue', { speed })
@@ -204,6 +240,22 @@ function handleSleepSelect(value: unknown) {
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <div v-if="hasBookClock" class="-my-2 flex flex-col px-1">
+        <MediaScrubber
+          :current="positionSeconds ?? 0"
+          :duration="durationSeconds ?? 0"
+          size="sm"
+          :ariaLabel="t('reader.narration.bookPosition')"
+          :ariaValueText="positionValueText"
+          :tooltip="scrubberTooltip"
+          @seek="handleSeek"
+        />
+        <div class="-mt-1 flex justify-between text-[11px] font-medium tabular-nums text-muted-foreground">
+          <span>{{ elapsedLabel }}</span>
+          <span>{{ timeLeftLabel }}</span>
+        </div>
+      </div>
 
       <div class="flex items-center justify-between px-1">
         <DropdownMenu>

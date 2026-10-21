@@ -1,6 +1,9 @@
 import { api, getAccessToken } from '@/lib/api'
 import type { EpubBookInfo } from '@bookorbit/types'
+import type { FoliateMediaOverlay } from './composables/useFoliate'
+import { PlaylistNarration, type NarrationBook } from '../media-overlay/engine/playlist-narration'
 import { ensureMediaOverlayActiveClass } from '../media-overlay/lib/media-overlay-highlight'
+import { loadMediaOverlayPlaylist } from '../media-overlay/lib/media-overlay-playlist'
 
 type FoliateFetchFile = ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) & {
   toString: () => string
@@ -57,5 +60,8 @@ export async function openStreamingEpub(bookId: number, fileId: number): Promise
   if (!makeStreamingBook) throw new Error('makeStreamingBook not available')
   const book = await makeStreamingBook(bookId, '/api/v1/epub', info, makeFoliateFetchFile(), null, fileId)
   ensureMediaOverlayActiveClass(book)
+  const narrated = book as NarrationBook & { createMediaOverlay?: (fallback: () => FoliateMediaOverlay) => FoliateMediaOverlay }
+  narrated.createMediaOverlay = (fallback) =>
+    new PlaylistNarration({ book: narrated, loadPlaylist: () => loadMediaOverlayPlaylist(bookId, fileId), fallback })
   return { book, info }
 }

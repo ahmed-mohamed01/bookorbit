@@ -69,7 +69,7 @@ function applyEpubOpenOptions(book: unknown, options: EpubOpenOptions | undefine
 
 export interface FoliateMediaOverlay extends EventTarget {
   start: (index?: number, filter?: (item: { text: string }, i: number, items: { text: string }[]) => boolean) => Promise<boolean>
-  prepare?: (index: number, filter?: (item: { text: string }) => boolean) => Promise<boolean>
+  prepare?: (index: number, filter?: (item: { text: string }, i: number, items: { text: string }[]) => boolean) => Promise<boolean>
   pause: () => void
   resume: () => void
   stop: () => void
@@ -77,6 +77,10 @@ export interface FoliateMediaOverlay extends EventTarget {
   prev: () => void
   setRate: (rate: number) => void
   setVolume: (volume: number) => void
+  // Only the playlist engine knows the whole book's narration clock.
+  seekTo?: (seconds: number) => void
+  readonly position?: number | null
+  readonly duration?: number | null
 }
 
 // Receives the narrated element (null while its section is not rendered) and

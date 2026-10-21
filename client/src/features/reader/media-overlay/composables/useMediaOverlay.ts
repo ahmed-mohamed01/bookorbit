@@ -29,6 +29,9 @@ const isDetached = ref(false)
 // True while narration is waiting for audio to arrive over the network.
 const isBuffering = ref(false)
 const isWaitingForAudio = computed(() => isPlaying.value && isBuffering.value)
+// Where narration is on the book's whole narration clock, when the engine has one.
+const positionSeconds = ref<number | null>(null)
+const durationSeconds = ref<number | null>(null)
 
 export interface MediaOverlayDetachedActions {
   // Restarts narration at the reader's current position.
@@ -65,6 +68,8 @@ let highlightListener: ((e: Event) => void) | null = null
 let errorListener: ((e: Event) => void) | null = null
 let bufferingListener: ((e: Event) => void) | null = null
 let traceListener: ((e: Event) => void) | null = null
+let timeListener: ((e: Event) => void) | null = null
+let endListener: ((e: Event) => void) | null = null
 let snapshotUserId: number | null = null
 let trackingEnabled = true
 // Bumped whenever a headless engine load starts or is abandoned, so a load that finishes late can tell.
@@ -95,11 +100,15 @@ function detachListeners() {
     if (errorListener) instance.removeEventListener('error', errorListener)
     if (bufferingListener) instance.removeEventListener('buffering', bufferingListener)
     if (traceListener) instance.removeEventListener('trace', traceListener)
+    if (timeListener) instance.removeEventListener('time', timeListener)
+    if (endListener) instance.removeEventListener('end', endListener)
   }
   highlightListener = null
   errorListener = null
   bufferingListener = null
   traceListener = null
+  timeListener = null
+  endListener = null
 }
 
 function releaseSink() {
@@ -185,6 +194,8 @@ function stop() {
   currentBook.value = null
   currentFragment.value = null
   currentSectionIndex.value = null
+  positionSeconds.value = null
+  durationSeconds.value = null
   error.value = null
   mediaSession.clearHandlers()
   mediaSession.setPlaybackState('none')
@@ -215,6 +226,13 @@ function prevSentence() {
   instance?.prev()
 }
 
+function seekTo(seconds: number) {
+  if (!instance?.seekTo) return
+  traceNarration('seek', { to: seconds })
+  instance.seekTo(seconds)
+  positionSeconds.value = instance.position ?? seconds
+}
+
 function bindInstance(mo: FoliateMediaOverlay, book: TtsCurrentBook, actions?: MediaOverlayDetachedActions) {
   requestAudioFocus('media-overlay')
   pendingReaderResume = null
@@ -228,6 +246,8 @@ function bindInstance(mo: FoliateMediaOverlay, book: TtsCurrentBook, actions?: M
 
   instance.setRate(rate.value)
   instance.setVolume(volume.value)
+  positionSeconds.value = instance.position ?? null
+  durationSeconds.value = instance.duration ?? null
 
   highlightListener = (e: Event) => {
     isPlaying.value = true
@@ -253,8 +273,24 @@ function bindInstance(mo: FoliateMediaOverlay, book: TtsCurrentBook, actions?: M
     const { event, ...detail } = (e as CustomEvent<{ event: string } & Record<string, unknown>>).detail
     traceNarration(event, detail)
   }
+  timeListener = (e: Event) => {
+    const { position, duration } = (e as CustomEvent<{ position: number; duration: number }>).detail
+    positionSeconds.value = position
+    durationSeconds.value = duration
+  }
+  // The end of the book: narration stops on the last sentence.
+  endListener = () => {
+    traceNarration('end')
+    isPlaying.value = false
+    isBuffering.value = false
+    mediaSession.setPlaybackState('paused')
+    backgroundSink?.flush()
+    persistSnapshot(true)
+  }
   instance.addEventListener('buffering', bufferingListener)
   instance.addEventListener('trace', traceListener)
+  instance.addEventListener('time', timeListener)
+  instance.addEventListener('end', endListener)
   traceNarration('bind', { bookFileId: book.bookFileId, background: isBackground.value, headless: !!backgroundSink })
 
   registerMediaSession(book)
@@ -500,6 +536,8 @@ export function useMediaOverlay() {
     isBuffering,
     isWaitingForAudio,
     currentSectionIndex,
+    positionSeconds,
+    durationSeconds,
     isBackground,
     isAwaitingPlay,
     error,
@@ -521,6 +559,7 @@ export function useMediaOverlay() {
     playSection,
     nextSentence,
     prevSentence,
+    seekTo,
     setRate,
     setVolume,
     increaseRate,

@@ -12507,7 +12507,10 @@
       "sleepRemainingShort": "{count}m",
       "sleepChapterBadge": "Ch",
       "endOfChapter": "End of chapter",
-      "openBook": "Open book"
+      "openBook": "Open book",
+      "bookPosition": "Position in book",
+      "bookPositionValue": "{position} of {duration}",
+      "timeLeft": "{time} left"
     }
   },
   "scanner": {

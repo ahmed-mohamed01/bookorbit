@@ -140,6 +140,29 @@ describe('useMediaOverlay', () => {
     expect(player.currentSectionIndex.value).toBe(3)
   })
 
+  it('tracks the book position from the engine, seeks through it, and stops playing at the end', () => {
+    const mo = makeFakeMediaOverlay() as ReturnType<typeof makeFakeMediaOverlay> & { seekTo: ReturnType<typeof vi.fn> }
+    mo.seekTo = vi.fn<(seconds: number) => void>()
+    const player = useMediaOverlay()
+    player.start(mo, vi.fn<() => void>(), book)
+    expect(player.positionSeconds.value).toBeNull()
+
+    mo.dispatchEvent(new CustomEvent('time', { detail: { position: 42, duration: 900 } }))
+    expect(player.positionSeconds.value).toBe(42)
+    expect(player.durationSeconds.value).toBe(900)
+
+    player.seekTo(300)
+    expect(mo.seekTo).toHaveBeenCalledWith(300)
+
+    mo.dispatchEvent(new CustomEvent('end'))
+    expect(player.isPlaying.value).toBe(false)
+    expect(player.isActive.value).toBe(true)
+
+    player.stop()
+    expect(player.positionSeconds.value).toBeNull()
+    expect(player.durationSeconds.value).toBeNull()
+  })
+
   it('stop clears the tracked fragment', () => {
     const mo = makeFakeMediaOverlay()
     const player = useMediaOverlay()

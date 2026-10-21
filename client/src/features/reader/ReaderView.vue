@@ -36,6 +36,7 @@ import { resolveMediaOverlayResume, type MediaOverlayResumePosition } from './me
 import { injectMediaOverlayHighlightCss, MEDIA_OVERLAY_DEFAULT_ACTIVE_CLASS } from './media-overlay/lib/media-overlay-highlight'
 import { startMediaOverlayWithFallback } from './media-overlay/lib/media-overlay-start'
 import { mediaOverlayEntriesOverlapping } from './media-overlay/lib/media-overlay-range'
+import { loadMediaOverlayPlaylist } from './media-overlay/lib/media-overlay-playlist'
 import { decideNarrationFollow, isNarrationInView } from './media-overlay/lib/media-overlay-follow'
 import { useMediaOverlayFollow } from './media-overlay/composables/useMediaOverlayFollow'
 import MediaOverlayStartButton from './media-overlay/components/MediaOverlayStartButton.vue'
@@ -316,7 +317,6 @@ const showTtsResumePrompt = ref(false)
 const clearingSavedTtsPosition = ref(false)
 const pendingTtsChapterNavigation = ref<number | null>(null)
 const lastNavigationBlockedToastAt = ref(0)
-let mediaOverlayPlaylistPromise: Promise<EpubMediaOverlayPlaylist | null> | null = null
 // A paused narration can still finish loading its page. Keep its relocations separate from
 // reading progress until the reader explicitly navigates, rather than relying on playback state.
 let relocationSource: 'text' | 'narration' = 'text'
@@ -587,13 +587,8 @@ function getCurrentNarrationPos(): MediaOverlayResumePosition | null {
   return null
 }
 
-async function loadMediaOverlayPlaylist(): Promise<EpubMediaOverlayPlaylist | null> {
-  if (!mediaOverlayPlaylistPromise) {
-    mediaOverlayPlaylistPromise = api(`/api/v1/epub/${bookId}/media-overlay?fileId=${fileId}`)
-      .then((res) => (res.ok ? (res.json() as Promise<EpubMediaOverlayPlaylist>) : null))
-      .catch(() => null)
-  }
-  return mediaOverlayPlaylistPromise
+function loadReaderMediaOverlayPlaylist(): Promise<EpubMediaOverlayPlaylist | null> {
+  return loadMediaOverlayPlaylist(bookId, fileId).catch(() => null)
 }
 
 async function resolveSavedNarrationPos(): Promise<MediaOverlayResumePosition | null> {
@@ -601,7 +596,7 @@ async function resolveSavedNarrationPos(): Promise<MediaOverlayResumePosition | 
   if (current) return current
 
   if (progress.mediaOverlayFragment.value || (progress.positionSeconds.value != null && progress.positionSeconds.value > 0)) {
-    const playlist = await loadMediaOverlayPlaylist()
+    const playlist = await loadReaderMediaOverlayPlaylist()
     if (playlist) {
       const resolved = resolveMediaOverlayResume(playlist, {
         fragment: progress.mediaOverlayFragment.value,

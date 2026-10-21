@@ -22,6 +22,9 @@ vi.mock('../composables/useMediaOverlay', async () => {
     currentBook: ref({ bookId: 7, bookFileId: 9, title: 'Book', author: 'Author' }),
     error: ref<string | null>(null),
     currentFragment: ref<string | null>('c1.xhtml#s1'),
+    positionSeconds: ref<number | null>(null),
+    durationSeconds: ref<number | null>(null),
+    seekTo: vi.fn<(seconds: number) => void>(),
     toggle: vi.fn<() => void>(),
     pause: vi.fn<() => void>(),
     stop: vi.fn<() => void>(),
@@ -170,6 +173,27 @@ describe('MediaOverlayFullPlayer', () => {
     expect(button.exists()).toBe(true)
     expect(button.find('.animate-spin').exists()).toBe(true)
     waiting.value = false
+  })
+
+  it('shows where narration is in the whole book and how long is left at the chosen speed', async () => {
+    const state = useMediaOverlay()
+    const wrapper = mount(MediaOverlayFullPlayer)
+    expect(wrapper.find('[aria-label="Position in book"]').exists()).toBe(false)
+
+    state.positionSeconds.value = 600
+    state.durationSeconds.value = 3600
+    state.rate.value = 1.5
+    await wrapper.vm.$nextTick()
+    const scrubber = wrapper.find('[aria-label="Position in book"]')
+    expect(scrubber.exists()).toBe(true)
+    expect(wrapper.text()).toContain('10:00')
+    expect(wrapper.text()).toContain('33:20 left')
+
+    await scrubber.trigger('keydown', { key: 'End' })
+    expect(state.seekTo).toHaveBeenCalledWith(3600)
+    state.positionSeconds.value = null
+    state.durationSeconds.value = null
+    state.rate.value = 1
   })
 
   it('offers to open the book only while narrating in the background', async () => {
