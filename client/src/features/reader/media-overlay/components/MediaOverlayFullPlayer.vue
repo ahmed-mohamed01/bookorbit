@@ -2,7 +2,21 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { BookOpen, Check, ChevronDown, RotateCw, Headphones, ListOrdered, LoaderCircle, Moon, Pause, Play, RotateCcw, X } from '@lucide/vue'
+import {
+  BookOpen,
+  Check,
+  ChevronDown,
+  ClipboardList,
+  RotateCw,
+  Headphones,
+  ListOrdered,
+  LoaderCircle,
+  Moon,
+  Pause,
+  Play,
+  RotateCcw,
+  X,
+} from '@lucide/vue'
 import { EPUB_NARRATION_SPEED_MAX, EPUB_NARRATION_SPEED_MIN } from '@bookorbit/types'
 import {
   DropdownMenu,
@@ -12,12 +26,15 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { toast } from 'vue-sonner'
 import CoverFill from '@/features/book/components/CoverFill.vue'
+import { copyToClipboard } from '@/lib/clipboard'
 import { useMediaOverlay } from '../composables/useMediaOverlay'
 import { useNarrationChapters } from '../composables/useNarrationChapters'
 import { useNarrationDockPosition } from '../composables/useNarrationDockPosition'
 import { useNarrationDockLayout } from '../composables/useNarrationDockLayout'
 import { useNarrationSleep } from '../composables/useNarrationSleep'
+import { narrationTraceText } from '../lib/narration-trace'
 import MediaOverlayDetachedChips from './MediaOverlayDetachedChips.vue'
 
 const emit = defineEmits<{ minimise: [] }>()
@@ -55,6 +72,11 @@ function handleMinimise() {
 
 function handleStop() {
   stop()
+}
+
+async function handleCopyLog() {
+  if (await copyToClipboard(narrationTraceText())) toast.success(t('reader.narration.logCopied'))
+  else toast.error(t('reader.narration.logCopyFailed'))
 }
 
 function handleOpenBook() {
@@ -118,6 +140,15 @@ function handleSleepSelect(value: unknown) {
             @click="handleOpenBook"
           >
             <BookOpen class="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            class="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/55"
+            :aria-label="t('reader.narration.copyLog')"
+            :title="t('reader.narration.copyLog')"
+            @click="handleCopyLog"
+          >
+            <ClipboardList class="h-5 w-5" />
           </button>
           <button
             type="button"

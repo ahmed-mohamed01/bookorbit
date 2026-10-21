@@ -1,5 +1,8 @@
 import { fileURLToPath, URL } from 'node:url'
 import { Agent } from 'node:http'
+import { createHash } from 'node:crypto'
+import { cpSync, readFileSync, readdirSync } from 'node:fs'
+import { join, relative } from 'node:path'
 
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
@@ -12,14 +15,37 @@ const apiAgent = new Agent({ keepAlive: true })
 const apiTarget = process.env.BOOKORBIT_API_TARGET ?? 'http://localhost:6262'
 const offlineShellUrl = '__bookorbit_offline_shell'
 
+// Foliate is loaded as plain ES modules whose URLs never change, so a cache in front of the
+// server can keep handing out an old engine after a deploy. A build also serves the files under
+// a folder named by their content hash, which the reader loads instead.
+const foliateDir = fileURLToPath(new URL('./public/assets/foliate', import.meta.url))
+function hashFoliate(): string {
+  const hash = createHash('sha256')
+  const files = readdirSync(foliateDir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name))
+    .sort()
+  for (const file of files) hash.update(relative(foliateDir, file)).update(readFileSync(file))
+  return hash.digest('hex').slice(0, 12)
+}
+const foliateVersion = hashFoliate()
+
 // https://vite.dev/config/
 export default defineConfig({
   define: {
     __INTLIFY_PROD_DEVTOOLS__: false,
     __VUE_I18N_FULL_INSTALL__: true,
     __VUE_I18N_LEGACY_API__: false,
+    'import.meta.env.VITE_FOLIATE_VERSION': JSON.stringify(foliateVersion),
   },
   plugins: [
+    {
+      name: 'foliate-versioned-copy',
+      apply: 'build',
+      writeBundle(options) {
+        if (options.dir) cpSync(foliateDir, join(options.dir, 'assets', 'foliate', foliateVersion), { recursive: true })
+      },
+    },
     vue(),
     vueDevTools(),
     tailwindcss(),

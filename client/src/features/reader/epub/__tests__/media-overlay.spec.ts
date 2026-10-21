@@ -337,7 +337,9 @@ describe('Foliate MediaOverlay concurrency', () => {
     })
 
     it('warms the next section before the boundary and plays it without a new request', async () => {
-      const { overlay, getMediaUrl } = makeStreamingOverlay()
+      const { overlay, getMediaUrl, loadBlob } = makeStreamingOverlay()
+      // The download of the next file is still on its way at the boundary.
+      loadBlob.mockReturnValue(new Promise<Blob>(() => {}))
       await overlay.start(0)
       const current = latest()
       current.emitLoadedMetadata()
@@ -349,12 +351,14 @@ describe('Foliate MediaOverlay concurrency', () => {
       expect(FakeAudio.instances).toHaveLength(2)
       const next = latest()
       expect(next.src).toBe(streamUrl('OPS/next.mp3'))
-      expect(next.preload).toBe('auto')
+      expect(next.preload).toBe('metadata')
       next.emitLoadedMetadata()
       expect(next.currentTime).toBe(5)
 
       current.emit('ended')
       await flush()
+
+      expect(next.preload).toBe('auto')
 
       expect(FakeAudio.instances).toHaveLength(2)
       expect(getMediaUrl).toHaveBeenCalledTimes(2)

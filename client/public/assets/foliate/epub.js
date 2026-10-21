@@ -434,6 +434,12 @@ const PRELOAD_LEAD_SECONDS = 45
 // Within this distance of the boundary the next clip is warmed even if the
 // current one is not fully buffered yet.
 const PRELOAD_FORCE_SECONDS = 15
+// Android does not let a page in the background fetch a new file through an
+// audio element: the request stalls and fails until the page is shown. The
+// next file is downloaded ahead with fetch, which does work there, and played
+// from memory. It starts this long before the switch so a slow link finishes.
+const PREFETCH_LEAD_SECONDS = 300
+const MAX_PREFETCH_BYTES = 80 * 1024 * 1024
 const STREAM_RETRY_DELAYS_MS = [1000, 3000, 8000]
 // A stream that keeps failing after it played gets fresh retries, but only
 // this many within the window, so a dead link ends in an error, not a loop.
@@ -444,13 +450,73 @@ const HAVE_METADATA = 1
 const bufferedAhead = (audio) => {
   const t = audio.currentTime
   const { buffered } = audio
-  for (let i = 0; i < buffered.length; i++) {
+  for (let i = 0; i < (buffered?.length ?? 0); i++) {
     if (buffered.start(i) <= t + 0.05 && t < buffered.end(i)) return buffered.end(i) - t
   }
   return 0
 }
 
+// BookOrbit fork: names audio elements in the narration trace.
+let audioSerial = 0
+const audioName = (audio) => (audio.__traceId ??= ++audioSerial)
+const fileName = (src) => src?.split('/').pop()
+const TRACED_AUDIO_EVENTS = [
+  'loadstart',
+  'loadedmetadata',
+  'canplay',
+  'playing',
+  'pause',
+  'waiting',
+  'stalled',
+  'suspend',
+  'ended',
+  'error',
+  'emptied',
+  'abort',
+]
+
+// BookOrbit fork: Android gives a page in the background no working output for
+// an audio pipeline built there, so after a file switch narration plays on
+// silently and its media notification goes away. Every narration element is
+// routed through one AudioContext, whose output stays open for the session.
+// Only on Android: iOS suspends an AudioContext once the screen locks.
+let narrationContext = null
+const routedAudio = new WeakMap()
+const shouldRouteAudio = () => !!globalThis.AudioContext && /Android/i.test(globalThis.navigator?.userAgent ?? '')
+const routeAudio = (audio, trace) => {
+  if (!shouldRouteAudio() || routedAudio.has(audio)) return
+  try {
+    if (!narrationContext) {
+      narrationContext = new globalThis.AudioContext()
+      narrationContext.addEventListener('statechange', () => {
+        trace('context', { state: narrationContext.state })
+        if (narrationContext.state !== 'running' && narrationContext.state !== 'closed') narrationContext.resume().catch(() => {})
+      })
+    }
+    const context = narrationContext
+    // An element routed into a context that is not running is silent, so it
+    // is only routed once the context runs, and plays on its own until then.
+    const connect = () => {
+      if (context.state !== 'running' || routedAudio.has(audio)) return
+      const source = context.createMediaElementSource(audio)
+      source.connect(context.destination)
+      routedAudio.set(audio, source)
+      trace('routed', { el: audioName(audio) })
+    }
+    if (context.state === 'running') connect()
+    else
+      context
+        .resume()
+        .then(connect)
+        .catch((e) => trace('route failed', { message: e?.message }))
+  } catch (e) {
+    trace('route failed', { message: e?.message })
+  }
+}
+
 const releaseAudio = (audio) => {
+  routedAudio.get(audio)?.disconnect()
+  routedAudio.delete(audio)
   audio.pause()
   // Detaching the source aborts the in-flight range requests.
   audio.removeAttribute('src')
@@ -479,6 +545,16 @@ class MediaOverlay extends EventTarget {
   #rate = 1
   #state
   #playbackId = 0
+  // Detaches the listeners of the current load, so the element can take
+  // another file without the old load driving narration.
+  #listeners = null
+  // The link of the next file, resolved ahead so a page in the background
+  // can switch files without waiting on the network.
+  #nextUrl = null
+  #prefetchFor = null
+  #nextBlob = null
+  #advancing = false
+  #lastBeat = 0
   constructor(book, loadXML) {
     super()
     this.book = book
@@ -526,8 +602,31 @@ class MediaOverlay extends EventTarget {
   get #activeItem() {
     return this.#activeAudio?.items?.[this.#itemIndex]
   }
+  // BookOrbit fork: a diagnostic trace of playback decisions and element events.
+  #trace(event, detail = {}) {
+    this.dispatchEvent(new CustomEvent('trace', { detail: { event, ...detail } }))
+  }
+  #traceElement(audio, signal) {
+    for (const type of TRACED_AUDIO_EVENTS)
+      audio.addEventListener(
+        type,
+        () =>
+          this.#trace(`audio.${type}`, {
+            el: audioName(audio),
+            file: fileName(this.#audio === audio ? this.#audioSrc : null),
+            t: audio.currentTime,
+            ready: audio.readyState,
+            net: audio.networkState,
+            ahead: bufferedAhead(audio),
+            paused: audio.paused,
+            code: audio.error?.code,
+          }),
+        { signal },
+      )
+  }
   #error(e) {
     console.error(e)
+    this.#trace('error', { message: e?.message ?? String(e) })
     this.dispatchEvent(new CustomEvent('error', { detail: e }))
   }
   #highlight() {
@@ -538,11 +637,14 @@ class MediaOverlay extends EventTarget {
   }
   #setBuffering(buffering) {
     if (this.#buffering === buffering) return
+    this.#trace('buffering', { on: buffering })
     this.#buffering = buffering
     this.dispatchEvent(new CustomEvent('buffering', { detail: buffering }))
   }
   #playAudio(audio) {
+    this.#trace('play()', { el: audioName(audio), t: audio.currentTime, ready: audio.readyState })
     audio.play().catch((e) => {
+      this.#trace('play() rejected', { el: audioName(audio), name: e?.name, message: e?.message })
       if (e?.name !== 'AbortError') this.#error(e)
     })
   }
@@ -563,6 +665,7 @@ class MediaOverlay extends EventTarget {
     const now = Date.now()
     this.#streamFailures = this.#streamFailures.filter((at) => now - at < STREAM_FAILURE_WINDOW_MS)
     this.#streamFailures.push(now)
+    this.#trace('retry', { attempt, serverAnswered, message: error?.message })
     if (this.#streamFailures.length > MAX_STREAM_FAILURES) {
       this.#setBuffering(false)
       return this.#error(error)
@@ -579,13 +682,19 @@ class MediaOverlay extends EventTarget {
       this.#play(audioIndex, itemIndex, undefined, { attempt: attempt + 1 }).catch((e) => this.#error(e))
     }, STREAM_RETRY_DELAYS_MS[attempt])
   }
-  #seekWithin(audioIndex, itemIndex, playbackId) {
+  #seekWithin(audioIndex, itemIndex, playbackId, natural) {
     const audio = this.#audio
     this.#unhighlight()
+    this.#advancing = false
     this.#audioIndex = audioIndex
     this.#itemIndex = itemIndex
     this.#audioPlaybackId = playbackId
-    audio.currentTime = this.#activeItem.begin ?? 0
+    const begin = this.#activeItem.begin ?? 0
+    // Narration running on into the next section of the same file is already
+    // there, and a seek makes a stream on a hidden page fetch again.
+    const drift = begin - audio.currentTime
+    this.#trace('play.seek', { el: audioName(audio), file: fileName(this.#audioSrc), section: this.#sectionIndex, begin, drift, natural })
+    if (!natural || drift > 0.5 || drift < -1) audio.currentTime = begin
     this.#highlight()
     if (this.#state !== 'paused' && audio.paused) this.#playAudio(audio)
   }
@@ -622,10 +731,26 @@ class MediaOverlay extends EventTarget {
     }
     return null
   }
-  #nextClip() {
+  // The next clip in another file. Storyteller cuts files at a silence, which
+  // often leaves a chapter's title at the end of the previous chapter's file,
+  // so the next section can begin in this file and switch files after it.
+  async #nextFileClip() {
+    const src = this.#audioSrc
     const next = this.#entries[this.#audioIndex + 1]
     if (next) return { src: next.src, begin: next.items[0]?.begin ?? 0 }
-    return this.#findClip(this.#sectionIndex + 1)
+    for (let index = this.#sectionIndex + 1; index < this.book.sections.length; index++) {
+      const section = this.book.sections[index]
+      if (!section?.id) return null
+      if (!section.mediaOverlay) continue
+      const entries = await this.#parseSMIL(section.mediaOverlay)
+      for (const entry of entries) {
+        const first = entry.items.find((item) => item.text.split('#')[0] === section.id)
+        if (first && entry.src !== src) return { src: entry.src, begin: first.begin ?? 0 }
+      }
+      // A section that stays in this file is looked past once narration is in it.
+      return null
+    }
+    return null
   }
   async #warm(clip, preload, isStale) {
     const url = await this.book.getMediaUrl(clip.src)
@@ -643,22 +768,67 @@ class MediaOverlay extends EventTarget {
     this.#dropPreload()
     this.#preload = warmed
   }
+  #maybePrefetch(audio) {
+    const entry = this.#activeAudio
+    if (!entry || this.#prefetchFor === entry || !this.book.getMediaUrl) return
+    const clipEnd = entry.items.at(-1)?.end
+    const left = (Number.isFinite(clipEnd) ? clipEnd : audio.duration) - audio.currentTime
+    if (!(left / (this.#rate || 1) <= PREFETCH_LEAD_SECONDS)) return
+    this.#prefetchFor = entry
+    this.#prefetchNext(audio, entry).catch((e) => this.#trace('prefetch failed', { message: e?.message }))
+  }
+  async #prefetchNext(current, entry) {
+    const clip = await this.#nextFileClip()
+    if (!clip || this.#audio !== current || this.#activeAudio !== entry || this.#nextBlob?.src === clip.src) return
+    const size = this.book.getSize?.(clip.src) ?? 0
+    if (size > MAX_PREFETCH_BYTES) return this.#trace('prefetch skipped', { file: fileName(clip.src), size })
+    const pending = { src: clip.src, blob: null }
+    this.#nextBlob = pending
+    const startedAt = Date.now()
+    this.#trace('prefetch', { file: fileName(clip.src), size })
+    const blob = await this.book.loadBlob(clip.src)
+    if (this.#nextBlob !== pending) return
+    if (!blob) {
+      this.#nextBlob = null
+      return this.#trace('prefetch failed', { file: fileName(clip.src) })
+    }
+    pending.blob = blob
+    this.#trace('prefetch done', { file: fileName(clip.src), bytes: blob.size, ms: Date.now() - startedAt })
+  }
+  #takeNextBlob(src) {
+    const next = this.#nextBlob
+    if (next?.src !== src) return null
+    this.#nextBlob = null
+    return next.blob ? { blob: next.blob, prefetched: true } : null
+  }
   #maybePreload(audio) {
-    if (this.#preloadFor === audio || !this.book.getMediaUrl) return
-    const clipEnd = this.#activeAudio.items.at(-1)?.end
+    const entry = this.#activeAudio
+    if (!entry || this.#preloadFor === entry || !this.book.getMediaUrl) return
+    const clipEnd = entry.items.at(-1)?.end
     const left = (Number.isFinite(clipEnd) ? clipEnd : audio.duration) - audio.currentTime
     const secondsLeft = left / (this.#rate || 1)
     if (!(secondsLeft <= PRELOAD_LEAD_SECONDS)) return
     // Keep the link for the current clip until it is buffered to its end.
     if (secondsLeft > PRELOAD_FORCE_SECONDS && bufferedAhead(audio) < left - 0.5) return
-    this.#preloadFor = audio
-    this.#preloadNext(audio).catch(() => {})
+    this.#preloadFor = entry
+    this.#preloadNext(audio, entry).catch(() => {})
   }
-  async #preloadNext(current) {
-    const isStale = () => this.#audio !== current
-    const clip = await this.#nextClip()
-    // A next section that continues this file is reached by seeking the playing element.
-    if (clip && clip.src !== this.#audioSrc && !isStale()) await this.#warm(clip, 'auto', isStale)
+  async #preloadNext(current, entry) {
+    const isStale = () => this.#audio !== current || this.#activeAudio !== entry
+    const clip = await this.#nextFileClip()
+    const prefetch = this.#nextBlob?.src === clip?.src ? this.#nextBlob : null
+    if (!clip || isStale() || this.#nextUrl?.src === clip.src || prefetch?.blob) return
+    if (this.#preload?.src === clip.src && !this.#preload.audio.error) return
+    // A hidden page switches files on its playing element, so it only needs the link.
+    this.#trace('preload', { file: fileName(clip.src), mode: globalThis.document?.hidden ? 'link' : 'warm' })
+    if (globalThis.document?.hidden) {
+      const url = await this.book.getMediaUrl(clip.src)
+      if (url && !isStale()) this.#nextUrl = { src: clip.src, url }
+      return
+    }
+    // A download still on its way may yet be used, so only the start is warmed.
+    await this.#warm(clip, prefetch ? 'metadata' : 'auto', isStale)
+    if (this.#preload?.src === clip.src) this.#nextUrl = { src: clip.src, url: this.#preload.audio.src }
   }
   // BookOrbit fork: lets the reader warm narration for where play would start,
   // so pressing play is instant. Fetches only the index and a little audio.
@@ -684,91 +854,167 @@ class MediaOverlay extends EventTarget {
     await this.#warm(clip, 'metadata', isStale)
     return !isStale()
   }
-  async #play(audioIndex, itemIndex, playbackId = ++this.#playbackId, { attempt = 0, blob = false } = {}) {
+  // Moves on once the current clip is done. The playing element is kept: a
+  // next section in the same file plays on without a pause, and another file
+  // is loaded into the same element. Android keeps a hidden page playing, but
+  // does not reliably let it start a new element.
+  #advance() {
+    this.#trace('advance', { section: this.#sectionIndex, entry: this.#audioIndex, pending: this.#advancing })
+    if (this.#advancing) return
+    this.#advancing = true
+    this.#play(this.#audioIndex + 1, 0, undefined, { natural: true }).catch((e) => this.#error(e))
+  }
+  async #play(audioIndex, itemIndex, playbackId = ++this.#playbackId, { attempt = 0, blob = false, natural = false } = {}) {
     const target = this.#entries[audioIndex]
-    if (!attempt && !blob && this.#audio && !this.#audio.error && target?.src === this.#audioSrc && target.items[itemIndex]) {
-      return this.#seekWithin(audioIndex, itemIndex, playbackId)
+    const item = target?.items[itemIndex]
+    if (!attempt && !blob && item && this.#audio && !this.#audio.error && target.src === this.#audioSrc) {
+      return this.#seekWithin(audioIndex, itemIndex, playbackId, natural)
     }
-    this.#stop()
-    this.#audioIndex = audioIndex
-    this.#itemIndex = itemIndex
-    const src = this.#activeAudio?.src
-    if (!src || !this.#activeItem) return this.start(this.#sectionIndex + 1, undefined, playbackId)
-    const begin = this.#activeItem.begin ?? 0
+    if (!item) return this.#continueToSection(this.#sectionIndex + 1, playbackId, natural)
+    const { src } = target
+    const begin = item.begin ?? 0
+    // The element plays on while the next file loads, but no longer drives narration.
+    this.#listeners?.abort()
+    this.#listeners = null
+    this.#advancing = false
+    this.#unhighlight()
 
+    const previous = this.#audio
+    const prefetched = attempt || blob ? null : this.#takeNextBlob(src)
     let audio = attempt || blob ? null : this.#takePreload(src)
-    if (audio) audio.preload = 'auto'
-    let source = audio ? { url: audio.src, streamed: true } : null
+    if (audio && (prefetched || (previous && globalThis.document?.hidden))) {
+      releaseAudio(audio)
+      audio = null
+    }
+    let source = prefetched ?? (audio ? { url: audio.src, streamed: true } : attempt || blob ? null : this.#takeNextUrl(src))
+    this.#trace('play.load', {
+      file: fileName(src),
+      section: this.#sectionIndex,
+      begin,
+      natural,
+      attempt,
+      blob,
+      via: audio ? 'warmed' : previous && !attempt && !blob && !previous.error ? 'reuse' : 'new',
+      linkReady: !!source,
+      prefetched: !!source?.prefetched,
+      previous: previous ? audioName(previous) : null,
+    })
     if (!source) {
       this.#setBuffering(true)
       try {
         source = await this.#loadAudioSource(src, blob)
       } catch (e) {
-        if (playbackId === this.#playbackId) this.#retryStream(audioIndex, itemIndex, attempt, false, e)
+        if (playbackId === this.#playbackId) {
+          this.#stop()
+          this.#retryStream(audioIndex, itemIndex, attempt, false, e)
+        }
         return
       }
     }
-    if (playbackId !== this.#playbackId) return
+    if (playbackId !== this.#playbackId) {
+      if (audio) releaseAudio(audio)
+      return
+    }
     const streamed = source.streamed === true
     const url = streamed ? source.url : URL.createObjectURL(source.blob)
-    audio ??= new Audio(url)
+    if (audio) {
+      audio.preload = 'auto'
+      if (previous) this.#releaseElement(previous, this.#audioStreamed)
+    } else if (previous && !attempt && !blob && !previous.error) {
+      audio = previous
+      if (!this.#audioStreamed) URL.revokeObjectURL(audio.src)
+      audio.src = url
+    } else {
+      // A failed element is not trusted with another load.
+      if (previous) this.#releaseElement(previous, this.#audioStreamed)
+      audio = new Audio(url)
+    }
     this.#audio = audio
     this.#audioSrc = src
     this.#audioStreamed = streamed
     this.#audioPlaybackId = playbackId
-    const isCurrent = () => this.#audio === audio && this.#audioPlaybackId === this.#playbackId
+    this.#audioIndex = audioIndex
+    this.#itemIndex = itemIndex
+    const listeners = new AbortController()
+    this.#listeners = listeners
+    const { signal } = listeners
+    this.#traceElement(audio, signal)
+    routeAudio(audio, (event, detail) => this.#trace(event, detail))
+    this.#trace('play.bound', { el: audioName(audio), file: fileName(src), streamed, state: this.#state })
+    const isCurrent = () => !signal.aborted && this.#audio === audio && this.#audioPlaybackId === this.#playbackId
     let hasPlayed = false
     audio.volume = this.#volume
     audio.playbackRate = this.#rate
-    audio.addEventListener('timeupdate', () => {
-      if (!isCurrent() || audio.paused) return
-      const t = audio.currentTime
-      const { items } = this.#activeAudio
-      if (streamed) this.#maybePreload(audio)
-      if (t > this.#activeItem?.end) {
-        this.#unhighlight()
-        if (this.#itemIndex === items.length - 1) {
-          this.#play(this.#audioIndex + 1, 0).catch((e) => this.#error(e))
-          return
+    audio.addEventListener(
+      'timeupdate',
+      () => {
+        if (!isCurrent() || audio.paused) return
+        const entry = this.#activeAudio
+        if (!entry) return
+        const t = audio.currentTime
+        const { items } = entry
+        if (Date.now() - this.#lastBeat > 30000) {
+          this.#lastBeat = Date.now()
+          this.#trace('tick', { el: audioName(audio), file: fileName(this.#audioSrc), t, ahead: bufferedAhead(audio) })
         }
-      }
-      const oldIndex = this.#itemIndex
-      while (items[this.#itemIndex + 1]?.begin <= t) this.#itemIndex++
-      if (this.#itemIndex !== oldIndex) this.#highlight()
-    })
-    audio.addEventListener('error', () => {
-      if (!isCurrent()) return
-      this.#setBuffering(false)
-      if (!streamed) return this.#error(new Error(`Failed to load ${src}`))
-      // A stream that had been playing earns a fresh set of retries.
-      this.#retryStream(this.#audioIndex, this.#itemIndex, hasPlayed ? 0 : attempt, true, new Error(`Failed to stream ${src}`))
-    })
-    audio.addEventListener('playing', () => {
-      hasPlayed = true
-      if (!isCurrent()) return
-      this.#setBuffering(false)
-      this.#highlight()
-    })
+        this.#maybePrefetch(audio)
+        this.#maybePreload(audio)
+        if (t > this.#activeItem?.end) {
+          this.#unhighlight()
+          if (this.#itemIndex === items.length - 1) return this.#advance()
+        }
+        const oldIndex = this.#itemIndex
+        while (items[this.#itemIndex + 1]?.begin <= t) this.#itemIndex++
+        if (this.#itemIndex !== oldIndex) this.#highlight()
+      },
+      { signal },
+    )
+    audio.addEventListener(
+      'error',
+      () => {
+        if (!isCurrent()) return
+        this.#setBuffering(false)
+        if (!streamed && !source.prefetched) return this.#error(new Error(`Failed to load ${src}`))
+        // A stream that had been playing earns a fresh set of retries.
+        this.#retryStream(this.#audioIndex, this.#itemIndex, hasPlayed ? 0 : attempt, true, new Error(`Failed to stream ${src}`))
+      },
+      { signal },
+    )
+    audio.addEventListener(
+      'playing',
+      () => {
+        hasPlayed = true
+        if (!isCurrent()) return
+        this.#setBuffering(false)
+        this.#highlight()
+      },
+      { signal },
+    )
     // A stall is left to the browser, which resumes once data arrives. Pausing
     // here makes Android release the decoder of a hidden page, and resuming
     // then replays a moment of audio and can stall again in a loop.
-    audio.addEventListener('waiting', () => {
-      if (!isCurrent() || this.#state !== 'playing') return
-      this.#setBuffering(true)
-    })
-    audio.addEventListener('ended', () => {
-      if (!isCurrent()) return
-      this.#unhighlight()
-      if (!streamed) URL.revokeObjectURL(url)
-      this.#audio = null
-      this.#audioSrc = null
-      this.#play(this.#audioIndex + 1, 0).catch((e) => this.#error(e))
-    })
+    audio.addEventListener(
+      'waiting',
+      () => {
+        if (!isCurrent() || this.#state !== 'playing') return
+        this.#setBuffering(true)
+      },
+      { signal },
+    )
+    audio.addEventListener(
+      'ended',
+      () => {
+        if (!isCurrent()) return
+        this.#unhighlight()
+        this.#advance()
+      },
+      { signal },
+    )
     if (this.#state === 'paused') {
       this.#setBuffering(false)
       this.#highlight()
       audio.currentTime = begin
-    } else if (streamed) {
+    } else if (streamed || source.prefetched) {
       // Seeking once metadata is known lets the browser fetch from the clip
       // position instead of buffering the file from its start.
       const startStreamed = () => {
@@ -779,7 +1025,12 @@ class MediaOverlay extends EventTarget {
         this.#playAudio(audio)
       }
       if (audio.readyState >= HAVE_METADATA) startStreamed()
-      else audio.addEventListener('loadedmetadata', startStreamed, { once: true })
+      else {
+        audio.addEventListener('loadedmetadata', startStreamed, { once: true, signal })
+        // A new source pauses the element. Asking to play straight away keeps
+        // a hidden page's playback going while the file loads.
+        if (audio === previous) this.#playAudio(audio)
+      }
     } else
       audio.addEventListener(
         'canplaythrough',
@@ -792,18 +1043,50 @@ class MediaOverlay extends EventTarget {
           this.#setBuffering(false)
           audio.play().catch((e) => this.#error(e))
         },
-        { once: true },
+        { once: true, signal },
       )
   }
+  #takeNextUrl(src) {
+    const next = this.#nextUrl
+    this.#nextUrl = null
+    return next?.src === src ? { url: next.url, streamed: true } : null
+  }
+  #releaseElement(audio, streamed) {
+    if (streamed) return releaseAudio(audio)
+    routedAudio.get(audio)?.disconnect()
+    audio.pause()
+    URL.revokeObjectURL(audio.src)
+  }
+  // The element keeps playing until the next section is ready, so narration
+  // that goes on in the same file never stops. It is only released when
+  // nothing follows.
+  async #continueToSection(sectionIndex, playbackId, natural) {
+    let started = false
+    try {
+      started = await this.#startSection(sectionIndex, undefined, playbackId, natural)
+    } finally {
+      this.#trace('section', { index: sectionIndex, started, stale: playbackId !== this.#playbackId })
+      if (!started && playbackId === this.#playbackId) this.#stop()
+    }
+    return started
+  }
   async start(sectionIndex, filter = () => true, playbackId = ++this.#playbackId) {
+    this.#trace('start', { section: sectionIndex })
     if (playbackId !== this.#playbackId) return false
     this.#audio?.pause()
+    this.#nextUrl = null
+    // A jump keeps a finished download, since it is often still the next file.
+    this.#prefetchFor = null
+    return this.#startSection(sectionIndex, filter, playbackId)
+  }
+  async #startSection(sectionIndex, filter = () => true, playbackId, natural = false) {
+    if (playbackId !== this.#playbackId) return false
     const section = this.book.sections[sectionIndex]
     const href = section?.id
     if (!href) return false
 
     const { mediaOverlay } = section
-    if (!mediaOverlay) return this.start(sectionIndex + 1, undefined, playbackId)
+    if (!mediaOverlay) return this.#startSection(sectionIndex + 1, undefined, playbackId, natural)
     this.#sectionIndex = sectionIndex
     if (!(await this.#loadSMIL(mediaOverlay, playbackId))) return false
 
@@ -811,7 +1094,7 @@ class MediaOverlay extends EventTarget {
       const { items } = this.#entries[i]
       for (let j = 0; j < items.length; j++) {
         if (items[j].text.split('#')[0] === href && filter(items[j], j, items)) {
-          await this.#play(i, j, playbackId).catch((e) => this.#error(e))
+          await this.#play(i, j, playbackId, { natural }).catch((e) => this.#error(e))
           return true
         }
       }
@@ -819,32 +1102,37 @@ class MediaOverlay extends EventTarget {
     return false
   }
   pause() {
+    this.#trace('pause')
     this.#state = 'paused'
     this.#setBuffering(false)
     this.#audio?.pause()
   }
   resume() {
+    this.#trace('resume', { el: this.#audio ? audioName(this.#audio) : null })
     this.#state = 'playing'
     this.#audio?.play().catch((e) => this.#error(e))
   }
   #stop() {
     this.#setBuffering(false)
+    this.#listeners?.abort()
+    this.#listeners = null
+    this.#advancing = false
     if (this.#audio) {
-      if (this.#audioStreamed) releaseAudio(this.#audio)
-      else {
-        this.#audio.pause()
-        URL.revokeObjectURL(this.#audio.src)
-      }
+      this.#releaseElement(this.#audio, this.#audioStreamed)
       this.#audio = null
       this.#audioSrc = null
       this.#unhighlight()
     }
   }
   stop() {
+    this.#trace('stop')
     this.#playbackId++
     this.#state = 'stopped'
     this.#stop()
     this.#dropPreload()
+    this.#nextUrl = null
+    this.#nextBlob = null
+    this.#prefetchFor = null
     this.#streamFailures = []
   }
   prev() {

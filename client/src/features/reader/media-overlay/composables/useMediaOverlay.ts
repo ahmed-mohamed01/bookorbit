@@ -8,6 +8,7 @@ import { useTtsSleepTimer } from '@/features/tts/composables/useTtsSleepTimer'
 import type { TtsCurrentBook } from '@/features/tts/lib/tts-state'
 import { startMediaOverlayWithFallback } from '../lib/media-overlay-start'
 import { clearSnapshot, readSnapshot, writeSnapshot, type NarrationPosition } from '../lib/narration-snapshot'
+import { traceNarration } from '../lib/narration-trace'
 
 const MIN_RATE = EPUB_NARRATION_SPEED_MIN
 const MAX_RATE = EPUB_NARRATION_SPEED_MAX
@@ -63,6 +64,7 @@ let backgroundSink: MediaOverlayBackgroundSink | null = null
 let highlightListener: ((e: Event) => void) | null = null
 let errorListener: ((e: Event) => void) | null = null
 let bufferingListener: ((e: Event) => void) | null = null
+let traceListener: ((e: Event) => void) | null = null
 let snapshotUserId: number | null = null
 let trackingEnabled = true
 // Bumped whenever a headless engine load starts or is abandoned, so a load that finishes late can tell.
@@ -92,10 +94,12 @@ function detachListeners() {
     if (highlightListener) instance.removeEventListener('highlight', highlightListener)
     if (errorListener) instance.removeEventListener('error', errorListener)
     if (bufferingListener) instance.removeEventListener('buffering', bufferingListener)
+    if (traceListener) instance.removeEventListener('trace', traceListener)
   }
   highlightListener = null
   errorListener = null
   bufferingListener = null
+  traceListener = null
 }
 
 function releaseSink() {
@@ -187,9 +191,19 @@ function stop() {
   sleepTimer.cancelTimer()
 }
 
-const sleepTimer = useTtsSleepTimer(pause)
+const sleepTimer = useTtsSleepTimer(() => {
+  traceNarration('sleep-timer')
+  pause()
+})
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (isActive.value) traceNarration('visibility', { playing: isPlaying.value, buffering: isBuffering.value })
+  })
+}
 
 registerAudioFocusOwner('media-overlay', () => {
+  if (isPlaying.value) traceNarration('focus-lost')
   if (isPlaying.value) pause()
 })
 
@@ -235,7 +249,13 @@ function bindInstance(mo: FoliateMediaOverlay, book: TtsCurrentBook, actions?: M
   }
   instance.addEventListener('highlight', highlightListener)
   instance.addEventListener('error', errorListener)
+  traceListener = (e: Event) => {
+    const { event, ...detail } = (e as CustomEvent<{ event: string } & Record<string, unknown>>).detail
+    traceNarration(event, detail)
+  }
   instance.addEventListener('buffering', bufferingListener)
+  instance.addEventListener('trace', traceListener)
+  traceNarration('bind', { bookFileId: book.bookFileId, background: isBackground.value, headless: !!backgroundSink })
 
   registerMediaSession(book)
 }
@@ -243,11 +263,20 @@ function bindInstance(mo: FoliateMediaOverlay, book: TtsCurrentBook, actions?: M
 function registerMediaSession(book: TtsCurrentBook) {
   mediaSession.setMetadata(book)
   mediaSession.registerHandlers({
-    play: resume,
-    pause,
+    play: () => {
+      traceNarration('session.play')
+      resume()
+    },
+    pause: () => {
+      traceNarration('session.pause')
+      pause()
+    },
     previoustrack: prevSentence,
     nexttrack: nextSentence,
-    stop,
+    stop: () => {
+      traceNarration('session.stop')
+      stop()
+    },
   })
 }
 

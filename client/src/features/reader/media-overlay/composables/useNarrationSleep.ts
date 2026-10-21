@@ -2,6 +2,7 @@ import { computed, ref, watch } from 'vue'
 import { i18n } from '@/i18n'
 import { useMediaOverlay } from './useMediaOverlay'
 import { useNarrationChapters } from './useNarrationChapters'
+import { traceNarration } from '../lib/narration-trace'
 
 export const SLEEP_OFF = 'off'
 export const SLEEP_END_OF_CHAPTER = 'chapter'
@@ -45,6 +46,7 @@ export function installNarrationSleepWatchers() {
     }
     if (!sleepAtChapterEnd.value || previous === next) return
     sleepAtChapterEnd.value = false
+    traceNarration('sleep-chapter-end', { from: previous, to: next })
     pause()
   })
   // Registered after the chapter watcher so a restart landing in the chapter it left, which

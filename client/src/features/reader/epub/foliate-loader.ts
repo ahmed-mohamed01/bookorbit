@@ -23,7 +23,7 @@ let loading: Promise<void> | null = null
 export function loadFoliate(): Promise<void> {
   if (customElements.get('foliate-view')) return Promise.resolve()
   loading ??= (async () => {
-    const src = import.meta.env.DEV ? `/assets/foliate/view.js?v=${Date.now()}` : '/assets/foliate/view.js'
+    const src = import.meta.env.DEV ? `/assets/foliate/view.js?v=${Date.now()}` : `/assets/foliate/${import.meta.env.VITE_FOLIATE_VERSION}/view.js`
     await new Promise<void>((resolve, reject) => {
       const script = document.createElement('script')
       script.type = 'module'
