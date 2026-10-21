@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MonitoredAuthorConfig, MonitoredWork } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
+import { ProviderThrottleError } from '../metadata-fetch/provider-throttle.error';
 import { MonitoredAutoRequestService } from './monitored-autorequest.service';
 import { MonitoredService } from './monitored.service';
 
@@ -1005,6 +1006,25 @@ describe('MonitoredService', () => {
 
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({ name: 'Alexander Olson', localAuthorId: 62, providerIds: { hardcover: '685771' } });
+  });
+
+  it('still returns the library author when Hardcover throttles the search', async () => {
+    const instance = service(
+      { findMonitoredIdsByNames: vi.fn().mockResolvedValue(new Map()) },
+      {},
+      {
+        authorsRepository: {
+          findPage: vi.fn().mockResolvedValue({ items: [{ id: 1920, name: 'Álex Gilbert', bookCount: 14 }], total: 1, page: 0, size: 5 }),
+        },
+        libraryService: { findAccessibleLibraryIds: vi.fn().mockResolvedValue([1]) },
+        providerConfigs: { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' } }) },
+        hardcover: { searchAuthors: vi.fn().mockRejectedValue(new ProviderThrottleError(30)) },
+      },
+    );
+
+    const results = await instance.searchAuthors('Álex Gilbert', viewer);
+
+    expect(results).toEqual([expect.objectContaining({ name: 'Álex Gilbert', localAuthorId: 1920, providerIds: {} })]);
   });
 
   it('keeps two genuinely different authors apart', async () => {

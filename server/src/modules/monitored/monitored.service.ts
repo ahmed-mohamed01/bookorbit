@@ -75,6 +75,7 @@ import { RequestFulfillmentService } from '../book-request/fulfillment/request-f
 import { IndexerSearchService } from '../book-request/indexers/indexer-search.service';
 import type { IndexerSearchRequest } from '../book-request/indexers/indexer-search.service';
 import { HardcoverClient } from '../metadata-fetch/providers/hardcover/hardcover.client';
+import type { HardcoverAuthorSearchDocument } from '../metadata-fetch/providers/hardcover/hardcover.types';
 import { LibraryService } from '../library/library.service';
 import { MonitoredCatalogService, normalizeMonitoredName, type WorkAvailabilityGroup } from './monitored-catalog.service';
 import { MonitoredAutoRequestService, submitThrottled } from './monitored-autorequest.service';
@@ -616,7 +617,7 @@ export class MonitoredService {
       libraryIds,
       contentFilters: user.isSuperuser ? undefined : user.contentFilters,
     });
-    const hardcoverResults = isHardcoverConfigured(providerConfig) ? await this.hardcover.searchAuthors(q, providerConfig.hardcover.apiKey) : [];
+    const hardcoverResults = isHardcoverConfigured(providerConfig) ? await this.searchHardcoverAuthors(q, providerConfig.hardcover.apiKey, user) : [];
     const byName = new Map<string, MonitoredAuthorSearchResult>();
     for (const author of local.items) {
       byName.set(normalizeMonitoredName(author.name), {
@@ -649,6 +650,19 @@ export class MonitoredService {
       user,
     );
     return results.map((result) => ({ ...result, alreadyMonitoredId: monitoredIds.get(normalizeMonitoredName(result.name)) ?? null }));
+  }
+
+  // A throttled or unreachable Hardcover must not cost the viewer the library author they searched for.
+  private async searchHardcoverAuthors(q: string, apiKey: string, user: RequestUser): Promise<HardcoverAuthorSearchDocument[]> {
+    const startedAt = Date.now();
+    try {
+      return await this.hardcover.searchAuthors(q, apiKey);
+    } catch (error) {
+      this.logger.warn(
+        `[monitored.author.search] [fail] userId=${user.id} durationMs=${Date.now() - startedAt} errorClass=${error instanceof Error ? error.name : 'Error'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - Hardcover author search failed, using library results only`,
+      );
+      return [];
+    }
   }
 
   private assertHardcoverAvailable(config: ProviderConfigurations): void {
