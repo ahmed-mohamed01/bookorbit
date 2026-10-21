@@ -1083,12 +1083,21 @@ class MediaOverlay extends EventTarget {
     if (playbackId !== this.#playbackId) return false
     const section = this.book.sections[sectionIndex]
     const href = section?.id
-    if (!href) return false
+    if (!href) {
+      this.#trace('section.miss', { index: sectionIndex, reason: 'no-id', sections: this.book.sections.length })
+      return false
+    }
 
     const { mediaOverlay } = section
-    if (!mediaOverlay) return this.#startSection(sectionIndex + 1, undefined, playbackId, natural)
+    if (!mediaOverlay) {
+      this.#trace('section.skip', { index: sectionIndex, href, reason: 'no-overlay' })
+      return this.#startSection(sectionIndex + 1, undefined, playbackId, natural)
+    }
     this.#sectionIndex = sectionIndex
-    if (!(await this.#loadSMIL(mediaOverlay, playbackId))) return false
+    if (!(await this.#loadSMIL(mediaOverlay, playbackId))) {
+      this.#trace('section.miss', { index: sectionIndex, href, reason: 'stale-smil' })
+      return false
+    }
 
     for (let i = 0; i < this.#entries.length; i++) {
       const { items } = this.#entries[i]
@@ -1099,6 +1108,16 @@ class MediaOverlay extends EventTarget {
         }
       }
     }
+    const texts = [...new Set(this.#entries.flatMap(({ items }) => items.map((item) => item.text.split('#')[0])))]
+    this.#trace('section.miss', {
+      index: sectionIndex,
+      href,
+      reason: 'no-match',
+      smil: mediaOverlay.href,
+      entries: this.#entries.length,
+      files: this.#entries.map((entry) => fileName(entry.src)).join(','),
+      texts: texts.slice(0, 4).join(','),
+    })
     return false
   }
   pause() {
