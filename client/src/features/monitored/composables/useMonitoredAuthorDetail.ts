@@ -105,12 +105,15 @@ export function useMonitoredAuthorDetail() {
     },
     { immediate: true },
   )
-  const loadedWorks = computed(() => detail.value?.works.filter((work) => !hiddenWorkIds.value.has(work.id)) ?? [])
+  const loadedWorks = computed(() => detail.value?.works ?? [])
   const filterCounts = computed(() => countWorkClasses(loadedWorks.value))
   const visibleWorks = computed(() => {
     const today = todayUtc()
     return loadedWorks.value.filter(
-      (work) => isWorkDisplayed(work, display.value) && workMatchesAuthorStatus(work, statusFilters.value, formatModes.value, today),
+      (work) =>
+        (display.value.hidden || !hiddenWorkIds.value.has(work.id)) &&
+        isWorkDisplayed(work, display.value) &&
+        workMatchesAuthorStatus(work, statusFilters.value, formatModes.value, today),
     )
   })
   const sortedWorks = computed(() => sortWorks(visibleWorks.value, sort.value, order.value))
@@ -161,7 +164,10 @@ export function useMonitoredAuthorDetail() {
         // opens. The withheld classes measured 13-59 kB of extra text on the largest catalogs here.
         includeHidden: true,
       })
-      if (sequence === loadSequence) detail.value = loaded
+      if (sequence === loadSequence) {
+        detail.value = loaded
+        hiddenWorkIds.value = new Set()
+      }
     } catch (cause) {
       if (sequence === loadSequence) error.value = monitoredErrorText(cause, t('monitored.errors.loadAuthor'))
     } finally {
@@ -334,8 +340,9 @@ export function useMonitoredAuthorDetail() {
   }
 
   /**
-   * Hiding takes a work off the page the moment the server confirms it, instead of leaving it dimmed
-   * until the next refetch. An unhide or a return to the automatic verdict brings it straight back.
+   * While the Hidden filter is off, hiding takes a work off the page the moment the server confirms it,
+   * instead of leaving it dimmed until the next refetch. An unhide or a return to the automatic verdict
+   * brings it straight back.
    */
   function recordVisibilityChange(workIds: string[], patch: MonitoredWorkPatch): void {
     if (patch.hidden === undefined && !patch.automaticVisibility) return

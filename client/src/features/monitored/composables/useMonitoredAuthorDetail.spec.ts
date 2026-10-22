@@ -109,6 +109,7 @@ function mountComposable() {
 
 describe('useMonitoredAuthorDetail', () => {
   beforeEach(() => {
+    storage.remove('monitored:authorDetail:display:v3')
     fetchDetailMock.mockReset()
     requestWorkMock.mockReset()
     refreshMock.mockReset()
@@ -168,6 +169,36 @@ describe('useMonitoredAuthorDetail', () => {
     expect(updateWorkMock).toHaveBeenCalledWith('work-1', { hidden: true })
     expect(composable.detail.value?.works[0]).toEqual(hidden)
     expect(composable.visibleWorks.value).toHaveLength(0)
+    wrapper.unmount()
+  })
+
+  it('shows a work hidden on this page once the Hidden filter is on, without a refetch', async () => {
+    updateWorkMock.mockResolvedValue(work({ userVisibility: 'hidden' }))
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+    await composable.updateWork('work-1', { hidden: true })
+    expect(composable.visibleWorks.value).toHaveLength(0)
+    expect(composable.filterCounts.value.hidden).toBe(1)
+    fetchDetailMock.mockClear()
+
+    composable.setDisplay({ ...composable.display.value, hidden: true })
+
+    expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['work-1'])
+    expect(fetchDetailMock).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('trusts a fresh load over a hide recorded earlier on the page', async () => {
+    updateWorkMock.mockResolvedValue(work({ userVisibility: 'hidden' }))
+    const { composable, wrapper } = mountComposable()
+    await composable.load()
+    await composable.updateWork('work-1', { hidden: true })
+    expect(composable.visibleWorks.value).toHaveLength(0)
+
+    fetchDetailMock.mockResolvedValue(detail())
+    await composable.load()
+
+    expect(composable.visibleWorks.value.map((entry) => entry.id)).toEqual(['work-1'])
     wrapper.unmount()
   })
 
