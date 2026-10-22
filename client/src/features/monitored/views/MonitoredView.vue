@@ -77,6 +77,7 @@ import MonitoredFiltersMenu from '../components/MonitoredFiltersMenu.vue'
 import MonitoredQuickSelect from '../components/MonitoredQuickSelect.vue'
 import MonitoredSelectionBar from '../components/MonitoredSelectionBar.vue'
 import { useMonitoredBulkSelection } from '../composables/useMonitoredBulkSelection'
+import { persistedNumber, useMonitoredCardDisplay, WORK_CARD_SIZE } from '../composables/useMonitoredCardDisplay'
 import { RELEASE_STATUS_OPTIONS, readStatusFilters } from '../lib/status-filter'
 import { readFilterSections, type MonitoredFilterSection } from '../lib/filter-sections'
 import {
@@ -479,22 +480,13 @@ function refreshReleaseClassCounts() {
 
 type AuthorSort = MonitoredAuthorListSort
 
-function persistedNumber(key: string, fallback: number, min: number, max: number) {
-  const raw = Number(storage.get<number | string | null>(key, null))
-  const value = ref(Number.isFinite(raw) && raw >= min && raw <= max ? raw : fallback)
-  watch(value, (next) => storage.set(key, next))
-  return value
-}
-
 const authorSort = persisted<AuthorSort>('monitored:authors:sort', 'name', MONITORED_AUTHOR_LIST_SORTS)
 const authorOrder = persisted<'asc' | 'desc'>('monitored:authors:order', 'asc', MONITORED_LIST_ORDERS)
 
 // Card sizing, adjustable from the same slider popover the main app views use.
 const AUTHOR_CARD_SIZE = { min: 72, max: 240, fallback: 150 }
-const WORK_CARD_SIZE = { min: 90, max: 240, fallback: 122 }
 const authorCardSize = persistedNumber('monitored:authors:size', AUTHOR_CARD_SIZE.fallback, AUTHOR_CARD_SIZE.min, AUTHOR_CARD_SIZE.max)
-const workCardSize = persistedNumber('monitored:cards:size', WORK_CARD_SIZE.fallback, WORK_CARD_SIZE.min, WORK_CARD_SIZE.max)
-const cardGap = persistedNumber('monitored:cards:gap', 16, 4, 40)
+const { workCardSize, cardGap } = useMonitoredCardDisplay()
 
 const activeCardSizeConfig = computed(() => (activeTab.value === 'authors' ? AUTHOR_CARD_SIZE : WORK_CARD_SIZE))
 const activeCardSize = computed({

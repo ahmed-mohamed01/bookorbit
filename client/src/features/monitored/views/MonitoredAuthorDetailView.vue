@@ -11,6 +11,7 @@ import {
   ChevronsUpDown,
   CheckSquare,
   Headphones,
+  LayoutGrid,
   Loader2,
   Minus,
   MoreHorizontal,
@@ -25,6 +26,8 @@ import { Permission } from '@bookorbit/types'
 import type { MonitoredFormat, MonitoredGrouping, MonitoredMarkKind, MonitoredSort, MonitoredStatusFilter, MonitoredWork } from '@bookorbit/types'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import ViewHeaderDisplayControls from '@/components/view-header/ViewHeaderDisplayControls.vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import AuthorPlaceholder from '@/features/author/components/AuthorPlaceholder.vue'
 import { usePermissions } from '@/features/auth/composables/usePermissions'
@@ -43,6 +46,7 @@ import MonitoredVirtualGrid from '../components/MonitoredVirtualGrid.vue'
 import MonitoredQuickSelect from '../components/MonitoredQuickSelect.vue'
 import MonitoredSelectionBar from '../components/MonitoredSelectionBar.vue'
 import { useMonitoredBulkSelection } from '../composables/useMonitoredBulkSelection'
+import { CARD_GAP, useMonitoredCardDisplay, WORK_CARD_SIZE } from '../composables/useMonitoredCardDisplay'
 import type { MonitoredWorkGroup } from '../lib/grouping'
 import { useMonitoredAuthorDetail } from '../composables/useMonitoredAuthorDetail'
 import { useRefreshFeedback } from '../composables/useRefreshFeedback'
@@ -110,8 +114,20 @@ const initialLoadComplete = ref(false)
 let requestRefreshPending = false
 let requestRefreshTimer: ReturnType<typeof setTimeout> | null = null
 const REQUEST_CHANGE_DEBOUNCE_MS = 1500
-const DETAIL_WORK_CARD_SIZE = 122
-const DETAIL_WORK_GRID_GAP = 12
+const { workCardSize, cardGap } = useMonitoredCardDisplay()
+const displayOpen = ref(false)
+
+function handleDisplayOpenChange(value: boolean) {
+  displayOpen.value = value
+}
+
+function handleCardSizeUpdate(value: number) {
+  workCardSize.value = value
+}
+
+function handleCardGapUpdate(value: number) {
+  cardGap.value = value
+}
 
 const canManage = computed(() => hasPermission(Permission.BookRequestAccess))
 const canEdit = computed(() => canManage.value && (detail.value?.author.isOwner ?? false))
@@ -721,6 +737,39 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                 <span class="hidden sm:inline">{{ selectionMode ? t('monitored.selection.done') : t('monitored.selection.select') }}</span>
                 <span class="sr-only sm:hidden">{{ selectionMode ? t('monitored.selection.done') : t('monitored.selection.select') }}</span>
               </button>
+              <Popover :open="displayOpen" @update:open="handleDisplayOpenChange">
+                <PopoverTrigger as-child>
+                  <button
+                    type="button"
+                    class="flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors"
+                    :class="
+                      displayOpen
+                        ? 'border-primary/55 bg-primary/10 text-primary'
+                        : 'border-input bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
+                    "
+                    :aria-label="t('components.viewHeader.display')"
+                    :title="t('components.viewHeader.display')"
+                    data-testid="author-display"
+                  >
+                    <LayoutGrid :size="13" aria-hidden="true" />
+                    <span class="hidden lg:inline">{{ t('components.viewHeader.display') }}</span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" :side-offset="8" class="w-64 p-4">
+                  <ViewHeaderDisplayControls
+                    view-mode="grid"
+                    :cover-size="workCardSize"
+                    :grid-gap="cardGap"
+                    :cover-size-min="WORK_CARD_SIZE.min"
+                    :cover-size-max="WORK_CARD_SIZE.max"
+                    :cover-size-step="4"
+                    :grid-gap-min="CARD_GAP.min"
+                    :grid-gap-max="CARD_GAP.max"
+                    @update:cover-size="handleCardSizeUpdate"
+                    @update:grid-gap="handleCardGapUpdate"
+                  />
+                </PopoverContent>
+              </Popover>
               <MonitoredFiltersMenu
                 :model-value="display"
                 :counts="filterCounts"
@@ -810,8 +859,8 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                 v-if="!isGroupCollapsed(group.key)"
                 :virtualized="grouping === 'none'"
                 :items="group.works"
-                :card-size="DETAIL_WORK_CARD_SIZE"
-                :grid-gap="DETAIL_WORK_GRID_GAP"
+                :card-size="workCardSize"
+                :grid-gap="cardGap"
               >
                 <template #default="{ item: work }">
                   <MonitoredWorkCard
