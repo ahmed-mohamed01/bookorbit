@@ -2,6 +2,64 @@
 
 Releases of the ahmed-mohamed01/bookorbit fork. Versions are `v<upstream base>-m<N>`; see [FORK_MAINTENANCE.md](FORK_MAINTENANCE.md). Upstream changes are in the [upstream releases](https://github.com/bookorbit/bookorbit/releases).
 
+## v3.5.0-m1 - 2026-10-22
+
+Upstream base: v3.5.0 · Previous: v3.4.0-m6
+
+### Highlights
+
+- **Up to date with upstream BookOrbit 3.5.0**: the rebuilt KOReader plugin with four-way annotation sync, a customizable sidebar, correcting an author's metadata match, release-page links with hold-for-review imports, and new smart-scope and read-along filters, plus upstream `main` fixes for KOReader menus, series lists and night-mode covers.
+- **Pick the files you want from a torrent**: View files now shows a folder tree for every release. Grab only the selected files, batch-grab several books from one pack, or add books to a torrent already in your client. BookOrbit also reads a release's format and book count from its .torrent, so trackers that state neither (such as Nyaa) can still reach your preferred tier.
+- **Watchlist improvements and better error handling**: a library file is no longer owned by several Watchlist works at once, so bundles, translations and split parts stop showing as owned. Adding or refreshing an author returns at once while the catalog fetch runs behind it. A Hardcover failure shows a banner with Retry now instead of an empty author, and is retried automatically.
+
+### Features
+
+- **reader:** play narration from the book's playlist as one timeline (275d9d62)
+- **monitored:** share or move a file when matching it by hand (f531a10d)
+- **watchlist:** search watchlist books from the page search bar (eaa719c5)
+- **watchlist:** link watched authors from the add panel (4ee16e4e)
+- **watchlist:** fetch author catalogs in the background (efec91ce)
+- **web-serials:** volume-first acquisition for light novels (7d5cd1ee)
+- **server:** read English from a tracker's English-translated category (864a576d)
+- **client:** check releases in the picker as they scroll into view (ee3791e1)
+- **server:** learn a release's format and book count from its .torrent (5184a5f7)
+- **client:** folder tree for every View files panel (8939352d)
+- **server:** add books to a torrent already in the client, retry batch imports (978ca1e5)
+- **server:** batch grabs from a release's folder tree (5b695a46)
+- **server:** download only the selected files of a torrent (edc54f02)
+- **monitored:** classify watchlist works with Hardcover's own signals (144ee1f9)
+- **watchlist:** review hidden works across all authors from Releases (97f57f8c)
+- **cover:** add a per-slot placeholder cover switch (e684b738)
+- **book-requests:** stream manual release search results (9ac0d373)
+
+### Fixes
+
+- **server:** keep release inspection facts out of the upstream schema barrel (85b13f7d)
+- **monitored:** keep the author watchlist lookup working when Hardcover throttles (657303f6)
+- **reader:** keep narration audible into a new chapter in the background (d49473ca)
+- **watchlist:** drop the chevron from the owned files folder row (9a0fc56f)
+- **watchlist:** keep a split part as a possible match for the whole book (18938872)
+- **monitored:** close gaps a review of one-file-one-work found (046bf703)
+- **monitored:** give each library file to one work (c542fe66)
+- **web-serials:** leave releases that do not name the series unmatched (b6eb6785)
+- **web-serials:** count only unsettled volumes in the download heading (1f76b4d0)
+- **server:** mark Elscione releases from Shelfmark as English (3b6e90b9)
+- **server:** drop releases whose title names the other medium (97b7c003)
+- **watchlist:** stop a shared title front from claiming a sub-series (d6112ee6)
+- **monitored:** count release distance in days, then months, then years (53fd7ec9)
+- **monitored:** read release dates through the probe and the owner's choice (15377b6d)
+- **web-serials:** list Suwayomi repositories from extension stores (7841d580)
+
+### Maintenance
+
+- **reader:** log why narration could not start the next section (3db2cbb6)
+- skip the kepubify Go x509 advisory in the image scan (b7968de3)
+- **release:** describe release.mjs as an on-demand release step (a1662681)
+
+### Upstream syncs
+
+- Merge upstream/main into monitored (dab8e27b)
+
 ## v3.4.0-m6 - 2026-10-18
 
 Upstream base: v3.4.0 · Previous: v3.4.0-m5
