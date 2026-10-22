@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { BookCopy, BookOpen, Check, Headphones, Loader2, MoreHorizontal, Pause, Play, RefreshCw, Trash2, TriangleAlert } from '@lucide/vue'
+import { BookCopy, BookOpen, Check, Headphones, Loader2, MoreHorizontal, Pause, Pencil, Play, RefreshCw, Trash2, TriangleAlert } from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { relativeTimestamp } from '@/lib/relative-time'
 import { fetchStatusCopy } from '../lib/fetch-status-copy'
@@ -18,6 +18,7 @@ const props = defineProps<{ author: MonitoredAuthorItem; canManage: boolean }>()
 const emit = defineEmits<{
   open: [id: string]
   pause: [author: MonitoredAuthorItem]
+  edit: [author: MonitoredAuthorItem]
   remove: [author: MonitoredAuthorItem]
   updated: [author: MonitoredAuthorItem]
 }>()
@@ -55,6 +56,10 @@ function handleOpen() {
 
 function handlePause() {
   emit('pause', props.author)
+}
+
+function handleEdit() {
+  emit('edit', props.author)
 }
 
 function handleRemove() {
@@ -180,6 +185,10 @@ function stopCardClick(event: MouseEvent) {
                 <Play v-if="author.paused" />
                 <Pause v-else />
                 {{ author.paused ? t('monitored.actions.resume') : t('monitored.actions.pause') }}
+              </DropdownMenuItem>
+              <DropdownMenuItem @click="handleEdit">
+                <Pencil />
+                {{ t('monitored.actions.editSettings') }}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" @click="handleRemove">

@@ -15,6 +15,7 @@ import {
   Loader2,
   Minus,
   MoreHorizontal,
+  Pencil,
   RefreshCw,
   Square,
   Trash2,
@@ -23,7 +24,15 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vue-sonner'
 import { Permission } from '@bookorbit/types'
-import type { MonitoredFormat, MonitoredGrouping, MonitoredMarkKind, MonitoredSort, MonitoredStatusFilter, MonitoredWork } from '@bookorbit/types'
+import type {
+  MonitoredAuthorItem,
+  MonitoredFormat,
+  MonitoredGrouping,
+  MonitoredMarkKind,
+  MonitoredSort,
+  MonitoredStatusFilter,
+  MonitoredWork,
+} from '@bookorbit/types'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -36,6 +45,7 @@ import { useBookRequestProgress } from '@/features/book-requests/composables/use
 import { deleteMonitoredAuthor } from '../api/monitored'
 import { monitoredErrorText } from '../lib/api-error'
 import { monitoredPortraitUrl } from '../lib/portrait-url'
+import MonitorAuthorModal from '../components/MonitorAuthorModal.vue'
 import MonitoredFetchFailedBanner from '../components/MonitoredFetchFailedBanner.vue'
 import MonitoredWorkCard from '../components/MonitoredWorkCard.vue'
 import MonitoredBookPanel from '../components/MonitoredBookPanel.vue'
@@ -102,6 +112,7 @@ const { onRequestsChanged } = useBookRequestProgress()
 const mainRef = ref<HTMLElement | null>(null)
 useScrollRestoreOnActivate(mainRef)
 const confirmStopOpen = ref(false)
+const editOpen = ref(false)
 const imageFailed = ref(false)
 // The header's prose and links cost a full viewport on a phone, so they stay behind a toggle there.
 const detailsExpanded = ref(false)
@@ -208,6 +219,20 @@ async function handleRefresh() {
   } catch (cause) {
     toast.error(monitoredErrorText(cause, t('monitored.toast.refreshFailed')))
   }
+}
+
+function openEdit() {
+  editOpen.value = true
+}
+
+function closeEdit() {
+  editOpen.value = false
+}
+
+function handleAuthorUpdated(item: MonitoredAuthorItem) {
+  if (detail.value) detail.value.author = item
+  editOpen.value = false
+  toast.success(t('monitored.toast.settingsSaved', { name: item.authorName }))
 }
 
 function promptStopAuthor() {
@@ -570,6 +595,7 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                             t('monitored.actions.refresh')
                           }}</DropdownMenuItem
                         >
+                        <DropdownMenuItem @click="openEdit"><Pencil />{{ t('monitored.actions.editSettings') }}</DropdownMenuItem>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem variant="destructive" @click="promptStopAuthor"
                           ><Trash2 />{{ t('monitored.actions.stopMonitoring') }}</DropdownMenuItem
@@ -905,6 +931,8 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
       @request="requestSelected"
       @exit="exitSelectionMode"
     />
+
+    <MonitorAuthorModal :open="editOpen" :result="null" :initial-formats="[]" :author="author" @close="closeEdit" @updated="handleAuthorUpdated" />
 
     <ConfirmDialog
       :open="confirmStopOpen"

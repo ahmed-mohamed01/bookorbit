@@ -61,6 +61,7 @@ import { refreshAllAuthorsSequentially, type MonitoredRefreshSummary } from '../
 import { releaseItemHasFormatToGet, sweptRowWorkIds } from '../lib/bulk-select'
 import { collapseReleaseItems, releaseDateForWork, releaseDateMoved, type MonitoredReleaseEntry } from '../lib/grouping'
 import AddMonitoredPanel from '../components/AddMonitoredPanel.vue'
+import MonitorAuthorModal from '../components/MonitorAuthorModal.vue'
 import MonitoredAuthorCard from '../components/MonitoredAuthorCard.vue'
 import MonitoredBookPanel from '../components/MonitoredBookPanel.vue'
 import MonitoredEmptyState from '../components/MonitoredEmptyState.vue'
@@ -982,6 +983,25 @@ async function handleAuthorPause(author: MonitoredAuthorItem) {
   }
 }
 
+const editingAuthor = ref<MonitoredAuthorItem | null>(null)
+const authorEditOpen = ref(false)
+
+function handleAuthorEdit(author: MonitoredAuthorItem) {
+  editingAuthor.value = author
+  authorEditOpen.value = true
+}
+
+// The author stays set after close so the dialog keeps its content while it animates out.
+function closeAuthorEdit() {
+  authorEditOpen.value = false
+}
+
+function handleAuthorSettingsSaved(item: MonitoredAuthorItem) {
+  handleAuthorUpdated(item)
+  authorEditOpen.value = false
+  toast.success(t('monitored.toast.settingsSaved', { name: item.authorName }))
+}
+
 // Removing a monitored row is destructive and unrecoverable from the list, so it asks first.
 const pendingAuthorRemoval = ref<MonitoredAuthorItem | null>(null)
 const removing = ref(false)
@@ -1420,6 +1440,7 @@ defineOptions({ name: 'MonitoredView' })
                 :can-manage="canManage && author.isOwner"
                 @open="openAuthor"
                 @pause="handleAuthorPause"
+                @edit="handleAuthorEdit"
                 @remove="handleAuthorRemove"
                 @updated="handleAuthorUpdated"
               />
@@ -1544,6 +1565,14 @@ defineOptions({ name: 'MonitoredView' })
         @patch="updateSelected"
         @request="requestSelected"
         @exit="exitSelectionMode"
+      />
+      <MonitorAuthorModal
+        :open="authorEditOpen"
+        :result="null"
+        :initial-formats="[]"
+        :author="editingAuthor"
+        @close="closeAuthorEdit"
+        @updated="handleAuthorSettingsSaved"
       />
       <ConfirmDialog
         :open="pendingAuthorRemoval !== null"

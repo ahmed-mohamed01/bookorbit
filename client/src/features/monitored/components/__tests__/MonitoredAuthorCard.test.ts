@@ -58,3 +58,10 @@ it('keeps the count pills with a previous catalog', () => {
   expect(wrapper.text()).toContain('Showing books from')
   wrapper.unmount()
 })
+it('emits edit with the author from the menu', async () => {
+  const wrapper = setup('idle')
+  const item = wrapper.findAll('button').find((button) => button.text().includes('Edit watch settings'))!
+  await item.trigger('click')
+  expect(wrapper.emitted('edit')?.[0]?.[0]).toMatchObject({ id: 'a' })
+  wrapper.unmount()
+})

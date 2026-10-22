@@ -14970,6 +14970,7 @@
       "resume": "Resume",
       "refresh": "Refresh",
       "actions": "Actions",
+      "editSettings": "Edit watch settings",
       "stopMonitoring": "Remove from watchlist",
       "alreadyMonitoring": "{name} is already on your watchlist",
       "stopMonitoringNamed": "Remove {name} from watchlist",
@@ -15016,7 +15017,14 @@
       "monitoringMode": "Watch mode",
       "noLibrary": "No target library",
       "start": "Add to watchlist",
-      "failed": "Failed to add author to watchlist."
+      "failed": "Failed to add author to watchlist.",
+      "editTitle": "Edit watch settings for {name}",
+      "editDescription": "Change how BookOrbit watches this author. A refresh is queued after saving so the new mode applies right away.",
+      "save": "Save changes",
+      "destinationGone": "The library or folder this format was saved to is no longer available. Pick another library.",
+      "librariesUnavailable": "Your libraries could not be loaded, so these settings cannot be saved safely. Close this dialog and try again.",
+      "libraryRequired": "Choose a target library so downloads have somewhere to go.",
+      "updateFailed": "Failed to update watch settings."
     },
     "hardcoverNotice": {
       "title": "The watchlist needs Hardcover.",
@@ -15041,6 +15049,7 @@
     "toast": {
       "monitoring": "Added {name} to your watchlist.",
       "stopped": "Removed {name} from your watchlist.",
+      "settingsSaved": "Updated watch settings for {name}.",
       "paused": "Paused watching {name}.",
       "resumed": "Resumed watching {name}.",
       "workStopped": "Removed {title} from your watchlist.",
