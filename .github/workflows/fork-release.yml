@@ -92,15 +92,26 @@ jobs:
           echo "::error::$src never appeared. Run the Container Image workflow on ${GITHUB_REF_NAME}, then re-run this job."
           exit 1
 
+      # The commit image carries APP_VERSION=sha-<commit>, which the sidebar shows. Retagging would keep
+      # it, so the release image is the commit image plus one ENV layer. No RUN step, so the arm64 variant
+      # needs no emulation and nothing is rebuilt. Without a leading "v" the version stays outside the
+      # app's update check and release-notes cap, which only apply to upstream's v-prefixed tags.
       - name: Tag version and latest
         shell: bash
         run: |
           set -euo pipefail
           full="${REGISTRY}/${IMAGE_NAME}"
-          docker buildx imagetools create \
-            --tag "${full}:${GITHUB_REF_NAME#v}" \
+          version="${GITHUB_REF_NAME#v}"
+          context="$(mktemp -d)"
+          printf 'ARG SOURCE_IMAGE\nFROM ${SOURCE_IMAGE}\nARG APP_VERSION\nENV APP_VERSION=${APP_VERSION}\n' > "${context}/Dockerfile"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg "SOURCE_IMAGE=${full}:sha-${GITHUB_SHA:0:12}" \
+            --build-arg "APP_VERSION=${version}" \
+            --provenance=false --sbom=false \
+            --tag "${full}:${version}" \
             --tag "${full}:latest" \
-            "${full}:sha-${GITHUB_SHA:0:12}"
+            --push "${context}"
 
   release:
     name: Publish GitHub Release
