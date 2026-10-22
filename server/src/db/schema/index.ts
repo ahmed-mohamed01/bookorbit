@@ -46,4 +46,3 @@ export * from './podcasts';
 export * from './metadata-cache';
 export * from './delivery';
 export * from './server-identity';
-export * from '../../modules/book-request/schema/release-inspection-facts.schema';
