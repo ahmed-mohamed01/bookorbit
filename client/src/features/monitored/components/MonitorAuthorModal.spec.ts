@@ -6,12 +6,13 @@ import type { MonitoredAuthorItem } from '@bookorbit/types'
 import en from '@/locales/en.json'
 import { compileIcuCatalog } from '@/i18n/icu'
 import MonitorAuthorModal from './MonitorAuthorModal.vue'
+import type * as MonitoredApi from '../api/monitored'
 
 const mocks = vi.hoisted(() => ({
-  monitorAuthor: vi.fn(),
-  updateMonitoredAuthor: vi.fn(),
-  refreshMonitoredAuthor: vi.fn(),
-  loadRequestDestinations: vi.fn(),
+  monitorAuthor: vi.fn<typeof MonitoredApi.monitorAuthor>(),
+  updateMonitoredAuthor: vi.fn<typeof MonitoredApi.updateMonitoredAuthor>(),
+  refreshMonitoredAuthor: vi.fn<typeof MonitoredApi.refreshMonitoredAuthor>(),
+  loadRequestDestinations: vi.fn<() => Promise<boolean>>(),
   libraryState: {
     libraries: [] as unknown[],
     loaded: true,
@@ -29,8 +30,8 @@ vi.mock('@/features/library/composables/useLibraries', () => ({
     libraries: ref(mocks.libraryState.libraries),
     loaded: ref(mocks.libraryState.loaded),
     error: ref(mocks.libraryState.error),
-    fetchLibraries: vi.fn(),
-    refreshLibraries: vi.fn(),
+    fetchLibraries: vi.fn<() => Promise<void>>(),
+    refreshLibraries: vi.fn<() => Promise<void>>(),
   }),
 }))
 vi.mock('@/features/book-requests/composables/useRequestDestinationDefault', () => ({
@@ -172,7 +173,7 @@ describe('MonitorAuthorModal edit mode', () => {
   })
 
   it('saves the changed mode, refreshes, and emits the refreshed author', async () => {
-    const refreshed = { ...author, fetch: { state: 'queued' } }
+    const refreshed = { ...author, fetch: { state: 'queued' as const, errorKind: null, errorAt: null, retryAt: null } }
     mocks.updateMonitoredAuthor.mockResolvedValue(author)
     mocks.refreshMonitoredAuthor.mockResolvedValue(refreshed)
     const wrapper = await mountEdit()
