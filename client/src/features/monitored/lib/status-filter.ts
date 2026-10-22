@@ -10,7 +10,7 @@ import {
   type MonitoredStatusFilter,
   type MonitoredWork,
 } from '@bookorbit/types'
-import { isDefaultDisplay, type MonitoredDisplayOptions } from './work-visibility'
+import { DEFAULT_MONITORED_DISPLAY, isDefaultDisplay, type MonitoredDisplayOptions } from './work-visibility'
 
 export function defaultStatusFilters(): MonitoredStatusFilter[] {
   return [...DEFAULT_MONITORED_STATUS_FILTERS]
@@ -69,6 +69,20 @@ export function isDefaultFilterSelection(
 ): boolean {
   if (!options.includes('in_progress')) return isDefaultAuthorFilters(display, status)
   return isDefaultDisplay(display) && (!status || isDefaultStatusFilters(status))
+}
+
+export function countChangedFilters(
+  display: MonitoredDisplayOptions,
+  status: readonly MonitoredStatusFilter[] | undefined,
+  options: readonly MonitoredStatusFilter[],
+): number {
+  const flags = ['released', 'upcoming', 'hidden', 'placeholders', 'unconfirmed'] as const
+  const displayCount = flags.filter((flag) => display[flag] !== DEFAULT_MONITORED_DISPLAY[flag]).length
+  const kindsChanged =
+    display.kinds.length !== DEFAULT_MONITORED_DISPLAY.kinds.length || !DEFAULT_MONITORED_DISPLAY.kinds.every((kind) => display.kinds.includes(kind))
+  const defaults = options.includes('in_progress') ? defaultStatusFilters() : defaultAuthorStatusFilters()
+  const statusCount = status ? MONITORED_STATUS_FILTERS.filter((filter) => status.includes(filter) !== defaults.includes(filter)).length : 0
+  return displayCount + Number(kindsChanged) + statusCount
 }
 
 /**

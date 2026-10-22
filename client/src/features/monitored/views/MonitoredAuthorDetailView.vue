@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import {
   BookCopy,
   BookOpen,
@@ -11,7 +11,8 @@ import {
   ChevronsUpDown,
   CheckSquare,
   Headphones,
-  LayoutGrid,
+  Layers,
+  SlidersHorizontal,
   Loader2,
   Minus,
   MoreHorizontal,
@@ -49,15 +50,22 @@ import MonitorAuthorModal from '../components/MonitorAuthorModal.vue'
 import MonitoredFetchFailedBanner from '../components/MonitoredFetchFailedBanner.vue'
 import MonitoredWorkCard from '../components/MonitoredWorkCard.vue'
 import MonitoredBookPanel from '../components/MonitoredBookPanel.vue'
-import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
+import MonitoredGroupOptions from '../components/MonitoredGroupOptions.vue'
 import MonitoredFiltersMenu from '../components/MonitoredFiltersMenu.vue'
-import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
+import MonitoredSortOptions from '../components/MonitoredSortOptions.vue'
+import BrowseSearchField from '@/components/browse-header/BrowseSearchField.vue'
+import BrowseSortControl from '@/components/browse-header/BrowseSortControl.vue'
+import { barButton, barButtonOn, barIconButton, barDivider, BROWSE_BAR_KEY } from '@/components/browse-header/browse-header'
+import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useMonitoredPinnedBar } from '../composables/useMonitoredPinnedBar'
 import MonitoredVirtualGrid from '../components/MonitoredVirtualGrid.vue'
 import MonitoredQuickSelect from '../components/MonitoredQuickSelect.vue'
 import MonitoredSelectionBar from '../components/MonitoredSelectionBar.vue'
 import { useMonitoredBulkSelection } from '../composables/useMonitoredBulkSelection'
 import { CARD_GAP, useMonitoredCardDisplay, WORK_CARD_SIZE } from '../composables/useMonitoredCardDisplay'
 import type { MonitoredWorkGroup } from '../lib/grouping'
+import { barLabel, barChevron, barCompactPadding, barLabelScreenReader } from '../lib/author-bar'
 import { useMonitoredAuthorDetail } from '../composables/useMonitoredAuthorDetail'
 import { useRefreshFeedback } from '../composables/useRefreshFeedback'
 import { seriesMembershipForGroup } from '../lib/grouping'
@@ -69,6 +77,8 @@ const router = useRouter()
 const { hasPermission } = usePermissions()
 const {
   detail,
+  searchQuery,
+  setSearchQuery,
   fetchStatus,
   loading,
   error,
@@ -96,6 +106,9 @@ const {
   refreshAuthor,
   setSort,
   setOrder,
+  toggleOrder,
+  sortIsDefault,
+  groupingIsDefault,
   setGrouping,
   setDisplay,
   resetDisplay,
@@ -111,6 +124,13 @@ const { state: refreshState, run: runRefresh } = useRefreshFeedback()
 const { onRequestsChanged } = useBookRequestProgress()
 const mainRef = ref<HTMLElement | null>(null)
 useScrollRestoreOnActivate(mainRef)
+const barRef = ref<HTMLElement | null>(null)
+const sentinelRef = ref<HTMLElement | null>(null)
+provide(BROWSE_BAR_KEY, barRef)
+const { pinned } = useMonitoredPinnedBar(mainRef, sentinelRef)
+function clearSearch() {
+  setSearchQuery('')
+}
 const confirmStopOpen = ref(false)
 const editOpen = ref(false)
 const imageFailed = ref(false)
@@ -149,6 +169,13 @@ const catalogTotal = computed(() => {
   return author.isOwner ? author.counts.total + author.counts.hidden : author.counts.total
 })
 const author = computed(() => detail.value?.author ?? null)
+const countTooltip = computed(() => {
+  const shown = visibleWorks.value.length
+  const total = catalogTotal.value
+  if (shown >= total) return t('monitored.detail.booksCountAll', { total })
+  const key = searchQuery.value ? 'monitored.detail.booksCountHiddenSearch' : 'monitored.detail.booksCountHidden'
+  return t(key, { shown, total, rest: total - shown })
+})
 const portraitUrl = computed(() => (author.value?.portraitAuthorId == null ? null : monitoredPortraitUrl(author.value.id)))
 const hasCatalog = computed(() => author.value?.lastRefreshedAt != null)
 const ebookCount = computed(() => (hasCatalog.value ? `${author.value?.counts.ebookOwned}/${author.value?.counts.total}` : '-'))
@@ -171,6 +198,8 @@ const groupOptions = computed<{ value: MonitoredGrouping; label: string }[]>(() 
   { value: 'year', label: t('monitored.detail.controls.year') },
   { value: 'status', label: t('monitored.detail.controls.status') },
 ])
+const sortLabel = computed(() => sortOptions.value.find((option) => option.value === sort.value)?.label ?? '')
+const groupingLabel = computed(() => groupOptions.value.find((option) => option.value === grouping.value)?.label ?? '')
 const collapseAllLabel = computed(() => t(allGroupsCollapsed.value ? 'monitored.detail.controls.expandAll' : 'monitored.detail.controls.collapseAll'))
 const bioExpanded = ref(false)
 watch(bio, () => {
@@ -354,6 +383,8 @@ function handleGroupSelect(group: MonitoredWorkGroup) {
 function handleSelectionKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape' && selectionMode.value && !panelOpen.value && !event.defaultPrevented) exitSelectionMode()
 }
+
+const selectionLabel = computed(() => (selectionMode.value ? t('monitored.selection.done') : t('monitored.selection.select')))
 
 watch(selectionMode, (on) => {
   if (on) window.addEventListener('keydown', handleSelectionKeydown)
@@ -707,78 +738,116 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
           </template>
         </MonitoredFetchFailedBanner>
         <section class="mt-4 rounded-xl border border-border bg-card/75 p-3 sm:p-4">
-          <div class="flex items-center justify-between gap-3">
-            <h2 class="min-w-0 truncate text-sm font-semibold text-foreground">
-              <span v-if="!hasCatalog">{{ t(fetchBusy ? 'monitored.fetch.fetching' : 'monitored.fetch.noBooksYet') }}</span>
-              <span v-else class="hidden sm:inline">{{
-                t('monitored.detail.booksHeading', { shown: visibleWorks.length, total: catalogTotal })
-              }}</span>
-              <span v-if="hasCatalog" class="sm:hidden">{{
-                t('monitored.detail.booksHeadingShort', { shown: visibleWorks.length, total: catalogTotal })
-              }}</span>
-            </h2>
-            <div class="flex shrink-0 items-center gap-2">
-              <MonitoredSortMenu
-                :options="sortOptions"
-                :model-value="sort"
-                :order="order"
-                default-value="releaseDate"
-                default-order="desc"
-                @update:model-value="setSort"
-                @update:order="setOrder"
+          <div ref="sentinelRef" class="h-px" aria-hidden="true" />
+          <div class="sticky top-0 z-20 bg-card py-1">
+            <div
+              ref="barRef"
+              class="@container/bar flex h-12 min-w-0 items-center gap-1 rounded-[10px] [&_input]:min-w-0 border border-border bg-card px-[7px] shadow-xs"
+            >
+              <div class="flex shrink-0 items-center gap-2 ps-1">
+                <div v-if="pinned" class="hidden size-[26px] shrink-0 overflow-hidden rounded bg-muted sm:block">
+                  <img v-if="portraitUrl && !imageFailed" :src="portraitUrl" alt="" class="size-full object-cover" />
+                  <AuthorPlaceholder v-else :name="author.authorName" />
+                </div>
+                <span v-if="pinned" class="hidden max-w-[10rem] truncate text-[15px] font-bold lg:inline">{{ author.authorName }}</span>
+                <h2 v-else class="hidden text-[15px] font-bold sm:block">{{ t('monitored.detail.booksTitle') }}</h2>
+                <Tooltip v-if="hasCatalog">
+                  <TooltipTrigger as-child>
+                    <span tabindex="0" class="cursor-default rounded text-[12.5px] text-muted-foreground tabular-nums">{{
+                      t('monitored.detail.booksCountShort', { shown: visibleWorks.length, total: catalogTotal })
+                    }}</span>
+                  </TooltipTrigger>
+                  <TooltipContent>{{ countTooltip }}</TooltipContent>
+                </Tooltip>
+                <span :class="barDivider" aria-hidden="true" />
+              </div>
+              <BrowseSearchField
+                :model-value="searchQuery"
+                :placeholder="t('monitored.detail.booksSearchPlaceholder')"
+                @update:model-value="setSearchQuery"
+                @clear="clearSearch"
               />
-              <MonitoredGroupMenu :options="groupOptions" :model-value="grouping" default-value="series" @update:model-value="setGrouping" />
+              <span :class="[barDivider, 'hidden sm:block']" aria-hidden="true" />
+              <BrowseSortControl
+                :label="sortLabel"
+                :direction="order"
+                :changed="!sortIsDefault"
+                popover-class="w-56 p-2"
+                @toggle-direction="toggleOrder"
+              >
+                <MonitoredSortOptions
+                  :options="sortOptions"
+                  :model-value="sort"
+                  :order="order"
+                  @update:model-value="setSort"
+                  @update:order="setOrder"
+                />
+              </BrowseSortControl>
+              <Popover>
+                <PopoverTrigger as-child>
+                  <button
+                    type="button"
+                    :class="cn(barButton, barCompactPadding, !groupingIsDefault && barButtonOn)"
+                    :aria-label="t('monitored.detail.controls.group')"
+                    :title="groupingLabel"
+                  >
+                    <Layers :size="14" />
+                    <span :class="barLabel">{{ groupingLabel }}</span>
+                    <ChevronDown :size="13" :class="barChevron" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" class="w-56 p-2">
+                  <MonitoredGroupOptions :options="groupOptions" :model-value="grouping" @update:model-value="setGrouping" />
+                </PopoverContent>
+              </Popover>
               <button
                 v-if="groups.length > 1"
                 type="button"
-                class="flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors"
-                :class="
-                  allGroupsCollapsed
-                    ? 'border-primary/55 bg-primary/10 text-primary'
-                    : 'border-input bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
-                "
+                :class="cn(barIconButton, 'hidden sm:inline-grid', allGroupsCollapsed && barButtonOn)"
                 :aria-label="collapseAllLabel"
                 :title="collapseAllLabel"
                 @click="toggleAllGroups"
               >
-                <ChevronsUpDown v-if="allGroupsCollapsed" :size="13" />
-                <ChevronsDownUp v-else :size="13" />
-                <span class="hidden lg:inline">{{ collapseAllLabel }}</span>
+                <ChevronsUpDown v-if="allGroupsCollapsed" :size="14" />
+                <ChevronsDownUp v-else :size="14" />
               </button>
+              <span :class="[barDivider, 'hidden sm:block']" aria-hidden="true" />
+              <MonitoredFiltersMenu
+                variant="bar"
+                :model-value="display"
+                :counts="filterCounts"
+                :sections="filterSections"
+                :can-curate="canEdit"
+                :status-filters="statusFilters"
+                @toggle-section="toggleFilterSection"
+                @update:status-filters="handleStatusFiltersChange"
+                @update:model-value="setDisplay"
+                @reset="resetDisplay"
+              />
               <button
                 v-if="canEdit"
                 type="button"
-                class="flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors"
-                :class="
-                  selectionMode
-                    ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
-                    : 'border-input bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
-                "
+                :class="cn(barButton, barCompactPadding, selectionMode && barButtonOn)"
                 :aria-pressed="selectionMode"
                 data-testid="toggle-selection"
                 @click="toggleSelectionMode"
               >
                 <CheckSquare v-if="selectionMode" :size="13" aria-hidden="true" />
                 <Square v-else :size="13" aria-hidden="true" />
-                <span class="hidden sm:inline">{{ selectionMode ? t('monitored.selection.done') : t('monitored.selection.select') }}</span>
-                <span class="sr-only sm:hidden">{{ selectionMode ? t('monitored.selection.done') : t('monitored.selection.select') }}</span>
+                <span :class="barLabel">{{ selectionLabel }}</span>
+                <span :class="barLabelScreenReader">{{ selectionLabel }}</span>
               </button>
+              <span :class="[barDivider, 'hidden sm:block']" aria-hidden="true" />
               <Popover :open="displayOpen" @update:open="handleDisplayOpenChange">
                 <PopoverTrigger as-child>
                   <button
                     type="button"
-                    class="flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors"
-                    :class="
-                      displayOpen
-                        ? 'border-primary/55 bg-primary/10 text-primary'
-                        : 'border-input bg-background text-muted-foreground hover:bg-muted hover:text-foreground'
-                    "
+                    :class="cn(barIconButton, displayOpen && barButtonOn)"
                     :aria-label="t('components.viewHeader.display')"
                     :title="t('components.viewHeader.display')"
                     data-testid="author-display"
                   >
-                    <LayoutGrid :size="13" aria-hidden="true" />
-                    <span class="hidden lg:inline">{{ t('components.viewHeader.display') }}</span>
+                    <SlidersHorizontal :size="15" aria-hidden="true" />
                   </button>
                 </PopoverTrigger>
                 <PopoverContent align="end" :side-offset="8" class="w-64 p-4">
@@ -796,17 +865,6 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                   />
                 </PopoverContent>
               </Popover>
-              <MonitoredFiltersMenu
-                :model-value="display"
-                :counts="filterCounts"
-                :sections="filterSections"
-                :can-curate="canEdit"
-                :status-filters="statusFilters"
-                @toggle-section="toggleFilterSection"
-                @update:status-filters="handleStatusFiltersChange"
-                @update:model-value="setDisplay"
-                @reset="resetDisplay"
-              />
             </div>
           </div>
 
@@ -833,7 +891,8 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
             <Loader2 v-if="fetchBusy" :size="20" class="animate-spin" aria-hidden="true" />
             {{ t(fetchBusy ? 'monitored.fetch.fetching' : 'monitored.fetch.noBooksYet') }}
           </div>
-          <div class="mt-5 space-y-6" :class="selectionMode ? 'pb-28' : ''">
+          <!-- Cards use z-30/z-40 for badges and menus, so isolate keeps them from painting over the pinned bar. -->
+          <div class="isolate mt-5 space-y-6" :class="selectionMode ? 'pb-28' : ''">
             <section v-for="group in groups" :key="group.key">
               <div class="mb-3 flex items-center gap-2">
                 <button

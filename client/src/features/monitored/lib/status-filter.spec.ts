@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { MonitorMode, MonitoredFormat, MonitoredWork } from '@bookorbit/types'
 import {
   AUTHOR_STATUS_OPTIONS,
+  countChangedFilters,
+  isDefaultFilterSelection,
   RELEASE_STATUS_OPTIONS,
   defaultAuthorStatusFilters,
   defaultStatusFilters,
@@ -85,5 +87,29 @@ describe('workMatchesAuthorStatus', () => {
     expect(workMatchesAuthorStatus(undated, ['not_watched'], AUDIO_OFF, TODAY)).toBe(true)
     expect(workMatchesAuthorStatus(undated, ['missing'], AUDIO_OFF, TODAY)).toBe(false)
     expect(workMatchesAuthorStatus(undated, ['upcoming'], BOTH_WATCHED, TODAY)).toBe(true)
+  })
+})
+
+describe('changed filter counts', () => {
+  it.each([[AUTHOR_STATUS_OPTIONS], [RELEASE_STATUS_OPTIONS]])('counts changes against the defaults for %j', (options) => {
+    const status = options.includes('in_progress') ? defaultStatusFilters() : defaultAuthorStatusFilters()
+    const cases = [
+      { display: DEFAULT_MONITORED_DISPLAY, status, count: 0 },
+      { display: { ...DEFAULT_MONITORED_DISPLAY, hidden: true }, status, count: 1 },
+      { display: { ...DEFAULT_MONITORED_DISPLAY, kinds: [] }, status, count: 1 },
+      { display: DEFAULT_MONITORED_DISPLAY, status: status.slice(1), count: 1 },
+      { display: DEFAULT_MONITORED_DISPLAY, status: undefined, count: 0 },
+    ]
+    for (const entry of cases) {
+      const count = countChangedFilters(entry.display, entry.status, options)
+      expect(count).toBe(entry.count)
+      expect(count === 0).toBe(isDefaultFilterSelection(entry.display, entry.status, options))
+    }
+  })
+
+  it('distinguishes author defaults from list defaults', () => {
+    const status = defaultAuthorStatusFilters()
+    expect(countChangedFilters(DEFAULT_MONITORED_DISPLAY, status, AUTHOR_STATUS_OPTIONS)).toBe(0)
+    expect(countChangedFilters(DEFAULT_MONITORED_DISPLAY, status, RELEASE_STATUS_OPTIONS)).toBeGreaterThan(0)
   })
 })

@@ -1,4 +1,4 @@
-import { computed, ref, watch } from 'vue'
+import { computed, onActivated, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import type {
@@ -13,6 +13,7 @@ import type {
   MonitoredWorkPatch,
 } from '@bookorbit/types'
 import { useMonitoredFetchEvents } from './useMonitoredFetchEvents'
+import { foldSearchText } from '@/features/command-palette/lib/rank'
 import { storage } from '@/services/storage'
 import {
   fetchMonitoredAuthorDetail,
@@ -67,6 +68,11 @@ export function useMonitoredAuthorDetail() {
   const route = useRoute()
   const router = useRouter()
   const detail = ref<MonitoredAuthorDetail | null>(null)
+  const searchQuery = ref(firstQueryValue(route.query.q) ?? '')
+  onActivated(() => {
+    searchQuery.value = firstQueryValue(route.query.q) ?? ''
+  })
+  const normalizedQuery = computed(() => foldSearchText(searchQuery.value))
   const loading = ref(false)
   const error = ref<string | null>(null)
   const updating = ref(false)
@@ -76,6 +82,8 @@ export function useMonitoredAuthorDetail() {
   const sort = ref<MonitoredSort>(parseSort(route.query.sort ?? storage.get<string | null>(SORT_STORAGE_KEY, null)))
   const order = ref<SortOrder>(parseOrder(route.query.order ?? storage.get<string | null>(ORDER_STORAGE_KEY, null)))
   const grouping = ref<MonitoredGrouping>(parseGrouping(route.query.group ?? storage.get<string | null>(GROUP_STORAGE_KEY, null)))
+  const sortIsDefault = computed(() => sort.value === 'releaseDate' && order.value === 'desc')
+  const groupingIsDefault = computed(() => grouping.value === 'series')
   const collapse = ref<MonitoredCollapseEntry>(emptyCollapseEntry())
   const statusFilters = ref<MonitoredStatusFilter[]>(readAuthorStatusFilters(storage.get<unknown>(STATUS_STORAGE_KEY, null)))
 
@@ -111,6 +119,10 @@ export function useMonitoredAuthorDetail() {
     const today = todayUtc()
     return loadedWorks.value.filter(
       (work) =>
+        (!normalizedQuery.value ||
+          [work.title, work.subtitle, work.seriesName, ...work.seriesMemberships.map((membership) => membership.name)].some(
+            (value) => value && foldSearchText(value).includes(normalizedQuery.value),
+          )) &&
         (display.value.hidden || !hiddenWorkIds.value.has(work.id)) &&
         isWorkDisplayed(work, display.value) &&
         workMatchesAuthorStatus(work, statusFilters.value, formatModes.value, today),
@@ -119,7 +131,7 @@ export function useMonitoredAuthorDetail() {
   const sortedWorks = computed(() => sortWorks(visibleWorks.value, sort.value, order.value))
   const groups = computed(() => groupWorks(sortedWorks.value, grouping.value, order.value, sort.value))
   const allGroupsCollapsed = computed(() => groups.value.length > 0 && groups.value.every((group) => isGroupCollapsed(group.key)))
-  const filtersAreDefault = computed(() => isDefaultAuthorFilters(display.value, statusFilters.value))
+  const filtersAreDefault = computed(() => !searchQuery.value && isDefaultAuthorFilters(display.value, statusFilters.value))
 
   function syncRouteQuery() {
     void router.replace({
@@ -127,6 +139,7 @@ export function useMonitoredAuthorDetail() {
       params: { id: authorId.value },
       query: {
         ...route.query,
+        q: searchQuery.value || undefined,
         sort: sort.value === 'releaseDate' ? undefined : sort.value,
         order: order.value === 'desc' ? undefined : order.value,
         group: grouping.value === 'series' ? undefined : grouping.value,
@@ -182,11 +195,20 @@ export function useMonitoredAuthorDetail() {
     if (sequence === loadSequence && detail.value && item.id === authorId.value) detail.value.author = item
   }
 
+  function setSearchQuery(value: string) {
+    searchQuery.value = value
+    syncRouteQuery()
+  }
+
   function setSort(value: MonitoredSort) {
     if (sort.value === value) return
     sort.value = value
     storage.set(SORT_STORAGE_KEY, value)
     syncRouteQuery()
+  }
+
+  function toggleOrder() {
+    setOrder(order.value === 'asc' ? 'desc' : 'asc')
   }
 
   function setOrder(value: SortOrder) {
@@ -255,6 +277,7 @@ export function useMonitoredAuthorDetail() {
   }
 
   function resetDisplay(): void {
+    setSearchQuery('')
     setDisplay({ ...DEFAULT_MONITORED_DISPLAY })
     setStatusFilters(defaultAuthorStatusFilters())
   }
@@ -366,6 +389,8 @@ export function useMonitoredAuthorDetail() {
 
   return {
     detail,
+    searchQuery,
+    setSearchQuery,
     fetchStatus,
     loading,
     error,
@@ -393,6 +418,9 @@ export function useMonitoredAuthorDetail() {
     refreshAuthor,
     setSort,
     setOrder,
+    toggleOrder,
+    sortIsDefault,
+    groupingIsDefault,
     setGrouping,
     setDisplay,
     resetDisplay,
