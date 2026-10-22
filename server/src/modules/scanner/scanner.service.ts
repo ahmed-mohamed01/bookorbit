@@ -2899,8 +2899,10 @@ export class ScannerService implements OnApplicationBootstrap {
       mediaOverlayCheckedAt = mediaOverlayFields.mediaOverlayCheckedAt ?? null;
     }
 
+    const fileHash = !sizeUnchanged || !mtimeUnchanged ? await computeFileHash(fileStat.absolutePath) : byPath.fileHash;
     if (!sizeUnchanged || !mtimeUnchanged || !inoUnchanged || !relPathUnchanged || reassigned || classificationChanged) {
       await this.scannerRepo.updateBookFile(byPath.id, {
+        fileHash,
         ...(reassigned && { bookId }),
         libraryFolderId,
         relPath: fileStat.relPath,
@@ -2929,7 +2931,7 @@ export class ScannerService implements OnApplicationBootstrap {
       ino: fileStat.ino,
       sizeBytes: fileStat.sizeBytes,
       mtime: fileStat.mtime,
-      fileHash: byPath.fileHash,
+      fileHash,
       format,
       role,
       sortOrder,

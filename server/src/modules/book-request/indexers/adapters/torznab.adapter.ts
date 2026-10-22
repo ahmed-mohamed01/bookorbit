@@ -14,6 +14,7 @@ import {
   type ResolvedIndexerConfig,
   type TorrentFetchResult,
 } from '../indexer-adapter';
+import { publicReleaseGuid } from '../release-guid';
 import { normalizeProviderSeedRatio, normalizeTorznabSeedTimeSeconds } from '../seed-goal.utils';
 // An ISBN is the one query a tracker almost never indexes, so it stays out of the search text.
 import { buildSearchText } from '../search-text';
@@ -47,6 +48,8 @@ interface TorznabItem {
   title?: string;
   guid?: unknown;
   link?: string;
+  /** The release's details page on the tracker, which Jackett and Prowlarr both publish here. */
+  comments?: unknown;
   size?: string | number;
   pubDate?: string;
   enclosure?: { '@_url'?: string; '@_length'?: string | number } | Array<{ '@_url'?: string; '@_length'?: string | number }>;
@@ -332,8 +335,9 @@ function parseItems(xml: string, indexerId: number, categoryNames: Map<string, s
 
     const attrs = attrMap(item);
     const enclosure = toArray(item.enclosure)[0];
-    const guid = readGuid(item) ?? enclosure?.['@_url'] ?? title;
-    if (!withinFieldBound(guid)) continue;
+    const sourceGuid = readGuid(item) ?? enclosure?.['@_url'] ?? title;
+    if (!withinFieldBound(sourceGuid)) continue;
+    const guid = publicReleaseGuid(indexerId, sourceGuid);
     // A proxy may publish the release as a magnet in `link`, in an enclosure, or in an attribute.
     const link = withinFieldBound(item.link ?? enclosure?.['@_url']) ? (item.link ?? enclosure?.['@_url']) : undefined;
     const magnet = attrs.get('magneturl') ?? (link?.startsWith('magnet:') ? link : undefined);
@@ -354,12 +358,14 @@ function parseItems(xml: string, indexerId: number, categoryNames: Map<string, s
         .map((attr) => String(attr['@_value'] ?? '')),
     ].map((id) => categoryNames.get(id.trim()) ?? '');
     const language = attrs.get('language') || languageFromCategoryNames(names);
+    const infoUrl = readText(item.comments);
 
     releases.push({
       indexerId,
       guid,
       title,
       ...(bookTitle ? { bookTitle } : {}),
+      ...(infoUrl && withinFieldBound(infoUrl) ? { infoUrl } : {}),
       ...(downloadUrl ? { downloadUrl } : {}),
       ...(magnet ? { magnet } : {}),
       ...(infoHash ? { infoHash: infoHash.toLowerCase() } : {}),
@@ -417,11 +423,15 @@ function withinFieldBound(value: string | undefined): boolean {
 
 /** `guid` is a bare string on some proxies and `{ '#text', '@_isPermaLink' }` on others. */
 function readGuid(item: TorznabItem): string | undefined {
-  const guid = item.guid;
-  if (typeof guid === 'string' && guid.trim()) return guid.trim();
-  if (typeof guid === 'number') return String(guid);
-  if (guid && typeof guid === 'object') {
-    const text = (guid as { '#text'?: unknown })['#text'];
+  return readText(item.guid);
+}
+
+/** An element's text, whether the parser handed it over bare or as `{ '#text', ...attributes }`. */
+function readText(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (typeof value === 'number') return String(value);
+  if (value && typeof value === 'object') {
+    const text = (value as { '#text'?: unknown })['#text'];
     if (typeof text === 'string' && text.trim()) return text.trim();
     if (typeof text === 'number') return String(text);
   }

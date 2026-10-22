@@ -8,6 +8,7 @@ const release: ReleaseCandidateItem = {
   indexerName: 'An Indexer',
   guid: 'release-1',
   title: 'The Long Wait (2026) [EPUB]',
+  infoUrl: null,
   sizeBytes: 1024,
   seeders: null,
   leechers: null,

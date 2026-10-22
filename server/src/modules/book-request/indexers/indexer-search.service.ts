@@ -30,6 +30,7 @@ import { IndexerOperationLock, SlotWaitAbortedError } from './indexer-operation-
 import { IndexerRegistry } from './indexer-registry';
 import { releaseInfoHash } from './release-inspection-facts';
 import { ReleaseInspectionFactsRepository } from './release-inspection-facts.repository';
+import { indexerSecrets, withSafeInfoUrl } from './release-info-url';
 import { applyInspectionFacts, rejectRelease, scoreRelease, toReleaseItem, type ScoredRelease, type ScoringRequest } from './release-scoring';
 import { buildSearchText } from './search-text';
 
@@ -566,7 +567,10 @@ export class IndexerSearchService {
           () => new IndexerSearchException('timeout', `${config.name} did not answer in time`),
         );
       }
-      return { config, releases, query: indexerQuery };
+      // Vetted here rather than in each adapter, so a plugin is held to the same rule as the
+      // built-ins and a candidate refreshed for a grab is held to it a second time.
+      const secrets = indexerSecrets(config);
+      return { config, releases: releases.map((release) => withSafeInfoUrl(release, secrets)), query: indexerQuery };
     } catch (error) {
       const failure: IndexerSearchFailure = error instanceof IndexerSearchException ? error.failure : 'error';
       const message = error instanceof Error ? error.message : String(error);

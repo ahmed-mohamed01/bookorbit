@@ -10,6 +10,8 @@ import ChangePasswordDialog from '@/features/auth/ChangePasswordDialog.vue'
 import WhatsNewDialog from '@/features/whats-new/WhatsNewDialog.vue'
 import { useWhatsNew } from '@/features/whats-new/composables/useWhatsNew'
 import { useAuth } from '@/features/auth/composables/useAuth'
+import { useSessionBootstrap } from '@/features/auth/composables/useSessionBootstrap'
+import ServerReconnectScreen from '@/features/auth/components/ServerReconnectScreen.vue'
 import TtsMiniPlayer from '@/features/tts/components/TtsMiniPlayer.vue'
 import MediaOverlayDock from '@/features/reader/media-overlay/components/MediaOverlayDock.vue'
 import { useMediaOverlay } from '@/features/reader/media-overlay/composables/useMediaOverlay'
@@ -45,6 +47,7 @@ const chartTokens = useChartTokens()
 
 const route = useRoute()
 const { user } = useAuth()
+const { unreachable: serverUnreachable } = useSessionBootstrap()
 const { popupOpen, evaluate, syncPopup } = useWhatsNew()
 const podcastPlayer = APP_FEATURES.podcasts ? usePodcastPlayer() : null
 const podcastDownloads = APP_FEATURES.podcasts ? usePodcastDownloadBatches() : null
@@ -93,6 +96,7 @@ provide(
 
 <template>
   <TooltipProvider :delay-duration="0">
+    <ServerReconnectScreen v-if="serverUnreachable" />
     <router-view v-slot="{ Component, route: activeRoute }">
       <Transition name="page" mode="out-in">
         <component :is="Component" :key="resolveRouteViewKey(activeRoute)" />

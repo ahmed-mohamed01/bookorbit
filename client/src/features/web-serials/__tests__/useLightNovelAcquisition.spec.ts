@@ -23,6 +23,7 @@ const release: ReleaseCandidateItem = {
   indexerName: 'Source',
   guid: 'pack',
   title: 'Novel Vol. 1-3',
+  infoUrl: null,
   sizeBytes: 100,
   seeders: 1,
   leechers: 0,

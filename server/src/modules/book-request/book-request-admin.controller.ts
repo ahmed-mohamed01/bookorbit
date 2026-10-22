@@ -17,11 +17,13 @@ import {
   Res,
 } from '@nestjs/common';
 import { RouteConfig } from '@nestjs/platform-fastify';
+import { createReadStream } from 'fs';
 import { AuditAction, AuditResource, Permission } from '@bookorbit/types';
 
 import { Auditable } from '../../common/decorators/auditable.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { imageContentTypeFromPath } from '../../common/image-content-type';
 import type { RequestUser } from '../../common/types/request-user';
 import { BookRequestBatchService } from './batch/book-request-batch.service';
 import { BookRequestService } from './book-request.service';
@@ -211,6 +213,14 @@ export class BookRequestAdminController {
   @Get(':id/review')
   getReview(@Param('id', ParseIntPipe) id: number) {
     return this.verification.getReview(id);
+  }
+
+  @Get(':id/review/cover')
+  async getReviewCover(@Param('id', ParseIntPipe) id: number, @Res() reply: FastifyReply) {
+    const coverPath = await this.verification.getReviewCoverPath(id);
+    reply.header('Content-Type', imageContentTypeFromPath(coverPath));
+    reply.header('Cache-Control', 'private, no-cache');
+    return reply.send(createReadStream(coverPath));
   }
 
   /** The approver disagrees with the score. Files the held import exactly as a pass would have. */

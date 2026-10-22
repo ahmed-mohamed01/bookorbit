@@ -17,6 +17,17 @@ const getElementForNode = (node) => {
 const getRangePoint = (range) => {
   if (!range) return null
   if (range.startContainer?.nodeType === 3) return { node: range.startContainer, offset: range.startOffset }
+  const doc = range.startContainer?.ownerDocument
+  const walker = doc?.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT)
+  if (walker) {
+    walker.currentNode = range.startContainer.childNodes[range.startOffset] ?? range.startContainer
+    let node = walker.currentNode
+    while (node) {
+      if (node.nodeType === 3 && node.textContent.trim() && range.intersectsNode(node)) return { node, offset: 0 }
+      node = walker.nextNode()
+      if (node && range.comparePoint(node, 0) > 0) break
+    }
+  }
   if (range.endContainer?.nodeType === 3) return { node: range.endContainer, offset: range.endOffset }
   return { node: range.startContainer, offset: range.startOffset }
 }
@@ -313,6 +324,13 @@ const languageInfo = (lang) => {
   }
 }
 
+/** Whether the reader holds a non-empty text selection in any loaded section. */
+export const holdsTextSelection = (renderer) =>
+  (renderer?.getContents?.() ?? []).some(({ doc }) => {
+    const selection = doc?.defaultView?.getSelection?.()
+    return Boolean(selection && selection.rangeCount > 0 && !selection.isCollapsed)
+  })
+
 export class View extends HTMLElement {
   #root = this.attachShadow({ mode: 'closed' })
   #sectionProgress
@@ -388,17 +406,21 @@ export class View extends HTMLElement {
           const doc = this.renderer.getContents().find((x) => x.index === resolved.index)?.doc
           return doc ? resolved.anchor(doc) : null
         }
-        // BookOrbit fork: `mediaOverlayFollow` lets the host decide whether to
-        // navigate to the narrated element, so the view can stay where the
-        // reader scrolled it while narration continues. Upstream always navigates.
-        const follow = this.mediaOverlayFollow ? this.mediaOverlayFollow(findActive()) : true
-        Promise.resolve(follow ? this.renderer.goTo(resolved) : null).then(() => {
+        const mark = () => {
           const el = findActive()
           if (!el) return
           el.classList.add(activeClass)
           if (playbackActiveClass) el.ownerDocument.documentElement.classList.add(playbackActiveClass)
           lastActive = new WeakRef(el)
-        })
+        }
+        // BookOrbit fork: `mediaOverlayFollow` lets the host decide whether to
+        // navigate to the narrated element, so the view can stay where the
+        // reader scrolled it while narration continues. Upstream always navigates.
+        const follow = this.mediaOverlayFollow ? this.mediaOverlayFollow(findActive()) : true
+        // BookOrbit: following the voice relocates the page, and every relocation collapses the selection,
+        // so a reader selecting text keeps it; the sentence is still marked wherever it is laid out.
+        if (follow && !holdsTextSelection(this.renderer)) this.renderer.goTo(resolved).then(mark)
+        else mark()
       }, { signal })
       this.mediaOverlay.addEventListener('unhighlight', () => {
         const el = lastActive?.deref()
@@ -472,6 +494,7 @@ export class View extends HTMLElement {
     const koreaderProgress = null
     this.lastLocation = {
       ...progress,
+      reason,
       tocItem,
       pageItem,
       cfi,

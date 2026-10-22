@@ -217,6 +217,7 @@ export function toReleaseItem(scored: ScoredRelease, indexerName: string, reques
     ...(candidate.origin ? { origin: candidate.origin } : {}),
     guid: candidate.guid,
     title: candidate.title,
+    infoUrl: candidate.infoUrl ?? null,
     sizeBytes: candidate.sizeBytes,
     seeders: candidate.seeders,
     leechers: candidate.leechers,

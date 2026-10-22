@@ -425,6 +425,30 @@ describe('RequestFulfillmentService.grab from a picked release', () => {
     );
   });
 
+  it('keeps the release page and the request to review it on the attempt', async () => {
+    const { service, downloads } = makeService({
+      releases: { find: vi.fn().mockReturnValue({ ...RELEASE, infoUrl: 'https://tracker.example.com/details/1' }) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+    });
+
+    await service.grab(7, { indexerId: 9, releaseGuid: 'r-1', holdForReview: true }, user());
+
+    expect(downloads.create).toHaveBeenCalledWith(
+      expect.objectContaining({ releaseInfoUrl: 'https://tracker.example.com/details/1', holdForReview: true }),
+    );
+  });
+
+  it('files a grab on its score unless the sender asked to review it', async () => {
+    const { service, downloads } = makeService({
+      releases: { find: vi.fn().mockReturnValue(RELEASE) },
+      indexerAdapter: { fetchTorrentFile: vi.fn().mockResolvedValue(torrentBytes()) },
+    });
+
+    await service.grab(7, { indexerId: 9, releaseGuid: 'r-1' }, user());
+
+    expect(downloads.create).toHaveBeenCalledWith(expect.objectContaining({ releaseInfoUrl: null, holdForReview: false }));
+  });
+
   it('grab still sends a whole torrent without wantedPaths', async () => {
     const { service, adapter } = makeService({
       releases: { find: vi.fn().mockReturnValue(RELEASE) },

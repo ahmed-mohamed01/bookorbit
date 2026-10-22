@@ -1,12 +1,14 @@
 import { computed, onUnmounted, ref, unref, type MaybeRef, type Ref } from 'vue'
 import type { FoliateRenderer, RelocateDetail } from '../../epub/composables/useFoliate'
+import { api } from '@/lib/api'
 import {
   createProgressSaver,
-  fetchProgressRecord,
   normalizeFraction,
   normalizePageNumber,
   normalizePercentage,
   normalizeString,
+  parseProgressRecord,
+  type ProgressRecord,
   type ProgressSource,
 } from '../lib/progress-writer'
 
@@ -14,6 +16,34 @@ export type FooterDisplayMode = 0 | 1 | 2
 
 export interface ReaderProgressOptions {
   trackingEnabled?: MaybeRef<boolean>
+  /** Where a narrated sentence starts in the narration, in seconds, or null when it cannot be placed. */
+  narrationSeconds?: (fragment: string, sectionIndex: number | null) => Promise<number | null>
+  /** Told when a narration save was held back because another device sent the narration well behind it. */
+  onNarrationMovedBack?: (position: NewerPosition) => void
+}
+
+/** How far behind the sentence being saved another device must send narration for the save to wait. */
+const NARRATION_MOVED_BACK_SECONDS = 30
+
+/** A position another device saved while this reader was open: the server's row, and when it moved. */
+export interface NewerPosition {
+  percentage: number
+  stamp: number
+  data: Record<string, unknown>
+}
+
+function serverTime(value: unknown): number | null {
+  if (typeof value !== 'string') return null
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+/** When the row's positions last moved, on the server's clock; the row's own stamp before the split. */
+function positionStamp(data: Record<string, unknown>): number {
+  const text = serverTime(data.textUpdatedAt)
+  const narration = serverTime(data.narrationUpdatedAt)
+  if (text === null && narration === null) return serverTime(data.updatedAt) ?? 0
+  return Math.max(text ?? 0, narration ?? 0)
 }
 
 export function formatTimeRemaining(minutes: number): string {
@@ -62,7 +92,16 @@ export function useReaderProgress(
   const footerMode = ref<FooterDisplayMode>(initialFooterMode)
   const trackingEnabled = options.trackingEnabled ?? true
 
+  let hadSavedPosition = false
   let lastValidPercentage = 0
+  // The newest write to the row this reader has read or made, on the server's clock. Anything
+  // newer came from another device.
+  let knownServerStamp = 0
+  // The narration marker that write left on the row; null after a page turn, which the server may
+  // have carried narration along with. `Date` counts whole seconds, so a row inside that second
+  // holding another marker was written by another device just after this one.
+  let knownNarrationFragment: string | null = null
+  let adoptingNewerPosition = false
 
   onUnmounted(() => flush())
 
@@ -79,8 +118,21 @@ export function useReaderProgress(
 
   async function load() {
     if (!unref(trackingEnabled)) return
-    const record = await fetchProgressRecord(fileId)
-    if (!record) return
+    const res = await api(`/api/v1/books/files/${fileId}/progress`)
+    if (!res.ok) return
+    const data = (await res.json()) as Record<string, unknown>
+    const record = parseProgressRecord(data)
+    hadSavedPosition =
+      record.cfi !== null ||
+      record.koboLocationValue !== null ||
+      record.koreaderProgress !== null ||
+      (typeof data.percentage === 'number' && data.percentage > 0)
+    applyServerProgress(record)
+    knownServerStamp = positionStamp(data)
+    knownNarrationFragment = record.mediaOverlayFragment
+  }
+
+  function applyServerProgress(record: ProgressRecord) {
     cfi.value = record.cfi
     pageNumber.value = record.pageNumber
     updatePercentage(record.percentage, 0)
@@ -98,19 +150,30 @@ export function useReaderProgress(
     fileId,
     isEnabled: () => unref(trackingEnabled),
     source: () => pendingSource.value,
-    buildRecord: () => ({
-      cfi: cfi.value,
-      pageNumber: normalizePageNumber(pageNumber.value),
-      percentage: updatePercentage(percentage.value),
-      koboLocationSource: koboLocationSource.value,
-      koboLocationType: koboLocationType.value,
-      koboLocationValue: koboLocationValue.value,
-      koboContentSourceProgressPercent: normalizePercentage(koboContentSourceProgressPercent.value),
-      koreaderProgress: koreaderProgress.value,
-      positionSeconds: positionSeconds.value,
-      mediaOverlayFragment: mediaOverlayFragment.value,
-      mediaOverlaySectionIndex: mediaOverlaySectionIndex.value,
-    }),
+    beforeSave: () =>
+      pendingSource.value === 'narration' && options.narrationSeconds && mediaOverlayFragment.value ? proceedUnlessMovedBack() : true,
+    onSaved: (res, record) => noteOwnWrite(res, 'mediaOverlayFragment' in record ? record.mediaOverlayFragment : null),
+    buildRecord: () => {
+      const text = {
+        cfi: cfi.value,
+        pageNumber: normalizePageNumber(pageNumber.value),
+        percentage: updatePercentage(percentage.value),
+        koboLocationSource: koboLocationSource.value,
+        koboLocationType: koboLocationType.value,
+        koboLocationValue: koboLocationValue.value,
+        koboContentSourceProgressPercent: normalizePercentage(koboContentSourceProgressPercent.value),
+        koreaderProgress: koreaderProgress.value,
+      }
+      // Left out of a page turn, which says nothing about narration: sent along, the marker this
+      // reader read when it opened went back over a newer one another device had saved since.
+      if (pendingSource.value !== 'narration') return text
+      return {
+        ...text,
+        positionSeconds: positionSeconds.value,
+        mediaOverlayFragment: mediaOverlayFragment.value,
+        mediaOverlaySectionIndex: mediaOverlaySectionIndex.value,
+      }
+    },
   })
   const { flush, save } = saver
 
@@ -143,6 +206,11 @@ export function useReaderProgress(
       saver.cancelScheduled()
       return
     }
+    // Opening at a position a device saved, or reflowing the page, moves no reader. Saving the
+    // page start the view lands on would pull every other device back to it (#1136). A reflow
+    // under paused narration would also restamp its old sentence as just narrated.
+    const repositionOnly = (detail?.restoring === true && hadSavedPosition) || adoptingNewerPosition || detail?.reason === 'anchor'
+    if (repositionOnly) return
     pendingSource.value = source
     saver.schedule()
   }
@@ -154,6 +222,90 @@ export function useReaderProgress(
     pendingSource.value = 'narration'
     saver.noteNarration()
     saver.schedule()
+  }
+
+  async function proceedUnlessMovedBack(): Promise<boolean> {
+    const movedBack = await narrationMovedBack()
+    if (!movedBack) return true
+    options.onNarrationMovedBack?.(movedBack)
+    return false
+  }
+
+  /**
+   * The server's position when another device sent narration well behind the sentence about to be
+   * saved, a reset or a return to an earlier passage, since this reader last read or wrote it.
+   * Read-aloud saves every few sentences, so a reset made elsewhere while it played was overwritten
+   * by the next one and nobody was asked. A move ahead is not held: this narration is the newer place.
+   */
+  async function narrationMovedBack(): Promise<NewerPosition | null> {
+    const secondsOf = options.narrationSeconds
+    const fragment = mediaOverlayFragment.value
+    if (!secondsOf || !fragment) return null
+    const res = await api(`/api/v1/books/files/${fileId}/progress`).catch(() => null)
+    if (!res?.ok) return null
+    const data = (await res.json()) as Record<string, unknown>
+    const stamp = positionStamp(data)
+    const serverFragment = normalizeString(data.mediaOverlayFragment)
+    if (!serverFragment || serverFragment === fragment) return null
+    if (stamp <= knownServerStamp && (knownNarrationFragment === null || serverFragment === knownNarrationFragment)) return null
+    const serverSection = typeof data.mediaOverlaySectionIndex === 'number' ? data.mediaOverlaySectionIndex : null
+    const [serverAt, savingAt] = await Promise.all([secondsOf(serverFragment, serverSection), secondsOf(fragment, mediaOverlaySectionIndex.value)])
+    if (serverAt === null || savingAt === null || serverAt >= savingAt - NARRATION_MOVED_BACK_SECONDS) return null
+    return { percentage: normalizePercentage(data.percentage) ?? 0, stamp, data }
+  }
+
+  /**
+   * The write lands with a server stamp no later than the response's `Date`, which counts whole
+   * seconds, so the next second covers it.
+   */
+  function noteOwnWrite(res: Response | undefined, narrationFragment: string | null) {
+    const date = serverTime(res?.headers?.get?.('Date') ?? null)
+    if (date === null) return
+    knownServerStamp = Math.max(knownServerStamp, date + 1000)
+    knownNarrationFragment = narrationFragment
+  }
+
+  /**
+   * The server's position when another device moved it since this reader last read or wrote it,
+   * so a reader left open can offer it instead of saving its old page over it. Nothing is asked
+   * while a save is waiting: this reader is about to speak for the position itself.
+   */
+  async function checkForNewerPosition(): Promise<NewerPosition | null> {
+    if (!unref(trackingEnabled) || saver.isBusy()) return null
+    const res = await api(`/api/v1/books/files/${fileId}/progress`)
+    if (!res.ok || saver.isBusy()) return null
+    const data = (await res.json()) as Record<string, unknown>
+    const stamp = positionStamp(data)
+    if (stamp <= knownServerStamp) return null
+    if (normalizeString(data.cfi) === cfi.value && normalizeString(data.mediaOverlayFragment) === mediaOverlayFragment.value) {
+      knownServerStamp = stamp
+      knownNarrationFragment = mediaOverlayFragment.value
+      return null
+    }
+    return { percentage: normalizePercentage(data.percentage) ?? 0, stamp, data }
+  }
+
+  /** Takes the newer position, both text and narration, and lets `navigate` go there without saving it back. */
+  async function adoptNewerPosition(position: NewerPosition, navigate: () => Promise<void>) {
+    saver.discardPending()
+    applyServerProgress(parseProgressRecord(position.data))
+    knownServerStamp = Math.max(knownServerStamp, position.stamp)
+    knownNarrationFragment = normalizeString(position.data.mediaOverlayFragment)
+    adoptingNewerPosition = true
+    try {
+      await navigate()
+    } finally {
+      adoptingNewerPosition = false
+    }
+  }
+
+  /** Keeps this reader's page over the one it turned down, and saves it so other devices follow. */
+  async function keepCurrentPosition(position: NewerPosition, source: ProgressSource = 'text') {
+    knownServerStamp = Math.max(knownServerStamp, position.stamp)
+    knownNarrationFragment = normalizeString(position.data.mediaOverlayFragment)
+    saver.discardPending()
+    pendingSource.value = source
+    await save()
   }
 
   function cycleFooterMode() {
@@ -296,6 +448,9 @@ export function useReaderProgress(
     timeTotal,
     footerMode,
     load,
+    checkForNewerPosition,
+    adoptNewerPosition,
+    keepCurrentPosition,
     onRelocate,
     setMediaOverlayProgress,
     save,

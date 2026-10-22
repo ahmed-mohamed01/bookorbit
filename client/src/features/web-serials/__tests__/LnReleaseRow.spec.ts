@@ -10,6 +10,7 @@ const release: ReleaseCandidateItem = {
   indexerName: 'Nyaa',
   guid: 'a',
   title: 'Novel Vol. 1',
+  infoUrl: null,
   sizeBytes: 1024,
   seeders: 2,
   leechers: null,
