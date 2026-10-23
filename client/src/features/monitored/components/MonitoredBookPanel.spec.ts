@@ -375,7 +375,7 @@ describe('MonitoredBookPanel owned slot', () => {
     expect(ebook.text()).toContain('In library')
     expect(ebook.text()).toContain('Released Jan 2, 2020')
     expect(ebook.text()).toContain('Available since Mar 4, 2025')
-    expect(ebook.find('[data-testid="watch-toggle"]').exists()).toBe(true)
+    expect(ebook.find('[data-testid="watch-toggle"]').exists()).toBe(false)
     expect(ebook.find('[data-testid="releases-toggle"]').exists()).toBe(false)
     const link = ebook.findAllComponents(RouterLinkStub).find((candidate) => JSON.stringify(candidate.props('to')).includes('"bookId":5'))
     expect(link).toBeDefined()
@@ -1520,7 +1520,19 @@ describe('MonitoredBookPanel owned slot failure states', () => {
     const ebook = slot(wrapper, 'ebook')
 
     expect(ebook.text()).toContain('Not watching')
+    expect(ebook.find('[data-testid="watch-toggle"]').exists()).toBe(false)
     expect(ebook.get('section > span').classes()).toContain('bg-muted-foreground/40')
+    wrapper.unmount()
+  })
+
+  it('says nothing about watching on an owned format the author does watch', async () => {
+    bookDetailState.books = [ebookBook()]
+    const wrapper = await mountPanel(ownedEbook)
+    const ebook = slot(wrapper, 'ebook')
+
+    expect(ebook.find('[data-testid="watch-toggle"]').exists()).toBe(false)
+    expect(ebook.text()).not.toContain('Watching')
+    expect(ebook.text()).not.toContain('Not watching')
     wrapper.unmount()
   })
 

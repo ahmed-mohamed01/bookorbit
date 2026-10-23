@@ -114,6 +114,10 @@ const formatLower = computed(() => state.formatName.value.toLowerCase())
 const collapseLabel = computed(() => t(props.collapsed ? 'monitored.slot.expand' : 'monitored.slot.collapse'))
 const watchHintId = computed(() => `${props.work.id}-${props.format}-watch-hint`)
 const watchLabel = computed(() => t('monitored.slot.watchFormat', { format: formatLower.value }))
+/** An owned format has nothing left to watch for, so only a format the author does not watch still says so. */
+const showWatchIndicator = computed(
+  () => !state.statusLine.value && !(state.owned.value && state.watching.value) && (!props.canEdit || state.owned.value),
+)
 const autoDownloadId = computed(() => `${props.work.id}-${props.format}-auto-download-hint`)
 const autoDownloadOverride = computed(() => props.work.autoDownload?.[props.format])
 const autoDownloadOn = computed(() => isAutoDownload(props.mode ?? 'off', autoDownloadOverride.value))
@@ -354,7 +358,7 @@ function handleCheckLibrary() {
           </div>
 
           <!-- What the switch means ("Searched automatically", "Never searched") lives in its tooltip, keeping this one row. -->
-          <div v-if="canEdit" class="ms-auto -me-1.5 flex items-center gap-0.5">
+          <div v-if="canEdit && !state.owned.value" class="ms-auto -me-1.5 flex items-center gap-0.5">
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger as-child>
@@ -401,9 +405,9 @@ function handleCheckLibrary() {
             </TooltipProvider>
             <span v-if="showAutoDownload" :id="autoDownloadId" class="sr-only">{{ autoDownloadTooltip }}</span>
           </div>
-          <span v-if="canEdit" :id="watchHintId" class="sr-only">{{ state.watchTooltip.value }}</span>
+          <span v-if="canEdit && !state.owned.value" :id="watchHintId" class="sr-only">{{ state.watchTooltip.value }}</span>
           <span
-            v-else-if="!state.statusLine.value"
+            v-else-if="showWatchIndicator"
             class="ms-auto inline-flex shrink-0 items-center gap-1 text-[12.5px] font-medium"
             :class="state.watching.value ? 'text-primary' : 'text-muted-foreground'"
           >
