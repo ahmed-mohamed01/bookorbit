@@ -3,13 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MonitoredAuthorConfig, MonitoredWork } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
-import {
-  autoRequestFormats,
-  isDestinationRefusal,
-  isRequestable,
-  MonitoredAutoRequestService,
-  submitThrottled,
-} from './monitored-autorequest.service';
+import { isAutoFormat, isDestinationRefusal, isRequestable, MonitoredAutoRequestService, submitThrottled } from './monitored-autorequest.service';
 
 const user = { id: 9, isSuperuser: true } as RequestUser;
 
@@ -84,6 +78,34 @@ describe('MonitoredAutoRequestService', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it.each([
+    ['notify', true, false, 1],
+    ['auto-all', false, false, 0],
+    ['off', true, false, 0],
+    ['notify', true, true, 0],
+    ['auto-upcoming', true, false, 1],
+    ['auto-upcoming', undefined, false, 0],
+  ] as const)('applies override %s %s with paused=%s', async (mode, override, paused, created) => {
+    const works = [work({ ...(override === undefined ? {} : { autoDownload: { ebook: override } }), ebookReleaseDate: '2025-01-01' })];
+    const { service, submit } = harness(works);
+    const configured = monitor({ paused, formats: { ...monitor().formats, ebook: { mode, libraryId: 2, folderId: 3 } } });
+    expect((await service.fanOut(configured, works, user)).created).toBe(created);
+    expect(submit).toHaveBeenCalledTimes(created);
+  });
+
+  it.each([
+    ['a possible match', { possibleMatches: { ebook: { bookId: 9 } } }],
+    ['an existing request', { requestIds: { ebook: 41 } }],
+    ['a hidden work', { userVisibility: 'hidden' as const }],
+    ['an owned format', { ownedFormats: ['ebook' as const] }],
+  ])('does not let an override on bypass %s', async (_label, blocker) => {
+    const works = [work({ autoDownload: { ebook: true }, ebookReleaseDate: '2025-01-01', ...(blocker as object) })];
+    const { service, submit } = harness(works);
+    const configured = monitor({ formats: { ...monitor().formats, ebook: { mode: 'notify', libraryId: 2, folderId: 3 } } });
+    expect((await service.fanOut(configured, works, user)).created).toBe(0);
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it('submits an auto-all work for the monitor owner and records the request id', async () => {
@@ -284,18 +306,6 @@ describe('MonitoredAutoRequestService', () => {
 describe('auto-request helpers', () => {
   const refusal = () => new BadRequestException({ message: 'Pick a destination', errorCode: 'SUBMIT_DESTINATION_REQUIRED', statusCode: 400 });
 
-  it('lists only the auto formats of an unpaused monitor', () => {
-    const configured = monitor({
-      formats: {
-        ebook: { mode: 'auto-upcoming', libraryId: null, folderId: null },
-        audiobook: { mode: 'notify', libraryId: null, folderId: null },
-      },
-    });
-
-    expect(autoRequestFormats(configured)).toEqual(['ebook']);
-    expect(autoRequestFormats({ ...configured, paused: true })).toEqual([]);
-  });
-
   it('treats owned, matched, already requested, opted out and unmonitored works as not requestable', () => {
     expect(isRequestable(work(), 'ebook')).toBe(true);
     expect(isRequestable(work({ ownedFormats: ['ebook'] }), 'ebook')).toBe(false);
@@ -361,5 +371,14 @@ describe('auto-request helpers', () => {
     expect(submit).toHaveBeenCalledTimes(4);
     expect(outcomes.map((outcome) => outcome.status)).toEqual(['rejected', 'fulfilled', 'fulfilled', 'stopped', 'fulfilled']);
     expect(outcomes[0]).toMatchObject({ destinationRefusal: true });
+  });
+});
+
+describe('per-work auto format gate', () => {
+  it('blocks both formats while paused even with explicit overrides', () => {
+    const configured = monitor({ paused: true });
+    const target = work({ autoDownload: { ebook: true, audiobook: true } });
+    expect(isAutoFormat(configured, target, 'ebook')).toBe(false);
+    expect(isAutoFormat(configured, target, 'audiobook')).toBe(false);
   });
 });

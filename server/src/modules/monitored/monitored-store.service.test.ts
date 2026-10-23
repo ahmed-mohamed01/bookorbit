@@ -240,6 +240,19 @@ describe('MonitoredStoreService work composition', () => {
     });
   });
 
+  it.each([
+    [true, false, { ebook: true, audiobook: false }],
+    [null, null, {}],
+  ] as const)('composes nullable auto-download overrides %s %s', (ebook, audiobook, expected) => {
+    const result = Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => MonitoredWork }).composeWork, store, [
+      workRow(),
+      [],
+      overlayRow({ workId: 'monitor-1:hardcover:1', autoDownloadEbook: ebook, autoDownloadAudiobook: audiobook }),
+      null,
+    ]);
+    expect(result.autoDownload).toEqual(expected);
+  });
+
   it('supplies default user state when no overlay exists', () => {
     const result = Reflect.apply((store as unknown as { composeWork: (...args: unknown[]) => unknown }).composeWork, store, [
       workRow(),
@@ -1150,6 +1163,24 @@ describe('MonitoredStoreService paged lists', () => {
     const work = { ...defaults, ...patch };
     const status = monitoredFormatStatus(work as never, 'ebook', '2026-10-15');
     expect(MONITORED_STATUS_FILTER_BY_FORMAT_STATUS[status]).toBe(bucket);
+  });
+
+  it.each([true, false, null])('writes and clears auto-download overrides with %s', async (value) => {
+    const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
+    const values = vi.fn().mockReturnValue({ onConflictDoUpdate });
+    const db = {
+      select: vi.fn(() => ({ from: vi.fn(() => ({ where: vi.fn(() => ({ limit: vi.fn().mockResolvedValue([workRow()]) })) })) })),
+      insert: vi.fn(() => ({ values })),
+    };
+    const store = new MonitoredStoreService(db as never, {} as never);
+    const internals = store as unknown as { assertWorkWritable: () => Promise<void>; composeWorks: () => Promise<unknown[]> };
+    vi.spyOn(internals, 'assertWorkWritable').mockResolvedValue(undefined);
+    vi.spyOn(internals, 'composeWorks').mockResolvedValue([{ work: { id: 'work-1' } }]);
+    await store.updateWorkUserState('work-1', { autoDownloadEbook: value, autoDownloadAudiobook: value }, { id: 1 } as RequestUser);
+    expect(values).toHaveBeenCalledWith(expect.objectContaining({ autoDownloadEbook: value, autoDownloadAudiobook: value }));
+    expect(onConflictDoUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ set: expect.objectContaining({ autoDownloadEbook: value, autoDownloadAudiobook: value }) }),
+    );
   });
 
   it('clears the visibility override on back to automatic, and the mark too unless the work was hidden', async () => {

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { onLongPress } from '@vueuse/core'
-import { BookOpen, Check, Download, EyeOff, Headphones, MoreVertical } from '@lucide/vue'
+import { BookOpen, Check, Download, EyeOff, Headphones, MoreVertical, Zap } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 import { MONITORED_FORMATS, type MonitorMode, type MonitoredFormat, type MonitoredSeriesMembership, type MonitoredWork } from '@bookorbit/types'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import BookCoverPlaceholder from '@/features/book/components/BookCoverPlaceholder.vue'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
+import { willAutoDownload, effectiveFormatMode } from '../lib/auto-download'
 import { cardBadgeKind, cardBadgeTone, type CardBadgeKind } from '../lib/card-badge'
 import { ACTIVE_REQUEST_STATUSES, workFormatStatus, type MonitoredFormatStatus } from '../lib/format-status'
 import { releaseDateForWork } from '../lib/grouping'
@@ -28,6 +29,7 @@ const props = withDefaults(
     monitoredFormats?: MonitoredFormat[]
     /** The author's mode per format, so a badge can say what happens on release. */
     formatModes?: Partial<Record<MonitoredFormat, MonitorMode>>
+    authorPaused?: boolean
     /** Shown on hover when the card stands outside its author's page. */
     authorName?: string | null
     /** Credits the placeholder cover on the author's own page, where the hover byline stays hidden. */
@@ -114,6 +116,7 @@ interface FormatBadge {
   kind: CardBadgeKind
   tone: string
   title: string
+  auto: boolean
 }
 
 const badges = computed<FormatBadge[]>(() =>
@@ -121,12 +124,16 @@ const badges = computed<FormatBadge[]>(() =>
     const status = statuses.value[format]
     const kind = cardBadgeKind(status)
     if (!kind) return []
+    const authorMode = props.formatModes?.[format] ?? null
+    const auto = willAutoDownload(props.work, format, kind, authorMode, { authorPaused: props.authorPaused })
+    const sentenceText = sentence(props.work, format, status, { mode: effectiveFormatMode(props.work, format, authorMode) })
     return [
       {
         format,
         kind,
         tone: cardBadgeTone(kind, format),
-        title: sentence(props.work, format, status, { mode: props.formatModes?.[format] ?? null }),
+        title: auto && kind === 'missing' ? `${sentenceText}. ${t('monitored.formatStatus.autoGrabNextRefresh')}` : sentenceText,
+        auto,
       },
     ]
   }),
@@ -316,6 +323,12 @@ function handleStop() {
             <Download
               v-if="badge.kind === 'downloading'"
               class="absolute -bottom-1 -right-1 size-3 rounded-full bg-background p-px text-[var(--pill-info)]"
+              aria-hidden="true"
+            />
+            <Zap
+              v-if="badge.auto"
+              class="absolute -right-1 -top-1 size-3 rounded-full bg-background p-px text-[var(--pill-warning)]"
+              data-testid="auto-download-mark"
               aria-hidden="true"
             />
             <span class="sr-only">{{ badge.title }}</span>

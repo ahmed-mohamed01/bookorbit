@@ -10,6 +10,7 @@ import {
   type MonitoredWork,
 } from '@bookorbit/types'
 import { bookFormatEntries, formatKeyCode } from '@/features/book/lib/book-formats'
+import { effectiveFormatMode } from '../lib/auto-download'
 import { editionRowAction, ACTIVE_REQUEST_STATUSES, type MonitoredFormatStatus } from '../lib/format-status'
 import { slotRequestKind, type SlotRequestKind } from '../lib/slot-request'
 import { useFormatStatusText } from './useFormatStatusText'
@@ -103,8 +104,9 @@ export function useFormatSlotState(props: FormatSlotInput, onFiled: (requestId: 
   const watchTooltip = computed(() => {
     if (!watching.value) return t('monitored.slot.notWatchingHint')
     if (props.status === 'unannounced' || props.status === 'upcoming') {
-      if (props.mode === 'auto-upcoming' || props.mode === 'auto-all') return t('monitored.slot.watchingAutoHint')
-      if (props.mode === 'notify') return t('monitored.slot.watchingNotifyHint')
+      const mode = effectiveFormatMode(props.work, props.format, props.mode)
+      if (mode === 'auto-upcoming' || mode === 'auto-all') return t('monitored.slot.watchingAutoHint')
+      if (mode === 'notify') return t('monitored.slot.watchingNotifyHint')
     }
     return t('monitored.slot.watchingHint')
   })

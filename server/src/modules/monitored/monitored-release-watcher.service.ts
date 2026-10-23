@@ -5,7 +5,7 @@ import type { MonitoredAuthorConfig, MonitoredWork } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { UserService } from '../user/user.service';
-import { autoRequestFormats, isRequestable, MonitoredAutoRequestService, submitThrottled } from './monitored-autorequest.service';
+import { isAutoFormat, isRequestable, MonitoredAutoRequestService, submitThrottled } from './monitored-autorequest.service';
 import { MonitoredReleaseNotifier } from './monitored-release-notifier.service';
 import { MonitoredStoreService, type MonitoredDueRelease } from './monitored-store.service';
 import { releaseDueDay } from './release-window';
@@ -248,22 +248,20 @@ export class MonitoredReleaseWatcher {
     owner: RequestUser,
     releases: MonitoredDueRelease[],
   ): Promise<{ requested: number; requestFailed: number }> {
-    const formats = autoRequestFormats(monitor);
-    const wanted = releases.filter((release) => formats.includes(release.format));
-    if (wanted.length === 0) return { requested: 0, requestFailed: 0 };
+    if (releases.length === 0) return { requested: 0, requestFailed: 0 };
 
     let works: Map<string, MonitoredWork>;
     const loadStartedAt = Date.now();
     try {
-      works = await this.store.getComposedWorks([...new Set(wanted.map((release) => release.workId))], owner);
+      works = await this.store.getComposedWorks([...new Set(releases.map((release) => release.workId))], owner);
     } catch (error) {
       this.logRequestFailure(monitor, null, loadStartedAt, error);
-      return { requested: 0, requestFailed: wanted.length };
+      return { requested: 0, requestFailed: releases.length };
     }
 
-    const candidates = wanted.flatMap((release) => {
+    const candidates = releases.flatMap((release) => {
       const work = works.get(release.workId);
-      return work && isRequestable(work, release.format) ? [{ work, format: release.format }] : [];
+      return work && isRequestable(work, release.format) && isAutoFormat(monitor, work, release.format) ? [{ work, format: release.format }] : [];
     });
     const outcomes = await submitThrottled(candidates, async ({ work, format }, deferred) => {
       const startedAt = Date.now();

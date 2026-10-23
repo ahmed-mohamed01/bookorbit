@@ -951,6 +951,7 @@ export class MonitoredCatalogService {
       ...ratingsField(work),
       monitorState: 'monitoring',
       monitorFormats: {},
+      autoDownload: {},
       matchedBookId: null,
       matchedBookIds: {},
       ownedFormats: [],

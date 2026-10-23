@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowUpRight, Bell, BellOff, BookCopy, BookOpen, ChevronUp, Folder, Headphones, Link2, RefreshCw } from '@lucide/vue'
 import {
+  isAutoDownload,
   monitoredFormatReleaseDate,
   monitoredReleaseStarted,
   type BookDetail,
@@ -11,12 +12,15 @@ import {
   type MonitoredMatchHolder,
   type MonitoredWork,
 } from '@bookorbit/types'
+import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatBytes } from '@/lib/formatting'
 import { fetchMatchHolders } from '../api/monitored'
 import { useFormatSlotState } from '../composables/useFormatSlotState'
 import type { MonitoredMatchAnswer } from '../composables/useWorkMatch'
 import type { MonitoredReleaseRow } from '../composables/useReleaseRows'
+import { willAutoDownload } from '../lib/auto-download'
+import { cardBadgeKind } from '../lib/card-badge'
 import type { MonitoredFormatStatus } from '../lib/format-status'
 import MonitoredOwnedTree from './MonitoredOwnedTree.vue'
 import MonitoredMatchFilePicker from './MonitoredMatchFilePicker.vue'
@@ -39,6 +43,8 @@ const props = defineProps<{
   authorRoute?: { name: string; params: { id: string } } | null
   /** The author's mode for this format. */
   mode?: MonitorMode | null
+  /** A paused author files nothing, whatever the book's own switch says. */
+  authorPaused?: boolean
   /** The library book holding this format, once loaded. */
   book?: BookDetail | null
   bookError?: boolean
@@ -60,6 +66,7 @@ const emit = defineEmits<{
   request: [format: MonitoredFormat, autoDownload: boolean]
   'toggle-releases': [format: MonitoredFormat]
   'toggle-monitor': [format: MonitoredFormat, value: boolean]
+  'toggle-auto-download': [format: MonitoredFormat, value: boolean | null]
   'dates-open-change': [format: MonitoredFormat, open: boolean]
   'date-set': [format: MonitoredFormat, releaseDate: string]
   'date-clear': [format: MonitoredFormat]
@@ -107,6 +114,20 @@ const formatLower = computed(() => state.formatName.value.toLowerCase())
 const collapseLabel = computed(() => t(props.collapsed ? 'monitored.slot.expand' : 'monitored.slot.collapse'))
 const watchHintId = computed(() => `${props.work.id}-${props.format}-watch-hint`)
 const watchLabel = computed(() => t('monitored.slot.watchFormat', { format: formatLower.value }))
+const autoDownloadId = computed(() => `${props.work.id}-${props.format}-auto-download-hint`)
+const autoDownloadOverride = computed(() => props.work.autoDownload?.[props.format])
+const autoDownloadOn = computed(() => isAutoDownload(props.mode ?? 'off', autoDownloadOverride.value))
+const showAutoDownload = computed(() => props.canEdit && !state.owned.value && !state.requestMoving.value && (props.mode ?? 'off') !== 'off')
+const autoDownloadBlocked = computed(() => !state.watching.value || props.authorPaused === true)
+const autoDownloadChecked = computed(() => !autoDownloadBlocked.value && autoDownloadOn.value)
+const autoDownloadTooltip = computed(() => {
+  if (!state.watching.value) return t('monitored.slot.autoDownloadUnavailableHint')
+  if (props.authorPaused) return t('monitored.slot.autoDownloadPausedHint')
+  if (!autoDownloadOn.value) return t('monitored.slot.autoDownloadOffHint')
+  if (!willAutoDownload(props.work, props.format, cardBadgeKind(props.status), props.mode)) return t('monitored.slot.autoDownloadIdleHint')
+  const unreleased = props.status === 'unannounced' || props.status === 'upcoming'
+  return t(unreleased ? 'monitored.slot.autoDownloadOnHint' : 'monitored.slot.autoDownloadOnReleasedHint')
+})
 
 /** The empty state's second line: the release on its way, or what this viewer can do about the gap. */
 const emptyHint = computed(() => {
@@ -173,6 +194,14 @@ function holderRoute(holder: MonitoredMatchHolder) {
 
 function handleToggleWatch() {
   emit('toggle-monitor', props.format, !state.watching.value)
+}
+
+function handleToggleAutoDownload(value: boolean) {
+  emit('toggle-auto-download', props.format, value)
+}
+
+function handleResetAutoDownload() {
+  emit('toggle-auto-download', props.format, null)
 }
 
 function handleRequest(format: MonitoredFormat) {
@@ -325,28 +354,53 @@ function handleCheckLibrary() {
           </div>
 
           <!-- What the switch means ("Searched automatically", "Never searched") lives in its tooltip, keeping this one row. -->
-          <TooltipProvider v-if="canEdit">
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <button
-                  type="button"
-                  role="switch"
-                  class="ms-auto -me-1.5 inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[12.5px] font-medium transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                  :class="state.watching.value ? 'text-primary' : 'text-muted-foreground'"
-                  :aria-checked="state.watching.value"
-                  :aria-label="watchLabel"
-                  :aria-describedby="watchHintId"
-                  data-testid="watch-toggle"
-                  @click="handleToggleWatch"
-                >
-                  <Bell v-if="state.watching.value" :size="12" aria-hidden="true" />
-                  <BellOff v-else :size="12" aria-hidden="true" />
-                  {{ state.watching.value ? t('monitored.slot.watching') : t('monitored.slot.notWatching') }}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>{{ state.watchTooltip.value }}</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <div v-if="canEdit" class="ms-auto -me-1.5 flex items-center gap-0.5">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger as-child>
+                  <button
+                    type="button"
+                    role="switch"
+                    class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[12.5px] font-medium transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                    :class="state.watching.value ? 'text-primary' : 'text-muted-foreground'"
+                    :aria-checked="state.watching.value"
+                    :aria-label="watchLabel"
+                    :aria-describedby="watchHintId"
+                    data-testid="watch-toggle"
+                    @click="handleToggleWatch"
+                  >
+                    <Bell v-if="state.watching.value" :size="12" aria-hidden="true" />
+                    <BellOff v-else :size="12" aria-hidden="true" />
+                    {{ state.watching.value ? t('monitored.slot.watching') : t('monitored.slot.notWatching') }}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{{ state.watchTooltip.value }}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <TooltipProvider v-if="showAutoDownload">
+              <Tooltip>
+                <TooltipTrigger as-child>
+                  <span
+                    class="ms-1 inline-flex shrink-0 items-center gap-1.5 px-1.5 py-0.5 text-[12.5px] font-medium"
+                    :class="autoDownloadChecked ? 'text-primary' : 'text-muted-foreground'"
+                    data-testid="auto-download-control"
+                  >
+                    <span :class="autoDownloadBlocked ? 'opacity-50' : undefined">{{ t('monitored.slot.autoDownload') }}</span>
+                    <ToggleSwitch
+                      :model-value="autoDownloadChecked"
+                      :disabled="autoDownloadBlocked"
+                      :aria-label="t('monitored.slot.autoDownload')"
+                      :aria-describedby="autoDownloadId"
+                      data-testid="auto-download-toggle"
+                      @update:model-value="handleToggleAutoDownload"
+                    />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>{{ autoDownloadTooltip }}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <span v-if="showAutoDownload" :id="autoDownloadId" class="sr-only">{{ autoDownloadTooltip }}</span>
+          </div>
           <span v-if="canEdit" :id="watchHintId" class="sr-only">{{ state.watchTooltip.value }}</span>
           <span
             v-else-if="!state.statusLine.value"
@@ -358,6 +412,16 @@ function handleCheckLibrary() {
             {{ state.watching.value ? t('monitored.slot.watching') : t('monitored.slot.notWatching') }}
           </span>
         </div>
+
+        <button
+          v-if="showAutoDownload && !autoDownloadBlocked && autoDownloadOverride !== undefined"
+          type="button"
+          class="self-end text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          data-testid="auto-download-reset"
+          @click="handleResetAutoDownload"
+        >
+          {{ t('monitored.slot.autoDownloadReset') }}
+        </button>
 
         <p v-if="!canEdit && state.statusLine.value" class="text-[12.5px]">
           <span :class="state.statusLine.value.tone" data-testid="slot-status">{{ state.statusLine.value.text }}</span>

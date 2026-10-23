@@ -4,6 +4,7 @@ import { BookOpen, Headphones } from '@lucide/vue'
 import type { MonitorMode, MonitoredFormat, MonitoredWork } from '@bookorbit/types'
 import { FORMAT_STATUS_TONES, type MonitoredFormatStatus } from '../lib/format-status'
 import { useFormatStatusText } from '../composables/useFormatStatusText'
+import { effectiveFormatMode } from '../lib/auto-download'
 
 /** One format of a work in a compact list: its icon, a word for its state, and the full sentence on hover. */
 const props = defineProps<{
@@ -17,7 +18,7 @@ const { describe, sentence } = useFormatStatusText()
 
 const tone = computed(() => FORMAT_STATUS_TONES[props.status])
 const short = computed(() => describe(props.work, props.format, props.status).short)
-const full = computed(() => sentence(props.work, props.format, props.status, { mode: props.mode }))
+const full = computed(() => sentence(props.work, props.format, props.status, { mode: effectiveFormatMode(props.work, props.format, props.mode) }))
 </script>
 
 <template>

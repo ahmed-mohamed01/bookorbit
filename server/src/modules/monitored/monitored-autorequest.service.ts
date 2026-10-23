@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { isWorkVisible, MONITORED_FORMATS } from '@bookorbit/types';
+import { isAutoDownload, isWorkVisible, MONITORED_FORMATS } from '@bookorbit/types';
 import type { MonitoredAuthorConfig, MonitoredFormat, MonitoredWork } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
@@ -20,13 +20,10 @@ export type ThrottledSubmitOutcome<C, T> =
 const FAN_OUT_CONCURRENCY = 3;
 const DESTINATION_ERROR_CODES = new Set(['SUBMIT_DESTINATION_REQUIRED', 'SUBMIT_DEFAULT_LIBRARY_UNREACHABLE']);
 
-/** The formats a monitor files requests for on its own: none while paused. */
-export function autoRequestFormats(monitor: MonitoredAuthorConfig): MonitoredFormat[] {
-  if (monitor.paused) return [];
-  return MONITORED_FORMATS.filter((format) => {
-    const mode = monitor.formats[format].mode;
-    return mode === 'auto-all' || mode === 'auto-upcoming';
-  });
+/** Whether a monitor files a request for this work and format on its own: the book's override, else the author's mode; never while paused or not watching the format. */
+export function isAutoFormat(monitor: MonitoredAuthorConfig, work: MonitoredWork, format: MonitoredFormat): boolean {
+  const mode = monitor.formats[format].mode;
+  return !monitor.paused && mode !== 'off' && isAutoDownload(mode, work.autoDownload?.[format]);
 }
 
 /** Everything that makes a (work, format) requestable apart from its release date. */
@@ -156,8 +153,7 @@ export class MonitoredAutoRequestService {
   }
 
   async fanOut(monitor: MonitoredAuthorConfig, works: MonitoredWork[], user: RequestUser): Promise<FanOutResult> {
-    const formats = autoRequestFormats(monitor);
-    if (formats.length === 0) return { created: 0, skipped: 0, failed: 0 };
+    if (monitor.paused) return { created: 0, skipped: 0, failed: 0 };
 
     let skipped = 0;
     const today = new Date().toISOString().slice(0, 10);
@@ -165,12 +161,13 @@ export class MonitoredAutoRequestService {
     const candidates: Candidate[] = [];
 
     for (const work of works) {
-      for (const format of formats) {
+      for (const format of MONITORED_FORMATS) {
+        if (!isAutoFormat(monitor, work, format)) continue;
         const releaseDate = format === 'ebook' ? work.ebookReleaseDate : work.audioReleaseDate;
         const precision = format === 'ebook' ? work.ebookDatePrecision : work.audioDatePrecision;
         const range = releaseDate ? releaseDateRange(releaseDate, precision) : null;
-        const mode = monitor.formats[format].mode;
-        const qualifies = isRequestable(work, format) && range !== null && releaseDue(range, today) && (mode === 'auto-all' || range.end >= addedDay);
+        const windowed = monitor.formats[format].mode === 'auto-upcoming' && work.autoDownload?.[format] !== true;
+        const qualifies = isRequestable(work, format) && range !== null && releaseDue(range, today) && (!windowed || range.end >= addedDay);
         if (qualifies && range) candidates.push({ work, format, releaseStart: range.start });
         else skipped++;
       }

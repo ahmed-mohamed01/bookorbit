@@ -373,6 +373,17 @@ describe('MonitoredReleaseWatcher request hand-off', () => {
     ]);
   });
 
+  it.each([
+    ['notify', true, 1],
+    ['auto-all', false, 0],
+    ['off', true, 0],
+  ] as const)('honors %s with override %s on release', async (mode, override, requested) => {
+    const { watcher, autoRequests } = harness({ due: [release()], works: [work({ autoDownload: { ebook: override } })] });
+    const result = await watcher.checkMonitor(autoMonitor(mode));
+    expect(result.requested).toBe(requested);
+    expect(autoRequests.submitWorkRequest).toHaveBeenCalledTimes(requested);
+  });
+
   it('files nothing for a notify-mode format of the same monitor', async () => {
     const { watcher, autoRequests } = harness({
       due: [release(), release({ format: 'audiobook' })],
@@ -394,7 +405,7 @@ describe('MonitoredReleaseWatcher request hand-off', () => {
 
     await watcher.checkMonitor(monitor());
 
-    expect(store.getComposedWorks).not.toHaveBeenCalled();
+    expect(store.getComposedWorks).toHaveBeenCalledWith(['work-1'], owner);
     expect(autoRequests.submitWorkRequest).not.toHaveBeenCalled();
   });
 
@@ -488,7 +499,7 @@ describe('MonitoredReleaseWatcher request hand-off', () => {
   });
 
   it('files nothing for a paused monitor', async () => {
-    const { watcher, autoRequests } = harness({ due: [release()], works: [work()] });
+    const { watcher, autoRequests } = harness({ due: [release()], works: [work({ autoDownload: { ebook: true } })] });
 
     await watcher.checkMonitor({ ...autoMonitor('auto-all'), paused: true });
 

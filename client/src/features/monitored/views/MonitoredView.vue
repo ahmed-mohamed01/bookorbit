@@ -310,6 +310,10 @@ function handleToggleMonitor(work: MonitoredWork, format: MonitoredFormat, value
   void patchWork(work, format === 'ebook' ? { monitorEbook: value } : { monitorAudiobook: value })
 }
 
+function handleToggleAutoDownload(work: MonitoredWork, format: MonitoredFormat, value: boolean | null) {
+  void patchWork(work, format === 'ebook' ? { autoDownloadEbook: value } : { autoDownloadAudiobook: value })
+}
+
 function handleSetAutomatic(work: MonitoredWork) {
   void patchWork(work, { automaticVisibility: true })
 }
@@ -1598,6 +1602,7 @@ defineOptions({ name: 'MonitoredView' })
         @grabbed="handlePanelGrabbed"
         @filed="handlePanelFiled"
         @toggle-monitor="handleToggleMonitor"
+        @toggle-auto-download="handleToggleAutoDownload"
         @toggle-hidden="handleToggleHidden"
         @set-automatic="handleSetAutomatic"
         @set-kind="handleSetKind"

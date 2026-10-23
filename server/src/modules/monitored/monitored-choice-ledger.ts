@@ -6,6 +6,7 @@ import * as schema from './schema/monitored.schema';
 
 function hasChoiceSql(overlay: SQL): SQL {
   return sql`(${overlay}.monitor_state <> 'monitoring' or ${overlay}.monitor_ebook is not null or ${overlay}.monitor_audiobook is not null
+    or ${overlay}.auto_download_ebook is not null or ${overlay}.auto_download_audiobook is not null
     or ${overlay}.user_visibility is not null or ${overlay}.user_kind is not null)`;
 }
 
@@ -20,16 +21,18 @@ function hasChoiceSql(overlay: SQL): SQL {
 export async function recordChoiceLedger(tx: ReleaseTransaction, monitorId: string): Promise<void> {
   await tx.execute(sql`
     insert into ${schema.monitoredChoiceLedger}
-      (monitor_author_id, identity_key, work_id, monitor_state, monitor_ebook, monitor_audiobook, user_visibility, user_kind)
+      (monitor_author_id, identity_key, work_id, monitor_state, monitor_ebook, monitor_audiobook, auto_download_ebook, auto_download_audiobook, user_visibility, user_kind)
     select distinct on (recorded.identity_key)
       ${monitorId}, recorded.identity_key, recorded.work_id, recorded.monitor_state, recorded.monitor_ebook,
-      recorded.monitor_audiobook, recorded.user_visibility, recorded.user_kind
+      recorded.monitor_audiobook, recorded.auto_download_ebook, recorded.auto_download_audiobook, recorded.user_visibility, recorded.user_kind
     from (
       select
         work.id as work_id,
         nullif(overlay.monitor_state, 'monitoring') as monitor_state,
         overlay.monitor_ebook,
         overlay.monitor_audiobook,
+        overlay.auto_download_ebook,
+        overlay.auto_download_audiobook,
         overlay.user_visibility,
         overlay.user_kind,
         unnest(${workIdentityKeysSql(sql`work`)}) as identity_key
@@ -44,6 +47,8 @@ export async function recordChoiceLedger(tx: ReleaseTransaction, monitorId: stri
       monitor_state = excluded.monitor_state,
       monitor_ebook = excluded.monitor_ebook,
       monitor_audiobook = excluded.monitor_audiobook,
+      auto_download_ebook = excluded.auto_download_ebook,
+      auto_download_audiobook = excluded.auto_download_audiobook,
       user_visibility = excluded.user_visibility,
       user_kind = excluded.user_kind
   `);
@@ -76,13 +81,13 @@ export async function restoreChoiceLedger(tx: ReleaseTransaction, monitorId: str
   const overlay = schema.monitoredAuthorWorks;
   const previous = sql`array(select jsonb_array_elements_text(${JSON.stringify(previousWorkIds)}::jsonb))`;
   await tx.execute(sql`
-    insert into ${overlay} (work_id, monitor_author_id, monitor_state, monitor_ebook, monitor_audiobook, user_visibility, user_kind)
+    insert into ${overlay} (work_id, monitor_author_id, monitor_state, monitor_ebook, monitor_audiobook, auto_download_ebook, auto_download_audiobook, user_visibility, user_kind)
     select work.id, work.monitor_author_id, coalesce(recorded.monitor_state, 'monitoring'), recorded.monitor_ebook,
-      recorded.monitor_audiobook, recorded.user_visibility, recorded.user_kind
+      recorded.monitor_audiobook, recorded.auto_download_ebook, recorded.auto_download_audiobook, recorded.user_visibility, recorded.user_kind
     from ${schema.authorCatalogWorks} as work
     left join ${overlay} as current on current.work_id = work.id
     cross join lateral (
-      select ledger.monitor_state, ledger.monitor_ebook, ledger.monitor_audiobook, ledger.user_visibility, ledger.user_kind
+      select ledger.monitor_state, ledger.monitor_ebook, ledger.monitor_audiobook, ledger.auto_download_ebook, ledger.auto_download_audiobook, ledger.user_visibility, ledger.user_kind
       from ${schema.monitoredChoiceLedger} as ledger
       where ledger.monitor_author_id = work.monitor_author_id
         and ledger.identity_key = any(${workIdentityKeysSql(sql`work`)})
@@ -100,6 +105,8 @@ export async function restoreChoiceLedger(tx: ReleaseTransaction, monitorId: str
       monitor_state = excluded.monitor_state,
       monitor_ebook = excluded.monitor_ebook,
       monitor_audiobook = excluded.monitor_audiobook,
+      auto_download_ebook = excluded.auto_download_ebook,
+      auto_download_audiobook = excluded.auto_download_audiobook,
       user_visibility = excluded.user_visibility,
       user_kind = excluded.user_kind
     where not ${hasChoiceSql(sql`${overlay}`)}

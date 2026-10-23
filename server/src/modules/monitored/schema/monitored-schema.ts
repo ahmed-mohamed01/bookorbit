@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS "monitored_author_works" (
 	"monitor_state" varchar(12) DEFAULT 'monitoring' NOT NULL,
 	"monitor_ebook" boolean,
 	"monitor_audiobook" boolean,
+	"auto_download_ebook" boolean,
+	"auto_download_audiobook" boolean,
 	"user_visibility" varchar(10),
 	"user_kind" varchar(16),
 	"ebook_request_id" integer,
@@ -719,6 +721,8 @@ CREATE TABLE IF NOT EXISTS "monitored_choice_ledger" (
 	"monitor_state" varchar(12),
 	"monitor_ebook" boolean,
 	"monitor_audiobook" boolean,
+	"auto_download_ebook" boolean,
+	"auto_download_audiobook" boolean,
 	"user_visibility" varchar(10),
 	"user_kind" varchar(16),
 	CONSTRAINT "monitored_choice_ledger_monitor_author_id_identity_key_pk" PRIMARY KEY("monitor_author_id","identity_key")
@@ -795,6 +799,14 @@ DO $$ BEGIN
 END $$;
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS "monitored_match_overrides_book_id_idx" ON "monitored_match_overrides" USING btree ("book_id");
+--> statement-breakpoint
+ALTER TABLE "monitored_author_works" ADD COLUMN IF NOT EXISTS "auto_download_ebook" boolean;
+--> statement-breakpoint
+ALTER TABLE "monitored_author_works" ADD COLUMN IF NOT EXISTS "auto_download_audiobook" boolean;
+--> statement-breakpoint
+ALTER TABLE "monitored_choice_ledger" ADD COLUMN IF NOT EXISTS "auto_download_ebook" boolean;
+--> statement-breakpoint
+ALTER TABLE "monitored_choice_ledger" ADD COLUMN IF NOT EXISTS "auto_download_audiobook" boolean;
 --> statement-breakpoint
 ALTER TABLE "monitored_authors" ADD COLUMN IF NOT EXISTS "fetch_state" varchar(12) NOT NULL DEFAULT 'idle';
 --> statement-breakpoint

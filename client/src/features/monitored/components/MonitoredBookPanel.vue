@@ -65,6 +65,7 @@ const emit = defineEmits<{
   grabbed: [work: MonitoredWork, format: MonitoredFormat, requestId: number]
   filed: [work: MonitoredWork, requestId: number]
   'toggle-monitor': [work: MonitoredWork, format: MonitoredFormat, value: boolean]
+  'toggle-auto-download': [work: MonitoredWork, format: MonitoredFormat, value: boolean | null]
   'toggle-hidden': [work: MonitoredWork, value: boolean]
   /** Drops the owner's hidden or kept choice, so the verdict decides again. */
   'set-automatic': [work: MonitoredWork]
@@ -414,6 +415,10 @@ function handleToggleMonitor(format: MonitoredFormat, value: boolean) {
   if (props.work) emit('toggle-monitor', props.work, format, value)
 }
 
+function handleToggleAutoDownload(format: MonitoredFormat, value: boolean | null) {
+  if (props.work) emit('toggle-auto-download', props.work, format, value)
+}
+
 function handleHide() {
   if (props.work) emit('toggle-hidden', props.work, true)
 }
@@ -603,6 +608,7 @@ function handleResumeAuthor() {
                 :author-route="bylineRoute"
                 :can-manage="canManage"
                 :mode="formatModes?.[format] ?? null"
+                :author-paused="authorPaused"
                 :book="bookFor(bookIdForFormat(format))"
                 :book-error="bookFailedFor(bookIdForFormat(format))"
                 :row="rowFor(format)"
@@ -619,6 +625,7 @@ function handleResumeAuthor() {
                 @request="handleRequest"
                 @toggle-releases="handleToggleReleases"
                 @toggle-monitor="handleToggleMonitor"
+                @toggle-auto-download="handleToggleAutoDownload"
                 @dates-open-change="handleReleaseDatesOpen"
                 @date-set="handleReleaseDateSet"
                 @date-clear="handleReleaseDateClear"

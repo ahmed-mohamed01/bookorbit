@@ -1402,6 +1402,8 @@ export class MonitoredStoreService {
       ...(patch.monitorState !== undefined ? { monitorState: patch.monitorState } : {}),
       ...(patch.monitorEbook !== undefined ? { monitorEbook: patch.monitorEbook } : {}),
       ...(patch.monitorAudiobook !== undefined ? { monitorAudiobook: patch.monitorAudiobook } : {}),
+      ...(patch.autoDownloadEbook !== undefined ? { autoDownloadEbook: patch.autoDownloadEbook } : {}),
+      ...(patch.autoDownloadAudiobook !== undefined ? { autoDownloadAudiobook: patch.autoDownloadAudiobook } : {}),
       ...overlayState.values,
       ...(patch.requestIds?.ebook !== undefined ? { ebookRequestId: patch.requestIds.ebook } : {}),
       ...(patch.requestIds?.audiobook !== undefined ? { audiobookRequestId: patch.requestIds.audiobook } : {}),
@@ -2353,6 +2355,10 @@ export class MonitoredStoreService {
         ? { possibleMatches: { ...(possibleEbook ? { ebook: possibleEbook } : {}), ...(possibleAudio ? { audiobook: possibleAudio } : {}) } }
         : {}),
       ...(isOwner && row.linkedFormats.length > 0 ? { linkedFormats: row.linkedFormats } : {}),
+      autoDownload: {
+        ...(overlay?.autoDownloadEbook != null ? { ebook: overlay.autoDownloadEbook } : {}),
+        ...(overlay?.autoDownloadAudiobook != null ? { audiobook: overlay.autoDownloadAudiobook } : {}),
+      },
       monitorFormats: {
         ...(overlay?.monitorEbook != null ? { ebook: overlay.monitorEbook } : {}),
         ...(overlay?.monitorAudiobook != null ? { audiobook: overlay.monitorAudiobook } : {}),

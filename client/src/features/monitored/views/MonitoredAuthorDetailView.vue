@@ -400,6 +400,15 @@ async function handleToggleMonitor(work: MonitoredWork, format: MonitoredFormat,
   }
 }
 
+async function handleToggleAutoDownload(work: MonitoredWork, format: MonitoredFormat, value: boolean | null) {
+  try {
+    await updateWork(work.id, format === 'ebook' ? { autoDownloadEbook: value } : { autoDownloadAudiobook: value })
+    panelWork.value = detail.value?.works.find((candidate) => candidate.id === work.id) ?? panelWork.value
+  } catch (cause) {
+    toast.error(monitoredErrorText(cause, t('monitored.toast.updateFailed')))
+  }
+}
+
 async function handleSetAutomatic(work: MonitoredWork) {
   try {
     await updateWork(work.id, { automaticVisibility: true })
@@ -957,6 +966,7 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                     :series-membership="grouping === 'series' ? seriesMembershipForGroup(work, group.key) : undefined"
                     :monitored-formats="monitoredFormats"
                     :format-modes="formatModes"
+                    :author-paused="author?.paused ?? false"
                     :can-manage="canEdit"
                     :selection-mode="selectionMode"
                     :selected="selectedIds.has(work.id)"
@@ -1021,6 +1031,7 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
       @grabbed="handlePanelGrabbed"
       @filed="handlePanelFiled"
       @toggle-monitor="handleToggleMonitor"
+      @toggle-auto-download="handleToggleAutoDownload"
       @toggle-hidden="handleToggleHidden"
       @set-automatic="handleSetAutomatic"
       @set-kind="handleSetKind"

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import type { MonitoredWork } from '@bookorbit/types'
+import type { MonitorMode, MonitoredFormat, MonitoredWork } from '@bookorbit/types'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import MonitoredWorkCard from './MonitoredWorkCard.vue'
 
@@ -33,7 +33,7 @@ function work(overrides: Partial<MonitoredWork> = {}): MonitoredWork {
   }
 }
 
-function mountCard(cardWork: MonitoredWork, ebookQueued = false) {
+function mountCard(cardWork: MonitoredWork, ebookQueued = false, formatModes?: Partial<Record<MonitoredFormat, MonitorMode>>) {
   return mount(MonitoredWorkCard, {
     props: {
       work: cardWork,
@@ -41,6 +41,7 @@ function mountCard(cardWork: MonitoredWork, ebookQueued = false) {
       ebookQueued,
       audiobookQueued: false,
       canManage: true,
+      ...(formatModes ? { formatModes } : {}),
     },
     global: {
       stubs: {
@@ -613,5 +614,64 @@ describe('MonitoredWorkCard review reasons', () => {
     })
     expect(wrapper.get('[data-testid="review-reasons"]').text()).toContain('Audio episode')
     expect(wrapper.get('[data-testid="kind-pill"]').text()).toBe('Collection')
+  })
+})
+
+describe('MonitoredWorkCard auto-download mark', () => {
+  const upcoming = { ebookReleaseDate: '2099-04-10', ebookDatePrecision: 'day' as const }
+  const mark = '[data-testid="auto-download-mark"]'
+
+  it('marks an upcoming format an auto author will request', () => {
+    const wrapper = mountCard(work(upcoming), false, { ebook: 'auto-upcoming' })
+    expect(wrapper.find(mark).exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('marks an upcoming format of a notify author when the book is switched on', () => {
+    const wrapper = mountCard(work({ ...upcoming, autoDownload: { ebook: true } }), false, { ebook: 'notify' })
+    expect(wrapper.find(mark).exists()).toBe(true)
+    expect(wrapper.get('[data-format="ebook"]').attributes('title')).toContain('Grabbed automatically on release')
+    wrapper.unmount()
+  })
+
+  it('leaves a notify format and a switched off book bare', () => {
+    const notify = mountCard(work(upcoming), false, { ebook: 'notify' })
+    expect(notify.find(mark).exists()).toBe(false)
+    notify.unmount()
+    const off = mountCard(work({ ...upcoming, autoDownload: { ebook: false } }), false, { ebook: 'auto-all' })
+    expect(off.find(mark).exists()).toBe(false)
+    expect(off.get('[data-format="ebook"]').attributes('title')).toContain('You get a notification on release')
+    off.unmount()
+  })
+
+  it('leaves every format bare while the author is paused', () => {
+    const wrapper = mount(MonitoredWorkCard, {
+      props: {
+        work: work(upcoming),
+        queued: false,
+        ebookQueued: false,
+        audiobookQueued: false,
+        canManage: true,
+        formatModes: { ebook: 'auto-all' },
+        authorPaused: true,
+      },
+      global: {
+        stubs: {
+          DropdownMenu: passthrough,
+          DropdownMenuTrigger: passthrough,
+          DropdownMenuContent: passthrough,
+          DropdownMenuItem: passthrough,
+          DropdownMenuSeparator: true,
+        },
+      },
+    })
+    expect(wrapper.find(mark).exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('leaves a format with a request filed bare', () => {
+    const wrapper = mountCard(work({ ...upcoming, requestIds: { ebook: 9 }, requestStatuses: { ebook: 'grabbed' } }), false, { ebook: 'auto-all' })
+    expect(wrapper.find(mark).exists()).toBe(false)
+    wrapper.unmount()
   })
 })

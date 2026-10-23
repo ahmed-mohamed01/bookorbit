@@ -68,6 +68,14 @@ describe('GrabWorkReleaseDto', () => {
 });
 
 describe('UpdateMonitoredWorkDto', () => {
+  it.each(['autoDownloadEbook', 'autoDownloadAudiobook'])('validates nullable %s through the strict pipe', async (field) => {
+    const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
+    for (const value of [true, false, null]) {
+      await expect(pipe.transform({ [field]: value }, { type: 'body', metatype: UpdateMonitoredWorkDto })).resolves.toMatchObject({ [field]: value });
+    }
+    await expect(pipe.transform({ [field]: 'true' }, { type: 'body', metatype: UpdateMonitoredWorkDto })).rejects.toMatchObject({ status: 400 });
+  });
+
   it('accepts the automatic visibility flag as true only', async () => {
     await expect(validate(plainToInstance(UpdateMonitoredWorkDto, { automaticVisibility: true }))).resolves.toHaveLength(0);
     await expect(validate(plainToInstance(UpdateMonitoredWorkDto, { automaticVisibility: 'yes' }))).resolves.not.toHaveLength(0);

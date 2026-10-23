@@ -405,6 +405,11 @@ export interface SetMonitoredReleaseDatePayload {
   releaseDate: string | null;
 }
 
+/** Whether a format is requested on its own: the book's override when it has one, else the author's mode. */
+export function isAutoDownload(mode: MonitorMode, override: boolean | undefined): boolean {
+  return override ?? (mode === "auto-all" || mode === "auto-upcoming");
+}
+
 export interface MonitorFormatConfig {
   mode: MonitorMode;
   libraryId: number | null;
@@ -500,6 +505,8 @@ export interface MonitoredWork {
   answeredFormats?: MonitoredFormat[];
   /** Per-work monitor toggles; a missing entry means monitoring is on for that format. */
   monitorFormats?: Partial<Record<MonitoredFormat, boolean>>;
+  /** Per-work auto-download overrides; a missing entry follows the author's mode for that format. */
+  autoDownload?: Partial<Record<MonitoredFormat, boolean>>;
   /**
    * User visibility override. Absent = the verdict decides (verified+unflagged shows, the rest sit
    * under review). 'hidden' forces a work out of the default list; 'visible' promotes a
@@ -792,6 +799,9 @@ export interface MonitoredMatchHolder {
 export interface MonitoredWorkPatch {
   monitorEbook?: boolean;
   monitorAudiobook?: boolean;
+  /** True or false overrides the author's mode for this book; null hands the format back to the author. */
+  autoDownloadEbook?: boolean | null;
+  autoDownloadAudiobook?: boolean | null;
   hidden?: boolean;
   /** True hands visibility back to the verdict, dropping a hidden or kept choice. Never sent with `hidden`. */
   automaticVisibility?: true;

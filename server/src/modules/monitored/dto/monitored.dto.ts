@@ -381,6 +381,14 @@ export class SearchWorkReleasesDto {
 }
 
 export class UpdateMonitoredWorkDto implements MonitoredWorkPatch {
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @IsBoolean()
+  autoDownloadEbook?: boolean | null;
+
+  @ValidateIf((_, value) => value !== undefined && value !== null)
+  @IsBoolean()
+  autoDownloadAudiobook?: boolean | null;
+
   @IsOptional()
   @IsBoolean()
   monitorEbook?: boolean;

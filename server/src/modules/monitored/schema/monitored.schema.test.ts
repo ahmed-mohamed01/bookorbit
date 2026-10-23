@@ -484,3 +484,15 @@ describe('monitored fetch state', () => {
     );
   });
 });
+
+describe('per-book auto-download schema', () => {
+  it.each([monitoredAuthorWorks, monitoredChoiceLedger])('stores nullable overrides in %s on fresh and existing databases', (table) => {
+    const config = getTableConfig(table);
+    const create = MONITORED_SCHEMA_SQL.slice(MONITORED_SCHEMA_SQL.indexOf(`CREATE TABLE IF NOT EXISTS "${config.name}"`)).split(');')[0];
+    for (const name of ['auto_download_ebook', 'auto_download_audiobook']) {
+      expect(config.columns.find((column) => column.name === name)?.notNull).toBe(false);
+      expect(create).toContain(`"${name}" boolean`);
+      expect(MONITORED_SCHEMA_SQL).toContain(`ALTER TABLE "${config.name}" ADD COLUMN IF NOT EXISTS "${name}" boolean;`);
+    }
+  });
+});
