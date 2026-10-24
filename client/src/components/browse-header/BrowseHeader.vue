@@ -26,16 +26,26 @@ const props = defineProps<{
 
 const FOLD_AT = 64
 const UNFOLD_AT = 8
+const TITLE_ROW_GAP = 12
 
 const barRef = ref<HTMLElement | null>(null)
+const titleRowRef = ref<HTMLElement | null>(null)
 provide(BROWSE_BAR_KEY, barRef)
 
 const folded = ref(false)
 let listening: HTMLElement | null = null
 
+// Folding hands the title row's height to the scroller, shrinking its scroll range. Folding a page
+// that would be left with less than FOLD_AT of range clamps scrollTop under UNFOLD_AT, which
+// unfolds it again and loops.
+function canFold(el: HTMLElement) {
+  const titleRowHeight = (titleRowRef.value?.offsetHeight ?? 0) + TITLE_ROW_GAP
+  return el.scrollHeight - el.clientHeight - titleRowHeight > FOLD_AT
+}
+
 function handleScroll() {
   const top = listening?.scrollTop ?? 0
-  if (!folded.value && top > FOLD_AT) folded.value = true
+  if (!folded.value && top > FOLD_AT && listening && canFold(listening)) folded.value = true
   else if (folded.value && top < UNFOLD_AT) folded.value = false
 }
 
@@ -71,7 +81,7 @@ onBeforeUnmount(detach)
       :class="folded ? 'mb-0 grid-rows-[0fr] opacity-0' : 'mb-3 grid-rows-[1fr] opacity-100'"
       :inert="folded || undefined"
     >
-      <div class="min-h-0 overflow-hidden">
+      <div ref="titleRowRef" class="min-h-0 overflow-hidden">
         <PageTitleRow :eyebrow="eyebrow" :title="title" :icon="icon" :fallback-icon="fallbackIcon">
           <template v-if="switcher" #title>
             <BrowseTitleSwitcher :place="switcher" :title="title" />
