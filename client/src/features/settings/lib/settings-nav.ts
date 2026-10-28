@@ -481,6 +481,15 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         keywords: 'storyteller read-along readalong epub3 media overlay alignment narration',
         isVisible: anyPermission(Permission.ManageAppSettings),
       },
+      {
+        id: 'edition-links',
+        routeName: 'settings-edition-links',
+        labelKey: 'settings.integrations.tabs.editionLinks',
+        descriptionKey: 'settings.integrations.providerSubtitles.editionLinks',
+        icon: Link2,
+        keywords: 'edition links work ebook audiobook read-along shared status position sync match',
+        isVisible: anyPermission(Permission.LibraryEditMetadata),
+      },
     ],
   },
   {

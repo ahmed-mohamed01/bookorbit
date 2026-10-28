@@ -234,6 +234,19 @@ describe('DashboardWidgetRepository.countCompletedBooks', () => {
     expect(where.params).toEqual([1, 'completed', '2026-01-01', '2027-01-01', 3, 4]);
   });
 
+  it('counts a work of two variants once, because its single completed attempt lives on the canonical variant', async () => {
+    const query = makeQuery([{ count: 1 }]);
+    const db = { select: vi.fn(() => query) };
+    const repository = new DashboardWidgetRepository(db as never);
+
+    await expect(repository.countCompletedBooks(1, [3], '2026-01-01', '2027-01-01')).resolves.toBe(1);
+
+    expect(query.from).toHaveBeenCalledWith(readingAttempts);
+    const where = render(query.where!.mock.calls[0]![0]);
+    expect(where.sql).not.toContain('user_book_status');
+    expect(where.sql).not.toContain('book_edition_link');
+  });
+
   it('does not query without accessible libraries', async () => {
     const db = { select: vi.fn() };
     const repository = new DashboardWidgetRepository(db as never);

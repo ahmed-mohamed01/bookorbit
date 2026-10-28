@@ -167,7 +167,7 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
       if (!state) {
         // The text edition and the read-along reach Audiobookshelf through their linked audiobook.
         const link = await this.editionLinks.findLinkForBook(payload.bookId);
-        if (!link || link.audioBookId === payload.bookId) return;
+        if (!link || link.audioBookId === null || (link.textBookId !== payload.bookId && link.readAlongBookId !== payload.bookId)) return;
         state = await this.repo.findPushableBookStateByBookId(payload.userId, link.audioBookId, context.scope, context.excludedLibraryIds);
       }
       if (!state || state.bookId === null) return;

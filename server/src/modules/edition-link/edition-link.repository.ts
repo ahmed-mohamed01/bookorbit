@@ -1,9 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { and, desc, eq, ilike, inArray, isNotNull, isNull, or, type SQL, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import type { ContentFilterRules, EditionLinkCandidate, EditionLinkCounterpartSummary } from '@bookorbit/types';
-import { AUDIO_FORMAT_LIST, isAudioFormat } from '@bookorbit/types';
+import { AUDIO_FORMAT_LIST, isAudioFormat, EBOOK_FORMAT_LIST } from '@bookorbit/types';
 import { buildContentFilterClauses } from '../../common/utils/content-filter-sql.utils';
 import { isUniqueViolation } from '../../common/utils/db-error.utils';
 import { DB } from '../../db';
@@ -13,6 +13,8 @@ import { normalizeName, scoreAuthors, scoreTitle, titleVolumeConflict } from '..
 import { seriesVolumeConflict } from '../../common/utils/series-volume.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
 import { bookEditionLinks, type BookEditionLink } from './schema/edition-link.schema';
+import { bookEditionLinkMembers } from './schema/work.schema';
+import { WorkScopeService } from './work-scope.service';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -28,6 +30,44 @@ export interface FindCounterpartCandidatesOptions {
   accessibleLibraryIds: number[];
   contentFilters?: ContentFilterRules;
   query?: string;
+}
+
+export interface FindMatchCandidatesOptions {
+  bookId: number;
+  /** The modality the candidates must have: the other one for counterparts, the same one for duplicates. */
+  candidateModality: 'text' | 'audio';
+  /** Duplicate search: every ebook format counts as text, not only the alignable EPUB and KEPUB. */
+  anyTextFormat?: boolean;
+  accessibleLibraryIds: number[];
+  contentFilters?: ContentFilterRules;
+}
+
+export interface MatchCandidate {
+  bookId: number;
+  title: string | null;
+  authorNames: string[];
+  language: string | null;
+  /** Combined score 0-1, the same weighting the link panel ranks with. */
+  score: number;
+  titleScore: number;
+  authorScore: number;
+}
+
+interface CandidateSource {
+  title: string;
+  seriesName: string | null;
+  seriesIndex: string | null;
+  authorNames: string[];
+}
+
+interface CandidateRow {
+  bookId: number;
+  title: string | null;
+  seriesName: string | null;
+  seriesIndex: string | null;
+  language: string | null;
+  coverUpdatedAt: Date | null;
+  authorNames: string[];
 }
 
 export interface EditionLinkMemberIds {
@@ -56,7 +96,15 @@ export interface EditionLinkMemberProgressRows {
 
 @Injectable()
 export class EditionLinkRepository {
-  constructor(@Inject(DB) private readonly db: Db) {}
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    @Optional() private readonly workScope?: WorkScopeService,
+  ) {}
+
+  private changed<T>(result: T): T {
+    this.workScope?.invalidate();
+    return result;
+  }
 
   async findMissingTables(tableNames: readonly string[]): Promise<string[]> {
     return findMissingTables(this.db, tableNames);
@@ -129,8 +177,17 @@ export class EditionLinkRepository {
       .from(bookEditionLinks)
       .where(
         and(
-          or(eq(bookEditionLinks.textBookId, bookId), eq(bookEditionLinks.audioBookId, bookId), eq(bookEditionLinks.readAlongBookId, bookId)),
-          or(isNotNull(bookEditionLinks.textBookId), isNotNull(bookEditionLinks.readAlongBookId)),
+          or(
+            eq(bookEditionLinks.textBookId, bookId),
+            eq(bookEditionLinks.audioBookId, bookId),
+            eq(bookEditionLinks.readAlongBookId, bookId),
+            sql`${bookEditionLinks.id} IN (SELECT member.link_id FROM ${bookEditionLinkMembers} member WHERE member.book_id = ${bookId})`,
+          ),
+          or(
+            isNotNull(bookEditionLinks.textBookId),
+            isNotNull(bookEditionLinks.readAlongBookId),
+            sql`EXISTS (SELECT 1 FROM ${bookEditionLinkMembers} duplicate WHERE duplicate.link_id = ${bookEditionLinks.id} AND NOT duplicate.is_primary)`,
+          ),
         ),
       )
       .limit(1);
@@ -143,7 +200,9 @@ export class EditionLinkRepository {
       .select({ audioBookId: bookEditionLinks.audioBookId, readAlongBookId: bookEditionLinks.readAlongBookId })
       .from(bookEditionLinks)
       .where(and(inArray(bookEditionLinks.audioBookId, audioBookIds), isNotNull(bookEditionLinks.readAlongBookId)));
-    return new Map(rows.flatMap((row) => (row.readAlongBookId === null ? [] : [[row.audioBookId, row.readAlongBookId] as const])));
+    return new Map(
+      rows.flatMap((row) => (row.readAlongBookId === null || row.audioBookId === null ? [] : [[row.audioBookId, row.readAlongBookId] as const])),
+    );
   }
 
   // Per-member reading progress for the link popover. Text and read-along read the book's primary
@@ -229,7 +288,7 @@ export class EditionLinkRepository {
           setWhere: and(isNull(bookEditionLinks.textBookId), isNull(bookEditionLinks.readAlongBookId)),
         })
         .returning();
-      return row;
+      return this.changed(row);
     } catch (err) {
       if (isUniqueViolation(err)) return undefined;
       throw err;
@@ -248,7 +307,7 @@ export class EditionLinkRepository {
     if (textBookId === null) return this.clearMember({ textBookId: null }, where);
     try {
       const [row] = await this.db.update(bookEditionLinks).set({ textBookId }).where(where).returning();
-      return row;
+      return this.changed(row);
     } catch (err) {
       if (isUniqueViolation(err)) return undefined;
       throw err;
@@ -289,84 +348,46 @@ export class EditionLinkRepository {
       .set({ readAlongBookId: bookId })
       .where(and(eq(bookEditionLinks.id, linkId), attachable))
       .returning();
-    return row;
+    return this.changed(row);
   }
 
   // The clear and the delete share one transaction so no audio-only row is ever committed. The
   // update's row lock serializes a concurrent clear of the other optional member: whichever runs
   // second sees both sides empty and drops the row. Returns the cleared row, deleted or not.
   private async clearMember(set: { textBookId: null } | { readAlongBookId: null }, where: SQL | undefined): Promise<BookEditionLink | undefined> {
-    return this.db.transaction(async (tx) => {
+    const cleared = await this.db.transaction(async (tx) => {
       const [row] = await tx.update(bookEditionLinks).set(set).where(where).returning();
       if (row && row.textBookId === null && row.readAlongBookId === null) {
         await tx.delete(bookEditionLinks).where(eq(bookEditionLinks.id, row.id));
       }
       return row;
     });
+    return this.changed(cleared);
   }
 
   // Keyed by the resolved link id, never by a member book: an OR across the three member columns
   // would delete every link a book belongs to while reporting only the first row back.
   async deleteLink(linkId: number): Promise<BookEditionLink | undefined> {
     const [row] = await this.db.delete(bookEditionLinks).where(eq(bookEditionLinks.id, linkId)).returning();
-    return row;
+    return this.changed(row);
   }
 
   async findCounterpartCandidates(options: FindCounterpartCandidatesOptions): Promise<EditionLinkCandidate[]> {
     if (options.accessibleLibraryIds.length === 0) return [];
 
-    const [source] = await this.db
-      .select({ title: bookMetadata.title, seriesName: bookMetadata.seriesName, seriesIndex: bookMetadata.seriesIndex })
-      .from(bookMetadata)
-      .where(eq(bookMetadata.bookId, options.bookId))
-      .limit(1);
-    const sourceAuthors = await this.db
-      .select({ name: authors.name })
-      .from(bookAuthors)
-      .innerJoin(authors, eq(authors.id, bookAuthors.authorId))
-      .where(eq(bookAuthors.bookId, options.bookId))
-      .orderBy(bookAuthors.displayOrder);
-
+    const source = await this.findCandidateSource(options.bookId);
     const query = options.query?.trim() || undefined;
-    if (!query && !source?.title?.trim()) return [];
+    if (!query && !source.title.trim()) return [];
 
-    const contentFilters = options.contentFilters ? buildContentFilterClauses(options.contentFilters, this.db) : [];
-    const audioFormats = sql.join(
-      AUDIO_FORMAT_LIST.map((format) => sql`${format}`),
-      sql`, `,
-    );
-    const requiredModality =
-      options.modality === 'text'
-        ? sql`EXISTS (
-            SELECT 1 FROM book_files candidate_file
-            WHERE candidate_file.book_id = ${books.id}
-              AND candidate_file.role = 'content'
-              AND lower(coalesce(candidate_file.format, '')) IN (${audioFormats})
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM book_files candidate_file
-            WHERE candidate_file.book_id = ${books.id}
-              AND candidate_file.role = 'content'
-              AND lower(coalesce(candidate_file.format, '')) IN ('epub', 'kepub')
-          )`
-        : sql`EXISTS (
-            SELECT 1 FROM book_files candidate_file
-            WHERE candidate_file.book_id = ${books.id}
-              AND candidate_file.role = 'content'
-              AND lower(coalesce(candidate_file.format, '')) IN ('epub', 'kepub')
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM book_files candidate_file
-            WHERE candidate_file.book_id = ${books.id}
-              AND candidate_file.role = 'content'
-              AND lower(coalesce(candidate_file.format, '')) IN (${audioFormats})
-          )`;
     // An audiobook linked to a read-along alone is still open to an ebook: link() fills that row's text side.
     const notLinked = sql`NOT EXISTS (
       SELECT 1 FROM book_edition_links existing_link
       WHERE existing_link.text_book_id = ${books.id}
          OR (existing_link.audio_book_id = ${books.id} AND existing_link.text_book_id IS NOT NULL)
          OR existing_link.read_along_book_id = ${books.id}
+    ) AND NOT EXISTS (
+      SELECT 1 FROM ${bookEditionLinkMembers} existing_member
+      WHERE existing_member.book_id = ${books.id} AND NOT existing_member.is_primary
     )`;
     const matchFilter = query
       ? or(
@@ -379,18 +400,138 @@ export class EditionLinkRepository {
               AND search_author.name ILIKE ${`%${query}%`}
           )`,
         )
-      : sql`similarity(
-          public.bookorbit_unaccent(coalesce(${bookMetadata.title}, '')),
-          public.bookorbit_unaccent(${source!.title!})
-        ) >= 0.15`;
-    const orderTerm = query ?? source!.title!;
+      : undefined;
+    const rows = await this.findCandidateRows({
+      bookId: options.bookId,
+      candidateModality: options.modality === 'text' ? 'audio' : 'text',
+      accessibleLibraryIds: options.accessibleLibraryIds,
+      contentFilters: options.contentFilters,
+      orderTerm: query ?? source.title,
+      extra: [notLinked, matchFilter],
+      similarityTo: query ? undefined : source.title,
+    });
 
-    const rows = await this.db
+    const normalizedQuery = query ? normalizeName(query) : null;
+    const scored = rows.flatMap((row) => {
+      if (normalizedQuery) {
+        if (![row.title, ...row.authorNames].some((value) => value && normalizeName(value).includes(normalizedQuery))) return [];
+        const titleScore = scoreTitle(query!, row.title ?? '');
+        const authorScore = scoreAuthors([query!], row.authorNames);
+        return [{ row, score: Math.max(titleScore, authorScore) }];
+      }
+      const match = scoreCandidate(source, row);
+      return match ? [{ row, score: match.score }] : [];
+    });
+
+    return scored
+      .map(({ row, score }) => ({
+        bookId: row.bookId,
+        title: row.title,
+        authorName: row.authorNames[0] ?? null,
+        coverVersion: row.coverUpdatedAt?.toISOString() ?? null,
+        score: Math.round(score * 100),
+      }))
+      .sort((left, right) => right.score - left.score || left.bookId - right.bookId)
+      .slice(0, CANDIDATE_RESULT_LIMIT);
+  }
+
+  /**
+   * The same similarity search and scoring the link panel ranks with, linked books included, for the
+   * match scan. Scores stay unrounded and split into title and author parts.
+   */
+  async findMatchCandidates(options: FindMatchCandidatesOptions): Promise<MatchCandidate[]> {
+    if (options.accessibleLibraryIds.length === 0) return [];
+    const source = await this.findCandidateSource(options.bookId);
+    if (!source.title.trim()) return [];
+
+    const rows = await this.findCandidateRows({
+      bookId: options.bookId,
+      candidateModality: options.candidateModality,
+      anyTextFormat: options.anyTextFormat,
+      accessibleLibraryIds: options.accessibleLibraryIds,
+      contentFilters: options.contentFilters,
+      orderTerm: source.title,
+      extra: [],
+      similarityTo: source.title,
+    });
+    return rows
+      .flatMap((row) => {
+        const match = scoreCandidate(source, row);
+        return match ? [{ bookId: row.bookId, title: row.title, authorNames: row.authorNames, language: row.language, ...match }] : [];
+      })
+      .sort((left, right) => right.score - left.score || left.bookId - right.bookId)
+      .slice(0, CANDIDATE_RESULT_LIMIT);
+  }
+
+  private async findCandidateSource(bookId: number): Promise<CandidateSource> {
+    const [source] = await this.db
+      .select({ title: bookMetadata.title, seriesName: bookMetadata.seriesName, seriesIndex: bookMetadata.seriesIndex })
+      .from(bookMetadata)
+      .where(eq(bookMetadata.bookId, bookId))
+      .limit(1);
+    const sourceAuthors = await this.db
+      .select({ name: authors.name })
+      .from(bookAuthors)
+      .innerJoin(authors, eq(authors.id, bookAuthors.authorId))
+      .where(eq(bookAuthors.bookId, bookId))
+      .orderBy(bookAuthors.displayOrder);
+    return {
+      title: source?.title ?? '',
+      seriesName: source?.seriesName ?? null,
+      seriesIndex: source?.seriesIndex ?? null,
+      authorNames: sourceAuthors.map((row) => row.name),
+    };
+  }
+
+  private async findCandidateRows(options: {
+    bookId: number;
+    candidateModality: 'text' | 'audio';
+    anyTextFormat?: boolean;
+    accessibleLibraryIds: number[];
+    contentFilters?: ContentFilterRules;
+    orderTerm: string;
+    extra: (SQL | undefined)[];
+    similarityTo: string | undefined;
+  }): Promise<CandidateRow[]> {
+    const contentFilters = options.contentFilters ? buildContentFilterClauses(options.contentFilters, this.db) : [];
+    const audioFormats = sql.join(
+      AUDIO_FORMAT_LIST.map((format) => sql`${format}`),
+      sql`, `,
+    );
+    const textFormats = options.anyTextFormat
+      ? sql.join(
+          EBOOK_FORMAT_LIST.map((format) => sql`${format}`),
+          sql`, `,
+        )
+      : sql`'epub', 'kepub'`;
+    const [required, excluded] = options.candidateModality === 'audio' ? [audioFormats, sql`'epub', 'kepub'`] : [textFormats, audioFormats];
+    const requiredModality = sql`EXISTS (
+        SELECT 1 FROM book_files candidate_file
+        WHERE candidate_file.book_id = ${books.id}
+          AND candidate_file.role = 'content'
+          AND lower(coalesce(candidate_file.format, '')) IN (${required})
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM book_files candidate_file
+        WHERE candidate_file.book_id = ${books.id}
+          AND candidate_file.role = 'content'
+          AND lower(coalesce(candidate_file.format, '')) IN (${excluded})
+      )`;
+    const similarity =
+      options.similarityTo === undefined
+        ? undefined
+        : sql`similarity(
+          public.bookorbit_unaccent(coalesce(${bookMetadata.title}, '')),
+          public.bookorbit_unaccent(${options.similarityTo})
+        ) >= 0.15`;
+
+    return this.db
       .select({
         bookId: books.id,
         title: bookMetadata.title,
         seriesName: bookMetadata.seriesName,
         seriesIndex: bookMetadata.seriesIndex,
+        language: bookMetadata.language,
         coverUpdatedAt: bookMetadata.coverUpdatedAt,
         authorNames: sql<string[]>`coalesce(
           array_agg(${authors.name} ORDER BY ${bookAuthors.displayOrder}, ${authors.id})
@@ -408,59 +549,35 @@ export class EditionLinkRepository {
           eq(books.status, 'present'),
           sql`${books.id} <> ${options.bookId}`,
           requiredModality,
-          notLinked,
-          matchFilter,
+          ...options.extra,
+          similarity,
           ...contentFilters,
         ),
       )
-      .groupBy(books.id, bookMetadata.title, bookMetadata.seriesName, bookMetadata.seriesIndex, bookMetadata.coverUpdatedAt)
+      .groupBy(books.id, bookMetadata.title, bookMetadata.seriesName, bookMetadata.seriesIndex, bookMetadata.language, bookMetadata.coverUpdatedAt)
       .orderBy(
         desc(
           sql`similarity(
             public.bookorbit_unaccent(coalesce(${bookMetadata.title}, '')),
-            public.bookorbit_unaccent(${orderTerm})
+            public.bookorbit_unaccent(${options.orderTerm})
           )`,
         ),
         books.id,
       )
       .limit(CANDIDATE_FETCH_LIMIT);
-
-    const sourceAuthorNames = sourceAuthors.map((row) => row.name);
-    const normalizedQuery = query ? normalizeName(query) : null;
-    // Sibling volumes share the author and differ by a digit, so edit distance puts "Series 13" and
-    // "Series 11" in the high nineties - and spelled-out volumes ("Book Seven", "Book Three") or a bare
-    // first book against its numbered sequels score near 100. A typed search is exempt: the reader may
-    // want any volume.
-    const sourcePlaced = { title: source?.title ?? '', seriesName: source?.seriesName ?? null, seriesIndex: source?.seriesIndex ?? null };
-    const scoreSourceTitle = (row: { title: string | null; seriesName: string | null; seriesIndex: string | null }) => {
-      const candidate = { title: row.title ?? '', seriesName: row.seriesName, seriesIndex: row.seriesIndex };
-      const otherVolume = titleVolumeConflict(sourcePlaced.title, candidate.title) || seriesVolumeConflict(sourcePlaced, candidate);
-      return otherVolume ? 0 : scoreTitle(sourcePlaced.title, candidate.title);
-    };
-
-    return rows
-      .filter((row) => {
-        if (normalizedQuery) {
-          return [row.title, ...row.authorNames].some((value) => value && normalizeName(value).includes(normalizedQuery));
-        }
-        const titleScore = scoreSourceTitle(row);
-        const authorScore = scoreAuthors(sourceAuthorNames, row.authorNames);
-        return titleScore >= 0.8 && (sourceAuthorNames.length === 0 || row.authorNames.length === 0 ? titleScore >= 0.9 : authorScore >= 0.75);
-      })
-      .map((row) => {
-        const titleScore = query ? scoreTitle(query, row.title ?? '') : scoreSourceTitle(row);
-        const authorScore = query ? scoreAuthors([query], row.authorNames) : scoreAuthors(sourceAuthorNames, row.authorNames);
-        const hasComparableAuthors = query ? row.authorNames.length > 0 : sourceAuthorNames.length > 0 && row.authorNames.length > 0;
-        const score = query ? Math.max(titleScore, authorScore) : hasComparableAuthors ? titleScore * 0.7 + authorScore * 0.3 : titleScore;
-        return {
-          bookId: row.bookId,
-          title: row.title,
-          authorName: row.authorNames[0] ?? null,
-          coverVersion: row.coverUpdatedAt?.toISOString() ?? null,
-          score: Math.round(score * 100),
-        };
-      })
-      .sort((left, right) => right.score - left.score || left.bookId - right.bookId)
-      .slice(0, CANDIDATE_RESULT_LIMIT);
   }
+}
+
+// Sibling volumes share the author and differ by a digit, so edit distance puts "Series 13" and
+// "Series 11" in the high nineties - and spelled-out volumes ("Book Seven", "Book Three") or a bare
+// first book against its numbered sequels score near 100. A typed search is exempt: the reader may
+// want any volume.
+function scoreCandidate(source: CandidateSource, row: CandidateRow): { score: number; titleScore: number; authorScore: number } | null {
+  const candidate = { title: row.title ?? '', seriesName: row.seriesName, seriesIndex: row.seriesIndex };
+  const otherVolume = titleVolumeConflict(source.title, candidate.title) || seriesVolumeConflict(source, candidate);
+  const titleScore = otherVolume ? 0 : scoreTitle(source.title, candidate.title);
+  const authorScore = scoreAuthors(source.authorNames, row.authorNames);
+  const comparableAuthors = source.authorNames.length > 0 && row.authorNames.length > 0;
+  if (titleScore < 0.8 || (comparableAuthors ? authorScore < 0.75 : titleScore < 0.9)) return null;
+  return { score: comparableAuthors ? titleScore * 0.7 + authorScore * 0.3 : titleScore, titleScore, authorScore };
 }

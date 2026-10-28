@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import {
@@ -9,6 +9,7 @@ import {
 } from '../achievement/achievement-events.service';
 import { BookReadService } from '../book/book-read.service';
 import { BookService } from '../book/book.service';
+import { EditionLinkSettingsService } from '../edition-link/edition-link-settings.service';
 import { LibraryService } from '../library/library.service';
 import { UserService } from '../user/user.service';
 import { absoluteSecondsToFilePosition, buildAudioTimeline, filePositionToAbsoluteSeconds } from './reading-alignment-audio-timeline.util';
@@ -61,6 +62,7 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
     private readonly libraryService: LibraryService,
     private readonly bookService: BookService,
     private readonly userService: UserService,
+    @Optional() private readonly editionLinkSettings?: EditionLinkSettingsService,
   ) {}
 
   onModuleInit(): void {
@@ -84,6 +86,8 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
   }
 
   private async project(payload: BookProgressChangedPayload, startedAt: number): Promise<void> {
+    const settings = await this.editionLinkSettings?.get(payload.userId);
+    if (settings?.enabled && settings.positionSync === 'off') return;
     const pair = await this.pairService.resolveAlignmentPair(payload.bookId);
     if (!pair) return;
 

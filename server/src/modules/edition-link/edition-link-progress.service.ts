@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, inArray, isNotNull, max, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, max, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import { DB } from '../../db';
@@ -10,6 +10,7 @@ import type { ReadAlongLink, ReadAlongLinkSource } from '../book/read-along-link
 import type { CurrentlyReadingGroupMembership, CurrentlyReadingGroupSource } from '../dashboard/currently-reading-group-source';
 import type { ReadingSessionScopeMember, ReadingSessionScopeSource } from '../reading-session/reading-session-scope-source';
 import { bookEditionLinks } from './schema/edition-link.schema';
+import { bookEditionLinkMembers } from './schema/work.schema';
 
 type Db = NodePgDatabase<typeof schema>;
 
@@ -29,25 +30,27 @@ export class EditionLinkProgressService implements ExtraProgressSource, ReadAlon
         and(isNotNull(bookEditionLinks.readAlongBookId), or(eq(bookEditionLinks.audioBookId, bookId), eq(bookEditionLinks.readAlongBookId, bookId))),
       )
       .limit(1);
-    return row?.readAlongBookId != null ? { audioBookId: row.audioBookId, readAlongBookId: row.readAlongBookId } : null;
+    return row?.readAlongBookId != null && row.audioBookId != null ? { audioBookId: row.audioBookId, readAlongBookId: row.readAlongBookId } : null;
   }
 
+  // Every member of the work, duplicates included, primaries first within each role.
   async resolveScope(bookId: number): Promise<ReadingSessionScopeMember[] | null> {
-    const [row] = await this.db
-      .select({
-        textBookId: bookEditionLinks.textBookId,
-        audioBookId: bookEditionLinks.audioBookId,
-        readAlongBookId: bookEditionLinks.readAlongBookId,
-      })
-      .from(bookEditionLinks)
-      .where(or(eq(bookEditionLinks.textBookId, bookId), eq(bookEditionLinks.audioBookId, bookId), eq(bookEditionLinks.readAlongBookId, bookId)))
-      .limit(1);
-    if (!row) return null;
+    const linkIds = this.db
+      .select({ linkId: bookEditionLinkMembers.linkId })
+      .from(bookEditionLinkMembers)
+      .where(eq(bookEditionLinkMembers.bookId, bookId));
+    const rows = await this.db
+      .select({ bookId: bookEditionLinkMembers.bookId, role: bookEditionLinkMembers.role, isPrimary: bookEditionLinkMembers.isPrimary })
+      .from(bookEditionLinkMembers)
+      .where(inArray(bookEditionLinkMembers.linkId, linkIds))
+      .orderBy(desc(bookEditionLinkMembers.isPrimary), asc(bookEditionLinkMembers.createdAt), asc(bookEditionLinkMembers.id));
+    if (rows.length < 2) return null;
 
-    const members: ReadingSessionScopeMember[] = [{ bookId: row.audioBookId, role: 'audio' }];
-    if (row.textBookId != null) members.unshift({ bookId: row.textBookId, role: 'text' });
-    if (row.readAlongBookId != null) members.push({ bookId: row.readAlongBookId, role: 'readAlong' });
-    return members;
+    const roleOrder = { text: 0, audio: 1, readAlong: 2 } as const;
+    return rows
+      .map((row, index) => ({ row, index }))
+      .sort((left, right) => roleOrder[left.row.role] - roleOrder[right.row.role] || left.index - right.index)
+      .map(({ row }) => ({ bookId: row.bookId, role: row.role }));
   }
 
   async findProgressForBooks(userId: number, bookIds: number[]): Promise<Map<number, ExtraProgress>> {

@@ -17,7 +17,8 @@ export class ReadingAlignmentPairService {
       // The generated read-along is its own book record with its own progress, so neither the sampled
       // alignment nor cross-format resume may run on it: it is not a side of the pair, and treating it
       // as one would project the pair's positions onto a third, unrelated file.
-      if (link.readAlongBookId === bookId || link.textBookId === null) return null;
+      if (link.textBookId === null || link.audioBookId === null) return null;
+      if (link.textBookId !== bookId && link.audioBookId !== bookId) return null;
       return { textBookId: link.textBookId, audioBookId: link.audioBookId };
     }
 

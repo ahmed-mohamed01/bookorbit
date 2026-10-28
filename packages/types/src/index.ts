@@ -16,6 +16,7 @@ export * from "./identifier-input";
 export * from "./dashboard";
 export * from "./book";
 export * from "./edition-link";
+export * from "./work";
 export * from "./reading-alignment";
 export * from "./book-duplicates";
 export * from "./book-move";

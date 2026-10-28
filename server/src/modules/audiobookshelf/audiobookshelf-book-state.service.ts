@@ -87,7 +87,7 @@ export class AudiobookshelfBookStateService {
 
     const link = await this.editionLinks.findLinkForBook(bookId);
     const linked =
-      link && link.audioBookId !== bookId
+      link && link.audioBookId !== null && link.audioBookId !== bookId
         ? await this.usableLinkState(user, settings, await this.repo.findBookStateByBookId(user.id, link.audioBookId))
         : null;
     const state = linked ?? direct;

@@ -110,6 +110,7 @@ const INTEGRATION_ROUTES: Record<IntegrationTab, string> = {
   storygraph: 'settings-storygraph',
   audiobookshelf: 'settings-audiobookshelf',
   storyteller: 'settings-storyteller',
+  'edition-links': 'settings-edition-links',
 }
 
 /** Settings pages are their own routes now, so the legacy `?tab=` value is consumed by the redirect. */
@@ -492,6 +493,13 @@ export const routes: RouteRecordRaw[] = [
             meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.storyteller') },
           },
           {
+            path: 'edition-links',
+            name: 'settings-edition-links',
+            component: () => import('@/features/edition-link/components/EditionLinkSettings.vue'),
+            props: { embedded: true },
+            meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.editionLinks') },
+          },
+          {
             path: 'tts',
             name: 'settings-tts',
             component: () => import('@/features/tts/TtsSettings.vue'),
@@ -790,6 +798,12 @@ export const routes: RouteRecordRaw[] = [
             name: 'tools-duplicate-books',
             component: () => import('@/features/tools/book-duplicates/views/BookDuplicatesView.vue'),
             meta: { title: () => t('titles.duplicateBooks') },
+          },
+          {
+            path: 'edition-links',
+            name: 'tools-edition-links',
+            component: () => import('@/features/tools/edition-links/views/EditionLinksView.vue'),
+            meta: { title: () => t('titles.editionLinks') },
           },
           {
             path: 'missing-resources',

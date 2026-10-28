@@ -15,6 +15,7 @@ import { BookQueryBuilder } from '../../book/book-query-builder.service';
 import { MetadataExtractionService } from '../../metadata/metadata-extraction.service';
 import { SmartScopeService } from '../../smart-scope/smart-scope.service';
 import { KoboDeliveryService, deliveryErrorCode } from './kobo-delivery.service';
+import { KOBO_SHELF_FILTER_SOURCE, type KoboShelfFilterSource } from '../kobo-shelf-filter-source';
 import { KoboBookAccessService } from './kobo-book-access.service';
 import { KoboBookIdentityService } from './kobo-book-identity.service';
 import { normalizeKoboLanguage, selectKoboIsbn } from './kobo-metadata.utils';
@@ -143,6 +144,7 @@ export class KoboSyncService {
     private readonly smartScopeService: SmartScopeService,
     private readonly metadataExtractionService: MetadataExtractionService,
     @Optional() private readonly deliveries?: KoboDeliveryService,
+    @Optional() @Inject(KOBO_SHELF_FILTER_SOURCE) private readonly shelfFilterSource?: KoboShelfFilterSource,
   ) {}
 
   async getDelta(
@@ -1190,6 +1192,7 @@ export class KoboSyncService {
     const membershipFilter = smartScopeFilters.length > 0 ? or(collectionMembershipFilter, ...smartScopeFilters) : collectionMembershipFilter;
 
     const contentFilterClauses = accessibleLibraryIds !== null ? buildContentFilterClauses(contentFilters, this.db) : [];
+    const shelfFilter = await this.shelfFilterSource?.shelfFilter(userId, schema.books.id);
 
     return and(
       eq(schema.books.status, 'present'),
@@ -1197,6 +1200,7 @@ export class KoboSyncService {
       libraryAccessFilter,
       membershipFilter,
       ...contentFilterClauses,
+      shelfFilter,
     );
   }
 

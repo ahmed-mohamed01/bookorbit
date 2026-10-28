@@ -36,7 +36,15 @@ describe('EditionLinkSchemaBootstrapService', () => {
 
     await service.onApplicationBootstrap();
 
-    expect(repo.findMissingTables).toHaveBeenCalledWith(['book_edition_links', 'read_along_narration_offsets']);
+    expect(repo.findMissingTables).toHaveBeenCalledWith([
+      'book_edition_links',
+      'read_along_narration_offsets',
+      'book_edition_link_members',
+      'edition_link_user_settings',
+      'edition_link_match_scans',
+      'edition_link_match_results',
+      'edition_link_match_dismissals',
+    ]);
     expect(repo.applySchemaStatements).toHaveBeenCalledTimes(1);
     const statements = repo.applySchemaStatements.mock.calls[0]![0] as string[];
     const expectedCount = EDITION_LINK_SCHEMA_SQL.split('--> statement-breakpoint')
@@ -72,9 +80,7 @@ describe('EditionLinkSchemaBootstrapService', () => {
   it('deletes rows holding only the audiobook after relaxing the column', () => {
     const statements = EDITION_LINK_SCHEMA_SQL.split('--> statement-breakpoint').map((statement) => statement.trim());
     const relax = statements.findIndex((statement) => statement.includes('ALTER COLUMN "text_book_id" DROP NOT NULL'));
-    const cleanup = statements.findIndex((statement) =>
-      statement.startsWith('DELETE FROM "book_edition_links" WHERE "text_book_id" IS NULL AND "read_along_book_id" IS NULL;'),
-    );
+    const cleanup = statements.findIndex((statement) => statement.startsWith('DELETE FROM "book_edition_links" link'));
 
     // A fresh table has no read_along_book_id until its ADD COLUMN runs, so the cleanup must follow it.
     const readAlongColumn = statements.findIndex((statement) => statement.includes('ADD COLUMN IF NOT EXISTS "read_along_book_id"'));
@@ -83,6 +89,51 @@ describe('EditionLinkSchemaBootstrapService', () => {
     expect(readAlongColumn).toBeGreaterThanOrEqual(0);
     expect(cleanup).toBeGreaterThan(relax);
     expect(cleanup).toBeGreaterThan(readAlongColumn);
+  });
+
+  it('keeps a work of two audiobook copies when it cleans up audio-only rows', () => {
+    const statements = EDITION_LINK_SCHEMA_SQL.split('--> statement-breakpoint').map((statement) => statement.trim());
+    const members = statements.findIndex((statement) => statement.startsWith('CREATE TABLE IF NOT EXISTS "book_edition_link_members"'));
+    const cleanup = statements.findIndex((statement) => statement.startsWith('DELETE FROM "book_edition_links" link'));
+
+    expect(members).toBeGreaterThanOrEqual(0);
+    expect(cleanup).toBeGreaterThan(members);
+    expect(statements[cleanup]).toContain('< 2');
+  });
+
+  it('drops NOT NULL on audio_book_id only when the catalog says it is still set', () => {
+    const guard = EDITION_LINK_SCHEMA_SQL.split('--> statement-breakpoint')
+      .map((statement) => statement.trim())
+      .find((statement) => statement.includes('ALTER COLUMN "audio_book_id" DROP NOT NULL'))!;
+
+    expect(guard).toContain("attrelid = 'book_edition_links'::regclass AND attname = 'audio_book_id'");
+    expect(guard).toContain('IF col_notnull THEN');
+  });
+
+  it('backfills one primary member per filled slot, idempotently, after the sync trigger exists', () => {
+    const statements = EDITION_LINK_SCHEMA_SQL.split('--> statement-breakpoint').map((statement) => statement.trim());
+    const trigger = statements.findIndex((statement) => statement.startsWith('CREATE OR REPLACE TRIGGER "book_edition_links_sync_members"'));
+    const backfill = statements.findIndex((statement) => statement.startsWith('INSERT INTO "book_edition_link_members"'));
+    const sql = statements[backfill]!;
+
+    expect(trigger).toBeGreaterThanOrEqual(0);
+    expect(backfill).toBeGreaterThan(trigger);
+    expect(sql).toContain(`(link."text_book_id", 'text'), (link."audio_book_id", 'audio'), (link."read_along_book_id", 'readAlong')`);
+    expect(sql).toContain('WHERE slot.book_id IS NOT NULL');
+    expect(sql).toContain('ON CONFLICT DO NOTHING');
+  });
+
+  it('keeps the slots equal to the primary member of each role through the trigger', () => {
+    const statements = EDITION_LINK_SCHEMA_SQL.split('--> statement-breakpoint').map((statement) => statement.trim());
+    const sync = statements.find((statement) => statement.includes('FUNCTION "bookorbit_edition_link_sync_members"'))!;
+    const claim = statements.find((statement) => statement.includes('FUNCTION "bookorbit_edition_link_claim_primary"'))!;
+
+    for (const role of ['text', 'audio', 'readAlong']) {
+      expect(sync).toContain(`'${role}');`);
+    }
+    expect(sync).toContain('AND "is_primary";');
+    expect(claim).toContain('"is_primary" = false');
+    expect(claim).toContain("ERRCODE = 'unique_violation'");
   });
 
   it('is silent when no tables are missing', async () => {

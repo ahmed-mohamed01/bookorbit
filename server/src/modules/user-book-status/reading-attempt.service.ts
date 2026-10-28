@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, InternalServerErrorException, NotFoundException, Optional } from '@nestjs/common';
 import type {
   ReadingAttempt,
   ReadingAttemptListResponse,
@@ -11,6 +11,7 @@ import type {
 
 import { ReadingAttemptRepository, type AttemptProjection } from './reading-attempt.repository';
 import { ReadingAttemptEventsService } from './reading-attempt-events.service';
+import { READING_STATE_SCOPE_SOURCE, type ReadingStateScopeSource } from './reading-state-scope-source';
 import { READING_DATE_ERROR_CODES } from './user-book-status.constants';
 import { hasReachedProgressThreshold } from '../../common/utils/progress-threshold.utils';
 
@@ -50,12 +51,28 @@ type ManualStatusOptions = {
   statusWasExplicit?: boolean;
 };
 
+type Tx = Parameters<Parameters<ReadingAttemptRepository['transaction']>[0]>[0];
+
+type ResolvedScope = { bookId: number; mirrorBookIds: number[] };
+
 @Injectable()
 export class ReadingAttemptService {
   constructor(
     private readonly repo: ReadingAttemptRepository,
     private readonly events: ReadingAttemptEventsService,
+    @Optional() @Inject(READING_STATE_SCOPE_SOURCE) private readonly scopeSource?: ReadingStateScopeSource,
   ) {}
+
+  /** A book that shares its reading state keeps its attempts on the group's canonical book. */
+  private async resolveScope(userId: number, bookId: number): Promise<ResolvedScope> {
+    const scope = await this.scopeSource?.resolveScope(userId, bookId);
+    return scope ? { bookId: scope.canonicalBookId, mirrorBookIds: scope.mirrorBookIds } : { bookId, mirrorBookIds: [] };
+  }
+
+  private async projectScope(tx: Tx, userId: number, scope: ResolvedScope, projection: AttemptProjection): Promise<void> {
+    await this.repo.project(tx, userId, scope.bookId, projection);
+    for (const mirrorBookId of scope.mirrorBookIds) await this.repo.project(tx, userId, mirrorBookId, projection);
+  }
 
   coalesceChanges<T>(operation: () => T | Promise<T>): Promise<T> {
     return this.events.coalesceChanges(operation);
@@ -63,13 +80,15 @@ export class ReadingAttemptService {
 
   async applyManualStatus(
     userId: number,
-    bookId: number,
+    requestedBookId: number,
     status: ReadStatus,
     startedOn: string | null | undefined,
     endedOn: string | null | undefined,
     today: string,
     options: ManualStatusOptions = {},
   ): Promise<UserBookStatus> {
+    const scope = await this.resolveScope(userId, requestedBookId);
+    const bookId = scope.bookId;
     let changed = false;
     const result = await this.repo.transaction<UserBookStatus>(async (tx) => {
       let active: Awaited<ReturnType<ReadingAttemptRepository['findActive']>> | null = await this.repo.findActive(tx, userId, bookId);
@@ -254,7 +273,7 @@ export class ReadingAttemptService {
         finishedAt: dateToUtcDate(projected.endedOn),
       };
       changed ||= this.hasProjectionChanged(current, projection);
-      await this.repo.project(tx, userId, bookId, projection);
+      await this.projectScope(tx, userId, scope, projection);
       return {
         status: projectedStatus,
         source: 'manual',
@@ -279,11 +298,13 @@ export class ReadingAttemptService {
     /** The reader's timezone, which files late sessions into the read they belong to. */
     timeZone?: string;
   }): Promise<UserBookStatus | null> {
+    const scope = await this.resolveScope(input.userId, input.bookId);
+    const bookId = scope.bookId;
     let changed = false;
     const result = await this.repo.transaction<UserBookStatus | null>(async (tx) => {
-      let active: Awaited<ReturnType<ReadingAttemptRepository['findActive']>> | null = await this.repo.findActive(tx, input.userId, input.bookId);
-      let latest = active ?? (await this.repo.findLatest(tx, input.userId, input.bookId));
-      const hasCompleted = await this.repo.hasCompleted(tx, input.userId, input.bookId);
+      let active: Awaited<ReturnType<ReadingAttemptRepository['findActive']>> | null = await this.repo.findActive(tx, input.userId, bookId);
+      let latest = active ?? (await this.repo.findLatest(tx, input.userId, bookId));
+      const hasCompleted = await this.repo.hasCompleted(tx, input.userId, bookId);
       const isFinished = hasReachedProgressThreshold(input.progress, input.finishThreshold);
 
       // A device that went without syncing delivers the sessions of a read only after its finished state
@@ -313,7 +334,7 @@ export class ReadingAttemptService {
       if (!active && isFinished && !hasCompleted) {
         latest = await this.repo.create(tx, {
           userId: input.userId,
-          bookId: input.bookId,
+          bookId,
           startedOn: null,
           endedOn: input.occurredOn,
           outcome: 'completed',
@@ -324,7 +345,7 @@ export class ReadingAttemptService {
       if (!active && isFinished && hasCompleted && input.strongRereadEvidence) {
         latest = await this.repo.create(tx, {
           userId: input.userId,
-          bookId: input.bookId,
+          bookId,
           startedOn: input.occurredOn,
           endedOn: input.occurredOn,
           outcome: 'completed',
@@ -335,7 +356,7 @@ export class ReadingAttemptService {
       if (!active && !isFinished && (input.progress > 0 || input.strongRereadEvidence || input.meaningfulActivity)) {
         active = await this.repo.createActive(tx, {
           userId: input.userId,
-          bookId: input.bookId,
+          bookId,
           startedOn: input.occurredOn,
           origin: input.origin,
         });
@@ -345,7 +366,7 @@ export class ReadingAttemptService {
       let projectionTarget = active ?? latest;
       let status: ReadStatus;
       if (active && isFinished) {
-        projectionTarget = await this.repo.update(tx, input.userId, input.bookId, active.id, {
+        projectionTarget = await this.repo.update(tx, input.userId, bookId, active.id, {
           endedOn: notBeforeStart(input.occurredOn, active.startedOn),
           outcome: 'completed',
         });
@@ -359,7 +380,7 @@ export class ReadingAttemptService {
         return null;
       }
 
-      const current = await this.repo.findStatus(tx, input.userId, input.bookId);
+      const current = await this.repo.findStatus(tx, input.userId, bookId);
       const projection: AttemptProjection = {
         status,
         source: 'auto',
@@ -367,7 +388,7 @@ export class ReadingAttemptService {
         finishedAt: projectionTarget?.outcome === 'completed' ? dateToUtcDate(projectionTarget.endedOn) : null,
       };
       changed ||= this.hasProjectionChanged(current, projection);
-      await this.repo.project(tx, input.userId, input.bookId, projection);
+      await this.projectScope(tx, input.userId, scope, projection);
       return {
         status,
         source: 'auto',
@@ -380,7 +401,8 @@ export class ReadingAttemptService {
     return result;
   }
 
-  async list(userId: number, bookId: number, page = 1, pageSize = 20): Promise<ReadingAttemptListResponse> {
+  async list(userId: number, requestedBookId: number, page = 1, pageSize = 20): Promise<ReadingAttemptListResponse> {
+    const { bookId } = await this.resolveScope(userId, requestedBookId);
     const result = await this.repo.list(userId, bookId, page, pageSize);
     return {
       items: result.items.map((row) => this.toDto(row)),
@@ -392,9 +414,10 @@ export class ReadingAttemptService {
 
   async createHistorical(
     userId: number,
-    bookId: number,
+    requestedBookId: number,
     input: { startedOn?: string | null; endedOn?: string | null; outcome: ReadingAttemptOutcome },
   ): Promise<ReadingAttempt> {
+    const { bookId } = await this.resolveScope(userId, requestedBookId);
     this.validateDates(input.startedOn ?? null, input.endedOn ?? null);
     const row = await this.repo.transaction((tx) =>
       this.repo.create(tx, {
@@ -412,9 +435,10 @@ export class ReadingAttemptService {
 
   async importExternalRead(
     userId: number,
-    bookId: number,
+    requestedBookId: number,
     input: { provider: 'hardcover'; externalId: string; startedOn: string | null; endedOn: string | null },
   ): Promise<void> {
+    const { bookId } = await this.resolveScope(userId, requestedBookId);
     this.validateDates(input.startedOn, input.endedOn);
     const changed = await this.repo.transaction(async (tx) => {
       const existing = await this.repo.findByExternal(tx, userId, input.provider, input.externalId);
@@ -463,9 +487,10 @@ export class ReadingAttemptService {
    */
   async importUnlinkedRead(
     userId: number,
-    bookId: number,
+    requestedBookId: number,
     input: { origin: 'audiobookshelf'; startedOn: string | null; endedOn: string | null },
   ): Promise<void> {
+    const { bookId } = await this.resolveScope(userId, requestedBookId);
     this.validateDates(input.startedOn, input.endedOn);
     await this.repo.transaction(async (tx) => {
       if (input.endedOn === null) {
@@ -515,7 +540,8 @@ export class ReadingAttemptService {
     });
   }
 
-  async update(userId: number, bookId: number, attemptId: number, patch: ReadingAttemptPatch): Promise<ReadingAttempt> {
+  async update(userId: number, requestedBookId: number, attemptId: number, patch: ReadingAttemptPatch): Promise<ReadingAttempt> {
+    const { bookId } = await this.resolveScope(userId, requestedBookId);
     const { row, changed } = await this.repo.transaction(async (tx) => {
       const existing = await this.repo.findOwned(userId, bookId, attemptId, tx);
       if (!existing) throw new NotFoundException('Reading attempt not found');
@@ -533,12 +559,15 @@ export class ReadingAttemptService {
     return this.toDto({ ...row, totalSessions: 0, totalSeconds: 0 });
   }
 
-  async delete(userId: number, bookId: number, attemptId: number): Promise<void> {
+  async delete(userId: number, requestedBookId: number, attemptId: number): Promise<void> {
+    const { bookId } = await this.resolveScope(userId, requestedBookId);
     if (!(await this.repo.softDelete(userId, bookId, attemptId))) throw new NotFoundException('Reading attempt not found');
     await this.rebuildProjection(userId, bookId);
   }
 
-  private async rebuildProjection(userId: number, bookId: number, changed = true): Promise<void> {
+  async rebuildProjection(userId: number, requestedBookId: number, changed = true): Promise<void> {
+    const scope = await this.resolveScope(userId, requestedBookId);
+    const bookId = scope.bookId;
     try {
       await this.repo.transaction(async (tx) => {
         const active = await this.repo.findActive(tx, userId, bookId);
@@ -560,7 +589,7 @@ export class ReadingAttemptService {
           finishedAt: dateToUtcDate(projected.endedOn),
         };
         changed ||= this.hasProjectionChanged(current, projection);
-        await this.repo.project(tx, userId, bookId, projection);
+        await this.projectScope(tx, userId, scope, projection);
       });
     } finally {
       // The history mutation already committed even if rebuilding its projection fails.

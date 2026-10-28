@@ -1749,13 +1749,15 @@
         "readwise": "Readwise",
         "storygraph": "StoryGraph",
         "audiobookshelf": "Audiobookshelf",
-        "storyteller": "Storyteller"
+        "storyteller": "Storyteller",
+        "editionLinks": "Edition links"
       },
       "providerSubtitles": {
         "readwise": "Send your highlights to Readwise automatically.",
         "storygraph": "Sync your reading progress and status to The StoryGraph.",
         "audiobookshelf": "Sync listening progress and sessions from Audiobookshelf.",
-        "storyteller": "Generate read-along EPUBs by pairing an ebook with an audiobook through Storyteller."
+        "storyteller": "Generate read-along EPUBs by pairing an ebook with an audiobook through Storyteller.",
+        "editionLinks": "Treat an ebook, audiobook and read-along of the same book as one work with one reading state."
       },
       "audiobookshelf": {
         "pushPosition": {
@@ -1881,6 +1883,84 @@
           "success": "Storyteller settings saved",
           "failure": "Failed to save Storyteller settings",
           "blockedByPassword": "Enter the password for this Storyteller server, or restore the saved URL, before saving."
+        }
+      },
+      "editionLinks": {
+        "saved": "Edition link settings saved",
+        "saveFailed": "Could not save edition link settings",
+        "loadFailed": "Could not load edition link settings.",
+        "save": "Save settings",
+        "master": {
+          "label": "Link editions into works",
+          "description": "Books you link stay separate records in their own libraries, but read as one work."
+        },
+        "diagram": {
+          "aria": "How an audiobook, its read-along and its ebook stay in step",
+          "box": {
+            "audiobookshelf": "Audiobookshelf",
+            "audiobook": "Audiobook",
+            "readAlong": "Read-along",
+            "ebook": "Ebook"
+          },
+          "abs": {
+            "off": "sync off",
+            "pull": "pulls in",
+            "push": "pushes out",
+            "twoWay": "two-way"
+          },
+          "absUnknown": "see Audiobookshelf settings",
+          "timing": "timing",
+          "sameText": "same text",
+          "shared": "one status · one attempt history · one reading log · one position · counted once"
+        },
+        "sharing": {
+          "title": "What is shared",
+          "shareReadingState": {
+            "label": "Share reading state",
+            "description": "Status and reading attempts live on one book and show on every edition."
+          },
+          "sameType": {
+            "label": "Same type is one work",
+            "description": "An EPUB and a MOBI, or an M4B and an MP3 of the same book, join the same work."
+          },
+          "positionSync": {
+            "label": "Position sync",
+            "description": "How far a position travels between editions that have no exact timing.",
+            "off": "Off",
+            "precise": "Precise only",
+            "rough": "Precise + rough %"
+          },
+          "primary": {
+            "label": "Primary copy per type",
+            "description": "Follows each library's format order. The primary ebook goes to Kobo, the primary audiobook to Audiobookshelf.",
+            "link": "Library settings"
+          }
+        },
+        "matching": {
+          "title": "Matching",
+          "autoLink": {
+            "label": "Link strong matches automatically",
+            "description": "A scan links matches it is sure about without waiting for review."
+          },
+          "noScan": "No scan has run yet.",
+          "counts": "{fix} to fix · {review} to review · {ready} ready",
+          "openTool": "Open Tools › Edition links"
+        },
+        "history": {
+          "title": "Audiobookshelf history",
+          "description": "Finish dates imported from Audiobookshelf are the real ones. Rebuild replaces earlier migrated finishes on the same work, so each book counts once and on the right day.",
+          "preview": "Preview",
+          "rebuild": "Rebuild",
+          "previewFailed": "Could not preview the rebuild",
+          "rebuildFailed": "Could not rebuild the history",
+          "rebuilt": "{count, plural, one {Rebuilt # work} other {Rebuilt # works}}",
+          "summary": "{works} works have an Audiobookshelf finish. {attempts, plural, one {# earlier finish} other {# earlier finishes}} will be replaced.",
+          "untouched": "{count} works are left as they are.",
+          "thisYear": "Books read this year goes from {before} to {after}.",
+          "sample": "Audiobookshelf {abs}, replaces {replaced}",
+          "result": "Rebuilt {works} works and replaced {attempts} finishes.",
+          "confirmTitle": "Rebuild Audiobookshelf history?",
+          "confirmDescription": "{count, plural, one {# earlier finish will be replaced.} other {# earlier finishes will be replaced.}} Nothing is permanently deleted."
         }
       }
     },
@@ -8176,6 +8256,32 @@
             "detachFailed": "Couldn't stop syncing the read-along.",
             "changeFailed": "Couldn't link {title}. The previous edition was unlinked."
           }
+        },
+        "work": {
+          "summary": "{count} · {libraries, plural, one {# library} other {# libraries}}",
+          "otherLibraries": "same work in other libraries",
+          "manage": "Manage",
+          "generate": "Generate read-along",
+          "generating": "Generating read-along",
+          "duplicateOfThis": "duplicate of this copy",
+          "sourceWhen": "{source} · {when}",
+          "state": {
+            "sync": "One work · in sync",
+            "catching": "One work · catching up",
+            "off": "Shared state off"
+          },
+          "role": {
+            "text": "Ebook",
+            "audio": "Audio",
+            "readAlong": "Read-along"
+          },
+          "source": {
+            "web_reader": "Web reader",
+            "kobo": "Kobo",
+            "koreader": "KOReader",
+            "audiobookshelf": "Audiobookshelf",
+            "mirror": "mirrored"
+          }
         }
       },
       "readingAlignment": {
@@ -13059,7 +13165,8 @@
       "entityManager": "Entity Manager",
       "bulkRename": "Bulk Rename",
       "duplicateBooks": "Duplicate Books",
-      "missingResources": "Missing Resources"
+      "missingResources": "Missing Resources",
+      "editionLinks": "Edition links"
     },
     "entityTypes": {
       "authors": "Authors",
@@ -13586,6 +13693,104 @@
         "sweep": "The cover check failed.",
         "list": "Could not load these entries.",
         "clean": "Cleanup failed."
+      }
+    },
+    "editionLinks": {
+      "accessDenied": "You do not have permission to use the edition links tool.",
+      "scope": "Library scope",
+      "allLibraries": "All libraries",
+      "runScan": "Scan",
+      "rescan": "Rescan",
+      "scannedBooks": "{count} books · checked {when}",
+      "scanProgress": "{processed} of {total} books",
+      "status": {
+        "running": "Matching editions"
+      },
+      "filter": "Filter matches",
+      "allMatches": "All matches",
+      "filters": {
+        "fix": "Fix",
+        "review": "Review",
+        "ready": "Ready",
+        "linked": "Linked",
+        "dismissed": "Dismissed"
+      },
+      "bucket": {
+        "strong": "Strong",
+        "weak": "Weak",
+        "linked_suspect": "Suspect link",
+        "conflict": "Conflict",
+        "linked_ok": "Linked"
+      },
+      "autoLinked": "{count, plural, one {# strong match was linked automatically} other {# strong matches were linked automatically}}",
+      "strongBand": {
+        "title": "{count, plural, one {# strong match} other {# strong matches}}",
+        "hint": "Same book, same author, high confidence.",
+        "action": "Preview and link all"
+      },
+      "linkAll": {
+        "title": "Link all strong matches?",
+        "description": "{count, plural, one {# strong match will be linked.} other {# strong matches will be linked.}} Books stay in their libraries and nothing moves on disk.",
+        "confirm": "{count, plural, one {Link # match} other {Link # matches}}",
+        "done": "Linked {linked}, skipped {skipped}"
+      },
+      "columns": {
+        "match": "Match",
+        "work": "Work",
+        "variants": "Editions",
+        "libraries": "Libraries",
+        "actions": "Action"
+      },
+      "actions": {
+        "link": "Link",
+        "relink": "Relink",
+        "notTheSame": "Not the same",
+        "unlink": "Unlink"
+      },
+      "compare": "Compare editions of {title}",
+      "compareCaption": "Comparison of the two editions",
+      "fieldColumn": "Field",
+      "openBook": "Open",
+      "fields": {
+        "title": "Title",
+        "author": "Author",
+        "series": "Series",
+        "isbn": "ISBN",
+        "library": "Library",
+        "status": "Status"
+      },
+      "unknown": "Unknown",
+      "unknownAuthor": "Unknown author",
+      "pairLabel": "{first} and {second}",
+      "linked": "Editions linked",
+      "unlinked": "Edition unlinked",
+      "empty": {
+        "title": "Nothing to show here",
+        "description": "No matches in this view. Try another filter or scan again."
+      },
+      "initial": {
+        "title": "Match editions across libraries",
+        "description": "Scan to find ebooks, audiobooks and read-alongs of the same book. No books are linked until you confirm, unless automatic linking is on."
+      },
+      "dismissed": {
+        "show": "{count, plural, one {Show # dismissed pair} other {Show # dismissed pairs}}",
+        "hide": "Hide dismissed pairs",
+        "restore": "Restore this pair"
+      },
+      "pagination": {
+        "label": "Edition link pages",
+        "page": "Page {page} of {total}"
+      },
+      "errors": {
+        "start": "Could not start the scan.",
+        "status": "Could not load scan progress.",
+        "scan": "The scan failed. Try running it again.",
+        "results": "Could not load matches.",
+        "link": "Could not link those editions.",
+        "dismiss": "Could not dismiss that match.",
+        "unlink": "Could not unlink that edition.",
+        "linkAll": "Could not link the strong matches.",
+        "restore": "Could not restore that pair."
       }
     }
   },
@@ -14727,7 +14932,8 @@
     "monitored": "Watchlist",
     "monitoredAuthor": "Watchlist Author",
     "tts": "Text-to-Speech",
-    "webSerials": "Manga & Light Novels"
+    "webSerials": "Manga & Light Novels",
+    "editionLinks": "Edition Links"
   },
   "monitored": {
     "controlsBar": {

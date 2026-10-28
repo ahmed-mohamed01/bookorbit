@@ -33,6 +33,13 @@ function handleOpenChange(next: boolean) {
   void panel.handleOpen()
 }
 
+/** Lets the Editions card's "Manage" link open the same panel the trigger does. */
+function openPanel() {
+  if (panel.isEligible && !open.value) handleOpenChange(true)
+}
+
+defineExpose({ openPanel })
+
 // Opening keeps focus off the panel's first control, so a stray Enter right after opening changes nothing.
 function handleOpenAutoFocus(event: Event) {
   event.preventDefault()

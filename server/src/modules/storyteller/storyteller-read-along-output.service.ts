@@ -50,7 +50,7 @@ export class StorytellerReadAlongOutputService implements ReadAlongOutputSource,
   }
 
   async findLostReadAlong(link: ReadAlongLinkTarget): Promise<ReadAlongAttachment | null> {
-    if (link.readAlongBookId !== null || link.textBookId === null) return null;
+    if (link.readAlongBookId !== null || link.textBookId === null || link.audioBookId === null) return null;
     const build = await this.repo.findBuildByPair(link.textBookId, link.audioBookId);
     // The output's foreign key nulls it when the book is deleted, so a set id is a book that exists.
     if (!build || build.status !== 'ready' || build.outputBookId === null) return null;
@@ -60,6 +60,11 @@ export class StorytellerReadAlongOutputService implements ReadAlongOutputSource,
 
   async recordAttachment(buildId: number, linkId: number): Promise<void> {
     await this.repo.updateBuild(buildId, { attachedLinkId: linkId });
+  }
+
+  async isConfigured(): Promise<boolean> {
+    const settings = await this.repo.getSettings();
+    return Boolean(settings?.serverUrl && settings.username && settings.passwordEnc);
   }
 
   async recordDetach(readAlongBookId: number, linkId: number): Promise<void> {

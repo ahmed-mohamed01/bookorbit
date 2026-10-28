@@ -51,6 +51,9 @@ import { useMetadataLocks } from '@/features/book/composables/useMetadataLocks'
 import { usePersonalNote, PERSONAL_NOTE_MAX_LENGTH } from '@/features/book/composables/usePersonalNote'
 import { useResetReadingState } from '@/features/book/composables/useResetReadingState'
 import LinkBookControl from '@/features/book/components/detail/tabs/LinkBookControl.vue'
+import { useWorkForBook } from '@/features/edition-link/composables/useWorkForBook'
+import { useWorkReadAlong } from '@/features/edition-link/composables/useWorkReadAlong'
+import { useEditionLink } from '@/features/book/composables/useEditionLink'
 import DeleteBookDialog from '@/features/book/components/DeleteBookDialog.vue'
 import MoveToLibrarySheet from '@/features/book/components/MoveToLibrarySheet.vue'
 import ResetReadingStateDialog from '@/features/book/components/ResetReadingStateDialog.vue'
@@ -109,6 +112,19 @@ const router = useRouter()
 const { user } = useAuth()
 
 const addToCollectionOpen = ref(false)
+
+const { work, load: loadWork } = useWorkForBook(() => props.book.id)
+const workReadAlong = useWorkReadAlong(work, () => void loadWork())
+const linkControl = ref<{ openPanel: () => void } | null>(null)
+const editionLink = useEditionLink(props.book.id)
+watch(
+  () => editionLink.link.value,
+  () => void loadWork(),
+)
+
+function handleManageWork() {
+  linkControl.value?.openPanel()
+}
 const moveToLibraryOpen = ref(false)
 const scoreBreakdownOpen = ref(false)
 const mobileScoreBreakdownOpen = ref(false)
@@ -1360,6 +1376,7 @@ watch(
               <TooltipContent>{{ t('book.detail.details.peek') }}</TooltipContent>
             </Tooltip>
             <LinkBookControl
+              ref="linkControl"
               :book="book"
               trigger-class="flex items-center justify-center h-9 w-12 shrink-0 rounded-md border border-input bg-background hover:bg-muted transition-colors"
             />
@@ -2062,7 +2079,17 @@ watch(
         </dl>
       </section>
 
-      <BookEditionsCard :book="book" :progress="editionProgress" :resetting-file-ids="resettingFileIds" @reset-progress="handleEditionReset">
+      <BookEditionsCard
+        :book="book"
+        :progress="editionProgress"
+        :resetting-file-ids="resettingFileIds"
+        :work="work"
+        :can-generate-read-along="workReadAlong.canGenerate.value"
+        :generating-read-along="workReadAlong.building.value"
+        @reset-progress="handleEditionReset"
+        @manage-work="handleManageWork"
+        @generate-read-along="workReadAlong.generate"
+      >
         <template #missing>
           <BookMissingFormatRequest :book="book" />
         </template>

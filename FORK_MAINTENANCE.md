@@ -868,6 +868,29 @@ registration, and `sectionHasMediaOverlay` from the `useFoliate` destructure. In
 The unused `reader.narration.*` keys in `en.json` can go too; nothing else reads them. Upstream's bar
 then works as before, since `useMediaOverlay.ts` was never changed.
 
+## Works overlay (edition links as one reading state)
+
+A `book_edition_links` row is a **work**: its members (`book_edition_link_members`, role `text` / `audio` /
+`readAlong`, one primary per role picked by each library's format order) share one status, one attempt
+history, one reading log and one position. Duplicate copies of a role (EPUB + MOBI, M4B + MP3) join as
+non-primary members when the reader's `sameTypeAsOneWork` setting allows it. All code lives in
+`modules/edition-link/` (`work*.ts`), the schema in its bootstrap SQL (members, `edition_link_user_settings`,
+`edition_link_match_scans` / `_results` / `_dismissals`). A trigger on `book_edition_links` keeps every slot
+column equal to the primary member of its role, so the older slot readers keep working unchanged;
+`audio_book_id` is now nullable (guarded `DROP NOT NULL`).
+
+**Seams in shared files:**
+
+| Shared file                                   | Hook                                                                                                                      |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `user-book-status/reading-attempt.service.ts` | optional `READING_STATE_SCOPE_SOURCE`: every entry point resolves the book to the canonical one, projections are mirrored |
+| `kobo/services/kobo-sync.service.ts`          | optional `KOBO_SHELF_FILTER_SOURCE` adds one clause to the shelf query (non-primary ebook copies stay off the device)     |
+
+Both tokens live in fork-authored files beside those services and are provided by the `@Global`
+`EditionLinkProgressModule` (`WorkScopeService`). Without the module both are no-ops and every book keeps
+its own state. `rebuildProjection` on `ReadingAttemptService` became public so the work module can rebuild a
+book after moving attempts.
+
 ## Investigated and rejected - do not re-chase
 
 Each of these was analysed and deliberately left alone. Re-attempting them wastes time.

@@ -60,15 +60,19 @@ describe('EditionLinkProgressService', () => {
   });
   describe('resolveScope', () => {
     function makeScopeService(rows: unknown[]) {
-      const limit = vi.fn().mockResolvedValue(rows);
-      const chain = { from: vi.fn(), where: vi.fn(), limit };
+      const orderBy = vi.fn().mockResolvedValue(rows);
+      const chain = { from: vi.fn(), where: vi.fn(), orderBy };
       chain.from.mockReturnValue(chain);
       chain.where.mockReturnValue(chain);
       return { service: new EditionLinkProgressService({ select: vi.fn().mockReturnValue(chain) } as never), chain };
     }
 
-    it('returns every member of the link, the read-along copy included', async () => {
-      const { service, chain } = makeScopeService([{ textBookId: 10, audioBookId: 20, readAlongBookId: 30 }]);
+    it('returns every member of the work, the read-along copy included', async () => {
+      const { service, chain } = makeScopeService([
+        { bookId: 20, role: 'audio', isPrimary: true },
+        { bookId: 10, role: 'text', isPrimary: true },
+        { bookId: 30, role: 'readAlong', isPrimary: true },
+      ]);
 
       await expect(service.resolveScope(20)).resolves.toEqual([
         { bookId: 10, role: 'text' },
@@ -76,34 +80,28 @@ describe('EditionLinkProgressService', () => {
         { bookId: 30, role: 'readAlong' },
       ]);
 
-      const query = new PgDialect().sqlToQuery(chain.where.mock.calls[0]![0]);
-      expect(query.sql).toContain('"text_book_id"');
-      expect(query.sql).toContain('"read_along_book_id"');
-      expect(query.params).toEqual([20, 20, 20]);
+      const subquery = new PgDialect().sqlToQuery(chain.where.mock.calls[0]![0]);
+      expect(subquery.sql).toContain('"book_id"');
+      expect(subquery.params).toEqual([20]);
     });
 
-    it('returns the text and audio members when the link has no read-along copy', async () => {
-      const { service } = makeScopeService([{ textBookId: 10, audioBookId: 20, readAlongBookId: null }]);
+    it('includes duplicate copies of a role after its primary', async () => {
+      const { service } = makeScopeService([
+        { bookId: 10, role: 'text', isPrimary: true },
+        { bookId: 20, role: 'audio', isPrimary: true },
+        { bookId: 11, role: 'text', isPrimary: false },
+      ]);
 
-      await expect(service.resolveScope(10)).resolves.toEqual([
+      await expect(service.resolveScope(11)).resolves.toEqual([
         { bookId: 10, role: 'text' },
+        { bookId: 11, role: 'text' },
         { bookId: 20, role: 'audio' },
       ]);
     });
 
-    it('emits no text member for a link with no ebook', async () => {
-      const { service } = makeScopeService([{ textBookId: null, audioBookId: 20, readAlongBookId: 30 }]);
-
-      await expect(service.resolveScope(20)).resolves.toEqual([
-        { bookId: 20, role: 'audio' },
-        { bookId: 30, role: 'readAlong' },
-      ]);
-    });
-
-    it('returns null when the book is not linked', async () => {
-      const { service } = makeScopeService([]);
-
-      await expect(service.resolveScope(10)).resolves.toBeNull();
+    it('returns null when the book is not linked or stands alone in its row', async () => {
+      await expect(makeScopeService([]).service.resolveScope(10)).resolves.toBeNull();
+      await expect(makeScopeService([{ bookId: 10, role: 'audio', isPrimary: true }]).service.resolveScope(10)).resolves.toBeNull();
     });
   });
 

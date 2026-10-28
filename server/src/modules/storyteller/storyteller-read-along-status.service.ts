@@ -1173,7 +1173,8 @@ export class StorytellerReadAlongStatusService implements OnModuleInit, OnApplic
   async resolvePair(bookId: number): Promise<StorytellerReadAlongPair | null> {
     const link = await this.editionLinks.findLinkForBook(bookId);
     if (link) {
-      if (link.textBookId === null) return null;
+      if (link.textBookId === null || link.audioBookId === null) return null;
+      if (![link.textBookId, link.audioBookId, link.readAlongBookId].includes(bookId)) return null;
       const role = link.textBookId === bookId ? 'text' : link.audioBookId === bookId ? 'audio' : 'readAlong';
       return { textBookId: link.textBookId, audioBookId: link.audioBookId, linkId: link.id, role, link };
     }

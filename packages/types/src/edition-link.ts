@@ -4,7 +4,8 @@
 export interface EditionLink {
   id: number;
   textBookId: number | null;
-  audioBookId: number;
+  /** Null for a work that holds no audiobook, such as two ebook copies of one book. */
+  audioBookId: number | null;
   readAlongBookId: number | null;
   createdBy: number | null;
   createdAt: string;

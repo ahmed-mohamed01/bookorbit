@@ -21,6 +21,7 @@ import {
   type ReadAlongOutputSource,
 } from './read-along-output-source';
 import type { BookEditionLink } from './schema/edition-link.schema';
+import { WorkService } from './work.service';
 
 export interface EditionLinkForBookResult {
   link: BookEditionLink | null;
@@ -77,6 +78,7 @@ export class EditionLinkService {
     private readonly bookService: BookService,
     private readonly libraryService: LibraryService,
     @Inject(READ_ALONG_OUTPUT_SOURCE) private readonly readAlongOutputs: ReadAlongOutputSource,
+    private readonly works: WorkService,
   ) {}
 
   /**
@@ -86,7 +88,11 @@ export class EditionLinkService {
   async getForBook(user: RequestUser, bookId: number, counterpartId?: number): Promise<EditionLinkForBookResult> {
     await this.bookService.verifyBookAccess(bookId, user);
 
-    const link = await this.repo.findLinkForBook(bookId);
+    const found = await this.repo.findLinkForBook(bookId);
+    // A work without an audiobook (two ebook copies), or a duplicate copy outside the three slots, has no
+    // place in the pair view; the work card shows it.
+    const inSlot = found !== undefined && [found.textBookId, found.audioBookId, found.readAlongBookId].includes(bookId);
+    const link = found?.audioBookId == null || !inSlot ? undefined : (found as BookEditionLink & { audioBookId: number });
     // A proposal beside a link is always an ebook for its audiobook.
     if (link) return this.withProgress(user, { bookId, audio: link.audioBookId === bookId }, false, await this.linkedView(user, bookId, link));
 
@@ -242,7 +248,14 @@ export class EditionLinkService {
       // An audiobook linked to a read-along alone takes the ebook onto that same row, which keeps the read-along.
       const fillable = !textLink && audioLink?.textBookId === null ? audioLink : null;
       if (!fillable && (bookLink || counterpartLink)) {
-        throw new ConflictException('One or both books are already linked');
+        const linkId = await this.works.joinWorks(user, textBookId, audioBookId);
+        const joined = await this.repo.findLinkForBook(bookId);
+        if (!joined) throw new ConflictException('One or both books are already linked');
+        await this.works.mergeStateForBook(bookId, user.id);
+        this.logger.log(
+          `[edition_link.link] [end] bookId=${bookId} counterpartId=${counterpartId} userId=${user.id} linkId=${linkId} durationMs=${Date.now() - startedAt} outcome=works_joined - edition link completed`,
+        );
+        return joined;
       }
 
       // A fill whose row a concurrent detach just removed finds the audiobook free again.
@@ -255,6 +268,7 @@ export class EditionLinkService {
       // after a lost fill: that row went away with a detach, and the new one must not undo it.
       const link = fillable && !filled ? inserted : await this.attachLostReadAlong(inserted, user.id);
       const readAlongBookId = await this.visibleReadAlongId(link, bookId, user);
+      await this.works.mergeStateForBook(bookId, user.id);
 
       this.logger.log(
         `[edition_link.link] [end] bookId=${bookId} counterpartId=${counterpartId} userId=${user.id} linkId=${link.id} durationMs=${Date.now() - startedAt} readAlongAttached=${link.readAlongBookId !== null} - edition link completed`,
@@ -282,10 +296,15 @@ export class EditionLinkService {
       const pairIds = [link.textBookId, link.audioBookId].filter((id): id is number => id !== null && id !== bookId);
       await Promise.all(pairIds.map((id) => this.bookService.verifyBookAccess(id, user)));
 
+      const members = await this.works.findMembers(bookId);
+      const detach = await this.works.prepareDetach(bookId);
       const role = this.resolveRole(link, bookId);
       let updated: BookEditionLink | undefined;
-      let outcome: 'read_along_detached' | 'text_left' | 'link_deleted';
-      if (role === 'readAlong') {
+      let outcome: 'read_along_detached' | 'text_left' | 'link_deleted' | 'member_removed';
+      if (members.some((member) => !member.isPrimary) || role === null) {
+        updated = await this.works.removeMember(bookId, members);
+        outcome = 'member_removed';
+      } else if (role === 'readAlong') {
         // From the read-along's own page, unlinking means "this generated book is no longer part of that
         // link" - the rest of the link stays. The detach is recorded on the build first: a recorded detach
         // on a link still carrying the book reads as attached, whereas an unrecorded one would be healed
@@ -303,6 +322,12 @@ export class EditionLinkService {
         outcome = 'link_deleted';
       }
       if (!updated) throw new NotFoundException('Edition link not found');
+      await this.works.finishDetach(detach);
+      await this.works.notifyChanged(
+        user.id,
+        members.map((member) => member.bookId),
+        members.filter((member) => member.role === 'audio').map((member) => member.bookId),
+      );
 
       this.logger.log(
         `[edition_link.unlink] [end] bookId=${bookId} userId=${user.id} linkId=${updated.id} textBookId=${link.textBookId ?? 'none'} durationMs=${Date.now() - startedAt} outcome=${outcome} - edition unlink completed`,
@@ -440,7 +465,10 @@ export class EditionLinkService {
 
   private async writeReadAlongAttachment(link: BookEditionLink, readAlong: ReadAlongAttachment): Promise<BookEditionLink | undefined> {
     const updated = await this.repo.setReadAlongBook(link.id, readAlong.outputBookId);
-    if (updated) await this.readAlongOutputs.recordAttachment(readAlong.buildId, link.id);
+    if (updated) {
+      await this.readAlongOutputs.recordAttachment(readAlong.buildId, link.id);
+      await this.works.mergeStateForBook(readAlong.outputBookId);
+    }
     return updated;
   }
 
@@ -462,14 +490,16 @@ export class EditionLinkService {
     if (pairAccess.some((allowed) => !allowed)) return unlinked();
 
     const link = await this.attachLostReadAlong(found, user.id);
+    const audioBookId = link.audioBookId;
+    if (audioBookId === null) return unlinked();
     const readAlongBookId = await this.visibleReadAlongId(link, bookId, user);
     // A link holding only the audiobook and its read-along still wants an ebook, so the page gets the same proposal an unlinked audiobook would.
-    const proposed = link.textBookId === null ? await this.proposeEbook(user, link.audioBookId) : null;
+    const proposed = link.textBookId === null ? await this.proposeEbook(user, audioBookId) : null;
     // With its read-along masked, an ebook-less link would read as a linked audiobook on its own.
     if (link.textBookId === null && readAlongBookId === null) return unlinked(proposed);
     const role = this.resolveRole(link, bookId);
-    const { members, summaries } = await this.resolveMembers(user, link.textBookId, link.audioBookId, readAlongBookId);
-    const counterpartId = role === 'audio' ? link.textBookId : link.audioBookId;
+    const { members, summaries } = await this.resolveMembers(user, link.textBookId, audioBookId, readAlongBookId);
+    const counterpartId = role === 'audio' ? link.textBookId : audioBookId;
     const counterpart = (counterpartId === null ? null : summaries.get(counterpartId)) ?? null;
     const visibleLink = readAlongBookId === link.readAlongBookId ? link : { ...link, readAlongBookId };
     return { link: visibleLink, proposed, counterpart, role, members };
@@ -494,8 +524,8 @@ export class EditionLinkService {
       if (healed.readAlongBookId === bookId) return this.linkedView(user, bookId, healed);
       // A slot holding another read-along leaves this one nothing to rejoin.
       if (healed.readAlongBookId !== null) return null;
-      const { members, summaries } = await this.resolveMembers(user, healed.textBookId, healed.audioBookId, null);
-      return { link: healed, proposed: null, counterpart: summaries.get(healed.audioBookId) ?? null, role: 'readAlong', members };
+      const { members, summaries } = await this.resolveMembers(user, healed.textBookId, pair.audioBookId, null);
+      return { link: healed, proposed: null, counterpart: summaries.get(pair.audioBookId) ?? null, role: 'readAlong', members };
     }
     // The page's own book is not a member here: it is the detached read-along the pair could take back.
     // An ebook linked elsewhere or out of reach is left off, and the audiobook still shows.

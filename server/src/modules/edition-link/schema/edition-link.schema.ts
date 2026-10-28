@@ -9,9 +9,7 @@ export const bookEditionLinks = pgTable(
   {
     id: serial('id').primaryKey(),
     textBookId: integer('text_book_id').references(() => books.id, { onDelete: 'cascade' }),
-    audioBookId: integer('audio_book_id')
-      .notNull()
-      .references(() => books.id, { onDelete: 'cascade' }),
+    audioBookId: integer('audio_book_id').references(() => books.id, { onDelete: 'cascade' }),
     // Optional third member: the generated read-along book. ON DELETE SET NULL so deleting the
     // generated output leaves the text/audio pair linked instead of dropping the whole row.
     readAlongBookId: integer('read_along_book_id').references(() => books.id, { onDelete: 'set null' }),

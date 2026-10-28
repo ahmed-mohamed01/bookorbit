@@ -26,6 +26,8 @@ export interface ReadAlongOutputSource {
    * purpose, so a later heal leaves it detached. A book no build generated has nothing to record.
    */
   recordDetach(readAlongBookId: number, linkId: number): Promise<void>;
+  /** Whether a read-along generator is connected, so a page can offer to generate one. */
+  isConfigured(): Promise<boolean>;
 }
 
 export interface ReadAlongSourcePair {
@@ -36,7 +38,7 @@ export interface ReadAlongSourcePair {
 export interface ReadAlongLinkTarget {
   id: number;
   textBookId: number | null;
-  audioBookId: number;
+  audioBookId: number | null;
   readAlongBookId: number | null;
 }
 

@@ -1,5 +1,5 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReadingAttemptService } from './reading-attempt.service';
 import { ReadingAttemptEventsService } from './reading-attempt-events.service';
 import { makeFakeRepo } from '../../../test/helpers/reading-attempt-repository.fake';
@@ -689,6 +689,67 @@ describe('ReadingAttemptService', () => {
         externalProvider: null,
         externalId: null,
       });
+    });
+  });
+
+  describe('a book that shares its reading state with a work', () => {
+    const scope = { resolveScope: vi.fn() };
+
+    beforeEach(() => {
+      scope.resolveScope.mockReset();
+      scope.resolveScope.mockImplementation((_userId: number, bookId: number) =>
+        Promise.resolve([10, 20, 30].includes(bookId) ? { canonicalBookId: 20, mirrorBookIds: [10, 30].filter((id) => id !== 20) } : null),
+      );
+      service = new ReadingAttemptService(fake.repo as never, new ReadingAttemptEventsService(), scope);
+    });
+
+    it('records activity on the canonical book and mirrors the status onto every other variant once', async () => {
+      const result = await service.recordActivity({
+        userId: 1,
+        bookId: 10,
+        occurredOn: '2026-07-12',
+        origin: 'kobo',
+        progress: 99,
+        finishThreshold: 98,
+        strongRereadEvidence: false,
+        meaningfulActivity: true,
+      });
+
+      expect(result?.status).toBe('read');
+      expect(fake.rows).toHaveLength(1);
+      expect(fake.rows[0]).toMatchObject({ bookId: 20, outcome: 'completed' });
+      expect(scope.resolveScope).toHaveBeenCalledTimes(1);
+      const projected = fake.repo.project.mock.calls.map((call) => call[2]);
+      expect(projected).toEqual([20, 10, 30]);
+      expect(new Set(fake.repo.project.mock.calls.map((call) => call[3].status))).toEqual(new Set(['read']));
+    });
+
+    it('lists, updates and deletes attempts on the canonical book whichever variant asks', async () => {
+      await service.createHistorical(1, 30, { startedOn: '2026-01-01', endedOn: '2026-01-05', outcome: 'completed' });
+
+      await service.list(1, 10);
+      expect(fake.repo.list).toHaveBeenCalledWith(1, 20, 1, 20);
+      const attemptId = fake.rows[0]!.id;
+      expect(fake.rows[0]).toMatchObject({ bookId: 20 });
+      await service.update(1, 30, attemptId, { endedOn: '2026-01-06' });
+      expect(fake.rows[0]).toMatchObject({ bookId: 20, endedOn: '2026-01-06' });
+      await service.delete(1, 10, attemptId);
+      expect(fake.repo.softDelete).toHaveBeenCalledWith(1, 20, attemptId);
+    });
+
+    it('applies a manual status on the canonical book and mirrors it', async () => {
+      const result = await service.applyManualStatus(1, 30, 'reading', undefined, undefined, '2026-07-12');
+
+      expect(result.status).toBe('reading');
+      expect(fake.rows[0]).toMatchObject({ bookId: 20, outcome: null });
+      expect(fake.repo.project.mock.calls.map((call) => call[2])).toEqual([20, 10, 30]);
+    });
+
+    it('keeps a lone book on its own state', async () => {
+      await service.applyManualStatus(1, 99, 'reading', undefined, undefined, '2026-07-12');
+
+      expect(fake.rows[0]).toMatchObject({ bookId: 99 });
+      expect(fake.repo.project.mock.calls.map((call) => call[2])).toEqual([99]);
     });
   });
 });

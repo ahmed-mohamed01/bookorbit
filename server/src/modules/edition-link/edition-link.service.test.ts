@@ -9,6 +9,7 @@ import { LibraryService } from '../library/library.service';
 import { EditionLinkRepository } from './edition-link.repository';
 import { EditionLinkService } from './edition-link.service';
 import { READ_ALONG_OUTPUT_SOURCE } from './read-along-output-source';
+import { WorkService } from './work.service';
 
 type BuildProposal = { textBookId: number; audioBookId: number; status: string; outputBookId: number | null };
 
@@ -27,6 +28,15 @@ describe('EditionLinkService', () => {
     findReadingPercentages: ReturnType<typeof vi.fn>;
   };
   let bookService: { verifyBookAccess: ReturnType<typeof vi.fn> };
+  let works: {
+    joinWorks: ReturnType<typeof vi.fn>;
+    mergeStateForBook: ReturnType<typeof vi.fn>;
+    findMembers: ReturnType<typeof vi.fn>;
+    prepareDetach: ReturnType<typeof vi.fn>;
+    finishDetach: ReturnType<typeof vi.fn>;
+    notifyChanged: ReturnType<typeof vi.fn>;
+    removeMember: ReturnType<typeof vi.fn>;
+  };
   let libraryService: { findAccessibleLibraryIds: ReturnType<typeof vi.fn> };
   let readAlongOutputs: {
     findReadAlongOutputs: Mock<(bookIds: readonly number[]) => Promise<Set<number>>>;
@@ -79,6 +89,15 @@ describe('EditionLinkService', () => {
     bookService = {
       verifyBookAccess: vi.fn().mockResolvedValue(undefined),
     };
+    works = {
+      joinWorks: vi.fn().mockRejectedValue(new ConflictException('One or both books are already linked')),
+      mergeStateForBook: vi.fn().mockResolvedValue(undefined),
+      findMembers: vi.fn().mockResolvedValue([]),
+      prepareDetach: vi.fn().mockResolvedValue({ bookId: 0, remainingBookIds: [], carryOver: [], readers: [] }),
+      finishDetach: vi.fn().mockResolvedValue(undefined),
+      notifyChanged: vi.fn().mockResolvedValue(undefined),
+      removeMember: vi.fn(),
+    };
     libraryService = {
       findAccessibleLibraryIds: vi.fn().mockResolvedValue([1, 2]),
     };
@@ -100,6 +119,7 @@ describe('EditionLinkService', () => {
         { provide: BookService, useValue: bookService },
         { provide: LibraryService, useValue: libraryService },
         { provide: READ_ALONG_OUTPUT_SOURCE, useValue: readAlongOutputs },
+        { provide: WorkService, useValue: works },
       ],
     }).compile();
     service = module.get(EditionLinkService);
@@ -1505,6 +1525,65 @@ describe('EditionLinkService', () => {
 
         expect(result.pickedProgress).toBeUndefined();
       });
+    });
+  });
+
+  describe('works', () => {
+    it('joins an ebook already in a work to an audiobook and folds the history together', async () => {
+      (repo.getBookModality as Mock<(id: number) => Promise<string>>).mockImplementation((id) => Promise.resolve(id === 10 ? 'text' : 'audio'));
+      const joined = { ...linkRow, id: 12, audioBookId: 21 };
+      works.joinWorks.mockResolvedValue(12);
+      repo.findLinkForBook.mockResolvedValueOnce(linkRow).mockResolvedValueOnce(undefined).mockResolvedValueOnce(joined);
+
+      await expect(service.link(user, 10, 21)).resolves.toEqual(joined);
+      expect(works.joinWorks).toHaveBeenCalledWith(user, 10, 21);
+      expect(works.mergeStateForBook).toHaveBeenCalledWith(10, 7);
+      expect(repo.insertLink).not.toHaveBeenCalled();
+    });
+
+    it('folds the history together after a fresh link', async () => {
+      (repo.getBookModality as Mock<(id: number) => Promise<string>>).mockImplementation((id) => Promise.resolve(id === 10 ? 'text' : 'audio'));
+
+      await service.link(user, 10, 20);
+
+      expect(works.mergeStateForBook).toHaveBeenCalledWith(10, 7);
+    });
+
+    it('removes a member of a work with duplicate copies through the work, copying history around it', async () => {
+      const members = [
+        { linkId: 9, bookId: 10, role: 'text', isPrimary: true },
+        { linkId: 9, bookId: 11, role: 'text', isPrimary: false },
+        { linkId: 9, bookId: 20, role: 'audio', isPrimary: true },
+      ];
+      const context = { bookId: 11, remainingBookIds: [10, 20], carryOver: [], readers: [7] };
+      repo.findLinkForBook.mockResolvedValue(linkRow);
+      works.findMembers.mockResolvedValue(members);
+      works.prepareDetach.mockResolvedValue(context);
+      works.removeMember.mockResolvedValue(linkRow);
+
+      await expect(service.unlink(user, 11)).resolves.toEqual(linkRow);
+
+      expect(works.removeMember).toHaveBeenCalledWith(11, members);
+      expect(repo.setTextBook).not.toHaveBeenCalled();
+      expect(repo.deleteLink).not.toHaveBeenCalled();
+      expect(works.prepareDetach.mock.invocationCallOrder[0]).toBeLessThan(works.removeMember.mock.invocationCallOrder[0]!);
+      expect(works.finishDetach).toHaveBeenCalledWith(context);
+      expect(works.notifyChanged).toHaveBeenCalledWith(7, [10, 11, 20], [20]);
+    });
+
+    it('copies history onto a book leaving a plain pair before the slot is cleared', async () => {
+      repo.findLinkForBook.mockResolvedValue(linkRow);
+      works.findMembers.mockResolvedValue([
+        { linkId: 9, bookId: 10, role: 'text', isPrimary: true },
+        { linkId: 9, bookId: 20, role: 'audio', isPrimary: true },
+      ]);
+      repo.setTextBook.mockResolvedValue({ ...linkRow, textBookId: null });
+
+      await service.unlink(user, 10);
+
+      expect(works.prepareDetach).toHaveBeenCalledWith(10);
+      expect(works.prepareDetach.mock.invocationCallOrder[0]).toBeLessThan(repo.setTextBook.mock.invocationCallOrder[0]!);
+      expect(works.finishDetach).toHaveBeenCalled();
     });
   });
 });
