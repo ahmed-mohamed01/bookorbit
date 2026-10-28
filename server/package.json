@@ -39,6 +39,7 @@
     "tts:register-kokoro": "tsx --env-file-if-exists=.env src/scripts/register-kokoro-provider.ts",
     "whats-new:preview": "tsx src/scripts/whats-new-preview.ts",
     "whats-new:lint": "tsx src/scripts/whats-new-lint.ts",
+    "audit:work-matching": "tsx --env-file-if-exists=.env src/scripts/audit-work-matching.ts",
     "whats-new:check": "tsx src/scripts/whats-new-check.ts",
     "whats-new:images": "tsx src/scripts/whats-new-images.ts",
     "pretype-check": "pnpm --filter @bookorbit/types build && pnpm --filter @bookorbit/plugin-api build",
