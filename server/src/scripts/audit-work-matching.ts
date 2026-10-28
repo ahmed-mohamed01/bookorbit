@@ -221,7 +221,7 @@ function classify(source: BookRow, targetType: VariantType | 'duplicate', best: 
   return { ...base, bucket: 'none', reason: `best only ${best.score}` };
 }
 
-function report(books: BookRow[], pairings: Pairing[], abs: Map<number, AbsState>, attempts: Map<number, AttemptCounts>, t: Thresholds): void {
+function report(books: BookRow[], pairings: Pairing[], abs: Map<string, AbsState>, attempts: Map<number, AttemptCounts>, t: Thresholds): void {
   const count = (predicate: (pairing: Pairing) => boolean) => pairings.filter(predicate).length;
   const byType = (type: VariantType) => books.filter((book) => book.type === type).length;
   console.log(`Books: ${books.length} (text ${byType('text')}, audio ${byType('audio')}, read-along ${byType('readAlong')})`);
