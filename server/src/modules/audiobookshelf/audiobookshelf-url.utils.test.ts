@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { lookup } from 'dns/promises';
 import { PrivateAddressException } from '../../common/utils/ssrf.utils';
-import { audiobookshelfSafeRemoteHostOptions, ensureSafeAudiobookshelfUrl, parseAndNormalizeServerUrl } from './audiobookshelf-url.utils';
+import { ensureSafeAudiobookshelfUrl, parseAndNormalizeServerUrl } from './audiobookshelf-url.utils';
 
 vi.mock('dns/promises', () => ({ lookup: vi.fn() }));
 
@@ -16,12 +16,6 @@ describe('parseAndNormalizeServerUrl', () => {
   it('rejects a non-http(s) scheme and an unparseable URL', () => {
     expect(parseAndNormalizeServerUrl('ftp://abs.example.com')).toBeNull();
     expect(parseAndNormalizeServerUrl('not a url')).toBeNull();
-  });
-});
-
-describe('audiobookshelfSafeRemoteHostOptions', () => {
-  it('allows LAN targets but keeps link-local blocked', () => {
-    expect(audiobookshelfSafeRemoteHostOptions()).toEqual({ allowLocal: true, allowPrivate: true, blockLinkLocal: true });
   });
 });
 

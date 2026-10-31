@@ -7,7 +7,6 @@ import type {
   WebSerialPrintSeriesInput,
   WebSerialPrintState,
   RequestWebSerialVolumesInput,
-  LinkWebSerialBatchInput,
   CreateWebSerialJobInput,
   MoveWebSerialJobInput,
   MoveWebSerialJobResult,
@@ -47,10 +46,6 @@ import type {
 const BASE = '/api/v1/web-serials'
 
 export type WebSerialSearchScope = 'all' | 'manga' | 'novel'
-
-export function seriesCoverPath(seriesKey: string): string {
-  return `${BASE}/series/${encodeURIComponent(seriesKey)}/cover`
-}
 
 export async function fetchCapabilities(): Promise<WebSerialCapabilities> {
   return apiJson(`${BASE}/capabilities`, undefined, 'webSerials.api.capabilities')
@@ -292,10 +287,6 @@ export async function fetchPrintState(matchId: string, input: WebSerialPrintSeri
 
 export async function requestPrintVolumes(matchId: string, input: RequestWebSerialVolumesInput): Promise<WebSerialPrintState> {
   return apiJson(`${BASE}/novel/${encodeURIComponent(matchId)}/series-request`, jsonBody('POST', input), 'webSerials.api.requestVolume')
-}
-
-export async function linkPrintBatch(matchId: string, input: LinkWebSerialBatchInput): Promise<void> {
-  await apiSend(`${BASE}/novel/${encodeURIComponent(matchId)}/batches`, jsonBody('POST', input), 'webSerials.api.recordRequest')
 }
 
 export async function createPrintDraft(matchId: string, input: WebSerialPrintSeriesInput): Promise<WebSerialDraft> {

@@ -134,7 +134,7 @@ it('keeps unmatched releases selectable in a collapsed disclosure and places the
   flow.releases.value.push({ ...flow.releases.value[0]!, guid: 'unmatched', title: 'My Sony Library part A-B', volumes: [], score: 0 })
   const torrentPicks = ref(true)
   Object.assign(flow, {
-    hasTorrentPicks: torrentPicks,
+    needsClient: torrentPicks,
     clients: ref([{ id: 5, name: 'Qbit', color: null, delivery: 'torrent', fileSelection: true }]),
   })
   vi.mocked(useLightNovelAcquisition).mockReturnValue(flow)

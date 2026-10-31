@@ -6454,15 +6454,9 @@
         "metadataScore": "Metatietojen Pistemäärä",
         "primaryFormat": "Ensisijainen muoto",
         "readAloudSync": {
-          "title": "Luetun edistymisen synkronointi",
           "state": {
-            "enabled": "Käytössä",
-            "disabled": "Pois Käytöstä",
-            "unavailable": "Unavailable",
             "epubCopiesOnly": "Vain EPUB-kopiot"
           },
-          "enabledDescription": "Äänikirja, verkkolukija, Kobo ja KOReader-asema pysyvät synkronoina.",
-          "disabledDescription": "Jokainen muoto säilyttää oman lukuasemansa.",
           "epubCopiesDescription": "Web-lukijan, Kobon ja KOReaderin sijainnit pysyvät synkronoituna EPUB-kopioissa. Lisää vastaavia äänikirjatiedostoja synkronoidaksesi myös äänikirjan.",
           "reason": {
             "no_media_overlay_epub": "Tarvitaan luettavaa EPUB:tä, jossa on median peittoja.",
@@ -6470,9 +6464,6 @@
             "missing_duration": "Äänen keston metadata on epätäydellinen.",
             "durationMismatch": "Kestot eivät vastaa riittävän tarkasti: audiobook {audio}, luku-along EPUB {overlay}."
           },
-          "enable": "Aktivoi",
-          "disable": "Poista Käytöstä",
-          "saving": "Tallennetaan...",
           "saveFailed": "Ei voitu päivittää luku-aloudin edistymisen synkronointia."
         },
         "openIn": "Avaa nimellä {provider}",

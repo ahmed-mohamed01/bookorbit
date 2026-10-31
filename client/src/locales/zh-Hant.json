@@ -6456,15 +6456,9 @@
         "metadataScore": "後設資料分數",
         "primaryFormat": "主要格式",
         "readAloudSync": {
-          "title": "朗讀進度同步",
           "state": {
-            "enabled": "已啟用",
-            "disabled": "已停用",
-            "unavailable": "不可用",
             "epubCopiesOnly": "僅限 EPUB 副本"
           },
-          "enabledDescription": "有聲書、網頁閱讀器、Kobo 和 KOReader 的進度保持同步。",
-          "disabledDescription": "每種格式各自保留自己的閱讀位置。",
           "epubCopiesDescription": "網頁閱讀器、Kobo 和 KOReader 的進度會在各 EPUB 副本之間保持同步。新增匹配的有聲書檔案後，有聲書也會同步。",
           "reason": {
             "no_media_overlay_epub": "需要帶媒體疊加層的伴讀 EPUB。",
@@ -6472,9 +6466,6 @@
             "missing_duration": "音訊時長後設資料不完整。",
             "durationMismatch": "時長差距過大：有聲書 {audio}，伴讀 EPUB {overlay}。"
           },
-          "enable": "啟用",
-          "disable": "停用",
-          "saving": "正在儲存……",
           "saveFailed": "無法更新朗讀進度同步。"
         },
         "openIn": "使用 {provider} 開啟",

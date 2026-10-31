@@ -1,3 +1,4 @@
+import { assertOffsetWithinLimit } from '../../common/constants/pagination.constants';
 import { randomUUID } from 'node:crypto';
 
 import { ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
@@ -37,6 +38,7 @@ import { countWorkClasses, isDefaultClassSelection, MONITORED_ACQUISITION_STATE_
 
 import type { RequestUser } from '../../common/types/request-user';
 import { accentInsensitiveIlike, buildSearchPattern, escapeLikePattern } from '../../common/utils/accent-insensitive-search.utils';
+import { chunk } from '../../common/utils/batch.utils';
 import { normalizeMetadataText } from '../../common/utils/metadata-text-normalize.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { applySchemaStatements, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
@@ -65,12 +67,6 @@ import type { AuthorCatalogWorkRow, MonitoredAuthorRow, MonitoredAuthorWorkRow, 
 const WRITE_BATCH_SIZE = 250;
 /** The OR arms the identity prefilter may spend on one candidate list, so a query stays bounded. */
 const IDENTITY_LIKE_MAX_RUNS = 10;
-
-function batches<T>(values: T[]): T[][] {
-  const result: T[][] = [];
-  for (let index = 0; index < values.length; index += WRITE_BATCH_SIZE) result.push(values.slice(index, index + WRITE_BATCH_SIZE));
-  return result;
-}
 
 function storedRatings(sources: Array<typeof schema.authorCatalogSourceWorks.$inferSelect>): { ratings?: MonitoredWorkRating[] } {
   const ratings = sources.flatMap((source) =>
@@ -313,6 +309,7 @@ export class MonitoredStoreService {
     order: MonitoredListOrder;
     today: string;
   }): Promise<{ items: MonitoredAuthorPageEntry[]; total: number; page: number; size: number }> {
+    assertOffsetWithinLimit(params.page, params.size);
     const { viewer } = params;
     const scope = this.readScope(viewer, schema.monitoredAuthors.ownerUserId);
     const where = and(scope, params.q ? accentInsensitiveIlike(schema.monitoredAuthors.authorName, buildSearchPattern(params.q)) : undefined)!;
@@ -405,6 +402,7 @@ export class MonitoredStoreService {
     page: number,
     size: number,
   ): Promise<{ items: string[]; total: number; page: number; size: number }> {
+    assertOffsetWithinLimit(page, size);
     const where = this.readScope(viewer, schema.monitoredAuthors.ownerUserId);
     const [rows, [countRow]] = await this.snapshotRead(async (tx) => {
       const dataQuery = tx
@@ -428,6 +426,7 @@ export class MonitoredStoreService {
     sort: MonitoredBookListSort;
     order: MonitoredListOrder;
   }): Promise<{ items: MonitoredBookPageEntry[]; total: number; page: number; size: number }> {
+    assertOffsetWithinLimit(params.page, params.size);
     const bookScope = this.readScope(params.viewer, schema.monitoredBooks.ownerUserId);
     const authorScope = this.readScope(params.viewer, schema.monitoredAuthors.ownerUserId);
     const qPattern = params.q ? buildSearchPattern(params.q) : null;
@@ -550,6 +549,7 @@ export class MonitoredStoreService {
     page: number;
     size: number;
   }> {
+    assertOffsetWithinLimit(params.page, params.size);
     const term = normalizeMetadataText(params.q);
     if (!term) return { items: [], total: 0, page: params.page, size: params.size };
     const where = this.workSearchCondition(params.viewer, term);
@@ -664,6 +664,7 @@ export class MonitoredStoreService {
     soonLatest: string;
     currentYear: string;
   }): Promise<{ items: MonitoredReleasePageEntry[]; total: number; cards: MonitoredReleaseCardCounts; page: number; size: number }> {
+    assertOffsetWithinLimit(params.page, params.size);
     const hasStatusBuckets = params.status?.some((status) => status !== 'hidden');
     const libraryIds = hasStatusBuckets && !params.viewer.isSuperuser ? await this.libraries.findAccessibleLibraryIds(params.viewer) : null;
     const releaseRows = this.releaseRowsSql({ ...params, libraryIds });
@@ -1294,38 +1295,6 @@ export class MonitoredStoreService {
     return result;
   }
 
-  async getReleaseWorks(monitorIds: string[], viewer: RequestUser, earliest: string, latest: string): Promise<Map<string, MonitoredWork[]>> {
-    const result = new Map<string, MonitoredWork[]>(monitorIds.map((id) => [id, []]));
-    if (!monitorIds.length) return result;
-    const visible = visibleWorkCondition();
-    const active = activeWorkCondition(visible);
-    const ebook = and(
-      ne(schema.monitoredAuthors.ebookMode, 'off'),
-      or(ne(schema.monitoredAuthorWorks.monitorEbook, false), sql`${schema.monitoredAuthorWorks.monitorEbook} is null`),
-      releaseRangeOverlapsSql(schema.authorCatalogWorks.ebookReleaseDate, schema.authorCatalogWorks.ebookDatePrecision, earliest, latest),
-    );
-    const audio = and(
-      ne(schema.monitoredAuthors.audiobookMode, 'off'),
-      or(ne(schema.monitoredAuthorWorks.monitorAudiobook, false), sql`${schema.monitoredAuthorWorks.monitorAudiobook} is null`),
-      releaseRangeOverlapsSql(schema.authorCatalogWorks.audioReleaseDate, schema.authorCatalogWorks.audioDatePrecision, earliest, latest),
-    );
-    const rows = await this.db
-      .select({ work: schema.authorCatalogWorks })
-      .from(schema.authorCatalogWorks)
-      .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, schema.authorCatalogWorks.monitorAuthorId))
-      .innerJoin(schema.authorCatalogState, eq(schema.authorCatalogState.monitorAuthorId, schema.monitoredAuthors.id))
-      .leftJoin(schema.monitoredAuthorWorks, eq(schema.monitoredAuthorWorks.workId, schema.authorCatalogWorks.id))
-      .where(
-        and(inArray(schema.monitoredAuthors.id, monitorIds), this.readScope(viewer, schema.monitoredAuthors.ownerUserId), active, or(ebook, audio)),
-      );
-    const composed = await this.composeWorks(
-      rows.map((row) => row.work),
-      viewer,
-    );
-    for (const item of composed) result.set(item.monitorAuthorId, [...(result.get(item.monitorAuthorId) ?? []), item.work]);
-    return result;
-  }
-
   async getWorkWithMonitor(workId: string, viewer?: RequestUser): Promise<MonitoredWorkEntry | null> {
     const clauses = [eq(schema.authorCatalogWorks.id, workId)];
     if (viewer) clauses.push(this.readScope(viewer, schema.monitoredAuthors.ownerUserId));
@@ -1629,7 +1598,10 @@ export class MonitoredStoreService {
         if (options.enrolReleaseProbes) await enrolReleaseProbes(tx, monitorId, catalog.fetchedAt.slice(0, 10));
         return;
       }
-      for (const values of batches(catalog.works.map((work) => this.workValues(monitorId, work)))) {
+      for (const values of chunk(
+        catalog.works.map((work) => this.workValues(monitorId, work)),
+        WRITE_BATCH_SIZE,
+      )) {
         await tx
           .insert(schema.authorCatalogWorks)
           .values(values)
@@ -1666,7 +1638,7 @@ export class MonitoredStoreService {
       }
       await tx.delete(schema.authorCatalogSourceWorks).where(inArray(schema.authorCatalogSourceWorks.workId, ids));
       const sources = catalog.works.flatMap((work) => this.sourceValues(work));
-      for (const batch of batches(sources)) await tx.insert(schema.authorCatalogSourceWorks).values(batch);
+      for (const batch of chunk(sources, WRITE_BATCH_SIZE)) await tx.insert(schema.authorCatalogSourceWorks).values(batch);
       await restoreRequestLedger(tx, monitorId);
       await restoreChoiceLedger(tx, monitorId, previousWorkIds);
       await reapplyReleaseOverlay(tx, monitorId);
@@ -1818,7 +1790,7 @@ export class MonitoredStoreService {
     const fresh = releases.filter((release) => !release.claimed);
     if (!fresh.length) return won;
     const detectedAt = new Date();
-    for (const batch of batches(fresh)) {
+    for (const batch of chunk(fresh, WRITE_BATCH_SIZE)) {
       const inserted = await this.db
         .insert(schema.monitoredReleaseEvents)
         .values(

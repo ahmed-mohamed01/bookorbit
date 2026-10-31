@@ -1,4 +1,6 @@
 import { api } from '@/lib/api'
+import { readApiErrorDetail } from '@/lib/api-error'
+import { jsonBody } from '@/lib/api-json'
 import type {
   AudiobookshelfBookState,
   AudiobookshelfBookStateBucket,
@@ -37,8 +39,7 @@ export type { BookSearchOption }
 
 async function responseError(response: Response, fallback: string, conflictMessage?: string): Promise<Error> {
   if (response.status === 409 && conflictMessage) return new Error(conflictMessage)
-  const body = await response.json().catch(() => ({}))
-  return new Error((body as { message?: string }).message ?? fallback)
+  return new Error((await readApiErrorDetail(response)) ?? fallback)
 }
 
 export async function fetchAudiobookshelfSettings(): Promise<AudiobookshelfSettings> {
@@ -54,11 +55,7 @@ export async function fetchAudiobookshelfLibraries(): Promise<AudiobookshelfLibr
 }
 
 export async function updateAudiobookshelfSettings(payload: UpsertAudiobookshelfSettingsPayload): Promise<AudiobookshelfSettings> {
-  const response = await api(`${BASE}/settings`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  const response = await api(`${BASE}/settings`, jsonBody('PATCH', payload))
   if (!response.ok) throw await responseError(response, 'Failed to save Audiobookshelf settings')
   return response.json()
 }
@@ -77,11 +74,7 @@ export async function disconnectAudiobookshelf(): Promise<void> {
 }
 
 export async function testAudiobookshelfConnection(payload: AudiobookshelfConnectionTestPayload): Promise<AudiobookshelfConnectionTestResult> {
-  const response = await api(`${BASE}/test-connection`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  const response = await api(`${BASE}/test-connection`, jsonBody('POST', payload))
   if (!response.ok) throw await responseError(response, 'Failed to test Audiobookshelf connection')
   return response.json()
 }
@@ -128,11 +121,7 @@ export async function reconcileAudiobookshelfPosition(
   absLibraryItemId: string,
   direction: AudiobookshelfReconcileDirection,
 ): Promise<AudiobookshelfBookSyncLive> {
-  const response = await api(`${BASE}/books/${encodeURIComponent(absLibraryItemId)}/reconcile`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ direction }),
-  })
+  const response = await api(`${BASE}/books/${encodeURIComponent(absLibraryItemId)}/reconcile`, jsonBody('POST', { direction }))
   if (!response.ok) {
     const error = await responseError(response, 'Failed to sync the position')
     throw new AudiobookshelfReconcileError(error.message, response.status)
@@ -154,11 +143,7 @@ export async function linkAudiobookshelfBook(
   absLibraryItemId: string,
   bookId: AudiobookshelfLinkBookPayload['bookId'],
 ): Promise<AudiobookshelfBookState> {
-  const response = await api(`${BASE}/books/${encodeURIComponent(absLibraryItemId)}/link`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bookId }),
-  })
+  const response = await api(`${BASE}/books/${encodeURIComponent(absLibraryItemId)}/link`, jsonBody('PATCH', { bookId }))
   if (!response.ok) throw await responseError(response, 'Failed to link Audiobookshelf book')
   return response.json()
 }
@@ -173,11 +158,7 @@ export async function updateAudiobookshelfBookExclusion(
   absLibraryItemId: string,
   syncExcluded: AudiobookshelfExclusionPayload['syncExcluded'],
 ): Promise<AudiobookshelfBookState> {
-  const response = await api(`${BASE}/books/${encodeURIComponent(absLibraryItemId)}/exclusion`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ syncExcluded }),
-  })
+  const response = await api(`${BASE}/books/${encodeURIComponent(absLibraryItemId)}/exclusion`, jsonBody('PATCH', { syncExcluded }))
   if (!response.ok) throw await responseError(response, 'Failed to update Audiobookshelf book')
   return response.json()
 }
@@ -191,11 +172,7 @@ export async function rescanAudiobookshelfMatches(): Promise<AudiobookshelfResca
 }
 
 export async function cleanupAudiobookshelfStaleEntries(payload: AudiobookshelfCleanupPayload = {}): Promise<AudiobookshelfCleanupResult> {
-  const response = await api(`${BASE}/books/cleanup-stale`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
+  const response = await api(`${BASE}/books/cleanup-stale`, jsonBody('POST', payload))
   if (!response.ok) {
     throw await responseError(response, 'Failed to clean up stale Audiobookshelf entries', 'An Audiobookshelf cleanup is already running')
   }

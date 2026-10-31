@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import type { BookReadingSession, BookReadingSessionListResponse, ReadingSessionSource, UserSettings } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
@@ -18,7 +18,6 @@ import {
   type RecordCumulativeReadingSessionParams,
   type RecordCumulativeReadingSessionResult,
 } from './reading-session.repository';
-import { READING_SESSION_SCOPE_SOURCE, type ReadingSessionScopeMember, type ReadingSessionScopeSource } from './reading-session-scope-source';
 
 @Injectable()
 export class ReadingSessionService {
@@ -29,29 +28,7 @@ export class ReadingSessionService {
     private readonly bookService: BookService,
     private readonly achievementEvents: AchievementEventsService,
     private readonly userStatistics: UserStatisticsService,
-    @Optional() @Inject(READING_SESSION_SCOPE_SOURCE) private readonly scopeSource?: ReadingSessionScopeSource,
   ) {}
-
-  // An empty scope means the book's log stands alone. Counterparts the user cannot see are dropped so they never leak sessions.
-  private async resolveAccessibleScope(bookId: number, user: RequestUser): Promise<ReadingSessionScopeMember[]> {
-    const members = await this.scopeSource?.resolveScope(bookId);
-    if (!members) return [];
-
-    const requested = members.find((member) => member.bookId === bookId);
-    if (!requested) return [];
-
-    const accessible: ReadingSessionScopeMember[] = [requested];
-    for (const member of members) {
-      if (member.bookId === bookId) continue;
-      try {
-        await this.bookService.verifyBookAccess(member.bookId, user);
-        accessible.push(member);
-      } catch (error) {
-        if (!(error instanceof ForbiddenException) && !(error instanceof NotFoundException)) throw error;
-      }
-    }
-    return accessible.length > 1 ? accessible : [];
-  }
 
   private resolveUserTimeZone(user: RequestUser): string {
     return resolveTimeZone((user.settings as { timezone?: unknown } | undefined)?.timezone, 'UTC');
@@ -259,8 +236,9 @@ export class ReadingSessionService {
     this.logger.log(`[${event}] [start] bookId=${bookId} userId=${user.id} - list reading sessions started`);
     try {
       await this.bookService.verifyBookAccess(bookId, user);
-      const scope = await this.resolveAccessibleScope(bookId, user);
-      const listArgs = [
+      const result = await this.repo.listByBook(
+        user.id,
+        bookId,
         query.page ?? 1,
         query.pageSize ?? 25,
         query.sortBy ?? 'startedAt',
@@ -269,21 +247,9 @@ export class ReadingSessionService {
         query.dateTo,
         query.format,
         this.resolveUserTimeZone(user),
-      ] as const;
-      const result =
-        scope.length > 0
-          ? {
-              ...(await this.repo.listByBooks(
-                user.id,
-                scope.map((member) => member.bookId),
-                new Map(scope.map((member) => [member.bookId, member.role])),
-                ...listArgs,
-              )),
-              scope: { members: scope },
-            }
-          : await this.repo.listByBook(user.id, bookId, ...listArgs);
+      );
       this.logger.log(
-        `[${event}] [end] bookId=${bookId} userId=${user.id} scopeBooks=${scope.length || 1} durationMs=${Date.now() - startedAtMs} total=${result.total} - list reading sessions completed`,
+        `[${event}] [end] bookId=${bookId} userId=${user.id} durationMs=${Date.now() - startedAtMs} total=${result.total} - list reading sessions completed`,
       );
       return result;
     } catch (error) {
@@ -301,16 +267,7 @@ export class ReadingSessionService {
     this.logger.log(`[${event}] [start] bookId=${bookId} sessionId=${sessionId} userId=${user.id} - delete reading session started`);
     try {
       await this.bookService.verifyBookAccess(bookId, user);
-      const scope = await this.resolveAccessibleScope(bookId, user);
-      const result =
-        scope.length > 0
-          ? await this.repo.deleteSessionByBooks(
-              user.id,
-              scope.map((member) => member.bookId),
-              sessionId,
-              this.resolveUserTimeZone(user),
-            )
-          : await this.repo.deleteSessionByBook(user.id, bookId, sessionId, this.resolveUserTimeZone(user));
+      const result = await this.repo.deleteSessionByBook(user.id, bookId, sessionId, this.resolveUserTimeZone(user));
       if (!result.found) throw new NotFoundException('Reading session not found');
       this.userStatistics.invalidateUser(user.id);
       this.logger.log(

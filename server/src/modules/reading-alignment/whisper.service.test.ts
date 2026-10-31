@@ -37,10 +37,11 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
   return {
     whisperPath: '/usr/local/bin/whisper-cli',
     whisperModel: '/models/ggml-base.en.bin',
-    ffmpegPath: 'ffmpeg',
     ...overrides,
   } as never;
 }
+
+const AUDIO_TOOLS = { ffmpegPath: 'ffmpeg', ffprobePath: 'ffprobe' } as never;
 
 function makeModels() {
   return {
@@ -72,30 +73,30 @@ describe('WhisperService', () => {
 
   describe('isAvailable', () => {
     it('is true when both whisper path and model are configured', () => {
-      const service = new WhisperService(makeConfig(), makeModels());
+      const service = new WhisperService(makeConfig(), makeModels(), AUDIO_TOOLS);
       expect(service.isAvailable()).toBe(true);
     });
 
     it('is false when the whisper path is missing', () => {
-      const service = new WhisperService(makeConfig({ whisperPath: undefined }), makeModels());
+      const service = new WhisperService(makeConfig({ whisperPath: undefined }), makeModels(), AUDIO_TOOLS);
       expect(service.isAvailable()).toBe(false);
     });
 
     it('stays true without a configured model - the model service resolves or downloads it', () => {
-      const service = new WhisperService(makeConfig({ whisperModel: undefined }), makeModels());
+      const service = new WhisperService(makeConfig({ whisperModel: undefined }), makeModels(), AUDIO_TOOLS);
       expect(service.isAvailable()).toBe(true);
     });
   });
 
   describe('transcribeWindow', () => {
     it('throws a clear error and never spawns when whisper is unavailable', async () => {
-      const service = new WhisperService(makeConfig({ whisperPath: undefined }), makeModels());
+      const service = new WhisperService(makeConfig({ whisperPath: undefined }), makeModels(), AUDIO_TOOLS);
       await expect(service.transcribeWindow('/audio/book.m4b', 120, 15)).rejects.toThrow(/not configured/i);
       expect(spawnMock).not.toHaveBeenCalled();
     });
 
     it('decodes only the window and returns the trimmed transcript', async () => {
-      const service = new WhisperService(makeConfig(), makeModels());
+      const service = new WhisperService(makeConfig(), makeModels(), AUDIO_TOOLS);
       const ffmpeg = makeChild();
       const whisper = makeChild();
       queueChildren(ffmpeg, whisper);
@@ -134,7 +135,7 @@ describe('WhisperService', () => {
     });
 
     it('throws and logs a fail entry when whisper exits non-zero', async () => {
-      const service = new WhisperService(makeConfig(), makeModels());
+      const service = new WhisperService(makeConfig(), makeModels(), AUDIO_TOOLS);
       const ffmpeg = makeChild();
       const whisper = makeChild();
       queueChildren(ffmpeg, whisper);
@@ -158,7 +159,7 @@ describe('WhisperService', () => {
       ['SIGILL', 'the whisper binary was built for a different CPU; rebuild the image with GGML_NATIVE=OFF'],
       ['SIGKILL', 'likely out of memory or a timeout'],
     ])('names the signal and a hint when whisper is killed by %s', async (signal, hint) => {
-      const service = new WhisperService(makeConfig(), makeModels());
+      const service = new WhisperService(makeConfig(), makeModels(), AUDIO_TOOLS);
       const ffmpeg = makeChild();
       const whisper = makeChild();
       queueChildren(ffmpeg, whisper);
@@ -175,7 +176,7 @@ describe('WhisperService', () => {
     });
 
     it('throws when ffmpeg fails to spawn', async () => {
-      const service = new WhisperService(makeConfig(), makeModels());
+      const service = new WhisperService(makeConfig(), makeModels(), AUDIO_TOOLS);
       const ffmpeg = makeChild();
       queueChildren(ffmpeg);
 
@@ -191,7 +192,7 @@ describe('WhisperService', () => {
 
     it('times out, kills both processes, and throws', async () => {
       vi.useFakeTimers();
-      const service = new WhisperService(makeConfig(), makeModels());
+      const service = new WhisperService(makeConfig(), makeModels(), AUDIO_TOOLS);
       const ffmpeg = makeChild();
       const whisper = makeChild();
       queueChildren(ffmpeg, whisper);

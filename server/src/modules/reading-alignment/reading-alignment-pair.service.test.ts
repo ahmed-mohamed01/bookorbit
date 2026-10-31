@@ -2,55 +2,33 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ReadingAlignmentPairService } from './reading-alignment-pair.service';
 
-function build(options?: {
-  link?: { textBookId: number | null; audioBookId: number; readAlongBookId?: number | null };
-  modality?: 'text' | 'audio' | 'both' | 'none';
-}) {
-  const editionLinkRepo = {
-    findLinkForBook: vi.fn().mockResolvedValue(options?.link),
-    getBookModality: vi.fn().mockResolvedValue(options?.modality ?? 'none'),
-  };
-  const service = new ReadingAlignmentPairService(editionLinkRepo as never);
-  return { service, editionLinkRepo };
-}
-
 describe('ReadingAlignmentPairService.resolveAlignmentPair', () => {
-  it('returns the linked text and audio book IDs', async () => {
-    const { service, editionLinkRepo } = build({ link: { textBookId: 11, audioBookId: 22 } });
+  it.each([
+    [true, true, { textBookId: 11, audioBookId: 11 }],
+    [true, false, null],
+    [false, true, null],
+    [false, false, null],
+  ])('resolves a same-book pair with ebook=%s audio=%s', async (hasEbook, hasAudio, expected) => {
+    const repo = {
+      findEbookFile: vi.fn().mockResolvedValue(hasEbook ? { id: 1 } : undefined),
+      resolveAudioPlayOrder: vi.fn().mockResolvedValue(hasAudio ? [{ fileId: 2 }] : []),
+    };
+    const service = new ReadingAlignmentPairService({ ...repo, hasReadAlong: vi.fn().mockResolvedValue(false) } as never);
 
-    await expect(service.resolveAlignmentPair(22)).resolves.toEqual({ textBookId: 11, audioBookId: 22 });
-    expect(editionLinkRepo.getBookModality).not.toHaveBeenCalled();
+    await expect(service.resolveAlignmentPair(11)).resolves.toEqual(expected);
+    expect(repo.findEbookFile).toHaveBeenCalledWith(11);
+    expect(repo.resolveAudioPlayOrder).toHaveBeenCalledWith(11);
   });
 
-  it('refuses to align the generated read-along member, without falling back to a self-pair', async () => {
-    const { service, editionLinkRepo } = build({ link: { textBookId: 11, audioBookId: 22, readAlongBookId: 33 }, modality: 'both' });
-
-    await expect(service.resolveAlignmentPair(33)).resolves.toBeNull();
-    expect(editionLinkRepo.getBookModality).not.toHaveBeenCalled();
-  });
-
-  it('resolves no pair for a link with no ebook, without falling back to a self-pair', async () => {
-    const { service, editionLinkRepo } = build({ link: { textBookId: null, audioBookId: 22, readAlongBookId: 33 }, modality: 'both' });
-
-    await expect(service.resolveAlignmentPair(22)).resolves.toBeNull();
-    expect(editionLinkRepo.getBookModality).not.toHaveBeenCalled();
-  });
-
-  it('still resolves the pair from the text member of a three-way link', async () => {
-    const { service } = build({ link: { textBookId: 11, audioBookId: 22, readAlongBookId: 33 } });
-
-    await expect(service.resolveAlignmentPair(11)).resolves.toEqual({ textBookId: 11, audioBookId: 22 });
-  });
-
-  it('returns a self-pair for one record with both formats', async () => {
-    const { service } = build({ modality: 'both' });
-
-    await expect(service.resolveAlignmentPair(11)).resolves.toEqual({ textBookId: 11, audioBookId: 11 });
-  });
-
-  it('returns null for an unlinked book without both formats', async () => {
-    const { service } = build({ modality: 'text' });
+  it("has no pair for a book with a read-along, which upstream's read-aloud sync owns", async () => {
+    const repo = {
+      findEbookFile: vi.fn().mockResolvedValue({ id: 1 }),
+      resolveAudioPlayOrder: vi.fn().mockResolvedValue([{ fileId: 2 }]),
+      hasReadAlong: vi.fn().mockResolvedValue(true),
+    };
+    const service = new ReadingAlignmentPairService(repo as never);
 
     await expect(service.resolveAlignmentPair(11)).resolves.toBeNull();
+    expect(repo.hasReadAlong).toHaveBeenCalledWith(11);
   });
 });

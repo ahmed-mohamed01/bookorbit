@@ -1,3 +1,4 @@
+import { isEligibleMonitoredUser } from './monitored-user.utils';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import type { MonitoredAuthorConfig, MonitoredWork } from '@bookorbit/types';
@@ -160,7 +161,7 @@ export class MonitoredReleaseWatcher {
     const startedAt = Date.now();
     const empty: ReleaseCheckResult = { seeded: 0, announced: 0, failed: 0, requested: 0, requestFailed: 0, releases: [] };
     const owner = await this.users.findByIdWithPermissions(monitor.ownerUserId);
-    if (!owner) {
+    if (!owner || !isEligibleMonitoredUser(owner)) {
       await this.store.stampReleaseCheck(monitor.id, new Date());
       return empty;
     }
@@ -250,6 +251,9 @@ export class MonitoredReleaseWatcher {
   ): Promise<{ requested: number; requestFailed: number }> {
     if (releases.length === 0) return { requested: 0, requestFailed: 0 };
 
+    const currentOwner = await this.users.findByIdWithPermissions(monitor.ownerUserId);
+    if (!currentOwner || !isEligibleMonitoredUser(currentOwner)) return { requested: 0, requestFailed: 0 };
+    owner = currentOwner;
     let works: Map<string, MonitoredWork>;
     const loadStartedAt = Date.now();
     try {

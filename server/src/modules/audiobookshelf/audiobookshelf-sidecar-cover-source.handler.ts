@@ -3,7 +3,7 @@ import { readFile, stat } from 'fs/promises';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import type { CoverSource, CoverSourceHandler } from '../metadata/cover-source-handler';
-import { isDecodableImage } from '../metadata/lib/cover';
+import { isDecodableImage } from './audiobookshelf-image.utils';
 
 const MAX_SIDECAR_COVER_BYTES = 20 * 1024 * 1024;
 

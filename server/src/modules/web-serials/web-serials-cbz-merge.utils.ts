@@ -5,6 +5,8 @@ import { Transform, type Readable } from 'stream';
 import { BadGatewayException } from '@nestjs/common';
 import { ZipArchive, type Archiver } from 'archiver';
 
+import { buildComicInfoXml } from '../file-write/formats/cbx/comic-info-builder';
+import type { BookWritePayload, BookWritePayloadKey } from '../file-write/interfaces/book-write-payload.interface';
 import { createCbzZipEntryReadStream, isSupportedCbzZipCompression, readCbzZipIndex } from '../../common/cbz-zip-reader';
 
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif']);
@@ -21,7 +23,6 @@ export interface MergedCbzMetadata {
   summary: string | null;
   genres: string[];
   language: string | null;
-  web: string | null;
 }
 
 export interface MergedCbzResult {
@@ -107,34 +108,20 @@ function outputSizeCap(limit: number): Transform {
 }
 
 function buildComicInfo(metadata: MergedCbzMetadata): string {
-  const fields: Array<[string, string | null | undefined]> = [
-    ['Series', metadata.series],
-    ['Title', metadata.title],
-    ['Volume', metadata.volume],
-    ['Number', metadata.number],
-    ['Writer', metadata.writers.join(', ') || null],
-    ['Penciller', metadata.pencillers.join(', ') || null],
-    ['Summary', metadata.summary],
-    ['Genre', metadata.genres.join(', ') || null],
-    ['LanguageISO', metadata.language],
-    ['Web', metadata.web],
-  ];
-  const body = fields
-    .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0)
-    .map(([key, value]) => `  <${key}>${escapeXml(value)}</${key}>`)
-    .join('\n');
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<ComicInfo>\n${body}\n</ComicInfo>`;
+  const clean = (value: string) => value.replace(INVALID_XML_CHARS, '');
+  const payload: BookWritePayload = {
+    title: clean(metadata.title),
+    seriesName: clean(metadata.series),
+    comicVolumeName: metadata.volume == null ? metadata.volume : clean(metadata.volume),
+    comicIssueNumber: clean(metadata.number),
+    authors: metadata.writers.map((name) => ({ name: clean(name), sortName: null })),
+    comicPencillers: metadata.pencillers.map(clean),
+    description: metadata.summary === null ? null : clean(metadata.summary),
+    genres: metadata.genres.map(clean),
+    language: metadata.language === null ? null : clean(metadata.language),
+  };
+  return buildComicInfoXml(null, payload, new Set(Object.keys(payload) as BookWritePayloadKey[]));
 }
 
 // XML 1.0 forbids most control characters; one in a synopsis would leave ComicInfo.xml unreadable.
 const INVALID_XML_CHARS = /[^\t\n\r\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu;
-
-function escapeXml(value: string): string {
-  return value
-    .replace(INVALID_XML_CHARS, '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}

@@ -12,19 +12,7 @@ defineProps<{ iconRadiusClass: string }>()
 
 const { t } = useI18n()
 
-const {
-  notifications,
-  inProgressNotifications,
-  settledNotifications,
-  unreadCount,
-  loading,
-  hasMore,
-  fetchNotifications,
-  markAsRead,
-  markAllAsRead,
-  dismiss,
-  clearAll,
-} = useNotifications()
+const { notifications, unreadCount, loading, hasMore, fetchNotifications, markAsRead, markAllAsRead, dismiss, clearAll } = useNotifications()
 
 const sheetOpen = ref(false)
 
@@ -63,7 +51,7 @@ function handleLoadMore() {
           <Button
             variant="ghost"
             size="icon"
-            class="relative h-8 w-8 border border-(--shell-accent-line) text-foreground transition-colors duration-150 hover:bg-(--shell-accent-wash)"
+            class="relative size-(--dock-control,2rem) border border-(--shell-accent-line) text-foreground transition-colors duration-150 hover:bg-(--shell-accent-wash)"
             :class="iconRadiusClass"
             :aria-label="t('notifications.title')"
           >
@@ -90,7 +78,7 @@ function handleLoadMore() {
               {{ t('notifications.markAllRead') }}
             </Button>
             <Button
-              v-if="settledNotifications.length > 0"
+              v-if="notifications.length > 0"
               variant="ghost"
               size="sm"
               class="h-7 gap-1.5 text-xs text-muted-foreground"
@@ -109,20 +97,8 @@ function handleLoadMore() {
           </div>
 
           <div v-else class="flex flex-col gap-1.5 px-2 py-2">
-            <section v-if="inProgressNotifications.length > 0" class="flex flex-col gap-1.5" data-testid="notifications-in-progress">
-              <h3 class="px-1 pt-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                {{ t('notifications.inProgress') }}
-              </h3>
-              <NotificationItemVue
-                v-for="item in inProgressNotifications"
-                :key="item.id"
-                :notification="item"
-                @read="handleMarkAsRead"
-                @dismiss="handleDismiss"
-              />
-            </section>
             <NotificationItemVue
-              v-for="item in settledNotifications"
+              v-for="item in notifications"
               :key="item.id"
               :notification="item"
               @read="handleMarkAsRead"

@@ -1,3 +1,4 @@
+import { isEligibleMonitoredUser } from './monitored-user.utils';
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { isAutoDownload, isWorkVisible, MONITORED_FORMATS } from '@bookorbit/types';
 import type { MonitoredAuthorConfig, MonitoredFormat, MonitoredWork } from '@bookorbit/types';
@@ -153,7 +154,7 @@ export class MonitoredAutoRequestService {
   }
 
   async fanOut(monitor: MonitoredAuthorConfig, works: MonitoredWork[], user: RequestUser): Promise<FanOutResult> {
-    if (monitor.paused) return { created: 0, skipped: 0, failed: 0 };
+    if (monitor.paused || !isEligibleMonitoredUser(user)) return { created: 0, skipped: 0, failed: 0 };
 
     let skipped = 0;
     const today = new Date().toISOString().slice(0, 10);

@@ -16,7 +16,6 @@ import {
   releaseNamesSeries,
   type WebSerialPrintSeriesInput,
   type RequestWebSerialVolumesInput,
-  type LinkWebSerialBatchInput,
   type WebSerialPrintState,
 } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
@@ -92,7 +91,7 @@ export class WebSerialsPrintService implements OnModuleInit {
       user,
       matchId,
       () => this.downloadNow(user, matchId, input),
-      ` seriesRequestId=${input.seriesRequestId} downloadClientId=${input.downloadClientId} picks=${input.picks.length}`,
+      ` seriesRequestId=${input.seriesRequestId} downloadClientId=${input.downloadClientId ?? 'none'} picks=${input.picks.length}`,
     );
   }
 
@@ -190,6 +189,7 @@ export class WebSerialsPrintService implements OnModuleInit {
     const row = await this.ownedRow(user, matchId, input.seriesRequestId);
     if (input.picks.some((pick) => pick.unitIndexes === null && pick.volumes.length > 1))
       throw new BadRequestException('A single-file release must cover exactly one volume');
+    for (const pick of input.picks) if (pick.unitIndexes !== null) this.packClientId(pick, input);
     if (!(await this.repo.setSeriesDraft(row.id, false))) throw new ConflictException('This draft was closed before the download started');
     const failures: NonNullable<WebSerialPrintState['failures']> = [];
     const source = await this.requests.getOne(row.bookRequestId, user);
@@ -202,10 +202,10 @@ export class WebSerialsPrintService implements OnModuleInit {
             sourceRequestId: row.bookRequestId,
             indexerId: pick.indexerId,
             releaseGuid: pick.releaseGuid,
-            downloadClientId: pick.downloadClientId ?? input.downloadClientId,
+            downloadClientId: this.packClientId(pick, input),
             unitIndexes: pick.unitIndexes,
           });
-          await this.linkBatch(user, matchId, { seriesRequestId: row.id, batchRequestId: batch.requestId });
+          await this.repo.linkBatch(row.id, batch.requestId);
         } else {
           for (const volume of pick.volumes) {
             const child = await this.requests.submit(
@@ -262,6 +262,11 @@ export class WebSerialsPrintService implements OnModuleInit {
       volumeCount: input.volumeCount,
     });
     return { ...state, failures };
+  }
+  private packClientId(pick: WebSerialDownloadInput['picks'][number], input: WebSerialDownloadInput): number {
+    const clientId = pick.downloadClientId ?? input.downloadClientId;
+    if (clientId == null) throw new BadRequestException('Picking books from a release needs a download client');
+    return clientId;
   }
   private async activeRequest(user: RequestUser, matchId: string): Promise<WebSerialSeriesRequestRow | undefined> {
     const rows = await this.repo.findSeriesRequests(user.id, 'novel', matchId);
@@ -479,15 +484,6 @@ export class WebSerialsPrintService implements OnModuleInit {
       );
       throw error;
     }
-  }
-
-  async linkBatch(user: RequestUser, matchId: string, input: LinkWebSerialBatchInput): Promise<void> {
-    const row = await this.repo.findSeriesRequestById(input.seriesRequestId);
-    if (!row || row.kind !== 'novel' || row.matchId !== matchId || (row.userId !== user.id && !user.isSuperuser))
-      throw new ForbiddenException('Series request does not belong to this series or user');
-    const batch = (await this.batches.findRequestsByIds([input.batchRequestId])).get(input.batchRequestId);
-    if (!batch || (batch.userId !== user.id && !user.isSuperuser)) throw new ForbiddenException('Batch request does not belong to the caller');
-    await this.repo.linkBatch(row.id, input.batchRequestId);
   }
 
   async settleIfComplete(row: WebSerialSeriesRequestRow, owner: RequestUser): Promise<boolean> {

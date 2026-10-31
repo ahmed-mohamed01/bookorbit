@@ -4,8 +4,12 @@ import { defineComponent, ref } from 'vue'
 import type { BookDetail } from '@bookorbit/types'
 import DetailsTab from '../DetailsTab.vue'
 import BookReadingActivityCard from '../../details/BookReadingActivityCard.vue'
+import BookCoverStack from '../../details/BookCoverStack.vue'
+import BookCoverLightbox from '@/features/book/components/BookCoverLightbox.vue'
+import LinkBookControl from '../LinkBookControl.vue'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import { useProviderLinkSettings } from '@/features/book/composables/useProviderLinkSettings'
+import ReadAloudInviteChip from '@/features/read-aloud/components/ReadAloudInviteChip.vue'
 
 const mocks = vi.hoisted(() => ({
   api: vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(),
@@ -36,7 +40,7 @@ vi.mock('@/features/library/composables/useLibraries', () => ({
 }))
 
 vi.mock('@/features/auth/composables/usePermissions', () => ({
-  usePermissions: () => ({ hasPermission: mocks.hasPermission, isSuperuser: { value: false } }),
+  usePermissions: () => ({ hasPermission: mocks.hasPermission, isSuperuser: { value: false }, isDemoRestrictedAccount: { value: false } }),
 }))
 
 vi.mock('@/features/auth/composables/useAuth', () => ({
@@ -107,8 +111,6 @@ function makeBook(overrides: Partial<BookDetail> = {}): BookDetail {
       durationDifferenceSeconds: null,
       durationDifferenceRatio: null,
       koreaderDownloadAvailable: false,
-      narrationMismatch: null,
-      offsetsSource: null,
     },
     formatPriority: [],
     comicMetadata: null,
@@ -201,6 +203,7 @@ describe('DetailsTab cover surface', () => {
         })
       }
       if (url.includes('/koreader/books/')) return response(null)
+      if (url.startsWith('/api/v1/reading-progress')) return response({ items: [] })
       if (url.includes('/progress')) return response([])
       return response({})
     })
@@ -524,6 +527,7 @@ describe('DetailsTab cover surface', () => {
         })
       }
       if (url.includes('/koreader/books/')) return response(null)
+      if (url.startsWith('/api/v1/reading-progress')) return response({ items: [] })
       if (url.includes('/progress')) return response([])
       return response({})
     })
@@ -690,6 +694,7 @@ describe('DetailsTab cover surface', () => {
         return response({ eligibleForKoboSync: false, syncCollections: [], readingState: null, snapshots: [] })
       }
       if (url.includes('/koreader/books/')) return response(null)
+      if (url.startsWith('/api/v1/reading-progress')) return response({ items: [] })
       if (url.includes('/progress')) return response([])
       return response({})
     })
@@ -698,7 +703,7 @@ describe('DetailsTab cover surface', () => {
     await flushPromises()
 
     expect(mocks.api).toHaveBeenNthCalledWith(1, '/api/v1/books/12/reset-reading-state', { method: 'POST' })
-    expect(mocks.api).toHaveBeenCalledWith('/api/v1/books/12/progress')
+    expect(mocks.api).toHaveBeenCalledWith('/api/v1/reading-progress?bookId=12')
     expect(mocks.api).toHaveBeenCalledWith('/api/v1/books/12/kobo-state')
     expect(mocks.api).toHaveBeenCalledWith('/api/v1/koreader/books/12/progress')
     expect(wrapper.emitted('saved')).toEqual([
@@ -788,6 +793,7 @@ describe('DetailsTab cover surface', () => {
       if (url.includes('/collections/membership')) return response([])
       if (url.includes('/kobo-state')) return response({ eligibleForKoboSync: false, syncCollections: [], readingState: null, snapshots: [] })
       if (url.includes('/koreader/books/')) return response(null)
+      if (url.startsWith('/api/v1/reading-progress')) return response({ items: [] })
       if (url.includes('/progress')) return response([])
       return response({})
     })
@@ -878,13 +884,98 @@ describe('DetailsTab cover surface', () => {
         durationDifferenceSeconds: 0,
         durationDifferenceRatio: 0,
         koreaderDownloadAvailable: true,
-        narrationMismatch: null,
-        offsetsSource: null,
       },
     })
     const wrapper = mountDetails(book)
     await flushPromises()
 
     expect(wrapper.find('[data-test="read-aloud-sync"]').exists()).toBe(false)
+  })
+
+  describe('read-aloud invitation and cover stack', () => {
+    const epub = makeBook().files[0]!
+    const m4b = { ...epub, id: 102, format: 'm4b', role: 'content', absolutePath: '/books/audio.m4b', filename: 'audio.m4b', durationSeconds: 3600 }
+    const slot = { placeholder: false, source: 'extracted' as const, updatedAt: '2026-01-01T00:00:00.000Z', width: null, height: null }
+    const createRoute = { name: 'book-detail', params: { bookId: 12 }, query: { tab: 'files', readAloud: 'create' } }
+
+    function answerCapability(capability: Record<string, unknown>) {
+      const previous = mocks.api.getMockImplementation()!
+      mocks.api.mockImplementation(async (input, init) =>
+        String(input).endsWith('/books/12/read-aloud') ? response(capability) : previous(input, init),
+      )
+    }
+
+    const canCreate = { workerConfigured: true, eligible: true, reason: null, existingReadAlongs: [] }
+
+    it('offers a read-aloud beside the format chips, leaving the Position sync panel to its own slot', async () => {
+      answerCapability(canCreate)
+      const wrapper = mountDetails(makeBook({ files: [epub, m4b] }))
+      await flushPromises()
+
+      expect(wrapper.findComponent(ReadAloudInviteChip).exists()).toBe(true)
+      expect(Object.keys(wrapper.findComponent(LinkBookControl).props())).not.toContain('readAloudInvite')
+    })
+
+    it('opens the read-aloud generator in one click from the chip', async () => {
+      answerCapability(canCreate)
+      const wrapper = mountDetails(makeBook({ files: [epub, m4b] }))
+      await flushPromises()
+
+      wrapper.findComponent(ReadAloudInviteChip).vm.$emit('create')
+      expect(mocks.push).toHaveBeenLastCalledWith(createRoute)
+    })
+
+    it.each([
+      ['the worker is offline', { workerConfigured: true, eligible: false, reason: 'worker_unavailable', existingReadAlongs: [] }],
+      ['no worker is configured', { workerConfigured: false, eligible: false, reason: 'worker_not_configured', existingReadAlongs: [] }],
+      ['a read-aloud already exists', { ...canCreate, existingReadAlongs: [{ fileId: 9 }] }],
+    ])('offers no read-aloud when %s', async (_name, capability) => {
+      answerCapability(capability)
+      const wrapper = mountDetails(makeBook({ files: [epub, m4b] }))
+      await flushPromises()
+
+      expect(wrapper.findComponent(ReadAloudInviteChip).exists()).toBe(false)
+    })
+
+    it('does not ask, or offer, without the permission', async () => {
+      mocks.hasPermission.mockImplementation((name) => name !== 'library_generate_read_aloud')
+      answerCapability(canCreate)
+      const wrapper = mountDetails(makeBook({ files: [epub, m4b] }))
+      await flushPromises()
+
+      expect(mocks.api).not.toHaveBeenCalledWith('/api/v1/books/12/read-aloud', expect.anything())
+      expect(wrapper.findComponent(ReadAloudInviteChip).exists()).toBe(false)
+    })
+
+    it('stacks the two covers when both slots hold art, the audiobook in front for a square book', async () => {
+      const wrapper = mountDetails(
+        makeBook({ files: [epub, m4b], coverMedia: ['ebook', 'audio'], covers: { ebook: slot, audio: slot }, coverAspectRatio: '1/1' }),
+      )
+      await flushPromises()
+
+      expect(wrapper.findComponent(BookCoverStack).props('face')).toBe('audio')
+    })
+
+    it('opens the lightbox on the cover that was in front when it was chosen', async () => {
+      const wrapper = mountDetails(makeBook({ files: [epub, m4b], coverMedia: ['ebook', 'audio'], covers: { ebook: slot, audio: slot } }))
+      await flushPromises()
+
+      wrapper.findComponent(BookCoverStack).vm.$emit('open', 'ebook')
+      await flushPromises()
+
+      const lightbox = wrapper.findComponent(BookCoverLightbox)
+      expect(lightbox.props('open')).toBe(true)
+      expect(lightbox.props('medium')).toBe('ebook')
+    })
+
+    it.each([
+      ['only the book', { ebook: slot, audio: null }],
+      ['only the audiobook', { ebook: null, audio: slot }],
+    ])('keeps the single cover with %s', async (_name, covers) => {
+      const wrapper = mountDetails(makeBook({ files: [epub, m4b], covers }))
+      await flushPromises()
+
+      expect(wrapper.findComponent(BookCoverStack).exists()).toBe(false)
+    })
   })
 })

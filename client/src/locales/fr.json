@@ -6454,15 +6454,9 @@
         "metadataScore": "Score des métadonnées",
         "primaryFormat": "Format principal",
         "readAloudSync": {
-          "title": "Synchronisation de la progression audio-texte",
           "state": {
-            "enabled": "Activée",
-            "disabled": "Désactivée",
-            "unavailable": "Indisponible",
             "epubCopiesOnly": "Exemplaires EPUB uniquement"
           },
-          "enabledDescription": "Les positions du livre audio, du lecteur web, de Kobo et de KOReader restent synchronisées.",
-          "disabledDescription": "Chaque format conserve sa propre position de lecture.",
           "epubCopiesDescription": "Les positions du lecteur web, de Kobo et de KOReader restent synchronisées entre les exemplaires EPUB. Ajoutez des fichiers de livre audio correspondants pour synchroniser aussi le livre audio.",
           "reason": {
             "no_media_overlay_epub": "Un EPUB à lecture synchronisée avec des media overlays est nécessaire.",
@@ -6470,9 +6464,6 @@
             "missing_duration": "Les métadonnées de durée audio sont incomplètes.",
             "durationMismatch": "Les durées ne concordent pas suffisamment : livre audio {audio}, EPUB à lecture synchronisée {overlay}."
           },
-          "enable": "Activer",
-          "disable": "Désactiver",
-          "saving": "Enregistrement...",
           "saveFailed": "Impossible de mettre à jour la synchronisation de la progression audio-texte."
         },
         "openIn": "Ouvrir dans {provider}",

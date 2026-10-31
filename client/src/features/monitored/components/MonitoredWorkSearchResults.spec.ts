@@ -11,7 +11,7 @@ function render(items: MonitoredWorkSearchItem[], canManage = true) {
       stubs: {
         MonitoredVirtualGrid: { props: ['items'], template: '<div><slot v-for="item in items" :item="item" /></div>' },
         MonitoredWorkCard: true,
-        MonitoredEmptyState: { props: ['title'], template: '<p>{{ title }}</p>' },
+        EmptyState: { props: ['title'], template: '<p>{{ title }}</p>' },
       },
     },
   })

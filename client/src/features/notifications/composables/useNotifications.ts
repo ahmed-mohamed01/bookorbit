@@ -22,25 +22,6 @@ let offset = 0
 
 const hasMore = computed(() => notifications.value.length < total.value)
 
-/** Tracks an operation still running: it cannot be dismissed or cleared, and is pinned above the rest. */
-export function isLockedNotification(item: NotificationItem): boolean {
-  return item.meta?.['locked'] === true
-}
-
-// Derived rather than kept apart, so an update that unlocks a row moves it out of the group at once.
-const inProgressNotifications = computed(() =>
-  notifications.value.filter(isLockedNotification).sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt)),
-)
-const settledNotifications = computed(() => notifications.value.filter((item) => !isLockedNotification(item)))
-
-function keepLocked(): void {
-  const kept = notifications.value.filter(isLockedNotification)
-  notifications.value = kept
-  offset = kept.length
-  total.value = kept.length
-  unreadCount.value = kept.filter((item) => !item.read).length
-}
-
 function isAchievementRarity(value: unknown): value is AchievementRarity {
   return typeof value === 'string' && ACHIEVEMENT_RARITIES.includes(value as AchievementRarity)
 }
@@ -162,11 +143,11 @@ function getSocket(): Socket {
       unreadCount.value = 0
     })
 
-    // Locked rows survive a clear, including ones past the loaded page, so the server's list is the truth.
     socket.on('notification:cleared', () => {
-      keepLocked()
-      void requestNotifications(true, false)
-      void requestUnreadCount()
+      notifications.value = []
+      offset = 0
+      total.value = 0
+      unreadCount.value = 0
     })
 
     socket.on('connect', () => {
@@ -274,13 +255,12 @@ export function useNotifications() {
     const previousNotifications = [...notifications.value]
     const previousTotal = total.value
     const previousUnread = unreadCount.value
-    keepLocked()
+    notifications.value = []
+    offset = 0
+    total.value = 0
+    unreadCount.value = 0
     try {
       const res = await api('/api/v1/notifications', { method: 'DELETE' })
-      if (res.ok) {
-        void requestNotifications(true, false)
-        void requestUnreadCount()
-      }
       if (!res.ok) {
         notifications.value = previousNotifications
         offset = notifications.value.length
@@ -308,8 +288,6 @@ export function useNotifications() {
 
   return {
     notifications,
-    inProgressNotifications,
-    settledNotifications,
     unreadCount,
     total,
     loading,

@@ -22,7 +22,6 @@ import { MetadataScoreService } from '../metadata-score/metadata-score.service';
 import { AchievementEventsService } from '../achievement/achievement-events.service';
 import { AudiobookEbookProgressSyncService } from './audiobook-ebook-progress-sync.service';
 import { UserBookStatusService } from '../user-book-status/user-book-status.service';
-import { READ_ALONG_LINK_SOURCE } from './read-along-link-source';
 
 const user: RequestUser = {
   id: 11,
@@ -122,7 +121,6 @@ async function createContext(role: AccessLevel | null = 'viewer') {
     [BookCoverStore, coverStore],
     [FileWriteService, fileWrite],
     [FileRenameService, fileRename],
-    [READ_ALONG_LINK_SOURCE, { findReadAlongLink: vi.fn().mockResolvedValue(null) }],
   ]);
   const module = await Test.createTestingModule({ providers: [BookService, LibraryService, CoverService] })
     .useMocker((token) => mocks.get(token) ?? {})

@@ -3,7 +3,7 @@ import { Cron } from '@nestjs/schedule';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { UserService } from '../user/user.service';
-import { chunk } from '../../common/utils/batch.utils';
+import { mapWithConcurrency } from '../../common/utils/batch.utils';
 import { AudiobookshelfRepository, type AbsEnabledUser } from './audiobookshelf.repository';
 import { AudiobookshelfSyncService, type AudiobookshelfSyncOptions } from './audiobookshelf-sync.service';
 import { describeError, isEligibleSyncUser } from './audiobookshelf-user.utils';
@@ -74,12 +74,10 @@ export class AudiobookshelfSyncSchedulerService {
       if (!quiet) this.logger.log(`[${event}] [start] - run started`);
 
       while (true) {
-        for (const group of chunk(users, AUDIOBOOKSHELF_SCHEDULER_CONCURRENCY)) {
-          const outcomes = await Promise.all(group.map((user) => this.syncUser(event, user, options)));
-          for (const outcome of outcomes) {
-            if (outcome.result === 'processed') usersProcessed++;
-            else if (outcome.result === 'failed') usersFailed++;
-          }
+        const outcomes = await mapWithConcurrency(users, AUDIOBOOKSHELF_SCHEDULER_CONCURRENCY, (user) => this.syncUser(event, user, options));
+        for (const outcome of outcomes) {
+          if (outcome.result === 'processed') usersProcessed++;
+          else if (outcome.result === 'failed') usersFailed++;
         }
 
         if (users.length < AUDIOBOOKSHELF_SCHEDULER_USER_PAGE_SIZE) break;

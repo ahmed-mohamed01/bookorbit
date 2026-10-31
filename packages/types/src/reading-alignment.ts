@@ -8,7 +8,6 @@ export interface AlignmentStatusResponse {
   status: string;
   samplesDone?: number;
   samplesTotal?: number | null;
-  anchorCount?: number;
   builtAt?: string | null;
   error?: string | null;
   stale?: boolean;
@@ -18,3 +17,7 @@ export interface AlignmentStatusResponse {
 export interface AlignmentBuildResponse {
   status: string;
 }
+
+// Where to open the plain EPUB when the audiobook is strictly ahead of it. `phrase` is the narration
+// text the audiobook reached, `spineIndex` scopes the search for it, `percentage` is a whole-book fallback.
+export type CrossFormatResume = { available: false } | { available: true; source: "audio"; spineIndex: number; phrase: string; percentage: number };

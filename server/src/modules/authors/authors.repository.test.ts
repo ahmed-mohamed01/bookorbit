@@ -480,3 +480,21 @@ describe('AuthorsRepository', () => {
     expect(tx.execute).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Unicode author matching', () => {
+  it.each(['刘慈欣', '村上春樹', 'نجيب محفوظ', 'Мария'])('preserves the name %s in a punctuation-only SQL normalization', async (name) => {
+    const { db, selectBuilder } = makeDb();
+    selectBuilder.limit.mockResolvedValueOnce([]);
+    await expect(new AuthorsRepository(db as never).findIdByNormalizedName(name)).resolves.toBeNull();
+    const query = selectBuilder.where.mock.calls[0]![0] as { text: string; values: unknown[] };
+    expect(query.text).toContain('[[:space:][:punct:]]');
+    expect(query.text).not.toContain('[^a-z0-9]');
+    expect(query.values).toContain(name);
+  });
+
+  it.each(['', '  ', '. - !', '😀'])('never matches an empty author key: %s', async (name) => {
+    const { db } = makeDb();
+    await expect(new AuthorsRepository(db as never).findIdByNormalizedName(name)).resolves.toBeNull();
+    expect(db.select).not.toHaveBeenCalled();
+  });
+});

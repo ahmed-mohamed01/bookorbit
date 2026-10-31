@@ -18,7 +18,7 @@ vi.mock('vue-router', async (importOriginal) => {
 
 vi.mock('@/lib/api', () => ({ api: mocks.api, setOnAuthFailure: vi.fn<(callback: () => void) => void>() }))
 vi.mock('@/features/auth/composables/usePermissions', () => ({
-  usePermissions: () => ({ hasPermission: mocks.hasPermission, isSuperuser: ref(false) }),
+  usePermissions: () => ({ hasPermission: mocks.hasPermission, isSuperuser: ref(false), isDemoRestrictedAccount: ref(false) }),
 }))
 vi.mock('@/features/library/composables/useLibraries', () => ({
   useLibraries: () => ({ libraries: ref([{ id: 3, accessLevel: 'editor' }]) }),
@@ -100,8 +100,6 @@ function makeBook(overrides: Partial<BookDetail> = {}): BookDetail {
       durationDifferenceSeconds: null,
       durationDifferenceRatio: null,
       koreaderDownloadAvailable: false,
-      narrationMismatch: null,
-      offsetsSource: null,
     },
     formatPriority: [],
     comicMetadata: null,

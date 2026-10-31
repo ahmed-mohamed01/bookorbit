@@ -14,6 +14,7 @@ import {
   descriptionPlainText,
   getCandidateList,
   otherSeriesAdditions,
+  providerIdFieldFor,
   summarizeDifferences,
   withOtherSeries,
 } from '../metadata-diff-fields'
@@ -160,5 +161,14 @@ describe('other series', () => {
       { seriesName: 'Mistborn: The Original Trilogy', seriesIndex: '1' },
     )
     expect(merged.map((membership) => membership.seriesName)).toEqual(['Mistborn: The Original Trilogy', 'The Cosmere', 'Cosmere Universe'])
+  })
+})
+
+describe('providerIdFieldFor', () => {
+  it('keeps the id field of a source that moved out, and gives other external providers none', () => {
+    expect(providerIdFieldFor('google')).toBe('googleBooksId')
+    expect(providerIdFieldFor('lubimyczytac')).toBe('lubimyczytacId')
+    expect(providerIdFieldFor('aladin')).toBe('aladinId')
+    expect(providerIdFieldFor('fantlab')).toBeUndefined()
   })
 })

@@ -53,7 +53,7 @@ function sizeCap(limit: number): Transform {
   });
 }
 
-/** Files one downloaded unit through the Book Dock, the same way the Storyteller read-along import does. */
+/** Files one downloaded unit through the Book Dock, the same way an upload does. */
 @Injectable()
 export class WebSerialsImportService implements OnApplicationBootstrap {
   private readonly logger = new Logger(WebSerialsImportService.name);

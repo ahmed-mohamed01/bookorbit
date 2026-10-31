@@ -6,6 +6,9 @@ declined Audiobookshelf support, so this fork carries it as a permanent overlay:
 - **Audiobookshelf metadata.json / cover.jpg sidecar support**
 - **Audiobookshelf reading-progress + position sync**
 
+It also carries the reading-alignment, Watchlist (`monitored`), Web Serials and read-along
+narration player overlays described below.
+
 We track `upstream/main` and merge its releases indefinitely. We do **not** follow
 upstream's submission requirements (no squash-for-PR, no upstream commit
 conventions). The single design goal is: **minimize the merge-conflict surface so
@@ -126,8 +129,8 @@ to need no work at all.
 
 ## Branch model
 
-- **`monitored` is this fork's main branch.** It carries all three overlays (Audiobookshelf,
-  reading alignment, monitored) on top of upstream. `audiobookshelf-support` and
+- **`monitored` is this fork's main branch.** It carries every overlay in this document on
+  top of upstream. `audiobookshelf-support` and
   `reading-alignment` are the historical branches it absorbed; do not develop on them.
   Local `main` is a plain mirror of `upstream/main` with no fork commits.
 - **Merge upstream, never rebase.** Merging preserves fork history and keeps conflict
@@ -175,6 +178,54 @@ breaks it). Each is a one-line catch-up; make it rather than carry a red test.
 
 ### Merge log
 
+- **2026-10-28, upstream v3.6.0 (`f2a7a111`), 27 commits.** 33 conflicted files. Upstream added in-app
+  read-aloud generation (`workers/read-aloud`, its own `ReadAloudModule`, `read_aloud_*` notifications),
+  so the Storyteller overlay was deleted (see its section) instead of carried. Upstream moved audiobook
+  chapters into `AudiobookChaptersService` (the fork keeps only `abridged` in `metadata.service.ts`,
+  the progress emit beside the new constructor arg in `audiobook.service.ts`) and added grouped
+  `GET/PUT /reading-progress` routes: the fork's `progress-writer.ts` now reads through upstream's
+  `fetchFileProgress` and saves the grouped write itself, because it needs a request timeout.
+  `scanner.service.ts` takes upstream's `storedFilesAsRegistered` with the fork's `storedFileHash`
+  field added to it. Upstream's undici/zod overrides replaced the fork's `cheerio>undici` line. The
+  fork's earlier removal of the read-aloud sync card in `DetailsTab.vue` stands; upstream's
+  `ReadAloudInviteChip` is taken as upstream renders it, beside the format chips. The route inventory is byte-identical to upstream again. Fork
+  spec drift: `placeholder` in upstream cover-slot fixtures, the ABS `audibleId` clobber test now
+  asserts chapters through `applyFileChapters`.
+  A post-merge reuse review then moved fork copies onto upstream: `orderAudiobookTracks` for the
+  read-along timeline and alignment repository (a sort-order tie used to diverge from the player),
+  `audioToolsConfig.ffmpegPath`, `StatsCache` for both watchlist caches, `chunk`, `readBoundedBytes`
+  for ABS covers, `BookReadService.findLibraryIdsByBookIds`, `normalizeTitleText`, `endpointUrl`,
+  `BookCoverArtwork` on the watchlist card (a recycled card kept a broken cover's placeholder), and
+  `jsonBody` / `readApiErrorDetail` in the ABS client. Upstream's own `carriesMedium`, `roleUnchanged`,
+  narration item lookups and `MediaOverlayMiniPlayer.vue` were restored; dead `findMalformedSpineItem`
+  and `offsetsSource` were deleted.
+  Follow-up on 2026-10-29/30, before the merge commit: a second reuse pass (Tier 2) moved more fork
+  copies onto upstream (`resolveStoredAudiobookChapters` for narration chapters, `buildComicInfoXml`
+  for Web Serials CBZs, `isPublishedDateKey` for Watchlist dates, `mapWithConcurrency` in the ABS
+  scheduler, `isDecodableImage` out of upstream's `cover.ts`). Then the owner moved to upstream's
+  same-record model: one book record holds its EPUB, read-along EPUB and audio files, so everything
+  that joined separate books was removed (the `edition-link` module and its routes, cross-book
+  read-along sync, the merged reading log, Currently Reading stacks, the `EXTRA_PROGRESS_SOURCE`,
+  `READ_ALONG_LINK_SOURCE`, `READ_ALONG_OFFSETS_STORE`, `READING_SESSION_SCOPE_SOURCE` and
+  `CURRENTLY_READING_GROUP_SOURCE` seams, `read-along-chapter-mapping.ts` and `mp4-faststart.ts`),
+  and `resolveAudioPlayOrder` moved from a hunk in `AudiobookChaptersService` to the fork-only
+  `AudioPlayOrderService`. Three review and fix passes followed: whisper aligns only the plain EPUB,
+  the ABS pull runs upstream's `syncEbookProgressForAudiobookPlayback`, the Watchlist background
+  eligibility rule, the Web Serials quota lock and scoped move-to-top, the open-time resolver yields
+  to upstream's read-aloud sync, the Position sync trigger shows only when there is something to
+  sync, and dead fork code and i18n keys were deleted. Last, whisper was confined to books with no
+  read-along (the live projection and the resume both skip a book holding a media-overlay EPUB),
+  the panel orders ebook, read-along and audio so upstream's two read-aloud connectors sit between
+  their files, upstream's `ReadAloudInviteChip` stays beside the format chips (upstream's one-click
+  entry wins over the panel's Create read-along row, which stays too), and the uncalled `POST web-serials/novel/:matchId/batches` route went.
+  A live test then found upstream's audio-to-text lookup treating a Storyteller track-boundary clip
+  (one that ends before it begins, so its length is unknown) as open-ended: every later position
+  landed on it. The fork now gives such a clip what its section's declared length leaves over, in
+  both directions, so a boundary clip in the middle of a chapter ends in the right place too.
+  On 2026-10-31 the panel's Create read-along ghost became a read-aloud slot driven by upstream's
+  generator (`useReadAloud`): one-click Create with the dialog's defaults, Modify opening upstream's
+  `ReadAloudDialog`, and the queued, processing (stepper and percent), review and failed states, with
+  Review opening the Files tab with the job card's Details expanded.
 - **2026-09-30, upstream `acce1e15`, 26 commits.** 7 conflicted files, all small. Upstream added a
   per-user Requests visibility toggle: `notification.repository.ts` `deleteAllForUser` now ANDs the
   fork's locked-row guard with upstream's request filter, and the sidebar still fetches the Monitored
@@ -355,7 +406,7 @@ ABS schema is **not** a Drizzle migration. It is applied at runtime by
 
 **Rules that keep the database switchable between this fork and the upstream image.**
 Prod must survive a switch to the upstream container and a later return to the fork.
-Every fork feature with schema (ABS, edition links, reading alignment, monitored) follows
+Every fork feature with schema (ABS, reading alignment, monitored, web serials) follows
 these; the pattern is a deliberate fork exception to the CLAUDE.md rule "never hand-write
 migration SQL", which exists for upstream contributions - fork schema never goes upstream.
 
@@ -425,35 +476,27 @@ migration SQL", which exists for upstream contributions - fork schema never goes
 Both live in upstream files, contain **zero ABS identifiers**, and are supplied from
 `modules/audiobookshelf/` through the `@Global` `AudiobookshelfMetadataModule`:
 
-| Seam                     | Upstream file                                 | Token                            |
-| ------------------------ | --------------------------------------------- | -------------------------------- |
-| Format extractors        | `metadata/metadata-extraction.service.ts`     | `EXTRA_METADATA_EXTRACTORS`      |
-| Cover sources            | `metadata/cover-source-handler.ts`            | `EXTRA_COVER_SOURCE_HANDLERS`    |
-| Metadata sources         | `scanner/metadata-source-provider.ts`         | `EXTRA_METADATA_SOURCES`         |
-| Bulk cover refresher     | `book/bulk-cover-refresher.ts`                | `BULK_COVER_REFRESHER`           |
-| Card progress source     | `book/extra-progress-source.ts`               | `EXTRA_PROGRESS_SOURCE`          |
-| Currently Reading groups | `dashboard/currently-reading-group-source.ts` | `CURRENTLY_READING_GROUP_SOURCE` |
+| Seam                 | Upstream file                             | Token                         |
+| -------------------- | ----------------------------------------- | ----------------------------- |
+| Format extractors    | `metadata/metadata-extraction.service.ts` | `EXTRA_METADATA_EXTRACTORS`   |
+| Cover sources        | `metadata/cover-source-handler.ts`        | `EXTRA_COVER_SOURCE_HANDLERS` |
+| Metadata sources     | `scanner/metadata-source-provider.ts`     | `EXTRA_METADATA_SOURCES`      |
+| Bulk cover refresher | `book/bulk-cover-refresher.ts`            | `BULK_COVER_REFRESHER`        |
 
-The token files themselves are fork-authored new files (zero conflict). `EXTRA_PROGRESS_SOURCE`
-is supplied from `edition-link/` (a `@Global` module that imports nothing, so it can never form a
-cycle) and lets `book.repository.ts` merge a counterpart's progress into card progress without
-naming any fork table; with the module unregistered it is a no-op. The residual coupling the
+The token files themselves are fork-authored new files (zero conflict). The residual coupling the
 seams could not remove lives in `scanner.service.ts` and `metadata.service.ts` and is tallied
-below.
+below. The `EXTRA_PROGRESS_SOURCE` and `CURRENTLY_READING_GROUP_SOURCE` seams were deleted with
+edition links on 2026-10-29/30.
 
 ## Current conflict surface (semantic, `-w`)
 
-> **2026-09-24: the table below predates the Storyteller read-along overlay.** That overlay adds
-> **38 semantic lines across 6 upstream files**, added up file by file: `router/index.ts` (+8),
-> `settings-nav.ts` (+10), `integration-tabs.ts` (+6/-1), `app.module.ts` (+2),
-> `packages/types/src/index.ts` (+1) and `server/.env.example` (+10, the Storyteller env-var block).
-> Everything else it adds is fork-only, including the whole
-> `modules/storyteller/` tree, `features/storyteller/`, the three new `common/utils/` helpers, and
-> `AudiobookshelfPathMappings.vue` (+1/-1, an import path fix after `PathPrefixCombobox.vue` moved to
-> `components/ui/` to be shared by both integrations) - it lives in the fork-only `audiobookshelf`
-> feature directory, so it never touches the upstream conflict surface even though it changed.
-> `modules/audiobookshelf/` is itself fork-only, so moving its URL and SSRF guard into
-> `common/utils/self-hosted-service-url.utils.ts` costs no upstream conflict surface at all.
+> **2026-10-28: the Storyteller overlay was removed** (see its section). Its 2026-09-24 note on 38
+> semantic lines across 6 upstream files is history: the `packages/types` export, the `.env.example`
+> Storyteller block and the route, nav and tab entries are gone.
+>
+> **2026-10-30: the rows below were re-checked after the same-record switch** where the review named
+> them; the rest of the table still carries the 2026-09-22 numbers (see "Where the remaining work is"
+> for the current total).
 
 Measured 2026-09-22, after the upstream v3.0.0 merge (`970b1525`). Source files only (locales,
 tests and docs excluded); per-file numbers are added+removed with `-w`. **80 modified upstream
@@ -462,48 +505,44 @@ is level with 2026-09-16 (1607) only because the per-format release-date work th
 between added about 75 lines to the Hardcover client. Fork-authored new files never conflict and
 are excluded.
 
-| File                                                                                                     | Semantic          | Owner          | Status                                                                                                  |
-| -------------------------------------------------------------------------------------------------------- | ----------------- | -------------- | ------------------------------------------------------------------------------------------------------- |
-| `scanner/scanner.service.ts`                                                                             | 287               | ABS            | Phase B (fork-internal shrink only; see rejected list)                                                  |
-| `metadata/metadata.service.ts`                                                                           | 134               | ABS            | cover/sidecar precedence, no ABS identifiers                                                            |
-| `metadata-fetch/providers/hardcover/hardcover.client.ts` + `.types.ts`                                   | 168 / 114         | monitored      | author search, contributions, per-format editions; reuse `BOOK_FIELDS`                                  |
-| `user-book-status/reading-attempt.service.ts` / `.repository.ts`                                         | 61 / 37           | ABS            | irreducible core (origin-based dedupe, soft-delete aware)                                               |
-| `book-request/book-request.repository.ts` / `.service.ts` / dto                                          | 47 / 18 / 8       | monitored      | `auto_grab` column, research filter, create passthrough                                                 |
-| `reader/epub/epub.service.ts`                                                                            | 64                | alignment      | `extractSpineText` seam + `findMalformedSpineItem` (read-along pre-check)                               |
-| client `settings/LibrariesSettings.vue` / `LibraryRowActions.vue`                                        | 39 / 10           | ABS            | re-extract metadata library action                                                                      |
-| `authors/authors.repository.ts`                                                                          | 38                | monitored      | name lookup/create + portrait candidates (was 73)                                                       |
-| client `reader/ReaderView.vue` / `epub/composables/useFoliate.ts`                                        | 29 / 15           | alignment      | resume ladder via the `crossFormatResume` open option (was 38 / 37)                                     |
-| `dashboard/dashboard-widget.service.ts`                                                                  | 47                | ABS, alignment | status-change listener (generic, propose upstream) + `CURRENTLY_READING_GROUP_SOURCE` seam (was 19)     |
-| client `author/views/AuthorsView.vue` / `AuthorTile.vue` / `AuthorIndexRow.vue`                          | 35 / 25 / 25      | monitored      | monitor action via `useMonitorAuthorAction()`                                                           |
-| `.github/workflows/container-image.yml`                                                                  | 32                | fork           | deliberate: any-branch manual builds + stable branch-name image tag                                     |
-| `book/book.repository.ts`                                                                                | 27                | alignment      | `EXTRA_PROGRESS_SOURCE` seam + N-way newest-wins merge (was 61)                                         |
-| client `router/index.ts` / `useSidebarNav.ts` / `settings-nav.ts` / `AppSidebar.vue`                     | 28 / 21 / 19 / 12 | mixed          | route, nav and badge registration (ABS + monitored)                                                     |
-| `achievement/achievement.repository.ts`                                                                  | 4                 | ABS            | `'audiobookshelf'` in upstream's two source `IN` lists (was 22)                                         |
-| `common/utils/ssrf.utils.ts`                                                                             | 21                | ABS            | generic `blockLinkLocal` option (exported helper) - **propose upstream**                                |
-| client `book-requests/components/RequestSearchPanel.vue`                                                 | 20                | monitored      | quick-monitor bell via `useMonitorGroupAction()` (was 75)                                               |
-| `.env.example` / `Dockerfile` / `config/config.ts`                                                       | 17 / 15 / 6       | alignment      | whisper stage + alignment config, additive                                                              |
-| `audiobook/audiobook.service.ts` / `.module.ts`                                                          | 14 / 3            | ABS+alignment  | `book:progress-changed` emit from `putPlaybackState` - **propose upstream**                             |
-| `book-request/fulfillment/request-automation.service.ts` / `indexers/indexer-search.service.ts` / module | 13 / 11 / 4       | monitored      | `grabAllowed`, `IndexerSearchRequest` Pick, exports                                                     |
-| client `book/.../tabs/DetailsTab.vue`                                                                    | 25                | alignment      | `LinkBookControl` + card rebuild action + upstream's `useBookProgressRefresh` (pure additions)          |
-| `metadata/metadata-extraction.service.ts`                                                                | 12                | ABS            | the extractor seam itself                                                                               |
-| client `useLibraryCreator.ts`                                                                            | 12                | ABS            | UI registration                                                                                         |
-| `metadata/lib/cover.ts`                                                                                  | 11                | ABS            | shared helper (`isDecodableImage`)                                                                      |
-| `book/book.service.ts` / `book.controller.ts`                                                            | 10 / 8            | ABS            | progress emit for file progress; `BULK_COVER_REFRESHER` seam (was 19)                                   |
-| `authors/authors.module.ts` / `author-enrichment-executor.service.ts`                                    | 9 / 8             | monitored      | export + `allowOrphan` flag                                                                             |
-| `app.module.ts`                                                                                          | 8                 | all            | module registration                                                                                     |
-| `notification/notification.service.ts`                                                                   | 65                | storyteller    | `groupKey` upsert; done rows refuse non-terminal patches; `findLockedByType`; clear count               |
-| `notification/notification.repository.ts`                                                                | 49                | storyteller    | group-key reads/update; locked rows skip dismiss/clear; `findLockedByType` (bounded)                    |
-| client `notifications/components/NotificationItem.vue`                                                   | 70                | storyteller    | progress bar until `meta.done`; no dismiss while `meta.locked`; Cancel build if `meta.cancellable`      |
-| client `notifications/components/NotificationSheet.vue`                                                  | 30                | storyteller    | "In progress" group of locked items above the rest                                                      |
-| client `notifications/composables/useNotifications.ts`                                                   | 38                | storyteller    | `meta.locked` grouping computeds; clear keeps locked items and reloads page one and badge               |
-| `packages/types/src/notification.ts`                                                                     | 22                | storyteller    | two `read_along_build*` enum members, their two meta entries, the `ReadAlongNotificationMeta` interface |
-| `scripts/migrate.ts`                                                                                     | 2                 | ABS            | pre-migrate row parking call (generic name, no ABS identifiers)                                         |
-| `scanner/scanner.controller.ts` / `scanner.repository.ts`                                                | 7 / 2             | ABS            | re-extract endpoint                                                                                     |
-| `achievement-events.service.ts` / `koreader.service.ts`                                                  | 6 / 3             | ABS+alignment  | `occurredAt` widening - **propose upstream**                                                            |
-| `metadata-fetch.module.ts` / `providers/goodreads/goodreads.provider.ts`                                 | 2 / 2             | monitored      | `GoodreadsProvider` exported, `fetchHtml` made public (was a copy)                                      |
-| `scanner/lib/classify.ts`                                                                                | 1                 | ABS            | `metadata.json` sidecar recognition (was 6)                                                             |
-| everything else                                                                                          | <= 6 each         | mixed          | enum members, `Record<Union>` exhaustiveness, trivial registrations                                     |
-| `client/src/locales/*.json`                                                                              | ~60 each          | all            | i18n keys, trivial conflicts                                                                            |
+| File                                                                                                     | Semantic          | Owner         | Status                                                                                     |
+| -------------------------------------------------------------------------------------------------------- | ----------------- | ------------- | ------------------------------------------------------------------------------------------ |
+| `scanner/scanner.service.ts`                                                                             | 287               | ABS           | Phase B (fork-internal shrink only; see rejected list)                                     |
+| `metadata/metadata.service.ts`                                                                           | 134               | ABS           | cover/sidecar precedence, no ABS identifiers                                               |
+| `metadata-fetch/providers/hardcover/hardcover.client.ts` + `.types.ts`                                   | 168 / 114         | monitored     | author search, contributions, per-format editions; reuse `BOOK_FIELDS`                     |
+| `user-book-status/reading-attempt.service.ts` / `.repository.ts`                                         | 61 / 37           | ABS           | irreducible core (origin-based dedupe, soft-delete aware)                                  |
+| `book-request/book-request.repository.ts` / `.service.ts` / dto                                          | 47 / 18 / 8       | monitored     | `auto_grab` column, research filter, create passthrough                                    |
+| `reader/epub/epub.service.ts`                                                                            | 128               | alignment     | `extractSpineText` seam + Range/ETag/HEAD streaming via fork-only `EpubMediaStreamService` |
+| client `settings/LibrariesSettings.vue` / `LibraryRowActions.vue`                                        | 39 / 10           | ABS           | re-extract metadata library action                                                         |
+| `authors/authors.repository.ts`                                                                          | 38                | monitored     | name lookup/create + portrait candidates (was 73)                                          |
+| client `reader/ReaderView.vue` / `epub/composables/useFoliate.ts`                                        | 29 / 15           | alignment     | resume ladder via the `crossFormatResume` open option (was 38 / 37)                        |
+| `dashboard/dashboard-widget.service.ts`                                                                  | 17                | ABS           | status-change listener (generic, propose upstream)                                         |
+| client `author/views/AuthorsView.vue` / `AuthorTile.vue` / `AuthorIndexRow.vue`                          | 35 / 25 / 25      | monitored     | monitor action via `useMonitorAuthorAction()`                                              |
+| `.github/workflows/container-image.yml`                                                                  | 32                | fork          | deliberate: any-branch manual builds + stable branch-name image tag                        |
+| client `router/index.ts` / `useSidebarNav.ts` / `settings-nav.ts` / `AppSidebar.vue`                     | 28 / 21 / 19 / 12 | mixed         | route, nav and badge registration (ABS + monitored)                                        |
+| `achievement/achievement.repository.ts`                                                                  | 4                 | ABS           | `'audiobookshelf'` in upstream's two source `IN` lists (was 22)                            |
+| `common/utils/ssrf.utils.ts`                                                                             | 21                | ABS           | generic `blockLinkLocal` option (exported helper) - **propose upstream**                   |
+| client `book-requests/components/RequestSearchPanel.vue`                                                 | 20                | monitored     | quick-monitor bell via `useMonitorGroupAction()` (was 75)                                  |
+| `.env.example` / `Dockerfile` / `config/config.ts`                                                       | 17 / 15 / 6       | alignment     | whisper stage + alignment config, additive                                                 |
+| `audiobook/audiobook.service.ts` / `.module.ts`                                                          | 14 / 3            | ABS+alignment | `book:progress-changed` emit from `putPlaybackState` - **propose upstream**                |
+| `book-request/fulfillment/request-automation.service.ts` / `indexers/indexer-search.service.ts` / module | 13 / 11 / 4       | monitored     | `grabAllowed`, `IndexerSearchRequest` Pick, exports                                        |
+| client `book/.../tabs/DetailsTab.vue`                                                                    | 191 (30+/161-)    | alignment     | `LinkBookControl` + `useBookProgressRefresh`; upstream read-aloud sync popover removed     |
+| `metadata/metadata-extraction.service.ts`                                                                | 12                | ABS           | the extractor seam itself                                                                  |
+| client `useLibraryCreator.ts`                                                                            | 12                | ABS           | UI registration                                                                            |
+| `book/book.service.ts` / `book.controller.ts`                                                            | 10 / 8            | ABS           | progress emit for file progress; `BULK_COVER_REFRESHER` seam (was 19)                      |
+| `authors/authors.module.ts` / `author-enrichment-executor.service.ts`                                    | 9 / 8             | monitored     | export + `allowOrphan` flag                                                                |
+| `app.module.ts`                                                                                          | 8                 | all           | module registration                                                                        |
+| `notification/notification.service.ts`                                                                   | 34                | web serials   | `groupKey` passthrough and `upsertByGroupKey` (rewrite a group's newest row in place)      |
+| `notification/notification.repository.ts`                                                                | 20                | web serials   | `updateLatestByGroupKey`, type taken from `excluded` on the group upsert                   |
+| client `notifications/components/NotificationItem.vue`                                                   | 139               | monitored     | release-available icon and the request action on Watchlist release notifications           |
+| `packages/types/src/notification.ts`                                                                     | 10                | mixed         | four enum members, two categories and their meta entries (monitored, web serials)          |
+| `scripts/migrate.ts`                                                                                     | 2                 | ABS           | pre-migrate row parking call (generic name, no ABS identifiers)                            |
+| `scanner/scanner.controller.ts` / `scanner.repository.ts`                                                | 7 / 2             | ABS           | re-extract endpoint                                                                        |
+| `achievement-events.service.ts` / `koreader.service.ts`                                                  | 6 / 3             | ABS+alignment | `occurredAt` widening - **propose upstream**                                               |
+| `metadata-fetch.module.ts` / `providers/goodreads/goodreads.provider.ts`                                 | 2 / 2             | monitored     | `GoodreadsProvider` exported, `fetchHtml` made public (was a copy)                         |
+| `scanner/lib/classify.ts`                                                                                | 1                 | ABS           | `metadata.json` sidecar recognition (was 6)                                                |
+| everything else                                                                                          | <= 6 each         | mixed         | enum members, `Record<Union>` exhaustiveness, trivial registrations                        |
+| `client/src/locales/*.json`                                                                              | ~60 each          | all           | i18n keys, trivial conflicts                                                               |
 
 Zeroed on 2026-09-16: `app-settings/app-settings.service.ts` (62 -> 0), `app-settings.controller.ts`
 (17 -> 0), `common/constants/app-settings.constants.ts` (16 -> 0) and `seed/seed.service.ts`
@@ -565,32 +604,51 @@ lag visible.
 
 The fork carries a **second** overlay beside Audiobookshelf: **ebook <-> audiobook cross-format
 alignment**. A Whisper build samples the audiobook, matches transcripts to EPUB spine text, and stores
-anchors; a progress-sync listener projects progress across a linked pair - gated by a movement
+anchors; a progress-sync listener projects progress across the plain EPUB and the audio files of one
+book - gated by a movement
 classifier that only trusts an actively-read side (sudden seeks are quarantined until reading
-continues from them for two minutes) - a one-shot reconcile pulls the ebook status up to a fresher,
-positionally-ahead audiobook when a pair becomes ready, and an open-time resolver
-returns a precise ebook resume point. Upstream has no analogue, so this is maintained here indefinitely
-under the same rules as ABS.
+continues from them for two minutes) - and an open-time resolver
+returns a precise ebook resume point. Whisper aligns the book's plain EPUB only: `findEbookFile` skips
+EPUBs with a media overlay, and `ReadingAlignmentPairService` reports no pair for any book that holds
+one (`hasReadAlong`), so nothing builds, resolves or projects whisper there, because upstream's read-aloud sync already joins a read-along to the audio and to
+the plain EPUB exactly through its SMIL playlist. Upstream has no analogue for a book without a
+read-along, so this is maintained here indefinitely under the same rules as ABS.
 
 **Owned (fork-only) modules - never conflict:** `server/src/modules/reading-alignment/`,
-`server/src/modules/edition-link/`, `packages/types/src/reading-alignment.ts`,
-`server/src/modules/reading-alignment/reading-alignment-content-hash.util.ts`, and the client feature files (`features/reader/shared/composables/
-useCrossFormatResume.ts`, `features/reader/epub/composables/crossFormatResumeNav.ts`, and the `*Control.vue`
-components). The Position sync panel is owned as well, all under `client/src/features/book/`:
-`components/detail/tabs/edition-link/` (every `SyncChain*.vue`, `ReadAlongStepper.vue`,
-`ReadAlongBuildOptions.vue`, `EditionCover.vue`, `EditionSlotSearch.vue`, `PositionSyncTicks.vue`),
-`composables/` (`useSyncChainPanel.ts`, `useAudiobookshelfSyncActions.ts`, `useAudiobookshelfSyncLink.ts`,
-`useReadAlongSection.ts`, `useReadAlong.ts`, `useReadingAlignment.ts`, `useEditionLink.ts`) and `lib/`
-(`sync-chain.ts`, `sync-chain-messages.ts`, `sync-chain-view.ts`, `abs-sync-status.ts`,
-`read-along-section.ts`, `read-aloud-sync-issue.ts`, `position-sync.ts`).
+`packages/types/src/reading-alignment.ts` (including the `CrossFormatResume` response),
+`server/src/modules/audiobook-chapters/audio-play-order.service.ts`,
+`server/src/common/utils/audio-timeline.utils.ts`, and the client feature files
+(`features/reader/shared/composables/useCrossFormatResume.ts`,
+`features/reader/epub/composables/crossFormatResumeNav.ts`, and the `*Control.vue` components). The
+Position sync panel is owned as well, all under `client/src/features/book/`:
+`components/detail/tabs/edition-link/` (`chain-ui.ts`, `EditionCover.vue`, `PositionSyncTicks.vue` and
+every `SyncChain*.vue`: `SyncChainAbsDetails`, `SyncChainAbsSearch`, `SyncChainActionButton`,
+`SyncChainCard`, `SyncChainChevron`, `SyncChainConnector`, `SyncChainGhost`, `SyncChainPanel`,
+`SyncChainPlaceholder`, `SyncChainRailSwitch`, `SyncChainReadAloudSlot`, `SyncChainReadAloudStepper`,
+`SyncChainRow`, `SyncChainSettingsLink`), `composables/` (`useSyncChainPanel.ts`,
+`useSyncChainReadAloud.ts`, `useAudiobookshelfSyncActions.ts`, `useAudiobookshelfSyncLink.ts`,
+`useReadingAlignment.ts`) and `lib/` (`sync-chain.ts`, `sync-chain-messages.ts`, `sync-chain-view.ts`,
+`read-aloud-defaults.ts`, `abs-sync-status.ts`, `position-sync.ts`). The `edition-link/` folder name and the
+`book.detail.editionLink.*` i18n namespace are kept as misnomers; renaming them would only churn.
+The trigger shows only when there is something to sync or set up: two of EPUB, read-along and audio,
+or Audiobookshelf set up for the book's audio. With a read-along the chain reads ebook, read-along,
+audio, joined by upstream's read-aloud sync; without one, ebook and audio are joined by whisper and a
+read-aloud slot trails the audio. The slot runs upstream's generator (`useReadAloud`, gated like the
+Files tab: `library_generate_read_aloud` and not a demo account) and hides wherever upstream hides its
+entry, unless a job is running or failed. Create starts a job in one click with the defaults
+upstream's `ReadAloudDialog` would start with (`lib/read-aloud-defaults.ts`) and opens the dialog
+instead when no supported language is known; Modify opens the dialog, rendered by `LinkBookControl`
+outside the popover; a job shows queued, processing (upstream's steps and percent), review or failed,
+and Review opens the Files tab with `?readAloud=details`. A published job reloads the book so the chain
+switches to ebook, read-aloud, audio.
 
-**Schema decoupling (same pattern as ABS):** three tables - `audiobook_alignment`,
-`audiobook_alignment_anchor`, `book_edition_links` - are applied at runtime by
-`ReadingAlignmentSchemaBootstrapService` and `EditionLinkSchemaBootstrapService` (`OnApplicationBootstrap`)
-from SQL embedded in each module's `schema/*-schema.ts`. They are **not** reachable from
+**Schema decoupling (same pattern as ABS):** two tables - `audiobook_alignment` and
+`audiobook_alignment_anchor` - are applied at runtime by `ReadingAlignmentSchemaBootstrapService`
+(`OnApplicationBootstrap`) from SQL embedded in the module's `schema/*-schema.ts`. They are **not** reachable from
 `db/schema/index.ts` (drizzle-kit ignores them; `db:generate` reports no changes), use `db.select()`,
 and add no migration to `server/src/db/migrations/`. `ReadingAlignmentSchemaBootstrapService` also resets
-interrupted `building` rows on boot.
+interrupted `building` rows on boot. `book_edition_links`, `book_edition_read_along_offsets` and the
+`storyteller_*` tables stay in existing databases unreferenced; nothing creates or reads them.
 
 **Live ebook projection (fork column `reading_progress.alignment_projected_at`):** when the audiobook
 side advances, the sync writes the mapped percentage onto the ebook's `reading_progress` row so every
@@ -602,48 +660,23 @@ fork-column rule it is nullable, added with `ADD COLUMN IF NOT EXISTS` from the 
 SQL, and read or written only through the module-local `pgTable` in
 `modules/reading-alignment/schema/reading-progress-projection.schema.ts`.
 
-**Unified reading log:** every member of a link (ebook, audiobook, read-along copy) shares one Reading Log
-ledger, whichever record it is opened from. Upstream's `ReadingSessionService` asks the optional
-`READING_SESSION_SCOPE_SOURCE` seam (token in `reading-session/reading-session-scope-source.ts`, provided by
-`EditionLinkProgressService.resolveScope`) for the link's members, drops any member the user cannot access
-(`ForbiddenException` / `NotFoundException` from `verifyBookAccess`, so hidden counterparts never leak
-sessions), and lists or deletes over the survivors through the generic `listByBooks` / `deleteSessionByBooks`.
-Each row carries its `bookId` and a `medium`: `listened` for `listen`/`tts` session types or any session on
-the audio member (Audiobookshelf-ingested sessions keep the default type), otherwise `read`. Stats cover the
-merged set. Attempts stay per record: the ledger rules off attempts only between the opened book's own rows.
-
-**Stacked editions on the dashboard:** the Currently Reading widget lists every in-progress book, so a linked
-work showed once per edition. Upstream's `DashboardWidgetService` asks the optional
-`CURRENTLY_READING_GROUP_SOURCE` seam (token in `dashboard/currently-reading-group-source.ts`, provided by
-`EditionLinkProgressService.findGroupsForBooks`) which of the listed books share a link and when the reader
-last spent time with each, and stamps `editionGroupId` / `lastActivityAt` onto those books; a failing source
-logs and the widget degrades to the flat list. Activity is the latest `reading_sessions.ended_at`, never a
-progress row: progress rows are written by the projections in both directions and by the Audiobookshelf
-sync, while a session only comes from a reader, a player or ingested Audiobookshelf listening. The client
-(`features/dashboard/lib/currently-reading-stacks.ts`) folds a group into one row whose cover is a deck in
-a single cover's space and opens or resumes the edition with the latest session; ties and missing sessions fall back to
-the server's progress order.
-
 **Seams / hooks in shared files (keep minimal + generic):**
 
-| Shared file                                                                                               | Hook                                                                                                                                                                                       | Conflict cost                                                                           |
-| --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| `app.module.ts`                                                                                           | register `ReadingAlignmentModule` + `EditionLinkModule`                                                                                                                                    | 2 lines, trivial                                                                        |
-| `reader/epub/epub.service.ts`                                                                             | `extractSpineText()` + `findMalformedSpineItem()` added (spine text for matching/backfill; malformed-XHTML pre-check before a read-along build)                                            | real; a generic method, reused by the module - keep it generic                          |
-| `config/config.ts`                                                                                        | `whisperPath`/`whisperModel`/`ffmpegPath`/`readingAlignment*` on `appConfig`                                                                                                               | additive                                                                                |
-| `achievement-events.service.ts` + `koreader.service.ts`                                                   | `occurredAt` (effective activity time) on the progress event                                                                                                                               | **generic, shared with ABS**, additive/removable - propose upstream                     |
-| `packages/types/src/index.ts`                                                                             | `export * from "./reading-alignment"` (plus the earlier `./edition-link` export)                                                                                                           | 2 lines, trivial                                                                        |
-| client `DetailsTab.vue`                                                                                   | `<LinkBookControl>` in the action bar                                                                                                                                                      | keep additive (do not relocate upstream buttons)                                        |
-| client `ReaderView.vue`                                                                                   | open-time `fetchEbookCrossFormatResume`, passed to `useFoliate` as the `crossFormatResume` open option; wins over saved CFI and media-overlay positions                                    | one option field, one branch, a `{ crossFormatResumed }` return                         |
-| `book/book.repository.ts`                                                                                 | `EXTRA_PROGRESS_SOURCE` token (optional) feeds an N-way newest-wins merge in `enrichBookIds`; the SQL lives in `edition-link/edition-link-progress.service.ts`                             | one constructor param, one `Promise.all` entry, the merge branch                        |
-| `reading-session/reading-session.service.ts` / `.repository.ts` / `reading-session-scope-source.ts`       | `READING_SESSION_SCOPE_SOURCE` seam + `listByBooks` / `deleteSessionByBooks` / `findLatestEndProgressForBooks`, generic; the single-book methods delegate                                  | one optional constructor param, two scoped branches, additive repo methods              |
-| `packages/types/src/reading-session.ts`                                                                   | `bookId`, `medium`, `scope`                                                                                                                                                                | additive                                                                                |
-| `dashboard/dashboard-widget.service.ts`                                                                   | `CURRENTLY_READING_GROUP_SOURCE` seam (optional) stamps `editionGroupId` / `lastActivityAt` onto Currently Reading books; the SQL lives in `edition-link/edition-link-progress.service.ts` | one optional constructor param, one decorate call, a warn-and-fallback                  |
-| `packages/types/src/dashboard.ts`                                                                         | `editionGroupId`, `lastActivityAt` on `CurrentlyReadingBook`                                                                                                                               | additive, optional                                                                      |
-| client `components/ui/ToggleSwitch.vue`                                                                   | optional `tone` prop that only changes the checked colour classes (the chain connectors' switches)                                                                                         | additive; defaults to the existing look                                                 |
-| client `dashboard/components/widgets/CurrentlyReadingWidget.vue`                                          | rows come from `stackCurrentlyReading()`; a multi-edition row draws a deck with a link badge in the cover slot and acts for the lead                                                       | additive branch in the cover slot; single rows unchanged                                |
-| client `ReadingLogLedger.vue` / `ReadingLogTab.vue` / `useBookReadingLog.ts` / `ReadingLogExportMenu.vue` | merged-log caption, medium marker, scope plumbing, per-record attempt rules, `medium` CSV column                                                                                           | additive; the attempt-rule change is the one to re-check on an upstream ledger refactor |
-| `Dockerfile`                                                                                              | `whisper-builder` stage compiles whisper.cpp `v1.9.1` (CPU-only, static) -> `whisper-cli`; runtime adds `libstdc++`/`libgomp`                                                              | isolated stage + one COPY                                                               |
+| Shared file                                             | Hook                                                                                                                                                                                                    | Conflict cost                                                       |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `app.module.ts`                                         | register `ReadingAlignmentModule` (the fork registers `AudiobookshelfModule`, `MonitoredModule`, `ReadingAlignmentModule` and `WebSerialsModule`, 8 lines in all)                                       | 2 lines, trivial                                                    |
+| `reader/epub/epub.service.ts`                           | `extractSpineText()` added (spine text for matching/backfill); Range/ETag/HEAD streaming of EPUB media through `EpubMediaStreamService` (`epub-media-stream.service.ts`, `epub-zip-range.ts`)           | real; generic methods - keep them generic                           |
+| `config/config.ts`                                      | `whisperPath`/`whisperModel`/`ffmpegPath`/`readingAlignment*` on `appConfig`                                                                                                                            | additive                                                            |
+| `achievement-events.service.ts` + `koreader.service.ts` | `occurredAt` (effective activity time) on the progress event                                                                                                                                            | **generic, shared with ABS**, additive/removable - propose upstream |
+| `packages/types/src/index.ts`                           | `export * from "./reading-alignment"`                                                                                                                                                                   | 1 line, trivial                                                     |
+| client `DetailsTab.vue`                                 | `<LinkBookControl>` in the action bar, replacing upstream's read-aloud sync popover (the invite chip stays upstream's); passes `editionProgress`, forwards `saved`                                      | keep additive (do not relocate upstream buttons)                    |
+| client `read-aloud/components/ReadAloudJobCard.vue`     | optional `initialDetailsOpen` prop seeding `detailsOpen`, so the panel's Review lands with Details expanded                                                                                             | 2 lines, trivial                                                    |
+| client `book/.../tabs/FilesTab.vue`                     | consumes `?readAloud=details` once (like upstream's `readAloud=create`), passes `initial-details-open` to the job card and scrolls it into view                                                         | ~12 lines, additive                                                 |
+| client `ReaderView.vue`                                 | open-time `fetchEbookCrossFormatResume(bookId, fileId)`, passed to `useFoliate` as the `crossFormatResume` open option; the server answers only for the aligned plain EPUB of a book with no read-along | one option field, one branch, a `{ crossFormatResumed }` return     |
+| `audiobook-chapters/audiobook-chapters.module.ts`       | register and export `AudioPlayOrderService`                                                                                                                                                             | 2 lines, trivial                                                    |
+| `book/audiobook-ebook-progress-sync.service.ts`         | `resolveAudioBookPosition` + the `AudioPlayOrderService` injection, feeds the ABS push; `itemDurations` gives a track-boundary clip of unknown length the rest of its section's declared length         | ~30 lines; drop the clip guard once upstream fixes the lookup       |
+| client `ReadingLogLedger.vue` / `ReadingLogTab.vue`     | one `audiobookshelf` pill token (ABS); `useBookProgressRefresh` (6 lines)                                                                                                                               | trivial                                                             |
+| `Dockerfile`                                            | `whisper-builder` stage compiles whisper.cpp `v1.9.1` (CPU-only, static) -> `whisper-cli`; runtime adds `libstdc++`/`libgomp`                                                                           | isolated stage + one COPY                                           |
 
 **Runtime deps (feature is OFF by default):** `whisper-cli` (bundled) + `ffmpeg` (already present) +
 a GGML model, downloaded automatically on first build into `<APP_DATA_PATH>/models` (`WhisperModelService`;
@@ -651,36 +684,41 @@ a GGML model, downloaded automatically on first build into `<APP_DATA_PATH>/mode
 Enable with `READING_ALIGNMENT_ENABLED=true`; `WHISPER_PATH` defaults to the bundled binary;
 `FFMPEG_PATH` defaults to `ffmpeg`. See `.env.example`.
 
-**Plugin removal:** unregister both modules in `app.module.ts`. The app still builds and runs: the
-resolver route 404s and the client falls back to its normal saved-position restore; the progress-sync
-listener simply isn't registered; the link/alignment controls hide when no pair exists. The fork Vue
-component files must remain for the client to compile (expected UI-registration coupling). The three
-tables are left in place, unused.
+**Plugin removal:** unregister `ReadingAlignmentModule` in `app.module.ts`. The app still builds and
+runs: the resolver route 404s and the client falls back to its normal saved-position restore; the
+progress-sync listener simply isn't registered; the Position sync panel still shows its ABS and
+read-aloud rows, and only the whisper connector shows "Not aligned" with no backend (the status route
+404s). The fork Vue component files must remain for the client to compile (expected UI-registration
+coupling). The two tables are left in place, unused.
 
-**Watched cross-module import:** two fork files import the pure helpers `applyPathMappings`/
-`pathMatchesPrefix` (and the `PathMapping` type) from upstream's `migration/planner/` for the
-path-mapping match tier, rather than reimplementing it: `audiobookshelf-match.utils.ts` (ABS) and
-`storyteller-path.utils.ts` (Storyteller) - deliberate reuse over reinvention in both. Signature drift
-(a rename, a moved file, a changed parameter) breaks both at typecheck; behaviour drift that keeps the
-signature is caught by the upstream-contract tests in `audiobookshelf-upstream-contract.test.ts`, which
-pin the no-match passthrough, longest-source-prefix ordering, the skipping of a prefix that normalizes
-to empty, and `pathMatchesPrefix`'s trailing-slash handling. `storyteller-path.utils.test.ts` adds a
-module-boundary test pinning the exact import list; it has no test of the upstream helpers' contract
-in isolation, but its own `toRemotePath`/`toLocalPath` tests drive them through `translate` and would
-catch the same behaviour drift. Re-point or inline the two functions in both files if they move.
-Audio-format predicates in ABS, `reading-alignment`, `edition-link` and `storyteller` come from
+**Watched cross-module import:** `audiobookshelf-match.utils.ts` (ABS) imports the pure helpers
+`applyPathMappings`/`pathMatchesPrefix` (and the `PathMapping` type) from upstream's `migration/planner/`
+for the path-mapping match tier, rather than reimplementing it. Signature drift (a rename, a moved file, a
+changed parameter) breaks it at typecheck; behaviour drift that keeps the signature is caught by the
+upstream-contract tests in `audiobookshelf-upstream-contract.test.ts`, which pin the no-match passthrough,
+longest-source-prefix ordering, the skipping of a prefix that normalizes to empty, and
+`pathMatchesPrefix`'s trailing-slash handling. Re-point or inline the two functions if they move.
+Audio-format predicates in ABS and `reading-alignment` come from
 `@bookorbit/types` (`AUDIO_FORMAT_LIST` / `isAudioFormat`), not from `scanner/lib/classify.ts`.
 
-**Audio play order must match upstream's manifest.** `reading-alignment.repository.ts` and
-`storyteller.repository.ts` sort with upstream's exported `compareAudioTracks`
-(`common/utils/book-media.utils.ts`), the same comparator the manifest uses, because absolute
-positions are derived from the ordering on both sides; a divergent tiebreak silently writes wrong
-percentages. The fork's own copy was deleted once upstream exported it. The projection's percentage divides by the sum of file durations (upstream's player
-prefers `book_metadata.duration_seconds`); they differ only when that column is overridden.
+**Audio play order must match upstream's manifest.** Every consumer of an absolute audio position
+(the ABS push through `resolveAudioBookPosition`, and the whisper build, resolve, sync and pair
+services through `reading-alignment.repository.ts`) gets the clock from the fork-only
+`AudioPlayOrderService` (`audiobook-chapters/audio-play-order.service.ts`). It orders tracks with
+upstream's `orderAudiobookTracks`, resolves stored chapters with `resolveStoredAudiobookChapters` and
+snaps rounded file boundaries onto chapter starts with `snapAudioFileStarts`
+(`common/utils/audio-timeline.utils.ts`); `buildAudioTimeline` consumes the result. A divergent order
+or start silently writes wrong percentages. A snapped start is part of the alignment content hash, so
+a book whose boundaries move is rebuilt; starts that match the summed durations are left out of the
+hash, so alignments built before snapping stay fresh. The projection's percentage divides by the sum
+of file durations (upstream's player prefers `book_metadata.duration_seconds`); they differ only when
+that column is overridden.
 
 **Merge notes:** the progress-sync projection into reading-state is the irreducible core coupling (like
 ABS). `extractSpineText` on `epub.service.ts` is the one seam worth watching on an upstream EPUB
-refactor. The `occurredAt` widening is shared with ABS - resolve it once.
+refactor. The `occurredAt` widening is shared with ABS - resolve it once. The `BOOK_PROGRESS_CHANGED`
+emit in the ABS pull is ordered after upstream's `syncEbookProgressForAudiobookPlayback`, like
+`audiobook.service.ts`.
 
 ## Monitored overlay (third permanent feature)
 
@@ -749,99 +787,67 @@ as expected UI-registration coupling.
   between lease and dispatch leaves `notifiedAt` set and the notification is never retried.
   A stale-lease reaper would close it.
 
-## Storyteller read-along overlay (fourth permanent feature)
+**Background eligibility.** Every background path that can submit a request on an owner's behalf
+(the fetch job, fetch-event items, follow-ups, the release watcher and its recheck before fan-out,
+and `fanOut` itself) checks `isEligibleMonitoredUser` (`monitored/monitored-user.utils.ts`): the owner
+is active and is a superuser or holds `BookRequestAccess`. The owner is reloaded where a step runs
+later, so a permission revoked between announce and fan-out stops the request. The only ungated
+submitters are the controller routes, which carry `@RequirePermission(Permission.BookRequestAccess)`.
 
-The fork carries a **fourth** overlay: an instance-level connection to a
-[Storyteller](https://storyteller-platform.gitlab.io/storyteller/) server that generates read-along
-EPUB3s (word-level narrated ebooks) from an ebook <-> audiobook pair already linked by the
-reading-alignment overlay's edition-link. One admin-configured server and service account serves every
-BookOrbit user; BookOrbit registers the pair with Storyteller (by shared path or by uploading it),
-starts alignment, waits for the result, and imports the finished EPUB as a new book that becomes the
-third member of the link. Upstream has no analogue, so this is maintained here indefinitely under the
-same rules as ABS. See [`docs/STORYTELLER_READ_ALONG.md`](docs/STORYTELLER_READ_ALONG.md) for the
-operator-facing setup guide (service account, transports, shared-storage mounts, env vars).
+## Web Serials overlay
 
-**Owned (fork-only) code - never conflicts:** `server/src/modules/storyteller/` (controller, settings
-service, encryption, the typed Storyteller API client, path-mapping and existing-book matching utils,
-the build orchestrator and status service, schema), `client/src/features/storyteller/`
-(`useStorytellerSettings.ts` + `StorytellerSettings.vue`), and the read-along pieces of the
-reading-alignment overlay's own fork-owned files (`client/src/features/book/composables/useReadAlong.ts`,
-`useReadAlongSection.ts`, `ReadAlongStepper.vue` and `ReadAlongBuildOptions.vue` under
-`client/src/features/book/components/detail/tabs/edition-link/`, and the `readAlongBookId` /
-`role` / `members` additions in `edition-link/*` and `useEditionLink.ts`). Three common utils, each shared by this
-module without an inter-module import: one moved out of `reading-alignment` (the audio play-order
-comparator, since replaced by upstream's `compareAudioTracks`), one out of `audiobookshelf`, and one new:
-`path-prefix-mapping.utils.ts` (prefix rewriting
-between two servers sharing storage, modelled on the ABS path-mapping matcher and deliberately a
-separate copy: ABS keeps its own in `audiobookshelf-match.utils.ts`, and importing it here would
-couple two integrations that must stay independently removable), and
-`self-hosted-service-url.utils.ts` (SSRF-safe parsing for a user-supplied self-hosted server URL,
-shared by every fork integration that polls one on a schedule).
+The fork carries a Web Serials overlay: manga and web-novel engines fetch serials chapter by chapter
+and import them as CBZ or EPUB volumes. **Owned (fork-only) code - never conflicts:**
+`server/src/modules/web-serials/` (engines, lookup, schema bootstrap in `web-serials-schema.ts`),
+`client/src/features/web-serials/` and `packages/types/src/web-serials.ts`. Its upstream footprint is
+the module registration in `app.module.ts`, the notification group-key upsert and the notification
+enum members (see the conflict table).
 
-**Schema decoupling (same pattern as ABS):** `storyteller_settings` (single row: connection, path
-mappings, target library/folder, transport, encrypted password) and
-`storyteller_read_along_builds` (one row per build: source/output book ids, Storyteller book uuid,
-transport, phase, status, progress) are applied at runtime by `StorytellerSchemaBootstrapService` from
-SQL embedded in `modules/storyteller/schema/storyteller-schema.ts`, never reachable from
-`db/schema/index.ts`, read through `db.select()` on module-local `pgTable` declarations in
-`storyteller.schema.ts`. `book_edition_links.read_along_book_id` (nullable FK to `books`, `ON DELETE
-SET NULL`, partial unique index) is a column added to the reading-alignment overlay's own
-`edition-link-schema.ts` bootstrap, not a new table - it stays fork-owned because the table it extends
-already is.
+- **Per-user quota lock.** `WebSerialsRepository.withUserJobQuota` takes a transaction-scoped advisory
+  lock per user, runs the write, then recounts and rolls back when the user is over the limit, so two
+  concurrent creates or resumes cannot both pass the check. Resume passes `countActiveJobs` as the
+  counter.
+- **Scoped move-to-top.** `moveJobToTop` reorders globally for superusers and `ManageAppSettings`
+  holders and only among the owner's own queued jobs otherwise. The job response carries
+  `canMoveToTop` from the same scope, so the client never offers a move that would change nothing.
 
-**Seams / hooks in shared files (keep minimal + generic):**
+**Plugin removal:** unregister `WebSerialsModule` in `app.module.ts`; its tables stay in place, unused.
 
-| Shared file                   | Hook                                                                                                                                               | Conflict cost                                        |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `app.module.ts`               | register `StorytellerModule`                                                                                                                       | 2 lines, trivial                                     |
-| `packages/types/src/index.ts` | `export * from "./storyteller"`                                                                                                                    | 1 line, trivial                                      |
-| `integration-tabs.ts`         | `storyteller` tab entry, gated on `Permission.ManageAppSettings`                                                                                   | additive                                             |
-| `router/index.ts`             | `settings-storyteller` route + `INTEGRATION_ROUTES` entry, same shape as every other integration tab                                               | additive                                             |
-| `en.json`                     | `settings.integrations.storyteller.*` + `book.detail.editionLink.readAlong.*` keys                                                                 | additive, en-only                                    |
-| client `LinkBookControl.vue`  | mounts `SyncChainPanel.vue` (the modality chain); the read-along is generated from the Available row's options block (`ReadAlongBuildOptions.vue`) | additive, same slot pattern as the alignment overlay |
-| `settings-nav.ts`             | `storyteller` entry under ACCOUNTS, same shape as every other integration                                                                          | additive                                             |
+## Storyteller read-along overlay (removed 2026-10-28, upstream v3.6.0 merge)
 
-**Access control is entirely BookOrbit's, not Storyteller's.** `GET/PUT settings` and `POST
-settings/test` require `Permission.ManageAppSettings`; `POST read-along/books/:bookId/build` and `GET
-.../existing` require `Permission.LibraryUpload` plus the requester's normal library access to every
-member book; replacing an existing read-along additionally requires `Permission.LibraryDeleteBooks`,
-since the build deletes the output it supersedes. `POST edition-links/read-along/:bookId` (attach a
-generated read-along to its pair) requires `Permission.LibraryEditMetadata`, and access is verified on
-both pair members before any write. Storyteller's own per-user accounts and reading state are never read; the service account
-configured in Settings is the only identity BookOrbit authenticates as.
+The fork used to carry a fourth overlay that drove an external Storyteller server to build read-along
+EPUB3s and imported each one as a separate book attached to an edition link as its read-along member.
+Upstream v3.6.0 ships in-app read-aloud generation (`workers/read-aloud`, STAlign + QuartzNet, which
+publishes `<book>.readaloud.epub` into the book's own folder; see [`docs/READ_ALOUD.md`](docs/READ_ALOUD.md)),
+so the overlay was deleted in that merge rather than carried.
 
-**Runtime deps (feature is inert until configured):** no new packages and no Dockerfile change - the
-client is native `fetch` and the server calls out over HTTP. `STORYTELLER_ENCRYPTION_KEY` /
-`STORYTELLER_REQUEST_TIMEOUT_MS` / `STORYTELLER_TRANSFER_TIMEOUT_MINUTES` /
-`STORYTELLER_WAIT_CEILING_MINUTES` are all optional with documented defaults (see
-`server/.env.example`); with no Storyteller server configured under Settings, the connection is simply
-unset and the Available row's generate action stays disabled with the reason why.
+Removed: `server/src/modules/storyteller/`, `client/src/features/storyteller/`,
+`packages/types/src/storyteller.ts`, `docs/STORYTELLER_READ_ALONG.md`, `common/utils/path-prefix-mapping.utils.ts`,
+the `STORYTELLER_*` env vars, the settings tab, route and nav entry, the read-along build UI in the
+Position sync panel, the `READ_ALONG_OUTPUT_SOURCE` seam in `edition-link/` and the
+`READ_ALONG_PROVENANCE_SOURCE` seam in `book/` (and the Storyteller file-name chapter matching it enabled),
+and the notification `meta.locked` / progress / cancel-build support that only builds used.
 
-**Plugin removal:** unregister `StorytellerModule` in `app.module.ts`, then remove `storyteller` from
-`INTEGRATION_TABS` (and its `INTEGRATION_TAB_INFO` entry) in `integration-tabs.ts` together with the
-`storyteller` entry in `INTEGRATION_ROUTES` and the `settings-storyteller` route in `router/index.ts`.
-`INTEGRATION_ROUTES` is typed `Record<IntegrationTab, string>`, so the two sides must move together:
-drop `storyteller` from `INTEGRATION_TABS` while its `INTEGRATION_ROUTES` entry survives and the client
-fails to typecheck on an excess property; drop the `INTEGRATION_ROUTES` entry first and it fails on a
-missing property instead. Also drop the `storyteller` item from the `accounts` group in
-`settings-nav.ts`, or it is left pointing at a route that no longer exists. The app still builds and
-runs otherwise: the settings panel and the read-along row and card disappear from the UI,
-`book_edition_links.read_along_book_id` and the two storyteller tables are left in place unused, and
-any book Storyteller had already produced stays exactly where it landed as an ordinary book. The fork
-Vue component files must remain for the client to compile (expected UI-registration coupling, same as
-the other three overlays).
+Removed later, with edition links on 2026-10-29/30: the edition link's read-along member and the
+manual read-along attach route (`GET/POST/DELETE /edition-links/*` are gone), `read-along-chapter-mapping.ts`,
+and `mp4-faststart.ts` (the Storyteller-format moov-after-mdat rewrite). EPUB media is still streamed
+with Range/ETag through `epub-media-stream.service.ts` / `epub-zip-range.ts`, unchanged. The
+`storyteller_settings`, `storyteller_read_along_builds`, `book_edition_links` and
+`book_edition_read_along_offsets` tables stay in the database unused; nothing reads them.
 
 ## Read-along narration player overlay (fifth permanent feature)
 
-The fork carries a **fifth** overlay: the player for EPUB3 media-overlay narration (read-along books,
-often Storyteller output). Upstream shows `MediaOverlayMiniPlayer`, a 480px bar at the bottom of the
+The fork carries a **fifth** overlay: the player for EPUB3 media-overlay narration (read-along books:
+upstream's read-aloud output or Storyteller-built EPUBs). Upstream shows `MediaOverlayMiniPlayer`, a 480px bar at the bottom of the
 reader that covers the text. The fork replaces it with a small floating **pill** (play/pause and an
 "open controls" button) that expands into a **full player** (cover, title, chapter dropdown, speed,
 previous/next sentence, sleep timer with an end-of-chapter option). When the reader has moved away from
 the narrated sentence, "Back to narration" and "Narrate from here" chips sit beside the pill. A
 "Listen with narration" chip above the reader footer starts narration. Narration itself still runs
-through upstream's `useMediaOverlay.ts`, which this overlay does not edit: the sleep-timer carry-over
-across restarts is done with watchers instead. Upstream's `MediaOverlayMiniPlayer.vue` is left in place,
+through upstream's `useMediaOverlay.ts`; the sleep-timer carry-over across restarts is done with
+watchers. Since the 2026-10-13 background-playback work the fork does edit that composable (one
+playlist timeline, a resume snapshot, background playback: 435 semantic lines on 2026-10-30), so it is
+now this overlay's largest upstream hunk and the first file to check on an upstream narration change. Upstream's `MediaOverlayMiniPlayer.vue` is left in place,
 unused, so upstream changes to it merge cleanly.
 
 **Owned (fork-only) code - never conflicts:** everything under
@@ -865,8 +871,8 @@ unused, so upstream changes to it merge cleanly.
 the `showNarrationStart` computed, the `registerNarrationChapters` import and the `onUnmounted`
 registration, and `sectionHasMediaOverlay` from the `useFoliate` destructure. In `useFoliate.ts`, drop
 `sectionHasMediaOverlay` and the `sections` type field. Then delete the fork-only files listed above.
-The unused `reader.narration.*` keys in `en.json` can go too; nothing else reads them. Upstream's bar
-then works as before, since `useMediaOverlay.ts` was never changed.
+The unused `reader.narration.*` keys in `en.json` can go too; nothing else reads them. Restore
+`useMediaOverlay.ts` from upstream as well; upstream's bar then works as before.
 
 ## Investigated and rejected - do not re-chase
 
@@ -894,7 +900,8 @@ Each of these was analysed and deliberately left alone. Re-attempting them waste
 - **`hardcover/hardcover-import.service.ts`** - resolved by the v2.7.0 rebase. Upstream
   extracted its own scoring into `hardcover-import-fuzzy-index.ts`, so the fork's moved
   helpers now live in the fork-owned `common/utils/fuzzy-match.utils.ts`, imported only by
-  ABS matching and edition-link. `hardcover-import.service.ts` is byte-identical to
+  ABS matching. Its `normalizeIsbn` was deleted on 2026-10-30 in favour of upstream's
+  `text-match/isbn-normalize.ts` `normalizeMetadataIsbn`. `hardcover-import.service.ts` is byte-identical to
   upstream again and the old delete/modify merge hazard is gone. Re-checked 2026-09-16:
   thresholds are still byte-identical to upstream's, but upstream exports only
   `HardcoverImportFuzzyIndex` (a whole-library inverted index over `PreparedText`
@@ -912,30 +919,34 @@ Each of these was analysed and deliberately left alone. Re-attempting them waste
   unwrap in upstream `common/utils/db-error.utils.ts`, but hoisting a shared
   `findPgErrorCode()` into that upstream file would add ~10 upstream lines to delete 25
   fork-only lines. Net loss on the surface that matters; rejected.
-- **Upstream `AudiobookEbookProgressSyncService` vs the alignment overlay** (checked at the v3.0.0
-  merge). Upstream's sync maps positions through an EPUB3 media-overlay (SMIL) playlist between
-  the audio file and a Storyteller-style read-aloud EPUB of the **same book**, and refuses pairs
-  whose durations differ by more than 5%. The fork's alignment projects across an **edition link
-  between two separate books** using Whisper anchors against ordinary EPUBs with no overlay.
-  Different inputs, different scope: **not substitutable, both stay.** They write disjoint rows
-  (same-book files vs the linked counterpart), so they do not fight; re-check if upstream ever
-  extends its sync across books.
+- **Upstream `AudiobookEbookProgressSyncService` vs the alignment overlay** (re-checked 2026-10-30,
+  after the same-record switch). Both now work inside one book. Upstream maps audio through the
+  read-along's SMIL playlist, refuses pairs whose durations differ by more than 5%, and writes every
+  EPUB of the book (the read-along first, then plain copies, with a full CFI). The whisper overlay
+  aligns the plain EPUB with no overlay and writes percentage-only projections. When a book has both,
+  they would target the same plain-EPUB row, so the pair service reports no whisper pair for any book
+  that holds a media-overlay EPUB, whatever its read-aloud sync mode, and the resolver
+  also returns nothing when the opened file is not the aligned plain EPUB. Upstream's exact mapping
+  owns every book with a read-along. **Not substitutable:** whisper exists for books with no
+  read-along at all.
 - **Upstream `TtsTextExtractorService` vs `EpubService.extractSpineText`** (checked at the v3.0.0
   merge). Upstream's extractor serves one chapter per call (it reopens the zip each time), is not
   exported from `TtsModule`, and splits text with `htmlToBlocks`, whereas alignment matching reads
   the whole spine in one pass through `extractVisibleText`. Swapping normalizers would shift every
   stored anchor. **Not substitutable; the seam stays.**
-- **`book.repository.ts` edition-link progress merge** - moved behind the generic
-  `EXTRA_PROGRESS_SOURCE` token on 2026-09-16 (fork-owned provider in `edition-link/`),
-  which restores plugin isolation; the merge branch itself is the irreducible part.
 
 ## Where the remaining work is
 
-After the v2.10.0 merge and review pass (2026-09-16): five seams landed, and modified
-upstream source files carry 1607 semantic lines across 80 files (locales and tests
-excluded) for three overlays. The files above the bar are `scanner.service.ts` (287, Phase B,
-fork-internal shrink only) and `metadata.service.ts` (134, cover precedence); the monitored
-Hardcover client additions (123 + 85 types) are the next largest and are generic GraphQL.
+Re-measured 2026-10-30 on the v3.6.0 merge tree (`git diff -w --numstat --diff-filter=M upstream/main`,
+locales, docs, JSON and tests excluded): modified upstream source files carry 9359 semantic lines
+across 192 files for all overlays (2026-09-16: 1607 across 80 for three). The growth is mostly the
+book-request work (Shelfmark, batch grab, release inspection), the command palette and the narration
+player, not seams: four seams remain after the two edition-link seams were deleted. The largest are
+the vendored `client/public/assets/foliate/epub.js` (671), `request-fulfillment.service.ts` (441),
+`useMediaOverlay.ts` (435) and `request-import.service.ts` (402). Of the overlay hooks this document
+tracks, `scanner.service.ts` (324, Phase B, fork-internal shrink only) and `metadata.service.ts` (149,
+cover precedence) are still the largest; the monitored Hardcover client additions (231 + 126 types)
+come next and are generic GraphQL.
 The rest is genuine core coupling - progress sync into reading state, provider-ID unions,
 registration lines - plus the propose-upstream queue below.
 
@@ -958,3 +969,6 @@ shrinks the footprint.
   the `audiobookshelf` member of the progress-source enums.
 - `audiobook.service.ts`: emit `book:progress-changed` from `putPlaybackState`; upstream's
   web reader already emits it for ebooks.
+- ABS pull: it calls `syncEbookProgressForAudiobookPlayback` and emits `book:progress-changed`, the
+  same pair upstream's player does; if upstream ever emits from `putPlaybackState`, both fork emits
+  can go.

@@ -1,8 +1,8 @@
 import { mount } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
-import type { ChainFrame, ChainGhostRow, ChainViewMode, SyncChainSnapshot } from '@/features/book/lib/sync-chain'
+import type { ChainFrame, ChainGhostRow, ChainViewMode } from '@/features/book/lib/sync-chain'
 import SyncChainGhost from '../SyncChainGhost.vue'
-import { chainAbs, chainAlignment, chainBook, chainOf, chainReadAlong, chainSide, ghostRow } from '@/features/book/lib/__tests__/sync-chain-fixtures'
+import { chainAbs, chainOf, ghostRow } from '@/features/book/lib/__tests__/sync-chain-fixtures'
 
 const stubs = { RouterLink: { props: ['to'], template: '<a data-testid="router-link" :href="JSON.stringify(to)"><slot /></a>' } }
 
@@ -10,39 +10,18 @@ function mountGhost(row: ChainGhostRow, view: ChainViewMode = 'modify', busy = f
   return mount(SyncChainGhost, { props: { row, view, busy, frame }, global: { stubs } })
 }
 
-const ebookOnly = (overrides: Partial<SyncChainSnapshot> = {}) =>
-  chainOf({
-    linked: false,
-    ebook: chainSide({ book: chainBook(1, 'Ebook'), isThisBook: true }),
-    audiobook: chainSide(),
-    alignment: chainAlignment({ status: 'none', builtAt: null }),
-    ...overrides,
-  })
+const NO_MATCH = 'No match in your libraries'
+
+const createGhost = () => ghostRow(chainOf({ abs: { configured: true, link: null, live: null, checking: false } }), 'abs')
 
 describe('SyncChainGhost', () => {
   it('draws a dashed one-line slot with its label and note', () => {
-    const wrapper = mountGhost(ghostRow(ebookOnly(), 'audiobook'))
+    const wrapper = mountGhost(createGhost())
 
     const root = wrapper.get('[data-testid="sync-chain-ghost"]')
     expect(root.classes()).toEqual(expect.arrayContaining(['border-dashed', 'rounded-xl']))
-    expect(wrapper.get('[data-testid="sync-chain-placeholder-label"]').text()).toBe('Audiobook')
-    expect(wrapper.get('[data-testid="sync-chain-placeholder-note"]').text()).toBe('No matching audiobook found yet')
-  })
-
-  it('offers Search on a missing ebook or audiobook and emits it with the slot id', async () => {
-    const wrapper = mountGhost(ghostRow(ebookOnly(), 'audiobook'))
-
-    const search = wrapper.get('[data-action="change"]')
-    expect(search.text()).toBe('Search')
-    await search.trigger('click')
-
-    expect(wrapper.emitted('action')?.[0]).toEqual(['change', 'card:audiobook'])
-  })
-
-  it('has no action without the edit permission', () => {
-    const chain = ebookOnly({ can: { editLink: false, generate: true, rebuild: true } })
-
-    expect(mountGhost(ghostRow(chain, 'audiobook')).find('[data-testid="sync-chain-action"]').exists()).toBe(false)
+    expect(wrapper.get('[data-testid="sync-chain-placeholder-label"]').text()).toBe('Audiobookshelf')
+    expect(wrapper.get('[data-testid="sync-chain-placeholder-note"]').text()).toBe(NO_MATCH)
   })
 
   it('offers Match when the audiobook has no Audiobookshelf item', async () => {
@@ -53,13 +32,6 @@ describe('SyncChainGhost', () => {
     await wrapper.get('[data-action="change"]').trigger('click')
     expect(wrapper.text()).toContain('Match')
     expect(wrapper.emitted('action')?.[0]).toEqual(['change', 'card:abs'])
-  })
-
-  it('waits for the audiobook before Audiobookshelf can match, with no action', () => {
-    const wrapper = mountGhost(ghostRow(ebookOnly({ abs: chainAbs() }), 'abs'))
-
-    expect(wrapper.get('[data-testid="sync-chain-placeholder-note"]').text()).toBe('Pick an audiobook first')
-    expect(wrapper.find('[data-testid="sync-chain-action"]').exists()).toBe(false)
   })
 
   it('points to Settings when position sync is off, with no action', () => {
@@ -79,7 +51,7 @@ describe('SyncChainGhost', () => {
   })
 
   it('renders no empty note link holder in compact when there is no Settings link', () => {
-    const wrapper = mountGhost(ghostRow(ebookOnly(), 'audiobook'), 'compact')
+    const wrapper = mountGhost(createGhost(), 'compact')
 
     const line = wrapper.get('[data-testid="sync-chain-placeholder-label"]').element.parentElement!
     expect(Array.from(line.children).map((child) => child.getAttribute('data-testid'))).toEqual([
@@ -89,30 +61,22 @@ describe('SyncChainGhost', () => {
   })
 
   it('points its compact action at a note that exists', () => {
-    const wrapper = mountGhost(ghostRow(ebookOnly(), 'audiobook'), 'compact')
+    const wrapper = mountGhost(createGhost(), 'compact')
 
     const describedBy = wrapper.get('[data-action="change"]').attributes('aria-describedby')
     expect(describedBy).toBeTruthy()
     expect(wrapper.get('[data-testid="sync-chain-placeholder-note"]').attributes('id')).toBe(describedBy)
   })
 
-  it('says an out-of-reach read-along was added somewhere the reader cannot open', () => {
-    const chain = chainOf({ readAlong: chainReadAlong({ status: 'ready' }) })
-    const wrapper = mountGhost(ghostRow(chain, 'readAlong'))
-
-    expect(wrapper.get('[data-testid="sync-chain-placeholder-note"]').text()).toBe("Added to a library you can't open.")
-    expect(wrapper.find('[data-testid="sync-chain-action"]').exists()).toBe(false)
-  })
-
   it('disables its action while the panel is busy', () => {
-    const wrapper = mountGhost(ghostRow(ebookOnly(), 'audiobook'), 'modify', true)
+    const wrapper = mountGhost(createGhost(), 'modify', true)
 
     expect(wrapper.get('[data-action="change"]').attributes('disabled')).toBeDefined()
   })
 
   it('moves focus to its action on request', () => {
     const wrapper = mount(SyncChainGhost, {
-      props: { row: ghostRow(ebookOnly(), 'audiobook'), view: 'modify' },
+      props: { row: createGhost(), view: 'modify' },
       global: { stubs },
       attachTo: document.body,
     })
@@ -124,15 +88,15 @@ describe('SyncChainGhost', () => {
   })
 
   it('keeps its dashed shell on one line with its action as a text link in compact', () => {
-    const wrapper = mountGhost(ghostRow(ebookOnly(), 'audiobook'), 'compact')
+    const wrapper = mountGhost(createGhost(), 'compact')
 
     const root = wrapper.get('[data-testid="sync-chain-ghost"]')
     expect(root.classes()).toEqual(expect.arrayContaining(['rounded-xl', 'border-dashed']))
     expect(wrapper.get('[data-testid="sync-chain-placeholder-note"]').classes()).toContain('truncate')
     const action = wrapper.get('button')
-    expect(action.text()).toBe('Search')
+    expect(action.text()).toBe('Match')
     expect(action.classes()).toEqual(expect.arrayContaining(['text-info', '-my-1']))
-    expect(root.text()).toContain('No matching audiobook found yet')
+    expect(root.text()).toContain(NO_MATCH)
   })
 
   it('is a plain row without a dashed outline inside the audio group, keeping its note and action', () => {

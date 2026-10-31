@@ -91,6 +91,19 @@ describe('placeholder cover summaries and mutations', () => {
     expect(writes.find((write) => write.table === bookMetadata)?.values).toMatchObject({ coverSource: servedBytesChanged ? 'extracted' : null });
   });
 
+  it('keeps the switch on an adopted slot instead of clearing it', async () => {
+    const { repository, deleted, writes } = harness([]);
+    await repository.applySlotMutation(
+      7,
+      'ebook',
+      media,
+      { kind: 'upsert', row: { source: 'custom', origin: 'embedded' } },
+      { bumpBook: true, servedBytesChanged: true, updatedAt: new Date(100), placeholder: true },
+    );
+    expect(writes.some((write) => write.table === bookCoverPlaceholders)).toBe(true);
+    expect(deleted.includes(bookCoverPlaceholders)).toBe(false);
+  });
+
   it('cleans up the switch on slot deletion', async () => {
     const { repository, deleted } = harness([slot('ebook', 'custom', true)]);
     await repository.applySlotMutation(7, 'ebook', media, { kind: 'delete' }, { bumpBook: true, servedBytesChanged: false, updatedAt: new Date() });

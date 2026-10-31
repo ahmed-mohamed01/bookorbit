@@ -28,6 +28,11 @@ describe('AudibleCatalogClient', () => {
     await expect(new AudibleCatalogClient().searchProducts('Book Author', 'com')).resolves.toEqual([]);
   });
 
+  it('rejects oversized catalog JSON', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { headers: { 'content-length': String(5 * 1024 * 1024) } }));
+    await expect(new AudibleCatalogClient().searchProducts('Book Author', 'com')).rejects.toMatchObject({ name: 'ResponseTooLargeError' });
+  });
+
   it('turns a non-ok response into a gateway exception', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500 }));
 

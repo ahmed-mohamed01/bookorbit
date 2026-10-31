@@ -52,7 +52,7 @@ const coverUrl = computed(() => toMonitoredCoverUrl(props.item.coverUrl))
 const placeholderAuthors = computed(() => [props.item.authorName])
 const relativeTime = computed(() => {
   if (!date.value) return null
-  return relativeReleaseLabel(daysUntil(date.value), t)
+  return relativeReleaseLabel(daysUntil(date.value))
 })
 
 /** The row's own format leads; the other one follows so the row reads like the card. */

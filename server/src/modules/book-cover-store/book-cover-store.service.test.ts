@@ -460,6 +460,26 @@ describe('BookCoverStore', () => {
     }
   });
 
+  it('keeps Use placeholder on a slot the target adopts, so hidden artwork stays hidden', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'cover-store-adopt-placeholder-'));
+    try {
+      const { store, repository } = makeStore(root, context({ bookId: 8, slots: [] }));
+      for (const medium of ['ebook', 'audio'] as const) {
+        const dir = bookCoverSlotDirPath(root, 7, medium);
+        await mkdir(dir, { recursive: true });
+        await writeFile(join(dir, 'cover_extracted.jpg'), await image(80, 80));
+      }
+
+      await expect(store.adoptSlots(7, [{ ...slot('ebook', 'custom'), placeholder: true }, slot('audio')], 8)).resolves.toEqual(['ebook', 'audio']);
+
+      const optionsFor = (medium: string) => repository.applySlotMutation.mock.calls.find((call) => call[1] === medium)?.[4];
+      expect(optionsFor('ebook')).toMatchObject({ servedBytesChanged: true, placeholder: true });
+      expect(optionsFor('audio')).toMatchObject({ servedBytesChanged: true, placeholder: false });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('reports each slot a fetch may fill, sorting a legacy cover into its slot first', async () => {
     const withAudioOnlyEmpty = makeStore(join(tmpdir(), 'unused-cover-store'), context({ slots: [slot('ebook')], lockedFields: ['audioCover'] }));
     await expect(withAudioOnlyEmpty.store.fetchState(7)).resolves.toEqual({

@@ -9,11 +9,6 @@ import { fetchMonitoredSummary } from '../api/monitored'
 const summary = ref<MonitoredSummary | null>(null)
 let fetchPromise: Promise<void> | null = null
 
-export function resetMonitoredSummary(): void {
-  summary.value = null
-  fetchPromise = null
-}
-
 export function useMonitoredSummary() {
   function fetchSummary(force = false): Promise<void> {
     if (!force && summary.value) return Promise.resolve()

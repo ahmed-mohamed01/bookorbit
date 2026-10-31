@@ -7,7 +7,7 @@ import { ReadingAlignmentResolveService } from './reading-alignment-resolve.serv
 
 const USER = { id: 42, isSuperuser: false } as RequestUser;
 const BOOK_ID = 7;
-const TEXT_BOOK_ID = 8;
+const TEXT_BOOK_ID = BOOK_ID;
 const AUDIO_BOOK_ID = BOOK_ID;
 const EBOOK_FILE_ID = 5;
 
@@ -118,8 +118,27 @@ describe('ReadingAlignmentResolveService.resolveResume', () => {
 
     await service.resolveResume(BOOK_ID, USER);
 
-    expect(log).toHaveBeenCalledWith(expect.stringMatching(/\[end\] bookId=7 textBookId=8 audioBookId=7 durationMs=\d+ available=true/));
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/\[end\] bookId=7 textBookId=7 audioBookId=7 durationMs=\d+ available=true/));
     log.mockRestore();
+  });
+
+  it('resumes the aligned plain EPUB when it is the opened file', async () => {
+    const { service } = build({
+      ebookProgress: { percentage: 0, updatedAt: OLDER },
+      audioProgress: { currentFileId: 10, positionSeconds: 50, percentage: 75, updatedAt: NEWER },
+    });
+
+    expect(await service.resolveResume(BOOK_ID, USER, EBOOK_FILE_ID)).toMatchObject({ available: true, phrase: 'end' });
+  });
+
+  it('is unavailable for any other opened file, such as the read-along EPUB', async () => {
+    const { service, repo } = build({
+      ebookProgress: { percentage: 0, updatedAt: OLDER },
+      audioProgress: { currentFileId: 10, positionSeconds: 50, percentage: 75, updatedAt: NEWER },
+    });
+
+    expect(await service.resolveResume(BOOK_ID, USER, 99)).toEqual({ available: false });
+    expect(repo.getAudiobookProgress).not.toHaveBeenCalled();
   });
 
   it('stays available when the ebook row is a projection whose timestamps are newer than the audio row', async () => {

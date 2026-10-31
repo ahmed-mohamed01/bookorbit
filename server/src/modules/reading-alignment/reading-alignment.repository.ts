@@ -5,9 +5,9 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { isAudioFormat } from '@bookorbit/types';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
-import { compareAudioTracks } from '../../common/utils/book-media.utils';
+import { AudioPlayOrderService } from '../audiobook-chapters/audio-play-order.service';
 import { applySchemaStatements, findMissingColumns, findMissingTables } from '../../common/utils/schema-bootstrap.utils';
-import type { AudioTimelineFile } from './reading-alignment-audio-timeline.util';
+import type { AudioTimelineFile } from '../../common/utils/audio-timeline.utils';
 import { audiobookAlignment, audiobookAlignmentAnchor } from './schema/reading-alignment.schema';
 import type {
   AudiobookAlignment,
@@ -32,7 +32,7 @@ type AudiobookProgressSnapshot = { currentFileId: number; positionSeconds: numbe
 
 // An audio content file resolved in play order, carrying both the on-disk path the transcriber needs
 // and the duration the timeline needs.
-type AudioFileWithPath = { fileId: number; absolutePath: string; durationSeconds: number | null };
+type AudioFileWithPath = { fileId: number; absolutePath: string; durationSeconds: number | null; startSeconds?: number };
 
 // The book's primary EPUB content file, used both to feed the spine extractor and to hash for change
 // detection.
@@ -42,7 +42,10 @@ type AlignmentProgress = { samplesDone: number; anchorCount: number };
 
 @Injectable()
 export class ReadingAlignmentRepository {
-  constructor(@Inject(DB) private readonly db: Db) {}
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    private readonly chapters: AudioPlayOrderService,
+  ) {}
 
   async findMissingTables(tableNames: readonly string[]): Promise<string[]> {
     return findMissingTables(this.db, tableNames);
@@ -59,43 +62,11 @@ export class ReadingAlignmentRepository {
   }
 
   async resolveAudioPlayOrder(audioBookId: number): Promise<AudioTimelineFile[]> {
-    const rows = await this.db
-      .select({
-        id: schema.bookFiles.id,
-        format: schema.bookFiles.format,
-        absolutePath: schema.bookFiles.absolutePath,
-        sortOrder: schema.bookFiles.sortOrder,
-        durationSeconds: schema.bookFiles.durationSeconds,
-      })
-      .from(schema.bookFiles)
-      .where(and(eq(schema.bookFiles.bookId, audioBookId), eq(schema.bookFiles.role, 'content')))
-      .orderBy(asc(schema.bookFiles.sortOrder));
-
-    return rows
-      .filter((row) => row.format != null && isAudioFormat(row.format))
-      .sort(compareAudioTracks)
-      .map((row) => ({ fileId: row.id, durationSeconds: row.durationSeconds }));
+    return this.chapters.resolveAudioPlayOrder(audioBookId);
   }
 
-  // Same play order as resolveAudioPlayOrder, but also carries the absolute path each audio window is
-  // decoded from. The build service both times the audiobook and transcribes from this one list.
   async resolveAudioFilesWithPaths(audioBookId: number): Promise<AudioFileWithPath[]> {
-    const rows = await this.db
-      .select({
-        id: schema.bookFiles.id,
-        format: schema.bookFiles.format,
-        absolutePath: schema.bookFiles.absolutePath,
-        sortOrder: schema.bookFiles.sortOrder,
-        durationSeconds: schema.bookFiles.durationSeconds,
-      })
-      .from(schema.bookFiles)
-      .where(and(eq(schema.bookFiles.bookId, audioBookId), eq(schema.bookFiles.role, 'content')))
-      .orderBy(asc(schema.bookFiles.sortOrder));
-
-    return rows
-      .filter((row) => row.format != null && isAudioFormat(row.format))
-      .sort(compareAudioTracks)
-      .map((row) => ({ fileId: row.id, absolutePath: row.absolutePath, durationSeconds: row.durationSeconds }));
+    return this.chapters.resolveAudioPlayOrder(audioBookId);
   }
 
   // The primary EPUB content file for a book. Only epub is selected, because the spine-text extractor
@@ -109,10 +80,26 @@ export class ReadingAlignmentRepository {
         sizeBytes: schema.bookFiles.sizeBytes,
       })
       .from(schema.bookFiles)
-      .where(and(eq(schema.bookFiles.bookId, textBookId), eq(schema.bookFiles.role, 'content'), eq(schema.bookFiles.format, 'epub')))
+      .where(
+        and(
+          eq(schema.bookFiles.bookId, textBookId),
+          eq(schema.bookFiles.role, 'content'),
+          eq(schema.bookFiles.format, 'epub'),
+          eq(schema.bookFiles.mediaOverlayAvailable, false),
+        ),
+      )
       .orderBy(asc(schema.bookFiles.sortOrder), asc(schema.bookFiles.id))
       .limit(1);
     return row;
+  }
+
+  async hasReadAlong(bookId: number): Promise<boolean> {
+    const [overlay] = await this.db
+      .select({ id: schema.bookFiles.id })
+      .from(schema.bookFiles)
+      .where(and(eq(schema.bookFiles.bookId, bookId), eq(schema.bookFiles.format, 'epub'), eq(schema.bookFiles.mediaOverlayAvailable, true)))
+      .limit(1);
+    return overlay !== undefined;
   }
 
   async getAlignmentByPair(textBookId: number, audioBookId: number): Promise<AudiobookAlignment | undefined> {

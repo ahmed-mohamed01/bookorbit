@@ -11,6 +11,7 @@ vi.mock('fs/promises', async (importOriginal) => {
   return {
     ...actual,
     readdir: vi.fn().mockResolvedValue([]),
+    readFile: vi.fn(actual.readFile),
     stat: vi.fn().mockResolvedValue({ isFile: () => true, ino: 2001n, size: 1024, mtime: new Date('2024-01-01') }),
   };
 });
@@ -19,7 +20,7 @@ import { ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { NotificationType } from '@bookorbit/types';
 import type { MockedFunction } from 'vitest';
 import type { Dirent } from 'fs';
-import { readdir, stat } from 'fs/promises';
+import { readdir, readFile, stat } from 'fs/promises';
 
 import { SelfWriteRegistry } from '../../common/services/self-write-registry.service';
 import { ACHIEVEMENT_EVENT_LIBRARY_CATALOG_CHANGED } from '../achievement/achievement-events.service';
@@ -154,6 +155,7 @@ const mockGateway = {
 const mockMetadata = {
   extractAndSave: vi.fn().mockResolvedValue(undefined),
   extractAndSaveWithRegex: vi.fn().mockResolvedValue(undefined),
+  applyRegexMetadataRules: vi.fn().mockResolvedValue('unchanged'),
   refreshCoverForBook: vi.fn().mockResolvedValue(false),
   extractAudioFileDuration: vi.fn().mockResolvedValue(undefined),
   aggregateAudioDuration: vi.fn().mockResolvedValue(undefined),
@@ -168,6 +170,7 @@ function makeService(
   autoFetchOrchestrator?: { scheduleImportedBooksIfEligible: (...args: unknown[]) => Promise<number> },
   coverStore: { enrichCardFaces: (cards: unknown[]) => Promise<void> } = { enrichCardFaces: vi.fn().mockResolvedValue(undefined) },
   coverReconciler?: { enqueue: (...args: unknown[]) => Promise<void>; enqueueExpiredDormant?: (libraryId: number) => Promise<void> },
+  extraMetadataSources: unknown[] = [],
 ) {
   const jobStore = new ScanJobStore();
   const notificationService = { notify: vi.fn().mockResolvedValue(undefined) };
@@ -186,6 +189,7 @@ function makeService(
     autoFetchOrchestrator as any,
     achievementEvents as any,
     coverReconciler as any,
+    extraMetadataSources as any,
   );
   return { service, jobStore, notificationService, achievementEvents, selfWriteRegistry, regexMetadata };
 }
@@ -2788,6 +2792,59 @@ describe('reextractMetadata option', () => {
     // byte-identical to what's stored, so the provider cover must not be re-applied.
     expect(mockMetadata.applyCoverSource).not.toHaveBeenCalled();
   });
+  it('reimports a sidecar cover overwritten at the same path', async () => {
+    const epub = makeFileStat({ absolutePath: '/library/Book/book.epub', relPath: 'Book/book.epub', format: 'epub', role: 'content' });
+    const cover = makeFileStat({
+      absolutePath: '/library/Book/cover.jpg',
+      relPath: 'Book/cover.jpg',
+      ino: 5002n,
+      sizeBytes: 1024,
+      mtime: new Date('2026-10-01'),
+      format: 'jpg',
+      role: 'cover',
+    });
+
+    mockFindCandidates.mockResolvedValue({
+      candidates: [makeCandidate('/library/Book', [epub, cover])],
+      skippedDirs: new Set(),
+      unchangedDirs: new Set(),
+      dirMtimes: new Map(),
+    });
+
+    const repo = makeRepo({
+      findBooksByLibraryFolder: vi
+        .fn()
+        .mockResolvedValue([{ id: 1, libraryId: 1, libraryFolderId: 1, folderPath: '/library/Book', primaryFileId: 10, status: 'present' }]),
+      findBookFilesByLibraryFolder: vi.fn().mockResolvedValue([
+        makeBookFile({ id: 10, bookId: 1, absolutePath: epub.absolutePath, ino: epub.ino, sortOrder: 0 }),
+        makeBookFile({
+          id: 11,
+          bookId: 1,
+          absolutePath: cover.absolutePath,
+          ino: cover.ino,
+          sizeBytes: 512,
+          format: 'jpg',
+          role: 'cover',
+          sortOrder: 1,
+          fileHash: 'stored-cover-hash',
+        }),
+      ]),
+    });
+
+    const fakeCoverProvider = {
+      key: 'sidecar',
+      select: () => null,
+      selectCover: (files: { role: string }[]) => files.find((f) => f.role === 'cover') ?? null,
+    };
+
+    const { service } = makeService(repo, undefined, undefined, undefined, [fakeCoverProvider]);
+
+    const done = awaitScan(repo);
+    await service.startScan(1, 'manual');
+    await done;
+
+    expect(mockMetadata.applyCoverSource).toHaveBeenCalledWith(expect.any(Number), { kind: 'sidecar', absolutePath: cover.absolutePath });
+  });
 });
 
 describe('unchecked read-along EPUBs in unchanged folders', () => {
@@ -4152,6 +4209,70 @@ describe('bootstrap, wrappers, and cover refresh', () => {
     expect(mockMetadata.refreshCoverForBook).toHaveBeenNthCalledWith(2, 4, '/library/Book/book.m4b', 'm4b', 'audio');
   });
 
+  describe('with a sidecar cover.jpg beside an EPUB and an audiobook', () => {
+    const bookFiles = [
+      { id: 40, bookId: 4, absolutePath: '/library/Book/book.epub', format: 'epub', role: 'content', sizeBytes: 10, mediaOverlayAvailable: false },
+      { id: 41, bookId: 4, absolutePath: '/library/Book/book.m4b', format: 'm4b', role: 'content', sizeBytes: 10, mediaOverlayAvailable: false },
+    ];
+    const sidecarProvider = {
+      key: 'sidecar',
+      select: () => null,
+      listCoversForBooks: vi.fn().mockResolvedValue([{ bookId: 4, absolutePath: '/library/Book/cover.jpg', format: 'jpg' }]),
+    };
+
+    afterEach(() => {
+      mockMetadata.refreshCoverForBook.mockReset().mockResolvedValue(false);
+      mockMetadata.applyCoverSource.mockReset().mockResolvedValue('saved');
+    });
+
+    async function refreshWithSidecar(metadataPrecedence: string[], sidecarMedium: 'ebook' | 'audio') {
+      const repo = makeRepo({
+        findPrimaryBookFilesByLibrary: vi.fn().mockResolvedValue([{ bookId: 4, absolutePath: '/library/Book/book.epub', format: 'epub' }]),
+        findLibrarySettings: vi.fn().mockResolvedValue({ formatPriority: ['epub', 'm4b'], metadataPrecedence, organizationMode: 'book_per_folder' }),
+        findBookFilesByBookIds: vi.fn().mockResolvedValue(bookFiles),
+      });
+      const coverStore = { enrichCardFaces: vi.fn(), chooseSidecarMedium: vi.fn().mockResolvedValue(sidecarMedium) };
+      const coverReconciler = { enqueue: vi.fn().mockResolvedValue(undefined) };
+      vi.mocked(readFile).mockResolvedValueOnce(Buffer.from('jpg'));
+      const { service } = makeService(repo, undefined, coverStore, coverReconciler, [sidecarProvider]);
+      await expect(service.refreshCovers(1)).resolves.toEqual({ queued: 1 });
+      await vi.waitFor(() => expect(coverReconciler.enqueue).toHaveBeenCalledWith([4]));
+      return coverStore;
+    }
+
+    it('fills the sidecar’s slot from cover.jpg and still refreshes the other medium from its own file', async () => {
+      mockMetadata.refreshCoverForBook.mockResolvedValue(true);
+      mockMetadata.applyCoverSource.mockResolvedValue('saved');
+
+      const coverStore = await refreshWithSidecar(['sidecar', 'embedded'], 'ebook');
+
+      expect(coverStore.chooseSidecarMedium).toHaveBeenCalledWith(4, Buffer.from('jpg'));
+      expect(mockMetadata.applyCoverSource).toHaveBeenCalledExactlyOnceWith(4, { kind: 'sidecar', absolutePath: '/library/Book/cover.jpg' });
+      expect(mockMetadata.refreshCoverForBook).toHaveBeenCalledExactlyOnceWith(4, '/library/Book/book.m4b', 'm4b', 'audio');
+    });
+
+    it('keeps embedded art ahead of the sidecar per medium, using cover.jpg only where the file has none', async () => {
+      mockMetadata.refreshCoverForBook.mockImplementation((_bookId: number, path: string) => Promise.resolve(path.endsWith('.epub')));
+      mockMetadata.applyCoverSource.mockResolvedValue('saved');
+
+      await refreshWithSidecar(['embedded', 'sidecar'], 'audio');
+
+      expect(mockMetadata.refreshCoverForBook).toHaveBeenCalledTimes(2);
+      expect(mockMetadata.refreshCoverForBook).toHaveBeenCalledWith(4, '/library/Book/book.epub', 'epub', 'ebook');
+      expect(mockMetadata.refreshCoverForBook).toHaveBeenCalledWith(4, '/library/Book/book.m4b', 'm4b', 'audio');
+      expect(mockMetadata.applyCoverSource).toHaveBeenCalledExactlyOnceWith(4, { kind: 'sidecar', absolutePath: '/library/Book/cover.jpg' });
+    });
+
+    it('skips the sidecar for a medium whose own file has embedded art first in precedence', async () => {
+      mockMetadata.refreshCoverForBook.mockResolvedValue(true);
+
+      await refreshWithSidecar(['embedded', 'sidecar'], 'audio');
+
+      expect(mockMetadata.refreshCoverForBook).toHaveBeenCalledTimes(2);
+      expect(mockMetadata.applyCoverSource).not.toHaveBeenCalled();
+    });
+  });
+
   it('rethrows refreshCovers query failures', async () => {
     const repo = makeRepo({
       findPrimaryBookFilesByLibrary: vi.fn().mockRejectedValue(new Error('lookup failed')),
@@ -4907,5 +5028,61 @@ describe('regex metadata outside a scan', () => {
     selfWriteRegistry.end([primary.absolutePath]);
     expect(regexMetadata.evaluate).not.toHaveBeenCalled();
     expect(mockMetadata.extractAndSave).not.toHaveBeenCalled();
+  });
+
+  describe('applying saved rules to a book already in the library', () => {
+    const rules = { config: regexConfig, precedence: ['embedded', 'regex'] };
+
+    it('writes only rule-decided fields through the metadata service', async () => {
+      const { service, regexMetadata } = makeService(rulesRepo(regexConfig));
+      regexMetadata.evaluate.mockResolvedValue({ matched: true, metadata: { seriesName: 'Series' }, diagnostics: [] });
+      mockMetadata.applyRegexMetadataRules.mockResolvedValueOnce('updated');
+
+      await expect(service.applyLibraryRulesToBook(book, [primary] as never, rules)).resolves.toBe('updated');
+      expect(regexMetadata.evaluate).toHaveBeenCalledWith(regexConfig, 'Series/Book/book.epub');
+      expect(mockMetadata.applyRegexMetadataRules).toHaveBeenCalledWith(
+        7,
+        [{ key: 'embedded', absolutePath: '/library/Series/Book/book.epub', format: 'epub' }],
+        { seriesName: 'Series' },
+        ['embedded', 'regex'],
+      );
+      expect(mockMetadata.extractAndSaveWithRegex).not.toHaveBeenCalled();
+    });
+
+    it('reports an unchanged book when the rules decide what it already has', async () => {
+      const { service, regexMetadata } = makeService(rulesRepo(regexConfig));
+      regexMetadata.evaluate.mockResolvedValue({ matched: true, metadata: { seriesName: 'Series' }, diagnostics: [] });
+
+      await expect(service.applyLibraryRulesToBook(book, [primary] as never, rules)).resolves.toBe('unchanged');
+    });
+
+    it('reports a book whose files could not be read', async () => {
+      const { service, regexMetadata } = makeService(rulesRepo(regexConfig));
+      regexMetadata.evaluate.mockResolvedValue({ matched: true, metadata: { seriesName: 'Series' }, diagnostics: [] });
+      mockMetadata.applyRegexMetadataRules.mockResolvedValueOnce('unreadable');
+
+      await expect(service.applyLibraryRulesToBook(book, [primary] as never, rules)).resolves.toBe('file_unavailable');
+    });
+
+    it('skips a book no rule matches, one without a primary file, and one being written', async () => {
+      const { service, regexMetadata, selfWriteRegistry } = makeService(rulesRepo(regexConfig));
+      regexMetadata.evaluate.mockResolvedValue({ matched: false, metadata: {}, diagnostics: [] });
+      await expect(service.applyLibraryRulesToBook(book, [primary] as never, rules)).resolves.toBe('skipped');
+      await expect(service.applyLibraryRulesToBook({ ...book, primaryFileId: null }, [primary] as never, rules)).resolves.toBe('skipped');
+      selfWriteRegistry.begin([primary.absolutePath]);
+      await expect(service.applyLibraryRulesToBook(book, [primary] as never, rules)).resolves.toBe('skipped');
+      selfWriteRegistry.end([primary.absolutePath]);
+      expect(regexMetadata.evaluate).toHaveBeenCalledTimes(1);
+      expect(mockMetadata.applyRegexMetadataRules).not.toHaveBeenCalled();
+    });
+
+    it('tells a pool failure apart from rules that cannot run', async () => {
+      const { service, regexMetadata } = makeService(rulesRepo(regexConfig));
+      regexMetadata.evaluate.mockResolvedValueOnce({ matched: false, metadata: {}, diagnostics: [{ code: 'timeout' }] });
+      regexMetadata.evaluate.mockResolvedValueOnce({ matched: false, metadata: {}, diagnostics: [{ code: 'invalid_pattern', ruleIndex: 0 }] });
+
+      await expect(service.applyLibraryRulesToBook(book, [primary] as never, rules)).resolves.toBe('rules_unavailable');
+      await expect(service.applyLibraryRulesToBook(book, [primary] as never, rules)).resolves.toBe('rules_invalid');
+    });
   });
 });

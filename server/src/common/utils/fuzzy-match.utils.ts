@@ -1,11 +1,5 @@
 import { distance } from 'fastest-levenshtein';
 
-export function normalizeIsbn(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const normalized = value.replace(/[^0-9X]/gi, '').toUpperCase();
-  return normalized.length > 0 ? normalized : null;
-}
-
 // Matches upstream's cap in hardcover-import-fuzzy-index.ts. `normalizeName` feeds an O(n*m)
 // Levenshtein from user-supplied text, so the input is bounded before any scoring runs.
 const MAX_MATCH_TEXT_LENGTH = 512;

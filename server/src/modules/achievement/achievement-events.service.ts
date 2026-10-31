@@ -12,7 +12,7 @@ export const ACHIEVEMENT_EVENT_ACHIEVEMENT_AWARDED = 'achievement.awarded';
 export const ACHIEVEMENT_EVENT_BOOK_RATING_CHANGED = 'book.rating-changed';
 export const ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED = 'book.progress-changed';
 export const ACHIEVEMENT_EVENT_BOOK_HARDCOVER_EDITION_CHANGED = 'book.hardcover-edition-changed';
-// An audiobook position written as a side effect of reading its linked read-along. Kept apart from
+// An audiobook position written as a side effect of reading the same book’s ebook. Kept apart from
 // BOOK_PROGRESS_CHANGED so progress listeners (achievements, Hardcover, alignment) do not count it twice.
 export const ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED = 'book.audio-position-derived';
 

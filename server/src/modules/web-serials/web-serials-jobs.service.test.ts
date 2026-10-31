@@ -383,7 +383,7 @@ describe('WebSerialJobsService job management', () => {
     await service.moveJobToTop(11, USER);
     expect(repo.pauseJob).toHaveBeenCalledWith(11);
     expect(repo.resumeJob).toHaveBeenCalledWith(11);
-    expect(repo.moveJobToTop).toHaveBeenCalledWith(11);
+    expect(repo.moveJobToTop).toHaveBeenCalledWith(11, USER.id);
 
     repo.pauseJob.mockResolvedValue(undefined);
     repo.resumeJob.mockResolvedValue(undefined);
@@ -483,4 +483,10 @@ describe('WebSerialJobsService selection mapping', () => {
     await expect(service.createJob({ ...base, selection: { mode: 'list' } }, USER)).rejects.toBeInstanceOf(BadRequestException);
     expect(repo.createJob).not.toHaveBeenCalled();
   });
+});
+
+it.each([ADMIN, { ...USER, isSuperuser: true }])('allows global priority for an administrator', async (user) => {
+  const { service, repo } = setup();
+  await service.moveJobToTop(11, user);
+  expect(repo.moveJobToTop).toHaveBeenCalledWith(11, null);
 });

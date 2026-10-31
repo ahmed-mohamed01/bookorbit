@@ -114,7 +114,6 @@ function handleClose() {
       <ReleaseResultRow
         v-for="(release, index) in visible"
         :key="releaseKey(release)"
-        compact
         :best="index === 0 && !source.loading.value"
         :release="release"
         :delivery="source.deliveryFor(release)"

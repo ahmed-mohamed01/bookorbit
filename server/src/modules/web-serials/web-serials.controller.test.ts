@@ -1,5 +1,5 @@
 import { BadRequestException, ValidationPipe } from '@nestjs/common';
-import { RequestWebSerialVolumesDto, WebSerialPrintSeriesDto, LinkWebSerialBatchDto } from './dto/web-serials-print.dto';
+import { RequestWebSerialVolumesDto, WebSerialPrintSeriesDto } from './dto/web-serials-print.dto';
 import { HTTP_CODE_METADATA, METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 import { RequestMethod } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
@@ -26,7 +26,6 @@ function setup() {
   const service = {
     getState: vi.fn().mockResolvedValue({ seriesRequestId: null, volumes: [] }),
     requestVolumes: vi.fn().mockResolvedValue({ seriesRequestId: 1, volumes: [] }),
-    linkBatch: vi.fn().mockResolvedValue(undefined),
     getCapabilities: vi.fn().mockResolvedValue({}),
     search: vi.fn().mockResolvedValue({ hits: [] }),
     resolve: vi.fn().mockResolvedValue({}),
@@ -80,13 +79,13 @@ describe('WebSerialsController', () => {
   it('gates every route with WebSerialAccess', () => {
     const proto = WebSerialsController.prototype as unknown as Record<string, unknown>;
     const routes = Object.getOwnPropertyNames(WebSerialsController.prototype).filter((name) => name !== 'constructor');
-    expect(routes).toHaveLength(38);
+    expect(routes).toHaveLength(37);
     const adminRoutes = ['pauseQueue', 'resumeQueue'];
     for (const route of routes) {
       const expected =
         route === 'requestPrintVolumes'
           ? [Permission.WebSerialAccess, Permission.BookRequestAccess]
-          : ['linkPrintBatch', 'createPrintDraft', 'deletePrintDraft', 'downloadPrintVolumes', 'suggestPrintDownload'].includes(route)
+          : ['createPrintDraft', 'deletePrintDraft', 'downloadPrintVolumes', 'suggestPrintDownload'].includes(route)
             ? [Permission.WebSerialAccess, Permission.ManageBookRequests]
             : adminRoutes.includes(route)
               ? [Permission.WebSerialAccess, Permission.ManageAppSettings]
@@ -279,18 +278,14 @@ it('maps print routes and forwards the user, series and body', async () => {
   for (const [method, path] of [
     [proto.getPrintState, 'print-state'],
     [proto.requestPrintVolumes, 'series-request'],
-    [proto.linkPrintBatch, 'batches'],
   ] as const) {
     expect(Reflect.getMetadata(METHOD_METADATA, method)).toBe(RequestMethod.POST);
     expect(Reflect.getMetadata(PATH_METADATA, method)).toBe(`novel/:matchId/${path}`);
   }
-  expect(Reflect.getMetadata(HTTP_CODE_METADATA, proto.linkPrintBatch)).toBe(204);
   await controller.getPrintState('12', input, USER);
   await controller.requestPrintVolumes('12', { ...input, volumes: [1] }, USER);
-  await controller.linkPrintBatch('12', { seriesRequestId: 1, batchRequestId: 2 }, USER);
   expect(service.getState).toHaveBeenCalledWith(USER, '12', input);
   expect(service.requestVolumes).toHaveBeenCalledWith(USER, '12', { ...input, volumes: [1] });
-  expect(service.linkBatch).toHaveBeenCalledWith(USER, '12', { seriesRequestId: 1, batchRequestId: 2 });
 });
 it('validates print DTOs with the global pipe', async () => {
   const pipe = new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true });
@@ -300,21 +295,15 @@ it('validates print DTOs with the global pipe', async () => {
     await expect(pipe.transform({ ...input, volumes }, { type: 'body', metatype: RequestWebSerialVolumesDto })).rejects.toThrow();
   await expect(pipe.transform({ ...input, volumes: [1], extra: true }, { type: 'body', metatype: RequestWebSerialVolumesDto })).rejects.toThrow();
   await expect(pipe.transform({ ...input, url: 'ftp://example.com' }, { type: 'body', metatype: WebSerialPrintSeriesDto })).rejects.toThrow();
-  await expect(pipe.transform({ seriesRequestId: 1, batchRequestId: 2 }, { type: 'body', metatype: LinkWebSerialBatchDto })).resolves.toEqual({
-    seriesRequestId: 1,
-    batchRequestId: 2,
-  });
 });
 
-it.each(['', 'a'.repeat(17), 'bad.id', 'bad id', 'é', 'id\n'])('rejects invalid print matchId %j on all three routes', (matchId) => {
+it.each(['', 'a'.repeat(17), 'bad.id', 'bad id', 'é', 'id\n'])('rejects invalid print matchId %j on both routes', (matchId) => {
   const { controller, service } = setup();
   const input = { title: 'Story', altTitles: [], authors: [], url: 'https://example.com/1', volumeCount: 2 };
   expect(() => controller.getPrintState(matchId, input, USER)).toThrow(BadRequestException);
   expect(() => controller.requestPrintVolumes(matchId, { ...input, volumes: [1] }, USER)).toThrow(BadRequestException);
-  expect(() => controller.linkPrintBatch(matchId, { seriesRequestId: 1, batchRequestId: 2 }, USER)).toThrow(BadRequestException);
   expect(service.getState).not.toHaveBeenCalled();
   expect(service.requestVolumes).not.toHaveBeenCalled();
-  expect(service.linkBatch).not.toHaveBeenCalled();
 });
 
 it('validates download DTO limits and nested picks', async () => {

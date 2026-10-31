@@ -6456,15 +6456,9 @@
         "metadataScore": "Scor metadate",
         "primaryFormat": "Format primar",
         "readAloudSync": {
-          "title": "Sincronizare avansată cu voce tare",
           "state": {
-            "enabled": "Activat",
-            "disabled": "Dezactivat",
-            "unavailable": "Unavailable",
             "epubCopiesOnly": "Doar copii EPUB"
           },
-          "enabledDescription": "Poziţiile Audiobook, cititor web, Kobo şi KOReader rămân sincronizate.",
-          "disabledDescription": "Fiecare format își păstrează propria poziție de citire.",
           "epubCopiesDescription": "Poziţiile cititorului de web, Kobo şi KOReader rămân sincronizate pe toate copiile EPUB. Adăugați fişiere audiobook potrivite pentru a sincroniza şi audiobok-ul.",
           "reason": {
             "no_media_overlay_epub": "Este necesar un EPUB de citire cu suprapuneri media.",
@@ -6472,9 +6466,6 @@
             "missing_duration": "Metadatele duratei audio sunt incomplete.",
             "durationMismatch": "Durata nu se potrivește îndeajuns: audiobok {audio}, citește EPUB {overlay}."
           },
-          "enable": "Activare",
-          "disable": "Dezactivează",
-          "saving": "Salvare...",
           "saveFailed": "Nu s-a putut actualiza sincronizarea progresului în citire."
         },
         "openIn": "Deschide în {provider}",

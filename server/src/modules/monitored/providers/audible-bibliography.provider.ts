@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { readBoundedText } from '../../../common/utils/bounded-response';
+import { BadGatewayException, Injectable, Logger } from '@nestjs/common';
 import { parseSeriesIndex as parseSeriesIndexLabel } from '@bookorbit/types';
 import type { MonitoredSeriesMembership, ProviderConfigurations } from '@bookorbit/types';
 
@@ -170,8 +171,8 @@ export class AudibleBibliographyProvider implements AuthorBibliographyProvider {
       url.searchParams.set('response_groups', 'product_attrs,product_desc,series,rating,media,contributors');
       url.searchParams.set('products_sort_by', '-ReleaseDate');
       const response = await fetchWithThrottle(url.toString(), { signal: buildRequestSignal(PROVIDER_TIMEOUT_MS.SCRAPE, signal) });
-      if (!response.ok) throw new Error(`Audible catalog returned HTTP ${response.status}`);
-      const body = (await response.json()) as AudibleSearchResponse;
+      if (!response.ok) throw new BadGatewayException(`Audible catalog returned HTTP ${response.status}`);
+      const body = JSON.parse(await readBoundedText(response, 4 * 1024 * 1024)) as AudibleSearchResponse;
       if (totalResults == null && typeof body.total_results === 'number') totalResults = body.total_results;
       const batch = body.products ?? [];
       products.push(...batch);

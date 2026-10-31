@@ -16,10 +16,6 @@ const mockRepo = {
   findAudioProgress: vi.fn(),
 };
 
-const mockEditionLinks = {
-  findLinkForBook: vi.fn(),
-};
-
 const mockClient = {
   getItemCover: vi.fn(),
   getMediaProgress: vi.fn(),
@@ -97,7 +93,6 @@ function makeService() {
     mockRepo as never,
     mockBookService as never,
     mockLibraryService as never,
-    mockEditionLinks as never,
     mockClient as never,
     mockSyncService as never,
     mockProgressPush as never,
@@ -401,7 +396,6 @@ describe('AudiobookshelfBookStateService.findPositionSyncLink', () => {
     mockBookService.verifyBookAccess.mockResolvedValue(undefined);
     mockRepo.findSettings.mockResolvedValue(syncSettings());
     mockRepo.findBookStateByBookId.mockResolvedValue(audiobookState());
-    mockEditionLinks.findLinkForBook.mockResolvedValue(undefined);
     mockClient.getMediaProgress.mockResolvedValue({ progress: 0.25, isFinished: false, lastUpdate: 5000 });
   });
 
@@ -428,23 +422,6 @@ describe('AudiobookshelfBookStateService.findPositionSyncLink', () => {
     mockRepo.findSettings.mockResolvedValue(syncSettings(overrides));
 
     await expect(makeService().findPositionSyncLink(baseUser, 218)).resolves.toMatchObject({ direction });
-  });
-
-  it('reaches the item through the linked audiobook for a read-along or ebook', async () => {
-    mockRepo.findBookStateByBookId.mockResolvedValueOnce(undefined).mockResolvedValueOnce(audiobookState());
-    mockEditionLinks.findLinkForBook.mockResolvedValue({ audioBookId: 218, textBookId: 163, readAlongBookId: 307 });
-
-    await expect(makeService().findPositionSyncLink(baseUser, 307)).resolves.toMatchObject({ audioBookId: 218, direction: 'two_way' });
-    expect(mockRepo.findBookStateByBookId).toHaveBeenNthCalledWith(2, baseUser.id, 218);
-    expect(mockBookService.verifyBookAccess).toHaveBeenCalledWith(218, baseUser);
-  });
-
-  it('returns nothing when the linked audiobook is not visible to the user', async () => {
-    mockRepo.findBookStateByBookId.mockResolvedValueOnce(undefined).mockResolvedValueOnce(audiobookState());
-    mockEditionLinks.findLinkForBook.mockResolvedValue({ audioBookId: 218, textBookId: 163, readAlongBookId: 307 });
-    mockBookService.verifyBookAccess.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new NotFoundException());
-
-    await expect(makeService().findPositionSyncLink(baseUser, 307)).resolves.toBeNull();
   });
 
   it.each([
@@ -491,57 +468,6 @@ describe('AudiobookshelfBookStateService.findPositionSyncLink', () => {
       pausedReason: 'excluded',
     });
     expect(mockRepo.findBookStateByBookId).toHaveBeenCalledWith(baseUser.id, 218);
-  });
-
-  describe('fall-through to the linked audiobook', () => {
-    const pair = { audioBookId: 218, textBookId: 163, readAlongBookId: null };
-    const byBook = (rows: Record<number, unknown>) =>
-      mockRepo.findBookStateByBookId.mockImplementation((_userId: number, id: number) => Promise.resolve(rows[id]));
-
-    beforeEach(() => {
-      mockEditionLinks.findLinkForBook.mockResolvedValue(pair);
-    });
-
-    it('prefers the syncing audiobook match over a paused direct row of the text book', async () => {
-      byBook({ 163: audiobookState({ bookId: 163, absLibraryItemId: 'abs-text', syncExcluded: true }), 218: audiobookState() });
-
-      await expect(makeService().findPositionSyncLink(baseUser, 163)).resolves.toMatchObject({
-        audioBookId: 218,
-        absLibraryItemId: 'abs-1',
-        syncing: true,
-        pausedReason: null,
-      });
-    });
-
-    it('uses the audiobook link when the direct row carries a match error', async () => {
-      byBook({ 163: audiobookState({ bookId: 163, absLibraryItemId: 'abs-text', matchError: 'ambiguous' }), 218: audiobookState() });
-
-      await expect(makeService().findPositionSyncLink(baseUser, 163)).resolves.toMatchObject({ audioBookId: 218, syncing: true });
-    });
-
-    it('falls back to the direct paused row when the linked audiobook has no usable match', async () => {
-      byBook({
-        163: audiobookState({ bookId: 163, absLibraryItemId: 'abs-text', needsReview: true }),
-        218: audiobookState({ manualUnlinked: true }),
-      });
-
-      await expect(makeService().findPositionSyncLink(baseUser, 163)).resolves.toMatchObject({
-        absLibraryItemId: 'abs-text',
-        syncing: false,
-        pausedReason: 'needs_review',
-      });
-    });
-
-    it('returns the audiobook own paused row as paused', async () => {
-      byBook({ 218: audiobookState({ syncExcluded: true }) });
-
-      await expect(makeService().findPositionSyncLink(baseUser, 218)).resolves.toMatchObject({
-        audioBookId: 218,
-        syncing: false,
-        pausedReason: 'excluded',
-      });
-      expect(mockRepo.findBookStateByBookId).toHaveBeenCalledTimes(1);
-    });
   });
 
   it('returns a paused link when position sync is off in both directions', async () => {

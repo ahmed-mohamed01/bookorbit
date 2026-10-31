@@ -21,13 +21,13 @@ function build() {
 describe('ReadingAlignmentController', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('GET cross-format resume delegates the book ID to the resolve service', async () => {
+  it('GET cross-format resume delegates the book and opened file IDs to the resolve service', async () => {
     const { controller, resolveService } = build();
     resolveService.resolveResume.mockResolvedValue({ available: false });
 
-    const result = await controller.getCrossFormatResume(BOOK_ID, USER);
+    const result = await controller.getCrossFormatResume(BOOK_ID, { fileId: 5 }, USER);
 
-    expect(resolveService.resolveResume).toHaveBeenCalledWith(BOOK_ID, USER);
+    expect(resolveService.resolveResume).toHaveBeenCalledWith(BOOK_ID, USER, 5);
     expect(result).toEqual({ available: false });
   });
 
@@ -68,7 +68,7 @@ describe('ReadingAlignmentController', () => {
 
   it('GET alignment returns the build error the status service decided to expose', async () => {
     const { controller, statusService } = build();
-    const failed = { status: 'failed', samplesDone: 3, samplesTotal: 10, anchorCount: 0, builtAt: null, error: 'whisper was killed by SIGILL' };
+    const failed = { status: 'failed', samplesDone: 3, samplesTotal: 10, builtAt: null, error: 'whisper was killed by SIGILL' };
     statusService.getStatus.mockResolvedValue(failed);
 
     await expect(controller.getAlignmentStatus(BOOK_ID, USER)).resolves.toEqual(failed);
@@ -76,7 +76,7 @@ describe('ReadingAlignmentController', () => {
 
   it('GET alignment passes a hidden build error through as null', async () => {
     const { controller, statusService } = build();
-    const failed = { status: 'failed', samplesDone: 3, samplesTotal: 10, anchorCount: 0, builtAt: null, error: null };
+    const failed = { status: 'failed', samplesDone: 3, samplesTotal: 10, builtAt: null, error: null };
     statusService.getStatus.mockResolvedValue(failed);
 
     await expect(controller.getAlignmentStatus(BOOK_ID, USER)).resolves.toEqual(failed);

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import type { PlaceholderCoverStyle } from '@bookorbit/types'
 import { useElementSize } from '@vueuse/core'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -9,8 +8,6 @@ import { renderAuthorPlaceholder } from '../lib/author-placeholder'
 
 const props = defineProps<{
   name: string
-  /** Draws this style instead of the reader's setting, for previews. */
-  variant?: PlaceholderCoverStyle
 }>()
 
 const { t, locale } = useI18n()
@@ -40,7 +37,7 @@ const strings = computed<PlaceholderStrings>(() => {
   }
 })
 
-const activeStyle = computed(() => props.variant ?? placeholderCoverStyle.value)
+const activeStyle = computed(() => placeholderCoverStyle.value)
 
 const markup = computed(() => {
   if (size.value.width < 8 || size.value.height < 8) return ''

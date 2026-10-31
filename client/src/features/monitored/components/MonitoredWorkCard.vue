@@ -5,7 +5,7 @@ import { BookOpen, Check, Download, EyeOff, Headphones, MoreVertical, Zap } from
 import { useI18n } from 'vue-i18n'
 import { MONITORED_FORMATS, type MonitorMode, type MonitoredFormat, type MonitoredSeriesMembership, type MonitoredWork } from '@bookorbit/types'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
-import BookCoverPlaceholder from '@/features/book/components/BookCoverPlaceholder.vue'
+import BookCoverArtwork from '@/features/book/components/BookCoverArtwork.vue'
 import { toMonitoredCoverUrl } from '@/features/monitored/lib/cover-url'
 import { willAutoDownload, effectiveFormatMode } from '../lib/auto-download'
 import { cardBadgeKind, cardBadgeTone, type CardBadgeKind } from '../lib/card-badge'
@@ -21,7 +21,6 @@ import MonitoredCardMenu, { type CardFormatMenu } from './MonitoredCardMenu.vue'
 const props = withDefaults(
   defineProps<{
     work: MonitoredWork
-    queued: boolean
     ebookQueued: boolean
     audiobookQueued: boolean
     canManage: boolean
@@ -57,7 +56,6 @@ const emit = defineEmits<{
 const { t, te } = useI18n()
 const { sentence } = useFormatStatusText()
 const { cardInfoMode } = useDisplaySettings()
-const imageFailed = ref(false)
 const showBelowCoverLabel = computed(() => cardInfoMode.value === 'below-cover')
 const inSelectMode = computed(() => props.selectionMode === true)
 const isSelectable = computed(() => props.selectable)
@@ -73,7 +71,7 @@ const placeholderAuthors = computed(() => {
 })
 
 const badgeTime = computed<TimeBadge | null>(() =>
-  props.timeBadge !== undefined ? props.timeBadge : releaseTimeBadge(releaseDateForWork(props.work), t),
+  props.timeBadge !== undefined ? props.timeBadge : releaseTimeBadge(releaseDateForWork(props.work)),
 )
 const timeTone = computed(() => (badgeTime.value?.upcoming ? 'bg-[var(--pill-warning)]' : 'bg-[var(--pill-info)]'))
 
@@ -157,10 +155,6 @@ const subline = computed(() => props.authorName ?? (props.work.releaseYear ? Str
 const ebookMenu = computed(() => menuState('ebook'))
 const audiobookMenu = computed(() => menuState('audiobook'))
 
-function handleImageError() {
-  imageFailed.value = true
-}
-
 function handlePreview() {
   emit('preview', props.work)
 }
@@ -232,24 +226,19 @@ function handleStop() {
       class="relative aspect-2/3 overflow-hidden rounded-sm shadow-md transition-[box-shadow,transform,filter] duration-150 group-hover:scale-[1.02] group-hover:shadow-xl motion-reduce:group-hover:scale-100"
       :class="{ 'brightness-75 saturate-50 group-hover:brightness-100 group-hover:saturate-100': notWatched }"
     >
-      <img
-        v-if="coverUrl && !imageFailed"
-        :src="coverUrl"
-        :alt="work.title"
-        class="size-full object-cover"
-        :class="longPressSelect ? '[-webkit-touch-callout:none] select-none' : ''"
-        loading="lazy"
-        decoding="async"
-        @error="handleImageError"
-      />
-      <BookCoverPlaceholder
-        v-else
+      <BookCoverArtwork
+        :src="coverUrl || null"
+        :has-cover="Boolean(coverUrl)"
         :title="work.title"
         :subtitle="work.subtitle"
         :authors="placeholderAuthors"
         :series-name="work.seriesName"
         :series-index="work.seriesIndex"
         :seed="work.title"
+        :alt="work.title"
+        mode="fill-crop"
+        :spine="false"
+        :image-class="longPressSelect ? '[-webkit-touch-callout:none] select-none' : ''"
       />
 
       <button

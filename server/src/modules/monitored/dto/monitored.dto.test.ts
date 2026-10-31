@@ -222,10 +222,10 @@ describe('SearchMonitoredWorksDto', () => {
     await expect(parse({ q: ' ab ' })).rejects.toMatchObject({ status: 400 });
   });
 
-  it('rejects a page past the bound before it can overflow the offset', async () => {
+  it('accepts integer pages for the service offset check', async () => {
     await expect(parse({ q: 'dune', page: '10000' })).resolves.toMatchObject({ page: 10000 });
-    await expect(parse({ q: 'dune', page: '10001' })).rejects.toMatchObject({ status: 400 });
-    await expect(parse({ q: 'dune', page: '1e18' })).rejects.toMatchObject({ status: 400 });
+    await expect(parse({ q: 'dune', page: '10001' })).resolves.toMatchObject({ page: 10001 });
+    await expect(parse({ q: 'dune', page: '1.5' })).rejects.toMatchObject({ status: 400 });
   });
 
   it('rejects the list order it does not read', async () => {

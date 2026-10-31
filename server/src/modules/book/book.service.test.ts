@@ -130,8 +130,6 @@ function makeService(
     bookMetadataLockService?: unknown;
     appDataPath?: string;
     audiobookEbookProgressSync?: unknown;
-    readAlongLinks?: unknown;
-    userService?: unknown;
     positionConverter?: unknown;
     seriesMemberships?: unknown;
     seriesExpectedCount?: unknown;
@@ -348,8 +346,6 @@ function makeService(
     overrides.audiobookEbookProgressSync as never,
     undefined,
     undefined,
-    overrides.readAlongLinks as never,
-    overrides.userService as never,
     readingEvents,
     undefined,
     undefined,
@@ -1068,6 +1064,7 @@ describe('BookService', () => {
             [MetadataProviderKey.OPEN_LIBRARY]: 'ol-id',
           },
           isAudiobook: false,
+          mediaKind: 'ebook',
           maxCandidatesPerProvider: 1,
         },
         {
@@ -1130,7 +1127,7 @@ describe('BookService', () => {
         1,
         { title: 'Resolved', authors: ['A'], genres: ['G'], isbn10: '0306406152', isbn13: '9780306406157' },
         user,
-        { postSaveMode: 'schedule' },
+        { postSaveMode: 'schedule', chaptersSource: 'provider' },
       );
       expect(metadataService.downloadAndSaveCover).toHaveBeenCalledWith([{ url: 'https://img/c.jpg' }], 1, 'ebook');
       expect(getDetailSpy).toHaveBeenCalledWith(1, user);
@@ -1180,6 +1177,25 @@ describe('BookService', () => {
       expect(metadataService.downloadAndSaveCover).toHaveBeenCalledTimes(1);
       expect(metadataService.downloadAndSaveCover).toHaveBeenCalledWith(audioCoverChoices, 1, 'audio');
       expect(getDetailSpy).toHaveBeenCalledWith(1, user);
+    });
+
+    it('refreshMetadata hands the stored chapters to the pipeline so a fetch only fills a book without any', async () => {
+      const { service, bookRepo, pipeline, coverStore } = makeService();
+      const chapters = [{ title: 'Stored', startMs: 0 }];
+      bookRepo.findById.mockResolvedValue({
+        book: { books: { id: 1, libraryId: 7 }, book_metadata: { title: 'Old', chapters } },
+        authorRows: [],
+        genreRows: [],
+        narratorRows: [],
+        communityRatingRows: [],
+        fileRows: [{ format: 'm4b', role: 'content', mediaOverlayAvailable: false }],
+      });
+      pipeline.runWithSources.mockResolvedValue({ resolved: {}, sources: {}, providerIds: {} });
+      coverStore.fetchState.mockResolvedValue({ media: { hasEbook: false, hasAudio: true }, filled: { ebook: false, audio: true }, locked: [] });
+
+      await service.refreshMetadata(1, true, makeUser());
+
+      expect(pipeline.runWithSources).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ chapters }), 7, expect.any(Object));
     });
 
     it('refreshMetadata answers not found when the book disappears before its cover state is read', async () => {
@@ -1451,7 +1467,7 @@ describe('BookService', () => {
           openLibraryId: 'ol-id',
         },
         user,
-        { postSaveMode: 'schedule' },
+        { postSaveMode: 'schedule', chaptersSource: 'provider' },
       );
     });
 
@@ -1492,7 +1508,7 @@ describe('BookService', () => {
           hardcoverId: 'the-name-of-the-wind',
         },
         user,
-        { postSaveMode: 'schedule' },
+        { postSaveMode: 'schedule', chaptersSource: 'provider' },
       );
     });
 
@@ -1580,7 +1596,7 @@ describe('BookService', () => {
           communityRatings: [{ provider: MetadataProviderKey.HARDCOVER, rating: 4.25, ratingCount: 12345, updatedAt: null }],
         },
         user,
-        { postSaveMode: 'schedule' },
+        { postSaveMode: 'schedule', chaptersSource: 'provider' },
       );
     });
 
@@ -1629,7 +1645,7 @@ describe('BookService', () => {
           ],
         },
         user,
-        { postSaveMode: 'schedule' },
+        { postSaveMode: 'schedule', chaptersSource: 'provider' },
       );
     });
 
@@ -1678,7 +1694,7 @@ describe('BookService', () => {
           },
         },
         user,
-        { postSaveMode: 'schedule' },
+        { postSaveMode: 'schedule', chaptersSource: 'provider' },
       );
     });
 
@@ -1727,7 +1743,7 @@ describe('BookService', () => {
           },
         },
         user,
-        { postSaveMode: 'schedule' },
+        { postSaveMode: 'schedule', chaptersSource: 'provider' },
       );
     });
 
@@ -1765,7 +1781,7 @@ describe('BookService', () => {
 
       await service.refreshMetadata(1, false, user);
 
-      expect(updateSpy).toHaveBeenCalledWith(1, { authors: ['A'] }, user, { postSaveMode: 'schedule' });
+      expect(updateSpy).toHaveBeenCalledWith(1, { authors: ['A'] }, user, { postSaveMode: 'schedule', chaptersSource: 'provider' });
       expect(metadataService.downloadAndSaveCover).not.toHaveBeenCalled();
     });
 
@@ -1935,6 +1951,67 @@ describe('BookService', () => {
       const options = { previousSeriesIds: new Set([31]) };
       expect(seriesExpectedCount.setManual).toHaveBeenNthCalledWith(1, 'Harry Potter', 7, expect.anything(), options);
       expect(seriesExpectedCount.setManual).toHaveBeenNthCalledWith(2, 'Hogwarts Library', null, expect.anything(), options);
+    });
+
+    it('updateMetadata cleans chapters instead of rejecting them and records who changed them', async () => {
+      const { service, bookRepo } = makeService();
+      const user = makeUser();
+      const audiobookChapters = { recordCurrentRevision: vi.fn().mockResolvedValue(undefined) };
+      Object.assign(service, { audiobookChapters });
+      vi.spyOn(service, 'verifyBookAccess').mockResolvedValue(undefined);
+      vi.spyOn(service, 'getDetail').mockResolvedValue({ id: 5 } as never);
+
+      await service.updateMetadata(
+        5,
+        {
+          audioMetadata: {
+            chapters: [
+              { title: 'Two', startMs: 2_000 },
+              { title: '', startMs: 0 },
+              { title: 'Again', startMs: 2_000 },
+            ],
+          },
+        },
+        user,
+      );
+
+      expect(bookRepo.updateMetadataFields).toHaveBeenCalledWith(
+        5,
+        expect.objectContaining({
+          chapters: [
+            { title: 'Chapter 1', startMs: 0 },
+            { title: 'Two', startMs: 2_000 },
+          ],
+          chaptersSource: 'manual',
+          chaptersUpdatedBy: user.id,
+          chaptersUpdatedAt: expect.any(Date),
+        }),
+        expect.anything(),
+      );
+      expect(audiobookChapters.recordCurrentRevision).toHaveBeenCalledWith(5);
+    });
+
+    it('updateMetadata stores provider chapters without naming a person, and clears the source with the list', async () => {
+      const { service, bookRepo } = makeService();
+      const user = makeUser();
+      vi.spyOn(service, 'verifyBookAccess').mockResolvedValue(undefined);
+      vi.spyOn(service, 'getDetail').mockResolvedValue({ id: 5 } as never);
+
+      await service.updateMetadata(5, { audioMetadata: { chapters: [{ title: 'One', startMs: 0 }] } }, user, { chaptersSource: 'provider' });
+      await service.updateMetadata(5, { audioMetadata: { chapters: [] } }, user);
+
+      expect(bookRepo.updateMetadataFields).toHaveBeenNthCalledWith(
+        1,
+        5,
+        expect.objectContaining({ chaptersSource: 'provider', chaptersUpdatedBy: null }),
+        expect.anything(),
+      );
+      expect(bookRepo.updateMetadataFields).toHaveBeenNthCalledWith(
+        2,
+        5,
+        expect.objectContaining({ chapters: null, chaptersSource: null, chaptersUpdatedBy: null }),
+        expect.anything(),
+      );
     });
 
     it('updateMetadata with empty communityRatings clears all existing ratings', async () => {
@@ -5217,6 +5294,39 @@ describe('BookService', () => {
         { title: 'Bonus', startMs: 90_000 },
       ]);
       expect(result.files.map((file) => file.filename)).toEqual(['Bonus.mp3', 'Part 01.mp3', 'Part 02.mp3']);
+      expect(result.audioMetadata).toMatchObject({ chaptersSource: 'tracks', chaptersUpdatedAt: null });
+    });
+
+    it('serves a stored chapter list cleaned for clients, with its source', async () => {
+      const { service, bookRepo } = makeService();
+      vi.spyOn(service, 'verifyBookAccess').mockResolvedValue(undefined);
+      mockAudiobookDetail(bookRepo, [
+        { id: 1, updatedAt: new Date('2026-01-01'), absolutePath: '/audio/Book.m4b', durationSeconds: 600, sortOrder: null },
+      ]);
+      const found = await bookRepo.findById(21);
+      found.book.book_metadata = {
+        title: 'Tracks',
+        durationSeconds: 600,
+        chapters: [
+          { title: 'Later', startMs: 5_000, durationMs: 100 },
+          { title: '', startMs: 0 },
+          { title: 'Duplicate', startMs: 5_000 },
+        ],
+        chaptersSource: 'provider',
+        chaptersUpdatedAt: new Date('2026-03-01T00:00:00.000Z'),
+      };
+      bookRepo.findById.mockResolvedValue(found);
+
+      const result = await service.getDetail(21, makeUser());
+
+      expect(result.audioMetadata).toMatchObject({
+        chapters: [
+          { title: 'Chapter 1', startMs: 0 },
+          { title: 'Later', startMs: 5_000 },
+        ],
+        chaptersSource: 'provider',
+        chaptersUpdatedAt: '2026-03-01T00:00:00.000Z',
+      });
     });
 
     it('does not synthesize chapters while any track duration is unknown', async () => {
@@ -6770,281 +6880,32 @@ describe('BookService', () => {
   });
 });
 
-describe('BookService.syncReadAlongForAudiobookPosition', () => {
-  const params = { audioBookId: 5, readAlongBookId: 9, audioSeconds: 95, audioTotalSeconds: 120, sourceUpdatedAt: new Date('2026-09-27T16:09:07Z') };
-
-  function makeReadAlongService() {
-    const audiobookEbookProgressSync = { syncReadAlongFromAudioPosition: vi.fn().mockResolvedValue(true) };
-    const made = makeService({ audiobookEbookProgressSync });
-    made.bookRepo.findLibraryIdByBookId.mockResolvedValue(3);
-    return { ...made, audiobookEbookProgressSync };
-  }
-
-  it('syncs the read-along with the Kobo permission of the listening user', async () => {
-    const { service, libraryService, audiobookEbookProgressSync } = makeReadAlongService();
-    const user = makeUser({ id: 42, permissions: [Permission.KoboSync] });
-
-    await expect(service.syncReadAlongForAudiobookPosition(user, params)).resolves.toBe(true);
-
-    expect(libraryService.verifyUserAccess).toHaveBeenCalledWith(42, 3, false);
-    expect(audiobookEbookProgressSync.syncReadAlongFromAudioPosition).toHaveBeenCalledWith({ userId: 42, ...params, syncKobo: true });
-  });
-
-  it('leaves a read-along the user cannot see untouched', async () => {
-    const { service, libraryService, audiobookEbookProgressSync } = makeReadAlongService();
-    libraryService.verifyUserAccess.mockRejectedValue(new ForbiddenException('no access'));
-
-    await expect(service.syncReadAlongForAudiobookPosition(makeUser(), params)).resolves.toBe(false);
-
-    expect(audiobookEbookProgressSync.syncReadAlongFromAudioPosition).not.toHaveBeenCalled();
-  });
-});
-
-describe('BookService linked audiobook and read-along', () => {
-  const link = { audioBookId: 5, readAlongBookId: 9 };
-  const captured = new Date('2026-09-27T19:22:13Z');
-
-  function makeLinkedService(found: typeof link | null = link) {
+describe('BookService external audio sync', () => {
+  it('exposes the audiobook timeline through the BookService boundary', async () => {
     const audiobookEbookProgressSync = {
-      syncFromAudioProgress: vi.fn().mockResolvedValue(false),
-      syncFromEbookProgress: vi.fn().mockResolvedValue(false),
       resolveAudioBookPosition: vi.fn().mockResolvedValue({ audioSeconds: 95, audioTotalSeconds: 120 }),
-      syncReadAlongFromAudioPosition: vi.fn().mockResolvedValue(true),
-      syncAudioFromReadAlongPosition: vi.fn().mockResolvedValue(true),
-      advanceNarrationToText: vi.fn().mockResolvedValue(false),
-      resolveReadAlongFit: vi.fn().mockResolvedValue({ status: 'ready', offsets: [], source: 'match' }),
     };
-    const readAlongLinks = { findReadAlongLink: vi.fn().mockResolvedValue(found) };
-    const userService = { findByIdWithPermissions: vi.fn().mockResolvedValue(makeUser({ id: 42 })) };
-    const made = makeService({ audiobookEbookProgressSync, readAlongLinks, userService });
-    made.bookRepo.findLibraryIdByBookId.mockResolvedValue(3);
-    return { ...made, audiobookEbookProgressSync, readAlongLinks, userService };
-  }
+    const { service } = makeService({ audiobookEbookProgressSync });
 
-  it('exposes the chapter-snapped audiobook timeline through the BookService boundary', async () => {
-    const { service, audiobookEbookProgressSync } = makeLinkedService();
-
-    await expect(service.resolveAudiobookPositionForExternalSync(5, 12, 75)).resolves.toEqual({
-      audioSeconds: 95,
-      audioTotalSeconds: 120,
-    });
+    await expect(service.resolveAudiobookPositionForExternalSync(5, 12, 75)).resolves.toEqual({ audioSeconds: 95, audioTotalSeconds: 120 });
     expect(audiobookEbookProgressSync.resolveAudioBookPosition).toHaveBeenCalledWith(5, 12, 75);
   });
 
-  it('moves the linked read-along from in-app playback of the audiobook', async () => {
-    const { service, audiobookEbookProgressSync } = makeLinkedService();
-    const user = makeUser({ id: 42, permissions: [Permission.KoboSync] });
-
-    await service.syncEbookProgressForAudiobookPlayback(user, 5, 12, 75, 79, captured);
-
-    expect(audiobookEbookProgressSync.resolveAudioBookPosition).toHaveBeenCalledWith(5, 12, 75);
-    expect(audiobookEbookProgressSync.syncReadAlongFromAudioPosition).toHaveBeenCalledWith({
-      userId: 42,
-      audioBookId: 5,
-      readAlongBookId: 9,
-      audioSeconds: 95,
-      audioTotalSeconds: 120,
-      sourceUpdatedAt: captured,
-      syncKobo: true,
-    });
-  });
-
-  it('leaves the read-along alone when the user cannot see it', async () => {
-    const { service, libraryService, audiobookEbookProgressSync } = makeLinkedService();
-    libraryService.verifyUserAccess.mockRejectedValue(new ForbiddenException('no access'));
-
-    await service.syncEbookProgressForAudiobookPlayback(makeUser(), 5, 12, 75, 79, captured);
-
-    expect(audiobookEbookProgressSync.syncReadAlongFromAudioPosition).not.toHaveBeenCalled();
-  });
-
-  it('does not treat playback of the read-along book itself as audiobook playback', async () => {
-    const { service, audiobookEbookProgressSync } = makeLinkedService();
-
-    await service.syncEbookProgressForAudiobookPlayback(makeUser(), 9, 30, 75, 79, captured);
-
-    expect(audiobookEbookProgressSync.syncReadAlongFromAudioPosition).not.toHaveBeenCalled();
-  });
-
-  it('moves the linked audiobook from a device position on the read-along', async () => {
-    const { service, userService, audiobookEbookProgressSync } = makeLinkedService();
-
-    await service.syncAudioProgressForExternalEbookProgress(42, 9, 30, 40, { cfi: 'epubcfi(/6/2)', sourceUpdatedAt: captured });
-
-    expect(userService.findByIdWithPermissions).toHaveBeenCalledWith(42);
-    expect(audiobookEbookProgressSync.syncAudioFromReadAlongPosition).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: 42, audioBookId: 5, readAlongBookId: 9, bookFileId: 30, cfi: 'epubcfi(/6/2)', sourceUpdatedAt: captured }),
-    );
-  });
-
-  it('announces an audiobook moved by reading the read-along, and nothing when it did not move', async () => {
-    const { service, audiobookEbookProgressSync, achievementEvents } = makeLinkedService();
-
-    await service.syncAudioProgressForExternalEbookProgress(42, 9, 30, 40, { sourceUpdatedAt: captured });
-    expect(achievementEvents.emit).toHaveBeenCalledWith(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, { userId: 42, bookId: 5 });
-
-    achievementEvents.emit.mockClear();
-    audiobookEbookProgressSync.syncAudioFromReadAlongPosition.mockResolvedValue(false);
-    await service.syncAudioProgressForExternalEbookProgress(42, 9, 30, 40, { sourceUpdatedAt: captured });
-    expect(achievementEvents.emit).not.toHaveBeenCalledWith(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, expect.anything());
-  });
-
-  it('announces a legacy audio progress save so outbound position sync sees it, and nothing when the write was a no-op', async () => {
-    const { service, bookRepo, achievementEvents } = makeLinkedService(null);
+  it('announces a legacy audio save for outbound sync only when the write succeeds', async () => {
+    const { service, bookRepo, achievementEvents } = makeService();
+    bookRepo.findLibraryIdByBookId.mockResolvedValue(3);
     bookRepo.findFileById.mockResolvedValue({ id: 12, absolutePath: '/books/a.mp3', format: 'mp3', bookId: 5, libraryId: 3 });
     bookRepo.findAudioProgress.mockResolvedValue(null);
-    bookRepo.upsertAudioProgress.mockResolvedValue({ capturedAt: captured });
+    bookRepo.upsertAudioProgress.mockResolvedValue({ capturedAt: new Date('2026-09-27T16:09:07Z') });
     const dto = { currentFileId: 12, positionSeconds: 75, percentage: 40 };
+    const user = makeUser({ id: 42 });
 
-    await service.saveAudioProgress(42, 5, dto, makeUser({ id: 42 }));
+    await service.saveAudioProgress(42, 5, dto, user);
     expect(achievementEvents.emit).toHaveBeenCalledWith(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, { userId: 42, bookId: 5 });
 
     achievementEvents.emit.mockClear();
     bookRepo.upsertAudioProgress.mockResolvedValue(null);
-    await service.saveAudioProgress(42, 5, dto, makeUser({ id: 42 }));
+    await service.saveAudioProgress(42, 5, dto, user);
     expect(achievementEvents.emit).not.toHaveBeenCalledWith(ACHIEVEMENT_EVENT_AUDIO_POSITION_DERIVED, expect.anything());
-  });
-
-  it('loads no user for a device position on a book without a read-along link', async () => {
-    const { service, userService, audiobookEbookProgressSync } = makeLinkedService(null);
-
-    await service.syncAudioProgressForExternalEbookProgress(42, 9, 30, 40, { sourceUpdatedAt: captured });
-
-    expect(userService.findByIdWithPermissions).not.toHaveBeenCalled();
-    expect(audiobookEbookProgressSync.syncAudioFromReadAlongPosition).not.toHaveBeenCalled();
-  });
-
-  it('keeps the shared read-aloud setting on the read-along when toggled from the audiobook', async () => {
-    const { service, bookRepo } = makeLinkedService();
-    vi.spyOn(service, 'getDetail').mockResolvedValue({} as never);
-
-    await service.updateReadAloudSyncMode(5, 'disabled', makeUser({ id: 42 }));
-
-    expect(bookRepo.upsertReadAloudSyncMode).toHaveBeenCalledWith(42, 9, 'disabled');
-  });
-
-  it('evaluates the audiobook card against the linked read-along narration and its setting', async () => {
-    const { service, bookRepo } = makeLinkedService();
-    bookRepo.findAudioEbookProgressSyncFiles = vi.fn().mockResolvedValue({
-      primaryFileId: 30,
-      files: [{ id: 30, format: 'epub', durationSeconds: null, mediaOverlayAvailable: true, mediaOverlayDurationSeconds: 118 }],
-    });
-    bookRepo.findReadAloudSyncMode.mockResolvedValue('auto');
-
-    const sync = await (service as any).resolveReadAloudProgressSync(
-      makeUser({ id: 42 }),
-      5,
-      [{ id: 12, format: 'mp3', durationSeconds: 120 }],
-      new Map(),
-      12,
-      'disabled',
-    );
-
-    expect(bookRepo.findAudioEbookProgressSyncFiles).toHaveBeenCalledWith(9);
-    expect(bookRepo.findReadAloudSyncMode).toHaveBeenCalledWith(42, 9);
-    expect(sync).toMatchObject({
-      state: 'enabled',
-      mode: 'auto',
-      overlayFileId: 30,
-      audioDurationSeconds: 120,
-      overlayDurationSeconds: 118,
-      offsetsSource: 'match',
-      narrationMismatch: null,
-    });
-  });
-
-  function resolveLinkedAudiobookSync(service: BookService) {
-    return (service as any).resolveReadAloudProgressSync(
-      makeUser({ id: 42 }),
-      5,
-      [{ id: 12, format: 'mp3', durationSeconds: 120 }],
-      new Map(),
-      12,
-      'auto',
-    ) as Promise<Record<string, unknown>>;
-  }
-
-  function linkReadAlong(bookRepo: ReturnType<typeof makeLinkedService>['bookRepo'], narrationSeconds = 118) {
-    bookRepo.findAudioEbookProgressSyncFiles = vi.fn().mockResolvedValue({
-      primaryFileId: 30,
-      files: [{ id: 30, format: 'epub', durationSeconds: null, mediaOverlayAvailable: true, mediaOverlayDurationSeconds: narrationSeconds }],
-    });
-    bookRepo.findReadAloudSyncMode.mockResolvedValue('auto');
-  }
-
-  it.each([
-    [
-      { status: 'narration_mismatch', mismatch: { narrationFile: 4, narrationSeconds: 2035.1, chapter: 6, chapterSeconds: 6 } },
-      {
-        state: 'unavailable',
-        unavailableReason: 'narration_mismatch',
-        narrationMismatch: { narrationFile: 4, narrationSeconds: 2035.1, chapter: 6, chapterSeconds: 6 },
-        offsetsSource: null,
-      },
-    ],
-    [{ status: 'audio_changed' }, { state: 'unavailable', unavailableReason: 'audio_changed', narrationMismatch: null, offsetsSource: null }],
-    [{ status: 'missing_duration' }, { state: 'unavailable', unavailableReason: 'missing_duration', offsetsSource: null }],
-    [{ status: 'no_narration' }, { state: 'unavailable', unavailableReason: 'no_media_overlay_epub', offsetsSource: null }],
-    [
-      { status: 'ready', offsets: [], source: 'build' },
-      { state: 'enabled', unavailableReason: null, offsetsSource: 'build' },
-    ],
-  ])('reports the linked pair from its narration fit %j', async (fit, expected) => {
-    const { service, bookRepo, audiobookEbookProgressSync } = makeLinkedService();
-    linkReadAlong(bookRepo);
-    audiobookEbookProgressSync.resolveReadAlongFit.mockResolvedValue(fit);
-
-    await expect(resolveLinkedAudiobookSync(service)).resolves.toMatchObject(expected);
-    expect(audiobookEbookProgressSync.resolveReadAlongFit).toHaveBeenCalledWith(5, 9);
-  });
-
-  it('judges a linked pair by its fit, not by comparing narration and audio totals', async () => {
-    const { service, bookRepo } = makeLinkedService();
-    linkReadAlong(bookRepo, 60);
-
-    await expect(resolveLinkedAudiobookSync(service)).resolves.toMatchObject({ state: 'enabled', durationDifferenceSeconds: 60 });
-  });
-
-  it('reports a disabled linked pair without matching its narration', async () => {
-    const { service, bookRepo, audiobookEbookProgressSync } = makeLinkedService();
-    linkReadAlong(bookRepo);
-    bookRepo.findReadAloudSyncMode.mockResolvedValue('disabled');
-
-    await expect(resolveLinkedAudiobookSync(service)).resolves.toMatchObject({ state: 'disabled', narrationMismatch: null, offsetsSource: null });
-    expect(audiobookEbookProgressSync.resolveReadAlongFit).not.toHaveBeenCalled();
-  });
-
-  it('does not call a linked pair unavailable for a read-along whose narration length was never stored', async () => {
-    const { service, bookRepo } = makeLinkedService();
-    bookRepo.findAudioEbookProgressSyncFiles = vi.fn().mockResolvedValue({
-      primaryFileId: 30,
-      files: [{ id: 30, format: 'epub', durationSeconds: null, mediaOverlayAvailable: true, mediaOverlayDurationSeconds: null }],
-    });
-
-    const sync = await (service as any).resolveReadAloudProgressSync(
-      makeUser({ id: 42 }),
-      5,
-      [{ id: 12, format: 'mp3', durationSeconds: 120 }],
-      new Map(),
-      12,
-      'auto',
-    );
-
-    expect(sync).toMatchObject({ state: 'enabled', unavailableReason: null, overlayDurationSeconds: null });
-  });
-
-  it('keeps the single-book evaluation for a book without a read-along link', async () => {
-    const { service } = makeLinkedService(null);
-
-    const sync = await (service as any).resolveReadAloudProgressSync(
-      makeUser(),
-      9,
-      [{ id: 30, format: 'epub', durationSeconds: null }],
-      new Map(),
-      30,
-      'auto',
-    );
-
-    expect(sync).toMatchObject({ state: 'unavailable', unavailableReason: 'no_media_overlay_epub' });
   });
 });

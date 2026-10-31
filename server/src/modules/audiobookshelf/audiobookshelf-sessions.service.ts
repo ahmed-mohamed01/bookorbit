@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { isAudioFormat } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
+import { BookReadService } from '../book/book-read.service';
 import { LibraryService } from '../library/library.service';
 import {
   ACHIEVEMENT_EVENT_BACKFILL,
@@ -59,6 +60,7 @@ export class AudiobookshelfSessionsService {
     private readonly client: AudiobookshelfClientService,
     private readonly achievementEvents: AchievementEventsService,
     private readonly libraryService: LibraryService,
+    private readonly bookRead: BookReadService,
   ) {}
 
   /**
@@ -187,7 +189,7 @@ export class AudiobookshelfSessionsService {
     // with two batched queries. These maps are scoped to the page (not the whole run), so a multi-year
     // backfill never accumulates one entry per book across every page.
     const linkedBookIds = [...new Set(states.filter((state) => state.bookId != null).map((state) => state.bookId!))];
-    const libraryIdByBook = await this.repo.findLibraryIdsByBookIds(linkedBookIds);
+    const libraryIdByBook = new Map((await this.bookRead.findLibraryIdsByBookIds(linkedBookIds)).map((row) => [row.id, row.libraryId]));
     const audioFilesByBook = await this.resolveAudioFiles(linkedBookIds);
 
     const mapped: AbsMappedSession[] = [];

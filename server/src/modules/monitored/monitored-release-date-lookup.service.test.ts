@@ -1030,10 +1030,9 @@ describe('MonitoredReleaseDateLookupService', () => {
     const first = service.lookup(target());
     const second = service.lookup(target());
 
-    expect(second).toBe(first);
-    await Promise.resolve();
+    await vi.waitFor(() => expect(resolveApple).toBeDefined());
     resolveApple?.();
-    await first;
+    await expect(second).resolves.toEqual(await first);
     await service.lookup(target());
     expect(providerConfigs.forUser).toHaveBeenCalledOnce();
 

@@ -37,7 +37,7 @@ function mountCard(cardWork: MonitoredWork, ebookQueued = false, formatModes?: P
   return mount(MonitoredWorkCard, {
     props: {
       work: cardWork,
-      queued: ebookQueued,
+
       ebookQueued,
       audiobookQueued: false,
       canManage: true,
@@ -201,7 +201,6 @@ describe('MonitoredWorkCard cover badges', () => {
   function mountCover(props: { work: MonitoredWork } & Record<string, unknown>) {
     return mount(MonitoredWorkCard, {
       props: {
-        queued: false,
         ebookQueued: false,
         audiobookQueued: false,
         canManage: false,
@@ -250,7 +249,7 @@ describe('MonitoredWorkCard cover badges', () => {
 describe('MonitoredWorkCard time pill', () => {
   function mountWith(timeBadge: { label: string; upcoming: boolean } | undefined, cardWork: MonitoredWork = work()) {
     return mount(MonitoredWorkCard, {
-      props: { work: cardWork, queued: false, ebookQueued: false, audiobookQueued: false, canManage: false, timeBadge },
+      props: { work: cardWork, ebookQueued: false, audiobookQueued: false, canManage: false, timeBadge },
       global: {
         stubs: { DropdownMenu: passthrough, DropdownMenuTrigger: passthrough, DropdownMenuContent: passthrough, DropdownMenuItem: passthrough },
       },
@@ -290,7 +289,7 @@ describe('MonitoredWorkCard card info mode', () => {
 
   function mountInfo(authorName: string | null = 'A Writer') {
     return mount(MonitoredWorkCard, {
-      props: { work: work(), queued: false, ebookQueued: false, audiobookQueued: false, canManage: true, authorName },
+      props: { work: work(), ebookQueued: false, audiobookQueued: false, canManage: true, authorName },
       global: {
         stubs: { DropdownMenu: passthrough, DropdownMenuTrigger: passthrough, DropdownMenuContent: passthrough, DropdownMenuItem: passthrough },
       },
@@ -465,7 +464,6 @@ describe('MonitoredWorkCard long press select', () => {
     return mount(MonitoredWorkCard, {
       props: {
         work: work(),
-        queued: false,
         ebookQueued: false,
         audiobookQueued: false,
         canManage: true,
@@ -594,7 +592,6 @@ describe('MonitoredWorkCard review reasons', () => {
   it('keeps the reason chips and kind pill in select mode', () => {
     const wrapper = mount(MonitoredWorkCard, {
       props: {
-        queued: false,
         ebookQueued: false,
         audiobookQueued: false,
         work: work({ verdict: 'suspect', flags: ['audio_episode' as never], kind: 'collection' }),
@@ -648,7 +645,6 @@ describe('MonitoredWorkCard auto-download mark', () => {
     const wrapper = mount(MonitoredWorkCard, {
       props: {
         work: work(upcoming),
-        queued: false,
         ebookQueued: false,
         audiobookQueued: false,
         canManage: true,
@@ -672,6 +668,19 @@ describe('MonitoredWorkCard auto-download mark', () => {
   it('leaves a format with a request filed bare', () => {
     const wrapper = mountCard(work({ ...upcoming, requestIds: { ebook: 9 }, requestStatuses: { ebook: 'grabbed' } }), false, { ebook: 'auto-all' })
     expect(wrapper.find(mark).exists()).toBe(false)
+    wrapper.unmount()
+  })
+})
+
+describe('MonitoredWorkCard cover image', () => {
+  it('shows the next work cover after a recycled card held a broken one', async () => {
+    const wrapper = mountCard(work({ id: 'a', title: 'Broken', coverUrl: 'https://covers.test/a.jpg' }))
+    await wrapper.get('img[alt="Broken"]').trigger('error')
+    expect(wrapper.find('img[alt="Broken"]').exists()).toBe(false)
+
+    await wrapper.setProps({ work: work({ id: 'b', title: 'Working', coverUrl: 'https://covers.test/b.jpg' }) })
+
+    expect(wrapper.get('img[alt="Working"]').attributes('src')).toContain('b.jpg')
     wrapper.unmount()
   })
 })

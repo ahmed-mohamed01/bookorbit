@@ -22,23 +22,9 @@ export interface BookReadingSession {
   // The reading attempt this session was recorded against, when one was open at the time.
   // Sessions logged before attempts existed, or outside any attempt, carry null.
   attemptId: number | null;
-  bookId?: number;
-  medium?: ReadingSessionMedium;
   // How the session was spent: reading the text, listening to text to speech, or listening to
   // audio. Optional because servers before this field omit it; clients fall back to the format.
   sessionType?: ReadingSessionType;
-}
-
-export type ReadingSessionMedium = "read" | "listened";
-
-export interface ReadingLogScopeMember {
-  bookId: number;
-  role: "text" | "audio" | "readAlong";
-}
-
-// Present only when the log merges every member of a linked work; members include the requested book.
-export interface ReadingLogScope {
-  members: ReadingLogScopeMember[];
 }
 
 export interface BookReadingSourceSlice {
@@ -79,5 +65,4 @@ export interface BookReadingSessionListResponse {
   page: number;
   pageSize: number;
   stats: BookReadingSessionStats;
-  scope?: ReadingLogScope;
 }

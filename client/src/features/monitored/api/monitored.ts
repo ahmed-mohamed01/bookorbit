@@ -174,18 +174,8 @@ export async function requestMonitoredWork(workId: string, payload: RequestFromW
   )
 }
 
-export async function searchWorkReleases(workId: string, format: MonitoredFormat): Promise<MonitoredWorkReleasesResponse> {
-  return readJson(
-    await api(`${BASE_PATH}/works/${encodeURIComponent(workId)}/releases/search`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ format }),
-    }),
-  )
-}
-
 /**
- * The streamed form of `searchWorkReleases`: each merged snapshot is handed to `onProgress` as the
+ * Search releases as a stream: each merged snapshot is handed to `onProgress` as the
  * sources answer, and the final ranked list resolves the promise. Failures surface as the same
  * `MonitoredApiError` `readJson` throws, so a caller's error wording keeps working unchanged.
  */

@@ -340,7 +340,7 @@ export class AudiobookshelfRepository {
   }
 
   /**
-   * ABS links target the audiobook copy of a work; ebook-only rows are edition-link territory. Every
+   * ABS matches require audio content. Every
    * candidate query carries this so an ABS item can never match (exactly or fuzzily) a book that has
    * no audio content at all.
    */
@@ -1083,19 +1083,6 @@ export class AudiobookshelfRepository {
       results.push(...rows.map((row) => row.audiobookshelf_book_state));
     }
     return results;
-  }
-
-  async findLibraryIdsByBookIds(bookIds: number[]): Promise<Map<number, number>> {
-    const map = new Map<number, number>();
-    if (bookIds.length === 0) return map;
-    for (const group of chunk([...new Set(bookIds)], ISBN_ASIN_LOOKUP_CHUNK)) {
-      const rows = await this.db
-        .select({ id: schema.books.id, libraryId: schema.books.libraryId })
-        .from(schema.books)
-        .where(inArray(schema.books.id, group));
-      for (const row of rows) map.set(row.id, row.libraryId);
-    }
-    return map;
   }
 
   async findSidecarCoverCandidatesByBookIds(

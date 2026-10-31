@@ -116,11 +116,11 @@ describe('WebSerialsRepository settings', () => {
 
 describe('WebSerialsRepository jobs', () => {
   it('lists only the given user with a clamped page, ranked active then queue then paused then finished', async () => {
-    const db = mockDb({ select: [[{ job: { id: 7 }, libraryName: 'Manga', ownerName: 'Ann', queuePosition: 2 }]] });
+    const db = mockDb({ select: [[{ job: { id: 7 }, libraryName: 'Manga', ownerName: 'Ann', queuePosition: 2, ownerQueuePosition: 1 }]] });
 
     const rows = await new WebSerialsRepository(db as never).listJobs(42, 5000, -3);
 
-    expect(rows).toEqual([{ id: 7, libraryName: 'Manga', ownerName: 'Ann', queuePosition: 2 }]);
+    expect(rows).toEqual([{ id: 7, libraryName: 'Manga', ownerName: 'Ann', queuePosition: 2, ownerQueuePosition: 1 }]);
     const builder = builderAt(db.select);
     const where = whereSql(builder);
     expect(where.sql).toContain('"web_serial_jobs"."user_id" = $1');
@@ -146,11 +146,13 @@ describe('WebSerialsRepository jobs', () => {
 
     await new WebSerialsRepository(db as never).findJobById(5);
 
-    const selected = (db.select.mock.calls[0] as unknown[])[0] as { queuePosition: SQL };
+    const selected = (db.select.mock.calls[0] as unknown[])[0] as { queuePosition: SQL; ownerQueuePosition: SQL };
     const rendered = render(selected.queuePosition).sql;
     expect(rendered).toContain('count(*)');
     expect(rendered).toContain('"queue_order"');
     expect(rendered).toContain('"queue_ahead"');
+    expect(render(selected.ownerQueuePosition).sql).toContain('"queue_ahead"."user_id" = "web_serial_jobs"."user_id"');
+    expect(rendered).not.toContain('"queue_ahead"."user_id"');
   });
 
   it('counts paused jobs towards the per-user cap, so pausing never makes room for more', async () => {
@@ -288,6 +290,14 @@ describe('WebSerialsRepository jobs', () => {
     expect(rendered.sql).toContain('min("web_serial_jobs"."queue_order")');
     expect(rendered.sql).toContain('- 1');
     expect(whereSql(builder).params).toEqual([3, 'queued']);
+  });
+
+  it('limits a non-admin priority jump to the owner queued jobs', async () => {
+    const db = mockDb({ update: [[{ id: 3 }]] });
+    await new WebSerialsRepository(db as never).moveJobToTop(3, 7);
+    const rendered = render(builderAt(db.update).set!.mock.calls[0]![0].queueOrder);
+    expect(rendered.sql).toContain('"web_serial_jobs"."user_id" =');
+    expect(rendered.params).toContain(7);
   });
 
   it('removes only a finished job', async () => {
@@ -1141,20 +1151,6 @@ describe('webSerialMangaVolumeOwned', () => {
   });
 });
 
-describe('WebSerialsRepository series requests', () => {
-  it('findSeriesRequestsByKeys uses array overlap', async () => {
-    const db = mockDb({ select: [[{ id: 1 }]] });
-    await expect(new WebSerialsRepository(db as never).findSeriesRequestsByKeys(['saga', 'alias'])).resolves.toEqual([{ id: 1 }]);
-    expect(whereSql(builderAt(db.select))).toEqual(
-      expect.objectContaining({
-        sql: '"web_serial_series_requests"."series_keys" && $1::text[]',
-        params: [['saga', 'alias']],
-      }),
-    );
-    expect(builderAt(db.select).limit).toHaveBeenCalledWith(50);
-  });
-});
-
 describe('WebSerialsRepository findSeriesRequestByBatch', () => {
   it('returns the series request linked to a batch request, or undefined', async () => {
     const db = mockDb({ select: [[{ request: { id: 4 } }], []] });
@@ -1217,7 +1213,6 @@ describe('WebSerialsRepository series request storage', () => {
   it('skips empty key and request id queries', async () => {
     const db = mockDb();
     const repo = new WebSerialsRepository(db as never);
-    await expect(repo.findSeriesRequestsByKeys([])).resolves.toEqual([]);
     await expect(repo.findBatchIds([])).resolves.toEqual(new Map());
     expect(db.select).not.toHaveBeenCalled();
   });
@@ -1260,4 +1255,129 @@ it('returns conditional deletion counts and bounds reference checks', async () =
   expect(whereSql(builderAt(db.select)).params).toEqual([9]);
   expect(await repo.setSeriesDraft(4, false)).toBe(true);
   expect(await repo.setSeriesDraft(4, false)).toBe(false);
+});
+
+describe('atomic per-user job quota', () => {
+  it('locks the owner before the write and rolls back when the resulting count exceeds the cap', async () => {
+    const order: string[] = [];
+    const tx = {
+      execute: vi.fn((statement: SQL) => {
+        const query = render(statement);
+        expect(query.sql).toContain('pg_advisory_xact_lock');
+        expect(query.params).toEqual([7]);
+        order.push('lock');
+        return Promise.resolve();
+      }),
+      select: vi.fn(() => queryBuilder([{ value: 26 }])),
+    };
+    const db = { transaction: vi.fn(async (operation: (value: typeof tx) => Promise<unknown>) => operation(tx)) };
+    const repo = new WebSerialsRepository(db as never);
+    await expect(
+      repo.withUserJobQuota(
+        7,
+        25,
+        () => new Error('quota exceeded'),
+        () => {
+          order.push('write');
+          return Promise.resolve();
+        },
+      ),
+    ).rejects.toThrow('quota exceeded');
+    expect(order).toEqual(['lock', 'write']);
+  });
+
+  it('serializes concurrent reservations so only one of two callers can take the last slot', async () => {
+    let count = 24;
+    let releasePrevious = Promise.resolve();
+    const db = {
+      transaction: async (operation: (tx: unknown) => Promise<unknown>) => {
+        let unlock!: () => void;
+        const waiting = releasePrevious;
+        releasePrevious = new Promise<void>((resolve) => {
+          unlock = resolve;
+        });
+        let before = 0;
+        const tx = {
+          execute: async () => {
+            await waiting;
+            before = count;
+          },
+          select: () => queryBuilder([{ value: count }]),
+        };
+        try {
+          return await operation(tx);
+        } catch (error) {
+          count = before;
+          throw error;
+        } finally {
+          unlock();
+        }
+      },
+    };
+    const repo = new WebSerialsRepository(db as never);
+    const reserve = () =>
+      repo.withUserJobQuota(
+        7,
+        25,
+        () => new Error('quota exceeded'),
+        () => {
+          count++;
+          return Promise.resolve();
+        },
+      );
+    const results = await Promise.allSettled([reserve(), reserve()]);
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'rejected']);
+    expect(count).toBe(25);
+  });
+  it('serializes concurrent resumes using active jobs even when paused jobs already count towards the cap', async () => {
+    let count = 24;
+    let releasePrevious = Promise.resolve();
+    const db = {
+      transaction: async (operation: (tx: unknown) => Promise<unknown>) => {
+        let unlock!: () => void;
+        const waiting = releasePrevious;
+        releasePrevious = new Promise<void>((resolve) => {
+          unlock = resolve;
+        });
+        let before = 0;
+        const tx = {
+          execute: async () => {
+            await waiting;
+            before = count;
+          },
+          select: () => {
+            const builder = queryBuilder([{ value: count }]);
+            builder.where = vi.fn((condition: SQL) => {
+              expect(render(condition).params).not.toContain('paused');
+              return builder;
+            });
+            return builder;
+          },
+        };
+        try {
+          return await operation(tx);
+        } catch (error) {
+          count = before;
+          throw error;
+        } finally {
+          unlock();
+        }
+      },
+    };
+    const repo = new WebSerialsRepository(db as never);
+    const reserve = () =>
+      repo.withUserJobQuota(
+        7,
+        25,
+        () => new Error('quota exceeded'),
+        () => {
+          count++;
+          return Promise.resolve();
+        },
+        (lockedRepo) => lockedRepo.countActiveJobs(7),
+      );
+    const results = await Promise.allSettled([reserve(), reserve()]);
+    expect(results.map((result) => result.status)).toEqual(['fulfilled', 'rejected']);
+    expect(count).toBe(25);
+  });
 });

@@ -556,6 +556,8 @@ export interface WebSerialJob {
   message: string | null;
   /** 1-based place among this queue's waiting jobs; null unless queued. */
   queuePosition: number | null;
+  /** Whether reordering within the viewer's permitted queue scope would move this job. */
+  canMoveToTop: boolean;
   /** Set only in the admin view (scope=all). */
   owner: { id: number; name: string } | null;
   createdAt: string;
@@ -860,10 +862,6 @@ export interface WebSerialPrintSeriesInput {
 export interface RequestWebSerialVolumesInput extends WebSerialPrintSeriesInput {
   volumes: number[];
 }
-export interface LinkWebSerialBatchInput {
-  seriesRequestId: number;
-  batchRequestId: number;
-}
 
 export function parseReleaseVolumes(title: string, max = WEB_SERIAL_MAX_PUBLISHED_VOLUMES): number[] | null {
   const volumes = new Set<number>();
@@ -947,6 +945,7 @@ export interface WebSerialDownloadPick {
 }
 export interface WebSerialDownloadInput extends Pick<WebSerialPrintSeriesInput, "title" | "altTitles" | "volumeCount"> {
   seriesRequestId: number;
-  downloadClientId: number;
+  /** Fallback for picks that name no client; only a pack (picked books) needs one. */
+  downloadClientId?: number | null;
   picks: WebSerialDownloadPick[];
 }

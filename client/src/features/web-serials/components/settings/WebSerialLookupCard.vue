@@ -5,7 +5,7 @@ import { Check, ChevronDown, Library, Loader2, Plug, TriangleAlert } from '@luci
 import type { WebSerialLookupHealth } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
-import { formatDateTime, formatRelativeFromNow } from '@/i18n/formatters'
+import { formatDate, formatDateTime, formatRelativeFromNow } from '@/i18n/formatters'
 
 const props = defineProps<{
   enabled: boolean
@@ -61,7 +61,7 @@ const checkedLabel = computed(() =>
 const checkedTitle = computed(() => (checkedAt.value && !Number.isNaN(checkedAt.value.getTime()) ? formatDateTime(checkedAt.value) : undefined))
 
 function formatTime(date: Date): string {
-  return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  return formatDate(date, { hour: '2-digit', minute: '2-digit' })
 }
 
 function handleToggleExplained() {

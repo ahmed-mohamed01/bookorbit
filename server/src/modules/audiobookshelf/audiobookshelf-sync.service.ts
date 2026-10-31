@@ -6,7 +6,6 @@ import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { toDateKeyInTimeZone } from '../../common/utils/timezone.utils';
 import { ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, AchievementEventsService } from '../achievement/achievement-events.service';
 import { BookService } from '../book/book.service';
-import { EditionLinkRepository } from '../edition-link/edition-link.repository';
 import { LibraryService } from '../library/library.service';
 import { ReadingAttemptService } from '../user-book-status/reading-attempt.service';
 import { UserBookStatusService } from '../user-book-status/user-book-status.service';
@@ -112,7 +111,6 @@ interface AbsDueBook {
 interface AbsSyncPreload {
   audioFilesByBookId: Map<number, { id: number; format: string | null; durationSeconds: number | null }[]>;
   audioProgressByBookId: Awaited<ReturnType<AudiobookshelfRepository['findAudioProgressForBooks']>>;
-  readAlongBookIdByAudioBookId: Map<number, number>;
 }
 
 type PositionApplyReason = 'applied' | 'no_audio_files' | 'invalid_duration' | 'duration_mismatch' | 'local_newer' | 'no_position' | 'write_race';
@@ -141,10 +139,9 @@ export class AudiobookshelfSyncService {
     private readonly sessionsService: AudiobookshelfSessionsService,
     private readonly libraryService: LibraryService,
     private readonly achievementEvents: AchievementEventsService,
-    private readonly bookService: BookService,
-    private readonly editionLinks: EditionLinkRepository,
     private readonly progressPush: AudiobookshelfProgressPushService,
     private readonly coordinator: AudiobookshelfSyncCoordinatorService,
+    private readonly bookService: BookService,
   ) {}
 
   /**
@@ -364,12 +361,11 @@ export class AudiobookshelfSyncService {
   }
 
   private async preloadPositions(userId: number, positionBookIds: number[]): Promise<AbsSyncPreload> {
-    const [audioFilesByBookId, audioProgressByBookId, readAlongBookIdByAudioBookId] = await Promise.all([
+    const [audioFilesByBookId, audioProgressByBookId] = await Promise.all([
       this.repo.findAudioFilesInPlayOrderForBooks(positionBookIds),
       this.repo.findAudioProgressForBooks(userId, positionBookIds),
-      this.editionLinks.findReadAlongBookIdsByAudioBookIds(positionBookIds),
     ]);
-    return { audioFilesByBookId, audioProgressByBookId, readAlongBookIdByAudioBookId };
+    return { audioFilesByBookId, audioProgressByBookId };
   }
 
   private async applyProgressToBook(
@@ -527,6 +523,14 @@ export class AudiobookshelfSyncService {
       updatedAt: written.updatedAt,
       revision: written.revision,
     });
+    await this.bookService.syncEbookProgressForAudiobookPlayback(
+      user,
+      bookId,
+      resolved.currentFileId,
+      resolved.positionSeconds,
+      percentage,
+      capturedAt,
+    );
     // Announce the position write on the shared bus like every other progress writer (web reader, Kobo,
     // KOReader), so source-agnostic listeners such as the reading-alignment sync observe ABS advances.
     this.achievementEvents.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, {
@@ -536,43 +540,10 @@ export class AudiobookshelfSyncService {
       progress: percentage,
       source: 'audiobookshelf',
       // ABS reports the real client playback time; carry it so a delayed poll of older progress cannot
-      // look newer than a more recent local update and drag the linked ebook backward.
+      // look newer than a more recent local update and drag the same book's ebook backward.
       ...(mp.lastUpdate ? { occurredAt: new Date(mp.lastUpdate) } : {}),
     });
-    // A user-chosen pull makes ABS the truth for the read-along too, which may hold newer activity than ABS's own timestamp.
-    await this.syncLinkedReadAlong(user, bookId, mp, options.bypassNewestWins ? new Date() : capturedAt, preload);
     return { applied: true, watermarkAdvanced: true, pushPending: false, progressAt: written.updatedAt, reason: 'applied' };
-  }
-
-  /**
-   * The read-along is its own book, so the in-book audio -> ebook sync never reaches it. Runs after the
-   * audiobook write has committed: a failure here must not fail the book, or its watermark would stay
-   * put and the next run would read our own write as newer local progress.
-   */
-  private async syncLinkedReadAlong(
-    user: RequestUser,
-    bookId: number,
-    mp: AbsMediaProgress,
-    capturedAt: Date,
-    preload: AbsSyncPreload,
-  ): Promise<void> {
-    const readAlongBookId = preload.readAlongBookIdByAudioBookId.get(bookId);
-    if (readAlongBookId === undefined) return;
-    const startedAt = Date.now();
-    try {
-      await this.bookService.syncReadAlongForAudiobookPosition(user, {
-        audioBookId: bookId,
-        readAlongBookId,
-        audioSeconds: mp.currentTime,
-        audioTotalSeconds: mp.duration,
-        sourceUpdatedAt: capturedAt,
-      });
-    } catch (err) {
-      const { errorClass, error } = describeError(err);
-      this.logger.warn(
-        `[abs.sync] [fail] userId=${user.id} bookId=${bookId} readAlongBookId=${readAlongBookId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${error}" - read-along position sync failed`,
-      );
-    }
   }
 
   /**

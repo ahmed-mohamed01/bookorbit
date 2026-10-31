@@ -2,7 +2,6 @@ import type { BookRequestRow } from '../../../db/schema';
 import { emptyReleaseProfiles } from '@bookorbit/types';
 import type { IndexerAdapterType } from '@bookorbit/types';
 
-import { BookRequestSourcesService } from '../book-request-sources.service';
 import { IndexerSearchException, type ReleaseCandidate, type ResolvedIndexerConfig } from './indexer-adapter';
 import { IndexerOperationLock } from './indexer-operation-lock';
 import { IndexerSearchService } from './indexer-search.service';
@@ -111,14 +110,12 @@ function makeService(
   // No profile, which is the shipped default and keeps these cases about search and scoring.
   const automationSettings = { get: vi.fn(() => Promise.resolve({ profiles: emptyReleaseProfiles() })) };
   const factsRepository = { findByHashes: vi.fn().mockResolvedValue(new Map()) };
-  const requestSources = new BookRequestSourcesService(indexers as never, registry as never);
   return {
     service: new IndexerSearchService(
       indexers as never,
       registry as never,
       automationSettings as never,
       new IndexerOperationLock(),
-      requestSources,
       factsRepository as never,
     ),
     indexers,

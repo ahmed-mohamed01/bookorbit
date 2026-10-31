@@ -28,10 +28,10 @@ interface ResponseInput {
 }
 
 function makeResponse(input: ResponseInput): Response {
-  const { status, type = 'basic', json, jsonThrows, headers = {}, bytes = new Uint8Array() } = input;
+  const { status, type = 'basic', json, jsonThrows, headers = {} } = input;
   return {
     headers: new Headers(headers),
-    body: bytesStream(bytes),
+    body: bytesStream(input.bytes ?? new TextEncoder().encode(jsonThrows ? 'bad json' : (JSON.stringify(json) ?? ''))),
     ok: status >= 200 && status < 300,
     status,
     type,
@@ -63,22 +63,19 @@ function endlessImageBody(chunkBytes: number) {
   return { body, stats };
 }
 
-// Headers arrive, then the body never does: json() settles only when the request signal aborts.
 function stalledJsonResponse(signal: () => AbortSignal): Response {
   return {
     headers: new Headers(),
-    body: null,
+    body: new ReadableStream({
+      start(controller) {
+        signal().addEventListener('abort', () => {
+          controller.error(new DOMException('The operation was aborted', 'AbortError'));
+        });
+      },
+    }),
     ok: true,
     status: 200,
     type: 'basic',
-    json: () =>
-      new Promise((_resolve, reject) => {
-        signal().addEventListener('abort', () => {
-          const abortError = new Error('The operation was aborted');
-          abortError.name = 'AbortError';
-          reject(abortError);
-        });
-      }),
   } as unknown as Response;
 }
 
@@ -125,7 +122,7 @@ describe('AudiobookshelfClientService', () => {
     });
 
     it('invokes the SSRF guard on every outbound call', async () => {
-      fetchMock.mockResolvedValue(makeResponse({ status: 200, json: {} }));
+      fetchMock.mockImplementation(() => makeResponse({ status: 200, json: {} }));
       const service = makeService();
 
       await service.getMe(1, SERVER_URL, TOKEN);
@@ -134,6 +131,23 @@ describe('AudiobookshelfClientService', () => {
       expect(mockedEnsureSafeUrl).toHaveBeenCalledTimes(2);
       expect(mockedEnsureSafeUrl).toHaveBeenCalledWith('https://abs.example.com/api/me', expect.any(Object));
       expect(mockedEnsureSafeUrl).toHaveBeenCalledWith('https://abs.example.com/api/libraries', expect.any(Object));
+    });
+
+    it('rejects oversized declared JSON before consuming the body', async () => {
+      const log = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const { body, stats } = endlessImageBody(1024);
+      fetchMock.mockResolvedValueOnce(new Response(body, { headers: { 'content-length': String(17 * 1024 * 1024) } }));
+      await expect(makeService().getMe(1, SERVER_URL, TOKEN)).rejects.toMatchObject({ code: 'invalid_response' });
+      expect(stats.cancelled).toBe(true);
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('response_too_large'));
+    });
+
+    it('stops an unbounded JSON stream at the byte cap', async () => {
+      const { body, stats } = endlessImageBody(1024 * 1024);
+      fetchMock.mockResolvedValueOnce(new Response(body));
+      await expect(makeService().getMe(1, SERVER_URL, TOKEN)).rejects.toMatchObject({ code: 'invalid_response' });
+      expect(stats.cancelled).toBe(true);
+      expect(stats.pulled).toBeLessThanOrEqual(19);
     });
 
     it('throws invalid_url when the SSRF guard rejects the target', async () => {
@@ -276,7 +290,7 @@ describe('AudiobookshelfClientService', () => {
     });
 
     it('times out a response whose body stalls after the headers arrive', async () => {
-      fetchMock.mockResolvedValueOnce(stalledJsonResponse(() => (fetchMock.mock.calls[0][1] as RequestInit).signal!));
+      fetchMock.mockImplementationOnce((_url, init: RequestInit) => stalledJsonResponse(() => init.signal!));
 
       await expect(makeService().getMediaProgress(1, SERVER_URL, TOKEN, 'item-1', 20)).rejects.toMatchObject({ code: 'timeout' });
     });

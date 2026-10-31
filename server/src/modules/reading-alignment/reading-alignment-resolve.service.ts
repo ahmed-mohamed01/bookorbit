@@ -1,9 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { CrossFormatResume } from '@bookorbit/types';
 
 import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
 import { EpubService } from '../reader/epub/epub.service';
-import { buildAudioTimeline, filePositionToAbsoluteSeconds } from './reading-alignment-audio-timeline.util';
+import { buildAudioTimeline, filePositionToAbsoluteSeconds } from '../../common/utils/audio-timeline.utils';
 import { alignmentContentChanged } from './reading-alignment-content-hash.util';
 import { computeAnchorFraction } from './reading-alignment-fraction.util';
 import { ebookActivityTime, type EbookProgressActivity, isStrictlyNewer } from './reading-alignment-freshness.util';
@@ -13,8 +14,6 @@ import type { Anchor } from './reading-alignment-resolver.util';
 import { audioSecondsToEbook } from './reading-alignment-resolver.util';
 import { ReadingAlignmentRepository } from './reading-alignment.repository';
 import type { AudiobookAlignmentAnchor } from './schema/reading-alignment.schema';
-
-export type CrossFormatResume = { available: false } | { available: true; source: 'audio'; spineIndex: number; phrase: string; percentage: number };
 
 const RESOLVE_EVENT = 'reading_alignment.resolve_resume';
 const MIN_ANCHORS = 2;
@@ -34,16 +33,20 @@ export class ReadingAlignmentResolveService {
   // Resolve where to resume in the ebook when audiobook progress is strictly newer. Read-only: no
   // progress is written here and nothing is persisted beyond backfilling missing anchor fractions (the
   // live ebook projection is written by the sync service, never by this resolver).
-  async resolveResume(bookId: number, user: RequestUser): Promise<CrossFormatResume> {
+  //
+  // Upstream's read-aloud sync maps audio through the read-along's SMIL playlist exactly and writes
+  // every EPUB of the book, so the whisper phrase is only offered where that sync does not exist: the
+  // opened file must be the aligned plain EPUB, and a book with a read-along has no pair at all.
+  async resolveResume(bookId: number, user: RequestUser, fileId?: number): Promise<CrossFormatResume> {
     const startedAt = Date.now();
-    this.logger.log(`[${RESOLVE_EVENT}] [start] bookId=${bookId} userId=${user.id} - cross-format resume started`);
+    const fileField = fileId != null ? ` fileId=${fileId}` : '';
+    this.logger.log(`[${RESOLVE_EVENT}] [start] bookId=${bookId} userId=${user.id}${fileField} - cross-format resume started`);
 
     await this.assertAccess(bookId, user);
     const pair = await this.pairService.resolveAlignmentPair(bookId);
     if (!pair) {
       return this.done(startedAt, bookId, null, UNAVAILABLE);
     }
-    await this.assertPairAccess(pair, bookId, user);
 
     const ready = await this.repo.getReadyAlignmentWithAnchors(pair.textBookId, pair.audioBookId);
     if (!ready || ready.anchors.length < MIN_ANCHORS) {
@@ -55,6 +58,9 @@ export class ReadingAlignmentResolveService {
       return this.done(startedAt, bookId, pair, UNAVAILABLE, `alignmentId=${alignment.id} skipped=alignment_stale`);
     }
     const ebookFileId = alignment.ebookFileId;
+    if (fileId != null && fileId !== ebookFileId) {
+      return this.done(startedAt, bookId, pair, UNAVAILABLE, `alignmentId=${alignment.id} skipped=not_aligned_file`);
+    }
 
     const anchors = await this.resolveAnchors(pair.textBookId, ebookFileId, user, ready.anchors);
     if (anchors.length < MIN_ANCHORS) {
@@ -126,12 +132,6 @@ export class ReadingAlignmentResolveService {
     // verifyBookAccess is content-filter aware (unlike a bare library check), so a hidden book cannot
     // have its cross-format phrases or positions read by a user it is filtered from.
     await this.bookService.verifyBookAccess(bookId, user);
-  }
-
-  private async assertPairAccess(pair: ReadingAlignmentPair, requestedBookId: number, user: RequestUser): Promise<void> {
-    const counterpartIds = new Set([pair.textBookId, pair.audioBookId]);
-    counterpartIds.delete(requestedBookId);
-    await Promise.all([...counterpartIds].map((bookId) => this.assertAccess(bookId, user)));
   }
 
   private done(startedAt: number, bookId: number, pair: ReadingAlignmentPair | null, result: CrossFormatResume, skip?: string): CrossFormatResume {

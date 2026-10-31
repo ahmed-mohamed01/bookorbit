@@ -41,13 +41,7 @@ import {
   WebSerialJobScopeDto,
   WebSerialSeriesKeyParamsDto,
 } from './dto';
-import {
-  WebSerialDownloadDto,
-  WebSerialSuggestionDto,
-  WebSerialPrintSeriesDto,
-  RequestWebSerialVolumesDto,
-  LinkWebSerialBatchDto,
-} from './dto/web-serials-print.dto';
+import { WebSerialDownloadDto, WebSerialSuggestionDto, WebSerialPrintSeriesDto, RequestWebSerialVolumesDto } from './dto/web-serials-print.dto';
 import { WebSerialsPrintService } from './web-serials-print.service';
 import { WebSerialsCatalogService } from './web-serials-catalog.service';
 import { WebSerialsDiscoverService } from './web-serials-discover.service';
@@ -121,14 +115,6 @@ export class WebSerialsController {
   ): Promise<WebSerialPrintState> {
     validateNovelMatchId(matchId);
     return this.print.requestVolumes(user, matchId, input);
-  }
-
-  @Post('novel/:matchId/batches')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @RequirePermission(Permission.WebSerialAccess, Permission.ManageBookRequests)
-  linkPrintBatch(@Param('matchId') matchId: string, @Body() input: LinkWebSerialBatchDto, @CurrentUser() user: RequestUser): Promise<void> {
-    validateNovelMatchId(matchId);
-    return this.print.linkBatch(user, matchId, input);
   }
 
   @Get('capabilities')

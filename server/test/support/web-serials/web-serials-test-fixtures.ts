@@ -156,6 +156,11 @@ export function setupServices(options: { settings?: Record<string, unknown>; lib
     libraryService as never,
     lookupService as never,
   );
+  Object.assign(repo, {
+    withUserJobQuota: vi.fn(async (_userId: number, _limit: number, _exceeded: unknown, operation: (value: typeof repo) => Promise<unknown>) =>
+      operation(repo),
+    ),
+  });
   const jobs = new WebSerialJobsService(
     repo as never,
     settings as never,

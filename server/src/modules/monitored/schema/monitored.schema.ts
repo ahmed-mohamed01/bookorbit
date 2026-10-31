@@ -401,5 +401,4 @@ export const monitoredBooks = pgTable(
 export type MonitoredAuthorRow = typeof monitoredAuthors.$inferSelect;
 export type AuthorCatalogWorkRow = typeof authorCatalogWorks.$inferSelect;
 export type MonitoredAuthorWorkRow = typeof monitoredAuthorWorks.$inferSelect;
-export type MonitoredBookRow = typeof monitoredBooks.$inferSelect;
 export type MonitoredMatchOverrideRow = typeof monitoredMatchOverrides.$inferSelect;

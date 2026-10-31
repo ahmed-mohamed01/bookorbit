@@ -35,11 +35,10 @@ export const CHAIN_TONE_TEXT_CLASS: Record<ChainTone, string> = {
   muted: 'text-muted-foreground',
 }
 
-type ChainChrome = 'plain' | 'thisBook' | 'dashed' | 'dashedFilled'
+type ChainChrome = 'plain' | 'dashed' | 'dashedFilled'
 
 const CHAIN_CHROME_CLASS: Record<ChainChrome, string> = {
   plain: 'rounded-xl border border-border bg-card',
-  thisBook: 'rounded-xl border border-primary bg-card',
   dashed: 'rounded-xl border border-dashed border-border bg-transparent',
   dashedFilled: 'rounded-xl border border-dashed border-border bg-card',
 }

@@ -1,31 +1,24 @@
-import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive, EditionLinkMember } from '@bookorbit/types'
+import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive, ReadAloudProgressSync } from '@bookorbit/types'
 import {
   buildSyncChain,
   type ChainCardRow,
   type ChainConnectorRow,
   type ChainGhostRow,
-  type ChainReadAlongSlotRow,
+  type ChainReadAloudSlotRow,
   type ConnectorKey,
   type EditionKey,
   type SyncChain,
   type SyncChainAbs,
   type SyncChainAlignment,
-  type SyncChainBook,
-  type SyncChainReadAlong,
-  type SyncChainSide,
+  type SyncChainEdition,
+  type SyncChainReadAloud,
+  type SyncChainReadAloudJob,
+  type SyncChainReadAloudSlot,
   type SyncChainSnapshot,
 } from '../sync-chain'
 
-export function chainBook(id: number, title: string | null, progress: number | null = null): SyncChainBook {
-  return { id, title, authorName: `Author ${id}`, coverVersion: `v${id}`, progress }
-}
-
-export function chainMember(id: number, title: string): EditionLinkMember {
-  return { id, title, authorName: 'Narrator', coverVersion: 'rv', progress: { percentage: 41, updatedAt: '2026-10-01' }, narrationPercentage: null }
-}
-
-export function chainSide(overrides: Partial<SyncChainSide> = {}): SyncChainSide {
-  return { book: null, isMember: false, isThisBook: false, match: null, ...overrides }
+export function chainEdition(overrides: Partial<SyncChainEdition> = {}): SyncChainEdition {
+  return { title: 'Book', formatName: 'EPUB e-book', fileCount: 1, sizeBytes: 1024, progress: null, ...overrides }
 }
 
 export function chainAlignment(overrides: Partial<SyncChainAlignment> = {}): SyncChainAlignment {
@@ -42,27 +35,47 @@ export function chainAlignment(overrides: Partial<SyncChainAlignment> = {}): Syn
   }
 }
 
-export function chainReadAlong(overrides: Partial<SyncChainReadAlong> = {}): SyncChainReadAlong {
+export function readAloudSync(overrides: Partial<ReadAloudProgressSync> = {}): ReadAloudProgressSync {
   return {
-    member: null,
-    status: 'none',
-    blocked: null,
-    phase: null,
-    remoteTask: null,
-    remoteProgress: null,
+    mode: 'auto',
+    state: 'enabled',
+    unavailableReason: null,
+    overlayFileId: 3,
+    audioDurationSeconds: 3600,
+    overlayDurationSeconds: 3600,
+    durationDifferenceSeconds: 0,
+    durationDifferenceRatio: 0,
+    koreaderDownloadAvailable: false,
+    ...overrides,
+  }
+}
+
+export function chainReadAloud(overrides: Partial<ReadAloudProgressSync> = {}): SyncChainReadAloud {
+  return { sync: readAloudSync(overrides), audioDuration: '1h 0m', overlayDuration: '1h 0m' }
+}
+
+/** Upstream's generator with nothing to offer: no slot unless a test says otherwise. */
+export function chainReadAloudSlot(overrides: Partial<SyncChainReadAloudSlot> = {}): SyncChainReadAloudSlot {
+  return { entry: { kind: 'hidden' }, job: null, pending: null, errorKey: null, ...overrides }
+}
+
+export function chainReadAloudJob(overrides: Partial<SyncChainReadAloudJob> = {}): SyncChainReadAloudJob {
+  return {
+    status: 'processing',
+    stage: 'aligning',
+    progress: 42.4,
     queuePosition: null,
-    outputBook: null,
-    thisBook: null,
-    error: null,
-    mutating: false,
-    memberPending: false,
+    stopping: false,
+    canCancel: true,
+    canRetry: true,
+    errorKey: null,
     ...overrides,
   }
 }
 
 export function absLink(overrides: Partial<AudiobookshelfBookSyncLink> = {}): AudiobookshelfBookSyncLink {
   return {
-    audioBookId: 2,
+    audioBookId: 7,
     absLibraryItemId: 'li_1',
     title: 'He Who Fights',
     authorName: 'Shirtaloon',
@@ -87,18 +100,19 @@ export function chainAbs(
   return { configured: true, link: absLink(link), live, checking }
 }
 
-/** Ebook page, ebook and audiobook linked and aligned, no read-along, no Audiobookshelf. */
+/** A book holding a plain EPUB and its audiobook, aligned, with no read-along and no Audiobookshelf. */
 export function chainSnapshot(overrides: Partial<SyncChainSnapshot> = {}): SyncChainSnapshot {
   return {
-    thisBook: 'ebook',
-    linked: true,
-    ebook: chainSide({ book: chainBook(1, 'Ebook', 41), isMember: true, isThisBook: true }),
-    audiobook: chainSide({ book: chainBook(2, 'Audiobook', 63), isMember: true }),
+    bookId: 7,
+    coverVersion: 'v7',
+    ebook: chainEdition({ title: 'Book', progress: 41 }),
+    audiobook: chainEdition({ title: 'Book', formatName: 'M4B audiobook', progress: 63 }),
+    readAlong: null,
+    readAloudSlot: chainReadAloudSlot(),
     alignment: chainAlignment(),
-    readAlong: chainReadAlong(),
-    readAloudIssue: null,
+    readAloud: chainReadAloud({ state: 'unavailable', unavailableReason: 'no_media_overlay_epub', overlayFileId: null }),
     abs: null,
-    can: { editLink: true, generate: true, rebuild: true },
+    can: { align: true },
     ...overrides,
   }
 }
@@ -125,8 +139,8 @@ export function ghostRow(chain: SyncChain, edition: EditionKey): ChainGhostRow {
   return row
 }
 
-export function slotRow(chain: SyncChain): ChainReadAlongSlotRow {
-  const row = chain.rows.find((r): r is ChainReadAlongSlotRow => r.kind === 'readAlongSlot')
-  if (!row) throw new Error('no read-along slot')
+export function readAloudSlotRow(chain: SyncChain): ChainReadAloudSlotRow {
+  const row = chain.rows.find((r): r is ChainReadAloudSlotRow => r.kind === 'readAloudSlot')
+  if (!row) throw new Error('no read-aloud slot')
   return row
 }

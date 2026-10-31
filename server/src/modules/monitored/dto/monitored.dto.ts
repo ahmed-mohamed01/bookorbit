@@ -312,7 +312,6 @@ export class SearchMonitoredWorksDto {
   @Type(() => Number)
   @IsInt()
   @Min(0)
-  @Max(10000)
   page?: number = 0;
 
   @IsOptional()

@@ -273,11 +273,13 @@ export class AuthorsRepository {
 
   async findIdByNormalizedName(name: string): Promise<number | null> {
     const trimmed = name.trim();
-    if (!trimmed) return null;
+    if (!trimmed || !/[\p{L}\p{N}]/u.test(trimmed)) return null;
     const [row] = await this.db
       .select({ id: authors.id })
       .from(authors)
-      .where(sql`regexp_replace(lower(${authors.name}), '[^a-z0-9]', '', 'g') = regexp_replace(lower(${trimmed}), '[^a-z0-9]', '', 'g')`)
+      .where(
+        sql`regexp_replace(lower(${authors.name}), '[[:space:][:punct:]]', '', 'g') = regexp_replace(lower(${trimmed}), '[[:space:][:punct:]]', '', 'g')`,
+      )
       .orderBy(asc(authors.id))
       .limit(1);
     return row?.id ?? null;

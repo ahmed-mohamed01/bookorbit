@@ -519,11 +519,13 @@ export class RequestFulfillmentService {
       );
       // Which half refused decides what another attempt should do: a client that is down refuses
       // every torrent alike, while a file BookOrbit fetches itself was refused by the source. A
-      // client that already said the refusal is about this release alone is taken at its word.
+      // client that already said the refusal is about this release alone is taken at its word. The
+      // client's configured name lets the picker say which one, in the reader's language.
       throw withGrabCode(
         error,
         grabFailureCode(error) ??
           (client === null ? 'GRAB_SOURCE_REFUSED' : isServiceUnavailable(error) ? 'GRAB_CLIENT_UNAVAILABLE' : 'GRAB_CLIENT_REFUSED'),
+        client === null ? undefined : { client: client.name },
       );
     }
 
@@ -1071,7 +1073,7 @@ export class RequestFulfillmentService {
     }
 
     const client = await this.clients.findOne(requestedId);
-    if (!client.enabled) throw grabError('GRAB_CLIENT_REFUSED', `Download client "${client.name}" is disabled`);
+    if (!client.enabled) throw grabError('GRAB_CLIENT_REFUSED', `Download client "${client.name}" is disabled`, { client: client.name });
     this.assertClientCanDeliver(client, source);
     this.assertClientCanImport(client);
     return client;
@@ -1191,16 +1193,16 @@ function errorCodeOf(error: unknown): string {
   return typeof code === 'string' ? code : 'UNKNOWN';
 }
 
-function grabError(errorCode: GrabFailureCode, message: string): BadRequestException {
-  return new BadRequestException({ message, errorCode, statusCode: HttpStatus.BAD_REQUEST });
+function grabError(errorCode: GrabFailureCode, message: string, errorMeta?: BookRequestFailureMeta): BadRequestException {
+  return new BadRequestException({ message, errorCode, ...(errorMeta ? { errorMeta } : {}), statusCode: HttpStatus.BAD_REQUEST });
 }
 
-function grabUnavailable(errorCode: GrabFailureCode, message: string): ServiceUnavailableException {
-  return new ServiceUnavailableException({ message, errorCode, statusCode: HttpStatus.SERVICE_UNAVAILABLE });
+function grabUnavailable(errorCode: GrabFailureCode, message: string, errorMeta?: BookRequestFailureMeta): ServiceUnavailableException {
+  return new ServiceUnavailableException({ message, errorCode, ...(errorMeta ? { errorMeta } : {}), statusCode: HttpStatus.SERVICE_UNAVAILABLE });
 }
 
-function grabConflict(errorCode: GrabFailureCode, message: string): ConflictException {
-  return new ConflictException({ message, errorCode, statusCode: HttpStatus.CONFLICT });
+function grabConflict(errorCode: GrabFailureCode, message: string, errorMeta?: BookRequestFailureMeta): ConflictException {
+  return new ConflictException({ message, errorCode, ...(errorMeta ? { errorMeta } : {}), statusCode: HttpStatus.CONFLICT });
 }
 
 /**
@@ -1222,14 +1224,14 @@ export class RequestAlreadyClaimedException extends ConflictException {
  * Anything that is not an HTTP failure is handed back untouched: an unexpected error is a fault
  * on our side, and dressing it as a refusal would let the failover route around a real bug.
  */
-function withGrabCode(error: unknown, errorCode: GrabFailureCode): unknown {
+function withGrabCode(error: unknown, errorCode: GrabFailureCode, errorMeta?: BookRequestFailureMeta): unknown {
   if (!(error instanceof HttpException)) return error;
 
   const status = error.getStatus();
-  if (status === (HttpStatus.SERVICE_UNAVAILABLE as number)) return grabUnavailable(errorCode, error.message);
-  if (status === (HttpStatus.CONFLICT as number)) return grabConflict(errorCode, error.message);
-  if (status === (HttpStatus.BAD_REQUEST as number)) return grabError(errorCode, error.message);
-  return new HttpException({ message: error.message, errorCode, statusCode: status }, status);
+  if (status === (HttpStatus.SERVICE_UNAVAILABLE as number)) return grabUnavailable(errorCode, error.message, errorMeta);
+  if (status === (HttpStatus.CONFLICT as number)) return grabConflict(errorCode, error.message, errorMeta);
+  if (status === (HttpStatus.BAD_REQUEST as number)) return grabError(errorCode, error.message, errorMeta);
+  return new HttpException({ message: error.message, errorCode, ...(errorMeta ? { errorMeta } : {}), statusCode: status }, status);
 }
 
 function isServiceUnavailable(error: unknown): boolean {

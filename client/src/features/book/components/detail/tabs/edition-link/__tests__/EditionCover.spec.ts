@@ -9,27 +9,12 @@ describe('EditionCover', () => {
     const src = slot.get('img').attributes('src') ?? ''
     expect(src.startsWith('/api/v1/books/20/thumbnail?')).toBe(true)
     expect(new URLSearchParams(src.split('?')[1]).get('medium')).toBe('audio')
-
-    const result = mount(EditionCover, { props: { bookId: 20, medium: 'audio', size: 'result' } })
-    expect(result.get('[data-testid="edition-cover"]').classes()).toContain('size-8')
   })
 
   it('keeps the portrait frame and the ebook art for an ebook', () => {
     const slot = mount(EditionCover, { props: { bookId: 10, medium: 'ebook' } })
     expect(slot.get('[data-testid="edition-cover"]').classes()).toEqual(expect.arrayContaining(['h-12', 'w-8']))
     expect(new URLSearchParams((slot.get('img').attributes('src') ?? '').split('?')[1]).get('medium')).toBe('ebook')
-
-    const result = mount(EditionCover, { props: { bookId: 10, medium: 'ebook', size: 'result' } })
-    expect(result.get('[data-testid="edition-cover"]').classes()).toEqual(expect.arrayContaining(['h-[42px]', 'w-7']))
-  })
-
-  it('draws a mini frame for each medium and greys it out only when muted', () => {
-    const audio = mount(EditionCover, { props: { bookId: 20, medium: 'audio', size: 'mini', muted: true } })
-    expect(audio.get('[data-testid="edition-cover"]').classes()).toEqual(expect.arrayContaining(['size-7', 'grayscale']))
-
-    const ebook = mount(EditionCover, { props: { bookId: 10, medium: 'ebook', size: 'mini' } })
-    expect(ebook.get('[data-testid="edition-cover"]').classes()).toEqual(expect.arrayContaining(['h-7', 'w-5']))
-    expect(ebook.get('[data-testid="edition-cover"]').classes()).not.toContain('grayscale')
   })
 
   it('falls back to a neutral placeholder when the image fails', async () => {

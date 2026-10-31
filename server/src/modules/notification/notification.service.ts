@@ -58,17 +58,7 @@ export interface NotifyPayload {
 export type NotificationPatch = Pick<NotifyPayload, 'type' | 'title' | 'message' | 'actionUrl' | 'meta'>;
 
 export interface UpsertByGroupKeyOptions {
-  updateOnly?: boolean;
   markUnread?: boolean;
-  /** Writes only over a row whose `meta.locked` is still true. */
-  onlyWhileLocked?: boolean;
-}
-
-export interface LockedNotification {
-  id: number;
-  userId: number;
-  groupKey: string | null;
-  meta: Record<string, unknown> | null;
 }
 
 @Injectable()
@@ -145,25 +135,13 @@ export class NotificationService {
 
   /**
    * Rewrites the user's newest notification with this group key, read or not, or creates it through
-   * notify() when there is none. For a notification that tracks one long operation to its end.
-   *
-   * `updateOnly` never creates a row, so a notification the user dismissed stays dismissed.
-   * `markUnread` puts an outcome back in front of a user who had read the progress row. A user who
-   * turned the category off still gets a terminal patch (`meta.done`) on an existing row, so no live
-   * progress bar is left behind, but never a new row.
-   *
-   * A row already done only takes another terminal patch: a late progress or start must not reopen it.
+   * notify() when there is none. `markUnread` puts the rewritten row back in front of a user who had
+   * already read it.
    */
   async upsertByGroupKey(userId: number, groupKey: string, patch: NotificationPatch, options: UpsertByGroupKeyOptions = {}): Promise<void> {
-    const terminal = patch.meta?.done === true;
-    const latest = await this.repo.findLatestByGroupKey(userId, groupKey);
-    const latestMeta = (latest?.meta ?? null) as Record<string, unknown> | null;
-    if (!terminal && latestMeta?.done === true) return;
-    if (options.onlyWhileLocked === true && latestMeta?.locked !== true) return;
     const settingsMap = await this.repo.findUserSettings([userId]);
-    const enabled = this.isEnabled(settingsMap.get(userId), patch.type);
-    if (!enabled && !terminal) return;
-    const markUnread = enabled && options.markUnread === true;
+    if (!this.isEnabled(settingsMap.get(userId), patch.type)) return;
+    const markUnread = options.markUnread === true;
     const updated = await this.repo.updateLatestByGroupKey(userId, groupKey, {
       type: patch.type,
       title: patch.title,
@@ -177,13 +155,7 @@ export class NotificationService {
       if (markUnread) this.gateway.emitCountUpdate(userId, await this.repo.countUnread(userId));
       return;
     }
-    if (!enabled || options.updateOnly === true) return;
     await this.notify({ ...patch, groupKey, scope: { kind: 'user', userId } });
-  }
-
-  async findLockedByType(type: NotificationType): Promise<LockedNotification[]> {
-    const rows = await this.repo.findLockedByType(type);
-    return rows.map((row) => ({ id: row.id, userId: row.userId, groupKey: row.groupKey, meta: (row.meta as Record<string, unknown>) ?? null }));
   }
 
   async list(userId: number, limit: number, offset: number) {
@@ -218,10 +190,9 @@ export class NotificationService {
     return deleted;
   }
 
-  /** A locked notification (`meta.locked`) is neither dismissed nor cleared: it tracks work still running. */
   async clearAll(userId: number): Promise<void> {
     await this.repo.deleteAllForUser(userId);
-    this.gateway.emitCountUpdate(userId, await this.repo.countUnread(userId));
+    this.gateway.emitCountUpdate(userId, 0);
     this.gateway.emitCleared(userId);
   }
 

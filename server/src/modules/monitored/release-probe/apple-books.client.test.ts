@@ -70,6 +70,16 @@ describe('AppleBooksClient', () => {
     ]);
   });
 
+  it('rejects impossible calendar release dates', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ results: [{ trackName: 'Book', artistName: 'Author', releaseDate: '2025-02-31T00:00:00Z', trackId: 1 }] }), {
+        status: 200,
+      }),
+    );
+
+    await expect(new AppleBooksClient().searchEbookCandidates('Book', 'Author', 'us')).resolves.toEqual([]);
+  });
+
   it('returns no candidates when nothing matches', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ results: [] }), { status: 200 }));
 

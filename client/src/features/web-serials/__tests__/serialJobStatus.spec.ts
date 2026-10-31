@@ -31,13 +31,18 @@ describe('serialJobStatus', () => {
   it('offers the right actions for each status', () => {
     expect(jobActions(job({ status: 'running' }))).toEqual(['pause', 'cancel', 'move'])
     expect(jobActions(job({ status: 'importing' }))).toEqual(['pause', 'cancel', 'move'])
-    expect(jobActions(job({ status: 'queued', queuePosition: 3 }))).toEqual(['moveToTop', 'pause', 'cancel', 'move'])
+    expect(jobActions(job({ status: 'queued', queuePosition: 3, canMoveToTop: true }))).toEqual(['moveToTop', 'pause', 'cancel', 'move'])
     expect(jobActions(job({ status: 'queued', queuePosition: 1 }))).toEqual(['pause', 'cancel', 'move'])
     expect(jobActions(job({ status: 'paused' }))).toEqual(['resume', 'cancel', 'move'])
     expect(jobActions(job({ status: 'failed' }))).toEqual(['retry', 'move', 'remove'])
     expect(jobActions(job({ status: 'completed_with_gaps' }))).toEqual(['retry', 'move', 'remove'])
     expect(jobActions(job({ status: 'completed' }))).toEqual(['open', 'remove'])
     expect(jobActions(job({ status: 'cancelled' }))).toEqual(['remove'])
+  })
+
+  it('hides move to top when the server says this job already leads its permitted scope', () => {
+    expect(jobActions(job({ status: 'queued', queuePosition: 3, canMoveToTop: false }))).not.toContain('moveToTop')
+    expect(jobActions(job({ status: 'queued', queuePosition: 3, canMoveToTop: true }))).toContain('moveToTop')
   })
 
   it('offers a move only for manga jobs that still have chapters to download', () => {

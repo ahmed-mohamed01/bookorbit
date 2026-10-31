@@ -2,7 +2,7 @@
 import { useI18n } from 'vue-i18n'
 import type { WebSerialPrintSuggestion } from '@bookorbit/types'
 import { formatBytes } from '@/lib/formatting'
-defineProps<{ suggestion: WebSerialPrintSuggestion; description?: string; disabled?: boolean }>()
+defineProps<{ suggestion: WebSerialPrintSuggestion; disabled?: boolean }>()
 const emit = defineEmits<{ select: [] }>()
 const { t } = useI18n()
 function select() {
@@ -22,7 +22,6 @@ function select() {
         }}
       </p>
       <p class="text-xs text-muted-foreground">
-        {{ description }}
         {{ suggestion.sizeBytes === null ? '' : t('webSerials.acquisition.totalSize', { size: formatBytes(suggestion.sizeBytes) }) }}
       </p>
     </div>

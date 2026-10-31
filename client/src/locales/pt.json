@@ -6456,15 +6456,9 @@
         "metadataScore": "Pontuação de Metadados",
         "primaryFormat": "Formato primário",
         "readAloudSync": {
-          "title": "Sincronização de progresso em voz alta",
           "state": {
-            "enabled": "Habilitado",
-            "disabled": "Desabilitado",
-            "unavailable": "Indisponível",
             "epubCopiesOnly": "Somente cópias EPUB"
           },
-          "enabledDescription": "As posições em Audiobook, leitor web, Kobo e KOReader permanecem em sincronia.",
-          "disabledDescription": "Cada formato mantém a sua própria posição de leitura.",
           "epubCopiesDescription": "O progresso de leitura no Web reader, Kobo e KOReader permanece sincronizado entre as cópias em EPUB. Adicione os arquivos de audiolivro correspondentes para sincronizar o audiolivro também.",
           "reason": {
             "no_media_overlay_epub": "É necessária uma leitura ao longo do EPUB com sobreposições de mídia.",
@@ -6472,9 +6466,6 @@
             "missing_duration": "Os metadados da duração do áudio estão incompletos.",
             "durationMismatch": "As durações não combinam o suficiente: audioobook {audio}, leitura ao longo do EPUB {overlay}."
           },
-          "enable": "Habilitar",
-          "disable": "Desativar",
-          "saving": "Salvando...",
           "saveFailed": "Não foi possível atualizar a sincronização de progresso de leitura alta."
         },
         "openIn": "Abrir em {provider}",
@@ -7596,24 +7587,13 @@
         "totalHint": "Total de livros nesta série. Compartilhado com todos os que têm esta série."
       },
       "editionLink": {
-        "trigger": "Link book",
-        "tooltipNeedsAudio": "Link an audiobook to enable position alignment.",
-        "tooltipNeedsText": "Link an ebook to enable position alignment.",
-        "tooltipLinked": "Manage the linked edition.",
-        "title": "Link edition",
         "unknownTitle": "Untitled",
-        "unlink": "Unlink",
         "searching": "Searching...",
         "noResults": "No matches found.",
-        "linkedSuccess": "Books linked.",
-        "linkFailed": "Failed to link book.",
-        "unlinkedSuccess": "Books unlinked.",
-        "unlinkFailed": "Failed to unlink book.",
         "searchFailed": "Couldn't search for a match. Try again."
       },
       "readingAlignment": {
         "title": "Position alignment",
-        "builtAt": "Built {date}",
         "unalignableHint": "Position alignment isn't available for this book pair.",
         "buildFailed": "Failed to start alignment build.",
         "buildBlocked": {

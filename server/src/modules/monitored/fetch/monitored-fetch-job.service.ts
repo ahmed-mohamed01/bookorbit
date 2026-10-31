@@ -1,3 +1,4 @@
+import { isEligibleMonitoredUser } from '../monitored-user.utils';
 import { Injectable, Logger } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import type { MonitoredFetchErrorKind } from '@bookorbit/types';
@@ -44,7 +45,7 @@ export class MonitoredFetchJobService {
       attempts = monitor.fetchAttempts;
       const owner = await this.users.findByIdWithPermissions(monitor.ownerUserId);
       if (signal.aborted) return skipped;
-      if (!owner) {
+      if (!owner || !isEligibleMonitoredUser(owner)) {
         await this.store.releaseFetch(monitorId);
         return skipped;
       }

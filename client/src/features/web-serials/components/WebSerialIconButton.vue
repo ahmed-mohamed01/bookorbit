@@ -10,10 +10,9 @@ withDefaults(
     label: string
     tooltip?: string
     busy?: boolean
-    disabled?: boolean
     variant?: 'outline' | 'destructive-outline'
   }>(),
-  { busy: false, disabled: false, variant: 'outline' },
+  { busy: false, variant: 'outline' },
 )
 const emit = defineEmits<{ click: [] }>()
 
@@ -25,7 +24,7 @@ function handleClick() {
 <template>
   <Tooltip>
     <TooltipTrigger as-child>
-      <Button :variant="variant" size="icon-sm" :disabled="disabled || busy" :aria-label="label" @click="handleClick">
+      <Button :variant="variant" size="icon-sm" :disabled="busy" :aria-label="label" @click="handleClick">
         <Loader2 v-if="busy" class="animate-spin" aria-hidden="true" />
         <component :is="icon" v-else :size="14" aria-hidden="true" />
       </Button>

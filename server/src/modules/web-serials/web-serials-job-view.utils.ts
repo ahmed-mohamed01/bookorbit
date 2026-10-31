@@ -8,7 +8,7 @@ export function isWebSerialsAdmin(user: RequestUser): boolean {
   return user.isSuperuser || user.permissions.includes(Permission.ManageAppSettings);
 }
 
-export function toWebSerialJob(row: WebSerialJobWithLibrary, includeOwner = false): WebSerialJob {
+export function toWebSerialJob(row: WebSerialJobWithLibrary, user: RequestUser, includeOwner = false): WebSerialJob {
   return {
     id: row.id,
     kind: row.kind,
@@ -29,6 +29,7 @@ export function toWebSerialJob(row: WebSerialJobWithLibrary, includeOwner = fals
     current: row.currentUnit ?? null,
     message: row.message,
     queuePosition: row.queuePosition,
+    canMoveToTop: row.status === 'queued' && ((isWebSerialsAdmin(user) ? row.queuePosition : row.ownerQueuePosition) ?? 0) > 1,
     owner: includeOwner ? { id: row.userId, name: row.ownerName ?? '' } : null,
     createdAt: row.createdAt.toISOString(),
     startedAt: row.startedAt?.toISOString() ?? null,

@@ -8,12 +8,10 @@ const props = withDefaults(
     items: T[]
     cardSize: number
     gridGap: number
-    aspectRatio?: number
-    extraHeight?: number
     /** Grouped views render many bounded sections; a scroller per section costs more than it saves. */
     virtualized?: boolean
   }>(),
-  { aspectRatio: 1.5, extraHeight: 0, virtualized: true },
+  { virtualized: true },
 )
 
 defineSlots<{ default(props: { item: T }): unknown }>()
@@ -53,11 +51,11 @@ const availableWidth = computed(() => {
 const gridItems = computed(() => Math.max(1, Math.floor((availableWidth.value + gap.value) / (coverSize.value + gap.value))))
 const itemSecondarySize = computed(() => Math.max(1, Math.floor((availableWidth.value + gap.value) / gridItems.value)))
 const cardWidth = computed(() => Math.max(1, itemSecondarySize.value - gap.value))
-const cardHeight = computed(() => Math.max(1, Math.round(cardWidth.value * props.aspectRatio)))
-const itemSize = computed(() => cardHeight.value + Math.max(0, props.extraHeight) + gap.value)
+const cardHeight = computed(() => Math.max(1, Math.round(cardWidth.value * 1.5)))
+const itemSize = computed(() => cardHeight.value + gap.value)
 const buffer = computed(() => Math.max(itemSize.value * 2, 240))
 const scrollerStyle = computed(() => ({
-  '--monitored-card-height': `${cardHeight.value + Math.max(0, props.extraHeight)}px`,
+  '--monitored-card-height': `${cardHeight.value}px`,
   '--monitored-grid-gap': `${gap.value}px`,
 }))
 const plainGridStyle = computed(() => ({

@@ -3,32 +3,25 @@ import type {
   AlignmentStatus,
   AudiobookshelfBookSyncLink,
   AudiobookshelfBookSyncLive,
-  EditionLinkMember,
-  ReadAlongBlockReason,
-  ReadAlongOutputBook,
-  ReadAlongPhase,
-  ReadAlongStatus,
   ReadAloudProgressSync,
 } from '@bookorbit/types'
 import { isTerminalBlock } from '@/features/book/lib/position-sync'
+import { stageLabelKey, type ReadAloudEntryState } from '@/features/read-aloud/lib/read-aloud'
 import { displayPercentage } from '@/features/book/lib/abs-sync-status'
-import { isActionBlocked, READ_ALONG_STAGES, stageIndex } from '@/features/book/lib/read-along-section'
-import { readAloudSyncIssueMessage } from '@/features/book/lib/read-aloud-sync-issue'
+import { formatBytes } from '@/lib/formatting'
 
 /**
- * The Position sync panel as a spine of the ebook, an audio group (the audiobook with Audiobookshelf linked
- * beneath it) and the read-along (or its slot until it exists), with a connector between neighbouring
- * slots carrying its own state and the switch that links them. The order follows `thisBook`: this book
- * leads, the audio group sits next to it, and the read-along comes last unless it is this book.
- * Connector keys, ends and labels do not change with position. `buildSyncChain` turns one snapshot of the
- * panel's composables into that row list; it is pure so every state can be pinned by a unit test.
+ * The Position sync panel as a spine of one book's own files: its ebook, its read-along and an audio
+ * group (the audiobook with Audiobookshelf linked beneath it), with a connector between neighbouring
+ * slots carrying that pair's sync state. Upstream's read-aloud sync joins the read-along to the audio and
+ * to the plain EPUB; whisper joins the plain EPUB to the audio only in a book with no read-along.
+ * `buildSyncChain` turns one snapshot of the panel's composables into that row list; it is pure so every
+ * state can be pinned by a unit test.
  */
-
-export type EditionFormat = 'ebook' | 'audiobook'
 
 export type EditionKey = 'ebook' | 'readAlong' | 'audiobook' | 'abs'
 
-export type ConnectorKey = 'readAlong-audiobook' | 'ebook-audiobook' | 'audiobook-abs'
+export type ConnectorKey = 'readAlong-audiobook' | 'ebook-readAlong' | 'ebook-audiobook' | 'audiobook-abs'
 
 export type ChainTone = 'success' | 'info' | 'warning' | 'destructive' | 'muted'
 export type ChainIcon = 'link' | 'spinner' | 'alert' | 'ban'
@@ -36,32 +29,25 @@ export type ChainIcon = 'link' | 'spinner' | 'alert' | 'ban'
 export type ChainArrow = 'both' | 'left' | 'right'
 export type ChainViewMode = 'compact' | 'modify'
 
-/** What a connector's switch turns off: always the link that connector draws, whichever page it is on. */
-type ChainOffTarget = 'pair' | 'readAlong' | 'abs'
-
 export type ChainActionId =
-  | 'linkPair'
-  | 'cancelLinking'
   | 'cancelAlignment'
   | 'retryAlignment'
   | 'alignNow'
   | 'rebuildAlignment'
-  | 'unlinkPair'
-  | 'attachReadAlong'
-  | 'openGenerate'
-  | 'generate'
-  | 'cancelGenerate'
-  | 'importExisting'
-  | 'cancelReadAlong'
-  | 'retryReadAlong'
-  | 'rebuildReadAlong'
-  | 'toggleLog'
+  | 'enableReadAloudSync'
+  | 'disableReadAloudSync'
+  | 'createReadAloud'
+  | 'modifyReadAloud'
+  | 'cancelReadAloud'
+  | 'retryReadAloud'
+  | 'reviewReadAloud'
   | 'change'
   | 'retryAbs'
   | 'absPush'
   | 'absPull'
   | 'confirmAbs'
   | 'resumeAbs'
+  | 'pauseAbs'
 
 /** A translated line: the i18n key and its interpolation params, resolved by the component with `t()`. */
 export interface ChainMessage {
@@ -77,24 +63,15 @@ export interface ChainAction {
 
 /* Snapshot: what the composables know at one instant. */
 
-export interface SyncChainBook {
-  id: number
+/** One kind of file the book holds, as `bookFormatEntries` groups them. */
+export interface SyncChainEdition {
   title: string | null
-  authorName: string | null
-  coverVersion: string | null
+  /** The translated format name, such as "EPUB e-book". */
+  formatName: string
+  fileCount: number
+  sizeBytes: number
   /** 0..100, null when nothing is recorded. */
   progress: number | null
-}
-
-export type EditionMatchChip = { source: 'auto'; score: number } | { source: 'manual' } | { source: 'pair' } | { source: 'build' }
-
-/** One side of the ebook/audiobook pair: the book in that slot, if any, and how it got there. */
-export interface SyncChainSide {
-  book: SyncChainBook | null
-  isMember: boolean
-  isThisBook: boolean
-  /** How the book was chosen while not yet a member: a server proposal, a pick, or the read-along's own pair. */
-  match: EditionMatchChip | null
 }
 
 export interface SyncChainAlignment {
@@ -105,26 +82,40 @@ export interface SyncChainAlignment {
   samplesTotal: number | null
   buildBlocked: AlignmentBuildBlockReason | null
   buildError: string | null
-  /** A build is queued or running, including the window between a link and the first optimistic 'building'. */
+  /** A build is queued or running, including the window between a request and the first 'building' read. */
   running: boolean
 }
 
-export interface SyncChainReadAlong {
-  /** Strictly the link's own read-along member; a detached output never counts. */
-  member: EditionLinkMember | null
-  status: ReadAlongStatus
-  blocked: ReadAlongBlockReason | null
-  phase: ReadAlongPhase | null
-  remoteTask: string | null
-  remoteProgress: number | null
+export interface SyncChainReadAloud {
+  sync: ReadAloudProgressSync
+  /** Upstream's duration copy, already formatted, for a duration mismatch. */
+  audioDuration: string
+  overlayDuration: string
+}
+
+/** A read-aloud job the slot follows: running, waiting for review, or failed and not dismissed. */
+export interface SyncChainReadAloudJob {
+  status: 'queued' | 'processing' | 'awaiting_review' | 'failed'
+  stage: string
+  /** 0..100 for the current run. */
+  progress: number
   queuePosition: number | null
-  outputBook: ReadAlongOutputBook | null
-  /** The current book, set only on the read-along's own page, where neither the link nor the status read returns it. */
-  thisBook: SyncChainBook | null
-  error: string | null
-  mutating: boolean
-  /** The output is ready and the link is being reloaded to pick up its member, so no row is shown yet. */
-  memberPending: boolean
+  /** A cancel was asked for and the worker has not stopped yet. */
+  stopping: boolean
+  canCancel: boolean
+  canRetry: boolean
+  /** Upstream's error text for a failed job. */
+  errorKey: string | null
+}
+
+/** Upstream's read-aloud generator as the slot sees it, for a book with an EPUB and audio and no read-along. */
+export interface SyncChainReadAloudSlot {
+  entry: ReadAloudEntryState
+  job: SyncChainReadAloudJob | null
+  /** The job action in flight, which locks the slot's buttons. */
+  pending: 'create' | 'cancel' | 'retry' | 'other' | null
+  /** The last failed start or job action, shown in place of the note. */
+  errorKey: string | null
 }
 
 export interface SyncChainAbs {
@@ -135,44 +126,26 @@ export interface SyncChainAbs {
   checking: boolean
 }
 
-interface SyncChainPermissions {
-  editLink: boolean
-  generate: boolean
-  rebuild: boolean
-}
-
 export interface SyncChainSnapshot {
-  thisBook: Exclude<EditionKey, 'abs'>
-  linked: boolean
-  ebook: SyncChainSide
-  audiobook: SyncChainSide
+  bookId: number
+  coverVersion: string | null
+  ebook: SyncChainEdition | null
+  audiobook: SyncChainEdition | null
+  readAlong: SyncChainEdition | null
+  readAloudSlot: SyncChainReadAloudSlot
   alignment: SyncChainAlignment
-  readAlong: SyncChainReadAlong
-  /** The read-along's fit with its audiobook when it is not syncing; only known on the audiobook or read-along page. */
-  readAloudIssue: ReadAloudProgressSync | null
+  readAloud: SyncChainReadAloud
   /** Null without the Audiobookshelf sync permission. */
   abs: SyncChainAbs | null
-  can: SyncChainPermissions
+  can: { align: boolean }
 }
 
 /* Rows. */
 
-type ChainCover =
-  { kind: 'book'; bookId: number; coverVersion: string | null } | { kind: 'abs'; absLibraryItemId: string } | { kind: 'readAlongTile' }
+type ChainCover = { kind: 'book'; bookId: number; coverVersion: string | null } | { kind: 'abs'; absLibraryItemId: string }
 
 /** `group` rows are drawn inside the audio box: the audiobook, its Audiobookshelf connector and the Audiobookshelf row. */
 export type ChainFrame = 'spine' | 'group'
-
-interface ChainReadAlongJob {
-  /** Index into the four build stages (Sending, Transcribing, Aligning, Importing). */
-  stage: number
-  remoteProgress: number | null
-  /** The build failed at `stage`, so the stepper shows that step as failed instead of in progress. */
-  failed: boolean
-  cancel: ChainAction | null
-  retry: ChainAction | null
-  error: string | null
-}
 
 export interface ChainCardRow {
   kind: 'card'
@@ -181,30 +154,22 @@ export interface ChainCardRow {
   frame: ChainFrame
   cover: ChainCover
   title: string | null
-  /** Author for a book, library for the Audiobookshelf item. */
-  subtitle: string | null
-  /** The book page the title links to; null for this book and for Audiobookshelf. */
-  routeBookId: number | null
+  /** File summary for a file, library for the Audiobookshelf item. */
+  subtitle: ChainMessage | null
   /** Audiobookshelf's own page for the item, opened in a new tab. */
   href: string | null
-  isThisBook: boolean
   external: boolean
   progress: number | null
   /** The live check is still running, so the progress bar shows a shimmer. */
   progressPending: boolean
-  /** A member or this book renders as a full card; any other edition that exists renders dashed, waiting for the switch above it. */
+  /** A paused Audiobookshelf match renders dashed; every file of the book renders as a full card. */
   linked: boolean
-  /** The dashed card's small label: how the edition was picked, or why it is not syncing. */
+  /** The dashed card's small label: why it is not syncing. */
   chip: ChainMessage | null
-  /** Modify-only Change: offered, blocked while the read-along holds the pair (shown disabled with `changeHint`), or absent. */
-  change: 'available' | 'blocked' | 'none'
-  /** Why Change is blocked; null unless `change` is 'blocked'. */
-  changeHint: ChainMessage | null
+  /** Modify-only Change, for the Audiobookshelf match. */
+  change: boolean
   /** Modify-only Confirm on an Audiobookshelf match that needs review. */
   confirm: ChainAction | null
-  rebuild: ChainAction | null
-  /** A read-along member being rebuilt shows its stepper and cancel or retry under the card. */
-  job: ChainReadAlongJob | null
 }
 
 export interface ChainGhostRow {
@@ -214,34 +179,35 @@ export interface ChainGhostRow {
   frame: ChainFrame
   label: ChainMessage
   note: ChainMessage
-  /** At most one: Search or Match, which both open an in-place search. */
+  /** At most one: Match, Create read-along. */
   action: ChainAction | null
   settingsLink: boolean
 }
 
-type ChainReadAlongSlotVariant = 'notGenerated' | 'needsEbook' | 'needsAudio' | 'blocked' | 'queued' | 'building' | 'failed'
+export type ChainReadAloudSlotVariant = 'notCreated' | 'unavailable' | 'queued' | 'processing' | 'review' | 'failed'
 
-export interface ChainReadAlongSlotRow {
-  kind: 'readAlongSlot'
+export interface ChainReadAloudSlotRow {
+  kind: 'readAloudSlot'
   id: 'slot:readAlong'
-  variant: ChainReadAlongSlotVariant
+  edition: 'readAlong'
+  frame: 'spine'
+  variant: ChainReadAloudSlotVariant
   label: ChainMessage
   note: ChainMessage
-  /** Generate while idle, Retry after a failure. */
+  /** Create, Retry or Review. */
   action: ChainAction | null
+  /** Modify beside Create, Review beside Retry. */
+  secondary: ChainAction | null
   /** The red X for a job in flight. */
   cancel: ChainAction | null
-  job: ChainReadAlongJob | null
-  /** A text link beside the note, such as "View log". */
-  secondary: ChainAction | null
-  /** Error text shown under the row while "View log" is open. */
-  error: string | null
-  /** Generate opens the options block in place instead of starting a build. */
-  expandable: boolean
+  /** The action whose request is in flight, which spins. */
+  pending: ChainActionId | null
+  /** Queued or processing: the stepper's stage and percent. */
+  progress: { stage: string; percent: number | null } | null
 }
 
 export type ChainConnectorState =
-  | 'linking'
+  | 'aligning'
   | 'rebuilding'
   | 'alignmentFailed'
   | 'outOfDate'
@@ -249,9 +215,11 @@ export type ChainConnectorState =
   | 'alignmentBlocked'
   | 'notAligned'
   | 'linkedViaWhisper'
-  | 'linked'
-  | 'available'
+  | 'readAloudSynced'
+  | 'readAloudPartial'
   | 'readAloudIssue'
+  | 'epubCopiesSynced'
+  | 'available'
   | 'absUnreachable'
   | 'absDiverged'
   | 'absReceiving'
@@ -262,9 +230,9 @@ export type ChainConnectorState =
 interface ChainSwitch {
   on: boolean
   disabled: boolean
-  /** Turning it on runs this action; turning it off opens the confirm for `offTarget` (or cancels while linking). */
+  /** What turning it on runs, and what turning it off runs (or the confirm it opens). */
   onAction: ChainActionId | null
-  offTarget: ChainOffTarget | null
+  offAction: ChainActionId | null
 }
 
 export interface ChainConnectorRow {
@@ -280,11 +248,11 @@ export interface ChainConnectorRow {
   icon: ChainIcon
   arrow: ChainArrow
   pill: ChainMessage
-  /** Modify view: muted text after the pair label, such as "via Whisper" when linked or "not linked" when off. */
+  /** Modify view: muted text after the pair label, such as "via Whisper" when synced or "sync off" when off. */
   qualifier: ChainMessage | null
   /** Modify view: what the link does and how, shown when the chevron beside the qualifier is open. */
   explainer: ChainMessage | null
-  /** Null when the switch is hidden (failed alignment). */
+  /** Null when the pair has no switch, and the rail shows a node instead. */
   switch: ChainSwitch | null
   /** Why a disabled switch cannot be turned on; null while it can. */
   disabledReason: ChainMessage | null
@@ -303,7 +271,7 @@ export interface ChainConnectorRow {
   mini: { text: ChainMessage | null; action: ChainAction | null }
 }
 
-export type ChainRow = ChainCardRow | ChainGhostRow | ChainConnectorRow | ChainReadAlongSlotRow
+export type ChainRow = ChainCardRow | ChainGhostRow | ChainConnectorRow | ChainReadAloudSlotRow
 
 interface SyncChainHeader {
   tone: ChainTone
@@ -320,6 +288,7 @@ export interface SyncChain {
 
 const CHAIN = 'book.detail.editionLink.chain.'
 const EDITION_LINK = 'book.detail.editionLink.'
+const READ_ALOUD_SYNC = 'book.detail.details.readAloudSync.'
 
 const SHORT_LABEL_KEY: Record<EditionKey, string> = {
   ebook: 'short.ebook',
@@ -331,14 +300,13 @@ const SHORT_LABEL_KEY: Record<EditionKey, string> = {
 const PANEL_CHROME_HEIGHT = 96
 const HEIGHT_SLACK = 24
 const MODIFY_CARD_HEIGHT = 66
-const MODIFY_CARD_JOB_HEIGHT = 40
 const MODIFY_GHOST_HEIGHT = 46
+const MODIFY_SLOT_STEPPER_HEIGHT = 36
 const MODIFY_CONNECTOR_HEIGHT = 32
 const MODIFY_INNER_CONNECTOR_HEIGHT = 28
 const MODIFY_CONNECTOR_NOTE_HEIGHT = 30
 const MODIFY_CONNECTOR_ACTIONS_HEIGHT = 32
 const MODIFY_CONNECTOR_TICKS_HEIGHT = 20
-const MODIFY_SLOT_HEIGHT = 75
 
 function msg(key: string, params?: Record<string, string | number>): ChainMessage {
   return params ? { key, params } : { key }
@@ -352,49 +320,12 @@ function action(id: ChainActionId, label: ChainMessage, disabled = false): Chain
   return { id, label, disabled }
 }
 
-function snakeToCamel(value: string): string {
-  return value.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())
-}
-
-/* Membership. */
-
-function sideIsCard(side: SyncChainSide): boolean {
-  return side.book !== null && (side.isMember || side.isThisBook)
-}
-
-// Audiobookshelf matches the audiobook itself, so its rows need an audiobook on screen, linked to this page or not.
-function absIsCard(s: SyncChainSnapshot): boolean {
-  return s.abs?.link?.syncing === true && s.audiobook.book !== null
-}
-
-/** The read-along is a book of its own (linked, detached or this page), so it gets a place on the spine. */
-function readAlongBookExists(s: SyncChainSnapshot): boolean {
-  const { member, outputBook, status, memberPending } = s.readAlong
-  if (s.thisBook === 'readAlong' || member !== null) return true
-  return !memberPending && status === 'ready' && outputBook !== null
-}
-
-function readAlongOutOfReach(s: SyncChainSnapshot): boolean {
-  const { member, outputBook, status, memberPending } = s.readAlong
-  return !memberPending && s.thisBook !== 'readAlong' && member === null && status === 'ready' && outputBook === null
-}
-
-function readAlongBuildRunning(s: SyncChainSnapshot): boolean {
-  return s.readAlong.status === 'queued' || s.readAlong.status === 'building'
-}
-
-/** The bottom slot shows a build for the pair on screen: running, or failed and retryable by this reader. */
-function slotShowsBuild(s: SyncChainSnapshot): boolean {
-  if (s.readAlong.memberPending || readAlongBookExists(s)) return false
-  return readAlongBuildRunning(s) || (s.readAlong.status === 'failed' && s.can.generate)
-}
-
 /* State resolution shared by the rows and the header. */
 
-type AlignmentState = 'linking' | 'rebuilding' | 'alignmentFailed' | 'outOfDate' | 'cantAlign' | 'alignmentBlocked' | 'notAligned' | 'ready'
+type AlignmentState = 'aligning' | 'rebuilding' | 'alignmentFailed' | 'outOfDate' | 'cantAlign' | 'alignmentBlocked' | 'notAligned' | 'ready'
 
 function alignmentState(a: SyncChainAlignment): AlignmentState {
-  if (a.running || a.status === 'pending' || a.status === 'building') return a.builtAt === null ? 'linking' : 'rebuilding'
+  if (a.running || a.status === 'pending' || a.status === 'building') return a.builtAt === null ? 'aligning' : 'rebuilding'
   if (a.status === 'failed') return 'alignmentFailed'
   if (a.status === 'ready') return a.stale ? 'outOfDate' : 'ready'
   if (a.status === 'unalignable') return 'cantAlign'
@@ -417,72 +348,54 @@ function absState(link: AudiobookshelfBookSyncLink, live: AudiobookshelfBookSync
   return link.direction === 'two_way' ? 'absLinked' : 'absOneWay'
 }
 
-function hasReadAloudIssue(s: SyncChainSnapshot): boolean {
-  return s.readAlong.member !== null && s.readAloudIssue !== null
+/** Upstream's read-aloud sync owns text and audio wherever the book has a read-along, so whisper fills in only without one. */
+function usesWhisper(s: SyncChainSnapshot): boolean {
+  return s.ebook !== null && s.audiobook !== null && s.readAlong === null
+}
+
+function hasReadAloudPair(s: SyncChainSnapshot): boolean {
+  return s.readAlong !== null && s.audiobook !== null
+}
+
+/** Upstream counts any second EPUB beside the read-along as a copy it keeps in step through the narration. */
+function hasEpubCopy(s: SyncChainSnapshot): boolean {
+  return s.readAlong !== null && (s.ebook !== null || s.readAlong.fileCount > 1)
+}
+
+/** Upstream's "EPUB copies only": the audiobook half is unavailable, but the EPUB copies still sync. */
+function syncsEpubCopiesOnly(s: SyncChainSnapshot): boolean {
+  const sync = s.readAloud.sync
+  return sync.state === 'unavailable' && sync.unavailableReason !== 'no_media_overlay_epub' && hasEpubCopy(s)
+}
+
+function absIsCard(s: SyncChainSnapshot): boolean {
+  return s.abs?.link?.syncing === true && s.audiobook !== null
 }
 
 /* Cards and ghosts. */
 
-function bookCover(id: number, coverVersion: string | null): ChainCover {
-  return { kind: 'book', bookId: id, coverVersion }
+function fileSummary(edition: SyncChainEdition): ChainMessage {
+  const params = { format: edition.formatName, count: edition.fileCount, size: formatBytes(edition.sizeBytes) }
+  return chainMsg(edition.fileCount > 1 ? 'fileSummary' : 'fileSummarySingle', params)
 }
 
-function canCancelReadAlong(s: SyncChainSnapshot): boolean {
-  if (!s.can.generate) return false
-  if (s.readAlong.status === 'queued') return true
-  return s.readAlong.status === 'building' && s.readAlong.phase !== 'collect' && s.readAlong.phase !== 'link'
-}
-
-function readAlongJob(s: SyncChainSnapshot, withRetry: boolean): ChainReadAlongJob | null {
-  const ra = s.readAlong
-  if (ra.status !== 'queued' && ra.status !== 'building' && ra.status !== 'failed') return null
-  const cancel = canCancelReadAlong(s) ? action('cancelReadAlong', msg(`${EDITION_LINK}readAlong.cancelLabel`), ra.mutating) : null
-  const retry =
-    withRetry && ra.status === 'failed' && s.can.generate
-      ? action('retryReadAlong', chainMsg('action.retry'), ra.mutating || isActionBlocked(ra.blocked))
-      : null
+function fileCard(s: SyncChainSnapshot, edition: Exclude<EditionKey, 'abs'>, file: SyncChainEdition): ChainCardRow {
   return {
-    stage: ra.status === 'queued' ? 0 : stageIndex(ra.phase, ra.remoteTask),
-    remoteProgress: ra.remoteProgress,
-    failed: ra.status === 'failed',
-    cancel,
-    retry,
-    error: ra.status === 'failed' ? ra.error : null,
-  }
-}
-
-type PairChange = Pick<ChainCardRow, 'change' | 'changeHint'>
-
-const CHANGE_OFFERED: PairChange = { change: 'available', changeHint: null }
-
-/**
- * Re-pointing a side would orphan what the read-along holds: its member, or a build queued for this pair.
- * An unlinked candidate also keeps a failed build's pair, so Retry still targets the same audiobook.
- */
-function pairChange(s: SyncChainSnapshot, side: SyncChainSide, linked: boolean): PairChange {
-  if (side.isThisBook || !s.can.editLink) return { change: 'none', changeHint: null }
-  if (!linked) {
-    if (side.match?.source === 'pair') return { change: 'none', changeHint: null }
-    if (readAlongBuildRunning(s)) return { change: 'blocked', changeHint: chainMsg('change.building') }
-    if (!slotShowsBuild(s)) return CHANGE_OFFERED
-    return { change: 'blocked', changeHint: chainMsg('change.failed') }
-  }
-  if (s.readAlong.member !== null) return { change: 'blocked', changeHint: chainMsg('change.blocked') }
-  if (readAlongBuildRunning(s)) return { change: 'blocked', changeHint: chainMsg('change.building') }
-  return CHANGE_OFFERED
-}
-
-function candidateChip(match: EditionMatchChip | null, title: string): ChainMessage | null {
-  switch (match?.source) {
-    case 'auto':
-      return chainMsg('chip.match', { score: match.score })
-    case 'manual':
-    case 'build':
-      return chainMsg('chip.selected')
-    case 'pair':
-      return chainMsg('chip.generatedFrom', { title })
-    default:
-      return null
+    kind: 'card',
+    id: `card:${edition}`,
+    edition,
+    frame: edition === 'audiobook' ? 'group' : 'spine',
+    cover: { kind: 'book', bookId: s.bookId, coverVersion: s.coverVersion },
+    title: file.title,
+    subtitle: fileSummary(file),
+    href: null,
+    external: false,
+    progress: file.progress,
+    progressPending: false,
+    linked: true,
+    chip: null,
+    change: false,
+    confirm: null,
   }
 }
 
@@ -504,76 +417,6 @@ function ghostRow(
   }
 }
 
-function sideFrame(edition: 'ebook' | 'audiobook'): ChainFrame {
-  return edition === 'audiobook' ? 'group' : 'spine'
-}
-
-function sideSlot(s: SyncChainSnapshot, edition: 'ebook' | 'audiobook'): ChainCardRow | ChainGhostRow {
-  const side = s[edition]
-  const book = side.book
-  if (!book) {
-    const note = chainMsg(edition === 'ebook' ? 'ghost.noMatchEbook' : 'ghost.noMatchAudiobook')
-    return ghostRow(edition, sideFrame(edition), note, { action: s.can.editLink ? action('change', chainMsg('action.search')) : null })
-  }
-  const linked = sideIsCard(side)
-  return {
-    kind: 'card',
-    id: `card:${edition}`,
-    edition,
-    frame: sideFrame(edition),
-    cover: bookCover(book.id, book.coverVersion),
-    title: book.title,
-    subtitle: book.authorName,
-    routeBookId: side.isThisBook ? null : book.id,
-    href: null,
-    isThisBook: side.isThisBook,
-    external: false,
-    progress: book.progress,
-    progressPending: false,
-    linked,
-    chip: linked ? null : candidateChip(side.match, book.title ?? ''),
-    ...pairChange(s, side, linked),
-    confirm: null,
-    rebuild: null,
-    job: null,
-  }
-}
-
-/** A rebuild replaces a ready read-along member, so it needs a real link for the new output to attach to. */
-function canRebuildReadAlong(s: SyncChainSnapshot, ra: SyncChainReadAlong): boolean {
-  return s.linked && ra.member !== null && ra.status === 'ready' && s.can.generate && s.can.rebuild
-}
-
-function readAlongCard(s: SyncChainSnapshot): ChainCardRow {
-  const ra = s.readAlong
-  const isThisBook = s.thisBook === 'readAlong'
-  const linked = ra.member !== null || isThisBook
-  const book = ra.member ?? ra.outputBook ?? ra.thisBook
-  const canRebuild = canRebuildReadAlong(s, ra)
-  return {
-    kind: 'card',
-    id: 'card:readAlong',
-    edition: 'readAlong',
-    frame: 'spine',
-    cover: book ? bookCover(book.id, ra.member?.coverVersion ?? ra.thisBook?.coverVersion ?? null) : { kind: 'readAlongTile' },
-    title: book?.title ?? null,
-    subtitle: ra.member?.authorName ?? ra.thisBook?.authorName ?? null,
-    routeBookId: book && !isThisBook ? book.id : null,
-    href: null,
-    isThisBook,
-    external: false,
-    progress: ra.member?.progress?.percentage ?? null,
-    progressPending: false,
-    linked,
-    chip: linked ? null : chainMsg('chip.generated'),
-    change: 'none',
-    changeHint: null,
-    confirm: null,
-    rebuild: canRebuild ? action('rebuildReadAlong', msg(`${EDITION_LINK}actions.rebuild`), ra.mutating || isActionBlocked(ra.blocked)) : null,
-    job: readAlongJob(s, true),
-  }
-}
-
 function absCard(abs: SyncChainAbs, link: AudiobookshelfBookSyncLink): ChainCardRow {
   const progress = abs.live?.progress
   const linked = link.syncing
@@ -585,32 +428,22 @@ function absCard(abs: SyncChainAbs, link: AudiobookshelfBookSyncLink): ChainCard
     frame: 'group',
     cover: { kind: 'abs', absLibraryItemId: link.absLibraryItemId },
     title: link.title,
-    subtitle: link.libraryName,
-    routeBookId: null,
+    subtitle: link.libraryName ? msg(`${EDITION_LINK}abs.library`, { name: link.libraryName }) : null,
     href: link.webUrl,
-    isThisBook: false,
     external: true,
     progress: progress ? displayPercentage(progress.percentage, progress.isFinished) : null,
     progressPending: abs.checking,
     linked,
     chip: linked ? null : chainMsg(needsReview ? 'chip.needsReview' : 'chip.paused'),
-    change: 'available',
-    changeHint: null,
+    change: true,
     confirm: needsReview ? action('confirmAbs', chainMsg('action.confirm')) : null,
-    rebuild: null,
-    job: null,
   }
 }
 
-function absSlot(s: SyncChainSnapshot, abs: SyncChainAbs): ChainCardRow | ChainGhostRow {
+function absSlot(abs: SyncChainAbs): ChainCardRow | ChainGhostRow {
   const link = abs.link
-  const audioExists = s.audiobook.book !== null
-  if (!link) {
-    if (!audioExists) return ghostRow('abs', 'group', chainMsg('ghost.absNeedsAudio'))
-    return ghostRow('abs', 'group', chainMsg('ghost.noMatchAbs'), { action: action('change', chainMsg('action.match')) })
-  }
+  if (!link) return ghostRow('abs', 'group', chainMsg('ghost.noMatchAbs'), { action: action('change', chainMsg('action.match')) })
   if (link.pausedReason === 'position_sync_off') return ghostRow('abs', 'group', chainMsg('ghost.absPositionSyncOff'), { settingsLink: true })
-  if (!audioExists) return ghostRow('abs', 'group', chainMsg('ghost.absNeedsAudio'))
   return absCard(abs, link)
 }
 
@@ -638,12 +471,8 @@ interface ConnectorSpec {
   miniAction?: ChainAction | null
 }
 
-function connectorKey(from: EditionKey, to: EditionKey): ConnectorKey {
-  return `${from}-${to}` as ConnectorKey
-}
-
 function connectorRow(from: EditionKey, to: EditionKey, spec: ConnectorSpec): ChainConnectorRow {
-  const key = connectorKey(from, to)
+  const key = `${from}-${to}` as ConnectorKey
   return {
     kind: 'connector',
     id: `connector:${key}`,
@@ -660,7 +489,7 @@ function connectorRow(from: EditionKey, to: EditionKey, spec: ConnectorSpec): Ch
     qualifier: spec.qualifier ?? null,
     explainer: spec.explainer ?? null,
     switch: spec.switch ?? null,
-    disabledReason: spec.disabledReason ?? (spec.switch?.disabled ? chainMsg('disabled.noPermission') : null),
+    disabledReason: spec.disabledReason ?? null,
     note: spec.note ?? null,
     detail: spec.detail ?? null,
     actions: spec.actions ?? [],
@@ -675,202 +504,213 @@ function connectorRow(from: EditionKey, to: EditionKey, spec: ConnectorSpec): Ch
   }
 }
 
-/** The read-along switch only ever detaches the read-along; the others dissolve the pair or stop Audiobookshelf. */
-const OFF_TARGET: Record<ConnectorKey, ChainOffTarget> = {
-  'readAlong-audiobook': 'readAlong',
-  'ebook-audiobook': 'pair',
-  'audiobook-abs': 'abs',
-}
-
-function onSwitch(s: SyncChainSnapshot, from: EditionKey, to: EditionKey, disabled = !s.can.editLink): ChainSwitch {
-  return { on: true, disabled, onAction: null, offTarget: OFF_TARGET[connectorKey(from, to)] }
-}
-
-function editAction(s: SyncChainSnapshot, id: ChainActionId, label: ChainMessage): ChainAction | null {
-  return s.can.editLink ? action(id, label) : null
+function alignAction(s: SyncChainSnapshot, id: ChainActionId, label: ChainMessage): ChainAction | null {
+  return s.can.align ? action(id, label) : null
 }
 
 function presentActions(...actions: (ChainAction | null)[]): ChainAction[] {
   return actions.filter((a): a is ChainAction => a !== null)
 }
 
-interface OffSpec {
-  frame: ChainFrame
-  arrow?: ChainArrow
-  qualifier: ChainMessage
-  onAction: ChainActionId | null
-  disabledReason: ChainMessage | null
-  explainer?: ChainMessage | null
-  settingsLink?: boolean
-}
-
-/** Nothing is linked across this pair: a muted off switch that the user can turn on unless `disabledReason` says why not. */
-function offConnector(from: EditionKey, to: EditionKey, spec: OffSpec): ChainConnectorRow {
-  return connectorRow(from, to, {
-    state: 'available',
-    tone: 'muted',
-    icon: 'link',
-    frame: spec.frame,
-    arrow: spec.arrow,
-    pill: chainMsg('pill.available'),
-    qualifier: spec.qualifier,
-    explainer: spec.explainer,
-    switch: { on: false, disabled: spec.disabledReason !== null, onAction: spec.onAction, offTarget: null },
-    disabledReason: spec.disabledReason,
-    settingsLink: spec.settingsLink,
-    miniText: spec.qualifier,
-  })
-}
-
-function alignmentConnector(s: SyncChainSnapshot, from: EditionKey, to: EditionKey): ChainConnectorRow {
+function alignmentConnector(s: SyncChainSnapshot): ChainConnectorRow {
   const a = s.alignment
   const ticks = { samplesDone: a.samplesDone, samplesTotal: a.samplesTotal }
+  const whisper = { explainer: chainMsg('explain.whisper') }
   switch (alignmentState(a)) {
-    case 'linking':
-      return connectorRow(from, to, {
-        state: 'linking',
+    case 'aligning':
+      return connectorRow('ebook', 'audiobook', {
+        state: 'aligning',
         tone: 'info',
         icon: 'spinner',
-        pill: chainMsg('pill.linking'),
-        switch: onSwitch(s, from, to),
-        note: chainMsg('note.linking'),
-        cancel: editAction(s, 'cancelLinking', chainMsg('cancelLinking')),
+        pill: chainMsg('pill.aligning'),
+        note: chainMsg('note.aligning'),
+        cancel: alignAction(s, 'cancelAlignment', chainMsg('cancelAlignment')),
         ticks,
-        miniText: chainMsg('mini.linking'),
+        miniText: chainMsg('mini.aligning'),
+        ...whisper,
       })
     case 'rebuilding':
-      return connectorRow(from, to, {
+      return connectorRow('ebook', 'audiobook', {
         state: 'rebuilding',
         tone: 'info',
         icon: 'spinner',
         pill: chainMsg('pill.rebuilding'),
-        switch: onSwitch(s, from, to),
-        cancel: editAction(s, 'cancelAlignment', chainMsg('cancelAlignment')),
+        cancel: alignAction(s, 'cancelAlignment', chainMsg('cancelAlignment')),
         ticks,
         miniText: chainMsg('mini.rebuilding'),
+        ...whisper,
       })
     case 'alignmentFailed': {
-      const retry = editAction(s, 'retryAlignment', chainMsg('action.retry'))
-      return connectorRow(from, to, {
+      const retry = alignAction(s, 'retryAlignment', chainMsg('action.retry'))
+      return connectorRow('ebook', 'audiobook', {
         state: 'alignmentFailed',
         tone: 'destructive',
         icon: 'alert',
         pill: chainMsg('pill.alignmentFailed'),
         note: chainMsg('note.alignmentFailed'),
         detail: a.buildError,
-        actions: presentActions(retry, editAction(s, 'unlinkPair', msg(`${EDITION_LINK}unlink`))),
+        actions: presentActions(retry),
         miniAction: retry,
       })
     }
     case 'outOfDate':
-      return connectorRow(from, to, {
+      return connectorRow('ebook', 'audiobook', {
         state: 'outOfDate',
         tone: 'warning',
         icon: 'alert',
         pill: chainMsg('pill.outOfDate'),
-        switch: onSwitch(s, from, to),
         note: chainMsg('note.stale'),
-        actions: presentActions(editAction(s, 'rebuildAlignment', chainMsg('action.rebuildAlignment'))),
-        miniAction: editAction(s, 'rebuildAlignment', msg(`${EDITION_LINK}actions.rebuild`)),
+        actions: presentActions(alignAction(s, 'rebuildAlignment', chainMsg('action.rebuildAlignment'))),
+        miniAction: alignAction(s, 'rebuildAlignment', msg(`${EDITION_LINK}actions.rebuild`)),
+        ...whisper,
       })
     case 'cantAlign':
-      return connectorRow(from, to, {
+      return connectorRow('ebook', 'audiobook', {
         state: 'cantAlign',
         tone: 'muted',
         icon: 'ban',
         pill: chainMsg('pill.cantAlign'),
-        switch: onSwitch(s, from, to),
         note: msg('book.detail.readingAlignment.unalignableHint'),
       })
     case 'alignmentBlocked':
-      return connectorRow(from, to, {
+      return connectorRow('ebook', 'audiobook', {
         state: 'alignmentBlocked',
         tone: 'muted',
         icon: 'ban',
         pill: chainMsg('pill.notAligned'),
-        switch: onSwitch(s, from, to),
         note: msg(`book.detail.readingAlignment.buildBlocked.${a.buildBlocked}`),
       })
     case 'notAligned': {
-      const alignNow = editAction(s, 'alignNow', chainMsg('action.alignNow'))
-      return connectorRow(from, to, {
+      const alignNow = alignAction(s, 'alignNow', chainMsg('action.alignNow'))
+      return connectorRow('ebook', 'audiobook', {
         state: 'notAligned',
-        tone: 'warning',
-        icon: 'alert',
+        tone: 'muted',
+        icon: 'link',
         pill: chainMsg('pill.notAligned'),
-        switch: onSwitch(s, from, to),
         note: msg(a.buildBlocked === 'busy' ? 'book.detail.readingAlignment.buildBlocked.busy' : 'book.detail.readingAlignment.idleHint'),
         actions: presentActions(alignNow),
         miniAction: alignNow,
+        ...whisper,
       })
     }
-    case 'ready': {
-      return connectorRow(from, to, {
+    case 'ready':
+      return connectorRow('ebook', 'audiobook', {
         state: 'linkedViaWhisper',
         tone: 'success',
         icon: 'link',
         pill: chainMsg('pill.linkedViaWhisper'),
         qualifier: chainMsg('qualifier.viaWhisper'),
-        explainer: chainMsg('explain.whisper'),
-        switch: onSwitch(s, from, to),
+        ...whisper,
       })
-    }
   }
 }
 
-function pairConnector(s: SyncChainSnapshot): ChainConnectorRow {
-  if (s.linked && sideIsCard(s.ebook) && sideIsCard(s.audiobook)) return alignmentConnector(s, 'ebook', 'audiobook')
-  const nothingToLink = s.ebook.book === null || s.audiobook.book === null
-  const disabledReason = nothingToLink ? chainMsg('disabled.nothingToLink') : s.can.editLink ? null : chainMsg('disabled.noPermission')
-  return offConnector('ebook', 'audiobook', {
-    frame: 'spine',
-    qualifier: chainMsg('off.notLinked'),
-    onAction: 'linkPair',
-    disabledReason,
-    explainer: chainMsg('explain.whisper'),
-  })
+function readAloudReason(r: SyncChainReadAloud): ChainMessage {
+  const reason = r.sync.unavailableReason ?? 'missing_duration'
+  if (reason === 'duration_mismatch') return msg(`${READ_ALOUD_SYNC}reason.durationMismatch`, { audio: r.audioDuration, overlay: r.overlayDuration })
+  return msg(`${READ_ALOUD_SYNC}reason.${reason}`)
 }
 
-/** A read-along attaches to its audiobook on its own, so its switch only waits for an audiobook to exist. */
-function readAlongOff(s: SyncChainSnapshot): Pick<OffSpec, 'qualifier' | 'disabledReason'> {
-  if (s.audiobook.book === null) return { qualifier: chainMsg('off.pickAudiobookFirst'), disabledReason: chainMsg('off.pickAudiobookFirst') }
-  return { qualifier: chainMsg('off.notLinked'), disabledReason: s.can.editLink ? null : chainMsg('disabled.noPermission') }
+function readAloudToggle(sync: ReadAloudProgressSync): ChainSwitch {
+  return { on: sync.mode !== 'disabled', disabled: false, onAction: 'enableReadAloudSync', offAction: 'disableReadAloudSync' }
 }
 
-function readAlongConnector(s: SyncChainSnapshot): ChainConnectorRow {
-  const ra = s.readAlong
-  if (ra.member === null) {
-    return offConnector('readAlong', 'audiobook', {
-      frame: 'spine',
-      onAction: 'attachReadAlong',
-      explainer: chainMsg('explain.readAlongAudio'),
-      ...readAlongOff(s),
+/** Upstream's per-book read-aloud sync: the toggle flips its mode, whatever state the pair is in. */
+function readAloudConnector(s: SyncChainSnapshot): ChainConnectorRow {
+  const sync = s.readAloud.sync
+  const toggle = readAloudToggle(sync)
+  const explainer = chainMsg('explain.readAlongAudio')
+  if (sync.state === 'disabled') {
+    return connectorRow('readAlong', 'audiobook', {
+      state: 'available',
+      tone: 'muted',
+      icon: 'link',
+      pill: msg(`${READ_ALOUD_SYNC}chip.disabled`),
+      qualifier: msg(`${READ_ALOUD_SYNC}chip.disabled`),
+      explainer,
+      switch: toggle,
     })
   }
-  if (s.readAloudIssue !== null) {
-    const canRebuild = canRebuildReadAlong(s, ra)
-    const disabled = ra.mutating || isActionBlocked(ra.blocked)
+  // With a plain EPUB on the spine its own connector shows the copies syncing; this one is then only the audio half.
+  if (syncsEpubCopiesOnly(s) && s.ebook === null) {
+    return connectorRow('readAlong', 'audiobook', {
+      state: 'readAloudPartial',
+      tone: 'warning',
+      icon: 'alert',
+      pill: msg(`${READ_ALOUD_SYNC}chip.partial`),
+      explainer: msg(`${READ_ALOUD_SYNC}epubCopiesDescription`),
+      switch: toggle,
+      note: readAloudReason(s.readAloud),
+    })
+  }
+  if (sync.state === 'unavailable') {
     return connectorRow('readAlong', 'audiobook', {
       state: 'readAloudIssue',
       tone: 'warning',
       icon: 'alert',
-      frame: 'spine',
-      pill: msg('book.detail.details.readAloudSync.state.notSyncing'),
-      switch: onSwitch(s, 'readAlong', 'audiobook'),
-      note: readAloudSyncIssueMessage(s.readAloudIssue),
-      actions: canRebuild ? [action('rebuildReadAlong', msg(`${EDITION_LINK}actions.rebuildReadAlong`), disabled)] : [],
-      miniAction: canRebuild ? action('rebuildReadAlong', msg(`${EDITION_LINK}actions.rebuild`), disabled) : null,
+      pill: msg(`${READ_ALOUD_SYNC}chip.unavailable`),
+      switch: toggle,
+      note: readAloudReason(s.readAloud),
     })
   }
   return connectorRow('readAlong', 'audiobook', {
-    state: 'linked',
+    state: 'readAloudSynced',
     tone: 'success',
     icon: 'link',
-    frame: 'spine',
-    pill: chainMsg('pill.linked'),
+    pill: msg(`${READ_ALOUD_SYNC}chip.enabled`),
     qualifier: chainMsg('qualifier.direct'),
+    explainer,
+    switch: toggle,
+  })
+}
+
+/** Upstream's read-aloud sync keeps the plain EPUB in step with the read-along through its narration, with or without audio. */
+function epubCopiesConnector(s: SyncChainSnapshot): ChainConnectorRow {
+  const sync = s.readAloud.sync
+  const toggle = readAloudToggle(sync)
+  const explainer = msg(`${READ_ALOUD_SYNC}epubCopiesDescription`)
+  if (sync.state === 'disabled') {
+    return connectorRow('ebook', 'readAlong', {
+      state: 'available',
+      tone: 'muted',
+      icon: 'link',
+      pill: msg(`${READ_ALOUD_SYNC}chip.disabled`),
+      qualifier: msg(`${READ_ALOUD_SYNC}chip.disabled`),
+      explainer,
+      switch: toggle,
+    })
+  }
+  if (sync.state === 'unavailable' && !syncsEpubCopiesOnly(s)) {
+    return connectorRow('ebook', 'readAlong', {
+      state: 'readAloudIssue',
+      tone: 'warning',
+      icon: 'alert',
+      pill: msg(`${READ_ALOUD_SYNC}chip.unavailable`),
+      switch: toggle,
+      note: readAloudReason(s.readAloud),
+    })
+  }
+  return connectorRow('ebook', 'readAlong', {
+    state: 'epubCopiesSynced',
+    tone: 'success',
+    icon: 'link',
+    pill: msg(`${READ_ALOUD_SYNC}chip.enabled`),
+    // "EPUB copies only" is upstream's word for the copies syncing without the audio half.
+    qualifier: s.audiobook && !syncsEpubCopiesOnly(s) ? chainMsg('qualifier.direct') : msg(`${READ_ALOUD_SYNC}state.epubCopiesOnly`),
+    explainer,
+    switch: toggle,
+  })
+}
+
+/** Leads into the read-aloud slot: nothing to sync yet, so a dashed rail with no switch. */
+function noReadAlongConnector(): ChainConnectorRow {
+  return connectorRow('readAlong', 'audiobook', {
+    state: 'available',
+    tone: 'muted',
+    icon: 'link',
+    pill: chainMsg('off.noReadAlong'),
+    qualifier: chainMsg('off.noReadAlong'),
     explainer: chainMsg('explain.readAlongAudio'),
-    switch: onSwitch(s, 'readAlong', 'audiobook'),
   })
 }
 
@@ -912,7 +752,7 @@ function absArrow(direction: AudiobookshelfBookSyncLink['direction']): ChainArro
   return direction === 'from_abs' ? 'left' : direction === 'to_abs' ? 'right' : 'both'
 }
 
-function absLinkedConnector(s: SyncChainSnapshot, abs: SyncChainAbs, link: AudiobookshelfBookSyncLink): ChainConnectorRow {
+function absLinkedConnector(abs: SyncChainAbs, link: AudiobookshelfBookSyncLink): ChainConnectorRow {
   const state = absState(link, abs.live)
   const warns = state === 'absUnreachable' || state === 'absDiverged'
   const actions = absActions(state)
@@ -931,7 +771,7 @@ function absLinkedConnector(s: SyncChainSnapshot, abs: SyncChainAbs, link: Audio
     pill,
     qualifier: warns ? null : chainMsg(link.direction === 'two_way' ? 'qualifier.twoWay' : 'qualifier.oneWay'),
     explainer: warns ? null : chainMsg(ABS_EXPLAIN[link.direction]),
-    switch: onSwitch(s, 'audiobook', 'abs', false),
+    switch: { on: true, disabled: false, onAction: null, offAction: 'pauseAbs' },
     note: absNote(state),
     actions,
     settingsLink: state === 'absUnreachable' || link.direction !== 'two_way',
@@ -941,152 +781,187 @@ function absLinkedConnector(s: SyncChainSnapshot, abs: SyncChainAbs, link: Audio
   })
 }
 
-function absOffConnector(s: SyncChainSnapshot, link: AudiobookshelfBookSyncLink | null): ChainConnectorRow {
+function absOffConnector(link: AudiobookshelfBookSyncLink | null): ChainConnectorRow {
   const off = (qualifier: string, onAction: ChainActionId | null, reason: string | null) =>
-    offConnector('audiobook', 'abs', {
+    connectorRow('audiobook', 'abs', {
+      state: 'available',
+      tone: 'muted',
+      icon: 'link',
       frame: 'group',
-      qualifier: chainMsg(qualifier),
-      onAction,
-      disabledReason: reason ? chainMsg(reason) : null,
-      explainer: link ? chainMsg(ABS_EXPLAIN[link.direction]) : null,
       arrow: link ? absArrow(link.direction) : undefined,
+      pill: chainMsg('pill.available'),
+      qualifier: chainMsg(qualifier),
+      explainer: link ? chainMsg(ABS_EXPLAIN[link.direction]) : null,
+      switch: { on: false, disabled: reason !== null, onAction, offAction: null },
+      disabledReason: reason ? chainMsg(reason) : null,
       settingsLink: link !== null && link.direction !== 'two_way',
+      miniText: chainMsg(qualifier),
     })
   if (link?.pausedReason === 'position_sync_off') return off('off.syncOffInSettings', null, 'off.syncOffInSettings')
-  if (s.audiobook.book === null) return off('off.pickAudiobookFirst', null, 'off.pickAudiobookFirst')
   if (!link) return off('off.notMatched', null, 'disabled.nothingToLink')
   return link.pausedReason === 'needs_review' ? off('off.needsReview', 'confirmAbs', null) : off('off.syncPaused', 'resumeAbs', null)
 }
 
 function absConnector(s: SyncChainSnapshot, abs: SyncChainAbs): ChainConnectorRow {
-  return absIsCard(s) && abs.link ? absLinkedConnector(s, abs, abs.link) : absOffConnector(s, abs.link)
+  return absIsCard(s) && abs.link ? absLinkedConnector(abs, abs.link) : absOffConnector(abs.link)
 }
 
-/* Read-along slot. */
+/*
+ * Order: ebook, read-along, the audio group, so each upstream pair sits side by side. Without a read-along
+ * the ebook meets the audio through whisper and the read-aloud slot trails the audio group.
+ * A connector only joins two files that are both there.
+ */
 
-function readAlongSlotRow(spec: Pick<ChainReadAlongSlotRow, 'variant' | 'note'> & Partial<ChainReadAlongSlotRow>): ChainReadAlongSlotRow {
+function audioGroup(s: SyncChainSnapshot, audiobook: SyncChainEdition): ChainRow[] {
+  const abs = s.abs ? [absConnector(s, s.abs), absSlot(s.abs)] : []
+  return [fileCard(s, 'audiobook', audiobook), ...abs]
+}
+
+/* Read-aloud slot. */
+
+const READ_ALOUD = 'book.detail.files.readAloud.'
+
+const PENDING_ACTION: Record<Exclude<SyncChainReadAloudSlot['pending'], null>, ChainActionId | null> = {
+  create: 'createReadAloud',
+  cancel: 'cancelReadAloud',
+  retry: 'retryReadAloud',
+  other: null,
+}
+
+function slotRow(
+  slot: SyncChainReadAloudSlot,
+  spec: Pick<ChainReadAloudSlotRow, 'variant' | 'note'> & Partial<Pick<ChainReadAloudSlotRow, 'action' | 'secondary' | 'cancel' | 'progress'>>,
+): ChainReadAloudSlotRow {
+  const locked = slot.pending !== null
+  const lock = (a: ChainAction | null | undefined) => (a ? { ...a, disabled: a.disabled || locked } : null)
   return {
-    kind: 'readAlongSlot',
+    kind: 'readAloudSlot',
     id: 'slot:readAlong',
+    edition: 'readAlong',
+    frame: 'spine',
+    variant: spec.variant,
     label: chainMsg(SHORT_LABEL_KEY.readAlong),
-    action: null,
-    cancel: null,
-    job: null,
-    secondary: null,
-    error: null,
-    expandable: false,
-    ...spec,
+    note: slot.errorKey ? msg(slot.errorKey) : spec.note,
+    action: lock(spec.action),
+    secondary: lock(spec.secondary),
+    cancel: lock(spec.cancel),
+    pending: slot.pending ? PENDING_ACTION[slot.pending] : null,
+    progress: spec.progress ?? null,
   }
 }
 
-function idleSlot(s: SyncChainSnapshot): ChainReadAlongSlotRow | null {
-  const ra = s.readAlong
-  if (!s.can.generate || ra.blocked === 'not_configured') return null
-  const generate = (disabled: boolean) => action('openGenerate', chainMsg('action.generate'), disabled)
-  if (s.audiobook.book === null) return readAlongSlotRow({ variant: 'needsAudio', note: chainMsg('slot.needsAudio'), action: generate(true) })
-  if (s.ebook.book === null) return readAlongSlotRow({ variant: 'needsEbook', note: chainMsg('slot.needsEbook'), action: generate(true) })
-  const blocked = ra.blocked === 'no_pair' && !s.linked ? null : ra.blocked
-  if (isActionBlocked(blocked)) {
-    return readAlongSlotRow({
-      variant: 'blocked',
-      note: msg(`${EDITION_LINK}readAlong.blocked.${snakeToCamel(blocked ?? '')}`),
-      action: generate(true),
+function jobSlot(slot: SyncChainReadAloudSlot, job: SyncChainReadAloudJob): ChainReadAloudSlotRow {
+  const cancel = job.canCancel && !job.stopping ? action('cancelReadAloud', msg(`${READ_ALOUD}job.cancel`)) : null
+  const review = action('reviewReadAloud', chainMsg('action.review'))
+  switch (job.status) {
+    case 'queued':
+      return slotRow(slot, {
+        variant: 'queued',
+        note: job.stopping
+          ? msg(`${READ_ALOUD}job.stoppingTitle`)
+          : job.queuePosition === null
+            ? msg(`${READ_ALOUD}job.queuedTitle`)
+            : msg(`${READ_ALOUD}job.queueAhead`, { count: job.queuePosition }),
+        cancel,
+        progress: { stage: job.stage, percent: null },
+      })
+    case 'processing':
+      return slotRow(slot, {
+        variant: 'processing',
+        note: job.stopping ? msg(`${READ_ALOUD}job.stoppingTitle`) : msg(stageLabelKey(job.stage)),
+        cancel,
+        progress: { stage: job.stage, percent: Math.round(Math.min(Math.max(job.progress, 0), 100)) },
+      })
+    case 'awaiting_review':
+      return slotRow(slot, { variant: 'review', note: msg(`${READ_ALOUD}job.reviewTitle`), action: review })
+    case 'failed': {
+      const retry = job.canRetry ? action('retryReadAloud', msg(`${READ_ALOUD}job.retry`)) : null
+      return slotRow(slot, {
+        variant: 'failed',
+        note: msg(job.errorKey ?? `${READ_ALOUD}errors.job.unknown`),
+        action: retry ?? review,
+        secondary: retry ? review : null,
+      })
+    }
+  }
+}
+
+/** Upstream hides its entry when the generator can never run here; a job it already holds still shows. */
+function readAloudSlot(s: SyncChainSnapshot): ChainReadAloudSlotRow | null {
+  const slot = s.readAloudSlot
+  if (slot.job) return jobSlot(slot, slot.job)
+  const entry = slot.entry
+  if (entry.kind === 'available') {
+    return slotRow(slot, {
+      variant: 'notCreated',
+      note: chainMsg('slot.notCreated'),
+      action: action('createReadAloud', msg(`${READ_ALOUD}action`)),
+      secondary: action('modifyReadAloud', chainMsg('modify')),
     })
   }
-  return readAlongSlotRow({
-    variant: 'notGenerated',
-    note: chainMsg('slot.notGenerated'),
-    action: generate(ra.mutating),
-    expandable: true,
-  })
-}
-
-function readAlongSlot(s: SyncChainSnapshot): ChainReadAlongSlotRow | null {
-  const ra = s.readAlong
-  if (ra.memberPending || readAlongBookExists(s) || readAlongOutOfReach(s)) return null
-  switch (ra.status) {
-    case 'queued':
-    case 'building': {
-      const job = readAlongJob(s, false)
-      const note =
-        ra.status === 'building'
-          ? chainMsg('slot.generating')
-          : ra.queuePosition === null
-            ? msg(`${EDITION_LINK}readAlong.body.queuedUnknown`)
-            : msg(`${EDITION_LINK}readAlong.body.queued`, { position: ra.queuePosition })
-      return readAlongSlotRow({ variant: ra.status, note, cancel: job?.cancel ?? null, job })
-    }
-    case 'failed':
-      return readAlongSlotRow({
-        variant: 'failed',
-        note: chainMsg('slot.failed', { step: READ_ALONG_STAGES[stageIndex(ra.phase, ra.remoteTask)]! }),
-        action: s.can.generate ? action('retryReadAlong', chainMsg('action.retry'), ra.mutating || isActionBlocked(ra.blocked)) : null,
-        cancel: s.can.generate ? action('cancelReadAlong', chainMsg('slot.dismiss'), ra.mutating) : null,
-        secondary: ra.error ? action('toggleLog', chainMsg('action.viewLog')) : null,
-        error: ra.error,
-      })
-    default:
-      return idleSlot(s)
+  if (entry.kind === 'unavailable' && entry.reason !== 'job_active') {
+    return slotRow(slot, { variant: 'unavailable', note: msg(entry.reasonKey) })
   }
+  return null
 }
 
-/* Read-along tail. */
-
-/** The muted connector above a read-along that has nothing to switch: a bare node that keeps the spine rail joined. */
-function mutedReadAlongConnector(qualifier: ChainMessage | null): ChainConnectorRow {
-  const pill = qualifier ?? chainMsg('pill.available')
-  const row = connectorRow('readAlong', 'audiobook', { state: 'available', tone: 'muted', icon: 'link', pill, qualifier })
-  return { ...row, mini: { text: null, action: null } }
+function readAloudSlotRows(s: SyncChainSnapshot): ChainRow[] {
+  if (!s.ebook || !s.audiobook || s.readAlong) return []
+  const slot = readAloudSlot(s)
+  return slot ? [noReadAlongConnector(), slot] : []
 }
 
-function readAlongRows(s: SyncChainSnapshot): ChainRow[] {
-  if (readAlongBookExists(s)) return [readAlongConnector(s), readAlongCard(s)]
-  if (readAlongOutOfReach(s)) {
-    return [mutedReadAlongConnector(null), ghostRow('readAlong', 'spine', msg(`${EDITION_LINK}readAlong.body.outOfReach`))]
-  }
-  const slot = readAlongSlot(s)
-  return slot ? [mutedReadAlongConnector(chainMsg('off.notGenerated')), slot] : []
+function withReadAlong(s: SyncChainSnapshot, readAlong: SyncChainEdition): ChainRow[] {
+  const rows: ChainRow[] = []
+  if (s.ebook) rows.push(fileCard(s, 'ebook', s.ebook), epubCopiesConnector(s))
+  rows.push(fileCard(s, 'readAlong', readAlong))
+  if (s.audiobook) rows.push(readAloudConnector(s), ...audioGroup(s, s.audiobook))
+  return rows
 }
 
 function orderedRows(s: SyncChainSnapshot): ChainRow[] {
-  const group: ChainRow[] = [sideSlot(s, 'audiobook'), ...(s.abs ? [absConnector(s, s.abs), absSlot(s, s.abs)] : [])]
-  const ebookSlot = sideSlot(s, 'ebook')
-  const ebookConnector = pairConnector(s)
-  switch (s.thisBook) {
-    case 'ebook':
-      return [ebookSlot, ebookConnector, ...group, ...readAlongRows(s)]
-    case 'audiobook':
-      return [...group, ebookConnector, ebookSlot, ...readAlongRows(s)]
-    case 'readAlong':
-      return [readAlongCard(s), readAlongConnector(s), ...group, ebookConnector, ebookSlot]
+  if (s.readAlong) return withReadAlong(s, s.readAlong)
+  const rows: ChainRow[] = []
+  if (s.ebook) rows.push(fileCard(s, 'ebook', s.ebook))
+  if (s.audiobook) {
+    if (s.ebook) rows.push(alignmentConnector(s))
+    rows.push(...audioGroup(s, s.audiobook))
   }
+  rows.push(...readAloudSlotRows(s))
+  return rows
 }
 
 /* Header. */
 
 function headerPriority(s: SyncChainSnapshot): 1 | 2 | 3 | null {
-  const pairLinked = s.linked && sideIsCard(s.ebook) && sideIsCard(s.audiobook)
-  const align = pairLinked ? alignmentState(s.alignment) : null
-  const raStatus = s.readAlong.status
+  const align = usesWhisper(s) ? alignmentState(s.alignment) : null
   const abs = absIsCard(s) && s.abs?.link ? absState(s.abs.link, s.abs.live) : null
-  if (align === 'alignmentFailed' || raStatus === 'failed') return 1
-  const alignWarns = align === 'outOfDate' || align === 'notAligned' || align === 'cantAlign' || align === 'alignmentBlocked'
-  if (alignWarns || hasReadAloudIssue(s) || abs === 'absUnreachable' || abs === 'absDiverged') return 2
-  if (align === 'linking' || align === 'rebuilding' || raStatus === 'queued' || raStatus === 'building') return 3
+  const readAloudIssue =
+    s.readAlong !== null && (s.audiobook !== null || s.ebook !== null) && s.readAloud.sync.state === 'unavailable' && !copiesOnlyWithoutAudio(s)
+  if (align === 'alignmentFailed') return 1
+  if (align === 'outOfDate' || readAloudIssue || abs === 'absUnreachable' || abs === 'absDiverged') return 2
+  if (align === 'aligning' || align === 'rebuilding') return 3
   return null
 }
 
+function copiesOnlyWithoutAudio(s: SyncChainSnapshot): boolean {
+  return s.audiobook === null && syncsEpubCopiesOnly(s)
+}
+
 function countInSync(s: SyncChainSnapshot): number {
-  const absSyncing = absIsCard(s)
-  const ebook = sideIsCard(s.ebook) && s.ebook.isMember
-  const readAlong = s.readAlong.member !== null
-  // The audiobook is in sync while anything hangs off it, even when this page is not linked to it.
-  const audiobook = s.audiobook.book !== null && (s.audiobook.isMember || absSyncing || readAlong)
-  return [ebook, audiobook, readAlong, absSyncing].filter(Boolean).length
+  const align = usesWhisper(s) ? alignmentState(s.alignment) : null
+  const pair = align === 'ready'
+  const readAloudAudio = hasReadAloudPair(s) && s.readAloud.sync.state === 'enabled'
+  const copies = s.ebook !== null && s.readAlong !== null && (s.readAloud.sync.state === 'enabled' || syncsEpubCopiesOnly(s))
+  const abs = absIsCard(s)
+  const ebook = pair || copies
+  const audiobook = pair || readAloudAudio || abs
+  const readAlong = readAloudAudio || copies
+  return [ebook, audiobook, readAlong, abs].filter(Boolean).length
 }
 
 export function buildSyncChain(input: SyncChainSnapshot): SyncChain {
-  const snapshot = input.abs && !input.abs.configured ? { ...input, abs: null } : input
+  const snapshot = input.abs && (!input.abs.configured || !input.audiobook) ? { ...input, abs: null } : input
   const rows = orderedRows(snapshot)
 
   const inSync = countInSync(snapshot)
@@ -1098,15 +973,15 @@ export function buildSyncChain(input: SyncChainSnapshot): SyncChain {
       : priority === 2
         ? { tone: 'warning', label: chainMsg('header.checkSync') }
         : priority === 3
-          ? { tone: 'info', label: chainMsg('header.linking') }
+          ? { tone: 'info', label: chainMsg('header.aligning') }
           : inSync >= 2
             ? { tone: 'success', label: chainMsg('header.inSync', { n: inSync, m: present }) }
-            : { tone: 'muted', label: chainMsg('header.notLinked') }
+            : { tone: 'muted', label: chainMsg('header.notSyncing') }
 
   return {
     rows,
     header,
-    intro: chainMsg(inSync >= 2 ? 'intro.linked' : 'intro.unlinked'),
+    intro: chainMsg(inSync >= 2 ? 'intro.synced' : 'intro.notSynced'),
     needsAttention: priority === 1 || priority === 2 || rows.some((row) => row.kind === 'card' && row.confirm !== null),
   }
 }
@@ -1119,9 +994,11 @@ function hasNoteLine(row: ChainConnectorRow): boolean {
 function modifyRowHeight(row: ChainRow): number {
   switch (row.kind) {
     case 'card':
-      return MODIFY_CARD_HEIGHT + (row.job ? MODIFY_CARD_JOB_HEIGHT : 0)
+      return MODIFY_CARD_HEIGHT
     case 'ghost':
       return MODIFY_GHOST_HEIGHT
+    case 'readAloudSlot':
+      return MODIFY_GHOST_HEIGHT + (row.progress ? MODIFY_SLOT_STEPPER_HEIGHT : 0)
     case 'connector':
       return (
         (row.frame === 'group' ? MODIFY_INNER_CONNECTOR_HEIGHT : MODIFY_CONNECTOR_HEIGHT) +
@@ -1129,8 +1006,6 @@ function modifyRowHeight(row: ChainRow): number {
         (row.actions.length > 0 ? MODIFY_CONNECTOR_ACTIONS_HEIGHT : 0) +
         (row.ticks ? MODIFY_CONNECTOR_TICKS_HEIGHT : 0)
       )
-    case 'readAlongSlot':
-      return MODIFY_SLOT_HEIGHT + (row.job ? MODIFY_CARD_JOB_HEIGHT : 0)
   }
 }
 

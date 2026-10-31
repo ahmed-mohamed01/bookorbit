@@ -43,7 +43,7 @@ const {
   inspectionErrors,
   bar,
   clients,
-  hasTorrentPicks,
+  needsClient,
   clientId,
   send,
   downloads,
@@ -196,7 +196,7 @@ function setCount(event: Event) {
       <LnDownloadProgress :downloads="downloads" />
       <LnDownloadBar v-bind="bar" :sending="sending" @download="send">
         <select
-          v-if="hasTorrentPicks"
+          v-if="needsClient"
           class="select-field h-10 max-w-full"
           :value="clientId ?? ''"
           :aria-label="t('bookRequests.grab.client')"

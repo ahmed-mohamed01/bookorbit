@@ -1,9 +1,9 @@
 import { Logger } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { StatsCache } from '../../common/cache/stats-cache';
 import type { RequestUser } from '../../common/types/request-user';
 import type { HardcoverAuthorSearchDocument, HardcoverSearchDocument } from '../metadata-fetch/providers/hardcover/hardcover.types';
-import { HardcoverSearchCache } from './hardcover-search-cache';
 import { MonitoredUniversalSearchService } from './monitored-universal-search.service';
 
 /** Only the hardcover half is read here, and its key is nullable so an unset config can be expressed. */
@@ -51,8 +51,8 @@ function makeService() {
     findLocalAuthorNameKeys: vi.fn().mockResolvedValue(new Set<string>()),
   };
   const providerConfigs = { forUser: vi.fn().mockResolvedValue(CONFIGURED) };
-  const cache = new HardcoverSearchCache();
-  const service = new MonitoredUniversalSearchService(store as never, hardcover as never, providerConfigs as never, cache);
+  const service = new MonitoredUniversalSearchService(store as never, hardcover as never, providerConfigs as never);
+  const cache = (service as unknown as { hardcoverCache: StatsCache }).hardcoverCache;
   const logger = (service as unknown as { logger: Logger }).logger;
   const startEndLog = vi.spyOn(logger, 'log').mockImplementation(() => undefined);
   const failLog = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
@@ -104,7 +104,7 @@ describe('MonitoredUniversalSearchService hardcover search', () => {
     const load = vi.fn();
 
     await service.searchHardcover(USER, 'mistborn');
-    const cached = await cache.fetch('mistborn', load);
+    const cached = await cache.get<{ books: unknown[] }>('hardcover', 'mistborn', load);
 
     expect(load).not.toHaveBeenCalled();
     expect(cached.books[0]).toEqual({
@@ -128,7 +128,7 @@ describe('MonitoredUniversalSearchService hardcover search', () => {
 
   it('answers a punctuation-only query without calling hardcover or the cache', async () => {
     const { service, hardcover, cache } = makeService();
-    const fetchSpy = vi.spyOn(cache, 'fetch');
+    const fetchSpy = vi.spyOn(cache, 'get');
 
     await expect(service.searchHardcover(USER, '...!?')).resolves.toEqual({ available: true, books: [], authors: [] });
 

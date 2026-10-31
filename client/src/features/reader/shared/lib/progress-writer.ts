@@ -1,4 +1,6 @@
+import type { ReadingProgressWrite } from '@bookorbit/types'
 import { api } from '@/lib/api'
+import { fetchFileProgress } from '@/lib/reading-progress'
 
 export type ProgressSource = 'text' | 'narration'
 
@@ -67,12 +69,31 @@ export function parseProgressRecord(data: Record<string, unknown>): ProgressReco
 }
 
 export async function fetchProgressRecord(fileId: number): Promise<ProgressRecord | null> {
-  const res = await api(`/api/v1/books/files/${fileId}/progress`)
-  if (!res.ok) return null
-  return parseProgressRecord((await res.json()) as Record<string, unknown>)
+  const data = await fetchFileProgress(fileId)
+  return data ? parseProgressRecord(data) : null
 }
 
 export type TextProgressRecord = Omit<ProgressRecord, 'positionSeconds' | 'mediaOverlayFragment' | 'mediaOverlaySectionIndex'>
+
+// The grouped write upstream's `saveReadingProgress` sends; built here so the save can carry a timeout.
+function toProgressWrite(fileId: number, kind: ProgressSource, record: ProgressRecord | TextProgressRecord): ReadingProgressWrite {
+  return {
+    fileId,
+    kind,
+    percentage: record.percentage,
+    text: { cfi: record.cfi, page: record.pageNumber },
+    kobo: {
+      source: record.koboLocationSource,
+      type: record.koboLocationType,
+      value: record.koboLocationValue,
+      contentPercent: record.koboContentSourceProgressPercent,
+    },
+    koreader: record.koreaderProgress,
+    ...('positionSeconds' in record
+      ? { narration: { seconds: record.positionSeconds, fragment: record.mediaOverlayFragment, sectionIndex: record.mediaOverlaySectionIndex } }
+      : {}),
+  }
+}
 
 export interface ProgressSaverOptions {
   fileId: number
@@ -158,10 +179,10 @@ export function createProgressSaver({ fileId, isEnabled, buildRecord, source, be
       const proceed = beforeSave?.()
       if (proceed !== undefined && proceed !== true && !(await proceed)) return
       const record = buildRecord()
-      const res = await api(`/api/v1/books/files/${fileId}/progress`, {
-        method: 'POST',
+      const res = await api('/api/v1/reading-progress', {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...record, source: source() }),
+        body: JSON.stringify({ writes: [toProgressWrite(fileId, source(), record)] }),
         signal: AbortSignal.timeout(SAVE_TIMEOUT_MS),
       })
       if (!res.ok && (res.status >= 500 || res.status === 429)) dirty = true

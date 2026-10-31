@@ -38,7 +38,6 @@ import { MonitoredReleaseDateLookupService } from './monitored-release-date-look
 import { MonitoredReleaseProbeStore } from './monitored-release-probe-store.service';
 import { MonitoredReleaseProbeService } from './monitored-release-probe.service';
 import { MonitoredUniversalSearchService } from './monitored-universal-search.service';
-import { HardcoverSearchCache } from './hardcover-search-cache';
 import { AppleBooksClient } from './release-probe/apple-books.client';
 import { AudibleCatalogClient } from './release-probe/audible-catalog.client';
 import { AmazonProductPageClient } from './release-probe/amazon-product-page.client';
@@ -89,7 +88,6 @@ import { AmazonProductPageClient } from './release-probe/amazon-product-page.cli
     MonitoredReleaseProbeService,
     MonitoredReleaseDateLookupService,
     MonitoredUniversalSearchService,
-    HardcoverSearchCache,
     AppleBooksClient,
     AudibleCatalogClient,
     AmazonProductPageClient,

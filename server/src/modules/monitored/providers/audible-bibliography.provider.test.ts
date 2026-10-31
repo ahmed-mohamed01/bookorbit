@@ -31,7 +31,7 @@ function stubCatalog(total: number, reportedTotal: number | null = total): { pag
         ok: true,
         status: 200,
         headers: new Headers(),
-        json: () => Promise.resolve(reportedTotal == null ? { products: slice } : { products: slice, total_results: reportedTotal }),
+        body: new Response(JSON.stringify(reportedTotal == null ? { products: slice } : { products: slice, total_results: reportedTotal })).body,
       } as unknown as Response);
     }),
   );

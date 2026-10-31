@@ -128,7 +128,6 @@ export class GroupedMangaFetcher {
           summary: metadata.description ?? null,
           genres: metadata.genres ?? [],
           language: metadata.language ?? null,
-          web: series.sourceUrl,
         },
         WEB_SERIAL_SIZE_CAPS.manga,
       );

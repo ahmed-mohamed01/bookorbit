@@ -382,7 +382,6 @@ describe('ReleaseFileInspectionPanel', () => {
       const wrapper = mountPanel({ inspection: multi(), clients: clientList(true), ...identity })
       await flushPromises()
       await tickFirstBook(wrapper)
-      expect(wrapper.emitted('sent')).toEqual([[42]])
       const body = JSON.parse(vi.mocked(api).mock.calls[0]![1]!.body as string)
       expect(body).toEqual({ sourceRequestId: 5, indexerId: 2, releaseGuid: 'guid-1', downloadClientId: 7, unitIndexes: [0] })
     })

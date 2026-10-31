@@ -28,8 +28,10 @@ import { MetadataPreferencesService } from '../metadata-preferences/metadata-pre
 import { SeriesExpectedCountService } from '../../common/services/series-expected-count.service';
 import { applyGenreFetchOptions, createGenreBlocklistTokenSet, mergeExistingGenres } from '../../common/utils/genre-fetch-options.utils';
 import { normalizeMetadataText, normalizeMetadataTextKey } from '../../common/utils/metadata-text-normalize.utils';
+import { isRunYearQualifiedName } from '../../common/utils/series-run-year.utils';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { canonicalIsbn13, isValidIsbn10, isValidIsbn13, normalizeMetadataIsbn } from '../../common/text-match/isbn-normalize';
+import { normalizeTitleText } from '../../common/text-match/title-match';
 import { acceptAgainstAnchor, resolveCandidateAgreement } from './candidate-agreement';
 import { MetadataFetchService, type MetadataSearchEvent, type MetadataSearchOptions } from './metadata-fetch.service';
 import { ProviderRegistry } from './provider-registry';
@@ -508,6 +510,8 @@ export class MetadataFetchPipeline {
       hardcoverEditionId: undefined,
       existingProviderIds,
       isAudiobook: medium === 'audio',
+      // The other cover slot's medium: the audiobook, or the reading side of an audiobook.
+      mediaKind: medium === 'audio' ? 'audiobook' : pass1.params.mediaKind === 'audiobook' ? 'ebook' : pass1.params.mediaKind,
       includeAudiobookProviders: false,
     };
     const pass2 = await this.searchCandidates(pass2Params, pass2Providers, pass1.searchOptions);
@@ -815,6 +819,10 @@ export class MetadataFetchPipeline {
             break;
           case 'overwrite':
           case 'overwriteIfProvided':
+            // Providers name a comic run without its start year, so taking their name would merge
+            // "Batman (2016)" back into every other "Batman" run.
+            if (field === 'seriesName' && typeof value === 'string' && isRunYearQualifiedName(existingValue as string | null | undefined, value))
+              break;
             (result as Record<string, unknown>)[field] = value;
             this.copyPublishedDateForYear(result, candidate, field);
             sources[field] = providerKey;
@@ -851,15 +859,15 @@ export class MetadataFetchPipeline {
       }
     }
 
-    // Pass through chapters from the first candidate that has them, using the narrators field's
-    // provider order as the authority for audiobook data, and its merge strategy too: a fill-missing
-    // rule keeps the chapters a book already has, as it keeps its narrators.
-    const narratorPreference = preferences.fields['narrators'];
-    const chapterProviders = [...(narratorPreference?.providers ?? []), ...identifying.keys()];
-    const chaptersFillOnly = options?.preserveExisting === true || narratorPreference?.mergeStrategy === 'fillMissing';
+    // Pass through chapters from the first candidate that has them, using the
+    // narrators field's provider preference order as the authority for audiobook data. A fetch only
+    // fills a book that has none: a provider's chapters time a release the files may not be, so
+    // replacing a list is the chapter editor's job, where the person reviews it first.
+    const narratorProviders = preferences.fields['narrators']?.providers ?? [];
+    const chapterProviders = [...narratorProviders, ...identifying.keys()];
     for (const providerKey of chapterProviders) {
       const candidate = identifying.get(providerKey);
-      if (candidate?.chapters?.length && (!chaptersFillOnly || this.isMissing(existing.chapters))) {
+      if (candidate?.chapters?.length && this.isMissing(existing.chapters)) {
         result.chapters = candidate.chapters;
         break;
       }
@@ -1150,12 +1158,7 @@ const ADDITIVE_ROLE_FIELDS: ReadonlySet<MetadataField> = new Set<MetadataField>(
 
 /** Series names compared without case, accents or punctuation, so "Mistborn: Saga" and "Mistborn Saga" are one series. */
 function seriesMatchKey(name: string | null | undefined): string | null {
-  const key = name
-    ?.normalize('NFKD')
-    .replace(/\p{M}+/gu, '')
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, ' ')
-    .trim();
+  const key = normalizeTitleText(name ?? '');
   return key ? key : null;
 }
 

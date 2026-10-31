@@ -1,5 +1,7 @@
+import { readBoundedText } from '../../../common/utils/bounded-response';
 import { BadGatewayException, HttpException, Injectable, Logger } from '@nestjs/common';
 
+import { isPublishedDateKey } from '../../../common/utils/published-date.utils';
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import { ProviderThrottleError } from '../../metadata-fetch/provider-throttle.error';
 import { buildRequestSignal, sleep } from '../../metadata-fetch/providers/provider-utils';
@@ -76,7 +78,7 @@ export class AppleBooksClient {
       if (typeof candidate.trackName !== 'string' || typeof candidate.artistName !== 'string' || typeof candidate.trackId !== 'number') return [];
       if (!titleTokensMatch(title, candidate.trackName) || !authorMatches(author, candidate.artistName)) return [];
       const releaseDate = typeof candidate.releaseDate === 'string' ? candidate.releaseDate.slice(0, 10) : '';
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(releaseDate)) return [];
+      if (!isPublishedDateKey(releaseDate)) return [];
       return [
         {
           trackId: candidate.trackId,
@@ -119,7 +121,7 @@ export class AppleBooksClient {
         throw new ProviderThrottleError(undefined, `HTTP ${response.status}`);
       }
       if (!response.ok) throw new BadGatewayException(`Apple Books returned HTTP ${response.status}`);
-      return (await response.json()) as AppleSearchResponse;
+      return JSON.parse(await readBoundedText(response, 4 * 1024 * 1024)) as AppleSearchResponse;
     } catch (error) {
       if (error instanceof ProviderThrottleError) this.pauseRequests(Date.now() - startedAt, error.message);
       if (error instanceof HttpException || error instanceof ProviderThrottleError) throw error;

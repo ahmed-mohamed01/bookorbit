@@ -1,3 +1,4 @@
+import { normalizeMetadataIsbn as hardcoverNormalizeIsbn } from '../../common/text-match/isbn-normalize';
 /**
  * Audiobookshelf UPSTREAM CONTRACT tests.
  *
@@ -32,14 +33,7 @@
 import { describe, expect, it } from 'vitest';
 
 // 1) Hardcover fuzzy-match helpers - ABS's scoreFuzzy tier is built on these.
-import {
-  normalizeIsbn as hardcoverNormalizeIsbn,
-  normalizeName,
-  normalizedLevenshtein,
-  scoreAuthors,
-  scoreTitle,
-  tokenOverlap,
-} from '../../common/utils/fuzzy-match.utils';
+import { normalizeName, normalizedLevenshtein, scoreAuthors, scoreTitle, tokenOverlap } from '../../common/utils/fuzzy-match.utils';
 
 // 2/3) isbn-detect - ABS's metadata.json persist-path validator/normalizer.
 import { isValidIsbn10, isValidIsbn13, normalizeIsbn as isbnDetectNormalizeIsbn } from '../metadata/lib/isbn-detect';
@@ -59,7 +53,7 @@ import {
 } from '../../common/utils/reading-daily-stats.utils';
 
 // 7) cover decode gate - ABS's sidecar cover handler gates writes on this.
-import { isDecodableImage } from '../metadata/lib/cover';
+import { isDecodableImage } from './audiobookshelf-image.utils';
 
 // 8) migration planner path helpers - ABS's path match tier rewrites ABS item paths through these.
 import { applyPathMappings, pathMatchesPrefix } from '../migration/planner/matching.service';
@@ -152,19 +146,6 @@ describe('upstream contract: isbn-detect validators (ABS metadata.json persist p
 });
 
 describe('upstream contract: ISBN normalizer cross-check (persist path vs match path)', () => {
-  /**
-   * THE CROSS-CHECK (highest value). ABS deliberately uses isbn-detect's normalizeIsbn on the
-   * PERSIST path (abs-metadata.mapper.ts) and hardcover's exported normalizeIsbn on the MATCH
-   * path (audiobookshelf.repository ISBN tier), and relies on them producing the IDENTICAL
-   * normalized string so a book persisted under one key matches under the other. isbn-detect
-   * uses [^0-9Xx]/g + toUpperCase; hardcover uses [^0-9X]/gi + toUpperCase. If a future
-   * upstream merge changes EITHER character class or casing, this test catches the divergence
-   * that would break ABS matching.
-   *
-   * Note the ONLY documented, benign difference: hardcover returns null when the result is
-   * empty, isbn-detect returns ''. We assert equivalence on inputs that normalize to a
-   * non-empty value (the only inputs that can ever match a book).
-   */
   const cases = ['978-0-306-40615-7', '979 8 6024 07 815', '0-8044-2957-x', 'ISBN: 9780306406157', '  080442957X  '];
 
   for (const raw of cases) {

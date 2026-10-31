@@ -112,6 +112,7 @@ export function job(overrides: Partial<WebSerialJob> = {}): WebSerialJob {
     current: null,
     message: null,
     queuePosition: null,
+    canMoveToTop: false,
     owner: null,
     createdAt: '2026-10-13T10:00:00.000Z',
     startedAt: null,

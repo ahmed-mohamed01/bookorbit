@@ -1,5 +1,6 @@
 import type { MonitoredFormat } from '@bookorbit/types';
 
+import { isPublishedDateKey } from '../../../common/utils/published-date.utils';
 import type { HardcoverEditionsProbeBook } from '../../metadata-fetch/providers/hardcover/hardcover.types';
 import type { EditionEvidence, HardcoverEvidence, HardcoverProbeBook, HardcoverProbeEdition } from './release-probe.types';
 
@@ -74,7 +75,7 @@ function evidenceFor(format: MonitoredFormat, book: HardcoverProbeBook, today: s
 
   const dated = editions.filter((edition) => edition.releaseDate !== null);
   const precise = dated
-    .filter((edition) => /^\d{4}-\d{2}-\d{2}$/.test(edition.releaseDate!) && !isPlaceholderDate(edition.releaseDate!))
+    .filter((edition) => isPublishedDateKey(edition.releaseDate!) && !isPlaceholderDate(edition.releaseDate!))
     .sort((a, b) => a.releaseDate!.localeCompare(b.releaseDate!));
   if (precise.length > 0) {
     // A zero-user placeholder dated earlier must not mask a real edition, so the earliest edition
@@ -87,7 +88,7 @@ function evidenceFor(format: MonitoredFormat, book: HardcoverProbeBook, today: s
   if (dated.length > 0) {
     const year = dated.map((edition) => edition.releaseDate!.slice(0, 4)).sort()[0];
     const bookDate = book.releaseDate;
-    if (bookDate && /^\d{4}-\d{2}-\d{2}$/.test(bookDate) && bookDate.startsWith(`${year}-`) && !isPlaceholderDate(bookDate)) {
+    if (bookDate && isPublishedDateKey(bookDate) && bookDate.startsWith(`${year}-`) && !isPlaceholderDate(bookDate)) {
       return { count: editions.length, date: bookDate, precision: 'day', strength: 'weak', seeds };
     }
     return { count: editions.length, date: year, precision: 'year', strength: 'weak', seeds };

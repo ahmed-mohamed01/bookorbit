@@ -46,27 +46,6 @@ function makeSelectChain<T>(terminalMethod: string, terminalResult: T) {
   return chain;
 }
 
-// The ten select() chains enrichBookIds issues, in order: the card page itself, then authors, files,
-// genres, tags, narrators, series memberships, statuses, file progress and audiobook progress.
-function makeEnrichSelect(cardRows: unknown[], fileProgressRows: unknown[]) {
-  return vi
-    .fn()
-    .mockReturnValueOnce(makeSelectChain('offset', cardRows))
-    .mockReturnValueOnce(makeSelectChain('orderBy', []))
-    .mockReturnValueOnce(makeSelectChain('orderBy', []))
-    .mockReturnValueOnce(makeSelectChain('where', []))
-    .mockReturnValueOnce(makeSelectChain('where', []))
-    .mockReturnValueOnce(makeSelectChain('orderBy', []))
-    .mockReturnValueOnce(makeSelectChain('orderBy', []))
-    .mockReturnValueOnce(makeSelectChain('where', []))
-    .mockReturnValueOnce(makeSelectChain('where', fileProgressRows))
-    .mockReturnValueOnce(makeSelectChain('where', []));
-}
-
-function makeExtraProgressSource(entries: [number, { percentage: number; updatedAt: Date }][]) {
-  return { findProgressForBooks: vi.fn().mockResolvedValue(new Map(entries)) };
-}
-
 function makeInsertChain() {
   const onConflictDoUpdate = vi.fn().mockResolvedValue(undefined);
   const values = vi.fn().mockReturnValue({ onConflictDoUpdate });
@@ -197,7 +176,10 @@ describe('BookRepository', () => {
     expect(db.transaction).toHaveBeenCalledTimes(1);
     expect(tx.update).toHaveBeenCalledTimes(1);
     expect(tx.delete).toHaveBeenCalledTimes(1);
-    expect(tx.execute).toHaveBeenCalledTimes(1);
+    // Unfinished reads dropped, finished ones kept with a snapshot, then the books deleted.
+    expect(tx.execute).toHaveBeenCalledTimes(3);
+    expect(new PgDialect().sqlToQuery(tx.execute.mock.calls[1]![0]).sql).toContain('book_title_snapshot');
+    expect(new PgDialect().sqlToQuery(tx.execute.mock.calls[2]![0]).sql).toContain('delete from "books"');
     const invalidationQuery = new PgDialect().sqlToQuery(stateDeleteWhere.mock.calls[0]![0]);
     expect(invalidationQuery.sql).toContain('"library_dir_scan_state"."library_folder_id" = $1');
     expect(invalidationQuery.sql).toContain('"library_dir_scan_state"."dir_path" in');
@@ -244,7 +226,7 @@ describe('BookRepository', () => {
     await repo.deleteByIdsAndInvalidateScanState(bookRows.map((row) => row.id));
 
     expect(tx.delete).toHaveBeenCalledTimes(2);
-    expect(tx.execute).toHaveBeenCalledTimes(1);
+    expect(tx.execute).toHaveBeenCalledTimes(3);
   });
 
   it('findCards loads card rows and related collections for the current user', async () => {
@@ -273,7 +255,6 @@ describe('BookRepository', () => {
         .mockReturnValueOnce(makeSelectChain('where', statusRows))
         .mockReturnValueOnce(makeSelectChain('where', fileProgressRows))
         .mockReturnValueOnce(makeSelectChain('where', [])),
-      execute: vi.fn().mockResolvedValue({ rows: [] }),
     };
     const repo = new BookRepository(db as never);
 
@@ -312,65 +293,12 @@ describe('BookRepository', () => {
         .mockReturnValueOnce(makeSelectChain('where', []))
         .mockReturnValueOnce(makeSelectChain('where', readingProgressRows))
         .mockReturnValueOnce(makeSelectChain('where', audiobookProgressRows)),
-      execute: vi.fn().mockResolvedValue({ rows: [] }),
     };
     const repo = new BookRepository(db as never);
 
     const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
 
     expect(result.progressRows).toEqual([{ bookFileId: 1001, percentage: 48 }]);
-  });
-
-  it("findCards maps an extra source's newer progress onto the card", async () => {
-    const rows = [{ id: 10, primaryFileId: 1001, _total: 1 }];
-    const readingProgressRows = [{ bookFileId: 1001, percentage: 30, lastReadAt: new Date('2026-01-01T00:00:00.000Z') }];
-    const extraProgress = makeExtraProgressSource([[10, { percentage: 62, updatedAt: new Date('2026-01-03T00:00:00.000Z') }]]);
-
-    const db = { select: makeEnrichSelect(rows, readingProgressRows), execute: vi.fn() };
-    const repo = new BookRepository(db as never, undefined, undefined, extraProgress);
-
-    const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
-
-    expect(extraProgress.findProgressForBooks).toHaveBeenCalledWith(7, [10]);
-    expect(result.progressRows).toEqual([{ bookFileId: 1001, percentage: 62 }]);
-  });
-
-  it("keeps the card's own progress when it is fresher than the extra source's", async () => {
-    const rows = [{ id: 10, primaryFileId: 1001, _total: 1 }];
-    const readingProgressRows = [{ bookFileId: 1001, percentage: 71, lastReadAt: new Date('2026-01-05T00:00:00.000Z') }];
-    const extraProgress = makeExtraProgressSource([[10, { percentage: 40, updatedAt: new Date('2026-01-03T00:00:00.000Z') }]]);
-
-    const db = { select: makeEnrichSelect(rows, readingProgressRows), execute: vi.fn() };
-    const repo = new BookRepository(db as never, undefined, undefined, extraProgress);
-
-    const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
-
-    expect(result.progressRows).toEqual([{ bookFileId: 1001, percentage: 71 }]);
-  });
-
-  it("surfaces an extra source's progress for a card that has none of its own", async () => {
-    const rows = [{ id: 20, primaryFileId: 2001, _total: 1 }];
-    const extraProgress = makeExtraProgressSource([[20, { percentage: 33, updatedAt: new Date('2026-01-03T00:00:00.000Z') }]]);
-
-    const db = { select: makeEnrichSelect(rows, []), execute: vi.fn() };
-    const repo = new BookRepository(db as never, undefined, undefined, extraProgress);
-
-    const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
-
-    expect(result.progressRows).toEqual([{ bookFileId: 2001, percentage: 33 }]);
-  });
-
-  it('merges no extra progress when no source is injected', async () => {
-    const rows = [{ id: 10, primaryFileId: 1001, _total: 1 }];
-    const readingProgressRows = [{ bookFileId: 1001, percentage: 30, lastReadAt: new Date('2026-01-01T00:00:00.000Z') }];
-
-    const db = { select: makeEnrichSelect(rows, readingProgressRows), execute: vi.fn() };
-    const repo = new BookRepository(db as never);
-
-    const result = await repo.findCards({ where: undefined as never, orderBy: [] as never, limit: 25, offset: 0, userId: 7 });
-
-    expect(result.progressRows).toEqual([{ bookFileId: 1001, percentage: 30 }]);
-    expect(db.execute).not.toHaveBeenCalled();
   });
 
   it('findCards hydrates related collections in batches of three', async () => {
@@ -1083,8 +1011,8 @@ describe('BookRepository', () => {
 
     await repo.deleteByIds([10, 11]);
     await repo.updateMetadataFields(10, { title: 'Updated' });
-    expect(db.execute).toHaveBeenCalledTimes(1);
-    expect(new PgDialect().sqlToQuery(db.execute.mock.calls[0]![0]).sql).toContain('delete from "books"');
+    expect(db.execute).toHaveBeenCalledTimes(3);
+    expect(new PgDialect().sqlToQuery(db.execute.mock.calls[2]![0]).sql).toContain('delete from "books"');
     expect(db.update).toHaveBeenCalledTimes(2);
     expect(updateBuilder.set).toHaveBeenNthCalledWith(1, { title: 'Updated' });
     expect(updateBuilder.set).toHaveBeenNthCalledWith(2, expect.objectContaining({ updatedAt: expect.any(Date) }));
@@ -2038,20 +1966,31 @@ describe('BookRepository', () => {
 
   describe('bulkSetRating', () => {
     it('does nothing for an empty book id list', async () => {
-      const db = { insert: vi.fn() };
+      const db = { insert: vi.fn(), transaction: vi.fn() };
       const repo = new BookRepository(db as never);
 
       await repo.bulkSetRating([], 4, 7);
 
       expect(db.insert).not.toHaveBeenCalled();
+      expect(db.transaction).not.toHaveBeenCalled();
     });
 
-    it('upserts a rating row per book id', async () => {
+    function ratingDb(insertChain: ReturnType<typeof makeInsertChain>) {
+      const tx = { insert: vi.fn().mockReturnValue(insertChain), execute: vi.fn().mockResolvedValue(undefined) };
+      return { tx, db: { transaction: vi.fn((callback: (executor: typeof tx) => Promise<void>) => callback(tx)) } };
+    }
+
+    it('upserts a rating row per book id and gives each book the same stars on its latest finished read', async () => {
       const insertChain = makeInsertChain();
-      const db = { insert: vi.fn().mockReturnValue(insertChain) };
+      const { tx, db } = ratingDb(insertChain);
       const repo = new BookRepository(db as never);
 
       await repo.bulkSetRating([10, 20], 4, 7);
+
+      const readUpdate = new PgDialect().sqlToQuery(tx.execute.mock.calls[0]![0]);
+      expect(readUpdate.sql).toContain('update "reading_attempts" set rating =');
+      expect(readUpdate.sql).toContain('order by ra.book_id, ra.ended_on desc nulls last, ra.id desc');
+      expect(readUpdate.params).toEqual([4, 7, 10, 20]);
 
       expect(insertChain.values).toHaveBeenCalledWith([
         { userId: 7, bookId: 10, rating: 4 },
@@ -2066,7 +2005,7 @@ describe('BookRepository', () => {
 
     it('upserts a null rating tombstone instead of deleting the row', async () => {
       const insertChain = makeInsertChain();
-      const db = { insert: vi.fn().mockReturnValue(insertChain) };
+      const { db } = ratingDb(insertChain);
       const repo = new BookRepository(db as never);
 
       await repo.bulkSetRating([10], null, 7);

@@ -68,6 +68,7 @@ export type WebSerialJobWithLibrary = Omit<WebSerialJobRow, 'engineState' | 'sel
   ownerName: string | null;
   /** 1-based rank among every queued job on the instance; null unless queued. */
   queuePosition: number | null;
+  ownerQueuePosition: number | null;
 };
 
 export type WebSerialJobItemSummary = Pick<WebSerialJobItemRow, 'id' | 'label' | 'sequence' | 'status' | 'error' | 'bookId' | 'updatedAt'>;
@@ -399,15 +400,6 @@ export class WebSerialsRepository {
       .limit(10);
   }
 
-  async findSeriesRequestsByKeys(keys: string[]): Promise<WebSerialSeriesRequestRow[]> {
-    if (keys.length === 0) return [];
-    return this.db
-      .select()
-      .from(webSerialSeriesRequests)
-      .where(sql`${webSerialSeriesRequests.seriesKeys} && ${sql.param(keys)}::text[]`)
-      .limit(50);
-  }
-
   async findSeriesRequestById(id: number): Promise<WebSerialSeriesRequestRow | undefined> {
     const [row] = await this.db.select().from(webSerialSeriesRequests).where(eq(webSerialSeriesRequests.id, id)).limit(1);
     return row;
@@ -466,6 +458,22 @@ export class WebSerialsRepository {
       .orderBy(asc(libraryFolders.id));
   }
 
+  async withUserJobQuota<T>(
+    userId: number,
+    limit: number,
+    exceeded: () => Error,
+    operation: (repo: WebSerialsRepository) => Promise<T>,
+    count: (repo: WebSerialsRepository) => Promise<number> = (repo) => repo.countCappedJobsForUser(userId),
+  ): Promise<T> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(1465078602, ${userId})`);
+      const repo = new WebSerialsRepository(tx as unknown as Db);
+      const result = await operation(repo);
+      if ((await count(repo)) > limit) throw exceeded();
+      return result;
+    });
+  }
+
   async createJob(values: NewWebSerialJobRow): Promise<WebSerialJobRow> {
     const [row] = await this.db.insert(webSerialJobs).values(values).returning();
     return row!;
@@ -511,6 +519,11 @@ export class WebSerialsRepository {
           where ${ahead.status} = 'queued'
             and (${ahead.queueOrder} < ${webSerialJobs.queueOrder} or (${ahead.queueOrder} = ${webSerialJobs.queueOrder} and ${ahead.id} <= ${webSerialJobs.id}))
         ) end`,
+        ownerQueuePosition: sql<number | null>`case when ${webSerialJobs.status} = 'queued' then (
+          select count(*)::int from ${webSerialJobs} as ${sql.identifier('queue_ahead')}
+          where ${ahead.status} = 'queued' and ${ahead.userId} = ${webSerialJobs.userId}
+            and (${ahead.queueOrder} < ${webSerialJobs.queueOrder} or (${ahead.queueOrder} = ${webSerialJobs.queueOrder} and ${ahead.id} <= ${webSerialJobs.id}))
+        ) end`,
       })
       .from(webSerialJobs)
       .leftJoin(libraries, eq(libraries.id, webSerialJobs.targetLibraryId))
@@ -531,8 +544,15 @@ export class WebSerialsRepository {
     libraryName: string | null;
     ownerName: string | null;
     queuePosition: number | null;
+    ownerQueuePosition: number | null;
   }): WebSerialJobWithLibrary {
-    return { ...row.job, libraryName: row.libraryName, ownerName: row.ownerName, queuePosition: row.queuePosition };
+    return {
+      ...row.job,
+      libraryName: row.libraryName,
+      ownerName: row.ownerName,
+      queuePosition: row.queuePosition,
+      ownerQueuePosition: row.ownerQueuePosition,
+    };
   }
 
   /** Every job in scope and how many of them are finished, for paging the queue. */
@@ -677,8 +697,9 @@ export class WebSerialsRepository {
     return this.transitionJob(id, ['paused'], { status: 'queued', queueOrder, heartbeatAt: null });
   }
 
-  async moveJobToTop(id: number): Promise<WebSerialJobId | undefined> {
-    const lowest = sql`(select min(${webSerialJobs.queueOrder}) from ${webSerialJobs} where ${webSerialJobs.status} = 'queued')`;
+  async moveJobToTop(id: number, userId: number | null = null): Promise<WebSerialJobId | undefined> {
+    const scope = userId === null ? sql`true` : sql`${webSerialJobs.userId} = ${userId}`;
+    const lowest = sql`(select min(${webSerialJobs.queueOrder}) from ${webSerialJobs} where ${webSerialJobs.status} = 'queued' and ${scope})`;
     return this.transitionJob(id, ['queued'], { queueOrder: sql`least(coalesce(${lowest}, ${QUEUE_ORDER_NOW}), ${QUEUE_ORDER_NOW}) - 1` });
   }
 

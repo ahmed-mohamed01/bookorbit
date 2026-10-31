@@ -13,10 +13,8 @@ const props = withDefaults(
     volumes?: number[]
     neededCount?: number
     delivery: DownloadDelivery
-    blocked?: boolean
-    canViewFiles?: boolean
   }>(),
-  { volumes: () => [], neededCount: 0, canViewFiles: true },
+  { volumes: () => [], neededCount: 0 },
 )
 const emit = defineEmits<{ select: []; 'view-files': [] }>()
 const { t } = useI18n()
@@ -39,14 +37,14 @@ const volumeLabel = computed(() =>
     : '',
 )
 function select() {
-  if (!props.blocked) emit('select')
+  emit('select')
 }
 function viewFiles() {
   emit('view-files')
 }
 </script>
 <template>
-  <article class="rounded-xl border bg-card" :class="[selected ? 'border-primary/40 bg-primary/10' : 'border-border', blocked ? 'opacity-60' : '']">
+  <article class="rounded-xl border bg-card" :class="selected ? 'border-primary/40 bg-primary/10' : 'border-border'">
     <div class="flex flex-wrap items-start gap-3.5 px-4 py-3.5">
       <span
         class="flex size-10 shrink-0 items-center justify-center rounded-lg border text-sm font-bold"
@@ -77,11 +75,7 @@ function viewFiles() {
             :class="neededCount ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'"
             >{{ volumeLabel }} · {{ t(neededCount ? 'webSerials.acquisition.youNeed' : 'webSerials.acquisition.youHave', neededCount) }}</span
           ><span v-if="release.freeleech" class="rounded-full bg-success/10 px-2 py-1 text-success">{{ t('webSerials.acquisition.freeleech') }}</span
-          ><span
-            v-if="release.vipOnly"
-            class="rounded-full px-2 py-1"
-            :class="blocked ? 'bg-destructive/10 text-destructive' : 'bg-success/10 text-success'"
-            >{{ t('webSerials.acquisition.vip') }}</span
+          ><span v-if="release.vipOnly" class="rounded-full bg-success/10 px-2 py-1 text-success">{{ t('webSerials.acquisition.vip') }}</span
           ><span v-if="release.alreadyGrabbed" class="rounded-full bg-muted px-2 py-1 text-muted-foreground">{{
             t('webSerials.acquisition.grabbed')
           }}</span>
@@ -90,7 +84,6 @@ function viewFiles() {
       </div>
       <div class="flex shrink-0 items-center gap-2">
         <button
-          v-if="canViewFiles"
           type="button"
           class="inline-flex h-9 items-center gap-1.5 rounded-lg border border-border px-3 text-xs"
           :aria-expanded="expanded"
@@ -101,12 +94,11 @@ function viewFiles() {
           type="button"
           class="h-9 min-w-23 rounded-lg border border-primary/40 px-3 text-xs font-semibold disabled:cursor-not-allowed"
           :class="selected ? 'bg-primary text-primary-foreground' : 'text-primary'"
-          :disabled="blocked"
           :aria-pressed="selected"
           :aria-label="t(selected ? 'webSerials.acquisition.deselectRelease' : 'webSerials.acquisition.selectRelease', { title: release.title })"
           @click="select"
         >
-          {{ t(blocked ? 'webSerials.acquisition.needsVip' : selected ? 'webSerials.acquisition.selected' : 'webSerials.acquisition.select') }}
+          {{ t(selected ? 'webSerials.acquisition.selected' : 'webSerials.acquisition.select') }}
         </button>
       </div>
     </div>

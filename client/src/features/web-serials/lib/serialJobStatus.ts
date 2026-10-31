@@ -38,7 +38,7 @@ export type SerialJobAction = 'pause' | 'resume' | 'moveToTop' | 'cancel' | 'ret
 /** Actions that sit as icon buttons in the row; the rest go in the overflow menu. */
 export const INLINE_JOB_ACTIONS: readonly SerialJobAction[] = ['pause', 'resume', 'retry', 'open', 'cancel']
 
-export function jobActions(job: Pick<WebSerialJob, 'status' | 'queuePosition' | 'kind'>): SerialJobAction[] {
+export function jobActions(job: Pick<WebSerialJob, 'status' | 'canMoveToTop' | 'kind'>): SerialJobAction[] {
   const actions = baseJobActions(job)
   if (job.kind !== 'manga' || !canMoveJob(job)) return actions
   const removeAt = actions.indexOf('remove')
@@ -50,13 +50,13 @@ export function canMoveJob(job: Pick<WebSerialJob, 'status'>): boolean {
   return job.status !== 'completed' && job.status !== 'cancelled'
 }
 
-function baseJobActions(job: Pick<WebSerialJob, 'status' | 'queuePosition'>): SerialJobAction[] {
+function baseJobActions(job: Pick<WebSerialJob, 'status' | 'canMoveToTop'>): SerialJobAction[] {
   switch (job.status) {
     case 'running':
     case 'importing':
       return ['pause', 'cancel']
     case 'queued':
-      return job.queuePosition === 1 ? ['pause', 'cancel'] : ['moveToTop', 'pause', 'cancel']
+      return job.canMoveToTop ? ['moveToTop', 'pause', 'cancel'] : ['pause', 'cancel']
     case 'paused':
       return ['resume', 'cancel']
     case 'failed':

@@ -3,7 +3,7 @@ import { CronTime } from 'cron';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AudiobookshelfSyncSchedulerService } from './audiobookshelf-sync-scheduler.service';
-import { AUDIOBOOKSHELF_HOT_SCHEDULER_CRON, AUDIOBOOKSHELF_SCHEDULER_CRON } from './audiobookshelf.constants';
+import { AUDIOBOOKSHELF_HOT_SCHEDULER_CRON, AUDIOBOOKSHELF_SCHEDULER_CONCURRENCY, AUDIOBOOKSHELF_SCHEDULER_CRON } from './audiobookshelf.constants';
 
 const mockRepo = {
   findEnabledConfiguredUsers: vi.fn(),
@@ -87,6 +87,27 @@ describe('AudiobookshelfSyncSchedulerService', () => {
       expect(logSpy).toHaveBeenCalledTimes(2);
       expect(logSpy).toHaveBeenCalledWith('[abs.scheduler] [start] - run started');
       expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('[abs.scheduler] [end]'));
+    });
+
+    it('starts another user when a slot opens while a slow user remains in flight', async () => {
+      const pending = makeDeferred<void>();
+      const count = AUDIOBOOKSHELF_SCHEDULER_CONCURRENCY + 1;
+      const lastStarted = makeDeferred<void>();
+      mockRepo.findEnabledConfiguredUsers.mockResolvedValue(Array.from({ length: count }, (_, index) => ({ userId: index + 1 })));
+      mockSyncService.sync.mockImplementation((user: { id: number }) => {
+        if (user.id === 1) return pending.promise;
+        if (user.id === count) lastStarted.resolve();
+        return Promise.resolve();
+      });
+
+      const run = makeService().runScheduledSync();
+      try {
+        await lastStarted.promise;
+        expect(mockSyncService.sync).toHaveBeenCalledWith(eligibleUser(count), {});
+      } finally {
+        pending.resolve();
+        await run;
+      }
     });
 
     it('walks keyset pages, advancing afterUserId to the last user of the page', async () => {

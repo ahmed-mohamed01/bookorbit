@@ -3,6 +3,7 @@ import { SelfWriteRegistryModule } from '../../common/self-write-registry.module
 
 import { AchievementModule } from '../achievement/achievement.module';
 import { AppSettingsModule } from '../app-settings/app-settings.module';
+import { AudiobookChaptersModule } from '../audiobook-chapters/audiobook-chapters.module';
 import { EmbeddingModule } from '../embedding/embedding.module';
 import { FileWriteModule } from '../file-write/file-write.module';
 import { LibraryModule } from '../library/library.module';
@@ -15,7 +16,6 @@ import { MetadataScoreModule } from '../metadata-score/metadata-score.module';
 import { NarratorModule } from '../narrator/narrator.module';
 import { UserBookNoteModule } from '../user-book-note/user-book-note.module';
 import { PositionConverterModule } from '../position-converter/position-converter.module';
-import { UserModule } from '../user/user.module';
 import { UserBookStatusModule } from '../user-book-status/user-book-status.module';
 import { AudiobookEbookProgressSyncService } from './audiobook-ebook-progress-sync.service';
 import { DeliveryArtifactRepository } from './delivery-artifact.repository';
@@ -31,10 +31,13 @@ import { BookRepository } from './book.repository';
 import { BookService } from './book.service';
 import { BookAuthorSortKeyBackfillService } from './book-author-sort-key-backfill.service';
 import { ReadingAttemptController } from './reading-attempt.controller';
+import { ReadingProgressController } from './reading-progress.controller';
+import { ReadingProgressService } from './reading-progress.service';
 
 @Module({
   imports: [
     forwardRef(() => LibraryModule),
+    AudiobookChaptersModule,
     BookMetadataLockModule,
     BookCoverStoreModule,
     CustomMetadataModule,
@@ -48,11 +51,10 @@ import { ReadingAttemptController } from './reading-attempt.controller';
     NarratorModule,
     UserBookNoteModule,
     UserBookStatusModule,
-    UserModule,
     AchievementModule,
     PositionConverterModule,
   ],
-  controllers: [BookController, ReadingAttemptController],
+  controllers: [BookController, ReadingAttemptController, ReadingProgressController],
   providers: [
     BookService,
     BookRepository,
@@ -66,6 +68,7 @@ import { ReadingAttemptController } from './reading-attempt.controller';
     DeliveryArtifactRepository,
     DeliverySelectionService,
     DeliveryHashRegistrationService,
+    ReadingProgressService,
   ],
   exports: [BookService, BookReadService, BookQueryBuilder, AudiolessEpubService, DeliveryArtifactService, DeliverySelectionService],
 })

@@ -33,6 +33,7 @@ import type {
   TableDensity,
 } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
+import EmptyState from '@/components/EmptyState.vue'
 import { formatNumber } from '@/i18n/formatters'
 import BrowseHeader from '@/components/browse-header/BrowseHeader.vue'
 import BrowseSearchField from '@/components/browse-header/BrowseSearchField.vue'
@@ -64,7 +65,6 @@ import AddMonitoredPanel from '../components/AddMonitoredPanel.vue'
 import MonitorAuthorModal from '../components/MonitorAuthorModal.vue'
 import MonitoredAuthorCard from '../components/MonitoredAuthorCard.vue'
 import MonitoredBookPanel from '../components/MonitoredBookPanel.vue'
-import MonitoredEmptyState from '../components/MonitoredEmptyState.vue'
 import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
 import MonitoredAudibleNotice from '../components/MonitoredAudibleNotice.vue'
 import MonitoredHardcoverNotice from '../components/MonitoredHardcoverNotice.vue'
@@ -1048,15 +1048,6 @@ function isReleaseRequesting(item: MonitoredReleaseItem): boolean {
   return requestingReleases.value.has(releaseKey(item))
 }
 
-/**
- * Queued covers both halves of the wait: the request this view is still sending, and one the server
- * already reports as sent. Without the second half a grab would leave the card showing its release
- * date, which is exactly the state it was in before the download started.
- */
-function entryQueued(entry: MonitoredReleaseEntry): boolean {
-  return entry.items.some((item) => isReleaseRequesting(item) || isMonitoredAcquisitionState(item.status))
-}
-
 function entryFormatQueued(entry: MonitoredReleaseEntry, format: MonitoredFormat): boolean {
   return entry.items.some((item) => item.format === format && (isReleaseRequesting(item) || isMonitoredAcquisitionState(item.status)))
 }
@@ -1068,7 +1059,7 @@ function entryCanManage(entry: MonitoredReleaseEntry): boolean {
 function entryTimeBadge(entry: MonitoredReleaseEntry): TimeBadge | null {
   const workDate = releaseDateForWork(entry.work)
   const shown = entry.items.find((item) => item.releaseDate === workDate) ?? entry.items[0]
-  return shown ? releaseTimeBadge(shown.releaseDate, t) : null
+  return shown ? releaseTimeBadge(shown.releaseDate) : null
 }
 
 async function handleReleaseRequest(item: MonitoredReleaseItem) {
@@ -1450,13 +1441,11 @@ defineOptions({ name: 'MonitoredView' })
               />
             </template>
           </MonitoredVirtualGrid>
-          <MonitoredEmptyState
-            v-else-if="showEmpty"
-            :title="t('monitored.empty.authorsTitle')"
-            :description="t('monitored.empty.authorsDescription')"
-            :action-label="canManage ? t('monitored.tabs.add') : undefined"
-            @action="openAddTab"
-          />
+          <EmptyState v-else-if="showEmpty" icon="Bell" :title="t('monitored.empty.authorsTitle')" :hint="t('monitored.empty.authorsDescription')">
+            <template v-if="canManage" #actions>
+              <Button @click="openAddTab"><Plus :size="16" /> {{ t('monitored.tabs.add') }}</Button>
+            </template>
+          </EmptyState>
         </section>
 
         <section v-else-if="activeTab === 'releases'" class="mt-4 space-y-6 px-1" :class="selectionMode ? 'pb-28' : ''">
@@ -1522,7 +1511,6 @@ defineOptions({ name: 'MonitoredView' })
               <template #default="{ item: entry }">
                 <MonitoredWorkCard
                   :work="entry.work"
-                  :queued="entryQueued(entry)"
                   :ebook-queued="entryFormatQueued(entry, 'ebook')"
                   :audiobook-queued="entryFormatQueued(entry, 'audiobook')"
                   :time-badge="entryTimeBadge(entry)"
@@ -1545,7 +1533,7 @@ defineOptions({ name: 'MonitoredView' })
               </template>
             </MonitoredVirtualGrid>
           </section>
-          <MonitoredEmptyState v-if="showEmpty" :title="t('monitored.empty.releasesTitle')" :description="t('monitored.empty.releasesDescription')" />
+          <EmptyState v-if="showEmpty" icon="Bell" :title="t('monitored.empty.releasesTitle')" :hint="t('monitored.empty.releasesDescription')" />
         </section>
 
         <div v-else class="mt-4 px-1">

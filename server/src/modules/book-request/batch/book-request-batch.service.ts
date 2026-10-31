@@ -67,11 +67,6 @@ export class BookRequestBatchService {
     return result;
   }
 
-  async findBatchUnitByDockFileId(fileId: number): Promise<{ batchRequestId: number; unit: BatchUnitView } | null> {
-    const row = await this.batches.findUnitByDockFileId(fileId);
-    return row ? { batchRequestId: row.requestId, unit: toUnitView(row) } : null;
-  }
-
   async findRequestsByIds(ids: number[]): Promise<
     Map<
       number,

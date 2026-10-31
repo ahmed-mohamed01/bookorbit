@@ -6456,15 +6456,9 @@
         "metadataScore": "Оценка метаданных",
         "primaryFormat": "Основной формат",
         "readAloudSync": {
-          "title": "Синхронизация в режиме чтения",
           "state": {
-            "enabled": "Включено",
-            "disabled": "Отключено",
-            "unavailable": "Unavailable",
             "epubCopiesOnly": "Только копии EPUB"
           },
-          "enabledDescription": "Audiobook, web reader, Kobo, and KOReader позиции остаются в синхронизации.",
-          "disabledDescription": "Каждый формат сохраняет свою позицию для чтения.",
           "epubCopiesDescription": "Все позиции KOReader синхронизируются между EPUB копиями. Добавляйте соответствующие аудио-файлы для синхронизации аудиокниги.",
           "reason": {
             "no_media_overlay_epub": "Требуется чтение по EPUB с накладываемыми медиа изображениями.",
@@ -6472,9 +6466,6 @@
             "missing_duration": "Аудио длительность метаданных не полна.",
             "durationMismatch": "Длительность не совпадает достаточно часто: аудиокнига {audio}, чтение EPUB {overlay}."
           },
-          "enable": "Включить",
-          "disable": "Отключено",
-          "saving": "Сохранение...",
           "saveFailed": "Не удалось обновить синхронизацию с данными read-aloud"
         },
         "openIn": "Открыть в {provider}",

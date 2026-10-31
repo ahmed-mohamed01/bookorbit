@@ -1,3 +1,4 @@
+import { normalizeMetadataIsbn as normalizeIsbn } from '../../common/text-match/isbn-normalize';
 import { BadRequestException, ConflictException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import type {
   AudiobookshelfCleanupResult,
@@ -9,7 +10,6 @@ import type {
 
 import type { RequestUser } from '../../common/types/request-user';
 import {
-  normalizeIsbn,
   normalizeName,
   normalizedLevenshtein,
   scoreAuthors,

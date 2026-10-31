@@ -488,21 +488,85 @@ it('loads volumes while the initial search is still pending', async () => {
   expect(flow.search.status.value).toBe('loading')
   expect(flow.state.value?.volumes).toEqual(printState.volumes)
 })
-it.each(['file', 'shelfmark', 'usenet'] as const)('sends a null client for %s picks', async (delivery) => {
+const single: ReleaseCandidateItem = { ...release, guid: 'single', title: 'Novel Vol. 2', fileCount: 1 }
+const singleInspection: ReleaseFileInspection = { ...inspection, unitCount: 1, totalFiles: 1, primaryFileCount: 1, selection: null }
+function directSearch(delivery: 'file' | 'shelfmark' | 'usenet', releases: ReleaseCandidateItem[]) {
   vi.mocked(streamReleaseSearch).mockResolvedValue({
     ...result,
+    releases,
     indexers: [{ indexerId: 1, indexerName: 'Direct', delivery, ok: true, count: 1, filtered: 0, seedsBack: false, color: null }],
   })
+}
+function respond(inspected: ReleaseFileInspection, clients: unknown[]) {
+  vi.mocked(api).mockImplementation(async (path) => new Response(JSON.stringify(String(path).endsWith('inspect') ? inspected : clients)))
+}
+it.each(['file', 'shelfmark', 'usenet'] as const)('sends a null client for %s single-file picks', async (delivery) => {
+  directSearch(delivery, [single])
+  respond(singleInspection, [{ id: 5, name: 'Client', color: null, delivery: 'torrent', fileSelection: true }])
   const { flow } = mount()
   await flush()
-  flow.pickSuggestion()
-  await flow.inspect(release)
-  expect(flow.hasTorrentPicks.value).toBe(false)
+  flow.togglePick(single)
+  await flush()
+  expect(flow.needsClient.value).toBe(false)
+  expect(flow.bar.value.canSend).toBe(true)
   await flow.send()
   expect(endpoints.downloadPrintVolumes).toHaveBeenCalledWith(
     '123',
     expect.objectContaining({
-      picks: [expect.objectContaining({ downloadClientId: null })],
+      picks: [expect.objectContaining({ unitIndexes: null, volumes: [2], downloadClientId: null })],
     }),
   )
+})
+it('sends a direct pick when no download client is configured', async () => {
+  directSearch('file', [single])
+  respond(singleInspection, [])
+  const { flow } = mount()
+  await flush()
+  flow.togglePick(single)
+  await flush()
+  expect(flow.bar.value.canSend).toBe(true)
+  await flow.send()
+  const payload = vi.mocked(endpoints.downloadPrintVolumes).mock.calls[0]![1]
+  expect(payload).not.toHaveProperty('downloadClientId')
+  expect(payload.picks).toEqual([expect.objectContaining({ downloadClientId: null })])
+})
+it.each(['file', 'shelfmark', 'usenet'] as const)('sends the chosen client for %s multi-file picks', async (delivery) => {
+  directSearch(delivery, [release])
+  const { flow } = mount()
+  await flush()
+  flow.togglePick(release)
+  await flush()
+  expect(flow.needsClient.value).toBe(true)
+  expect(flow.bar.value.canSend).toBe(true)
+  await flow.send()
+  expect(endpoints.downloadPrintVolumes).toHaveBeenCalledWith(
+    '123',
+    expect.objectContaining({
+      downloadClientId: 5,
+      picks: [expect.objectContaining({ unitIndexes: [1, 2], volumes: [2, 3], downloadClientId: 5 })],
+    }),
+  )
+})
+it('blocks a non-torrent multi-file pick when no download client is configured', async () => {
+  directSearch('usenet', [release])
+  respond(inspection, [])
+  const { flow } = mount()
+  await flush()
+  flow.togglePick(release)
+  await flush()
+  expect(flow.selected.value).toHaveLength(1)
+  expect(flow.needsClient.value).toBe(true)
+  expect(flow.bar.value.canSend).toBe(false)
+  await flow.send()
+  expect(endpoints.downloadPrintVolumes).not.toHaveBeenCalled()
+})
+it('blocks a non-torrent multi-file pick when the client cannot skip files', async () => {
+  directSearch('file', [release])
+  respond(inspection, [{ id: 6, name: 'Plain', color: null, delivery: 'torrent', fileSelection: false }])
+  const { flow } = mount()
+  await flush()
+  flow.togglePick(release)
+  await flush()
+  expect(flow.clientId.value).toBe(6)
+  expect(flow.bar.value.canSend).toBe(false)
 })

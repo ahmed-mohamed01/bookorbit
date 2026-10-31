@@ -9,9 +9,10 @@ import type {
 } from '@bookorbit/types';
 import { MetadataProviderKey } from '@bookorbit/types';
 
+import { StatsCache } from '../../common/cache/stats-cache';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { amazonOrigin } from '../../common/utils/metadata-provider-hosts.utils';
-import { parsePublishedDateKey } from '../../common/utils/published-date.utils';
+import { isPublishedDateKey, parsePublishedDateKey } from '../../common/utils/published-date.utils';
 import { ProviderRegistry } from '../metadata-fetch/provider-registry';
 import { ProviderThrottleError } from '../metadata-fetch/provider-throttle.error';
 import type { MetadataProvider } from '../metadata-fetch/providers/metadata-provider';
@@ -33,8 +34,6 @@ export const LOOKUP_CACHE_TTL_MS = 60_000;
 
 const LOOKUP_CACHE_MAX_ENTRIES = 200;
 
-const FULL_DATE = /^\d{4}-\d{2}-\d{2}$/;
-
 export interface ReleaseDateLookupTarget {
   workId: string;
   title: string;
@@ -47,19 +46,14 @@ export interface ReleaseDateLookupTarget {
 
 type LookupResult = Pick<MonitoredReleaseDateLookup, 'candidates' | 'unavailable' | 'empty'>;
 
-interface CachedLookup {
-  promise: Promise<MonitoredReleaseDateLookup>;
-  expiresAt: number;
-}
-
 function unavailable(source: MonitoredReleaseLookupSource, reason: MonitoredReleaseDateLookup['unavailable'][number]['reason']): LookupResult {
   return { candidates: [], unavailable: [{ source, reason }], empty: [] };
 }
 
 function publishedDatePrecision(publishedDate: string): MonitoredReleaseDateCandidate['precision'] | null {
-  if (publishedDate.length === 10) return 'day';
-  if (publishedDate.length === 7) return 'month';
-  if (publishedDate.length === 4) return 'year';
+  if (publishedDate.length === 10 && isPublishedDateKey(publishedDate)) return 'day';
+  if (publishedDate.length === 7 && isPublishedDateKey(`${publishedDate}-01`)) return 'month';
+  if (publishedDate.length === 4 && isPublishedDateKey(`${publishedDate}-01-01`)) return 'year';
   return null;
 }
 
@@ -108,7 +102,7 @@ function deduplicate(candidates: MonitoredReleaseDateCandidate[]): MonitoredRele
 @Injectable()
 export class MonitoredReleaseDateLookupService {
   private readonly logger = new Logger(MonitoredReleaseDateLookupService.name);
-  private readonly cache = new Map<string, CachedLookup>();
+  private readonly cache = new StatsCache({ ttlMs: LOOKUP_CACHE_TTL_MS, maxEntries: LOOKUP_CACHE_MAX_ENTRIES });
 
   constructor(
     private readonly hardcover: HardcoverClient,
@@ -120,25 +114,7 @@ export class MonitoredReleaseDateLookupService {
   ) {}
 
   lookup(target: ReleaseDateLookupTarget): Promise<MonitoredReleaseDateLookup> {
-    const now = Date.now();
-    for (const [key, entry] of this.cache) {
-      if (entry.expiresAt <= now) this.cache.delete(key);
-    }
-    const key = this.cacheKey(target.userId, target.workId, target.format);
-    const cached = this.cache.get(key);
-    if (cached) return cached.promise;
-
-    while (this.cache.size >= LOOKUP_CACHE_MAX_ENTRIES) {
-      const oldest = this.cache.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      this.cache.delete(oldest);
-    }
-    const promise = this.performLookup(target);
-    this.cache.set(key, { promise, expiresAt: now + LOOKUP_CACHE_TTL_MS });
-    void promise.catch(() => {
-      if (this.cache.get(key)?.promise === promise) this.cache.delete(key);
-    });
-    return promise;
+    return this.cache.get(`user:${target.userId}`, `${target.workId}:${target.format}`, () => this.performLookup(target));
   }
 
   private async performLookup(target: ReleaseDateLookupTarget): Promise<MonitoredReleaseDateLookup> {
@@ -246,7 +222,7 @@ export class MonitoredReleaseDateLookupService {
     const today = new Date().toISOString().slice(0, 10);
     const url = candidateUrl(`https://hardcover.app/books/${encodeURIComponent(target.hardcoverSlug)}`);
     return editionsForFormat(target.format, book, dominantLanguage(book)).flatMap((edition) => {
-      if (!edition.releaseDate || !FULL_DATE.test(edition.releaseDate)) return [];
+      if (!edition.releaseDate || !isPublishedDateKey(edition.releaseDate)) return [];
       return [
         {
           source: 'hardcover_edition' as const,
@@ -431,9 +407,5 @@ export class MonitoredReleaseDateLookupService {
         url: asin ? candidateUrl(`${amazonOrigin(config.amazon.domain)}/dp/${encodeURIComponent(asin)}`) : null,
       },
     ];
-  }
-
-  private cacheKey(userId: number, workId: string, format: MonitoredFormat): string {
-    return `${userId}|${workId}|${format}`;
   }
 }

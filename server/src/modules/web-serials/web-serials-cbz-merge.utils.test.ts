@@ -46,7 +46,6 @@ describe('mergeCbzChapters', () => {
         summary: 'A & B\u0008\u0000 end',
         genres: ['Fantasy'],
         language: 'en',
-        web: 'https://example.test/saga',
       },
       1024 * 1024,
     );
@@ -58,6 +57,9 @@ describe('mergeCbzChapters', () => {
     const xml = await extractCbzZipEntry(output, index!.entries.at(-1)!);
     expect(xml?.toString()).toContain('<Title>Saga, Volume 3</Title>');
     expect(xml?.toString()).toContain('<Summary>A &amp; B end</Summary>');
+    expect(xml?.toString()).toContain('<Penciller>Artist</Penciller>');
+    expect(xml?.toString()).toContain('<Volume>3</Volume>');
+    expect(xml?.toString()).not.toContain('<Web>');
     expect(result).toMatchObject({ path: output, pages: 4 });
     expect(await readFile(`${output}.part`).catch(() => null)).toBeNull();
   });
@@ -75,7 +77,6 @@ describe('mergeCbzChapters', () => {
       summary: null,
       genres: [],
       language: null,
-      web: null,
     };
 
     await expect(mergeCbzChapters([invalid], output, metadata, 1024)).rejects.toThrow('valid CBZ');

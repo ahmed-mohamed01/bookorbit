@@ -486,27 +486,6 @@ describe('BookRequestBatchService system seams', () => {
     expect(repo.findByIds).toHaveBeenCalledExactlyOnceWith([10, 12, 99]);
   });
 
-  it('findBatchUnitByDockFileId maps the unit and its batch request, or returns null', async () => {
-    const findUnitByDockFileId = vi
-      .fn()
-      .mockResolvedValueOnce({
-        requestId: 50,
-        unitIndex: 2,
-        title: 'Vol 3',
-        primaryPath: '/a/3.epub',
-        filePaths: ['/a/3.epub'],
-        mediaKind: 'ebook',
-        sizeBytes: 1,
-        status: 'in_dock',
-        bookDockFileId: 5,
-        errorMessage: null,
-      })
-      .mockResolvedValueOnce(undefined);
-    const { service } = makeSeamService({ batches: { findUnitByDockFileId } });
-    await expect(service.findBatchUnitByDockFileId(5)).resolves.toMatchObject({ batchRequestId: 50, unit: { unitIndex: 2, bookDockFileId: 5 } });
-    await expect(service.findBatchUnitByDockFileId(6)).resolves.toBeNull();
-  });
-
   it('findRequestsByIds rejects more than 50 ids without querying', async () => {
     const { service, repo } = makeSeamService();
     await expect(service.findRequestsByIds(Array(51).fill(10))).rejects.toBeInstanceOf(BadRequestException);

@@ -1,20 +1,8 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
-import type {
-  EditionLinkCounterpartSummary,
-  EditionLinkMembers,
-  EditionLinkRole,
-  Library,
-  ReadAlongBlockReason,
-  ReadAlongOutputBook,
-  ReadAlongPhase,
-  ReadAlongStatus,
-  StorytellerEffectiveTransport,
-  StorytellerExistingMatch,
-} from '@bookorbit/types'
-import type { EditionLink, EditionLinkCandidate } from '../../../../composables/useEditionLink'
-import type { ReadAlongBuildOutcome, ReadAlongCancelOutcome } from '../../../../composables/useReadAlong'
+import { createReadAloudPreferencesState, createReadAloudState } from '@/features/book/composables/__tests__/sync-chain-panel-mocks'
+import { makeCapability } from '@/features/read-aloud/__tests__/fixtures'
 import LinkBookControl from '../LinkBookControl.vue'
 
 const toastMocks = vi.hoisted(() => ({
@@ -26,11 +14,22 @@ vi.mock('vue-sonner', () => ({ toast: toastMocks }))
 
 const permissionMocks = vi.hoisted(() => ({ hasPermission: vi.fn<(...args: unknown[]) => boolean>() }))
 vi.mock('@/features/auth/composables/usePermissions', () => ({
-  usePermissions: () => ({ hasPermission: permissionMocks.hasPermission }),
+  usePermissions: () => ({ hasPermission: permissionMocks.hasPermission, isDemoRestrictedAccount: { value: false } }),
 }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn<(to: unknown) => Promise<void>>() }) }))
+vi.mock('@/features/auth/composables/useAuth', async () => {
+  const { ref } = await import('vue')
+  return { useAuth: () => ({ user: ref({ id: 1 }) }) }
+})
+
+let readAloudState = createReadAloudState()
+const preferencesState = createReadAloudPreferencesState()
+vi.mock('@/features/read-aloud/composables/useReadAloud', () => ({ useReadAloud: () => readAloudState }))
+vi.mock('@/features/read-aloud/composables/useReadAloudPreferences', () => ({ useReadAloudPreferences: () => preferencesState }))
 
 const absSyncLinkMocks = vi.hoisted(() => ({
   audioBookIds: [] as (number | null)[],
+  configured: false,
   refreshLive: vi.fn<() => void>(),
   applyLive: vi.fn<(live: unknown) => void>(),
 }))
@@ -43,7 +42,7 @@ vi.mock('@/features/book/composables/useAudiobookshelfSyncLink', async () => {
         link: ref(null),
         live: ref(null),
         checking: ref(false),
-        configured: ref(false),
+        configured: ref(absSyncLinkMocks.configured),
         loadConfigured: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
         refreshLive: absSyncLinkMocks.refreshLive,
         applyLive: absSyncLinkMocks.applyLive,
@@ -53,76 +52,11 @@ vi.mock('@/features/book/composables/useAudiobookshelfSyncLink', async () => {
   }
 })
 
-const editionLinkRecord: EditionLink = {
-  id: 1,
-  textBookId: 10,
-  audioBookId: 20,
-  readAlongBookId: null,
-  createdBy: 1,
-  createdAt: '2026-01-01T00:00:00.000Z',
-}
-
-function makeMembers(overrides: Partial<EditionLinkMembers> = {}): EditionLinkMembers {
-  return {
-    text: {
-      id: 10,
-      title: 'Test Book',
-      authorName: 'Frank Herbert',
-      coverVersion: null,
-      progress: { percentage: 40, updatedAt: '2026-09-01' },
-      narrationPercentage: null,
-    },
-    audio: {
-      id: 20,
-      title: 'Linked Audiobook',
-      authorName: 'Narrator Name',
-      coverVersion: null,
-      progress: { percentage: 12, updatedAt: '2026-09-02' },
-      narrationPercentage: null,
-    },
-    readAlong: null,
-    ...overrides,
-  }
-}
-
-function createMockState() {
-  return {
-    link: ref<EditionLink | null>(null),
-    proposed: ref<EditionLinkCandidate | null>(null),
-    linkedCounterpart: ref<EditionLinkCounterpartSummary | null>(null),
-    role: ref<EditionLinkRole | null>(null),
-    members: ref<EditionLinkMembers | null>(null),
-    readAlongOutput: ref(false),
-    candidates: ref<EditionLinkCandidate[]>([]),
-    loading: ref(false),
-    searching: ref(false),
-    mutating: ref(false),
-    error: ref<string | null>(null),
-    searchError: ref<string | null>(null),
-    loadForBook: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    thisBookProgress: ref<number | null>(null),
-    invalidateLoad: vi.fn<() => void>(),
-    searchCandidates: vi.fn<() => Promise<EditionLinkCandidate[]>>().mockResolvedValue([]),
-    linkBook: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
-    unlink: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
-    attachReadAlong: vi.fn<() => Promise<boolean>>().mockResolvedValue(true),
-    resetSearch: vi.fn<() => void>(),
-  }
-}
-
-let mockState = createMockState()
-
-vi.mock('@/features/book/composables/useEditionLink', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/features/book/composables/useEditionLink')>()
-  return { ...actual, useEditionLink: () => mockState }
-})
-
 function createAlignmentState() {
   return {
     status: ref<string>('none'),
     samplesDone: ref<number | null>(null),
     samplesTotal: ref<number | null>(null),
-    anchorCount: ref<number | null>(null),
     builtAt: ref<string | null>(null),
     stale: ref(false),
     mutating: ref(false),
@@ -141,50 +75,6 @@ vi.mock('@/features/book/composables/useReadingAlignment', () => ({
   useReadingAlignment: () => mockAlignment,
 }))
 
-function createReadAlongState() {
-  return {
-    status: ref<ReadAlongStatus>('none'),
-    blocked: ref<ReadAlongBlockReason | null>(null),
-    phase: ref<ReadAlongPhase | null>(null),
-    transport: ref<StorytellerEffectiveTransport | null>(null),
-    remoteTask: ref<string | null>(null),
-    remoteProgress: ref<number | null>(null),
-    queuePosition: ref<number | null>(null),
-    targetLibraryName: ref<string | null>(null),
-    remoteCopyBytes: ref({ epub: null, audio: null, readAlong: null }),
-    keepRemoteCopy: ref(true),
-    remoteCopyReclaimable: ref(true),
-    setKeepRemoteCopy: vi.fn<(value: boolean) => void>(),
-    resetKeepRemoteCopy: vi.fn<() => void>(),
-    outputBook: ref<ReadAlongOutputBook | null>(null),
-    targetLibraryId: ref<number | null>(null),
-    error: ref<string | null>(null),
-    mutating: ref(false),
-    existingMatches: ref<StorytellerExistingMatch[]>([]),
-    fetchStatus: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    build: vi.fn<() => Promise<ReadAlongBuildOutcome>>().mockResolvedValue('started'),
-    cancel: vi.fn<(id: number) => Promise<ReadAlongCancelOutcome>>().mockResolvedValue('cancelled'),
-    fetchExisting: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
-    onReady: vi.fn<(handler: () => void) => void>(),
-    reset: vi.fn<() => void>(),
-  }
-}
-
-let mockReadAlong = createReadAlongState()
-
-// The state composable is the only faked half. useReadAlongSection, the shared section wiring both
-// hosts call, is the real one here and derives everything it hands the section from this mock.
-vi.mock('@/features/book/composables/useReadAlong', () => ({
-  useReadAlong: () => mockReadAlong,
-}))
-
-const libraryList = ref<Library[]>([])
-const fetchLibraries = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
-
-vi.mock('@/features/library/composables/useLibraries', () => ({
-  useLibraries: () => ({ libraries: libraryList, fetchLibraries }),
-}))
-
 const stubs = {
   Popover: { name: 'Popover', props: ['open'], emits: ['update:open'], template: '<div><slot /></div>' },
   PopoverTrigger: { template: '<div><slot /></div>' },
@@ -194,6 +84,12 @@ const stubs = {
     name: 'SyncChainPanel',
     props: ['panel'],
     template: '<div data-testid="sync-chain-panel" />',
+  },
+  ReadAloudDialog: {
+    name: 'ReadAloudDialog',
+    props: ['open', 'capability', 'defaultLanguage', 'initial', 'busy', 'error'],
+    emits: ['close', 'create'],
+    template: '<div data-testid="read-aloud-dialog" :data-open="open" />',
   },
 }
 
@@ -254,8 +150,6 @@ function makeBook(overrides = {}) {
       durationDifferenceSeconds: null,
       durationDifferenceRatio: null,
       koreaderDownloadAvailable: false,
-      narrationMismatch: null,
-      offsetsSource: null,
     },
     formatPriority: [],
     comicMetadata: null,
@@ -278,12 +172,6 @@ async function openPopover(wrapper: ReturnType<typeof mountControl>) {
   await flushPromises()
 }
 
-function linkWithMembers(members: EditionLinkMembers = makeMembers()) {
-  mockState.link.value = editionLinkRecord
-  mockState.role.value = 'text'
-  mockState.members.value = members
-}
-
 const audioFile = {
   id: 1,
   format: 'm4b',
@@ -297,20 +185,18 @@ const audioFile = {
 
 describe('LinkBookControl', () => {
   beforeEach(() => {
-    mockState = createMockState()
     mockAlignment = createAlignmentState()
-    mockReadAlong = createReadAlongState()
-    libraryList.value = []
-    fetchLibraries.mockClear()
+    readAloudState = createReadAloudState()
     toastMocks.success.mockReset()
     toastMocks.error.mockReset()
     toastMocks.info.mockReset()
     permissionMocks.hasPermission.mockReset()
     permissionMocks.hasPermission.mockReturnValue(true)
+    absSyncLinkMocks.configured = false
   })
 
   it('names the popover for view transitions with a class, not an inline style', async () => {
-    const wrapper = mountControl()
+    const wrapper = mountControl({ files: [makeBook().files[0], { ...audioFile, id: 2 }] })
     await openPopover(wrapper)
 
     const content = wrapper.findComponent({ name: 'PopoverContent' })
@@ -318,83 +204,121 @@ describe('LinkBookControl', () => {
     expect(content.attributes('style')).toBeUndefined()
   })
 
-  it('does not render when the book has both formats or neither', () => {
-    const both = mountControl({ files: [makeBook().files[0], { ...audioFile, id: 2 }] })
-    expect(both.find('button').exists()).toBe(false)
-    expect(mockState.loadForBook).not.toHaveBeenCalled()
-
-    const none = mountControl({ files: [] })
-    expect(none.find('button').exists()).toBe(false)
-  })
-
-  it('loads the link and its build statuses on mount, so the trigger is accurate before opening', async () => {
-    mockState.loadForBook.mockImplementation(async () => {
-      mockState.link.value = editionLinkRecord
-    })
-    const wrapper = mountControl()
-    await flushPromises()
-
-    expect(wrapper.find('button').attributes('aria-label')).toBe('Link book')
-    expect(mockState.loadForBook).toHaveBeenCalledWith(null)
-    expect(mockAlignment.fetchStatus).toHaveBeenCalledWith(10)
-    expect(mockReadAlong.fetchStatus).toHaveBeenCalledWith(10, null)
-  })
-
-  it('names position sync in a modality-specific trigger title before a link exists', () => {
-    expect(mountControl().find('button').attributes('title')).toBe('Link an audiobook to enable position sync.')
+  it('renders only when the book has two sides to sync', () => {
+    const epub = makeBook().files[0]
+    const readAlong = { ...epub, id: 3, filename: 'b.readaloud.epub', mediaOverlay: { available: true } }
+    expect(
+      mountControl({ files: [epub, { ...audioFile, id: 2 }] })
+        .find('button')
+        .exists(),
+    ).toBe(true)
+    expect(
+      mountControl({ files: [readAlong, { ...audioFile, id: 2 }] })
+        .find('button')
+        .exists(),
+    ).toBe(true)
+    expect(
+      mountControl({ files: [epub, readAlong] })
+        .find('button')
+        .exists(),
+    ).toBe(true)
+    expect(mountControl().find('button').exists()).toBe(false)
     expect(
       mountControl({ files: [audioFile] })
         .find('button')
-        .attributes('title'),
-    ).toBe('Link an ebook to enable position sync.')
+        .exists(),
+    ).toBe(false)
+    expect(mountControl({ files: [] }).find('button').exists()).toBe(false)
+  })
+
+  it('renders for an audio-only book when Audiobookshelf is set up and the reader may sync it', () => {
+    absSyncLinkMocks.configured = true
+    expect(
+      mountControl({ files: [audioFile] })
+        .find('button')
+        .exists(),
+    ).toBe(true)
+    permissionMocks.hasPermission.mockReturnValue(false)
+    expect(
+      mountControl({ files: [audioFile] })
+        .find('button')
+        .exists(),
+    ).toBe(false)
+  })
+
+  it('stays hidden for a single-file book even when a read-aloud could be created', () => {
+    readAloudState.capability.value = makeCapability()
+    const wrapper = mountControl()
+    expect(wrapper.find('button').exists()).toBe(false)
+  })
+
+  it('reads this book’s alignment status on mount when it holds both, so the trigger is accurate before opening', async () => {
+    const wrapper = mountControl({ files: [makeBook().files[0], { ...audioFile, id: 2 }] })
+    await flushPromises()
+
+    expect(wrapper.find('button').attributes('aria-label')).toBe('Position sync')
+    expect(mockAlignment.fetchStatus).toHaveBeenCalledWith(10)
   })
 
   it.each([
-    ['none', 'none', 'text-primary', 'Manage the linked edition.'],
-    ['building', 'none', 'text-info', 'Linked - building position sync...'],
-    ['ready', 'none', 'text-success', 'Linked - position sync ready.'],
-    ['failed', 'none', 'text-destructive', 'Linked - position sync failed. Rebuild it from this panel.'],
-    ['ready', 'building', 'text-info', 'Linked - building the read-along...'],
-    ['ready', 'failed', 'text-destructive', 'Linked - read-along build failed.'],
-  ] as const)('narrates alignment %s and read-along %s on the trigger', (alignment, readAlong, tint, title) => {
-    mockState.link.value = editionLinkRecord
+    ['none', '', 'Position sync: Not syncing'],
+    ['building', 'text-info', 'Position sync: Aligning'],
+    ['ready', 'text-success', 'Position sync: 2 of 2 in sync'],
+    ['failed', 'text-destructive', 'Position sync: Needs attention'],
+  ] as const)('narrates alignment %s on the trigger', (alignment, tint, title) => {
     mockAlignment.status.value = alignment
-    mockReadAlong.status.value = readAlong
-    const wrapper = mountControl()
+    const wrapper = mountControl({ files: [makeBook().files[0], { ...audioFile, id: 2 }] })
 
-    expect(wrapper.find('button').find('svg').classes()).toContain(tint)
+    const classes = wrapper.find('button').find('svg').classes()
+    expect(tint === '' || classes.includes(tint)).toBe(true)
     expect(wrapper.find('button').attributes('title')).toBe(title)
   })
 
-  it('leaves the trigger icon neutral without a link', () => {
-    const wrapper = mountControl()
-
-    expect(wrapper.find('button').find('svg').classes()).not.toContain('text-primary')
-  })
-
-  it('looks the Audiobookshelf link up for the audiobook slot with the page, and refreshes it on open', async () => {
+  it('looks the Audiobookshelf link up for this book when it holds audio, and refreshes it on open', async () => {
     absSyncLinkMocks.audioBookIds.length = 0
     absSyncLinkMocks.refreshLive.mockClear()
-    linkWithMembers()
-    const wrapper = mountControl()
+    absSyncLinkMocks.configured = true
+    const wrapper = mountControl({ files: [audioFile] })
     await flushPromises()
 
-    expect(absSyncLinkMocks.audioBookIds.at(-1)).toBe(20)
+    expect(absSyncLinkMocks.audioBookIds.at(-1)).toBe(10)
     expect(absSyncLinkMocks.refreshLive).not.toHaveBeenCalled()
 
     await openPopover(wrapper)
     expect(absSyncLinkMocks.refreshLive).toHaveBeenCalledTimes(1)
+    expect(wrapper.find('[data-testid="sync-chain-panel"]').exists()).toBe(true)
   })
 
-  it('opens the panel and reloads the link without searching straight away', async () => {
-    const wrapper = mountControl()
+  it('opens upstream’s read-aloud dialog outside the popover from Modify, and creates from it', async () => {
+    readAloudState.capability.value = makeCapability()
+    const wrapper = mountControl({ files: [makeBook().files[0], { ...audioFile, id: 2 }], language: 'en' })
     await openPopover(wrapper)
 
-    expect(wrapper.find('[data-testid="sync-chain-panel"]').exists()).toBe(true)
-    expect(mockState.resetSearch).toHaveBeenCalled()
-    expect(mockState.loadForBook).toHaveBeenCalled()
-    expect(mockState.searchCandidates).not.toHaveBeenCalled()
-    expect(fetchLibraries).toHaveBeenCalled()
+    const dialog = () => wrapper.findComponent({ name: 'ReadAloudDialog' })
+    expect(dialog().props()).toMatchObject({ open: false, initial: null, defaultLanguage: 'en', busy: false, error: null })
+    expect(wrapper.findComponent({ name: 'PopoverContent' }).findComponent({ name: 'ReadAloudDialog' }).exists()).toBe(false)
+
+    wrapper.findComponent({ name: 'SyncChainPanel' }).props('panel').runAction('modifyReadAloud')
+    await flushPromises()
+    expect(dialog().props('open')).toBe(true)
+    expect(wrapper.findComponent({ name: 'Popover' }).props('open')).toBe(true)
+
+    const input = { epubFileId: 101, audioFileIds: [102], language: 'en', granularity: 'sentence' }
+    dialog().vm.$emit('create', input)
+    await flushPromises()
+    expect(readAloudState.create).toHaveBeenCalledWith(input)
+    expect(dialog().props('open')).toBe(false)
+  })
+
+  it('closes the dialog on request', async () => {
+    readAloudState.capability.value = makeCapability()
+    const wrapper = mountControl({ files: [makeBook().files[0], { ...audioFile, id: 2 }] })
+    await openPopover(wrapper)
+    wrapper.findComponent({ name: 'SyncChainPanel' }).props('panel').runAction('modifyReadAloud')
+    await flushPromises()
+    wrapper.findComponent({ name: 'ReadAloudDialog' }).vm.$emit('close')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'ReadAloudDialog' }).props('open')).toBe(false)
   })
 
   describe('view on open', () => {
@@ -413,15 +337,16 @@ describe('LinkBookControl', () => {
     }
 
     function alignedPair() {
-      linkWithMembers()
       mockAlignment.status.value = 'ready'
       mockAlignment.builtAt.value = '2026-10-01T00:00:00.000Z'
     }
 
+    const pair = () => ({ files: [makeBook().files[0], { ...audioFile, id: 2 }] })
+
     it('opens compact when the Modify chain would not fit the space beside the trigger', async () => {
       alignedPair()
       placeTrigger(10, 40, 200)
-      const wrapper = mountControl()
+      const wrapper = mountControl(pair())
       await openPopover(wrapper)
 
       expect(wrapper.findComponent({ name: 'SyncChainPanel' }).props('panel').viewMode).toBe('compact')
@@ -430,40 +355,10 @@ describe('LinkBookControl', () => {
     it('opens in Modify when it fits', async () => {
       alignedPair()
       placeTrigger(10, 40, 2000)
-      const wrapper = mountControl()
+      const wrapper = mountControl(pair())
       await openPopover(wrapper)
 
       expect(wrapper.findComponent({ name: 'SyncChainPanel' }).props('panel').viewMode).toBe('modify')
     })
-  })
-
-  it('looks up an importable Storyteller book when a linked pair has no read-along yet', async () => {
-    linkWithMembers()
-    const wrapper = mountControl()
-    await openPopover(wrapper)
-
-    expect(mockReadAlong.fetchExisting).toHaveBeenCalledWith(10)
-  })
-
-  it('does not look up Storyteller books once the read-along exists', async () => {
-    linkWithMembers(
-      makeMembers({
-        readAlong: { id: 30, title: 'Dune (read-along)', authorName: null, coverVersion: null, progress: null, narrationPercentage: null },
-      }),
-    )
-    const wrapper = mountControl()
-    await openPopover(wrapper)
-
-    expect(mockReadAlong.fetchExisting).not.toHaveBeenCalled()
-  })
-
-  it('reloads the link once a read-along build finishes, so the new member shows', () => {
-    mountControl()
-    const handler = mockReadAlong.onReady.mock.calls[0]?.[0]
-    mockState.loadForBook.mockClear()
-
-    handler?.()
-
-    expect(mockState.loadForBook).toHaveBeenCalled()
   })
 })

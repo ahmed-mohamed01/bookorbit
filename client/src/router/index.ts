@@ -109,7 +109,6 @@ const INTEGRATION_ROUTES: Record<IntegrationTab, string> = {
   readwise: 'settings-readwise',
   storygraph: 'settings-storygraph',
   audiobookshelf: 'settings-audiobookshelf',
-  storyteller: 'settings-storyteller',
 }
 
 /** Settings pages are their own routes now, so the legacy `?tab=` value is consumed by the redirect. */
@@ -485,13 +484,6 @@ export const routes: RouteRecordRaw[] = [
             meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.audiobookshelf') },
           },
           {
-            path: 'storyteller',
-            name: 'settings-storyteller',
-            component: () => import('@/features/storyteller/components/StorytellerSettings.vue'),
-            props: { embedded: true },
-            meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.storyteller') },
-          },
-          {
             path: 'tts',
             name: 'settings-tts',
             component: () => import('@/features/tts/TtsSettings.vue'),
@@ -667,6 +659,12 @@ export const routes: RouteRecordRaw[] = [
         },
       },
       {
+        path: '/history',
+        name: 'reading-history',
+        component: () => import('@/features/reading-history/views/ReadingHistoryView.vue'),
+        meta: { titleRow: true, title: () => t('titles.readingHistory') },
+      },
+      {
         path: '/achievements',
         name: 'achievements',
         component: () => import('@/views/AchievementsView.vue'),
@@ -796,6 +794,12 @@ export const routes: RouteRecordRaw[] = [
             name: 'tools-missing-resources',
             component: () => import('@/features/tools/missing-resources/views/MissingResourcesView.vue'),
             meta: { title: () => t('titles.missingResources') },
+          },
+          {
+            path: 'chapter-health',
+            name: 'tools-chapter-health',
+            component: () => import('@/features/tools/chapter-health/views/ChapterHealthView.vue'),
+            meta: { title: () => t('titles.chapterHealth') },
           },
           {
             path: ':pathMatch(.*)*',

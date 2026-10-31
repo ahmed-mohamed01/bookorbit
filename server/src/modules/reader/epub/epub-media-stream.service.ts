@@ -1,13 +1,11 @@
+import { createReadStream } from 'fs';
 import { Injectable, Logger } from '@nestjs/common';
 import type * as unzipper from 'unzipper';
 
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import { storedZipEntryDataOffset, type ByteRange } from './epub-zip-range';
-import { buildFaststartLayout, storedLayout, streamLayoutRange, type StoredMediaLayout } from './mp4-faststart';
 
-const MP4_EXTENSION = /\.(mp4|m4a|m4b)$/i;
 const MAX_ENTRIES = 512;
-const MAX_INDEX_BYTES_CACHED = 32 * 1024 * 1024;
 
 // Size as well as mtime: a cached entry is served without reading the zip
 // directory again, so a replaced archive must not look like the old one.
@@ -20,27 +18,23 @@ export interface ArchiveVersion {
 export interface StoredEntry {
   archivePath: string;
   dataStart: number;
-  layout: StoredMediaLayout;
-  // Differs between the stored and the index-first layout, so a browser never
-  // joins cached bytes of one with the other.
+  layout: { size: number };
   etag: string;
 }
 
-type LoadedEntry = StoredEntry & { cacheable: boolean };
+type LoadedEntry = StoredEntry;
 
 interface CachedEntry {
   entry: Promise<LoadedEntry | null>;
   loaded?: LoadedEntry | null;
-  indexBytes: number;
 }
 
 // Serves uncompressed EPUB entries (read-along audio) as byte ranges straight
-// from the archive, MP4 audio with its index first.
+// from the archive.
 @Injectable()
 export class EpubMediaStreamService {
   private readonly logger = new Logger(EpubMediaStreamService.name);
   private readonly entries = new Map<string, CachedEntry>();
-  private indexBytesCached = 0;
 
   // Lets a repeat request skip opening the archive's zip directory.
   knownEntry(archive: ArchiveVersion, entryPath: string): StoredEntry | null {
@@ -54,18 +48,12 @@ export class EpubMediaStreamService {
     const cached = this.touch(key);
     if (cached) return cached.entry;
 
-    const slot: CachedEntry = { entry: this.loadStoredEntry(bookId, archive, entry), indexBytes: 0 };
+    const slot: CachedEntry = { entry: this.loadStoredEntry(bookId, archive, entry) };
     this.entries.set(key, slot);
     slot.entry.then(
       (stored) => {
         if (this.entries.get(key) !== slot) return;
-        if (stored && !stored.cacheable) {
-          this.entries.delete(key);
-          return;
-        }
         slot.loaded = stored;
-        slot.indexBytes = stored?.layout.indexBytes ?? 0;
-        this.indexBytesCached += slot.indexBytes;
         this.evict();
       },
       () => this.entries.delete(key),
@@ -75,7 +63,7 @@ export class EpubMediaStreamService {
   }
 
   openRange(stored: StoredEntry, range: ByteRange): NodeJS.ReadableStream {
-    return streamLayoutRange(stored.archivePath, stored.dataStart, stored.layout, range);
+    return createReadStream(stored.archivePath, { start: stored.dataStart + range.start, end: stored.dataStart + range.end });
   }
 
   private keyOf(archive: ArchiveVersion, entryPath: string): string {
@@ -103,23 +91,13 @@ export class EpubMediaStreamService {
     if (dataStart === null) return null;
 
     const version = `${Math.trunc(archive.mtime)}-${entry.crc32}-${entry.offsetToLocalFileHeader}`;
-    const stored = { archivePath: archive.path, dataStart, layout: storedLayout(entry.uncompressedSize), etag: `"${version}"`, cacheable: true };
-    if (!MP4_EXTENSION.test(entry.path)) return stored;
-    try {
-      const faststart = await buildFaststartLayout(archive.path, dataStart, entry.uncompressedSize);
-      return faststart ? { ...stored, layout: faststart, etag: `"faststart-${version}"` } : stored;
-    } catch (err) {
-      this.logFailure('epub.mp4_faststart', bookId, entry, startedAtMs, err, 'index-first layout failed, sending the file as stored');
-      // Not cached, so the next request tries the index-first layout again.
-      return { ...stored, cacheable: false };
-    }
+    return { archivePath: archive.path, dataStart, layout: { size: entry.uncompressedSize }, etag: `"${version}"` };
   }
 
   private evict() {
-    for (const [key, slot] of this.entries) {
-      if (this.entries.size <= MAX_ENTRIES && this.indexBytesCached <= MAX_INDEX_BYTES_CACHED) return;
+    for (const key of this.entries.keys()) {
+      if (this.entries.size <= MAX_ENTRIES) return;
       this.entries.delete(key);
-      this.indexBytesCached -= slot.indexBytes;
     }
   }
 

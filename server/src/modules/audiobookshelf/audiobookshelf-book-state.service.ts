@@ -13,7 +13,6 @@ import type {
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { BookService } from '../book/book.service';
-import { EditionLinkRepository } from '../edition-link/edition-link.repository';
 import { LibraryService } from '../library/library.service';
 import { AudiobookshelfApiError, AudiobookshelfClientService, type AbsItemCover, type AbsMediaProgress } from './audiobookshelf-client.service';
 import { AudiobookshelfProgressPushService } from './audiobookshelf-progress-push.service';
@@ -51,7 +50,6 @@ export class AudiobookshelfBookStateService {
     private readonly repo: AudiobookshelfRepository,
     private readonly bookService: BookService,
     private readonly libraryService: LibraryService,
-    private readonly editionLinks: EditionLinkRepository,
     private readonly client: AudiobookshelfClientService,
     private readonly syncService: AudiobookshelfSyncService,
     private readonly progressPush: AudiobookshelfProgressPushService,
@@ -73,24 +71,12 @@ export class AudiobookshelfBookStateService {
     return cover;
   }
 
-  /**
-   * The Audiobookshelf item a book's position syncs with, given the audiobook or a book linked to it.
-   * Only the audiobook is ever matched in Audiobookshelf, so its linked editions reach the item through it.
-   */
   async findPositionSyncLink(user: RequestUser, bookId: number): Promise<AudiobookshelfBookSyncLink | null> {
     const settings = await this.repo.findSettings(user.id);
     if (!settings || !isAbsSyncConfigured(settings)) return null;
 
     await this.bookService.verifyBookAccess(bookId, user);
-    const direct = await this.usableLinkState(user, settings, await this.repo.findBookStateByBookId(user.id, bookId));
-    if (direct && this.pausedReasonFor(settings, direct) === null) return this.toSyncLink(settings, direct);
-
-    const link = await this.editionLinks.findLinkForBook(bookId);
-    const linked =
-      link && link.audioBookId !== bookId
-        ? await this.usableLinkState(user, settings, await this.repo.findBookStateByBookId(user.id, link.audioBookId))
-        : null;
-    const state = linked ?? direct;
+    const state = await this.usableLinkState(user, settings, await this.repo.findBookStateByBookId(user.id, bookId));
     return state ? this.toSyncLink(settings, state) : null;
   }
 

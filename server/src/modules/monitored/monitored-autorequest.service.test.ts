@@ -5,7 +5,7 @@ import type { MonitoredAuthorConfig, MonitoredWork } from '@bookorbit/types';
 import type { RequestUser } from '../../common/types/request-user';
 import { isAutoFormat, isDestinationRefusal, isRequestable, MonitoredAutoRequestService, submitThrottled } from './monitored-autorequest.service';
 
-const user = { id: 9, isSuperuser: true } as RequestUser;
+const user = { id: 9, isSuperuser: true, active: true } as RequestUser;
 
 function monitor(patch: Partial<MonitoredAuthorConfig> = {}): MonitoredAuthorConfig {
   return {

@@ -17,12 +17,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import {
-  WEB_SERIAL_MAX_PUBLISHED_VOLUMES,
-  type WebSerialPrintSeriesInput,
-  type RequestWebSerialVolumesInput,
-  type LinkWebSerialBatchInput,
-} from '@bookorbit/types';
+import { WEB_SERIAL_MAX_PUBLISHED_VOLUMES, type WebSerialPrintSeriesInput, type RequestWebSerialVolumesInput } from '@bookorbit/types';
 
 export class WebSerialPrintSeriesDto implements WebSerialPrintSeriesInput {
   @IsString()
@@ -58,16 +53,6 @@ export class RequestWebSerialVolumesDto extends WebSerialPrintSeriesDto implemen
   @Min(1, { each: true })
   @Max(WEB_SERIAL_MAX_PUBLISHED_VOLUMES, { each: true })
   volumes!: number[];
-}
-
-export class LinkWebSerialBatchDto implements LinkWebSerialBatchInput {
-  @IsInt()
-  @Min(1)
-  seriesRequestId!: number;
-
-  @IsInt()
-  @Min(1)
-  batchRequestId!: number;
 }
 
 export class WebSerialSuggestionQueryDto {
@@ -132,9 +117,10 @@ export class WebSerialDownloadDto
   @Min(1)
   seriesRequestId!: number;
 
+  @IsOptional()
   @IsInt()
   @Min(1)
-  downloadClientId!: number;
+  downloadClientId?: number | null;
 
   @IsArray()
   @ArrayMinSize(1)

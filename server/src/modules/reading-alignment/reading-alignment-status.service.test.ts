@@ -11,7 +11,7 @@ const USER = { id: 42, isSuperuser: false, permissions: [] } as unknown as Reque
 const EDITOR = { id: 43, isSuperuser: false, permissions: [Permission.LibraryEditMetadata] } as unknown as RequestUser;
 const SUPERUSER = { id: 1, isSuperuser: true, permissions: [] } as unknown as RequestUser;
 const BOOK_ID = 7;
-const TEXT_BOOK_ID = 8;
+const TEXT_BOOK_ID = BOOK_ID;
 const AUDIO_BOOK_ID = BOOK_ID;
 const EBOOK_FILE = { id: 5, absolutePath: '/books/x.epub', sizeBytes: 1000 };
 const AUDIO_FILES = [{ fileId: 9, absolutePath: '/books/x.m4b', durationSeconds: 40 }];
@@ -203,7 +203,6 @@ describe('ReadingAlignmentStatusService.getStatus', () => {
       status: 'ready',
       samplesDone: 10,
       samplesTotal: 10,
-      anchorCount: 4,
       builtAt: '2026-02-02T00:00:00.000Z',
       error: null,
       stale: false,

@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 
-type HashableAudioFile = { fileId: number; absolutePath: string; durationSeconds: number | null };
+type HashableAudioFile = { fileId: number; absolutePath: string; durationSeconds: number | null; startSeconds?: number };
 type HashableEbookFile = { id: number; absolutePath: string; sizeBytes: number | null };
 type StoredContentHashes = { audioContentHash: string | null; epubContentHash: string | null };
 type ContentFileReader = {
@@ -9,8 +9,17 @@ type ContentFileReader = {
 };
 
 // The hash inputs are persisted on every alignment row, so changing them marks every existing alignment stale.
+// A start is hashed only where chapter snapping moved it off the summed durations, which keeps the hash of
+// every alignment built before snapping applied to whisper unchanged.
 export function audioContentHashOf(files: readonly HashableAudioFile[]): string {
-  return sha256Json(files.map((f) => [f.fileId, f.absolutePath, f.durationSeconds]));
+  let summed = 0;
+  return sha256Json(
+    files.map((f) => {
+      const snapped = f.startSeconds != null && Math.abs(f.startSeconds - summed) > 1e-6;
+      summed += f.durationSeconds ?? 0;
+      return snapped ? [f.fileId, f.absolutePath, f.durationSeconds, f.startSeconds] : [f.fileId, f.absolutePath, f.durationSeconds];
+    }),
+  );
 }
 
 export function epubContentHashOf(ebook: HashableEbookFile): string {

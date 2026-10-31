@@ -36,37 +36,33 @@ describe('useReadingAlignment', () => {
 
   describe('fetchStatus', () => {
     it('maps a full status response onto the reactive fields', async () => {
-      mocks.api.mockResolvedValueOnce(
-        response({ status: 'ready', samplesDone: 40, samplesTotal: 40, anchorCount: 12, builtAt: '2026-02-02T00:00:00.000Z' }),
-      )
+      mocks.api.mockResolvedValueOnce(response({ status: 'ready', samplesDone: 40, samplesTotal: 40, builtAt: '2026-02-02T00:00:00.000Z' }))
 
-      const { status, samplesDone, samplesTotal, anchorCount, builtAt, fetchStatus } = useReadingAlignment()
+      const { status, samplesDone, samplesTotal, builtAt, fetchStatus } = useReadingAlignment()
       await fetchStatus(10)
 
       expect(mocks.api).toHaveBeenCalledExactlyOnceWith(STATUS_URL)
       expect(status.value).toBe('ready')
       expect(samplesDone.value).toBe(40)
       expect(samplesTotal.value).toBe(40)
-      expect(anchorCount.value).toBe(12)
       expect(builtAt.value).toBe('2026-02-02T00:00:00.000Z')
     })
 
     it('clears progress fields for a none response', async () => {
       mocks.api.mockResolvedValueOnce(response({ status: 'none' }))
 
-      const { status, samplesDone, samplesTotal, anchorCount, builtAt, fetchStatus } = useReadingAlignment()
+      const { status, samplesDone, samplesTotal, builtAt, fetchStatus } = useReadingAlignment()
       await fetchStatus(10)
 
       expect(status.value).toBe('none')
       expect(samplesDone.value).toBeNull()
       expect(samplesTotal.value).toBeNull()
-      expect(anchorCount.value).toBeNull()
       expect(builtAt.value).toBeNull()
     })
 
     it('keeps the build failure reason apart from request errors', async () => {
       mocks.api.mockResolvedValueOnce(
-        response({ status: 'failed', samplesDone: 3, samplesTotal: 40, anchorCount: 0, builtAt: null, error: 'whisper was killed by SIGILL' }),
+        response({ status: 'failed', samplesDone: 3, samplesTotal: 40, builtAt: null, error: 'whisper was killed by SIGILL' }),
       )
 
       const { status, buildError, error, fetchStatus } = useReadingAlignment()
@@ -78,7 +74,7 @@ describe('useReadingAlignment', () => {
     })
 
     it('reads a missing build error as null', async () => {
-      mocks.api.mockResolvedValueOnce(response({ status: 'failed', samplesDone: 3, samplesTotal: 40, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'failed', samplesDone: 3, samplesTotal: 40, builtAt: null }))
 
       const { buildError, fetchStatus } = useReadingAlignment()
       await fetchStatus(10)
@@ -88,7 +84,7 @@ describe('useReadingAlignment', () => {
 
     it('clears a previous build error once the status reads none', async () => {
       mocks.api
-        .mockResolvedValueOnce(response({ status: 'failed', samplesDone: 3, samplesTotal: 40, anchorCount: 0, builtAt: null, error: 'boom' }))
+        .mockResolvedValueOnce(response({ status: 'failed', samplesDone: 3, samplesTotal: 40, builtAt: null, error: 'boom' }))
         .mockResolvedValueOnce(response({ status: 'none' }))
 
       const { buildError, fetchStatus } = useReadingAlignment()
@@ -100,7 +96,7 @@ describe('useReadingAlignment', () => {
     })
 
     it('follows the stale flag from the response and resets it on none', async () => {
-      const ready = { status: 'ready', samplesDone: 40, samplesTotal: 40, anchorCount: 12, builtAt: '2026-02-02T00:00:00.000Z' }
+      const ready = { status: 'ready', samplesDone: 40, samplesTotal: 40, builtAt: '2026-02-02T00:00:00.000Z' }
       mocks.api
         .mockResolvedValueOnce(response({ ...ready, stale: true }))
         .mockResolvedValueOnce(response({ ...ready, stale: false }))
@@ -127,7 +123,7 @@ describe('useReadingAlignment', () => {
 
     it('clears the stale flag when the status request fails', async () => {
       mocks.api
-        .mockResolvedValueOnce(response({ status: 'ready', samplesDone: 1, samplesTotal: 1, anchorCount: 2, builtAt: null, stale: true }))
+        .mockResolvedValueOnce(response({ status: 'ready', samplesDone: 1, samplesTotal: 1, builtAt: null, stale: true }))
         .mockResolvedValueOnce(response(null, { ok: false }))
 
       const { stale, fetchStatus } = useReadingAlignment()
@@ -139,7 +135,7 @@ describe('useReadingAlignment', () => {
     })
 
     it('falls back to none for a status value the client does not recognize', async () => {
-      mocks.api.mockResolvedValueOnce(response({ status: 'some_future_status', samplesDone: 1, samplesTotal: 2, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'some_future_status', samplesDone: 1, samplesTotal: 2, builtAt: null }))
 
       const { status, samplesDone, fetchStatus } = useReadingAlignment()
       await fetchStatus(10)
@@ -172,7 +168,7 @@ describe('useReadingAlignment', () => {
   describe('build', () => {
     it('posts a build request and then fetches the refreshed status', async () => {
       mocks.api.mockResolvedValueOnce(response({ status: 'building' }))
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 40, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 40, builtAt: null }))
 
       const { status, samplesTotal, mutating, build } = useReadingAlignment()
       await build(10)
@@ -213,7 +209,7 @@ describe('useReadingAlignment', () => {
 
     it('does not append force=true to the POST for a first-time build', async () => {
       mocks.api.mockResolvedValueOnce(response({ status: 'building' }))
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 40, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 40, builtAt: null }))
 
       const { build } = useReadingAlignment()
       await build(10)
@@ -223,7 +219,7 @@ describe('useReadingAlignment', () => {
 
     it('appends force=true to the POST when a rebuild is requested', async () => {
       mocks.api.mockResolvedValueOnce(response({ status: 'building' }))
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 40, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 40, builtAt: null }))
 
       const { build } = useReadingAlignment()
       await build(10, true)
@@ -234,11 +230,9 @@ describe('useReadingAlignment', () => {
 
   describe('polling', () => {
     it('starts polling every ~3s once status is building, and stops once it leaves building', async () => {
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 4, anchorCount: 0, builtAt: null }))
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 4, anchorCount: 0, builtAt: null }))
-      mocks.api.mockResolvedValueOnce(
-        response({ status: 'ready', samplesDone: 4, samplesTotal: 4, anchorCount: 3, builtAt: '2026-02-02T00:00:00.000Z' }),
-      )
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 4, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 4, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'ready', samplesDone: 4, samplesTotal: 4, builtAt: '2026-02-02T00:00:00.000Z' }))
 
       const { status, samplesDone, fetchStatus } = useReadingAlignment()
       await fetchStatus(10)
@@ -260,11 +254,9 @@ describe('useReadingAlignment', () => {
     })
 
     it('keeps polling through a pending read until the build is ready', async () => {
-      mocks.api.mockResolvedValueOnce(response({ status: 'pending', samplesDone: 0, samplesTotal: null, anchorCount: 0, builtAt: null }))
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 4, anchorCount: 0, builtAt: null }))
-      mocks.api.mockResolvedValueOnce(
-        response({ status: 'ready', samplesDone: 4, samplesTotal: 4, anchorCount: 3, builtAt: '2026-02-02T00:00:00.000Z' }),
-      )
+      mocks.api.mockResolvedValueOnce(response({ status: 'pending', samplesDone: 0, samplesTotal: null, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 4, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'ready', samplesDone: 4, samplesTotal: 4, builtAt: '2026-02-02T00:00:00.000Z' }))
 
       const { status, fetchStatus } = useReadingAlignment()
       await fetchStatus(10)
@@ -283,7 +275,7 @@ describe('useReadingAlignment', () => {
     })
 
     it('does not poll when the fetched status is not building', async () => {
-      mocks.api.mockResolvedValueOnce(response({ status: 'ready', samplesDone: 4, samplesTotal: 4, anchorCount: 3, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'ready', samplesDone: 4, samplesTotal: 4, builtAt: null }))
 
       const { fetchStatus } = useReadingAlignment()
       await fetchStatus(10)
@@ -293,8 +285,8 @@ describe('useReadingAlignment', () => {
     })
 
     it('stops polling on scope dispose so no requests fire after the owner unmounts', async () => {
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 4, anchorCount: 0, builtAt: null }))
-      mocks.api.mockResolvedValue(response({ status: 'building', samplesDone: 1, samplesTotal: 4, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 4, builtAt: null }))
+      mocks.api.mockResolvedValue(response({ status: 'building', samplesDone: 1, samplesTotal: 4, builtAt: null }))
 
       const scope = effectScope()
       await scope.run(async () => {
@@ -323,7 +315,7 @@ describe('useReadingAlignment', () => {
       })
 
       scope.stop() // dispose while the request is still in flight
-      resolveApi(response({ status: 'building', samplesDone: 1, samplesTotal: 4, anchorCount: 0, builtAt: null }))
+      resolveApi(response({ status: 'building', samplesDone: 1, samplesTotal: 4, builtAt: null }))
       await pending
 
       const callsAfterDispose = mocks.api.mock.calls.length
@@ -337,7 +329,7 @@ describe('useReadingAlignment', () => {
       // a finished build stuck on 'building'. Serialized polling must instead apply the terminal read.
       let resolvePoll: (r: Response) => void = () => {}
       mocks.api.mockResolvedValueOnce(response({ status: 'building' })) // POST
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesTotal: 10, anchorCount: 0, builtAt: null })) // immediate fetch
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesTotal: 10, builtAt: null })) // immediate fetch
       mocks.api.mockImplementationOnce(() => new Promise<Response>((resolve) => (resolvePoll = resolve))) // slow poll, stays pending
 
       const { status, build } = useReadingAlignment()
@@ -353,7 +345,7 @@ describe('useReadingAlignment', () => {
       expect(mocks.api).toHaveBeenCalledTimes(3)
 
       // When the slow poll finally settles terminal, it is applied (not discarded) and polling stops.
-      resolvePoll(response({ status: 'ready', samplesTotal: 10, anchorCount: 5, builtAt: '2026-02-02T00:00:00.000Z' }))
+      resolvePoll(response({ status: 'ready', samplesTotal: 10, builtAt: '2026-02-02T00:00:00.000Z' }))
       await vi.advanceTimersByTimeAsync(3000)
       expect(status.value).toBe('ready')
       expect(mocks.api).toHaveBeenCalledTimes(3)
@@ -363,10 +355,10 @@ describe('useReadingAlignment', () => {
       // Rebuilding a ready alignment: the first status read after the accepted POST can still return the
       // OLD ready row before the worker flips it to building. That stale read must not stop polling.
       const T0 = '2026-01-01T00:00:00.000Z'
-      mocks.api.mockResolvedValueOnce(response({ status: 'ready', anchorCount: 5, builtAt: T0 })) // initial fetch -> ready
+      mocks.api.mockResolvedValueOnce(response({ status: 'ready', builtAt: T0 })) // initial fetch -> ready
       mocks.api.mockResolvedValueOnce(response({ status: 'building' })) // rebuild POST accepted
-      mocks.api.mockResolvedValueOnce(response({ status: 'ready', anchorCount: 5, builtAt: T0 })) // stale pre-build row
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 10, anchorCount: 0, builtAt: T0 })) // rebuild started
+      mocks.api.mockResolvedValueOnce(response({ status: 'ready', builtAt: T0 })) // stale pre-build row
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 10, builtAt: T0 })) // rebuild started
 
       const { status, fetchStatus, build } = useReadingAlignment()
       await fetchStatus(10)
@@ -383,7 +375,7 @@ describe('useReadingAlignment', () => {
     it('keeps the optimistic building state and keeps polling past a stale empty read right after build()', async () => {
       mocks.api.mockResolvedValueOnce(response({ status: 'building' })) // POST
       mocks.api.mockResolvedValueOnce(response({ status: 'none' })) // row not created yet
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 2, samplesTotal: 10, anchorCount: 0, builtAt: null })) // row now exists
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 2, samplesTotal: 10, builtAt: null })) // row now exists
 
       const { status, samplesTotal, build } = useReadingAlignment()
       await build(10)
@@ -437,7 +429,7 @@ describe('useReadingAlignment', () => {
     it('clears a previous block reason once a later build request is accepted', async () => {
       mocks.api.mockResolvedValueOnce(response({ status: 'busy' }))
       mocks.api.mockResolvedValueOnce(response({ status: 'building' }))
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 4, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 4, builtAt: null }))
 
       const { buildBlocked, build } = useReadingAlignment()
       await build(10)
@@ -450,7 +442,7 @@ describe('useReadingAlignment', () => {
 
   describe('cancel', () => {
     it('deletes the build, refetches the status and stops polling once it reads none', async () => {
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 4, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 4, builtAt: null }))
       mocks.api.mockResolvedValueOnce(response(null, { status: 204 }))
       mocks.api.mockResolvedValueOnce(response({ status: 'none' }))
 
@@ -470,7 +462,7 @@ describe('useReadingAlignment', () => {
     })
 
     it('answers false on a refused cancel and leaves the status alone', async () => {
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 4, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 1, samplesTotal: 4, builtAt: null }))
       mocks.api.mockResolvedValueOnce(response(null, { ok: false, status: 404 }))
 
       const { status, fetchStatus, cancel } = useReadingAlignment()
@@ -488,7 +480,7 @@ describe('useReadingAlignment', () => {
           resolveBuild = resolve
         }),
       )
-      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 4, anchorCount: 0, builtAt: null }))
+      mocks.api.mockResolvedValueOnce(response({ status: 'building', samplesDone: 0, samplesTotal: 4, builtAt: null }))
       mocks.api.mockResolvedValueOnce(response(null, { status: 204 }))
       mocks.api.mockResolvedValueOnce(response({ status: 'none' }))
 

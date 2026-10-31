@@ -18,7 +18,6 @@ const mockRepo = {
   updateSettings: vi.fn(),
   ingestSessions: vi.fn(),
   findSyncableBookStatesByAbsItemIds: vi.fn(),
-  findLibraryIdsByBookIds: vi.fn(),
   findAudioFilesInPlayOrderForBooks: vi.fn(),
 };
 
@@ -34,8 +33,18 @@ const mockLibraryService = {
   findAccessibleLibraryIds: vi.fn(),
 };
 
+const mockBookRead = {
+  findLibraryIdsByBookIds: vi.fn(),
+};
+
 function makeService() {
-  return new AudiobookshelfSessionsService(mockRepo as any, mockClient as any, mockAchievements as any, mockLibraryService as any);
+  return new AudiobookshelfSessionsService(
+    mockRepo as any,
+    mockClient as any,
+    mockAchievements as any,
+    mockLibraryService as any,
+    mockBookRead as any,
+  );
 }
 
 const user = { id: 1, isSuperuser: true, contentFilters: undefined, settings: { timezone: 'UTC' } } as any;
@@ -92,7 +101,7 @@ function page(sessions: AbsListeningSession[], total: number) {
 /** Wires the repo so a session's libraryItemId resolves to a linked book, letting ingestSessions run. */
 function wireLinked() {
   mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([{ absLibraryItemId: 'item-1', bookId: 100 } as any]);
-  mockRepo.findLibraryIdsByBookIds.mockResolvedValue(new Map([[100, 1]]));
+  mockBookRead.findLibraryIdsByBookIds.mockResolvedValue([{ id: 100, libraryId: 1 }]);
   mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map());
 }
 
@@ -107,7 +116,7 @@ describe('AudiobookshelfSessionsService', () => {
     mockLibraryService.findAccessibleLibraryIds.mockResolvedValue([1]);
     mockRepo.updateSettings.mockResolvedValue(undefined);
     mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([]);
-    mockRepo.findLibraryIdsByBookIds.mockResolvedValue(new Map());
+    mockBookRead.findLibraryIdsByBookIds.mockResolvedValue([]);
     mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map());
     mockRepo.ingestSessions.mockResolvedValue({ insertedSessionIds: [], updated: 0, affectedSessionIds: [], progressDeltaBySessionId: new Map() });
   });

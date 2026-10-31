@@ -1,6 +1,6 @@
 import type { BookCommunityRating, MetadataFetchDiagnostics, MetadataProviderKey, MetadataSeriesMembership } from "./metadata-fetch";
 import type { BookMetadataLockField } from "./metadata-lock";
-import type { AudiobookChapter, NarratorRef } from "./audiobook";
+import type { AudiobookChapter, AudiobookChapterSource, NarratorRef } from "./audiobook";
 import type { ComicMetadataFields } from "./metadata-fetch";
 import type { BookFileWriteField, WriteResult } from "./file-write";
 import type { CustomMetadataBookValue } from "./custom-metadata";
@@ -77,6 +77,8 @@ export type ReadingAttempt = {
   origin: ReadingAttemptOrigin;
   externalProvider: string | null;
   externalId: string | null;
+  /** This read's own stars; null when unrated. */
+  rating: number | null;
   totalSessions: number;
   totalSeconds: number;
   createdAt: string;
@@ -250,29 +252,16 @@ export type AudioMetadata = {
   durationSeconds: number | null;
   abridged: boolean;
   chapters: AudiobookChapter[] | null;
+  chaptersSource?: AudiobookChapterSource | null;
+  /** When the stored chapter list last changed; null for a derived or legacy list. */
+  chaptersUpdatedAt?: string | null;
 };
 
 export type ReadAloudProgressSyncMode = "auto" | "disabled";
 
 export type ReadAloudProgressSyncState = "enabled" | "disabled" | "unavailable";
 
-export type ReadAloudProgressSyncUnavailableReason =
-  | "no_media_overlay_epub"
-  | "no_audio_files"
-  | "missing_duration"
-  | "duration_mismatch"
-  | "narration_mismatch"
-  | "audio_changed";
-
-/** The first narration file the run match could not place, and the chapter it was tried against. */
-export type ReadAlongNarrationMismatch = {
-  narrationFile: number;
-  narrationSeconds: number;
-  chapter: number;
-  chapterSeconds: number;
-};
-
-export type ReadAlongOffsetsSource = "build" | "match";
+export type ReadAloudProgressSyncUnavailableReason = "no_media_overlay_epub" | "no_audio_files" | "missing_duration" | "duration_mismatch";
 
 export type ReadAloudProgressSync = {
   mode: ReadAloudProgressSyncMode;
@@ -284,8 +273,6 @@ export type ReadAloudProgressSync = {
   durationDifferenceSeconds: number | null;
   durationDifferenceRatio: number | null;
   koreaderDownloadAvailable: boolean;
-  narrationMismatch: ReadAlongNarrationMismatch | null;
-  offsetsSource: ReadAlongOffsetsSource | null;
 };
 
 export type BookFileWriteDisabledReason =
@@ -348,6 +335,12 @@ export type BookDetail = {
   coverVersion: string;
   hardcoverEditionId: string | null;
   providerIds: ProviderIds;
+  /**
+   * Record links for external providers' ids, keyed like `providerIds`: the page the id was applied
+   * from, or the provider's own URL template. Built-in links stay with the client's templates.
+   * Absent on older servers.
+   */
+  providerLinks?: Partial<Record<string, string>>;
   authors: { id: number; name: string; sortName: string | null }[];
   genres: string[];
   tags: string[];
@@ -413,6 +406,8 @@ export type BookMetadataRefreshPreviewFields = {
   ranobedbId?: string | null;
   lubimyczytacId?: string | null;
   aladinId?: string | null;
+  /** Ids from external providers, keyed by provider. Absent on older servers. */
+  externalProviderIds?: Partial<Record<string, string | null>>;
   audioMetadata?: {
     narrators?: string[];
     durationSeconds?: number | null;

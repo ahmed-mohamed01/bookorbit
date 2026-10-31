@@ -60,10 +60,6 @@ const mockBookService = {
   resolveAudiobookPositionForExternalSync: vi.fn(),
 };
 
-const mockEditionLinks = {
-  findLinkForBook: vi.fn(),
-};
-
 function settings(overrides: Record<string, unknown> = {}) {
   return {
     enabled: true,
@@ -112,7 +108,6 @@ function makeService(events = new AchievementEventsService(), coordinator = new 
     mockRepo as any,
     mockClient as any,
     mockBookService as any,
-    mockEditionLinks as any,
     coordinator,
     mockUserService as any,
     mockLibraryService as any,
@@ -144,7 +139,6 @@ describe('AudiobookshelfProgressPushService', () => {
     mockClient.getMediaProgress.mockResolvedValue({ duration: 100, lastUpdate: 1000 });
     mockClient.updateMediaProgress.mockResolvedValue(undefined);
     mockBookService.resolveAudiobookPositionForExternalSync.mockResolvedValue({ audioSeconds: 40, audioTotalSeconds: 100 });
-    mockEditionLinks.findLinkForBook.mockResolvedValue(undefined);
     vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   });
@@ -164,21 +158,7 @@ describe('AudiobookshelfProgressPushService', () => {
     expect(mockRepo.markPositionPushPending).not.toHaveBeenCalled();
   });
 
-  it('maps a read-along event to its linked audiobook', async () => {
-    vi.useFakeTimers();
-    mockRepo.findPushableBookStateByBookId.mockResolvedValueOnce(undefined).mockResolvedValueOnce(bookState({ bookId: 44 }));
-    mockEditionLinks.findLinkForBook.mockResolvedValue({ textBookId: 88, audioBookId: 44, readAlongBookId: 99 });
-    const { events } = makeService();
-
-    events.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, progressEvent({ bookId: 99 }));
-    await flushAsyncWork();
-
-    expect(mockEditionLinks.findLinkForBook).toHaveBeenCalledWith(99);
-    expect(mockRepo.findPushableBookStateByBookId).toHaveBeenNthCalledWith(2, USER_ID, 44, SCOPE, EXCLUDED_ABS_LIBRARIES);
-    expect(mockRepo.markPositionPushPending).toHaveBeenCalledWith(USER_ID, ITEM_ID);
-  });
-
-  it('schedules a push when reading the read-along moved the audiobook without a progress event', async () => {
+  it('schedules a push when alignment derives an audio position', async () => {
     vi.useFakeTimers();
     const { events } = makeService();
 
@@ -189,20 +169,7 @@ describe('AudiobookshelfProgressPushService', () => {
     expect(mockRepo.markPositionPushPending).toHaveBeenCalledWith(USER_ID, ITEM_ID);
   });
 
-  it('maps a text edition event to its linked audiobook, so the alignment estimate is pushed too', async () => {
-    vi.useFakeTimers();
-    mockRepo.findPushableBookStateByBookId.mockResolvedValueOnce(undefined).mockResolvedValueOnce(bookState({ bookId: 44 }));
-    mockEditionLinks.findLinkForBook.mockResolvedValue({ textBookId: 88, audioBookId: 44, readAlongBookId: null });
-    const { events } = makeService();
-
-    events.emit(ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED, progressEvent({ bookId: 88 }));
-    await flushAsyncWork();
-
-    expect(mockRepo.findPushableBookStateByBookId).toHaveBeenNthCalledWith(2, USER_ID, 44, SCOPE, EXCLUDED_ABS_LIBRARIES);
-    expect(mockRepo.markPositionPushPending).toHaveBeenCalledWith(USER_ID, ITEM_ID);
-  });
-
-  it('ignores a book with no edition link and no Audiobookshelf match', async () => {
+  it('ignores a book with no Audiobookshelf match', async () => {
     mockRepo.findPushableBookStateByBookId.mockResolvedValue(undefined);
     const { events } = makeService();
 

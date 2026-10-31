@@ -26,7 +26,6 @@ export function useReadingAlignment() {
   const status = ref<AlignmentStatus>('none')
   const samplesDone = ref<number | null>(null)
   const samplesTotal = ref<number | null>(null)
-  const anchorCount = ref<number | null>(null)
   const builtAt = ref<string | null>(null)
   // True when a ready alignment no longer matches the pair's current files; position sync is paused.
   const stale = ref(false)
@@ -86,7 +85,6 @@ export function useReadingAlignment() {
     if (status.value === 'none') {
       samplesDone.value = null
       samplesTotal.value = null
-      anchorCount.value = null
       builtAt.value = null
       buildError.value = null
       stale.value = false
@@ -94,7 +92,6 @@ export function useReadingAlignment() {
     }
     samplesDone.value = data.samplesDone ?? null
     samplesTotal.value = data.samplesTotal ?? null
-    anchorCount.value = data.anchorCount ?? null
     builtAt.value = data.builtAt ?? null
     buildError.value = data.error ?? null
     stale.value = data.stale ?? false
@@ -104,7 +101,6 @@ export function useReadingAlignment() {
     status.value = 'none'
     samplesDone.value = null
     samplesTotal.value = null
-    anchorCount.value = null
     builtAt.value = null
     buildError.value = null
     stale.value = false
@@ -253,7 +249,6 @@ export function useReadingAlignment() {
     status,
     samplesDone,
     samplesTotal,
-    anchorCount,
     builtAt,
     stale,
     mutating,

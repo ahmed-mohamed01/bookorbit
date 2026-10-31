@@ -37,7 +37,7 @@ export function useFormatStatusText() {
   function relative(value: string | null): string | null {
     const parsed = parseMonitoredDate(value)
     if (!parsed) return null
-    return relativeReleaseLabel(daysUntil(parsed.date), t)
+    return relativeReleaseLabel(daysUntil(parsed.date))
   }
 
   /** A chip has room for a day this year, or a month and year further out, never both. */

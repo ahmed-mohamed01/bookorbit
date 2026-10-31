@@ -6456,15 +6456,9 @@
         "metadataScore": "元数据分数",
         "primaryFormat": "主要格式",
         "readAloudSync": {
-          "title": "朗读进度同步",
           "state": {
-            "enabled": "已启用",
-            "disabled": "已禁用",
-            "unavailable": "不可用",
             "epubCopiesOnly": "仅限 EPUB 副本"
           },
-          "enabledDescription": "有声书、网页阅读器、Kobo 和 KOReader 的进度保持同步。",
-          "disabledDescription": "每种格式各自保留自己的阅读位置。",
           "epubCopiesDescription": "网页阅读器、Kobo 和 KOReader 的进度会在各 EPUB 副本之间保持同步。添加匹配的有声书文件后，有声书也会同步。",
           "reason": {
             "no_media_overlay_epub": "需要带媒体叠加层的伴读 EPUB。",
@@ -6472,9 +6466,6 @@
             "missing_duration": "音频时长元数据不完整。",
             "durationMismatch": "时长差距过大：有声书 {audio}，伴读 EPUB {overlay}。"
           },
-          "enable": "启用",
-          "disable": "禁用",
-          "saving": "正在保存……",
           "saveFailed": "无法更新朗读进度同步。"
         },
         "openIn": "使用 {provider} 打开",

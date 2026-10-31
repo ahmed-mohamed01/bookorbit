@@ -960,7 +960,6 @@ defineOptions({ name: 'MonitoredAuthorDetailView' })
                   <MonitoredWorkCard
                     :work="work"
                     :cover-author-name="author?.authorName"
-                    :queued="isQueued(work.id)"
                     :ebook-queued="isQueued(work.id, 'ebook')"
                     :audiobook-queued="isQueued(work.id, 'audiobook')"
                     :series-membership="grouping === 'series' ? seriesMembershipForGroup(work, group.key) : undefined"

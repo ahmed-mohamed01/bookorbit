@@ -5,9 +5,9 @@ vi.mock('@/lib/api', () => ({ api: apiMock }))
 
 import { createNarrationProgressWriter } from './progress-writer'
 
-function postedBody(callIndex: number): Record<string, unknown> {
+function postedWrite(callIndex: number): Record<string, unknown> {
   const [, init] = apiMock.mock.calls[callIndex]!
-  return JSON.parse((init as RequestInit).body as string) as Record<string, unknown>
+  return (JSON.parse((init as RequestInit).body as string) as { writes: Record<string, unknown>[] }).writes[0]!
 }
 
 describe('createNarrationProgressWriter', () => {
@@ -21,7 +21,10 @@ describe('createNarrationProgressWriter', () => {
   })
 
   it('saves narration over the loaded record so the text position survives', async () => {
-    apiMock.mockResolvedValueOnce({ ok: true, json: async () => ({ cfi: 'epubcfi(/6/2)', percentage: 42, pageNumber: 7 }) })
+    apiMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ items: [{ fileId: 5, percentage: 42, updatedAt: null, text: { cfi: 'epubcfi(/6/2)', page: 7 } }] }),
+    })
     apiMock.mockResolvedValue({ ok: true })
     const writer = createNarrationProgressWriter(5, true)
 
@@ -30,13 +33,13 @@ describe('createNarrationProgressWriter', () => {
     writer.flush()
 
     expect(apiMock).toHaveBeenCalledTimes(2)
-    expect(postedBody(1)).toMatchObject({
-      cfi: 'epubcfi(/6/2)',
+    expect(apiMock.mock.calls[1]![0]).toBe('/api/v1/reading-progress')
+    expect(postedWrite(1)).toMatchObject({
+      fileId: 5,
+      kind: 'narration',
       percentage: 42,
-      pageNumber: 7,
-      mediaOverlayFragment: 'c1.xhtml#s3',
-      mediaOverlaySectionIndex: 1,
-      source: 'narration',
+      text: { cfi: 'epubcfi(/6/2)', page: 7 },
+      narration: { fragment: 'c1.xhtml#s3', sectionIndex: 1 },
     })
   })
 
@@ -61,6 +64,6 @@ describe('createNarrationProgressWriter', () => {
     await vi.advanceTimersByTimeAsync(15_000)
 
     expect(apiMock).toHaveBeenCalledTimes(1)
-    expect(postedBody(0).mediaOverlayFragment).toBe('c1.xhtml#s3')
+    expect(postedWrite(0).narration).toMatchObject({ fragment: 'c1.xhtml#s3' })
   })
 })

@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import type { AudiobookshelfConnectionTestResult } from '@bookorbit/types';
 
+import { readBoundedBytes, readBoundedText, ResponseTooLargeError } from '../../common/utils/bounded-response';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import {
   AUDIOBOOKSHELF_COVER_CONTENT_TYPES,
@@ -354,8 +355,9 @@ export class AudiobookshelfClientService {
     if (options.response === 'image') return (await this.readImage(userId, path, response, started)) as T;
 
     try {
-      return (await response.json()) as T;
+      return JSON.parse(await readBoundedText(response, 16 * 1024 * 1024)) as T;
     } catch (err) {
+      if (err instanceof ResponseTooLargeError) throw this.invalidResponse(userId, path, started, response.status, 'response_too_large');
       if (err instanceof SyntaxError) throw this.invalidResponse(userId, path, started, response.status, 'response parse failed');
       throw this.transportError(userId, path, started, err);
     }
@@ -363,31 +365,17 @@ export class AudiobookshelfClientService {
 
   private async readImage(userId: number, path: string, response: Response, started: number): Promise<AbsItemCover> {
     const contentType = (response.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
-    const declaredLength = Number(response.headers.get('content-length') ?? 0);
-    if (!AUDIOBOOKSHELF_COVER_CONTENT_TYPES.has(contentType) || declaredLength > AUDIOBOOKSHELF_COVER_MAX_BYTES || !response.body) {
+    if (!AUDIOBOOKSHELF_COVER_CONTENT_TYPES.has(contentType) || !response.body) {
       await this.discardBody(response);
       throw this.invalidResponse(userId, path, started, response.status, 'cover response rejected');
     }
 
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
     try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        total += value.byteLength;
-        if (total > AUDIOBOOKSHELF_COVER_MAX_BYTES) {
-          await reader.cancel().catch(() => undefined);
-          throw this.invalidResponse(userId, path, started, response.status, 'cover response rejected');
-        }
-        chunks.push(value);
-      }
+      return { contentType, body: await readBoundedBytes(response, AUDIOBOOKSHELF_COVER_MAX_BYTES) };
     } catch (err) {
-      if (err instanceof AudiobookshelfApiError) throw err;
+      if (err instanceof ResponseTooLargeError) throw this.invalidResponse(userId, path, started, response.status, 'cover response rejected');
       throw this.transportError(userId, path, started, err);
     }
-    return { contentType, body: Buffer.concat(chunks) };
   }
 
   private async discardBody(response: Response): Promise<void> {

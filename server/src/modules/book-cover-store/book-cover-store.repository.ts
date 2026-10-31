@@ -265,7 +265,7 @@ export class BookCoverStoreRepository {
     medium: CoverMedium,
     media: CoverMedia,
     mutation: SlotMutation,
-    options: { bumpBook: boolean; servedBytesChanged: boolean; updatedAt: Date; beforeMedia?: CoverMedia },
+    options: { bumpBook: boolean; servedBytesChanged: boolean; updatedAt: Date; beforeMedia?: CoverMedia; placeholder?: boolean },
   ): Promise<{ libraryId: number; koboCoverChanged: boolean }> {
     return this.db.transaction(async (tx) => {
       const before = await this.selectSlots(bookId, tx);
@@ -280,7 +280,9 @@ export class BookCoverStoreRepository {
             set: mutation.row,
           });
       }
-      if (mutation.kind === 'delete' || options.servedBytesChanged) {
+      if (mutation.kind === 'upsert' && options.placeholder) {
+        await tx.insert(bookCoverPlaceholders).values({ bookId, medium }).onConflictDoNothing();
+      } else if (mutation.kind === 'delete' || options.servedBytesChanged) {
         await tx.delete(bookCoverPlaceholders).where(and(eq(bookCoverPlaceholders.bookId, bookId), eq(bookCoverPlaceholders.medium, medium)));
       }
       const after = await this.selectSlots(bookId, tx);

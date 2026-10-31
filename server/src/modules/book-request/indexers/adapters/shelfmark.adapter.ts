@@ -7,6 +7,7 @@ import { mainTitlePart } from '../../../../common/text-match/title-match';
 import { sanitizeLogValue } from '../../../../common/utils/log-sanitize.utils';
 import { safeFetch } from '../../../../common/utils/safe-fetch';
 import { PrivateAddressException } from '../../../../common/utils/ssrf.utils';
+import { endpointUrl } from '../../download-clients/adapters/client-http.utils';
 import {
   DEFAULT_SHELFMARK_SOURCE,
   MAX_SHELFMARK_RELEASE_BYTES,
@@ -204,7 +205,7 @@ export class ShelfmarkIndexerAdapter implements IndexerAdapter {
     let response: Response;
     try {
       response = await safeFetch(
-        endpoint(config.baseUrl, path),
+        endpointUrl(new URL(config.baseUrl), path).href,
         { signal, redirect: 'manual', headers: { Accept: 'application/json', 'X-Api-Key': apiKey } },
         { allowPrivate: config.allowPrivateAddress, profile: config.networkProfile, pinResolvedAddress: true },
       );
@@ -304,16 +305,6 @@ function toCandidate(raw: unknown, indexerId: number, query: ReleaseQuery): Rele
     ...(author ? { author } : {}),
     shelfmarkRelease: release,
   };
-}
-
-/** Joined under the base's own path, so a Shelfmark behind a reverse proxy subpath still works. */
-function endpoint(baseUrl: string, path: string): string {
-  const base = new URL(baseUrl);
-  const [pathname, search] = path.split('?');
-  base.pathname = `${base.pathname.replace(/\/+$/, '')}${pathname}`;
-  base.search = search ?? '';
-  base.hash = '';
-  return base.href;
 }
 
 function text(value: unknown): string | undefined {

@@ -1,3 +1,4 @@
+import { Permission } from '@bookorbit/types';
 import {
   BadRequestException,
   ForbiddenException,
@@ -15,7 +16,7 @@ import { ProviderThrottleError } from '../metadata-fetch/provider-throttle.error
 import { MonitoredAutoRequestService } from './monitored-autorequest.service';
 import { MonitoredService } from './monitored.service';
 
-const viewer = { id: 1, isSuperuser: false } as RequestUser;
+const viewer = { id: 1, isSuperuser: false, active: true, permissions: [Permission.BookRequestAccess] } as RequestUser;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -301,7 +302,7 @@ describe('MonitoredService', () => {
 
   it.each([
     ['regular user', viewer],
-    ['superuser', { id: 9, isSuperuser: true } as RequestUser],
+    ['superuser', { id: 9, isSuperuser: true, active: true } as RequestUser],
   ])('does not let a %s request work from a monitor owned by another user', async (_label, actor) => {
     const submit = vi.fn();
     const store = { getWorkWithMonitor: vi.fn().mockResolvedValue({ monitor: author({ ownerUserId: 2 }), work: work() }) };
@@ -1511,7 +1512,7 @@ describe('MonitoredService', () => {
   });
 
   it('reports isOwner only when the viewer id matches the owner id', async () => {
-    const superuser = { id: 9, isSuperuser: true } as RequestUser;
+    const superuser = { id: 9, isSuperuser: true, active: true } as RequestUser;
     const foreign = author({ ownerUserId: 1 });
     const aggregate = { counts: { total: 0, ebookOwned: 0, audioOwned: 0, hidden: 0 }, nextReleaseAt: null };
     const store = {
@@ -1530,7 +1531,7 @@ describe('MonitoredService', () => {
   });
 
   it('refuses a superuser write to another user monitored author', async () => {
-    const superuser = { id: 9, isSuperuser: true } as RequestUser;
+    const superuser = { id: 9, isSuperuser: true, active: true } as RequestUser;
     const updateAuthorFields = vi.fn();
     const store = { getAuthor: vi.fn().mockResolvedValue(author({ ownerUserId: 1 })), updateAuthorFields };
 
@@ -1540,7 +1541,7 @@ describe('MonitoredService', () => {
   });
 
   it('refuses a superuser write to another user monitored book', async () => {
-    const superuser = { id: 9, isSuperuser: true } as RequestUser;
+    const superuser = { id: 9, isSuperuser: true, active: true } as RequestUser;
     const upsertBook = vi.fn();
     const store = {
       getBook: vi.fn().mockResolvedValue({

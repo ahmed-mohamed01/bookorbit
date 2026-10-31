@@ -1,3 +1,4 @@
+import { isEligibleMonitoredUser } from './monitored-user.utils';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -411,7 +412,7 @@ export class MonitoredService {
     const monitor = await this.store.getAuthor(monitorId);
     if (!monitor) return null;
     const owner = await this.users.findByIdWithPermissions(monitor.ownerUserId);
-    if (!owner) return null;
+    if (!owner || !isEligibleMonitoredUser(owner)) return null;
     const [aggregates, metadata] = await Promise.all([
       this.store.getAuthorAggregates([monitorId], owner, new Date().toISOString().slice(0, 10)),
       this.loadAuthorProfile(monitor),
@@ -423,7 +424,7 @@ export class MonitoredService {
     const monitor = await this.store.getMonitorForFetch(monitorId);
     if (!monitor) return;
     const owner = await this.users.findByIdWithPermissions(monitor.ownerUserId);
-    if (!owner) return;
+    if (!owner || !isEligibleMonitoredUser(owner)) return;
     const step = async (name: string, run: () => Promise<unknown>): Promise<void> => {
       const startedAt = Date.now();
       try {
@@ -449,6 +450,8 @@ export class MonitoredService {
     const current = await this.store.getMonitorForFetch(monitorId);
     if (!current || current.paused) return;
     await step('auto_requests', async () => {
+      const owner = await this.users.findByIdWithPermissions(current.ownerUserId);
+      if (!owner || !isEligibleMonitoredUser(owner)) return;
       const catalog = await this.store.getCatalog(monitorId, owner);
       await this.autoRequests.fanOut(current, catalog?.works ?? [], owner);
     });

@@ -31,11 +31,13 @@ export const NotificationType = {
   PodcastFeedUnhealthy: "podcast_feed_unhealthy",
   PodcastDownloadFailed: "podcast_download_failed",
   MonitoredReleaseAvailable: "monitored_release_available",
-  ReadAlongBuild: "read_along_build",
-  ReadAlongBuildFailed: "read_along_build_failed",
   WebSerialCompleted: "web_serial_completed",
   WebSerialCompletedWithGaps: "web_serial_completed_with_gaps",
   WebSerialFailed: "web_serial_failed",
+  ReadAloudReady: "read_aloud_ready",
+  ReadAloudNeedsReview: "read_aloud_needs_review",
+  ReadAloudFailed: "read_aloud_failed",
+  ReadAloudReviewExpiring: "read_aloud_review_expiring",
 } as const;
 
 export type NotificationType = (typeof NotificationType)[keyof typeof NotificationType];
@@ -68,6 +70,7 @@ export const NOTIFICATION_CATEGORY_IDS = [
   "podcasts",
   "monitored",
   "webSerials",
+  "readAloud",
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORY_IDS)[number];
@@ -115,11 +118,13 @@ export const NOTIFICATION_TYPE_META: Record<NotificationType, NotificationTypeMe
   [NotificationType.PodcastFeedUnhealthy]: { category: "podcasts", severity: "warning" },
   [NotificationType.PodcastDownloadFailed]: { category: "podcasts", severity: "error" },
   [NotificationType.MonitoredReleaseAvailable]: { category: "monitored", severity: "success" },
-  [NotificationType.ReadAlongBuild]: { category: "bulkRename", severity: "success" },
-  [NotificationType.ReadAlongBuildFailed]: { category: "bulkRename", severity: "error" },
   [NotificationType.WebSerialCompleted]: { category: "webSerials", severity: "success" },
   [NotificationType.WebSerialCompletedWithGaps]: { category: "webSerials", severity: "warning" },
   [NotificationType.WebSerialFailed]: { category: "webSerials", severity: "error" },
+  [NotificationType.ReadAloudReady]: { category: "readAloud", severity: "success" },
+  [NotificationType.ReadAloudNeedsReview]: { category: "readAloud", severity: "warning" },
+  [NotificationType.ReadAloudFailed]: { category: "readAloud", severity: "error" },
+  [NotificationType.ReadAloudReviewExpiring]: { category: "readAloud", severity: "warning" },
 };
 
 export const NOTIFICATION_CATEGORIES: Record<NotificationCategory, readonly NotificationType[]> = NOTIFICATION_CATEGORY_IDS.reduce(
@@ -196,21 +201,6 @@ export interface NotificationItem {
   count: number;
   createdAt: string;
   updatedAt: string;
-}
-
-/** The `meta` a read-along build notification carries while it tracks one build from queue to finish. */
-export interface ReadAlongNotificationMeta {
-  buildId: number;
-  /** The text edition the build belongs to, which its cancel route is addressed by. */
-  bookId: number;
-  /** 0..1 for the current stage, while the build runs. */
-  progress?: number;
-  /** True once the build is ready, failed or cancelled: no further update will follow. */
-  done?: boolean;
-  /** True from queued until the build ends: the notification can be read but not dismissed or cleared. */
-  locked: boolean;
-  /** True while a cancel would still be accepted: queued, or before the read-along is imported. */
-  cancellable: boolean;
 }
 
 export interface NotificationPage {

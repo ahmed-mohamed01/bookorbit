@@ -7,14 +7,13 @@ import { describeError } from './reading-alignment-error.util';
 import type { RequestUser } from '../../common/types/request-user';
 import { appConfig } from '../../config/config';
 import { EpubService } from '../reader/epub/epub.service';
-import { absoluteSecondsToFilePosition, buildAudioTimeline } from './reading-alignment-audio-timeline.util';
+import { absoluteSecondsToFilePosition, buildAudioTimeline } from '../../common/utils/audio-timeline.utils';
 import { audioContentHashOf, epubContentHashOf } from './reading-alignment-content-hash.util';
 import { computeAnchorFraction } from './reading-alignment-fraction.util';
 import { matchTranscript } from './reading-alignment-matcher.util';
 import type { SpineText } from './reading-alignment-matcher.util';
 import type { ReadingAlignmentPair } from './reading-alignment-pair.service';
 import { ReadingAlignmentPairService } from './reading-alignment-pair.service';
-import { ReadingAlignmentSyncService } from './reading-alignment-sync.service';
 import { ReadingAlignmentRepository } from './reading-alignment.repository';
 import { WhisperService } from './whisper.service';
 
@@ -60,13 +59,12 @@ export class ReadingAlignmentBuildService {
     private readonly whisper: WhisperService,
     private readonly epub: EpubService,
     private readonly pairService: ReadingAlignmentPairService,
-    private readonly syncService: ReadingAlignmentSyncService,
   ) {}
 
   async buildAlignment(bookId: number, user: RequestUser, force = false): Promise<void> {
     const pair = await this.pairService.resolveAlignmentPair(bookId);
     if (!pair) {
-      this.logger.log(`[${BUILD_EVENT}] [end] bookId=${bookId} status=unalignable reason=no_pair - edition link required`);
+      this.logger.log(`[${BUILD_EVENT}] [end] bookId=${bookId} status=unalignable reason=no_pair - plain EPUB and audio required`);
       return;
     }
 
@@ -180,13 +178,10 @@ export class ReadingAlignmentBuildService {
       this.logger.log(
         `[${BUILD_EVENT}] [end] textBookId=${textBookId} audioBookId=${audioBookId} alignmentId=${existing.id} status=skipped reason=up_to_date - already built`,
       );
-      // A relink of an already-built pair reaches here: the pair just became alignable again, so the
-      // one-shot reconcile still runs (it logs and swallows its own failures).
-      await this.syncService.reconcilePairOnReady({ textBookId, audioBookId }, user.id);
       return;
     }
 
-    const timeline = buildAudioTimeline(audioFiles.map((f) => ({ fileId: f.fileId, durationSeconds: f.durationSeconds })));
+    const timeline = buildAudioTimeline(audioFiles);
     // A missing per-file duration shifts every later file's absolute offset, so anchors would be placed
     // against the wrong audio seconds. Refuse rather than build a silently mismapped alignment.
     if (timeline.incomplete) {
@@ -334,7 +329,6 @@ export class ReadingAlignmentBuildService {
       this.logger.log(
         `[${BUILD_EVENT}] [end] textBookId=${textBookId} audioBookId=${audioBookId} alignmentId=${alignmentId} durationMs=${durationMs} samplesTotal=${samplesTotal} anchorsFound=${anchorCount} status=ready - build completed`,
       );
-      await this.syncService.reconcilePairOnReady({ textBookId, audioBookId }, user.id);
     } catch (error) {
       // A write that races the cancel's delete (an anchor insert hitting the removed row's foreign key)
       // is a consequence of the cancel, not a build failure.

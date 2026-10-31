@@ -76,3 +76,20 @@ describe('contentHashesDiffer', () => {
     expect(contentHashesDiffer(stored, EBOOK, [])).toBe(true);
   });
 });
+
+it('invalidates an alignment when the snapped audio clock changes', () => {
+  const file = { fileId: 1, absolutePath: '/book/1.mp3', durationSeconds: 20 };
+  expect(audioContentHashOf([{ ...file, startSeconds: 20.5 }])).not.toBe(audioContentHashOf([{ ...file, startSeconds: 20 }]));
+  expect(audioContentHashOf([{ ...file, startSeconds: 20.5 }])).not.toBe(audioContentHashOf([file]));
+});
+
+it('keeps the hash of an unsnapped clock, so existing alignments stay fresh', () => {
+  const first = { fileId: 1, absolutePath: '/book/1.mp3', durationSeconds: 20 };
+  const second = { fileId: 2, absolutePath: '/book/2.mp3', durationSeconds: 30 };
+  expect(
+    audioContentHashOf([
+      { ...first, startSeconds: 0 },
+      { ...second, startSeconds: 20 },
+    ]),
+  ).toBe(audioContentHashOf([first, second]));
+});

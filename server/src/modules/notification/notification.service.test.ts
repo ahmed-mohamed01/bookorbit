@@ -20,8 +20,6 @@ describe('NotificationService', () => {
     findAllActiveUserIds: ReturnType<typeof vi.fn>;
     findUserSettings: ReturnType<typeof vi.fn>;
     updateLatestByGroupKey: ReturnType<typeof vi.fn>;
-    findLatestByGroupKey: ReturnType<typeof vi.fn>;
-    findLockedByType: ReturnType<typeof vi.fn>;
   };
   let gateway: {
     emitNew: ReturnType<typeof vi.fn>;
@@ -50,8 +48,6 @@ describe('NotificationService', () => {
       findAllActiveUserIds: vi.fn(),
       findUserSettings: vi.fn(),
       updateLatestByGroupKey: vi.fn(),
-      findLatestByGroupKey: vi.fn().mockResolvedValue(undefined),
-      findLockedByType: vi.fn().mockResolvedValue([]),
     };
     gateway = {
       emitNew: vi.fn(),
@@ -391,57 +387,20 @@ describe('NotificationService', () => {
   });
 
   describe('upsertByGroupKey()', () => {
-    const patch = { type: NotificationType.ReadAlongBuild, title: 'Building', message: 'Sending', meta: { progress: 0.2 } };
-
-    it('never reopens a finished row with a late non-terminal send', async () => {
-      repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
-      repo.findLatestByGroupKey.mockResolvedValue({ id: 9, meta: { done: true, locked: false } });
-
-      await service.upsertByGroupKey(3, 'read_along_build:7:1', { ...patch, meta: { locked: true } });
-
-      expect(repo.findLatestByGroupKey).toHaveBeenCalledWith(3, 'read_along_build:7:1');
-      expect(repo.updateLatestByGroupKey).not.toHaveBeenCalled();
-      expect(repo.insertOrCollapse).not.toHaveBeenCalled();
-    });
-
-    it('still lets a terminal send rewrite a finished row', async () => {
-      repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
-      repo.findLatestByGroupKey.mockResolvedValue({ id: 9, meta: { done: true } });
-      repo.updateLatestByGroupKey.mockResolvedValue(makeInserted(3));
-
-      await service.upsertByGroupKey(3, 'read_along_build:7:1', { ...patch, meta: { done: true } });
-
-      expect(repo.updateLatestByGroupKey).toHaveBeenCalledOnce();
-    });
-
-    it('writes an only-while-locked send only over a row that is still locked', async () => {
-      repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
-      repo.updateLatestByGroupKey.mockResolvedValue(makeInserted(3));
-      const ending = { ...patch, meta: { done: true, locked: false } };
-
-      repo.findLatestByGroupKey.mockResolvedValueOnce({ id: 9, meta: { locked: false, done: true } });
-      await service.upsertByGroupKey(3, 'k', ending, { onlyWhileLocked: true, updateOnly: true });
-      repo.findLatestByGroupKey.mockResolvedValueOnce(undefined);
-      await service.upsertByGroupKey(3, 'k', ending, { onlyWhileLocked: true, updateOnly: true });
-      expect(repo.updateLatestByGroupKey).not.toHaveBeenCalled();
-
-      repo.findLatestByGroupKey.mockResolvedValueOnce({ id: 9, meta: { locked: true } });
-      await service.upsertByGroupKey(3, 'k', ending, { onlyWhileLocked: true, updateOnly: true });
-      expect(repo.updateLatestByGroupKey).toHaveBeenCalledOnce();
-    });
+    const patch = { type: NotificationType.WebSerialCompleted, title: 'Done', message: '3 chapters added.', meta: { jobId: 7 } };
 
     it('rewrites the newest row with that key and emits an update', async () => {
       repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
-      repo.updateLatestByGroupKey.mockResolvedValue({ ...makeInserted(3, { id: 9, type: 'read_along_build', title: 'Building' }), read: true });
+      repo.updateLatestByGroupKey.mockResolvedValue({ ...makeInserted(3, { id: 9, type: 'web_serial_completed', title: 'Done' }), read: true });
 
-      await service.upsertByGroupKey(3, 'read_along_build:7', patch);
+      await service.upsertByGroupKey(3, 'web-serial-job:7', patch);
 
-      expect(repo.updateLatestByGroupKey).toHaveBeenCalledWith(3, 'read_along_build:7', {
-        type: 'read_along_build',
-        title: 'Building',
-        message: 'Sending',
+      expect(repo.updateLatestByGroupKey).toHaveBeenCalledWith(3, 'web-serial-job:7', {
+        type: 'web_serial_completed',
+        title: 'Done',
+        message: '3 chapters added.',
         actionUrl: null,
-        meta: { progress: 0.2 },
+        meta: { jobId: 7 },
       });
       expect(gateway.emitUpdated).toHaveBeenCalledWith(3, expect.objectContaining({ id: 9, read: true }));
       expect(repo.insertOrCollapse).not.toHaveBeenCalled();
@@ -450,22 +409,22 @@ describe('NotificationService', () => {
     it('creates the row through notify when none has the key yet', async () => {
       repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
       repo.updateLatestByGroupKey.mockResolvedValue(undefined);
-      repo.insertOrCollapse.mockResolvedValue([makeInserted(3, { type: 'read_along_build' })]);
+      repo.insertOrCollapse.mockResolvedValue([makeInserted(3, { type: 'web_serial_completed' })]);
 
-      await service.upsertByGroupKey(3, 'read_along_build:7', patch);
+      await service.upsertByGroupKey(3, 'web-serial-job:7', patch);
 
       expect(repo.insertOrCollapse.mock.calls[0][0][0]).toEqual(
-        expect.objectContaining({ userId: 3, type: 'read_along_build', groupKey: 'read_along_build:7', meta: { progress: 0.2 } }),
+        expect.objectContaining({ userId: 3, type: 'web_serial_completed', groupKey: 'web-serial-job:7', meta: { jobId: 7 } }),
       );
       expect(gateway.emitNew).toHaveBeenCalledOnce();
     });
 
-    it('puts an outcome back in front of a user who had read the progress row, and updates the count', async () => {
+    it('puts a rewritten row back in front of a user who had read it, and updates the count', async () => {
       repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
-      repo.updateLatestByGroupKey.mockResolvedValue({ ...makeInserted(3, { id: 9, type: 'read_along_build' }), read: false });
+      repo.updateLatestByGroupKey.mockResolvedValue({ ...makeInserted(3, { id: 9, type: 'web_serial_completed' }), read: false });
       repo.countUnread.mockResolvedValue(4);
 
-      await service.upsertByGroupKey(3, 'read_along_build:7:1', { ...patch, meta: { done: true } }, { markUnread: true });
+      await service.upsertByGroupKey(3, 'web-serial-job:7', patch, { markUnread: true });
 
       expect(repo.updateLatestByGroupKey.mock.calls[0][2]).toMatchObject({ read: false });
       expect(gateway.emitUpdated).toHaveBeenCalledWith(3, expect.objectContaining({ id: 9, read: false }));
@@ -476,45 +435,16 @@ describe('NotificationService', () => {
       repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
       repo.updateLatestByGroupKey.mockResolvedValue(makeInserted(3));
 
-      await service.upsertByGroupKey(3, 'read_along_build:7:1', patch);
+      await service.upsertByGroupKey(3, 'web-serial-job:7', patch);
 
       expect(repo.updateLatestByGroupKey.mock.calls[0][2]).not.toHaveProperty('read');
       expect(gateway.emitCountUpdate).not.toHaveBeenCalled();
     });
 
-    it('never recreates a row the user dismissed for an update-only send', async () => {
-      repo.findUserSettings.mockResolvedValue(new Map([[3, {}]]));
-      repo.updateLatestByGroupKey.mockResolvedValue(undefined);
-
-      await service.upsertByGroupKey(3, 'read_along_build:7:1', patch, { updateOnly: true });
-
-      expect(repo.insertOrCollapse).not.toHaveBeenCalled();
-    });
-
-    it('still finishes an existing row for a user who turned the category off, without marking it unread', async () => {
-      repo.findUserSettings.mockResolvedValue(new Map([[3, { notificationPreferences: { bulkRename: 'off' } }]]));
-      repo.updateLatestByGroupKey.mockResolvedValue(makeInserted(3));
-
-      await service.upsertByGroupKey(3, 'read_along_build:7:1', { ...patch, meta: { done: true } }, { markUnread: true });
-
-      expect(repo.updateLatestByGroupKey).toHaveBeenCalledOnce();
-      expect(repo.updateLatestByGroupKey.mock.calls[0][2]).not.toHaveProperty('read');
-      expect(repo.insertOrCollapse).not.toHaveBeenCalled();
-    });
-
-    it('never creates a finished row for a user who turned the category off', async () => {
-      repo.findUserSettings.mockResolvedValue(new Map([[3, { notificationPreferences: { bulkRename: 'off' } }]]));
-      repo.updateLatestByGroupKey.mockResolvedValue(undefined);
-
-      await service.upsertByGroupKey(3, 'read_along_build:7:1', { ...patch, meta: { done: true } });
-
-      expect(repo.insertOrCollapse).not.toHaveBeenCalled();
-    });
-
     it('writes nothing for a user who turned the category off', async () => {
-      repo.findUserSettings.mockResolvedValue(new Map([[3, { notificationPreferences: { bulkRename: 'off' } }]]));
+      repo.findUserSettings.mockResolvedValue(new Map([[3, { notificationPreferences: { webSerials: 'off' } }]]));
 
-      await service.upsertByGroupKey(3, 'read_along_build:7', patch);
+      await service.upsertByGroupKey(3, 'web-serial-job:7', patch);
 
       expect(repo.updateLatestByGroupKey).not.toHaveBeenCalled();
       expect(repo.insertOrCollapse).not.toHaveBeenCalled();
@@ -574,14 +504,6 @@ describe('NotificationService', () => {
       expect(gateway.emitCountUpdate).toHaveBeenCalledWith(42, 3);
     });
 
-    it('answers false for a locked notification, which the repository refuses to delete', async () => {
-      repo.deleteOne.mockResolvedValue(false);
-
-      await expect(service.dismiss(42, 7)).resolves.toBe(false);
-
-      expect(gateway.emitDismissed).not.toHaveBeenCalled();
-    });
-
     it('returns false and does not emit events when notification not found', async () => {
       repo.setRead.mockResolvedValue(false);
 
@@ -626,14 +548,6 @@ describe('NotificationService', () => {
       expect(gateway.emitCountUpdate).toHaveBeenCalledWith(42, 2);
     });
 
-    it('answers false for a locked notification, which the repository refuses to delete', async () => {
-      repo.deleteOne.mockResolvedValue(false);
-
-      await expect(service.dismiss(42, 7)).resolves.toBe(false);
-
-      expect(gateway.emitDismissed).not.toHaveBeenCalled();
-    });
-
     it('returns false and does not emit events when notification not found', async () => {
       repo.deleteOne.mockResolvedValue(false);
 
@@ -650,34 +564,12 @@ describe('NotificationService', () => {
   describe('clearAll()', () => {
     it('deletes all and emits count=0 + cleared', async () => {
       repo.deleteAllForUser.mockResolvedValue(undefined);
-      repo.countUnread.mockResolvedValue(0);
 
       await service.clearAll(42);
 
       expect(repo.deleteAllForUser).toHaveBeenCalledWith(42);
       expect(gateway.emitCountUpdate).toHaveBeenCalledWith(42, 0);
       expect(gateway.emitCleared).toHaveBeenCalledWith(42);
-    });
-
-    it('reports the unread count of the locked notifications a clear leaves behind', async () => {
-      repo.deleteAllForUser.mockResolvedValue(3);
-      repo.countUnread.mockResolvedValue(1);
-
-      await service.clearAll(42);
-
-      expect(gateway.emitCountUpdate).toHaveBeenCalledWith(42, 1);
-      expect(gateway.emitCleared).toHaveBeenCalledWith(42);
-    });
-  });
-
-  describe('findLockedByType()', () => {
-    it('returns the locked rows of that type with their user, key and meta', async () => {
-      repo.findLockedByType.mockResolvedValue([{ id: 4, userId: 3, groupKey: 'read_along_build:7:1', meta: { locked: true } }]);
-
-      await expect(service.findLockedByType(NotificationType.ReadAlongBuild)).resolves.toEqual([
-        { id: 4, userId: 3, groupKey: 'read_along_build:7:1', meta: { locked: true } },
-      ]);
-      expect(repo.findLockedByType).toHaveBeenCalledWith('read_along_build');
     });
   });
 

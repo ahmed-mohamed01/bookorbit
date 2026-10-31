@@ -28,7 +28,7 @@ import { SeriesIdentityService } from '../../common/services/series-identity.ser
 import { SeriesMembershipService } from '../../common/services/series-membership.service';
 import { BookQueryBuilder } from './book-query-builder.service';
 import { letterJumpBucketExpr } from './jump-bucket-expr';
-import { EXTRA_PROGRESS_SOURCE, type ExtraProgress, type ExtraProgressSource } from './extra-progress-source';
+import { preserveOutgoingChapters } from '../../db/preserve-audiobook-revision';
 import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import {
@@ -542,7 +542,6 @@ export class BookRepository {
     @Inject(DB) private readonly db: Db,
     @Optional() private readonly seriesIdentity?: SeriesIdentityService,
     @Optional() private readonly seriesMemberships?: SeriesMembershipService,
-    @Optional() @Inject(EXTRA_PROGRESS_SOURCE) private readonly extraProgress?: ExtraProgressSource,
   ) {}
 
   private visibleWhere(where: SQL | undefined): SQL {
@@ -769,7 +768,6 @@ export class BookRepository {
         .from(audiobookProgress)
         .where(and(eq(audiobookProgress.userId, userId), inArray(audiobookProgress.bookId, bookIds))),
     ]);
-    const extra = (await this.extraProgress?.findProgressForBooks(userId, bookIds)) ?? new Map<number, ExtraProgress>();
 
     const fileProgressById = new Map(fileProgressRows.map((row) => [row.bookFileId, row]));
     const audiobookProgressByBookId = new Map(audiobookProgressRows.map((row) => [row.bookId, row]));
@@ -778,24 +776,16 @@ export class BookRepository {
 
       const fileProgress = fileProgressById.get(book.primaryFileId);
       const audioProgress = audiobookProgressByBookId.get(book.id);
-      const extraProgress = extra.get(book.id);
-      if (!fileProgress && !audioProgress && !extraProgress) return [];
+      if (!fileProgress && !audioProgress) return [];
 
-      // Newest-wins across the book's own file progress, its own audiobook progress, and any progress
-      // an extra source reports for it. A missing timestamp counts as oldest; on a tie the earlier
-      // candidate wins, preserving the pre-existing file-over-audio precedence.
-      const candidates = [
-        fileProgress ? { at: fileProgress.lastReadAt ?? new Date(0), percentage: fileProgress.percentage } : null,
-        audioProgress ? { at: audioProgress.updatedAt ?? new Date(0), percentage: audioProgress.percentage } : null,
-        extraProgress ? { at: extraProgress.updatedAt ?? new Date(0), percentage: extraProgress.percentage } : null,
-      ].filter((candidate): candidate is { at: Date; percentage: number } => candidate != null);
+      const mergedPercentage =
+        fileProgress && audioProgress
+          ? fileProgress.lastReadAt >= audioProgress.updatedAt
+            ? fileProgress.percentage
+            : audioProgress.percentage
+          : (fileProgress?.percentage ?? audioProgress?.percentage ?? null);
 
-      let newest = candidates[0]!;
-      for (const candidate of candidates.slice(1)) {
-        if (candidate.at > newest.at) newest = candidate;
-      }
-
-      return [{ bookFileId: book.primaryFileId, percentage: newest.percentage }];
+      return [{ bookFileId: book.primaryFileId, percentage: mergedPercentage }];
     });
 
     return { authorRows, fileRows, genreRows, tagRows, progressRows, statusRows, narratorRows, seriesMembershipRows };
@@ -1681,14 +1671,6 @@ export class BookRepository {
     return { primaryFileId: book.primaryFileId, files };
   }
 
-  async findAudioChapterStarts(bookId: number): Promise<{ startMs: number }[]> {
-    const [row] = await this.db.select({ chapters: bookMetadata.chapters }).from(bookMetadata).where(eq(bookMetadata.bookId, bookId)).limit(1);
-    if (!Array.isArray(row?.chapters)) return [];
-    return (row.chapters as { startMs?: unknown }[])
-      .filter((chapter): chapter is { startMs: number } => typeof chapter?.startMs === 'number' && Number.isFinite(chapter.startMs))
-      .map((chapter) => ({ startMs: chapter.startMs }));
-  }
-
   async findBookBase(bookId: number) {
     const [row] = await this.db.select().from(books).where(eq(books.id, bookId)).limit(1);
     return row ?? null;
@@ -1718,6 +1700,9 @@ export class BookRepository {
         koboLocationValue: readingProgress.koboLocationValue,
         koboContentSourceProgressPercent: readingProgress.koboContentSourceProgressPercent,
         koreaderProgress: readingProgress.koreaderProgress,
+        narrationPercentage: readingProgress.narrationPercentage,
+        narrationUpdatedAt: readingProgress.narrationUpdatedAt,
+        textUpdatedAt: readingProgress.textUpdatedAt,
         updatedAt: readingProgress.updatedAt,
         lastReadAt: readingProgress.lastReadAt,
       })
@@ -2234,7 +2219,7 @@ export class BookRepository {
   }
 
   async deleteByIds(bookIds: number[]): Promise<void> {
-    await deleteBooksWithHashInvalidation(this.db, inArray(books.id, bookIds));
+    await deleteBooksWithHashInvalidation(this.db, inArray(books.id, bookIds), { keepFinishedReads: true });
   }
 
   async deleteByIdsAndInvalidateScanState(bookIds: number[]): Promise<void> {
@@ -2294,20 +2279,36 @@ export class BookRepository {
           books.id,
           rows.map((row) => row.id),
         ),
+        { keepFinishedReads: true },
       );
     });
   }
 
+  /** A book's rating is its latest completed read's, so that read takes the same stars. */
   async bulkSetRating(bookIds: number[], rating: number | null, userId: number): Promise<void> {
     if (bookIds.length === 0) return;
 
-    await this.db
-      .insert(userBookRatings)
-      .values(bookIds.map((bookId) => ({ userId, bookId, rating })))
-      .onConflictDoUpdate({
-        target: [userBookRatings.userId, userBookRatings.bookId],
-        set: { rating, updatedAt: new Date() },
-      });
+    await this.db.transaction(async (tx) => {
+      await tx
+        .insert(userBookRatings)
+        .values(bookIds.map((bookId) => ({ userId, bookId, rating })))
+        .onConflictDoUpdate({
+          target: [userBookRatings.userId, userBookRatings.bookId],
+          set: { rating, updatedAt: new Date() },
+        });
+      await tx.execute(sql`
+        update ${schema.readingAttempts} set rating = ${rating}
+        where ${schema.readingAttempts.id} in (
+          select distinct on (ra.book_id) ra.id from ${schema.readingAttempts} ra
+          where ra.user_id = ${userId} and ra.book_id in (${sql.join(
+            bookIds.map((bookId) => sql`${bookId}`),
+            sql`, `,
+          )})
+            and ra.outcome = 'completed' and ra.deleted_at is null
+          order by ra.book_id, ra.ended_on desc nulls last, ra.id desc
+        )
+      `);
+    });
   }
 
   async findTagsByBookIds(bookIds: number[], executor: MetadataReadExecutor = this.db): Promise<Map<number, string[]>> {
@@ -2381,9 +2382,17 @@ export class BookRepository {
     fields: Partial<typeof bookMetadata.$inferInsert>,
     executor: MetadataUpdateExecutor = this.db,
   ): Promise<void> {
+    if (executor === this.db && Object.prototype.hasOwnProperty.call(fields, 'chapters')) {
+      return this.db.transaction((tx) => this.updateMetadataFields(bookId, fields, tx));
+    }
     const shouldSyncSeries =
       Object.prototype.hasOwnProperty.call(fields, 'seriesName') || Object.prototype.hasOwnProperty.call(fields, 'seriesIndex');
-    const patch = (await this.seriesIdentity?.resolveMetadataPatch(fields, executor)) ?? fields;
+    const patch = await preserveOutgoingChapters(
+      executor,
+      bookId,
+      (await this.seriesIdentity?.resolveMetadataPatch(fields, executor)) ?? fields,
+      fields.chaptersSource !== 'manual',
+    );
     await executor.update(bookMetadata).set(patch).where(eq(bookMetadata.bookId, bookId));
     if (shouldSyncSeries) {
       await this.seriesMemberships?.syncPrimaryFromMetadata(bookId, executor);

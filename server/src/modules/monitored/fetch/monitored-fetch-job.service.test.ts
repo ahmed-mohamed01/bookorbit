@@ -24,7 +24,7 @@ async function harness(attempts = 0) {
   const service = { toFetchEventItem: vi.fn().mockResolvedValue({ id: 'a' }), runFetchFollowUps: vi.fn().mockResolvedValue(undefined) };
   const gateway = { emitFetch: vi.fn() };
   const configs = { forUser: vi.fn().mockResolvedValue({ hardcover: { enabled: true, apiKey: 'key' } }) };
-  const users = { findByIdWithPermissions: vi.fn().mockResolvedValue({ id: 1 }) };
+  const users = { findByIdWithPermissions: vi.fn().mockResolvedValue({ id: 1, active: true, isSuperuser: true }) };
   const module = await Test.createTestingModule({
     providers: [
       MonitoredFetchJobService,
@@ -151,4 +151,14 @@ describe('MonitoredFetchJobService', () => {
     expect(h.catalog.fetchCatalog).not.toHaveBeenCalled();
     expect(h.gateway.emitFetch).not.toHaveBeenCalled();
   });
+});
+
+it.each([
+  { id: 1, active: false, isSuperuser: true, permissions: [] },
+  { id: 1, active: true, isSuperuser: false, permissions: [] },
+])('does not fetch for an ineligible owner', async (owner) => {
+  const h = await harness();
+  h.users.findByIdWithPermissions.mockResolvedValue(owner);
+  await expect(h.job.run('a', 'create', new AbortController().signal)).resolves.toEqual({ outcome: 'skipped', retryAt: null });
+  expect(h.catalog.fetchCatalog).not.toHaveBeenCalled();
 });

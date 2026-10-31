@@ -6456,15 +6456,9 @@
         "metadataScore": "Оцінка метаданих",
         "primaryFormat": "Основний формат",
         "readAloudSync": {
-          "title": "Синхронізація між розмовними сповіщеннями",
           "state": {
-            "enabled": "Увімкнено",
-            "disabled": "Вимкнено",
-            "unavailable": "Unavailable",
             "epubCopiesOnly": "Лише EPUB копії"
           },
-          "enabledDescription": "Audiobook, веб-читачі, Кобо та KOReader позиції залишаються синхронізованими.",
-          "disabledDescription": "Кожен формат підтримує власну позицію читання.",
           "epubCopiesDescription": "Положення веб-читача, Кобо та KOReader, залишайтеся синхронізованими між копіями EPUB. Додайте відповідні файли аудіо, щоб синхронізувати також аудіобу.",
           "reason": {
             "no_media_overlay_epub": "Потрібне читання EPUB з засобами накладання медіа.",
@@ -6472,9 +6466,6 @@
             "missing_duration": "Метадані аудіо тривалістю неповні.",
             "durationMismatch": "Тригери недостатньо тісно: аудіосупровід {audio}, читання за EPUB {overlay}."
           },
-          "enable": "Увімкнено",
-          "disable": "Вимкнено",
-          "saving": "Збереження...",
           "saveFailed": "Не вдалося оновити синхронізацію поступу \"читання\"."
         },
         "openIn": "Відкрити в {provider}",

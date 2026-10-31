@@ -10,7 +10,6 @@ import { alignmentContentChanged } from './reading-alignment-content-hash.util';
 import { describeError } from './reading-alignment-error.util';
 import { BookService } from '../book/book.service';
 import { ReadingAlignmentBuildService } from './reading-alignment-build.service';
-import type { ReadingAlignmentPair } from './reading-alignment-pair.service';
 import { ReadingAlignmentPairService } from './reading-alignment-pair.service';
 import { ReadingAlignmentRepository } from './reading-alignment.repository';
 import { WhisperService } from './whisper.service';
@@ -39,7 +38,6 @@ export class ReadingAlignmentStatusService {
     await this.assertAccess(bookId, user);
     const pair = await this.pairService.resolveAlignmentPair(bookId);
     if (!pair) return { status: 'none' };
-    await this.assertPairAccess(pair, bookId, user);
 
     // Report the real reason a build cannot start instead of a "building" spinner that never resolves.
     if (!this.config.readingAlignmentEnabled) return { status: 'disabled' };
@@ -70,14 +68,13 @@ export class ReadingAlignmentStatusService {
 
   /**
    * Stops a running build and deletes its row rather than failing it. The panel offers Cancel only
-   * for a link it just started, and a cancelled first build left behind would resume as a stale
-   * half-alignment the next time the pair is linked.
+   * for a build it just started, and a cancelled first build left behind would resume as a stale
+   * half-alignment the next time the alignment is requested.
    */
   async cancelBuild(bookId: number, user: RequestUser): Promise<void> {
     await this.assertAccess(bookId, user);
     const pair = await this.pairService.resolveAlignmentPair(bookId);
     if (!pair) throw new NotFoundException('This book has no alignment pair');
-    await this.assertPairAccess(pair, bookId, user);
 
     const startedAt = Date.now();
     this.logger.log(
@@ -106,7 +103,6 @@ export class ReadingAlignmentStatusService {
     await this.assertAccess(bookId, user);
     const pair = await this.pairService.resolveAlignmentPair(bookId);
     if (!pair) return { status: 'none' };
-    await this.assertPairAccess(pair, bookId, user);
 
     const alignment = await this.repo.getAlignmentByPair(pair.textBookId, pair.audioBookId);
     if (!alignment) return { status: 'none' };
@@ -115,7 +111,6 @@ export class ReadingAlignmentStatusService {
       status: alignment.status,
       samplesDone: alignment.samplesDone,
       samplesTotal: alignment.samplesTotal,
-      anchorCount: alignment.anchorCount,
       builtAt: alignment.builtAt?.toISOString() ?? null,
       // The stored error can carry file paths and tool output, so only someone who may rebuild sees it.
       error: this.canBuild(user) && alignment.error ? alignment.error.slice(0, MAX_STATUS_ERROR_LENGTH) : null,
@@ -131,11 +126,5 @@ export class ReadingAlignmentStatusService {
     // Content-filter aware access check (see resolve service) so build/status cannot be probed for a
     // book hidden from the user.
     await this.bookService.verifyBookAccess(bookId, user);
-  }
-
-  private async assertPairAccess(pair: ReadingAlignmentPair, requestedBookId: number, user: RequestUser): Promise<void> {
-    const counterpartIds = new Set([pair.textBookId, pair.audioBookId]);
-    counterpartIds.delete(requestedBookId);
-    await Promise.all([...counterpartIds].map((bookId) => this.assertAccess(bookId, user)));
   }
 }

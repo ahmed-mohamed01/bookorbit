@@ -1,3 +1,4 @@
+import { readBoundedText } from '../../../common/utils/bounded-response';
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import type { ProviderConfigurations } from '@bookorbit/types';
 
@@ -94,7 +95,7 @@ export class GoodreadsBibliographyProvider implements AuthorBibliographyProvider
         const url = `https://www.goodreads.com/book/auto_complete?format=json&q=${encodeURIComponent(variant)}`;
         const response = await fetchWithThrottle(url, { signal: buildRequestSignal(PROVIDER_TIMEOUT_MS.SCRAPE, signal) });
         if (!response.ok) continue;
-        const rows = (await response.json()) as GoodreadsAutocompleteRow[];
+        const rows = JSON.parse(await readBoundedText(response, 4 * 1024 * 1024)) as GoodreadsAutocompleteRow[];
         const match = rows.find((row) => row.author && authorKey(row.author.name) === authorKey(name))?.author;
         if (match) {
           this.logger.log(

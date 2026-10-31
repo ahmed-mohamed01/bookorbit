@@ -1,13 +1,12 @@
 import { Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Post, Query } from '@nestjs/common';
 import { Permission } from '@bookorbit/types';
-import type { AlignmentBuildResponse, AlignmentStatusResponse } from '@bookorbit/types';
+import type { AlignmentBuildResponse, AlignmentStatusResponse, CrossFormatResume } from '@bookorbit/types';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import type { RequestUser } from '../../common/types/request-user';
-import { BuildAlignmentQueryDto } from './dto';
+import { BuildAlignmentQueryDto, CrossFormatResumeQueryDto } from './dto';
 import { ReadingAlignmentResolveService } from './reading-alignment-resolve.service';
-import type { CrossFormatResume } from './reading-alignment-resolve.service';
 import { ReadingAlignmentStatusService } from './reading-alignment-status.service';
 
 @Controller('reading-alignment')
@@ -18,8 +17,12 @@ export class ReadingAlignmentController {
   ) {}
 
   @Get('books/:bookId/cross-format-resume')
-  getCrossFormatResume(@Param('bookId', ParseIntPipe) bookId: number, @CurrentUser() user: RequestUser): Promise<CrossFormatResume> {
-    return this.resolveService.resolveResume(bookId, user);
+  getCrossFormatResume(
+    @Param('bookId', ParseIntPipe) bookId: number,
+    @Query() query: CrossFormatResumeQueryDto,
+    @CurrentUser() user: RequestUser,
+  ): Promise<CrossFormatResume> {
+    return this.resolveService.resolveResume(bookId, user, query.fileId);
   }
 
   @Post('books/:bookId/build')

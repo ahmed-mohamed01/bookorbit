@@ -13,11 +13,6 @@ describe('chainText', () => {
   it('names a missing title', () => {
     expect(chainText({ key: 'x', params: { title: '' } }, t)).toBe('x{"title":"book.detail.editionLink.unknownTitle"}')
   })
-
-  it("translates a failed read-along's stage, and leaves any other step alone", () => {
-    expect(chainText({ key: 'x', params: { step: 'transcribing' } }, t)).toBe('x{"step":"book.detail.editionLink.readAlong.stages.transcribing"}')
-    expect(chainText({ key: 'x', params: { step: 'elsewhere' } }, t)).toBe('x{"step":"elsewhere"}')
-  })
 })
 
 describe('chainTitle', () => {
@@ -40,13 +35,6 @@ describe('cardProgress', () => {
 
 describe('chain copy', () => {
   const chain = en.book.detail.editionLink.chain
-
-  it('asks only for an audiobook on screen, not a linked one', () => {
-    expect(chain.ghost.absNeedsAudio).toBe('Pick an audiobook first')
-    expect(chain.off.pickAudiobookFirst).toBe('pick an audiobook first')
-    expect(chain.slot.needsAudio).toBe('Not generated. Pick an audiobook first.')
-    expect(chain.off).not.toHaveProperty('linkAudiobookFirst')
-  })
 
   it('leaves the Settings pointer of a one-way explainer to the appended link', () => {
     expect(chain.explain.absFromAbs).not.toMatch(/Settings/)

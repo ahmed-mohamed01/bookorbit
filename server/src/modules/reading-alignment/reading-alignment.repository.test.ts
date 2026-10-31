@@ -2,13 +2,6 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 
 import { ReadingAlignmentRepository } from './reading-alignment.repository';
 
-function makeSelectDb(rows: unknown[]) {
-  const orderBy = vi.fn().mockResolvedValue(rows);
-  const where = vi.fn().mockReturnValue({ orderBy });
-  const from = vi.fn().mockReturnValue({ where });
-  return { select: vi.fn().mockReturnValue({ from }) };
-}
-
 function makeInsertDb(returned: unknown[]) {
   const returning = vi.fn().mockResolvedValue(returned);
   const onConflictDoUpdate = vi.fn().mockReturnValue({ returning });
@@ -16,28 +9,12 @@ function makeInsertDb(returned: unknown[]) {
   return { db: { insert: vi.fn().mockReturnValue({ values }) }, values, onConflictDoUpdate };
 }
 
-describe('ReadingAlignmentRepository.resolveAudioPlayOrder', () => {
-  it('drops non-audio files and returns the rest in manifest play order', async () => {
-    const db = makeSelectDb([
-      { id: 3, format: 'mp3', absolutePath: '/books/track-10.mp3', sortOrder: null, durationSeconds: 30 },
-      { id: 1, format: 'epub', absolutePath: '/books/book.epub', sortOrder: null, durationSeconds: null },
-      { id: 2, format: 'mp3', absolutePath: '/books/track-2.mp3', sortOrder: null, durationSeconds: 20 },
-    ]);
-    const repo = new ReadingAlignmentRepository(db as never);
-
-    await expect(repo.resolveAudioPlayOrder(42)).resolves.toEqual([
-      { fileId: 2, durationSeconds: 20 },
-      { fileId: 3, durationSeconds: 30 },
-    ]);
-  });
-});
-
 describe('ReadingAlignmentRepository.projectAudiobookProgress', () => {
   const updatedAt = new Date('2026-02-01T00:00:00.000Z');
 
   it('bumps the revision and stamps capturedAt so a stale web player conflicts', async () => {
     const { db, values, onConflictDoUpdate } = makeInsertDb([{ userId: 7 }]);
-    const repo = new ReadingAlignmentRepository(db as never);
+    const repo = new ReadingAlignmentRepository(db as never, {} as never);
 
     await expect(repo.projectAudiobookProgress(7, 42, 900, 12.5, 30, updatedAt)).resolves.toBe(true);
 
@@ -60,7 +37,7 @@ describe('ReadingAlignmentRepository.projectAudiobookProgress', () => {
 
   it('reports a lost newest-wins race as not applied', async () => {
     const { db } = makeInsertDb([]);
-    const repo = new ReadingAlignmentRepository(db as never);
+    const repo = new ReadingAlignmentRepository(db as never, {} as never);
 
     await expect(repo.projectAudiobookProgress(7, 42, 900, 12.5, 30, updatedAt)).resolves.toBe(false);
   });
@@ -71,7 +48,7 @@ describe('ReadingAlignmentRepository.projectReadingProgress', () => {
 
   it('inserts a projection with equal timestamps and updates only the percentage and projection time', async () => {
     const { db, values, onConflictDoUpdate } = makeInsertDb([{ userId: 7 }]);
-    const repo = new ReadingAlignmentRepository(db as never);
+    const repo = new ReadingAlignmentRepository(db as never, {} as never);
 
     await expect(repo.projectReadingProgress(7, 500, 42.5, projectedAt)).resolves.toBe(true);
 
@@ -95,7 +72,7 @@ describe('ReadingAlignmentRepository.projectReadingProgress', () => {
 
   it('clamps the percentage to the column CHECK range', async () => {
     const { db, values } = makeInsertDb([{ userId: 7 }]);
-    const repo = new ReadingAlignmentRepository(db as never);
+    const repo = new ReadingAlignmentRepository(db as never, {} as never);
 
     await repo.projectReadingProgress(7, 500, 104, projectedAt);
 
@@ -104,7 +81,7 @@ describe('ReadingAlignmentRepository.projectReadingProgress', () => {
 
   it('reports a guarded no-op as not applied', async () => {
     const { db } = makeInsertDb([]);
-    const repo = new ReadingAlignmentRepository(db as never);
+    const repo = new ReadingAlignmentRepository(db as never, {} as never);
 
     await expect(repo.projectReadingProgress(7, 500, 42.5, projectedAt)).resolves.toBe(false);
   });
@@ -119,7 +96,7 @@ describe('ReadingAlignmentRepository.deleteAlignment', () => {
 
   it('deletes only an unfinished alignment by id and reports that it was there', async () => {
     const { db, where } = makeDeleteDb([{ id: 4 }]);
-    const repo = new ReadingAlignmentRepository(db as never);
+    const repo = new ReadingAlignmentRepository(db as never, {} as never);
 
     await expect(repo.deleteAlignment(4)).resolves.toBe(true);
 
@@ -130,8 +107,62 @@ describe('ReadingAlignmentRepository.deleteAlignment', () => {
 
   it('reports false when no unfinished alignment had that id (a ready one is kept)', async () => {
     const { db } = makeDeleteDb([]);
-    const repo = new ReadingAlignmentRepository(db as never);
+    const repo = new ReadingAlignmentRepository(db as never, {} as never);
 
     await expect(repo.deleteAlignment(99)).resolves.toBe(false);
+  });
+});
+
+describe('ReadingAlignmentRepository.findEbookFile', () => {
+  it('excludes media-overlay EPUBs before selecting the first plain content EPUB', async () => {
+    const plain = { id: 20, absolutePath: '/books/plain.epub', sizeBytes: 200 };
+    const limit = vi.fn().mockResolvedValue([plain]);
+    const orderBy = vi.fn().mockReturnValue({ limit });
+    const where = vi.fn().mockReturnValue({ orderBy });
+    const from = vi.fn().mockReturnValue({ where });
+    const repo = new ReadingAlignmentRepository({ select: vi.fn().mockReturnValue({ from }) } as never);
+
+    await expect(repo.findEbookFile(11)).resolves.toEqual(plain);
+
+    const predicate = new PgDialect().sqlToQuery(where.mock.calls[0]![0]);
+    expect(predicate.sql).toContain('"book_files"."media_overlay_available" = $4');
+    expect(predicate.params).toEqual([11, 'content', 'epub', false]);
+    expect(orderBy).toHaveBeenCalledOnce();
+    expect(limit).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('ReadingAlignmentRepository.hasReadAlong', () => {
+  function makeSelectDb(result: unknown[]) {
+    const wheres: unknown[] = [];
+    const select = vi.fn().mockImplementation(() => ({
+      from: () => ({
+        where: (predicate: unknown) => {
+          wheres.push(predicate);
+          return { limit: vi.fn().mockResolvedValue(result) };
+        },
+      }),
+    }));
+    return { db: { select }, select, wheres };
+  }
+
+  it('is false without a media-overlay EPUB', async () => {
+    const { db, select, wheres } = makeSelectDb([]);
+    const repo = new ReadingAlignmentRepository(db as never, {} as never);
+
+    await expect(repo.hasReadAlong(11)).resolves.toBe(false);
+
+    expect(select).toHaveBeenCalledOnce();
+    const predicate = new PgDialect().sqlToQuery(wheres[0] as never);
+    expect(predicate.sql).toContain('"book_files"."media_overlay_available" = $3');
+    expect(predicate.params).toEqual([11, 'epub', true]);
+  });
+
+  it('is true for a book holding a read-along, whatever its read-aloud sync mode', async () => {
+    const { db, select } = makeSelectDb([{ id: 30 }]);
+    const repo = new ReadingAlignmentRepository(db as never, {} as never);
+
+    await expect(repo.hasReadAlong(11)).resolves.toBe(true);
+    expect(select).toHaveBeenCalledOnce();
   });
 });

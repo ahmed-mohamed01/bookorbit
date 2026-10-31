@@ -6,7 +6,7 @@ import { join } from 'path';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 
-import { appConfig } from '../../config/config';
+import { appConfig, audioToolsConfig } from '../../config/config';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { describeError } from './reading-alignment-error.util';
 import { WhisperModelService } from './whisper-model.service';
@@ -26,6 +26,7 @@ export class WhisperService {
   constructor(
     @Inject(appConfig.KEY) private readonly config: ConfigType<typeof appConfig>,
     private readonly models: WhisperModelService,
+    @Inject(audioToolsConfig.KEY) private readonly audioTools: ConfigType<typeof audioToolsConfig>,
   ) {}
 
   isAvailable(): boolean {
@@ -49,7 +50,7 @@ export class WhisperService {
     try {
       const modelPath = await this.models.ensureModelReady();
       await this.runProcess(
-        this.config.ffmpegPath,
+        this.audioTools.ffmpegPath,
         ['-nostdin', '-ss', String(offsetSeconds), '-t', String(durationSeconds), '-i', audioFilePath, '-ac', '1', '-ar', '16000', '-y', clipPath],
         timeoutMs,
         'ffmpeg',

@@ -2222,3 +2222,23 @@ describe('MonitoredStoreService automatic fetch eligibility SQL', () => {
     }
   });
 });
+
+describe('watchlist pagination limits', () => {
+  it.each(['findAuthorPage', 'findBookPage', 'findReleasePage', 'searchWorks'] as const)(
+    '%s rejects a deep offset before querying',
+    async (method) => {
+      const db = { select: vi.fn(), execute: vi.fn() };
+      const service = new MonitoredStoreService(db as never);
+      await expect(service[method]({ page: 501, size: 100 } as never)).rejects.toThrow('pagination window is too deep');
+      expect(db.select).not.toHaveBeenCalled();
+      expect(db.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects a deep owned-author id offset before querying', async () => {
+    const db = { select: vi.fn() };
+    const service = new MonitoredStoreService(db as never);
+    await expect(service.findOwnedAuthorIdsPage({} as never, 501, 100)).rejects.toThrow('pagination window is too deep');
+    expect(db.select).not.toHaveBeenCalled();
+  });
+});

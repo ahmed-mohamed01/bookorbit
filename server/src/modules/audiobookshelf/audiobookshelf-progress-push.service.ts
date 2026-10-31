@@ -10,7 +10,6 @@ import {
   type BookProgressChangedPayload,
 } from '../achievement/achievement-events.service';
 import { BookService } from '../book/book.service';
-import { EditionLinkRepository } from '../edition-link/edition-link.repository';
 import { LibraryService } from '../library/library.service';
 import { UserService } from '../user/user.service';
 import { AudiobookshelfApiError, AudiobookshelfClientService } from './audiobookshelf-client.service';
@@ -83,7 +82,6 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
     private readonly repo: AudiobookshelfRepository,
     private readonly client: AudiobookshelfClientService,
     private readonly bookService: BookService,
-    private readonly editionLinks: EditionLinkRepository,
     private readonly coordinator: AudiobookshelfSyncCoordinatorService,
     private readonly userService: UserService,
     private readonly libraryService: LibraryService,
@@ -163,13 +161,7 @@ export class AudiobookshelfProgressPushService implements OnModuleInit {
       const context = await this.eventContext(payload.userId);
       if (!context) return;
 
-      let state = await this.repo.findPushableBookStateByBookId(payload.userId, payload.bookId, context.scope, context.excludedLibraryIds);
-      if (!state) {
-        // The text edition and the read-along reach Audiobookshelf through their linked audiobook.
-        const link = await this.editionLinks.findLinkForBook(payload.bookId);
-        if (!link || link.audioBookId === payload.bookId) return;
-        state = await this.repo.findPushableBookStateByBookId(payload.userId, link.audioBookId, context.scope, context.excludedLibraryIds);
-      }
+      const state = await this.repo.findPushableBookStateByBookId(payload.userId, payload.bookId, context.scope, context.excludedLibraryIds);
       if (!state || state.bookId === null) return;
 
       await this.repo.markPositionPushPending(payload.userId, state.absLibraryItemId);

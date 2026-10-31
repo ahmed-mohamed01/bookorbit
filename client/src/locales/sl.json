@@ -6456,15 +6456,9 @@
         "metadataScore": "Ocena metapodatkov",
         "primaryFormat": "Primarni format",
         "readAloudSync": {
-          "title": "Usklajevanje napredka v zvezi z branjem",
           "state": {
-            "enabled": "Omogočeno",
-            "disabled": "Onemogočeno",
-            "unavailable": "Ni na voljo",
             "epubCopiesOnly": "Samo EPUB kopije"
           },
-          "enabledDescription": "Avdiobook, spletni bralnik, Kobo in KOReader položaji ostanejo usklajeni.",
-          "disabledDescription": "Vsak format ohranja svoj bralni položaj.",
           "epubCopiesDescription": "Spletni bralnik, Kobo in KOReader položaji ostanejo sinhronizirani preko EPUB kopij. Dodajte ujemanje avdioknjig datoteke za sinhronizacijo avdioknjige preveč.",
           "reason": {
             "no_media_overlay_epub": "Potrebno je branje-dolgo EPUB z medijskimi prekrivnimi sloji.",
@@ -6472,9 +6466,6 @@
             "missing_duration": "Metapodatki o trajanju zvoka so nepopolni.",
             "durationMismatch": "Trajanje se ne ujema dovolj: avdioknjiga {audio}, v celoti beri EPUB {overlay}."
           },
-          "enable": "Omogoči",
-          "disable": "Onemogoči",
-          "saving": "Shranjevanje...",
           "saveFailed": "Ni moč posodobiti napredka v obliki branja."
         },
         "openIn": "Odpri v {provider}",
@@ -7596,24 +7587,13 @@
         "totalHint": "Skupno število knjig v tej seriji. Deljeno z vsemi, ki imajo to serijo."
       },
       "editionLink": {
-        "trigger": "Link book",
-        "tooltipNeedsAudio": "Link an audiobook to enable position alignment.",
-        "tooltipNeedsText": "Link an ebook to enable position alignment.",
-        "tooltipLinked": "Manage the linked edition.",
-        "title": "Link edition",
         "unknownTitle": "Untitled",
-        "unlink": "Unlink",
         "searching": "Searching...",
         "noResults": "No matches found.",
-        "linkedSuccess": "Books linked.",
-        "linkFailed": "Failed to link book.",
-        "unlinkedSuccess": "Books unlinked.",
-        "unlinkFailed": "Failed to unlink book.",
         "searchFailed": "Couldn't search for a match. Try again."
       },
       "readingAlignment": {
         "title": "Position alignment",
-        "builtAt": "Built {date}",
         "unalignableHint": "Position alignment isn't available for this book pair.",
         "buildFailed": "Failed to start alignment build.",
         "buildBlocked": {

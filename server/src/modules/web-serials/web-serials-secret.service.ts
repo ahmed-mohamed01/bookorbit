@@ -6,7 +6,7 @@ import { webSerialsConfig } from './web-serials.config';
 
 const ALGORITHM = 'aes-256-gcm';
 
-// Same scheme as StorytellerSecretService: key = sha256(encryptionKey), `v1:` + base64url IV, tag and ciphertext.
+// key = sha256(encryptionKey); stored as `v1:` + base64url IV, tag and ciphertext.
 @Injectable()
 export class WebSerialsSecretService {
   private readonly key: Buffer;

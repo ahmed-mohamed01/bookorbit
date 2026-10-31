@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 
 import type {
   CurrentlyReadingWidgetData,
@@ -52,7 +52,6 @@ import {
   type ReaderClock,
 } from './dashboard-widget.calculations';
 import { DashboardWidgetRepository } from './dashboard-widget.repository';
-import { CURRENTLY_READING_GROUP_SOURCE, type CurrentlyReadingGroupSource } from './currently-reading-group-source';
 import { dashboardLibraryScopeCacheKey, resolveDashboardLibraryIds } from './dashboard-library-scope';
 
 const DASHBOARD_LIVE_TTL_MS = 120_000;
@@ -81,7 +80,6 @@ export class DashboardWidgetService implements OnModuleInit, OnModuleDestroy {
     private readonly libraryService: LibraryService,
     private readonly readingAttemptEvents: ReadingAttemptEventsService,
     @Optional() private readonly achievementEvents?: AchievementEventsService,
-    @Optional() @Inject(CURRENTLY_READING_GROUP_SOURCE) private readonly groupSource?: CurrentlyReadingGroupSource,
   ) {}
 
   private readonly onReadingAttemptChanged = ({ userId }: ReadingAttemptChangedPayload): void => {
@@ -183,35 +181,8 @@ export class DashboardWidgetService implements OnModuleInit, OnModuleDestroy {
     this.readingAttemptEvents.flushPendingChanges(user.id);
     return this.liveCache.get(this.cacheOwnerKey(user, accessibleLibraryIds), 'currently-reading', async () => {
       const contentFilters = this.getContentFilters(user);
-      const data = await this.widgetRepo.getCurrentlyReadingBooks(user.id, accessibleLibraryIds, contentFilters);
-      return this.attachEditionGroups(user.id, data);
+      return this.widgetRepo.getCurrentlyReadingBooks(user.id, accessibleLibraryIds, contentFilters);
     });
-  }
-
-  private async attachEditionGroups(userId: number, data: CurrentlyReadingWidgetData): Promise<CurrentlyReadingWidgetData> {
-    if (!this.groupSource || data.books.length === 0) return data;
-    const startedAt = Date.now();
-    try {
-      const groups = await this.groupSource.findGroupsForBooks(
-        userId,
-        data.books.map((book) => book.bookId),
-      );
-      return {
-        ...data,
-        books: data.books.map((book) => {
-          const membership = groups.get(book.bookId);
-          if (!membership) return book;
-          return { ...book, editionGroupId: membership.groupId, lastActivityAt: membership.lastActivityAt?.toISOString() ?? null };
-        }),
-      };
-    } catch (error) {
-      const errorClass = error instanceof Error ? error.constructor.name : typeof error;
-      const message = sanitizeLogValue(error instanceof Error ? error.message : error);
-      this.logger.warn(
-        `[dashboard.currently_reading_groups] [fail] userId=${userId} durationMs=${Date.now() - startedAt} errorClass=${errorClass} error="${message}" - currently reading edition groups failed`,
-      );
-      return data;
-    }
   }
 
   async getReadingStreak(user: RequestUser): Promise<ReadingStreakWidgetData> {

@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 
 import { AchievementModule } from '../achievement/achievement.module';
 import { BookModule } from '../book/book.module';
-import { EditionLinkModule } from '../edition-link/edition-link.module';
 import { LibraryModule } from '../library/library.module';
 import { UserModule } from '../user/user.module';
 import { UserBookStatusModule } from '../user-book-status/user-book-status.module';
@@ -22,7 +21,7 @@ import { AudiobookshelfProgressPushService } from './audiobookshelf-progress-pus
 import { AudiobookshelfSyncCoordinatorService } from './audiobookshelf-sync-coordinator.service';
 
 @Module({
-  imports: [AchievementModule, BookModule, EditionLinkModule, LibraryModule, UserModule, UserBookStatusModule, AudiobookshelfMetadataModule],
+  imports: [AchievementModule, BookModule, LibraryModule, UserModule, UserBookStatusModule, AudiobookshelfMetadataModule],
   controllers: [AudiobookshelfController, AudiobookshelfBooksController],
   providers: [
     AudiobookshelfClientService,

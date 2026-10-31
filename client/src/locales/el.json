@@ -6456,15 +6456,9 @@
         "metadataScore": "Βαθμολογία Μεταδεδομένων",
         "primaryFormat": "Κύρια μορφή",
         "readAloudSync": {
-          "title": "Συγχρονισμός προόδου",
           "state": {
-            "enabled": "Ενεργοποιημένο",
-            "disabled": "Απενεργοποιημένο",
-            "unavailable": "Unavailable",
             "epubCopiesOnly": "Μόνο αντίγραφα EPUB"
           },
-          "enabledDescription": "Οι θέσεις Audiobook, web reader, Kobo, και KOReader παραμένουν συγχρονισμένες.",
-          "disabledDescription": "Κάθε μορφή διατηρεί τη δική του θέση ανάγνωσης.",
           "epubCopiesDescription": "Οι θέσεις Web reader, Kobo, και KOReader παραμένουν συγχρονισμένες στα αντίγραφα του EPUB. Προσθέστε αρχεία ήχου που ταιριάζουν και για να συγχρονίσετε το audiobook.",
           "reason": {
             "no_media_overlay_epub": "Απαιτείται ένα διαβασμένο EPUB με επικαλύψεις πολυμέσων.",
@@ -6472,9 +6466,6 @@
             "missing_duration": "Τα μεταδεδομένα διάρκειας ήχου είναι ελλιπή.",
             "durationMismatch": "Οι διάρκειες δεν ταιριάζουν αρκετά στενά: audiobook {audio}, διαβάστε κατά μήκος του EPUB {overlay}."
           },
-          "enable": "Ενεργοποίηση",
-          "disable": "Απενεργοποίηση",
-          "saving": "Αποθηκεύεται...",
           "saveFailed": "Αδύνατη η ενημέρωση του συγχρονισμού προόδου για ανάγνωση."
         },
         "openIn": "Άνοιγμα σε {provider}",

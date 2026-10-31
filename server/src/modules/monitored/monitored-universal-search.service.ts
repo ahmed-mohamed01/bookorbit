@@ -1,6 +1,7 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import type { HardcoverSearchBook, HardcoverUniversalSearchResult, MonitoredAuthorSearchResult, MonitoredCatalogSearchHit } from '@bookorbit/types';
 
+import { StatsCache } from '../../common/cache/stats-cache';
 import type { RequestUser } from '../../common/types/request-user';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { HardcoverClient } from '../metadata-fetch/providers/hardcover/hardcover.client';
@@ -10,14 +11,30 @@ import { strongestHitPerName } from './hardcover-author-hits.utils';
 import { MonitoredProviderConfigService } from './monitored-provider-config.service';
 import { MonitoredStoreService } from './monitored-store.service';
 import { isHardcoverConfigured } from './providers/hardcover-bibliography.provider';
-import type { HardcoverCachedSearchAuthor, HardcoverSearchCacheEntry } from './hardcover-search-cache';
-import { HardcoverSearchCache } from './hardcover-search-cache';
 
 const HARDCOVER_SEARCH_TIMEOUT_MS = 4000;
 /** Measured Hardcover p90 is about 1s; a request that cannot even start inside that allowance is not worth a slot. */
 const HARDCOVER_REQUEST_ALLOWANCE_MS = 1500;
 const HARDCOVER_BOOK_LIMIT = 5;
 const HARDCOVER_AUTHOR_LIMIT = 3;
+const HARDCOVER_CACHE_TTL_MS = 15 * 60 * 1000;
+const HARDCOVER_CACHE_MAX_ENTRIES = 500;
+/** One scope for every user: the cache holds what Hardcover said, and dedupe runs per user after the read. */
+const HARDCOVER_CACHE_SCOPE = 'hardcover';
+
+/** The per-author fields the palette dedupe reads, kept in the shape the cache holds them. */
+interface HardcoverCachedSearchAuthor {
+  id: string;
+  name: string;
+  booksCount: number | null;
+  imageUrl: string | null;
+  genres: string[];
+}
+
+interface HardcoverSearchCacheEntry {
+  books: HardcoverSearchBook[];
+  authors: HardcoverCachedSearchAuthor[];
+}
 
 function toHardcoverSearchBook(document: HardcoverSearchDocument): HardcoverSearchBook {
   return {
@@ -57,12 +74,13 @@ class HardcoverBusyError extends ServiceUnavailableException {}
 @Injectable()
 export class MonitoredUniversalSearchService {
   private readonly logger = new Logger(MonitoredUniversalSearchService.name);
+  // A rate-limit shield for a hot palette path, so it stays in memory rather than in the metadata cache.
+  private readonly hardcoverCache = new StatsCache({ ttlMs: HARDCOVER_CACHE_TTL_MS, maxEntries: HARDCOVER_CACHE_MAX_ENTRIES });
 
   constructor(
     private readonly store: MonitoredStoreService,
     private readonly hardcover: HardcoverClient,
     private readonly providerConfigs: MonitoredProviderConfigService,
-    private readonly hardcoverCache: HardcoverSearchCache,
   ) {}
 
   searchCatalogWorks(user: RequestUser, q: string, limit: number): Promise<MonitoredCatalogSearchHit[]> {
@@ -77,7 +95,7 @@ export class MonitoredUniversalSearchService {
     if (!cacheKey) return { available: true, books: [], authors: [] };
     let raw: HardcoverSearchCacheEntry;
     try {
-      raw = await this.hardcoverCache.fetch(cacheKey, () => this.fetchHardcover(q, config.hardcover.apiKey, user.id));
+      raw = await this.hardcoverCache.get(HARDCOVER_CACHE_SCOPE, cacheKey, () => this.fetchHardcover(q, config.hardcover.apiKey, user.id));
     } catch {
       // Provider failures are logged where they happen, inside fetchHardcover, and the palette
       // answers an empty search rather than an error. Only the fetch is guarded: everything after

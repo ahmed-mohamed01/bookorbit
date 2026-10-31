@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, type OnModuleDestroy } from '@nestjs/common';
 
+import { sleep } from './web-serials-sleep.utils';
 import type { WebSerialNovelIndexSource, WebSerialNovelIndexStatus } from '@bookorbit/types';
 import { SystemCron } from '../../common/decorators/system-cron.decorator';
 import type { RequestUser } from '../../common/types/request-user';
@@ -151,16 +152,7 @@ export class WebSerialsNovelIndexFillerService implements OnModuleDestroy {
 
   /** Overridden in tests: the pause between two pages of one source. */
   protected sleep(ms: number, signal: AbortSignal): Promise<void> {
-    return new Promise((resolve) => {
-      if (signal.aborted) return resolve();
-      const timer = setTimeout(done, ms);
-      function done() {
-        signal.removeEventListener('abort', done);
-        clearTimeout(timer);
-        resolve();
-      }
-      signal.addEventListener('abort', done, { once: true });
-    });
+    return sleep(ms, signal);
   }
 
   protected now(): Date {

@@ -14,10 +14,6 @@ const props = defineProps<{
   delivery: DownloadDelivery
   busy?: boolean
   grabbed?: boolean
-  /** Renders the `expansion` slot under the row, for the request this release is downloading under. */
-  expanded?: boolean
-  /** The tighter row an inline list uses inside a format slot. */
-  compact?: boolean
   /** The top-ranked row: tinted, with the solid Grab. */
   best?: boolean
 }>()
@@ -73,24 +69,21 @@ function handleGrab() {
 <template>
   <li
     class="transition-colors motion-reduce:transition-none"
-    :class="[
-      compact ? 'rounded-lg px-2.5 py-2' : 'rounded-xl border bg-card p-3',
-      compact ? (best ? 'bg-muted' : 'hover:bg-muted/50') : expanded ? 'border-primary/45 bg-primary/5' : 'border-border hover:bg-accent/50',
-    ]"
+    :class="['rounded-lg px-2.5 py-2', best ? 'bg-muted' : 'hover:bg-muted/50']"
     :data-best="best || undefined"
   >
     <div class="flex flex-wrap items-center gap-x-3 gap-y-3">
       <div class="flex min-w-0 flex-1 basis-64 items-center gap-3">
         <span
           class="flex shrink-0 items-center justify-center rounded-lg border font-semibold tabular-nums"
-          :class="[compact ? 'size-8 text-[13px]' : 'size-11 text-[15px]', scoreClass, scoreSurfaceClass]"
+          :class="['size-8 text-[13px]', scoreClass, scoreSurfaceClass]"
         >
           <span aria-hidden="true">{{ release.score }}</span>
           <span class="sr-only">{{ t('bookRequests.releases.scoreLabel', { score: release.score }) }}</span>
         </span>
 
         <div class="min-w-0 flex-1">
-          <p class="text-sm font-medium text-foreground" :class="compact ? 'line-clamp-1' : 'line-clamp-2'">{{ release.title }}</p>
+          <p class="line-clamp-1 text-sm font-medium text-foreground">{{ release.title }}</p>
 
           <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
             <span class="inline-flex items-center gap-1 rounded-full border px-1.5 py-px font-medium" :class="protocolClass">
@@ -138,7 +131,7 @@ function handleGrab() {
         <Button
           size="sm"
           class="[@media(pointer:coarse)]:min-h-11"
-          :variant="grabbed || (compact && !best) ? 'outline' : 'default'"
+          :variant="grabbed || !best ? 'outline' : 'default'"
           :disabled="busy || grabbed"
           @click="handleGrab"
         >
@@ -148,10 +141,6 @@ function handleGrab() {
           {{ grabbed ? t('monitored.detail.badges.queued') : t('monitored.panel.grab') }}
         </Button>
       </div>
-    </div>
-
-    <div v-if="expanded" class="mt-3">
-      <slot name="expansion" />
     </div>
   </li>
 </template>

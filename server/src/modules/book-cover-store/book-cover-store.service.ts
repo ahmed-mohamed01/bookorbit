@@ -317,7 +317,7 @@ export class BookCoverStore {
   }
 
   /** The slots a book will hand over when it is merged into another book, read before it goes. */
-  async slotsForAdoption(bookId: number): Promise<BookCoverSlotRow[]> {
+  async slotsForAdoption(bookId: number): Promise<BookCoverSlotState[]> {
     const context = await this.repository.findContext(bookId);
     if (!context) return [];
     return (await this.ensureConverted(context)).slots.filter((slot) => slot.dormantSince === null);
@@ -358,7 +358,7 @@ export class BookCoverStore {
           kind: 'upsert',
           row: { ...this.rowValues(slot), updatedAt: now, dormantSince: this.mediumIsActive(medium, target.media) ? null : now },
         },
-        { bumpBook: true, servedBytesChanged: true, updatedAt: now },
+        { bumpBook: true, servedBytesChanged: true, updatedAt: now, placeholder: slot.placeholder === true },
       );
       adopted.push(medium);
     }

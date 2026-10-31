@@ -1,62 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildSyncChain, type SyncChainSnapshot } from '../sync-chain'
-import { chainViewItems, chainViewSegments, groupChromeClass, transitionView, viewTransitionName } from '../sync-chain-view'
+import { chainViewItems, chainViewSegments, groupChromeClass, segmentNeedsGap, transitionView, viewTransitionName } from '../sync-chain-view'
+import { chainAbs, chainReadAloudSlot, chainSnapshot } from './sync-chain-fixtures'
 
 type FakeTransition = { updateCallbackDone: Promise<void>; ready: Promise<void>; finished: Promise<void>; skipTransition: () => void }
 
-const snapshot: SyncChainSnapshot = {
-  thisBook: 'ebook',
-  linked: true,
-  ebook: { book: { id: 1, title: 'Ebook', authorName: null, coverVersion: null, progress: 10 }, isMember: true, isThisBook: true, match: null },
-  audiobook: {
-    book: { id: 2, title: 'Audiobook', authorName: null, coverVersion: null, progress: 20 },
-    isMember: true,
-    isThisBook: false,
-    match: null,
-  },
-  alignment: {
-    status: 'ready',
-    stale: false,
-    builtAt: 'x',
-    samplesDone: null,
-    samplesTotal: null,
-    buildBlocked: null,
-    buildError: null,
-    running: false,
-  },
-  readAlong: {
-    member: null,
-    status: 'none',
-    blocked: null,
-    phase: null,
-    remoteTask: null,
-    remoteProgress: null,
-    queuePosition: null,
-    outputBook: null,
-    thisBook: null,
-    error: null,
-    mutating: false,
-    memberPending: false,
-  },
-  readAloudIssue: null,
-  abs: {
-    configured: true,
-    link: {
-      audioBookId: 2,
-      absLibraryItemId: 'li',
-      title: null,
-      authorName: null,
-      libraryName: null,
-      direction: 'two_way',
-      syncing: true,
-      pausedReason: null,
-      webUrl: null,
-    },
-    live: null,
-    checking: false,
-  },
-  can: { editLink: true, generate: true, rebuild: true },
-}
+const snapshot: SyncChainSnapshot = chainSnapshot({ abs: chainAbs() })
 
 describe('chainViewItems', () => {
   const rows = buildSyncChain(snapshot).rows
@@ -65,38 +14,24 @@ describe('chainViewItems', () => {
     const items = chainViewItems(rows, null)
 
     expect(items.map((item) => item.id)).toEqual(rows.map((row) => row.id))
-    expect(items.map((item) => item.kind)).toEqual(['card', 'connector', 'card', 'connector', 'card', 'connector', 'readAlongSlot'])
-    expect(items.map((item) => item.frame)).toEqual(['spine', 'spine', 'group', 'group', 'group', 'spine', 'spine'])
+    expect(items.map((item) => item.kind)).toEqual(['card', 'connector', 'card', 'connector', 'card'])
+    expect(items.map((item) => item.frame)).toEqual(['spine', 'spine', 'group', 'group', 'group'])
   })
 
-  it('swaps the slot being changed for its search, by kind', () => {
-    expect(chainViewItems(rows, 'audiobook').find((item) => item.id === 'card:audiobook')).toMatchObject({ kind: 'cardSearch', format: 'audiobook' })
+  it('swaps only the Audiobookshelf slot for its search', () => {
     expect(chainViewItems(rows, 'abs').find((item) => item.id === 'card:abs')).toMatchObject({ kind: 'absSearch' })
-    expect(chainViewItems(rows, 'audiobook').find((item) => item.id === 'card:ebook')).toMatchObject({ kind: 'card' })
+    expect(chainViewItems(rows, 'audiobook').find((item) => item.id === 'card:audiobook')).toMatchObject({ kind: 'card' })
   })
 
-  it('swaps a ghost for its search too, and leaves a read-along slot alone', () => {
-    const ghostRows = buildSyncChain({ ...snapshot, linked: false, audiobook: { book: null, isMember: false, isThisBook: false, match: null } }).rows
-    expect(chainViewItems(ghostRows, null).find((item) => item.id === 'card:audiobook')).toMatchObject({ kind: 'ghost' })
-    expect(chainViewItems(ghostRows, 'audiobook').find((item) => item.id === 'card:audiobook')).toMatchObject({
-      kind: 'cardSearch',
-      format: 'audiobook',
-    })
-    expect(chainViewItems(rows, 'ebook').find((item) => item.id === 'slot:readAlong')).toMatchObject({ kind: 'readAlongSlot' })
+  it('passes the read-aloud slot through as its own kind on the spine', () => {
+    const slotRows = buildSyncChain({ ...snapshot, readAloudSlot: chainReadAloudSlot({ entry: { kind: 'available' } }) }).rows
+    expect(chainViewItems(slotRows, null).at(-1)).toMatchObject({ kind: 'readAloudSlot', id: 'slot:readAlong', frame: 'spine' })
   })
 
-  it('carries the group frame of the audio rows and the spine frame of the read-along rows', () => {
-    const raRows = buildSyncChain({
-      ...snapshot,
-      readAlong: { ...snapshot.readAlong, status: 'ready', outputBook: { id: 3, title: 'RA' } },
-    }).rows
-    const frames = Object.fromEntries(chainViewItems(raRows, null).map((item) => [item.id, item.frame]))
-    expect(frames['connector:readAlong-audiobook']).toBe('spine')
-    expect(frames['card:readAlong']).toBe('spine')
-    expect(frames['card:audiobook']).toBe('group')
-    expect(frames['connector:audiobook-abs']).toBe('group')
-    expect(frames['card:abs']).toBe('group')
-    expect(frames['card:ebook']).toBe('spine')
+  it('swaps the Audiobookshelf ghost for its search too', () => {
+    const ghostRows = buildSyncChain({ ...snapshot, abs: { configured: true, link: null, live: null, checking: false } }).rows
+    expect(chainViewItems(ghostRows, null).find((item) => item.id === 'card:abs')).toMatchObject({ kind: 'ghost' })
+    expect(chainViewItems(ghostRows, 'abs').find((item) => item.id === 'card:abs')).toMatchObject({ kind: 'absSearch' })
   })
 })
 
@@ -107,8 +42,6 @@ describe('chainViewSegments', () => {
       'card:ebook',
       'connector:ebook-audiobook',
       ['card:audiobook', 'connector:audiobook-abs', 'card:abs'],
-      'connector:readAlong-audiobook',
-      'slot:readAlong',
     ])
   })
 
@@ -119,37 +52,36 @@ describe('chainViewSegments', () => {
   })
 })
 
+describe('segmentNeedsGap', () => {
+  it('spaces two slots that have no connector between them and nothing else', () => {
+    const joined = chainViewSegments(chainViewItems(buildSyncChain(snapshot).rows, null))
+    expect(joined.map((_, index) => segmentNeedsGap(joined, index))).toEqual([false, false, false])
+    const withSlot = buildSyncChain({ ...snapshot, readAloudSlot: chainReadAloudSlot({ entry: { kind: 'available' } }) }).rows
+    const apart = chainViewSegments(
+      chainViewItems(
+        withSlot.filter((row) => row.kind !== 'connector' || row.key !== 'readAlong-audiobook'),
+        null,
+      ),
+    )
+    expect(apart.map((_, index) => segmentNeedsGap(apart, index))).toEqual([false, false, false, true])
+  })
+})
+
 describe('groupChromeClass', () => {
-  const itemsFor = (overrides: Partial<SyncChainSnapshot>) => {
-    const segment = chainViewSegments(chainViewItems(buildSyncChain({ ...snapshot, ...overrides }).rows, null)).find((s) => s.kind === 'group')
-    return segment?.kind === 'group' ? segment.items : []
-  }
-
-  it('is primary when the audiobook is this book', () => {
-    const items = itemsFor({
-      thisBook: 'audiobook',
-      audiobook: { ...snapshot.audiobook, isThisBook: true },
-      ebook: { ...snapshot.ebook, isThisBook: false },
-    })
-    expect(groupChromeClass(items)).toBe('border-primary bg-card')
+  it('is plain for the book’s audiobook', () => {
+    const segment = chainViewSegments(chainViewItems(buildSyncChain(snapshot).rows, null)).find((s) => s.kind === 'group')
+    expect(groupChromeClass(segment?.kind === 'group' ? segment.items : [])).toBe('border-border bg-card')
   })
 
-  it('is plain for a linked member', () => {
-    expect(groupChromeClass(itemsFor({}))).toBe('border-border bg-card')
-  })
-
-  it('is dashed for a candidate and for a ghost', () => {
-    const candidate = itemsFor({ linked: false, audiobook: { ...snapshot.audiobook, isMember: false, match: { source: 'manual' } } })
-    expect(groupChromeClass(candidate)).toBe('border-dashed border-border bg-transparent')
-    const ghost = itemsFor({ audiobook: { book: null, isMember: false, isThisBook: false, match: null } })
-    expect(groupChromeClass(ghost)).toBe('border-dashed border-border bg-transparent')
+  it('is dashed for an empty box', () => {
+    expect(groupChromeClass([])).toBe('border-dashed border-border bg-transparent')
   })
 })
 
 describe('viewTransitionName', () => {
   it('turns a row id into a CSS identifier', () => {
     expect(viewTransitionName('connector:readAlong-audiobook')).toBe('sync-chain-connector-readAlong-audiobook')
-    expect(viewTransitionName('slot:readAlong')).toBe('sync-chain-slot-readAlong')
+    expect(viewTransitionName('card:readAlong')).toBe('sync-chain-card-readAlong')
   })
 })
 

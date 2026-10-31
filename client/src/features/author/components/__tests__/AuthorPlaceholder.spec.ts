@@ -41,11 +41,6 @@ describe('AuthorPlaceholder', () => {
     expect(art.attributes('data-placeholder-style')).toBe('paperback')
   })
 
-  it('lets a preview override the setting', () => {
-    const wrapper = mountPlaceholder({ variant: 'memphis' })
-    expect(wrapper.get('[data-testid="author-placeholder"]').attributes('data-placeholder-style')).toBe('memphis')
-  })
-
   it('is hidden from assistive technology', () => {
     expect(mountPlaceholder().get('[data-testid="author-placeholder"]').attributes('aria-hidden')).toBe('true')
   })

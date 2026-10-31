@@ -1,35 +1,18 @@
-import type {
-  ChainCardRow,
-  ChainConnectorRow,
-  ChainFrame,
-  ChainGhostRow,
-  ChainReadAlongSlotRow,
-  ChainRow,
-  ChainTone,
-  EditionFormat,
-  EditionKey,
-} from './sync-chain'
+import type { ChainCardRow, ChainConnectorRow, ChainFrame, ChainGhostRow, ChainReadAloudSlotRow, ChainRow, ChainTone, EditionKey } from './sync-chain'
 
 /** One rendered entry of the chain: a row as the model gives it, or a slot swapped for its in-place search. */
 export type ChainViewItem =
   | { kind: 'card'; id: string; frame: ChainFrame; row: ChainCardRow }
   | { kind: 'ghost'; id: string; frame: ChainFrame; row: ChainGhostRow }
-  | { kind: 'cardSearch'; id: string; frame: ChainFrame; row: ChainCardRow | ChainGhostRow; format: EditionFormat }
   | { kind: 'absSearch'; id: string; frame: ChainFrame; row: ChainCardRow | ChainGhostRow }
   | { kind: 'connector'; id: string; frame: ChainFrame; row: ChainConnectorRow }
-  | { kind: 'readAlongSlot'; id: string; frame: ChainFrame; row: ChainReadAlongSlotRow }
-
-function editionFormat(edition: EditionKey): EditionFormat | null {
-  return edition === 'ebook' || edition === 'audiobook' ? edition : null
-}
+  | { kind: 'readAloudSlot'; id: string; frame: ChainFrame; row: ChainReadAloudSlotRow }
 
 function slotItem(row: ChainCardRow | ChainGhostRow, changing: EditionKey | null): ChainViewItem {
   const plain: ChainViewItem =
     row.kind === 'card' ? { kind: 'card', id: row.id, frame: row.frame, row } : { kind: 'ghost', id: row.id, frame: row.frame, row }
-  if (changing !== row.edition) return plain
-  const format = editionFormat(row.edition)
-  if (format) return { kind: 'cardSearch', id: row.id, frame: row.frame, row, format }
-  return row.edition === 'abs' ? { kind: 'absSearch', id: row.id, frame: row.frame, row } : plain
+  if (changing !== row.edition || row.edition !== 'abs') return plain
+  return { kind: 'absSearch', id: row.id, frame: row.frame, row }
 }
 
 export function chainViewItems(rows: readonly ChainRow[], changing: EditionKey | null): ChainViewItem[] {
@@ -40,13 +23,13 @@ export function chainViewItems(rows: readonly ChainRow[], changing: EditionKey |
         return slotItem(row, changing)
       case 'connector':
         return { kind: 'connector', id: row.id, frame: row.frame, row }
-      case 'readAlongSlot':
-        return { kind: 'readAlongSlot', id: row.id, frame: 'spine', row }
+      case 'readAloudSlot':
+        return { kind: 'readAloudSlot', id: row.id, frame: row.frame, row }
     }
   })
 }
 
-type ChainViewSegment = { kind: 'row'; item: ChainViewItem } | { kind: 'group'; id: string; items: ChainViewItem[] }
+export type ChainViewSegment = { kind: 'row'; item: ChainViewItem } | { kind: 'group'; id: string; items: ChainViewItem[] }
 
 const AUDIO_GROUP_ID = 'group-audio'
 
@@ -66,11 +49,20 @@ export function chainViewSegments(items: readonly ChainViewItem[]): ChainViewSeg
   return segments
 }
 
-/** The box mirrors the audiobook card's own chrome: primary for this book, dashed for a candidate or a ghost, else plain. */
+/** The box mirrors the audiobook card's own chrome. */
 export function groupChromeClass(items: readonly ChainViewItem[]): string {
   const row = items[0]?.row
   if (row?.kind !== 'card' || !row.linked) return 'border-dashed border-border bg-transparent'
-  return row.isThisBook ? 'border-primary bg-card' : 'border-border bg-card'
+  return 'border-border bg-card'
+}
+
+function isConnectorSegment(segment: ChainViewSegment | undefined): boolean {
+  return segment?.kind === 'row' && segment.item.kind === 'connector'
+}
+
+/** Two slots with no connector between them, such as an ebook and a read-along without an audiobook, get a gap instead. */
+export function segmentNeedsGap(segments: readonly ChainViewSegment[], index: number): boolean {
+  return index > 0 && !isConnectorSegment(segments[index]) && !isConnectorSegment(segments[index - 1])
 }
 
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'

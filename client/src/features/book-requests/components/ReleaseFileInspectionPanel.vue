@@ -27,7 +27,6 @@ const props = withDefaults(
   }>(),
   { delivery: 'torrent', failureReason: null, requestId: 0, indexerId: 0, releaseGuid: '', canManage: false, clients: () => [] },
 )
-const emit = defineEmits<{ sent: [batchRequestId: number] }>()
 
 const { t } = useI18n()
 
@@ -114,7 +113,6 @@ async function handleSend() {
   const client = props.clients.find((item) => item.id === clientId.value)?.name ?? ''
   toast.success(t('bookRequests.batch.sent', { count: unitIndexes.length, client }))
   clear()
-  emit('sent', batchRequestId)
 }
 
 const blocked = computed(() => releaseInspectionBlocksGrab(props.inspection?.status))

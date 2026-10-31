@@ -29,6 +29,7 @@ function resetEnv(): void {
   delete process.env.READING_ALIGNMENT_ENABLED;
   delete process.env.READING_ALIGNMENT_SAMPLE_INTERVAL_SEC;
   delete process.env.READING_ALIGNMENT_CLIP_SECONDS;
+  delete process.env.METADATA_PROVIDER_DIRECTORY_URL;
   delete process.env.DATABASE_URL;
   delete process.env.JWT_SECRET;
   delete process.env.JWT_EXPIRES_IN;
@@ -74,13 +75,13 @@ describe('config', () => {
       version: 'Local build',
       githubReleasesRepo: 'bookorbit/bookorbit',
       githubReleasesToken: undefined,
+      metadataProviderDirectoryUrl: 'https://raw.githubusercontent.com/bookorbit/bookorbit-metadata-providers/main/directory.json',
       oidcAllowLocalIssuers: false,
       swaggerEnabled: false,
       koboCloudscraperPython: undefined,
       koreaderPluginSourcePath: undefined,
       whisperPath: undefined,
       whisperModel: 'base.en',
-      ffmpegPath: 'ffmpeg',
       readingAlignmentEnabled: false,
       readingAlignmentSampleIntervalSec: 1200,
       readingAlignmentClipSeconds: 15,
@@ -104,6 +105,7 @@ describe('config', () => {
     process.env.READING_ALIGNMENT_SAMPLE_INTERVAL_SEC = '600';
     process.env.READING_ALIGNMENT_CLIP_SECONDS = '20';
     process.env.NATIVE_REDIRECT_URI = 'myfork://oauth2-callback';
+    process.env.METADATA_PROVIDER_DIRECTORY_URL = ' OFF ';
 
     expect(appConfig()).toEqual({
       nodeEnv: 'production',
@@ -113,13 +115,13 @@ describe('config', () => {
       version: 'v2.3.4',
       githubReleasesRepo: 'acme/app',
       githubReleasesToken: 'ghp_example',
+      metadataProviderDirectoryUrl: null,
       oidcAllowLocalIssuers: true,
       swaggerEnabled: true,
       koboCloudscraperPython: '/opt/bookorbit-python/bin/python',
       koreaderPluginSourcePath: '/opt/koreader/bookorbit.koplugin',
       whisperPath: '/usr/local/bin/whisper-cli',
       whisperModel: '/models/ggml-base.en.bin',
-      ffmpegPath: 'ffmpeg',
       readingAlignmentEnabled: true,
       readingAlignmentSampleIntervalSec: 600,
       readingAlignmentClipSeconds: 20,

@@ -51,17 +51,13 @@ const mockAchievementEvents = {
   emit: vi.fn(),
 };
 
-const mockBookService = {
-  syncReadAlongForAudiobookPosition: vi.fn(),
-};
-
-const mockEditionLinks = {
-  findReadAlongBookIdsByAudioBookIds: vi.fn(),
-};
-
 const mockProgressPush = {
   sweepPending: vi.fn(),
   requestPush: vi.fn(),
+};
+
+const mockBookService = {
+  syncEbookProgressForAudiobookPlayback: vi.fn(),
 };
 
 function makeService(coordinator = new AudiobookshelfSyncCoordinatorService()) {
@@ -74,10 +70,9 @@ function makeService(coordinator = new AudiobookshelfSyncCoordinatorService()) {
     mockSessionsService as any,
     mockLibraryService as any,
     mockAchievementEvents as any,
-    mockBookService as any,
-    mockEditionLinks as any,
     mockProgressPush as any,
     coordinator,
+    mockBookService as any,
   );
 }
 
@@ -221,8 +216,6 @@ describe('AudiobookshelfSyncService.sync', () => {
     mockSessionsService.syncSessions.mockResolvedValue({ inserted: 0, updated: 0 });
     mockSessionsService.deepReconciliationScan.mockResolvedValue({ inserted: 0, updated: 0 });
     mockLibraryService.findAccessibleLibraryIds.mockResolvedValue([]);
-    mockEditionLinks.findReadAlongBookIdsByAudioBookIds.mockResolvedValue(new Map());
-    mockBookService.syncReadAlongForAudiobookPosition.mockResolvedValue(true);
     mockProgressPush.sweepPending.mockResolvedValue(undefined);
   });
 
@@ -480,6 +473,42 @@ describe('AudiobookshelfSyncService.sync', () => {
       expect(mockStatusService.updateManual).not.toHaveBeenCalled();
     });
 
+    it('syncs the same-book read-along from the accepted position, in-file seconds of the containing file', async () => {
+      mockRepo.findSettings.mockResolvedValue(positionSettings());
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ progress: 0.75, currentTime: 1500, duration: 2000, lastUpdate: 9000 })] });
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10 })]);
+      mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(
+        new Map([
+          [
+            10,
+            [
+              { id: 501, format: 'mp3', durationSeconds: 1000 },
+              { id: 502, format: 'mp3', durationSeconds: 1000 },
+            ],
+          ],
+        ]),
+      );
+      mockRepo.findAudioProgressForBooks.mockResolvedValue(new Map());
+
+      await makeService().sync(user);
+
+      expect(mockBookService.syncEbookProgressForAudiobookPlayback).toHaveBeenCalledTimes(1);
+      expect(mockBookService.syncEbookProgressForAudiobookPlayback).toHaveBeenCalledWith(user, 10, 502, 500, 75, new Date(9000));
+    });
+
+    it('does not sync the read-along when the position is not accepted', async () => {
+      mockRepo.findSettings.mockResolvedValue(positionSettings());
+      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ progress: 0.5, currentTime: 500, duration: 1000 })] });
+      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10 })]);
+      mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map([[10, [{ id: 501, format: 'm4b', durationSeconds: 1000 }]]]));
+      mockRepo.findAudioProgressForBooks.mockResolvedValue(new Map());
+      mockRepo.upsertAudioProgressGuarded.mockResolvedValue(null);
+
+      await makeService().sync(user);
+
+      expect(mockBookService.syncEbookProgressForAudiobookPlayback).not.toHaveBeenCalled();
+    });
+
     it('passes the snapshot revision as the CAS base and the ABS lastUpdate as capturedAt', async () => {
       mockRepo.findSettings.mockResolvedValue(positionSettings());
       const syncedProgressAt = new Date('2026-07-19T00:00:00Z');
@@ -727,68 +756,6 @@ describe('AudiobookshelfSyncService.sync', () => {
     expect(mockProgressPush.sweepPending).toHaveBeenCalledWith(user.id);
   });
 
-  describe('linked read-along', () => {
-    function arrangeAppliedPosition() {
-      mockRepo.findSettings.mockResolvedValue(makeSettings({ syncStatus: false, syncPosition: true }));
-      mockClient.getMe.mockResolvedValue({ mediaProgress: [makeMp({ progress: 0.5, currentTime: 500, duration: 1000, lastUpdate: 9000 })] });
-      mockRepo.findSyncableBookStatesByAbsItemIds.mockResolvedValue([makeState({ bookId: 10 })]);
-      mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map([[10, [{ id: 501, format: 'm4b', durationSeconds: 1000 }]]]));
-    }
-
-    it('carries an applied position to the linked read-along book on the ABS clock', async () => {
-      arrangeAppliedPosition();
-      mockEditionLinks.findReadAlongBookIdsByAudioBookIds.mockResolvedValue(new Map([[10, 30]]));
-
-      await makeService().sync(user);
-
-      expect(mockEditionLinks.findReadAlongBookIdsByAudioBookIds).toHaveBeenCalledWith([10]);
-      expect(mockBookService.syncReadAlongForAudiobookPosition).toHaveBeenCalledWith(user, {
-        audioBookId: 10,
-        readAlongBookId: 30,
-        audioSeconds: 500,
-        audioTotalSeconds: 1000,
-        sourceUpdatedAt: new Date(9000),
-      });
-    });
-
-    it('does nothing when the audiobook has no read-along', async () => {
-      arrangeAppliedPosition();
-
-      await makeService().sync(user);
-
-      expect(mockRepo.upsertAudioProgressGuarded).toHaveBeenCalled();
-      expect(mockBookService.syncReadAlongForAudiobookPosition).not.toHaveBeenCalled();
-    });
-
-    it('keeps the audiobook sync and its watermark when the read-along sync throws', async () => {
-      arrangeAppliedPosition();
-      mockEditionLinks.findReadAlongBookIdsByAudioBookIds.mockResolvedValue(new Map([[10, 30]]));
-      mockBookService.syncReadAlongForAudiobookPosition.mockRejectedValue(new Error('db down'));
-      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-
-      const result = await makeService().sync(user);
-
-      expect(result).toMatchObject({ positionApplied: 1, failed: 0 });
-      expect(mockRepo.updateBookState).toHaveBeenCalledWith(
-        user.id,
-        'item-1',
-        expect.objectContaining({ syncError: null, lastSyncedPositionAbsUpdate: 9000 }),
-      );
-    });
-
-    it('leaves the read-along alone when local audio progress won', async () => {
-      arrangeAppliedPosition();
-      mockEditionLinks.findReadAlongBookIdsByAudioBookIds.mockResolvedValue(new Map([[10, 30]]));
-      mockRepo.findAudioProgressForBooks.mockResolvedValue(
-        new Map([[10, { percentage: 90, updatedAt: new Date('2026-07-19T00:00:00Z'), revision: 3 }]]),
-      );
-
-      await makeService().sync(user);
-
-      expect(mockBookService.syncReadAlongForAudiobookPosition).not.toHaveBeenCalled();
-    });
-  });
-
   describe('position skip warning dedupe', () => {
     function messagesContaining(spy: ReturnType<typeof vi.spyOn>, substring: string): number {
       return spy.mock.calls.filter((call) => typeof call[0] === 'string' && call[0].includes(substring)).length;
@@ -1001,8 +968,6 @@ describe('AudiobookshelfSyncService.pullPositionNow', () => {
     mockRepo.findAudioFilesInPlayOrderForBooks.mockResolvedValue(new Map([[10, [{ id: 501, format: 'm4b', durationSeconds: 1000 }]]]));
     mockRepo.findAudioProgressForBooks.mockResolvedValue(new Map([[10, newerLocal]]));
     mockRepo.upsertAudioProgressGuarded.mockResolvedValue(written);
-    mockEditionLinks.findReadAlongBookIdsByAudioBookIds.mockResolvedValue(new Map([[10, 30]]));
-    mockBookService.syncReadAlongForAudiobookPosition.mockResolvedValue(true);
   });
 
   it('applies an older Audiobookshelf position over a newer local one and advances the watermarks', async () => {
@@ -1023,29 +988,6 @@ describe('AudiobookshelfSyncService.pullPositionNow', () => {
     expect(mockAchievementEvents.emit).toHaveBeenCalledWith(
       ACHIEVEMENT_EVENT_BOOK_PROGRESS_CHANGED,
       expect.objectContaining({ userId: user.id, bookId: 10, source: 'audiobookshelf' }),
-    );
-    expect(mockBookService.syncReadAlongForAudiobookPosition).toHaveBeenCalledWith(
-      user,
-      expect.objectContaining({ audioBookId: 10, readAlongBookId: 30 }),
-    );
-  });
-
-  it('hands the read-along a fresh time on a user-chosen pull, while the audiobook row keeps the ABS capture time', async () => {
-    vi.useFakeTimers({ now: new Date('2026-10-07T12:00:00Z') });
-    try {
-      await makeService().pullPositionNow(
-        user,
-        { absLibraryItemId: 'item-1', bookId: 10 },
-        makeMp({ currentTime: 500, duration: 1000, lastUpdate: 5000 }),
-      );
-    } finally {
-      vi.useRealTimers();
-    }
-
-    expect(mockRepo.upsertAudioProgressGuarded).toHaveBeenCalledWith(user.id, 10, 501, 500, 50, 7, new Date(5000));
-    expect(mockBookService.syncReadAlongForAudiobookPosition).toHaveBeenCalledWith(
-      user,
-      expect.objectContaining({ readAlongBookId: 30, sourceUpdatedAt: new Date('2026-10-07T12:00:00Z') }),
     );
   });
 
@@ -1070,5 +1012,6 @@ describe('AudiobookshelfSyncService.pullPositionNow', () => {
       reason: 'write_race',
     });
     expect(mockAchievementEvents.emit).not.toHaveBeenCalled();
+    expect(mockBookService.syncEbookProgressForAudiobookPlayback).not.toHaveBeenCalled();
   });
 });

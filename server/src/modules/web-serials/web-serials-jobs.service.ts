@@ -1,3 +1,4 @@
+import { Permission } from '@bookorbit/types';
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import type {
@@ -123,23 +124,25 @@ export class WebSerialJobsService {
     };
     const finalAuthors = resolveWebSerialAuthors(series, metadata);
 
-    const created = await this.repo.createJob({
-      userId: user.id,
-      kind,
-      seriesKey: input.seriesKey,
-      seriesUrl: series.sourceUrl,
-      title: series.title.slice(0, 1000),
-      author: finalAuthors.join(', ').slice(0, 1000) || null,
-      sourceName: series.sourceName.slice(0, 255),
-      packaging: input.packaging,
-      selection: input.selection,
-      skipImported: input.skipImported ?? true,
-      targetLibraryId: input.libraryId,
-      targetFolderId: folderId,
-      status: 'queued',
-      engineState: { hasCover: series.remoteCoverPath !== null, units: selectedUnits },
-      metadata,
-    });
+    const created = await this.repo.withUserJobQuota(user.id, MAX_ACTIVE_JOBS_PER_USER, tooManyJobs, (repo) =>
+      repo.createJob({
+        userId: user.id,
+        kind,
+        seriesKey: input.seriesKey,
+        seriesUrl: series.sourceUrl,
+        title: series.title.slice(0, 1000),
+        author: finalAuthors.join(', ').slice(0, 1000) || null,
+        sourceName: series.sourceName.slice(0, 255),
+        packaging: input.packaging,
+        selection: input.selection,
+        skipImported: input.skipImported ?? true,
+        targetLibraryId: input.libraryId,
+        targetFolderId: folderId,
+        status: 'queued',
+        engineState: { hasCover: series.remoteCoverPath !== null, units: selectedUnits },
+        metadata,
+      }),
+    );
     this.logger.log(
       `[${CREATE_EVENT}] [end] jobId=${created.id} userId=${user.id} kind=${kind} packaging=${input.packaging} libraryId=${input.libraryId} durationMs=${Date.now() - startedAt} title="${sanitizeLogValue(created.title)}" - job queued`,
     );
@@ -155,7 +158,7 @@ export class WebSerialJobsService {
       this.settings.isQueuePaused(),
     ]);
     return {
-      items: rows.map((row) => toWebSerialJob(row, scope === 'all')),
+      items: rows.map((row) => toWebSerialJob(row, user, scope === 'all')),
       activeCount,
       total: counts.total,
       finishedCount: counts.finishedCount,
@@ -167,7 +170,7 @@ export class WebSerialJobsService {
     const job = await this.getAccessibleJob(id, user);
     const items = await this.repo.findItemsForDetail(id);
     return {
-      job: toWebSerialJob(job, this.showsOwner(job, user)),
+      job: toWebSerialJob(job, user, this.showsOwner(job, user)),
       items: items.map((item) => ({
         id: item.id,
         label: item.label,
@@ -191,7 +194,7 @@ export class WebSerialJobsService {
   async retryJob(id: number, user: RequestUser): Promise<WebSerialJob> {
     const job = await this.getAccessibleJob(id, user);
     await this.assertRoomToRequeue(job);
-    const requeued = await this.repo.requeueForRetry(id);
+    const requeued = await this.repo.withUserJobQuota(job.userId, MAX_ACTIVE_JOBS_PER_USER, tooManyJobs, (repo) => repo.requeueForRetry(id));
     if (!requeued)
       throw new ConflictException(
         codedError('Only downloads that failed or finished with gaps can be retried', WebSerialErrorCode.JobRetryNotAllowed),
@@ -199,7 +202,6 @@ export class WebSerialJobsService {
     return this.requireJob(id, user);
   }
 
-  /** A finished job that goes back to the queue counts towards the owner's cap again. */
   private async assertRoomToRequeue(job: WebSerialJobWithLibrary): Promise<void> {
     if (!REQUEUED_ON_RETRY.has(job.status)) return;
     if ((await this.repo.countCappedJobsForUser(job.userId)) >= MAX_ACTIVE_JOBS_PER_USER) throw tooManyJobs();
@@ -220,7 +222,13 @@ export class WebSerialJobsService {
     const startedAt = Date.now();
     const job = await this.getAccessibleJob(id, user);
     if (job.status === 'paused' && (await this.repo.countActiveJobs(job.userId)) >= MAX_ACTIVE_JOBS_PER_USER) throw tooManyJobs();
-    const resumed = await this.repo.resumeJob(id);
+    const resumed = await this.repo.withUserJobQuota(
+      job.userId,
+      MAX_ACTIVE_JOBS_PER_USER,
+      tooManyJobs,
+      (repo) => repo.resumeJob(id),
+      (repo) => repo.countActiveJobs(job.userId),
+    );
     if (!resumed) throw new ConflictException(codedError('Only paused downloads can be resumed', WebSerialErrorCode.JobResumeNotAllowed));
     this.logger.log(`[${QUEUE_EVENT}] [end] jobId=${id} userId=${user.id} durationMs=${Date.now() - startedAt} action=resume - job resumed`);
     return this.requireJob(id, user);
@@ -229,7 +237,7 @@ export class WebSerialJobsService {
   async moveJobToTop(id: number, user: RequestUser): Promise<WebSerialJob> {
     const startedAt = Date.now();
     await this.getAccessibleJob(id, user);
-    const moved = await this.repo.moveJobToTop(id);
+    const moved = await this.repo.moveJobToTop(id, user.isSuperuser || user.permissions.includes(Permission.ManageAppSettings) ? null : user.id);
     if (!moved) throw new ConflictException(codedError('Only waiting downloads can be moved up the queue', WebSerialErrorCode.JobMoveUpNotAllowed));
     this.logger.log(
       `[${QUEUE_EVENT}] [end] jobId=${id} userId=${user.id} durationMs=${Date.now() - startedAt} action=move_to_top - job moved to the front`,
@@ -267,7 +275,7 @@ export class WebSerialJobsService {
         codedError('This download was cancelled. Start it again to download the chapters.', WebSerialErrorCode.JobCancelled),
       );
     await this.assertRoomToRequeue(job);
-    const rearmed = await this.repo.retryItem(jobId, itemId);
+    const rearmed = await this.repo.withUserJobQuota(job.userId, MAX_ACTIVE_JOBS_PER_USER, tooManyJobs, (repo) => repo.retryItem(jobId, itemId));
     if (!rearmed) throw new ConflictException(codedError('Only failed items can be retried', WebSerialErrorCode.ItemRetryNotAllowed));
     this.logger.log(
       `[${QUEUE_EVENT}] [end] jobId=${jobId} itemId=${itemId} userId=${user.id} durationMs=${Date.now() - startedAt} action=retry_item - item set to retry`,
@@ -345,6 +353,6 @@ export class WebSerialJobsService {
   async requireJob(id: number, user: RequestUser): Promise<WebSerialJob> {
     const job = await this.repo.findJobById(id);
     if (!job) throw new NotFoundException(codedError('Download not found', WebSerialErrorCode.JobNotFound));
-    return toWebSerialJob(job, this.showsOwner(job, user));
+    return toWebSerialJob(job, user, this.showsOwner(job, user));
   }
 }

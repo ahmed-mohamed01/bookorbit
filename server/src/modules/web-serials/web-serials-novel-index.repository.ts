@@ -425,16 +425,6 @@ order by bool_or(prefix) desc, bool_and(mtl), max(score) desc, min(length(title)
       .limit(limit);
   }
 
-  /** Paths of the given ones the index already holds for the source; the top-up stops at a page of only known entries. */
-  async findKnownNovelIndexPaths(sourceId: string, paths: readonly string[]): Promise<Set<string>> {
-    if (paths.length === 0) return new Set();
-    const rows = await this.db
-      .select({ path: webSerialNovelIndex.path })
-      .from(webSerialNovelIndex)
-      .where(and(eq(webSerialNovelIndex.sourceId, sourceId), inArray(webSerialNovelIndex.path, [...paths])));
-    return new Set(rows.map((row) => row.path));
-  }
-
   async countNovelIndexEntries(sourceId: string): Promise<number> {
     const [row] = await this.db.select({ value: count() }).from(webSerialNovelIndex).where(eq(webSerialNovelIndex.sourceId, sourceId));
     return row?.value ?? 0;

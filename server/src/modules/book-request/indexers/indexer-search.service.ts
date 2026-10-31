@@ -21,7 +21,6 @@ import type {
 import { sanitizeLogValue } from '../../../common/utils/log-sanitize.utils';
 import { withDeadline } from '../../../common/utils/with-deadline.utils';
 import type { BookRequestRow } from '../../../db/schema';
-import { BookRequestSourcesService } from '../book-request-sources.service';
 import { RequestAutomationSettingsService } from '../fulfillment/request-automation-settings.service';
 import { RETIRED_MEDIUM_REFUSAL } from '../retired-media';
 import { IndexerSearchException, type ReleaseCandidate, type ReleaseQuery, type ResolvedIndexerConfig } from './indexer-adapter';
@@ -98,7 +97,6 @@ export class IndexerSearchService {
     private readonly registry: IndexerRegistry,
     private readonly automationSettings: RequestAutomationSettingsService,
     private readonly operationLock: IndexerOperationLock,
-    private readonly requestSources: BookRequestSourcesService,
     private readonly inspectionFacts: ReleaseInspectionFactsRepository,
   ) {}
 
@@ -135,7 +133,7 @@ export class IndexerSearchService {
     // searched and reported: nothing went wrong, no request was ever going to be made, and a
     // permanent property of the source has no business in a list of search outcomes. Counted, so
     // an empty list can still say why it is empty.
-    const compatible = configs.filter((config) => this.requestSources.carriesMedium(config, query.mediaKind));
+    const compatible = configs.filter((config) => this.carriesMedium(config, query.mediaKind));
     const selectedIds = options.sourceIds?.length ? new Set(options.sourceIds) : null;
     const selected = selectedIds ? compatible.filter((config) => selectedIds.has(config.id)) : compatible;
     const searchable = options.indexerMode === 'isbn-capable' ? selected.filter((config) => this.searchesIsbn(config)) : selected;
@@ -422,6 +420,19 @@ export class IndexerSearchService {
         colors.has(indexer.indexerId) ? { ...indexer, color: colors.get(indexer.indexerId) ?? null } : indexer,
       ),
     };
+  }
+
+  /**
+   * Whether this source is searched for the requested medium: what its adapter can answer for, and
+   * then what the operator left it in. A row whose adapter is no longer part of this build cannot
+   * be judged on its media and is kept in the search, so `searchOne` reports the missing adapter
+   * instead of this hiding it; an operator's own exclusion still applies to such a row, because
+   * that one is a decision about the source rather than a fact about the build.
+   */
+  private carriesMedium(config: ResolvedIndexerConfig, mediaKind: BookRequestMediaKind): boolean {
+    if (config.disabledMediaKinds.includes(mediaKind)) return false;
+    const adapter = this.registry.find(config.adapterType);
+    return !adapter || adapter.mediaKinds.includes(mediaKind);
   }
 
   /**

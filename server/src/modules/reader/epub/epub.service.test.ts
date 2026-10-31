@@ -564,6 +564,19 @@ describe('EpubService', () => {
       mockStat.mockResolvedValue({ mtimeMs: 100, size: 5000 } as Awaited<ReturnType<typeof stat>>);
     });
 
+    it('streams an empty stored entry and rejects an explicit range', async () => {
+      mockOpenFile.mockResolvedValueOnce(makeEpubArchive() as any);
+      mediaStream.knownEntry.mockReturnValue({ ...stored, layout: { ...stored.layout, size: 0 } });
+      const result = await service.streamFile(1, 'OPS/text/ch1.xhtml', undefined, {}, user);
+      expect(result).toMatchObject({ status: 200, size: 0 });
+      await expect(readStream(result.openBody())).resolves.toEqual(Buffer.alloc(0));
+      expect(mediaStream.openRange).not.toHaveBeenCalled();
+      await expect(service.streamFile(1, 'OPS/text/ch1.xhtml', undefined, { range: 'bytes=0-0' }, user)).resolves.toMatchObject({
+        status: 416,
+        contentRange: 'bytes */0',
+      });
+    });
+
     it('serves a known entry without reading the zip directory again', async () => {
       mockOpenFile.mockResolvedValueOnce(makeEpubArchive() as any);
       await service.getBookInfo(1, undefined, user);

@@ -5374,15 +5374,9 @@
         "metadataScore": "메타데이터 점수",
         "primaryFormat": "기본 포맷",
         "readAloudSync": {
-          "title": "소리내어 읽기 진행률 동기화",
           "state": {
-            "enabled": "활성화됨",
-            "disabled": "비활성화됨",
-            "unavailable": "사용할 수 없음",
             "epubCopiesOnly": "EPUB 사본만 해당"
           },
-          "enabledDescription": "오디오북, 웹 리더, Kobo 및 KOReader 위치가 동기화됩니다.",
-          "disabledDescription": "각 형식은 고유한 읽기 위치를 유지합니다.",
           "epubCopiesDescription": "웹 리더, Kobo 및 KOReader 위치는 EPUB 사본 전체에서 동기화 상태를 유지합니다. 일치하는 오디오북 파일을 추가하여 오디오북도 동기화하세요.",
           "reason": {
             "no_media_overlay_epub": "미디어 오버레이가 포함된 함께 읽기 EPUB가 필요합니다.",
@@ -5390,9 +5384,6 @@
             "missing_duration": "오디오 지속 시간 메타데이터가 불완전합니다.",
             "durationMismatch": "기간이 충분히 일치하지 않습니다. 오디오북 {audio}, 함께 읽기 EPUB {overlay}."
           },
-          "enable": "활성화",
-          "disable": "비활성화",
-          "saving": "저장 중...",
           "saveFailed": "소리내어 읽기 진행률 동기화를 업데이트할 수 없습니다."
         },
         "openIn": "{provider}에서 열기",

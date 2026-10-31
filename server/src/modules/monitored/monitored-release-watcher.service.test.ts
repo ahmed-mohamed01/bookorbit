@@ -6,7 +6,7 @@ import type { RequestUser } from '../../common/types/request-user';
 import { MonitoredReleaseWatcher } from './monitored-release-watcher.service';
 import { releaseEventKey, type MonitoredDueRelease } from './monitored-store.service';
 
-const owner = { id: 4, isSuperuser: false } as RequestUser;
+const owner = { id: 4, isSuperuser: true, active: true, permissions: [] } as RequestUser;
 
 function monitor(patch: Partial<MonitoredAuthorConfig> = {}): MonitoredAuthorConfig {
   return {
@@ -586,4 +586,23 @@ describe('MonitoredReleaseWatcher.sweepReleases', () => {
     );
     log.mockRestore();
   });
+});
+
+describe('background owner eligibility', () => {
+  it.each([
+    { ...owner, active: false },
+    { ...owner, isSuperuser: false, permissions: [] },
+  ])('skips an ineligible owner', async (user) => {
+    const h = harness({ user, due: [release()] });
+    await h.watcher.checkMonitor(monitor());
+    expect(h.store.findDueReleases).not.toHaveBeenCalled();
+  });
+});
+
+it('rechecks eligibility after announcing and before auto-request fan-out', async () => {
+  const h = harness({ due: [release()] });
+  h.users.findByIdWithPermissions.mockResolvedValueOnce(owner).mockResolvedValue({ ...owner, active: false });
+  await h.watcher.checkMonitor(autoMonitor('auto-all'));
+  expect(h.notifier.notifyRelease).toHaveBeenCalled();
+  expect(h.autoRequests.submitWorkRequest).not.toHaveBeenCalled();
 });

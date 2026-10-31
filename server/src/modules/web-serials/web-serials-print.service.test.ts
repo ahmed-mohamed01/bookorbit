@@ -136,13 +136,6 @@ it('settles when every requested volume is owned', async () => {
   expect(requests.settleAvailable).toHaveBeenCalledWith(9, 'Every requested volume is in the library');
 });
 
-it('linkBatch refuses a series request from another series or user', async () => {
-  const { service, repo } = await setup();
-  await expect(service.linkBatch(user, 'other', { seriesRequestId: 1, batchRequestId: 10 })).rejects.toThrow(ForbiddenException);
-  repo.findSeriesRequestById.mockResolvedValue({ ...row, userId: 8 });
-  await expect(service.linkBatch(user, '12', { seriesRequestId: 1, batchRequestId: 10 })).rejects.toThrow(ForbiddenException);
-});
-
 it('uses the newest active request and ignores completed volume rows', async () => {
   const { service, repo, requests } = await setup();
   repo.findSeriesRequests.mockResolvedValue([{ ...row, id: 2, bookRequestId: 11 }, row]);
@@ -175,16 +168,6 @@ it('does not settle an empty request', async () => {
   repo.listVolumeRequests.mockResolvedValue([]);
   await service.getState(user, '12', input);
   expect(requests.settleAvailable).not.toHaveBeenCalled();
-});
-
-it('allows an approver to link their own batch and series request but refuses another user batch', async () => {
-  const { service, requests, repo } = await setup();
-  requests.findRequestsByIds.mockResolvedValue(new Map([[10, { userId: 8, status: 'pending' }]]));
-  await expect(service.linkBatch(user, '12', { seriesRequestId: 1, batchRequestId: 10 })).rejects.toThrow(ForbiddenException);
-  expect(repo.linkBatch).not.toHaveBeenCalled();
-  requests.findRequestsByIds.mockResolvedValue(new Map([[10, { userId: 7, status: 'pending' }]]));
-  await service.linkBatch(user, '12', { seriesRequestId: 1, batchRequestId: 10 });
-  expect(repo.linkBatch).toHaveBeenCalledWith(1, 10);
 });
 
 it('records the user series row and volumes when submit subscribes to another user request', async () => {
@@ -573,6 +556,30 @@ it.each(['batch', 'child'])('failed picks preserve a series with an existing %s'
     picks: [{ indexerId: 1, releaseGuid: 'pack', unitIndexes: [0, 1], volumes: [1, 2] }],
   });
   expect(repo.setSeriesDraft).toHaveBeenCalledExactlyOnceWith(1, false);
+});
+it('sends a direct single pick with no download client configured', async () => {
+  const { service, requests, fulfillment } = await setup();
+  requests.getOne.mockResolvedValue({ seriesName: 'Story' });
+  requests.submit.mockResolvedValue({ request: { id: 11, userId: 7, status: 'approved' } });
+  const response = await service.download(user, '12', {
+    ...input,
+    seriesRequestId: 1,
+    picks: [{ indexerId: 1, releaseGuid: 'single', unitIndexes: null, volumes: [3], downloadClientId: null }],
+  });
+  expect(fulfillment.grab).toHaveBeenCalledWith(11, { indexerId: 1, releaseGuid: 'single' }, user);
+  expect(response.failures).toEqual([]);
+});
+it('rejects a pack with no download client before any side effects', async () => {
+  const { service, requests, repo } = await setup();
+  await expect(
+    service.download(user, '12', {
+      ...input,
+      seriesRequestId: 1,
+      picks: [{ indexerId: 1, releaseGuid: 'pack', unitIndexes: [0, 1], volumes: [1, 2], downloadClientId: null }],
+    }),
+  ).rejects.toThrow(BadRequestException);
+  expect(repo.setSeriesDraft).not.toHaveBeenCalled();
+  expect(requests.create).not.toHaveBeenCalled();
 });
 it('rejects multi-volume single-file releases before any side effects', async () => {
   const { service, requests, repo } = await setup();

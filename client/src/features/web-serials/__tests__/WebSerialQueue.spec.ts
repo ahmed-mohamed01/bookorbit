@@ -76,7 +76,7 @@ describe('WebSerialQueue row actions', () => {
   })
 
   it('offers move to top, pause and cancel on a queued job behind others', () => {
-    const wrapper = mountQueue([job({ status: 'queued', queuePosition: 2 })])
+    const wrapper = mountQueue([job({ status: 'queued', queuePosition: 2, canMoveToTop: true })])
     expect(wrapper.find('button[aria-label="Pause Tower Climber"]').exists()).toBe(true)
     expect(wrapper.find('button[aria-label="Cancel Tower Climber"]').exists()).toBe(true)
     expect(buttonByText(wrapper, 'Move to top')).toBeDefined()

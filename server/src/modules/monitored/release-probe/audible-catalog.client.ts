@@ -1,3 +1,4 @@
+import { readBoundedText } from '../../../common/utils/bounded-response';
 import { BadGatewayException, Injectable } from '@nestjs/common';
 
 import { audibleApiOrigin } from '../../../common/utils/metadata-provider-hosts.utils';
@@ -23,6 +24,6 @@ export class AudibleCatalogClient {
     url.searchParams.set('response_groups', 'product_attrs,product_desc,contributors');
     const response = await fetchWithThrottle(url.toString(), { signal: buildRequestSignal(PROVIDER_TIMEOUT_MS.SCRAPE, signal) });
     if (!response.ok) throw new BadGatewayException(`Audible catalog returned HTTP ${response.status}`);
-    return ((await response.json()) as AudibleSearchResponse).products ?? [];
+    return (JSON.parse(await readBoundedText(response, 4 * 1024 * 1024)) as AudibleSearchResponse).products ?? [];
   }
 }

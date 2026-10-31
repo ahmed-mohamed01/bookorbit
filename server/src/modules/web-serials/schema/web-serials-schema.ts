@@ -1,4 +1,4 @@
-// Web Serials schema bootstrap SQL, embedded as a string (see storyteller-schema.ts for why) and
+// Web Serials schema bootstrap SQL, embedded as a string (see audiobookshelf-schema.ts for why) and
 // applied on every boot; every statement is idempotent.
 //
 // Constraint names are short (`<table>_<column>_fk`): Postgres silently truncates identifiers over

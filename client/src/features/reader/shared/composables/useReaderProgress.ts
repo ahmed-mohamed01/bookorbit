@@ -1,6 +1,6 @@
 import { computed, onUnmounted, ref, unref, type MaybeRef, type Ref } from 'vue'
+import { fetchFileProgress } from '@/lib/reading-progress'
 import type { FoliateRenderer, RelocateDetail } from '../../epub/composables/useFoliate'
-import { api } from '@/lib/api'
 import {
   createProgressSaver,
   normalizeFraction,
@@ -118,9 +118,8 @@ export function useReaderProgress(
 
   async function load() {
     if (!unref(trackingEnabled)) return
-    const res = await api(`/api/v1/books/files/${fileId}/progress`)
-    if (!res.ok) return
-    const data = (await res.json()) as Record<string, unknown>
+    const data = await fetchFileProgress(fileId)
+    if (!data) return
     const record = parseProgressRecord(data)
     hadSavedPosition =
       record.cfi !== null ||
@@ -241,9 +240,8 @@ export function useReaderProgress(
     const secondsOf = options.narrationSeconds
     const fragment = mediaOverlayFragment.value
     if (!secondsOf || !fragment) return null
-    const res = await api(`/api/v1/books/files/${fileId}/progress`).catch(() => null)
-    if (!res?.ok) return null
-    const data = (await res.json()) as Record<string, unknown>
+    const data = await fetchFileProgress(fileId).catch(() => null)
+    if (!data) return null
     const stamp = positionStamp(data)
     const serverFragment = normalizeString(data.mediaOverlayFragment)
     if (!serverFragment || serverFragment === fragment) return null
@@ -272,9 +270,8 @@ export function useReaderProgress(
    */
   async function checkForNewerPosition(): Promise<NewerPosition | null> {
     if (!unref(trackingEnabled) || saver.isBusy()) return null
-    const res = await api(`/api/v1/books/files/${fileId}/progress`)
-    if (!res.ok || saver.isBusy()) return null
-    const data = (await res.json()) as Record<string, unknown>
+    const data = await fetchFileProgress(fileId)
+    if (!data || saver.isBusy()) return null
     const stamp = positionStamp(data)
     if (stamp <= knownServerStamp) return null
     if (normalizeString(data.cfi) === cfi.value && normalizeString(data.mediaOverlayFragment) === mediaOverlayFragment.value) {

@@ -1167,7 +1167,7 @@ onMounted(async () => {
   // When the audiobook is ahead of the ebook, resume at the exact narration passage. Skipped when a
   // deep link or checkpoint targets a specific location (those win) or when tracking is off (peek mode).
   const hasExplicitTarget = Boolean(deepLinkCfi) || resumeTarget.checkpointPercentage != null
-  const crossFormatResume = trackingEnabled.value && !hasExplicitTarget ? await fetchEbookCrossFormatResume(bookId) : null
+  const crossFormatResume = trackingEnabled.value && !hasExplicitTarget ? await fetchEbookCrossFormatResume(bookId, fileId) : null
   const priorCfi = progress.cfi.value
   const priorFraction = progress.percentage.value > 0 ? progress.percentage.value / 100 : null
   const savedNarration = await resolveSavedNarrationPos()

@@ -6453,15 +6453,9 @@
         "metadataScore": "メタデータスコア",
         "primaryFormat": "プライマリフォーマット",
         "readAloudSync": {
-          "title": "読み上げ進行状況の同期",
           "state": {
-            "enabled": "有効",
-            "disabled": "無効",
-            "unavailable": "Unavailable",
             "epubCopiesOnly": "EPUBのコピーのみ"
           },
-          "enabledDescription": "Audiobook、Webリーダー、Kobo、KOReaderのポジションは同期を保ちます。",
-          "disabledDescription": "各フォーマットは、独自の読み取り位置を保持します。",
           "epubCopiesDescription": "Webリーダー、Kobo、KOReaderのポジションは、EPUBコピー間で同期を維持します。オーディオブックを同期するために、一致するオーディオブックファイルを追加します。",
           "reason": {
             "no_media_overlay_epub": "メディアオーバーレイ付きの既読のEPUBが必要です。",
@@ -6469,9 +6463,6 @@
             "missing_duration": "音声期間のメタデータが不完全です。",
             "durationMismatch": "期間は十分に密接に一致しません: オーディオブック {audio}、既読のEPUB {overlay}."
           },
-          "enable": "有効にする",
-          "disable": "無効",
-          "saving": "保存中...",
           "saveFailed": "読み上げ進行状況の同期を更新できませんでした。"
         },
         "openIn": "{provider} で開く",

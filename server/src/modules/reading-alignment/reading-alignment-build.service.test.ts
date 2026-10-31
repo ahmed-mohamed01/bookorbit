@@ -20,7 +20,7 @@ const GIBBERISH = 'zzz qqq www vvv uuu ttt';
 const EBOOK = { id: 5, absolutePath: '/books/x.epub', sizeBytes: 1000 };
 const AUDIO_FILES = [{ fileId: 9, absolutePath: '/books/x.m4b', durationSeconds: 40 }];
 const TEXT_BOOK_ID = 101;
-const AUDIO_BOOK_ID = 202;
+const AUDIO_BOOK_ID = TEXT_BOOK_ID;
 
 function hash(input: unknown): string {
   return createHash('sha256').update(JSON.stringify(input)).digest('hex');
@@ -106,16 +106,8 @@ function createService(overrides: Overrides = {}) {
       .mockResolvedValue(overrides.pair === undefined ? { textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID } : overrides.pair),
   };
 
-  const syncService = { reconcilePairOnReady: vi.fn().mockResolvedValue(undefined) };
-  const service = new ReadingAlignmentBuildService(
-    config as never,
-    repo as never,
-    whisper as never,
-    epub as never,
-    pairService as never,
-    syncService as never,
-  );
-  return { service, repo, whisper, epub, pairService, config, syncService };
+  const service = new ReadingAlignmentBuildService(config as never, repo as never, whisper as never, epub as never, pairService as never);
+  return { service, repo, whisper, epub, pairService, config };
 }
 
 const USER = { id: 42, isSuperuser: false } as unknown as RequestUser;
@@ -403,38 +395,6 @@ describe('ReadingAlignmentBuildService', () => {
     expect(repo.setAlignmentStatus).not.toHaveBeenCalled();
   });
 
-  it('runs the one-shot reconcile after a build completes ready', async () => {
-    const { service, syncService } = createService();
-
-    await service.buildAlignment(TEXT_BOOK_ID, USER);
-
-    expect(syncService.reconcilePairOnReady).toHaveBeenCalledWith({ textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID }, USER.id);
-  });
-
-  it('still reconciles when the build is skipped as up to date (relink of a built pair)', async () => {
-    const existing = {
-      id: 1,
-      status: 'ready',
-      audioContentHash: AUDIO_HASH,
-      epubContentHash: EPUB_HASH,
-      samplesDone: 5,
-      anchorCount: 3,
-    };
-    const { service, syncService } = createService({ existing });
-
-    await service.buildAlignment(TEXT_BOOK_ID, USER);
-
-    expect(syncService.reconcilePairOnReady).toHaveBeenCalledWith({ textBookId: TEXT_BOOK_ID, audioBookId: AUDIO_BOOK_ID }, USER.id);
-  });
-
-  it('does not reconcile when the build ends unalignable', async () => {
-    const { service, syncService } = createService({ transcripts: {} });
-
-    await service.buildAlignment(TEXT_BOOK_ID, USER);
-
-    expect(syncService.reconcilePairOnReady).not.toHaveBeenCalled();
-  });
-
   it('aborts a resumed build after sustained consecutive transcription failures', async () => {
     const audioFiles = [{ fileId: 9, absolutePath: '/books/x.m4b', durationSeconds: 400 }];
     const existing = {
@@ -547,7 +507,7 @@ describe('ReadingAlignmentBuildService cancellation', () => {
   }
 
   it('writes no terminal status when the cancel lands after the last sample', async () => {
-    const { service, repo, syncService } = createService();
+    const { service, repo } = createService();
     repo.updateAlignmentProgress.mockImplementation((_id: number, progress: { samplesDone: number }) => {
       if (progress.samplesDone === 5) service.cancel(PAIR);
     });
@@ -556,7 +516,6 @@ describe('ReadingAlignmentBuildService cancellation', () => {
     await service.buildAlignment(TEXT_BOOK_ID, USER);
 
     expect(repo.setAlignmentStatus).not.toHaveBeenCalled();
-    expect(syncService.reconcilePairOnReady).not.toHaveBeenCalled();
     expect(logs.some((line) => line.startsWith('[reading_alignment.build] [end]') && line.includes('outcome=cancelled'))).toBe(true);
   });
 

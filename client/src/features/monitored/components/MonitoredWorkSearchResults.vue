@@ -5,7 +5,7 @@ import { monitoredAcquisitionState, type MonitoredFormat, type MonitoredWork, ty
 import { isMonitoredAcquisitionState, watchedFormats } from '../lib/monitored-format-state'
 import MonitoredVirtualGrid from './MonitoredVirtualGrid.vue'
 import MonitoredWorkCard from './MonitoredWorkCard.vue'
-import MonitoredEmptyState from './MonitoredEmptyState.vue'
+import EmptyState from '@/components/EmptyState.vue'
 
 const props = defineProps<{
   items: MonitoredWorkSearchItem[]
@@ -56,7 +56,6 @@ function stop(work: MonitoredWork) {
         :monitored-formats="formats(item)"
         :format-modes="item.authorModes"
         :can-manage="canManage && item.isOwner"
-        :queued="queued(item.work, 'ebook') || queued(item.work, 'audiobook')"
         :ebook-queued="queued(item.work, 'ebook')"
         :audiobook-queued="queued(item.work, 'audiobook')"
         @preview="preview(item)"
@@ -67,5 +66,5 @@ function stop(work: MonitoredWork) {
       />
     </template>
   </MonitoredVirtualGrid>
-  <MonitoredEmptyState v-else-if="!loading && !error" :title="t('monitored.search.empty')" :description="t('monitored.search.emptyDescription')" />
+  <EmptyState v-else-if="!loading && !error" icon="Bell" :title="t('monitored.search.empty')" :hint="t('monitored.search.emptyDescription')" />
 </template>

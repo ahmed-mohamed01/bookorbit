@@ -6453,15 +6453,9 @@
         "metadataScore": "Metaadat-pontszám",
         "primaryFormat": "Elsődleges formátum",
         "readAloudSync": {
-          "title": "Felolvasási haladás szinkronizálása",
           "state": {
-            "enabled": "Engedélyezve",
-            "disabled": "Letiltva",
-            "unavailable": "Nem elérhető",
             "epubCopiesOnly": "Csak EPUB példányok"
           },
-          "enabledDescription": "A hangoskönyv-, webes olvasó-, Kobo- és KOReader-pozíciók szinkronban maradnak.",
-          "disabledDescription": "Mindegyik formátum megőrzi a saját olvasási pozícióját.",
           "epubCopiesDescription": "A webes olvasó-, Kobo- és KOReader-pozíciók szinkronban maradnak az EPUB-példányok között. Adj hozzá egyező hangoskönyvfájlokat a hangoskönyv szinkronizálásához.",
           "reason": {
             "no_media_overlay_epub": "Médiaátfedésekkel rendelkező, hanggal rendelkező EPUB szükséges.",
@@ -6469,9 +6463,6 @@
             "missing_duration": "Hiányos hangidőtartam-metaadatok.",
             "durationMismatch": "Az időtartamok nem egyeznek kellő pontossággal: hangoskönyv: {audio}, hanggal rendelkező EPUB: {overlay}."
           },
-          "enable": "Engedélyezés",
-          "disable": "Letiltás",
-          "saving": "Mentés...",
           "saveFailed": "A felolvasási haladás szinkronizálását nem sikerült frissíteni."
         },
         "openIn": "Megnyitás itt: {provider}",

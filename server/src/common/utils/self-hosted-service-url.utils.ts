@@ -10,7 +10,7 @@ export interface SelfHostedUrlOptions {
  * Parse a user-supplied self-hosted server URL and return a normalized origin+path (trailing
  * slashes stripped), or null when the URL is unparseable or does not use an allowed scheme.
  * Shared by every fork integration that fetches a user-supplied, typically-LAN server URL on a
- * schedule (Audiobookshelf, Storyteller, ...); rejecting a disallowed scheme is part of the SSRF
+ * schedule (Audiobookshelf, Web Serials engines); rejecting a disallowed scheme is part of the SSRF
  * mitigation for that first outbound request.
  */
 export function parseAndNormalizeSelfHostedUrl(raw: string, options: SelfHostedUrlOptions): string | null {

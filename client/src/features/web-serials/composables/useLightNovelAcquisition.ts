@@ -185,11 +185,14 @@ export function useLightNovelAcquisition(
       )
     }),
   )
-  const hasTorrentPicks = computed(() => selected.value.some(isTorrent))
+  function isPack(release: ReleaseCandidateItem) {
+    return (inspections.value.get(releaseKey(release))?.unitCount ?? 0) > 1
+  }
+  const hasPackPicks = computed(() => selected.value.some(isPack))
+  const needsClient = computed(() => hasPackPicks.value || selected.value.some(isTorrent))
   const bar = computed(() => {
     const volumes = [...new Set(selected.value.flatMap((release) => plannedVolumes.value.get(releaseKey(release)) ?? []))]
     const client = clients.value.find((item) => item.id === clientId.value)
-    const packs = selected.value.some((release) => isTorrent(release) && (inspections.value.get(releaseKey(release))?.unitCount ?? 0) > 1)
     return {
       volumes,
       volumeCount: volumes.length,
@@ -201,7 +204,7 @@ export function useLightNovelAcquisition(
         !sending.value &&
         ![...picks.value].some((key) => inspecting.value.has(key)) &&
         !!draft &&
-        (!hasTorrentPicks.value || (!!client && (!packs || client.fileSelection))) &&
+        (!needsClient.value || (!!client && (!hasPackPicks.value || client.fileSelection))) &&
         selected.value.length > 0 &&
         selected.value.length <= 50 &&
         selected.value.every((release) => !!plannedVolumes.value.get(releaseKey(release))?.length),
@@ -346,14 +349,14 @@ export function useLightNovelAcquisition(
         altTitles: input.value.altTitles,
         volumeCount: input.value.volumeCount,
         seriesRequestId: draft.seriesRequestId,
-        downloadClientId: clientId.value ?? allClients.value[0]!.id,
+        ...(clientId.value != null ? { downloadClientId: clientId.value } : {}),
         picks: selected.value.map((release) => {
           const key = releaseKey(release)
           return {
-            downloadClientId: isTorrent(release) ? clientId.value : null,
+            downloadClientId: isTorrent(release) || isPack(release) ? clientId.value : null,
             indexerId: release.indexerId,
             releaseGuid: release.guid,
-            unitIndexes: (inspections.value.get(key)?.unitCount ?? 0) > 1 ? [...fileSelection.value.get(key)!].sort((a, b) => a - b) : null,
+            unitIndexes: isPack(release) ? [...fileSelection.value.get(key)!].sort((a, b) => a - b) : null,
             volumes: plannedVolumes.value.get(key)!,
           }
         }),
@@ -447,7 +450,7 @@ export function useLightNovelAcquisition(
     plannedVolumes,
     bar,
     clients,
-    hasTorrentPicks,
+    needsClient,
     clientId,
     send,
     downloads,

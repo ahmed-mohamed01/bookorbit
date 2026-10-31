@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { toast } from 'vue-sonner'
 import { Ellipsis, RotateCcw } from '@lucide/vue'
 import { formatOfKey, Permission, type BookDetail, type UserBookStatus } from '@bookorbit/types'
 import { bookFormatEntries } from '@/features/book/lib/book-formats'
@@ -40,7 +41,6 @@ const {
   sessions,
   total,
   stats,
-  scope,
   loading,
   loadingMore,
   error,
@@ -65,6 +65,7 @@ const {
   save: saveAttempt,
   startReread,
   remove: removeAttempt,
+  rate: rateAttempt,
 } = useReadingAttempts(bookIdRef)
 
 // The tab is kept alive, so returning to it shows the rows it already had rather than replaying
@@ -248,6 +249,12 @@ async function handleStartReread(resetProgress: boolean) {
   emit('saved', { ...props.book, readStatus })
 }
 
+async function handleRateAttempt(attemptId: number, rating: number | null) {
+  const bookRatingChanged = await rateAttempt(attemptId, rating)
+  if (bookRatingChanged === null) toast.error(t('readingHistory.rating.failed'))
+  else if (bookRatingChanged) emit('refetch')
+}
+
 async function handleRemoveAttempt(attemptId: number) {
   await removeAttempt(attemptId)
   await reload()
@@ -351,7 +358,6 @@ const quickFilters = computed<{ label: string; value: QuickFilter }[]>(() => [
           class="max-h-[28rem] xl:col-start-2 xl:row-start-1 xl:max-h-none"
           :book-id="book.id"
           :sessions="sessions"
-          :scope="scope"
           :total="total"
           :sort-by="sortBy"
           :sort-dir="sortDir"
@@ -425,7 +431,9 @@ const quickFilters = computed<{ label: string; value: QuickFilter }[]>(() => [
             :saving="attemptsSaving"
             :error="attemptsError"
             :can-manage="canManageReadingState"
+            :book-id="book.id"
             @save="handleSaveAttempt"
+            @rate="handleRateAttempt"
             @start-reread="handleStartReread"
             @remove="handleRemoveAttempt"
           />
