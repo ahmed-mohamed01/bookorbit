@@ -2,7 +2,7 @@
 
 Everything you need to work in this codebase: architecture, setup, workflows, conventions, and commands.
 
-For the contribution process (issues, PRs, review), see [CONTRIBUTING.md](CONTRIBUTING.md). For localization and Crowdin workflow details, see [LOCALIZATION.md](LOCALIZATION.md). For test architecture and E2E suite details, see [TESTING.md](TESTING.md).
+For the contribution process (issues, PRs, review), see [CONTRIBUTING.md](../CONTRIBUTING.md). For localization and Crowdin workflow details, see [LOCALIZATION.md](LOCALIZATION.md). For test architecture and E2E suite details, see [TESTING.md](TESTING.md).
 
 ---
 
@@ -105,7 +105,7 @@ git clone https://github.com/<your-username>/bookorbit.git
 cd bookorbit
 ```
 
-If you are an external contributor, fork first and clone your fork. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+If you are an external contributor, fork first and clone your fork. See [CONTRIBUTING.md](../CONTRIBUTING.md) for details.
 
 #### Step 2 - Create your environment file
 

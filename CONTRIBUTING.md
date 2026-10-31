@@ -4,16 +4,16 @@ Thanks for your interest in contributing to BookOrbit. Whether you are fixing a 
 
 **Companion docs:**
 
-- [DEVELOPMENT.md](DEVELOPMENT.md) - Local setup, architecture, commands, and technical reference.
-- [TESTING.md](TESTING.md) - Test architecture, E2E suites, coverage thresholds, and harness details.
-- [COMMIT_GUIDELINES.md](COMMIT_GUIDELINES.md) - Commit message format, types, scopes, and examples.
-- [LOCALIZATION.md](LOCALIZATION.md) - User-facing copy, ICU messages, Crowdin, and adding languages.
+- [DEVELOPMENT.md](docs/DEVELOPMENT.md) - Local setup, architecture, commands, and technical reference.
+- [TESTING.md](docs/TESTING.md) - Test architecture, E2E suites, coverage thresholds, and harness details.
+- [COMMIT_GUIDELINES.md](docs/COMMIT_GUIDELINES.md) - Commit message format, types, scopes, and examples.
+- [LOCALIZATION.md](docs/LOCALIZATION.md) - User-facing copy, ICU messages, Crowdin, and adding languages.
 
 ---
 
 ## Where to Start
 
-For usage questions, setup help, or community conversations, see the [community guide](COMMUNITY.md). You do not need approval or assignment to ask a question or participate.
+For usage questions, setup help, or community conversations, see the [community guide](docs/COMMUNITY.md). You do not need approval or assignment to ask a question or participate.
 
 Not sure what to work on? Look for issues tagged with:
 
@@ -36,7 +36,7 @@ The rest of this guide still applies (issue first, PR template, etc.), but expec
 
 ## Security Issues
 
-Do **not** open public issues for security vulnerabilities. Use GitHub's [private vulnerability reporting](https://github.com/bookorbit/bookorbit/security/advisories/new) instead. See [SECURITY.md](../.github/SECURITY.md) for details.
+Do **not** open public issues for security vulnerabilities. Use GitHub's [private vulnerability reporting](https://github.com/bookorbit/bookorbit/security/advisories/new) instead. See [SECURITY.md](.github/SECURITY.md) for details.
 
 ---
 
@@ -93,7 +93,7 @@ If this is your first time:
 pnpm setup
 ```
 
-This handles everything: dependencies, PostgreSQL, migrations, and seed data. See [DEVELOPMENT.md](DEVELOPMENT.md) for prerequisites, manual setup steps, and troubleshooting.
+This handles everything: dependencies, PostgreSQL, migrations, and seed data. See [DEVELOPMENT.md](docs/DEVELOPMENT.md) for prerequisites, manual setup steps, and troubleshooting.
 
 ### Phase 5: Create Your Branch
 
@@ -118,7 +118,7 @@ Start the dev server and get to work:
 pnpm dev
 ```
 
-Refer to [DEVELOPMENT.md](DEVELOPMENT.md) for architecture details, project structure, database workflows, and conventions. A few ground rules:
+Refer to [DEVELOPMENT.md](docs/DEVELOPMENT.md) for architecture details, project structure, database workflows, and conventions. A few ground rules:
 
 - **One logical change per PR.** Do not bundle a bug fix with a refactor or unrelated cleanup.
 - **No unapproved dependencies.** Propose new dependencies in the linked issue first (see [Adding Dependencies](#adding-dependencies)).
@@ -132,7 +132,7 @@ BookOrbit uses Vue I18n, with English as the complete source catalog and Crowdin
 - Do not add the key or an English fallback to any non-English catalog. Target catalogs are intentionally sparse, and missing messages fall back to English at runtime.
 - Do not create or improve target-language translations in a feature pull request. Translate them in [Crowdin](https://crowdin.com/project/bookorbit); the controlled translation workflow will open a separate PR.
 - Run `pnpm --filter client validate:locales` after changing `en.json`.
-- Read [LOCALIZATION.md](LOCALIZATION.md) before changing ICU plural structure, changing the meaning of an existing message, or adding a language.
+- Read [LOCALIZATION.md](docs/LOCALIZATION.md) before changing ICU plural structure, changing the meaning of an existing message, or adding a language.
 
 CI rejects edits to existing non-English catalogs in ordinary pull requests. A deliberate new-language setup may add only an empty target catalog until Crowdin export is enabled.
 
@@ -156,7 +156,7 @@ pnpm test
 
 If your change touches an area covered by an existing E2E suite, run it locally before pushing: `pnpm run e2e:run -- <suite-id>`. Use `pnpm run e2e:list` to see available suites.
 
-For E2E tests, suite IDs, coverage thresholds, and the test harness, see [TESTING.md](TESTING.md).
+For E2E tests, suite IDs, coverage thresholds, and the test harness, see [TESTING.md](docs/TESTING.md).
 
 ### Phase 8: Verify Code Quality
 
@@ -171,11 +171,11 @@ Before marking your PR ready for review, run the full quality gate yourself:
 pnpm verify
 ```
 
-See the [Code Quality](DEVELOPMENT.md#code-quality) section in DEVELOPMENT.md for individual commands.
+See the [Code Quality](docs/DEVELOPMENT.md#code-quality) section in DEVELOPMENT.md for individual commands.
 
 ### Phase 9: Commit Your Work
 
-Follow the format in [COMMIT_GUIDELINES.md](COMMIT_GUIDELINES.md). The short version:
+Follow the format in [COMMIT_GUIDELINES.md](docs/COMMIT_GUIDELINES.md). The short version:
 
 ```
 <type>(<scope>): <summary>
@@ -216,7 +216,7 @@ When creating the PR:
   assigned. Use the issue for direction before approval.
 - **Attach end-to-end evidence.** Upload a recording showing the changed behavior through the real
   client. Ready-for-review PRs without the required evidence will not be reviewed.
-- **Disclose AI usage** if applicable. See [AI_POLICY.md](AI_POLICY.md) for the format and expectations.
+- **Disclose AI usage** if applicable. See [AI_POLICY.md](docs/AI_POLICY.md) for the format and expectations.
 
 ### Phase 11: Respond to Review
 
@@ -278,10 +278,10 @@ If your PR introduces a breaking change (schema, API contract, environment varia
 
 ### AI-Assisted Contributions
 
-See [AI_POLICY.md](AI_POLICY.md). The short version: disclose all AI usage in your PR description and make sure you understand every line of the diff.
+See [AI_POLICY.md](docs/AI_POLICY.md). The short version: disclose all AI usage in your PR description and make sure you understand every line of the diff.
 
 ---
 
 ## License
 
-By submitting a contribution, you license it under the [GNU Affero General Public License, version 3 only](../LICENSE), together with the [BookOrbit Additional Terms](../ADDITIONAL_TERMS.md). You represent that you have the authority to grant this license. Copyright in your contribution remains yours.
+By submitting a contribution, you license it under the [GNU Affero General Public License, version 3 only](LICENSE), together with the [BookOrbit Additional Terms](ADDITIONAL_TERMS.md). You represent that you have the authority to grant this license. Copyright in your contribution remains yours.

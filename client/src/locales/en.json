@@ -13472,6 +13472,8 @@
     "period": {
       "year": "Year",
       "allTime": "All time",
+      "newerYears": "Show newer years",
+      "olderYears": "Show older years",
       "quarterGroup": "Quarter",
       "quarter": "Q{quarter}",
       "quarterYear": "Q{quarter} {year}"
@@ -17556,5 +17558,394 @@
     "sitesCount": "{count, plural, one {# site} other {# sites}}",
     "mtl": "MTL",
     "alsoKnownAs": "Also known as {title}"
+  },
+  "serverText": {
+    "achievements": {
+      "books_finished_1": {
+        "name": "Ink Initiate",
+        "description": "Finish your first book"
+      },
+      "books_finished_2": {
+        "name": "Spine Scout",
+        "description": "Finish 10 books"
+      },
+      "books_finished_3": {
+        "name": "Story Stalwart",
+        "description": "Finish 35 books"
+      },
+      "books_finished_4": {
+        "name": "Grand Archivist",
+        "description": "Finish 100 books"
+      },
+      "pages_read_1": {
+        "name": "First Leaves",
+        "description": "Read 500 pages"
+      },
+      "pages_read_2": {
+        "name": "Chapter Weaver",
+        "description": "Read 5,000 pages"
+      },
+      "pages_read_3": {
+        "name": "Tome Tactician",
+        "description": "Read 25,000 pages"
+      },
+      "pages_read_4": {
+        "name": "Grand Lexicon",
+        "description": "Read 100,000 pages"
+      },
+      "hours_read_1": {
+        "name": "Hour Initiate",
+        "description": "Read for 10 hours"
+      },
+      "hours_read_2": {
+        "name": "Timebound Reader",
+        "description": "Read for 100 hours"
+      },
+      "hours_read_3": {
+        "name": "Chronicle Veteran",
+        "description": "Read for 500 hours"
+      },
+      "hours_read_4": {
+        "name": "Timeless Scholar",
+        "description": "Read for 1,000 hours"
+      },
+      "marathoner": {
+        "name": "Marathoner",
+        "description": "Complete a reading session of 90 minutes or more"
+      },
+      "all_nighter": {
+        "name": "All-nighter",
+        "description": "Read between 1am and 4am"
+      },
+      "early_bird": {
+        "name": "Early Bird",
+        "description": "Start a reading session between 5am and 7am"
+      },
+      "long_book_1": {
+        "name": "Story Stretch",
+        "description": "Finish a book with 300 or more pages"
+      },
+      "page_turner": {
+        "name": "Page Pathfinder",
+        "description": "Finish a book with 500 or more pages"
+      },
+      "long_book_3": {
+        "name": "Epic Voyager",
+        "description": "Finish a book with 750 or more pages"
+      },
+      "tome_tamer": {
+        "name": "Tome Sovereign",
+        "description": "Finish a book with 1,000 or more pages"
+      },
+      "sprint": {
+        "name": "Sprint",
+        "description": "Finish a book in a single day"
+      },
+      "binge_reader": {
+        "name": "Binge Reader",
+        "description": "Finish 3 or more books in a single week"
+      },
+      "library_builder_1": {
+        "name": "Shelf Seed",
+        "description": "Have 50 books in your library"
+      },
+      "library_builder_2": {
+        "name": "Collection Architect",
+        "description": "Have 250 books in your library"
+      },
+      "library_builder_3": {
+        "name": "Stack Sovereign",
+        "description": "Have 1,000 books in your library"
+      },
+      "library_builder_4": {
+        "name": "Library of Alexandria",
+        "description": "Have 5,000 books in your library"
+      },
+      "annotator_1": {
+        "name": "Note Taker",
+        "description": "Create 10 annotations"
+      },
+      "annotator_2": {
+        "name": "Active Annotator",
+        "description": "Create 50 annotations"
+      },
+      "annotator_3": {
+        "name": "Prolific Annotator",
+        "description": "Create 200 annotations"
+      },
+      "annotator_4": {
+        "name": "Master Annotator",
+        "description": "Create 500 annotations"
+      },
+      "multi_format": {
+        "name": "Multi-Format",
+        "description": "Own books in 3 or more different formats"
+      },
+      "curator": {
+        "name": "Curator",
+        "description": "Create 10 or more collections"
+      },
+      "genre_explorer_1": {
+        "name": "Genre Curious",
+        "description": "Finish books in 5 different genres"
+      },
+      "genre_explorer_2": {
+        "name": "Genre Adventurer",
+        "description": "Finish books in 10 different genres"
+      },
+      "genre_explorer_3": {
+        "name": "Genre Connoisseur",
+        "description": "Finish books in 15 different genres"
+      },
+      "genre_explorer_4": {
+        "name": "Genre Master",
+        "description": "Finish books in 20 different genres"
+      },
+      "polyglot_1": {
+        "name": "Bilingual",
+        "description": "Finish books in 2 different languages"
+      },
+      "polyglot_2": {
+        "name": "Trilingual",
+        "description": "Finish books in 3 different languages"
+      },
+      "polyglot_3": {
+        "name": "Multilingual",
+        "description": "Finish books in 5 different languages"
+      },
+      "polyglot_4": {
+        "name": "Polyglot",
+        "description": "Finish books in 7 different languages"
+      },
+      "old_soul": {
+        "name": "Old Soul",
+        "description": "Finish a book published before 1900"
+      },
+      "new_release": {
+        "name": "New Release",
+        "description": "Finish a book published in the current year"
+      },
+      "century_span": {
+        "name": "Century Span",
+        "description": "Finish books from 3 or more different centuries"
+      },
+      "author_deep_dive": {
+        "name": "Author Deep Dive",
+        "description": "Read 5 or more books by the same author"
+      },
+      "streak_1": {
+        "name": "Getting Started",
+        "description": "Maintain a 7-day reading streak"
+      },
+      "streak_2": {
+        "name": "Habitual",
+        "description": "Maintain a 30-day reading streak"
+      },
+      "streak_3": {
+        "name": "Unstoppable",
+        "description": "Maintain a 100-day reading streak"
+      },
+      "streak_4": {
+        "name": "Year-Long Flame",
+        "description": "Maintain a 365-day reading streak"
+      },
+      "year_round_reader": {
+        "name": "Year-Round Reader",
+        "description": "Read in all 12 months of a calendar year"
+      },
+      "reborn": {
+        "name": "Reborn",
+        "description": "Finish a book you had abandoned for over 6 months"
+      },
+      "comeback_kid": {
+        "name": "Comeback Kid",
+        "description": "Resume reading after a 30-day break"
+      },
+      "bookmarked": {
+        "name": "Bookmarked",
+        "description": "Create your first annotation or highlight"
+      },
+      "new_year_reader": {
+        "name": "New Year Reader",
+        "description": "Complete a reading session on January 1st"
+      },
+      "monthly_reader_2": {
+        "name": "Monthly Machine",
+        "description": "Finish 10 books in a single calendar month"
+      },
+      "slow_burn": {
+        "name": "Slow Burn",
+        "description": "Take over 90 days from start to finish a book"
+      },
+      "one_sitting": {
+        "name": "One Sitting",
+        "description": "Cover 90% or more of a book in a single reading session"
+      },
+      "decade_sampler": {
+        "name": "Decade Sampler",
+        "description": "Finish books published in 5 different decades"
+      },
+      "short_story_fan": {
+        "name": "Short Story Fan",
+        "description": "Finish 5 books with fewer than 100 pages"
+      },
+      "thick_and_thin": {
+        "name": "Thick and Thin",
+        "description": "Finish at least one book under 100 pages and one over 800 pages"
+      },
+      "trilogy_master": {
+        "name": "Trilogy Master",
+        "description": "Finish a complete 3-book series"
+      },
+      "genre_devotee": {
+        "name": "Genre Devotee",
+        "description": "Finish 10 books in the same genre"
+      },
+      "seasonal_reader": {
+        "name": "Four Seasons",
+        "description": "Read in all 4 seasons within a single year"
+      },
+      "perfect_month": {
+        "name": "Perfect Month",
+        "description": "Read every day of a calendar month"
+      },
+      "consistent_reader": {
+        "name": "Consistency Is Key",
+        "description": "Read at least 30 minutes every day for 14 consecutive days"
+      },
+      "weekend_rhythm": {
+        "name": "Weekend Rhythm",
+        "description": "Read on 8 consecutive weekends"
+      },
+      "weekend_warrior": {
+        "name": "Weekend Warrior",
+        "description": "Read for 5 or more hours in a single weekend"
+      },
+      "yearly_finisher_12": {
+        "name": "Yearly Closer",
+        "description": "Finish 12 books in a single calendar year"
+      },
+      "note_keeper": {
+        "name": "Note Keeper",
+        "description": "Create 25 annotations that include a note"
+      },
+      "deep_dive_session": {
+        "name": "Deep Dive",
+        "description": "Create 10 annotations in a single day"
+      },
+      "first_series": {
+        "name": "Series Begun",
+        "description": "Finish your first book that belongs to a named series"
+      },
+      "category_sweeper": {
+        "name": "Category Sweeper",
+        "description": "Earn at least one achievement in all 4 categories"
+      },
+      "power_hour": {
+        "name": "Power Hour",
+        "description": "Read 75 or more pages in a single reading session"
+      },
+      "speed_reader": {
+        "name": "Speed Reader",
+        "description": "Read 100 or more pages in a single day"
+      },
+      "old_friend": {
+        "name": "Old Friend",
+        "description": "Finish a book you were re-reading"
+      },
+      "dnf_self_aware": {
+        "name": "It's Not You, It's Me",
+        "description": "Mark a book as abandoned"
+      },
+      "first_verdict": {
+        "name": "First Verdict",
+        "description": "Rate your first book"
+      },
+      "critic_1": {
+        "name": "Fledgling Critic",
+        "description": "Rate 10 books"
+      },
+      "critic_2": {
+        "name": "Seasoned Critic",
+        "description": "Rate 50 books"
+      },
+      "critic_3": {
+        "name": "Esteemed Critic",
+        "description": "Rate 200 books"
+      },
+      "critic_4": {
+        "name": "Definitive Critic",
+        "description": "Rate 500 books"
+      },
+      "standing_ovation": {
+        "name": "Standing Ovation",
+        "description": "Give a book a 5-star rating"
+      },
+      "across_the_board": {
+        "name": "Across the Board",
+        "description": "Use all five star ratings at least once"
+      },
+      "tough_crowd": {
+        "name": "Tough Crowd",
+        "description": "Give 10 books a rating of 2 stars or lower"
+      },
+      "wordsmith": {
+        "name": "Wordsmith",
+        "description": "Write a note longer than 280 characters"
+      },
+      "box_of_crayons": {
+        "name": "Box of Crayons",
+        "description": "Use all 5 highlight colors"
+      },
+      "synced_up": {
+        "name": "Synced Up",
+        "description": "Sync reading progress from a Kobo or KOReader device for the first time"
+      },
+      "full_orbit": {
+        "name": "Full Orbit",
+        "description": "Log reading from three different reading sources"
+      },
+      "two_worlds": {
+        "name": "Two Worlds",
+        "description": "Read the same book from two or more different sources"
+      }
+    },
+    "achievementCategories": {
+      "reading": "Reading",
+      "library": "Library",
+      "exploration": "Exploration",
+      "dedication": "Dedication",
+      "devices": "Devices"
+    },
+    "achievementSecret": {
+      "name": "Secret Achievement",
+      "description": "Keep reading to reveal this achievement."
+    },
+    "monthlyChallenge": {
+      "short-read": {
+        "title": "Quick Read",
+        "description": "Finish a book under 200 pages this month"
+      },
+      "genre-explorer": {
+        "title": "Genre Explorer",
+        "description": "Read a book in a genre new to you this month"
+      },
+      "finish-oldest": {
+        "title": "Clear the Backlog",
+        "description": "Finish your oldest in-progress book"
+      },
+      "streak-builder": {
+        "title": "Streak Builder",
+        "description": "Read for 5 consecutive days this month"
+      },
+      "new-author": {
+        "title": "New Voice",
+        "description": "Read a book by an author new to you this month"
+      },
+      "page-milestone": {
+        "title": "Page Turner",
+        "description": "Read 500 pages this month"
+      }
+    }
   }
 }
