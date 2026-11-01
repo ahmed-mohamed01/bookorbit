@@ -42,6 +42,7 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates ffmpeg tini && \
     rm -rf /var/lib/apt/lists/* && \
+    rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx && \
     mkdir -p /data/read-aloud/jobs /data/read-aloud/tmp /data/read-aloud/ghost-story && \
     chown -R node:node /data
 
