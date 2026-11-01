@@ -107,6 +107,7 @@ import { SearchModule } from './modules/search/search.module';
 import { WatchDownloadModule } from './modules/watch-download/watch-download.module';
 import { PodcastModule } from './modules/podcast/podcast.module';
 import { ReadAloudModule } from './modules/read-aloud/read-aloud.module';
+import { EditionSyncModule } from './modules/edition-sync/edition-sync.module';
 
 @Module({
   imports: [
@@ -224,6 +225,7 @@ import { ReadAloudModule } from './modules/read-aloud/read-aloud.module';
     ReadingAlignmentModule,
     WebSerialsModule,
     ReadAloudModule,
+    EditionSyncModule,
   ],
   providers: [{ provide: APP_INTERCEPTOR, useClass: AuditInterceptor }, ...GLOBAL_GUARDS.map((useClass) => ({ provide: APP_GUARD, useClass }))],
 })

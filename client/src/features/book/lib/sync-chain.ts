@@ -1,11 +1,4 @@
-import type {
-  AlignmentBuildBlockReason,
-  AlignmentStatus,
-  AudiobookshelfBookSyncLink,
-  AudiobookshelfBookSyncLive,
-  ReadAloudProgressSync,
-} from '@bookorbit/types'
-import { isTerminalBlock } from '@/features/book/lib/position-sync'
+import type { AudiobookshelfBookSyncLink, AudiobookshelfBookSyncLive, ReadAloudProgressSync } from '@bookorbit/types'
 import { stageLabelKey, type ReadAloudEntryState } from '@/features/read-aloud/lib/read-aloud'
 import { displayPercentage } from '@/features/book/lib/abs-sync-status'
 import { formatBytes } from '@/lib/formatting'
@@ -14,7 +7,7 @@ import { formatBytes } from '@/lib/formatting'
  * The Position sync panel as a spine of one book's own files: its ebook, its read-along and an audio
  * group (the audiobook with Audiobookshelf linked beneath it), with a connector between neighbouring
  * slots carrying that pair's sync state. Upstream's read-aloud sync joins the read-along to the audio and
- * to the plain EPUB; whisper joins the plain EPUB to the audio only in a book with no read-along.
+ * to the plain EPUB; the edition sync timing index joins the plain EPUB to the audio in a book with no read-along.
  * `buildSyncChain` turns one snapshot of the panel's composables into that row list; it is pure so every
  * state can be pinned by a unit test.
  */
@@ -30,10 +23,6 @@ export type ChainArrow = 'both' | 'left' | 'right'
 export type ChainViewMode = 'compact' | 'modify'
 
 export type ChainActionId =
-  | 'cancelAlignment'
-  | 'retryAlignment'
-  | 'alignNow'
-  | 'rebuildAlignment'
   | 'enableReadAloudSync'
   | 'disableReadAloudSync'
   | 'createReadAloud'
@@ -72,18 +61,6 @@ export interface SyncChainEdition {
   sizeBytes: number
   /** 0..100, null when nothing is recorded. */
   progress: number | null
-}
-
-export interface SyncChainAlignment {
-  status: AlignmentStatus
-  stale: boolean
-  builtAt: string | null
-  samplesDone: number | null
-  samplesTotal: number | null
-  buildBlocked: AlignmentBuildBlockReason | null
-  buildError: string | null
-  /** A build is queued or running, including the window between a request and the first 'building' read. */
-  running: boolean
 }
 
 export interface SyncChainReadAloud {
@@ -133,11 +110,11 @@ export interface SyncChainSnapshot {
   audiobook: SyncChainEdition | null
   readAlong: SyncChainEdition | null
   readAloudSlot: SyncChainReadAloudSlot
-  alignment: SyncChainAlignment
+  /** Edition sync is on for the book and its timing index is ready, which joins the plain EPUB to the audio. */
+  timingIndex: boolean
   readAloud: SyncChainReadAloud
   /** Null without the Audiobookshelf sync permission. */
   abs: SyncChainAbs | null
-  can: { align: boolean }
 }
 
 /* Rows. */
@@ -207,14 +184,7 @@ export interface ChainReadAloudSlotRow {
 }
 
 export type ChainConnectorState =
-  | 'aligning'
-  | 'rebuilding'
-  | 'alignmentFailed'
-  | 'outOfDate'
-  | 'cantAlign'
-  | 'alignmentBlocked'
-  | 'notAligned'
-  | 'linkedViaWhisper'
+  | 'indexSynced'
   | 'readAloudSynced'
   | 'readAloudPartial'
   | 'readAloudIssue'
@@ -322,16 +292,6 @@ function action(id: ChainActionId, label: ChainMessage, disabled = false): Chain
 
 /* State resolution shared by the rows and the header. */
 
-type AlignmentState = 'aligning' | 'rebuilding' | 'alignmentFailed' | 'outOfDate' | 'cantAlign' | 'alignmentBlocked' | 'notAligned' | 'ready'
-
-function alignmentState(a: SyncChainAlignment): AlignmentState {
-  if (a.running || a.status === 'pending' || a.status === 'building') return a.builtAt === null ? 'aligning' : 'rebuilding'
-  if (a.status === 'failed') return 'alignmentFailed'
-  if (a.status === 'ready') return a.stale ? 'outOfDate' : 'ready'
-  if (a.status === 'unalignable') return 'cantAlign'
-  return isTerminalBlock(a.buildBlocked) ? 'alignmentBlocked' : 'notAligned'
-}
-
 type AbsState = Extract<ChainConnectorState, 'absUnreachable' | 'absDiverged' | 'absReceiving' | 'absSending' | 'absOneWay' | 'absLinked'>
 
 function absState(link: AudiobookshelfBookSyncLink, live: AudiobookshelfBookSyncLive | null): AbsState {
@@ -346,11 +306,6 @@ function absState(link: AudiobookshelfBookSyncLink, live: AudiobookshelfBookSync
       return 'absSending'
   }
   return link.direction === 'two_way' ? 'absLinked' : 'absOneWay'
-}
-
-/** Upstream's read-aloud sync owns text and audio wherever the book has a read-along, so whisper fills in only without one. */
-function usesWhisper(s: SyncChainSnapshot): boolean {
-  return s.ebook !== null && s.audiobook !== null && s.readAlong === null
 }
 
 function hasReadAloudPair(s: SyncChainSnapshot): boolean {
@@ -504,105 +459,15 @@ function connectorRow(from: EditionKey, to: EditionKey, spec: ConnectorSpec): Ch
   }
 }
 
-function alignAction(s: SyncChainSnapshot, id: ChainActionId, label: ChainMessage): ChainAction | null {
-  return s.can.align ? action(id, label) : null
-}
-
-function presentActions(...actions: (ChainAction | null)[]): ChainAction[] {
-  return actions.filter((a): a is ChainAction => a !== null)
-}
-
-function alignmentConnector(s: SyncChainSnapshot): ChainConnectorRow {
-  const a = s.alignment
-  const ticks = { samplesDone: a.samplesDone, samplesTotal: a.samplesTotal }
-  const whisper = { explainer: chainMsg('explain.whisper') }
-  switch (alignmentState(a)) {
-    case 'aligning':
-      return connectorRow('ebook', 'audiobook', {
-        state: 'aligning',
-        tone: 'info',
-        icon: 'spinner',
-        pill: chainMsg('pill.aligning'),
-        note: chainMsg('note.aligning'),
-        cancel: alignAction(s, 'cancelAlignment', chainMsg('cancelAlignment')),
-        ticks,
-        miniText: chainMsg('mini.aligning'),
-        ...whisper,
-      })
-    case 'rebuilding':
-      return connectorRow('ebook', 'audiobook', {
-        state: 'rebuilding',
-        tone: 'info',
-        icon: 'spinner',
-        pill: chainMsg('pill.rebuilding'),
-        cancel: alignAction(s, 'cancelAlignment', chainMsg('cancelAlignment')),
-        ticks,
-        miniText: chainMsg('mini.rebuilding'),
-        ...whisper,
-      })
-    case 'alignmentFailed': {
-      const retry = alignAction(s, 'retryAlignment', chainMsg('action.retry'))
-      return connectorRow('ebook', 'audiobook', {
-        state: 'alignmentFailed',
-        tone: 'destructive',
-        icon: 'alert',
-        pill: chainMsg('pill.alignmentFailed'),
-        note: chainMsg('note.alignmentFailed'),
-        detail: a.buildError,
-        actions: presentActions(retry),
-        miniAction: retry,
-      })
-    }
-    case 'outOfDate':
-      return connectorRow('ebook', 'audiobook', {
-        state: 'outOfDate',
-        tone: 'warning',
-        icon: 'alert',
-        pill: chainMsg('pill.outOfDate'),
-        note: chainMsg('note.stale'),
-        actions: presentActions(alignAction(s, 'rebuildAlignment', chainMsg('action.rebuildAlignment'))),
-        miniAction: alignAction(s, 'rebuildAlignment', msg(`${EDITION_LINK}actions.rebuild`)),
-        ...whisper,
-      })
-    case 'cantAlign':
-      return connectorRow('ebook', 'audiobook', {
-        state: 'cantAlign',
-        tone: 'muted',
-        icon: 'ban',
-        pill: chainMsg('pill.cantAlign'),
-        note: msg('book.detail.readingAlignment.unalignableHint'),
-      })
-    case 'alignmentBlocked':
-      return connectorRow('ebook', 'audiobook', {
-        state: 'alignmentBlocked',
-        tone: 'muted',
-        icon: 'ban',
-        pill: chainMsg('pill.notAligned'),
-        note: msg(`book.detail.readingAlignment.buildBlocked.${a.buildBlocked}`),
-      })
-    case 'notAligned': {
-      const alignNow = alignAction(s, 'alignNow', chainMsg('action.alignNow'))
-      return connectorRow('ebook', 'audiobook', {
-        state: 'notAligned',
-        tone: 'muted',
-        icon: 'link',
-        pill: chainMsg('pill.notAligned'),
-        note: msg(a.buildBlocked === 'busy' ? 'book.detail.readingAlignment.buildBlocked.busy' : 'book.detail.readingAlignment.idleHint'),
-        actions: presentActions(alignNow),
-        miniAction: alignNow,
-        ...whisper,
-      })
-    }
-    case 'ready':
-      return connectorRow('ebook', 'audiobook', {
-        state: 'linkedViaWhisper',
-        tone: 'success',
-        icon: 'link',
-        pill: chainMsg('pill.linkedViaWhisper'),
-        qualifier: chainMsg('qualifier.viaWhisper'),
-        ...whisper,
-      })
-  }
+function indexConnector(): ChainConnectorRow {
+  return connectorRow('ebook', 'audiobook', {
+    state: 'indexSynced',
+    tone: 'success',
+    icon: 'link',
+    pill: chainMsg('pill.linked'),
+    qualifier: chainMsg('qualifier.viaTimings'),
+    explainer: chainMsg('explain.timings'),
+  })
 }
 
 function readAloudReason(r: SyncChainReadAloud): ChainMessage {
@@ -924,7 +789,7 @@ function orderedRows(s: SyncChainSnapshot): ChainRow[] {
   const rows: ChainRow[] = []
   if (s.ebook) rows.push(fileCard(s, 'ebook', s.ebook))
   if (s.audiobook) {
-    if (s.ebook) rows.push(alignmentConnector(s))
+    if (s.ebook && s.timingIndex) rows.push(indexConnector())
     rows.push(...audioGroup(s, s.audiobook))
   }
   rows.push(...readAloudSlotRows(s))
@@ -934,13 +799,10 @@ function orderedRows(s: SyncChainSnapshot): ChainRow[] {
 /* Header. */
 
 function headerPriority(s: SyncChainSnapshot): 1 | 2 | 3 | null {
-  const align = usesWhisper(s) ? alignmentState(s.alignment) : null
   const abs = absIsCard(s) && s.abs?.link ? absState(s.abs.link, s.abs.live) : null
   const readAloudIssue =
     s.readAlong !== null && (s.audiobook !== null || s.ebook !== null) && s.readAloud.sync.state === 'unavailable' && !copiesOnlyWithoutAudio(s)
-  if (align === 'alignmentFailed') return 1
-  if (align === 'outOfDate' || readAloudIssue || abs === 'absUnreachable' || abs === 'absDiverged') return 2
-  if (align === 'aligning' || align === 'rebuilding') return 3
+  if (readAloudIssue || abs === 'absUnreachable' || abs === 'absDiverged') return 2
   return null
 }
 
@@ -949,11 +811,10 @@ function copiesOnlyWithoutAudio(s: SyncChainSnapshot): boolean {
 }
 
 function countInSync(s: SyncChainSnapshot): number {
-  const align = usesWhisper(s) ? alignmentState(s.alignment) : null
-  const pair = align === 'ready'
   const readAloudAudio = hasReadAloudPair(s) && s.readAloud.sync.state === 'enabled'
   const copies = s.ebook !== null && s.readAlong !== null && (s.readAloud.sync.state === 'enabled' || syncsEpubCopiesOnly(s))
   const abs = absIsCard(s)
+  const pair = s.readAlong === null && s.ebook !== null && s.audiobook !== null && s.timingIndex
   const ebook = pair || copies
   const audiobook = pair || readAloudAudio || abs
   const readAlong = readAloudAudio || copies

@@ -1,0 +1,63 @@
+import { flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { EditionSyncSettings } from '@bookorbit/types'
+
+const mocks = vi.hoisted(() => ({
+  fetchSettings: vi.fn<() => Promise<EditionSyncSettings>>(),
+  updateSettings: vi.fn<(payload: unknown) => Promise<EditionSyncSettings>>(),
+  toastSuccess: vi.fn<(message: string) => void>(),
+  toastError: vi.fn<(message: string) => void>(),
+}))
+
+vi.mock('../../api/edition-sync.api', () => ({
+  fetchEditionSyncSettings: mocks.fetchSettings,
+  updateEditionSyncSettings: mocks.updateSettings,
+}))
+vi.mock('vue-sonner', () => ({ toast: { success: mocks.toastSuccess, error: mocks.toastError } }))
+
+import EditionSyncSettingsForm from '../EditionSyncSettings.vue'
+import { useEditionSyncSettings } from '../../composables/useEditionSyncSettings'
+
+const SETTINGS: EditionSyncSettings = { enabled: true, effectiveEnabled: true, disabledReason: null, bookSyncMode: 'selected_only' }
+
+describe('EditionSyncSettings', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((mock) => mock.mockReset())
+    useEditionSyncSettings().settings.value = null
+  })
+
+  it('shows the saved values and saves them once loaded', async () => {
+    mocks.fetchSettings.mockResolvedValue(SETTINGS)
+    mocks.updateSettings.mockResolvedValue(SETTINGS)
+    const wrapper = mount(EditionSyncSettingsForm)
+    await flushPromises()
+
+    const save = wrapper.findAll('button').find((button) => button.text() === 'Save')!
+    expect(save.attributes('disabled')).toBeUndefined()
+    await save.trigger('click')
+    expect(mocks.updateSettings).toHaveBeenCalledWith({ enabled: true, bookSyncMode: 'selected_only' })
+  })
+
+  it('cannot save defaults over the real settings while the load is in flight', async () => {
+    mocks.fetchSettings.mockReturnValue(new Promise(() => undefined))
+    const wrapper = mount(EditionSyncSettingsForm)
+    await flushPromises()
+
+    const save = wrapper.findAll('button').find((button) => button.text() === 'Save')!
+    expect(save.attributes('disabled')).toBeDefined()
+    await save.trigger('click')
+    expect(mocks.updateSettings).not.toHaveBeenCalled()
+  })
+
+  it('stays locked and shows the failure when the load failed', async () => {
+    mocks.fetchSettings.mockRejectedValue(new Error('server down'))
+    const wrapper = mount(EditionSyncSettingsForm)
+    await flushPromises()
+
+    expect(wrapper.get('[role="alert"]').text()).toBe('server down')
+    const save = wrapper.findAll('button').find((button) => button.text() === 'Save')!
+    expect(save.attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button[role="switch"]').attributes('disabled')).toBeDefined()
+    expect(useEditionSyncSettings().settings.value).toBeNull()
+  })
+})

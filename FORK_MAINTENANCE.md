@@ -875,6 +875,74 @@ registration, and `sectionHasMediaOverlay` from the `useFoliate` destructure. In
 The unused `reader.narration.*` keys in `en.json` can go too; nothing else reads them. Restore
 `useMediaOverlay.ts` from upstream as well; upstream's bar then works as before.
 
+## Edition sync overlay (read-aloud timing index)
+
+The fork runs upstream's read-aloud worker as a scheduled background job and keeps only an audioless
+**timing index** per book (`<stem>.bookorbit-timings`, a zip next to the book that the scanner files
+under Extras). Ebook / audiobook / Kobo / KOReader / ABS position sync maps through it at sentence
+level via upstream's own `AudiobookEbookProgressSyncService`, and Create read-aloud reuses it to
+rebuild a full EPUB3 in seconds instead of re-analysing. Gated by the fork permission `edition_sync`
+(user side) and `manage_app_settings` (schedule, run now, clear unused). Whisper (`reading-alignment`)
+stays only as the fallback for books whose worker run failed.
+
+The optional rebuild protocol field `sourceEntries` lists `{ href, size, crc32, position }` for images
+and fonts omitted from the index when their source EPUB path, size and CRC32 match. `position` is the
+number of index entries (timing files excluded) that preceded the asset, so rebuild restores each one
+from the source EPUB at its original place and the output matches a full run entry for entry. A
+mismatch falls back to full alignment; an entry without `position` goes last. Provenance
+remains version 1; older indexes without this field rebuild as before.
+
+**Owned (fork-only) files - never conflict:** `server/src/modules/edition-sync/` (module, bootstrap
+SQL, repository, services, controller, DTOs, including `edition-sync-fallback.service.ts`),
+`workers/read-aloud/src/rebuild.ts`, `workers/read-aloud/test/rebuild.test.mjs`, `packages/types/src/edition-sync.ts`,
+`client/src/features/edition-sync/`, and three seam token files that live inside upstream folders:
+`server/src/modules/read-aloud/read-aloud-hooks.ts`, `server/src/modules/book/overlay-source-provider.ts`,
+`server/src/modules/position-converter/epub-dom-source-provider.ts` (each with a fork `*.test.ts`
+beside it). Schema: `edition_sync_user_settings`, `edition_sync_book_overrides`,
+`edition_sync_book_index`, `edition_sync_settings`, `edition_sync_runs`, created by
+`EditionSyncSchemaBootstrapService` (idempotent SQL, `onModuleInit`), never Drizzle migrations.
+
+**Seams / hooks in upstream files:**
+
+| Upstream file                                                                    | Hook                                                                                                                                                                                                                                                                                                                                                                                         | Conflict cost                                    |
+| -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `book_files` (database trigger)                                                  | Bootstrap-owned `edition_sync_book_files_changed` trigger depends on `book_id`, `role` (value `'content'`), `size_bytes`, `mtime`, `file_hash`, `absolute_path`.                                                                                                                                                                                                                             | No upstream source edit; verify columns on merge |
+| `read-aloud/read-aloud.module.ts`                                                | `exports: [ReadAloudWorkerClientService, ReadAloudWorkspace, ReadAloudWorkerService]`                                                                                                                                                                                                                                                                                                        | 1 line                                           |
+| `read-aloud/read-aloud-worker.service.ts`                                        | `@Optional() @Inject(READ_ALOUD_HOOKS) hooks = NO_READ_ALOUD_HOOKS` ctor arg; `adoptRunning` returns null when `hooks.ownsWorkerJob(jobId)`; `process()` passes the request through `hooks.prepareRequest`; `finish()` takes that request and calls `hooks.onOutputValidated` inside `publisher.withHeartbeat` after the `output_validated` activity                                         | ~10 lines                                        |
+| `read-aloud/read-aloud-lifecycle.service.ts`                                     | optional `READ_ALOUD_HOOKS` ctor arg; `removeOrphanFolders` adds `hooks.keepWorkFolders()` to the keep set                                                                                                                                                                                                                                                                                   | 3 lines                                          |
+| `book/audiobook-ebook-progress-sync.service.ts`                                  | optional `OVERLAY_SOURCE_RESOLVER` ctor arg; `selectOverlaySourceFile` is async, takes `(userId, bookId, ...)` and falls back to `overlaySource.resolveOverlaySource` when the book has no read-along EPUB; `resolveProgress` / `resolveEbookOverlayPosition` param types gain `userId`; `resolveProgress` keeps only EPUB targets (a resolved non-EPUB source is never written as progress) | ~8 lines                                         |
+| `position-converter/epub-dom.service.ts`                                         | optional `EPUB_DOM_SOURCE_RESOLVER` ctor arg; `getSpineEntry` asks `sources.resolveEpubDomSource` for a row that is not `epub`/`kepub` (`const [file]` became `const [row]` + one line)                                                                                                                                                                                                      | ~6 lines                                         |
+| `app.module.ts`                                                                  | import + register `EditionSyncModule`                                                                                                                                                                                                                                                                                                                                                        | 2 lines, additive                                |
+| `packages/types/src/permissions.ts`                                              | `EditionSync = "edition_sync"` + label "Edition sync" (no `PERMISSION_REQUIRES` entry)                                                                                                                                                                                                                                                                                                       | 2 lines, additive                                |
+| `packages/types/src/index.ts`                                                    | `export * from "./edition-sync"`                                                                                                                                                                                                                                                                                                                                                             | 1 line, additive                                 |
+| `client/src/features/admin/lib/permission-presets.ts`                            | `Permission.EditionSync` in the `readingIntegrations` group (not in `STANDARD_PRESET`)                                                                                                                                                                                                                                                                                                       | 1 line                                           |
+| `workers/read-aloud/src/protocol.ts`                                             | `ReadAloudWorkerRebuildRequest` accepted on submit; validation of the `rebuild` block (`validation.ts`)                                                                                                                                                                                                                                                                                      | ~15 lines                                        |
+| `workers/read-aloud/src/jobs.ts`                                                 | job records carry the optional `rebuild` block and pass it to the runner                                                                                                                                                                                                                                                                                                                     | ~6 lines                                         |
+| `workers/read-aloud/src/runner.ts`                                               | when `job.rebuild` is set: plan `preparing_audio -> aligning -> validating`, `rebuildFromIndex` in place of alignment, `RebuildMismatchError` falls back to the full pipeline in the same job                                                                                                                                                                                                | ~45 lines                                        |
+| `workers/read-aloud/src/server.ts`                                               | authenticated `/health` adds `rebuild: true`                                                                                                                                                                                                                                                                                                                                                 | 1 line                                           |
+| `workers/read-aloud/test/fixtures/fake-pipeline.mjs`, `test/server.test.mjs`     | fixture support for the rebuild stage; health assertion                                                                                                                                                                                                                                                                                                                                      | test only                                        |
+| `client/src/features/book/components/detail/details/BookEditionsCard.vue`        | prop `syncCount`, slots `header-action` and `status`, footer summary                                                                                                                                                                                                                                                                                                                         | ~20 lines                                        |
+| `client/src/features/book/components/detail/tabs/DetailsTab.vue`                 | mounts `useEditionSyncBookState` and the two edition-sync components inside the card                                                                                                                                                                                                                                                                                                         | ~25 lines                                        |
+| `client/src/features/settings/lib/settings-nav.ts`, `client/src/router/index.ts` | `fork-settings` nav item and `settings-fork` route (ForkSettings.vue is fork-owned)                                                                                                                                                                                                                                                                                                          | 2 x ~5 lines                                     |
+| `client/src/locales/en.json`                                                     | `editionSync.*` keys                                                                                                                                                                                                                                                                                                                                                                         | additive                                         |
+| `client/src/features/book/lib/sync-chain.ts`, `composables/useSyncChainPanel.ts` | Whisper connector and build controls removed from the Position sync panel (fork-owned files; listed because the alignment scaffolding they still import is dead)                                                                                                                                                                                                                             | n/a                                              |
+| `docker-compose.yml`, `docs/READ_ALOUD.md`                                       | worker image default `ghcr.io/ahmed-mohamed01/bookorbit-read-aloud-worker:latest`; fork timing-index section                                                                                                                                                                                                                                                                                 | 1 line + section                                 |
+| `.github/workflows/container-image.yml`, `.github/workflows/fork-release.yml`    | worker image scope/build/manifest/retag jobs; release waits for and retags the worker image                                                                                                                                                                                                                                                                                                  | fork-only workflows                              |
+
+`EditionSyncModule` is `@Global()` and supplies all three tokens (`READ_ALOUD_HOOKS`,
+`OVERLAY_SOURCE_RESOLVER`, `EPUB_DOM_SOURCE_RESOLVER`), the same pattern as
+`AudiobookshelfMetadataModule`. Every upstream injection is `@Optional()` with a no-op default, so
+with the module unregistered upstream behaves byte-for-byte as before (pinned by the seam tests).
+
+**Plugin removal:** drop `EditionSyncModule` from `app.module.ts`, delete the owned files above, revert
+the server and client seams in the table. `reading-alignment/reading-alignment-pair.service.ts`
+imports `../edition-sync/edition-sync-fallback.service` (optional injection) and
+`edition-sync.module.ts` imports `ReadingAlignmentModule` for the fallback probe
+(`ReadingAlignmentStatusService.hasReadyAlignment`); remove both imports with the module, or the
+server does not compile. Whisper removal later: delete `reading-alignment/` and the two seams above;
+`whisperFallback` on the book state becomes `false`. The worker image seams stay with the fork image
+even if the server module is removed. The fork tables can stay in the database; nothing else reads them.
+
 ## Investigated and rejected - do not re-chase
 
 Each of these was analysed and deliberately left alone. Re-attempting them wastes time.
@@ -973,3 +1041,12 @@ shrinks the footprint.
 - ABS pull: it calls `syncEbookProgressForAudiobookPlayback` and emits `book:progress-changed`, the
   same pair upstream's player does; if upstream ever emits from `putPlaybackState`, both fork emits
   can go.
+
+### Edition sync content-file trigger dependency
+
+The edition-sync bootstrap owns `edition_sync_book_files_changed` on upstream `book_files`.
+It depends on `book_id`, `role`, `size_bytes`, `mtime`, `file_hash`, and `absolute_path`.
+An upstream rename must be reflected in the bootstrap SQL or bootstrap fails loudly.
+Content mutations flag only the affected books; the library catalog listener is removed.
+`on_files_changed` chooses the next scheduled run (default) or immediate pinning after a
+10-minute quiet period. Changed sources discard cached worker work before a fresh claim.

@@ -8632,6 +8632,7 @@
           },
           "qualifier": {
             "viaWhisper": "via Whisper",
+            "viaTimings": "via timing index",
             "direct": "direct",
             "oneWay": "one way",
             "twoWay": "two way"
@@ -8639,6 +8640,7 @@
           "explainToggle": "Explain this link",
           "reconcileToggle": "Show sync options",
           "explain": {
+            "timings": "Two-way. A timing index built from the audiobook maps its audio onto the ebook's text, so your position carries in both directions.",
             "whisper": "Two-way. Whisper maps the audiobook's audio onto the ebook's text, so your position carries in both directions.",
             "readAlongAudio": "Two-way. The read-aloud narrates the audiobook's own audio, so positions map directly between them.",
             "absTwoWay": "Two-way. Listening progress is exchanged with your Audiobookshelf server through its API.",
@@ -11364,6 +11366,142 @@
       "CHAPTERS_ANALYSIS_UNAVAILABLE": "Finding pauses needs ffmpeg on the server.",
       "CHAPTERS_WRITE_UNAVAILABLE": "Chapters can't be written into these files.",
       "CHAPTERS_NOTHING_TO_WRITE": "There are no saved chapters to write."
+    }
+  },
+  "editionSync": {
+    "card": {
+      "title": "{count, plural, one {Sync # edition} other {Sync # editions}}",
+      "toggle": "Sync editions"
+    },
+    "status": {
+      "queued": "Queued",
+      "queuedAt": "Queued #{position}",
+      "when": {
+        "today": "today {time}",
+        "tonight": "tonight {time}",
+        "tomorrow": "tomorrow {time}",
+        "later": "{date} {time}"
+      },
+      "failed": "Could not be indexed",
+      "failedFallback": "Could not be indexed · Whisper fallback active",
+      "stale": "Files changed · queued",
+      "startingSoon": "Starting soon",
+      "runNow": "Run now",
+      "retry": "Retry"
+    },
+    "errors": {
+      "loadFailed": "Unable to load edition sync state.",
+      "saveFailed": "Failed to save edition sync setting.",
+      "runFailed": "Failed to start indexing.",
+      "retryFailed": "Failed to retry indexing.",
+      "settingsLoadFailed": "Failed to load edition sync settings."
+    },
+    "fork": {
+      "empty": "There is nothing to configure here with your current permissions.",
+      "title": "Fork settings",
+      "description": "Settings for features added in this fork, such as edition sync.",
+      "userHeading": "Edition sync",
+      "adminHeading": "Edition sync (server)"
+    },
+    "user": {
+      "title": "Edition sync",
+      "description": "Keep your position in step between the ebook, the audiobook and the read-aloud edition.",
+      "info": "Position sync is automatic for the books you include. The timing data that makes it sentence accurate is built in the background and shared by every user.",
+      "enable": {
+        "title": "Enable edition sync",
+        "description": "Turns edition sync on for your account."
+      },
+      "scope": {
+        "title": "Books to sync",
+        "allEligible": {
+          "label": "All eligible books",
+          "description": "Every book with an ebook and an audiobook, except those you exclude."
+        },
+        "selectedOnly": {
+          "label": "Selected books only",
+          "description": "Only books where you switch sync on from the book page."
+        }
+      },
+      "toast": {
+        "saved": "Edition sync settings saved.",
+        "saveFailed": "Failed to save edition sync settings."
+      }
+    },
+    "admin": {
+      "loadFailed": "Failed to load edition sync status.",
+      "backlog": "{count, plural, one {# book} other {# books}} queued, about {hours} h at the recent rate",
+      "backlogNoRate": "{count, plural, one {# book} other {# books}} queued",
+      "nextRun": "Next run: {when}",
+      "worker": {
+        "title": "Worker connection",
+        "state": {
+          "ok": "Connected",
+          "unreachable": "Worker unreachable",
+          "incompatible": "Worker version is not compatible",
+          "not_configured": "Worker is not configured"
+        },
+        "noRebuild": "This worker cannot rebuild an edition from stored timing data, so it runs the full analysis instead."
+      },
+      "schedule": {
+        "title": "Indexing schedule",
+        "presets": {
+          "never": "Never (manual only)",
+          "daily": "Daily at 02:00",
+          "weekly": "Weekly, Sunday 02:00",
+          "custom": "Custom"
+        },
+        "human": {
+          "never": "Only runs when started manually",
+          "invalid": "Invalid cron expression"
+        },
+        "cronExpression": "Cron expression",
+        "cronFormat": "Five fields: minute, hour, day of month, month, day of week.",
+        "cronInvalid": "Enter a valid five-field cron expression.",
+        "timezoneHint": "Times use the server time zone.",
+        "runHours": {
+          "title": "Run for",
+          "unit": "{count, plural, one {hour} other {hours}}",
+          "invalid": "Enter a whole number of hours from {min} to {max}.",
+          "hint": "After this window closes no new book starts. The book being processed finishes."
+        }
+      },
+      "filesChanged": {
+        "title": "When a book's files change",
+        "options": {
+          "next_run": "Re-index in the next scheduled run",
+          "immediate": "Re-index right away"
+        },
+        "help": "Covers a replaced or new audiobook or EPUB. Right away waits until the files stop changing for 10 minutes, then indexes the book outside the schedule."
+      },
+      "run": {
+        "title": "Indexing",
+        "start": "Run now",
+        "stop": "Stop",
+        "active": "A run is in progress.",
+        "idle": "No run in progress."
+      },
+      "counts": {
+        "indexed": "Indexed",
+        "queued": "Queued",
+        "failed": "Failed",
+        "stale": "Stale"
+      },
+      "unused": {
+        "summary": "{count, plural, one {# unused timing file} other {# unused timing files}}, {size}",
+        "clear": "Clear unused",
+        "dialog": {
+          "title": "Clear unused timing data?",
+          "description": "Deletes timing files for books nobody syncs any more, and failed attempts. They are rebuilt if a book is wanted again."
+        }
+      },
+      "toast": {
+        "scheduleSaved": "Schedule saved.",
+        "scheduleFailed": "Failed to save the schedule.",
+        "runFailed": "Failed to start indexing.",
+        "stopFailed": "Failed to stop indexing.",
+        "cleared": "{count, plural, one {Removed # timing file} other {Removed # timing files}}, freed {size}.",
+        "clearFailed": "Failed to clear unused timing data."
+      }
     }
   },
   "hardcover": {

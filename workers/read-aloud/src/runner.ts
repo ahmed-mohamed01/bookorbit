@@ -1,3 +1,4 @@
+import { rebuildFromIndex, clearRebuildOutput, RebuildMismatchError } from "./rebuild.js";
 import { mkdir, readFile, rm, stat, symlink } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -184,6 +185,7 @@ async function run(job: RunnerJob): Promise<void> {
     try {
       result = await work();
     } catch (error) {
+      if (error instanceof RebuildMismatchError) throw error;
       const durationMs = Date.now() - startedAt;
       const failure = toFailure(stage, error, signal);
       logLine(
@@ -216,6 +218,53 @@ async function run(job: RunnerJob): Promise<void> {
     };
     const plan = planStages(await markerStates(job.workDir, source), job.resumeFrom);
     const decisionFor = (stage: MarkerStage): StageDecision => plan.find((entry) => entry.stage === stage)!;
+    if (job.rebuild) {
+      reporter.plan(["preparing_audio", "aligning", "validating"]);
+      const decision = decisionFor("preparing_audio");
+      if (decision.run) {
+        await removeMarker(job.workDir, "preparing_audio");
+        for (const dependent of dependentsOf("preparing_audio")) await removeMarker(job.workDir, dependent);
+        await clearStageOutputs("preparing_audio", decision, paths);
+        const inputs = stageInputs("preparing_audio", source);
+        const durationMs = await runStage("preparing_audio", () => pipeline.prepareAudio(context("preparing_audio")));
+        await writeMarker(job.workDir, {
+          stage: "preparing_audio",
+          fingerprint: fingerprint(inputs),
+          inputs,
+          finishedAt: new Date().toISOString(),
+          durationMs,
+        });
+      }
+      try {
+        // Do not write an aligning marker: rebuilt output is not evidence of cached emissions/markup.
+        await clearRebuildOutput(context("aligning"));
+        await removeMarker(job.workDir, "aligning");
+        await runStage("aligning", () => rebuildFromIndex(context("aligning")));
+        let outputBytes = 0;
+        await runStage("validating", async () => {
+          const validated = await validateOutput(paths, job.maxOutputBytes);
+          outputBytes = validated.outputBytes;
+          return { data: validated.data };
+        });
+        reporter.flush();
+        logLine(
+          "read_aloud.worker.run",
+          "end",
+          { jobId: job.jobId, durationMs: Date.now() - runStartedAt, outputBytes, rebuild: true },
+          "run finished",
+        );
+        send({ type: "done", outputBytes }, () => process.exit(0));
+        return;
+      } catch (error) {
+        if (!(error instanceof RebuildMismatchError)) throw error;
+        event("warn", "aligning", "rebuild_mismatch_fallback", "Processed audio differs from the timing index; running full alignment", {
+          chunks: job.rebuild.chunks.length,
+        });
+        await clearRebuildOutput(context("aligning"));
+        // Recompute after prepareAudio invalidated its dependent markers.
+        plan.splice(0, plan.length, ...planStages(await markerStates(job.workDir, source), job.resumeFrom));
+      }
+    }
     let needsModel = false;
     if (decisionFor("generating_emissions").run) {
       try {

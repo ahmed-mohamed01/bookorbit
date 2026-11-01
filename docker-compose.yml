@@ -86,7 +86,7 @@ services:
   # elsewhere in the app need the same read-only mount here and a READ_ALOUD_LIBRARY_ROOTS entry.
   read-aloud-worker:
     container_name: bookorbit-read-aloud-worker
-    image: ${READ_ALOUD_WORKER_IMAGE:-ghcr.io/bookorbit/bookorbit-read-aloud-worker:latest}
+    image: ${READ_ALOUD_WORKER_IMAGE:-ghcr.io/ahmed-mohamed01/bookorbit-read-aloud-worker:latest}
     profiles: ["read-aloud"]
     restart: unless-stopped
     user: "${PUID:-1000}:${PGID:-1000}"

@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { READ_ALOUD_WORKER_PROTOCOL, type ReadAloudErrorCode, type ReadAloudWorkerError, type ReadAloudWorkerHealth } from "@bookorbit/types";
+import { READ_ALOUD_WORKER_PROTOCOL, type ReadAloudErrorCode, type ReadAloudWorkerError, type ReadAloudWorkerForkHealth } from "@bookorbit/types";
 import type { ConfiguredCtcDevice, DeviceCheck, ResolvedCtcDevice } from "./accelerator.js";
 import { workerTmpDir, type WorkerConfig } from "./config.js";
 import { JobRegistry, freeBytes, type RegistryOptions } from "./jobs.js";
@@ -68,8 +68,9 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
   const url = new URL(request.url ?? "/", "http://worker.local");
 
   if (url.pathname === "/health" && request.method === "GET") {
-    const health: ReadAloudWorkerHealth = {
+    const health: ReadAloudWorkerForkHealth = {
       status: "ok",
+      rebuild: true,
       version: options.version,
       protocol: READ_ALOUD_WORKER_PROTOCOL,
       activeJobId: registry.active,

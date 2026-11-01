@@ -71,6 +71,11 @@ import BookCoverSurface from '@/features/book/components/BookCoverSurface.vue'
 import { useDisplaySettings } from '@/composables/useDisplaySettings'
 import HardcoverBookSyncGridItem from '@/features/hardcover/components/HardcoverBookSyncGridItem.vue'
 import StorygraphBookSyncGridItem from '@/features/storygraph/components/StorygraphBookSyncGridItem.vue'
+import EditionSyncCardHeader from '@/features/edition-sync/components/EditionSyncCardHeader.vue'
+import EditionSyncStatusRow from '@/features/edition-sync/components/EditionSyncStatusRow.vue'
+import { useEditionSyncBookState } from '@/features/edition-sync/composables/useEditionSyncBookState'
+import { useEditionSyncToggle } from '@/features/edition-sync/composables/useEditionSyncToggle'
+import { toast } from 'vue-sonner'
 import BookEditionsCard, { type EditionProgress } from '@/features/book/components/detail/details/BookEditionsCard.vue'
 import BookReadingActivityCard from '@/features/book/components/detail/details/BookReadingActivityCard.vue'
 import BookMissingFormatRequest from '@/features/book-requests/components/BookMissingFormatRequest.vue'
@@ -383,6 +388,35 @@ const openableFiles = computed(() =>
     .filter((file) => READER_OPENABLE_FORMATS.has(file.format!.toLowerCase())),
 )
 const hasMultipleFiles = computed(() => openableFiles.value.length > 1)
+const editionSyncBookId = computed(() => props.book.id)
+const editionSyncFilesKey = computed(() => props.book.files.map((file) => file.id).join(','))
+const editionSync = useEditionSyncBookState(editionSyncBookId, () => editionSyncFilesKey.value)
+const timingIndexReady = computed(() => editionSync.state.value?.syncEnabled === true && editionSync.state.value.index.status === 'ready')
+const editionSyncToggle = useEditionSyncToggle({
+  book: () => props.book,
+  editionSync,
+  onSaved: (updated) => emit('saved', updated),
+})
+const editionSyncCount = editionSyncToggle.count
+
+function handleEditionSyncToggle(value: boolean) {
+  void editionSyncToggle.toggle(value)
+}
+
+function handleEditionSyncError(message: string | null) {
+  if (message) toast.error(message)
+}
+
+watch(editionSync.error, handleEditionSyncError)
+
+function handleEditionSyncRun() {
+  void editionSync.runNow()
+}
+
+function handleEditionSyncRetry() {
+  void editionSync.retry()
+}
+
 const readAloudInviteBook = computed(() => props.book)
 const { invite: readAloudInvite } = useReadAloudInvite(readAloudInviteBook)
 
@@ -1398,6 +1432,7 @@ watch(
             <LinkBookControl
               :book="book"
               :progress="editionProgress"
+              :timing-index="timingIndexReady"
               trigger-class="flex items-center justify-center h-9 w-12 shrink-0 rounded-md border border-input bg-background hover:bg-muted transition-colors"
               @saved="handlePositionSyncSaved"
             />
@@ -2101,7 +2136,28 @@ watch(
         </dl>
       </section>
 
-      <BookEditionsCard :book="book" :progress="editionProgress" :resetting-file-ids="resettingFileIds" @reset-progress="handleEditionReset">
+      <BookEditionsCard
+        :book="book"
+        :progress="editionProgress"
+        :resetting-file-ids="resettingFileIds"
+        :sync-count="editionSyncCount"
+        @reset-progress="handleEditionReset"
+      >
+        <template v-if="editionSyncCount !== null" #header-action>
+          <EditionSyncCardHeader
+            :model-value="editionSyncToggle.checked.value"
+            :disabled="editionSyncToggle.disabled.value"
+            @update:model-value="handleEditionSyncToggle"
+          />
+        </template>
+        <template v-if="editionSyncToggle.kind.value === 'index' && editionSync.state.value" #status>
+          <EditionSyncStatusRow
+            :state="editionSync.state.value"
+            :busy="editionSync.acting.value"
+            @run="handleEditionSyncRun"
+            @retry="handleEditionSyncRetry"
+          />
+        </template>
         <template #missing>
           <BookMissingFormatRequest :book="book" />
         </template>

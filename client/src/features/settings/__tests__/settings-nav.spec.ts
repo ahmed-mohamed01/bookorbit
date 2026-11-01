@@ -109,6 +109,18 @@ describe('visibleSettingsNav', () => {
     expect(metadataChildren).not.toContain('metadata-providers')
   })
 
+  it('shows fork settings to edition sync users and settings admins only', () => {
+    const accountsIds = (context: SettingsNavContext) =>
+      visibleSettingsNav(context)
+        .find((group) => group.id === 'accounts')
+        ?.items.map((item) => item.id) ?? []
+
+    expect(accountsIds(NOBODY)).not.toContain('fork-settings')
+    expect(accountsIds({ ...NOBODY, permissions: [Permission.EditionSync] })).toContain('fork-settings')
+    expect(accountsIds({ ...NOBODY, permissions: [Permission.ManageAppSettings] })).toContain('fork-settings')
+    expect(accountsIds(SUPERUSER)).toContain('fork-settings')
+  })
+
   it('drops a grouping row once every child behind it is hidden', () => {
     const server = visibleSettingsNav({ ...NOBODY, permissions: [Permission.ManageBookDock] }).find((group) => group.id === 'server')
     expect(server?.items.map((item) => item.id)).not.toContain('users-access')

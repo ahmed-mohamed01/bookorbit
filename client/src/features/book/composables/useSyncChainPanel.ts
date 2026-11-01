@@ -3,7 +3,6 @@ import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 import {
   Permission,
-  type AlignmentStatus,
   type AudiobookshelfBookState,
   type BookDetail,
   type ReadAloudProgressSync,
@@ -23,19 +22,15 @@ import {
   type ChainViewMode,
   type ConnectorKey,
   type EditionKey,
-  type SyncChainAlignment,
   type SyncChainEdition,
   type SyncChainSnapshot,
 } from '@/features/book/lib/sync-chain'
 import { chainText } from '@/features/book/lib/sync-chain-messages'
 import { useAudiobookshelfSyncActions } from './useAudiobookshelfSyncActions'
 import { useAudiobookshelfSyncLink } from './useAudiobookshelfSyncLink'
-import { useReadingAlignment } from './useReadingAlignment'
 import { useSyncChainReadAloud } from './useSyncChainReadAloud'
 
 const CHAIN = 'book.detail.editionLink.chain.'
-
-const ALIGNMENT_RUNNING = new Set<AlignmentStatus>(['pending', 'building'])
 
 export type SyncChainDialogKind = 'pauseAbs'
 
@@ -49,6 +44,8 @@ export interface SyncChainDialog {
 export interface SyncChainPanelOptions {
   /** Each edition's progress, keyed like `bookFormatEntries`; the book page already loads it. */
   progress?: () => readonly EditionProgress[]
+  /** Edition sync is on for the book and its timing index is ready; joins the plain EPUB to the audio. */
+  timingIndex?: () => boolean
   onSaved?: (book: BookDetail) => void
 }
 
@@ -70,7 +67,6 @@ export function useSyncChainPanel(book: () => BookDetail, options: SyncChainPane
   const bookId = book().id
 
   const { hasPermission } = usePermissions()
-  const canAlign = computed(() => hasPermission(Permission.LibraryEditMetadata))
   const canSyncAbs = computed(() => hasPermission(Permission.AudiobookshelfSync))
 
   /* The book's own files. */
@@ -94,45 +90,7 @@ export function useSyncChainPanel(book: () => BookDetail, options: SyncChainPane
   const audiobook = computed(() => edition((entry) => entry.audio))
   const readAlong = computed(() => edition((entry) => entry.readAlong))
   // Upstream's read-aloud sync owns text and audio once the book has a read-along.
-  const usesWhisper = computed(() => ebook.value !== null && audiobook.value !== null && readAlong.value === null)
-
-  /* Whisper alignment of the plain EPUB with the audio, both in this book. */
-
-  const alignment = useReadingAlignment()
-  const alignmentRunning = computed(() => ALIGNMENT_RUNNING.has(alignment.status.value) || alignment.mutating.value)
-
-  const alignmentSnapshot = computed<SyncChainAlignment>(() => ({
-    status: alignment.status.value,
-    stale: alignment.stale.value,
-    builtAt: alignment.builtAt.value,
-    samplesDone: alignment.samplesDone.value,
-    samplesTotal: alignment.samplesTotal.value,
-    buildBlocked: alignment.buildBlocked.value,
-    buildError: alignment.buildError.value,
-    running: alignmentRunning.value,
-  }))
-
-  async function buildAlignment(force: boolean): Promise<void> {
-    await alignment.build(bookId, force)
-    if (alignment.error.value) toast.error(t('book.detail.readingAlignment.buildFailed'))
-  }
-
-  // Only a cancel in flight locks the cancel button: a build in flight is exactly what it stops.
-  const cancelling = ref(false)
-
-  async function cancelAlignment(): Promise<void> {
-    cancelling.value = true
-    try {
-      if (!(await alignment.cancel(bookId))) toast.error(t('book.detail.editionLink.syncCancelKeptRunning'))
-    } finally {
-      cancelling.value = false
-    }
-  }
-
-  function fetchAlignmentStatus(): Promise<unknown> {
-    if (!usesWhisper.value) return Promise.resolve()
-    return Promise.allSettled([alignment.fetchStatus(bookId)])
-  }
+  const lacksReadAlong = computed(() => ebook.value !== null && audiobook.value !== null && readAlong.value === null)
 
   /* Upstream's read-aloud sync between the read-along EPUB and the audio. */
 
@@ -178,7 +136,7 @@ export function useSyncChainPanel(book: () => BookDetail, options: SyncChainPane
   const readAloud = useSyncChainReadAloud({
     bookId,
     book,
-    applies: usesWhisper,
+    applies: lacksReadAlong,
     onBookChanged: (updated) => options.onSaved?.(updated),
   })
 
@@ -203,14 +161,13 @@ export function useSyncChainPanel(book: () => BookDetail, options: SyncChainPane
     audiobook: audiobook.value,
     readAlong: readAlong.value,
     readAloudSlot: readAloud.slot.value,
-    alignment: alignmentSnapshot.value,
+    timingIndex: options.timingIndex?.() === true,
     readAloud: {
       sync: readAloudSync.value,
       audioDuration: formatDuration(readAloudSync.value.audioDurationSeconds),
       overlayDuration: formatDuration(readAloudSync.value.overlayDurationSeconds),
     },
     abs: canSyncAbs.value ? { configured: abs.configured.value, link: abs.link.value, live: abs.live.value, checking: abs.checking.value } : null,
-    can: { align: canAlign.value },
   }))
 
   const chain = computed(() => buildSyncChain(snapshot.value))
@@ -299,10 +256,6 @@ export function useSyncChainPanel(book: () => BookDetail, options: SyncChainPane
   /* Actions. */
 
   const ACTIONS: Record<ChainActionId, () => void> = {
-    cancelAlignment: () => void cancelAlignment(),
-    retryAlignment: () => void buildAlignment(false),
-    alignNow: () => void buildAlignment(false),
-    rebuildAlignment: () => void buildAlignment(true),
     enableReadAloudSync: () => void setReadAloudSyncMode('auto'),
     disableReadAloudSync: () => void setReadAloudSyncMode('disabled'),
     createReadAloud: () => void readAloud.create(),
@@ -332,9 +285,7 @@ export function useSyncChainPanel(book: () => BookDetail, options: SyncChainPane
     if (id) runAction(id)
   }
 
-  const busy = computed(
-    () => alignment.mutating.value || absActions.busy.value !== null || dialogBusy.value || readAloudSaving.value || readAloud.busy.value,
-  )
+  const busy = computed(() => absActions.busy.value !== null || dialogBusy.value || readAloudSaving.value || readAloud.busy.value)
 
   /* Trigger. */
 
@@ -348,7 +299,7 @@ export function useSyncChainPanel(book: () => BookDetail, options: SyncChainPane
   // Read up front so the trigger's hover title reflects the real state before the popover is opened,
   // and so an audio-only book learns whether Audiobookshelf gives it a trigger at all.
   async function loadInitial(): Promise<void> {
-    await Promise.allSettled([fetchAlignmentStatus(), loadAbsConfigured()])
+    await loadAbsConfigured()
   }
 
   // Audiobookshelf only ever links the audiobook, so a book without one never needs its settings.
@@ -364,9 +315,8 @@ export function useSyncChainPanel(book: () => BookDetail, options: SyncChainPane
     viewMode.value = null
     promotedThisOpen = false
     const absConfigured = loadAbsConfigured()
-    const statuses = fetchAlignmentStatus()
     void abs.refreshLive()
-    await Promise.allSettled([statuses, absConfigured])
+    await absConfigured
     if (current === openId) decideView()
   }
 
@@ -392,7 +342,6 @@ export function useSyncChainPanel(book: () => BookDetail, options: SyncChainPane
     confirmDialog,
     cancelDialog,
     busy,
-    cancelling,
     readAloudDialog: readAloud.dialog,
     closeReadAloudDialog: readAloud.closeDialog,
     createReadAloudFromDialog: readAloud.createFromDialog,

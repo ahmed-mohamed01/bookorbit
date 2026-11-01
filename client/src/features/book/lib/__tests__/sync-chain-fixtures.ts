@@ -9,7 +9,6 @@ import {
   type EditionKey,
   type SyncChain,
   type SyncChainAbs,
-  type SyncChainAlignment,
   type SyncChainEdition,
   type SyncChainReadAloud,
   type SyncChainReadAloudJob,
@@ -19,20 +18,6 @@ import {
 
 export function chainEdition(overrides: Partial<SyncChainEdition> = {}): SyncChainEdition {
   return { title: 'Book', formatName: 'EPUB e-book', fileCount: 1, sizeBytes: 1024, progress: null, ...overrides }
-}
-
-export function chainAlignment(overrides: Partial<SyncChainAlignment> = {}): SyncChainAlignment {
-  return {
-    status: 'ready',
-    stale: false,
-    builtAt: '2026-10-01T00:00:00Z',
-    samplesDone: null,
-    samplesTotal: null,
-    buildBlocked: null,
-    buildError: null,
-    running: false,
-    ...overrides,
-  }
 }
 
 export function readAloudSync(overrides: Partial<ReadAloudProgressSync> = {}): ReadAloudProgressSync {
@@ -100,7 +85,7 @@ export function chainAbs(
   return { configured: true, link: absLink(link), live, checking }
 }
 
-/** A book holding a plain EPUB and its audiobook, aligned, with no read-along and no Audiobookshelf. */
+/** A book holding a plain EPUB and its audiobook with no timing index, no read-along and no Audiobookshelf. */
 export function chainSnapshot(overrides: Partial<SyncChainSnapshot> = {}): SyncChainSnapshot {
   return {
     bookId: 7,
@@ -109,10 +94,9 @@ export function chainSnapshot(overrides: Partial<SyncChainSnapshot> = {}): SyncC
     audiobook: chainEdition({ title: 'Book', formatName: 'M4B audiobook', progress: 63 }),
     readAlong: null,
     readAloudSlot: chainReadAloudSlot(),
-    alignment: chainAlignment(),
+    timingIndex: false,
     readAloud: chainReadAloud({ state: 'unavailable', unavailableReason: 'no_media_overlay_epub', overlayFileId: null }),
     abs: null,
-    can: { align: true },
     ...overrides,
   }
 }

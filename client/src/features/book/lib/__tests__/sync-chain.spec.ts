@@ -4,7 +4,6 @@ import {
   absLive,
   cardRow as cardOf,
   chainAbs as abs,
-  chainAlignment as alignment,
   chainEdition as edition,
   chainReadAloud as readAloud,
   chainSnapshot as snapshot,
@@ -59,19 +58,31 @@ describe('rows from the book’s own files', () => {
     ])
   })
 
-  it('joins the ebook to the audio through whisper only when the book has no read-along', () => {
-    expect(ids(buildSyncChain(snapshot({ abs: abs() })))).toEqual([
-      'card:ebook',
-      'connector:ebook-audiobook',
-      'card:audiobook',
-      'connector:audiobook-abs',
-      'card:abs',
-    ])
+  it('draws no whisper connector between the ebook and the audio, with or without a read-along', () => {
+    expect(ids(buildSyncChain(snapshot({ abs: abs() })))).toEqual(['card:ebook', 'card:audiobook', 'connector:audiobook-abs', 'card:abs'])
     expect(ids(buildSyncChain(fullChain()))).not.toContain('connector:ebook-audiobook')
   })
 
+  it('joins the plain EPUB to the audio when the timing index is ready, and counts both as synced', () => {
+    const chain = buildSyncChain(snapshot({ timingIndex: true }))
+    expect(ids(chain)).toEqual(['card:ebook', 'connector:ebook-audiobook', 'card:audiobook'])
+    expect(connectorOf(chain, 'ebook-audiobook')).toMatchObject({
+      state: 'indexSynced',
+      tone: 'success',
+      qualifier: { key: `${C}qualifier.viaTimings` },
+      switch: null,
+    })
+    expect(chain.header).toEqual({ tone: 'success', label: { key: `${C}header.inSync`, params: { n: 2, m: 2 } } })
+    expect(chain.intro).toEqual({ key: `${C}intro.synced` })
+  })
+
+  it('draws no index connector without the timing index, or in a book with a read-along', () => {
+    expect(ids(buildSyncChain(snapshot({ timingIndex: false })))).not.toContain('connector:ebook-audiobook')
+    expect(ids(buildSyncChain(fullChain({ timingIndex: true })))).not.toContain('connector:ebook-audiobook')
+  })
+
   it('counts the plain EPUB as synced through the read-along, with no whisper alignment', () => {
-    const chain = buildSyncChain(fullChain({ abs: null, alignment: alignment({ status: 'none' }) }))
+    const chain = buildSyncChain(fullChain({ abs: null }))
     expect(connectorOf(chain, 'ebook-readAlong')).toMatchObject({
       state: 'epubCopiesSynced',
       tone: 'success',
@@ -305,97 +316,6 @@ describe('read-aloud slot', () => {
   })
 })
 
-describe('ebook to audiobook: Whisper alignment of the same book', () => {
-  it('ready: linked via Whisper, no switch', () => {
-    expect(connectorOf(buildSyncChain(snapshot()), 'ebook-audiobook')).toMatchObject({
-      state: 'linkedViaWhisper',
-      tone: 'success',
-      qualifier: { key: `${C}qualifier.viaWhisper` },
-      explainer: { key: `${C}explain.whisper` },
-      switch: null,
-    })
-  })
-
-  it('aligning: ticks and a cancel', () => {
-    const row = connectorOf(
-      buildSyncChain(snapshot({ alignment: alignment({ running: true, builtAt: null, samplesDone: 2, samplesTotal: 8 }) })),
-      'ebook-audiobook',
-    )
-    expect(row).toMatchObject({
-      state: 'aligning',
-      tone: 'info',
-      icon: 'spinner',
-      pill: { key: `${C}pill.aligning` },
-      note: { key: `${C}note.aligning` },
-      cancel: { id: 'cancelAlignment' },
-      ticks: { samplesDone: 2, samplesTotal: 8 },
-    })
-  })
-
-  it('rebuilding: cancel only stops the rebuild', () => {
-    const row = connectorOf(buildSyncChain(snapshot({ alignment: alignment({ status: 'building' }) })), 'ebook-audiobook')
-    expect(row).toMatchObject({ state: 'rebuilding', cancel: { id: 'cancelAlignment' }, note: null })
-  })
-
-  it('failed: destructive, retry and the build error', () => {
-    const chain = buildSyncChain(snapshot({ alignment: alignment({ status: 'failed', buildError: 'whisper exited' }) }))
-    expect(connectorOf(chain, 'ebook-audiobook')).toMatchObject({
-      state: 'alignmentFailed',
-      tone: 'destructive',
-      detail: 'whisper exited',
-      actions: [{ id: 'retryAlignment' }],
-      mini: { action: { id: 'retryAlignment' } },
-    })
-    expect(chain.header).toEqual({ tone: 'destructive', label: { key: `${C}header.needsAttention` } })
-    expect(chain.needsAttention).toBe(true)
-  })
-
-  it('stale: out of date with a forced rebuild', () => {
-    const chain = buildSyncChain(snapshot({ alignment: alignment({ stale: true }) }))
-    expect(connectorOf(chain, 'ebook-audiobook')).toMatchObject({ state: 'outOfDate', actions: [{ id: 'rebuildAlignment' }] })
-    expect(chain.header.tone).toBe('warning')
-  })
-
-  it('never aligned: a quiet Align now that does not flag the panel', () => {
-    const chain = buildSyncChain(snapshot({ alignment: alignment({ status: 'none', builtAt: null }) }))
-    expect(connectorOf(chain, 'ebook-audiobook')).toMatchObject({
-      state: 'notAligned',
-      tone: 'muted',
-      note: { key: 'book.detail.readingAlignment.idleHint' },
-      actions: [{ id: 'alignNow' }],
-    })
-    expect(chain.needsAttention).toBe(false)
-    expect(chain.header.tone).toBe('muted')
-  })
-
-  it('busy server keeps Align now with the busy note', () => {
-    const row = connectorOf(
-      buildSyncChain(snapshot({ alignment: alignment({ status: 'none', builtAt: null, buildBlocked: 'busy' }) })),
-      'ebook-audiobook',
-    )
-    expect(row).toMatchObject({ note: { key: 'book.detail.readingAlignment.buildBlocked.busy' }, actions: [{ id: 'alignNow' }] })
-  })
-
-  it('unalignable and terminal blocks offer nothing', () => {
-    expect(connectorOf(buildSyncChain(snapshot({ alignment: alignment({ status: 'unalignable' }) })), 'ebook-audiobook')).toMatchObject({
-      state: 'cantAlign',
-      actions: [],
-    })
-    expect(
-      connectorOf(buildSyncChain(snapshot({ alignment: alignment({ status: 'none', buildBlocked: 'disabled' }) })), 'ebook-audiobook'),
-    ).toMatchObject({
-      state: 'alignmentBlocked',
-      note: { key: 'book.detail.readingAlignment.buildBlocked.disabled' },
-      actions: [],
-    })
-  })
-
-  it('drops every alignment action without the edit permission', () => {
-    const chain = buildSyncChain(snapshot({ alignment: alignment({ status: 'failed' }), can: { align: false } }))
-    expect(connectorOf(chain, 'ebook-audiobook')).toMatchObject({ actions: [], mini: { action: null } })
-  })
-})
-
 describe('read-along to audiobook: upstream read-aloud sync', () => {
   it('enabled: synced, with a switch that turns it off', () => {
     const chain = buildSyncChain(fullChain())
@@ -557,23 +477,19 @@ describe('Audiobookshelf', () => {
 })
 
 describe('header priority', () => {
-  it('failure beats check-sync beats aligning', () => {
-    expect(
-      buildSyncChain(snapshot({ alignment: alignment({ status: 'failed' }), abs: abs({}, absLive({ status: 'unreachable' })) })).header.tone,
-    ).toBe('destructive')
-    const warning = snapshot({ alignment: alignment({ running: true, builtAt: null }), abs: abs({}, absLive({ status: 'unreachable' })) })
-    expect(buildSyncChain(warning).header.tone).toBe('warning')
+  it('check-sync wins over a healthy chain', () => {
+    expect(buildSyncChain(snapshot({ abs: abs({}, absLive({ status: 'unreachable' })) })).header.tone).toBe('warning')
     expect(buildSyncChain(fullChain({ readAloud: readAloud({ state: 'unavailable', unavailableReason: 'missing_duration' }) })).header.tone).toBe(
       'warning',
     )
-    expect(buildSyncChain(snapshot({ alignment: alignment({ running: true, builtAt: null }) })).header).toEqual({
-      tone: 'info',
-      label: { key: `${C}header.aligning` },
-    })
+  })
+
+  it('stays muted for a plain EPUB and audio with no timing index', () => {
+    expect(buildSyncChain(snapshot()).header.tone).toBe('muted')
   })
 
   it('reads the intro from whether anything syncs', () => {
-    expect(buildSyncChain(snapshot()).intro).toEqual({ key: `${C}intro.synced` })
+    expect(buildSyncChain(fullChain()).intro).toEqual({ key: `${C}intro.synced` })
     expect(buildSyncChain(snapshot({ audiobook: null })).intro).toEqual({ key: `${C}intro.notSynced` })
   })
 })
@@ -583,26 +499,24 @@ describe('view mode', () => {
     expect(modifyHeight(buildSyncChain(fullChain()))).toBeGreaterThan(modifyHeight(buildSyncChain(snapshot())))
   })
 
-  it('counts notes, actions and ticks on connectors', () => {
+  it('counts notes and actions on connectors', () => {
     const plain = buildSyncChain(snapshot())
-    const aligning = buildSyncChain(snapshot({ alignment: alignment({ running: true, builtAt: null }) }))
-    const failed = buildSyncChain(snapshot({ alignment: alignment({ status: 'failed' }) }))
-    expect(modifyHeight(plain)).toBe(96 + 24 + 66 + 32 + 66)
-    expect(modifyHeight(aligning)).toBe(96 + 24 + 66 + 32 + 30 + 20 + 66)
-    expect(modifyHeight(failed)).toBe(96 + 24 + 66 + 32 + 30 + 32 + 66)
+    expect(modifyHeight(plain)).toBe(96 + 24 + 66 + 66)
+    const unreachable = buildSyncChain(snapshot({ abs: abs({}, absLive({ status: 'unreachable' })) }))
+    expect(modifyHeight(unreachable)).toBeGreaterThan(modifyHeight(buildSyncChain(snapshot({ abs: abs() }))))
   })
 
   it('sizes the inner Audiobookshelf connector smaller than a spine connector, and a ghost as the spec does', () => {
-    expect(modifyHeight(buildSyncChain(snapshot({ abs: abs() })))).toBe(96 + 24 + 66 + 32 + 66 + 28 + 66)
-    expect(modifyHeight(buildSyncChain(snapshot({ abs: noAbsMatch })))).toBe(96 + 24 + 66 + 32 + 66 + 28 + 46)
+    expect(modifyHeight(buildSyncChain(snapshot({ abs: abs() })))).toBe(96 + 24 + 66 + 66 + 28 + 66)
+    expect(modifyHeight(buildSyncChain(snapshot({ abs: noAbsMatch })))).toBe(96 + 24 + 66 + 66 + 28 + 46)
   })
 
   it('opens Modify exactly when the estimate fits or something needs attention', () => {
     const chain = buildSyncChain(snapshot())
-    const height = 96 + 24 + 66 + 32 + 66
+    const height = 96 + 24 + 66 + 66
     expect(initialViewMode(chain, height)).toBe('modify')
     expect(initialViewMode(chain, height - 1)).toBe('compact')
-    expect(initialViewMode(buildSyncChain(snapshot({ alignment: alignment({ status: 'failed' }) })), 0)).toBe('modify')
+    expect(initialViewMode(buildSyncChain(snapshot({ abs: abs({}, absLive({ status: 'unreachable' })) })), 0)).toBe('modify')
   })
 
   it('availableHeightFromTrigger takes the taller side less padding and offset', () => {

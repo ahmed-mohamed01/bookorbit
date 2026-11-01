@@ -10,8 +10,9 @@ import { availableHeightFromTrigger } from '@/features/book/lib/sync-chain'
 import ReadAloudDialog from '@/features/read-aloud/components/ReadAloudDialog.vue'
 import SyncChainPanel from './edition-link/SyncChainPanel.vue'
 
-const props = withDefaults(defineProps<{ book: BookDetail; progress?: EditionProgress[]; triggerClass?: string }>(), {
+const props = withDefaults(defineProps<{ book: BookDetail; progress?: EditionProgress[]; timingIndex?: boolean; triggerClass?: string }>(), {
   progress: () => [],
+  timingIndex: false,
   triggerClass: 'flex flex-1 items-center justify-center h-9 rounded-md border border-input bg-background text-sm hover:bg-muted transition-colors',
 })
 const emit = defineEmits<{ saved: [BookDetail] }>()
@@ -24,6 +25,7 @@ const triggerEl = ref<HTMLButtonElement | null>(null)
 const panel = reactive(
   useSyncChainPanel(() => props.book, {
     progress: () => props.progress,
+    timingIndex: () => props.timingIndex,
     onSaved: (updated) => emit('saved', updated),
   }),
 )

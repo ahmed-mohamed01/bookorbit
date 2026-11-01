@@ -1,5 +1,6 @@
 import type {
   ReadAloudDecisions,
+  ReadAloudRebuildRequest,
   ReadAloudErrorCode,
   ReadAloudGranularity,
   ReadAloudJobEventLevel,
@@ -29,6 +30,7 @@ export type RunnerJob = {
   maxOutputBytes: number;
   decisions: ReadAloudDecisions;
   resumeFrom: ReadAloudWorkerStage | null;
+  rebuild: ReadAloudRebuildRequest | null;
   device: ResolvedCtcDevice;
   dtype: "fp32" | "fp16" | null;
   batchSize: number | null;

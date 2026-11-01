@@ -113,6 +113,36 @@ jobs:
             --tag "${full}:latest" \
             --push "${context}"
 
+      - name: Tag worker version and latest
+        shell: bash
+        run: |
+          set -euo pipefail
+          full="${REGISTRY}/${IMAGE_NAME}-read-aloud-worker"
+          source="${full}:sha-${GITHUB_SHA:0:12}"
+          found=false
+          for _ in $(seq 1 200); do
+            if docker buildx imagetools inspect "$source" >/dev/null 2>&1; then
+              found=true
+              break
+            fi
+            echo "waiting for $source (Container Image workflow still building?)"
+            sleep 30
+          done
+          if [[ "$found" != true ]]; then
+            echo "::error::$source never appeared. Run the Container Image workflow on ${GITHUB_REF_NAME}, then re-run this job."
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          context="$(mktemp -d)"
+          printf 'ARG SOURCE_IMAGE\nFROM ${SOURCE_IMAGE}\nARG APP_VERSION\nENV APP_VERSION=${APP_VERSION}\n' > "${context}/Dockerfile"
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg "SOURCE_IMAGE=${source}" \
+            --build-arg "APP_VERSION=${version}" \
+            --provenance=false --sbom=false \
+            --tag "${full}:${version}" --tag "${full}:latest" \
+            --push "${context}"
+
   release:
     name: Publish GitHub Release
     needs: [plan, image]

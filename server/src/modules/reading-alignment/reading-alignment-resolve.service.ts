@@ -43,7 +43,7 @@ export class ReadingAlignmentResolveService {
     this.logger.log(`[${RESOLVE_EVENT}] [start] bookId=${bookId} userId=${user.id}${fileField} - cross-format resume started`);
 
     await this.assertAccess(bookId, user);
-    const pair = await this.pairService.resolveAlignmentPair(bookId);
+    const pair = await this.pairService.resolveAlignmentPair(bookId, user.id);
     if (!pair) {
       return this.done(startedAt, bookId, null, UNAVAILABLE);
     }

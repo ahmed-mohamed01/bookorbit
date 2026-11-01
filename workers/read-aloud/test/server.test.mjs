@@ -40,6 +40,7 @@ describe("HTTP surface", () => {
     assert.equal(status, 200);
     assert.equal(body.status, "ok");
     assert.equal(body.protocol, 1);
+    assert.equal(body.rebuild, true);
     assert.equal(body.activeJobId, null);
     assert.equal(body.activeJobs, 0);
     assert.equal(body.capacity, 1);

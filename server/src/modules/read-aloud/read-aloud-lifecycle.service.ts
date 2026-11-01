@@ -1,9 +1,10 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnApplicationBootstrap, Optional } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { ReadAloudActivityService } from './read-aloud-activity.service';
 import { errorMessage } from './read-aloud-errors';
+import { NO_READ_ALOUD_HOOKS, READ_ALOUD_HOOKS, type ReadAloudHooks } from './read-aloud-hooks';
 import { ReadAloudJobRepository } from './read-aloud-job.repository';
 import { ReadAloudNotifier } from './read-aloud-notifier.service';
 import { ReadAloudWorkerClientService } from './read-aloud-worker-client.service';
@@ -28,6 +29,7 @@ export class ReadAloudLifecycleService implements OnApplicationBootstrap {
     private readonly worker: ReadAloudWorkerClientService,
     private readonly activity: ReadAloudActivityService,
     private readonly notifier: ReadAloudNotifier,
+    @Optional() @Inject(READ_ALOUD_HOOKS) private readonly hooks: ReadAloudHooks = NO_READ_ALOUD_HOOKS,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -113,6 +115,7 @@ export class ReadAloudLifecycleService implements OnApplicationBootstrap {
 
   private async removeOrphanFolders(now: Date): Promise<number> {
     const keep = await this.jobs.findJobIdsKeepingWork(now);
+    for (const jobId of await this.hooks.keepWorkFolders()) keep.add(jobId);
     let removed = 0;
     for (const jobId of await this.workspace.listJobIds()) {
       if (keep.has(jobId)) continue;

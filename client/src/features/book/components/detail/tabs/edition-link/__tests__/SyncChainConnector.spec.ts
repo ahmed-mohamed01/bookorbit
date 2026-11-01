@@ -4,16 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { AudiobookshelfBookSyncLive } from '@bookorbit/types'
 import type { ChainConnectorRow, ChainViewMode } from '@/features/book/lib/sync-chain'
 import SyncChainConnector from '../SyncChainConnector.vue'
-import {
-  absLive,
-  chainAbs,
-  chainAlignment,
-  chainEdition,
-  chainOf,
-  chainReadAloud,
-  connectorRow,
-} from '@/features/book/lib/__tests__/sync-chain-fixtures'
-import { withMessages } from './with-messages'
+import { absLive, chainAbs, chainEdition, chainOf, chainReadAloud, connectorRow } from '@/features/book/lib/__tests__/sync-chain-fixtures'
 
 const stubs = { RouterLink: { props: ['to'], template: '<a :href="JSON.stringify(to)"><slot /></a>' } }
 
@@ -25,7 +16,6 @@ function mountConnector(
   return mount(SyncChainConnector, { props: { row, view, ...props }, global: { stubs } })
 }
 
-const pairRow = (alignment = chainAlignment()) => connectorRow(chainOf({ alignment }), 'ebook-audiobook')
 const readAlongChain = (overrides = {}) =>
   chainOf({
     readAlong: chainEdition({ title: 'Read-along' }),
@@ -36,50 +26,6 @@ const syncOffChain = () => readAlongChain({ readAloud: chainReadAloud({ mode: 'd
 const readAlongRow = () => connectorRow(readAlongChain(), 'readAlong-audiobook')
 
 describe('SyncChainConnector', () => {
-  it('labels an aligned pair with its editions, the Whisper qualifier inline and a node instead of a switch', async () => {
-    const wrapper = mountConnector(pairRow())
-
-    const label = wrapper.get('[data-testid="sync-chain-label"]')
-    expect(label.text()).toContain('Ebook')
-    expect(label.text()).toContain('Audiobook')
-    expect(label.get('[data-testid="sync-chain-arrow"]').attributes('aria-label')).toBe('syncs both ways')
-    expect(wrapper.find('[data-testid="sync-chain-pill"]').exists()).toBe(false)
-    const qualifier = wrapper.get('[data-testid="sync-chain-qualifier"]')
-    expect(qualifier.text()).toContain('Whisper')
-    expect(qualifier.classes()).toEqual(expect.arrayContaining(['bg-success/15', 'text-success']))
-    const state = wrapper.get('[data-testid="sync-chain-state"]')
-    expect(state.text()).toBe('Linked · via Whisper')
-    expect(state.classes()).toContain('sr-only')
-    expect(wrapper.find('[role="switch"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="sync-chain-node"]').classes()).toContain('text-success')
-    const explain = wrapper.get('[data-testid="sync-chain-explain-toggle"]')
-    expect(explain.attributes('aria-expanded')).toBe('false')
-    expect(explain.attributes('aria-controls')).toBeUndefined()
-    expect(wrapper.find('[data-testid="sync-chain-explainer"]').exists()).toBe(false)
-    await explain.trigger('click')
-    expect(explain.attributes('aria-expanded')).toBe('true')
-    expect(wrapper.get('[data-testid="sync-chain-explainer"]').attributes('id')).toBe(explain.attributes('aria-controls'))
-    expect(wrapper.get('[data-testid="sync-chain-explainer"]').text()).toContain('Two-way. Whisper maps')
-    expect(wrapper.find('[data-testid="position-sync-ticks"]').exists()).toBe(false)
-    expect(wrapper.find('[data-testid="position-sync-indeterminate"]').exists()).toBe(false)
-  })
-
-  it.each([
-    ['aligning', chainAlignment({ running: true, builtAt: null }), 'Aligning', 'bg-info/15'],
-    ['rebuilding', chainAlignment({ running: true }), 'Rebuilding', 'bg-info/15'],
-    ['alignmentFailed', chainAlignment({ status: 'failed', buildError: 'whisper died' }), 'Alignment failed', 'bg-destructive/15'],
-    ['outOfDate', chainAlignment({ stale: true }), 'Out of date', 'bg-warning/15'],
-    ['cantAlign', chainAlignment({ status: 'unalignable' }), "Can't align", 'bg-muted'],
-    ['alignmentBlocked', chainAlignment({ status: 'none', builtAt: null, buildBlocked: 'disabled' }), 'Not aligned', 'bg-muted'],
-    ['notAligned', chainAlignment({ status: 'none', builtAt: null }), 'Not aligned', 'bg-muted'],
-  ] as const)('shows the %s pill', (state, alignment, pill, pillClass) => {
-    const wrapper = mountConnector(pairRow(alignment))
-
-    expect(wrapper.get('[data-testid="sync-chain-connector"]').attributes('data-state')).toBe(state)
-    expect(wrapper.get('[data-testid="sync-chain-pill"]').text()).toBe(pill)
-    expect(wrapper.get('[data-testid="sync-chain-pill"]').classes()).toContain(pillClass)
-  })
-
   it('qualifies a synced read-along row as direct, keeps the state for screen readers and names its switch for both', () => {
     const wrapper = mountConnector(readAlongRow())
 
@@ -106,52 +52,6 @@ describe('SyncChainConnector', () => {
     const explainer = wrapper.get('[data-testid="sync-chain-explainer"]')
     expect(explainer.text()).toContain('One-way. Listening progress comes from your Audiobookshelf server')
     expect(explainer.find('[data-testid="sync-chain-explainer-settings"]').exists()).toBe(true)
-  })
-
-  it('draws the rail dashed for muted and failed states, solid otherwise', () => {
-    const failed = mountConnector(pairRow(chainAlignment({ status: 'failed' })))
-    expect(failed.get('[data-testid="sync-chain-rail-line"]').classes()).toContain('border-dashed')
-    expect(failed.get('[data-testid="sync-chain-node"]').classes()).toContain('border-dashed')
-    expect(mountConnector(pairRow()).get('[data-testid="sync-chain-rail-line"]').classes()).toContain('border-solid')
-  })
-
-  it('shows the ticks and a named cancel only while aligning, and emits the cancel', async () => {
-    const linking = mountConnector(pairRow(chainAlignment({ running: true, builtAt: null, samplesDone: 2, samplesTotal: 10 })))
-    expect(linking.find('[data-testid="position-sync-ticks"]').exists()).toBe(true)
-    const cancel = linking.get('[data-action="cancelAlignment"]')
-    expect(cancel.attributes('aria-label')).toBe('Cancel alignment')
-    await cancel.trigger('click')
-    expect(linking.emitted('action')?.[0]).toEqual(['cancelAlignment', 'connector:ebook-audiobook'])
-
-    const rebuilding = mountConnector(pairRow(chainAlignment({ running: true })))
-    expect(rebuilding.get('[data-action="cancelAlignment"]').attributes('aria-label')).toBe('Cancel alignment')
-  })
-
-  it('keeps Cancel clickable while the panel is busy aligning, and locks it only while a cancel is in flight', () => {
-    const row = pairRow(chainAlignment({ running: true, builtAt: null }))
-
-    expect(mountConnector(row, 'modify', { busy: true }).get('[data-action="cancelAlignment"]').attributes('disabled')).toBeUndefined()
-    expect(
-      mountConnector(row, 'modify', { busy: true, cancelling: true }).get('[data-action="cancelAlignment"]').attributes('disabled'),
-    ).toBeDefined()
-  })
-
-  it('shows the build error of a failed alignment with Retry', async () => {
-    const wrapper = mountConnector(pairRow(chainAlignment({ status: 'failed', buildError: 'whisper died' })))
-
-    expect(wrapper.find('[role="switch"]').exists()).toBe(false)
-    expect(wrapper.get('[data-testid="sync-chain-detail"]').text()).toBe('whisper died')
-    expect(wrapper.findAll('[data-testid="sync-chain-action"]').map((button) => button.attributes('data-action'))).toEqual(['retryAlignment'])
-
-    await wrapper.get('[data-action="retryAlignment"]').trigger('click')
-    expect(wrapper.emitted('action')?.[0]).toEqual(['retryAlignment', 'connector:ebook-audiobook'])
-  })
-
-  it('tints the node of an out-of-date map as a warning', () => {
-    const wrapper = mountConnector(pairRow(chainAlignment({ stale: true })))
-
-    expect(wrapper.get('[data-testid="sync-chain-node"]').classes()).toContain('bg-warning/15')
-    expect(wrapper.get('[data-testid="sync-chain-note"]').text()).toContain('The audiobook file changed')
   })
 
   it('emits the connector key with the next switch value', async () => {
@@ -310,26 +210,9 @@ describe('SyncChainConnector', () => {
   })
 
   describe('compact', () => {
-    it('says nothing for a synced pair but keeps the state for screen readers', () => {
-      const wrapper = mountConnector(pairRow(), 'compact')
-
-      expect(wrapper.find('[data-testid="sync-chain-mini-text"]').exists()).toBe(false)
-      expect(wrapper.find('[role="switch"]').exists()).toBe(false)
-      expect(wrapper.text()).toContain('Linked · via Whisper')
-    })
-
-    it('names a problem in its tone with its one action', async () => {
-      const wrapper = mountConnector(pairRow(chainAlignment({ stale: true })), 'compact')
-
-      const text = wrapper.get('[data-testid="sync-chain-mini-text"]')
-      expect(text.text()).toBe('Out of date')
-      expect(text.classes()).toContain('text-warning')
-      await wrapper.get('[data-action="rebuildAlignment"]').trigger('click')
-      expect(wrapper.emitted('action')?.[0]).toEqual(['rebuildAlignment', 'connector:ebook-audiobook'])
-    })
-
     it('lets a long mini text shrink and truncate instead of overflowing the popover', () => {
-      const wrapper = mountConnector(pairRow(chainAlignment({ stale: true })), 'compact')
+      const live = absLive({ status: 'unreachable', progress: null })
+      const wrapper = mountConnector(connectorRow(chainOf({ abs: chainAbs({}, live) }), 'audiobook-abs'), 'compact', { absLive: live })
 
       expect(wrapper.get('[data-testid="sync-chain-mini-text"]').classes()).toEqual(expect.arrayContaining(['min-w-0', 'truncate']))
     })
@@ -339,14 +222,6 @@ describe('SyncChainConnector', () => {
 
       expect(wrapper.get('[data-testid="sync-chain-mini-text"]').text()).toBe('Sync off')
       expect(wrapper.find('[data-testid="sync-chain-action"]').exists()).toBe(false)
-    })
-
-    it('reads the mini text from the catalog', async () => {
-      await withMessages({ book: { detail: { editionLink: { chain: { mini: { aligning: 'Mapping…' } } } } } }, () => {
-        const wrapper = mountConnector(pairRow(chainAlignment({ running: true, builtAt: null })), 'compact')
-
-        expect(wrapper.get('[data-testid="sync-chain-mini-text"]').text()).toBe('Mapping…')
-      })
     })
   })
 

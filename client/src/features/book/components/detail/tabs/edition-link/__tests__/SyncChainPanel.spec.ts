@@ -174,11 +174,10 @@ describe('SyncChainPanel', () => {
   })
 
   it('heads the chain with its state, politely announced, and its intro', async () => {
-    aligned()
-    const { wrapper } = await mountPanel()
+    const { wrapper } = await mountPanel({ shape: 'pairWithReadAlong' })
 
     const pill = wrapper.get('[data-testid="sync-chain-header-pill"]')
-    expect(pill.text()).toBe('2 of 2 in sync')
+    expect(pill.text()).toBe('3 of 3 in sync')
     expect(wrapper.get('[data-testid="sync-chain-header-live"]').attributes('aria-live')).toBe('polite')
     expect(pill.classes()).toEqual(expect.arrayContaining(['bg-success/15', 'text-success']))
     expect(wrapper.get('[data-testid="sync-chain-intro"]').text()).toBe('Synced files keep the same position as you switch between them.')

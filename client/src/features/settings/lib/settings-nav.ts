@@ -9,6 +9,7 @@ import {
   DownloadCloud,
   FileText,
   Filter,
+  GitFork,
   Folder,
   Globe,
   Headphones,
@@ -435,6 +436,15 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
     labelKey: 'settings.nav.groups.accounts',
     icon: Link2,
     items: [
+      {
+        id: 'fork-settings',
+        routeName: 'settings-fork',
+        labelKey: 'editionSync.fork.title',
+        descriptionKey: 'editionSync.fork.description',
+        icon: GitFork,
+        keywords: 'fork edition sync read aloud timing index whisper audiobook ebook position schedule worker',
+        isVisible: anyPermission(Permission.EditionSync, Permission.ManageAppSettings),
+      },
       {
         id: 'hardcover',
         routeName: 'settings-hardcover',

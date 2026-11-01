@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { stat } from 'fs/promises';
 import { eq } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -9,6 +9,7 @@ import { DB } from '../../db';
 import * as schema from '../../db/schema';
 import { bookFiles } from '../../db/schema';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
+import { EPUB_DOM_SOURCE_RESOLVER, type EpubDomSourceResolver } from './epub-dom-source-provider';
 import { ChapterDocument, parseChapterDocument } from './position-converter.core';
 
 type Db = NodePgDatabase<typeof schema>;
@@ -131,7 +132,10 @@ export class EpubDomService {
   private readonly spineCache = new Map<number, SpineCacheEntry>();
   private readonly chapterCache = new Map<string, ChapterDocument>();
 
-  constructor(@Inject(DB) private readonly db: Db) {}
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    @Optional() @Inject(EPUB_DOM_SOURCE_RESOLVER) private readonly sources?: EpubDomSourceResolver,
+  ) {}
 
   async getChapterCount(bookFileId: number): Promise<number | null> {
     const entry = await this.getSpineEntry(bookFileId);
@@ -174,11 +178,12 @@ export class EpubDomService {
   }
 
   private async getSpineEntry(bookFileId: number): Promise<SpineCacheEntry | null> {
-    const [file] = await this.db
+    const [row] = await this.db
       .select({ absolutePath: bookFiles.absolutePath, format: bookFiles.format })
       .from(bookFiles)
       .where(eq(bookFiles.id, bookFileId))
       .limit(1);
+    const file = row && row.format !== 'epub' && row.format !== 'kepub' ? await this.sources?.resolveEpubDomSource(bookFileId, row) : row;
     if (!file || (file.format !== 'epub' && file.format !== 'kepub')) return null;
 
     let mtimeMs: number;

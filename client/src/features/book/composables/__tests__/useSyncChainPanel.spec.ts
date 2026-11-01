@@ -230,13 +230,12 @@ describe('useSyncChainPanel rows', () => {
   })
 })
 
-describe('alignment', () => {
-  it('reads the status of this book up front only when it holds both an EPUB and audio and no read-along', async () => {
+describe('loading', () => {
+  it('never reads the Whisper alignment status, which is only an automatic fallback now', async () => {
     await mountPanel(makeBook([EPUB])).loadInitial()
     await mountPanel(makeBook([EPUB, M4B, READ_ALONG], sync())).loadInitial()
-    expect(alignmentState.fetchStatus).not.toHaveBeenCalled()
     await mountPanel(makeBook()).loadInitial()
-    expect(alignmentState.fetchStatus).toHaveBeenCalledWith(10)
+    expect(alignmentState.fetchStatus).not.toHaveBeenCalled()
   })
 
   it('reads whether Audiobookshelf is set up up front only for a book with audio', async () => {
@@ -246,34 +245,13 @@ describe('alignment', () => {
     expect(absState.loadConfigured).toHaveBeenCalledOnce()
   })
 
-  it('aligns, rebuilds and cancels this book', async () => {
-    alignmentState.status.value = 'none'
-    const panel = mountPanel()
-    panel.runAction('alignNow')
-    panel.runAction('rebuildAlignment')
-    panel.runAction('cancelAlignment')
-    await flushPromises()
-    expect(alignmentState.build.mock.calls).toEqual([
-      [10, false],
-      [10, true],
-    ])
-    expect(alignmentState.cancel).toHaveBeenCalledWith(10)
-  })
-
-  it('reports a build request that failed', async () => {
-    alignmentState.build.mockImplementation(async () => {
-      alignmentState.error.value = 'nope'
-    })
-    mountPanel().runAction('alignNow')
-    await flushPromises()
-    expect(toastMocks.error).toHaveBeenCalledWith('Failed to start alignment build.')
-  })
-
-  it('reports a cancel the server refused', async () => {
-    alignmentState.cancel.mockResolvedValue(false)
-    mountPanel().runAction('cancelAlignment')
-    await flushPromises()
-    expect(toastMocks.error).toHaveBeenCalledWith("The position sync build couldn't be cancelled and keeps running.")
+  it('joins the plain EPUB to the audio when edition sync reports a ready timing index', () => {
+    const synced = mountPanel(makeBook(), { timingIndex: () => true })
+    expect(rowIds(synced)).toContain('connector:ebook-audiobook')
+    expect(synced.chain.value.header.label).toEqual({ key: 'book.detail.editionLink.chain.header.inSync', params: { n: 2, m: 2 } })
+    const idle = mountPanel(makeBook(), { timingIndex: () => false })
+    expect(rowIds(idle)).not.toContain('connector:ebook-audiobook')
+    expect(idle.chain.value.header.tone).toBe('muted')
   })
 })
 
@@ -517,7 +495,7 @@ describe('opening', () => {
     await panel.handleOpen()
     expect(absState.loadConfigured).toHaveBeenCalled()
     expect(absState.refreshLive).toHaveBeenCalled()
-    expect(alignmentState.fetchStatus).toHaveBeenCalledWith(10)
+    expect(alignmentState.fetchStatus).not.toHaveBeenCalled()
     expect(panel.viewMode.value).toBe('modify')
   })
 
@@ -531,16 +509,15 @@ describe('opening', () => {
     panel.prepareView(0)
     await panel.handleOpen()
     expect(panel.viewMode.value).toBe('compact')
-    alignmentState.status.value = 'failed'
+    absMatch()
+    absState.live.value = { status: 'unreachable', progress: null, local: null, divergedReason: null }
     await flushPromises()
     expect(panel.viewMode.value).toBe('modify')
   })
 
   it('colours the trigger from the header and names its state', () => {
-    alignmentState.status.value = 'ready'
-    alignmentState.builtAt.value = '2026-10-01T00:00:00Z'
-    const panel = mountPanel()
+    const panel = mountPanel(makeBook([EPUB, M4B, READ_ALONG], sync()))
     expect(panel.triggerIconClass.value).toBe('text-success')
-    expect(panel.triggerTooltip.value).toBe('Position sync: 2 of 2 in sync')
+    expect(panel.triggerTooltip.value).toBe('Position sync: 3 of 3 in sync')
   })
 })

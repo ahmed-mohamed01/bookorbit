@@ -10,7 +10,7 @@ import type {
   ReadAloudStageDetail,
   ReadAloudWorkerEvent,
   ReadAloudWorkerJob,
-  ReadAloudWorkerRequest,
+  ReadAloudWorkerRebuildRequest,
   ReadAloudWorkerStage,
 } from "@bookorbit/types";
 import type { ResolvedCtcDevice } from "./accelerator.js";
@@ -47,7 +47,7 @@ export type RegistryOptions = {
 
 type JobRecord = {
   jobId: string;
-  request: ReadAloudWorkerRequest;
+  request: ReadAloudWorkerRebuildRequest;
   status: ReadAloudWorkerJob["status"];
   stage: ReadAloudWorkerStage;
   progress: number;
@@ -116,7 +116,7 @@ export class JobRegistry {
     return record ? this.view(record, afterSeq) : null;
   }
 
-  async submit(request: ReadAloudWorkerRequest): Promise<SubmitResult> {
+  async submit(request: ReadAloudWorkerRebuildRequest): Promise<SubmitResult> {
     const existing = this.jobs.get(request.jobId);
     if (existing && !TERMINAL.has(existing.status)) return { status: 200, job: this.view(existing, 0) };
     // A 503 makes the server wait and resubmit to the next process instead of starting a runner here.
@@ -134,7 +134,7 @@ export class JobRegistry {
     }
   }
 
-  private async start(request: ReadAloudWorkerRequest, existing: JobRecord | undefined): Promise<SubmitResult> {
+  private async start(request: ReadAloudWorkerRebuildRequest, existing: JobRecord | undefined): Promise<SubmitResult> {
     let resolved: ResolvedSources;
     try {
       resolved = await this.resolve(request);
@@ -226,7 +226,7 @@ export class JobRegistry {
     await exited;
   }
 
-  private async resolve(request: ReadAloudWorkerRequest): Promise<ResolvedSources> {
+  private async resolve(request: ReadAloudWorkerRebuildRequest): Promise<ResolvedSources> {
     const { workRoot } = this.options.config;
     const workDir = expectedWorkDir(request.workDir, workRoot, request.jobId);
     const libraryRoots = await this.roots.get(0);
@@ -236,7 +236,7 @@ export class JobRegistry {
     return { workDir, epub, audio };
   }
 
-  private startRecord(request: ReadAloudWorkerRequest, previous: JobRecord | undefined, workDir: string): JobRecord {
+  private startRecord(request: ReadAloudWorkerRebuildRequest, previous: JobRecord | undefined, workDir: string): JobRecord {
     const seqFile = join(workDir, SEQ_FILE);
     const record: JobRecord = {
       jobId: request.jobId,
@@ -310,6 +310,7 @@ export class JobRegistry {
       maxOutputBytes: request.maxOutputBytes,
       decisions: request.decisions,
       resumeFrom: request.resumeFrom,
+      rebuild: request.rebuild ?? null,
       device: this.options.device,
       dtype: config.dtype,
       batchSize: config.batchSize,

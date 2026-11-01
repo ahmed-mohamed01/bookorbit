@@ -102,6 +102,15 @@ export class ReadingAlignmentRepository {
     return overlay !== undefined;
   }
 
+  async findReadAloudSyncMode(userId: number, bookId: number): Promise<'auto' | 'disabled'> {
+    const [row] = await this.db
+      .select({ mode: schema.userBookReadAloudSyncSettings.mode })
+      .from(schema.userBookReadAloudSyncSettings)
+      .where(and(eq(schema.userBookReadAloudSyncSettings.userId, userId), eq(schema.userBookReadAloudSyncSettings.bookId, bookId)))
+      .limit(1);
+    return row?.mode ?? 'auto';
+  }
+
   async getAlignmentByPair(textBookId: number, audioBookId: number): Promise<AudiobookAlignment | undefined> {
     const [row] = await this.db
       .select()

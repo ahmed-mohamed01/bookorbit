@@ -163,8 +163,8 @@ function makeBook(overrides = {}) {
   }
 }
 
-function mountControl(overrides = {}) {
-  return mount(LinkBookControl, { props: { book: makeBook(overrides) }, global: { stubs } })
+function mountControl(overrides = {}, props: { timingIndex?: boolean } = {}) {
+  return mount(LinkBookControl, { props: { book: makeBook(overrides), ...props }, global: { stubs } })
 }
 
 async function openPopover(wrapper: ReturnType<typeof mountControl>) {
@@ -252,26 +252,20 @@ describe('LinkBookControl', () => {
     expect(wrapper.find('button').exists()).toBe(false)
   })
 
-  it('reads this book’s alignment status on mount when it holds both, so the trigger is accurate before opening', async () => {
+  it('no longer reads the Whisper alignment status for a book holding both, and shows it as not syncing', async () => {
     const wrapper = mountControl({ files: [makeBook().files[0], { ...audioFile, id: 2 }] })
     await flushPromises()
 
     expect(wrapper.find('button').attributes('aria-label')).toBe('Position sync')
-    expect(mockAlignment.fetchStatus).toHaveBeenCalledWith(10)
+    expect(wrapper.find('button').attributes('title')).toBe('Position sync: Not syncing')
+    expect(mockAlignment.fetchStatus).not.toHaveBeenCalled()
   })
 
-  it.each([
-    ['none', '', 'Position sync: Not syncing'],
-    ['building', 'text-info', 'Position sync: Aligning'],
-    ['ready', 'text-success', 'Position sync: 2 of 2 in sync'],
-    ['failed', 'text-destructive', 'Position sync: Needs attention'],
-  ] as const)('narrates alignment %s on the trigger', (alignment, tint, title) => {
-    mockAlignment.status.value = alignment
-    const wrapper = mountControl({ files: [makeBook().files[0], { ...audioFile, id: 2 }] })
+  it('shows a ready timing index as the pair syncing', async () => {
+    const wrapper = mountControl({ files: [makeBook().files[0], { ...audioFile, id: 2 }] }, { timingIndex: true })
+    await flushPromises()
 
-    const classes = wrapper.find('button').find('svg').classes()
-    expect(tint === '' || classes.includes(tint)).toBe(true)
-    expect(wrapper.find('button').attributes('title')).toBe(title)
+    expect(wrapper.find('button').attributes('title')).toBe('Position sync: 2 of 2 in sync')
   })
 
   it('looks the Audiobookshelf link up for this book when it holds audio, and refreshes it on open', async () => {

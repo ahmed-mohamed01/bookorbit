@@ -74,7 +74,7 @@ export class ReadingAlignmentSyncService implements OnModuleInit, OnModuleDestro
   }
 
   private async project(payload: BookProgressChangedPayload, startedAt: number): Promise<void> {
-    const pair = await this.pairService.resolveAlignmentPair(payload.bookId);
+    const pair = await this.pairService.resolveAlignmentPair(payload.bookId, payload.userId);
     if (!pair) return;
 
     const ready = await this.repo.getReadyAlignmentWithAnchors(pair.textBookId, pair.audioBookId);

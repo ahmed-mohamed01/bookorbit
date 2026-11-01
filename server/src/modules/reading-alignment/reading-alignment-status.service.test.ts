@@ -368,3 +368,26 @@ describe('ReadingAlignmentStatusService.cancelBuild', () => {
     expect(repo.deleteAlignment).not.toHaveBeenCalled();
   });
 });
+
+describe('ReadingAlignmentStatusService.hasReadyAlignment', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('is true only for a ready alignment on the pair resolved for that user, without an access check', async () => {
+    const { service, pairService, bookService } = build({ existing: alignmentRow() });
+    await expect(service.hasReadyAlignment(BOOK_ID, USER.id)).resolves.toBe(true);
+    expect(pairService.resolveAlignmentPair).toHaveBeenCalledWith(BOOK_ID, USER.id);
+    expect(bookService.verifyBookAccess).not.toHaveBeenCalled();
+  });
+
+  it.each(['building', 'failed', 'pending'])('is false for a %s alignment', async (status) => {
+    const { service } = build({ existing: alignmentRow({ status }) });
+    await expect(service.hasReadyAlignment(BOOK_ID, USER.id)).resolves.toBe(false);
+  });
+
+  it('is false with no alignment row or no pair for the user', async () => {
+    await expect(build({ existing: undefined }).service.hasReadyAlignment(BOOK_ID, USER.id)).resolves.toBe(false);
+    const noPair = build({ pair: null, existing: alignmentRow() });
+    await expect(noPair.service.hasReadyAlignment(BOOK_ID, USER.id)).resolves.toBe(false);
+    expect(noPair.repo.getAlignmentByPair).not.toHaveBeenCalled();
+  });
+});

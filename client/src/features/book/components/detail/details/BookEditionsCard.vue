@@ -24,8 +24,10 @@ const props = withDefaults(
     /** Rows shown before the rest collapse behind a count. */
     maxRows?: number
     resettingFileIds?: number[]
+    /** Set when edition sync is active for the book: the header counts the synced editions and the size moves to the footer. */
+    syncCount?: number | null
   }>(),
-  { progress: () => [], maxRows: 4, resettingFileIds: () => [] },
+  { progress: () => [], maxRows: 4, resettingFileIds: () => [], syncCount: null },
 )
 
 const emit = defineEmits<{ resetProgress: [key: string] }>()
@@ -46,6 +48,11 @@ const rows = computed(() => bookFormatEntries(props.book.files, props.book.forma
 const visibleRows = computed(() => rows.value.slice(0, props.maxRows))
 const hiddenCount = computed(() => Math.max(0, rows.value.length - visibleRows.value.length))
 const totalBytes = computed(() => rows.value.reduce((total, row) => total + row.sizeBytes, 0))
+
+const footerSummary = computed(() => {
+  const count = formatNumber(props.book.files.length)
+  return props.syncCount === null ? count : t('book.detail.details.editionsSummary', { count, size: formatBytes(totalBytes.value) })
+})
 
 function progressFor(row: BookFormatEntry): EditionProgress | null {
   return props.progress.find((entry) => entry.key === row.key) ?? null
@@ -74,7 +81,15 @@ function rowMeasure(row: BookFormatEntry): string {
 
 <template>
   <section class="rounded-xl border border-border bg-card px-3.5 py-3" :aria-label="t('book.detail.details.editions')">
-    <div class="flex items-baseline gap-2">
+    <div v-if="syncCount !== null" class="flex items-center gap-2">
+      <h3 class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {{ t('editionSync.card.title', { count: syncCount }) }}
+      </h3>
+      <div class="ml-auto flex shrink-0 items-center">
+        <slot name="header-action" />
+      </div>
+    </div>
+    <div v-else class="flex items-baseline gap-2">
       <h3 class="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         {{ t('book.detail.details.editions') }}
       </h3>
@@ -126,12 +141,16 @@ function rowMeasure(row: BookFormatEntry): string {
       {{ t('book.detail.details.moreFormats', { count: hiddenCount }) }}
     </p>
 
+    <slot name="status" />
+
     <!-- What this book could still have: a format another feature can offer to fetch. -->
     <slot name="missing" />
 
     <div class="mt-2.5 flex items-baseline gap-2 border-t border-border pt-2">
       <p class="text-[11px] text-muted-foreground">{{ t('book.detail.details.filesOnDisk') }}</p>
-      <p class="ml-auto text-[11px] font-semibold tabular-nums">{{ formatNumber(book.files.length) }}</p>
+      <p class="ml-auto text-[11px] font-semibold tabular-nums">
+        {{ footerSummary }}
+      </p>
     </div>
   </section>
 </template>

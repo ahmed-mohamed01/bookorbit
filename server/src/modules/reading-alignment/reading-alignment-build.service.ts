@@ -62,7 +62,7 @@ export class ReadingAlignmentBuildService {
   ) {}
 
   async buildAlignment(bookId: number, user: RequestUser, force = false): Promise<void> {
-    const pair = await this.pairService.resolveAlignmentPair(bookId);
+    const pair = await this.pairService.resolveAlignmentPair(bookId, user.id);
     if (!pair) {
       this.logger.log(`[${BUILD_EVENT}] [end] bookId=${bookId} status=unalignable reason=no_pair - plain EPUB and audio required`);
       return;

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { stat } from 'fs/promises';
 
 import type { EpubMediaOverlayPlaylist, EpubMediaOverlayPlaylistItem } from '@bookorbit/types';
@@ -10,6 +10,7 @@ import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { PositionConverterService } from '../position-converter/position-converter.service';
 import { buildEpubMediaOverlayPlaylistFromFile } from '../reader/epub/epub-media-overlay';
 import { BookRepository } from './book.repository';
+import { OVERLAY_SOURCE_RESOLVER, type OverlaySourceResolver } from './overlay-source-provider';
 
 const EVENT = 'book.audio_ebook_progress_sync';
 const REVERSE_EVENT = 'book.ebook_audio_progress_sync';
@@ -72,6 +73,7 @@ export class AudiobookEbookProgressSyncService {
     private readonly bookRepo: BookRepository,
     private readonly positionConverter: PositionConverterService,
     private readonly chapters: AudioPlayOrderService,
+    @Optional() @Inject(OVERLAY_SOURCE_RESOLVER) private readonly overlaySource?: OverlaySourceResolver,
   ) {}
 
   async syncFromAudioProgress(params: {
@@ -292,6 +294,7 @@ export class AudiobookEbookProgressSyncService {
   }
 
   private async resolveProgress(params: {
+    userId: number;
     bookId: number;
     currentFileId: number;
     positionSeconds: number;
@@ -304,7 +307,7 @@ export class AudiobookEbookProgressSyncService {
     const currentAudioIndex = audioFiles.findIndex((file) => file.id === params.currentFileId);
     if (currentAudioIndex < 0) return null;
 
-    const overlaySourceFile = this.selectOverlaySourceFile(syncFiles.files, syncFiles.primaryFileId);
+    const overlaySourceFile = await this.selectOverlaySourceFile(params.userId, params.bookId, syncFiles.files, syncFiles.primaryFileId);
     if (!overlaySourceFile) return null;
 
     const audioAbsoluteSeconds = this.computeAudioAbsoluteSeconds(audioFiles, currentAudioIndex, params.positionSeconds);
@@ -322,7 +325,9 @@ export class AudiobookEbookProgressSyncService {
 
     const targetFile = this.selectTargetFile(syncFiles.files, syncFiles.primaryFileId, overlaySourceFile);
     const epubFiles = syncFiles.files.filter((file) => file.format?.toLowerCase() === 'epub');
-    const orderedTargets = [targetFile, ...epubFiles.filter((file) => file.id !== targetFile.id)];
+    const orderedTargets = [targetFile, ...epubFiles.filter((file) => file.id !== targetFile.id)].filter(
+      (file) => file.format?.toLowerCase() === 'epub',
+    );
     const percentage = this.clampPercentage((overlaySeconds / playlist.durationSeconds) * 100);
     const targets: EpubProgressResolution[] = [];
     for (const candidate of orderedTargets) {
@@ -343,6 +348,7 @@ export class AudiobookEbookProgressSyncService {
    */
   private async resolveEbookOverlayPosition(
     params: {
+      userId: number;
       bookId: number;
       bookFileId: number;
       cfi?: string | null;
@@ -359,7 +365,7 @@ export class AudiobookEbookProgressSyncService {
     const ebookFile = syncFiles.files.find((file) => file.id === params.bookFileId && file.format?.toLowerCase() === 'epub');
     if (!ebookFile) return null;
 
-    const overlaySourceFile = this.selectOverlaySourceFile(syncFiles.files, syncFiles.primaryFileId);
+    const overlaySourceFile = await this.selectOverlaySourceFile(params.userId, params.bookId, syncFiles.files, syncFiles.primaryFileId);
     if (!overlaySourceFile) return null;
 
     const audioFiles = syncFiles.files.filter((file) => typeof file.format === 'string' && isAudioFormat(file.format));
@@ -460,9 +466,14 @@ export class AudiobookEbookProgressSyncService {
     };
   }
 
-  private selectOverlaySourceFile(files: SyncFile[], primaryFileId: number | null): SyncFile | null {
+  private async selectOverlaySourceFile(userId: number, bookId: number, files: SyncFile[], primaryFileId: number | null): Promise<SyncFile | null> {
     const overlayFiles = files.filter((file) => file.format?.toLowerCase() === 'epub' && file.mediaOverlayAvailable);
-    return overlayFiles.find((file) => file.id === primaryFileId) ?? overlayFiles[0] ?? null;
+    return (
+      overlayFiles.find((file) => file.id === primaryFileId) ??
+      overlayFiles[0] ??
+      (await this.overlaySource?.resolveOverlaySource(userId, bookId, files)) ??
+      null
+    );
   }
 
   private selectTargetFile(files: SyncFile[], primaryFileId: number | null, overlaySourceFile: SyncFile): SyncFile {

@@ -2,7 +2,7 @@
 // It writes small placeholder outputs and records every stage it runs, so the tests exercise the
 // runner's real caching, progress, cancel and failure handling without the model.
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -101,6 +101,7 @@ export const pipeline = {
       while (Date.now() < until);
     }
     writeFileSync(context.paths.outputPath, mode === "empty-output" ? "" : "output-epub-bytes");
+    if (mode === "fixture") copyFileSync(context.job.epub.path, context.paths.outputPath);
     writeFileSync(
       context.paths.reportPath,
       JSON.stringify({

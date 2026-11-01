@@ -36,7 +36,7 @@ export class ReadingAlignmentStatusService {
   // The build service owns an in-flight guard, so a repeated request never starts a duplicate build.
   async requestBuild(bookId: number, user: RequestUser, force = false): Promise<AlignmentBuildResponse> {
     await this.assertAccess(bookId, user);
-    const pair = await this.pairService.resolveAlignmentPair(bookId);
+    const pair = await this.pairService.resolveAlignmentPair(bookId, user.id);
     if (!pair) return { status: 'none' };
 
     // Report the real reason a build cannot start instead of a "building" spinner that never resolves.
@@ -73,7 +73,7 @@ export class ReadingAlignmentStatusService {
    */
   async cancelBuild(bookId: number, user: RequestUser): Promise<void> {
     await this.assertAccess(bookId, user);
-    const pair = await this.pairService.resolveAlignmentPair(bookId);
+    const pair = await this.pairService.resolveAlignmentPair(bookId, user.id);
     if (!pair) throw new NotFoundException('This book has no alignment pair');
 
     const startedAt = Date.now();
@@ -101,7 +101,7 @@ export class ReadingAlignmentStatusService {
 
   async getStatus(bookId: number, user: RequestUser): Promise<AlignmentStatusResponse> {
     await this.assertAccess(bookId, user);
-    const pair = await this.pairService.resolveAlignmentPair(bookId);
+    const pair = await this.pairService.resolveAlignmentPair(bookId, user.id);
     if (!pair) return { status: 'none' };
 
     const alignment = await this.repo.getAlignmentByPair(pair.textBookId, pair.audioBookId);
@@ -116,6 +116,14 @@ export class ReadingAlignmentStatusService {
       error: this.canBuild(user) && alignment.error ? alignment.error.slice(0, MAX_STATUS_ERROR_LENGTH) : null,
       stale: alignment.status === 'ready' && (await alignmentContentChanged(this.repo, pair, alignment)),
     };
+  }
+
+  /** No access check: callers verify book access first. */
+  async hasReadyAlignment(bookId: number, userId: number): Promise<boolean> {
+    const pair = await this.pairService.resolveAlignmentPair(bookId, userId);
+    if (!pair) return false;
+    const alignment = await this.repo.getAlignmentByPair(pair.textBookId, pair.audioBookId);
+    return alignment?.status === 'ready';
   }
 
   private canBuild(user: RequestUser): boolean {

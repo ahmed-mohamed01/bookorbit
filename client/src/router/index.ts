@@ -463,6 +463,12 @@ export const routes: RouteRecordRaw[] = [
             meta: { maxWidth: 'max-w-3xl', title: () => t('settings.integrations.tabs.hardcover') },
           },
           {
+            path: 'fork',
+            name: 'settings-fork',
+            component: () => import('@/features/settings/ForkSettings.vue'),
+            meta: { maxWidth: 'max-w-3xl', title: () => t('editionSync.fork.title') },
+          },
+          {
             path: 'readwise',
             name: 'settings-readwise',
             component: () => import('@/features/readwise/components/ReadwiseSettings.vue'),

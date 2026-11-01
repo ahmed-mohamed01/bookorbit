@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type { ConfigType } from '@nestjs/config';
 import { Interval } from '@nestjs/schedule';
 import type { ReadAloudErrorCode, ReadAloudJobStage, ReadAloudWorkerJob, ReadAloudWorkerRequest } from '@bookorbit/types';
@@ -8,6 +8,7 @@ import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { readAloudConfig } from '../../config/config';
 import type { ReadAloudJobRow } from '../../db/schema';
 import { ReadAloudActivityService } from './read-aloud-activity.service';
+import { NO_READ_ALOUD_HOOKS, READ_ALOUD_HOOKS, type ReadAloudHooks } from './read-aloud-hooks';
 import {
   classifyReadAloudError,
   errorMessage,
@@ -84,6 +85,7 @@ export class ReadAloudWorkerService {
     private readonly workspace: ReadAloudWorkspace,
     private readonly activity: ReadAloudActivityService,
     private readonly notifier: ReadAloudNotifier,
+    @Optional() @Inject(READ_ALOUD_HOOKS) private readonly hooks: ReadAloudHooks = NO_READ_ALOUD_HOOKS,
   ) {}
 
   get currentJobId(): string | null {
@@ -123,6 +125,7 @@ export class ReadAloudWorkerService {
    */
   private async adoptRunning(jobId: string): Promise<ReadAloudJobRow | null> {
     if (!JOB_ID.test(jobId)) return null;
+    if (await this.hooks.ownsWorkerJob(jobId)) return null;
     const row = await this.jobs.findById(jobId);
     if (row?.status === 'queued') return await this.jobs.claimQueued(jobId);
     if (row && ACTIVE_STATUSES.has(row.status)) return null;
@@ -148,7 +151,10 @@ export class ReadAloudWorkerService {
       await this.notifier.pushUpdate(await this.jobs.updateProgress(job.id, { stage: job.stage as ReadAloudJobStage, progress: 0, device }));
       const context = await this.readAloud.resolveProcessingContext(job);
       await this.workspace.ensure(job.id);
-      const request: ReadAloudWorkerRequest = { ...context.request, maxOutputBytes: this.config.maxOutputBytes };
+      const request: ReadAloudWorkerRequest = await this.hooks.prepareRequest(job, {
+        ...context.request,
+        maxOutputBytes: this.config.maxOutputBytes,
+      });
       const finalState = await this.runOnWorker(job, request);
       if (finalState.status === 'cancelled') {
         // A worker that is shutting down cancels its running job itself. Only a cancel someone asked
@@ -159,7 +165,7 @@ export class ReadAloudWorkerService {
       if (finalState.status === 'failed') {
         throw new ReadAloudJobError(finalState.errorCode ?? 'unknown', finalState.error ?? 'The read-aloud worker reported a failure');
       }
-      await this.finish(job, context.user, startedAt);
+      await this.finish(job, context.user, startedAt, request);
     } catch (error) {
       await this.handleFailure(job, error, startedAt);
     } finally {
@@ -264,7 +270,12 @@ export class ReadAloudWorkerService {
     return { ...state, status: 'cancelled', events: [] };
   }
 
-  private async finish(job: ReadAloudJobRow, user: Parameters<ReadAloudPublisher['publish']>[1], startedAt: number): Promise<void> {
+  private async finish(
+    job: ReadAloudJobRow,
+    user: Parameters<ReadAloudPublisher['publish']>[1],
+    startedAt: number,
+    request: ReadAloudWorkerRequest,
+  ): Promise<void> {
     const event = 'read_aloud.process_job';
     await this.notifier.pushUpdate(await this.jobs.updateProgress(job.id, { stage: 'validating', progress: 97, stageDetail: null }));
     const validation = await this.publisher.withHeartbeat(job.id, () => this.publisher.validate(job));
@@ -275,6 +286,7 @@ export class ReadAloudWorkerService {
       outsideNarration: validation.coverage?.outsideSentences ?? null,
       outputBytes: validation.outputBytes,
     });
+    await this.publisher.withHeartbeat(job.id, () => this.hooks.onOutputValidated(job, request));
     // A job someone already chose to add despite the warnings (and that a restart put back in the
     // queue) goes straight to the library instead of asking for the same review again.
     if (validation.requiresReview && !job.publishApproved) {

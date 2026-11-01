@@ -14,8 +14,8 @@ describe('chainViewItems', () => {
     const items = chainViewItems(rows, null)
 
     expect(items.map((item) => item.id)).toEqual(rows.map((row) => row.id))
-    expect(items.map((item) => item.kind)).toEqual(['card', 'connector', 'card', 'connector', 'card'])
-    expect(items.map((item) => item.frame)).toEqual(['spine', 'spine', 'group', 'group', 'group'])
+    expect(items.map((item) => item.kind)).toEqual(['card', 'card', 'connector', 'card'])
+    expect(items.map((item) => item.frame)).toEqual(['spine', 'group', 'group', 'group'])
   })
 
   it('swaps only the Audiobookshelf slot for its search', () => {
@@ -40,7 +40,6 @@ describe('chainViewSegments', () => {
     const segments = chainViewSegments(chainViewItems(buildSyncChain(snapshot).rows, null))
     expect(segments.map((segment) => (segment.kind === 'group' ? segment.items.map((item) => item.id) : segment.item.id))).toEqual([
       'card:ebook',
-      'connector:ebook-audiobook',
       ['card:audiobook', 'connector:audiobook-abs', 'card:abs'],
     ])
   })
@@ -55,7 +54,7 @@ describe('chainViewSegments', () => {
 describe('segmentNeedsGap', () => {
   it('spaces two slots that have no connector between them and nothing else', () => {
     const joined = chainViewSegments(chainViewItems(buildSyncChain(snapshot).rows, null))
-    expect(joined.map((_, index) => segmentNeedsGap(joined, index))).toEqual([false, false, false])
+    expect(joined.map((_, index) => segmentNeedsGap(joined, index))).toEqual([false, true])
     const withSlot = buildSyncChain({ ...snapshot, readAloudSlot: chainReadAloudSlot({ entry: { kind: 'available' } }) }).rows
     const apart = chainViewSegments(
       chainViewItems(
@@ -63,7 +62,7 @@ describe('segmentNeedsGap', () => {
         null,
       ),
     )
-    expect(apart.map((_, index) => segmentNeedsGap(apart, index))).toEqual([false, false, false, true])
+    expect(apart.map((_, index) => segmentNeedsGap(apart, index))).toEqual([false, true, true])
   })
 })
 

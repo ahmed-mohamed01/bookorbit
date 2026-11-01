@@ -77,7 +77,6 @@ function handleAbsPick(item: AudiobookshelfBookState) {
       :row="item.row"
       :view="view"
       :busy="panel.busy"
-      :cancelling="panel.cancelling"
       :abs-live="panel.abs.live"
       :abs-busy="panel.absActions.busy"
       :abs-action-error="panel.absActions.actionError"

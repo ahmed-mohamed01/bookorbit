@@ -54,5 +54,6 @@ import { ReadAloudWorkspace } from './read-aloud-workspace.service';
     ReadAloudWorkerService,
     ReadAloudWorkspace,
   ],
+  exports: [ReadAloudWorkerClientService, ReadAloudWorkspace, ReadAloudWorkerService],
 })
 export class ReadAloudModule {}

@@ -30,5 +30,6 @@ import { WhisperService } from './whisper.service';
     ReadingAlignmentStatusService,
     ReadingAlignmentSyncService,
   ],
+  exports: [ReadingAlignmentStatusService],
 })
 export class ReadingAlignmentModule {}

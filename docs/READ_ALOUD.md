@@ -33,7 +33,7 @@ Read-aloud generation is opt-in. Add the following values to the deployment `.en
 COMPOSE_PROFILES=read-aloud
 READ_ALOUD_WORKER_URL=http://read-aloud-worker:8787
 READ_ALOUD_WORKER_TOKEN=<a-random-secret-of-at-least-16-characters>
-READ_ALOUD_WORKER_IMAGE=ghcr.io/bookorbit/bookorbit-read-aloud-worker:latest
+READ_ALOUD_WORKER_IMAGE=ghcr.io/ahmed-mohamed01/bookorbit-read-aloud-worker:latest
 ```
 
 Generate the shared token with `openssl rand -hex 32`. The worker port is exposed only to the Compose network. The app and worker must use the same token.
@@ -174,3 +174,14 @@ Job, stage, cancellation and startup lines carry the job id and durations; STAli
 Publishing copies the output into the book's folder as `<book>.readaloud.epub` (with a number added if that name is taken), staged next to its destination and renamed into place. The admin upload size limit does not apply; `READ_ALOUD_MAX_OUTPUT_BYTES` (default 20 GB) is the only cap. BookOrbit checks the library volume has room for the file first.
 
 The source EPUB and audiobook are not modified.
+
+### Fork timing indexes
+
+The fork publishes `ghcr.io/ahmed-mohamed01/bookorbit-read-aloud-worker` with `:latest`, `:<version>`, `:sha-<12>`, `:main` and branch tags; every release carries a worker `:latest` even when the worker sources did not change.
+
+This fork's default worker image supports rebuilding read-aloud EPUBs from edition-sync
+`.bookorbit-timings` indexes. It runs the same audio preparation as a normal job and checks
+chunk sizes and SHA-256 hashes before restoring audio. Indexes omit source-identical images
+and fonts; rebuild restores them from the source EPUB after checking size and CRC32. A mismatch runs full alignment in
+the same job. The authenticated `/health` response advertises `rebuild: true`. Upstream
+worker images remain compatible, but run full alignment instead of the rebuild shortcut.

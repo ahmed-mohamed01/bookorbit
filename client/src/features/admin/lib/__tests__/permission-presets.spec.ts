@@ -37,6 +37,11 @@ describe('permission-presets', () => {
     expect(granting.length).toBeGreaterThan(0)
   })
 
+  it('includes edition sync in the admin preset so a full grant still reads as Admin', () => {
+    expect(presetPermissions('admin')).toContain(Permission.EditionSync)
+    expect(detectPermissionSelection(new Set(presetPermissions('admin')))).toBe('admin')
+  })
+
   it('limits the standard preset to reading and device access', () => {
     expect(presetPermissions('standard')).toEqual([
       Permission.LibraryDownload,
