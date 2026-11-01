@@ -167,8 +167,9 @@ describe('MonitoredService', () => {
       order: 'asc',
       kinds: [],
       more: ['hidden'],
+      timing: 'upcoming',
     });
-    expect(store.findReleasePage).toHaveBeenCalledWith(expect.objectContaining({ kinds: [], more: ['hidden'] }));
+    expect(store.findReleasePage).toHaveBeenCalledWith(expect.objectContaining({ kinds: [], more: ['hidden'], timing: 'upcoming' }));
     expect(result.items[0]).toMatchObject({ releaseDate: null, status: 'upcoming' });
   });
 

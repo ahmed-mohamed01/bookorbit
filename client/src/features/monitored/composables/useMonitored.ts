@@ -9,6 +9,7 @@ import type {
   MonitoredReleaseFilter,
   MonitoredReleaseItem,
   MonitoredReleaseListSort,
+  MonitoredReleaseTiming,
   MonitoredStatusFilter,
   MonitoredSummary,
 } from '@bookorbit/types'
@@ -18,7 +19,7 @@ import { appendUnique } from '../lib/append-unique'
 import { monitoredErrorText } from '../lib/api-error'
 import { appendBoundedPage, type RetainedPage } from '../lib/bounded-page-retention'
 
-export const MONITORED_TABS = ['authors', 'releases', 'add'] as const
+export const MONITORED_TABS = ['authors', 'releases', 'upcoming', 'add'] as const
 export type MonitoredTab = (typeof MONITORED_TABS)[number]
 
 /** Grouping has to survive pagination: author buckets would reshuffle as later pages arrive. */
@@ -31,6 +32,7 @@ const EMPTY_SUMMARY: MonitoredSummary = {
   books: 0,
   releases: 0,
   releaseCards: { byStatus: 0, byWork: 0 },
+  releaseTimings: { released: { rows: 0, works: 0 }, upcoming: { rows: 0, works: 0 } },
   hardcoverConfigured: true,
   audibleConfigured: true,
 }
@@ -46,6 +48,8 @@ export function useMonitored(onReconnect: () => void = () => {}) {
   const authorTotal = ref(0)
   const releaseTotal = ref(0)
   const releaseCardTotal = ref<MonitoredReleaseCardCounts>({ byStatus: 0, byWork: 0 })
+  /** Released and Upcoming share one list, so it records which of them its rows came from. */
+  const releaseTiming = ref<MonitoredReleaseTiming | null>(null)
   const authorPage = ref(0)
   const releasePage = ref(0)
   const authorDroppedOffset = ref(0)
@@ -80,11 +84,8 @@ export function useMonitored(onReconnect: () => void = () => {}) {
 
   // A reset refetch keeps the current page rendered until the new one lands; blanking the list
   // first turns every search keystroke into an empty-state flash.
-  const counts = computed<Record<Exclude<MonitoredTab, 'add'>, number>>(() => ({
-    authors: summary.value.authors,
-    releases: summary.value.releases,
-  }))
-  const summaryReleaseCards = computed(() => summary.value.releaseCards)
+  const authorCount = computed(() => summary.value.authors)
+  const releaseTimingCounts = computed(() => summary.value.releaseTimings)
   const hardcoverConfigured = computed(() => summary.value.hardcoverConfigured)
   const audibleConfigured = computed(() => summary.value.audibleConfigured)
   const authorHasMore = computed(() => authorPage.value * PAGE_SIZE < authorTotal.value)
@@ -183,12 +184,13 @@ export function useMonitored(onReconnect: () => void = () => {}) {
       sort: MonitoredReleaseListSort
       order: MonitoredListOrder
       filter: MonitoredReleaseFilter
+      timing: MonitoredReleaseTiming
       status?: MonitoredStatusFilter[]
       classes?: MonitoredClassSelection
     },
     reset = false,
   ): Promise<void> {
-    if (!reset && (releaseLoading.value || !releaseHasMore.value)) return
+    if (!reset && (releaseLoading.value || !releaseHasMore.value || releaseTiming.value !== options.timing)) return
     const token = ++releaseToken
     const requestPage = reset ? 0 : releasePage.value
     releaseLoading.value = true
@@ -201,6 +203,7 @@ export function useMonitored(onReconnect: () => void = () => {}) {
         releaseFirstPage = [...items]
         releasePages = [{ page: result.page, items }]
         releases.value = items
+        releaseTiming.value = options.timing
         releaseDroppedOffset.value = 0
       } else {
         const retained = appendBoundedPage(
@@ -238,8 +241,9 @@ export function useMonitored(onReconnect: () => void = () => {}) {
     summaryLoading,
     authorHasMore,
     releaseHasMore,
-    counts,
-    summaryReleaseCards,
+    authorCount,
+    releaseTimingCounts,
+    releaseTiming,
     hardcoverConfigured,
     audibleConfigured,
     error,

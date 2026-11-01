@@ -1,17 +1,20 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import type { MonitoredReleaseFilter } from '@bookorbit/types'
+import { computed } from 'vue'
+import type { MonitoredReleaseFilter, MonitoredReleaseTiming } from '@bookorbit/types'
+import { releaseFilterFitsTiming } from '../lib/release-view'
 
-defineProps<{ modelValue: MonitoredReleaseFilter }>()
+const props = defineProps<{ modelValue: MonitoredReleaseFilter; timing: MonitoredReleaseTiming }>()
 const emit = defineEmits<{ 'update:modelValue': [value: MonitoredReleaseFilter] }>()
 const { t } = useI18n()
 
-const options: { id: MonitoredReleaseFilter; labelKey: string }[] = [
+const allOptions: { id: MonitoredReleaseFilter; labelKey: string }[] = [
   { id: 'all', labelKey: 'monitored.controlsBar.filterAll' },
   { id: 'recent', labelKey: 'monitored.controlsBar.filterRecent' },
   { id: 'soon', labelKey: 'monitored.controlsBar.filterSoon' },
   { id: 'year', labelKey: 'monitored.controlsBar.filterYear' },
 ]
+const options = computed(() => allOptions.filter((option) => releaseFilterFitsTiming(option.id, props.timing)))
 
 function select(filter: MonitoredReleaseFilter) {
   emit('update:modelValue', filter)

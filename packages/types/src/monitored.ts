@@ -328,6 +328,10 @@ export type MonitoredReleaseListSort = (typeof MONITORED_RELEASE_LIST_SORTS)[num
 export const MONITORED_RELEASE_FILTERS = ["all", "recent", "soon", "year"] as const;
 export type MonitoredReleaseFilter = (typeof MONITORED_RELEASE_FILTERS)[number];
 
+/** Released is dated on or before today in UTC; upcoming is everything later, undated included. */
+export const MONITORED_RELEASE_TIMINGS = ["released", "upcoming"] as const;
+export type MonitoredReleaseTiming = (typeof MONITORED_RELEASE_TIMINGS)[number];
+
 export type MonitoredDatePrecision = "day" | "month" | "year";
 
 /**
@@ -675,6 +679,8 @@ export interface MonitoredSummary {
   books: number;
   releases: number;
   releaseCards: MonitoredReleaseCardCounts;
+  /** The default release list split by timing: a row per format, and the works those rows belong to. */
+  releaseTimings: Record<MonitoredReleaseTiming, { rows: number; works: number }>;
   hardcoverConfigured: boolean;
   audibleConfigured: boolean;
 }

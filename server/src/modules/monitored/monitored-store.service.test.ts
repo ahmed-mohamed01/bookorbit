@@ -1007,6 +1007,41 @@ describe('MonitoredStoreService paged lists', () => {
     expect(result).toEqual({ items: [], total: 456, cards: { byStatus: 300, byWork: 240 }, page: 4, size: 25 });
   });
 
+  it.each([
+    ['released', 'where "releaseDate" is not null and "releaseDate" <= $'],
+    ['upcoming', 'where not ("releaseDate" is not null and "releaseDate" <= $'],
+  ] as const)('cuts both the page and its total to %s rows by the listed date', async (timing, cut) => {
+    const dialect = new PgDialect();
+    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    const execute = vi.fn((statement: SQL) => {
+      const compiled = dialect.sqlToQuery(statement);
+      statements.push(compiled);
+      return Promise.resolve(compiled.sql.includes('count(*)::int') ? { rows: [{ total: 0, byStatus: 0, byWork: 0 }] } : { rows: [] });
+    });
+    const store = new MonitoredStoreService({ execute } as never, {} as never);
+
+    await store.findReleasePage({
+      viewer: { id: 1, isSuperuser: false } as RequestUser,
+      page: 0,
+      size: 25,
+      sort: 'date',
+      order: 'asc',
+      filter: 'all',
+      timing,
+      earliest: '2026-06-07',
+      latest: '2027-09-05',
+      today: '2026-09-05',
+      soonLatest: '2026-10-05',
+      currentYear: '2026',
+    });
+
+    expect(statements).toHaveLength(2);
+    for (const statement of statements) {
+      expect(statement.sql).toContain(cut);
+      expect(statement.params).toContain('2026-09-05');
+    }
+  });
+
   function releaseStatusStatements(status: Parameters<MonitoredStoreService['findReleasePage']>[0]['status']) {
     const dialect = new PgDialect();
     const statements: Array<{ sql: string; params: unknown[] }> = [];

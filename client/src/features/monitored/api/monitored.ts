@@ -25,6 +25,7 @@ import type {
   MonitoredPage,
   MonitoredReleaseDateLookup,
   MonitoredReleaseFilter,
+  MonitoredReleaseTiming,
   MonitoredReleasePage,
   MonitoredReleaseListSort,
   MonitoredSort,
@@ -140,6 +141,7 @@ export async function fetchMonitoredReleases(options: {
   sort: MonitoredReleaseListSort
   order: MonitoredListOrder
   filter: MonitoredReleaseFilter
+  timing: MonitoredReleaseTiming
   /** Absent lists every visible, watched release. */
   status?: MonitoredStatusFilter[]
   /** Absent, or the default selection, lists books only. */

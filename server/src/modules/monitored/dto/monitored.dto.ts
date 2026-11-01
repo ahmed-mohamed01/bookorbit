@@ -30,6 +30,7 @@ import {
   MONITORED_MARK_KINDS,
   MONITORED_REVIEW_FLAGS,
   MONITORED_RELEASE_FILTERS,
+  MONITORED_RELEASE_TIMINGS,
   MONITORED_RELEASE_LIST_SORTS,
   MONITORED_SORTS,
   MONITORED_STATUS_FILTERS,
@@ -52,6 +53,7 @@ import type {
   MonitoredReviewFlag,
   MonitoredReleaseFilter,
   MonitoredReleaseListSort,
+  MonitoredReleaseTiming,
   MonitoredSort,
   MonitoredStatusFilter,
   MonitoredWorkPatch,
@@ -248,6 +250,11 @@ export class ListMonitoredReleasesDto extends MonitoredPageQueryDto {
   @IsOptional()
   @IsIn(MONITORED_RELEASE_FILTERS)
   filter?: MonitoredReleaseFilter = 'all';
+
+  /** Absent lists released and upcoming together. */
+  @IsOptional()
+  @IsIn(MONITORED_RELEASE_TIMINGS)
+  timing?: MonitoredReleaseTiming;
 
   /** Optional status buckets; hidden is accepted for compatibility and ignored. */
   @IsOptional()

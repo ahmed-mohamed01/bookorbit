@@ -12,7 +12,7 @@ import { useLibraries } from '@/features/library/composables/useLibraries'
 import { useLibraryScanRefresh } from '@/features/library/composables/useLibraryScanRefresh'
 import { useLibraryUploadEvents } from '@/features/library/composables/useLibraryUploadEvents'
 import { useMonitoredSummary } from '@/features/monitored/composables/useMonitoredSummary'
-import { releaseCount } from '@/features/monitored/lib/release-view'
+import { releaseTimingCount } from '@/features/monitored/lib/release-view'
 import { getSocket } from '@/features/scanner/composables/useScanProgress'
 import { useAppInfo } from '@/features/settings/composables/useAppInfo'
 import { useSmartScopes } from '@/features/smart-scope/composables/useSmartScopes'
@@ -40,9 +40,7 @@ export function useSidebarDataSync() {
   const outstandingRequestTotal = computed(() =>
     hasPermission(Permission.ManageBookRequests) ? (bookRequestSummary.value?.active ?? 0) : (bookRequestSummary.value?.mine ?? 0),
   )
-  const monitoredReleaseTotal = computed(() =>
-    monitoredSummary.value ? releaseCount(monitoredSummary.value.releases, monitoredSummary.value.releaseCards) : 0,
-  )
+  const monitoredReleaseTotal = computed(() => (monitoredSummary.value ? releaseTimingCount(monitoredSummary.value.releaseTimings, 'released') : 0))
 
   onMounted(async () => {
     getSocket()

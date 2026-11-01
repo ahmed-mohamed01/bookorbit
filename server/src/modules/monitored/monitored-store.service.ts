@@ -24,6 +24,7 @@ import type {
   MonitoredMatchDecision,
   MonitoredPossibleMatch,
   MonitoredReleaseFilter,
+  MonitoredReleaseTiming,
   MonitoredReleaseListSort,
   MonitoredReleaseCardCounts,
   MonitoredStatusFilter,
@@ -136,7 +137,7 @@ export interface MonitoredReleasePageEntry {
   releaseDate: string | null;
 }
 
-export type MonitoredCounts = Pick<MonitoredSummary, 'authors' | 'books' | 'releases' | 'releaseCards'>;
+export type MonitoredCounts = Pick<MonitoredSummary, 'authors' | 'books' | 'releases' | 'releaseCards' | 'releaseTimings'>;
 
 interface ReleasePageRef extends Record<string, unknown> {
   workId: string;
@@ -657,6 +658,7 @@ export class MonitoredStoreService {
     sort: MonitoredReleaseListSort;
     order: MonitoredListOrder;
     filter: MonitoredReleaseFilter;
+    timing?: MonitoredReleaseTiming;
     status?: MonitoredStatusFilter[];
     earliest: string;
     latest: string;
@@ -667,7 +669,7 @@ export class MonitoredStoreService {
     assertOffsetWithinLimit(params.page, params.size);
     const hasStatusBuckets = params.status?.some((status) => status !== 'hidden');
     const libraryIds = hasStatusBuckets && !params.viewer.isSuperuser ? await this.libraries.findAccessibleLibraryIds(params.viewer) : null;
-    const releaseRows = this.releaseRowsSql({ ...params, libraryIds });
+    const releaseRows = this.timedReleaseRowsSql(this.releaseRowsSql({ ...params, libraryIds }), params.timing, params.today);
     const direction = sql.raw(params.order === 'asc' ? 'asc' : 'desc');
     const orderExpression =
       params.sort === 'title' ? sql.raw('title') : params.sort === 'author' ? sql.raw('"authorName"') : sql.raw('"releaseDate"');
@@ -1851,6 +1853,14 @@ export class MonitoredStoreService {
     await this.db.update(schema.monitoredAuthors).set({ lastSyncAttemptedAt: at }).where(eq(schema.monitoredAuthors.id, monitorId));
   }
 
+  /** Cuts on the date each row lists by, the same one the page sorts on and the client sections by. */
+  private timedReleaseRowsSql(rows: SQL, timing: MonitoredReleaseTiming | undefined, today: string): SQL {
+    if (!timing) return rows;
+    const date = sql.raw('"releaseDate"');
+    const released = sql`${date} is not null and ${releasedBySql(date, today)}`;
+    return sql`select * from (${rows}) as timed_rows where ${timing === 'released' ? released : sql`not (${released})`}`;
+  }
+
   private releaseRowsSql(params: {
     kinds?: MonitoredMarkKind[];
     more?: MonitoredReviewFlag[];
@@ -2037,6 +2047,10 @@ export class MonitoredStoreService {
           value: sql<number>`coalesce(sum((case when ${ebook} then 1 else 0 end) + (case when ${audio} then 1 else 0 end)), 0)::int`,
           byStatus: sql<number>`coalesce(sum((case when ${anyReleased} then 1 else 0 end) + (case when ${anyUpcoming} then 1 else 0 end)), 0)::int`,
           byWork: sql<number>`coalesce(sum(case when ${ebook} or ${audio} then 1 else 0 end), 0)::int`,
+          releasedRows: sql<number>`coalesce(sum((case when ${ebook} and ${ebookReleased} then 1 else 0 end) + (case when ${audio} and ${audioReleased} then 1 else 0 end)), 0)::int`,
+          releasedWorks: sql<number>`coalesce(sum(case when ${anyReleased} then 1 else 0 end), 0)::int`,
+          upcomingRows: sql<number>`coalesce(sum((case when ${ebook} and not ${ebookReleased} then 1 else 0 end) + (case when ${audio} and not ${audioReleased} then 1 else 0 end)), 0)::int`,
+          upcomingWorks: sql<number>`coalesce(sum(case when ${anyUpcoming} then 1 else 0 end), 0)::int`,
         })
         .from(schema.authorCatalogWorks)
         .innerJoin(schema.monitoredAuthors, eq(schema.monitoredAuthors.id, schema.authorCatalogWorks.monitorAuthorId))
@@ -2048,6 +2062,10 @@ export class MonitoredStoreService {
       books: books.value,
       releases: releases.value,
       releaseCards: { byStatus: releases.byStatus, byWork: releases.byWork },
+      releaseTimings: {
+        released: { rows: releases.releasedRows, works: releases.releasedWorks },
+        upcoming: { rows: releases.upcomingRows, works: releases.upcomingWorks },
+      },
     };
   }
 

@@ -558,6 +558,7 @@ export class MonitoredService {
       sort: query.sort ?? 'date',
       order: query.order ?? 'asc',
       filter: query.filter ?? 'all',
+      timing: query.timing,
       status: query.status,
       kinds: query.kinds,
       more: query.more,

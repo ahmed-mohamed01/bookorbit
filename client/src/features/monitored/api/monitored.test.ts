@@ -165,7 +165,15 @@ describe('status filters', () => {
   it('joins a typed selection into the canonical query value for the release list', async () => {
     mockedApi.mockResolvedValue(mockOkResponse({}))
 
-    await fetchMonitoredReleases({ page: 0, size: 24, sort: 'date', order: 'asc', filter: 'all', status: ['upcoming', 'missing'] })
+    await fetchMonitoredReleases({
+      page: 0,
+      size: 24,
+      sort: 'date',
+      order: 'asc',
+      filter: 'all',
+      timing: 'released',
+      status: ['upcoming', 'missing'],
+    })
 
     expect(String(mockedApi.mock.calls[0]?.[0])).toContain('status=missing%2Cupcoming')
   })
@@ -173,14 +181,15 @@ describe('status filters', () => {
   it('leaves the status out when no selection is sent', async () => {
     mockedApi.mockResolvedValue(mockOkResponse({}))
 
-    await fetchMonitoredReleases({ page: 0, size: 24, sort: 'date', order: 'asc', filter: 'all' })
+    await fetchMonitoredReleases({ page: 0, size: 24, sort: 'date', order: 'asc', filter: 'all', timing: 'upcoming' })
 
     expect(String(mockedApi.mock.calls[0]?.[0])).not.toContain('status=')
+    expect(String(mockedApi.mock.calls[0]?.[0])).toContain('timing=upcoming')
   })
 
   it('sends kinds and more only for a non-default class selection', async () => {
     mockedApi.mockResolvedValue(mockOkResponse({}))
-    const base = { page: 0, size: 24, sort: 'date', order: 'asc', filter: 'all' } as const
+    const base = { page: 0, size: 24, sort: 'date', order: 'asc', filter: 'all', timing: 'released' } as const
 
     await fetchMonitoredReleases({ ...base, classes: { kinds: ['book', 'graphic_novel'], more: ['unconfirmed'] } })
     const sent = new URL(String(mockedApi.mock.calls[0]?.[0]), 'http://x').searchParams

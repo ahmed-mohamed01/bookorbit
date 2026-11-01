@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, markRaw, reactive, shallowRef, type Component } from 'vue'
 import { flushPromises, shallowMount } from '@vue/test-utils'
-import { requestMonitoredWork, updateMonitoredWork } from '../api/monitored'
+import { fetchMonitoredReleases, requestMonitoredWork, updateMonitoredWork } from '../api/monitored'
+import { storage } from '@/services/storage'
 import { workFixture } from '../testing/work-fixture'
 import MonitoredView from './MonitoredView.vue'
 
@@ -34,6 +35,7 @@ vi.mock('../api/monitored', () => ({
       books: 0,
       releases: 0,
       releaseCards: { byStatus: 0, byWork: 0 },
+      releaseTimings: { released: { rows: 0, works: 0 }, upcoming: { rows: 0, works: 0 } },
       hardcoverConfigured: true,
       audibleConfigured: false,
     }),
@@ -245,7 +247,7 @@ describe('MonitoredView search and the route', () => {
     await view.findAll('[role="tab"]')[0]!.trigger('click')
     await flushPromises()
     expect(view.findComponent({ name: 'BrowseSearchField' }).props('modelValue')).toBe('')
-    await view.findAll('[role="tab"]')[2]!.trigger('click')
+    await view.findAll('[role="tab"]')[3]!.trigger('click')
     expect(mocks.routerReplace).toHaveBeenLastCalledWith(expect.objectContaining({ query: expect.objectContaining({ q: undefined, tab: 'add' }) }))
     view.unmount()
   })
@@ -297,6 +299,36 @@ describe('MonitoredView search and the route', () => {
     const view = mountView()
     await flushPromises()
     expect(view.findComponent({ name: 'MonitoredAudibleNotice' }).exists()).toBe(false)
+    view.unmount()
+  })
+  it('lists released rows newest first and upcoming rows soonest first', async () => {
+    localStorage.clear()
+    vi.mocked(fetchMonitoredReleases).mockClear()
+    mocks.route.query = { tab: 'releases' }
+    const view = mountView()
+    await flushPromises()
+    expect(fetchMonitoredReleases).toHaveBeenLastCalledWith(expect.objectContaining({ timing: 'released', order: 'desc' }))
+
+    await view.findAll('[role="tab"]')[2]!.trigger('click')
+    await flushPromises()
+    expect(fetchMonitoredReleases).toHaveBeenLastCalledWith(expect.objectContaining({ timing: 'upcoming', order: 'asc' }))
+    expect(mocks.routerReplace).toHaveBeenLastCalledWith(
+      expect.objectContaining({ query: expect.objectContaining({ tab: 'upcoming', order: undefined }) }),
+    )
+    view.unmount()
+  })
+  it('fetches once when a tab switch drops a filter the new tab cannot use', async () => {
+    localStorage.clear()
+    storage.set('monitored:releases:filter', 'recent')
+    mocks.route.query = { tab: 'releases' }
+    const view = mountView()
+    await flushPromises()
+    vi.mocked(fetchMonitoredReleases).mockClear()
+
+    await view.findAll('[role="tab"]')[2]!.trigger('click')
+    await flushPromises()
+    expect(fetchMonitoredReleases).toHaveBeenCalledTimes(1)
+    expect(fetchMonitoredReleases).toHaveBeenCalledWith(expect.objectContaining({ timing: 'upcoming', filter: 'all' }))
     view.unmount()
   })
 })

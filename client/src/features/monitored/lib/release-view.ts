@@ -1,5 +1,5 @@
 import { ref, watch, type Ref } from 'vue'
-import type { MonitoredReleaseCardCounts } from '@bookorbit/types'
+import type { MonitoredReleaseCardCounts, MonitoredReleaseFilter, MonitoredReleaseTiming, MonitoredSummary } from '@bookorbit/types'
 import { storage } from '@/services/storage'
 import { MONITORED_RELEASE_GROUPS, type MonitoredReleaseGroup } from '../composables/useMonitored'
 
@@ -22,6 +22,15 @@ export function releaseCount(rows: number, cards: MonitoredReleaseCardCounts): n
   return releaseGroup.value === 'none' ? cards.byWork : cards.byStatus
 }
 
+/**
+ * A single-timing tab has one status section, so its by-status and by-work card counts are the same
+ * number: the works with a row of that timing.
+ */
+export function releaseTimingCount(timings: MonitoredSummary['releaseTimings'], timing: MonitoredReleaseTiming): number {
+  const { rows, works } = timings[timing]
+  return releaseCount(rows, { byStatus: works, byWork: works })
+}
+
 /** Released means dated on or before today in UTC, the same cut the server counts cards by. */
 export function isReleasedByUtcDate(releaseDate: string | null, todayUtc: string = new Date().toISOString().slice(0, 10)): boolean {
   return releaseDate !== null && releaseDate <= todayUtc
@@ -32,4 +41,11 @@ export type MonitoredReleaseSection = 'released' | 'upcoming' | 'undated'
 export function releaseSectionOf(releaseDate: string | null, todayUtc: string = new Date().toISOString().slice(0, 10)): MonitoredReleaseSection {
   if (releaseDate === null) return 'undated'
   return isReleasedByUtcDate(releaseDate, todayUtc) ? 'released' : 'upcoming'
+}
+
+/** Recent can only match released rows and Soon only upcoming ones; All and This year fit either tab. */
+export function releaseFilterFitsTiming(filter: MonitoredReleaseFilter, timing: MonitoredReleaseTiming): boolean {
+  if (filter === 'recent') return timing === 'released'
+  if (filter === 'soon') return timing === 'upcoming'
+  return true
 }

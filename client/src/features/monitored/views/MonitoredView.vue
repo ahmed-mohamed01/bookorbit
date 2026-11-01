@@ -24,6 +24,7 @@ import type {
   MonitoredMarkKind,
   MonitoredStatusFilter,
   MonitoredReleaseFilter,
+  MonitoredReleaseTiming,
   MonitoredReleaseItem,
   MonitoredReleaseListSort,
   MonitoredReleaseStatus,
@@ -69,7 +70,15 @@ import MonitoredGroupMenu from '../components/MonitoredGroupMenu.vue'
 import MonitoredAudibleNotice from '../components/MonitoredAudibleNotice.vue'
 import MonitoredHardcoverNotice from '../components/MonitoredHardcoverNotice.vue'
 import MonitoredReleaseFilterBar from '../components/MonitoredReleaseFilterBar.vue'
-import { releaseSectionOf, releaseCount, type MonitoredReleaseSection, releaseGroup, releasesView } from '../lib/release-view'
+import {
+  releaseSectionOf,
+  releaseCount,
+  releaseFilterFitsTiming,
+  releaseTimingCount,
+  type MonitoredReleaseSection,
+  releaseGroup,
+  releasesView,
+} from '../lib/release-view'
 import MonitoredReleaseRow from '../components/MonitoredReleaseRow.vue'
 import MonitoredSortMenu from '../components/MonitoredSortMenu.vue'
 import MonitoredVirtualGrid from '../components/MonitoredVirtualGrid.vue'
@@ -118,8 +127,9 @@ const {
   summaryLoading,
   authorHasMore,
   releaseHasMore,
-  counts,
-  summaryReleaseCards,
+  authorCount,
+  releaseTimingCounts,
+  releaseTiming,
   hardcoverConfigured,
   audibleConfigured,
   error: tabError,
@@ -152,7 +162,8 @@ let hydrating = true
 let observer: IntersectionObserver | null = null
 let topObserver: IntersectionObserver | null = null
 const searchTimer = ref<ReturnType<typeof setTimeout> | null>(null)
-let suppressSearchReload = false
+// A tab switch reloads once itself; watchers that react to the switch's side effects stand down.
+let switchingTab = false
 // Deferred server reconciliation runs when this kept-alive view returns.
 let reloadOnActivate = false
 let cancelledSearch = false
@@ -383,6 +394,10 @@ function parseTab(value: unknown): MonitoredTab {
 }
 
 const activeTab = ref<MonitoredTab>(parseTab(route.query.tab))
+const releaseTab = computed(() => activeTab.value === 'releases' || activeTab.value === 'upcoming')
+const activeTiming = computed<MonitoredReleaseTiming>(() => (activeTab.value === 'upcoming' ? 'upcoming' : 'released'))
+// Until the other tab's first page lands, the shared list still holds this one's rows.
+const releaseListStale = computed(() => releaseTab.value && releaseTiming.value !== activeTiming.value)
 const searchMode = computed(() => activeTab.value !== 'add' && filterQuery.value.trim().length > 0)
 const searchReady = computed(() => searchMode.value && isSearchReady(filterQuery.value))
 const error = computed(() => (searchMode.value ? workSearch.error.value : tabError.value))
@@ -398,8 +413,8 @@ function openSearchPanel(item: MonitoredWorkSearchItem) {
   panelOpen.value = true
 }
 
-const DEFAULT_SORT = { authors: 'name', releases: 'date' } as const
-const DEFAULT_ORDER = { authors: 'asc', releases: 'asc' } as const
+const DEFAULT_SORT = { authors: 'name', releases: 'date', upcoming: 'date' } as const
+const DEFAULT_ORDER = { authors: 'asc', releases: 'desc', upcoming: 'asc' } as const
 // Adding an author is the page's main action, so its tab keeps the accent colour even when inactive.
 const TAB_CLASSES = {
   default: { active: 'border-primary text-foreground', inactive: 'border-transparent text-muted-foreground hover:text-foreground' },
@@ -412,8 +427,9 @@ function tabClass(id: MonitoredTab): string {
 }
 
 const tabs = computed(() => [
-  { id: 'authors' as const, label: t('monitored.tabs.authors'), count: counts.value.authors },
-  { id: 'releases' as const, label: t('monitored.tabs.releases'), count: releaseCount(counts.value.releases, summaryReleaseCards.value) },
+  { id: 'authors' as const, label: t('monitored.tabs.authors'), count: authorCount.value },
+  { id: 'releases' as const, label: t('monitored.tabs.releases'), count: releaseTimingCount(releaseTimingCounts.value, 'released') },
+  { id: 'upcoming' as const, label: t('monitored.tabs.upcoming'), count: releaseTimingCount(releaseTimingCounts.value, 'upcoming') },
   ...(canManage.value ? [{ id: 'add' as const, label: t('monitored.tabs.add'), count: null }] : []),
 ])
 // ---- View mode, filter, sort and grouping (persisted; Shelfmark-style, Book Orbit visuals) ----
@@ -430,8 +446,21 @@ function persisted<T extends string>(key: string, fallback: T, allowed: readonly
 }
 
 const releaseFilter = persisted<ReleaseFilter>('monitored:releases:filter', 'all', MONITORED_RELEASE_FILTERS)
+// Recent only finds released rows and Soon only upcoming ones, so each falls back to All on the other tab.
+const effectiveReleaseFilter = computed<ReleaseFilter>(() =>
+  releaseFilterFitsTiming(releaseFilter.value, activeTiming.value) ? releaseFilter.value : 'all',
+)
 const releaseSort = persisted<ReleaseSort>('monitored:releases:sort', 'date', MONITORED_RELEASE_LIST_SORTS)
-const releaseOrder = persisted<'asc' | 'desc'>('monitored:releases:order', 'asc', MONITORED_LIST_ORDERS)
+// Released reads newest first and Upcoming soonest first, so each tab keeps its own direction.
+const releasedOrder = persisted<'asc' | 'desc'>('monitored:released:order', DEFAULT_ORDER.releases, MONITORED_LIST_ORDERS)
+const upcomingOrder = persisted<'asc' | 'desc'>('monitored:upcoming:order', DEFAULT_ORDER.upcoming, MONITORED_LIST_ORDERS)
+const releaseOrder = computed<'asc' | 'desc'>({
+  get: () => (activeTiming.value === 'upcoming' ? upcomingOrder.value : releasedOrder.value),
+  set: (value) => {
+    if (activeTiming.value === 'upcoming') upcomingOrder.value = value
+    else releasedOrder.value = value
+  },
+})
 const RELEASE_STATUS_STORAGE_KEY = 'monitored:releases:status'
 const releaseStatus = ref<MonitoredStatusFilter[]>(readStatusFilters(storage.get<unknown>(RELEASE_STATUS_STORAGE_KEY, null)))
 watch(releaseStatus, (next) => storage.set(RELEASE_STATUS_STORAGE_KEY, next))
@@ -501,8 +530,8 @@ const activeCardSize = computed({
     else workCardSize.value = next
   },
 })
-const showDisplayControls = computed(() => !searchMode.value && (activeTab.value === 'authors' || activeTab.value === 'releases'))
-const showReleaseRows = computed(() => activeTab.value === 'releases' && releasesView.value === 'table')
+const showDisplayControls = computed(() => !searchMode.value && (activeTab.value === 'authors' || releaseTab.value))
+const showReleaseRows = computed(() => releaseTab.value && releasesView.value === 'table')
 const headerRowDensity = computed(() => (showReleaseRows.value ? monitoredReleaseRowDensity.value : undefined))
 const sortedAuthors = computed(() => authors.value)
 
@@ -524,6 +553,10 @@ const authorSortOptions = computed<{ value: AuthorSort; label: string }[]>(() =>
 
 function handleReleaseSortChange(value: ReleaseSort) {
   releaseSort.value = value
+}
+
+function handleReleaseFilterChange(value: ReleaseFilter) {
+  releaseFilter.value = value
 }
 
 function handleReleaseOrderChange(value: 'asc' | 'desc') {
@@ -568,7 +601,7 @@ function handleCardGapUpdate(value: number) {
   cardGap.value = value
 }
 
-const sortedReleases = computed(() => releases.value)
+const sortedReleases = computed(() => (releaseListStale.value ? [] : releases.value))
 
 const releaseGroups = computed<{ key: string; label: string | null; items: MonitoredReleaseItem[] }[]>(() => {
   const items = sortedReleases.value
@@ -576,9 +609,10 @@ const releaseGroups = computed<{ key: string; label: string | null; items: Monit
   const todayUtc = new Date().toISOString().slice(0, 10)
   const bySection: Record<MonitoredReleaseSection, MonitoredReleaseItem[]> = { released: [], upcoming: [], undated: [] }
   for (const item of items) bySection[releaseSectionOf(item.releaseDate, todayUtc)].push(item)
+  // The tab already names its own section; only Undated, which Upcoming also holds, needs a heading.
   return [
-    { key: 'released', label: t('monitored.controlsBar.sectionReleased'), items: bySection.released },
-    { key: 'upcoming', label: t('monitored.controlsBar.sectionUpcoming'), items: bySection.upcoming },
+    { key: 'released', label: null, items: bySection.released },
+    { key: 'upcoming', label: null, items: bySection.upcoming },
     { key: 'undated', label: t('monitored.releases.sections.undated'), items: bySection.undated },
   ].filter((group) => group.items.length > 0)
 })
@@ -591,7 +625,7 @@ const releaseSections = computed(() =>
   }),
 )
 
-const selectionAvailable = computed(() => !searchMode.value && activeTab.value === 'releases' && canManage.value)
+const selectionAvailable = computed(() => !searchMode.value && releaseTab.value && canManage.value)
 
 // Review classes (unconfirmed, hidden, other kinds) are picked to be kept or marked, not downloaded,
 // so a row with nothing left to get is still a valid pick there.
@@ -730,7 +764,7 @@ watch(selectionAvailable, (available) => {
 
 // Audiobook release dates are sourced from Audible alone, so with that provider off the feed is
 // silently ebook-only rather than empty. The notice belongs where that gap is visible.
-const showAudibleNotice = computed(() => !searchMode.value && activeTab.value === 'releases' && !audibleConfigured.value)
+const showAudibleNotice = computed(() => !searchMode.value && releaseTab.value && !audibleConfigured.value)
 
 const activeTotal = computed(() => {
   if (searchMode.value) return searchReady.value ? workSearch.total.value : 0
@@ -756,6 +790,11 @@ const factsLabel = computed(() =>
     : activeTab.value === 'authors'
       ? t('components.browseHeader.facts.authors', { count: activeTotal.value })
       : t('monitored.facts.releases', { count: activeTotal.value }),
+)
+
+const releaseEmptyTitle = computed(() => t(activeTiming.value === 'upcoming' ? 'monitored.empty.upcomingTitle' : 'monitored.empty.releasesTitle'))
+const releaseEmptyHint = computed(() =>
+  t(activeTiming.value === 'upcoming' ? 'monitored.empty.upcomingDescription' : 'monitored.empty.releasesDescription'),
 )
 
 const showSkeleton = computed(() => activeTab.value !== 'add' && !initialLoaded.value && loading.value)
@@ -784,13 +823,13 @@ const allLoadedLabel = computed(() => {
 // Skeleton only before a tab's first page ever lands. Search keystrokes, sorts and filter chips
 // refetch constantly, and swapping content for a skeleton on each one is a flicker, not a state.
 const initialLoaded = computed(() =>
-  searchMode.value ? workSearch.page.value > 0 : activeTab.value === 'add' || loadedTabs.value.has(activeTab.value),
+  searchMode.value ? workSearch.page.value > 0 : activeTab.value === 'add' || (loadedTabs.value.has(activeTab.value) && !releaseListStale.value),
 )
 
 const loading = computed(() => {
   if (searchMode.value) return searchReady.value && (workSearch.loading.value || searchTimer.value !== null)
   if (activeTab.value === 'authors') return authorLoading.value
-  if (activeTab.value === 'releases') return releaseLoading.value
+  if (releaseTab.value) return releaseLoading.value
   return summaryLoading.value
 })
 
@@ -825,20 +864,20 @@ watch([loading, summaryLoading], ([isLoading, isSummaryLoading]) => {
 const hasMore = computed(() => {
   if (searchMode.value) return searchReady.value && !searchTimer.value && workSearch.hasMore.value
   if (activeTab.value === 'authors') return authorHasMore.value
-  if (activeTab.value === 'releases') return releaseHasMore.value
+  if (releaseTab.value) return releaseHasMore.value
   return false
 })
 const activeItemsLength = computed(() => {
   if (searchMode.value) return workSearch.items.value.length
   if (activeTab.value === 'authors') return authors.value.length
-  if (activeTab.value === 'releases') return releases.value.length
+  if (releaseTab.value) return sortedReleases.value.length
   return 0
 })
 /** > 0 once the retention cap has dropped the earliest pages of the active list from memory. */
 const activeDroppedOffset = computed(() => {
   if (searchMode.value) return workSearch.droppedOffset.value
   if (activeTab.value === 'authors') return authorDroppedOffset.value
-  if (activeTab.value === 'releases') return releaseDroppedOffset.value
+  if (releaseTab.value) return releaseDroppedOffset.value
   return 0
 })
 
@@ -853,12 +892,13 @@ async function reloadActive(reset = false): Promise<void> {
   }
   if (tab === 'authors') {
     await loadAuthors({ sort: authorSort.value, order: authorOrder.value }, reset)
-  } else if (tab === 'releases') {
+  } else if (tab === 'releases' || tab === 'upcoming') {
     await loadReleases(
       {
         sort: releaseSort.value,
         order: releaseOrder.value,
-        filter: releaseFilter.value,
+        filter: effectiveReleaseFilter.value,
+        timing: activeTiming.value,
         status: releaseStatus.value,
         classes: effectiveReleaseClasses.value,
       },
@@ -872,13 +912,13 @@ async function reloadActive(reset = false): Promise<void> {
 
 function activeSort(): string | null {
   if (activeTab.value === 'authors') return authorSort.value
-  if (activeTab.value === 'releases') return releaseSort.value
+  if (releaseTab.value) return releaseSort.value
   return null
 }
 
 function activeOrder(): 'asc' | 'desc' | null {
   if (activeTab.value === 'authors') return authorOrder.value
-  if (activeTab.value === 'releases') return releaseOrder.value
+  if (releaseTab.value) return releaseOrder.value
   return null
 }
 
@@ -900,8 +940,8 @@ function syncRouteQuery() {
       q: tab === 'add' ? undefined : filterQuery.value.trim() || undefined,
       sort: tab !== 'add' && sort !== DEFAULT_SORT[tab] ? sort : undefined,
       order: tab !== 'add' && order !== DEFAULT_ORDER[tab] ? order : undefined,
-      group: tab === 'releases' && releaseGroup.value !== 'status' ? releaseGroup.value : undefined,
-      filter: tab === 'releases' && releaseFilter.value !== 'all' ? releaseFilter.value : undefined,
+      group: releaseTab.value && releaseGroup.value !== 'status' ? releaseGroup.value : undefined,
+      filter: releaseTab.value && effectiveReleaseFilter.value !== 'all' ? effectiveReleaseFilter.value : undefined,
     },
   })
 }
@@ -913,12 +953,12 @@ function hydrateFromRoute() {
   const order = typeof query.order === 'string' ? query.order : null
   if (order === 'asc' || order === 'desc') {
     if (activeTab.value === 'authors') authorOrder.value = order
-    else if (activeTab.value === 'releases') releaseOrder.value = order
+    else if (releaseTab.value) releaseOrder.value = order
   }
   if (sort) {
     if (activeTab.value === 'authors' && (MONITORED_AUTHOR_LIST_SORTS as readonly string[]).includes(sort)) {
       authorSort.value = sort as AuthorSort
-    } else if (activeTab.value === 'releases' && (MONITORED_RELEASE_LIST_SORTS as readonly string[]).includes(sort)) {
+    } else if (releaseTab.value && (MONITORED_RELEASE_LIST_SORTS as readonly string[]).includes(sort)) {
       releaseSort.value = sort as ReleaseSort
     }
   }
@@ -930,13 +970,13 @@ function hydrateFromRoute() {
 
 function selectTab(tab: MonitoredTab) {
   if (tab === 'add' && !canManage.value) return
-  suppressSearchReload = true
+  switchingTab = true
   activeTab.value = tab
   filterQuery.value = ''
   mainRef.value?.scrollTo({ top: 0 })
   syncRouteQuery()
   void nextTick(async () => {
-    suppressSearchReload = false
+    switchingTab = false
     await reloadActive(true)
     loadIfSentinelVisible()
   })
@@ -1122,13 +1162,13 @@ watch([authorSort, authorOrder], () => {
   syncRouteQuery()
   void reloadActive(true)
 })
-watch([releaseSort, releaseOrder, releaseFilter, releaseStatus, effectiveReleaseClasses], () => {
-  if (hydrating || searchMode.value || activeTab.value !== 'releases') return
+watch([releaseSort, releasedOrder, upcomingOrder, effectiveReleaseFilter, releaseStatus, effectiveReleaseClasses], () => {
+  if (hydrating || switchingTab || searchMode.value || !releaseTab.value) return
   syncRouteQuery()
   void reloadActive(true)
 })
 watch(releaseGroup, () => {
-  if (hydrating || searchMode.value || activeTab.value !== 'releases') return
+  if (hydrating || searchMode.value || !releaseTab.value) return
   syncRouteQuery()
 })
 watch(
@@ -1143,7 +1183,7 @@ watch(filterQuery, () => {
   workSearch.invalidate(filterQuery.value)
   if (searchTimer.value) clearTimeout(searchTimer.value)
   searchTimer.value = null
-  if (hydrating || suppressSearchReload) return
+  if (hydrating || switchingTab) return
   searchTimer.value = setTimeout(() => {
     searchTimer.value = null
     syncRouteQuery()
@@ -1286,8 +1326,8 @@ defineOptions({ name: 'MonitoredView' })
           </div>
 
           <!-- The header row has no room for the filter on narrow screens, so it stays beside the tabs there. -->
-          <div v-if="!searchMode && activeTab === 'releases'" class="min-w-0 md:hidden">
-            <MonitoredReleaseFilterBar v-model="releaseFilter" />
+          <div v-if="!searchMode && releaseTab" class="min-w-0 md:hidden">
+            <MonitoredReleaseFilterBar :model-value="effectiveReleaseFilter" :timing="activeTiming" @update:model-value="handleReleaseFilterChange" />
           </div>
         </div>
       </template>
@@ -1301,7 +1341,7 @@ defineOptions({ name: 'MonitoredView' })
           @update:model-value="handleSearchUpdate"
           @clear="handleSearchClear"
         />
-        <template v-if="!searchMode && activeTab === 'releases'">
+        <template v-if="!searchMode && releaseTab">
           <span :class="barDivider" aria-hidden="true" />
           <MonitoredSortMenu
             :options="releaseSortOptions"
@@ -1333,7 +1373,7 @@ defineOptions({ name: 'MonitoredView' })
             @update:model-value="handleReleaseGroupChange"
           />
           <div class="hidden min-w-0 md:block">
-            <MonitoredReleaseFilterBar v-model="releaseFilter" />
+            <MonitoredReleaseFilterBar :model-value="effectiveReleaseFilter" :timing="activeTiming" @update:model-value="handleReleaseFilterChange" />
           </div>
         </template>
         <template v-else-if="!searchMode && activeTab === 'authors'">
@@ -1352,7 +1392,7 @@ defineOptions({ name: 'MonitoredView' })
           <span class="flex-1" aria-hidden="true" />
           <BrowseViewControls
             :view-mode="headerViewMode"
-            :allowed-view-modes="activeTab === 'releases' ? ['grid', 'list'] : ['grid']"
+            :allowed-view-modes="releaseTab ? ['grid', 'list'] : ['grid']"
             :show-selection="selectionAvailable"
             :selection-mode="selectionMode"
             @update:view-mode="handleHeaderViewMode"
@@ -1448,7 +1488,7 @@ defineOptions({ name: 'MonitoredView' })
           </EmptyState>
         </section>
 
-        <section v-else-if="activeTab === 'releases'" class="mt-4 space-y-6 px-1" :class="selectionMode ? 'pb-28' : ''">
+        <section v-else-if="releaseTab" class="mt-4 space-y-6 px-1" :class="selectionMode ? 'pb-28' : ''">
           <MonitoredQuickSelect
             v-if="selectionMode"
             :works="selectableWorks"
@@ -1533,7 +1573,7 @@ defineOptions({ name: 'MonitoredView' })
               </template>
             </MonitoredVirtualGrid>
           </section>
-          <EmptyState v-if="showEmpty" icon="Bell" :title="t('monitored.empty.releasesTitle')" :hint="t('monitored.empty.releasesDescription')" />
+          <EmptyState v-if="showEmpty" icon="Bell" :title="releaseEmptyTitle" :hint="releaseEmptyHint" />
         </section>
 
         <div v-else class="mt-4 px-1">

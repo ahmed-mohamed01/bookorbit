@@ -41,9 +41,18 @@ describe('useMonitored', () => {
     api.fetchMonitoredReleases.mockResolvedValue({ items: [], total: 0, page: 0, size: 50 })
     const monitored = useMonitored()
 
-    await monitored.loadReleases({ q: 'orbit', sort: 'author', order: 'desc', filter: 'soon' }, true)
+    await monitored.loadReleases({ q: 'orbit', sort: 'author', order: 'desc', filter: 'soon', timing: 'upcoming' }, true)
 
-    expect(api.fetchMonitoredReleases).toHaveBeenCalledWith({ q: 'orbit', sort: 'author', order: 'desc', filter: 'soon', page: 0, size: 50 })
+    expect(api.fetchMonitoredReleases).toHaveBeenCalledWith({
+      q: 'orbit',
+      sort: 'author',
+      order: 'desc',
+      filter: 'soon',
+      timing: 'upcoming',
+      page: 0,
+      size: 50,
+    })
+    expect(monitored.releaseTiming.value).toBe('upcoming')
   })
 
   it('caps retained authors at 1500 and drops whole front pages once an append would exceed it', async () => {

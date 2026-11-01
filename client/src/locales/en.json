@@ -15848,9 +15848,7 @@
       "groupStatus": "Status",
       "sortName": "Name",
       "sortBooks": "Books",
-      "sortProgress": "Progress",
-      "sectionReleased": "Recently released",
-      "sectionUpcoming": "Upcoming"
+      "sortProgress": "Progress"
     },
     "panel": {
       "ratings": {
@@ -16020,6 +16018,7 @@
       "label": "Watchlist sections",
       "authors": "Authors",
       "releases": "Releases",
+      "upcoming": "Upcoming",
       "add": "Add author"
     },
     "formats": {
@@ -16126,7 +16125,9 @@
       "authorsTitle": "No authors on your watchlist",
       "authorsDescription": "Add an author to watch their catalog and hear about new releases.",
       "releasesTitle": "No releases yet",
-      "releasesDescription": "Upcoming and recently available releases will appear here."
+      "releasesDescription": "Books released in the last 90 days will appear here.",
+      "upcomingTitle": "Nothing upcoming yet",
+      "upcomingDescription": "Books announced for the coming year will appear here."
     },
     "toast": {
       "monitoring": "Added {name} to your watchlist.",
