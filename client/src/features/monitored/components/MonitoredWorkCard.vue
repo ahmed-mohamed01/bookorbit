@@ -247,7 +247,7 @@ function handleStop() {
         :aria-label="coverLabel"
         :aria-pressed="inSelectMode ? Boolean(selected) : undefined"
         :disabled="inSelectMode && !isSelectable"
-        class="absolute inset-0 z-0"
+        class="absolute inset-0 z-[2]"
         :class="[
           inSelectMode && !isSelectable ? 'cursor-not-allowed' : 'cursor-pointer',
           longPressSelect ? '[-webkit-touch-callout:none] select-none' : '',
