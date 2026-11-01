@@ -85,7 +85,7 @@ async function handleSave() {
           @click="selectMode(mode.id)"
         >
           <div class="text-sm font-medium">{{ t(`editionSync.user.scope.${mode.key}.label`) }}</div>
-          <div class="mt-0.5 text-xs leading-relaxed">{{ t(`editionSync.user.scope.${mode.key}.description`) }}</div>
+          <div class="mt-0.5 text-xs">{{ t(`editionSync.user.scope.${mode.key}.description`) }}</div>
         </button>
       </div>
     </div>

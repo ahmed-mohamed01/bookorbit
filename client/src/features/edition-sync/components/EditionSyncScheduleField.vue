@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { CalendarClock, Hourglass } from '@lucide/vue'
 import { EDITION_SYNC_DEFAULT_CRON, EDITION_SYNC_RUN_HOURS_MAX, EDITION_SYNC_RUN_HOURS_MIN, isFiveFieldCronExpression } from '@bookorbit/types'
 import { parseCronToHuman } from '@/features/library/utils/cron'
 
@@ -56,7 +55,7 @@ const humanSchedule = computed(() => {
   const cron = props.cronExpression
   if (!cron) return t(`${KEY}human.never`)
   const description = parseCronToHuman(cron, locale.value)
-  return !description || description === cron ? t(`${KEY}human.invalid`) : description
+  return !description || description === cron ? t(`${KEY}human.invalid`) : t(`${KEY}description`, { when: description })
 })
 
 function selectPreset(event: Event) {
@@ -78,67 +77,60 @@ function handleHoursInput(event: Event) {
 </script>
 
 <template>
-  <section class="divide-y divide-border rounded-xl border border-border bg-card">
-    <div class="flex items-start gap-3.5 px-4 py-3.5">
-      <CalendarClock :size="17" class="mt-0.5 shrink-0 text-foreground" aria-hidden="true" />
-      <div class="min-w-0 flex-1">
-        <label for="edition-sync-preset" class="text-sm font-semibold text-foreground">{{ t(`${KEY}title`) }}</label>
-        <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-          <select
-            id="edition-sync-preset"
-            :value="selectedPreset"
-            class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:w-48"
-            aria-describedby="edition-sync-summary"
-            @change="selectPreset"
-          >
-            <option v-for="preset in presets" :key="preset.value" :value="preset.value">{{ preset.label }}</option>
-          </select>
-          <p id="edition-sync-summary" class="text-xs text-muted-foreground" aria-live="polite">{{ humanSchedule }}</p>
-        </div>
-
-        <div v-if="isCustom" class="mt-3">
-          <label for="edition-sync-cron" class="mb-1.5 block text-xs font-medium text-muted-foreground">{{ t(`${KEY}cronExpression`) }}</label>
-          <input
-            id="edition-sync-cron"
-            type="text"
-            dir="ltr"
-            :value="cronExpression ?? ''"
-            placeholder="0 2 * * *"
-            class="h-9 w-full rounded-md border bg-background px-3 font-mono text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 sm:w-60"
-            :class="isCronValid ? 'border-input focus:ring-ring' : 'border-destructive focus:ring-destructive'"
-            :aria-invalid="!isCronValid"
-            aria-describedby="edition-sync-cron-help"
-            @input="handleCronInput"
-          />
-          <p v-if="!isCronValid" id="edition-sync-cron-help" class="mt-1 text-xs text-destructive">{{ t(`${KEY}cronInvalid`) }}</p>
-          <p v-else id="edition-sync-cron-help" class="mt-1 text-xs text-muted-foreground">{{ t(`${KEY}cronFormat`) }}</p>
-        </div>
-        <p class="mt-2 text-xs text-muted-foreground">{{ t(`${KEY}timezoneHint`) }}</p>
+  <div class="px-4 py-3.5">
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      <div class="min-w-0">
+        <label for="edition-sync-preset" class="text-sm">{{ t(`${KEY}title`) }}</label>
+        <p id="edition-sync-summary" class="mt-0.5 text-xs text-muted-foreground" aria-live="polite">{{ humanSchedule }}</p>
+      </div>
+      <div class="flex shrink-0 flex-wrap items-center gap-2">
+        <select
+          id="edition-sync-preset"
+          :value="selectedPreset"
+          class="min-w-0 rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+          aria-describedby="edition-sync-summary"
+          @change="selectPreset"
+        >
+          <option v-for="preset in presets" :key="preset.value" :value="preset.value">{{ preset.label }}</option>
+        </select>
+        <span class="text-sm text-muted-foreground">{{ t(`${KEY}runHours.prefix`) }}</span>
+        <input
+          id="edition-sync-hours"
+          type="number"
+          inputmode="numeric"
+          :min="EDITION_SYNC_RUN_HOURS_MIN"
+          :max="EDITION_SYNC_RUN_HOURS_MAX"
+          :value="Number.isFinite(runHours) ? runHours : ''"
+          :aria-label="t(`${KEY}runHours.title`)"
+          :aria-invalid="!isHoursValid"
+          class="w-16 rounded-md border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2"
+          :class="isHoursValid ? 'border-border focus:ring-primary/50' : 'border-destructive focus:ring-destructive'"
+          @input="handleHoursInput"
+        />
+        <span class="text-sm text-muted-foreground">{{ t(`${KEY}runHours.unit`, { count: hoursUnitCount }) }}</span>
       </div>
     </div>
 
-    <div class="flex items-start gap-3.5 px-4 py-3.5">
-      <Hourglass :size="17" class="mt-0.5 shrink-0 text-foreground" aria-hidden="true" />
-      <div class="min-w-0 flex-1">
-        <label for="edition-sync-hours" class="text-sm font-semibold text-foreground">{{ t(`${KEY}runHours.title`) }}</label>
-        <div class="mt-2 flex items-center gap-2">
-          <input
-            id="edition-sync-hours"
-            type="number"
-            inputmode="numeric"
-            :min="EDITION_SYNC_RUN_HOURS_MIN"
-            :max="EDITION_SYNC_RUN_HOURS_MAX"
-            :value="Number.isFinite(runHours) ? runHours : ''"
-            class="h-9 w-24 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-            @input="handleHoursInput"
-          />
-          <span class="text-xs text-muted-foreground">{{ t(`${KEY}runHours.unit`, { count: hoursUnitCount }) }}</span>
-        </div>
-        <p v-if="!isHoursValid" class="mt-2 text-xs text-destructive" role="alert">
-          {{ t(`${KEY}runHours.invalid`, { min: EDITION_SYNC_RUN_HOURS_MIN, max: EDITION_SYNC_RUN_HOURS_MAX }) }}
-        </p>
-        <p v-else class="mt-2 text-xs text-muted-foreground">{{ t(`${KEY}runHours.hint`) }}</p>
-      </div>
+    <p v-if="!isHoursValid" class="mt-2 text-xs text-destructive sm:text-right" role="alert">
+      {{ t(`${KEY}runHours.invalid`, { min: EDITION_SYNC_RUN_HOURS_MIN, max: EDITION_SYNC_RUN_HOURS_MAX }) }}
+    </p>
+
+    <div v-if="isCustom" class="mt-3 flex flex-col gap-1.5 sm:items-end">
+      <input
+        id="edition-sync-cron"
+        type="text"
+        dir="ltr"
+        :value="cronExpression ?? ''"
+        placeholder="0 2 * * *"
+        :aria-label="t(`${KEY}cronExpression`)"
+        class="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 sm:w-60"
+        :class="isCronValid ? 'border-border focus:ring-primary/50' : 'border-destructive focus:ring-destructive'"
+        :aria-invalid="!isCronValid"
+        aria-describedby="edition-sync-cron-help"
+        @input="handleCronInput"
+      />
+      <p v-if="!isCronValid" id="edition-sync-cron-help" class="text-xs text-destructive">{{ t(`${KEY}cronInvalid`) }}</p>
+      <p v-else id="edition-sync-cron-help" class="text-xs text-muted-foreground">{{ t(`${KEY}cronFormat`) }}</p>
     </div>
-  </section>
+  </div>
 </template>

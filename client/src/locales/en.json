@@ -11415,11 +11415,11 @@
         "title": "Books to sync",
         "allEligible": {
           "label": "All eligible books",
-          "description": "Every book with an ebook and an audiobook, except those you exclude."
+          "description": "Every book with an ebook and audiobook"
         },
         "selectedOnly": {
           "label": "Selected books only",
-          "description": "Only books where you switch sync on from the book page."
+          "description": "Only books you switch on"
         }
       },
       "toast": {
@@ -11457,21 +11457,21 @@
         "cronExpression": "Cron expression",
         "cronFormat": "Five fields: minute, hour, day of month, month, day of week.",
         "cronInvalid": "Enter a valid five-field cron expression.",
-        "timezoneHint": "Times use the server time zone.",
+        "description": "{when}, server time. No new book starts after the window.",
         "runHours": {
           "title": "Run for",
+          "prefix": "for",
           "unit": "{count, plural, one {hour} other {hours}}",
-          "invalid": "Enter a whole number of hours from {min} to {max}.",
-          "hint": "After this window closes no new book starts. The book being processed finishes."
+          "invalid": "Enter a whole number of hours from {min} to {max}."
         }
       },
       "filesChanged": {
         "title": "When a book's files change",
         "options": {
-          "next_run": "Re-index in the next scheduled run",
+          "next_run": "Re-index in the next run",
           "immediate": "Re-index right away"
         },
-        "help": "Covers a replaced or new audiobook or EPUB. Right away waits until the files stop changing for 10 minutes, then indexes the book outside the schedule."
+        "help": "New or replaced files. Right away waits 10 minutes after the last change."
       },
       "run": {
         "title": "Indexing",

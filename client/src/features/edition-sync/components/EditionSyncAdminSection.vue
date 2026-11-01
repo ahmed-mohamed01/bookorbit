@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
-import { Cpu, Eraser, FileClock, Loader2, Play, Save, Square } from '@lucide/vue'
+import { Cpu, Eraser, Loader2, Play, Save, Square } from '@lucide/vue'
 import type { EditionSyncFilesChangedMode } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
@@ -133,42 +133,32 @@ async function confirmClear() {
         </div>
       </section>
 
-      <EditionSyncScheduleField
-        v-if="settings"
-        v-model:cron-expression="cronExpression"
-        v-model:run-hours="runHours"
-        @update:valid="handleScheduleValid"
-      />
-      <section v-if="settings" class="rounded-xl border border-border bg-card">
-        <div class="flex items-start gap-3.5 px-4 py-3.5">
-          <FileClock :size="17" class="mt-0.5 shrink-0 text-foreground" aria-hidden="true" />
-          <div class="min-w-0 flex-1">
-            <label for="edition-sync-files-changed" class="text-sm font-semibold text-foreground">{{
-              t('editionSync.admin.filesChanged.title')
-            }}</label>
-            <div class="mt-2">
-              <select
-                id="edition-sync-files-changed"
-                :value="onFilesChanged"
-                class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:w-72"
-                aria-describedby="edition-sync-files-changed-help"
-                @change="handleFilesChangedChange"
-              >
-                <option v-for="mode in filesChangedModes" :key="mode" :value="mode">{{ t(`editionSync.admin.filesChanged.options.${mode}`) }}</option>
-              </select>
-            </div>
-            <p id="edition-sync-files-changed-help" class="mt-2 text-xs text-muted-foreground">{{ t('editionSync.admin.filesChanged.help') }}</p>
+      <section v-if="settings" class="divide-y divide-border rounded-xl border border-border bg-card">
+        <EditionSyncScheduleField v-model:cron-expression="cronExpression" v-model:run-hours="runHours" @update:valid="handleScheduleValid" />
+        <div class="flex flex-col gap-2 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div class="min-w-0">
+            <label for="edition-sync-files-changed" class="text-sm">{{ t('editionSync.admin.filesChanged.title') }}</label>
+            <p id="edition-sync-files-changed-help" class="mt-0.5 text-xs text-muted-foreground">{{ t('editionSync.admin.filesChanged.help') }}</p>
           </div>
+          <select
+            id="edition-sync-files-changed"
+            :value="onFilesChanged"
+            class="shrink-0 rounded-md border border-border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+            aria-describedby="edition-sync-files-changed-help"
+            @change="handleFilesChangedChange"
+          >
+            <option v-for="mode in filesChangedModes" :key="mode" :value="mode">{{ t(`editionSync.admin.filesChanged.options.${mode}`) }}</option>
+          </select>
+        </div>
+        <div class="flex items-center justify-between gap-3 px-4 py-3">
+          <p class="min-w-0 truncate text-xs text-muted-foreground">{{ nextRun ? t('editionSync.admin.nextRun', { when: nextRun }) : '' }}</p>
+          <Button size="sm" type="button" :disabled="saving || !dirty || !scheduleValid" @click="handleSaveSchedule">
+            <Loader2 v-if="saving" class="size-3.5 animate-spin" />
+            <Save v-else class="size-3.5" />
+            {{ t('common.save') }}
+          </Button>
         </div>
       </section>
-      <div v-if="settings" class="flex items-center justify-between gap-3">
-        <p class="min-w-0 truncate text-xs text-muted-foreground">{{ nextRun ? t('editionSync.admin.nextRun', { when: nextRun }) : '' }}</p>
-        <Button size="sm" type="button" :disabled="saving || !dirty || !scheduleValid" @click="handleSaveSchedule">
-          <Loader2 v-if="saving" class="size-3.5 animate-spin" />
-          <Save v-else class="size-3.5" />
-          {{ t('common.save') }}
-        </Button>
-      </div>
 
       <section v-if="status" class="space-y-3 rounded-xl border border-border bg-card px-4 py-3.5">
         <div class="flex flex-wrap items-center justify-between gap-2">

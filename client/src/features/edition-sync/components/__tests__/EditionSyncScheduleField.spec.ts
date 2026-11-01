@@ -22,6 +22,11 @@ describe('EditionSyncScheduleField', () => {
     expect(lastValid(wrapper)).toBe(false)
   })
 
+  it('folds the server time zone into the one-line schedule summary', () => {
+    expect(mountField('0 2 * * *').get('#edition-sync-summary').text()).toContain('server time')
+    expect(mountField(null).get('#edition-sync-summary').text()).toBe('Only runs when started manually')
+  })
+
   it('is valid for a preset and for a five-field custom expression', async () => {
     expect(lastValid(mountField('0 2 * * *'))).toBe(true)
     expect(lastValid(mountField(null))).toBe(true)
