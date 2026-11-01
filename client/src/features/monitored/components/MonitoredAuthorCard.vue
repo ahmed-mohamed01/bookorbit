@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
-import { BookCopy, BookOpen, Check, Headphones, Loader2, MoreHorizontal, Pause, Pencil, Play, RefreshCw, Trash2, TriangleAlert } from '@lucide/vue'
+import { BookCopy, Check, Loader2, MoreHorizontal, Pause, Pencil, Play, RefreshCw, Trash2, TriangleAlert } from '@lucide/vue'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { relativeTimestamp } from '@/lib/relative-time'
 import { fetchStatusCopy } from '../lib/fetch-status-copy'
@@ -137,28 +137,12 @@ function stopCardClick(event: MouseEvent) {
 
       <span
         v-if="showCounts"
+        data-testid="book-count"
         class="pointer-events-none absolute left-1.5 top-1.5 z-20 inline-flex items-center gap-1 rounded border border-white/20 bg-black/55 px-1.5 py-0.5 text-[10px] font-semibold text-white"
       >
         <BookCopy :size="11" />
         {{ author.counts.total }}
       </span>
-
-      <div v-if="showCounts" data-testid="count-pills" class="pointer-events-none absolute bottom-11 right-1.5 z-20 flex flex-col items-end gap-1">
-        <span
-          class="inline-flex items-center gap-1 rounded bg-background/85 px-2 py-0.5 text-[10px] font-bold tabular-nums text-[var(--pill-media-ebook)] shadow-sm ring-1 ring-border backdrop-blur-[2px]"
-        >
-          <BookOpen :size="10" aria-hidden="true" />
-          <span class="sr-only">{{ t('monitored.formats.ebooks') }}</span>
-          {{ author.counts.ebookOwned }}/{{ author.counts.total }}
-        </span>
-        <span
-          class="inline-flex items-center gap-1 rounded bg-background/85 px-2 py-0.5 text-[10px] font-bold tabular-nums text-[var(--pill-media-audiobook)] shadow-sm ring-1 ring-border backdrop-blur-[2px]"
-        >
-          <Headphones :size="10" aria-hidden="true" />
-          <span class="sr-only">{{ t('monitored.formats.audiobooks') }}</span>
-          {{ author.counts.audioOwned }}/{{ author.counts.total }}
-        </span>
-      </div>
 
       <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-linear-to-t from-black/80 via-black/35 to-transparent p-2 pt-8">
         <div class="flex items-end justify-between gap-2">
