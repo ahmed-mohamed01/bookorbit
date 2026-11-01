@@ -49,8 +49,9 @@ export class EditionSyncQueueService {
     return { bookId: next.bookId, workerJobId, pinned: next.pinned };
   }
 
-  /** True when the book has a ready index that still matches its files; marks it stale otherwise. */
-  async ensureValid(bookId: number): Promise<boolean> {
+  /** Checks a ready index, deferring covered changes within the tick budget and retrying concurrent writes. */
+  async ensureValid(bookId: number, budget = { deadline: 0 }): Promise<boolean> {
+    const started = Date.now();
     const row = await this.repo.findIndexRow(bookId);
     if (row?.status !== 'ready') return false;
     const verification = await checkEditionSyncSources(this.repo, bookId, row);
@@ -58,9 +59,28 @@ export class EditionSyncQueueService {
       if (row.invalidatedAt) await this.repo.clearRecheck(bookId);
       return true;
     }
-    await this.repo.markStale(bookId, verification.reason);
+    if (row.provenance && verification.canCheckContent) {
+      if (Date.now() >= budget.deadline) {
+        await this.repo.flagRecheck(bookId);
+        this.overlaySource.invalidateBook(bookId);
+        return false;
+      }
+      const outcome = await this.indexStore.checkContent(bookId, row.provenance);
+      if (outcome === 'retry') {
+        await this.repo.flagRecheck(bookId, true);
+        this.overlaySource.invalidateBook(bookId);
+        return false;
+      }
+      if (outcome === 'metadata_only') {
+        this.overlaySource.invalidateBook(bookId);
+        return true;
+      }
+    }
+    const stale = await this.repo.markStale(bookId, verification.reason, row.provenance ?? undefined);
     this.overlaySource.invalidateBook(bookId);
-    this.logger.log(`[edition_sync.invalidate] [end] bookId=${bookId} reason=${verification.reason} - timing index no longer matches the book files`);
+    this.logger.log(
+      `[edition_sync.invalidate] [end] bookId=${bookId} durationMs=${Date.now() - started} reason=${verification.reason} stale=${stale} - timing index invalidation completed`,
+    );
     return false;
   }
 

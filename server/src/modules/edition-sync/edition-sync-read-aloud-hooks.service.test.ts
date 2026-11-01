@@ -80,6 +80,24 @@ describe('EditionSyncReadAloudHooksService', () => {
     }).compile();
     service = module.get(EditionSyncReadAloudHooksService);
   });
+  it('uses full alignment when a fingerprinted index meets a worker without metadata replay', async () => {
+    repo.findIndexRow.mockResolvedValue({
+      status: 'ready',
+      provenance: { ...provenance, epub: { ...provenance.epub, chapterFingerprint: 'b'.repeat(64) } },
+    });
+    expect(await service.prepareRequest(job, request)).toBe(request);
+    expect(store.copyIndex).not.toHaveBeenCalled();
+  });
+
+  it('passes the source chapter fingerprint only to a worker advertising metadata replay', async () => {
+    repo.findIndexRow.mockResolvedValue({
+      status: 'ready',
+      provenance: { ...provenance, epub: { ...provenance.epub, chapterFingerprint: 'b'.repeat(64) } },
+    });
+    worker.healthState.mockResolvedValue({ state: 'ok', health: { version: 'test', rebuildMetadata: true } });
+    expect(await service.prepareRequest(job, request)).toMatchObject({ rebuild: { chapterFingerprint: 'b'.repeat(64) } });
+  });
+
   it('copies a matching index and extends only the worker request', async () => {
     expect(await service.prepareRequest(job, request)).toEqual({
       ...request,

@@ -1,4 +1,4 @@
-import { compareProvenance } from './edition-sync-provenance';
+import { canCheckChangedContent, compareProvenance } from './edition-sync-provenance';
 import type { EditionSyncRepository } from './edition-sync.repository';
 import type { EditionSyncBookIndexRow } from './schema/edition-sync.schema';
 import type { EditionSyncVerification } from './edition-sync.types';
@@ -16,12 +16,12 @@ export async function checkEditionSyncSources(
   ]);
   if (source && source.epub.id !== stored.epub.bookFileId) return { valid: false, reason: 'epub_changed' };
   const compared = compareProvenance(stored, files);
-  if (!compared.valid) return compared;
+  if (!compared.valid && compared.reason === 'file_missing') return compared;
   if (
     !source ||
     source.audio.length !== stored.audio.length ||
     source.audio.some((file) => !stored.audio.some((entry) => entry.bookFileId === file.id))
   )
     return { valid: false, reason: 'audio_changed' };
-  return { valid: true };
+  return compared.valid ? compared : { ...compared, canCheckContent: canCheckChangedContent(stored, files) };
 }

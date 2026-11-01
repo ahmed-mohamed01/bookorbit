@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { stat } from 'node:fs/promises';
-import type { ReadAloudRebuildRequest, ReadAloudWorkerRebuildRequest, ReadAloudWorkerRequest } from '@bookorbit/types';
+import type { ReadAloudRebuildRequest, ReadAloudWorkerForkHealth, ReadAloudWorkerRebuildRequest, ReadAloudWorkerRequest } from '@bookorbit/types';
 
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import type { ReadAloudJobRow } from '../../db/schema';
@@ -49,11 +49,16 @@ export class EditionSyncReadAloudHooksService implements ReadAloudHooks {
       }
       const row = await this.repo.findIndexRow(job.bookId);
       if (row?.status !== 'ready' || !row.provenance || Object.keys(job.decisions.chapters).length || job.decisions.audio.length) return request;
+      if (row.provenance.epub.chapterFingerprint) {
+        const health = await this.worker.healthState();
+        if (health.state !== 'ok' || !(health.health as ReadAloudWorkerForkHealth).rebuildMetadata) return request;
+      }
       if (!(await this.store.verifyProvenance(job.bookId)).valid) return request;
       const files = await this.repo.findBookFilesByIds([row.provenance.epub.bookFileId, ...row.provenance.audio.map((file) => file.bookFileId)]);
       if (!matchesRebuildRequest(row.provenance, request, files)) return request;
       this.logger.log(`[edition_sync.rebuild] [start] bookId=${job.bookId} workerJobId=${job.id} - preparing rebuild`);
       const rebuild: ReadAloudRebuildRequest = {
+        chapterFingerprint: row.provenance.epub.chapterFingerprint,
         indexEntry: EDITION_SYNC_REBUILD_INDEX_ENTRY,
         reportEntry: EDITION_SYNC_REPORT_ENTRY,
         chunks: row.provenance.chunks,

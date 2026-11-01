@@ -1,3 +1,6 @@
+import { EditionSyncQueueService } from './edition-sync-queue.service';
+import { checkEditionSyncSources } from './edition-sync-source-check';
+vi.mock('./edition-sync-source-check', () => ({ checkEditionSyncSources: vi.fn() }));
 import { ConflictException, Logger } from '@nestjs/common';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -372,4 +375,37 @@ it('logs pin duration and isolates pin failures from recheck failures', async ()
   expect(error.mock.calls.some(([message]) => String(message).includes('[edition_sync.recheck]'))).toBe(false);
   log.mockRestore();
   error.mockRestore();
+});
+
+it('shares one time budget across the batch and defers rows after ten seconds', async () => {
+  vi.useFakeTimers();
+  try {
+    const { service, repo, queue } = setup();
+    const started = Date.now();
+    repo.findBooksNeedingRecheck.mockResolvedValue([1, 2, 3, 4]);
+    const rows = {
+      findIndexRow: vi.fn().mockResolvedValue({ status: 'ready', provenance: {} }),
+      flagRecheck: vi.fn(),
+      markStale: vi.fn(),
+    };
+    vi.mocked(checkEditionSyncSources).mockResolvedValue({ valid: false, reason: 'epub_changed', canCheckContent: true });
+    const store = {
+      checkContent: vi.fn().mockImplementation(() => {
+        vi.setSystemTime(Date.now() + 5000);
+        return Promise.resolve('metadata_only');
+      }),
+    };
+    const realQueue = new EditionSyncQueueService(rows as never, store as never, {} as never, { invalidateBook: vi.fn() } as never);
+    queue.ensureValid.mockImplementation(realQueue.ensureValid.bind(realQueue) as never);
+    await service.tick();
+    const budgets = queue.ensureValid.mock.calls.map((call) => (call as unknown[])[1]);
+    expect(budgets).toHaveLength(4);
+    expect(budgets.every((budget) => budget === budgets[0])).toBe(true);
+    expect(budgets[0]).toEqual({ deadline: started + 10_000 });
+    expect(store.checkContent.mock.calls.map((call) => call[0])).toEqual([1, 2]);
+    expect(rows.flagRecheck.mock.calls.map((call) => call[0])).toEqual([3, 4]);
+    expect(rows.markStale).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
 });

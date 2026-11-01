@@ -38,11 +38,31 @@ describe('checkEditionSyncSources', () => {
   });
   it.each([
     ['unchanged', [epub, audio], [audio], { valid: true }],
-    ['replaced EPUB', [{ ...epub, sizeBytes: 20 }, audio], [audio], { valid: false, reason: 'epub_changed' }],
+    ['replaced EPUB', [{ ...epub, sizeBytes: 20 }, audio], [audio], { valid: false, reason: 'epub_changed', canCheckContent: false }],
     ['removed audio', [epub], [], { valid: false, reason: 'file_missing' }],
     ['added audio', [epub, audio], [audio, { ...audio, id: 3 }], { valid: false, reason: 'audio_changed' }],
   ])('checks %s using database facts', async (_label, files, sources, expected) => {
     const repo = { findBookFilesByIds: vi.fn().mockResolvedValue(files), findIndexSource: vi.fn().mockResolvedValue({ epub, audio: sources }) };
     expect(await checkEditionSyncSources(repo as never, 7, { indexPath: '/index', provenance })).toEqual(expected);
+  });
+});
+
+it.each([false, true])('only changed audio files require fingerprints: changed uncovered=%s', async (uncovered) => {
+  const other = file(3, 'mp3');
+  const stored = {
+    ...provenance,
+    audio: [
+      { ...provenance.audio[0]!, audioFingerprint: 'a'.repeat(32) },
+      { ...provenanceFile(other), order: 1 },
+    ],
+  };
+  const repo = {
+    findBookFilesByIds: vi.fn().mockResolvedValue([epub, { ...audio, fileHash: 'new' }, { ...other, fileHash: uncovered ? 'new' : other.fileHash }]),
+    findIndexSource: vi.fn().mockResolvedValue({ epub, audio: [audio, other] }),
+  };
+  expect(await checkEditionSyncSources(repo as never, 7, { indexPath: '/index', provenance: stored })).toEqual({
+    valid: false,
+    reason: 'audio_changed',
+    canCheckContent: !uncovered,
   });
 });

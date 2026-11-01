@@ -43,6 +43,30 @@ export function compareProvenance(provenance: EditionSyncProvenance, files: Edit
   return { valid: true };
 }
 
+export function canCheckChangedFile(
+  bookId: number,
+  stored: EditionSyncProvenanceFile,
+  current: EditionSyncBookFileRef,
+  fingerprint: string | undefined,
+): boolean {
+  if (current.bookId !== bookId) return false;
+  return (
+    !!fingerprint ||
+    (current.sizeBytes === stored.sizeBytes && current.fileHash === stored.fileHash && (current.mtime?.getTime() ?? 0) === stored.mtimeMs)
+  );
+}
+
+export function canCheckChangedContent(provenance: EditionSyncProvenance, files: EditionSyncBookFileRef[]): boolean {
+  const byId = new Map(files.map((file) => [file.id, file]));
+  return [provenance.epub, ...provenance.audio].every((stored) => {
+    const current = byId.get(stored.bookFileId);
+    if (!current) return false;
+    const fingerprint =
+      stored === provenance.epub ? provenance.epub.chapterFingerprint : 'audioFingerprint' in stored ? stored.audioFingerprint : undefined;
+    return canCheckChangedFile(provenance.bookId, stored, current, fingerprint as string | undefined);
+  });
+}
+
 export function matchesRebuildRequest(provenance: EditionSyncProvenance, request: ReadAloudWorkerRequest, files: EditionSyncBookFileRef[]): boolean {
   if (
     !compareProvenance(provenance, files).valid ||
@@ -82,6 +106,11 @@ export function isWorkerSafeEntry(value: string): boolean {
 }
 
 export function isWorkerRebuildValid(rebuild: ReadAloudRebuildRequest): boolean {
+  if (
+    rebuild.chapterFingerprint !== undefined &&
+    (typeof rebuild.chapterFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(rebuild.chapterFingerprint))
+  )
+    return false;
   if (!isWorkerSafeEntry(rebuild.indexEntry) || rebuild.indexEntry.includes('/') || !isWorkerSafeEntry(rebuild.reportEntry)) return false;
   if (!rebuild.chunks.length || rebuild.chunks.length > READ_ALOUD_REBUILD_MAX_CHUNKS) return false;
   if (!rebuild.audioEntries.length || rebuild.audioEntries.length > READ_ALOUD_REBUILD_MAX_CHUNKS) return false;
@@ -89,6 +118,7 @@ export function isWorkerRebuildValid(rebuild: ReadAloudRebuildRequest): boolean 
   for (const chunk of rebuild.chunks) {
     if (!isWorkerSafeEntry(chunk.name) || chunk.name.includes('/') || names.has(chunk.name)) return false;
     if (!Number.isSafeInteger(chunk.size) || chunk.size < 0 || !/^[a-f0-9]{64}$/.test(chunk.sha256)) return false;
+    if (chunk.audioMd5 !== undefined && (typeof chunk.audioMd5 !== 'string' || !/^[a-f0-9]{32}$/.test(chunk.audioMd5))) return false;
     names.add(chunk.name);
   }
   const hrefs = new Set<string>();

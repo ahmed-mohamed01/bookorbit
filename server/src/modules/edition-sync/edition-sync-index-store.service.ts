@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import type { ConfigType } from '@nestjs/config';
 import type { EditionSyncProvenance, EditionSyncProvenanceSource, ReadAloudRebuildChunk } from '@bookorbit/types';
 import { createHash } from 'node:crypto';
 import { crc32 } from 'node:zlib';
@@ -12,14 +13,23 @@ import { ZipArchive } from 'archiver';
 import { XMLParser } from 'fast-xml-parser';
 import * as unzipper from 'unzipper';
 
+import { audioToolsConfig } from '../../config/config';
 import { FileLockService, bookOperationLockKey } from '../../common/services/file-lock.service';
 import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import { parseAlignmentReport } from '../read-aloud/read-aloud-report';
 import { ScannerService } from '../scanner/scanner.service';
 import { EDITION_SYNC_INDEX_FORMAT, EDITION_SYNC_PROVENANCE_ENTRY, EDITION_SYNC_REPORT_ENTRY } from './edition-sync.constants';
-import { compareProvenance, EditionSyncSourcesChangedError, isWorkerSafeEntry, provenanceFile } from './edition-sync-provenance';
+import {
+  canCheckChangedContent,
+  canCheckChangedFile,
+  compareProvenance,
+  EditionSyncSourcesChangedError,
+  isWorkerSafeEntry,
+  provenanceFile,
+} from './edition-sync-provenance';
+import { audioFingerprint, chapterFingerprint } from './edition-sync-fingerprints';
 import { EditionSyncRepository } from './edition-sync.repository';
-import type { EditionSyncCaptureInput, EditionSyncCaptureResult, EditionSyncVerification } from './edition-sync.types';
+import type { EditionSyncCaptureInput, EditionSyncCaptureResult, EditionSyncVerification, EditionSyncBookFileRef } from './edition-sync.types';
 
 const MAX_JSON_BYTES = 16 * 1024 * 1024;
 const MAX_CHUNKS = 10_000;
@@ -37,7 +47,7 @@ async function digest(stream: Readable): Promise<string> {
 async function openWorkerFile(path: string): Promise<FileHandle> {
   const handle = await open(path, constants.O_RDONLY | NO_FOLLOW);
   try {
-    if (!(await handle.stat()).isFile()) throw new BadRequestException('Invalid worker output file');
+    if (!(await handle.stat()).isFile()) throw new InternalServerErrorException('Invalid worker output file');
     return handle;
   } catch (error) {
     await handle.close();
@@ -48,7 +58,7 @@ async function openWorkerFile(path: string): Promise<FileHandle> {
 async function readWorkerText(path: string, tooLarge: string): Promise<string> {
   const handle = await openWorkerFile(path);
   try {
-    if ((await handle.stat()).size > MAX_JSON_BYTES) throw new BadRequestException(tooLarge);
+    if ((await handle.stat()).size > MAX_JSON_BYTES) throw new InternalServerErrorException(tooLarge);
     return await handle.readFile('utf8');
   } finally {
     await handle.close();
@@ -66,19 +76,27 @@ async function digestWorkerFile(path: string): Promise<{ size: number; sha256: s
 }
 
 async function requireWorkerDirectory(path: string): Promise<void> {
-  if (!(await lstat(path)).isDirectory()) throw new BadRequestException('Invalid worker output folder');
+  if (!(await lstat(path)).isDirectory()) throw new InternalServerErrorException('Invalid worker output folder');
 }
 
 async function boundedText(entry: unzipper.File): Promise<string> {
-  if (entry.uncompressedSize > MAX_JSON_BYTES) throw new BadRequestException('Timing index metadata is too large');
+  if (entry.uncompressedSize > MAX_JSON_BYTES) throw new InternalServerErrorException('Timing index metadata is too large');
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const bytes of entry.stream()) {
     size += (bytes as Buffer).length;
-    if (size > MAX_JSON_BYTES) throw new BadRequestException('Timing index metadata is too large');
+    if (size > MAX_JSON_BYTES) throw new InternalServerErrorException('Timing index metadata is too large');
     chunks.push(bytes as Buffer);
   }
   return Buffer.concat(chunks).toString('utf8');
+}
+
+function immutableProvenance(value: EditionSyncProvenance) {
+  return {
+    ...value,
+    epub: { bookFileId: value.epub.bookFileId, chapterFingerprint: value.epub.chapterFingerprint },
+    audio: value.audio.map((file) => ({ bookFileId: file.bookFileId, order: file.order, audioFingerprint: file.audioFingerprint })),
+  };
 }
 
 @Injectable()
@@ -89,6 +107,7 @@ export class EditionSyncIndexStoreService {
     private readonly repo: EditionSyncRepository,
     private readonly locks: FileLockService,
     private readonly scanner: ScannerService,
+    @Inject(audioToolsConfig.KEY) private readonly config: ConfigType<typeof audioToolsConfig>,
   ) {}
 
   async capture(input: EditionSyncCaptureInput): Promise<EditionSyncCaptureResult> {
@@ -142,15 +161,21 @@ export class EditionSyncIndexStoreService {
     if (!verification.valid) throw new EditionSyncSourcesChangedError(verification.reason as 'epub_changed' | 'audio_changed' | 'file_missing');
     const source = await this.repo.findIndexSource(input.bookId);
     if (!source) throw new NotFoundException('Timing index source is missing');
+    const { fingerprints, checkStats } = await this.captureFingerprints(input.bookId, epub, audio);
     const reportText = await readWorkerText(join(input.workDir, 'report.json'), 'Alignment report is too large');
     const report = parseAlignmentReport(reportText).totals;
     const processed = join(input.workDir, 'processed-audio');
     await requireWorkerDirectory(processed);
     const names = (await readdir(processed)).filter((name) => !name.startsWith('.') && !name.endsWith('.json')).sort();
-    if (!names.length || names.length > MAX_CHUNKS) throw new BadRequestException('Invalid processed audio count');
+    if (!names.length || names.length > MAX_CHUNKS) throw new InternalServerErrorException('Invalid processed audio count');
     const chunks: ReadAloudRebuildChunk[] = [];
     const sources: EditionSyncProvenanceSource[] = [];
-    for (const name of names) chunks.push({ name, ...(await digestWorkerFile(join(processed, name))) });
+    for (const name of names)
+      chunks.push({
+        name,
+        ...(await digestWorkerFile(join(processed, name))),
+        ...(await this.optionalFingerprint(input.bookId, join(processed, name), 'audio').then((audioMd5) => (audioMd5 ? { audioMd5 } : {}))),
+      });
     for (const name of (await readdir(processed)).filter((name) => name.endsWith('.source.json')).sort()) {
       const text = await readWorkerText(join(processed, name), 'Audio source metadata is too large');
       const value = JSON.parse(text) as Omit<EditionSyncProvenanceSource, 'name'>;
@@ -165,7 +190,7 @@ export class EditionSyncIndexStoreService {
       });
     }
     const outputPath = join(input.workDir, 'output.epub');
-    if (!(await lstat(outputPath)).isFile()) throw new BadRequestException('Invalid worker output file');
+    if (!(await lstat(outputPath)).isFile()) throw new InternalServerErrorException('Invalid worker output file');
     const archive = await unzipper.Open.file(outputPath);
     const audioPaths = new Set<string>();
     const xml = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true });
@@ -189,7 +214,7 @@ export class EditionSyncIndexStoreService {
     const originalSizes = new Map(original.files.map((entry) => [entry.path, entry.uncompressedSize]));
     for (const entry of archive.files) {
       if (entry.type === 'Directory') continue;
-      if (!safePath(entry.path) || seen.has(entry.path)) throw new BadRequestException('Invalid EPUB entry path');
+      if (!safePath(entry.path) || seen.has(entry.path)) throw new InternalServerErrorException('Invalid EPUB entry path');
       seen.add(entry.path);
       if (audioPaths.has(entry.path) || /\.(mp3|m4a|m4b|aac|ogg|opus|wav|flac)$/i.test(entry.path)) {
         const chunk = byHash.get(`${entry.uncompressedSize}:${await digest(entry.stream())}`);
@@ -198,7 +223,7 @@ export class EditionSyncIndexStoreService {
             kept.push(entry);
             continue;
           }
-          throw new BadRequestException('EPUB audio does not match processed chunks');
+          throw new InternalServerErrorException('EPUB audio does not match processed chunks');
         }
         audioEntries.push({ href: entry.path, chunk: chunk.name, size: entry.uncompressedSize });
       } else if (!entry.path.startsWith('bookorbit-timings/')) {
@@ -225,7 +250,8 @@ export class EditionSyncIndexStoreService {
         kept.push(entry);
       }
     }
-    if (!audioEntries.length || !seen.has('mimetype')) throw new BadRequestException('Aligned EPUB has no usable audio');
+    if (!audioEntries.length || !seen.has('mimetype')) throw new InternalServerErrorException('Aligned EPUB has no usable audio');
+    await checkStats();
     const provenance: EditionSyncProvenance = {
       version: 1,
       bookId: input.bookId,
@@ -233,8 +259,8 @@ export class EditionSyncIndexStoreService {
       language: input.request.language,
       granularity: input.request.granularity,
       model: input.request.model,
-      epub: provenanceFile(epub),
-      audio: audio.map((file, order) => ({ ...provenanceFile(file), order })),
+      epub: { ...provenanceFile(epub), ...(fingerprints.has(epub.id) ? { chapterFingerprint: fingerprints.get(epub.id) } : {}) },
+      audio: [],
       sources,
       chunks,
       audioEntries,
@@ -243,6 +269,12 @@ export class EditionSyncIndexStoreService {
       decisions: input.request.decisions,
       createdAt: new Date().toISOString(),
     };
+    for (const [order, file] of audio.entries())
+      provenance.audio.push({
+        ...provenanceFile(file),
+        order,
+        ...(fingerprints.has(file.id) ? { audioFingerprint: fingerprints.get(file.id) } : {}),
+      });
     const folder = dirname(epub.absolutePath);
     const stem = basename(epub.absolutePath, extname(epub.absolutePath));
     let destination = '';
@@ -257,7 +289,7 @@ export class EditionSyncIndexStoreService {
         break;
       }
     }
-    if (!destination) throw new BadRequestException('No free timing index filename');
+    if (!destination) throw new InternalServerErrorException('No free timing index filename');
     const previous = await this.readProvenance(destination);
     if (previous && isDeepStrictEqual({ ...previous, createdAt: '' }, { ...provenance, createdAt: '' })) {
       return { indexPath: destination, indexBytes: (await stat(destination)).size, provenance: previous };
@@ -304,6 +336,158 @@ export class EditionSyncIndexStoreService {
     return { indexPath: destination, indexBytes: (await stat(destination)).size, provenance };
   }
 
+  private async captureFingerprints(bookId: number, epub: EditionSyncBookFileRef, audio: EditionSyncBookFileRef[]) {
+    const fingerprints = new Map<number, string>();
+    const sources = [{ file: epub, kind: 'chapter' as const }, ...audio.map((file) => ({ file, kind: 'audio' as const }))];
+    const sourceStats = new Map<number, { size: number; mtimeMs: number }>();
+    for (const { file, kind } of sources) {
+      const started = Date.now();
+      try {
+        const info = await stat(file.absolutePath);
+        if (info.size !== file.sizeBytes || Math.abs(info.mtimeMs - (file.mtime?.getTime() ?? 0)) >= 1)
+          throw new InternalServerErrorException('Source stat differs from catalog');
+        sourceStats.set(file.id, { size: info.size, mtimeMs: info.mtimeMs });
+        const fingerprint = await this.optionalFingerprint(bookId, file.absolutePath, kind);
+        if (fingerprint) fingerprints.set(file.id, fingerprint);
+      } catch (error) {
+        this.fingerprintSkipped(bookId, file.absolutePath, kind, started, error);
+      }
+    }
+    const checkStats = async () => {
+      for (const { file, kind } of sources) {
+        const before = sourceStats.get(file.id);
+        if (!before || !fingerprints.has(file.id)) continue;
+        const started = Date.now();
+        try {
+          const info = await stat(file.absolutePath);
+          if (info.size !== before.size || info.mtimeMs !== before.mtimeMs)
+            throw new InternalServerErrorException('Source stat changed during capture');
+        } catch (error) {
+          fingerprints.delete(file.id);
+          this.fingerprintSkipped(bookId, file.absolutePath, kind, started, error);
+        }
+      }
+    };
+    return { fingerprints, checkStats };
+  }
+
+  /** A missing fingerprint only costs the metadata-only shortcut later, so it never fails a capture. */
+  private async optionalFingerprint(bookId: number, path: string, kind: 'chapter' | 'audio'): Promise<string | undefined> {
+    const started = Date.now();
+    try {
+      return kind === 'chapter' ? await chapterFingerprint(path) : await audioFingerprint(path, this.config.ffmpegPath);
+    } catch (error) {
+      this.fingerprintSkipped(bookId, path, kind, started, error);
+      return undefined;
+    }
+  }
+
+  private fingerprintSkipped(bookId: number, path: string, kind: 'chapter' | 'audio', started: number, error: unknown): void {
+    this.logger.warn(
+      `[edition_sync.fingerprint] [fail] bookId=${bookId} kind=${kind} path="${sanitizeLogValue(path)}" durationMs=${Date.now() - started} errorClass=${error instanceof Error ? error.name : 'Unknown'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - fingerprint skipped`,
+    );
+  }
+
+  async checkContent(bookId: number, stored: EditionSyncProvenance): Promise<'metadata_only' | 'content_changed' | 'retry'> {
+    const started = Date.now();
+    let files = 0;
+    let candidates: EditionSyncBookFileRef[] = [];
+    const checked = new Map<string, { size: number; mtimeMs: number }>();
+    this.logger.log(`[edition_sync.content_check] [start] bookId=${bookId} - checking source content`);
+    const end = (outcome: string) =>
+      this.logger.log(
+        `[edition_sync.content_check] [end] bookId=${bookId} durationMs=${Date.now() - started} outcome=${outcome} files=${files} - source content checked`,
+      );
+    try {
+      const source = await this.repo.findIndexSource(bookId);
+      if (!source || source.epub.id !== stored.epub.bookFileId || source.audio.length !== stored.audio.length) {
+        end('content_changed');
+        return 'content_changed';
+      }
+      const refreshed = structuredClone(stored);
+      candidates = [source.epub, ...source.audio];
+      const audioById = new Map(source.audio.map((file) => [file.id, file]));
+      for (const [previous, target, current, fingerprint] of [
+        [stored.epub, refreshed.epub, source.epub, stored.epub.chapterFingerprint],
+        ...stored.audio.map((audio, index) => [audio, refreshed.audio[index], audioById.get(audio.bookFileId), audio.audioFingerprint] as const),
+      ] as const) {
+        if (!current || current.bookId !== bookId) {
+          end('content_changed');
+          return 'content_changed';
+        }
+        const changed = !compareProvenance({ ...stored, epub: previous, audio: [] }, [current]).valid;
+        if (changed) files++;
+        if (!canCheckChangedFile(bookId, previous, current, fingerprint)) {
+          end('no_fingerprint');
+          return 'content_changed';
+        }
+        const before = await stat(current.absolutePath);
+        if (before.size !== current.sizeBytes || Math.abs(before.mtimeMs - (current.mtime?.getTime() ?? 0)) >= 1) {
+          end('retry');
+          return 'retry';
+        }
+        checked.set(current.absolutePath, { size: before.size, mtimeMs: before.mtimeMs });
+        if (!changed) continue;
+        const actual =
+          current.id === source.epub.id
+            ? await chapterFingerprint(current.absolutePath)
+            : await audioFingerprint(current.absolutePath, this.config.ffmpegPath);
+        const after = await stat(current.absolutePath);
+        if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) {
+          end('retry');
+          return 'retry';
+        }
+        if (actual !== fingerprint) {
+          end('content_changed');
+          return 'content_changed';
+        }
+        Object.assign(target, provenanceFile(current));
+      }
+      for (const [path, file] of checked) {
+        const info = await stat(path);
+        if (info.size !== file.size || info.mtimeMs !== file.mtimeMs) {
+          end('retry');
+          return 'retry';
+        }
+      }
+      const fresh = await this.repo.findBookFilesByIds([refreshed.epub.bookFileId, ...refreshed.audio.map((file) => file.bookFileId)]);
+      if (!compareProvenance(refreshed, fresh).valid) {
+        end('retry');
+        return 'retry';
+      }
+      if (!(await this.repo.refreshProvenance(bookId, stored, refreshed, new Date(started)))) {
+        end('retry');
+        return 'retry';
+      }
+      end('metadata_only');
+      return 'metadata_only';
+    } catch (error) {
+      // A file renamed or replaced by a concurrent write disappears briefly; a real deletion shows up as file_missing next time.
+      if ((error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
+        end('retry');
+        return 'retry';
+      }
+      for (const file of candidates) {
+        try {
+          const info = await stat(file.absolutePath);
+          const before = checked.get(file.absolutePath);
+          const moved = before
+            ? info.size !== before.size || info.mtimeMs !== before.mtimeMs
+            : info.size !== file.sizeBytes || Math.abs(info.mtimeMs - (file.mtime?.getTime() ?? 0)) >= 1;
+          if (!moved) continue;
+        } catch (statError) {
+          if ((statError as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') continue;
+        }
+        end('retry');
+        return 'retry';
+      }
+      this.logger.warn(
+        `[edition_sync.content_check] [fail] bookId=${bookId} durationMs=${Date.now() - started} errorClass=${error instanceof Error ? error.name : 'Unknown'} error="${sanitizeLogValue(error instanceof Error ? error.message : String(error))}" - source content check failed`,
+      );
+      return 'content_changed';
+    }
+  }
+
   async readProvenance(indexPath: string): Promise<EditionSyncProvenance | null> {
     try {
       if (!(await lstat(indexPath)).isFile()) return null;
@@ -335,8 +519,10 @@ export class EditionSyncIndexStoreService {
     if (!row?.provenance || !row.indexPath || !(await lstat(row.indexPath).catch(() => null))?.isFile())
       return this.invalidate(bookId, 'index_missing');
     const stored = await this.readProvenance(row.indexPath);
-    if (!stored || stored.bookId !== bookId || !isDeepStrictEqual(stored, row.provenance)) return this.invalidate(bookId, 'index_missing');
-    const ids = [stored.epub.bookFileId, ...stored.audio.map((file) => file.bookFileId)];
+    if (!stored || stored.bookId !== bookId || !isDeepStrictEqual(immutableProvenance(stored), immutableProvenance(row.provenance)))
+      return this.invalidate(bookId, 'index_missing');
+    const current = row.provenance;
+    const ids = [current.epub.bookFileId, ...current.audio.map((file) => file.bookFileId)];
     const source = await this.repo.findIndexSource(bookId);
     if (
       source &&
@@ -345,8 +531,12 @@ export class EditionSyncIndexStoreService {
       await this.repo.markStale(bookId, 'audio_changed');
       return { valid: false, reason: 'audio_changed' };
     }
-    const result = compareProvenance(stored, await this.repo.findBookFilesByIds(ids));
-    if (!result.valid) await this.repo.markStale(bookId, result.reason);
+    const files = await this.repo.findBookFilesByIds(ids);
+    const result = compareProvenance(current, files);
+    if (!result.valid) {
+      if (canCheckChangedContent(current, files)) await this.repo.flagRecheck(bookId);
+      else await this.repo.markStale(bookId, result.reason);
+    }
     return result;
   }
 

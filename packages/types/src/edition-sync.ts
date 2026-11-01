@@ -139,6 +139,7 @@ export interface ReadAloudRebuildChunk {
   name: string;
   size: number;
   sha256: string;
+  audioMd5?: string;
 }
 
 export interface ReadAloudRebuildAudioEntry {
@@ -164,12 +165,13 @@ export interface ReadAloudRebuildRequest {
   chunks: ReadAloudRebuildChunk[];
   audioEntries: ReadAloudRebuildAudioEntry[];
   sourceEntries?: ReadAloudRebuildSourceEntry[];
+  chapterFingerprint?: string;
 }
 
 export const READ_ALOUD_REBUILD_MAX_CHUNKS = 10_000;
 
 export type ReadAloudWorkerRebuildRequest = ReadAloudWorkerRequest & { rebuild: ReadAloudRebuildRequest | null };
-export type ReadAloudWorkerForkHealth = ReadAloudWorkerHealth & { rebuild?: boolean };
+export type ReadAloudWorkerForkHealth = ReadAloudWorkerHealth & { rebuild?: boolean; rebuildMetadata?: boolean };
 
 export interface EditionSyncProvenanceFile {
   bookFileId: number;
@@ -196,8 +198,8 @@ export interface EditionSyncProvenance {
   language: string;
   granularity: ReadAloudGranularity;
   model: "quartznet15x5";
-  epub: EditionSyncProvenanceFile;
-  audio: Array<EditionSyncProvenanceFile & { order: number }>;
+  epub: EditionSyncProvenanceFile & { chapterFingerprint?: string };
+  audio: Array<EditionSyncProvenanceFile & { order: number; audioFingerprint?: string }>;
   sources: EditionSyncProvenanceSource[];
   chunks: ReadAloudRebuildChunk[];
   audioEntries: Array<ReadAloudRebuildAudioEntry & { size: number }>;

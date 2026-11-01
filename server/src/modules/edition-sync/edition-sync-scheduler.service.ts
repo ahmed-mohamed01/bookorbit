@@ -15,6 +15,7 @@ import { ReadAloudWorkerClientService } from '../read-aloud/read-aloud-worker-cl
 import { ReadAloudWorkerService } from '../read-aloud/read-aloud-worker.service';
 import {
   EDITION_SYNC_CRON_JOB_NAME,
+  EDITION_SYNC_CONTENT_CHECK_BUDGET_MS,
   EDITION_SYNC_FILES_SETTLE_MS,
   EDITION_SYNC_FILES_CHANGED_PIN_BATCH_SIZE,
   EDITION_SYNC_POKE_INTERVAL_MS,
@@ -365,7 +366,8 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
     try {
       try {
         const bookIds = await this.repo.findBooksNeedingRecheck(RECHECK_BATCH_SIZE);
-        for (const bookId of bookIds) await this.queue.ensureValid(bookId);
+        const budget = { deadline: recheckStarted + EDITION_SYNC_CONTENT_CHECK_BUDGET_MS };
+        for (const bookId of bookIds) await this.queue.ensureValid(bookId, budget);
       } catch (err) {
         this.logFailure('edition_sync.recheck', recheckStarted, err, 'index re-verification failed');
       }

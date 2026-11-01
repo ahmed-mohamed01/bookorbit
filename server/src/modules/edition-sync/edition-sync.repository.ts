@@ -1,3 +1,4 @@
+import type { EditionSyncProvenance } from '@bookorbit/types';
 import { Inject, Injectable } from '@nestjs/common';
 import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -439,11 +440,19 @@ export class EditionSyncRepository {
     return rows.length > 0;
   }
 
-  async markStale(bookId: number, reason: EditionSyncInvalidatedReason): Promise<void> {
-    await this.db
+  async markStale(bookId: number, reason: EditionSyncInvalidatedReason, expectedProvenance?: EditionSyncProvenance): Promise<boolean> {
+    const rows = await this.db
       .update(editionSyncBookIndex)
       .set({ status: 'stale', invalidatedAt: new Date(), invalidatedReason: reason, stage: null, progress: null, updatedAt: new Date() })
-      .where(and(eq(editionSyncBookIndex.bookId, bookId), sql`${editionSyncBookIndex.status} <> 'running'`));
+      .where(
+        and(
+          eq(editionSyncBookIndex.bookId, bookId),
+          sql`${editionSyncBookIndex.status} <> 'running'`,
+          expectedProvenance === undefined ? undefined : sql`${editionSyncBookIndex.provenance} = ${JSON.stringify(expectedProvenance)}::jsonb`,
+        ),
+      )
+      .returning({ bookId: editionSyncBookIndex.bookId });
+    return rows.length > 0;
   }
 
   async markRunningStale(bookId: number, reason: EditionSyncInvalidatedReason): Promise<void> {
@@ -554,6 +563,29 @@ export class EditionSyncRepository {
       .orderBy(asc(editionSyncBookIndex.invalidatedAt))
       .limit(limit);
     return rows.map((row) => row.bookId);
+  }
+
+  async refreshProvenance(bookId: number, previous: EditionSyncProvenance, provenance: EditionSyncProvenance, started: Date): Promise<boolean> {
+    const rows = await this.db
+      .update(editionSyncBookIndex)
+      .set({ provenance, invalidatedAt: null, invalidatedReason: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(editionSyncBookIndex.bookId, bookId),
+          eq(editionSyncBookIndex.status, 'ready'),
+          sql`${editionSyncBookIndex.provenance} = ${JSON.stringify(previous)}::jsonb`,
+          sql`(${editionSyncBookIndex.filesChangedAt} IS NULL OR ${editionSyncBookIndex.filesChangedAt} <= ${started})`,
+        ),
+      )
+      .returning({ bookId: editionSyncBookIndex.bookId });
+    return rows.length > 0;
+  }
+
+  async flagRecheck(bookId: number, retry = false): Promise<void> {
+    await this.db
+      .update(editionSyncBookIndex)
+      .set({ invalidatedAt: retry ? sql`now()` : sql`coalesce(${editionSyncBookIndex.invalidatedAt}, now())` })
+      .where(and(eq(editionSyncBookIndex.bookId, bookId), eq(editionSyncBookIndex.status, 'ready')));
   }
 
   async clearRecheck(bookId: number): Promise<void> {

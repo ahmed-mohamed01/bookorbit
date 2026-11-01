@@ -38,6 +38,7 @@ function setup(inputs: {
         ? { status: inputs.status, indexFileId: inputs.indexFileId === undefined ? 3 : inputs.indexFileId, indexPath: index.absolutePath }
         : null,
     }),
+    flagRecheck: vi.fn(),
     markStale: vi.fn(),
     clearRecheck: vi.fn(),
     userHasEditionSyncPermission: vi.fn().mockResolvedValue(inputs.hasPermission ?? true),
@@ -122,4 +123,51 @@ describe('EditionSyncOverlaySourceService.resolveEpubDomSource', () => {
     });
     await expect(service.resolveEpubDomSource(2, { absolutePath: audio.absolutePath, format: 'm4b' })).resolves.toBeNull();
   });
+});
+
+it('serves nothing and flags fingerprinted mismatches for the scheduler without loading a fingerprint service', async () => {
+  const { service, repo } = setup({ enabled: true, status: 'ready' });
+  const inputs = await repo.findResolverInputs();
+  inputs.index.provenance = { epub: { chapterFingerprint: 'a'.repeat(64) }, audio: [{ audioFingerprint: 'b'.repeat(32) }] };
+  vi.mocked(checkEditionSyncSources).mockResolvedValue({ valid: false, reason: 'audio_changed', canCheckContent: true });
+  expect(await service.resolveOverlaySource(7, 10, [index])).toBeNull();
+  expect(repo.flagRecheck).toHaveBeenCalledWith(10);
+  expect(repo.markStale).not.toHaveBeenCalled();
+});
+
+it.each([false, true])('resolver uses shared per-changed-file coverage: uncovered=%s', async (uncovered) => {
+  const { service, repo } = setup({ enabled: true, status: 'ready' });
+  const { checkEditionSyncSources: actualCheck } = await vi.importActual<typeof import('./edition-sync-source-check')>('./edition-sync-source-check');
+  vi.mocked(checkEditionSyncSources).mockImplementation(actualCheck);
+  const sourceEpub = { ...epub, bookId: 10, sizeBytes: 100, fileHash: 'old', mtime: new Date(1000) };
+  const first = { ...sourceEpub, id: 2, format: 'm4b' };
+  const second = { ...first, id: 4 };
+  const storedFile = (file: typeof sourceEpub) => ({
+    bookFileId: file.id,
+    path: file.absolutePath,
+    sizeBytes: file.sizeBytes,
+    fileHash: file.fileHash,
+    mtimeMs: 1000,
+  });
+  const inputs = await repo.findResolverInputs();
+  inputs.index.provenance = {
+    bookId: 10,
+    epub: storedFile(sourceEpub),
+    audio: [
+      { ...storedFile(first), order: 0, audioFingerprint: 'a'.repeat(32) },
+      { ...storedFile(second), order: 1 },
+    ],
+  };
+  Object.assign(repo, {
+    findIndexSource: vi.fn().mockResolvedValue({ epub: sourceEpub, audio: [first, second] }),
+    findBookFilesByIds: vi.fn().mockResolvedValue([sourceEpub, { ...first, fileHash: 'new' }, { ...second, fileHash: uncovered ? 'new' : 'old' }]),
+  });
+  expect(await service.resolveOverlaySource(7, 10, [index])).toBeNull();
+  if (uncovered) {
+    expect(repo.markStale).toHaveBeenCalledWith(10, 'audio_changed');
+    expect(repo.flagRecheck).not.toHaveBeenCalled();
+  } else {
+    expect(repo.flagRecheck).toHaveBeenCalledWith(10);
+    expect(repo.markStale).not.toHaveBeenCalled();
+  }
 });

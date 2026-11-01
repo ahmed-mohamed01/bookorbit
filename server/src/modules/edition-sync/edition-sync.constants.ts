@@ -16,6 +16,7 @@ export const EDITION_SYNC_FILE_CHANGE_REASONS: readonly string[] = ['epub_change
 export const EDITION_SYNC_FILES_SETTLE_MS = 10 * 60_000;
 /** How often pinned books (toggle on, run now, retry) are picked up outside a run. */
 export const EDITION_SYNC_POKE_INTERVAL_MS = 15_000;
+export const EDITION_SYNC_CONTENT_CHECK_BUDGET_MS = 10_000;
 /** Wait between checks while the worker is busy with an upstream read-aloud job. */
 export const EDITION_SYNC_UPSTREAM_WAIT_MS = 30_000;
 /** Minimum gap between progress writes to the index row. */

@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { checkEditionSyncSources } from './edition-sync-source-check';
 vi.mock('./edition-sync-source-check', () => ({ checkEditionSyncSources: vi.fn() }));
 import { describe, expect, it, vi } from 'vitest';
@@ -11,12 +12,14 @@ function setup() {
     findNextQueuedBook: vi.fn().mockResolvedValue({ bookId: 4, pinned: true }),
     findIndexRow: vi.fn().mockResolvedValue(null),
     claimIndexRow: vi.fn().mockResolvedValue({ bookId: 4, status: 'running' }),
+    flagRecheck: vi.fn(),
     clearRecheck: vi.fn().mockResolvedValue(undefined),
-    markStale: vi.fn().mockResolvedValue(undefined),
+    markStale: vi.fn().mockResolvedValue(true),
     findUnused: vi.fn().mockResolvedValue([]),
     deleteUnusedIndexRow: vi.fn().mockResolvedValue(true),
   };
   const indexStore = {
+    checkContent: vi.fn().mockResolvedValue('content_changed'),
     verifyProvenance: vi.fn().mockResolvedValue({ valid: true }),
     removeIndexFile: vi.fn().mockResolvedValue(1000),
   };
@@ -90,7 +93,7 @@ describe('EditionSyncQueueService.ensureValid', () => {
     repo.findIndexRow.mockResolvedValue({ bookId: 4, status: 'ready', invalidatedAt: null });
     vi.mocked(checkEditionSyncSources).mockResolvedValue({ valid: false, reason: 'audio_changed' });
     await expect(service.ensureValid(4)).resolves.toBe(false);
-    expect(repo.markStale).toHaveBeenCalledWith(4, 'audio_changed');
+    expect(repo.markStale).toHaveBeenCalledWith(4, 'audio_changed', undefined);
     expect(overlaySource.invalidateBook).toHaveBeenCalledWith(4);
   });
 
@@ -146,4 +149,81 @@ describe('EditionSyncQueueService.clearUnused', () => {
     expect(overlaySource.invalidateBook).not.toHaveBeenCalled();
     expect(indexStore.removeIndexFile).not.toHaveBeenCalled();
   });
+});
+
+describe('content recheck budget', () => {
+  it('keeps metadata-only sources ready and leaves the next row flagged when budget is spent', async () => {
+    const { service, repo, indexStore } = setup();
+    repo.findIndexRow.mockResolvedValue({ status: 'ready', invalidatedAt: new Date(), provenance: {} });
+    vi.mocked(checkEditionSyncSources).mockResolvedValue({ valid: false, reason: 'audio_changed', canCheckContent: true });
+    indexStore.checkContent.mockResolvedValue('metadata_only');
+    const budget = { deadline: Date.now() + 10_000 };
+    expect(await service.ensureValid(4, budget)).toBe(true);
+    budget.deadline = Date.now();
+    expect(await service.ensureValid(5, budget)).toBe(false);
+    expect(indexStore.checkContent).toHaveBeenCalledTimes(1);
+    expect(repo.markStale).not.toHaveBeenCalled();
+    expect(repo.clearRecheck).not.toHaveBeenCalled();
+  });
+  it('marks failed content checks stale', async () => {
+    const { service, repo } = setup();
+    repo.findIndexRow.mockResolvedValue({ status: 'ready', provenance: {} });
+    vi.mocked(checkEditionSyncSources).mockResolvedValue({ valid: false, reason: 'epub_changed', canCheckContent: true });
+    expect(await service.ensureValid(4, { deadline: Date.now() + 10_000 })).toBe(false);
+    expect(repo.markStale).toHaveBeenCalledWith(4, 'epub_changed', {});
+  });
+});
+
+describe('content check races and coverage', () => {
+  it('reflags a retry without staling the current capture', async () => {
+    const { service, repo, indexStore } = setup();
+    const row = { status: 'ready', invalidatedAt: new Date(1000), provenance: {} };
+    repo.findIndexRow.mockResolvedValue(row);
+    repo.flagRecheck.mockImplementation((_bookId, retry) => {
+      if (retry) row.invalidatedAt = new Date();
+      return Promise.resolve();
+    });
+    vi.mocked(checkEditionSyncSources).mockResolvedValue({ valid: false, reason: 'epub_changed', canCheckContent: true } as never);
+    indexStore.checkContent.mockResolvedValue('retry' as never);
+    expect(await service.ensureValid(4, { deadline: Date.now() + 10_000 })).toBe(false);
+    expect(repo.markStale).not.toHaveBeenCalled();
+    expect(repo.flagRecheck).toHaveBeenCalledWith(4, true);
+    expect(row.status).toBe('ready');
+    expect(row.invalidatedAt.getTime()).toBeGreaterThan(1000);
+  });
+  it('stales an uncovered change immediately without budget', async () => {
+    const { service, repo, indexStore } = setup();
+    const provenance = {};
+    repo.findIndexRow.mockResolvedValue({ status: 'ready', provenance });
+    vi.mocked(checkEditionSyncSources).mockResolvedValue({ valid: false, reason: 'epub_changed', canCheckContent: false } as never);
+    const budget = { deadline: 0 };
+    expect(await service.ensureValid(4, budget)).toBe(false);
+    expect(repo.markStale).toHaveBeenCalledWith(4, 'epub_changed', provenance);
+    expect(indexStore.checkContent).not.toHaveBeenCalled();
+    expect(repo.flagRecheck).not.toHaveBeenCalled();
+    expect(budget.deadline).toBe(0);
+  });
+});
+
+it.each([true, false])('logs the guarded stale outcome: %s', async (stale) => {
+  const { service, repo } = setup();
+  repo.findIndexRow.mockResolvedValue({ status: 'ready', provenance: {} });
+  repo.markStale.mockResolvedValue(stale);
+  vi.mocked(checkEditionSyncSources).mockResolvedValue({ valid: false, reason: 'epub_changed' });
+  const log = vi.spyOn(Logger.prototype, 'log');
+  try {
+    await service.ensureValid(4);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining(`stale=${stale}`));
+  } finally {
+    log.mockRestore();
+  }
+});
+
+it('defaults book-state reads to no content budget', async () => {
+  const { service, repo, indexStore } = setup();
+  repo.findIndexRow.mockResolvedValue({ status: 'ready', provenance: {} });
+  vi.mocked(checkEditionSyncSources).mockResolvedValue({ valid: false, reason: 'epub_changed', canCheckContent: true });
+  expect(await service.ensureValid(4)).toBe(false);
+  expect(indexStore.checkContent).not.toHaveBeenCalled();
+  expect(repo.flagRecheck).toHaveBeenCalledWith(4);
 });

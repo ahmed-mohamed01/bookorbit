@@ -1,10 +1,16 @@
+import { audioToolsConfig } from '../../config/config';
+import { audioFingerprint, chapterFingerprint } from './edition-sync-fingerprints';
+vi.mock('./edition-sync-fingerprints', () => ({
+  audioFingerprint: vi.fn().mockResolvedValue('a'.repeat(32)),
+  chapterFingerprint: vi.fn().mockResolvedValue('b'.repeat(64)),
+}));
 import { Test } from '@nestjs/testing';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZipArchive } from 'archiver';
 import * as unzipper from 'unzipper';
 import { createWriteStream } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, stat, lstat, mkdtemp, mkdir, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -41,10 +47,21 @@ describe('EditionSyncIndexStoreService', () => {
   let service: EditionSyncIndexStoreService;
   let input: EditionSyncCaptureInput;
   let source: { bookId: number; libraryId: number; epub: EditionSyncBookFileRef; audio: EditionSyncBookFileRef[] };
-  const repo = { findIndexSource: vi.fn(), findIndexRow: vi.fn(), findBookFilesByIds: vi.fn(), markStale: vi.fn(), updateIndexRow: vi.fn() };
+  const repo = {
+    findIndexSource: vi.fn(),
+    findIndexRow: vi.fn(),
+    findBookFilesByIds: vi.fn(),
+    markStale: vi.fn(),
+    updateIndexRow: vi.fn(),
+    refreshProvenance: vi.fn().mockResolvedValue(true),
+    flagRecheck: vi.fn(),
+  };
   const scanner = { scanBookFolderAsync: vi.fn() };
   beforeEach(async () => {
     vi.resetAllMocks();
+    vi.mocked(audioFingerprint).mockResolvedValue('a'.repeat(32));
+    vi.mocked(chapterFingerprint).mockResolvedValue('b'.repeat(64));
+    repo.refreshProvenance.mockResolvedValue(true);
     root = await mkdtemp(join(tmpdir(), 'edition-sync-test-'));
     const workDir = join(root, 'work');
     await mkdir(join(workDir, 'processed-audio'), { recursive: true });
@@ -78,6 +95,12 @@ describe('EditionSyncIndexStoreService', () => {
       workerVersion: 'test',
     };
     await zip(source.epub.absolutePath, { mimetype: 'application/epub+zip' });
+    await writeFile(source.audio[0]!.absolutePath, 'source audio');
+    for (const file of [source.epub, ...source.audio]) {
+      const info = await stat(file.absolutePath);
+      file.sizeBytes = info.size;
+      file.mtime = info.mtime;
+    }
     await writeFile(join(workDir, 'report.json'), JSON.stringify({ version: 4, totals }));
     await writeFile(join(workDir, 'processed-audio', '00001.mp3'), 'audio');
     await writeFile(
@@ -95,6 +118,7 @@ describe('EditionSyncIndexStoreService', () => {
     const module = await Test.createTestingModule({
       providers: [
         EditionSyncIndexStoreService,
+        { provide: audioToolsConfig.KEY, useValue: { ffmpegPath: 'configured-ffmpeg' } },
         FileLockService,
         { provide: EditionSyncRepository, useValue: repo },
         { provide: ScannerService, useValue: scanner },
@@ -106,6 +130,155 @@ describe('EditionSyncIndexStoreService', () => {
     await chmod(root, 0o755);
     await rm(root, { recursive: true, force: true });
   });
+  it.each(['metadata_only', 'content_changed', 'no_fingerprint', 'failed'])('content recheck handles %s', async (outcome) => {
+    const capture = await service.capture(input);
+    const previous = structuredClone(capture.provenance);
+    await writeFile(source.audio[0]!.absolutePath, 'retagged audio');
+    const info = await stat(source.audio[0]!.absolutePath);
+    Object.assign(source.audio[0]!, { sizeBytes: info.size, mtime: info.mtime, fileHash: 'new-hash' });
+    if (outcome === 'content_changed') vi.mocked(audioFingerprint).mockResolvedValue('c'.repeat(32));
+    if (outcome === 'no_fingerprint') delete previous.audio[0]!.audioFingerprint;
+    if (outcome === 'failed') vi.mocked(audioFingerprint).mockRejectedValue(new Error('ffmpeg failed'));
+    const warn = vi.spyOn(service['logger'], 'warn');
+    const log = vi.spyOn(service['logger'], 'log');
+    const result = await service.checkContent(7, previous);
+    if (outcome === 'failed') {
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('[edition_sync.content_check] [fail]'));
+      expect(log.mock.calls.some(([message]) => String(message).includes('[edition_sync.content_check] [end]'))).toBe(false);
+    }
+    expect(result).toBe(outcome === 'metadata_only' ? 'metadata_only' : 'content_changed');
+    if (outcome === 'metadata_only') {
+      expect(repo.refreshProvenance).toHaveBeenCalledWith(
+        7,
+        previous,
+        expect.objectContaining({
+          audio: [expect.objectContaining({ fileHash: 'new-hash', audioFingerprint: 'a'.repeat(32), sizeBytes: info.size })],
+        }),
+        expect.any(Date),
+      );
+    } else expect(repo.refreshProvenance).not.toHaveBeenCalled();
+  });
+
+  it.each(['moved', 'missing', 'other', 'unchanged'])('handles a code-less hashing error with %s source stats', async (state) => {
+    const captured = await service.capture(input);
+    source.epub.fileHash = 'changed';
+    vi.mocked(chapterFingerprint).mockImplementationOnce(async () => {
+      if (state === 'moved') await utimes(source.epub.absolutePath, new Date(), new Date(Date.now() + 2000));
+      if (state === 'other') await utimes(source.audio[0]!.absolutePath, new Date(), new Date(Date.now() + 2000));
+      if (state === 'missing') await rm(source.epub.absolutePath);
+      throw new Error('FILE_ENDED');
+    });
+    const warn = vi.spyOn(service['logger'], 'warn');
+    const log = vi.spyOn(service['logger'], 'log');
+    expect(await service.checkContent(7, captured.provenance)).toBe(state === 'unchanged' ? 'content_changed' : 'retry');
+    expect(repo.markStale).not.toHaveBeenCalled();
+    if (state === 'unchanged') expect(warn).toHaveBeenCalledWith(expect.stringContaining('[edition_sync.content_check] [fail]'));
+    else {
+      expect(warn).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('outcome=retry'));
+    }
+  });
+
+  it.each(['before', 'during', 'after', 'catalog', 'capture', 'vanished'])('retries when %s moves during a content check', async (cause) => {
+    const captured = await service.capture(input);
+    const previous = structuredClone(captured.provenance);
+    source.epub.fileHash = 'changed';
+    if (cause === 'before') source.epub.sizeBytes!++;
+    if (cause === 'during')
+      vi.mocked(chapterFingerprint).mockImplementationOnce(async () => {
+        await writeFile(source.epub.absolutePath, 'changed while hashing');
+        return 'b'.repeat(64);
+      });
+    if (cause === 'after')
+      vi.mocked(audioFingerprint).mockImplementationOnce(async () => {
+        await writeFile(source.epub.absolutePath, 'changed later');
+        return 'a'.repeat(32);
+      });
+    if (cause === 'after') source.audio[0]!.fileHash = 'changed';
+    if (cause === 'catalog') repo.findBookFilesByIds.mockResolvedValue([source.epub, { ...source.audio[0], fileHash: 'moved' }]);
+    if (cause === 'capture') repo.refreshProvenance.mockResolvedValue(false);
+    if (cause === 'vanished') await rm(source.epub.absolutePath);
+    expect(await service.checkContent(7, previous)).toBe('retry');
+    expect(repo.markStale).not.toHaveBeenCalled();
+  });
+
+  it.each(['before', 'during', 'end', 'io'])('omits a fingerprint when capture source stat moves: %s', async (cause) => {
+    if (cause === 'before') source.epub.sizeBytes!++;
+    if (cause === 'io') await rm(source.audio[0]!.absolutePath);
+    if (cause === 'during')
+      vi.mocked(chapterFingerprint).mockImplementationOnce(async () => {
+        await writeFile(source.audio[0]!.absolutePath, 'changed during capture');
+        return 'b'.repeat(64);
+      });
+    if (cause === 'end')
+      vi.mocked(audioFingerprint).mockImplementationOnce(async () => {
+        await utimes(source.epub.absolutePath, new Date(), new Date(Date.now() + 2000));
+        return 'a'.repeat(32);
+      });
+    const warn = vi.spyOn(service['logger'], 'warn');
+    const captured = await service.capture(input);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /\[edition_sync\.fingerprint\] \[fail\] bookId=7 kind=(chapter|audio) path="[^"]+" durationMs=\d+ errorClass=\S+ error="[^"]+" - fingerprint skipped/,
+      ),
+    );
+    if (cause === 'before' || cause === 'end') expect(warn).toHaveBeenCalledWith(expect.stringContaining('errorClass=InternalServerErrorException'));
+    if (cause === 'before' || cause === 'end') expect(captured.provenance.epub).not.toHaveProperty('chapterFingerprint');
+    else expect(captured.provenance.audio[0]).not.toHaveProperty('audioFingerprint');
+  });
+
+  it('defers a changed fingerprinted audio file even when another audio fingerprint is absent', async () => {
+    const other = { ...source.audio[0]!, id: 3, absolutePath: join(root, 'other.mp3') };
+    await writeFile(other.absolutePath, 'other audio');
+    const info = await stat(other.absolutePath);
+    Object.assign(other, { sizeBytes: info.size, mtime: info.mtime });
+    source.audio.push(other);
+    repo.findBookFilesByIds.mockResolvedValue([source.epub, ...source.audio]);
+    vi.mocked(audioFingerprint).mockImplementation((path) => {
+      if (path === other.absolutePath) return Promise.reject(new Error('cannot fingerprint other audio'));
+      return Promise.resolve('a'.repeat(32));
+    });
+    const captured = await service.capture(input);
+    repo.findIndexRow.mockResolvedValue({ status: 'ready', ...captured });
+    repo.findBookFilesByIds.mockResolvedValue([source.epub, { ...source.audio[0], fileHash: 'changed' }, other]);
+    expect(await service.verifyProvenance(7)).toEqual({ valid: false, reason: 'audio_changed' });
+    expect(repo.flagRecheck).toHaveBeenCalledWith(7);
+    expect(repo.markStale).not.toHaveBeenCalled();
+  });
+
+  it('ignores legacy textFingerprint provenance without treating it as chapter coverage', async () => {
+    const captured = await service.capture(input);
+    const old = structuredClone(captured.provenance);
+    delete old.epub.chapterFingerprint;
+    Object.assign(old.epub, { textFingerprint: 'old dev fingerprint' });
+    await zip(captured.indexPath, { 'bookorbit-timings/provenance.json': JSON.stringify(old) });
+    expect(await service.readProvenance(captured.indexPath)).not.toBeNull();
+    source.epub.fileHash = 'changed';
+    expect(await service.checkContent(7, old)).toBe('content_changed');
+  });
+
+  it('uses refreshed DB file metadata while preserving the zip capture snapshot', async () => {
+    const captured = await service.capture(input);
+    const refreshed = structuredClone(captured.provenance);
+    refreshed.audio[0]!.fileHash = 'refreshed';
+    repo.findIndexRow.mockResolvedValue({ status: 'ready', ...captured, provenance: refreshed });
+    repo.findBookFilesByIds.mockResolvedValue([source.epub, { ...source.audio[0], fileHash: 'refreshed' }]);
+    expect(await service.verifyProvenance(7)).toEqual({ valid: true });
+    await service.copyIndex(7, join(root, 'copy.epub'));
+    expect(await service.readProvenance(join(root, 'copy.epub'))).toEqual(captured.provenance);
+    refreshed.audio[0]!.audioFingerprint = 'c'.repeat(32);
+    expect(await service.verifyProvenance(7)).toEqual({ valid: false, reason: 'index_missing' });
+  });
+
+  it('fails closed when a newer change prevents the conditional provenance refresh', async () => {
+    const captured = await service.capture(input);
+    const previous = structuredClone(captured.provenance);
+    source.epub.fileHash = 'new';
+    repo.refreshProvenance.mockResolvedValue(false);
+    expect(await service.checkContent(7, previous)).toBe('retry');
+    expect(repo.refreshProvenance).toHaveBeenCalled();
+  });
+
   it('streams an audioless EPUB, preserving markup and embedding report/provenance', async () => {
     const captured = await service.capture(input);
     const archive = await unzipper.Open.file(captured.indexPath);
@@ -126,9 +299,20 @@ describe('EditionSyncIndexStoreService', () => {
     expect((await readFile(captured.indexPath)).readUInt16LE(8)).toBe(0);
     expect(await service.readProvenance(captured.indexPath)).toEqual(captured.provenance);
   });
+  it('keeps the capture when a fingerprint cannot be computed', async () => {
+    vi.mocked(audioFingerprint).mockRejectedValue(new Error('ffmpeg failed'));
+    const captured = await service.capture(input);
+    expect(captured.provenance.audio[0]).not.toHaveProperty('audioFingerprint');
+    expect(captured.provenance.chunks[0]).toBeDefined();
+    expect(captured.provenance.chunks[0]).not.toHaveProperty('audioMd5');
+    expect(captured.provenance.epub.chapterFingerprint).toBe('b'.repeat(64));
+  });
   it('drops only identical image and font assets and reads old provenance', async () => {
     const assets = { 'OPS/image.png': 'image', 'OPS/font.WOFF2': 'font', 'OPS/changed.jpg': 'first', 'OPS/style.css': 'style' };
     await zip(source.epub.absolutePath, { mimetype: 'application/epub+zip', ...assets });
+    const sourceInfo = await stat(source.epub.absolutePath);
+    source.epub.sizeBytes = sourceInfo.size;
+    source.epub.mtime = sourceInfo.mtime;
     await zip(join(input.workDir, 'output.epub'), {
       mimetype: 'application/epub+zip',
       ...assets,
@@ -187,6 +371,9 @@ describe('EditionSyncIndexStoreService', () => {
   });
   it('keeps the source EPUB audio as content', async () => {
     await zip(source.epub.absolutePath, { mimetype: 'application/epub+zip', 'OPS/clip.mp3': 'clip' });
+    const info = await stat(source.epub.absolutePath);
+    source.epub.sizeBytes = info.size;
+    source.epub.mtime = info.mtime;
     await zip(join(input.workDir, 'output.epub'), {
       mimetype: 'application/epub+zip',
       'OPS/audio.mp3': 'audio',

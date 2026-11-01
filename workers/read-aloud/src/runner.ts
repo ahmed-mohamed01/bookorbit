@@ -257,9 +257,10 @@ async function run(job: RunnerJob): Promise<void> {
         return;
       } catch (error) {
         if (!(error instanceof RebuildMismatchError)) throw error;
-        event("warn", "aligning", "rebuild_mismatch_fallback", "Processed audio differs from the timing index; running full alignment", {
-          chunks: job.rebuild.chunks.length,
-        });
+        const message = "Timing index cannot be reused; running full alignment";
+        const data = { chunks: job.rebuild.chunks.length, reason: clean(error.message) };
+        event("warn", "aligning", "rebuild_mismatch_fallback", message, data);
+        logLine("read_aloud.worker.rebuild_mismatch_fallback", null, { jobId: job.jobId, ...data }, message);
         await clearRebuildOutput(context("aligning"));
         // Recompute after prepareAudio invalidated its dependent markers.
         plan.splice(0, plan.length, ...planStages(await markerStates(job.workDir, source), job.resumeFrom));

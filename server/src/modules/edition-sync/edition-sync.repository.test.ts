@@ -105,3 +105,27 @@ describe('pinned quiet period', () => {
     expect(query.params).toEqual(expect.arrayContaining(['epub_changed', 'audio_changed', 'file_missing', 'files_changed']));
   });
 });
+
+describe('content check concurrency guards', () => {
+  it('only stales the checked provenance and moves retries to the tail of the recheck queue', async () => {
+    const { repo, chain } = setup();
+    const provenance = { bookId: 7 } as never;
+    await repo.markStale(7, 'audio_changed', provenance);
+    const query = new PgDialect().sqlToQuery(chain.where.mock.calls[0][0]);
+    expect(query.sql).toContain('"provenance" =');
+    expect(query.sql).toContain('::jsonb');
+    expect(query.params).toContain(JSON.stringify(provenance));
+    await repo.flagRecheck(7, true);
+    expect(sqlText(chain.set.mock.calls[1][0].invalidatedAt)).toBe('now()');
+    await repo.flagRecheck(7);
+    expect(sqlText(chain.set.mock.calls[2][0].invalidatedAt)).toContain('coalesce');
+  });
+});
+
+it.each([{ rows: [] }, { rows: [{ bookId: 7 }] }])('returns whether guarded markStale updated a row: %j', async ({ rows }) => {
+  const { repo, chain } = setup();
+  chain.returning.mockResolvedValue(rows);
+  expect(await repo.markStale(7, 'epub_changed', {} as never)).toBe(rows.length > 0);
+  expect(chain.returning).toHaveBeenCalled();
+  expect(sqlText(chain.where.mock.calls[0][0])).toContain('provenance');
+});

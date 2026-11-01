@@ -71,6 +71,7 @@ async function handle(request: IncomingMessage, response: ServerResponse, option
     const health: ReadAloudWorkerForkHealth = {
       status: "ok",
       rebuild: true,
+      rebuildMetadata: true,
       version: options.version,
       protocol: READ_ALOUD_WORKER_PROTOCOL,
       activeJobId: registry.active,

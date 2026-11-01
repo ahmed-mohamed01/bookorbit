@@ -98,4 +98,4 @@ export interface EditionSyncCaptureResult {
   provenance: EditionSyncProvenance;
 }
 
-export type EditionSyncVerification = { valid: true } | { valid: false; reason: EditionSyncInvalidatedReason };
+export type EditionSyncVerification = { valid: true } | { valid: false; reason: EditionSyncInvalidatedReason; canCheckContent?: boolean };

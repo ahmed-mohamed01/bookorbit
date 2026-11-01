@@ -894,7 +894,10 @@ remains version 1; older indexes without this field rebuild as before.
 
 **Owned (fork-only) files - never conflict:** `server/src/modules/edition-sync/` (module, bootstrap
 SQL, repository, services, controller, DTOs, including `edition-sync-fallback.service.ts`),
-`workers/read-aloud/src/rebuild.ts`, `workers/read-aloud/test/rebuild.test.mjs`, `packages/types/src/edition-sync.ts`,
+`workers/read-aloud/src/rebuild.ts`, `workers/read-aloud/src/rebuild-metadata.ts`,
+`workers/read-aloud/src/rebuild-error.ts`,
+`workers/read-aloud/src/audio-fingerprint.ts`, `workers/read-aloud/test/rebuild.test.mjs`,
+`workers/read-aloud/test/fixtures/chapter-fingerprints.json`, `packages/types/src/edition-sync.ts`,
 `client/src/features/edition-sync/`, and three seam token files that live inside upstream folders:
 `server/src/modules/read-aloud/read-aloud-hooks.ts`, `server/src/modules/book/overlay-source-provider.ts`,
 `server/src/modules/position-converter/epub-dom-source-provider.ts` (each with a fork `*.test.ts`
@@ -1050,3 +1053,36 @@ An upstream rename must be reflected in the bootstrap SQL or bootstrap fails lou
 Content mutations flag only the affected books; the library catalog listener is removed.
 `on_files_changed` chooses the next scheduled run (default) or immediate pinning after a
 10-minute quiet period. Changed sources discard cached worker work before a fresh claim.
+
+### Edition sync metadata-only source changes
+
+Provenance stays jsonb version 1, with optional `epub.chapterFingerprint`,
+`audio[].audioFingerprint`, `chunks[].audioMd5`, and rebuild `chapterFingerprint`.
+No schema changes are needed. The scheduler shares a 10-second content-check budget across each
+tick; sync lookups never invoke ffmpeg and return off while a fingerprinted mismatch awaits verification.
+The server uses typed `audioToolsConfig.ffmpegPath`; STAlign and the worker use ffmpeg on PATH.
+The DB provenance owns refreshed source file metadata while the zip retains its capture snapshot.
+Verification compares immutable alignment fields, source IDs and fingerprints across both copies.
+
+`workers/read-aloud/src/rebuild-metadata.ts` runs STAlign upgrade and cheap markup and replays
+the supported OPF delta onto the current source. Markup preserves the full-run serialization of
+image-only cover pages while retaining their current image links. Chapter hrefs and IDs must agree.
+Rebuild replay also compares STAlign's chapter classification, so classifier inputs outside chapter
+bytes fall back to a full run if the classification changes. Audio-only added chapters alter both
+spine and navigation and can derive titles from audio metadata; these, unknown manifest deltas,
+and ID collisions fail closed to a full run. The worker ZIP and XML dependencies resolve through
+the pinned STAlign/EPUB packages, so recheck their APIs and upgrade/markup/align behavior when
+updating those packages. Old indexes retain exact size/SHA256 chunk and source-entry CRC checks.
+Metadata replay also requires the fork worker health capability `rebuildMetadata: true`.
+An older worker's `rebuild: true` alone is insufficient because its request validator drops the
+new fields and could otherwise publish the stored OPF after the DB provenance was refreshed.
+
+The metadata-only shortcut depends on upstream `server/src/modules/file-write`:
+`epub-format-writer.ts` and the cover handler touch only the OPF, cover image and
+cover page, leaving text-bearing chapter documents byte-identical;
+`audio-metadata-embedder.ts` remuxes audio with `-c copy`. If upstream starts rewriting
+chapter documents or re-encoding audio, metadata saves will re-index again.
+The server and worker audio fingerprint helpers are twins and must change together.
+The chapter fingerprint is implemented twice (cheerio on the server, xmldom in the
+worker). Both implementations must pass the shared parity fixture at
+`workers/read-aloud/test/fixtures/chapter-fingerprints.json`.

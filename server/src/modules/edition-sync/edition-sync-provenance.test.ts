@@ -85,7 +85,12 @@ describe('edition sync provenance', () => {
       ...[-1, 1.5, 0x100000000].map((crc32) => [{ ...source, crc32 }]),
       ...[0, 7, -1, 1.5].map((position) => [{ ...source, position }]),
     ];
-    const requests = variants.map((sourceEntries) => ({ ...rebuild, sourceEntries }));
+    const requests = [
+      { ...rebuild, textFingerprint: { obsolete: true } },
+      ...variants.map((sourceEntries) => ({ ...rebuild, sourceEntries })),
+      ...['a'.repeat(32), 'BAD', '', 'b'.repeat(64), ['a'.repeat(32)] as never].map((audioMd5) => ({ ...rebuild, chunks: [{ ...chunk, audioMd5 }] })),
+      ...['a'.repeat(64), 'BAD', '', 'b'.repeat(32), ['a'.repeat(64)] as never].map((chapterFingerprint) => ({ ...rebuild, chapterFingerprint })),
+    ];
     const workerResults = JSON.parse(
       execFileSync(
         process.execPath,

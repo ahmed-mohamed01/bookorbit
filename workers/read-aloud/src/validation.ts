@@ -156,11 +156,17 @@ function validateRebuild(value: unknown): ReadAloudRebuildRequest | null {
       names.has(chunk.name) ||
       !isNonNegativeInteger(chunk.size) ||
       typeof chunk.sha256 !== "string" ||
-      !/^[a-f0-9]{64}$/.test(chunk.sha256)
+      !/^[a-f0-9]{64}$/.test(chunk.sha256) ||
+      (chunk.audioMd5 !== undefined && (typeof chunk.audioMd5 !== "string" || !/^[a-f0-9]{32}$/.test(chunk.audioMd5)))
     )
       throw incompatible("Invalid rebuild chunk");
     names.add(chunk.name);
-    return { name: chunk.name, size: chunk.size, sha256: chunk.sha256 };
+    return {
+      name: chunk.name,
+      size: chunk.size,
+      sha256: chunk.sha256,
+      ...(chunk.audioMd5 === undefined ? {} : { audioMd5: chunk.audioMd5 as string }),
+    };
   });
   if (!Array.isArray(body.audioEntries) || body.audioEntries.length < 1 || body.audioEntries.length > READ_ALOUD_REBUILD_MAX_CHUNKS)
     throw incompatible("Invalid rebuild audio entries");
@@ -198,7 +204,10 @@ function validateRebuild(value: unknown): ReadAloudRebuildRequest | null {
       throw incompatible("Invalid rebuild source entry");
     hrefs.add(entry.href);
   }
+  if (body.chapterFingerprint !== undefined && (typeof body.chapterFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(body.chapterFingerprint)))
+    throw incompatible("Invalid chapter fingerprint");
   return {
+    ...(body.chapterFingerprint === undefined ? {} : { chapterFingerprint: body.chapterFingerprint as string }),
     indexEntry: body.indexEntry,
     reportEntry: body.reportEntry,
     chunks,

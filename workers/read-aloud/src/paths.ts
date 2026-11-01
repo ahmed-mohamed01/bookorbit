@@ -166,3 +166,10 @@ export class ReadableRoots {
 function canRead(path: string): Promise<void> {
   return access(path, constants.R_OK | constants.X_OK);
 }
+
+export function rebuildPaths(workDir: string): { upgradedEpubPath: string; markedEpubPath: string } {
+  return {
+    upgradedEpubPath: resolve(workDir, "rebuild-upgraded.epub"),
+    markedEpubPath: resolve(workDir, "rebuild-marked.epub"),
+  };
+}

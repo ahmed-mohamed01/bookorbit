@@ -87,7 +87,8 @@ export class EditionSyncOverlaySourceService implements OverlaySourceResolver, E
       const verification = await checkEditionSyncSources(this.repo, bookId, inputs.index);
       valid = verification.valid;
       if (!verification.valid) {
-        await this.repo.markStale(bookId, verification.reason);
+        if (verification.canCheckContent) await this.repo.flagRecheck(bookId);
+        else await this.repo.markStale(bookId, verification.reason);
         this.invalidateBook(bookId);
       } else if (inputs.index.invalidatedAt) await this.repo.clearRecheck(bookId);
     }

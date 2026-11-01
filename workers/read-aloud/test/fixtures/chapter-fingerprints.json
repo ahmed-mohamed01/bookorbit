@@ -1,0 +1,65 @@
+[
+  {
+    "name": "plain chapter",
+    "entries": {
+      "META-INF/container.xml": "<container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>",
+      "OPS/book.opf": "<package xmlns=\"http://www.idpf.org/2007/opf\"><manifest><item id=\"c\" href=\"c.xhtml\"/></manifest><spine><itemref idref=\"c\"/></spine></package>",
+      "OPS/c.xhtml": "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>Hello world</p></body></html>"
+    },
+    "expected": "54cdaa43c0d279808ee55c2eb4a39487058fdceed158ff0963739e3a728c99a0"
+  },
+  {
+    "name": "BOM and XML declaration",
+    "entries": {
+      "META-INF/container.xml": "<container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>",
+      "OPS/book.opf": "<package xmlns=\"http://www.idpf.org/2007/opf\"><manifest><item id=\"c\" href=\"c.xhtml\"/></manifest><spine><itemref idref=\"c\"/></spine></package>",
+      "OPS/c.xhtml": "﻿<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>Hello BOM</p></body></html>"
+    },
+    "expected": "077b07b46cf2cb639c81ffe130eb768a30d1b1879bc005005faba50b0825fde2"
+  },
+  {
+    "name": "entities and CDATA",
+    "entries": {
+      "META-INF/container.xml": "<container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>",
+      "OPS/book.opf": "<package xmlns=\"http://www.idpf.org/2007/opf\"><manifest><item id=\"c\" href=\"c.xhtml\"/></manifest><spine><itemref idref=\"c\"/></spine></package>",
+      "OPS/c.xhtml": "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>A &amp; B &nbsp; &#160; <![CDATA[<text>]]></p></body></html>"
+    },
+    "expected": "18fe7c730912c92491d95a0d3d8576db7469cdfdc5ab60dc6e2b5c92cadfbfae"
+  },
+  {
+    "name": "image-only cover",
+    "entries": {
+      "META-INF/container.xml": "<container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>",
+      "OPS/book.opf": "<package xmlns=\"http://www.idpf.org/2007/opf\"><manifest><item id=\"c\" href=\"cover.xhtml\"/></manifest><spine><itemref idref=\"c\"/></spine></package>",
+      "OPS/cover.xhtml": "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body> \n<img src=\"cover.png\"/> </body></html>"
+    },
+    "expected": "746189e321cf74d75a8e559d0ccc57e25bb0c39d2ab8d4af2e32211d058a1d17"
+  },
+  {
+    "name": "prefixed XHTML",
+    "entries": {
+      "META-INF/container.xml": "<container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>",
+      "OPS/book.opf": "<package xmlns=\"http://www.idpf.org/2007/opf\"><manifest><item id=\"c\" href=\"c.xhtml\"/></manifest><spine><itemref idref=\"c\"/></spine></package>",
+      "OPS/c.xhtml": "<x:html xmlns:x=\"http://www.w3.org/1999/xhtml\"><x:body><x:p>Prefixed</x:p></x:body></x:html>"
+    },
+    "expected": "fa8327b0ab7f8932b8c1b0fd8f150947acad03ba98bcec497f94939d053e01d0"
+  },
+  {
+    "name": "percent-encoded href",
+    "entries": {
+      "META-INF/container.xml": "<container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>",
+      "OPS/book.opf": "<package xmlns=\"http://www.idpf.org/2007/opf\"><manifest><item id=\"c\" href=\"chapter%20one.xhtml\"/></manifest><spine><itemref idref=\"c\"/></spine></package>",
+      "OPS/chapter one.xhtml": "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body>Encoded path</body></html>"
+    },
+    "expected": "3c198f7e1a417289e91f7b208beb13b04b5a9011dc4daecf4088fbc1d493bae4"
+  },
+  {
+    "name": "nested body content",
+    "entries": {
+      "META-INF/container.xml": "<container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>",
+      "OPS/book.opf": "<package xmlns=\"http://www.idpf.org/2007/opf\"><manifest><item id=\"c\" href=\"c.xhtml\"/></manifest><spine><itemref idref=\"c\"/></spine></package>",
+      "OPS/c.xhtml": "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><section><div><p>Hello <b>nested <i>world</i></b>!</p></div></section></body></html>"
+    },
+    "expected": "e15acec39a3f759269f86915762c55f098cbc53cc1f18a3c9f09352efeb17f7e"
+  }
+]

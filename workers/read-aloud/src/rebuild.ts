@@ -1,3 +1,5 @@
+import { audioFingerprint } from "./audio-fingerprint.js";
+import { markupRebuildSource, replayMetadata, sourceChapterFingerprint, upgradeRebuildSource, type MetadataEntry } from "./rebuild-metadata.js";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { lstat, readdir, rm } from "node:fs/promises";
@@ -7,6 +9,8 @@ import type { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadAloudRebuildSourceEntry } from "@bookorbit/types";
 import type { StageContext, StageResult } from "./pipeline-contract.js";
+import { RebuildMismatchError } from "./rebuild-error.js";
+import { rebuildPaths } from "./paths.js";
 import { safeEntry } from "./validation.js";
 
 // Merge hazard: these are the ZIP dependencies shipped by the pinned STAlign/EPUB packages.
@@ -32,25 +36,46 @@ interface ZipWriter {
 const reader = epubRequire("yauzl-promise") as { open(path: string): Promise<ZipReader> };
 const writer = alignRequire("yazl") as { ZipFile: new () => ZipWriter };
 
-export class RebuildMismatchError extends Error {
-  constructor(message = "The timing index does not match the processed audio") {
-    super(message);
-    this.name = "RebuildMismatchError";
+export { RebuildMismatchError } from "./rebuild-error.js";
+
+export async function rebuildFromIndex(context: StageContext, fingerprint = audioFingerprint): Promise<StageResult> {
+  const replayPaths = rebuildPaths(context.paths.workDir);
+  try {
+    return await rebuildArchive(context, fingerprint, replayPaths);
+  } finally {
+    if (context.job.rebuild!.chapterFingerprint) await Promise.all(Object.values(replayPaths).map((path) => rm(path, { force: true })));
   }
 }
 
-export async function rebuildFromIndex(context: StageContext): Promise<StageResult> {
+async function rebuildArchive(
+  context: StageContext,
+  fingerprint: typeof audioFingerprint,
+  replayPaths: ReturnType<typeof rebuildPaths>,
+): Promise<StageResult> {
   const { job, paths, signal } = context;
   const rebuild = job.rebuild!;
+  const replayContext = { ...context, paths: { ...paths, ...replayPaths } };
   const actual = new Set((await readdir(paths.processedAudioDir)).filter((name) => !name.startsWith(".") && !name.endsWith(".json")));
   const expected = new Set(rebuild.chunks.map((chunk) => chunk.name));
   if (actual.size !== expected.size || [...actual].some((name) => !expected.has(name)))
     throw new RebuildMismatchError("Processed audio differs from the timing index");
+  const actualSizes = new Map<string, number>();
   for (const chunk of rebuild.chunks) {
     signal.throwIfAborted();
     const path = join(paths.processedAudioDir, chunk.name);
     const info = await lstat(path).catch(() => null);
-    if (!info?.isFile() || info.size !== chunk.size) throw new RebuildMismatchError();
+    if (!info?.isFile()) throw new RebuildMismatchError();
+    actualSizes.set(chunk.name, info.size);
+    if (chunk.audioMd5) {
+      try {
+        if ((await fingerprint(path, signal)) !== chunk.audioMd5) throw new RebuildMismatchError();
+      } catch (error) {
+        if (signal.aborted) throw error;
+        throw new RebuildMismatchError("Chunk audio fingerprint differs or failed");
+      }
+      continue;
+    }
+    if (info.size !== chunk.size) throw new RebuildMismatchError();
     const hash = createHash("sha256");
     for await (const bytes of createReadStream(path, { signal })) hash.update(bytes);
     if (hash.digest("hex") !== chunk.sha256) throw new RebuildMismatchError();
@@ -59,6 +84,7 @@ export async function rebuildFromIndex(context: StageContext): Promise<StageResu
   if (!(await lstat(indexPath).catch(() => null))?.isFile()) throw new RebuildMismatchError("The timing index is missing");
   const zip = await reader.open(indexPath);
   let sourceZip: ZipReader | undefined;
+  let upgradedZip: ZipReader | undefined;
   try {
     const entries: ZipEntry[] = [];
     const names = new Set<string>();
@@ -77,7 +103,35 @@ export async function rebuildFromIndex(context: StageContext): Promise<StageResu
     const restored: ZipEntry[] = [];
     const restoredNames = new Set<string>();
     const sourceEntries = rebuild.sourceEntries ?? [];
-    if (sourceEntries.length) {
+    let replayed: MetadataEntry[] | undefined;
+    if (rebuild.chapterFingerprint) {
+      try {
+        sourceZip = await reader.open(job.epub.path);
+        const current: ZipEntry[] = [];
+        for await (const entry of sourceZip) if (!entry.filename.endsWith("/")) current.push(entry);
+        if ((await sourceChapterFingerprint(current)) !== rebuild.chapterFingerprint) throw new RebuildMismatchError("Source chapter bytes changed");
+        await upgradeRebuildSource(replayContext);
+        upgradedZip = await reader.open(replayPaths.upgradedEpubPath);
+        const seen = new Set<string>();
+        for await (const entry of upgradedZip) {
+          if (entry.filename.endsWith("/")) continue;
+          if (!safeEntry(entry.filename) || seen.has(entry.filename) || entry.filename.startsWith("bookorbit-timings/"))
+            throw new RebuildMismatchError("Invalid source entries");
+          seen.add(entry.filename);
+        }
+        // Markup also rewrites image-only spine pages, whose current cover links must survive.
+        await markupRebuildSource(replayContext);
+        await upgradedZip.close();
+        upgradedZip = undefined;
+        upgradedZip = await reader.open(replayPaths.markedEpubPath);
+        const marked: ZipEntry[] = [];
+        for await (const entry of upgradedZip) if (!entry.filename.endsWith("/")) marked.push(entry);
+        replayed = inFullRunOrder(await replayMetadata(entries, marked, replayContext), entries, sourceEntries);
+      } catch (error) {
+        if (signal.aborted || error instanceof RebuildMismatchError) throw error;
+        throw new RebuildMismatchError("Cannot replay current EPUB metadata");
+      }
+    } else if (sourceEntries.length) {
       if (!(await lstat(job.epub.path).catch(() => null))?.isFile()) throw new RebuildMismatchError("Source EPUB is missing");
       try {
         sourceZip = await reader.open(job.epub.path);
@@ -108,11 +162,18 @@ export async function rebuildFromIndex(context: StageContext): Promise<StageResu
         throw new RebuildMismatchError("Cannot read source EPUB entries");
       }
     }
-    const sizes = new Map(rebuild.chunks.map((chunk) => [chunk.name, chunk.size]));
+    const outputEntries =
+      replayed ??
+      inOriginalOrder(
+        entries.filter((entry) => !entry.filename.startsWith("bookorbit-timings/")),
+        restored,
+        sourceEntries,
+      );
+    const audioHrefs = new Set(rebuild.audioEntries.map((audio) => audio.href));
+    if (outputEntries.some((entry) => audioHrefs.has(entry.filename))) throw new RebuildMismatchError("Audio entry collides with the source");
     if (
-      total +
-        sourceEntries.reduce((sum, entry) => sum + entry.size, 0) +
-        rebuild.audioEntries.reduce((sum, entry) => sum + sizes.get(entry.chunk)!, 0) >
+      outputEntries.reduce((sum, entry) => sum + entry.uncompressedSize, 0) +
+        rebuild.audioEntries.reduce((sum, entry) => sum + actualSizes.get(entry.chunk)!, 0) >
       job.maxOutputBytes
     )
       throw new RebuildMismatchError("Rebuild exceeds output limit");
@@ -121,9 +182,7 @@ export async function rebuildFromIndex(context: StageContext): Promise<StageResu
     const done = pipeline(output.outputStream, createWriteStream(paths.outputPath), { signal });
     void done.catch(() => undefined);
     try {
-      const kept = entries.filter((entry) => !entry.filename.startsWith("bookorbit-timings/"));
-      kept.sort((a, b) => Number(b.filename === "mimetype") - Number(a.filename === "mimetype"));
-      for (const entry of inOriginalOrder(kept, restored, sourceEntries)) {
+      for (const entry of outputEntries.toSorted((a, b) => Number(b.filename === "mimetype") - Number(a.filename === "mimetype"))) {
         output.addReadStreamLazy(entry.filename, { compress: entry.filename !== "mimetype" }, (callback) => {
           entry.openReadStream().then(
             (stream) => callback(null, stream),
@@ -142,19 +201,34 @@ export async function rebuildFromIndex(context: StageContext): Promise<StageResu
     context.event("info", "rebuild_from_index", "Rebuilt the read-aloud EPUB from its timing index", { chunks: rebuild.chunks.length });
     return { data: { chunks: rebuild.chunks.length } };
   } finally {
-    await sourceZip?.close();
-    await zip.close();
+    await Promise.all([upgradedZip?.close(), sourceZip?.close(), zip.close()]);
   }
 }
 
+/** Orders replayed entries like the aligned EPUB: the index's order, dropped source entries at their positions, anything new last. */
+function inFullRunOrder<T extends { filename: string }>(
+  replayed: T[],
+  stored: readonly ZipEntry[],
+  sourceEntries: readonly ReadAloudRebuildSourceEntry[],
+): T[] {
+  const byName = new Map(replayed.map((entry) => [entry.filename, entry]));
+  const dropped = new Set(sourceEntries.map((entry) => entry.href));
+  const kept = stored.filter((entry) => byName.has(entry.filename)).map((entry) => byName.get(entry.filename)!);
+  const keptNames = new Set(kept.map((entry) => entry.filename));
+  const restored = replayed.filter((entry) => dropped.has(entry.filename) && !keptNames.has(entry.filename));
+  const ordered = inOriginalOrder(kept, restored, sourceEntries);
+  const placed = new Set(ordered.map((entry) => entry.filename));
+  return [...ordered, ...replayed.filter((entry) => !placed.has(entry.filename))];
+}
+
 /** Puts each restored source entry back where it sat in the aligned EPUB; entries without a position go last. */
-function inOriginalOrder(kept: ZipEntry[], restored: ZipEntry[], sourceEntries: readonly ReadAloudRebuildSourceEntry[]): ZipEntry[] {
+function inOriginalOrder<T extends { filename: string }>(kept: T[], restored: T[], sourceEntries: readonly ReadAloudRebuildSourceEntry[]): T[] {
   const positions = new Map(sourceEntries.map((entry) => [entry.href, entry.position ?? Number.MAX_SAFE_INTEGER]));
   const captureOrder = new Map(sourceEntries.map((entry, index) => [entry.href, index]));
   const pending = [...restored].sort(
     (a, b) => positions.get(a.filename)! - positions.get(b.filename)! || captureOrder.get(a.filename)! - captureOrder.get(b.filename)!,
   );
-  const ordered: ZipEntry[] = [];
+  const ordered: T[] = [];
   for (const [index, entry] of kept.entries()) {
     while (pending.length && positions.get(pending[0].filename)! <= index) ordered.push(pending.shift()!);
     ordered.push(entry);

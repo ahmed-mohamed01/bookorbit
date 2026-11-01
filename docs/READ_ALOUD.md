@@ -185,3 +185,44 @@ chunk sizes and SHA-256 hashes before restoring audio. Indexes omit source-ident
 and fonts; rebuild restores them from the source EPUB after checking size and CRC32. A mismatch runs full alignment in
 the same job. The authenticated `/health` response advertises `rebuild: true`. Upstream
 worker images remain compatible, but run full alignment instead of the rebuild shortcut.
+
+Timing provenance version 1 now optionally stores a source EPUB `chapterFingerprint`, source audio
+`audioFingerprint` values, and per-chunk `audioMd5` values. Chapter fingerprints walk the source
+spine in order. For each document whose collapsed, trimmed body text is non-empty, hash the
+inflated raw entry bytes (including any BOM) with SHA256; empty-text pages use an empty digest.
+Hash the concatenation of `JSON.stringify([href, digest]) + "\n"` with SHA256. Hrefs come from
+the manifest and resolve relative to the OPF directory after percent decoding. This detects
+chapter markup edits as well as text edits while allowing image-only cover changes.
+Legacy dev provenance with `textFingerprint` is ignored as fingerprint coverage; it does not
+fail validation. Audio fingerprints hash copied audio packets using
+ffmpeg, so tag writes and chapter-only remuxes can retain the timing index. The scheduler checks
+at most one changed book per tick, sequentially reading only changed files. Until it verifies a
+byte mismatch, sync offers no timing source. Old indexes without fingerprints keep their existing
+invalidation and exact chunk-byte checks.
+
+The DB provenance is authoritative for refreshed source file size, mtime, hash and path; the zip
+keeps its original provenance. Verification still compares the immutable alignment provenance,
+source IDs and content fingerprints. A conditional DB update preserves a newer file-change flag.
+
+For fingerprinted indexes, rebuild checks the current source chapter bytes again, upgrades the current source EPUB
+with STAlign, runs its cheap markup pass, and replays supported alignment manifest and timing metadata onto its OPF. Markup is needed even for image-only spine pages to match full-run serialization. It keeps
+stored textual spine XHTML and SMIL, current images, fonts, CSS, freshly marked cover pages and navigation,
+and newly split audio chunks verified by packet MD5. Ambiguous manifest changes, changed chapter
+IDs, or alignment-added spine/navigation entries fall back to full alignment. In particular,
+audio-only generated chapters require a full run because their titles and navigation may depend
+on the current audio metadata. Create read-aloud also uses a full run if it arrives before the
+scheduler verifies changed sources; request preparation never runs audio fingerprinting. Claiming
+a stale row does not attempt content recovery.
+
+The fork worker advertises `rebuildMetadata: true` on authenticated health. The server sends
+fingerprinted metadata replay requests only with that capability; older workers use full alignment
+so they cannot silently rebuild an EPUB with an outdated OPF.
+
+Rebuild compares the chapter fingerprint before `upgradeEpub`, because upgrade can legitimately
+rewrite chapter bytes. It does not compare upgraded bytes to the original source fingerprint.
+The existing spine identity and supported metadata replay checks still apply after upgrade.
+Only changed files need fingerprint coverage before a content check can be deferred. Concurrent
+stat/catalog changes and rejected provenance refreshes leave the row ready and re-flag it at the
+current DB time, behind older flagged books. A confirmed content change marks stale only while
+the checked provenance is still current. Capture stat drift or fingerprint failures omit the
+file's optional fingerprint and log a warning instead of discarding the alignment.
