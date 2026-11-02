@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { effectScope } from 'vue'
+import { effectScope, ref } from 'vue'
 import type { EditionSyncBookListItem, EditionSyncBookListQuery, EditionSyncBookListResponse, EditionSyncBookState } from '@bookorbit/types'
 import { editionSyncState } from '@/features/book/lib/__tests__/sync-fixtures'
 
@@ -8,7 +8,9 @@ const mocks = vi.hoisted(() => ({
   update: vi.fn<(bookId: number, payload: { syncEnabled: boolean }) => Promise<EditionSyncBookState>>(),
   run: vi.fn<(bookId: number) => Promise<EditionSyncBookState>>(),
   retry: vi.fn<(bookId: number) => Promise<EditionSyncBookState>>(),
+  retryFailed: vi.fn<() => Promise<{ retried: number }>>(),
   toastError: vi.fn<(message: string) => void>(),
+  toastSuccess: vi.fn<(message: string) => void>(),
 }))
 
 vi.mock('../../api/edition-sync.api', () => ({
@@ -16,30 +18,22 @@ vi.mock('../../api/edition-sync.api', () => ({
   updateEditionSyncBookState: mocks.update,
   runEditionSyncBookNow: mocks.run,
   retryEditionSyncBook: mocks.retry,
+  retryFailedEditionSyncBooks: mocks.retryFailed,
 }))
-vi.mock('vue-sonner', () => ({ toast: { error: mocks.toastError } }))
+vi.mock('vue-sonner', () => ({ toast: { error: mocks.toastError, success: mocks.toastSuccess } }))
 
-import { applyBookState, EDITION_SYNC_BOOKS_SEARCH_DEBOUNCE_MS, useEditionSyncBooks } from '../useEditionSyncBooks'
+import {
+  applyBookState,
+  EDITION_SYNC_BOOKS_REFRESH_MS,
+  EDITION_SYNC_BOOKS_SEARCH_DEBOUNCE_MS,
+  useEditionSyncBooks,
+  type UseEditionSyncBooksOptions,
+} from '../useEditionSyncBooks'
+import { bookItem as fixtureBookItem } from '../../lib/__tests__/list-fixtures'
 import { useEditionSyncSettings } from '../useEditionSyncSettings'
 
 function bookItem(overrides: Partial<EditionSyncBookListItem> = {}): EditionSyncBookListItem {
-  return {
-    bookId: 7,
-    title: 'Wind and Truth',
-    coverVersion: null,
-    formats: ['m4b', 'epub'],
-    syncEnabled: true,
-    syncOverride: null,
-    status: 'queued',
-    stage: null,
-    progress: null,
-    indexedAt: null,
-    error: null,
-    whisperFallback: false,
-    canRunNow: true,
-    canRetry: false,
-    ...overrides,
-  }
+  return fixtureBookItem({ coverVersion: null, status: 'queued', indexedAt: null, canRunNow: true, ...overrides })
 }
 
 function response(overrides: Partial<EditionSyncBookListResponse> = {}): EditionSyncBookListResponse {
@@ -62,9 +56,14 @@ function deferred<T>() {
 
 let scope = effectScope()
 
-function setup() {
+function setup(options: UseEditionSyncBooksOptions = {}) {
   scope = effectScope()
-  return scope.run(() => useEditionSyncBooks())!
+  return scope.run(() => useEditionSyncBooks(options))!
+}
+
+function setVisibility(state: DocumentVisibilityState) {
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+  document.dispatchEvent(new Event('visibilitychange'))
 }
 
 describe('useEditionSyncBooks', () => {
@@ -77,6 +76,7 @@ describe('useEditionSyncBooks', () => {
   afterEach(() => {
     scope.stop()
     vi.useRealTimers()
+    setVisibility('visible')
   })
 
   it('loads the first page of every book with the counts', async () => {
@@ -95,12 +95,12 @@ describe('useEditionSyncBooks', () => {
     mocks.fetchBooks.mockResolvedValue(response({ total: 120, items: Array.from({ length: 50 }, (_, i) => bookItem({ bookId: i })) }))
     await books.load()
     books.nextPage()
-    await vi.runAllTimersAsync()
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_SEARCH_DEBOUNCE_MS)
     expect(books.page.value).toBe(2)
     expect(books.range.value).toEqual({ from: 51, to: 100, total: 120 })
 
     books.setFilter('problems')
-    await vi.runAllTimersAsync()
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_SEARCH_DEBOUNCE_MS)
     expect(mocks.fetchBooks).toHaveBeenLastCalledWith({ filter: 'problems', q: undefined, page: 1 })
   })
 
@@ -121,7 +121,7 @@ describe('useEditionSyncBooks', () => {
     mocks.fetchBooks.mockReturnValueOnce(slow.promise).mockResolvedValueOnce(response({ items: [bookItem({ bookId: 2, title: 'New' })] }))
     const first = books.load()
     books.setFilter('off')
-    await vi.runAllTimersAsync()
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_SEARCH_DEBOUNCE_MS)
     slow.resolve(response({ items: [bookItem({ bookId: 1, title: 'Old' })] }))
     await first
     expect(books.items.value.map((item) => item.title)).toEqual(['New'])
@@ -132,7 +132,7 @@ describe('useEditionSyncBooks', () => {
     books.page.value = 3
     mocks.fetchBooks.mockResolvedValueOnce(response({ items: [], total: 60 })).mockResolvedValueOnce(response({ total: 60, page: 2 }))
     await books.load()
-    await vi.runAllTimersAsync()
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_SEARCH_DEBOUNCE_MS)
     expect(mocks.fetchBooks).toHaveBeenLastCalledWith({ filter: 'all', q: undefined, page: 2 })
     expect(books.page.value).toBe(2)
   })
@@ -233,8 +233,137 @@ describe('useEditionSyncBooks', () => {
     expect(books.canToggle(bookItem())).toBe(false)
   })
 
-  it('maps a book state onto a list row', () => {
-    const row = applyBookState(bookItem(), editionSyncState({ status: 'failed', error: 'x', whisperFallback: true }, { canRetry: true }))
-    expect(row).toMatchObject({ status: 'failed', error: 'x', whisperFallback: true, canRetry: true })
+  it('takes only the reliable fields from a book state and clears details of the old status', () => {
+    const failed = bookItem({
+      status: 'failed',
+      error: 'old',
+      errorCode: 'worker_crashed',
+      lastAttemptAt: '2026-11-01T03:00:00.000Z',
+      canRetry: true,
+    })
+    const row = applyBookState(
+      failed,
+      editionSyncState({ status: 'queued', error: 'from state', queuePosition: 3, attemptCount: 9 }, { canRetry: false, canRunNow: true }),
+    )
+    expect(row).toMatchObject({ status: 'queued', error: null, errorCode: null, lastAttemptAt: null, invalidatedReason: null, queuePosition: null })
+    expect(row).toMatchObject({ canRunNow: true, canRetry: false, attemptCount: 0 })
+
+    const queued = bookItem({ status: 'queued', queuePosition: 4, invalidatedReason: 'yielded' })
+    const pinned = applyBookState(queued, editionSyncState({ status: 'queued', queuePosition: 1 }))
+    expect(pinned).toMatchObject({ status: 'queued', invalidatedReason: 'yielded', queuePosition: null })
+  })
+
+  it('marks an acted-on row as waiting for details until the re-fetch lands', async () => {
+    const books = setup()
+    await books.load()
+    const refetch = deferred<EditionSyncBookListResponse>()
+    mocks.fetchBooks.mockReturnValueOnce(refetch.promise)
+    mocks.run.mockResolvedValue(editionSyncState({ status: 'queued' }))
+    await books.runNow(7)
+    expect(books.detailsPendingIds.value.has(7)).toBe(true)
+    refetch.resolve(response())
+    await vi.waitFor(() => expect(books.loading.value).toBe(false))
+    expect(books.detailsPendingIds.value.size).toBe(0)
+  })
+
+  it('opens on Problems when anything failed, and stays on All otherwise', async () => {
+    mocks.fetchBooks
+      .mockResolvedValueOnce(response({ counts: { all: 3, problems: 2, queued: 1, synced: 0, off: 0 } }))
+      .mockResolvedValueOnce(response({ counts: { all: 3, problems: 2, queued: 1, synced: 0, off: 0 } }))
+    const books = setup()
+    await books.load()
+    await vi.waitFor(() => expect(books.loading.value).toBe(false))
+    expect(books.filter.value).toBe('problems')
+    expect(mocks.fetchBooks).toHaveBeenLastCalledWith({ filter: 'problems', q: undefined, page: 1 })
+
+    scope.stop()
+    mocks.fetchBooks.mockReset().mockResolvedValue(response({ items: [bookItem({ status: 'ready' })] }))
+    const fresh = setup()
+    await fresh.load()
+    expect(fresh.filter.value).toBe('all')
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a tab the reader picked before the first answer', async () => {
+    const first = deferred<EditionSyncBookListResponse>()
+    mocks.fetchBooks.mockReturnValueOnce(first.promise).mockResolvedValue(response({ counts: { all: 3, problems: 2, queued: 1, synced: 0, off: 0 } }))
+    const books = setup()
+    void books.load()
+    books.setFilter('synced')
+    await vi.waitFor(() => expect(books.loading.value).toBe(false))
+    expect(books.filter.value).toBe('synced')
+  })
+
+  it('retries every failed book, says how many, and reloads', async () => {
+    mocks.fetchBooks.mockResolvedValue(response({ items: [bookItem({ status: 'ready' })] }))
+    mocks.retryFailed.mockResolvedValue({ retried: 3 })
+    const books = setup()
+    await books.load()
+    mocks.fetchBooks.mockClear()
+    expect(await books.retryAllFailed()).toBe(true)
+    expect(mocks.toastSuccess).toHaveBeenCalledWith('3 books queued to retry')
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
+    expect(books.retryingFailed.value).toBe(false)
+
+    mocks.retryFailed.mockRejectedValue(new Error('Edition sync is off'))
+    expect(await books.retryAllFailed()).toBe(false)
+    expect(mocks.toastError).toHaveBeenCalledWith('Edition sync is off')
+  })
+
+  it('re-fetches every 5 s while the page has running or queued rows, and stops when hidden or idle', async () => {
+    const books = setup()
+    await books.load()
+    mocks.fetchBooks.mockClear()
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
+
+    setVisibility('hidden')
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS * 3)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
+
+    setVisibility('visible')
+    await vi.waitFor(() => expect(mocks.fetchBooks).toHaveBeenCalledTimes(2))
+
+    mocks.fetchBooks.mockResolvedValue(response({ items: [bookItem({ status: 'ready' })] }))
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS * 3)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps refreshing while the page has out-of-date rows', async () => {
+    mocks.fetchBooks.mockResolvedValue(response({ items: [bookItem({ status: 'stale' })] }))
+    const books = setup()
+    await books.load()
+    mocks.fetchBooks.mockClear()
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps refreshing an idle page while an admin run is active', async () => {
+    mocks.fetchBooks.mockResolvedValue(response({ items: [bookItem({ status: 'ready' })] }))
+    const runActive = ref(false)
+    const books = setup({ runActive })
+    await books.load()
+    mocks.fetchBooks.mockClear()
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS * 2)
+    expect(mocks.fetchBooks).not.toHaveBeenCalled()
+
+    runActive.value = true
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(1)
+
+    runActive.value = false
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS * 3)
+    expect(mocks.fetchBooks).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops refreshing once disposed', async () => {
+    const books = setup()
+    await books.load()
+    mocks.fetchBooks.mockClear()
+    scope.stop()
+    await vi.advanceTimersByTimeAsync(EDITION_SYNC_BOOKS_REFRESH_MS * 3)
+    expect(mocks.fetchBooks).not.toHaveBeenCalled()
   })
 })

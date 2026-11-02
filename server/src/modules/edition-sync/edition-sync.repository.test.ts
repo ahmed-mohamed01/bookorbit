@@ -223,7 +223,7 @@ describe('settings books list', () => {
       expect(query.params).toContain('%100\\%\\_\\\\%');
       expect(query.sql).not.toContain('OFFSET 256');
     }
-    expect(page.sql).toContain('ORDER BY lower(s.title), s.id');
+    expect(page.sql).toContain("ORDER BY (s.status = 'running') DESC, s.queue_position ASC NULLS LAST, lower(s.title), s.id");
     expect(page.params).toEqual(expect.arrayContaining([50, 100]));
     expect(counts.sql.slice(counts.sql.lastIndexOf('SELECT count(*)')).match(/count\(\*\) FILTER/g)).toHaveLength(4);
     expect(counts.sql).not.toContain('LIMIT');
@@ -275,4 +275,92 @@ describe('settings books list', () => {
     );
     for (const query of [page, counts]) expect(query.params).toContain(false);
   });
+});
+
+it('selects monitoring fields with status guards and ranks the queue once', async () => {
+  const execute = vi.fn().mockResolvedValue({ rows: [] });
+  await new EditionSyncRepository({ execute } as never).listBooks(
+    { id: 1, isSuperuser: true } as never,
+    { effectiveEnabled: true, bookSyncMode: 'all_eligible' },
+    'all',
+    undefined,
+    1,
+  );
+  const query = sqlText(execute.mock.calls[0][0]);
+  for (const field of [
+    'error_code',
+    'attempt_count',
+    'last_attempt_at',
+    'invalidated_reason',
+    'worker_version',
+    'index_bytes',
+    "report->'totals'->>'sentences'",
+    "report->'totals'->>'matchedSentences'",
+  ])
+    expect(query).toContain(field);
+  expect(query.match(/row_number\(\)/g)).toHaveLength(1);
+  expect(query).toContain('queue_positions AS MATERIALIZED');
+  expect(query).toContain("CASE WHEN s.status IN ('queued', 'stale') THEN qp.position END");
+  expect(query).toContain("CASE WHEN s.status = 'ready' THEN i.worker_version END");
+  expect(query).toContain('ORDER BY lower(s.title), s.id');
+});
+
+it.each(['all', 'queued', 'problems', 'synced', 'off'] as const)('only ranks the server queue when needed for %s', async (filter) => {
+  const execute = vi.fn().mockResolvedValue({ rows: [] });
+  await new EditionSyncRepository({ execute } as never).listBooks(
+    { id: 1, isSuperuser: true } as never,
+    { effectiveEnabled: true, bookSyncMode: 'all_eligible' },
+    filter,
+    undefined,
+    1,
+  );
+  const page = sqlText(execute.mock.calls[0][0]);
+  const counts = sqlText(execute.mock.calls[1][0]);
+  if (filter === 'all' || filter === 'queued') {
+    expect(page).toContain('queue_positions AS MATERIALIZED');
+    expect(page.match(/row_number\(\)/g)).toHaveLength(1);
+    expect(page).toContain('LEFT JOIN queue_positions qp ON qp.id = s.id');
+    expect(page).not.toContain('NULL::int AS queue_position');
+  } else {
+    expect(page).toContain('NULL::int AS queue_position');
+    expect(page).not.toContain('queue_positions');
+    expect(page).not.toContain('row_number()');
+  }
+  expect(counts).not.toContain('queue_positions');
+  expect(counts).not.toContain('row_number()');
+});
+
+it('retries failed books in the shared user scope with one set update', async () => {
+  const execute = vi.fn().mockResolvedValue({ rows: [{ retried: 3 }] });
+  const db = drizzle.mock({ schema: dbSchema });
+  Object.assign(db, { execute });
+  const repo = new EditionSyncRepository(db as never);
+  expect(
+    await repo.retryFailedBooks(
+      { id: 17, isSuperuser: false, contentFilters: { includeTagIds: [], includeGenreIds: [], excludeTagIds: [4], excludeGenreIds: [] } } as never,
+      { effectiveEnabled: true, bookSyncMode: 'selected_only' },
+      new Date(),
+    ),
+  ).toBe(3);
+  expect(execute).toHaveBeenCalledTimes(1);
+  const query = sqlText(execute.mock.calls[0][0]);
+  expect(query).toContain('user_library_access');
+  expect(query).toContain('book_tags');
+  expect(query).toContain('eligible_files AS');
+  expect(query).toContain('CASE WHEN NOT enabled');
+  expect(query).toContain("s.status = 'failed' AND i.status = 'failed' AND NOT i.retry_requested");
+  expect(query).toContain('attempt_count = 0, retry_requested = true');
+});
+
+it('reads only the newest finished run with a deterministic tie break', async () => {
+  const limit = vi.fn().mockResolvedValue([]);
+  const orderBy = vi.fn().mockReturnValue({ limit });
+  const where = vi.fn().mockReturnValue({ orderBy });
+  const from = vi.fn().mockReturnValue({ where });
+  const select = vi.fn().mockReturnValue({ from });
+  expect(await new EditionSyncRepository({ select } as never).findLastFinishedRun()).toBeNull();
+  expect(sqlText(where.mock.calls[0][0])).toContain('IS NOT NULL');
+  expect(sqlText(orderBy.mock.calls[0][0])).toContain('"ended_at" desc');
+  expect(sqlText(orderBy.mock.calls[0][1])).toContain('"id" desc');
+  expect(limit).toHaveBeenCalledWith(1);
 });

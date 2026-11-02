@@ -6,6 +6,7 @@ import type {
   EditionSyncBookListResponse,
   EditionSyncBookState,
   EditionSyncClearUnusedResult,
+  EditionSyncRetryFailedResult,
   EditionSyncSettings,
   UpdateEditionSyncAdminSettingsPayload,
   UpdateEditionSyncBookStatePayload,
@@ -57,6 +58,10 @@ export async function runEditionSyncBookNow(bookId: number): Promise<EditionSync
 
 export async function retryEditionSyncBook(bookId: number): Promise<EditionSyncBookState> {
   return readJson(await api(`${BASE}/books/${bookId}/retry`, jsonInit('POST')))
+}
+
+export async function retryFailedEditionSyncBooks(): Promise<EditionSyncRetryFailedResult> {
+  return readJson(await api(`${BASE}/books/retry-failed`, jsonInit('POST')))
 }
 
 export async function fetchEditionSyncAdminStatus(): Promise<EditionSyncAdminStatus> {

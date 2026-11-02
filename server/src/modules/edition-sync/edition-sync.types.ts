@@ -117,17 +117,7 @@ export interface EditionSyncBookListSettings {
  * A books-list row as the repository reads it; the service adds the cover version and the actions.
  * A type alias rather than an interface so it satisfies drizzle's `execute<Record<string, unknown>>` bound.
  */
-export type EditionSyncBookListRow = {
-  bookId: number;
-  title: string;
-  /** Computed in SQL from the user's effective setting, book sync mode and per-book override. */
-  syncEnabled: boolean;
-  syncOverride: EditionSyncOverride;
-  status: EditionSyncBookListItem['status'];
-  stage: EditionSyncBookListItem['stage'];
-  progress: number | null;
+export type EditionSyncBookListRow = Omit<EditionSyncBookListItem, 'coverVersion' | 'canRunNow' | 'canRetry' | 'indexedAt' | 'lastAttemptAt'> & {
   indexedAt: Date | string | null;
-  error: string | null;
-  whisperFallback: boolean;
-  formats: string[];
+  lastAttemptAt: Date | string | null;
 };

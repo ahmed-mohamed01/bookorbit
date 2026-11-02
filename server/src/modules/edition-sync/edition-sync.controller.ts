@@ -3,9 +3,10 @@ import { Permission } from '@bookorbit/types';
 import type {
   EditionSyncAdminSettings,
   EditionSyncAdminStatus,
-  EditionSyncBookState,
   EditionSyncBookListResponse,
+  EditionSyncBookState,
   EditionSyncClearUnusedResult,
+  EditionSyncRetryFailedResult,
   EditionSyncSettings,
 } from '@bookorbit/types';
 
@@ -45,6 +46,12 @@ export class EditionSyncController {
   @Get('books')
   listBooks(@CurrentUser() user: RequestUser, @Query() query: EditionSyncBookListQueryDto): Promise<EditionSyncBookListResponse> {
     return this.bookList.list(user, query);
+  }
+
+  @Post('books/retry-failed')
+  @HttpCode(HttpStatus.OK)
+  retryFailedBooks(@CurrentUser() user: RequestUser): Promise<EditionSyncRetryFailedResult> {
+    return this.bookState.retryFailed(user);
   }
 
   @Get('books/:bookId/state')

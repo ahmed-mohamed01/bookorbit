@@ -7,15 +7,14 @@ import type { EditionSyncBookSyncMode } from '@bookorbit/types'
 import { Button } from '@/components/ui/button'
 import ToggleSwitch from '@/components/ui/ToggleSwitch.vue'
 import { useEditionSyncSettings } from '../composables/useEditionSyncSettings'
-import EditionSyncBooksList from './EditionSyncBooksList.vue'
 
 const { t } = useI18n()
 const { settings, saving, error, fetchSettings, saveSettings } = useEditionSyncSettings()
 
+const emit = defineEmits<{ saved: [] }>()
+
 const loaded = ref(false)
-const booksList = ref<InstanceType<typeof EditionSyncBooksList> | null>(null)
 const serverDisabled = computed(() => settings.value?.disabledReason === 'server_disabled')
-const showBooks = computed(() => loaded.value && !serverDisabled.value && settings.value?.disabledReason !== 'permission_denied')
 const loadAttempted = ref(false)
 const form = reactive({ enabled: false, bookSyncMode: 'all_eligible' as EditionSyncBookSyncMode })
 
@@ -46,7 +45,7 @@ async function handleSave() {
     return
   }
   toast.success(t('editionSync.user.toast.saved'))
-  void booksList.value?.load()
+  emit('saved')
 }
 </script>
 
@@ -110,8 +109,6 @@ async function handleSave() {
           {{ t('common.save') }}
         </Button>
       </div>
-
-      <EditionSyncBooksList v-if="showBooks" ref="booksList" />
     </template>
   </div>
 </template>

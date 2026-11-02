@@ -442,7 +442,7 @@ export const SETTINGS_NAV: readonly SettingsNavGroup[] = [
         labelKey: 'editionSync.fork.title',
         descriptionKey: 'editionSync.fork.description',
         icon: GitFork,
-        keywords: 'fork edition sync read aloud timing index whisper audiobook ebook position schedule worker',
+        keywords: 'fork edition sync read aloud timing index whisper audiobook ebook position schedule worker queue failed retry',
         isVisible: anyPermission(Permission.EditionSync, Permission.ManageAppSettings),
       },
       {

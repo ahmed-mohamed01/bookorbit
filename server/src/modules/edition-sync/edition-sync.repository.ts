@@ -200,12 +200,56 @@ export class EditionSyncRepository {
   constructor(@Inject(DB) private readonly db: Db) {}
 
   async listBooks(user: RequestUser, settings: EditionSyncBookListSettings, filter: EditionSyncBookListFilter, q: string | undefined, page: number) {
+    const base = this.listScope(user, settings, q);
+    const positioned =
+      filter === 'queued' || filter === 'all'
+        ? sql`queue_positions AS MATERIALIZED (${queueQuery(sql`b.id, row_number() OVER (ORDER BY ${QUEUE_ORDER_SQL})::int AS position`)}), positioned AS (
+            SELECT s.*, CASE WHEN s.status IN ('queued', 'stale') THEN qp.position END AS queue_position
+            FROM states s LEFT JOIN queue_positions qp ON qp.id = s.id
+          )`
+        : sql`positioned AS (SELECT s.*, NULL::int AS queue_position FROM states s)`;
+    const order =
+      filter === 'queued' ? sql`(s.status = 'running') DESC, s.queue_position ASC NULLS LAST, lower(s.title), s.id` : sql`lower(s.title), s.id`;
+    const [items, counts] = await Promise.all([
+      this.db.execute<EditionSyncBookListRow>(sql`${base}, ${positioned}, page AS (
+        SELECT s.* FROM positioned s WHERE ${listFilterPredicate(filter)} ORDER BY ${order}
+        LIMIT ${EDITION_SYNC_BOOK_LIST_PAGE_SIZE} OFFSET ${(page - 1) * EDITION_SYNC_BOOK_LIST_PAGE_SIZE}
+      ) SELECT s.id AS "bookId", s.title, s.enabled AS "syncEnabled", s.sync_override AS "syncOverride", s.status,
+        CASE WHEN s.status = 'running' THEN i.stage END AS stage,
+        CASE WHEN s.status = 'running' THEN COALESCE(i.progress, 0) END AS progress,
+        i.indexed_at AS "indexedAt", i.last_error AS error,
+        i.error_code AS "errorCode", COALESCE(i.attempt_count, 0) AS "attemptCount", i.last_attempt_at AS "lastAttemptAt",
+        CASE WHEN s.status IN ('queued', 'stale') THEN i.invalidated_reason END AS "invalidatedReason",
+        s.queue_position AS "queuePosition",
+        CASE WHEN s.status = 'ready' THEN i.worker_version END AS "workerVersion",
+        CASE WHEN s.status = 'ready' THEN i.index_bytes::float8 END AS "indexBytes",
+        CASE WHEN s.status = 'ready' THEN (i.report->'totals'->>'sentences')::int END AS sentences,
+        CASE WHEN s.status = 'ready' THEN (i.report->'totals'->>'matchedSentences')::int END AS "matchedSentences",
+        (s.status = 'failed' AND COALESCE(r.mode, 'auto') <> 'disabled' AND EXISTS (
+          SELECT 1 FROM audiobook_alignment a WHERE a.text_book_id = s.id AND a.audio_book_id = s.id AND a.status = 'ready'
+        )) AS "whisperFallback",
+        ARRAY(SELECT f.format FROM book_files f WHERE f.book_id = s.id AND f.role = 'content'
+          GROUP BY f.format ORDER BY bool_or(f.id = b.primary_file_id) DESC,
+          min(CASE WHEN f.format IN (${AUDIO_FORMATS_SQL}) THEN 0 WHEN f.format = 'epub' THEN 1 ELSE 2 END), f.format) AS formats
+      FROM page s JOIN books b ON b.id = s.id
+      LEFT JOIN edition_sync_book_index i ON i.book_id = s.id
+      LEFT JOIN user_book_read_aloud_sync_settings r ON r.book_id = s.id AND r.user_id = ${user.id}
+      ORDER BY ${order}`),
+      this.db.execute<Record<EditionSyncBookListFilter, number>>(sql`${base} SELECT ${LIST_FILTER_COUNTS_SQL} FROM states`),
+    ]);
+    return {
+      items: rowsOf<EditionSyncBookListRow>(items),
+      counts: rowsOf<Record<EditionSyncBookListFilter, number>>(counts)[0],
+    };
+  }
+
+  private listScope(user: RequestUser, settings: EditionSyncBookListSettings, q?: string): SQL {
     const contentFilterClauses = !user.isSuperuser && user.contentFilters ? buildContentFilterClauses(user.contentFilters, this.db) : [];
     // The content filter clauses reference the unaliased "books" table, so they run in their own scope.
     const contentFilterSql =
       contentFilterClauses.length > 0 ? sql`AND EXISTS (SELECT 1 FROM books WHERE books.id = b.id AND ${and(...contentFilterClauses)})` : sql``;
     const title = sql`COALESCE(m.title, b.folder_path)`;
-    const base = sql`WITH ${ELIGIBLE_FILES_CTE}, scoped AS (
+    return sql`WITH ${ELIGIBLE_FILES_CTE}, scoped AS (
       SELECT b.id, ${title} AS title, o.sync_override,
         (${settings.effectiveEnabled} AND (o.sync_override = 'included' OR (o.sync_override IS NULL AND ${settings.bookSyncMode} = 'all_eligible'))) IS TRUE AS enabled,
         i.status AS stored_status, i.retry_requested, i.indexed_at
@@ -225,30 +269,18 @@ export class EditionSyncRepository {
         WHEN stored_status = 'stale' AND indexed_at IS NULL THEN 'queued'
         ELSE stored_status END AS status FROM scoped
     )`;
-    const [items, counts] = await Promise.all([
-      this.db.execute<EditionSyncBookListRow>(sql`${base}, page AS (
-        SELECT s.* FROM states s WHERE ${listFilterPredicate(filter)} ORDER BY lower(s.title), s.id
-        LIMIT ${EDITION_SYNC_BOOK_LIST_PAGE_SIZE} OFFSET ${(page - 1) * EDITION_SYNC_BOOK_LIST_PAGE_SIZE}
-      ) SELECT s.id AS "bookId", s.title, s.enabled AS "syncEnabled", s.sync_override AS "syncOverride", s.status,
-        CASE WHEN s.status = 'running' THEN i.stage END AS stage,
-        CASE WHEN s.status = 'running' THEN COALESCE(i.progress, 0) END AS progress,
-        i.indexed_at AS "indexedAt", i.last_error AS error,
-        (s.status = 'failed' AND COALESCE(r.mode, 'auto') <> 'disabled' AND EXISTS (
-          SELECT 1 FROM audiobook_alignment a WHERE a.text_book_id = s.id AND a.audio_book_id = s.id AND a.status = 'ready'
-        )) AS "whisperFallback",
-        ARRAY(SELECT f.format FROM book_files f WHERE f.book_id = s.id AND f.role = 'content'
-          GROUP BY f.format ORDER BY bool_or(f.id = b.primary_file_id) DESC,
-          min(CASE WHEN f.format IN (${AUDIO_FORMATS_SQL}) THEN 0 WHEN f.format = 'epub' THEN 1 ELSE 2 END), f.format) AS formats
-      FROM page s JOIN books b ON b.id = s.id
-      LEFT JOIN edition_sync_book_index i ON i.book_id = s.id
-      LEFT JOIN user_book_read_aloud_sync_settings r ON r.book_id = s.id AND r.user_id = ${user.id}
-      ORDER BY lower(s.title), s.id`),
-      this.db.execute<Record<EditionSyncBookListFilter, number>>(sql`${base} SELECT ${LIST_FILTER_COUNTS_SQL} FROM states`),
-    ]);
-    return {
-      items: rowsOf<EditionSyncBookListRow>(items),
-      counts: rowsOf<Record<EditionSyncBookListFilter, number>>(counts)[0],
-    };
+  }
+
+  async retryFailedBooks(user: RequestUser, settings: EditionSyncBookListSettings, at: Date): Promise<number> {
+    const result = await this.db.execute<{ retried: number }>(sql`
+      ${this.listScope(user, settings)}, updated AS (
+        UPDATE edition_sync_book_index i
+        SET pinned_at = ${at}, attempt_count = 0, retry_requested = true, updated_at = ${at}
+        FROM states s WHERE s.id = i.book_id AND s.status = 'failed' AND i.status = 'failed' AND NOT i.retry_requested
+        RETURNING i.book_id
+      ) SELECT count(*)::int AS retried FROM updated
+    `);
+    return rowsOf<{ retried: number }>(result)[0]?.retried ?? 0;
   }
 
   // Schema bootstrap
@@ -891,6 +923,16 @@ export class EditionSyncRepository {
       .from(editionSyncRuns)
       .where(isNull(editionSyncRuns.endedAt))
       .orderBy(desc(editionSyncRuns.startedAt))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async findLastFinishedRun(): Promise<EditionSyncRunRow | null> {
+    const [row] = await this.db
+      .select()
+      .from(editionSyncRuns)
+      .where(sql`${editionSyncRuns.endedAt} IS NOT NULL`)
+      .orderBy(desc(editionSyncRuns.endedAt), desc(editionSyncRuns.id))
       .limit(1);
     return row ?? null;
   }

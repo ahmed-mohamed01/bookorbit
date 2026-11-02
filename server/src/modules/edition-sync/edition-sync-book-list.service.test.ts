@@ -19,6 +19,15 @@ function row(overrides: Record<string, unknown> = {}) {
     stage: null,
     progress: null,
     indexedAt: null,
+    lastAttemptAt: null,
+    errorCode: null,
+    attemptCount: 0,
+    invalidatedReason: null,
+    queuePosition: null,
+    sentences: null,
+    matchedSentences: null,
+    workerVersion: null,
+    indexBytes: null,
     error: null,
     whisperFallback: false,
     formats: ['m4b', 'epub'],
@@ -144,4 +153,35 @@ it('takes the cover version from the cover store faces of the page rows', async 
   const { items } = await service.list({ id: 1 } as never, {});
   expect(coverStore.facesFor).toHaveBeenCalledWith([7, 9]);
   expect(items.map((item) => item.coverVersion)).toEqual(['audio:2026:-', null]);
+});
+
+it.each(['queued', 'stale', 'running', 'failed', 'ready', 'off'])('maps monitoring data for %s', async (status) => {
+  const { service, repo } = await setup();
+  const waiting = status === 'queued' || status === 'stale';
+  repo.listBooks.mockResolvedValue({
+    items: [
+      row({
+        status,
+        lastAttemptAt: new Date('2026-11-01T01:00:00Z'),
+        errorCode: 'TIMEOUT',
+        attemptCount: 2,
+        queuePosition: waiting ? 4 : null,
+        invalidatedReason: waiting ? 'files_changed' : null,
+        sentences: status === 'ready' ? 100 : null,
+        matchedSentences: status === 'ready' ? 90 : null,
+        workerVersion: status === 'ready' ? '1.0' : null,
+        indexBytes: status === 'ready' ? 2048 : null,
+      }),
+    ],
+    counts: COUNTS,
+  });
+  const [item] = (await service.list({ id: 1 } as never, {})).items;
+  expect(item).toMatchObject({
+    lastAttemptAt: '2026-11-01T01:00:00.000Z',
+    errorCode: 'TIMEOUT',
+    attemptCount: 2,
+    queuePosition: waiting ? 4 : null,
+    invalidatedReason: waiting ? 'files_changed' : null,
+    sentences: status === 'ready' ? 100 : null,
+  });
 });

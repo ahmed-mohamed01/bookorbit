@@ -7,7 +7,6 @@ const mocks = vi.hoisted(() => ({
   updateSettings: vi.fn<(payload: unknown) => Promise<EditionSyncSettings>>(),
   toastSuccess: vi.fn<(message: string) => void>(),
   toastError: vi.fn<(message: string) => void>(),
-  booksLoad: vi.fn<() => Promise<void>>(),
 }))
 
 vi.mock('../../api/edition-sync.api', () => ({
@@ -15,13 +14,6 @@ vi.mock('../../api/edition-sync.api', () => ({
   updateEditionSyncSettings: mocks.updateSettings,
 }))
 vi.mock('vue-sonner', () => ({ toast: { success: mocks.toastSuccess, error: mocks.toastError } }))
-vi.mock('../EditionSyncBooksList.vue', () => ({
-  default: {
-    name: 'EditionSyncBooksList',
-    setup: (_: unknown, { expose }: { expose: (exposed: Record<string, unknown>) => void }) => expose({ load: mocks.booksLoad }),
-    template: '<div data-testid="books-list" />',
-  },
-}))
 
 import EditionSyncSettingsForm from '../EditionSyncSettings.vue'
 import { useEditionSyncSettings } from '../../composables/useEditionSyncSettings'
@@ -46,7 +38,7 @@ describe('EditionSyncSettings', () => {
     expect(mocks.updateSettings).toHaveBeenCalledWith({ enabled: true, bookSyncMode: 'selected_only' })
   })
 
-  it('reloads the books list after a save, and not after a failed one', async () => {
+  it('tells the page it saved, and not after a failed save', async () => {
     mocks.fetchSettings.mockResolvedValue(SETTINGS)
     mocks.updateSettings.mockResolvedValue({ ...SETTINGS, bookSyncMode: 'all_eligible' })
     const wrapper = mount(EditionSyncSettingsForm)
@@ -55,12 +47,12 @@ describe('EditionSyncSettings', () => {
 
     await save.trigger('click')
     await flushPromises()
-    expect(mocks.booksLoad).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('saved')).toHaveLength(1)
 
     mocks.updateSettings.mockRejectedValue(new Error('nope'))
     await save.trigger('click')
     await flushPromises()
-    expect(mocks.booksLoad).toHaveBeenCalledTimes(1)
+    expect(wrapper.emitted('saved')).toHaveLength(1)
   })
 
   it('cannot save defaults over the real settings while the load is in flight', async () => {
@@ -103,25 +95,5 @@ describe('EditionSyncSettings', () => {
     expect(save.attributes('disabled')).toBeDefined()
     expect(wrapper.get('button[role="switch"]').attributes('disabled')).toBeDefined()
     expect(useEditionSyncSettings().settings.value).toBeNull()
-  })
-
-  it('lists the books under the settings while edition sync is available', async () => {
-    mocks.fetchSettings.mockResolvedValue(SETTINGS)
-    const wrapper = mount(EditionSyncSettingsForm)
-    await flushPromises()
-    expect(wrapper.find('[data-testid="books-list"]').exists()).toBe(true)
-  })
-
-  it('lists no books when an admin turned edition sync off or the permission is missing', async () => {
-    mocks.fetchSettings.mockResolvedValue({ ...SETTINGS, effectiveEnabled: false, disabledReason: 'server_disabled' })
-    const serverOff = mount(EditionSyncSettingsForm)
-    await flushPromises()
-    expect(serverOff.find('[data-testid="books-list"]').exists()).toBe(false)
-
-    useEditionSyncSettings().settings.value = null
-    mocks.fetchSettings.mockResolvedValue({ ...SETTINGS, effectiveEnabled: false, disabledReason: 'permission_denied' })
-    const denied = mount(EditionSyncSettingsForm)
-    await flushPromises()
-    expect(denied.find('[data-testid="books-list"]').exists()).toBe(false)
   })
 })

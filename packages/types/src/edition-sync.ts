@@ -127,6 +127,15 @@ export interface EditionSyncAdminStatus {
     windowUntil: string | null;
     current: { bookId: number; title: string; stage: ReadAloudWorkerStage | null; progress: number } | null;
   };
+  /** The most recent finished run. */
+  lastRun: {
+    trigger: EditionSyncRunTrigger;
+    startedAt: string;
+    endedAt: string;
+    stopReason: EditionSyncRunStopReason | null;
+    booksIndexed: number;
+    booksFailed: number;
+  } | null;
   counts: { indexed: number; queued: number; failed: number; stale: number; unusedIndexes: number; unusedBytes: number };
   backlogEstimate: { books: number; hoursAtRecentRate: number | null };
 }
@@ -162,9 +171,24 @@ export interface EditionSyncBookListItem {
   progress: number | null;
   indexedAt: string | null;
   error: string | null;
+  errorCode: ReadAloudErrorCode | null;
+  attemptCount: number;
+  lastAttemptAt: string | null;
+  /** Why a queued or out-of-date book needs indexing; null for a book never indexed. */
+  invalidatedReason: EditionSyncInvalidatedReason | null;
+  /** 1-based place in the server-wide run order while queued or out of date; null otherwise. */
+  queuePosition: number | null;
+  sentences: number | null;
+  matchedSentences: number | null;
+  workerVersion: string | null;
+  indexBytes: number | null;
   whisperFallback: boolean;
   canRunNow: boolean;
   canRetry: boolean;
+}
+
+export interface EditionSyncRetryFailedResult {
+  retried: number;
 }
 
 export interface EditionSyncBookListResponse {

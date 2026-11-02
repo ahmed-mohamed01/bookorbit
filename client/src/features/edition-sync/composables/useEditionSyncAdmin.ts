@@ -1,4 +1,4 @@
-import { onScopeDispose, ref } from 'vue'
+import { computed, inject, onScopeDispose, provide, ref, type InjectionKey } from 'vue'
 import type { EditionSyncAdminSettings, EditionSyncAdminStatus, UpdateEditionSyncAdminSettingsPayload } from '@bookorbit/types'
 import {
   clearUnusedEditionSyncData,
@@ -22,6 +22,7 @@ export function useEditionSyncAdmin() {
   const saving = ref(false)
   const acting = ref(false)
   const error = ref<string | null>(null)
+  const runActive = computed(() => status.value?.run.active === true)
   let pollTimer: ReturnType<typeof setTimeout> | null = null
   let disposed = false
 
@@ -40,7 +41,7 @@ export function useEditionSyncAdmin() {
 
   function schedulePoll(): void {
     stopPolling()
-    if (disposed || status.value?.run.active !== true) return
+    if (disposed || !runActive.value) return
     pollTimer = setTimeout(() => {
       pollTimer = null
       void refreshStatus().finally(schedulePoll)
@@ -120,5 +121,22 @@ export function useEditionSyncAdmin() {
     stopPolling()
   })
 
-  return { status, settings, loading, saving, acting, error, load, refreshStatus, saveSchedule, runNow, stop, clearUnused }
+  return { status, settings, loading, saving, acting, error, runActive, load, refreshStatus, saveSchedule, runNow, stop, clearUnused }
+}
+
+export type EditionSyncAdmin = ReturnType<typeof useEditionSyncAdmin>
+
+/** One admin state per page, so the Indexing card and the Server section share a single status poll. */
+export const EDITION_SYNC_ADMIN_KEY: InjectionKey<EditionSyncAdmin> = Symbol('editionSyncAdmin')
+
+export function provideEditionSyncAdmin(): EditionSyncAdmin {
+  const admin = useEditionSyncAdmin()
+  provide(EDITION_SYNC_ADMIN_KEY, admin)
+  return admin
+}
+
+export function injectEditionSyncAdmin(): EditionSyncAdmin {
+  const admin = inject(EDITION_SYNC_ADMIN_KEY, null)
+  if (!admin) throw new Error('injectEditionSyncAdmin() needs provideEditionSyncAdmin() in an ancestor')
+  return admin
 }

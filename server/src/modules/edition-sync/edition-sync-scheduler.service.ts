@@ -178,13 +178,14 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
 
   async getAdminStatus(): Promise<EditionSyncAdminStatus> {
     const run = this.run;
-    const [health, settings, indexCounts, unused, throughput, current] = await Promise.all([
+    const [health, settings, indexCounts, unused, throughput, current, lastRun] = await Promise.all([
       this.workerClient.healthState(),
       this.repo.findAdminSettings(),
       this.repo.countIndexStates(),
       this.repo.countUnused(),
       this.repo.findRecentThroughput(),
       run?.currentBookId ? this.describeCurrent(run.currentBookId) : Promise.resolve(null),
+      this.repo.findLastFinishedRun(),
     ]);
     const counts = settings.enabled ? indexCounts : { ...indexCounts, queued: 0 };
     const forkHealth = health.state === 'ok' || health.state === 'incompatible' ? (health.health as ReadAloudWorkerForkHealth) : null;
@@ -211,6 +212,16 @@ export class EditionSyncSchedulerService implements OnApplicationBootstrap, OnMo
         windowUntil: run?.windowUntil?.toISOString() ?? null,
         current,
       },
+      lastRun: lastRun?.endedAt
+        ? {
+            trigger: lastRun.trigger,
+            startedAt: lastRun.startedAt.toISOString(),
+            endedAt: lastRun.endedAt.toISOString(),
+            stopReason: lastRun.stopReason,
+            booksIndexed: lastRun.booksIndexed,
+            booksFailed: lastRun.booksFailed,
+          }
+        : null,
       counts: { ...counts, unusedIndexes: unused.count, unusedBytes: unused.bytes },
       backlogEstimate: {
         books: counts.queued,

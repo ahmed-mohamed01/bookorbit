@@ -28,6 +28,7 @@ function setup(
     isWanted: vi.fn().mockResolvedValue(true),
     findIndexRow: vi.fn().mockResolvedValue(options.row ?? null),
     setOverride: vi.fn().mockResolvedValue(undefined),
+    retryFailedBooks: vi.fn().mockResolvedValue(3),
     pinBook: vi.fn().mockResolvedValue(undefined),
     findQueuePosition: vi.fn().mockResolvedValue(142),
     findBookFileIdByPath: vi.fn().mockResolvedValue(55),
@@ -227,4 +228,28 @@ it('does not pin a toggle-on book while the server is disabled', async () => {
   await expect(service.setSyncEnabled(user, 10, true)).resolves.toMatchObject({ syncEnabled: false, effectiveReason: 'server_disabled' });
   expect(repo.pinBook).not.toHaveBeenCalled();
   expect(scheduler.poke).not.toHaveBeenCalled();
+});
+
+describe('retryFailed', () => {
+  it('rejects when the server is disabled without updating or waking the scheduler', async () => {
+    const { service, repo, scheduler } = setup({ serverEnabled: false });
+    await expect(service.retryFailed(user)).rejects.toThrow(EDITION_SYNC_SERVER_DISABLED_MESSAGE);
+    expect(repo.retryFailedBooks).not.toHaveBeenCalled();
+    expect(scheduler.poke).not.toHaveBeenCalled();
+  });
+  it('returns the count, clears cached positions and wakes the scheduler', async () => {
+    const { service, repo, scheduler } = setup();
+    await service.getState(user, 10);
+    expect(await service.retryFailed(user)).toEqual({ retried: 3 });
+    expect(repo.retryFailedBooks).toHaveBeenCalledWith(user, expect.objectContaining({ effectiveEnabled: true }), expect.any(Date));
+    expect(scheduler.poke).toHaveBeenCalledTimes(1);
+    await service.getState(user, 10);
+    expect(repo.findQueuePosition).toHaveBeenCalledTimes(2);
+  });
+  it('does not wake the scheduler when the update fails', async () => {
+    const { service, repo, scheduler } = setup();
+    repo.retryFailedBooks.mockRejectedValue(new BadRequestException('failed'));
+    await expect(service.retryFailed(user)).rejects.toThrow('failed');
+    expect(scheduler.poke).not.toHaveBeenCalled();
+  });
 });

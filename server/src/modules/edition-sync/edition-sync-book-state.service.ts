@@ -1,6 +1,13 @@
-import { BadRequestException, Injectable, NotFoundException, Optional } from '@nestjs/common';
-import type { EditionSyncBookState, EditionSyncIndexState, ReadAloudErrorCode, ReadAloudWorkerStage } from '@bookorbit/types';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import type {
+  EditionSyncBookState,
+  EditionSyncIndexState,
+  EditionSyncRetryFailedResult,
+  ReadAloudErrorCode,
+  ReadAloudWorkerStage,
+} from '@bookorbit/types';
 
+import { sanitizeLogValue } from '../../common/utils/log-sanitize.utils';
 import type { RequestUser } from '../../common/types/request-user';
 import { BookService } from '../book/book.service';
 import { ReadingAlignmentStatusService } from '../reading-alignment/reading-alignment-status.service';
@@ -20,6 +27,7 @@ const MAX_POSITION_CACHE_ENTRIES = 2_000;
 /** One book's edition-sync state for one user. Every method checks book access first. */
 @Injectable()
 export class EditionSyncBookStateService {
+  private readonly logger = new Logger(EditionSyncBookStateService.name);
   private readonly positionCache = new Map<number, { expiresAt: number; position: number | null }>();
 
   constructor(
@@ -67,6 +75,30 @@ export class EditionSyncBookStateService {
     if (!state.canRetry) throw new BadRequestException('This book has no failed index to retry');
     await this.pin(bookId, true);
     return this.buildState(user, bookId);
+  }
+
+  async retryFailed(user: RequestUser): Promise<EditionSyncRetryFailedResult> {
+    const startedAt = Date.now();
+    this.logger.log(`[edition_sync.retry_failed] [start] userId=${user.id} - retry failed books started`);
+    let retried = 0;
+    try {
+      const settings = await this.settings.getSettings(user);
+      if (settings.disabledReason === 'server_disabled') throw new BadRequestException(EDITION_SYNC_SERVER_DISABLED_MESSAGE);
+      retried = await this.repo.retryFailedBooks(user, settings, new Date());
+      this.positionCache.clear();
+      this.scheduler.poke();
+      this.logger.log(
+        `[edition_sync.retry_failed] [end] userId=${user.id} durationMs=${Date.now() - startedAt} retried=${retried} - retry failed books completed`,
+      );
+      return { retried };
+    } catch (error) {
+      const errorClass = error instanceof Error ? error.name : 'Unknown';
+      const message = sanitizeLogValue(error instanceof Error ? error.message : String(error));
+      this.logger.error(
+        `[edition_sync.retry_failed] [fail] userId=${user.id} durationMs=${Date.now() - startedAt} retried=${retried} errorClass=${errorClass} error="${message}" - retry failed books failed`,
+      );
+      throw error;
+    }
   }
 
   private async pin(bookId: number, retry: boolean): Promise<void> {

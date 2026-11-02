@@ -11311,10 +11311,10 @@
     },
     "fork": {
       "empty": "There is nothing to configure here with your current permissions.",
-      "title": "Fork settings",
-      "description": "Settings for features added in this fork, such as edition sync.",
-      "userHeading": "Edition sync",
-      "adminHeading": "Edition sync (server)"
+      "title": "Edition sync",
+      "description": "Timing indexes that keep your ebook and audiobook positions together.",
+      "userHeading": "Your preferences",
+      "adminHeading": "Server"
     },
     "user": {
       "title": "Edition sync",
@@ -11343,19 +11343,6 @@
     },
     "admin": {
       "loadFailed": "Failed to load edition sync status.",
-      "backlog": "{count, plural, one {# book} other {# books}} queued, about {hours} h at the recent rate",
-      "backlogNoRate": "{count, plural, one {# book} other {# books}} queued",
-      "nextRun": "Next run: {when}",
-      "worker": {
-        "title": "Worker connection",
-        "state": {
-          "ok": "Connected",
-          "unreachable": "Worker unreachable",
-          "incompatible": "Worker version is not compatible",
-          "not_configured": "Worker is not configured"
-        },
-        "noRebuild": "This worker cannot rebuild an edition from stored timing data, so it runs the full analysis instead."
-      },
       "schedule": {
         "title": "Indexing schedule",
         "presets": {
@@ -11386,19 +11373,6 @@
           "immediate": "Re-index right away"
         },
         "help": "New or replaced files. Right away waits 10 minutes after the last change."
-      },
-      "run": {
-        "title": "Indexing",
-        "start": "Run now",
-        "stop": "Stop",
-        "active": "A run is in progress.",
-        "idle": "No run in progress."
-      },
-      "counts": {
-        "indexed": "Indexed",
-        "queued": "Queued",
-        "failed": "Failed",
-        "stale": "Stale"
       },
       "unused": {
         "summary": "{count, plural, one {# unused timing file} other {# unused timing files}}, {size}",
@@ -11449,14 +11423,51 @@
         "retry": "Retry indexing"
       }
     },
+    "indexing": {
+      "heading": "Indexing",
+      "worker": {
+        "ok": "Worker online",
+        "online": "Worker online · {version}",
+        "unreachable": "Worker unreachable",
+        "incompatible": "Worker needs an update",
+        "not_configured": "Worker not configured"
+      },
+      "run": "Run queue",
+      "stop": "Stop",
+      "running": "{stage} · started {time}",
+      "active": "A run is in progress.",
+      "idle": "Nothing is running. The next scheduled run starts {when}.",
+      "idleUnscheduled": "Nothing is running. No run is scheduled.",
+      "serverOff": "Edition sync is off for this server.",
+      "paused": {
+        "unreachable": "The read-aloud worker can't be reached, so the queue is paused.",
+        "incompatible": "The read-aloud worker needs an update, so the queue is paused.",
+        "not_configured": "No read-aloud worker is configured, so the queue is paused."
+      },
+      "summary": {
+        "queue": "In queue",
+        "queueBooks": "{count, plural, one {# book} other {# books}}",
+        "queueBooksHours": "{count, plural, one {# book} other {# books}} · about {hours} h",
+        "nextRun": "Next scheduled run",
+        "notScheduled": "No run is scheduled",
+        "lastRun": "Last run",
+        "lastRunCounts": "{when} · {indexed} indexed, {failed} failed",
+        "lastRunOutcome": "{when} · {outcome}",
+        "noRun": "None yet",
+        "outcome": {
+          "stopped": "Stopped",
+          "worker_unavailable": "Worker unavailable",
+          "error": "Ended with an error"
+        }
+      }
+    },
     "books": {
       "title": "Books",
-      "description": "Books with an ebook and an audiobook, and where each one stands for you.",
       "filterLabel": "Filter books",
       "filters": {
         "all": "All",
         "problems": "Problems",
-        "queued": "Queued",
+        "queued": "Queue",
         "synced": "Synced",
         "off": "Off"
       },
@@ -11466,12 +11477,59 @@
       "retryLoad": "Try again",
       "loading": "Loading books…",
       "empty": "No books match.",
-      "offDetail": "Turned off for this book",
-      "indexedOn": "Indexed {date}",
-      "toggle": "Sync {title}",
       "range": "{from}-{to} of {total}",
       "previous": "Previous",
-      "next": "Next"
+      "next": "Next",
+      "problemsHint": "{count, plural, one {# book couldn't be indexed.} other {# books couldn't be indexed.}} Retrying puts them at the front of the queue.",
+      "retryAllFailed": "Retry all failed",
+      "retryFailedDone": "{count, plural, one {# book queued to retry} other {# books queued to retry}}",
+      "queueHint": "In the order they will run.",
+      "openBook": "Open book",
+      "actions": {
+        "retry": "Retry",
+        "runNext": "Run next",
+        "turnOff": "Turn off for this book",
+        "turnOn": "Turn on sync"
+      },
+      "details": {
+        "error": "Error",
+        "code": "Code",
+        "attempts": "Attempts",
+        "positionSync": "Position sync",
+        "queuedBecause": "Queued because",
+        "placeInQueue": "Place in queue",
+        "stage": "Stage",
+        "progress": "Progress",
+        "matched": "Matched",
+        "indexed": "Indexed",
+        "indexSize": "Index size",
+        "why": "Why"
+      },
+      "values": {
+        "attempts": "{count} · last tried {when}",
+        "whisperFallback": "Using the Whisper alignment instead",
+        "notAvailable": "Not available until this is indexed",
+        "previousIndex": "Uses the previous index until then",
+        "queuePlace": "#{position}",
+        "notInRunOrder": "Not in the run order yet",
+        "matched": "{percent} of {count, plural, one {# sentence} other {# sentences}}",
+        "indexed": "{date} · worker {version}"
+      },
+      "reasons": {
+        "audioChanged": "The audiobook changed",
+        "epubChanged": "The EPUB changed",
+        "fileMissing": "A file went missing",
+        "filesChanged": "The files changed",
+        "indexMissing": "The index file is missing",
+        "yielded": "Paused for another book",
+        "interrupted": "The last run was interrupted",
+        "notIndexed": "Not indexed yet"
+      },
+      "offReasons": {
+        "excluded": "You turned sync off for this book",
+        "notSelected": "Only selected books sync, and this one isn't selected",
+        "userDisabled": "Your edition sync is off"
+      }
     }
   },
   "hardcover": {

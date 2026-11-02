@@ -20,7 +20,15 @@ async function errors<T extends object>(cls: new () => T, body: Record<string, u
 
 describe('EditionSyncController', () => {
   it('gates the user routes by edition_sync', () => {
-    for (const handler of ['getSettings', 'upsertSettings', 'getBookState', 'updateBookState', 'runBookNow', 'retryBook'] as Handler[]) {
+    for (const handler of [
+      'getSettings',
+      'upsertSettings',
+      'getBookState',
+      'updateBookState',
+      'runBookNow',
+      'retryBook',
+      'retryFailedBooks',
+    ] as Handler[]) {
       expect(permissionOf(handler), handler).toBe(Permission.EditionSync);
     }
   });
@@ -97,4 +105,15 @@ it('validates the books query through the global validation pipe', async () => {
   expect(list.list).toHaveBeenCalledWith(user, query);
   expect(Reflect.getMetadata('path', EditionSyncController.prototype.listBooks)).toBe('books');
   expect(permissionOf('listBooks')).toBe(Permission.EditionSync);
+});
+
+it('routes bulk retry to the current user and returns HTTP 200', async () => {
+  const bookState = { retryFailed: vi.fn().mockResolvedValue({ retried: 2 }) };
+  const controller = new EditionSyncController({} as never, bookState as never, {} as never, {} as never, {} as never);
+  const user = { id: 7 } as never;
+  expect(await controller.retryFailedBooks(user)).toEqual({ retried: 2 });
+  expect(bookState.retryFailed).toHaveBeenCalledWith(user);
+  expect(Reflect.getMetadata('path', EditionSyncController.prototype.retryFailedBooks)).toBe('books/retry-failed');
+  expect(Reflect.getMetadata('method', EditionSyncController.prototype.retryFailedBooks)).toBe(1);
+  expect(Reflect.getMetadata('__httpCode__', EditionSyncController.prototype.retryFailedBooks)).toBe(200);
 });

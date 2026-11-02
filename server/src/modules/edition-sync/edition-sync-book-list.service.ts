@@ -32,6 +32,7 @@ export class EditionSyncBookListService {
     const items = result.items.map((row) => ({
       ...row,
       indexedAt: row.indexedAt === null ? null : new Date(row.indexedAt).toISOString(),
+      lastAttemptAt: row.lastAttemptAt === null ? null : new Date(row.lastAttemptAt).toISOString(),
       coverVersion: faces.get(row.bookId)?.coverVersion ?? null,
       canRunNow: row.status === 'queued' || row.status === 'stale',
       canRetry: row.status === 'failed',

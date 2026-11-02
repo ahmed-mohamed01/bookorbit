@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref } from 'vue'
+import { computed, onScopeDispose, ref, toValue, watch, type MaybeRefOrGetter } from 'vue'
 import { toast } from 'vue-sonner'
 import {
   EDITION_SYNC_BOOK_LIST_PAGE_SIZE,
@@ -8,35 +8,54 @@ import {
   type EditionSyncDisabledReason,
 } from '@bookorbit/types'
 import { i18n } from '@/i18n'
-import { fetchEditionSyncBooks, retryEditionSyncBook, runEditionSyncBookNow, updateEditionSyncBookState } from '../api/edition-sync.api'
+import {
+  fetchEditionSyncBooks,
+  retryEditionSyncBook,
+  retryFailedEditionSyncBooks,
+  runEditionSyncBookNow,
+  updateEditionSyncBookState,
+} from '../api/edition-sync.api'
+import { isActiveStatus } from '../lib/book-row'
 import { useEditionSyncSettings } from './useEditionSyncSettings'
 
 export const EDITION_SYNC_BOOKS_SEARCH_DEBOUNCE_MS = 300
 export const EDITION_SYNC_BOOKS_QUERY_MAX_LENGTH = 200
+export const EDITION_SYNC_BOOKS_REFRESH_MS = 5_000
 
 function messageOf(err: unknown, fallbackKey: string): string {
   return err instanceof Error && err.message ? err.message : i18n.global.t(fallbackKey)
 }
 
-/** A row takes the book's fresh state from a toggle, run or retry instead of reloading the page. */
+/**
+ * A row takes what a toggle, run or retry reliably tells about the book: its status, sync choice, actions and progress.
+ * Details that belonged to the old status are cleared; the re-fetch that follows brings the current ones from the list.
+ */
 export function applyBookState(item: EditionSyncBookListItem, state: EditionSyncBookState): EditionSyncBookListItem {
-  return {
+  const indexStatus = state.index.status === 'none' ? 'queued' : state.index.status
+  const status = state.syncEnabled ? indexStatus : 'off'
+  const next: EditionSyncBookListItem = {
     ...item,
     syncEnabled: state.syncEnabled,
     syncOverride: state.syncOverride,
-    status: state.syncEnabled ? state.index.status : 'off',
+    status,
     stage: state.index.stage,
     progress: state.index.progress,
-    indexedAt: state.index.indexedAt,
-    error: state.index.error,
-    whisperFallback: state.index.whisperFallback,
     canRunNow: state.canRunNow,
     canRetry: state.canRetry,
+    // The book state's place is not the server-wide run order the list numbers by.
+    queuePosition: null,
   }
+  if (status === item.status) return next
+  return { ...next, error: null, errorCode: null, lastAttemptAt: null, invalidatedReason: null }
+}
+
+export interface UseEditionSyncBooksOptions {
+  /** An admin run is in progress, which keeps the page refreshing even when no row on it is moving yet. */
+  runActive?: MaybeRefOrGetter<boolean>
 }
 
 /** The settings page's paged list of the books edition sync covers, by the reader's own sync state. */
-export function useEditionSyncBooks() {
+export function useEditionSyncBooks(options: UseEditionSyncBooksOptions = {}) {
   const { settings } = useEditionSyncSettings()
   const filter = ref<EditionSyncBookListFilter>('all')
   const query = ref('')
@@ -50,8 +69,15 @@ export function useEditionSyncBooks() {
   const loaded = ref(false)
   const error = ref<string | null>(null)
   const pendingIds = ref<ReadonlySet<number>>(new Set())
+  const retryingFailed = ref(false)
+  /** Rows whose status came from an action, waiting for the re-fetch to bring their details. */
+  const detailsPendingIds = ref<ReadonlySet<number>>(new Set())
   let requestId = 0
   let searchTimer: ReturnType<typeof setTimeout> | null = null
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null
+  let disposed = false
+  // The first answer picks the opening tab: Problems when anything failed, otherwise All.
+  let pickOpeningTab = true
 
   const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
   const hasPrevious = computed(() => page.value > 1)
@@ -84,10 +110,20 @@ export function useEditionSyncBooks() {
       const response = await fetchEditionSyncBooks({ filter: filter.value, q: query.value.trim() || undefined, page: page.value })
       if (current !== requestId) return
       items.value = response.items
+      detailsPendingIds.value = new Set()
       total.value = response.total
       pageSize.value = response.pageSize
       counts.value = response.counts
       disabledReason.value = response.disabledReason
+      if (pickOpeningTab) {
+        pickOpeningTab = false
+        if (filter.value === 'all' && response.counts.problems > 0) {
+          filter.value = 'problems'
+          page.value = 1
+          void load()
+          return
+        }
+      }
       // A page past the end, after the list shrank, falls back to the last one that exists.
       if (response.items.length === 0 && response.total > 0 && page.value > 1) {
         page.value = Math.max(1, Math.ceil(response.total / response.pageSize))
@@ -98,9 +134,46 @@ export function useEditionSyncBooks() {
     } catch (err) {
       if (current === requestId) error.value = messageOf(err, 'editionSync.books.loadFailed')
     } finally {
-      if (current === requestId) loading.value = false
+      if (current === requestId) {
+        loading.value = false
+        scheduleRefresh()
+      }
     }
   }
+
+  function clearRefreshTimer(): void {
+    if (refreshTimer) clearTimeout(refreshTimer)
+    refreshTimer = null
+  }
+
+  function shouldRefresh(): boolean {
+    if (disposed || document.visibilityState === 'hidden') return false
+    return toValue(options.runActive) === true || items.value.some((item) => isActiveStatus(item.status))
+  }
+
+  /** While something is moving, the page re-fetches itself so running, queued and out-of-date rows stay current. */
+  function scheduleRefresh(): void {
+    clearRefreshTimer()
+    if (!shouldRefresh()) return
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null
+      void load()
+    }, EDITION_SYNC_BOOKS_REFRESH_MS)
+  }
+
+  function handleVisibilityChange(): void {
+    if (document.visibilityState === 'hidden') clearRefreshTimer()
+    else if (loaded.value && !loading.value && !refreshTimer && shouldRefresh()) void load()
+  }
+
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+
+  watch(
+    () => toValue(options.runActive) === true,
+    (active) => {
+      if (active && loaded.value && !loading.value && !refreshTimer) scheduleRefresh()
+    },
+  )
 
   function clearSearchTimer(): void {
     if (searchTimer) clearTimeout(searchTimer)
@@ -108,6 +181,7 @@ export function useEditionSyncBooks() {
   }
 
   function setFilter(value: EditionSyncBookListFilter): void {
+    pickOpeningTab = false
     if (value === filter.value) return
     filter.value = value
     page.value = 1
@@ -149,7 +223,8 @@ export function useEditionSyncBooks() {
     try {
       const state = await call()
       items.value = items.value.map((item) => (item.bookId === bookId ? applyBookState(item, state) : item))
-      // The row shows its new state at once; the page and counts follow, since filter membership may have changed.
+      detailsPendingIds.value = new Set(detailsPendingIds.value).add(bookId)
+      // The row shows its new status at once; its details, the page and the counts follow from the re-fetch.
       void load()
       return true
     } catch (err) {
@@ -172,8 +247,27 @@ export function useEditionSyncBooks() {
     return updateRow(bookId, () => retryEditionSyncBook(bookId), 'editionSync.errors.retryFailed')
   }
 
+  async function retryAllFailed(): Promise<boolean> {
+    if (retryingFailed.value) return false
+    retryingFailed.value = true
+    try {
+      const { retried } = await retryFailedEditionSyncBooks()
+      toast.success(i18n.global.t('editionSync.books.retryFailedDone', { count: retried }))
+      void load()
+      return true
+    } catch (err) {
+      toast.error(messageOf(err, 'editionSync.errors.retryFailed'))
+      return false
+    } finally {
+      retryingFailed.value = false
+    }
+  }
+
   onScopeDispose(() => {
+    disposed = true
     clearSearchTimer()
+    clearRefreshTimer()
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
     requestId += 1
   })
 
@@ -190,6 +284,8 @@ export function useEditionSyncBooks() {
     loaded,
     error,
     pendingIds,
+    detailsPendingIds,
+    retryingFailed,
     pageCount,
     hasPrevious,
     hasNext,
@@ -204,5 +300,6 @@ export function useEditionSyncBooks() {
     setSyncEnabled,
     runNow,
     retry,
+    retryAllFailed,
   }
 }

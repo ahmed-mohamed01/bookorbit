@@ -27,6 +27,7 @@ function makeStatus(active: boolean): EditionSyncAdminStatus {
     worker: { configured: true, state: 'ok', version: '1', device: 'cpu', rebuildSupported: true },
     schedule: { enabled: true, cronExpression: '0 2 * * *', runHours: 8, onFilesChanged: 'next_run', updatedAt: null, nextRunAt: null },
     run: { active, trigger: active ? 'manual' : null, startedAt: null, windowUntil: null, current: null },
+    lastRun: null,
     counts: { indexed: 1, queued: 2, failed: 0, stale: 0, unusedIndexes: 4, unusedBytes: 100 },
     backlogEstimate: { books: 2, hoursAtRecentRate: null },
   }

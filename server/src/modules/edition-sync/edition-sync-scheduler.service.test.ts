@@ -59,6 +59,7 @@ function setup(options: { runHours?: number; cron?: string | null; onFilesChange
     findBookTitle: vi.fn().mockResolvedValue('Edgedancer'),
     countIndexStates: vi.fn().mockResolvedValue({ indexed: 1, queued: 4, failed: 0, stale: 0 }),
     countUnused: vi.fn().mockResolvedValue({ count: 0, bytes: 0 }),
+    findLastFinishedRun: vi.fn().mockResolvedValue(null),
     findRecentThroughput: vi.fn().mockResolvedValue({ books: 2, seconds: 7200 }),
   };
   const queue = { claimNext: vi.fn().mockResolvedValue(null), ensureValid: vi.fn().mockResolvedValue(true) };
@@ -431,4 +432,19 @@ it('does not register, pin or start runs when the server switch is off', async (
   expect(repo.createRun).not.toHaveBeenCalled();
   expect(indexer.indexBook).not.toHaveBeenCalled();
   await expect(service.stop()).resolves.toMatchObject({ run: { active: false }, counts: { queued: 0 }, backlogEstimate: { books: 0 } });
+});
+
+it('maps the latest finished run to ISO dates and reports null without one', async () => {
+  const { service, repo } = setup();
+  expect((await service.getAdminStatus()).lastRun).toBeNull();
+  const run = {
+    trigger: 'manual',
+    startedAt: new Date('2026-11-01T01:00:00Z'),
+    endedAt: new Date('2026-11-01T02:00:00Z'),
+    stopReason: 'empty',
+    booksIndexed: 3,
+    booksFailed: 1,
+  };
+  repo.findLastFinishedRun.mockResolvedValue(run as never);
+  expect((await service.getAdminStatus()).lastRun).toEqual({ ...run, startedAt: '2026-11-01T01:00:00.000Z', endedAt: '2026-11-01T02:00:00.000Z' });
 });
